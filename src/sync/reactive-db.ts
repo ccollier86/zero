@@ -1,0 +1,775 @@
+import { Database } from 'bun:sqlite';
+import {
+  createIdentityId,
+  getIdentityValues,
+  hasIdentity,
+  quoteSqlIdentifier,
+  type IdentityKey,
+} from './identity';
+import { OBS_CODES } from '../observability/codes';
+import { emitPlatformCode } from '../observability/sink';
+import type {
+  ReactiveDBConfig,
+  TableSchema,
+  Row,
+  Change,
+  ChangeOp,
+  ChangeListener,
+  TableDef,
+  ChangeStatements,
+  ChangeRow,
+} from './types';
+
+const DEFAULT_RING_BUFFER_DEPTH = 1000;
+
+/**
+ * ReactiveDB — SQLite wrapper that makes every write observable.
+ *
+ * Define a table, get prepared CRUD statements and change events for free.
+ * One instance per application.
+ *
+ * Every write:
+ *  1. Executes the prepared statement
+ *  2. Increments the global seq counter
+ *  3. Records in the _changes ring buffer
+ *  4. Emits to change listeners
+ */
+export class ReactiveDB {
+  private db: Database;
+  private tables: Map<string, TableDef> = new Map();
+  private listeners: ChangeListener[] = [];
+  private seq = 0;
+  private ringBufferDepth: number;
+  private changeStmts: ChangeStatements;
+  private disposed = false;
+
+  // Transaction support: when true, changes are accumulated and emitted after commit
+  private inTransaction = false;
+  private deferredChanges: Change[] | null = null;
+
+  constructor(config: ReactiveDBConfig) {
+    const dbPath = config.mode === 'memory' ? ':memory:' : config.mode;
+    this.db = new Database(dbPath);
+    this.ringBufferDepth = config.ringBufferDepth ?? DEFAULT_RING_BUFFER_DEPTH;
+
+    this.applyPragmas();
+    this.createChangesTable();
+    this.changeStmts = this.prepareChangeStatements();
+
+    // Truncate stale _changes from previous process (file mode).
+    // On restart, seq resets to 0 — old entries would have conflicting seq numbers.
+    // All clients must reconnect after restart (WS drops), so they get fresh snapshots.
+    if (config.mode !== 'memory') {
+      this.db.run('DELETE FROM _changes');
+    }
+  }
+
+  // ─── Table Definition ───────────────────────────────────────────────────
+
+  /**
+   * Define a table schema and prepare all CRUD statements.
+   *
+   * Idempotent — calling with the same name re-creates statements.
+   * Table names starting with `_` are allowed but the sync plugin will
+   * exclude them from pub/sub broadcasts.
+   */
+  defineTable(name: string, schema: TableSchema): void {
+    this.assertNotDisposed();
+
+    const identity = Array.isArray(schema._identity) ? [...schema._identity] : undefined;
+    const columns = Object.keys(schema).filter((key) => key !== '_identity');
+    if (columns.length === 0) {
+      throw new Error(`defineTable('${name}'): schema must have at least one column`);
+    }
+
+    // Find primary key: first column whose definition contains 'primary key'
+    let primaryKey: string | null = null;
+    for (const col of columns) {
+      const def = schema[col];
+      if (typeof def !== 'string') {
+        throw new Error(`defineTable('${name}'): column '${col}' must have a SQL definition string`);
+      }
+      if (def.toLowerCase().includes('primary key')) {
+        primaryKey = col;
+        break;
+      }
+    }
+    if (!primaryKey) {
+      throw new Error(
+        `defineTable('${name}'): schema must have a column with 'primary key' in its definition`
+      );
+    }
+
+    this.validateIdentity(name, columns, primaryKey, identity);
+
+    // Create the table
+    const columnDefs = columns
+      .map((col) => `${col} ${schema[col]}`)
+      .join(', ');
+    this.db.run(`CREATE TABLE IF NOT EXISTS ${name} (${columnDefs})`);
+
+    if (hasIdentity(identity)) {
+      const indexName = `idx_${name}_identity`;
+      const identityColumns = identity.map(quoteSqlIdentifier).join(', ');
+      this.db.run(
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${quoteSqlIdentifier(indexName)} ` +
+        `ON ${quoteSqlIdentifier(name)} (${identityColumns})`
+      );
+    }
+
+    // Prepare CRUD statements
+    const nonPkColumns = columns.filter((c) => c !== primaryKey);
+
+    // INSERT OR REPLACE — all columns
+    const insertPlaceholders = columns.map(() => '?').join(', ');
+    const insertSQL = `INSERT OR REPLACE INTO ${name} (${columns.join(', ')}) VALUES (${insertPlaceholders})`;
+
+    // UPDATE — set non-PK columns, WHERE pk = ?
+    let updateSQL: string;
+    if (nonPkColumns.length > 0) {
+      const setClauses = nonPkColumns.map((c) => `${c} = ?`).join(', ');
+      updateSQL = `UPDATE ${name} SET ${setClauses} WHERE ${primaryKey} = ?`;
+    } else {
+      // Table with only a PK column — update is effectively a no-op
+      // Use a self-referencing SET to satisfy SQL syntax
+      updateSQL = `UPDATE ${name} SET ${primaryKey} = ${primaryKey} WHERE ${primaryKey} = ?`;
+    }
+
+    const deleteSQL = `DELETE FROM ${name} WHERE ${primaryKey} = ?`;
+    const getOneSQL = `SELECT * FROM ${name} WHERE ${primaryKey} = ?`;
+    const getAllSQL = `SELECT * FROM ${name}`;
+    const getByIdentitySQL = hasIdentity(identity)
+      ? `SELECT * FROM ${name} WHERE ${identity.map((field) => `${field} = ?`).join(' AND ')}`
+      : null;
+
+    const tableDef: TableDef = {
+      name,
+      columns,
+      primaryKey,
+      identity: hasIdentity(identity) ? [...identity] : undefined,
+      stmts: {
+        insert: this.db.prepare(insertSQL),
+        update: this.db.prepare(updateSQL),
+        delete: this.db.prepare(deleteSQL),
+        getOne: this.db.prepare(getOneSQL),
+        getAll: this.db.prepare(getAllSQL),
+        getByIdentity: getByIdentitySQL ? this.db.prepare(getByIdentitySQL) : undefined,
+      },
+    };
+
+    this.tables.set(name, tableDef);
+  }
+
+  // ─── Write Methods ──────────────────────────────────────────────────────
+
+  /**
+   * Insert a row. If the primary key already exists, replaces it
+   * (INSERT OR REPLACE) and emits op: 'UPDATE'.
+   *
+   * Returns the Change, or null if the write somehow produced no effect.
+   */
+  insert(table: string, row: Row): Change {
+    this.assertNotDisposed();
+    const def = this.getTableDef(table);
+    const nextRow = this.ensurePrimaryKeyFromIdentity(def, row);
+    const pkValue = nextRow[def.primaryKey];
+    if (pkValue === undefined || pkValue === null || pkValue === '') {
+      throw new Error(`insert('${table}'): row is missing primary key '${def.primaryKey}'`);
+    }
+    const pk = String(pkValue);
+
+    // Check if row already exists to determine correct op
+    const existing = def.stmts.getOne.get(pk) as Row | null;
+    const op: ChangeOp = existing ? 'UPDATE' : 'INSERT';
+    if (existing) this.assertIdentityUnchanged(def, existing, nextRow);
+    this.assertNoIdentityConflict(def, nextRow, pk);
+
+    // Determine which columns are present in the row object.
+    // Columns NOT provided are omitted from the INSERT so SQLite applies defaults.
+    const presentColumns = def.columns.filter((col) => col in nextRow);
+    const values = presentColumns.map((col) => nextRow[col] ?? null);
+
+    if (presentColumns.length === def.columns.length) {
+      // All columns provided — use the pre-prepared statement (fast path)
+      def.stmts.insert.run(...values);
+    } else {
+      // Partial columns — build dynamic INSERT to let defaults apply
+      const placeholders = presentColumns.map(() => '?').join(', ');
+      const sql = `INSERT OR REPLACE INTO ${def.name} (${presentColumns.join(', ')}) VALUES (${placeholders})`;
+      this.db.prepare(sql).run(...(values as any[]));
+    }
+
+    // Read back the full row to get any defaults applied by SQLite
+    const fullRow = def.stmts.getOne.get(pk) as Row;
+
+    const change = this.createChange(table, op, pk, fullRow);
+    this.recordAndEmit(change);
+    return change;
+  }
+
+  /**
+   * Update a row by merging partial data into the existing row.
+   * Returns the Change with the full merged row, or null if the row doesn't exist.
+   */
+  update(table: string, id: string, partial: Partial<Row>): Change | null {
+    this.assertNotDisposed();
+    const def = this.getTableDef(table);
+
+    // Read current row
+    const existing = def.stmts.getOne.get(id) as Row | null;
+    if (!existing) return null;
+    this.assertIdentityUnchanged(def, existing, partial);
+
+    // Merge: existing values + partial overrides
+    const merged: Row = { ...existing, ...partial };
+    // Ensure PK hasn't been changed
+    merged[def.primaryKey] = id;
+
+    // Build values for UPDATE SET clause: non-PK columns + PK for WHERE
+    const nonPkColumns = def.columns.filter((c) => c !== def.primaryKey);
+    if (nonPkColumns.length > 0) {
+      const updateValues = nonPkColumns.map((col) => merged[col] ?? null);
+      updateValues.push(id); // WHERE pk = ?
+      def.stmts.update.run(...updateValues);
+    }
+    // If table only has PK column, nothing to update — but we still emit
+
+    // Read back the full row
+    const fullRow = def.stmts.getOne.get(id) as Row;
+
+    const change = this.createChange(table, 'UPDATE', id, fullRow);
+    this.recordAndEmit(change);
+    return change;
+  }
+
+  /**
+   * Delete a row by primary key.
+   * Returns the Change, or null if the row didn't exist.
+   */
+  delete(table: string, id: string): Change | null {
+    this.assertNotDisposed();
+    const def = this.getTableDef(table);
+
+    // Check existence
+    const existing = def.stmts.getOne.get(id) as Row | null;
+    if (!existing) return null;
+
+    def.stmts.delete.run(id);
+
+    const change = this.createChange(table, 'DELETE', id, null);
+    this.recordAndEmit(change);
+    return change;
+  }
+
+  // ─── Read Methods ───────────────────────────────────────────────────────
+
+  /** Get all rows from a table. */
+  query(table: string): Row[] {
+    this.assertNotDisposed();
+    const def = this.getTableDef(table);
+    return def.stmts.getAll.all() as Row[];
+  }
+
+  /** Get a single row by primary key. Returns null if not found. */
+  queryOne(table: string, id: string): Row | null {
+    this.assertNotDisposed();
+    const def = this.getTableDef(table);
+    return (def.stmts.getOne.get(id) as Row | null) ?? null;
+  }
+
+  /** Get the ordered natural identity fields for a table, if configured. */
+  getIdentity(table: string): string[] {
+    return [...(this.getTableDef(table).identity ?? [])];
+  }
+
+  /** Return the deterministic sync primary key for a natural identity object. */
+  identityKey(table: string, key: IdentityKey): string {
+    this.assertNotDisposed();
+    const def = this.getTableDef(table);
+    if (!hasIdentity(def.identity)) {
+      throw new Error(`Table '${table}' does not define a natural identity.`);
+    }
+    return createIdentityId(table, def.identity, key);
+  }
+
+  /** Get a single row by natural identity. Returns null if not found. */
+  queryByIdentity(table: string, key: IdentityKey): Row | null {
+    this.assertNotDisposed();
+    const def = this.getTableDef(table);
+    const stmt = this.requireIdentityStatement(def);
+    const values = getIdentityValues(def.identity!, key);
+    return (stmt.get(...values) as Row | null) ?? null;
+  }
+
+  /**
+   * Insert or update a row by natural identity.
+   *
+   * Missing primary keys are generated deterministically from the identity
+   * fields. Existing rows are updated by their current sync primary key.
+   */
+  upsertByIdentity(table: string, row: Row): Change {
+    this.assertNotDisposed();
+    const def = this.getTableDef(table);
+    this.requireIdentityStatement(def);
+
+    const existing = this.queryByIdentity(table, row);
+    if (existing) {
+      const pk = String(existing[def.primaryKey]);
+      const partial = { ...row };
+      delete partial[def.primaryKey];
+      const change = this.update(table, pk, partial);
+      if (!change) throw new Error(`upsertByIdentity('${table}'): existing row disappeared during update`);
+      return change;
+    }
+
+    return this.insert(table, row);
+  }
+
+  /** Update a row by natural identity. Returns null if not found. */
+  updateByIdentity(table: string, key: IdentityKey, partial: Partial<Row>): Change | null {
+    this.assertNotDisposed();
+    const def = this.getTableDef(table);
+    this.requireIdentityStatement(def);
+
+    const existing = this.queryByIdentity(table, key);
+    if (!existing) return null;
+    return this.update(table, String(existing[def.primaryKey]), partial);
+  }
+
+  /** Delete a row by natural identity. Returns null if not found. */
+  deleteByIdentity(table: string, key: IdentityKey): Change | null {
+    this.assertNotDisposed();
+    const def = this.getTableDef(table);
+    this.requireIdentityStatement(def);
+
+    const existing = this.queryByIdentity(table, key);
+    if (!existing) return null;
+    return this.delete(table, String(existing[def.primaryKey]));
+  }
+
+  // ─── Change Listeners ──────────────────────────────────────────────────
+
+  /**
+   * Register a change listener. Fires synchronously after every write.
+   * Returns an unsubscribe function.
+   *
+   * Callable at any time after construction — not tied to WS connections.
+   */
+  onChange(listener: ChangeListener): () => void {
+    this.assertNotDisposed();
+    this.listeners.push(listener);
+
+    return () => {
+      const idx = this.listeners.indexOf(listener);
+      if (idx !== -1) this.listeners.splice(idx, 1);
+    };
+  }
+
+  // ─── Ring Buffer Replay ─────────────────────────────────────────────────
+
+  /**
+   * Get all changes after the given sequence number.
+   *
+   * Returns null if the seq has been pruned from the ring buffer,
+   * indicating the caller should send a full snapshot instead.
+   */
+  getChangesAfter(seq: number): Change[] | null {
+    this.assertNotDisposed();
+
+    // If seq is 0, the caller wants everything — check if buffer has data
+    if (seq === 0) {
+      const rows = this.changeStmts.after.all(0) as ChangeRow[];
+      return rows.map(deserializeChangeRow);
+    }
+
+    // Check if we can fulfill this request
+    const oldest = this.changeStmts.oldest.get() as { min_seq: number | null } | null;
+
+    // No changes in buffer at all
+    if (!oldest || oldest.min_seq === null) {
+      // Buffer is empty. If seq > 0, the client is up to date (or we can't tell).
+      // Return empty array — no changes to send.
+      return [];
+    }
+
+    // If the requested seq is older than the oldest entry in the buffer,
+    // we can't provide a contiguous sequence — signal snapshot needed.
+    if (seq < oldest.min_seq - 1) {
+      return null;
+    }
+
+    const rows = this.changeStmts.after.all(seq) as ChangeRow[];
+    return rows.map(deserializeChangeRow);
+  }
+
+  // ─── Transactions ───────────────────────────────────────────────────────
+
+  /**
+   * Execute multiple writes as a single atomic transaction.
+   *
+   * - All writes succeed or none do (SQLite ACID).
+   * - Each write increments seq and records in _changes normally.
+   * - Change listeners are deferred — accumulated during the transaction,
+   *   fired in order after commit.
+   * - If the transaction throws, no changes are emitted and writes are rolled back.
+   */
+  transaction<T>(fn: () => T): T {
+    this.assertNotDisposed();
+
+    // Nested transactions just run the function — SQLite doesn't support
+    // true nested transactions, and the outer transaction handles atomicity.
+    if (this.inTransaction) {
+      return fn();
+    }
+
+    const pendingChanges: Change[] = [];
+    this.inTransaction = true;
+    this.deferredChanges = pendingChanges;
+
+    try {
+      const result = this.db.transaction(() => {
+        return fn();
+      })();
+
+      // Transaction committed — emit all deferred changes
+      this.inTransaction = false;
+      this.deferredChanges = null;
+
+      for (const change of pendingChanges) {
+        this.emitChange(change);
+      }
+
+      return result;
+    } catch (err) {
+      // Transaction rolled back — discard deferred changes, rollback seq
+      this.seq -= pendingChanges.length;
+      this.inTransaction = false;
+      this.deferredChanges = null;
+      throw err;
+    }
+  }
+
+  // ─── Raw Access ─────────────────────────────────────────────────────────
+
+  /**
+   * Execute raw SQL. Use for creating internal (_-prefixed) tables
+   * that don't need change tracking (e.g., _credentials, _auth_config).
+   */
+  exec(sql: string): void {
+    this.assertNotDisposed();
+    this.db.run(sql);
+  }
+
+  /**
+   * Prepare a raw SQL statement. Use for internal table operations
+   * where you don't want change tracking.
+   */
+  prepare(sql: string) {
+    this.assertNotDisposed();
+    return this.db.prepare(sql);
+  }
+
+  /**
+   * Get the list of defined table names.
+   */
+  getTableNames(): string[] {
+    return Array.from(this.tables.keys());
+  }
+
+  /**
+   * Check if a table has been defined.
+   */
+  hasTable(name: string): boolean {
+    return this.tables.has(name);
+  }
+
+  /**
+   * Get the primary key column name for a defined table.
+   */
+  getPrimaryKey(table: string): string {
+    return this.getTableDef(table).primaryKey;
+  }
+
+  /**
+   * Get the current sequence number.
+   */
+  get currentSeq(): number {
+    return this.seq;
+  }
+
+  // ─── Lifecycle ──────────────────────────────────────────────────────────
+
+  /**
+   * Close the SQLite database and release all resources.
+   * After disposal, all methods throw.
+   */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+
+    // Finalize all table prepared statements
+    for (const def of this.tables.values()) {
+      def.stmts.insert.finalize();
+      def.stmts.update.finalize();
+      def.stmts.delete.finalize();
+      def.stmts.getOne.finalize();
+      def.stmts.getAll.finalize();
+      def.stmts.getByIdentity?.finalize();
+    }
+
+    // Finalize change buffer statements
+    this.changeStmts.insert.finalize();
+    this.changeStmts.prune.finalize();
+    this.changeStmts.after.finalize();
+    this.changeStmts.oldest.finalize();
+
+    this.tables.clear();
+    this.listeners.length = 0;
+
+    // Explicit WAL checkpoint before close — ensures all WAL pages
+    // are written to the main database file. Without this, a crash
+    // between dispose() and process exit could leave data only in WAL.
+    try {
+      this.db.run('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {
+      // Best effort — database may already be in an error state
+    }
+
+    this.db.close();
+  }
+
+  // ─── Private ────────────────────────────────────────────────────────────
+
+  private applyPragmas(): void {
+    this.db.run('PRAGMA journal_mode = WAL');
+    this.db.run('PRAGMA synchronous = NORMAL');
+    this.db.run('PRAGMA cache_size = -64000'); // 64MB page cache
+    this.db.run('PRAGMA mmap_size = 268435456'); // 256MB memory-mapped I/O
+    this.db.run('PRAGMA temp_store = MEMORY');
+    this.db.run('PRAGMA wal_autocheckpoint = 1000');
+  }
+
+  private createChangesTable(): void {
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS _changes (
+        seq     INTEGER PRIMARY KEY,
+        tbl     TEXT NOT NULL,
+        op      TEXT NOT NULL,
+        row_id  TEXT NOT NULL,
+        data    TEXT,
+        ts      INTEGER NOT NULL
+      )
+    `);
+  }
+
+  private prepareChangeStatements(): ChangeStatements {
+    return {
+      insert: this.db.prepare(
+        'INSERT INTO _changes (seq, tbl, op, row_id, data, ts) VALUES (?, ?, ?, ?, ?, ?)'
+      ),
+      prune: this.db.prepare('DELETE FROM _changes WHERE seq <= ?'),
+      after: this.db.prepare('SELECT * FROM _changes WHERE seq > ? ORDER BY seq'),
+      oldest: this.db.prepare('SELECT MIN(seq) AS min_seq FROM _changes'),
+    };
+  }
+
+  private getTableDef(table: string): TableDef {
+    const def = this.tables.get(table);
+    if (!def) {
+      throw new Error(`Table '${table}' is not defined. Call defineTable() first.`);
+    }
+    return def;
+  }
+
+  private validateIdentity(
+    table: string,
+    columns: string[],
+    primaryKey: string,
+    identity: string[] | undefined
+  ): void {
+    if (!hasIdentity(identity)) return;
+
+    const columnSet = new Set(columns);
+    for (const field of identity) {
+      if (field === primaryKey) {
+        throw new Error(`defineTable('${table}'): identity field '${field}' cannot be the primary key`);
+      }
+      if (!columnSet.has(field)) {
+        throw new Error(`defineTable('${table}'): identity field '${field}' is not a table column`);
+      }
+    }
+  }
+
+  private ensurePrimaryKeyFromIdentity(def: TableDef, row: Row): Row {
+    const pkValue = row[def.primaryKey];
+    if (pkValue !== undefined && pkValue !== null && pkValue !== '') return row;
+    if (!hasIdentity(def.identity)) return row;
+
+    return {
+      ...row,
+      [def.primaryKey]: createIdentityId(def.name, def.identity, row),
+    };
+  }
+
+  private assertIdentityUnchanged(
+    def: TableDef,
+    existing: Row,
+    partial: Partial<Row>
+  ): void {
+    if (!hasIdentity(def.identity)) return;
+
+    for (const field of def.identity) {
+      if (!(field in partial)) continue;
+      const next = partial[field];
+      if (next !== existing[field]) {
+        throw new Error(`update('${def.name}'): identity field '${field}' is immutable`);
+      }
+    }
+  }
+
+  private assertNoIdentityConflict(def: TableDef, row: Row, primaryKey: string): void {
+    if (!hasIdentity(def.identity)) return;
+
+    const stmt = this.requireIdentityStatement(def);
+    const values = getIdentityValues(def.identity, row);
+    const existing = stmt.get(...values) as Row | null;
+    if (!existing) return;
+
+    const existingKey = String(existing[def.primaryKey]);
+    if (existingKey !== primaryKey) {
+      throw new Error(
+        `insert('${def.name}'): natural identity already exists for a different primary key`
+      );
+    }
+  }
+
+  private requireIdentityStatement(def: TableDef): NonNullable<TableDef['stmts']['getByIdentity']> {
+    if (!hasIdentity(def.identity) || !def.stmts.getByIdentity) {
+      throw new Error(`Table '${def.name}' does not define a natural identity.`);
+    }
+    return def.stmts.getByIdentity;
+  }
+
+  private nextSeq(): number {
+    return ++this.seq;
+  }
+
+  private createChange(table: string, op: ChangeOp, rowId: string, row: Row | null): Change {
+    return {
+      seq: this.nextSeq(),
+      table,
+      op,
+      rowId,
+      row,
+      ts: Date.now(),
+    };
+  }
+
+  /**
+   * Record a change in the ring buffer and emit to listeners.
+   * During transactions, emission is deferred until commit.
+   */
+  private recordAndEmit(change: Change): void {
+    this.recordChange(change);
+
+    if (this.inTransaction && this.deferredChanges) {
+      // Defer emission until transaction commits
+      this.deferredChanges.push(change);
+    } else {
+      this.emitChange(change);
+    }
+  }
+
+  /**
+   * Write a change to the _changes ring buffer and prune old entries.
+   * Runs atomically — insert + prune in a single transaction.
+   *
+   * During an outer transaction, this runs within that transaction
+   * (bun:sqlite doesn't support nested transactions, but the statements
+   * execute within the active transaction context).
+   */
+  private recordChange(change: Change): void {
+    const data = change.row ? JSON.stringify(change.row) : null;
+
+    if (this.inTransaction) {
+      // Already inside a transaction — just run the statements
+      this.changeStmts.insert.run(
+        change.seq,
+        change.table,
+        change.op,
+        change.rowId,
+        data,
+        change.ts
+      );
+      const cutoff = change.seq - this.ringBufferDepth;
+      if (cutoff > 0) {
+        this.changeStmts.prune.run(cutoff);
+      }
+    } else {
+      // Wrap in transaction for atomicity
+      this.db.transaction(() => {
+        this.changeStmts.insert.run(
+          change.seq,
+          change.table,
+          change.op,
+          change.rowId,
+          data,
+          change.ts
+        );
+        const cutoff = change.seq - this.ringBufferDepth;
+        if (cutoff > 0) {
+          this.changeStmts.prune.run(cutoff);
+        }
+      })();
+    }
+  }
+
+  /**
+   * Emit a change to all registered listeners.
+   * Errors in listeners are caught and logged — a broken listener
+   * cannot prevent subsequent listeners from being called.
+   */
+  private emitChange(change: Change): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(change);
+      } catch (err) {
+        emitPlatformCode(OBS_CODES.SYNC_CHANGE_LISTENER_FAILED, {
+          error: err,
+          metadata: {
+            table: change.table,
+            op: change.op,
+            rowId: change.rowId,
+            seq: change.seq,
+          },
+        });
+      }
+    }
+  }
+
+  private assertNotDisposed(): void {
+    if (this.disposed) {
+      throw new Error('ReactiveDB is disposed');
+    }
+  }
+}
+
+// ─── Factory ──────────────────────────────────────────────────────────────
+
+/** Create a new ReactiveDB instance. */
+export function createReactiveDB(config: ReactiveDBConfig): ReactiveDB {
+  return new ReactiveDB(config);
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+
+function deserializeChangeRow(row: ChangeRow): Change {
+  return {
+    seq: row.seq,
+    table: row.tbl,
+    op: row.op as ChangeOp,
+    rowId: row.row_id,
+    row: row.data ? JSON.parse(row.data) : null,
+    ts: row.ts,
+  };
+}

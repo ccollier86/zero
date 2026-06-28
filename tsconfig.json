@@ -1,0 +1,43 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["bun"],
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "rootDir": ".",
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "paths": {
+      "@platform/sync": ["./src/sync"],
+      "@platform/sync/*": ["./src/sync/*"],
+      "@platform/auth": ["./src/auth"],
+      "@platform/auth/*": ["./src/auth/*"],
+      "@platform/frontend": ["./src/frontend"],
+      "@platform/frontend/*": ["./src/frontend/*"],
+      "@platform/server": ["./src/frontend/server"],
+      "@platform/server/*": ["./src/frontend/server/*"],
+      "@platform/react": ["./src/frontend/client"],
+      "@platform/react/*": ["./src/frontend/client/*"],
+      "@platform/router": ["./src/frontend/router"],
+      "@platform/router/*": ["./src/frontend/router/*"],
+      "@/components/*": ["./src/components/*"],
+      "@/lib/*": ["./src/lib/*"],
+      "@/hooks/*": ["./src/hooks/*"],
+      "@platform/schema": ["./src/schema"],
+      "@platform/schema/*": ["./src/schema/*"],
+      "@app/*": ["./app/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "app/**/*.ts", "app/**/*.tsx"],
+  "exclude": ["node_modules", "dist", "projects"]
+}

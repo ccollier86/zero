@@ -1,0 +1,394 @@
+/**
+ * Platform Frontend — CLIENT-SAFE barrel exports.
+ *
+ * This is the default import for app code (pages, layouts, components).
+ * Everything here is safe for browser bundles — no bun:sqlite, no server-only code.
+ *
+ * For server-only exports (createApp, plugins, etc.), import from:
+ *   import { createApp } from '../src/frontend/server';
+ *
+ * @example
+ * // In app pages/components:
+ * import { AppProvider, useAuth, Button, DataTable } from '../src/frontend';
+ *
+ * // In app server entry (app.ts):
+ * import { createApp } from '../src/frontend/server';
+ */
+
+// ─── Schema (pure JS — no server deps, no bun:sqlite) ──────────────────
+export { defineTable, defineSchema, schema, field } from '../schema';
+export type {
+  SchemaDescriptor,
+  TableDefinition,
+  SchemaConfig,
+  Schema,
+  FieldType,
+  FieldMeta,
+  FieldDef,
+  InferRow,
+  Register,
+  TableNames,
+  TableRow as RegisteredTableRow,
+} from '../schema';
+
+// ─── SDK Core (vanilla JS — no React required) ──────────────────────────
+export { createClient, getClient, FetchError } from './client/sdk';
+export type { Client, Collection, ClientConfig, FetchInit, SyncClient, InternalClient } from './client/sdk';
+export type { IdentityKey, IdentityValue } from '../sync/identity';
+
+// ─── Typed API (Eden Treaty) ────────────────────────────────────────────
+export { unwrap } from './client/api';
+export type { Api } from './client/api';
+
+// ─── Auth Client (vanilla JS) ────────────────────────────────────────────
+export { AuthClient } from './client/auth-client';
+export type { AuthUser, RegisterParams } from './client/auth-client';
+
+// ─── React: Providers ────────────────────────────────────────────────────
+export { AppProvider } from './client/app-provider';
+export type { AppProviderProps } from './client/app-provider';
+
+// ─── React: Error Handling ──────────────────────────────────────────────
+export { ErrorBoundary, NotFoundPage } from './client/error-boundary';
+export {
+  CompositeFrontendSink,
+  ConsoleFrontendSink,
+  HttpFrontendSink,
+  FRONTEND_OBS_CODES,
+  configureFrontendObservability,
+  emitFrontendCode,
+  emitFrontendEvent,
+  getFrontendObservabilitySink,
+} from './client/observability';
+export type {
+  FrontendObservabilityConfig,
+  FrontendObservabilityEvent,
+  FrontendObservabilitySink,
+} from './client/observability';
+export { ClientProvider } from './client/hooks';
+export type { ClientProviderProps } from './client/hooks';
+export { RouterProvider } from './client/router-context';
+
+// ─── React: Hooks ────────────────────────────────────────────────────────
+export {
+  // Client
+  useClient,
+  useClientMaybe,
+  useIsServer,
+  useCollection,
+  useLazyCollection,
+  useRow,
+  useQuery,
+  useStatus,
+  // Auth
+  useAuth,
+  useCurrentUser,
+  useRequireAuth,
+  // State (re-exported from sync/client)
+  useServerState,
+  useServerStateReady,
+  // Router
+  useParams,
+  usePathname,
+  useRouter,
+} from './client/hooks';
+
+export type {
+  AuthState,
+  AuthActions,
+  LazyCollectionResult,
+  LazyCollectionOptions,
+  CollectionResult,
+} from './client/hooks';
+
+// ─── React: Components ──────────────────────────────────────────────────
+export { Link } from './client/link';
+export type { LinkProps } from './client/link';
+
+// ─── Toast ──────────────────────────────────────────────────────────────
+export { Toaster } from '../components/ui/sonner';
+export { toast } from 'sonner';
+
+// ─── Client Router (for advanced use) ───────────────────────────────────
+export {
+  registerRoute,
+  matchClientRoute,
+  navigateTo,
+  prefetchRoute,
+} from './client/client-router';
+
+// ─── Router Types ────────────────────────────────────────────────────────
+export type {
+  RouteModule,
+  RouteNode,
+  MatchResult,
+  LoaderContext,
+  ApiHandler,
+  PageMeta,
+  RouterConfig,
+  RouteConfig,
+} from './router/types';
+
+// ─── Forms ──────────────────────────────────────────────────────────────
+export { AutoForm } from '../components/forms';
+export { FieldRenderer } from '../components/forms';
+export { Wizard } from '../components/forms';
+export type { WizardProps, WizardStep } from '../components/forms';
+export { useForm } from '../hooks/use-form';
+export type { UseFormOptions, UseFormReturn } from '../hooks/use-form';
+
+// ─── Data Table ─────────────────────────────────────────────────────────
+export { DataTable } from '../components/data-table';
+export { useDataTable } from '../components/data-table';
+export { DataTableColumnHeader } from '../components/data-table';
+export { DataTableToolbar } from '../components/data-table';
+export { DataTablePagination } from '../components/data-table';
+export { DataTableRowActions } from '../components/data-table';
+export type { DataTableProps, UseDataTableOptions, UseDataTableReturn, RowAction } from '../components/data-table';
+
+// ─── UI Components ──────────────────────────────────────────────────────
+export { Button, buttonVariants } from '../components/ui/button';
+export { Input } from '../components/ui/input';
+export { Label } from '../components/ui/label';
+export { Textarea } from '../components/ui/textarea';
+export { Badge, badgeVariants } from '../components/ui/badge';
+export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '../components/ui/card';
+export {
+  Select, SelectContent, SelectGroup, SelectItem, SelectLabel,
+  SelectSeparator, SelectTrigger, SelectValue,
+} from '../components/ui/select';
+export {
+  Table, TableBody, TableCaption, TableCell, TableFooter,
+  TableHead, TableHeader, TableRow,
+} from '../components/ui/table';
+export { ScrollArea, ScrollBar } from '../components/ui/scroll-area';
+export { Separator } from '../components/ui/separator';
+export { Skeleton } from '../components/ui/skeleton';
+export { Avatar, AvatarImage, AvatarFallback } from '../components/ui/avatar';
+export {
+  FormField, FormLabel, FormControl, FormDescription, FormMessage,
+} from '../components/ui/form-field';
+export {
+  Pagination, PaginationContent, PaginationEllipsis, PaginationItem,
+  PaginationLink, PaginationNext, PaginationPrevious,
+} from '../components/ui/pagination';
+
+// ─── Calendar & Date ────────────────────────────────────────────────────
+export { Calendar } from '../components/ui/calendar';
+export type { CalendarProps } from '../components/ui/calendar';
+export { DatePicker } from '../components/ui/date-picker';
+export type { DatePickerProps } from '../components/ui/date-picker';
+export { DateRangePicker } from '../components/ui/date-range-picker';
+export type { DateRangePickerProps } from '../components/ui/date-range-picker';
+
+// ─── Command ────────────────────────────────────────────────────────────
+export {
+  Command, CommandDialog, CommandInput, CommandList, CommandEmpty,
+  CommandGroup, CommandItem, CommandSeparator, CommandShortcut,
+} from '../components/ui/command';
+
+// ─── Combobox ───────────────────────────────────────────────────────────
+export { Combobox } from '../components/ui/combobox';
+export type { ComboboxProps, ComboboxOption } from '../components/ui/combobox';
+
+// ─── Tag Input ──────────────────────────────────────────────────────────
+export { TagInput } from '../components/ui/tag-input';
+export type { TagInputProps } from '../components/ui/tag-input';
+
+// ─── Master-Detail ──────────────────────────────────────────────────────
+export { MasterDetailPage } from '../components/master-detail';
+export type { MasterDetailPageProps } from '../components/master-detail';
+
+// ─── CRUD Page ──────────────────────────────────────────────────────────
+export { CrudPage } from '../components/crud-page';
+export type { CrudPageProps } from '../components/crud-page';
+
+// ─── Stat Card ──────────────────────────────────────────────────────────
+export { StatCard } from '../components/ui/stat-card';
+export type { StatCardProps } from '../components/ui/stat-card';
+
+// ─── Layout Components ──────────────────────────────────────────────────
+export { ListDetailLayout } from '../components/ui/list-detail-layout';
+export type { ListDetailLayoutProps } from '../components/ui/list-detail-layout';
+export { DetailPanel } from '../components/ui/detail-panel';
+export type { DetailPanelProps } from '../components/ui/detail-panel';
+export { RecordNavigationBar } from '../components/ui/record-navigation-bar';
+export type {
+  RecordNavigationBarProps,
+  NavigationAction,
+} from '../components/ui/record-navigation-bar';
+
+// ─── Auth Blocks ────────────────────────────────────────────────────────
+export {
+  LoginForm, RegisterForm, ForgotPasswordForm, OTPVerification,
+  PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup,
+  AuthLayout, AuthHeader,
+  Gate, useGate,
+} from '../components/auth';
+export type {
+  LoginFormProps, RegisterFormProps, ForgotPasswordFormProps,
+  OTPVerificationProps, SocialProvider,
+  GateProps,
+} from '../components/auth';
+
+// ─── Validation Primitives ──────────────────────────────────────────────
+export { ValidationRules } from '../components/ui/validation-rules';
+export type { ValidationRule, ValidationRulesProps } from '../components/ui/validation-rules';
+export { ValidationMeter } from '../components/ui/validation-meter';
+export type { ValidationMeterProps } from '../components/ui/validation-meter';
+
+// ─── Notifications: Hooks ────────────────────────────────────────────────
+export {
+  useNotifications,
+  useUnreadCount,
+  useOnNewNotification,
+} from './client/hooks';
+export type {
+  Notification,
+  NotificationReceipt,
+  NotificationWithStatus,
+  UseNotificationsResult,
+} from './client/hooks';
+
+// ─── Rooms: Hooks ───────────────────────────────────────────────────────
+export {
+  useRoom,
+  useRoomMembers,
+  useRooms,
+  useRoomActions,
+  useRoomData,
+  usePresence,
+} from './client/hooks';
+export type {
+  UseRoomResult,
+  RoomActions,
+  PresenceMember,
+  UsePresenceResult,
+} from './client/hooks';
+
+// ─── Rooms: Config (types only — no bun:sqlite) ────────────────────────
+export type {
+  RoomRecord,
+  RoomMemberRecord,
+  RoomRole,
+  CreateRoomParams,
+} from '../rooms/types';
+
+// ─── Ephemeral KV: Hooks ───────────────────────────────────────────────
+export { useEphemeral, useEphemeralTopic } from './client/hooks';
+
+// ─── Ephemeral KV: Client ──────────────────────────────────────────────
+export { EphemeralClient } from '../sync/client/ephemeral-client';
+export type { EphemeralChangeEvent } from '../sync/client/ephemeral-client';
+export type { EphemeralEntryClient } from '../sync/client/ephemeral-store';
+
+// ─── Notifications: Provider ─────────────────────────────────────────────
+export { NotificationProvider, useNotificationContext } from './client/notification-provider';
+export type { NotificationProviderProps } from './client/notification-provider';
+
+// ─── Notifications: UI Components ────────────────────────────────────────
+export { NotificationBadge } from '../components/ui/notification-badge';
+export type { NotificationBadgeProps } from '../components/ui/notification-badge';
+export { NotificationItem, formatRelativeTime } from '../components/ui/notification-item';
+export type { NotificationItemProps, NotificationItemType } from '../components/ui/notification-item';
+export { NotificationList } from '../components/ui/notification-list';
+export type { NotificationListProps, NotificationListItem } from '../components/ui/notification-list';
+export { NotificationDropdown } from '../components/ui/notification-dropdown';
+export type { NotificationDropdownProps } from '../components/ui/notification-dropdown';
+export { NotificationCenter } from '../components/ui/notification-center';
+export type { NotificationCenterProps } from '../components/ui/notification-center';
+
+// ─── Notifications: Config (types only) ─────────────────────────────────
+export type {
+  NotificationType,
+  NotificationPriority,
+  NotificationTarget,
+} from '../notifications/types';
+
+// ─── Workflows: React Hooks ────────────────────────────────────────────
+export {
+  useWorkflow,
+  useWorkflowList,
+  useWorkflowActions,
+} from './client/workflow-hooks';
+export type {
+  UseWorkflowResult,
+  UseWorkflowListResult,
+  WorkflowActions,
+} from './client/workflow-hooks';
+
+// ─── Workflows: Types (no bun:sqlite — types.ts is clean) ──────────────
+export type {
+  WorkflowStatus,
+  StepStatus,
+  StepDefinition,
+  WorkflowDefinition,
+  StepContext,
+  StepHandler,
+} from '../workflows/types';
+
+// ─── Storage: Hooks ─────────────────────────────────────────────────────
+export {
+  useUpload,
+  useStorageFolder,
+  useStorageDrives,
+  useDriveUsage,
+  usePresignedUrl,
+  useStorageActions,
+} from '../storage/storage-hooks';
+export type {
+  UploadState,
+  UseUploadReturn,
+  UploadFileOptions,
+  UseStorageFolderReturn,
+  UseStorageDrivesReturn,
+  UseDriveUsageReturn,
+  UsePresignedUrlReturn,
+  StorageActions,
+} from '../storage/storage-hooks';
+
+// ─── Storage: Types (client-safe) ───────────────────────────────────────
+export { STORAGE_TABLES } from '../storage/types';
+export type {
+  FileInfo,
+  DriveRecord,
+  DriveUsage,
+  ObjectType,
+  CreateDriveParams,
+  UploadOptions,
+  ListResult,
+  GrantType,
+  PermissionLevel,
+} from '../storage/types';
+
+// ─── Admin Pages ────────────────────────────────────────────────────────
+export { UserManagementPage } from '../pages/users/user-management-page';
+export type { UserManagementPageProps } from '../pages/users/user-management-page';
+export { StorageManagementPage } from '../pages/storage';
+export type { StorageManagementPageProps } from '../pages/storage';
+
+// ─── Hooks ──────────────────────────────────────────────────────────────
+export { useHotkey } from '../hooks/use-hotkey';
+export { ConfirmProvider, useConfirm } from '../hooks/use-confirm';
+export type { ConfirmOptions } from '../hooks/use-confirm';
+
+// ─── Theme ──────────────────────────────────────────────────────────────
+export { ThemeProvider } from '../components/ui/theme-provider';
+export type { ThemeProviderProps } from '../components/ui/theme-provider';
+export { ThemeTogglerButton } from '../components/animate-ui/components/buttons/theme-toggler';
+export type { ThemeTogglerButtonProps } from '../components/animate-ui/components/buttons/theme-toggler';
+
+// ─── Modal Manager ──────────────────────────────────────────────────────
+export { ModalManager, modals, HoldButton } from '../modals';
+export type { ModalManagerProps } from '../modals';
+export type {
+  ModalSize,
+  ModalType,
+  ModalOverflow,
+  ModalCustomSize,
+  ModalInstance,
+  ConfirmModalOptions,
+  OpenModalOptions,
+  OpenConfirmOptions,
+  HoldButtonProps,
+} from '../modals';

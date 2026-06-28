@@ -1,0 +1,165 @@
+'use client';
+
+import * as React from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { AuthHeader } from '@/components/auth/auth-header';
+import { AnimateIcon } from '@/components/animate-ui/icons/icon';
+import { CircleX } from '@/components/animate-ui/icons/circle-x';
+import { CircleCheck } from '@/components/animate-ui/icons/circle-check';
+import { Loader } from '@/components/animate-ui/icons/loader';
+import { Send } from '@/components/animate-ui/icons/send';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface ForgotPasswordFormProps {
+  onSubmit?: (email: string) => Promise<void>;
+  onBack?: () => void;
+  loginHref?: string;
+  className?: string;
+}
+
+// ─── Success state ───────────────────────────────────────────────────────────
+
+function SuccessState({ email }: { email: string }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="flex flex-col items-center gap-3 py-2"
+    >
+      <div className="flex items-center justify-center rounded-full bg-green-500/10 p-3">
+        <AnimateIcon animate>
+          <CircleCheck size={32} className="text-green-500" />
+        </AnimateIcon>
+      </div>
+      <div className="text-center space-y-1">
+        <p className="text-sm font-medium">Check your inbox</p>
+        <p className="text-xs text-muted-foreground">
+          We sent a reset link to <span className="font-medium text-foreground">{email}</span>
+        </p>
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── ForgotPasswordForm ──────────────────────────────────────────────────────
+
+function ForgotPasswordForm({
+  onSubmit,
+  onBack,
+  loginHref = '#login',
+  className,
+}: ForgotPasswordFormProps) {
+  const [email, setEmail] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [sent, setSent] = React.useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      await onSubmit?.(email);
+      setSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send reset email');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className={cn('space-y-3', className)}>
+      <AuthHeader
+        title={sent ? 'Email sent' : 'Reset password'}
+        description={sent ? undefined : 'Enter your email to receive a reset link'}
+      />
+
+      <AnimatePresence mode="wait">
+        {sent ? (
+          <SuccessState key="success" email={email} />
+        ) : (
+          <motion.form
+            key="form"
+            onSubmit={handleSubmit}
+            className="space-y-3"
+            exit={{ opacity: 0, height: 0 }}
+          >
+            <div className="space-y-1.5">
+              <Label htmlFor="reset-email" className="text-sm font-medium">Email</Label>
+              <Input
+                id="reset-email"
+                type="email"
+                placeholder="you@example.com"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className={cn('h-8 text-sm', error && 'border-destructive/50 focus-visible:ring-destructive/30')}
+              />
+            </div>
+
+            <AnimatePresence>
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0, y: -4 }}
+                  animate={{ opacity: 1, height: 'auto', y: 0, x: [0, -6, 6, -4, 4, 0] }}
+                  exit={{ opacity: 0, height: 0, y: -4 }}
+                  transition={{ duration: 0.4, ease: 'easeOut' }}
+                  className="overflow-hidden"
+                >
+                  <div
+                    className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5"
+                    role="alert"
+                  >
+                    <AnimateIcon animate>
+                      <CircleX size={16} className="mt-px flex-shrink-0 text-destructive" />
+                    </AnimateIcon>
+                    <p className="text-xs font-medium leading-relaxed text-destructive">
+                      {error}
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <Button type="submit" size="sm" className="w-full h-8" disabled={loading}>
+              {loading ? (
+                <AnimateIcon animate loop>
+                  <Loader size={16} />
+                </AnimateIcon>
+              ) : (
+                <>
+                  <AnimateIcon animateOnHover>
+                    <Send size={14} className="mr-1" />
+                  </AnimateIcon>
+                  Send reset link
+                </>
+              )}
+            </Button>
+          </motion.form>
+        )}
+      </AnimatePresence>
+
+      <p className="text-center text-xs text-muted-foreground">
+        {onBack ? (
+          <button type="button" onClick={onBack} className="text-primary hover:underline">
+            Back to login
+          </button>
+        ) : (
+          <a href={loginHref} className="text-primary hover:underline">
+            Back to login
+          </a>
+        )}
+      </p>
+    </div>
+  );
+}
+
+export { ForgotPasswordForm, type ForgotPasswordFormProps };

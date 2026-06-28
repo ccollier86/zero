@@ -1,0 +1,140 @@
+'use client';
+
+import * as React from 'react';
+import type { SchemaDescriptor } from '../../schema/define-schema';
+import type { FieldMeta } from '../../schema/field-types';
+import { useForm, type UseFormOptions } from '../../hooks/use-form';
+import { FieldRenderer } from './field-renderer';
+import { Button } from '@/components/ui/button';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+import type { Row } from '../../sync/types';
+import type { Collection } from '../../frontend/client/sdk';
+import { AnimateIcon } from '@/components/animate-ui/icons/icon';
+import { Loader } from '@/components/animate-ui/icons/loader';
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+interface FieldOverrides {
+  autoFocus?: boolean;
+  hidden?: boolean;
+  useSwitch?: boolean;
+}
+
+export interface AutoFormProps<T extends Row = Row> {
+  schema: SchemaDescriptor;
+  collection?: Collection<T>;
+  mode?: 'create' | 'edit';
+  editId?: string;
+  defaultValues?: Partial<T>;
+  layout?: 'vertical' | 'horizontal' | 'inline';
+  columns?: number;
+  card?: { title: string; description?: string };
+  fields?: Record<string, FieldOverrides>;
+  onSubmit?: (data: T) => void | Promise<void>;
+  onSuccess?: () => void;
+  onError?: (error: string) => void;
+  submitLabel?: string;
+  showReset?: boolean;
+  className?: string;
+}
+
+// ─── Component ──────────────────────────────────────────────────────────────
+
+export function AutoForm<T extends Row = Row>({
+  schema,
+  collection,
+  mode = 'create',
+  editId,
+  defaultValues,
+  layout = 'vertical',
+  columns = 1,
+  card,
+  fields: fieldOverrides = {},
+  onSubmit,
+  onSuccess,
+  onError,
+  submitLabel,
+  showReset = false,
+  className,
+}: AutoFormProps<T>) {
+  const form = useForm<T>({
+    schema,
+    defaultValues,
+    collection,
+    mode,
+    editId,
+    onSubmit,
+    onSuccess,
+    onError,
+  });
+
+  const gridStyle = columns > 1
+    ? { display: 'grid', gridTemplateColumns: `repeat(${columns}, 1fr)`, gap: '1rem' }
+    : undefined;
+
+  const content = (
+    <form onSubmit={form.handleSubmit} className={cn('space-y-4', className)}>
+      <div style={gridStyle} className={columns <= 1 ? 'space-y-4' : undefined}>
+        {form.fieldNames.map((name) => {
+          const meta = form.getFieldMeta(name);
+          if (!meta) return null;
+
+          const overrides = fieldOverrides[name];
+          if (overrides?.hidden) return null;
+
+          return (
+            <FieldRenderer
+              key={name}
+              name={name}
+              meta={meta}
+              registration={form.register(name)}
+              overrides={overrides}
+            />
+          );
+        })}
+      </div>
+
+      <div className={cn(
+        'flex gap-2',
+        layout === 'inline' ? 'flex-row items-end' : 'flex-row pt-2',
+      )}>
+        <Button
+          type="submit"
+          disabled={form.isSubmitting}
+        >
+          {form.isSubmitting && (
+            <AnimateIcon animate loop>
+              <Loader size={16} />
+            </AnimateIcon>
+          )}
+          {submitLabel ?? (mode === 'edit' ? 'Save' : 'Create')}
+        </Button>
+        {showReset && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={form.reset}
+            disabled={form.isSubmitting || !form.isDirty}
+          >
+            Reset
+          </Button>
+        )}
+      </div>
+    </form>
+  );
+
+  if (card) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>{card.title}</CardTitle>
+          {card.description && <CardDescription>{card.description}</CardDescription>}
+        </CardHeader>
+        <CardContent>{content}</CardContent>
+      </Card>
+    );
+  }
+
+  return content;
+}

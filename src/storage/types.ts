@@ -1,0 +1,242 @@
+import type { ClientTableDef } from '../schema/define-schema';
+
+// ─── Drive Types ──────────────────────────────────────────────────────────
+
+export interface DriveRecord {
+  drive_id: string;
+  name: string;
+  owner_id: string | null;
+  max_size_bytes: number;
+  max_file_size_bytes: number;
+  allowed_mime_types: string;
+  public: number;
+  created_at: number;
+}
+
+export interface CreateDriveParams {
+  name: string;
+  /** Max total drive size in bytes. 0 = unlimited. */
+  maxSize?: number;
+  /** Max individual file size in bytes. 0 = unlimited. */
+  maxFileSize?: number;
+  /** Allowed MIME types. Supports wildcards: 'image/*', 'application/pdf'. Default: '*' (all). */
+  allowedMimeTypes?: string[];
+  /** Make entire drive publicly accessible without auth. */
+  public?: boolean;
+}
+
+// ─── Object Types (files + folders) ───────────────────────────────────────
+
+export type ObjectType = 'file' | 'folder';
+
+export interface ObjectRecord {
+  object_id: string;
+  drive_id: string;
+  parent_id: string | null;
+  name: string;
+  path: string;
+  type: ObjectType;
+  mime_type: string | null;
+  size_bytes: number;
+  checksum: string | null;
+  public: number;
+  metadata: string;
+  created_by: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface FileInfo {
+  id: string;
+  driveId: string;
+  name: string;
+  path: string;
+  type: ObjectType;
+  mimeType: string | null;
+  sizeBytes: number;
+  checksum: string | null;
+  isPublic: boolean;
+  metadata: Record<string, unknown>;
+  createdBy: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ─── Blob Record (content-addressable dedup) ─────────────────────────────
+
+export interface BlobRecord {
+  checksum: string;
+  size_bytes: number;
+  ref_count: number;
+  created_at: number;
+}
+
+// ─── Permissions ──────────────────────────────────────────────────────────
+
+export type GrantType = 'role' | 'user' | 'property';
+export type PermissionLevel = 'read' | 'write' | 'admin';
+
+export interface PermissionRecord {
+  permission_id: string;
+  drive_id: string;
+  object_id: string | null;
+  grant_type: GrantType;
+  grant_key: string | null;
+  grant_value: string;
+  permission: PermissionLevel;
+  created_at: number;
+}
+
+export interface GrantPermissionParams {
+  /** Target: drive-level if no objectPath, or specific file/folder. */
+  objectPath?: string;
+  /** Grant to a role, specific user, or users with a property value. */
+  grantType: GrantType;
+  /** Property key (only for 'property' grant type). e.g., 'department' */
+  grantKey?: string;
+  /** Role name, user ID, or property value. e.g., 'admin', 'user_123', 'engineering' */
+  grantValue: string;
+  /** Permission level. */
+  permission: PermissionLevel;
+}
+
+// ─── Upload/Download ──────────────────────────────────────────────────────
+
+export interface UploadOptions {
+  /** Overwrite existing file. Default: false (throws if exists). */
+  overwrite?: boolean;
+  /** Custom metadata to attach. */
+  metadata?: Record<string, unknown>;
+  /** Make file publicly accessible. */
+  public?: boolean;
+}
+
+export interface PresignedUrlOptions {
+  /** Expiry in seconds. Default: 3600 (1 hour). */
+  expiresIn?: number;
+  /** 'upload' for PUT, 'download' for GET. Default: 'download'. */
+  method?: 'upload' | 'download';
+  /** Max file size for upload presigned URLs (bytes). */
+  maxSize?: number;
+  /** Required content type for upload presigned URLs. */
+  contentType?: string;
+}
+
+export interface ListOptions {
+  /** Only list files, folders, or both. Default: 'all'. */
+  type?: 'file' | 'folder' | 'all';
+  /** Pagination cursor. */
+  cursor?: string;
+  /** Max items per page. Default: 100. */
+  limit?: number;
+  /** Sort by field. Default: 'name'. */
+  sortBy?: 'name' | 'size' | 'created_at' | 'updated_at';
+  /** Sort direction. Default: 'asc'. */
+  sortDir?: 'asc' | 'desc';
+}
+
+export interface ListResult {
+  items: FileInfo[];
+  cursor: string | null;
+  total: number;
+}
+
+// ─── Drive Usage ──────────────────────────────────────────────────────────
+
+export interface DriveUsage {
+  driveId: string;
+  name: string;
+  totalBytes: number;
+  maxBytes: number;
+  fileCount: number;
+  folderCount: number;
+  percentUsed: number;
+}
+
+// ─── Storage Adapter ──────────────────────────────────────────────────────
+
+/**
+ * Content-addressable byte storage adapter.
+ *
+ * Files are stored by SHA-256 checksum, enabling automatic deduplication.
+ * The service layer handles metadata (SQLite) and ref counting.
+ * The adapter handles reading/writing the actual bytes.
+ */
+export interface StorageAdapter {
+  /** Write bytes, returning the SHA-256 checksum + head bytes for MIME detection. If blob already exists, returns checksum without rewriting. */
+  writeBlob(
+    data: ReadableStream<Uint8Array> | Uint8Array | Blob,
+    maxSize?: number
+  ): Promise<{ checksum: string; size: number; headBytes: Uint8Array }>;
+  /** Read blob by checksum. Returns null if not found. */
+  readBlob(checksum: string): Promise<ReadableStream<Uint8Array> | null>;
+  /** Read a byte range of a blob (for Range requests). */
+  readBlobRange(checksum: string, start: number, end: number): Promise<ReadableStream<Uint8Array> | null>;
+  /** Delete blob bytes from storage. Only called when ref_count reaches 0. */
+  removeBlob(checksum: string): Promise<void>;
+  /** Check if a blob exists in storage. */
+  blobExists(checksum: string): Promise<boolean>;
+  /** Get the size of a blob on disk. Returns 0 if not found. */
+  blobSize(checksum: string): Promise<number>;
+}
+
+// ─── Config ───────────────────────────────────────────────────────────────
+
+export interface StoragePluginConfig {
+  /** ReactiveDB instance (for metadata tables). */
+  db: import('../sync/reactive-db').ReactiveDB;
+  /** Storage adapter for byte storage. Default: local filesystem. */
+  adapter?: StorageAdapter;
+  /** Base directory for local file storage. Default: '.storage'. */
+  localDir?: string;
+  /** Secret for signing presigned URLs (auto-generated if not set). */
+  signingSecret?: string;
+  /** Default presigned URL expiry in seconds. Default: 3600. */
+  defaultPresignedTTL?: number;
+}
+
+// ─── Client Table Definitions ─────────────────────────────────────────────
+
+/**
+ * Spread into your client's `tables` config to sync storage metadata.
+ *
+ * @example
+ * ```ts
+ * createClient({
+ *   url: 'http://localhost:3000',
+ *   tables: { ...STORAGE_TABLES, ...myTables },
+ * });
+ * ```
+ */
+export const STORAGE_TABLES: Record<string, ClientTableDef> = {
+  storage_drives: {
+    _pk: 'drive_id',
+    _sync: 'lazy',
+    drive_id: 'text',
+    name: 'text',
+    owner_id: 'text',
+    max_size_bytes: 'integer',
+    max_file_size_bytes: 'integer',
+    allowed_mime_types: 'text',
+    public: 'integer',
+    created_at: 'integer',
+  },
+  storage_objects: {
+    _pk: 'object_id',
+    _sync: 'lazy',
+    object_id: 'text',
+    drive_id: 'text',
+    parent_id: 'text',
+    name: 'text',
+    path: 'text',
+    type: 'text',
+    mime_type: 'text',
+    size_bytes: 'integer',
+    checksum: 'text',
+    public: 'integer',
+    metadata: 'text',
+    created_by: 'text',
+    created_at: 'integer',
+    updated_at: 'integer',
+  },
+};

@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+@theme {
+  /* ─── Custom design tokens ─── */
+  --color-bg-base: #131320;
+  --color-bg-surface: #191930;
+  --color-bg-raised: #1f1f38;
+  --color-bg-inset: #0e0e1a;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+  --color-text-primary: rgba(255, 255, 255, 0.87);
+  --color-text-secondary: rgba(255, 255, 255, 0.60);
+  --color-text-muted: rgba(255, 255, 255, 0.38);
+  --color-accent: #4a7cff;
+  --color-accent-hover: #3a6aee;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  /* ─── shadcn semantic tokens ─── */
+  --color-background: #131320;
+  --color-foreground: rgba(255, 255, 255, 0.87);
+  --color-card: #191930;
+  --color-card-foreground: rgba(255, 255, 255, 0.87);
+  --color-popover: #1c1c34;
+  --color-popover-foreground: rgba(255, 255, 255, 0.87);
+  --color-primary: #4a7cff;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #1f1f38;
+  --color-secondary-foreground: rgba(255, 255, 255, 0.87);
+  --color-muted: #1f1f38;
+  --color-muted-foreground: rgba(255, 255, 255, 0.60);
+  --color-accent-foreground: rgba(255, 255, 255, 0.87);
+  --color-destructive: oklch(63.7% 0.237 25.331);
+  --color-destructive-foreground: #ffffff;
+  --color-input: rgba(255, 255, 255, 0.06);
+  --color-ring: #4a7cff;
+  --color-sidebar-background: #131320;
+  --color-sidebar-foreground: rgba(255, 255, 255, 0.87);
+  --color-sidebar-primary: #4a7cff;
+  --color-sidebar-primary-foreground: #ffffff;
+  --color-sidebar-accent: #1f1f38;
+  --color-sidebar-accent-foreground: rgba(255, 255, 255, 0.87);
+  --color-sidebar-border: rgba(255, 255, 255, 0.08);
+  --color-sidebar-ring: #4a7cff;
+
+  /* ─── Chart colors ─── */
+  --color-chart-1: #4a7cff;
+  --color-chart-2: #a855f7;
+  --color-chart-3: #22c55e;
+  --color-chart-4: #f59e0b;
+  --color-chart-5: #ec4899;
+}
