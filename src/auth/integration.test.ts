@@ -838,6 +838,85 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
     }
   });
 
+  test('forgot password requires ready email config before creating a token', async () => {
+    configureEmail(false);
+    const local = await startAuthApp({
+      accountEmails: {
+        passwordReset: true,
+      },
+    });
+
+    try {
+      const registered = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'reset-config',
+        email: 'reset-config@test.com',
+        password: 'oldpassword1',
+      });
+      expect(registered.status).toBe(200);
+
+      const forgot = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'reset-config@test.com',
+      });
+      expect(forgot.status).toBe(503);
+      expect(forgot.data.code).toBe('EMAIL_NOT_CONFIGURED');
+
+      const row = local.db
+        .prepare('SELECT COUNT(*) as count FROM _auth_action_tokens')
+        .get() as { count: number };
+      expect(row.count).toBe(0);
+    } finally {
+      await local.stop();
+      configureEmail(false);
+    }
+  });
+
+  test('forgot password hides unknown users and cooldown repeats', async () => {
+    const provider = new MemoryEmailProvider();
+    configureEmail({
+      from: 'Zero <noreply@test.com>',
+      provider,
+    }, {
+      name: 'Zero Test',
+      publicUrl: 'https://app.test',
+    });
+
+    const local = await startAuthApp({
+      accountEmails: {
+        passwordReset: true,
+        requestCooldown: '5m',
+      },
+    });
+
+    try {
+      const unknown = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'missing@test.com',
+      });
+      expect(unknown.status).toBe(200);
+      expect(unknown.data.ok).toBe(true);
+      expect(provider.messages).toHaveLength(0);
+
+      const registered = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'cooldown-reset',
+        email: 'cooldown-reset@test.com',
+        password: 'oldpassword1',
+      });
+      expect(registered.status).toBe(200);
+
+      const first = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'cooldown-reset@test.com',
+      });
+      const second = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'cooldown-reset@test.com',
+      });
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(provider.messages).toHaveLength(1);
+    } finally {
+      await local.stop();
+      configureEmail(false);
+    }
+  });
+
   test('admin-forced reset emails revoke sessions and block old access tokens', async () => {
     const provider = new MemoryEmailProvider();
     configureEmail({
@@ -928,6 +1007,112 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
     } finally {
       await local.stop();
       configureEmail(false);
+    }
+  });
+
+  test('admin email reset validates email links before forcing password changes', async () => {
+    const provider = new MemoryEmailProvider();
+    configureEmail({
+      from: 'Zero <noreply@test.com>',
+      provider,
+    }, {
+      name: 'Zero Test',
+    });
+
+    const local = await startAuthApp({
+      registration: { mode: 'admin-only' },
+      accountEmails: {
+        passwordReset: true,
+      },
+    });
+
+    try {
+      const admin = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'owner-misconfigured-email',
+        email: 'owner-misconfigured-email@test.com',
+        password: 'password123',
+      });
+      expect(admin.status).toBe(200);
+
+      const created = await requestJson(
+        local.url,
+        'POST',
+        '/auth/admin/users',
+        {
+          username: 'worker-misconfigured-email',
+          email: 'worker-misconfigured-email@test.com',
+          password: 'oldpassword1',
+        },
+        admin.data.accessToken
+      );
+      expect(created.status).toBe(200);
+
+      const forced = await requestJson(
+        local.url,
+        'POST',
+        `/auth/admin/users/${created.data.user.userId}/send-password-reset`,
+        {},
+        admin.data.accessToken
+      );
+      expect(forced.status).toBe(500);
+      expect(forced.data.code).toBe('EMAIL_PUBLIC_URL_REQUIRED');
+      expect(provider.messages).toHaveLength(0);
+
+      const user = await requestJson(
+        local.url,
+        'GET',
+        `/auth/admin/users/${created.data.user.userId}`,
+        undefined,
+        admin.data.accessToken
+      );
+      expect(user.status).toBe(200);
+      expect(user.data.user.passwordChangeRequired).toBe(false);
+    } finally {
+      await local.stop();
+      configureEmail(false);
+    }
+  });
+
+  test('manual admin password reset can be disabled by config', async () => {
+    const local = await startAuthApp({
+      registration: { mode: 'admin-only' },
+      accountEmails: {
+        manualPasswordReset: false,
+      },
+    });
+
+    try {
+      const admin = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'manual-reset-owner',
+        email: 'manual-reset-owner@test.com',
+        password: 'password123',
+      });
+      expect(admin.status).toBe(200);
+
+      const created = await requestJson(
+        local.url,
+        'POST',
+        '/auth/admin/users',
+        {
+          username: 'manual-reset-worker',
+          email: 'manual-reset-worker@test.com',
+          password: 'oldpassword1',
+        },
+        admin.data.accessToken
+      );
+      expect(created.status).toBe(200);
+
+      const reset = await requestJson(
+        local.url,
+        'POST',
+        `/auth/admin/users/${created.data.user.userId}/reset-password`,
+        { password: 'newpassword1' },
+        admin.data.accessToken
+      );
+      expect(reset.status).toBe(403);
+      expect(reset.data.code).toBe('MANUAL_PASSWORD_RESET_DISABLED');
+    } finally {
+      await local.stop();
     }
   });
 
@@ -1062,6 +1247,69 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
         password: 'password123',
       });
       expect(allowedLogin.status).toBe(200);
+    } finally {
+      await local.stop();
+    }
+  });
+
+  test('admin user list supports paging and filters', async () => {
+    const local = await startAuthApp({
+      registration: { mode: 'admin-only' },
+    });
+
+    try {
+      const admin = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'list-owner',
+        email: 'list-owner@test.com',
+        password: 'password123',
+      });
+      expect(admin.status).toBe(200);
+
+      const active = await requestJson(
+        local.url,
+        'POST',
+        '/auth/admin/users',
+        {
+          username: 'ops-active',
+          email: 'ops-active@test.com',
+          password: 'password123',
+        },
+        admin.data.accessToken
+      );
+      const suspended = await requestJson(
+        local.url,
+        'POST',
+        '/auth/admin/users',
+        {
+          username: 'ops-suspended',
+          email: 'ops-suspended@test.com',
+          password: 'password123',
+        },
+        admin.data.accessToken
+      );
+      expect(active.status).toBe(200);
+      expect(suspended.status).toBe(200);
+
+      await requestJson(
+        local.url,
+        'POST',
+        `/auth/admin/users/${suspended.data.user.userId}/suspend`,
+        {},
+        admin.data.accessToken
+      );
+
+      const filtered = await requestJson(
+        local.url,
+        'GET',
+        '/auth/admin/users?search=ops&status=active&limit=1&offset=0',
+        undefined,
+        admin.data.accessToken
+      );
+      expect(filtered.status).toBe(200);
+      expect(filtered.data.users).toHaveLength(1);
+      expect(filtered.data.users[0].username).toBe('ops-active');
+      expect(filtered.data.page.total).toBe(1);
+      expect(filtered.data.page.hasMore).toBe(false);
     } finally {
       await local.stop();
     }

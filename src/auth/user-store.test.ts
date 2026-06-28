@@ -288,6 +288,39 @@ describe('UserStore — User CRUD', () => {
     expect(store.countUsersByRole('user')).toBe(1);
   });
 
+  test('listUsers supports pagination, search, role, and status filters', async () => {
+    await store.createUser({
+      username: 'ops-admin',
+      email: 'ops-admin@example.com',
+      password: 'password123',
+      role: 'admin',
+      firstName: 'Ops',
+    });
+    const inactive = await store.createUser({
+      username: 'ops-worker',
+      email: 'ops-worker@example.com',
+      password: 'password123',
+      role: 'user',
+      firstName: 'Ops',
+    });
+    await store.createUser({
+      username: 'sales-worker',
+      email: 'sales-worker@example.com',
+      password: 'password123',
+      role: 'user',
+      firstName: 'Sales',
+    });
+    store.updateUser(inactive.userId, { status: 'suspended' });
+
+    const activeOps = store.listUsers({ search: 'ops', status: 'active', limit: 10 });
+    expect(activeOps.map((user) => user.username)).toEqual(['ops-admin']);
+    expect(store.countUsers({ search: 'ops', status: 'active' })).toBe(1);
+
+    const users = store.listUsers({ role: 'user', limit: 1, offset: 1 });
+    expect(users).toHaveLength(1);
+    expect(store.countUsers({ role: 'user' })).toBe(2);
+  });
+
   test('updateUser updates fields and sets updated_at', async () => {
     const created = await store.createUser({
       username: 'alice',

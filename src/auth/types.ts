@@ -106,8 +106,12 @@ export interface AuthAccountEmailConfig {
   passwordReset?: boolean;
   /** Send notification email after password changes. Default: false. */
   passwordChangedNotice?: boolean;
+  /** Allow direct admin password replacement. Default: true for compatibility. */
+  manualPasswordReset?: boolean;
   /** One-time action token TTL. Supports `s`, `m`, `h`, and `d`. Default: '1h'. */
   actionTokenTTL?: string;
+  /** Cooldown between active action emails for the same user/type. Default: '5m'. */
+  requestCooldown?: string;
   /** Public reset page path appended to app.publicUrl. Default: '/reset-password'. */
   resetPath?: string;
   /** Public setup page path appended to app.publicUrl. Default: '/setup-password'. */
@@ -119,7 +123,9 @@ export interface ResolvedAuthAccountEmailConfig {
   adminCreatedUser: boolean;
   passwordReset: boolean;
   passwordChangedNotice: boolean;
+  manualPasswordReset: boolean;
   actionTokenTTL: string;
+  requestCooldown: string;
   resetPath: string;
   setupPath: string;
 }

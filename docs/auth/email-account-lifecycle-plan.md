@@ -149,6 +149,9 @@ createApp({
       adminCreatedUser: true,
       passwordReset: true,
       passwordChangedNotice: true,
+      manualPasswordReset: false,
+      actionTokenTTL: '1h',
+      requestCooldown: '5m',
     },
   },
 });
@@ -176,7 +179,8 @@ Configuration rules:
 3. Tests and local development should be able to use a memory or console
    provider without a network call.
 4. Production startup should warn or fail clearly when email-dependent auth
-   features are enabled but no deliverable provider/from address exists.
+   features are enabled but no deliverable provider/from address exists. The
+   platform doctor now performs these checks.
 5. Email config should be exposed to admin UI only as safe capability flags,
    never API keys or provider secrets.
 
@@ -266,7 +270,9 @@ Token types:
 | `email_verification` | Optional later email verification flow. |
 
 Tokens must be opaque random values. Store only hashes. Expire tokens and mark
-them consumed when used.
+them consumed when used. The action-token service also enforces
+`auth.accountEmails.requestCooldown` for active tokens of the same user and
+type, and opportunistically cleans expired/consumed records.
 
 ## Auth Route Additions
 
@@ -276,11 +282,6 @@ Public routes:
 POST /auth/forgot-password
 POST /auth/reset-password
 GET  /auth/action-token/:token
-```
-
-Possible setup route:
-
-```txt
 POST /auth/setup-password
 ```
 
@@ -293,9 +294,10 @@ POST /auth/admin/users/:userId/suspend
 POST /auth/admin/users/:userId/activate
 ```
 
-Existing admin reset route should be revisited. It currently changes the
-password directly. After email lifecycle support, the preferred admin action
-should send a reset/setup email and force change instead of setting a permanent
+Existing admin direct reset remains available for compatibility and manual
+workflows, but it is configurable through
+`auth.accountEmails.manualPasswordReset`. The preferred admin action sends a
+reset/setup email and forces password change instead of setting a permanent
 password for the user.
 
 ## Login Behavior

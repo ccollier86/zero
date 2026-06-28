@@ -27,6 +27,15 @@ export type {
   TableSyncDefaultConfig,
 } from './server/types';
 
+// ─── Platform Doctor ───────────────────────────────────────────────────
+export { runPlatformDoctor } from '../doctor/platform-doctor';
+export type {
+  PlatformDoctorFinding,
+  PlatformDoctorOptions,
+  PlatformDoctorReport,
+  PlatformDoctorSeverity,
+} from '../doctor/platform-doctor';
+
 // ─── Route Config ───────────────────────────────────────────────────────
 export type { RouteConfig, LoaderContext, PageMeta } from './router/types';
 

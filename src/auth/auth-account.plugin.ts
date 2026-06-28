@@ -39,6 +39,7 @@ export function createAuthAccountPlugin(config: AuthAccountPluginConfig) {
         if (!authConfig.accountEmails.passwordReset) {
           throw new AuthError('Password reset email is disabled', 'PASSWORD_RESET_DISABLED', 403);
         }
+        accountEmail.assertReady();
 
         const user = store.getUserByEmail(body.email);
         emitPlatformCode(OBS_CODES.AUTH_PASSWORD_RESET_REQUESTED, {
@@ -50,11 +51,15 @@ export function createAuthAccountPlugin(config: AuthAccountPluginConfig) {
           return { ok: true };
         }
 
-        const created = actionTokens.create({
-          userId: user.userId,
-          type: 'password_reset',
-          metadata: { source: 'forgot-password' },
-        });
+        const created = createActionTokenOrHideCooldown(() =>
+          actionTokens.create({
+            userId: user.userId,
+            type: 'password_reset',
+            metadata: { source: 'forgot-password' },
+          })
+        );
+        if (!created) return { ok: true };
+
         await accountEmail.sendPasswordReset({
           user,
           rawToken: created.rawToken,
@@ -113,6 +118,19 @@ export function createAuthAccountPlugin(config: AuthAccountPluginConfig) {
         }),
       }
     );
+}
+
+function createActionTokenOrHideCooldown(
+  create: () => ReturnType<AuthActionTokenService['create']>
+): ReturnType<AuthActionTokenService['create']> | null {
+  try {
+    return create();
+  } catch (error) {
+    if (error instanceof AuthError && error.code === 'ACTION_TOKEN_COOLDOWN') {
+      return null;
+    }
+    throw error;
+  }
 }
 
 interface AccountServices {

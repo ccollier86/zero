@@ -167,7 +167,9 @@ createApp({
     accountEmails: {
       adminCreatedUser: Boolean(Bun.env.RESEND_API_KEY),
       passwordReset: Boolean(Bun.env.RESEND_API_KEY),
+      manualPasswordReset: Bun.env.AUTH_MANUAL_PASSWORD_RESET !== 'false',
       actionTokenTTL: Bun.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
+      requestCooldown: Bun.env.AUTH_ACCOUNT_EMAIL_COOLDOWN ?? '5m',
     },
     userProperties: {
       department: {
@@ -191,6 +193,8 @@ Relevant environment variables are shown in `.env.example`:
 | `EMAIL_REPLY_TO` | Optional reply-to address. |
 | `RESEND_API_KEY` | Enables the default Resend email provider. |
 | `AUTH_ACTION_TOKEN_TTL` | Expiration for setup/reset action tokens. |
+| `AUTH_ACCOUNT_EMAIL_COOLDOWN` | Cooldown between active setup/reset emails for the same user and token type. |
+| `AUTH_MANUAL_PASSWORD_RESET` | Set to `false` to disable direct admin password replacement and require email-driven reset flows. |
 | `ACCESS_TOKEN_TTL` | Access token lifetime. |
 | `REFRESH_TOKEN_TTL` | Refresh token lifetime. |
 | `AUTH_SIGNING_KEY` | Optional externally managed ES256 private JWK. |
@@ -236,9 +240,32 @@ zero/access.ts
 Templates should be normal TypeScript files. They should teach by showing
 commented examples and safe defaults, not by requiring a separate wizard.
 
-## Doctor Checks
+## Platform Doctor
 
-Future platform doctor should validate config files:
+Zero now includes an app-level platform doctor:
+
+```txt
+bun run doctor -- --config ./zero.config.ts
+bun run doctor -- --config ./zero.config.ts --strict
+```
+
+The platform doctor checks createApp config and warnings do not fail by
+default. `--strict` makes warnings fail for CI.
+
+Current checks cover:
+
+1. Invalid `createApp()` config such as `stateSync` without auth.
+2. Missing or multiple primary-key declarations in ReactiveDB tables.
+3. Invalid natural identity fields.
+4. Invalid auth action-token TTL/cooldown duration strings.
+5. Auth account email flows with email disabled.
+6. Missing `app.publicUrl`, sender address, or Resend API key for email-driven
+   account flows.
+7. File-backed databases with startup migrations disabled.
+8. Auth-enabled apps without an app `syncPolicy`.
+9. Lazy/auto sync index guidance for `/api/data` filters and sorting.
+
+Future config-file doctor checks should validate:
 
 1. Missing referenced config files.
 2. Unsupported keys or field types.

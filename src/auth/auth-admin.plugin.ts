@@ -10,7 +10,12 @@ import { Elysia, t } from 'elysia';
 import type { AccountEmailService } from './account-email-service';
 import type { AuthActionTokenService } from './action-token-service';
 import type { TokenService } from './token-service';
-import type { UserStore } from './user-store';
+import {
+  USER_LIST_DEFAULT_LIMIT,
+  USER_LIST_MAX_LIMIT,
+  type UserListOptions,
+  type UserStore,
+} from './user-store';
 import { extractAuthContext } from './auth-context';
 import { AuthError, type AuthContext, type ResolvedAuthBehaviorConfig } from './types';
 import type { UserPropertyService } from './user-property-service';
@@ -43,10 +48,42 @@ export function createAuthAdminPlugin(config: AuthAdminPluginConfig) {
       const { store } = await requireAdminServices(config, request);
       return buildAdminConfigResponse(store, config.getAuthConfig());
     })
-    .get('/users', async ({ request }) => {
-      const { store } = await requireAdminServices(config, request);
-      return { users: store.listUsers() };
-    })
+    .get(
+      '/users',
+      async ({ request, query }) => {
+        const { store } = await requireAdminServices(config, request);
+        const options = normalizeUserListQuery(query);
+        const users = store.listUsers(options);
+        const total = store.countUsers({
+          search: options.search,
+          role: options.role,
+          status: options.status,
+        });
+
+        return {
+          users,
+          page: {
+            limit: options.limit,
+            offset: options.offset,
+            count: users.length,
+            total,
+            hasMore: options.offset + users.length < total,
+            nextOffset: options.offset + users.length < total
+              ? options.offset + users.length
+              : null,
+          },
+        };
+      },
+      {
+        query: t.Object({
+          limit: t.Optional(t.Numeric()),
+          offset: t.Optional(t.Numeric()),
+          search: t.Optional(t.String()),
+          role: t.Optional(t.String()),
+          status: t.Optional(t.Union([t.Literal('active'), t.Literal('suspended')])),
+        }),
+      }
+    )
     .get(
       '/users/:userId',
       async ({ request, params }) => {
@@ -74,6 +111,14 @@ export function createAuthAdminPlugin(config: AuthAdminPluginConfig) {
         }
 
         const shouldSendSetupEmail = body.sendSetupEmail ?? authConfig.accountEmails.adminCreatedUser;
+        if (shouldSendSetupEmail) {
+          const accountEmail = config.getAccountEmailService();
+          if (!config.getActionTokenService() || !accountEmail) {
+            throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
+          }
+          accountEmail.assertReady();
+        }
+
         const properties = {
           ...propertyService.getDefaultProperties(),
           ...propertyService.validateWrites(body.properties, 'admin'),
@@ -249,6 +294,10 @@ export function createAuthAdminPlugin(config: AuthAdminPluginConfig) {
       '/users/:userId/reset-password',
       async ({ request, params, body }) => {
         const { store, auth } = await requireAdminServices(config, request);
+        if (!config.getAuthConfig().accountEmails.manualPasswordReset) {
+          throw new AuthError('Manual password reset is disabled', 'MANUAL_PASSWORD_RESET_DISABLED', 403);
+        }
+
         const ok = await store.resetPassword(params.userId, body.password);
         if (!ok) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
 
@@ -307,6 +356,7 @@ export function createAuthAdminPlugin(config: AuthAdminPluginConfig) {
         if (!actionTokens || !accountEmail) {
           throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
         }
+        accountEmail.assertReady();
 
         store.requirePasswordChange(user.userId);
         const updated = store.getUserById(user.userId)!;
@@ -393,6 +443,9 @@ interface AdminServices {
   auth: AuthContext;
 }
 
+type NormalizedUserListOptions = Required<Pick<UserListOptions, 'limit' | 'offset'>> &
+  Omit<UserListOptions, 'limit' | 'offset'>;
+
 async function requireAdminServices(
   config: AuthAdminPluginConfig,
   request: Request
@@ -430,6 +483,7 @@ function buildAdminConfigResponse(
 ) {
   const userCount = store.countUsers();
   const emailRuntime = getEmailRuntime();
+  const accountEmailReady = emailRuntime.enabled && Boolean(emailRuntime.app.publicUrl);
 
   return {
     registration: {
@@ -445,13 +499,43 @@ function buildAdminConfigResponse(
     },
     accountEmails: {
       ...config.accountEmails,
-      adminCreatedUser: config.accountEmails.adminCreatedUser && emailRuntime.enabled,
-      passwordReset: config.accountEmails.passwordReset && emailRuntime.enabled,
-      passwordChangedNotice: config.accountEmails.passwordChangedNotice && emailRuntime.enabled,
+      adminCreatedUser: config.accountEmails.adminCreatedUser && accountEmailReady,
+      passwordReset: config.accountEmails.passwordReset && accountEmailReady,
+      passwordChangedNotice: config.accountEmails.passwordChangedNotice && accountEmailReady,
+    },
+    capabilities: {
+      manualPasswordReset: config.accountEmails.manualPasswordReset,
+      setupEmail: accountEmailReady,
+      passwordResetEmail: config.accountEmails.passwordReset && accountEmailReady,
+      suspendUsers: true,
+      promoteAdmins: true,
+      userProperties: true,
     },
     userProperties: config.userProperties,
     strictUserProperties: config.strictUserProperties,
   };
+}
+
+function normalizeUserListQuery(query: Record<string, unknown>): NormalizedUserListOptions {
+  return {
+    limit: normalizeListLimit(typeof query.limit === 'number' ? query.limit : undefined),
+    offset: normalizeListOffset(typeof query.offset === 'number' ? query.offset : undefined),
+    search: typeof query.search === 'string' ? query.search : undefined,
+    role: typeof query.role === 'string' ? query.role : undefined,
+    status: query.status === 'active' || query.status === 'suspended'
+      ? query.status
+      : undefined,
+  };
+}
+
+function normalizeListLimit(limit: number | undefined): number {
+  if (limit === undefined || !Number.isFinite(limit)) return USER_LIST_DEFAULT_LIMIT;
+  return Math.max(1, Math.min(USER_LIST_MAX_LIMIT, Math.floor(limit)));
+}
+
+function normalizeListOffset(offset: number | undefined): number {
+  if (offset === undefined || !Number.isFinite(offset)) return 0;
+  return Math.max(0, Math.floor(offset));
 }
 
 async function sendSetupEmail(params: {
@@ -470,6 +554,7 @@ async function sendSetupEmail(params: {
   if (user.status === 'suspended') {
     throw new AuthError('Account is suspended', 'ACCOUNT_SUSPENDED', 403);
   }
+  params.accountEmail.assertReady();
 
   params.store.requirePasswordChange(user.userId);
   const updated = params.store.getUserById(user.userId)!;

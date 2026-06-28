@@ -22,6 +22,16 @@ export class AccountEmailService {
   ) {}
 
   /**
+   * Assert that account email delivery can build action links.
+   *
+   * Routes call this before mutating user state or creating action tokens so a
+   * missing provider/public URL fails without leaving half-applied reset state.
+   */
+  assertReady(): EmailRuntime {
+    return this.requireEmailRuntime();
+  }
+
+  /**
    * Send an account setup email for an admin-created account.
    *
    * The raw token is embedded only in the delivered email body and never logged
@@ -32,7 +42,7 @@ export class AccountEmailService {
     rawToken: string;
     token: AuthActionTokenRecord;
   }): Promise<void> {
-    const runtime = this.requireEmailRuntime();
+    const runtime = this.assertReady();
     const actionUrl = this.createActionUrl(
       runtime.app.publicUrl!,
       this.config.accountEmails.setupPath,
@@ -63,7 +73,7 @@ export class AccountEmailService {
     rawToken: string;
     token: AuthActionTokenRecord;
   }): Promise<void> {
-    const runtime = this.requireEmailRuntime();
+    const runtime = this.assertReady();
     const actionUrl = this.createActionUrl(
       runtime.app.publicUrl!,
       this.config.accountEmails.resetPath,

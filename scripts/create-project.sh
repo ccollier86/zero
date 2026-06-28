@@ -156,7 +156,7 @@ cat > "$PROJECT_DIR/tsconfig.json" << 'TSCONFIG'
       "@platform/schema/*": ["./src/schema/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "app/**/*.ts", "app/**/*.tsx"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "app/**/*.ts", "app/**/*.tsx", "zero.config.ts", "zero/**/*.ts", "config/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
 TSCONFIG
@@ -165,14 +165,14 @@ TSCONFIG
 
 echo "[4/5] Creating starter app..."
 
-# Server entry point
-cat > "$PROJECT_DIR/app/server.ts" << 'SERVER'
-import { createApp } from '../src/frontend';
+# Zero config. Keep this file pure; platform doctor loads it without starting the server.
+cat > "$PROJECT_DIR/zero.config.ts" << 'CONFIG'
+import type { AppConfig } from './src/frontend';
 
 const PORT = Number(process.env.PORT ?? 3000);
 const hasEmail = Boolean(process.env.RESEND_API_KEY);
 
-const app = await createApp({
+const config = {
   app: {
     name: process.env.APP_NAME ?? 'Zero App',
     publicUrl: process.env.APP_PUBLIC_URL ?? `http://localhost:${PORT}`,
@@ -203,15 +203,30 @@ const app = await createApp({
     accountEmails: {
       adminCreatedUser: hasEmail,
       passwordReset: hasEmail,
+      manualPasswordReset: process.env.AUTH_MANUAL_PASSWORD_RESET !== 'false',
       actionTokenTTL: process.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
+      requestCooldown: process.env.AUTH_ACCOUNT_EMAIL_COOLDOWN ?? '5m',
     },
   },
   stateSync: true,
-});
+  port: PORT,
+} satisfies AppConfig;
 
-app.listen(PORT);
+export default config;
+export { config };
+CONFIG
 
-console.log(`\n  Server running at http://localhost:${PORT}\n`);
+# Server entry point
+cat > "$PROJECT_DIR/app/server.ts" << 'SERVER'
+import { createApp } from '../src/frontend';
+import config from '../zero.config';
+
+const app = await createApp(config);
+const port = config.port ?? 3000;
+
+app.listen(port);
+
+console.log(`\n  Server running at http://localhost:${port}\n`);
 SERVER
 
 # Environment example
@@ -227,6 +242,8 @@ APP_SUPPORT_EMAIL=support@example.com
 ACCESS_TOKEN_TTL=15m
 REFRESH_TOKEN_TTL=7d
 AUTH_ACTION_TOKEN_TTL=1h
+AUTH_ACCOUNT_EMAIL_COOLDOWN=5m
+AUTH_MANUAL_PASSWORD_RESET=true
 
 # Optional managed signing key.
 # Leave blank to let Zero generate and store an ES256 keypair in the app DB.

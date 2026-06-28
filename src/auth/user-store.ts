@@ -73,6 +73,18 @@ interface CountRow {
   count: number;
 }
 
+/** Filter and pagination options for admin user listing. */
+export interface UserListOptions {
+  limit?: number;
+  offset?: number;
+  search?: string;
+  role?: string;
+  status?: UserStatus;
+}
+
+export const USER_LIST_DEFAULT_LIMIT = 50;
+export const USER_LIST_MAX_LIMIT = 200;
+
 // ─── UserStore ─────────────────────────────────────────────────────────────
 
 /**
@@ -117,6 +129,7 @@ export class UserStore {
     insertActionToken: Statement;
     getActionTokenByHash: Statement;
     consumeActionToken: Statement;
+    countRecentActionTokens: Statement;
     deleteExpiredActionTokens: Statement;
 
     // Auth config (internal — direct SQL)
@@ -185,6 +198,15 @@ export class UserStore {
       ),
       consumeActionToken: db.prepare(
         'UPDATE _auth_action_tokens SET consumed_at = ? WHERE token_id = ? AND consumed_at IS NULL'
+      ),
+      countRecentActionTokens: db.prepare(
+        `SELECT COUNT(*) as count
+         FROM _auth_action_tokens
+         WHERE user_id = ?
+           AND type = ?
+           AND consumed_at IS NULL
+           AND expires_at > ?
+           AND created_at >= ?`
       ),
       deleteExpiredActionTokens: db.prepare(
         'DELETE FROM _auth_action_tokens WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)'
@@ -289,20 +311,46 @@ export class UserStore {
   }
 
   /**
-   * List all users (ordered by creation date, newest first).
+   * List users for admin screens.
+   *
+   * When options are omitted this preserves the historical all-users response.
+   * Filtered calls use parameterized SQL and capped pagination.
    */
-  listUsers(): UserRecord[] {
-    const rows = this.stmts.listUsers.all() as UserRow[];
+  listUsers(options: UserListOptions = {}): UserRecord[] {
+    const normalized = normalizeUserListOptions(options);
+    const hasFilters = hasUserListFilters(normalized);
+    if (!hasFilters && options.limit === undefined && options.offset === undefined) {
+      const rows = this.stmts.listUsers.all() as UserRow[];
+      return rows.map((row) =>
+        this.toUserRecord(row, this.loadProperties(row.user_id))
+      );
+    }
+
+    const filter = buildUserListFilter(normalized);
+    const rows = this.db.prepare(
+      `SELECT * FROM users${filter.where}
+       ORDER BY created_at DESC
+       LIMIT ? OFFSET ?`
+    ).all(...filter.args, normalized.limit, normalized.offset) as UserRow[];
     return rows.map((row) =>
       this.toUserRecord(row, this.loadProperties(row.user_id))
     );
   }
 
   /**
-   * Count all user rows.
+   * Count user rows, optionally matching the same filters as listUsers().
    */
-  countUsers(): number {
-    const row = this.stmts.countUsers.get() as CountRow;
+  countUsers(options: Omit<UserListOptions, 'limit' | 'offset'> = {}): number {
+    const normalized = normalizeUserListOptions(options);
+    if (!hasUserListFilters(normalized)) {
+      const row = this.stmts.countUsers.get() as CountRow;
+      return row.count;
+    }
+
+    const filter = buildUserListFilter(normalized);
+    const row = this.db.prepare(
+      `SELECT COUNT(*) as count FROM users${filter.where}`
+    ).get(...filter.args) as CountRow;
     return row.count;
   }
 
@@ -614,6 +662,24 @@ export class UserStore {
   }
 
   /**
+   * Count active action tokens created after a cutoff for cooldown checks.
+   */
+  countRecentActionTokens(params: {
+    userId: string;
+    type: AuthActionTokenType;
+    createdAfter: number;
+    now?: number;
+  }): number {
+    const row = this.stmts.countRecentActionTokens.get(
+      params.userId,
+      params.type,
+      params.now ?? Date.now(),
+      params.createdAfter
+    ) as CountRow;
+    return row.count;
+  }
+
+  /**
    * Delete expired and consumed action tokens. Cleanup operation.
    */
   deleteExpiredActionTokens(): number {
@@ -696,4 +762,64 @@ function parseMetadata(value: string | null): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function normalizeUserListOptions(options: UserListOptions): Required<Pick<UserListOptions, 'limit' | 'offset'>> &
+  Omit<UserListOptions, 'limit' | 'offset'> {
+  return {
+    limit: normalizeListLimit(options.limit),
+    offset: normalizeListOffset(options.offset),
+    search: options.search?.trim() || undefined,
+    role: options.role?.trim() || undefined,
+    status: options.status,
+  };
+}
+
+function normalizeListLimit(limit: number | undefined): number {
+  if (limit === undefined || !Number.isFinite(limit)) return USER_LIST_DEFAULT_LIMIT;
+  return Math.max(1, Math.min(USER_LIST_MAX_LIMIT, Math.floor(limit)));
+}
+
+function normalizeListOffset(offset: number | undefined): number {
+  if (offset === undefined || !Number.isFinite(offset)) return 0;
+  return Math.max(0, Math.floor(offset));
+}
+
+function hasUserListFilters(options: UserListOptions): boolean {
+  return Boolean(options.search || options.role || options.status);
+}
+
+function buildUserListFilter(options: UserListOptions): {
+  where: string;
+  args: Array<string>;
+} {
+  const clauses: string[] = [];
+  const args: string[] = [];
+
+  if (options.search) {
+    const pattern = `%${escapeLikePattern(options.search)}%`;
+    clauses.push(
+      `(username LIKE ? ESCAPE '\\' OR email LIKE ? ESCAPE '\\' OR first_name LIKE ? ESCAPE '\\' OR last_name LIKE ? ESCAPE '\\')`
+    );
+    args.push(pattern, pattern, pattern, pattern);
+  }
+
+  if (options.role) {
+    clauses.push('role = ?');
+    args.push(options.role);
+  }
+
+  if (options.status) {
+    clauses.push('status = ?');
+    args.push(options.status);
+  }
+
+  return {
+    where: clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : '',
+    args,
+  };
+}
+
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }

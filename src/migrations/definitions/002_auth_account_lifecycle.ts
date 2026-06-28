@@ -36,6 +36,7 @@ export const migration: Migration = {
     `);
     db.run('CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_hash ON _auth_action_tokens(token_hash)');
     db.run('CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_user ON _auth_action_tokens(user_id)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_user_type_created ON _auth_action_tokens(user_id, type, created_at)');
   },
 
   down(db: Database) {

@@ -2,6 +2,8 @@
 
 A full-stack reactive application framework that ships as a single Bun binary. One import, one server, everything in-process. No microservices, no Redis, no external queue. SQLite + WebSockets + React — wired end to end.
 
+For the practical app setup path, start with [Start Here](./start-here.md).
+
 ```
 Browser (React)  <->  WebSocket /sync  <->  Bun Server (Elysia)
      SDK hooks          pub/sub              ReactiveDB (SQLite)

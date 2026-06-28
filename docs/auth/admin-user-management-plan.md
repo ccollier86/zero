@@ -98,7 +98,7 @@ Recommended routes:
 
 ```txt
 GET    /auth/admin/config
-GET    /auth/admin/users
+GET    /auth/admin/users?limit=50&offset=0&search=ops&role=user&status=active
 GET    /auth/admin/users/:userId
 POST   /auth/admin/users
 PATCH  /auth/admin/users/:userId
@@ -115,6 +115,13 @@ POST   /auth/admin/users/:userId/suspend
 POST   /auth/admin/users/:userId/activate
 POST   /auth/admin/users/:userId/revoke-sessions
 ```
+
+`GET /auth/admin/users` returns `{ users, page }`; `page` includes `limit`,
+`offset`, `count`, `total`, `hasMore`, and `nextOffset`.
+
+Direct `reset-password` is controlled by
+`auth.accountEmails.manualPasswordReset`. Set it to `false` to force admin
+reset flows through emailed action links.
 
 Admin user creation should accept:
 

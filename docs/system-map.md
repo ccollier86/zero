@@ -93,6 +93,8 @@ src/
 |------|---------|
 | `src/auth/auth.plugin.ts` | Elysia plugin — defines user tables, token service, REST routes |
 | `src/auth/auth.middleware.ts` | `createAuthMiddleware()` — resolve-based, provides `requireAuth/requireAdmin` |
+| `src/auth/auth-admin.plugin.ts` | Admin user-management routes and capability/config response |
+| `src/auth/auth-config.ts` | Auth behavior config normalization and typed config helper |
 | `src/auth/auth.models.ts` | TypeBox request/response schemas |
 | `src/auth/action-token-service.ts` | Hash-only setup/reset action token generation, inspection, and consumption |
 | `src/auth/account-email-service.ts` | Auth lifecycle email delivery through the platform email runtime |
@@ -106,6 +108,21 @@ src/
 | `src/frontend/client/auth-client.ts` | AuthClient — login/register/logout/refresh, @xstate/store for state |
 
 **Key pattern:** Auth guard uses Elysia's `resolve()` (not `derive()`) for type propagation across plugin boundaries. Named plugin with deduplication.
+
+---
+
+## System 2.1: Platform Doctor
+
+**What:** Pure createApp config diagnostics plus a human-facing CLI.
+
+**Files:**
+| File | Purpose |
+|------|---------|
+| `src/doctor/platform-doctor.ts` | App config checks for auth/email, schema PKs, sync policy, migrations, and index guidance |
+| `src/doctor/config-loader.ts` | Loads an explicit `zero.config.ts`/`config/zero.config.ts` module for CLI checks |
+| `src/doctor/run.ts` | CLI presentation for `bun run doctor` |
+
+**Key pattern:** Warnings do not fail by default; `--strict` makes warnings fail for CI. Migration drift stays in `migrate:doctor`.
 
 ---
 

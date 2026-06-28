@@ -61,7 +61,9 @@ function normalizeAccountEmails(
     adminCreatedUser: config.adminCreatedUser ?? false,
     passwordReset: config.passwordReset ?? true,
     passwordChangedNotice: config.passwordChangedNotice ?? false,
+    manualPasswordReset: config.manualPasswordReset ?? true,
     actionTokenTTL: config.actionTokenTTL ?? '1h',
+    requestCooldown: config.requestCooldown ?? '5m',
     resetPath: config.resetPath ?? '/reset-password',
     setupPath: config.setupPath ?? '/setup-password',
   };

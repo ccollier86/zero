@@ -215,7 +215,9 @@ createApp({
     accountEmails: {
       adminCreatedUser: Boolean(Bun.env.RESEND_API_KEY),
       passwordReset: Boolean(Bun.env.RESEND_API_KEY),
+      manualPasswordReset: Bun.env.AUTH_MANUAL_PASSWORD_RESET !== 'false',
       actionTokenTTL: Bun.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
+      requestCooldown: Bun.env.AUTH_ACCOUNT_EMAIL_COOLDOWN ?? '5m',
     },
   },
 });
@@ -239,7 +241,7 @@ Admin UI can read and manage:
 
 ```txt
 GET    /auth/admin/config
-GET    /auth/admin/users
+GET    /auth/admin/users?limit=50&offset=0&search=ops&role=user&status=active
 GET    /auth/admin/users/:userId
 POST   /auth/admin/users
 PATCH  /auth/admin/users/:userId
@@ -256,11 +258,13 @@ POST   /auth/admin/users/:userId/revoke-sessions
 ```
 
 Admin routes require an admin Bearer token. Deleting or demoting the last admin
-is rejected. Direct password resets remain available for manual workflows and
-revoke existing refresh tokens. The preferred email-driven reset/setup routes
-create one-time action tokens, send account lifecycle email through the
-platform email service, mark the account as requiring a password change, and
-revoke existing sessions.
+is rejected. `GET /auth/admin/users` is paginated and supports `search`,
+`role`, and `status` filters. Direct password resets remain available for
+manual workflows by default, revoke existing refresh tokens, and can be disabled
+with `auth.accountEmails.manualPasswordReset: false`. The preferred
+email-driven reset/setup routes create one-time action tokens, send account
+lifecycle email through the platform email service, mark the account as
+requiring a password change, and revoke existing sessions.
 
 Public account lifecycle routes:
 
@@ -271,10 +275,16 @@ POST /auth/reset-password
 POST /auth/setup-password
 ```
 
-`POST /auth/forgot-password` always returns `{ ok: true }` when the request is
-accepted so it does not reveal whether an email address exists. Reset/setup
-tokens are opaque, stored only as hashes, expire according to
-`auth.accountEmails.actionTokenTTL`, and are consumed once.
+Email-driven routes validate delivery readiness before mutating user state.
+If email is disabled they return `EMAIL_NOT_CONFIGURED`; if setup/reset links
+cannot be built they return `EMAIL_PUBLIC_URL_REQUIRED`.
+
+`POST /auth/forgot-password` always returns `{ ok: true }` when a ready email
+config accepts the request, including unknown email addresses and cooldown
+repeats, so it does not reveal whether an account exists. Reset/setup tokens
+are opaque, stored only as hashes, expire according to
+`auth.accountEmails.actionTokenTTL`, are rate-limited by
+`auth.accountEmails.requestCooldown`, and are consumed once.
 
 Login, refresh, auth middleware, and `requireAuth()` enforce account state:
 
@@ -287,7 +297,8 @@ Login, refresh, auth middleware, and `requireAuth()` enforce account state:
 The root `.env.example` documents the common auth/email environment variables:
 `APP_NAME`, `APP_PUBLIC_URL`, `EMAIL_FROM`, `EMAIL_REPLY_TO`,
 `RESEND_API_KEY`, `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL`,
-`AUTH_ACTION_TOKEN_TTL`, and optional `AUTH_SIGNING_KEY`.
+`AUTH_ACTION_TOKEN_TTL`, `AUTH_ACCOUNT_EMAIL_COOLDOWN`,
+`AUTH_MANUAL_PASSWORD_RESET`, and optional `AUTH_SIGNING_KEY`.
 
 ## Configured User Properties
 

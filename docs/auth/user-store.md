@@ -356,13 +356,15 @@ getRefreshTokenByHash(tokenHash: string): RefreshTokenRecord | null {
 storeActionToken(params): AuthActionTokenRecord
 getActionTokenByHash(tokenHash: string): AuthActionTokenRecord | null
 consumeActionToken(tokenId: string): boolean
+countRecentActionTokens(params): number
 deleteExpiredActionTokens(): number
 ```
 
 All operate on `_auth_action_tokens` and never store raw reset/setup tokens.
-`consumeActionToken()` only succeeds once. `AuthActionTokenService` wraps these
-methods to generate raw tokens, hash them, enforce TTL/type checks, and emit
-observability events.
+`consumeActionToken()` only succeeds once. `countRecentActionTokens()` supports
+account email cooldown checks for active unconsumed tokens. `AuthActionTokenService`
+wraps these methods to generate raw tokens, hash them, enforce TTL/type/cooldown
+checks, clean stale records, and emit observability events.
 
 `deleteExpiredTokens()` is a cleanup operation — called periodically (cron or on refresh) to purge expired/revoked tokens:
 

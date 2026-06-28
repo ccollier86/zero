@@ -74,6 +74,36 @@ describe('AuthActionTokenService', () => {
 
     expect(() => expiredService.inspect(created.rawToken)).toThrow('Action token has expired');
   });
+
+  test('enforces cooldown for active tokens of the same user and type', async () => {
+    const user = await store.createUser({
+      username: 'cooldown',
+      email: 'cooldown@example.com',
+      password: 'password123',
+    });
+
+    const first = service.create({ userId: user.userId, type: 'password_reset' });
+    expect(() => service.create({ userId: user.userId, type: 'password_reset' }))
+      .toThrow(AuthError);
+
+    service.consume(first.rawToken, ['password_reset']);
+    const second = service.create({ userId: user.userId, type: 'password_reset' });
+    expect(second.record.tokenId).not.toBe(first.record.tokenId);
+  });
+
+  test('cleanupExpired deletes stale action tokens', async () => {
+    const user = await store.createUser({
+      username: 'cleanup',
+      email: 'cleanup@example.com',
+      password: 'password123',
+    });
+    const created = service.create({ userId: user.userId, type: 'password_reset' });
+    db.prepare('UPDATE _auth_action_tokens SET expires_at = ? WHERE token_id = ?')
+      .run(Date.now() - 1, created.record.tokenId);
+
+    expect(service.cleanupExpired()).toBe(1);
+    expect(() => service.inspect(created.rawToken)).toThrow(AuthError);
+  });
 });
 
 function setupAuthTables(db: ReactiveDB): void {

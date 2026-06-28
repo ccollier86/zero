@@ -28,12 +28,15 @@ export interface AuthActionTokenInspection {
 /** Framework-neutral service for auth action tokens. */
 export class AuthActionTokenService {
   private readonly ttlMs: number;
+  private readonly cooldownMs: number;
 
   constructor(
     private readonly store: UserStore,
-    ttl: string
+    ttl: string,
+    requestCooldown = '5m'
   ) {
     this.ttlMs = parseTTLtoMs(ttl);
+    this.cooldownMs = parseTTLtoMs(requestCooldown);
   }
 
   /**
@@ -47,7 +50,11 @@ export class AuthActionTokenService {
     type: AuthActionTokenType;
     createdBy?: string | null;
     metadata?: Record<string, unknown>;
+    skipCooldown?: boolean;
   }): CreatedAuthActionToken {
+    this.cleanupExpired();
+    if (!params.skipCooldown) this.assertCooldownOpen(params.userId, params.type);
+
     const rawToken = createOpaqueToken();
     const now = Date.now();
     const record = this.store.storeActionToken({
@@ -72,6 +79,16 @@ export class AuthActionTokenService {
     });
 
     return { rawToken, record };
+  }
+
+  /**
+   * Delete expired and already-consumed action tokens.
+   *
+   * This is intentionally safe to call opportunistically before token creation
+   * so cooldown checks do not keep stale records around.
+   */
+  cleanupExpired(): number {
+    return this.store.deleteExpiredActionTokens();
   }
 
   /**
@@ -161,6 +178,25 @@ export class AuthActionTokenService {
     }
 
     return record;
+  }
+
+  private assertCooldownOpen(userId: string, type: AuthActionTokenType): void {
+    if (this.cooldownMs <= 0) return;
+
+    const now = Date.now();
+    const recent = this.store.countRecentActionTokens({
+      userId,
+      type,
+      createdAfter: now - this.cooldownMs,
+      now,
+    });
+    if (recent === 0) return;
+
+    emitPlatformCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
+      userId,
+      metadata: { type, reason: 'cooldown' },
+    });
+    throw new AuthError('Action token request is cooling down', 'ACTION_TOKEN_COOLDOWN', 429);
   }
 }
 

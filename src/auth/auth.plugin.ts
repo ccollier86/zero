@@ -152,6 +152,9 @@ function defineAuthTables(db: ReactiveDB): void {
   db.exec(
     'CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_user ON _auth_action_tokens(user_id)'
   );
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_user_type_created ON _auth_action_tokens(user_id, type, created_at)'
+  );
 
   // Internal: _auth_config — signing key storage, never broadcast
   db.exec(`
@@ -213,7 +216,8 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       _propertyService = new UserPropertyService(authConfig);
       _actionTokenService = new AuthActionTokenService(
         _userStore,
-        authConfig.accountEmails.actionTokenTTL
+        authConfig.accountEmails.actionTokenTTL,
+        authConfig.accountEmails.requestCooldown
       );
       _accountEmailService = new AccountEmailService(getEmailRuntime, authConfig);
 
@@ -279,20 +283,22 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       }
 
       const userCount = _userStore.countUsers();
-        return {
-          registration: {
-            ...authConfig.registration,
-            bootstrapRequired: userCount === 0,
-            publicRegistrationEnabled: userCount === 0 || authConfig.registration.mode === 'public',
-            userCount,
-          },
-          accountEmails: {
-            adminCreatedUser: authConfig.accountEmails.adminCreatedUser && getEmailRuntime().enabled,
-            passwordReset: authConfig.accountEmails.passwordReset && getEmailRuntime().enabled,
-            passwordChangedNotice: authConfig.accountEmails.passwordChangedNotice && getEmailRuntime().enabled,
-          },
-        };
-      })
+      const emailRuntime = getEmailRuntime();
+      const accountEmailReady = emailRuntime.enabled && Boolean(emailRuntime.app.publicUrl);
+      return {
+        registration: {
+          ...authConfig.registration,
+          bootstrapRequired: userCount === 0,
+          publicRegistrationEnabled: userCount === 0 || authConfig.registration.mode === 'public',
+          userCount,
+        },
+        accountEmails: {
+          adminCreatedUser: authConfig.accountEmails.adminCreatedUser && accountEmailReady,
+          passwordReset: authConfig.accountEmails.passwordReset && accountEmailReady,
+          passwordChangedNotice: authConfig.accountEmails.passwordChangedNotice && accountEmailReady,
+        },
+      };
+    })
 
     // ─── POST /auth/register ───────────────────────────
     .post(

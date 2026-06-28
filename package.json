@@ -8,6 +8,7 @@
     "build": "bun build app/server.ts --target bun --outdir dist",
     "build:binary": "bun build --compile app/server.ts --outfile platform",
     "typecheck": "tsc --noEmit",
+    "doctor": "bun run src/doctor/run.ts",
     "migrate": "bun run src/migrations/run.ts",
     "migrate:status": "bun run src/migrations/run.ts --status",
     "migrate:doctor": "bun run src/migrations/run.ts --doctor",
