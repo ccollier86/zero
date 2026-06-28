@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * data-table.tsx
+ *
+ * Renders Zero's schema-aware table organism on top of TanStack Table. Data
+ * source resolution, column state, toolbar UI, and cell editors live in
+ * dedicated modules; this file composes them into the public DataTable API.
+ */
+
 import * as React from 'react';
 import { useCallback } from 'react';
 import { flexRender } from '@tanstack/react-table';
@@ -8,8 +16,16 @@ import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { FieldMeta } from '../../schema/field-types';
 import { encodeFieldValue } from '../../schema/field-codecs';
 import type { Row } from '../../sync/types';
-import { useCollection } from '../../frontend/client/hooks';
-import { useDataTable, type UseDataTableReturn } from './use-data-table';
+import { useDataTable } from './use-data-table';
+import type {
+  DataTableColumnOverrides,
+  DataTableInitialState,
+} from './use-data-table';
+import {
+  useDataTableSource,
+  type DataTableFilters,
+  type DataTableSource,
+} from './data-table-source';
 import { AnimatedCell } from './animated-cell';
 import { EditableCell } from './editable-cell';
 import { DataTableColumnHeader } from './data-table-column-header';
@@ -27,32 +43,62 @@ import {
 } from '@/components/ui/table';
 import { Checkbox } from '@/components/animate-ui/components/radix/checkbox';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import type { LazyCollectionOptions } from '../../frontend/client/hooks';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface DataTableProps<T extends Row = Row> {
   schema: SchemaDescriptor;
-  /** Static data array — ignored if `collection` is provided. */
+  /** Explicit source config. Overrides legacy `data` / `collection` props. */
+  source?: DataTableSource<T>;
+  /** Static data array — ignored if `source` or `collection` is provided. */
   data?: T[];
   /** Collection name — auto-wires to live-updating reactive data. */
   collection?: string;
+  /** Fetch the collection through `/api/data` before rendering rows. */
+  lazy?: boolean;
+  /** Lazy `/api/data` equality filters. Only used with `lazy` or lazy source. */
+  filters?: DataTableFilters;
+  /** Lazy `/api/data` ordering, limit, and offset options. */
+  lazyOptions?: LazyCollectionOptions;
   columns?: string[];
   /** Primary key override. Defaults to `schema.primaryKey`. */
   primaryKey?: string;
   editable?: string[];
+  columnOverrides?: DataTableColumnOverrides<T>;
   actions?: RowAction<T>[];
   searchable?: boolean;
   sortable?: boolean;
   filterable?: boolean;
+  filterColumns?: string[];
   paginated?: boolean | { pageSize?: number };
   selectable?: boolean;
   onSelectionChange?: (ids: string[]) => void;
   onCellEdit?: (rowId: string, columnId: string, value: unknown) => void;
   /** Called when a row is clicked (for master-detail patterns). */
   onRowClick?: (row: T) => void;
+  /** Called when a row is double-clicked. */
+  onRowDoubleClick?: (row: T) => void;
   /** Row ID to highlight (visual feedback for selected state in master-detail). */
   highlightedRowId?: string;
+  /** Initial TanStack table state. */
+  initialState?: DataTableInitialState;
+  /** Extra toolbar controls rendered before built-in buttons. */
+  toolbarActions?: React.ReactNode;
+  toolbarClassName?: string;
+  /** Force toolbar rendering when only export, column, or custom actions are needed. */
+  showToolbar?: boolean;
+  /** CSV filename for the built-in export action. Default: `export.csv`. */
+  exportFilename?: string;
+  showExport?: boolean;
+  showColumnVisibility?: boolean;
+  emptyState?: React.ReactNode;
+  loadingState?: React.ReactNode;
+  errorState?: (error: Error | string, retry: () => void) => React.ReactNode;
+  getRowClassName?: (row: T) => string | undefined;
   className?: string;
 }
 
@@ -60,43 +106,63 @@ export interface DataTableProps<T extends Row = Row> {
 
 export function DataTable<T extends Row = Row>({
   schema,
+  source,
   data: dataProp,
   collection: collectionName,
+  lazy = false,
+  filters,
+  lazyOptions,
   columns: visibleColumns,
   primaryKey: primaryKeyOverride,
   editable = [],
+  columnOverrides,
   actions,
   searchable = false,
   sortable = true,
   filterable = false,
+  filterColumns,
   paginated = false,
   selectable = false,
   onSelectionChange,
   onCellEdit: onCellEditProp,
   onRowClick,
+  onRowDoubleClick,
   highlightedRowId,
+  initialState,
+  toolbarActions,
+  toolbarClassName,
+  showToolbar,
+  exportFilename = 'export.csv',
+  showExport = true,
+  showColumnVisibility = true,
+  emptyState,
+  loadingState,
+  errorState,
+  getRowClassName,
   className,
 }: DataTableProps<T>) {
   const pageSize = typeof paginated === 'object' ? (paginated.pageSize ?? 20) : 20;
   const showPagination = !!paginated;
   const primaryKey = getSchemaPrimaryKey(schema, primaryKeyOverride);
-
-  // When collection is provided, use live-updating reactive data
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  const live = collectionName ? useCollection<T>(collectionName) : null;
-  const data = live?.data ?? dataProp ?? [];
+  const resolvedSource = useDataTableSource<T>({
+    source,
+    data: dataProp,
+    collection: collectionName,
+    lazy,
+    filters,
+    lazyOptions,
+  });
+  const data = resolvedSource.data;
 
   // Auto-wire cell edits to collection.update when using collection prop
   const onCellEdit = React.useCallback(
     (rowId: string, columnId: string, value: unknown) => {
       const meta = schema.fields.get(columnId);
       const encodedValue = meta ? encodeFieldValue(meta, value) : value;
-      if (live) {
-        live.update(rowId, { [columnId]: encodedValue } as Partial<T>);
-      }
+      resolvedSource.actions?.update(rowId, { [columnId]: encodedValue } as Partial<T>);
       onCellEditProp?.(rowId, columnId, encodedValue);
     },
-    [live, onCellEditProp, schema],
+    [onCellEditProp, resolvedSource.actions, schema],
   );
 
   const dt = useDataTable<T>({
@@ -107,6 +173,8 @@ export function DataTable<T extends Row = Row>({
     selectable,
     pageSize,
     primaryKey,
+    columnOverrides,
+    initialState,
   });
 
   const {
@@ -158,16 +226,51 @@ export function DataTable<T extends Row = Row>({
   // ─── Render ───────────────────────────────────────────────────────
 
   const pageRows = table.getRowModel().rows;
+  const shouldShowToolbar = showToolbar ?? (searchable || filterable || !!toolbarActions);
+  const colSpan =
+    (visibleColumns?.length ?? schema.fieldNames.length) +
+    (selectable ? 1 : 0) +
+    (actions?.length ? 1 : 0);
+
+  if (resolvedSource.isLoading && data.length === 0) {
+    return (
+      <div className={cn('space-y-3', className)}>
+        {loadingState ?? <DefaultLoadingState />}
+      </div>
+    );
+  }
+
+  if (resolvedSource.error && data.length === 0) {
+    return (
+      <div className={cn('space-y-3', className)}>
+        {errorState
+          ? errorState(resolvedSource.error, resolvedSource.refresh)
+          : (
+              <DefaultErrorState
+                error={resolvedSource.error}
+                onRetry={resolvedSource.refresh}
+              />
+            )}
+      </div>
+    );
+  }
 
   return (
     <div className={cn('space-y-3', className)}>
       {/* Toolbar */}
-      {(searchable || filterable) && (
+      {shouldShowToolbar && (
         <DataTableToolbar
           table={table}
           globalFilter={globalFilter}
           onGlobalFilterChange={setGlobalFilter}
           searchable={searchable}
+          filterable={filterable}
+          filterColumns={filterColumns}
+          showColumnVisibility={showColumnVisibility}
+          showExport={showExport}
+          exportFilename={exportFilename}
+          actions={toolbarActions}
+          className={toolbarClassName}
         />
       )}
 
@@ -225,8 +328,10 @@ export function DataTable<T extends Row = Row>({
                     className={cn(
                       'border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted data-[highlighted]:bg-accent',
                       onRowClick && 'cursor-pointer',
+                      getRowClassName?.(row.original),
                     )}
                     onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                    onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row.original) : undefined}
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, x: -20 }}
@@ -235,7 +340,7 @@ export function DataTable<T extends Row = Row>({
                   >
                     {/* Selection cell */}
                     {selectable && (
-                      <TableCell>
+                      <TableCell onClick={(event) => event.stopPropagation()}>
                         <Checkbox
                           checked={row.getIsSelected()}
                           onCheckedChange={(value) => row.toggleSelected(!!value)}
@@ -254,7 +359,10 @@ export function DataTable<T extends Row = Row>({
                         editingCell?.columnId === cell.column.id;
 
                       return (
-                        <TableCell key={cell.id}>
+                        <TableCell
+                          key={cell.id}
+                          onClick={isEditable ? (event) => event.stopPropagation() : undefined}
+                        >
                           <AnimatedCell value={cellValue}>
                             {isEditable ? (
                               <EditableCell
@@ -285,7 +393,7 @@ export function DataTable<T extends Row = Row>({
                     })}
                     {/* Actions cell */}
                     {actions && actions.length > 0 && (
-                      <TableCell>
+                      <TableCell onClick={(event) => event.stopPropagation()}>
                         <DataTableRowActions row={row.original} actions={actions} />
                       </TableCell>
                     )}
@@ -294,14 +402,10 @@ export function DataTable<T extends Row = Row>({
               ) : (
                 <TableRow>
                   <TableCell
-                    colSpan={
-                      (visibleColumns?.length ?? schema.fieldNames.length) +
-                      (selectable ? 1 : 0) +
-                      (actions?.length ? 1 : 0)
-                    }
+                    colSpan={colSpan}
                     className="h-24 text-center text-muted-foreground"
                   >
-                    No results.
+                    {emptyState ?? 'No results.'}
                   </TableCell>
                 </TableRow>
               )}
@@ -313,6 +417,40 @@ export function DataTable<T extends Row = Row>({
 
       {/* Pagination */}
       {showPagination && <DataTablePagination table={table} />}
+    </div>
+  );
+}
+
+export const DataTableView = DataTable;
+
+function DefaultLoadingState() {
+  return (
+    <div className="space-y-2">
+      <Skeleton className="h-8 w-[min(18rem,100%)]" />
+      <Skeleton className="h-32 w-full" />
+      <Skeleton className="h-8 w-full" />
+    </div>
+  );
+}
+
+function DefaultErrorState({
+  error,
+  onRetry,
+}: {
+  error: Error | string;
+  onRetry: () => void;
+}) {
+  const message = error instanceof Error ? error.message : error;
+
+  return (
+    <div
+      role="alert"
+      className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+    >
+      <span className="min-w-0 truncate">{message}</span>
+      <Button size="sm" variant="outline" onClick={onRetry}>
+        Retry
+      </Button>
     </div>
   );
 }

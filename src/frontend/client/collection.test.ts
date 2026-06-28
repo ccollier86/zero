@@ -70,6 +70,10 @@ function createFakeSyncClient() {
     },
     sendRaw(): void {},
     connect(): void {},
+    reconnect(): void {},
+    reset(): void {
+      store.send({ type: 'sync.reset' });
+    },
     onMessage(): () => void {
       return () => {};
     },

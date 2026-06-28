@@ -483,31 +483,25 @@ Client                    Auth Plugin               UserStore
 
 After password change, all refresh tokens for the user are revoked — forces re-login on all devices. The current session's access token remains valid until it expires (stateless, no way to revoke), but the next refresh attempt will fail.
 
-### Session Expiration Messages
+### Session Expiration And Client Recovery
 
-The server publishes session expiration events to the `auth:{userId}` Bun pub/sub topic:
+The implemented client recovery path is refresh-token based:
 
-```ts
-interface SessionExpiredMessage {
-  type: 'auth.session-expired';
-  reason: 'inactive' | 'revoked' | 'token-expired';
-}
-```
+1. Access tokens are short-lived and stored only in memory.
+2. Refresh tokens are opaque, stored hashed in `_refresh_tokens`, persisted by the browser SDK, and rotated on every refresh.
+3. Browser startup exchanges the stored refresh token for a fresh access token, then loads `/auth/me`.
+4. Authenticated HTTP calls that receive 401 call `/auth/refresh` and retry once.
+5. The sync WebSocket reads the current access token every time it opens or reconnects, so login/restore/refresh cannot leave sync using a stale token.
+6. Logout, rejected refresh, token replay, or an unrefreshable 401 clears auth state and resets local synced table/state data.
 
-Published via `server.publish('auth:{userId}', JSON.stringify(message))`. Each client subscribes to their personal `auth:{userId}` topic when the WebSocket connection opens. The Client SDK listens on this topic, clears auth state, and fires the `onSessionExpired` callback:
+`AppProvider` provides the default UI safety net. When auth is enabled and the
+client becomes unauthenticated on a non-public route, it redirects to
+`loginPath` with a `redirect` query parameter. The server router uses the same
+`publicPaths` and `loginPath` settings during SSR/protected route handling.
 
-```ts
-// Client SDK — on receiving auth.session-expired
-store.send({ type: 'auth.clear' });   // wipe tokens + user from state
-ws.close();                            // drop the sync connection
-onSessionExpired?.(msg.reason);        // app callback — e.g., redirect to /login
-```
-
-| Reason | Trigger |
-|--------|---------|
-| `'inactive'` | Audit middleware detected no activity for inactivityTimeoutMs |
-| `'revoked'` | Admin force-revoked all tokens, or password changed on another device |
-| `'token-expired'` | Refresh token expired naturally (7d TTL) and client attempted refresh |
+Push-based inactivity messages over a personal `auth:{userId}` WebSocket topic
+belong to the deferred user-activity audit system. They are not part of the
+current auth runtime contract.
 
 ## Shared ReactiveDB
 
@@ -638,7 +632,10 @@ Neither plugin creates the database. Neither plugin owns it. Both receive it. Th
 
 ### WebSocket auth
 
-The auth middleware derives `authContext` on HTTP requests only. WebSocket connections use the sync plugin's explicit auth bridge: the client passes the access token as `?token=...`, and sync calls the auth token verifier during the WebSocket `open` lifecycle.
+The auth middleware derives `authContext` on HTTP requests only. WebSocket
+connections use the sync plugin's explicit auth bridge: the browser sync client
+adds the latest access token as `?token=...` whenever it opens or reconnects,
+and sync calls the auth token verifier during the WebSocket `open` lifecycle.
 
 ```ts
 createSyncPlugin({

@@ -7,6 +7,7 @@ import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { RowAction } from '../data-table/data-table-row-actions';
 import type { NavigationAction } from '../ui/record-navigation-bar';
 import { useCollection, useLazyCollection } from '../../frontend/client/hooks';
+import type { LazyCollectionOptions } from '../../frontend/client/hooks';
 import { DataTable } from '../data-table';
 import {
   ensureRowPrimaryKey,
@@ -54,6 +55,8 @@ export interface CrudPageProps<T extends Row = Row> {
   lazy?: boolean;
   /** Filters for lazy collection fetch. Only used when lazy=true. */
   filters?: Record<string, string>;
+  /** Sorting and pagination options for lazy `/api/data` fetches. */
+  lazyOptions?: LazyCollectionOptions;
 
   // ── Create/Edit form ──────────────────────────────────────
   /** Field overrides for the create form. */
@@ -112,7 +115,7 @@ export interface CrudPageProps<T extends Row = Row> {
   /** Navigation bar action buttons for the selected record. */
   navigationActions?: (item: T | null) => NavigationAction[];
   /** Primary action button in the navigation bar. */
-  primaryAction?: { label: string; sublabel?: string; shortcut?: string; onClick: () => void };
+  primaryAction?: { label: string; sublabel?: string; shortcut?: string; disabled?: boolean; onClick: () => void };
   /** Detail panel submit label. Default: 'Save Changes'. */
   submitLabel?: string;
   /** Width of the list panel. Default: '3fr'. */
@@ -157,7 +160,7 @@ export function CrudPage<T extends Row = Row>(props: CrudPageProps<T>) {
 }
 
 function CrudPageLazy<T extends Row = Row>(props: CrudPageProps<T>) {
-  const result = useLazyCollection<T>(props.table, props.filters);
+  const result = useLazyCollection<T>(props.table, props.filters, props.lazyOptions);
   return createElement(CrudPageCore<T>, {
     ...props,
     data: result.data,
@@ -384,6 +387,7 @@ function MasterDetailLayout<T extends Row = Row>({
   error,
   title,
   createLabel = 'Create',
+  emptyState,
   createFields,
   editableFields,
   formColumns = 2,
@@ -470,9 +474,6 @@ function MasterDetailLayout<T extends Row = Row>({
     ];
   }, [navigationActions, hideDelete, remove, onAfterDelete, primaryKey]);
 
-  // Resolve detailFooter — can be static ReactNode or render function
-  const resolvedFooter = typeof detailFooter === 'function' ? undefined : detailFooter;
-
   // Build primary action — default to create button if not provided and not hidden
   const resolvedPrimaryAction = primaryAction ?? (!hideCreate ? {
     label: createLabel,
@@ -511,7 +512,8 @@ function MasterDetailLayout<T extends Row = Row>({
         primaryKey={primaryKey}
         editableFields={editableFields}
         detailHeader={detailHeader}
-        detailFooter={resolvedFooter}
+        emptyState={emptyState}
+        detailFooter={detailFooter}
         navigationActions={navActions}
         primaryAction={resolvedPrimaryAction}
         onSelect={onRowClick}

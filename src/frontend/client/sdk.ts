@@ -2,11 +2,23 @@ import type { Row, ClientTableDef, JsonValue } from '../../sync/types';
 import { createSyncClient } from '../../sync/client/sync-client';
 import type { SyncClient } from '../../sync/client/sync-client';
 import { StateClient } from '../../sync/client/state-client';
-import { createStateStore, routeStateMessage } from '../../sync/client/state-store';
+import { createStateStore, routeStateMessage, type StateStore } from '../../sync/client/state-store';
 import { EphemeralClient } from '../../sync/client/ephemeral-client';
 import { createEphemeralStore, routeEphemeralMessage } from '../../sync/client/ephemeral-store';
 import { AuthClient, createAuthDisabledError } from './auth-client';
-import type { AuthActionTokenInfo, AuthPublicConfig, AuthUser, RegisterParams } from './auth-client';
+import type {
+  AuthActionTokenInfo,
+  AuthAdminConfig,
+  AuthAdminCreateUserParams,
+  AuthAdminUpdateUserParams,
+  AuthAdminUserPropertyConfig,
+  AuthAdminUserListParams,
+  AuthAdminUserListResult,
+  AuthPublicConfig,
+  AuthUserPropertyConfig,
+  AuthUser,
+  RegisterParams,
+} from './auth-client';
 import { createApi } from './api';
 import type { Api } from './api';
 import { NOTIFICATION_TABLES } from '../../notifications/types';
@@ -30,7 +42,19 @@ export type { SyncClient };
 
 export type { Collection } from './collection';
 
-export type { AuthActionTokenInfo, AuthPublicConfig, AuthUser, RegisterParams };
+export type {
+  AuthActionTokenInfo,
+  AuthAdminConfig,
+  AuthAdminCreateUserParams,
+  AuthAdminUpdateUserParams,
+  AuthAdminUserPropertyConfig,
+  AuthAdminUserListParams,
+  AuthAdminUserListResult,
+  AuthPublicConfig,
+  AuthUserPropertyConfig,
+  AuthUser,
+  RegisterParams,
+};
 
 // ─── FetchError ─────────────────────────────────────────────────────────────
 
@@ -163,6 +187,42 @@ export interface Client {
 
   /** Delete a user property by key. */
   deleteProperty(key: string): Promise<void>;
+
+  /** Load admin-only auth/user-management config. Requires an admin user. */
+  getAuthAdminConfig(): Promise<AuthAdminConfig>;
+
+  /** List users through the admin auth API. Requires an admin user. */
+  listAuthAdminUsers(params?: AuthAdminUserListParams): Promise<AuthAdminUserListResult>;
+
+  /** Load one user through the admin auth API. Requires an admin user. */
+  getAuthAdminUser(userId: string): Promise<AuthUser>;
+
+  /** Create a user through the admin auth API. Requires an admin user. */
+  createAuthAdminUser(params: AuthAdminCreateUserParams): Promise<{ user: AuthUser; setupEmailSent: boolean }>;
+
+  /** Update a user through the admin auth API. Requires an admin user. */
+  updateAuthAdminUser(userId: string, params: AuthAdminUpdateUserParams): Promise<AuthUser>;
+
+  /** Delete a user through the admin auth API. Requires an admin user. */
+  deleteAuthAdminUser(userId: string): Promise<void>;
+
+  /** Send an account setup email for an admin-created user. */
+  sendAuthAdminSetupEmail(userId: string): Promise<boolean>;
+
+  /** Send a password reset email for a user. */
+  sendAuthAdminPasswordReset(userId: string): Promise<void>;
+
+  /** Directly replace a user's password when manual admin reset is enabled. */
+  resetAuthAdminPassword(userId: string, password: string): Promise<void>;
+
+  /** Suspend a user and revoke their sessions. */
+  suspendAuthAdminUser(userId: string): Promise<AuthUser>;
+
+  /** Reactivate a suspended user. */
+  activateAuthAdminUser(userId: string): Promise<AuthUser>;
+
+  /** Revoke all active refresh tokens for a user. */
+  revokeAuthAdminUserSessions(userId: string): Promise<void>;
 
   // ─── HTTP (authenticated JSON fetch) ─────────────────────────────
 
@@ -344,18 +404,50 @@ export function createClient(config: ClientConfig): Client {
     const u = new URL(url);
     u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
     u.pathname = '/sync';
-    const token = authClient?.accessToken;
-    if (token) u.searchParams.set('token', token);
     return u.toString();
   }
 
   // ─── Sync Client (always created — owns the WebSocket) ────────────
-  const syncClient: SyncClient = createSyncClient({
+  const currentAuthToken = () => authClient?.accessToken || null;
+  let syncAuthRefresh: Promise<void> | null = null;
+  let syncStarted = autoConnect;
+  let syncClient!: SyncClient;
+  let stateStore: StateStore | null = null;
+
+  function resetClientSessionState(): void {
+    syncClient.reset();
+    stateStore?.send({ type: 'state.reset' } as any);
+  }
+
+  function handleSyncAuthFailure(error: string): void {
+    if (!authClient) {
+      onError?.(error);
+      return;
+    }
+    if (syncAuthRefresh) return;
+
+    syncAuthRefresh = (async () => {
+      const refreshed = await authClient.refresh();
+      if (refreshed && currentAuthToken()) {
+        syncClient.connect();
+        return;
+      }
+
+      authClient.expireSession();
+      resetClientSessionState();
+      onError?.(error);
+    })().finally(() => {
+      syncAuthRefresh = null;
+    });
+  }
+
+  syncClient = createSyncClient({
     url: getWsUrl(),
     tables,
-    token: authClient?.accessToken ?? undefined,
+    getToken: currentAuthToken,
     autoConnect,
     onError,
+    onAuthFailure: handleSyncAuthFailure,
     onReconnect,
     maxReconnectAttempts,
   });
@@ -363,7 +455,7 @@ export function createClient(config: ClientConfig): Client {
   // ─── State Client (optional) ──────────────────────────────────────
   let stateClient: StateClient | null = null;
   if (stateSync) {
-    const stateStore = createStateStore();
+    stateStore = createStateStore();
     stateClient = new StateClient(
       (msg) => syncClient.sendRaw(msg),
       stateStore
@@ -371,7 +463,7 @@ export function createClient(config: ClientConfig): Client {
 
     // Route incoming state messages from WS to state store + client
     syncClient.onMessage((msg) => {
-      const handled = routeStateMessage(stateStore, msg);
+      const handled = routeStateMessage(stateStore!, msg);
       if (handled) {
         // Notify StateClient subscribers for remote changes
         if (msg.type === 'state.snapshot') {
@@ -401,6 +493,19 @@ export function createClient(config: ClientConfig): Client {
 
   // ─── Collection Cache ─────────────────────────────────────────────
   const collections = new Map<string, Collection<any>>();
+
+  let previousAuthToken = currentAuthToken();
+  const unsubscribeAuth = authClient?.subscribe(() => {
+    const nextAuthToken = currentAuthToken();
+    if (nextAuthToken === previousAuthToken) return;
+
+    previousAuthToken = nextAuthToken;
+    if (nextAuthToken && syncStarted) {
+      syncClient.reconnect();
+    } else {
+      resetClientSessionState();
+    }
+  }) ?? null;
 
   function getCollection<T extends Row>(name: string): Collection<T> {
     if (!tables[name]) throw new Error(`Unknown table: ${name}`);
@@ -479,6 +584,18 @@ export function createClient(config: ClientConfig): Client {
     getProperty: async (key: string) => requireAuthClient().getProperty(key),
     getProperties: async () => requireAuthClient().getProperties(),
     deleteProperty: async (key: string) => requireAuthClient().deleteProperty(key),
+    getAuthAdminConfig: async () => requireAuthClient().getAdminConfig(),
+    listAuthAdminUsers: async (params?: AuthAdminUserListParams) => requireAuthClient().listAdminUsers(params),
+    getAuthAdminUser: async (userId: string) => requireAuthClient().getAdminUser(userId),
+    createAuthAdminUser: async (params: AuthAdminCreateUserParams) => requireAuthClient().createAdminUser(params),
+    updateAuthAdminUser: async (userId: string, params: AuthAdminUpdateUserParams) => requireAuthClient().updateAdminUser(userId, params),
+    deleteAuthAdminUser: async (userId: string) => requireAuthClient().deleteAdminUser(userId),
+    sendAuthAdminSetupEmail: async (userId: string) => requireAuthClient().sendAdminSetupEmail(userId),
+    sendAuthAdminPasswordReset: async (userId: string) => requireAuthClient().sendAdminPasswordReset(userId),
+    resetAuthAdminPassword: async (userId: string, password: string) => requireAuthClient().resetAdminPassword(userId, password),
+    suspendAuthAdminUser: async (userId: string) => requireAuthClient().suspendAdminUser(userId),
+    activateAuthAdminUser: async (userId: string) => requireAuthClient().activateAdminUser(userId),
+    revokeAuthAdminUserSessions: async (userId: string) => requireAuthClient().revokeAdminUserSessions(userId),
 
     // ─── HTTP ──────────────────────────────────────────────────────
     fetch: clientFetch,
@@ -498,6 +615,7 @@ export function createClient(config: ClientConfig): Client {
     },
 
     connect() {
+      syncStarted = true;
       syncClient.connect();
     },
 
@@ -515,6 +633,7 @@ export function createClient(config: ClientConfig): Client {
 
     disconnect() {
       syncClient.disconnect();
+      unsubscribeAuth?.();
       stateClient?.dispose();
       ephemeralClient.dispose();
       collections.clear();

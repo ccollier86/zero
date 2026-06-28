@@ -57,6 +57,7 @@ type SyncStoreEvents = {
   // Connection events
   'sync.connected': Record<string, never>;
   'sync.disconnected': Record<string, never>;
+  'sync.reset': Record<string, never>;
 
   // Optimistic mutations — generic (table name passed as field)
   'optimistic.insert': { table: string; rowId: string; row: Row; ref: string };
@@ -81,22 +82,25 @@ type SyncStoreEvents = {
  */
 export function createSyncStore(tables: Record<string, ClientTableDef>) {
   // Build initial context: empty record per table + sync metadata
-  const initialContext: SyncStoreContext = {
-    _sync: {
-      connected: false,
-      lastSeq: 0,
-      pending: [],
-    },
+  const tableDefs = tables;
+  const createInitialContext = (): SyncStoreContext => {
+    const context: SyncStoreContext = {
+      _sync: {
+        connected: false,
+        lastSeq: 0,
+        pending: [],
+      },
+    };
+
+    for (const tableName of Object.keys(tableDefs)) {
+      context[tableName] = {} as Record<string, Row>;
+    }
+
+    return context;
   };
 
-  for (const tableName of Object.keys(tables)) {
-    initialContext[tableName] = {} as Record<string, Row>;
-  }
-
-  const tableDefs = tables;
-
   const store = createStore({
-    context: initialContext,
+    context: createInitialContext(),
 
     on: {
       // ─── Server: Full snapshot ──────────────────────────────
@@ -240,6 +244,8 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
         ...ctx,
         _sync: { ...ctx._sync, connected: false },
       }),
+
+      'sync.reset': () => createInitialContext(),
 
       // ─── Optimistic: Insert ────────────────────────────────
       'optimistic.insert': (ctx, event: SyncStoreEvents['optimistic.insert']) => {

@@ -699,3 +699,28 @@ describe('complex scenarios', () => {
     expect(getCtx(store).entries).toEqual({ x: 'server-state' });
   });
 });
+
+describe('state.reset', () => {
+  test('clears entries, pending operations, and readiness', () => {
+    const store = createStateStore();
+
+    store.send({
+      type: 'state.snapshot' as const,
+      entries: { theme: 'dark' },
+    } as any);
+    store.send({
+      type: 'state.optimistic-set' as const,
+      ref: 'ref-1',
+      key: 'draft',
+      value: 'secret',
+    } as any);
+
+    store.send({ type: 'state.reset' as const } as any);
+
+    expect(getCtx(store)).toEqual({
+      entries: {},
+      ready: false,
+      pending: [],
+    });
+  });
+});

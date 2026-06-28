@@ -2,6 +2,11 @@
 
 JSON messages over WebSocket. Every message has a `type` field. The server assigns a monotonic sequence number to every data change. Clients track their position in the sequence to handle reconnect without data loss.
 
+> **Advanced engine docs:** This page describes the standalone sync wire
+> protocol. Full Zero apps usually consume this through `@platform/frontend`
+> hooks (`useCollection`, `useLazyCollection`, `useStatus`) instead of the
+> lower-level sync hooks named here.
+
 ## Message Types
 
 ### Server → Client
@@ -370,7 +375,7 @@ On successful reconnect, reset the attempt counter to 0.
 
 Connection is expected. This is a web app — an active WebSocket connection is the baseline assumption.
 
-When disconnected, the client shows an offline indicator via `useSyncStatus()` (see [SyncStore — Connection Status](./sync-store.md#connection-status)). There is no IndexedDB persistence and no offline mutation queue. Optimistic mutations sitting in the @xstate/store pending queue are lost if the tab or page is closed while disconnected.
+When disconnected, the standalone sync client can show an offline indicator via `useSyncStatus()` (see [SyncStore — Connection Status](./sync-store.md#connection-status)). Full Zero apps usually use `useStatus()` from `@platform/frontend`. There is no IndexedDB persistence and no offline mutation queue. Optimistic mutations sitting in the @xstate/store pending queue are lost if the tab or page is closed while disconnected.
 
 When the connection resumes, the client sends `sync.subscribe` with its `lastSeq`. The server responds with `sync.catchup` (if the seq is still in the ring buffer) or a fresh `sync.snapshot` (if the seq was pruned). Either way, the client converges to the server's current state.
 

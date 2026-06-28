@@ -9,8 +9,10 @@ const client = createClient({ url: 'http://localhost:3000', tables });
 // Auth — top-level
 await client.login('alice', 'password123');
 
+// Auth admin — typed user-management helpers
+const { users } = await client.listAuthAdminUsers();
+
 // HTTP — authenticated JSON requests in one line
-const { users } = await client.get('/api/admin/users');
 const { user } = await client.post('/api/users', { name: 'Alice' });
 await client.patch('/api/users/1', { role: 'admin' });
 await client.delete('/api/users/1');
@@ -141,9 +143,36 @@ if (config.registration.publicRegistrationEnabled) {
 }
 ```
 
-The built-in `LoginForm` and `RegisterForm` use the same config by default.
-After the first admin account exists, `registration.mode: 'admin-only'` hides
-public registration UI while keeping login available.
+The built-in `LoginForm`, `RegisterForm`, and `ForgotPasswordForm` use the same
+config by default. Policy-aware forms wait for config before exposing
+registration or password-reset actions. After the first admin account exists,
+`registration.mode: 'admin-only'` hides public registration UI while keeping
+login available.
+
+The auth component set is reusable and route-agnostic:
+
+```tsx
+import {
+  ChangePasswordForm,
+  ForgotPasswordForm,
+  LoginForm,
+  PasswordActionForm,
+  RegisterForm,
+  UserPropertiesForm,
+} from '@platform/frontend';
+
+<LoginForm forgotPasswordHref="/forgot-password" registerHref="/register" />
+<RegisterForm loginHref="/login" fields={['email', 'username', 'password']} />
+<ForgotPasswordForm loginHref="/login" />
+<PasswordActionForm token={tokenFromUrl} mode="auto" loginHref="/login" />
+<UserPropertiesForm />
+<ChangePasswordForm />
+```
+
+`PasswordActionForm` inspects `/auth/action-token/:token` and calls the reset
+or setup route based on token type. Invalid, expired, unsupported, or
+mode-mismatched tokens keep submit disabled. `UserPropertiesForm` renders only
+`editableBy: 'user'` property fields exposed by `/auth/config`.
 
 ### User Property Gates
 
@@ -151,7 +180,7 @@ Current-user properties are included in `user.properties`. The frontend barrel
 exports lightweight UI gates:
 
 ```tsx
-import { PropertyGate, HasFlag } from '@platform/frontend';
+import { AdminGate, PropertyGate, HasFlag, SignedIn, SignedOut } from '@platform/frontend';
 
 <PropertyGate propertyKey="department" allow={['accounting', 'management']}>
   <DepartmentTools />
@@ -160,6 +189,14 @@ import { PropertyGate, HasFlag } from '@platform/frontend';
 <HasFlag propertyKey="notificationsEnabled">
   <NotificationSettings />
 </HasFlag>
+
+<AdminGate>
+  <AdminOnlyButton />
+</AdminGate>
+
+<SignedOut>
+  <LoginForm />
+</SignedOut>
 ```
 
 These gates only control UI visibility. Protect sensitive data and actions
@@ -180,7 +217,7 @@ class FetchError extends Error {
 
 ```ts
 try {
-  const { user } = await client.patch('/api/admin/users', { userId: id, role: 'admin' });
+  const user = await client.updateAuthAdminUser(id, { role: 'admin' });
 } catch (err) {
   if (err instanceof FetchError) {
     if (err.status === 403) toast.error('Not authorized');
@@ -214,6 +251,12 @@ interface FetchInit {
 With `autoConnect: false`, the client creates stores but does not open a
 WebSocket until `client.connect()` is called.
 
+When auth is enabled, the WebSocket does not capture a one-time token at client
+creation. It reads the current access token every time it opens or reconnects.
+That keeps sync aligned with login, restore, refresh, and registration. If the
+server rejects the socket for auth, the SDK attempts one refresh; if refresh is
+rejected, auth state and local synced table/state data are cleared.
+
 ---
 
 ## Collections (Database)
@@ -234,7 +277,7 @@ const todos = client.collection<Todo>('todos');
 
 The type parameter `<Todo>` flows through to all return types and mutation inputs. No codegen — pure TypeScript inference.
 
-**Type safety note:** `client.collection<T>('todos')` — the generic `T` is a **client-side type assertion**. There is no runtime validation by default. The server validates writes via its ReactiveDB schema (column types, constraints). The client trusts the server's data shape. For client-side validation before sending mutations, use `createValidatedCollection<T>(name, schema)` with a valibot schema — see the [Validation](#validation) section.
+**Type safety note:** `client.collection<T>('todos')` — the generic `T` is a **client-side type assertion**. The server validates writes through the ReactiveDB table schema. Add client-side validation in your own form/action code when you want earlier UI feedback before an optimistic mutation is sent.
 
 ### Collection Interface
 
@@ -527,13 +570,7 @@ interface AuthClient {
   logout(): Promise<void>;
 
   /** Refresh the access token using the stored refresh token. */
-  refresh(): Promise<AuthResult>;
-
-  /** Get fresh user data from the server. */
-  getUser(): Promise<UserRecord>;
-
-  /** Update current user's profile. */
-  updateProfile(partial: Partial<UserProfile>): Promise<UserRecord>;
+  refresh(): Promise<boolean>;
 
   /** Change password. Requires current password. Revokes all sessions. */
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
@@ -541,10 +578,7 @@ interface AuthClient {
   // ─── Events ──────────────────────────────────────────
 
   /** Listen for auth state changes */
-  onChange(callback: (user: UserRecord | null) => void): () => void;
-
-  /** Listen for session expiry (inactivity timeout, forced logout) */
-  onSessionExpired(callback: (reason: string) => void): () => void;
+  subscribe(callback: () => void): () => void;
 }
 ```
 
@@ -652,7 +686,9 @@ await client.refresh();
 5. SDK stores the new access token in memory and the new refresh token in `localStorage`
 6. Resolves when refresh completes
 
-**Automatic refresh:** The SDK intercepts 401 responses from Eden RPC calls and automatically refreshes before retrying. The component never sees the 401.
+**Automatic refresh:** The SDK intercepts 401 responses from authenticated
+HTTP calls and automatically refreshes before retrying once. The component
+never sees a recoverable expired-access-token 401.
 
 **Rotation:** Every refresh call produces a new refresh token and revokes the old one. If an old refresh token is reused (replay attack), the server detects the revocation and revokes the entire token family — forcing re-login on all devices.
 
@@ -664,27 +700,48 @@ await client.refresh();
 | `Token revoked` | `TOKEN_REVOKED` | Refresh token was already used or explicitly revoked |
 | `No refresh token` | `NO_TOKEN` | No refresh token stored locally |
 
-### Session Expiry
+### Session Persistence And Expiry
 
-The server can force-expire a session for inactivity:
+The access token is short-lived and memory-only. The refresh token is persisted
+in `localStorage`, rotated on every refresh, and used to restore the browser
+session after reload.
+
+The SDK keeps the user logged in across normal access-token expiry:
+
+1. Startup with a stored refresh token calls `/auth/refresh`, then `/auth/me`.
+2. Authenticated HTTP calls that receive 401 refresh and retry once.
+3. Sync opens and reconnects with the latest access token instead of a stale token captured at startup.
+4. Login, registration, and refresh reconnect sync when the auth token changes.
+5. Logout, rejected refresh, revoked refresh token, or unknown 401 clears auth state and resets local synced table/state data.
+
+When auth is enabled, `AppProvider` watches auth state on the client. If the
+user becomes unauthenticated on a non-public route, it redirects to `loginPath`
+and appends `?redirect=<current-url>`. Server rendering uses the same
+`publicPaths` and `loginPath` config for protected route responses.
+
+Configure those paths in `createApp()`:
 
 ```ts
-client.onSessionExpired((reason) => {
-  // reason: 'inactive' | 'forced' | 'token_revoked'
-  console.log('Session expired:', reason);
-  window.location.href = '/login';
+createApp({
+  auth: true,
+  publicPaths: ['/login', '/register', '/forgot-password'],
+  loginPath: '/login',
 });
 ```
 
-**How it works:**
+Or override them in the root provider:
 
-1. Server scans active sessions every 30 seconds
-2. If no activity for the configured timeout (default: 30 minutes), the server:
-   - Revokes all refresh tokens for the user
-   - Pushes `auth.session-expired` via WebSocket (`server.publish('auth:{userId}')`)
-3. SDK receives the message, clears auth state, fires `onSessionExpired`
-
-The WebSocket connection is always present (sync engine), so the push is instant. No polling.
+```tsx
+<AppProvider
+  url={origin}
+  tables={tables}
+  auth
+  publicPaths={['/login', '/forgot-password']}
+  loginPath="/login"
+>
+  {children}
+</AppProvider>
+```
 
 ### User Record
 
@@ -778,7 +835,7 @@ todos.insert({ id: 'new-1', title: 'Walk dog', done: 0 });
 
 // 2. Immediately (synchronous):
 //    - Store applies the row locally
-//    - Any useTable/subscribe callbacks fire
+//    - Any useCollection/subscribe callbacks fire
 //    - UI shows the new row
 
 // 3. Asynchronously:
@@ -920,20 +977,17 @@ runtime server settings such as `auth`, `stateSync`, and resolved
 `tableSyncModes` so omitted provider props and auto-lazy decisions match the
 backend.
 
-### useTable
+### useCollection
 
-Subscribe to a full table. Returns all rows plus mutation functions. Re-renders when any row changes.
+Subscribe to a full-sync table. Returns array/map reads plus optimistic mutation functions. Re-renders when the local collection changes.
 
 ```tsx
 function TodoList() {
-  const { rows, isLoading, error, insert, update, delete: remove } = useTable<Todo>('todos');
-
-  if (isLoading) return <p>Loading...</p>;
-  if (error) return <p>Error: {error.message}</p>;
+  const { data, insert, update, remove } = useCollection<Todo>('todos');
 
   return (
     <ul>
-      {rows.map(todo => (
+      {data.map(todo => (
         <li key={todo.id}>
           <input
             type="checkbox"
@@ -952,40 +1006,85 @@ function TodoList() {
 }
 ```
 
-> **Prefer `useCollection`** for most page code. `useCollection` is the primary mutation API -- one hook for reads + writes with auto-PK on insert. `useTable` is the lower-level hook when you need `isLoading`/`error`/`refetch`.
+**Signature:**
+
+```ts
+function useCollection<T extends Record<string, unknown>>(name: string): CollectionResult<T>;
+
+interface CollectionResult<T> {
+  /** All rows as an array. Live, updates on every change. */
+  data: T[];
+  /** All rows keyed by primary key. */
+  byId: Record<string, T>;
+  /** Current local row count. */
+  count: number;
+
+  /** Optimistic insert. Auto-generates the primary key when omitted. */
+  insert(row: T): void;
+
+  /** Optimistic partial update by primary key. Merges into existing row. */
+  update(id: string, partial: Partial<T>): void;
+
+  /** Optimistic delete by primary key. */
+  remove(id: string): void;
+
+  /** Load rows into the local store. Used by lazy tables. */
+  load(rows: T[], options?: { replace?: boolean }): void;
+  /** Clear local rows without deleting server rows. */
+  clear(): void;
+}
+```
+
+Full-sync tables receive an initial WebSocket snapshot. For large tables, let
+Zero auto-lazy the table or mark it lazy and use `useLazyCollection`.
+
+### useLazyCollection
+
+Fetch a lazy table through `GET /api/data`, load the result into the local
+collection, then keep loaded rows live through WebSocket changes.
+
+```tsx
+function AttendanceList({ groupId }: { groupId: string }) {
+  const { data, isLoading, error, refresh } = useLazyCollection<Attendance>(
+    'attendance',
+    { group_id: groupId },
+    { order: 'date', dir: 'desc', limit: 50 },
+  );
+
+  if (isLoading) return <p>Loading...</p>;
+  if (error) return <p>{error.message}</p>;
+
+  return (
+    <ul>
+      {data.map(row => <li key={row.id}>{row.date}</li>)}
+      <button onClick={refresh}>Refresh</button>
+    </ul>
+  );
+}
+```
 
 **Signature:**
 
 ```ts
-function useTable<T extends Record<string, unknown>>(name: string): UseTableResult<T>;
-
-interface UseTableResult<T> {
-  /** All rows as an array. Live — updates on every change. */
-  rows: T[];
-
-  /** Whether the initial snapshot has been received from the server. */
+function useLazyCollection<T extends Record<string, unknown>>(
+  table: string,
+  filters?: Record<string, string>,
+  options?: {
+    order?: string;
+    dir?: 'asc' | 'desc';
+    limit?: number;
+    offset?: number;
+  },
+): CollectionResult<T> & {
   isLoading: boolean;
-
-  /** Error from the last failed operation, or null. */
   error: Error | null;
-
-  /** Optimistic insert. Row appears immediately, server confirms/rejects. */
-  insert(row: T): Promise<T>;
-
-  /** Optimistic partial update by primary key. Merges into existing row. */
-  update(id: string | number, partial: Partial<T>): Promise<T>;
-
-  /** Optimistic delete by primary key. Row disappears immediately, server confirms/rejects. */
-  delete(id: string | number): Promise<void>;
-
-  /** Re-fetch from the server. Useful after external mutations or error recovery. */
-  refetch(): Promise<void>;
-}
+  refresh(): void;
+};
 ```
 
-**Re-render behavior:** Re-renders when any row in the table changes (insert, update, or delete). For large tables with frequent updates to unrelated rows, use `useRow` instead.
-
-**Stable references:** `insert`, `update`, and `delete` are stable function references (memoized). Safe to pass as props or use in dependency arrays.
+Filters are sent to `/api/data` as equality filters. The backend validates table
+and column names against the schema, enforces sync read policy, caps result
+size, and applies configured sorting/pagination.
 
 ### useRow
 
@@ -993,7 +1092,8 @@ Subscribe to a single row by primary key. Only re-renders when that specific row
 
 ```tsx
 function TodoItem({ id }: { id: string }) {
-  const { row, update, remove } = useRow<Todo>('todos', id);
+  const row = useRow<Todo>('todos', id);
+  const { update, remove } = useCollection<Todo>('todos');
 
   if (!row) return null;  // Row was deleted
 
@@ -1014,18 +1114,7 @@ function TodoItem({ id }: { id: string }) {
 **Signature:**
 
 ```ts
-function useRow<T extends Record<string, unknown>>(name: string, id: string): UseRowResult<T>;
-
-interface UseRowResult<T> {
-  /** The row, or null if it doesn't exist / was deleted. */
-  row: T | null;
-
-  /** Optimistic partial update. ID is bound from the hook call. */
-  update: (partial: Partial<T>) => void;
-
-  /** Optimistic delete. ID is bound from the hook call. */
-  remove: () => void;
-}
+function useRow<T extends Record<string, unknown>>(name: string, id: string): T | null;
 ```
 
 **Re-render behavior:** Only re-renders when this specific row changes. Other rows in the same table changing does not trigger a re-render. Uses referential equality on `store.context[table][id]`.
@@ -1061,6 +1150,21 @@ function useQuery<T extends Record<string, unknown>>(
 **Re-render behavior:** The filter runs on every store change, but the hook only re-renders if the filtered result changes (shallow array comparison — same items in same order = same reference).
 
 **Important:** The filter function should be stable — wrap in `useCallback` or define outside the component. A new function reference on every render defeats the memoization.
+
+### useStatus
+
+Connection state for the shared SDK WebSocket.
+
+```tsx
+function ConnectionIndicator() {
+  const { connected } = useStatus();
+  return <div className={connected ? 'online' : 'offline'} />;
+}
+```
+
+```ts
+function useStatus(): { connected: boolean };
+```
 
 ### useServerState
 
@@ -1193,7 +1297,11 @@ interface AuthHookResult {
 
 **Reactive user:** `user` is backed by `useRow('users', userId)` — it reads from the sync engine's reactive `users` table. If an admin changes this user's role, the component re-renders with the new role. No polling, no refetch.
 
-**Session expiry:** When the server pushes `auth.session-expired` via WebSocket, the hook clears state automatically. `user` becomes `null`, `isAuthenticated` becomes `false`. Combine with an auth-gated layout to redirect:
+**Session expiry:** When the refresh token can no longer restore the session,
+the hook reflects the cleared auth state. `user` becomes `null`,
+`isAuthenticated` becomes `false`, and `AppProvider` redirects protected
+client routes to the configured login path. You can still add local guards when
+you want a component-specific fallback:
 
 ```tsx
 // app/dashboard/layout.tsx
@@ -1230,50 +1338,26 @@ function useCurrentUser(): UserRecord | null;
 
 Equivalent to `useAuth().user`, but slightly cheaper — only subscribes to the user row, not the full auth state.
 
-### useSyncStatus
-
-Connection and sync state.
-
-```tsx
-function ConnectionIndicator() {
-  const { connected, pending } = useSyncStatus();
-
-  return (
-    <div className={connected ? 'online' : 'offline'}>
-      {connected ? 'Connected' : 'Reconnecting...'}
-      {pending > 0 && <span>{pending} saving...</span>}
-    </div>
-  );
-}
-```
-
-**Signature:**
-
-```ts
-function useSyncStatus(): SyncStatus;
-
-interface SyncStatus {
-  /** Whether the WebSocket is connected. */
-  connected: boolean;
-
-  /** Number of optimistic mutations awaiting server acknowledgment. */
-  pending: number;
-}
-```
-
 ### SSR Hook Behavior
 
 Hooks behave differently during server-side rendering (`renderToReadableStream`) vs. after client hydration.
 
 **During SSR (server):**
-- Hooks that depend on WebSocket (`useTable`, `useServerState`, `useSyncStatus`) are **not available** during SSR. There is no WebSocket connection on the server.
-- SSR renders with data loaded server-side and passed via props or initial context. The server reads directly from ReactiveDB.
-- `useAuth()` during SSR reads from the request context (JWT in cookie/header), not from a WebSocket connection.
+- Public frontend hooks are SSR-safe and return empty/default values while there
+  is no browser SDK client.
+- Server rendering should load data directly from ReactiveDB or route loaders
+  when the first HTML needs data.
+- In the browser, hooks throw a clear provider error if used outside
+  `<AppProvider>` or `<ClientProvider>`.
 
 **After hydration (client):**
-- Hooks activate on the client after `hydrateRoot()` completes. They connect to the live sync engine.
-- `useTable` takes over with live data from the WebSocket snapshot. If the data hasn't changed since SSR, no re-render occurs.
-- `useServerState` reads from the @xstate/store populated by the `state.snapshot` message.
+- `AppProvider` creates the SDK client, connects the WebSocket, and provides
+  auth/sync/router context.
+- `useCollection` reads the full-sync snapshot and then stays live through
+  change events.
+- `useLazyCollection` fetches its first page through `/api/data`, loads those
+  rows locally, and then keeps loaded rows live through change events.
+- `useServerState` reads from the @xstate/store populated by `state.snapshot`.
 
 **Pattern for synced tables:**
 
@@ -1285,16 +1369,16 @@ Server SSR:
 Client hydration:
   3. hydrateRoot() attaches React to server HTML
   4. Sync engine connects, receives sync.snapshot
-  5. useTable('todos') takes over with live updates
+  5. useCollection('todos') takes over with live updates
   6. If data unchanged since SSR → no re-render, no flash
 ```
 
 ```tsx
 // app/todos/page.tsx
-// Server renders with initial DB query. Client hydrates. useTable takes over.
+// Server renders with initial DB query. Client hydrates. useCollection takes over.
 export default function Todos() {
-  const { rows } = useTable<Todo>('todos');
-  return <ul>{rows.map(t => <li key={t.id}>{t.title}</li>)}</ul>;
+  const { data } = useCollection<Todo>('todos');
+  return <ul>{data.map(t => <li key={t.id}>{t.title}</li>)}</ul>;
 }
 ```
 
@@ -1388,7 +1472,7 @@ Valibot schemas for validating mutations, route params, and API inputs. One sche
 Validate before the optimistic apply — bad data never enters the local store.
 
 ```tsx
-import { useTable } from '@platform/frontend';
+import { useCollection } from '@platform/frontend';
 import * as v from 'valibot';
 
 const TodoSchema = v.object({
@@ -1398,14 +1482,14 @@ const TodoSchema = v.object({
 });
 
 function AddTodo() {
-  const { insert } = useTable<v.InferOutput<typeof TodoSchema>>('todos');
+  const { insert } = useCollection<v.InferOutput<typeof TodoSchema>>('todos');
+  const [issues, setIssues] = useState<v.BaseIssue<unknown>[]>([]);
 
   const handleAdd = (title: string) => {
     const row = { title, done: 0 };  // Auto-PK generates UUID
     const result = v.safeParse(TodoSchema, row);
     if (!result.success) {
-      // Handle validation error — row never enters store
-      console.error(result.issues);
+      setIssues(result.issues);
       return;
     }
     insert(result.output);
@@ -1415,31 +1499,9 @@ function AddTodo() {
 }
 ```
 
-### Validated Collection
-
-Wrap a collection with a schema. Every `insert()` and `update()` validates before applying.
-
-```ts
-import { createValidatedCollection } from '@platform/frontend';
-import * as v from 'valibot';
-
-const TodoSchema = v.object({
-  id: v.string(),
-  title: v.pipe(v.string(), v.minLength(1), v.maxLength(200)),
-  done: v.number(),
-});
-
-const todos = createValidatedCollection(client.collection('todos'), {
-  insert: TodoSchema,
-  update: v.partial(v.omit(TodoSchema, ['id'])),
-});
-
-// Throws ValiError if validation fails — mutation never sent
-todos.insert({ id: '...', title: '', done: 0 });  // ValiError: title minLength 1
-
-// Valid — applies optimistically + sends to server
-todos.insert({ id: '...', title: 'Buy milk', done: 0 });
-```
+For reusable forms, keep validation in the form or action component so invalid
+data never enters the optimistic store. The server schema still remains the
+authoritative validation boundary.
 
 ### Route Param Validation
 
@@ -1512,7 +1574,7 @@ const { data: transcript } = await api.api.sessions[sessionId].transcript.get();
 
 | Scenario | Use |
 |----------|-----|
-| Data that should be live (todos, users, messages) | `useTable` / `useRow` — synced automatically |
+| Data that should be live (todos, users, messages) | `useCollection` / `useRow` — synced automatically |
 | Mutation that should be optimistic + live | `insert()` / `update()` / `remove()` from hooks |
 | One-off action (send email, trigger export) | Eden RPC |
 | File upload | Eden RPC |
@@ -1668,7 +1730,7 @@ catch-all route.
 3. Steady state
    ├─► Client A: insert() → optimistic → WS sync.mutate
    ├─► Server: validates → writes → sync.ack to A → broadcast to all
-   ├─► Client B: store updates → useTable re-renders
+   ├─► Client B: store updates → useCollection re-renders
    └─► No polling. No refetch. No invalidation. Live.
 ```
 

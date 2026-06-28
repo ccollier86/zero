@@ -840,7 +840,7 @@ Same `useSyncExternalStore` pattern as the sync hooks. Tear-free reads, change-d
 | **Optimistic** | Yes — pending queue with rollback | Yes — same pattern |
 | **Broadcast** | All subscribed clients (multi-user) | Same user's other devices (single-user) |
 | **Persistence** | SQLite (ReactiveDB tables) | SQLite (`_user_state` table) |
-| **React hook** | `useTable()`, `useRow()`, `useQuery()` | `useServerState()` |
+| **React hook** | `useCollection()`, `useRow()`, `useQuery()` | `useServerState()` |
 | **Transport** | Same WebSocket | Same WebSocket |
 | **Use case** | Todos, users, projects, records | Theme, sidebar, form drafts, game state |
 

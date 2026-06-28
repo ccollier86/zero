@@ -297,6 +297,11 @@ export function createAuthPlugin(config: AuthPluginConfig) {
           passwordReset: authConfig.accountEmails.passwordReset && accountEmailReady,
           passwordChangedNotice: authConfig.accountEmails.passwordChangedNotice && accountEmailReady,
         },
+        userProperties: Object.fromEntries(
+          Object.entries(authConfig.userProperties)
+            .filter(([, field]) => field.editableBy === 'user')
+        ),
+        strictUserProperties: authConfig.strictUserProperties,
       };
     })
 

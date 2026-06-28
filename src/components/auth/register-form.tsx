@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * register-form.tsx
+ *
+ * Renders the reusable Zero registration form. This file owns public
+ * registration UI state and policy-aware visibility only; account creation and
+ * first-admin bootstrap rules remain backend responsibilities.
+ */
+
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -15,11 +23,18 @@ import { ValidationRules } from '@/components/ui/validation-rules';
 import { AnimateIcon } from '@/components/animate-ui/icons/icon';
 import { CircleX } from '@/components/animate-ui/icons/circle-x';
 import { Loader } from '@/components/animate-ui/icons/loader';
+import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
+import {
+  isAuthConfigPending,
+  isAuthConfigUnavailable,
+  isRegistrationClosed,
+} from './auth-config-ui-policy';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type FieldName = 'email' | 'username' | 'firstName' | 'lastName' | 'password';
 
+/** Props that control registration fields, links, and policy behavior. */
 interface RegisterFormProps {
   onSuccess?: () => void;
   showLoginLink?: boolean;
@@ -44,6 +59,7 @@ function getUsernameRules(username: string) {
 
 // ─── RegisterForm ────────────────────────────────────────────────────────────
 
+/** Render a registration form that adapts to public registration config. */
 function RegisterForm({
   onSuccess,
   showLoginLink = true,
@@ -51,7 +67,7 @@ function RegisterForm({
   fields = ['email', 'password'],
   showPasswordStrength = true,
   respectRegistrationPolicy = true,
-  unavailable = null,
+  unavailable,
   socialProviders,
   className,
 }: RegisterFormProps) {
@@ -69,10 +85,9 @@ function RegisterForm({
 
   const displayError = localError ?? error;
   const hasNames = fields.includes('firstName') || fields.includes('lastName');
-  const registrationClosed =
-    respectRegistrationPolicy &&
-    authConfig.config !== null &&
-    !authConfig.canRegister;
+  const configPending = isAuthConfigPending(respectRegistrationPolicy, authConfig);
+  const configUnavailable = isAuthConfigUnavailable(respectRegistrationPolicy, authConfig);
+  const registrationClosed = isRegistrationClosed(respectRegistrationPolicy, authConfig);
 
   function update(field: string) {
     return (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -92,17 +107,29 @@ function RegisterForm({
       });
       onSuccess?.();
     } catch (err) {
-      setLocalError(err instanceof Error ? err.message : 'Registration failed');
+      reportAuthUiError('register', err);
+      setLocalError(getAuthDisplayMessage(err, 'Registration failed'));
     }
   }
 
+  if (configPending) {
+    return <RegistrationPolicyLoading />;
+  }
+
+  if (configUnavailable) {
+    return <>{unavailable ?? <RegistrationConfigUnavailable loginHref={loginHref} showLoginLink={showLoginLink} />}</>;
+  }
+
   if (registrationClosed) {
-    return <>{unavailable}</>;
+    return <>{unavailable ?? <RegistrationUnavailable loginHref={loginHref} showLoginLink={showLoginLink} />}</>;
   }
 
   return (
     <form onSubmit={handleSubmit} className={cn('space-y-3', className)}>
-      <AuthHeader title="Create account" description="Enter your details to get started" />
+      <AuthHeader
+        title={authConfig.bootstrapRequired ? 'Create first admin' : 'Create account'}
+        description={authConfig.bootstrapRequired ? 'The first account becomes the app admin' : 'Enter your details to get started'}
+      />
 
       <div className="space-y-3">
         {hasNames && (
@@ -217,7 +244,7 @@ function RegisterForm({
         )}
       </AnimatePresence>
 
-      <Button type="submit" size="sm" className="w-full h-8" disabled={isLoading}>
+      <Button type="submit" size="sm" className="w-full h-8" disabled={isLoading || configPending}>
         {isLoading ? (
           <AnimateIcon animate loop>
             <Loader size={16} />
@@ -240,6 +267,61 @@ function RegisterForm({
         </p>
       )}
     </form>
+  );
+}
+
+function RegistrationPolicyLoading() {
+  return (
+    <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground" aria-live="polite">
+      <AnimateIcon animate loop>
+        <Loader size={16} />
+      </AnimateIcon>
+      Loading registration settings
+    </div>
+  );
+}
+
+function RegistrationConfigUnavailable({
+  loginHref,
+  showLoginLink,
+}: {
+  loginHref: string;
+  showLoginLink: boolean;
+}) {
+  return (
+    <div className="space-y-3">
+      <AuthHeader title="Registration unavailable" description="Registration settings could not be loaded." />
+      {showLoginLink && (
+        <p className="text-center text-xs text-muted-foreground">
+          Already have an account?{' '}
+          <a href={loginHref} className="text-primary hover:underline">
+            Sign in
+          </a>
+        </p>
+      )}
+    </div>
+  );
+}
+
+function RegistrationUnavailable({
+  loginHref,
+  showLoginLink,
+}: {
+  loginHref: string;
+  showLoginLink: boolean;
+}) {
+  return (
+    <div className="space-y-3">
+      <AuthHeader title="Registration closed" description="An administrator must create new accounts for this app." />
+      {showLoginLink && (
+        <p className="text-center text-xs text-muted-foreground">
+          Already have an account?{' '}
+          <a href={loginHref} className="text-primary hover:underline">
+            Sign in
+          </a>
+        </p>
+      )}
+    </div>
   );
 }
 

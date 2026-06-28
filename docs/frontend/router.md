@@ -496,7 +496,7 @@ After initial SSR + hydration, all subsequent navigation is client-side. The syn
 3. React 19 renderToReadableStream — HTML streams progressively (Suspense boundaries)
 4. bootstrapScripts loads client bundle
 5. Client calls hydrateRoot() — app becomes interactive
-6. Sync engine connects, useTable hooks take over with live data
+6. Sync engine connects, useCollection hooks take over with live data
 ```
 
 ### 2. Client Navigation (SPA)
@@ -516,7 +516,7 @@ import { Link } from '@platform/frontend';
 6. Render page component with params + loader data
 7. Shared layouts stay mounted — React only re-renders the changed subtree
 8. `history.pushState()` updates URL bar
-9. `useSyncStatus`, `useTable` etc. continue working — no reconnection needed
+9. `useStatus`, `useCollection` etc. continue working — no reconnection needed
 
 **Shared layouts are preserved.** If navigating from `/dashboard/settings` to `/dashboard/team`, the `RootLayout` and `DashboardLayout` stay mounted. Only the page component swaps. No re-render, no re-fetch, no flash.
 
@@ -540,7 +540,7 @@ Preload = fetch the route's JS chunk + call loader if present.
 
 ### 4. Route Loaders
 
-Optional. Only needed for data **not** in synced tables. Most pages just use `useTable`/`useRow` and need no loader.
+Optional. Only needed for data **not** in synced tables. Most pages just use `useCollection`/`useRow` and need no loader.
 
 ```ts
 interface LoaderContext {
@@ -555,8 +555,8 @@ interface LoaderContext {
 ```tsx
 // app/todos/page.tsx — NO loader needed, data is live
 export default function Todos() {
-  const { rows, insert } = useTable<Todo>('todos');
-  return <ul>{rows.map(t => <li key={t.id}>{t.title}</li>)}</ul>;
+  const { data, insert } = useCollection<Todo>('todos');
+  return <ul>{data.map(t => <li key={t.id}>{t.title}</li>)}</ul>;
 }
 ```
 
@@ -584,7 +584,7 @@ export async function loader({ params, client }: LoaderContext) {
 }
 
 export default function TeamDashboard({ data, params }: { data: { stats: Stats }; params: { teamId: string } }) {
-  const { rows: members } = useTable<Member>('members');  // live synced data
+  const { data: members } = useCollection<Member>('members');  // live synced data
   return (
     <div>
       <h1>Team {params.teamId}</h1>

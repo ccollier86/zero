@@ -4,9 +4,9 @@
 
 Implementation order, dependency map, and file inventory for the platform.
 
-> **Status (2026-03-17):** All four phases are built and operational. The platform ships as a single Bun binary with ReactiveDB, real-time sync, auth, state sync, file-based router, SSR, schema system, and the full component library. Recent DX improvements: single `@platform/frontend` import path, single `tables` export (no manual `.serverTable`/`.clientTable` extraction), auto-PK on insert, `InferRow` type inference, `useCollection` as primary mutation API, `useLazyCollection` hook, `CrudPage` component, auto `/api/data` endpoint for lazy tables, `.build/` auto-clean.
+> **Status (2026-06-28):** Historical implementation plan. All four phases are built and operational, but prototype-era examples in this file may mention lower-level sync names such as `useTable` or `useSyncStatus`. Current app-facing APIs are documented in [Frontend SDK](./frontend/sdk.md) and [SDK Reference](./sdk-reference.md): use `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, and `useStatus` from `@platform/frontend`.
 
-All spec contradictions have been resolved. The design docs are internally consistent and ready to build from.
+Use the current SDK docs for copy-pasteable examples and public export names.
 
 ## Architecture Map
 

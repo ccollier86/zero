@@ -85,9 +85,9 @@ Drop a file in `app/`, it's a route. Subscribe to a table, it updates live. Regi
 |----------|--------------|
 | **File-based routing** | `app/` directory maps to URL routes — `page.tsx` renders, `layout.tsx` wraps, `[param]/` is dynamic |
 | **React 19 streaming SSR** | `renderToReadableStream` on Bun — progressive HTML, Suspense boundaries stream as they resolve |
-| **Reactive data** | Sync engine tables are live — `useTable('todos')` returns `{ rows, isLoading, insert, ... }` and re-renders when any client mutates |
+| **Reactive data** | Sync engine tables are live — `useCollection('todos')` returns `{ data, insert, update, remove }` and re-renders when any client mutates |
 | **Typed RPC** | Eden Treaty generates typed client from Elysia server — full autocomplete, zero codegen step |
-| **Built-in auth** | Auth plugin provides register/login/refresh/logout — reactive user data via shared ReactiveDB |
+| **Built-in auth** | Register/login/refresh/logout, persistent browser sessions, protected-route redirects, and reactive user data via shared ReactiveDB |
 | **Persistent state** | Per-user KV state survives refresh, device switch, server restart — `useServerState('theme', 'dark')` |
 | **Single binary** | `bun build --compile` packages server + client bundle + SQLite + all runtime into one executable |
 
@@ -153,6 +153,8 @@ Auth, sync, and router all share one ReactiveDB. The router renders pages with R
 |----------|---------------|
 | [Router](./router.md) | File-based routing conventions, React 19 SSR on Bun, route scanning, layouts, dynamic segments |
 | [SDK](./sdk.md) | `createApp()` server factory, `<AppProvider>`, auth hooks, router hooks, Eden typed RPC, SSR → hydration → live data flow |
+| [DataTableView](./data-table.md) | Schema-aware table organism, full-sync/lazy/data sources, inline editing, toolbar, column overrides |
+| [MasterDetailView](./master-detail.md) | List/detail organism, generated detail forms, custom detail rendering, navigation, low-level detail primitives |
 | [Migrations](../migrations.md) | First-class migration files, schema history, doctor, migrate-plan, rollback, backups |
 | [Observability](../observability.md) | Stable event codes, default console + memory store, protected event endpoint, frontend sink |
 
@@ -162,7 +164,7 @@ The frontend SDK composes these — it doesn't reinvent them:
 
 | Primitive | Docs | What it provides to the frontend |
 |-----------|------|----------------------------------|
-| Sync engine | [docs/realtime-sync/](../realtime-sync/realtime-sync/README.md) | `useTable`, `useRow`, `useQuery`, `useSyncStatus`, `SyncClient`, `SyncProvider`, optimistic mutations, reconnect |
+| Sync engine | [docs/realtime-sync/](../realtime-sync/realtime-sync/README.md) | `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, `useStatus`, `SyncClient`, `SyncProvider`, optimistic mutations, reconnect |
 | Auth system | [docs/auth/](../auth/README.md) | Register, login, refresh, logout routes, reactive `users` table, JWT middleware, guards |
 | State sync | [docs/state-sync.md](../state-sync.md) | `useServerState`, per-user persistent KV, device sync, form drafts, UI preferences |
 | Observability | [docs/observability.md](../observability.md) | Backend/frontend event sink, default inspection endpoint, configurable adapters |
@@ -241,7 +243,7 @@ src/frontend/
 │   └── types.ts               # AppConfig, CreateAppOptions
 ├── client/
 │   ├── app-provider.tsx       # React context — sync client, auth state, router state
-│   ├── hooks.ts               # useTable, useRow, useQuery, useAuth, useCurrentUser
+│   ├── hooks.ts               # useCollection, useLazyCollection, useRow, useQuery, useAuth
 │   ├── link.tsx               # <Link> component — client-side navigation
 │   ├── router-context.tsx     # Route params, navigation, pathname
 │   └── hydrate.tsx            # Client entry — hydrateRoot + provider setup

@@ -71,10 +71,8 @@ export function buildRouteTree(files: ScannedFile[]): RouteNode {
 
 // ─── Debug ─────────────────────────────────────────────────────────────────
 
-/**
- * Print the route tree for debugging.
- */
-export function printRouteTree(node: RouteNode, depth = 0): void {
+/** Format the route tree for debug or CLI presentation. */
+export function formatRouteTree(node: RouteNode, depth = 0): string {
   const indent = '  '.repeat(depth);
   const segment = node.segment || '/';
   const flags = [
@@ -86,7 +84,7 @@ export function printRouteTree(node: RouteNode, depth = 0): void {
     .filter(Boolean)
     .join(', ');
 
-  console.log(`${indent}${segment}${flags ? ` [${flags}]` : ''}`);
+  const lines = [`${indent}${segment}${flags ? ` [${flags}]` : ''}`];
 
   // Sort children: static first, then dynamic, then catch-all
   const sorted = [...node.children.values()].sort((a, b) => {
@@ -96,6 +94,13 @@ export function printRouteTree(node: RouteNode, depth = 0): void {
   });
 
   for (const child of sorted) {
-    printRouteTree(child, depth + 1);
+    lines.push(formatRouteTree(child, depth + 1));
   }
+
+  return lines.join('\n');
+}
+
+/** Return a formatted route tree string for debug callers. */
+export function printRouteTree(node: RouteNode, depth = 0): string {
+  return formatRouteTree(node, depth);
 }

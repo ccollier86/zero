@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * forgot-password-form.tsx
+ *
+ * Renders the reusable password-reset request form. This file owns email input
+ * state and auth-config-aware visibility only; reset token creation and email
+ * delivery remain backend responsibilities.
+ */
+
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -13,13 +21,23 @@ import { CircleX } from '@/components/animate-ui/icons/circle-x';
 import { CircleCheck } from '@/components/animate-ui/icons/circle-check';
 import { Loader } from '@/components/animate-ui/icons/loader';
 import { Send } from '@/components/animate-ui/icons/send';
+import { useAuth, useAuthConfig } from '../../frontend/client/hooks';
+import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
+import {
+  isAuthConfigPending,
+  isAuthConfigUnavailable,
+  isPasswordResetUnavailable,
+} from './auth-config-ui-policy';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+/** Props that control password-reset request behavior and navigation links. */
 interface ForgotPasswordFormProps {
   onSubmit?: (email: string) => Promise<void>;
   onBack?: () => void;
   loginHref?: string;
+  respectEmailPolicy?: boolean;
+  unavailable?: React.ReactNode;
   className?: string;
 }
 
@@ -49,29 +67,51 @@ function SuccessState({ email }: { email: string }) {
 
 // ─── ForgotPasswordForm ──────────────────────────────────────────────────────
 
+/** Render a password-reset request form backed by the shared auth client. */
 function ForgotPasswordForm({
   onSubmit,
   onBack,
   loginHref = '#login',
+  respectEmailPolicy = true,
+  unavailable,
   className,
 }: ForgotPasswordFormProps) {
+  const { forgotPassword } = useAuth();
+  const authConfig = useAuthConfig();
   const [email, setEmail] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [sent, setSent] = React.useState(false);
+  const configPending = isAuthConfigPending(respectEmailPolicy, authConfig);
+  const configUnavailable = isAuthConfigUnavailable(respectEmailPolicy, authConfig);
+  const resetUnavailable = isPasswordResetUnavailable(respectEmailPolicy, authConfig);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
     try {
-      await onSubmit?.(email);
+      if (onSubmit) await onSubmit(email);
+      else await forgotPassword(email);
       setSent(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send reset email');
+      reportAuthUiError('forgotPassword', err);
+      setError(getAuthDisplayMessage(err, 'Failed to send reset email'));
     } finally {
       setLoading(false);
     }
+  }
+
+  if (configPending) {
+    return <ResetPolicyLoading />;
+  }
+
+  if (configUnavailable) {
+    return <>{unavailable ?? <ResetConfigUnavailable onBack={onBack} loginHref={loginHref} />}</>;
+  }
+
+  if (resetUnavailable) {
+    return <>{unavailable ?? <ResetUnavailable onBack={onBack} loginHref={loginHref} />}</>;
   }
 
   return (
@@ -129,7 +169,7 @@ function ForgotPasswordForm({
               )}
             </AnimatePresence>
 
-            <Button type="submit" size="sm" className="w-full h-8" disabled={loading}>
+            <Button type="submit" size="sm" className="w-full h-8" disabled={loading || configPending}>
               {loading ? (
                 <AnimateIcon animate loop>
                   <Loader size={16} />
@@ -147,6 +187,67 @@ function ForgotPasswordForm({
         )}
       </AnimatePresence>
 
+      <p className="text-center text-xs text-muted-foreground">
+        {onBack ? (
+          <button type="button" onClick={onBack} className="text-primary hover:underline">
+            Back to login
+          </button>
+        ) : (
+          <a href={loginHref} className="text-primary hover:underline">
+            Back to login
+          </a>
+        )}
+      </p>
+    </div>
+  );
+}
+
+function ResetPolicyLoading() {
+  return (
+    <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground" aria-live="polite">
+      <AnimateIcon animate loop>
+        <Loader size={16} />
+      </AnimateIcon>
+      Loading reset settings
+    </div>
+  );
+}
+
+function ResetConfigUnavailable({
+  onBack,
+  loginHref,
+}: {
+  onBack?: () => void;
+  loginHref: string;
+}) {
+  return (
+    <div className="space-y-3">
+      <AuthHeader title="Reset unavailable" description="Password reset settings could not be loaded." />
+      <p className="text-center text-xs text-muted-foreground">
+        {onBack ? (
+          <button type="button" onClick={onBack} className="text-primary hover:underline">
+            Back to login
+          </button>
+        ) : (
+          <a href={loginHref} className="text-primary hover:underline">
+            Back to login
+          </a>
+        )}
+      </p>
+    </div>
+  );
+}
+
+function ResetUnavailable({
+  onBack,
+  loginHref,
+}: {
+  onBack?: () => void;
+  loginHref: string;
+}) {
+  return (
+    <div className="space-y-3">
+      <AuthHeader title="Reset unavailable" description="Password reset email is not enabled for this app." />
       <p className="text-center text-xs text-muted-foreground">
         {onBack ? (
           <button type="button" onClick={onBack} className="text-primary hover:underline">

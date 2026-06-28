@@ -1039,3 +1039,36 @@ describe('complex scenarios', () => {
     expect(getCtx(store)._sync.pending[0].ref).toBe('ref-3');
   });
 });
+
+describe('sync.reset', () => {
+  test('clears table data, pending mutations, connection state, and sequence', () => {
+    const { store } = createSyncStore(makeTables());
+
+    store.send({
+      type: 'sync.snapshot',
+      tables: {
+        todos: { '1': { id: '1', title: 'Sensitive', done: 0 } },
+      },
+      seq: 10,
+    });
+    store.send({
+      type: 'optimistic.insert',
+      table: 'users',
+      rowId: 'u1',
+      row: { id: 'u1', name: 'Alice' },
+      ref: 'ref-1',
+    });
+    store.send({ type: 'sync.connected' });
+
+    store.send({ type: 'sync.reset' });
+
+    const ctx = getCtx(store);
+    expect(ctx.todos).toEqual({});
+    expect(ctx.users).toEqual({});
+    expect(ctx._sync).toEqual({
+      connected: false,
+      lastSeq: 0,
+      pending: [],
+    });
+  });
+});

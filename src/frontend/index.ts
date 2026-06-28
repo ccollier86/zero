@@ -41,8 +41,18 @@ export { unwrap } from './client/api';
 export type { Api } from './client/api';
 
 // ─── Auth Client (vanilla JS) ────────────────────────────────────────────
-export { AuthClient } from './client/auth-client';
-export type { AuthPublicConfig, AuthUser, RegisterParams } from './client/auth-client';
+export { AuthClient, AuthClientError } from './client/auth-client';
+export type {
+  AuthAdminConfig,
+  AuthAdminCreateUserParams,
+  AuthAdminUpdateUserParams,
+  AuthAdminUserListParams,
+  AuthAdminUserListResult,
+  AuthPublicConfig,
+  AuthUserPropertyConfig,
+  AuthUser,
+  RegisterParams,
+} from './client/auth-client';
 
 // ─── React: Providers ────────────────────────────────────────────────────
 export { AppProvider } from './client/app-provider';
@@ -140,13 +150,28 @@ export { useForm } from '../hooks/use-form';
 export type { UseFormOptions, UseFormReturn } from '../hooks/use-form';
 
 // ─── Data Table ─────────────────────────────────────────────────────────
-export { DataTable } from '../components/data-table';
-export { useDataTable } from '../components/data-table';
+export { DataTable, DataTableView } from '../components/data-table';
+export { useDataTable, useDataTableSource, buildDataTableLazyQuery } from '../components/data-table';
 export { DataTableColumnHeader } from '../components/data-table';
 export { DataTableToolbar } from '../components/data-table';
 export { DataTablePagination } from '../components/data-table';
 export { DataTableRowActions } from '../components/data-table';
-export type { DataTableProps, UseDataTableOptions, UseDataTableReturn, RowAction } from '../components/data-table';
+export type {
+  DataTableCellContext,
+  DataTableColumnOverride,
+  DataTableColumnOverrides,
+  DataTableFilters,
+  DataTableFilterValue,
+  DataTableInitialState,
+  DataTableProps,
+  DataTableSource,
+  DataTableSourceActions,
+  DataTableSourceState,
+  RowAction,
+  UseDataTableOptions,
+  UseDataTableReturn,
+  UseDataTableSourceOptions,
+} from '../components/data-table';
 
 // ─── UI Components ──────────────────────────────────────────────────────
 export { Button, buttonVariants } from '../components/ui/button';
@@ -198,8 +223,11 @@ export { TagInput } from '../components/ui/tag-input';
 export type { TagInputProps } from '../components/ui/tag-input';
 
 // ─── Master-Detail ──────────────────────────────────────────────────────
-export { MasterDetailPage } from '../components/master-detail';
-export type { MasterDetailPageProps } from '../components/master-detail';
+export { MasterDetailPage, MasterDetailView } from '../components/master-detail';
+export type {
+  MasterDetailPageProps,
+  MasterDetailRenderContext,
+} from '../components/master-detail';
 
 // ─── CRUD Page ──────────────────────────────────────────────────────────
 export { CrudPage } from '../components/crud-page';
@@ -223,14 +251,17 @@ export type {
 // ─── Auth Blocks ────────────────────────────────────────────────────────
 export {
   LoginForm, RegisterForm, ForgotPasswordForm, OTPVerification,
+  PasswordActionForm, ChangePasswordForm, UserPropertiesForm,
   PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup,
   AuthLayout, AuthHeader,
-  Gate, HasFlag, HasProperty, PropertyGate, useGate, usePropertyGate,
+  AdminGate, Gate, HasFlag, HasProperty, PropertyGate, SignedIn, SignedOut,
+  useGate, usePropertyGate,
 } from '../components/auth';
 export type {
   LoginFormProps, RegisterFormProps, ForgotPasswordFormProps,
+  PasswordActionFormProps, ChangePasswordFormProps, UserPropertiesFormProps,
   OTPVerificationProps, SocialProvider,
-  GateProps, HasFlagProps, PropertyGateProps, PropertyGateValue,
+  AuthVisibilityGateProps, GateProps, HasFlagProps, PropertyGateProps, PropertyGateValue,
 } from '../components/auth';
 
 // ─── Validation Primitives ──────────────────────────────────────────────
@@ -363,11 +394,34 @@ export type {
   PermissionLevel,
 } from '../storage/types';
 
-// ─── Admin Pages ────────────────────────────────────────────────────────
-export { UserManagementPage } from '../pages/users/user-management-page';
-export type { UserManagementPageProps } from '../pages/users/user-management-page';
-export { StorageManagementPage } from '../pages/storage';
-export type { StorageManagementPageProps } from '../pages/storage';
+// ─── Admin Components ───────────────────────────────────────────────────
+export { UserManagement, useAdminUsers } from '../components/admin/users';
+export type {
+  UseAdminUsersOptions,
+  UseAdminUsersResult,
+  UserManagementCreateResult,
+  UserManagementFilters,
+  UserManagementProps,
+  UserManagementStatusFilter,
+  UserManagementUser,
+  UserRoleOption,
+} from '../components/admin/users';
+export {
+  StorageManagement,
+  StorageDriveList,
+  StorageFileBrowser,
+  StorageDriveDetailHeader,
+  StorageFileDetailPanel,
+} from '../components/storage';
+export type {
+  StorageManagementProps,
+  StorageManagementView,
+  StorageDriveRow,
+  StorageDriveListProps,
+  StorageFileBrowserProps,
+  StorageDriveDetailHeaderProps,
+  StorageFileDetailPanelProps,
+} from '../components/storage';
 
 // ─── Hooks ──────────────────────────────────────────────────────────────
 export { useHotkey } from '../hooks/use-hotkey';

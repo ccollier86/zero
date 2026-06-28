@@ -224,7 +224,9 @@ The first implementation routes these platform paths through the sink:
 - SSR renderer failures
 - router layout-config import failures
 - frontend ErrorBoundary and hydration failures
+- frontend auth session redirects
 - frontend notification receipt failures
+- frontend storage management action failures
 - migrator library logs
 
 CLI presentation in `src/migrations/run.ts` intentionally remains direct

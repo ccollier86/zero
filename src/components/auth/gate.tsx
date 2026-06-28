@@ -9,7 +9,7 @@
  */
 
 import * as React from 'react';
-import { useCurrentUser } from '../../frontend/client/hooks';
+import { useAuth, useCurrentUser } from '../../frontend/client/hooks';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -17,6 +17,12 @@ export interface GateProps {
   /** Role(s) that are allowed to see the children. */
   allow: string | string[];
   /** Content shown when access is denied. Defaults to nothing. */
+  fallback?: React.ReactNode;
+  children: React.ReactNode;
+}
+
+export interface AuthVisibilityGateProps {
+  /** Content shown when the visibility condition is not met. Defaults to nothing. */
   fallback?: React.ReactNode;
   children: React.ReactNode;
 }
@@ -124,8 +130,29 @@ function HasFlag({ propertyKey, value = true, fallback = null, children }: HasFl
   );
 }
 
+/** Render children only when a user is signed in. */
+function SignedIn({ fallback = null, children }: AuthVisibilityGateProps) {
+  const { isAuthenticated } = useAuth();
+  return <>{isAuthenticated ? children : fallback}</>;
+}
+
+/** Render children only when no user is signed in. */
+function SignedOut({ fallback = null, children }: AuthVisibilityGateProps) {
+  const { isAuthenticated, isLoading } = useAuth();
+  return <>{!isLoading && !isAuthenticated ? children : fallback}</>;
+}
+
+/** Render children only for admin users. */
+function AdminGate({ fallback = null, children }: AuthVisibilityGateProps) {
+  return (
+    <Gate allow="admin" fallback={fallback}>
+      {children}
+    </Gate>
+  );
+}
+
 function serializeGateValue(value: PropertyGateValue): string {
   return String(value);
 }
 
-export { Gate, PropertyGate, HasProperty, HasFlag };
+export { AdminGate, Gate, PropertyGate, HasProperty, HasFlag, SignedIn, SignedOut };

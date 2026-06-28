@@ -190,6 +190,70 @@ describe('createSyncClient', () => {
 
     client.disconnect();
   });
+
+  test('reads getToken when opening and reconnecting the socket', async () => {
+    let token = 'token-1';
+    const client = makeClient({
+      token: 'stale-token',
+      getToken: () => token,
+    });
+    await flushMicrotasks();
+
+    expect(MockWebSocket.latest().url).toBe(
+      'ws://localhost:3000/sync?token=token-1'
+    );
+
+    token = 'token-2';
+    client.reconnect();
+    await flushMicrotasks();
+
+    expect(MockWebSocket.instances).toHaveLength(2);
+    expect(MockWebSocket.latest().url).toBe(
+      'ws://localhost:3000/sync?token=token-2'
+    );
+
+    client.disconnect();
+  });
+
+  test('reset closes the socket and clears local table state', async () => {
+    const client = makeClient();
+    await flushMicrotasks();
+
+    MockWebSocket.latest().simulateMessage(
+      JSON.stringify({
+        type: 'sync.snapshot',
+        tables: {
+          todos: { '1': { id: '1', title: 'Sensitive', done: 0 } },
+        },
+        seq: 5,
+      })
+    );
+
+    expect((getCtx(client).todos as Record<string, unknown>)['1']).toBeDefined();
+
+    client.reset();
+
+    expect(client.connected).toBe(false);
+    expect(getCtx(client)._sync.lastSeq).toBe(0);
+    expect(getCtx(client)._sync.pending).toEqual([]);
+    expect(getCtx(client).todos).toEqual({});
+
+    client.disconnect();
+  });
+
+  test('routes auth close codes to onAuthFailure when provided', async () => {
+    const errors: string[] = [];
+    const client = makeClient({
+      onAuthFailure: (error) => errors.push(error),
+    });
+    await flushMicrotasks();
+
+    MockWebSocket.latest().simulateClose(4001, 'Invalid auth token');
+
+    expect(errors).toEqual(['Auth failed (code 4001): Invalid auth token']);
+
+    client.disconnect();
+  });
 });
 
 describe('mutations', () => {

@@ -12,11 +12,35 @@ import {
 import type { ReactNode } from 'react';
 import type { Row } from '../../sync/types';
 import type { Client, ClientConfig, InternalClient } from './sdk';
-import type { AuthActionTokenInfo, AuthPublicConfig, AuthUser, RegisterParams } from './auth-client';
+import type {
+  AuthActionTokenInfo,
+  AuthAdminConfig,
+  AuthAdminCreateUserParams,
+  AuthAdminUpdateUserParams,
+  AuthAdminUserPropertyConfig,
+  AuthAdminUserListParams,
+  AuthAdminUserListResult,
+  AuthPublicConfig,
+  AuthUserPropertyConfig,
+  AuthUser,
+  RegisterParams,
+} from './auth-client';
 import { createClient, getClient } from './sdk';
 import { createAuthDisabledError } from './auth-client';
 
-export type { AuthActionTokenInfo, AuthPublicConfig, AuthUser, RegisterParams };
+export type {
+  AuthActionTokenInfo,
+  AuthAdminConfig,
+  AuthAdminCreateUserParams,
+  AuthAdminUpdateUserParams,
+  AuthAdminUserPropertyConfig,
+  AuthAdminUserListParams,
+  AuthAdminUserListResult,
+  AuthPublicConfig,
+  AuthUserPropertyConfig,
+  AuthUser,
+  RegisterParams,
+};
 
 // Re-export state hooks
 export { useServerState, useServerStateReady } from '../../sync/client/state-hooks';
@@ -27,6 +51,16 @@ export { useParams, usePathname, useRouter } from './router-context';
 // ─── Client Context ────────────────────────────────────────────────────────
 
 const ClientContext = createContext<Client | null>(null);
+
+function shouldUseSsrFallback(client: Client | null, hookName: string): boolean {
+  if (client) return false;
+
+  if (typeof window !== 'undefined') {
+    throw new Error(`${hookName} must be used within <AppProvider> or <ClientProvider>.`);
+  }
+
+  return true;
+}
 
 /**
  * Returns true when running on the server (SSR).
@@ -47,7 +81,7 @@ export function useIsServer(): boolean {
 export function useClient(): Client {
   const client = useContext(ClientContext);
   if (!client && typeof window !== 'undefined') {
-    throw new Error('useClient must be used within a <ClientProvider>');
+    throw new Error('useClient must be used within <AppProvider> or <ClientProvider>.');
   }
   return client!;
 }
@@ -307,7 +341,9 @@ export function useAuth(): AuthState & AuthActions {
     [authClient, authDisabled],
   );
 
-  if (!authClient && !authDisabled) return SSR_AUTH_DEFAULTS;
+  if (!authClient && !authDisabled && shouldUseSsrFallback(client, 'useAuth')) {
+    return SSR_AUTH_DEFAULTS;
+  }
 
   return {
     user: state.user,
@@ -351,7 +387,7 @@ export function useAuthConfig(): AuthConfigState {
   const authClient = client?.auth ?? null;
   const authDisabled = client !== null && authClient === null;
   const [config, setConfig] = useState<AuthPublicConfig | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(() => authClient !== null);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -377,6 +413,17 @@ export function useAuthConfig(): AuthConfigState {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  if (shouldUseSsrFallback(client, 'useAuthConfig')) {
+    return {
+      config: null,
+      isLoading: false,
+      error: null,
+      canRegister: false,
+      bootstrapRequired: false,
+      reload,
+    };
+  }
 
   return {
     config,
@@ -487,6 +534,8 @@ export function useCollection<T extends Row = Row>(name: string): CollectionResu
   const load = useCallback((r: T[], opts?: { replace?: boolean }) => col?.load(r, opts), [col]);
   const clear = useCallback(() => col?.clear(), [col]);
 
+  shouldUseSsrFallback(client, 'useCollection');
+
   return { data, byId, count: data.length, insert, update, remove, load, clear };
 }
 
@@ -596,6 +645,8 @@ export function useLazyCollection<T extends Row = Row>(
     doFetch();
   }, [doFetch]);
 
+  shouldUseSsrFallback(client, 'useLazyCollection');
+
   return { ...collection, isLoading, error, refresh };
 }
 
@@ -623,11 +674,15 @@ export function useRow<T extends Row = Row>(name: string, id: string): T | null 
     [col],
   );
 
-  return useSyncExternalStore(
+  const row = useSyncExternalStore(
     subscribe,
     () => col ? col.getOne(id) : null,
     () => null,
   );
+
+  shouldUseSsrFallback(client, 'useRow');
+
+  return row;
 }
 
 // ─── useQuery ───────────────────────────────────────────────────────────────
@@ -661,10 +716,14 @@ export function useQuery<T extends Row = Row>(
     () => EMPTY_RECORD as Record<string, T>,
   );
 
-  return useMemo(
+  const result = useMemo(
     () => col ? Object.values(rows).filter(predicate) : EMPTY_ARRAY as T[],
     [rows, predicate, col],
   );
+
+  shouldUseSsrFallback(client, 'useQuery');
+
+  return result;
 }
 
 // ─── useStatus ─────────────────────────────────────────────────────────────
@@ -686,7 +745,11 @@ export function useStatus(): { connected: boolean } {
     () => false,
   );
 
-  return useMemo(() => ({ connected }), [connected]);
+  const status = useMemo(() => ({ connected }), [connected]);
+
+  shouldUseSsrFallback(client, 'useStatus');
+
+  return status;
 }
 
 // ─── Notification Hooks ───────────────────────────────────────────────────────

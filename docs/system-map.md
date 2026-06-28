@@ -34,9 +34,9 @@ src/
     ui/                    <- Core UI primitives (35 components)
     forms/                 <- AutoForm, FieldRenderer, Wizard
     data-table/            <- DataTable + related components
-    auth/                  <- Auth UI blocks (LoginForm, RegisterForm, Gate, etc.)
-    master-detail/         <- MasterDetailPage
-    animate-ui/            <- 174 animated components (framer-motion + radix)
+    auth/                  <- Auth UI blocks (LoginForm, reset/setup forms, gates, etc.)
+    master-detail/         <- MasterDetailView / MasterDetailPage
+    animate-ui/            <- 174 animated components (Motion + radix)
   frontend/
     client/                <- SDK client, React hooks, providers, routing
     server/                <- App factory, file-based router, SSR, client bundling
@@ -236,18 +236,24 @@ src/
 
 ## System 9: DataTable + MasterDetail
 
+**Docs:** [DataTableView](./frontend/data-table.md),
+[MasterDetailView](./frontend/master-detail.md)
+
 **Files:**
 | File | Purpose |
 |------|---------|
 | `src/components/data-table/data-table.tsx` | `<DataTable>` — full-featured table |
 | `src/components/data-table/use-data-table.ts` | `useDataTable()` — TanStack Table wrapper |
+| `src/components/data-table/data-table-source.ts` | `useDataTableSource()` — static/full-sync/lazy data-source resolver |
 | `src/components/data-table/data-table-column-header.tsx` | Sortable/filterable column headers |
-| `src/components/data-table/data-table-toolbar.tsx` | Search + filter toolbar |
+| `src/components/data-table/data-table-toolbar.tsx` | Search, generated filters, column visibility, and export toolbar |
 | `src/components/data-table/data-table-pagination.tsx` | Pagination controls |
 | `src/components/data-table/data-table-row-actions.tsx` | Row action dropdown |
 | `src/components/data-table/editable-cell.tsx` | Inline cell editing |
 | `src/components/data-table/animated-cell.tsx` | Animated cell transitions |
-| `src/components/master-detail/master-detail-page.tsx` | `<MasterDetailPage>` — list + detail layout |
+| `src/components/master-detail/master-detail-page.tsx` | `<MasterDetailView>` / `<MasterDetailPage>` — list + detail organism |
+| `src/components/master-detail/use-master-detail-state.ts` | Live data and selected-row state for master-detail views |
+| `src/components/master-detail/master-detail-selection.ts` | Pure primary-key-aware selection resolution |
 
 ---
 
@@ -260,7 +266,7 @@ Button, Input, Label, Textarea, Select, Badge, Card, FormField, Table, ScrollAre
 Organized into `primitives/` (raw building blocks) and `components/` (pre-styled compositions). Categories: buttons, radix UI (animated), effects, text animations, backgrounds, community components.
 
 **`src/components/auth/` — auth UI blocks:**
-LoginForm, RegisterForm, ForgotPasswordForm, OTPVerification, PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup, AuthLayout, AuthHeader, Gate, PropertyGate, HasProperty, HasFlag, useGate, usePropertyGate.
+LoginForm, RegisterForm, ForgotPasswordForm, PasswordActionForm, ChangePasswordForm, UserPropertiesForm, OTPVerification, PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup, AuthLayout, AuthHeader, Gate, AdminGate, SignedIn, SignedOut, PropertyGate, HasProperty, HasFlag, useGate, usePropertyGate.
 
 ---
 

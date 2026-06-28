@@ -11,7 +11,7 @@ const source = await Bun.file(new URL('./storage-hooks.ts', import.meta.url)).te
 
 describe('storage hooks transport contract', () => {
   test('delegates JSON requests to the SDK client instead of browser token storage', () => {
-    expect(source).toContain('useClientMaybe');
+    expect(source).toContain('useClient');
     expect(source).toContain('client).fetch<T>(apiUrl(path), init)');
     expect(source).not.toContain('localStorage');
     expect(source).not.toContain('access_token');

@@ -59,6 +59,7 @@ protected `/api/_zero/observability/events` endpoint. See
 
 - **User registration** with username/email/password
 - **JWT access + refresh tokens** with rotation
+- **Persistent browser sessions:** refresh-token restore, 401 retry, sync reconnect with fresh tokens
 - **Role-based middleware:** `requireAuth()` and `requireAdmin()` — fully typed, zero casts
 - **User properties:** arbitrary KV per user (`setProperty`, `getProperty`)
 - **React integration:** `useAuth()` returns full state + actions in one call
@@ -82,16 +83,20 @@ console.log(client.isAuthenticated); // true
 
 | Component | What it does |
 |-----------|-------------|
-| `<LoginForm>` | Email/password login with social providers, forgot password link |
-| `<RegisterForm>` | Registration with field selection, password strength meter, and registration-policy awareness |
-| `<ForgotPasswordForm>` | Password reset flow |
+| `<LoginForm>` | Username/email login with auth config-aware links and lifecycle error states |
+| `<RegisterForm>` | Registration with field selection, password strength meter, and policy-aware loading/closure states |
+| `<ForgotPasswordForm>` | SDK-backed password reset email request with policy-aware loading/disabled states |
+| `<PasswordActionForm>` | Reset/setup password flow for valid emailed action tokens |
+| `<ChangePasswordForm>` | Current-user password change form |
+| `<UserPropertiesForm>` | Current-user editable property settings from `/auth/config` |
 | `<OTPVerification>` | OTP input with auto-focus |
 | `<PasswordInput>` | Password field with show/hide toggle |
 | `<PasswordStrength>` | Real-time password strength indicator |
 | `<SocialLoginGroup>` | Google, GitHub, Microsoft, Apple OAuth buttons |
 | `<AuthLayout>` | Centered card layout for auth pages |
+| `<SignedIn>` / `<SignedOut>` | Auth-state visibility gates |
 | `<PropertyGate>` / `<HasFlag>` | UI-only visibility gates based on current-user properties |
-| `<Gate allow={['admin']}>` | Role-based conditional rendering |
+| `<Gate allow={['admin']}>` / `<AdminGate>` | Role-based conditional rendering |
 
 ---
 
@@ -217,6 +222,16 @@ const unread = useUnreadCount();
 ## Storage
 
 Authenticated drive and file storage with local filesystem blobs by default.
+
+```tsx
+import { StorageManagement } from '@platform/frontend';
+
+export function FilesPanel() {
+  return <StorageManagement className="h-[42rem]" />;
+}
+```
+
+Or compose the lower-level hooks yourself:
 
 ```tsx
 const { drives } = useStorageDrives();
@@ -361,12 +376,13 @@ Per-field validation on blur, full validation on submit, dirty tracking, first-e
 
 ---
 
-## DataTable
+## DataTable / DataTableView
 
-Full-featured data table with live collection binding.
+Schema-aware data table built on TanStack Table, with first-class Zero data
+sources. See the full guide in [DataTableView](./frontend/data-table.md).
 
 ```tsx
-<DataTable
+<DataTableView
   schema={todoSchema}
   collection="todos"
   editable={['title', 'done', 'priority']}
@@ -375,25 +391,61 @@ Full-featured data table with live collection binding.
   filterable
   paginated={{ pageSize: 25 }}
   actions={[
-    { label: 'Delete', variant: 'destructive', onClick: (row) => remove(row.id) },
+    { label: 'Delete', variant: 'destructive', onClick: (row) => remove(row.todo_id) },
   ]}
+/>
+```
+
+Full-sync tables use `collection="todos"` and write inline edits back through
+the reactive DB automatically. Lazy tables can fetch through Zero's `/api/data`
+endpoint without hand-writing a hook:
+
+```tsx
+<DataTableView
+  schema={auditLogSchema}
+  source={{
+    type: 'lazy',
+    table: 'audit_log',
+    filters: { user_id: userId },
+    options: { order: 'created_at', dir: 'desc', limit: 100 },
+  }}
+  columns={['created_at', 'event', 'severity']}
+  searchable
+  filterable
+/>
+```
+
+Caller-owned data stays simple:
+
+```tsx
+<DataTableView
+  schema={reportSchema}
+  data={rows}
+  columns={['name', 'total']}
+  onCellEdit={(id, field, value) => updateReportRow(id, { [field]: value })}
 />
 ```
 
 **Features:**
 - **Live binding:** Point it at a collection name, it auto-updates as data changes
+- **Lazy backend reads:** Use `source={{ type: 'lazy', table }}` for `/api/data`
 - **Inline editing:** Click a cell, edit in-place, Tab to next — changes sync instantly
 - **Sorting/filtering:** Column headers with sort toggles and filter inputs
+- **Composable toolbar:** Search, filters, export, column visibility, and app actions can be shown independently
 - **Row actions:** Dropdown menu per row with custom actions
 - **Selection:** Checkbox selection with `onSelectionChange` callback
 - **Pagination:** Configurable page size
 - **Global search:** Filter across all columns
-- **Animated transitions:** Smooth cell updates via framer-motion
+- **Column overrides:** Override labels, renderers, widths, sorting, filtering, and editability
+- **Animated transitions:** Smooth cell updates via Motion
 
-### MasterDetailPage — List + Detail Layout
+### MasterDetailView / MasterDetailPage — List + Detail Layout
+
+See the full organism and low-level detail primitive guide in
+[MasterDetailView](./frontend/master-detail.md).
 
 ```tsx
-<MasterDetailPage
+<MasterDetailView
   schema={userSchema}
   collection="users"
   listColumns={['name', 'email', 'role']}
@@ -401,13 +453,45 @@ Full-featured data table with live collection binding.
   searchable
   paginated={{ pageSize: 20 }}
   detailHeader={({ item }) => <UserAvatar user={item} />}
-  navigationActions={(user) => [
+  navigationActions={(user) => user ? [
     { label: 'Message', icon: <Mail />, onClick: () => openChat(user) },
-  ]}
+  ] : []}
 />
 ```
 
 DataTable on the left, auto-generated edit form on the right. Click a row, the detail panel loads. Edit fields, changes sync to all clients. Responsive — detail panel slides up on mobile.
+
+For full-sync tables, `collection="users"` is the fastest path: the component
+subscribes once through the reactive DB, feeds both the list and detail panel,
+and writes detail-form updates back to the collection unless `onUpdate` is
+provided.
+
+For lazy tables or custom backends, pass `data` and `onUpdate` explicitly:
+
+```tsx
+const users = useLazyCollection<UserRow>('users', { department: 'ops' });
+
+<MasterDetailView
+  schema={userSchema}
+  data={users.data}
+  listColumns={['name', 'email', 'role']}
+  onUpdate={(id, changes) => users.update(id, changes)}
+/>
+```
+
+Use `renderDetail` when the right panel should be a custom read model instead
+of the generated form:
+
+```tsx
+<MasterDetailView
+  schema={clientSchema}
+  collection="clients"
+  listColumns={['name', 'status']}
+  renderDetail={(client, ctx) => (
+    <ClientOverview client={client} onArchive={() => ctx.update({ status: 'archived' })} />
+  )}
+/>
+```
 
 ---
 
@@ -419,7 +503,7 @@ Full shadcn/ui set plus domain-specific components:
 Button (6 variants), Input, Label, Textarea, Select, Badge, Card (Header/Title/Description/Content/Footer), FormField (Label/Control/Description/Message), Table, ScrollArea, Separator, Skeleton, Avatar (with fallback), Breadcrumb, Pagination, Calendar, Command palette, Combobox (searchable), DatePicker, DateRangePicker, TagInput, StatCard, Chart, ValidationMeter, ValidationRules.
 
 ### Animated Components (174 components)
-Built on framer-motion + radix-ui:
+Built on Motion + radix-ui:
 
 - **Buttons:** Standard, flip, liquid, ripple, copy, icon, GitHub stars, theme toggler
 - **Radix primitives (animated):** Accordion, AlertDialog, Checkbox, Dialog, DropdownMenu, Files, HoverCard, Popover, PreviewLinkCard, Progress, RadioGroup, Sheet, Sidebar, Switch, Tabs, Toggle, ToggleGroup, Tooltip
@@ -559,6 +643,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 }
 ```
 
+When auth is enabled, `AppProvider` also handles client-side auth loss on
+protected routes. If a stored refresh token is rejected or an authenticated call
+cannot refresh, it clears the local synced data and redirects non-public paths
+to `loginPath` with a `redirect` query parameter. `publicPaths` and `loginPath`
+come from `createApp()` and can be overridden on the provider.
+
 ```tsx
 // In any page — useCollection is the primary mutation API
 import { useCollection } from '@platform/frontend';
@@ -571,7 +661,7 @@ For imperative use outside React:
 
 ```ts
 await client.login('alice', 'password123');
-const { users } = await client.get('/api/admin/users');
+const { users } = await client.listAuthAdminUsers();
 ```
 
 ---

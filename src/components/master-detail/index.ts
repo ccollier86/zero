@@ -1,2 +1,5 @@
-export { MasterDetailPage } from './master-detail-page';
-export type { MasterDetailPageProps } from './master-detail-page';
+export { MasterDetailPage, MasterDetailView } from './master-detail-page';
+export type {
+  MasterDetailPageProps,
+  MasterDetailRenderContext,
+} from './master-detail-page';

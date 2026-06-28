@@ -2,6 +2,11 @@
 
 @xstate/store integration that makes server data feel local. Define your tables once, get a fully typed reactive store with optimistic mutations, reconnect, and React hooks.
 
+> **Advanced engine docs:** This page describes the standalone sync client and
+> lower-level React hooks exported from `@platform/sync/client`. App code that
+> uses the full Zero frontend should prefer `@platform/frontend` hooks:
+> `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, and `useStatus`.
+
 ## Overview
 
 SyncStore is the client-side counterpart to [ReactiveDB](./reactive-db.md). Where ReactiveDB wraps SQLite with change events, SyncStore wraps @xstate/store with server synchronization. Together they form the two halves of the sync engine.
@@ -13,7 +18,7 @@ SyncStore is the client-side counterpart to [ReactiveDB](./reactive-db.md). Wher
 The entry point. Pass table definitions, get a fully wired store.
 
 ```ts
-import { createSyncStore } from '@sync/client';
+import { createSyncStore } from '@platform/sync/client';
 
 const { store, tables } = createSyncStore({
   todos: { _pk: 'id', id: 'string', title: 'string', done: 'number' },
@@ -195,7 +200,7 @@ const reducers = {
 `createTableSlice()` extracts a single table from the store as a `Slice<Record<string, Row>>`. Same pattern as `createSlice()` in `packages/sdk/src/store/store.ts` — only notifies subscribers when the selected value actually changes (referential equality).
 
 ```ts
-import { createTableSlice } from '@sync/client';
+import { createTableSlice } from '@platform/sync/client';
 
 const todosSlice = createTableSlice(store, 'todos');
 
@@ -430,7 +435,7 @@ The connection manager. Handles WebSocket lifecycle, message routing, optimistic
 ### Creation
 
 ```ts
-import { createSyncClient } from '@sync/client';
+import { createSyncClient } from '@platform/sync/client';
 
 const client = createSyncClient({
   url: 'ws://localhost:3000/sync',
@@ -577,13 +582,13 @@ React context provider that creates a `SyncClient` on mount, exposes it via cont
 
 ```tsx
 import { createContext, useContext, useEffect, useRef } from 'react';
-import { createSyncClient, type SyncClient, type TableDefs } from '@sync/client';
+import { createSyncClient, type ClientTableDef, type SyncClient } from '@platform/sync/client';
 
 const SyncContext = createContext<SyncClient | null>(null);
 
 interface SyncProviderProps {
   url: string;
-  tables: TableDefs;
+  tables: Record<string, ClientTableDef>;
   token?: string;
   children: React.ReactNode;
 }
@@ -629,7 +634,7 @@ function useSyncClient(): SyncClient {
 ### Usage
 
 ```tsx
-import { SyncProvider } from '@sync/react';
+import { SyncProvider } from '@platform/sync/client';
 
 function App() {
   return (

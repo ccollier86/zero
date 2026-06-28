@@ -480,8 +480,8 @@ A machine-readable catalog of every component, hook, block, and pattern:
 ```json
 {
   "components": {
-    "DataTable": {
-      "import": "import { DataTable } from '@platform/frontend'",
+    "DataTableView": {
+      "import": "import { DataTableView } from '@platform/frontend'",
       "props": {
         "schema": { "type": "SchemaDescriptor", "required": true },
         "collection": { "type": "string" },
@@ -501,7 +501,7 @@ A machine-readable catalog of every component, hook, block, and pattern:
   "patterns": {
     "lazy-table-page": {
       "description": "Page that displays a lazy-synced table with CRUD",
-      "requires": ["useLazyCollection", "MasterDetailPage or DataTable"],
+      "requires": ["DataTableView source lazy", "MasterDetailView or DataTableView"],
       "template": "..."
     }
   }
@@ -511,8 +511,11 @@ A machine-readable catalog of every component, hook, block, and pattern:
 **Assembly Rules**
 Machine-readable rules for what connects to what:
 
-- `useCollection` returns `CollectionResult` — pass `.data` to `DataTable.data` or `MasterDetailPage.data`
-- `defineTable().schema` — pass to `AutoForm.schema`, `DataTable.schema`, `MasterDetailPage.schema`
+- `MasterDetailView collection="table"` is the fastest full-sync wiring path.
+- `DataTableView collection="table"` is the fastest full-sync table wiring path.
+- `DataTableView source={{ type: 'lazy', table }}` is the fastest lazy `/api/data` wiring path.
+- `useCollection` returns `CollectionResult` — pass `.data` to `DataTableView.data` or `MasterDetailView.data` when custom data ownership is needed.
+- `defineTable().schema` — pass to `AutoForm.schema`, `DataTableView.schema`, `MasterDetailView.schema`
 - Lazy tables must use `useLazyCollection` not `useCollection`
 - `useServerState` for UI preferences, `useCollection` for domain data, `useEphemeral` for transient shared state
 - File at `app/foo/page.tsx` = route `/foo`
@@ -527,7 +530,7 @@ Complete, tested combinations as starting points:
 - Settings page with grouped form sections
 - Intake wizard with multi-step form
 - Report page with tabs and charts
-- Admin user management page
+- Admin user-management organism
 - Chat room with real-time messages
 - Calendar view with event management
 - File browser with upload/preview

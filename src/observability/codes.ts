@@ -105,6 +105,10 @@ export const OBS_CODES = {
   FRONTEND_HYDRATE_MISSING_MANIFEST_ENTRY: code('frontend', 'hydrate.missing_manifest_entry', 'error', 'Hydration manifest entry is missing.'),
   FRONTEND_HYDRATE_MISSING_PAGE_EXPORT: code('frontend', 'hydrate.missing_page_export', 'error', 'Hydration page module has no default export.'),
   FRONTEND_NOTIFICATION_RECEIPT_FAILED: code('frontend', 'notification.receipt_failed', 'error', 'Notification receipt action failed.'),
+  FRONTEND_AUTH_ACTION_FAILED: code('frontend', 'auth.action_failed', 'error', 'Frontend auth action failed.'),
+  FRONTEND_AUTH_SESSION_REDIRECT: code('frontend', 'auth.session_redirect', 'warn', 'Frontend redirected after auth session ended.'),
+  FRONTEND_ADMIN_USER_ACTION_FAILED: code('frontend', 'admin_user.action_failed', 'error', 'Admin user-management action failed.'),
+  FRONTEND_STORAGE_ACTION_FAILED: code('frontend', 'storage.action_failed', 'error', 'Storage management action failed.'),
 
   MIGRATOR_LOG: code('migrations', 'log', 'info', 'Migration runner emitted a log message.'),
   MIGRATOR_FAILED: code('migrations', 'failed', 'error', 'Migration failed.'),

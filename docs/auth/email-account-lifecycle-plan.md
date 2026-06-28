@@ -370,10 +370,12 @@ adapter created here, but it should be planned as a separate platform service.
 
 ## Admin UI Requirements
 
-The default `UserManagementPage` should stop being mock-backed for production
-usage and support:
+The reusable `UserManagement` organism is the default production admin surface.
+It is intentionally not a page; apps embed it inside their own dashboards or
+settings views. The organism should support:
 
-1. Load users from `/auth/admin/users`.
+1. Load users from `/auth/admin/users` with backend pagination, search, role
+   filters, and status filters.
 2. Load config from `/auth/admin/config`.
 3. Create users.
 4. Apply configured user property controls.
@@ -394,10 +396,13 @@ button that will fail.
 
 Login and account pages should support:
 
-1. Registration link visibility based on `/auth/config`.
-2. Forgot-password link only when password reset email is enabled.
+1. Registration link visibility based on `/auth/config`, with policy-aware UI
+   waiting for config before exposing registration actions.
+2. Forgot-password link only when password reset email is enabled, with the
+   reset request form waiting for config before rendering.
 3. Forgot-password form wired to `/auth/forgot-password`.
-4. Reset-password form for emailed reset/setup tokens.
+4. Reset-password form for emailed reset/setup tokens that blocks invalid or
+   mode-mismatched tokens before submit.
 5. Forced password-change screen when login indicates it is required.
 6. Password-changed success state.
 7. Clear generic reset messaging that does not reveal account existence.
@@ -443,7 +448,7 @@ Status: implemented.
 
 ### Phase 3: Password Reset And Setup Routes
 
-Status: implemented for backend routes and SDK contracts; UI remains Phase 5.
+Status: implemented.
 
 1. Add forgot-password route.
 2. Add setup/reset-password routes.
@@ -453,7 +458,7 @@ Status: implemented for backend routes and SDK contracts; UI remains Phase 5.
 
 ### Phase 4: Admin Lifecycle Routes
 
-Status: implemented for backend routes; admin UI remains Phase 5.
+Status: implemented.
 
 1. Add suspend/reactivate routes.
 2. Add send setup/reset email routes.
@@ -462,6 +467,8 @@ Status: implemented for backend routes; admin UI remains Phase 5.
 4. Revoke refresh tokens on reset/suspend.
 
 ### Phase 5: Frontend SDK And UI
+
+Status: implemented.
 
 1. Add SDK methods for forgot/reset/setup and admin email actions.
 2. Wire `ForgotPasswordForm`.

@@ -149,13 +149,26 @@ Zero includes these backend capabilities out of the box:
 | ReactiveDB | SQLite table definition, change tracking, ring-buffer replay, natural identity. |
 | Sync | WebSocket snapshots, live updates, lazy/auto sync, sync policy hooks. |
 | Data API | `/api/data` reads for lazy tables with pagination, sorting, filtering, limits, and auth/policy integration. |
-| Storage | Built-in file storage with platform auth boundaries. |
+| Storage | Built-in file storage with platform auth boundaries and a reusable management organism. |
 | State Sync | Per-user server-persisted reactive key/value state. |
 | Notifications | Server-created notifications and receipt tracking. |
 | Rooms/Presence | Presence and room coordination primitives. |
 | Workflows | Built-in workflow/scheduler infrastructure. |
 | Migrations | Explicit migration files, ledger, schema history, rollback, backups, doctor, draft plans. |
 | Observability | Structured event codes, default console/memory sink, protected event endpoint, frontend ingest. |
+
+## Reusable Data UI
+
+Zero includes reusable frontend organisms for fast data-driven screens:
+
+| Organism | Use it for | Docs |
+| --- | --- | --- |
+| `DataTableView` | Schema-aware tables with full-sync, lazy `/api/data`, or caller-owned sources. | [docs/frontend/data-table.md](./frontend/data-table.md) |
+| `MasterDetailView` | A table/list plus detail panel, generated edit form, custom detail body, and record navigation. | [docs/frontend/master-detail.md](./frontend/master-detail.md) |
+| `DetailPanel` / `ListDetailLayout` / `RecordNavigationBar` | Custom detail screens that need the polished shell without the full organism. | [docs/frontend/master-detail.md](./frontend/master-detail.md#low-level-detail-primitives) |
+
+These components use schema primary keys by default. Do not assume `row.id`
+unless the table schema actually uses `id` as its primary key.
 
 ## Auth Defaults
 
@@ -172,9 +185,57 @@ activate, revoke sessions, direct reset, setup email, and password reset email.
 `GET /auth/admin/users` supports `limit`, `offset`, `search`, `role`, and
 `status`.
 
+For frontend admin dashboards, use the reusable organism instead of a page:
+
+```tsx
+import { UserManagement } from '@platform/frontend';
+
+export function UsersSettingsPanel() {
+  return <UserManagement className="h-[720px]" />;
+}
+```
+
+The component self-wires to the admin auth SDK, loads `/auth/admin/config`,
+uses backend pagination plus `search`, `role`, and `status` filters, adapts
+configured `auth.userProperties`, and hides email-only actions when the email
+runtime is not ready.
+
 Email-driven setup/reset flows validate email readiness before changing account
 state. Forgot-password responses avoid user enumeration and cooldown repeats do
 not send additional emails.
+
+Reusable auth UI blocks are exported from `@platform/frontend`:
+
+```tsx
+import {
+  ChangePasswordForm,
+  ForgotPasswordForm,
+  LoginForm,
+  PasswordActionForm,
+  RegisterForm,
+  UserPropertiesForm,
+} from '@platform/frontend';
+```
+
+`LoginForm`, `RegisterForm`, and `ForgotPasswordForm` read `/auth/config` and
+wait for policy before exposing registration/reset actions.
+`PasswordActionForm` handles reset/setup tokens from email links and blocks
+invalid or mode-mismatched tokens before submit.
+`UserPropertiesForm` renders only user-editable `auth.userProperties`.
+
+For storage dashboards, embed the reusable organism:
+
+```tsx
+import { StorageManagement } from '@platform/frontend';
+
+export function FilesSettingsPanel() {
+  return <StorageManagement className="h-[42rem]" />;
+}
+```
+
+It manages drives, file browsing, uploads, folders, rename, visibility, and
+delete confirmation through the platform storage hooks and authenticated SDK
+transport.
 
 ## Configuration Files
 

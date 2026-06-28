@@ -33,6 +33,10 @@ export interface SyncClient {
   sendRaw(msg: object): void;
   /** Open the WebSocket when the client was created with autoConnect: false. */
   connect(): void;
+  /** Close the current socket and open a new one without clearing local data. */
+  reconnect(): void;
+  /** Close the current socket and clear all local synced table state. */
+  reset(): void;
 
   /**
    * Register a handler for non-sync messages arriving on the WS.
@@ -80,8 +84,10 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     url,
     tables,
     token,
+    getToken,
     autoConnect = true,
     onError,
+    onAuthFailure,
     onReconnect,
     ackTimeout = DEFAULT_ACK_TIMEOUT,
     maxReconnectAttempts = DEFAULT_MAX_RECONNECT_ATTEMPTS,
@@ -129,8 +135,9 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
       return;
     }
 
-    const wsUrl = token
-      ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+    const currentToken = getToken?.() ?? token;
+    const wsUrl = currentToken
+      ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(currentToken)}`
       : url;
 
     ws = new WebSocket(wsUrl);
@@ -224,7 +231,12 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
 
       // Don't reconnect on auth failure
       if (event.code === 4001 || event.code === 4003) {
-        onError?.(`Auth failed (code ${event.code}): ${event.reason}`);
+        const message = `Auth failed (code ${event.code}): ${event.reason}`;
+        if (onAuthFailure) {
+          onAuthFailure(message);
+        } else {
+          onError?.(message);
+        }
         return;
       }
 
@@ -519,31 +531,51 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
 
   // ─── Disconnect ────────────────────────────────────────────────────
 
-  function disconnect(): void {
-    if (disposed) return;
-    disposed = true;
-
-    // Clear timers
+  function closeSocket(reason = 'Client reconnect'): void {
     if (reconnectTimer !== null) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
+
     stopAckChecker();
 
-    // Close WS
     if (ws) {
-      ws.onclose = null; // Prevent reconnect trigger
-      ws.close(1000, 'Client disconnect');
+      const current = ws;
       ws = null;
+      current.onclose = null;
+      current.close(1000, reason);
     }
+
+    store.send({ type: 'sync.disconnected' });
+  }
+
+  function reconnect(): void {
+    if (disposed) return;
+    closeSocket();
+    connect();
+  }
+
+  function reset(): void {
+    if (disposed) return;
+    closeSocket('Client reset');
+    sendBuffer.length = 0;
+    rowQueue.clear();
+    inFlightRows.clear();
+    reconnectAttempts = 0;
+    isFirstConnect = true;
+    store.send({ type: 'sync.reset' });
+  }
+
+  function disconnect(): void {
+    if (disposed) return;
+    disposed = true;
+
+    closeSocket('Client disconnect');
 
     // Clear buffers
     sendBuffer.length = 0;
     rowQueue.clear();
     inFlightRows.clear();
-
-    // Update store
-    store.send({ type: 'sync.disconnected' });
   }
 
   // ─── Connect on creation ──────────────────────────────────────────
@@ -571,6 +603,8 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     },
 
     connect,
+    reconnect,
+    reset,
 
     onMessage(handler: (msg: { type: string; [key: string]: unknown }) => void): () => void {
       messageHandlers.add(handler);

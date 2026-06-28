@@ -96,7 +96,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 ### 4. Build features
 
 ```tsx
-import { useCollection, AutoForm, DataTable, CrudPage } from '@platform/frontend';
+import { useCollection, AutoForm, DataTableView, CrudPage } from '@platform/frontend';
 
 function TodoApp() {
   const { data, insert, update, remove } = useCollection('todos');
@@ -105,7 +105,7 @@ function TodoApp() {
     <div>
       <button onClick={() => insert({ title: 'Buy milk', done: false })}>Add</button>
       <AutoForm schema={todoTable.schema} collection="todos" />
-      <DataTable schema={todoTable.schema} collection="todos" editable={['done']} />
+      <DataTableView schema={todoTable.schema} collection="todos" editable={['done']} />
     </div>
   );
 }
@@ -389,6 +389,12 @@ full-stack apps, `AppProvider` reads the server-injected platform config when
 `auth` or `stateSync` props are omitted. Auth actions throw a clear
 configuration error when auth is disabled.
 
+When auth is enabled, sessions persist through the refresh token. The SDK keeps
+the access token in memory, stores the refresh token locally, refreshes and
+retries authenticated HTTP calls after an expired access-token 401, and
+reconnects sync with the latest access token. If refresh is rejected, it clears
+auth state plus local synced table/state data.
+
 ### FetchError
 
 All HTTP shortcuts throw `FetchError` on non-2xx responses:
@@ -465,6 +471,12 @@ function LoginPage() {
 | `useAuthConfig()` | `AuthConfigState` | Public registration/bootstrap config for auth UI |
 | `useCurrentUser()` | `AuthUser \| null` | Just the user object |
 | `useRequireAuth(redirectTo?)` | `AuthUser \| null` | Redirects to `/login` if not authenticated |
+
+`AppProvider` also owns the default client-side protected-route behavior when
+auth is enabled. If a restored or refreshed session fails and the current path
+is not public, it redirects to `loginPath` with a `redirect` query parameter.
+The defaults come from `createApp()` and can be overridden with
+`<AppProvider publicPaths={...} loginPath="/login" />`.
 
 ### AuthUser shape
 
@@ -651,15 +663,57 @@ optimistic insert, and edit flows strip the primary key from update partials.
   columns={['first_name', 'last_name', 'status']}
   layout="master-detail"
   detailHeader={({ item }) => <ClientAvatar client={item} />}
-  detailFooter={({ item }) => <ClientNotes clientId={item.id} />}
-  navigationActions={(client) => [
+  detailFooter={(client) => client && <ClientNotes clientId={client.id} />}
+  navigationActions={(client) => client ? [
     { label: 'Message', icon: <Mail />, onClick: () => openChat(client) },
-  ]}
+  ] : []}
   primaryAction={{ label: 'New Client', onClick: openCreateModal }}
 />
 ```
 
 Split-panel: list on the left, detail/edit on the right. Click a row, the detail panel loads.
+
+### Standalone master-detail view
+
+Use `MasterDetailView` when you want the same list/detail organism without the
+full CRUD wrapper. `MasterDetailPage` remains as a backwards-compatible alias.
+See [docs/frontend/master-detail.md](./frontend/master-detail.md) for the full
+organism guide and the lower-level detail primitives.
+
+```tsx
+import { MasterDetailView } from '@platform/frontend';
+
+<MasterDetailView
+  schema={clientTable.schema}
+  collection="clients"
+  listColumns={['first_name', 'last_name', 'status']}
+  editableFields={['first_name', 'last_name', 'status', 'notes']}
+  detailHeader={({ item }) => <ClientAvatar client={item} />}
+  navigationActions={(client) => client ? [
+    { label: 'Archive', icon: <Archive />, onClick: () => archiveClient(client) },
+  ] : []}
+/>
+```
+
+For full-sync tables, `collection` subscribes through the reactive DB and
+auto-wires generated detail-form updates back to the collection. For lazy
+tables or external sources, pass `data` and `onUpdate`.
+
+```tsx
+const clients = useLazyCollection<Client>('clients', { status: 'active' });
+
+<MasterDetailView
+  schema={clientTable.schema}
+  data={clients.data}
+  listColumns={['first_name', 'last_name', 'status']}
+  selectedId={selectedClientId}
+  onSelectedIdChange={(id) => setSelectedClientId(id)}
+  onUpdate={(id, changes) => clients.update(id, changes)}
+  renderDetail={(client, ctx) => (
+    <ClientProfile client={client} onSave={ctx.update} />
+  )}
+/>
+```
 
 ### Lazy tables
 
@@ -873,21 +927,23 @@ Renders a single field based on schema metadata. Used internally by AutoForm, bu
 
 ## Data Table
 
-### `<DataTable>`
+### `<DataTableView>` / `<DataTable>`
 
-Full-featured data grid with sorting, filtering, pagination, inline editing, and row animations.
+Schema-aware table organism built on TanStack Table. `DataTableView` is the
+preferred organism name; `DataTable` remains as the backwards-compatible alias.
+See [docs/frontend/data-table.md](./frontend/data-table.md) for the full source,
+toolbar, editing, and override guide.
 
 ```tsx
-<DataTable
+<DataTableView
   schema={todos.schema}
   collection="todos"          // Live-updating from collection
-  // OR data={staticArray}    // Static data
   columns={['title', 'priority', 'done']}
   primaryKey="id"             // Optional override; defaults to schema.primaryKey
   editable={['title', 'priority', 'done']}
   actions={[
-    { label: 'Delete', icon: Trash2, onClick: (row) => remove(row.id), variant: 'destructive' },
-    { label: 'Edit', icon: Pencil, onClick: (row) => push(`/todos/${row.id}`) },
+    { label: 'Delete', icon: Trash2, onClick: (row) => remove(row.todo_id), variant: 'destructive' },
+    { label: 'Edit', icon: Pencil, onClick: (row) => push(`/todos/${row.todo_id}`) },
   ]}
   searchable            // Global search bar
   sortable              // Column header sorting
@@ -896,11 +952,96 @@ Full-featured data grid with sorting, filtering, pagination, inline editing, and
   selectable            // Checkbox column
   onSelectionChange={(ids) => console.log('Selected:', ids)}
   onCellEdit={(rowId, col, val) => console.log('Edited:', rowId, col, val)}
+  showToolbar            // Force toolbar rendering for actions/export/columns only
+  exportFilename="todos.csv"
 />
 ```
 
 Row IDs, selection IDs, inline-edit IDs, and highlighted rows all use
 `schema.primaryKey` unless `primaryKey` is provided.
+
+#### Data sources
+
+Full-sync table:
+
+```tsx
+<DataTableView schema={todoTable.schema} collection="todos" />
+```
+
+Lazy `/api/data` table:
+
+```tsx
+<DataTableView
+  schema={auditLogTable.schema}
+  source={{
+    type: 'lazy',
+    table: 'audit_log',
+    filters: { user_id: currentUser.userId },
+    options: { order: 'created_at', dir: 'desc', limit: 100 },
+  }}
+/>
+```
+
+Caller-owned rows:
+
+```tsx
+<DataTableView
+  schema={reportSchema}
+  data={rows}
+  onCellEdit={(id, field, value) => saveCell(id, field, value)}
+/>
+```
+
+Custom data source with mutation actions:
+
+```tsx
+<DataTableView
+  schema={reportSchema}
+  source={{
+    type: 'data',
+    data: rows,
+    isLoading,
+    error,
+    refresh,
+    actions: {
+      update: (id, changes) => saveRow(id, changes),
+    },
+  }}
+  editable={['status']}
+/>
+```
+
+Toolbar behavior:
+
+- `searchable` or `filterable` renders the toolbar automatically.
+- `toolbarActions` also renders the toolbar so custom controls are not hidden.
+- Set `showToolbar` when an app only wants built-in export or column visibility controls.
+- Set `showExport={false}` or `showColumnVisibility={false}` to hide those default controls.
+
+#### Column overrides
+
+Use `columnOverrides` when schema defaults are close but a column needs custom
+rendering or behavior.
+
+```tsx
+<DataTableView
+  schema={clientTable.schema}
+  collection="clients"
+  columns={['name', 'status', 'last_contacted_at']}
+  columnOverrides={{
+    status: {
+      header: 'Status',
+      width: 140,
+      cell: ({ value }) => <StatusBadge status={String(value)} />,
+    },
+    last_contacted_at: {
+      header: 'Last Contact',
+      sortable: true,
+      filterable: false,
+    },
+  }}
+/>
+```
 
 Editable cells decode values for display/editing and encode the changed field
 before calling collection updates. For example, a `field.tags()` cell edits a
@@ -908,6 +1049,10 @@ before calling collection updates. For example, a `field.tags()` cell edits a
 
 **Features:**
 - **Inline editing** — click a cell to edit, Enter to save, Escape to cancel, Tab to move
+- **Full-sync source** — `collection="table"` subscribes through the reactive DB
+- **Lazy source** — `source={{ type: 'lazy', table }}` fetches `/api/data`, then stays live for loaded rows
+- **Caller-owned source** — `data` or `source={{ type: 'data' }}` for external backends
+- **Generated filters** — `filterable` renders field-aware inputs for schema columns
 - **Real-time cell flash** — when another user changes a value, the cell briefly highlights blue
 - **Row animations** — new rows slide in, deleted rows fade out (via AnimatePresence)
 - **CSV export** — built into toolbar
@@ -1006,18 +1151,18 @@ app.use(createNotificationPlugin({ db }));
 ### Client Setup
 
 ```ts
-import { createClient, NOTIFICATION_TABLES } from '@platform/frontend';
+import { createClient } from '@platform/frontend';
 
 const client = createClient({
   url: 'http://localhost:3000',
-  tables: { ...NOTIFICATION_TABLES, ...myTables },
+  tables: myTables,
 });
 ```
 
 ```tsx
 import { AppProvider, NotificationProvider, Toaster } from '@platform/frontend';
 
-<AppProvider url="http://localhost:3000" tables={{ ...NOTIFICATION_TABLES }} auth>
+<AppProvider url="http://localhost:3000" tables={myTables} auth>
   <NotificationProvider>
     <Toaster />
     <App />
@@ -1138,16 +1283,11 @@ Wraps children with notification context and optionally fires Sonner toasts for 
 | `toastDuration` | `number` | `5000` | Toast display duration (ms) |
 | `renderToast` | `(n: Notification) => ReactNode` | — | Custom toast renderer. Return `null` to suppress. |
 
-### `NOTIFICATION_TABLES`
+### Platform Tables
 
-Client table definitions for the sync layer. Spread into your `tables` config.
-
-```ts
-import { NOTIFICATION_TABLES } from '@platform/frontend';
-
-// Contains: notifications, notification_receipts
-// Both tables are synced in real-time via WebSocket
-```
+The frontend SDK automatically merges notification, room, workflow, and storage
+tables into each client. App code should pass only its app tables to
+`createClient()` or `AppProvider`.
 
 ### Receipt System
 
@@ -1226,6 +1366,22 @@ Storage hooks use the SDK client for authenticated transport. JSON routes call
 rest of the frontend SDK. Uploads still use `XMLHttpRequest` for progress
 events, but they read the SDK client's in-memory access token and retry once
 after `client.refresh()` if the server returns 401.
+
+### Storage Management Component
+
+For admin or owner dashboards, Zero exports an embeddable storage organism:
+
+```tsx
+import { StorageManagement } from '@platform/frontend';
+
+function FilesPanel() {
+  return <StorageManagement className="h-[42rem]" />;
+}
+```
+
+`StorageManagement` composes smaller drive-list, file-browser, drive-header,
+and file-detail components. It uses the storage hooks above, so it must be
+rendered inside `AppProvider` or `ClientProvider`.
 
 ### REST API
 
@@ -1856,14 +2012,15 @@ app.listen(3000);
 | `useServerState` | `<T>(key, default) => [T, (v: T) => void]` | Server-persisted per-user state |
 | `useServerStateReady` | `() => boolean` | Initial state loaded from server? |
 
-### Sync Hooks (re-exported)
+### Collection Hooks
 
 | Hook | Signature | Description |
 |------|-----------|-------------|
-| `useTable` | `(name) => UseTableResult` | Table data with filtering/pagination |
-| `useRow` | `(name, id) => UseRowResult` | Single row subscription |
-| `useQuery` | `(query) => result` | SQL-like query subscription |
-| `useSyncStatus` | `() => SyncStatus` | Connection + sync status |
+| `useCollection` | `(name) => CollectionResult` | Full-sync table data and mutations |
+| `useLazyCollection` | `(name, filters?, options?) => LazyCollectionResult` | `/api/data` fetch plus live loaded rows |
+| `useRow` | `(name, id) => row \| null` | Single row subscription |
+| `useQuery` | `(name, predicate) => rows[]` | Local filtered collection view |
+| `useStatus` | `() => { connected }` | WebSocket connection status |
 
 ### Notification Hooks
 
@@ -1908,6 +2065,7 @@ use SDK auth headers with an automatic refresh-and-retry on 401.
 | Hook | Signature | Description |
 |------|-----------|-------------|
 | `useDataTable` | `<T>(opts) => UseDataTableReturn<T>` | TanStack Table state management |
+| `useDataTableSource` | `<T>(opts) => DataTableSourceState<T>` | DataTable source resolver for static, full-sync, and lazy sources |
 
 ---
 
@@ -1916,19 +2074,19 @@ use SDK auth headers with an automatic refresh-and-retry on 401.
 Everything available from `@platform/frontend`:
 
 ### Functions & Classes
-`createClient`, `getClient`, `AuthClient`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`
+`createClient`, `getClient`, `AuthClient`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`
 
 ### React Components
-`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `Link`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `AutoForm`, `FieldRenderer`, `CrudPage`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
+`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `Link`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
 
 ### React Hooks
-`useClient`, `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, `useStatus`, `useAuth`, `useCurrentUser`, `useRequireAuth`, `useTable`, `useRow`, `useQuery`, `useSyncStatus`, `useServerState`, `useServerStateReady`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useUpload`, `useStorageFolder`, `useStorageDrives`, `useDriveUsage`, `usePresignedUrl`, `useStorageActions`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`
+`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, `useStatus`, `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useServerState`, `useServerStateReady`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useUpload`, `useStorageFolder`, `useStorageDrives`, `useDriveUsage`, `usePresignedUrl`, `useStorageActions`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`
 
 ### Constants
-`NOTIFICATION_TABLES`, `NOTIFICATION_TABLES.notifications`, `NOTIFICATION_TABLES.notification_receipts`, `STORAGE_TABLES`
+`STORAGE_TABLES`
 
 ### Types
-`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `RegisterParams`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `UseTableResult`, `UseRowResult`, `SyncStatus`, `AuthState`, `AuthActions`, `CollectionResult`, `InferRow`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `UseUploadReturn`, `UseStorageFolderReturn`, `UseStorageDrivesReturn`, `StorageActions`, `DriveRecord`, `FileInfo`, `DriveUsage`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `InferSchemaType`, `InferSchemaInput`, `UseFormOptions`, `UseFormReturn`, `DataTableProps`, `UseDataTableOptions`, `UseDataTableReturn`, `RowAction`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`
+`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `RegisterParams`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `InferRow`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseStorageFolderReturn`, `UseStorageDrivesReturn`, `UseDriveUsageReturn`, `UsePresignedUrlReturn`, `StorageActions`, `DriveRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`
 
 Server-only (from `@platform/server`): `App`, `AppConfig`, `ResolvedConfig`, `AuthPluginConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `createAuthPlugin`, `createAuthMiddleware`, `getTokenService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `emitPlatformCode`, `createObservabilityPlugin`
 

@@ -1,7 +1,15 @@
 'use client';
 
+/**
+ * master-detail-page.tsx
+ *
+ * Renders Zero's reusable list/detail organism. This component owns UI
+ * composition for table selection, detail rendering, and action placement; data
+ * subscription and selection state live in dedicated helper files.
+ */
+
 import * as React from 'react';
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useMemo, useCallback } from 'react';
 import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { Row } from '../../sync/types';
 import { DataTable } from '@/components/data-table';
@@ -14,8 +22,28 @@ import {
   type NavigationAction,
 } from '@/components/ui/record-navigation-bar';
 import { cn } from '@/lib/utils';
+import {
+  useMasterDetailState,
+  type MasterDetailLiveActions,
+} from './use-master-detail-state';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
+
+export interface MasterDetailRenderContext<T extends Row = Row> {
+  primaryKey: string;
+  selectedId: string | null;
+  selectedItem: T | null;
+  selectedIndex: number;
+  totalCount: number;
+  canSelectPrevious: boolean;
+  canSelectNext: boolean;
+  selectId: (id: string | null) => void;
+  selectItem: (item: T) => void;
+  selectPrevious: () => void;
+  selectNext: () => void;
+  update: (changes: Partial<T>) => void | Promise<void>;
+  liveActions: MasterDetailLiveActions<T> | null;
+}
 
 export interface MasterDetailPageProps<T extends Row = Row> {
   // ── Schema & column config ──────────────────────────────────────
@@ -31,12 +59,28 @@ export interface MasterDetailPageProps<T extends Row = Row> {
   // ── Data source ─────────────────────────────────────────────────
   /** Static data array. */
   data?: T[];
-  /** Collection name for live reactive data (overrides `data`). */
+  /**
+   * Collection name for live reactive data (overrides `data`).
+   * When provided, detail-form updates write to the collection unless `onUpdate`
+   * is supplied.
+   */
   collection?: string;
+
+  // ── Selection ───────────────────────────────────────────────────
+  /** Controlled selected row ID. Pass `null` to force no selection. */
+  selectedId?: string | null;
+  /** Initial selected row ID for uncontrolled usage. */
+  defaultSelectedId?: string | null;
+  /** Auto-select the first row when uncontrolled and no row is selected. Default: true. */
+  autoSelectFirst?: boolean;
+  /** Called whenever the selected row ID changes through this component. */
+  onSelectedIdChange?: (id: string | null, item: T | null) => void;
 
   // ── Detail header ───────────────────────────────────────────────
   /** Custom header component rendered above the edit form in the detail panel. */
   detailHeader?: React.ComponentType<{ item: T }>;
+  /** Custom empty state content when no record is selected. */
+  emptyState?: React.ReactNode;
   /** Empty state text when no record is selected. */
   emptyStateText?: string;
 
@@ -48,6 +92,7 @@ export interface MasterDetailPageProps<T extends Row = Row> {
     label: string;
     sublabel?: string;
     shortcut?: string;
+    disabled?: boolean;
     onClick: () => void;
   };
 
@@ -55,7 +100,9 @@ export interface MasterDetailPageProps<T extends Row = Row> {
   /** Called when a row is clicked / selected. */
   onSelect?: (item: T) => void;
   /** Called when the detail form is submitted. */
-  onUpdate?: (id: string, changes: Partial<T>) => void;
+  onUpdate?: (id: string, changes: Partial<T>) => void | Promise<void>;
+  /** Called when the generated detail form update fails. */
+  onUpdateError?: (error: string) => void;
 
   // ── Table features ──────────────────────────────────────────────
   /** Enable search bar in the table toolbar. Default: true. */
@@ -70,8 +117,14 @@ export interface MasterDetailPageProps<T extends Row = Row> {
   formColumns?: number;
   /** Submit button label. Default: 'Save Changes'. */
   submitLabel?: string;
-  /** Content rendered below the form in the detail panel. */
-  detailFooter?: React.ReactNode;
+  /** Content rendered in the sticky detail footer. */
+  detailFooter?:
+    | React.ReactNode
+    | ((item: T | null, context: MasterDetailRenderContext<T>) => React.ReactNode);
+  /** Custom detail body. When provided, replaces the generated AutoForm. */
+  renderDetail?: (item: T, context: MasterDetailRenderContext<T>) => React.ReactNode;
+  /** Content rendered below the detail body for the selected item. */
+  detailContent?: (item: T, context: MasterDetailRenderContext<T>) => React.ReactNode;
 
   // ── Layout ──────────────────────────────────────────────────────
   /** Width ratio for list panel. Default: '3fr'. */
@@ -90,70 +143,111 @@ function MasterDetailPage<T extends Row = Row>({
   editableFields,
   data: dataProp,
   collection,
+  selectedId: selectedIdProp,
+  defaultSelectedId,
+  autoSelectFirst,
+  onSelectedIdChange,
   detailHeader: DetailHeader,
+  emptyState,
   emptyStateText,
   navigationActions,
   primaryAction,
   onSelect,
   onUpdate,
+  onUpdateError,
   searchable = true,
   sortable = true,
   paginated = false,
   formColumns = 2,
   submitLabel = 'Save Changes',
   detailFooter,
+  renderDetail,
+  detailContent,
   listWidth,
   detailWidth,
   className,
 }: MasterDetailPageProps<T>) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const primaryKey = getSchemaPrimaryKey(schema, primaryKeyOverride);
-
-  // Resolve data — collection prop not wired here (DataTable handles it internally)
-  const data = dataProp ?? [];
-
-  // Auto-select first record on mount / when data changes
-  useEffect(() => {
-    if (data.length === 0) {
-      setSelectedId(null);
-      return;
-    }
-    const ids = data.map((r) => requireRowPrimaryKey(r, primaryKey));
-    if (selectedId == null || !ids.includes(selectedId)) {
-      setSelectedId(ids[0]!);
-    }
-  }, [data, selectedId, primaryKey]);
-
-  const selectedItem = useMemo(
-    () => data.find((r) => requireRowPrimaryKey(r, primaryKey) === selectedId) ?? null,
-    [data, selectedId, primaryKey],
+  const state = useMasterDetailState<T>({
+    data: dataProp,
+    collection,
+    primaryKey,
+    selectedId: selectedIdProp,
+    defaultSelectedId,
+    autoSelectFirst,
+    onSelect,
+    onSelectedIdChange,
+  });
+  const {
+    data,
+    selectedId,
+    selectedItem,
+    selectedIndex,
+    totalCount,
+    canSelectPrevious,
+    canSelectNext,
+    selectRow,
+    selectId,
+    selectPrevious,
+    selectNext,
+    liveActions,
+  } = state;
+  const editableFieldSet = useMemo(
+    () => editableFields ? new Set(editableFields) : null,
+    [editableFields],
+  );
+  const formFieldOverrides = useMemo(
+    () => editableFieldSet
+      ? Object.fromEntries(
+          schema.fieldNames.map((name) => [name, { hidden: !editableFieldSet.has(name) }]),
+        )
+      : undefined,
+    [editableFieldSet, schema.fieldNames],
   );
 
-  const selectedIndex = useMemo(
-    () => data.findIndex((r) => requireRowPrimaryKey(r, primaryKey) === selectedId),
-    [data, selectedId, primaryKey],
-  );
-
-  // ─── Navigation ───────────────────────────────────────────────────
-
-  const handlePrevious = useCallback(() => {
-    if (selectedIndex > 0) {
-      setSelectedId(requireRowPrimaryKey(data[selectedIndex - 1]!, primaryKey));
-    }
-  }, [data, selectedIndex, primaryKey]);
-
-  const handleNext = useCallback(() => {
-    if (selectedIndex < data.length - 1) {
-      setSelectedId(requireRowPrimaryKey(data[selectedIndex + 1]!, primaryKey));
-    }
-  }, [data, selectedIndex, primaryKey]);
-
-  const handleRowClick = useCallback(
-    (row: T) => {
-      setSelectedId(requireRowPrimaryKey(row, primaryKey));
-      onSelect?.(row);
+  const submitDetailChanges = useCallback(
+    (item: T, changes: Partial<T>) => {
+      const id = requireRowPrimaryKey(item, primaryKey);
+      if (onUpdate) return onUpdate(id, changes);
+      liveActions?.update(id, changes);
     },
-    [onSelect, primaryKey],
+    [liveActions, onUpdate, primaryKey],
+  );
+
+  const renderContext = useMemo<MasterDetailRenderContext<T>>(
+    () => ({
+      primaryKey,
+      selectedId,
+      selectedItem,
+      selectedIndex,
+      totalCount,
+      canSelectPrevious,
+      canSelectNext,
+      selectId,
+      selectItem: selectRow,
+      selectPrevious,
+      selectNext,
+      update: (changes) => {
+        if (!selectedItem) return;
+        return submitDetailChanges(selectedItem, changes);
+      },
+      liveActions,
+    }),
+    [
+      canSelectNext,
+      canSelectPrevious,
+      liveActions,
+      primaryKey,
+      selectId,
+      selectNext,
+      selectPrevious,
+      selectRow,
+      selectedId,
+      selectedIndex,
+      selectedItem,
+      submitDetailChanges,
+      totalCount,
+    ],
   );
 
   // ─── Navigation actions ───────────────────────────────────────────
@@ -161,6 +255,13 @@ function MasterDetailPage<T extends Row = Row>({
   const navActions = useMemo(
     () => navigationActions?.(selectedItem) ?? [],
     [selectedItem, navigationActions],
+  );
+
+  const resolvedDetailFooter = useMemo(
+    () => typeof detailFooter === 'function'
+      ? detailFooter(selectedItem, renderContext)
+      : detailFooter,
+    [detailFooter, renderContext, selectedItem],
   );
 
   // ─── Render ───────────────────────────────────────────────────────
@@ -175,14 +276,13 @@ function MasterDetailPage<T extends Row = Row>({
         list={
           <DataTable<T>
             schema={schema}
-            data={collection ? undefined : data}
-            collection={collection}
+            data={data}
             columns={listColumns}
             primaryKey={primaryKey}
             searchable={searchable}
             sortable={sortable}
             paginated={paginated}
-            onRowClick={handleRowClick}
+            onRowClick={selectRow}
             highlightedRowId={selectedId ?? undefined}
             className="h-full"
           />
@@ -191,39 +291,53 @@ function MasterDetailPage<T extends Row = Row>({
           <DetailPanel
             isEmpty={selectedItem == null}
             emptyState={
-              emptyStateText ? (
+              emptyState ?? (emptyStateText ? (
                 <p className="text-sm">{emptyStateText}</p>
-              ) : undefined
+              ) : undefined)
             }
             header={
               selectedItem && DetailHeader ? (
                 <DetailHeader item={selectedItem} />
               ) : undefined
             }
-            footer={detailFooter}
+            footer={resolvedDetailFooter}
           >
             {selectedItem && (
-              <AutoForm
-                key={selectedId}
-                schema={schema}
-                mode="edit"
-                defaultValues={selectedItem as Record<string, unknown>}
-                columns={formColumns}
-                onSubmit={(values) => {
-                  onUpdate?.(requireRowPrimaryKey(selectedItem, primaryKey), values as Partial<T>);
-                }}
-                submitLabel={submitLabel}
-                className="mt-2"
-              />
+              <>
+                {renderDetail ? (
+                  renderDetail(selectedItem, renderContext)
+                ) : (
+                  <AutoForm
+                    key={selectedId}
+                    schema={schema}
+                    mode="edit"
+                    defaultValues={selectedItem as Record<string, unknown>}
+                    columns={formColumns}
+                    fields={formFieldOverrides}
+                    onSubmit={(values) => {
+                      const changes = editableFieldSet
+                        ? Object.fromEntries(
+                            Object.entries(values).filter(([name]) => editableFieldSet.has(name)),
+                          )
+                        : values;
+                      return submitDetailChanges(selectedItem, changes as Partial<T>);
+                    }}
+                    onError={onUpdateError}
+                    submitLabel={submitLabel}
+                    className="mt-2"
+                  />
+                )}
+                {detailContent?.(selectedItem, renderContext)}
+              </>
             )}
           </DetailPanel>
         }
         bottomBar={
           <RecordNavigationBar
             currentIndex={selectedIndex}
-            totalCount={data.length}
-            onPrevious={handlePrevious}
-            onNext={handleNext}
+            totalCount={totalCount}
+            onPrevious={selectPrevious}
+            onNext={selectNext}
             actions={navActions}
             primaryAction={primaryAction}
           />
@@ -234,3 +348,4 @@ function MasterDetailPage<T extends Row = Row>({
 }
 
 export { MasterDetailPage };
+export const MasterDetailView = MasterDetailPage;

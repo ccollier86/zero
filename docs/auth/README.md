@@ -84,7 +84,28 @@ Register a user — every client subscribed to the `users` table sees them appea
 | **Stateless verification** | Access tokens verified with public key only — no DB lookup per request |
 | **Reactive user rows** | User profile and role changes use ReactiveDB; properties are joined into auth payloads |
 | **Revocable refresh** | Refresh tokens are opaque UUIDs, SHA-256 hashed in DB, rotated on use |
+| **Persistent sessions** | Browser clients restore from the stored refresh token, refresh access tokens on 401, and reconnect sync with the latest token |
 | **Zero sensitive broadcast** | Password hashes live in `_credentials` (internal table) — never broadcast |
+
+## Session Persistence
+
+Access tokens are intentionally short-lived and kept only in memory. The
+browser SDK stores the opaque refresh token in `localStorage` so a reload can
+restore the session without making the user log in again.
+
+The SDK handles the normal lifecycle:
+
+1. On startup, it exchanges the stored refresh token for a fresh access token.
+2. Authenticated HTTP calls retry once after a 401 by refreshing the access token.
+3. The sync WebSocket reads the current access token whenever it opens or reconnects.
+4. Login, registration, and refresh reconnect sync with the latest token.
+5. Logout or an unrefreshable 401 clears auth state and resets local synced table/state data.
+
+`AppProvider` also guards protected client routes when auth is enabled. If a
+session cannot be restored or a refresh token is rejected, protected routes are
+redirected to the configured login path with a `redirect` query string.
+Configure public paths and the login route in `createApp()` or override them on
+`<AppProvider publicPaths={...} loginPath="/login" />`.
 
 ## Stack
 
@@ -109,8 +130,8 @@ A **standalone auth primitive** that composes with the sync engine. It owns user
 
 - **Not an identity provider.** No OAuth flows, no SAML, no social login. It's username/password auth with JWTs. Add OAuth on top if you need it.
 - **Not multi-tenant.** Single database, single namespace. All users share one `users` table.
-- **Not a full user management UI.** It ships admin user-management routes and a mock/admin page shell, but a production admin screen can be app-specific.
-- **Not a permissions framework.** It provides `role` on the user and `authContext` in middleware. Row-level access control, RBAC policies — that's application code on top.
+- **Not a permissions framework.** It provides `role` on the user, configurable user properties, and `authContext` in middleware. Row-level access control and deeper RBAC policies remain application code on top.
+- **Not a hosted admin product.** It ships admin user-management routes and a reusable `UserManagement` dashboard organism, but apps still choose where that component lives and how the rest of the admin dashboard is composed.
 
 ## Comparison
 
@@ -266,6 +287,28 @@ email-driven reset/setup routes create one-time action tokens, send account
 lifecycle email through the platform email service, mark the account as
 requiring a password change, and revoke existing sessions.
 
+The frontend barrel exports a ready-to-embed admin organism. It is not a page;
+place it inside whatever dashboard, tab, or settings view the app owns:
+
+```tsx
+import { UserManagement } from '@platform/frontend';
+
+function AdminUsersPanel() {
+  return <UserManagement className="h-[720px]" />;
+}
+```
+
+`UserManagement` loads `/auth/admin/config` and `/auth/admin/users`, creates and
+updates users, promotes admins through the `role` field, suspends/reactivates
+accounts, deletes users with confirmation, revokes sessions, sends setup/reset
+emails when configured, and adapts configured `auth.userProperties` into admin
+property controls. In self-wired mode it uses backend pagination plus server
+`search`, `role`, and `status` filters so users beyond the first page remain
+reachable. For custom dashboards, `useAdminUsers()` exposes the same SDK-backed
+state, page metadata, filters, and mutations without rendering the organism.
+Manual password reset appears only when
+`auth.accountEmails.manualPasswordReset` is enabled.
+
 Public account lifecycle routes:
 
 ```txt
@@ -338,3 +381,44 @@ Configured fields validate type/options and edit authority:
 Unknown property keys remain allowed by default for compatibility. Set
 `strictUserProperties: true` to reject unknown current-user/admin property
 writes through the platform routes.
+
+`GET /auth/config` exposes only fields with `editableBy: 'user'` so public
+account settings can adapt without leaking admin-only metadata policy. The
+admin config endpoint exposes all configured fields for the `UserManagement`
+organism.
+
+```tsx
+import {
+  ChangePasswordForm,
+  ForgotPasswordForm,
+  LoginForm,
+  PasswordActionForm,
+  RegisterForm,
+  UserPropertiesForm,
+} from '@platform/frontend';
+
+function LoginPanel() {
+  return <LoginForm forgotPasswordHref="/forgot-password" registerHref="/register" />;
+}
+
+function ResetPasswordPanel({ token }: { token: string }) {
+  return <PasswordActionForm token={token} mode="auto" loginHref="/login" />;
+}
+
+function AccountSettings() {
+  return (
+    <>
+      <UserPropertiesForm />
+      <ChangePasswordForm />
+    </>
+  );
+}
+```
+
+`LoginForm`, `RegisterForm`, and `ForgotPasswordForm` read auth config by
+default. Policy-aware links/forms wait for `/auth/config` before showing
+registration or password-reset actions, hide unavailable actions, keep
+first-admin bootstrap visible, and surface lifecycle errors such as
+`PASSWORD_CHANGE_REQUIRED` and `ACCOUNT_SUSPENDED` with UI-friendly messages.
+`PasswordActionForm` inspects the emailed token first and only enables submit
+when the token is valid and matches the requested `mode`.

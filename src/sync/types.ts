@@ -385,10 +385,14 @@ export interface SyncClientConfig {
   tables: Record<string, ClientTableDef>;
   /** Auth token to send on connect */
   token?: string;
+  /** Return the current auth token at connection time. Overrides `token` when provided. */
+  getToken?: () => string | null | undefined;
   /** Connect WebSocket immediately. Default: true */
   autoConnect?: boolean;
   /** Callback on unrecoverable error */
   onError?: (error: string) => void;
+  /** Callback when the socket is closed for auth failure. */
+  onAuthFailure?: (error: string) => void;
   /** Callback after successful reconnect */
   onReconnect?: () => void;
   /** Mutation ack timeout in ms. Default: 10000 */

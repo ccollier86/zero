@@ -1,6 +1,15 @@
 # Guards & Activity Audit
 
-Route protection by role + automatic activity tracking. The guard is a one-liner per route group. The audit trail is wire-once, captures everything — routes visited, data read, data mutated, login/logout — grouped by session, stored in memory.
+Route protection by role + planned automatic activity tracking. The guard is a
+one-liner per route group. The audit trail design is wire-once: routes visited,
+data read, data mutated, login/logout, grouped by session.
+
+> Status: role guards are platform behavior. The user-activity audit and
+> push-based inactivity timeout sections are deferred design notes. Current
+> browser session recovery is refresh-token based: the SDK restores from the
+> stored refresh token, retries authenticated HTTP calls once after refreshing,
+> reconnects sync with the latest access token, and `AppProvider` redirects
+> protected client routes when auth is lost.
 
 ## Role Guard
 
@@ -111,9 +120,12 @@ createSyncPlugin({
 
 Role can determine table visibility through `SyncPolicy.canReadTable`. Direct client writes are checked separately with `canMutateTable`, `canInsert`, `canUpdate`, and `canDelete` (see [Subscription And Mutation Policy](../realtime-sync/realtime-sync/README.md#subscription-and-mutation-policy)).
 
-## Inactivity Timeout
+## Deferred Inactivity Timeout Design
 
-No activity for X minutes → server kills the session, pushes a signal over the WS, SDK wipes auth state and redirects to login. Instant — the real-time connection is always there.
+This section describes the intended audit-driven inactivity feature, not the
+current auth runtime. Today, refresh-token rejection or an unrefreshable 401
+clears auth/session state and `AppProvider` redirects protected routes. The
+future audit system can add server-pushed inactivity expiration on top.
 
 ### How It Works
 
@@ -140,9 +152,9 @@ User idle for 30 min
 │                                                                     │
 │  routeMessage() receives 'auth.session-expired'                     │
 │    │                                                                │
-│    ├── store.send('auth.clear')  → wipe tokens + user from state   │
-│    ├── ws.close()                → drop the sync connection         │
-│    └── onSessionExpired()        → app callback → redirect /login  │
+│    ├── authClient.expireSession()  → wipe tokens + user state       │
+│    ├── syncClient.reset()          → clear local synced data        │
+│    └── AppProvider guard           → redirect /login                │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -193,26 +205,22 @@ Bun auto-unsubscribes on close. No cleanup needed.
 The SDK routes the message like any other WS message. One new case in the switch:
 
 ```ts
-// In SDK routeMessage()
+// Future SDK routeMessage() case
 case 'auth.session-expired':
-  store.send({ type: 'auth.clear' });   // wipe tokens, user state
-  ws.close();                            // drop WS connection
-  onSessionExpired?.(msg.reason);        // app-provided callback
+  authClient.expireSession();   // wipe tokens and user state
+  syncClient.reset();           // clear synced local data
+  // AppProvider redirects protected routes through the normal auth guard.
   break;
 ```
 
-The app registers the callback at init:
+Apps can still show their own UI around auth loss by watching `useAuth()`:
 
-```ts
-const app = createApp({
-  serverUrl: 'http://localhost:3000',
-  tables: { ... },
-  onSessionExpired: (reason) => {
-    // reason: 'inactive' | 'forced' | 'expired'
-    router.navigate('/login');
-    toast.info('Session expired — please log in again');
-  },
-});
+```tsx
+function AuthLossNotice() {
+  const { isAuthenticated, isLoading } = useAuth();
+  if (isLoading || isAuthenticated) return null;
+  return <p>Please log in again.</p>;
+}
 ```
 
 **What the user sees:** They're staring at a page. 30 minutes pass. Suddenly the page redirects to login. Their reactive data, auth-gated routes — all gone from memory. Clean slate. They log in, get a fresh session, the sync engine sends a fresh snapshot, everything rebuilds.
@@ -221,15 +229,18 @@ const app = createApp({
 
 The real-time WS connection is **always present** when the app is running. It's not optional infrastructure — it's the sync engine, the backbone. If the user has the app open, the WS is open. If the WS drops, the client reconnects automatically (exponential backoff). The auth signal rides the same connection that powers everything else.
 
-No HTTP polling. No `setInterval` on the client checking token expiry. No "check auth on next route navigation." The server decides, the server pushes, the client reacts. One direction, one code path.
+In this deferred design there is no HTTP polling, no `setInterval` on the
+client checking token expiry, and no route-navigation-only auth check. The
+server decides, the server pushes, and the client reacts through the same auth
+clear/reset path used by rejected refresh today.
 
 | Scenario | What happens |
 |----------|-------------|
-| User idle 30min, tab open | Server pushes `auth.session-expired` → SDK redirects to login |
-| User idle 30min, tab backgrounded | Same — WS stays alive in background, push still delivered |
-| User idle, WS drops and reconnects | On reconnect, server checks: session already ended → sends `auth.session-expired` immediately |
+| User idle 30min, tab open | Future audit worker pushes `auth.session-expired` → SDK clears state → `AppProvider` redirects |
+| User idle 30min, tab backgrounded | Future behavior is the same when the browser keeps the WS alive |
+| User idle, WS drops and reconnects | Future reconnect can detect ended session and send `auth.session-expired` immediately |
 | Admin force-revokes user | Same push mechanism: `server.publish('auth:{userId}', ...)` → instant redirect |
-| User's refresh token expires naturally | On next refresh attempt, server returns 401 → SDK triggers same `onSessionExpired` path |
+| User's refresh token expires naturally | Current behavior: next refresh returns 401, SDK clears auth/local data, `AppProvider` redirects protected routes |
 
 ## Activity Audit
 

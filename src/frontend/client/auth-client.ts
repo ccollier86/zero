@@ -1,3 +1,11 @@
+/**
+ * auth-client.ts
+ *
+ * Browser-side auth transport and state manager for Zero. This file owns token
+ * lifecycle, auth route calls, and SDK error normalization; it does not render
+ * UI or enforce backend authorization policy.
+ */
+
 import { createStore } from '@xstate/store';
 
 // ─── Auth Store ────────────────────────────────────────────────────────────
@@ -140,6 +148,16 @@ export interface RegisterParams {
   lastName?: string;
 }
 
+export interface AuthUserPropertyConfig {
+  key: string;
+  type: 'string' | 'enum' | 'boolean' | 'number';
+  label?: string;
+  values?: string[];
+  default?: string;
+  editableBy: 'user' | 'admin' | 'system' | 'none';
+  description?: string;
+}
+
 export interface AuthPublicConfig {
   registration: {
     mode: 'public' | 'admin-only' | 'disabled';
@@ -152,6 +170,84 @@ export interface AuthPublicConfig {
     passwordReset: boolean;
     passwordChangedNotice: boolean;
   };
+  userProperties?: Record<string, AuthUserPropertyConfig>;
+  strictUserProperties?: boolean;
+}
+
+export interface AuthAdminConfig {
+  registration: AuthPublicConfig['registration'];
+  email: {
+    enabled: boolean;
+    provider: string;
+    hasPublicUrl: boolean;
+  };
+  accountEmails: {
+    adminCreatedUser: boolean;
+    passwordReset: boolean;
+    passwordChangedNotice: boolean;
+    manualPasswordReset: boolean;
+    actionTokenTTL: string;
+    requestCooldown: string;
+    resetPath: string;
+    setupPath: string;
+  };
+  capabilities: {
+    manualPasswordReset: boolean;
+    setupEmail: boolean;
+    passwordResetEmail: boolean;
+    suspendUsers: boolean;
+    promoteAdmins: boolean;
+    userProperties: boolean;
+  };
+  userProperties: Record<string, AuthAdminUserPropertyConfig>;
+  strictUserProperties: boolean;
+}
+
+export interface AuthAdminUserPropertyConfig extends AuthUserPropertyConfig {}
+
+export interface AuthAdminUserListParams {
+  limit?: number;
+  offset?: number;
+  search?: string;
+  role?: string;
+  status?: AuthUser['status'];
+}
+
+export interface AuthAdminUserPage {
+  limit: number;
+  offset: number;
+  count: number;
+  total: number;
+  hasMore: boolean;
+  nextOffset: number | null;
+}
+
+export interface AuthAdminUserListResult {
+  users: AuthUser[];
+  page: AuthAdminUserPage;
+}
+
+export interface AuthAdminCreateUserParams {
+  username: string;
+  email: string;
+  password?: string;
+  firstName?: string;
+  lastName?: string;
+  role?: string;
+  passwordChangeRequired?: boolean;
+  sendSetupEmail?: boolean;
+  properties?: Record<string, unknown>;
+}
+
+export interface AuthAdminUpdateUserParams {
+  username?: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  role?: string;
+  status?: AuthUser['status'];
+  passwordChangeRequired?: boolean;
+  properties?: Record<string, unknown>;
 }
 
 export interface AuthActionTokenInfo {
@@ -168,11 +264,24 @@ export interface AuthActionTokenInfo {
 export const AUTH_DISABLED_MESSAGE =
   '[client] Auth is disabled for this SDK client. Enable auth in createApp({ auth: true }) and <AppProvider auth>, or remove auth-only UI/actions.';
 
+/** Error thrown by AuthClient when an auth route returns a non-2xx response. */
+export class AuthClientError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string | null,
+    readonly body: unknown,
+  ) {
+    super(message);
+    this.name = 'AuthClientError';
+  }
+}
+
 export function createAuthDisabledError(): Error {
   return new Error(AUTH_DISABLED_MESSAGE);
 }
 
-function getAuthResponseError(res: Response, body: unknown, fallback: string): string {
+function getAuthResponseErrorMessage(res: Response, body: unknown, fallback: string): string {
   if (res.status === 404) {
     return '[client] Auth route not found. Enable auth in createApp({ auth: true }) or disable frontend auth.';
   }
@@ -182,6 +291,23 @@ function getAuthResponseError(res: Response, body: unknown, fallback: string): s
   }
 
   return fallback;
+}
+
+function getAuthResponseCode(body: unknown): string | null {
+  if (body && typeof body === 'object' && 'code' in body) {
+    const code = (body as { code?: unknown }).code;
+    return typeof code === 'string' ? code : null;
+  }
+  return null;
+}
+
+function createAuthClientError(res: Response, body: unknown, fallback: string): AuthClientError {
+  return new AuthClientError(
+    getAuthResponseErrorMessage(res, body, fallback),
+    res.status,
+    getAuthResponseCode(body),
+    body,
+  );
 }
 
 /**
@@ -253,9 +379,10 @@ export class AuthClient {
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      const msg = getAuthResponseError(res, body, 'Login failed');
+      const err = createAuthClientError(res, body, 'Login failed');
+      const msg = err.message;
       this.send('auth.error', { error: msg });
-      throw new Error(msg);
+      throw err;
     }
 
     const data = await res.json();
@@ -280,9 +407,10 @@ export class AuthClient {
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      const msg = getAuthResponseError(res, body, 'Registration failed');
+      const err = createAuthClientError(res, body, 'Registration failed');
+      const msg = err.message;
       this.send('auth.error', { error: msg });
-      throw new Error(msg);
+      throw err;
     }
 
     const data = await res.json();
@@ -301,10 +429,115 @@ export class AuthClient {
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new Error(getAuthResponseError(res, body, 'Failed to load auth config'));
+      throw createAuthClientError(res, body, 'Failed to load auth config');
     }
 
     return res.json();
+  }
+
+  /** Load admin-only auth and user-management capabilities. */
+  async getAdminConfig(): Promise<AuthAdminConfig> {
+    return this.adminJson<AuthAdminConfig>('/auth/admin/config');
+  }
+
+  /** List users through the admin auth API with backend pagination. */
+  async listAdminUsers(params: AuthAdminUserListParams = {}): Promise<AuthAdminUserListResult> {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null && value !== '') {
+        query.set(key, String(value));
+      }
+    }
+
+    const suffix = query.size > 0 ? `?${query}` : '';
+    return this.adminJson<AuthAdminUserListResult>(`/auth/admin/users${suffix}`);
+  }
+
+  /** Load a single user through the admin auth API. */
+  async getAdminUser(userId: string): Promise<AuthUser> {
+    const data = await this.adminJson<{ user: AuthUser }>(`/auth/admin/users/${encodeURIComponent(userId)}`);
+    return data.user;
+  }
+
+  /** Create a user through the admin auth API. */
+  async createAdminUser(params: AuthAdminCreateUserParams): Promise<{ user: AuthUser; setupEmailSent: boolean }> {
+    return this.adminJson<{ user: AuthUser; setupEmailSent: boolean }>('/auth/admin/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+  }
+
+  /** Update a user profile, role, status, password flag, or configured properties. */
+  async updateAdminUser(userId: string, params: AuthAdminUpdateUserParams): Promise<AuthUser> {
+    const data = await this.adminJson<{ user: AuthUser }>(`/auth/admin/users/${encodeURIComponent(userId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return data.user;
+  }
+
+  /** Delete a user through the admin auth API. */
+  async deleteAdminUser(userId: string): Promise<void> {
+    await this.adminJson<{ ok: boolean }>(`/auth/admin/users/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /** Send an account setup email to an admin-created user. */
+  async sendAdminSetupEmail(userId: string): Promise<boolean> {
+    const data = await this.adminJson<{ ok: boolean; setupEmailSent: boolean }>(
+      `/auth/admin/users/${encodeURIComponent(userId)}/send-setup-email`,
+      { method: 'POST' },
+    );
+    return data.setupEmailSent;
+  }
+
+  /** Send a password reset email and require the target user to change password. */
+  async sendAdminPasswordReset(userId: string): Promise<void> {
+    await this.adminJson<{ ok: boolean }>(
+      `/auth/admin/users/${encodeURIComponent(userId)}/send-password-reset`,
+      { method: 'POST' },
+    );
+  }
+
+  /** Directly replace a user's password when manual admin resets are enabled. */
+  async resetAdminPassword(userId: string, password: string): Promise<void> {
+    await this.adminJson<{ ok: boolean }>(
+      `/auth/admin/users/${encodeURIComponent(userId)}/reset-password`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      },
+    );
+  }
+
+  /** Suspend a user and revoke their active sessions. */
+  async suspendAdminUser(userId: string): Promise<AuthUser> {
+    const data = await this.adminJson<{ user: AuthUser }>(
+      `/auth/admin/users/${encodeURIComponent(userId)}/suspend`,
+      { method: 'POST' },
+    );
+    return data.user;
+  }
+
+  /** Reactivate a suspended user. */
+  async activateAdminUser(userId: string): Promise<AuthUser> {
+    const data = await this.adminJson<{ user: AuthUser }>(
+      `/auth/admin/users/${encodeURIComponent(userId)}/activate`,
+      { method: 'POST' },
+    );
+    return data.user;
+  }
+
+  /** Revoke all refresh tokens for a user without changing profile fields. */
+  async revokeAdminUserSessions(userId: string): Promise<void> {
+    await this.adminJson<{ ok: boolean }>(
+      `/auth/admin/users/${encodeURIComponent(userId)}/revoke-sessions`,
+      { method: 'POST' },
+    );
   }
 
   /**
@@ -322,7 +555,7 @@ export class AuthClient {
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new Error(getAuthResponseError(res, body, 'Failed to request password reset'));
+      throw createAuthClientError(res, body, 'Failed to request password reset');
     }
   }
 
@@ -332,7 +565,7 @@ export class AuthClient {
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new Error(getAuthResponseError(res, body, 'Invalid or expired action token'));
+      throw createAuthClientError(res, body, 'Invalid or expired action token');
     }
 
     return res.json();
@@ -358,6 +591,17 @@ export class AuthClient {
       }).catch(() => {});
     }
 
+    this.send('auth.logout', {});
+    this.clearRefreshToken();
+  }
+
+  /**
+   * Clear local auth state when the session can no longer be refreshed.
+   *
+   * This does not call `/auth/logout`; callers use it when the server has
+   * already rejected the session or the refresh token is no longer trusted.
+   */
+  expireSession(): void {
     this.send('auth.logout', {});
     this.clearRefreshToken();
   }
@@ -394,7 +638,11 @@ export class AuthClient {
       const refreshed = await this.refresh();
       if (refreshed) {
         res = await doFetch(this.accessToken);
+      } else {
+        this.expireSession();
       }
+    } else if (res.status === 401 && this.ctx.user) {
+      this.expireSession();
     }
 
     return res;
@@ -412,7 +660,7 @@ export class AuthClient {
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new Error(getAuthResponseError(res, body, 'Failed to change password'));
+      throw createAuthClientError(res, body, 'Failed to change password');
     }
 
     const data = await res.json();
@@ -438,9 +686,10 @@ export class AuthClient {
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      const msg = getAuthResponseError(res, body, 'Failed to update password');
+      const err = createAuthClientError(res, body, 'Failed to update password');
+      const msg = err.message;
       this.send('auth.error', { error: msg });
-      throw new Error(msg);
+      throw err;
     }
 
     const data = await res.json();
@@ -452,6 +701,18 @@ export class AuthClient {
 
     this.persistRefreshToken(data.refreshToken);
     return data.user;
+  }
+
+  private async adminJson<T>(path: string, init?: RequestInit): Promise<T> {
+    const res = await this.fetchWithAuth(`${this.baseUrl}${path}`, init);
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw createAuthClientError(res, body, 'Admin auth request failed');
+    }
+
+    const text = await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
   }
 
   // ─── Property KV ─────────────────────────────────────────────────
@@ -466,8 +727,8 @@ export class AuthClient {
       },
     );
     if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'Failed to set property' }));
-      throw new Error(body.error ?? 'Failed to set property');
+      const body = await res.json().catch(() => null);
+      throw createAuthClientError(res, body, 'Failed to set property');
     }
     this.send('auth.properties.patch', {
       properties: { [key]: serializeAuthPropertyValue(value) },
@@ -480,8 +741,8 @@ export class AuthClient {
     );
     if (res.status === 404) return null;
     if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'Failed to get property' }));
-      throw new Error(body.error ?? 'Failed to get property');
+      const body = await res.json().catch(() => null);
+      throw createAuthClientError(res, body, 'Failed to get property');
     }
     const data = await res.json();
     this.send('auth.properties.patch', {
@@ -493,8 +754,8 @@ export class AuthClient {
   async getProperties(): Promise<Record<string, string>> {
     const res = await this.fetchWithAuth(`${this.baseUrl}/auth/me/properties`);
     if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'Failed to get properties' }));
-      throw new Error(body.error ?? 'Failed to get properties');
+      const body = await res.json().catch(() => null);
+      throw createAuthClientError(res, body, 'Failed to get properties');
     }
     const data = await res.json();
     this.send('auth.properties.replace', { properties: data.properties });
@@ -507,8 +768,8 @@ export class AuthClient {
       { method: 'DELETE' },
     );
     if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'Failed to delete property' }));
-      throw new Error(body.error ?? 'Failed to delete property');
+      const body = await res.json().catch(() => null);
+      throw createAuthClientError(res, body, 'Failed to delete property');
     }
     this.send('auth.properties.delete', { key });
   }
@@ -527,8 +788,7 @@ export class AuthClient {
   private async restoreSession(): Promise<void> {
     const refreshed = await this.refresh();
     if (!refreshed) {
-      this.send('auth.logout', {});
-      this.clearRefreshToken();
+      this.expireSession();
       return;
     }
 
@@ -536,8 +796,7 @@ export class AuthClient {
     try {
       const res = await this.fetchWithAuth(`${this.baseUrl}/auth/me`);
       if (!res.ok) {
-        this.send('auth.logout', {});
-        this.clearRefreshToken();
+        this.expireSession();
         return;
       }
 
@@ -548,8 +807,7 @@ export class AuthClient {
         refreshToken: this.ctx.refreshToken!,
       });
     } catch {
-      this.send('auth.logout', {});
-      this.clearRefreshToken();
+      this.expireSession();
     }
   }
 
@@ -576,8 +834,7 @@ export class AuthClient {
       });
 
       if (!res.ok) {
-        this.send('auth.logout', {});
-        this.clearRefreshToken();
+        this.expireSession();
         return false;
       }
 

@@ -42,6 +42,8 @@ export interface PlatformConfig {
   email?: boolean;
   stateSync?: boolean;
   tableSyncModes?: Record<string, SyncMode>;
+  publicPaths?: string[];
+  loginPath?: string;
 }
 
 export interface RenderOptions {

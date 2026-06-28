@@ -8,7 +8,7 @@
 
 import { useState, useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 import type { FileInfo, ListResult, DriveUsage, DriveRecord } from './types';
-import { useClientMaybe } from '../frontend/client/hooks';
+import { useClient } from '../frontend/client/hooks';
 import type { Client, FetchInit } from '../frontend/client/sdk';
 
 // ─── Internal: SDK-backed transport ───────────────────────────────────────
@@ -160,7 +160,7 @@ export interface UploadFileOptions {
  * `client.refresh()` if the upload receives 401.
  */
 export function useUpload(): UseUploadReturn {
-  const client = useClientMaybe();
+  const client = useClient();
   const [state, setState] = useState<UploadState>({
     uploading: false,
     progress: 0,
@@ -248,7 +248,7 @@ export interface UseStorageFolderReturn {
  * retry behavior match the rest of the SDK.
  */
 export function useStorageFolder(driveId: string | null, path?: string): UseStorageFolderReturn {
-  const client = useClientMaybe();
+  const client = useClient();
   const [items, setItems] = useState<FileInfo[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -299,7 +299,7 @@ export interface UseStorageDrivesReturn {
  * private and permission-granted drives through SDK auth headers.
  */
 export function useStorageDrives(): UseStorageDrivesReturn {
-  const client = useClientMaybe();
+  const client = useClient();
   const [drives, setDrives] = useState<DriveRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -345,7 +345,7 @@ export interface UseDriveUsageReturn {
  * Load usage statistics for one drive using the SDK-authenticated transport.
  */
 export function useDriveUsage(driveId: string | null): UseDriveUsageReturn {
-  const client = useClientMaybe();
+  const client = useClient();
   const [usage, setUsage] = useState<DriveUsage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -385,7 +385,7 @@ export interface UsePresignedUrlReturn {
  * Create presigned storage URLs through the authenticated SDK client.
  */
 export function usePresignedUrl(): UsePresignedUrlReturn {
-  const client = useClientMaybe();
+  const client = useClient();
   const getUrl = useCallback(
     async (driveId: string, path: string, method: 'upload' | 'download' = 'download') => {
       const result = await apiFetch<{ token: string }>(client, `/drives/${driveId}/presign`, {
@@ -418,7 +418,7 @@ export interface StorageActions {
  * Return storage mutation helpers backed by the SDK authenticated HTTP client.
  */
 export function useStorageActions(): StorageActions {
-  const client = useClientMaybe();
+  const client = useClient();
 
   return {
     createDrive: useCallback(async (name, options) => {

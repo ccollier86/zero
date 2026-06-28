@@ -13,12 +13,41 @@ import {
   type PaginationState,
   type Table,
 } from '@tanstack/react-table';
+import type { ReactNode } from 'react';
 import type { SchemaDescriptor } from '../../schema/define-schema';
+import type { FieldMeta } from '../../schema/field-types';
 import type { Row } from '../../sync/types';
 import { decodeFieldValue } from '../../schema/field-codecs';
 import { getRowPrimaryKey, getSchemaPrimaryKey } from './row-identity';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
+
+export interface DataTableCellContext<T extends Row> {
+  row: T;
+  value: unknown;
+  columnId: string;
+  fieldMeta?: FieldMeta;
+}
+
+export interface DataTableColumnOverride<T extends Row> {
+  header?: string;
+  cell?: (context: DataTableCellContext<T>) => ReactNode;
+  width?: number;
+  sortable?: boolean;
+  filterable?: boolean;
+  editable?: boolean;
+}
+
+export type DataTableColumnOverrides<T extends Row> = Record<string, DataTableColumnOverride<T>>;
+
+export interface DataTableInitialState {
+  sorting?: SortingState;
+  columnFilters?: ColumnFiltersState;
+  columnVisibility?: VisibilityState;
+  rowSelection?: RowSelectionState;
+  globalFilter?: string;
+  pagination?: Partial<PaginationState>;
+}
 
 export interface UseDataTableOptions<T extends Row> {
   schema: SchemaDescriptor;
@@ -29,6 +58,8 @@ export interface UseDataTableOptions<T extends Row> {
   pageSize?: number;
   globalFilter?: string;
   primaryKey?: string;
+  columnOverrides?: DataTableColumnOverrides<T>;
+  initialState?: DataTableInitialState;
 }
 
 export interface UseDataTableReturn<T extends Row> {
@@ -61,20 +92,28 @@ export function useDataTable<T extends Row>(
     selectable = false,
     pageSize = 20,
     primaryKey: primaryKeyOverride,
+    columnOverrides,
+    initialState,
   } = options;
   const primaryKey = getSchemaPrimaryKey(schema, primaryKeyOverride);
 
   // ─── State ──────────────────────────────────────────────────────────
 
-  const [sorting, setSorting] = useState<SortingState>([]);
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
-  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [sorting, setSorting] = useState<SortingState>(initialState?.sorting ?? []);
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
+    initialState?.columnFilters ?? [],
+  );
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
+    initialState?.columnVisibility ?? {},
+  );
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>(
+    initialState?.rowSelection ?? {},
+  );
   const [editingCell, setEditingCellState] = useState<{ rowId: string; columnId: string } | null>(null);
-  const [globalFilter, setGlobalFilter] = useState('');
+  const [globalFilter, setGlobalFilter] = useState(initialState?.globalFilter ?? '');
   const [pagination, setPagination] = useState<PaginationState>({
-    pageIndex: 0,
-    pageSize,
+    pageIndex: initialState?.pagination?.pageIndex ?? 0,
+    pageSize: initialState?.pagination?.pageSize ?? pageSize,
   });
 
   const setEditingCell = useCallback(
@@ -92,20 +131,29 @@ export function useDataTable<T extends Row>(
 
     return fieldNames.map((name) => {
       const meta = schema.fields.get(name);
+      const override = columnOverrides?.[name];
       return {
         id: name,
         accessorFn: (row) => meta ? decodeFieldValue(meta, row[name]) : row[name],
-        header: meta?.label ?? formatLabel(name),
-        enableSorting: meta?.sortable !== false,
-        enableColumnFilter: meta?.filterable !== false,
-        size: meta?.columnWidth,
+        header: override?.header ?? meta?.label ?? formatLabel(name),
+        cell: override?.cell
+          ? (context) => override.cell!({
+              row: context.row.original,
+              value: context.getValue(),
+              columnId: name,
+              fieldMeta: meta,
+            })
+          : undefined,
+        enableSorting: override?.sortable ?? meta?.sortable !== false,
+        enableColumnFilter: override?.filterable ?? meta?.filterable !== false,
+        size: override?.width ?? meta?.columnWidth,
         meta: {
           fieldMeta: meta,
-          isEditable: editable.includes(name),
+          isEditable: override?.editable ?? editable.includes(name),
         },
       };
     });
-  }, [schema, visibleColumns, editable]);
+  }, [columnOverrides, schema, visibleColumns, editable]);
 
   // ─── Table Instance ─────────────────────────────────────────────────
 

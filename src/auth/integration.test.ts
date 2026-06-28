@@ -689,6 +689,11 @@ describe('Auth Plugin — Registration Policy And Configured Properties', () => 
       expect(closed.status).toBe(403);
       expect(closed.data.code).toBe('REGISTRATION_DISABLED');
 
+      const publicConfig = await requestJson(local.url, 'GET', '/auth/config');
+      expect(publicConfig.status).toBe(200);
+      expect(publicConfig.data.userProperties.notificationsEnabled.type).toBe('boolean');
+      expect(publicConfig.data.userProperties.plan).toBeUndefined();
+
       const adminConfig = await requestJson(
         local.url,
         'GET',

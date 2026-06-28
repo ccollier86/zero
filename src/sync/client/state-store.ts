@@ -22,6 +22,7 @@ type StateStoreEvents = {
   'state.optimistic-delete': { ref: string; key: string };
   'state.optimistic-clear': { ref: string };
   'state.ack': { ref: string; ok: boolean; error?: string };
+  'state.reset': Record<string, never>;
 };
 
 // ─── Factory ────────────────────────────────────────────────────────────────
@@ -186,6 +187,12 @@ export function createStateStore() {
 
         return { ...ctx, entries, pending: newPending };
       },
+
+      'state.reset': () => ({
+        entries: {} as Record<string, JsonValue>,
+        ready: false as boolean,
+        pending: [] as PendingStateOp[],
+      }),
     },
   });
 }

@@ -267,6 +267,8 @@ export async function createApp(userConfig: AppConfig) {
         email: emailRuntime.enabled,
         stateSync: config.stateSync,
         tableSyncModes: config.resolvedSyncModes,
+        publicPaths: config.publicPaths,
+        loginPath: config.loginPath,
       },
       // When auth is enabled, protect all page routes by default
       ...(config.auth !== false

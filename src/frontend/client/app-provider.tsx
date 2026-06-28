@@ -8,16 +8,17 @@
  * remains inside the SDK client.
  */
 
-import { createElement, useRef } from 'react';
+import { createElement, Fragment, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { ClientTableDef, SyncMode } from '../../sync/types';
 import type { Client, InternalClient } from './sdk';
 import { createClient, getClient } from './sdk';
-import { ClientProvider } from './hooks';
-import { RouterProvider, useHasRouter } from './router-context';
+import { ClientProvider, useAuth } from './hooks';
+import { RouterProvider, useHasRouter, usePathname, useRouter } from './router-context';
 import { SyncProvider } from '../../sync/client/hooks';
 import { ErrorBoundary } from './error-boundary';
 import { ModalManager } from '../../modals';
+import { FRONTEND_OBS_CODES, emitFrontendCode } from './observability';
 
 // ─── AppProvider ───────────────────────────────────────────────────────────
 
@@ -33,6 +34,8 @@ interface BrowserPlatformConfig {
   email?: boolean;
   stateSync?: boolean;
   tableSyncModes?: Record<string, SyncMode>;
+  publicPaths?: string[];
+  loginPath?: string;
 }
 
 function getBrowserPlatformConfig(): BrowserPlatformConfig {
@@ -111,6 +114,10 @@ export interface AppProviderProps {
   initialPathname?: string;
   /** Initial route params from SSR. */
   initialParams?: Record<string, string>;
+  /** Paths that do not require auth. Defaults to injected server config. */
+  publicPaths?: string[];
+  /** Login route for client-side auth redirects. Defaults to injected server config. */
+  loginPath?: string;
   /** Custom error fallback component. */
   errorFallback?: (props: { error: Error; reset: () => void }) => ReactNode;
   children?: ReactNode;
@@ -153,6 +160,8 @@ export function AppProvider({
   stateSync,
   initialPathname,
   initialParams,
+  publicPaths,
+  loginPath,
   errorFallback,
   children,
 }: AppProviderProps) {
@@ -173,6 +182,8 @@ export function AppProvider({
   const platformConfig = getBrowserPlatformConfig();
   const authEnabled = auth ?? platformConfig.auth ?? false;
   const stateSyncEnabled = stateSync ?? platformConfig.stateSync ?? false;
+  const resolvedPublicPaths = publicPaths ?? platformConfig.publicPaths ?? ['/login', '/register', '/forgot-password'];
+  const resolvedLoginPath = loginPath ?? platformConfig.loginPath ?? '/login';
   assertAppProviderConfig(authEnabled, stateSyncEnabled, auth, stateSync, platformConfig);
   const resolvedTables = resolveProviderTables(tables, platformConfig.tableSyncModes);
 
@@ -191,12 +202,24 @@ export function AppProvider({
   // Innermost: Client > Sync > ModalManager > children
   //
   // SyncProvider receives the same SyncClient the SDK client owns.
-  // This means useTable/useRow/useQuery and useCollection
-  // all operate on the same underlying data — one WebSocket, one store.
+  // This means collection hooks and lower-level SyncProvider hooks operate on
+  // the same underlying data -- one WebSocket, one store.
   //
   // ModalManager renders the modal stack portal — must be inside providers
   // so modals can access auth, collections, router, etc.
   const internal = client as InternalClient;
+  const guardedChildren = authEnabled
+    ? createElement(
+        Fragment,
+        null,
+        createElement(AuthSessionRedirector, {
+          loginPath: resolvedLoginPath,
+          publicPaths: resolvedPublicPaths,
+        }),
+        children,
+      )
+    : children;
+
   let tree: ReactNode = createElement(
     ClientProvider,
     { client, children:
@@ -205,7 +228,7 @@ export function AppProvider({
         {
           client: internal._syncClient,
           stateClient: internal.state,
-          children: createElement(ModalManager, { children }),
+          children: createElement(ModalManager, { children: guardedChildren }),
         }
       )
     }
@@ -218,4 +241,42 @@ export function AppProvider({
   }
 
   return createElement(ErrorBoundary, { fallback: errorFallback }, tree);
+}
+
+function AuthSessionRedirector({
+  loginPath,
+  publicPaths,
+}: {
+  loginPath: string;
+  publicPaths: string[];
+}) {
+  const { isAuthenticated, isLoading } = useAuth();
+  const pathname = usePathname();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (isLoading || isAuthenticated) return;
+    if (isPublicPath(pathname, publicPaths)) return;
+
+    const from = `${pathname}${window.location.search}${window.location.hash}`;
+    const target = withRedirectParam(loginPath, from);
+    emitFrontendCode(FRONTEND_OBS_CODES.FRONTEND_AUTH_SESSION_REDIRECT, {
+      metadata: { from: pathname, to: loginPath },
+    });
+    router.replace(target);
+  }, [isAuthenticated, isLoading, loginPath, pathname, publicPaths, router]);
+
+  return null;
+}
+
+function isPublicPath(pathname: string, publicPaths: string[]): boolean {
+  return publicPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
+function withRedirectParam(loginPath: string, from: string): string {
+  const [path, query = ''] = loginPath.split('?');
+  const params = new URLSearchParams(query);
+  if (from && from !== path) params.set('redirect', from);
+  const nextQuery = params.toString();
+  return nextQuery ? `${path}?${nextQuery}` : path;
 }

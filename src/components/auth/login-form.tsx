@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * login-form.tsx
+ *
+ * Renders the reusable Zero login form. This file owns login UI state,
+ * auth-config-aware links, and frontend error reporting only; auth transport
+ * and lifecycle enforcement remain in the SDK and backend routes.
+ */
+
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -15,15 +23,28 @@ import { SocialLoginGroup, type SocialProvider } from '@/components/auth/social-
 import { AnimateIcon } from '@/components/animate-ui/icons/icon';
 import { CircleX } from '@/components/animate-ui/icons/circle-x';
 import { Loader } from '@/components/animate-ui/icons/loader';
+import {
+  getAuthDisplayMessage,
+  getAuthErrorCode,
+  reportAuthUiError,
+} from './auth-error';
+import {
+  canShowForgotPasswordLink,
+  canShowRegistrationLink,
+} from './auth-config-ui-policy';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+/** Props that control route links and lifecycle callbacks for LoginForm. */
 interface LoginFormProps {
   onSuccess?: () => void;
+  onPasswordChangeRequired?: () => void;
+  onAccountSuspended?: () => void;
   showForgotPassword?: boolean;
   forgotPasswordHref?: string;
   showRegisterLink?: boolean;
   respectRegistrationPolicy?: boolean;
+  showRememberMe?: boolean;
   registerHref?: string;
   socialProviders?: SocialProvider[];
   className?: string;
@@ -31,12 +52,16 @@ interface LoginFormProps {
 
 // ─── LoginForm ───────────────────────────────────────────────────────────────
 
+/** Render a config-aware login form backed by the shared auth client. */
 function LoginForm({
   onSuccess,
+  onPasswordChangeRequired,
+  onAccountSuspended,
   showForgotPassword = true,
   forgotPasswordHref = '#forgot-password',
   showRegisterLink = true,
   respectRegistrationPolicy = true,
+  showRememberMe = false,
   registerHref = '#register',
   socialProviders,
   className,
@@ -48,11 +73,16 @@ function LoginForm({
   const [localError, setLocalError] = React.useState<string | null>(null);
 
   const displayError = localError ?? error;
-  const canShowRegisterLink =
-    showRegisterLink &&
-    (!respectRegistrationPolicy ||
-      authConfig.config === null ||
-      authConfig.canRegister);
+  const canShowRegisterLink = canShowRegistrationLink(
+    showRegisterLink,
+    respectRegistrationPolicy,
+    authConfig,
+  );
+  const canShowForgotPassword = canShowForgotPasswordLink(
+    showForgotPassword,
+    respectRegistrationPolicy,
+    authConfig,
+  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -61,7 +91,11 @@ function LoginForm({
       await login(email, password);
       onSuccess?.();
     } catch (err) {
-      setLocalError(err instanceof Error ? err.message : 'Login failed');
+      const code = getAuthErrorCode(err);
+      if (code === 'PASSWORD_CHANGE_REQUIRED') onPasswordChangeRequired?.();
+      if (code === 'ACCOUNT_SUSPENDED') onAccountSuspended?.();
+      reportAuthUiError('login', err);
+      setLocalError(getAuthDisplayMessage(err, 'Login failed'));
     }
   }
 
@@ -71,12 +105,12 @@ function LoginForm({
 
       <div className="space-y-3">
         <div className="space-y-1.5">
-          <Label htmlFor="login-email" className="text-sm font-medium">Email</Label>
+          <Label htmlFor="login-email" className="text-sm font-medium">Username or email</Label>
           <Input
             id="login-email"
-            type="email"
+            type="text"
             placeholder="you@example.com"
-            autoComplete="email"
+            autoComplete="username"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -87,7 +121,7 @@ function LoginForm({
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <Label htmlFor="login-password" className="text-sm font-medium">Password</Label>
-            {showForgotPassword && (
+            {canShowForgotPassword && (
               <a
                 href={forgotPasswordHref}
                 className="text-xs text-primary hover:underline"
@@ -107,12 +141,14 @@ function LoginForm({
           />
         </div>
 
-        <div className="flex items-center gap-2">
-          <Checkbox id="login-remember" size="sm" />
-          <Label htmlFor="login-remember" className="text-xs font-normal text-muted-foreground cursor-pointer">
-            Remember me
-          </Label>
-        </div>
+        {showRememberMe && (
+          <div className="flex items-center gap-2">
+            <Checkbox id="login-remember" size="sm" />
+            <Label htmlFor="login-remember" className="text-xs font-normal text-muted-foreground cursor-pointer">
+              Remember me
+            </Label>
+          </div>
+        )}
       </div>
 
       <AnimatePresence>

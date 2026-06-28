@@ -2,6 +2,13 @@
 
 **Define a table. It's live.**
 
+> **Advanced engine docs:** This page documents the standalone sync engine and
+> its lower-level React bindings. Most Zero apps should use
+> `AppProvider`, `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, and
+> `useStatus` from `@platform/frontend`; see
+> [Frontend SDK](../../frontend/sdk.md). Use the hooks here only when mounting
+> the sync engine directly without the full Zero frontend SDK.
+
 A Convex-like real-time sync engine — self-hosted, single Bun process, SQLite in RAM, @xstate/store on the client. Define a table, it's instantly live. Mutate data anywhere, every connected client reflects it immediately. No polling, no manual invalidation, no WebSocket plumbing. Just data that's always current.
 
 ## The Full Loop
@@ -28,8 +35,7 @@ new Elysia()
 ```tsx
 // ─── Client: connect and use ──────────────────────────
 
-import { createSyncClient } from '@sync/client';
-import { useTable, useRow, useQuery } from '@sync/react';
+import { createSyncClient, useTable, useRow, useQuery } from '@platform/sync/client';
 
 const client = createSyncClient({
   url: 'ws://localhost:3000/sync',
@@ -85,7 +91,7 @@ Insert a todo on one client. Every other connected client sees it instantly. Che
 | **Real-time** | Every mutation broadcasts to all connected clients over WebSocket within milliseconds |
 | **Type-safe** | Table schemas flow through to TypeScript types — client code is fully typed |
 | **Optimistic** | Client mutations apply locally first, confirm/rollback on server response |
-| **Zero-boilerplate** | `defineTable()` on server, `useTable()` on client — no API routes, no fetch calls |
+| **Zero-boilerplate** | `defineTable()` on the standalone sync plugin, low-level `useTable()` on the client — no API routes, no fetch calls |
 | **Reconnect-safe** | Sequence-tracked changes replay on reconnect — no stale state, no manual refresh |
 
 ## Stack

@@ -26,6 +26,10 @@
   --color-popover-foreground: rgba(255, 255, 255, 0.87);
   --color-primary: #4a7cff;
   --color-primary-foreground: #ffffff;
+  --color-success: #22c55e;
+  --color-success-foreground: #ffffff;
+  --color-warning: #f59e0b;
+  --color-warning-foreground: #131320;
   --color-secondary: #1f1f38;
   --color-secondary-foreground: rgba(255, 255, 255, 0.87);
   --color-muted: #1f1f38;
