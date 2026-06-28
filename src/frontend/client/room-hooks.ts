@@ -6,7 +6,8 @@ import {
   useSyncExternalStore,
 } from 'react';
 import type { Row, JsonValue } from '../../sync/types';
-import { useClient, useQuery, useRow } from './hooks';
+import { useClient } from './client-context';
+import { useQuery, useRow } from './data-hooks';
 import type { InternalClient } from './sdk';
 import { unwrap } from './api';
 import type { RoomRecord, RoomMemberRecord, RoomRole } from '../../rooms/types';

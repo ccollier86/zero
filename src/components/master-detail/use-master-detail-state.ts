@@ -16,7 +16,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import type { Row } from '../../sync/types';
-import { useClientMaybe } from '../../frontend/client/hooks';
+import { useClientMaybe } from '../../frontend/client/client-context';
 import { requireRowPrimaryKey } from '../data-table/row-identity';
 import { resolveMasterDetailSelection } from './master-detail-selection';
 

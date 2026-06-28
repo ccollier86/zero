@@ -63,6 +63,7 @@ function printReport(
   console.log('Platform Doctor');
   console.log('───────────────');
   console.log(`Config: ${configPath}`);
+  console.log(`Summary: ${formatSummary(findings)}`);
   console.log('');
 
   if (findings.length === 0) {
@@ -70,12 +71,40 @@ function printReport(
     return;
   }
 
-  for (const finding of findings) {
-    const path = finding.path ? ` (${finding.path})` : '';
-    console.log(`${mark(finding.severity)} ${finding.code}${path}: ${finding.message}`);
-  }
+  printFindings('Errors', findings.filter((finding) => finding.severity === 'error'));
+  printFindings('Warnings', findings.filter((finding) => finding.severity === 'warning'));
+  printFindings('Info', findings.filter((finding) => finding.severity === 'info'));
 
   console.log(ok ? '\nDoctor completed with warnings.' : '\nDoctor failed.');
+}
+
+function printFindings(title: string, findings: PlatformDoctorFinding[]): void {
+  if (findings.length === 0) return;
+
+  console.log(title);
+  for (const finding of findings) {
+    const location = finding.path ? ` (${finding.path})` : '';
+    console.log(`  ${mark(finding.severity)} ${finding.code}${location}`);
+    console.log(`    ${finding.message}`);
+    if (finding.hint) console.log(`    hint: ${finding.hint}`);
+    if (finding.docs) console.log(`    docs: ${finding.docs}`);
+  }
+  console.log('');
+}
+
+function formatSummary(findings: PlatformDoctorFinding[]): string {
+  const errors = findings.filter((finding) => finding.severity === 'error').length;
+  const warnings = findings.filter((finding) => finding.severity === 'warning').length;
+  const info = findings.filter((finding) => finding.severity === 'info').length;
+  return [
+    formatCount(errors, 'error'),
+    formatCount(warnings, 'warning'),
+    formatCount(info, 'info'),
+  ].join(', ');
+}
+
+function formatCount(count: number, label: string): string {
+  return `${count} ${count === 1 ? label : `${label}s`}`;
 }
 
 function mark(severity: PlatformDoctorFinding['severity']): string {

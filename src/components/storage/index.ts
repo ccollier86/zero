@@ -13,6 +13,9 @@ export type { StorageDriveDetailHeaderProps } from './storage-drive-detail-heade
 export { StorageFileDetailPanel } from './storage-file-detail-panel';
 export type { StorageFileDetailPanelProps } from './storage-file-detail-panel';
 
+export { StorageDropzone } from './storage-dropzone';
+export type { StorageDropzoneProps } from './storage-dropzone';
+
 export {
   storageDriveEditableFields,
   storageDriveListColumns,

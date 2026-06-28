@@ -16,8 +16,8 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import type { LazyCollectionOptions } from '../../frontend/client/hooks';
-import { useClientMaybe } from '../../frontend/client/hooks';
+import { useClientMaybe } from '../../frontend/client/client-context';
+import type { LazyCollectionOptions } from '../../frontend/client/data-hooks';
 import type { Row } from '../../sync/types';
 
 const NOOP_UNSUBSCRIBE = () => {};

@@ -12,7 +12,7 @@ import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { cn } from '@/lib/utils';
-import { useAuth, useAuthConfig } from '../../frontend/client/hooks';
+import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';

@@ -10,7 +10,8 @@
 
 import { useCallback, useMemo } from 'react';
 import type { Row } from '../../sync/types';
-import { useClient, useRow, useQuery } from './hooks';
+import { useClient } from './client-context';
+import { useQuery, useRow } from './data-hooks';
 import { unwrap } from './api';
 import type {
   WorkflowStatus,

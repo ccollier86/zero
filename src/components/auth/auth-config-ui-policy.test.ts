@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { AuthConfigState } from '../../frontend/client/hooks';
+import type { AuthConfigState } from '../../frontend/client/auth-hooks';
 import {
   canShowForgotPasswordLink,
   canShowRegistrationLink,

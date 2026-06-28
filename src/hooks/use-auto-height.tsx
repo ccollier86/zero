@@ -1,12 +1,25 @@
 'use client';
 
+/**
+ * use-auto-height.tsx
+ *
+ * Measures an element's rendered height for animated layout primitives. This
+ * file owns DOM measurement only and does not render UI.
+ */
+
 import * as React from 'react';
 
-type AutoHeightOptions = {
+export type AutoHeightOptions = {
   includeParentBox?: boolean;
   includeSelfBox?: boolean;
 };
 
+/**
+ * Return a ref and measured height for an element.
+ *
+ * Re-measures when the supplied dependency list changes and when a
+ * ResizeObserver reports size changes.
+ */
 export function useAutoHeight<T extends HTMLElement = HTMLDivElement>(
   deps: React.DependencyList = [],
   options: AutoHeightOptions = {

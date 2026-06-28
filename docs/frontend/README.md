@@ -153,6 +153,7 @@ Auth, sync, and router all share one ReactiveDB. The router renders pages with R
 |----------|---------------|
 | [Router](./router.md) | File-based routing conventions, React 19 SSR on Bun, route scanning, layouts, dynamic segments |
 | [SDK](./sdk.md) | `createApp()` server factory, `<AppProvider>`, auth hooks, router hooks, Eden typed RPC, SSR → hydration → live data flow |
+| [Hooks](./hooks.md) | Generic React hooks, platform-specific hooks, user-property hooks, and hook responsibility boundaries |
 | [DataTableView](./data-table.md) | Schema-aware table organism, full-sync/lazy/data sources, inline editing, toolbar, column overrides |
 | [MasterDetailView](./master-detail.md) | List/detail organism, generated detail forms, custom detail rendering, navigation, low-level detail primitives |
 | [Migrations](../migrations.md) | First-class migration files, schema history, doctor, migrate-plan, rollback, backups |
@@ -167,6 +168,8 @@ The frontend SDK composes these — it doesn't reinvent them:
 | Sync engine | [docs/realtime-sync/](../realtime-sync/realtime-sync/README.md) | `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, `useStatus`, `SyncClient`, `SyncProvider`, optimistic mutations, reconnect |
 | Auth system | [docs/auth/](../auth/README.md) | Register, login, refresh, logout routes, reactive `users` table, JWT middleware, guards |
 | State sync | [docs/state-sync.md](../state-sync.md) | `useServerState`, per-user persistent KV, device sync, form drafts, UI preferences |
+| Storage | [Hooks](./hooks.md#storage-workflows) | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `StorageDropzone`, and storage browser helpers |
+| Rooms and ephemeral sync | [Hooks](./hooks.md#presence-and-typing) | `usePresence`, `usePresenceList`, `useTypingIndicator`, `useEphemeral`, and `useEphemeralTopic` |
 | Observability | [docs/observability.md](../observability.md) | Backend/frontend event sink, default inspection endpoint, configurable adapters |
 
 ## Path Aliases
@@ -175,6 +178,7 @@ References to `@platform/*` and `@app/*` throughout these docs are **tsconfig pa
 
 ```
 @platform/frontend → src/frontend           (SDK, hooks, providers, schema, defineTable, field)
+@platform/frontend/icons → src/frontend/icons (default animated icon pack)
 @platform/server   → src/frontend/server    (app factory, resolveConfig — ONLY for app/server.ts)
 @platform/router   → src/frontend/router    (file-based router types)
 @platform/sync     → src/sync              (sync engine, types)
@@ -187,16 +191,21 @@ References to `@platform/*` and `@app/*` throughout these docs are **tsconfig pa
 
 **Always use these aliases instead of relative paths.** They eliminate fragile `../../../` chains, make imports readable, and survive file moves without breaking.
 
-**Import rule:** Schema files, pages, and all app code import from `@platform/frontend`. The only file that imports from `@platform/server` is `app/server.ts` (for `resolveConfig` and `createApp`).
+**Import rule:** Schema files, pages, and app code import platform APIs from
+`@platform/frontend`, and default animated icons from
+`@platform/frontend/icons`. The only file that imports from `@platform/server`
+is `app/server.ts` (for `resolveConfig` and `createApp`).
 
 ```ts
 // Do this
 import { useCollection, defineTable, field } from '@platform/frontend';
+import { Check } from '@platform/frontend/icons';
 import { tables } from '@app/lib/schemas';
 import { Button } from '@/components/ui/button';
 
 // Not this
 import { useCollection } from '../../../src/frontend/client/hooks';
+import { Check } from '../../../src/components/animate-ui/icons/check';
 import { defineTable } from '@platform/server';    // wrong — use @platform/frontend
 import { Button } from '../../../src/components/ui/button';
 ```
@@ -243,11 +252,25 @@ src/frontend/
 │   └── types.ts               # AppConfig, CreateAppOptions
 ├── client/
 │   ├── app-provider.tsx       # React context — sync client, auth state, router state
-│   ├── hooks.ts               # useCollection, useLazyCollection, useRow, useQuery, useAuth
+│   ├── client-context.tsx     # SDK client context + ClientProvider
+│   ├── auth-hooks.ts          # useAuth, useAuthConfig, useUserProperty
+│   ├── data-hooks.ts          # useCollection, useLazyCollection, useRow, useQuery, useStatus
+│   ├── data-composition-hooks.ts # useDataPage, useRecord, useRecordByIdentity
+│   ├── mutation-hooks.ts      # useMutation
+│   ├── connection-health-hooks.ts # useConnectionHealth
+│   ├── preference-hooks.ts    # usePreference, useFormDraft
+│   ├── workflow-run-hooks.ts  # useWorkflowRun
+│   ├── hooks.ts               # Compatibility barrel for app-facing hook imports
 │   ├── link.tsx               # <Link> component — client-side navigation
 │   ├── router-context.tsx     # Route params, navigation, pathname
 │   └── hydrate.tsx            # Client entry — hydrateRoot + provider setup
+├── ../hooks/                  # Generic React hooks exported by @platform/frontend
+├── icons.ts                   # Public animated icon pack entrypoint
 └── index.ts                   # Public API: createApp, AppProvider, hooks, Link
 ```
 
-Fifteen files. Router is pure (no framework dependency). Server wires Elysia plugins. Client provides React hooks and components.
+Router is pure (no framework dependency). Server wires Elysia plugins. Client
+providers, auth hooks, data hooks, and generic React hooks are split by
+responsibility but exported together through `@platform/frontend`. Zero's
+default animated icon pack is exported from `@platform/frontend/icons`; use it
+before reaching for raw `lucide-react` icons. See [Frontend Icons](./icons.md).

@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useRef, useEffect } from 'react';
-import { useCollection, useAuth, useClientMaybe } from './hooks';
+import { useAuth } from './auth-hooks';
+import { useClientMaybe } from './client-context';
+import { useCollection } from './data-hooks';
 import type { Row } from '../../sync/types';
 import { OBS_CODES } from '../../observability/codes';
 import { emitFrontendCode } from './observability';

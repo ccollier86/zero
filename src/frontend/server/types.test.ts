@@ -88,6 +88,32 @@ describe('resolveConfig', () => {
     }
   });
 
+  test('resolves vector config when enabled', () => {
+    const config = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      vector: {
+        dataDir: './vectors',
+        defaultIndex: 'docs',
+        indexes: {
+          docs: {
+            dimensions: 768,
+            metadata: {
+              bucket: 'string',
+            },
+          },
+        },
+      },
+    });
+
+    expect(config.vector).not.toBe(false);
+    if (config.vector !== false) {
+      expect(config.vector.defaultIndex).toBe('docs');
+      expect(config.vector.indexes.docs.dimensions).toBe(768);
+      expect(config.vector.indexes.docs.metadata.bucket.type).toBe('string');
+    }
+  });
+
   test('rejects state sync when auth is omitted', () => {
     expect(() =>
       resolveConfig({

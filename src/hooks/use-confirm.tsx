@@ -1,5 +1,12 @@
 'use client';
 
+/**
+ * use-confirm.tsx
+ *
+ * Provides a promise-based confirmation dialog hook and provider. This file
+ * owns confirmation UI state only; callers own the action being confirmed.
+ */
+
 import * as React from 'react';
 import { createContext, useContext, useCallback, useRef, useState } from 'react';
 import {
@@ -37,6 +44,9 @@ interface ConfirmState extends ConfirmOptions {
   open: boolean;
 }
 
+/**
+ * Render the shared confirmation dialog provider for descendant hooks.
+ */
 export function ConfirmProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<ConfirmState>({
     open: false,
@@ -93,6 +103,9 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
 
 // ─── Hook ───────────────────────────────────────────────────────────────────
 
+/**
+ * Return the shared confirmation function from `ConfirmProvider`.
+ */
 export function useConfirm(): ConfirmFn {
   const confirm = useContext(ConfirmContext);
   if (!confirm) {

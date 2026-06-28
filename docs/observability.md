@@ -118,6 +118,16 @@ observability: {
 }
 ```
 
+Run platform doctor after changing observability config:
+
+```txt
+bun run doctor -- --config ./zero.config.ts
+```
+
+Doctor warns when observability is disabled in production, when endpoint read
+policy is unreachable for the current auth mode, and when the HTTP endpoint is
+enabled while the readable event store is disabled.
+
 ## Custom Sinks
 
 The sink is write-only by design. If an app needs queryable data, provide a
@@ -228,6 +238,10 @@ The first implementation routes these platform paths through the sink:
 - frontend notification receipt failures
 - frontend storage management action failures
 - migrator library logs
+- AI provider setup, skipped providers, request lifecycle, request failures,
+  unresolved aliases, status access denials, and tool execution failures
+- vector runtime configuration, index initialization, operation completion,
+  and operation/index failures
 
 CLI presentation in `src/migrations/run.ts` intentionally remains direct
 console output because it is command UI.

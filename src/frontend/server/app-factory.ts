@@ -17,11 +17,13 @@ import { createDataQueryPlugin } from '../../sync/data-query.plugin';
 import { createRouterPlugin } from './router-plugin';
 import { buildClientBundle } from './client-bundle';
 import { configureEmail } from '../../email';
+import { createAIPlugin } from '../../ai';
 import type { AppConfig } from './types';
 import { resolveConfig } from './types';
 import { applyTableSyncResolution, resolveTableSyncModes } from './sync-mode-resolver';
 import { Migrator, migrations } from '../../migrations';
 import { OBS_CODES, configureObservability, createObservabilityPlugin, emitPlatformCode } from '../../observability';
+import { createVectorPlugin } from '../../vector';
 
 // ─── App Factory ───────────────────────────────────────────────────────────
 
@@ -177,6 +179,21 @@ export async function createApp(userConfig: AppConfig) {
     config: config.observability,
     authEnabled: config.auth !== false,
   }));
+
+  // 2.6. AI — optional internal provider service for loaders, jobs, workflows, and plugins
+  if (config.ai !== false) {
+    app.use(createAIPlugin({
+      config: config.ai,
+      authEnabled: config.auth !== false,
+    }));
+  }
+
+  // 2.7. Vector store — optional local zvec service for loaders, jobs, workflows, and plugins
+  if (config.vector !== false) {
+    app.use(createVectorPlugin({
+      config: config.vector,
+    }));
+  }
 
   // 3. Scheduler — provides cron job registration for other plugins
   app.use(createSchedulerPlugin());

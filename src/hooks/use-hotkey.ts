@@ -1,10 +1,17 @@
+/**
+ * use-hotkey.ts
+ *
+ * Provides browser keyboard shortcut registration for React UI. This file owns
+ * keyboard event subscription only; commands are supplied by callers.
+ */
+
 import { useEffect, useRef } from 'react';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type HotkeyHandler = (e: KeyboardEvent) => void;
+export type HotkeyHandler = (e: KeyboardEvent) => void;
 
-interface HotkeyOptions {
+export interface HotkeyOptions {
   /** Only fire when this element (or its children) has focus. Default: global. */
   scope?: React.RefObject<HTMLElement | null>;
   /** Prevent default browser behavior. Default: true. */

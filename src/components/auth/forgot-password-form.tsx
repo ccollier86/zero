@@ -21,7 +21,7 @@ import { CircleX } from '@/components/animate-ui/icons/circle-x';
 import { CircleCheck } from '@/components/animate-ui/icons/circle-check';
 import { Loader } from '@/components/animate-ui/icons/loader';
 import { Send } from '@/components/animate-ui/icons/send';
-import { useAuth, useAuthConfig } from '../../frontend/client/hooks';
+import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
 import {
   isAuthConfigPending,

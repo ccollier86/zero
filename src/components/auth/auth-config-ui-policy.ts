@@ -6,7 +6,7 @@
  * truth for registration, reset, and account lifecycle enforcement.
  */
 
-import type { AuthConfigState } from '../../frontend/client/hooks';
+import type { AuthConfigState } from '../../frontend/client/auth-hooks';
 
 /** Return true while a policy-aware form is waiting for `/auth/config`. */
 export function isAuthConfigPending(

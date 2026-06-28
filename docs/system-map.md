@@ -25,6 +25,8 @@ src/
   sync/client/             <- Client-side sync: stores, clients, React hooks
   auth/                    <- Authentication: JWT, user store, middleware
   notifications/           <- Notification service + plugin
+  ai/                      <- Internal AI service, provider registry, tools, conversations, Meta adapter
+  vector/                  <- zvec-backed local vector store, filters, AI bridge
   rooms/                   <- Rooms, presence
   scheduler/               <- Cron job scheduler
   workflows/               <- Durable workflow engine
@@ -118,7 +120,7 @@ src/
 **Files:**
 | File | Purpose |
 |------|---------|
-| `src/doctor/platform-doctor.ts` | App config checks for auth/email, schema PKs, sync policy, migrations, and index guidance |
+| `src/doctor/platform-doctor.ts` | Pure app config checks for auth/email, schema PKs, storage, sync policy, migrations, observability, AI, vector, and index guidance |
 | `src/doctor/config-loader.ts` | Loads an explicit `zero.config.ts`/`config/zero.config.ts` module for CLI checks |
 | `src/doctor/run.ts` | CLI presentation for `bun run doctor` |
 
@@ -165,6 +167,65 @@ src/
 |------|---------|
 | `src/frontend/client/notification-hooks.ts` | useNotifications, useUnreadCount, useOnNewNotification |
 | `src/frontend/client/notification-provider.tsx` | NotificationProvider context |
+
+---
+
+## System 4.1: AI
+
+**What:** Internal server-side AI service with env-detected providers, model
+aliases, custom Meta Llama adapter, conversations, app-defined tools,
+embeddings, images, transcription, speech, and optional protected runtime
+status.
+
+**Docs:** [AI](./ai.md), [AI Providers](./ai-providers.md),
+[AI Conversations](./ai-conversations.md), [AI Tools](./ai-tools.md),
+[Meta Llama](./ai-meta-llama.md)
+
+**Files:**
+| File | Purpose |
+|------|---------|
+| `src/ai/ai-types.ts` | Public AI config, provider, model, message, status, and request contracts |
+| `src/ai/ai-env.ts` | `ai: true` env auto-detection and config normalization |
+| `src/ai/ai-provider-catalog.ts` | Built-in provider env keys, defaults, and capability metadata |
+| `src/ai/ai-registry.ts` | AI SDK provider instantiation and model lookup |
+| `src/ai/ai-service.ts` | Framework-neutral service for text, streaming, embeddings, images, transcription, speech |
+| `src/ai/ai-conversation.ts` | Conversation builder and message normalization |
+| `src/ai/ai-session.ts` | Bounded in-memory conversation session helper |
+| `src/ai/ai-toolkit.ts` | `aiTool()` / `defineAITools()` helpers |
+| `src/ai/ai-workflow.ts` | Workflow step helper for AI calls |
+| `src/ai/ai.plugin.ts` | Elysia service decoration and optional opt-in status route |
+| `src/ai/adapters/meta-llama.ts` | Native Meta hosted Llama AI SDK provider |
+| `src/ai/index.ts` | Server-side AI barrel exports |
+
+**Key pattern:** `meta/<model>` is the developer-facing model id, while the
+provider type is `meta-llama` internally. Public execution routes are not
+mounted by default; apps call the service from server code.
+
+---
+
+## System 4.2: Vector Store
+
+**What:** Local server-side vector persistence/search with zvec, structured
+scalar filters, scoped helpers, and optional composition with `AIService.embed()`.
+
+**Docs:** [Vector Store](./vector.md)
+
+**Files:**
+| File | Purpose |
+|------|---------|
+| `src/vector/vector-types.ts` | Public vector config, record, filter, result, and adapter contracts |
+| `src/vector/vector-config.ts` | `vector: true` / explicit config normalization and env defaults |
+| `src/vector/vector-filter.ts` | Safe structured filter to zvec SQL-like expression compiler |
+| `src/vector/zvec-adapter.ts` | Current `@zvec/zvec` schema, document, query, and lifecycle adapter |
+| `src/vector/vector-registry.ts` | Lazy named index store registry |
+| `src/vector/vector-service.ts` | Framework-neutral app API with default-index and scoped helpers |
+| `src/vector/vector-ai-bridge.ts` | Thin AI embedding plus vector upsert/query composition helper |
+| `src/vector/vector.plugin.ts` | Elysia service decoration and lifecycle cleanup |
+| `src/vector/index.ts` | Server-side vector barrel exports |
+
+**Key pattern:** Vector owns storage and search only. AI owns provider/model
+execution. The bridge is an optional composition helper, not a gateway, chat
+store, or public frontend API.
 
 ---
 
@@ -308,12 +369,16 @@ LoginForm, RegisterForm, ForgotPasswordForm, PasswordActionForm, ChangePasswordF
 1. Sync engine          (provides ReactiveDB — must be first)
 2. Auth plugin          (defines user tables on shared DB)
 3. Auth middleware       (resolve-based, provides requireAuth/requireAdmin)
-4. Scheduler            (cron jobs — used by notifications + workflows)
-5. Notifications        (depends on auth + scheduler)
-6. Rooms                (depends on auth)
-7. Workflows            (depends on auth + scheduler)
-8. Health check         (/api/health)
-9. File-based router    (catch-all — must be last)
+4. Observability        (sink endpoint + global error reporting)
+5. AI                   (optional internal provider service)
+6. Scheduler            (cron jobs — used by notifications + workflows)
+7. Notifications        (depends on auth + scheduler)
+8. Rooms                (depends on auth)
+9. Workflows            (depends on auth + scheduler)
+10. Storage             (depends on auth)
+11. Data query          (`/api/data` for lazy tables)
+12. Health check        (/api/health)
+13. File-based router   (catch-all — must be last)
 ```
 
 ---

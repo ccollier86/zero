@@ -1,14 +1,24 @@
 'use client';
 
+/**
+ * use-is-in-view.tsx
+ *
+ * Wraps Motion's in-view observer with Zero's animation defaults. This file
+ * owns viewport visibility state only.
+ */
+
 import * as React from 'react';
 import { useInView, type UseInViewOptions } from 'motion/react';
 
-interface UseIsInViewOptions {
+export interface UseIsInViewOptions {
   inView?: boolean;
   inViewOnce?: boolean;
   inViewMargin?: UseInViewOptions['margin'];
 }
 
+/**
+ * Return a local ref and whether the attached element should be treated as in view.
+ */
 function useIsInView<T extends HTMLElement = HTMLElement>(
   ref: React.Ref<T>,
   options: UseIsInViewOptions = {},
@@ -24,4 +34,4 @@ function useIsInView<T extends HTMLElement = HTMLElement>(
   return { ref: localRef, isInView };
 }
 
-export { useIsInView, type UseIsInViewOptions };
+export { useIsInView };

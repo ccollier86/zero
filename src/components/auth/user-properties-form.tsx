@@ -10,7 +10,7 @@
 
 import * as React from 'react';
 import type { AuthUserPropertyConfig } from '../../frontend/client/auth-client';
-import { useAuth, useAuthConfig } from '../../frontend/client/hooks';
+import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/animate-ui/components/radix/checkbox';

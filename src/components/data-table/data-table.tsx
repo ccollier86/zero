@@ -46,7 +46,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import type { LazyCollectionOptions } from '../../frontend/client/hooks';
+import type { LazyCollectionOptions } from '../../frontend/client/data-hooks';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

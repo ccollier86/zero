@@ -1,8 +1,15 @@
 'use client';
 
+/**
+ * use-data-state.tsx
+ *
+ * Watches a DOM `data-*` attribute through `MutationObserver`. This file owns
+ * DOM attribute subscription state only.
+ */
+
 import * as React from 'react';
 
-type DataStateValue = string | boolean | null;
+export type DataStateValue = string | boolean | null;
 
 function parseDatasetValue(value: string | null): DataStateValue {
   if (value === null) return null;
@@ -11,6 +18,12 @@ function parseDatasetValue(value: string | null): DataStateValue {
   return value;
 }
 
+/**
+ * Return the current parsed `data-${key}` value for the attached element.
+ *
+ * The returned ref must be assigned to the element whose data attribute should
+ * be observed.
+ */
 function useDataState<T extends HTMLElement = HTMLElement>(
   key: string,
   forwardedRef?: React.Ref<T | null>,
@@ -51,4 +64,4 @@ function useDataState<T extends HTMLElement = HTMLElement>(
   return [value, localRef];
 }
 
-export { useDataState, type DataStateValue };
+export { useDataState };

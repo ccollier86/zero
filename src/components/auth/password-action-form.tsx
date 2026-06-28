@@ -11,7 +11,7 @@
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import type { AuthActionTokenInfo } from '../../frontend/client/auth-client';
-import { useAuth } from '../../frontend/client/hooks';
+import { useAuth } from '../../frontend/client/auth-hooks';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';

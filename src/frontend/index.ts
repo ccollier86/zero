@@ -87,15 +87,25 @@ export {
   useIsServer,
   useCollection,
   useLazyCollection,
+  useDataPage,
+  useDataSelection,
   useRow,
+  useRecord,
+  useRecordByIdentity,
   useQuery,
   useStatus,
+  buildDataPageQuery,
+  useConnectionHealth,
+  useMutation,
   // Auth
   useAuth,
   useAuthConfig,
   useCurrentUser,
   useRequireAuth,
+  useUserProperty,
   // State (re-exported from sync/client)
+  useFormDraft,
+  usePreference,
   useServerState,
   useServerStateReady,
   // Router
@@ -108,14 +118,77 @@ export type {
   AuthState,
   AuthActions,
   AuthConfigState,
+  UseUserPropertyOptions,
+  UseUserPropertyResult,
+  ConnectionHealth,
   LazyCollectionResult,
   LazyCollectionOptions,
   CollectionResult,
+  DataFilterExpression,
+  DataFilterOperator,
+  DataFilterPrimitive,
+  DataFilterValue,
+  DataPageFilters,
+  DataPageInfo,
+  DataPageOptions,
+  DataPageResult,
+  DataPageSort,
+  DataSelectionMode,
+  IdentityRecordResult,
+  RecordResult,
+  UseDataSelectionOptions,
+  UseDataSelectionReturn,
+  UseFormDraftOptions,
+  UseFormDraftResult,
+  UseMutationOptions,
+  UseMutationReturn,
+  UsePreferenceResult,
 } from './client/hooks';
 
 // ─── React: Components ──────────────────────────────────────────────────
 export { Link } from './client/link';
 export type { LinkProps } from './client/link';
+
+// ─── Default Animated Icons ─────────────────────────────────────────────
+export {
+  AnimateIcon,
+  ZeroIcon,
+  getZeroAnimatedIcon,
+  hasZeroAnimatedIcon,
+  resolveZeroAnimatedIcon,
+  zeroAnimatedIconNames,
+  zeroAnimatedIcons,
+} from './icons';
+export type {
+  AnimateIconContextValue,
+  AnimateIconProps,
+  IconProps,
+  IconWrapperProps,
+  ZeroAnimatedIconComponent,
+  ZeroAnimatedIconName,
+  ZeroIconProps,
+} from './icons';
+
+// ─── Smooth Scroll-To-Bottom ────────────────────────────────────────────
+export {
+  StickToBottom,
+  useStickToBottom,
+  useStickToBottomContext,
+} from 'use-stick-to-bottom';
+export type {
+  Animation,
+  GetTargetScrollTop,
+  ScrollElements,
+  ScrollToBottom,
+  ScrollToBottomOptions,
+  SpringAnimation,
+  StickToBottomContext,
+  StickToBottomInstance,
+  StickToBottomOptions,
+  StickToBottomProps,
+  StickToBottomState,
+  StopScroll,
+} from 'use-stick-to-bottom';
 
 // ─── Toast ──────────────────────────────────────────────────────────────
 export { Toaster } from '../components/ui/sonner';
@@ -291,12 +364,20 @@ export {
   useRoomActions,
   useRoomData,
   usePresence,
+  usePresenceList,
+  useTypingIndicator,
 } from './client/hooks';
 export type {
   UseRoomResult,
   RoomActions,
   PresenceMember,
+  PresenceListMember,
+  TypingIndicatorMember,
   UsePresenceResult,
+  UsePresenceListOptions,
+  UsePresenceListReturn,
+  UseTypingIndicatorOptions,
+  UseTypingIndicatorReturn,
 } from './client/hooks';
 
 // ─── Rooms: Config (types only — no bun:sqlite) ────────────────────────
@@ -349,6 +430,12 @@ export type {
   UseWorkflowListResult,
   WorkflowActions,
 } from './client/workflow-hooks';
+export { useWorkflowRun } from './client/hooks';
+export type {
+  UseWorkflowRunOptions,
+  UseWorkflowRunResult,
+  WorkflowProgress,
+} from './client/hooks';
 
 // ─── Workflows: Types (no bun:sqlite — types.ts is clean) ──────────────
 export type {
@@ -379,6 +466,29 @@ export type {
   UsePresignedUrlReturn,
   StorageActions,
 } from '../storage/storage-hooks';
+export { useUploadQueue } from '../storage/upload-queue-hooks';
+export type {
+  UploadQueueFilesOptions,
+  UploadQueueItem,
+  UploadQueueItemStatus,
+  UseUploadQueueReturn,
+} from '../storage/upload-queue-hooks';
+export { useStorageFile } from '../storage/storage-file-hooks';
+export type { UseStorageFileReturn } from '../storage/storage-file-hooks';
+export { useUploadDropzone } from '../storage/upload-dropzone-hooks';
+export type {
+  UseUploadDropzoneOptions,
+  UseUploadDropzoneReturn,
+} from '../storage/upload-dropzone-hooks';
+export {
+  useDriveQuota,
+  useStorageBrowser,
+} from '../storage/storage-browser-hooks';
+export type {
+  StorageBrowserActions,
+  UseDriveQuotaReturn,
+  UseStorageBrowserReturn,
+} from '../storage/storage-browser-hooks';
 
 // ─── Storage: Types (client-safe) ───────────────────────────────────────
 export { STORAGE_TABLES } from '../storage/types';
@@ -409,6 +519,7 @@ export type {
 export {
   StorageManagement,
   StorageDriveList,
+  StorageDropzone,
   StorageFileBrowser,
   StorageDriveDetailHeader,
   StorageFileDetailPanel,
@@ -418,15 +529,71 @@ export type {
   StorageManagementView,
   StorageDriveRow,
   StorageDriveListProps,
+  StorageDropzoneProps,
   StorageFileBrowserProps,
   StorageDriveDetailHeaderProps,
   StorageFileDetailPanelProps,
 } from '../components/storage';
 
 // ─── Hooks ──────────────────────────────────────────────────────────────
-export { useHotkey } from '../hooks/use-hotkey';
-export { ConfirmProvider, useConfirm } from '../hooks/use-confirm';
-export type { ConfirmOptions } from '../hooks/use-confirm';
+export {
+  ConfirmProvider,
+  useAsyncAction,
+  useAutoHeight,
+  useConfirm,
+  useControlledState,
+  useDataState,
+  useDebouncedCallback,
+  useDebouncedValue,
+  useDisclosure,
+  useClickAway,
+  useCopyToClipboard,
+  useHotkey,
+  useIdle,
+  useInterval,
+  useIsInView,
+  useIsMobile,
+  useMediaQuery,
+  useMounted,
+  useMotionValueState,
+  getOS,
+  useOs,
+  usePrevious,
+  useStableCallback,
+  useTextSelection,
+  useThrottledCallback,
+  useThrottledValue,
+  useTimeout,
+} from '../hooks';
+export type {
+  AutoHeightOptions,
+  ClickAwayEvent,
+  CommonControlledStateProps,
+  ConfirmOptions,
+  DataStateValue,
+  HotkeyHandler,
+  HotkeyOptions,
+  OperatingSystem,
+  OSDetectionInput,
+  UseAsyncActionOptions,
+  UseAsyncActionReturn,
+  UseClickAwayOptions,
+  UseCopyToClipboardOptions,
+  UseCopyToClipboardReturn,
+  UseDebouncedCallbackOptions,
+  UseDebouncedCallbackReturn,
+  UseDisclosureOptions,
+  UseDisclosureReturn,
+  UseIdleOptions,
+  UseIntervalOptions,
+  UseIsInViewOptions,
+  UseMediaQueryOptions,
+  UseOsOptions,
+  UseOsReturnValue,
+  UseThrottledCallbackOptions,
+  UseThrottledCallbackReturn,
+  UseThrottledValueOptions,
+} from '../hooks';
 
 // ─── Theme ──────────────────────────────────────────────────────────────
 export { ThemeProvider } from '../components/ui/theme-provider';

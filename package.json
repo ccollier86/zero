@@ -1,6 +1,6 @@
 {
   "name": "@platform/core",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "test": "bun test",
@@ -12,7 +12,8 @@
     "migrate": "bun run src/migrations/run.ts",
     "migrate:status": "bun run src/migrations/run.ts --status",
     "migrate:doctor": "bun run src/migrations/run.ts --doctor",
-    "migrate:plan": "bun run src/migrations/run.ts --plan"
+    "migrate:plan": "bun run src/migrations/run.ts --plan",
+    "version:bump": "bun run scripts/bump-version.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -21,6 +22,16 @@
     "typescript": "^5.7.0"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "3.0.2",
+    "@ai-sdk/cohere": "3.0.2",
+    "@ai-sdk/deepgram": "2.0.2",
+    "@ai-sdk/google": "3.0.2",
+    "@ai-sdk/groq": "3.0.2",
+    "@ai-sdk/openai": "3.0.2",
+    "@ai-sdk/openai-compatible": "2.0.2",
+    "@ai-sdk/provider": "3.0.1",
+    "@ai-sdk/provider-utils": "4.0.2",
+    "@ai-sdk/xai": "3.0.3",
     "@base-ui-components/react": "^1.0.0-rc.0",
     "@elysiajs/cron": "^1.4.1",
     "@elysiajs/eden": "^1.4.8",
@@ -54,6 +65,8 @@
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-table": "^8.21.3",
     "@xstate/store": "^3.16.0",
+    "@zvec/zvec": "0.5.0",
+    "ai": "6.0.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -71,12 +84,15 @@
     "react": "^19.2.4",
     "react-day-picker": "^9.14.0",
     "react-dom": "^19.2.4",
+    "react-dropzone": "^15.0.0",
     "react-use-measure": "^2.1.7",
     "recharts": "^3.7.0",
     "shiki": "^4.0.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.1",
-    "valibot": "^1.2.0"
+    "use-stick-to-bottom": "^1.1.6",
+    "valibot": "^1.2.0",
+    "zod": "4.2.1"
   }
 }

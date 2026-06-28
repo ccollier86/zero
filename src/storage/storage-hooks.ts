@@ -8,7 +8,7 @@
 
 import { useState, useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 import type { FileInfo, ListResult, DriveUsage, DriveRecord } from './types';
-import { useClient } from '../frontend/client/hooks';
+import { useClient } from '../frontend/client/client-context';
 import type { Client, FetchInit } from '../frontend/client/sdk';
 
 // ─── Internal: SDK-backed transport ───────────────────────────────────────

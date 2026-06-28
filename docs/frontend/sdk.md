@@ -977,6 +977,43 @@ runtime server settings such as `auth`, `stateSync`, and resolved
 `tableSyncModes` so omitted provider props and auto-lazy decisions match the
 backend.
 
+### Hook organization
+
+Zero exposes hooks from `@platform/frontend`, but the implementation is split
+by responsibility:
+
+- `client-context.tsx` owns `ClientProvider`, `useClient`, `useClientMaybe`, and SSR fallback checks.
+- `auth-hooks.ts` owns `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, and `useUserProperty`.
+- `data-hooks.ts` owns `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, and `useStatus`.
+- `data-composition-hooks.ts` owns `useDataPage`, `useRecord`, and `useRecordByIdentity`.
+- `data-selection-hooks.ts` owns reusable selected-row state for tables and detail views.
+- `mutation-hooks.ts` and `connection-health-hooks.ts` own mutation lifecycle and sync/auth health state.
+- `presence-list-hooks.ts` and `typing-indicator-hooks.ts` own display-ready room presence and ephemeral typing state.
+- `preference-hooks.ts` owns `usePreference` and `useFormDraft` over server state sync.
+- `workflow-run-hooks.ts` owns the composed `useWorkflowRun` helper.
+- `src/storage/upload-queue-hooks.ts`, `src/storage/upload-dropzone-hooks.ts`, `src/storage/storage-file-hooks.ts`, and `src/storage/storage-browser-hooks.ts` own storage queue, dropzone, file, and browser composition.
+- `src/hooks/*` owns generic React primitives such as `useDisclosure`, `useAsyncAction`, `useDebouncedValue`, `useDebouncedCallback`, `useThrottledValue`, `useClickAway`, `useCopyToClipboard`, `useIdle`, `useOs`, `useTextSelection`, `useMediaQuery`, and `useHotkey`.
+- `use-stick-to-bottom` is re-exported directly as `StickToBottom`, `useStickToBottom`, and `useStickToBottomContext` for smooth AI/chat/log panels.
+
+App code should still import from `@platform/frontend`. Use the lower-level
+files only when working inside the platform source. See [Frontend Hooks](./hooks.md).
+
+### useUserProperty
+
+Read and update one current-user KV property through the auth client:
+
+```tsx
+const theme = useUserProperty('theme', {
+  defaultValue: 'system',
+});
+
+void theme.setValue('dark');
+```
+
+The server remains authoritative. If a configured property is admin-only,
+system-only, or non-editable, user writes are rejected by auth routes. Use this
+hook for UI preferences and visibility convenience, not backend authorization.
+
 ### useCollection
 
 Subscribe to a full-sync table. Returns array/map reads plus optimistic mutation functions. Re-renders when the local collection changes.

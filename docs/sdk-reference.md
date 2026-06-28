@@ -39,7 +39,7 @@ import {
 
 ## Quick Start
 
-> **Import aliases:** Use `@platform/frontend` for all app code (schema, hooks, components). Use `@platform/server` only in `app/server.ts` (for `resolveConfig`, `createApp`). Use `@app/*` for your app code, `@/components/*` for UI. Never use relative `../../../` paths. See [Path Aliases](frontend/README.md#path-aliases) for the full list.
+> **Import aliases:** Use `@platform/frontend` for app code (schema, hooks, components), and `@platform/frontend/icons` for Zero's default animated icon pack. Use `@platform/server` only in `app/server.ts` (for `resolveConfig`, `createApp`). Use `@app/*` for your app code. Never use relative `../../../` paths. See [Path Aliases](frontend/README.md#path-aliases) for the full list.
 
 ### 1. Define your schema
 
@@ -1778,15 +1778,26 @@ import { Magnetic } from '@/components/animate-ui/primitives/effects/magnetic';
 
 ## Animated Icons
 
-64 animated Lucide icons. Each icon animates on hover/trigger with motion paths.
+64 animated Lucide icons. This is Zero's default platform icon pack. Use it for
+app and platform UI by default, and use `lucide-react` directly only when Zero
+does not ship the icon shape yet.
 
 ```tsx
-import { Heart } from '@/components/animate-ui/icons/heart';
-import { Check } from '@/components/animate-ui/icons/check';
+import { AnimateIcon, Check, Heart, ZeroIcon } from '@platform/frontend/icons';
 
-<Heart className="size-6" />
-<Check className="size-6 text-green-500" />
+<Heart animateOnHover className="size-6" />
+<Check animate className="size-6 text-green-500" />
+
+<AnimateIcon animateOnHover>
+  <Heart size={20} />
+</AnimateIcon>
+
+<ZeroIcon name="arrow-right" size={18} animateOnHover />
 ```
+
+Direct named icon imports come from `@platform/frontend/icons`. The main
+`@platform/frontend` barrel exports `AnimateIcon`, `ZeroIcon`, and registry
+helpers only so icon names like `Link` do not collide with router components.
 
 ### Complete Icon List
 
@@ -1856,7 +1867,18 @@ import { Check } from '@/components/animate-ui/icons/check';
 | Wifi | `icons/wifi` |
 | X | `icons/x` |
 
-All icon import paths are prefixed with `@/components/animate-ui/`.
+All icons can be imported by name from `@platform/frontend/icons`.
+
+For config-driven UI, use the registry helpers:
+
+```tsx
+import {
+  getZeroAnimatedIcon,
+  hasZeroAnimatedIcon,
+  resolveZeroAnimatedIcon,
+  zeroAnimatedIconNames,
+} from '@platform/frontend/icons';
+```
 
 ---
 
@@ -1993,17 +2015,25 @@ app.listen(3000);
 |------|-----------|-------------|
 | `useCollection` | `<T>(name) => { data, insert, update, remove }` | Primary mutation API -- all rows + CRUD, re-renders on any change |
 | `useLazyCollection` | `(name, filter?) => { data, isLoading, error, refresh }` | Lazy table hook with loading/error/refresh |
+| `useDataPage` | `(table, options?) => DataPageResult` | `/api/data` pagination, sorting, filters, loading/error, and refresh |
 | `useRow` | `<T>(name, id) => T \| null` | Single row, re-renders when it changes |
+| `useRecord` | `(table, id) => RecordResult` | Single row plus update/delete helpers |
+| `useRecordByIdentity` | `(table, identity) => IdentityRecordResult` | Natural-identity lookup plus upsert/update/delete helpers |
+| `useDataSelection` | `(items, options?) => UseDataSelectionReturn` | Reusable single/multiple selected-row state for data views |
 | `useQuery` | `<T>(name, predicate) => T[]` | Filtered rows, re-renders on matching changes |
-| `useStatus` | `() => boolean` | WebSocket connected? |
+| `useStatus` | `() => { connected: boolean }` | WebSocket connected? |
+| `useConnectionHealth` | `() => ConnectionHealth` | Auth/sync/pending-mutation health for app banners |
+| `useMutation` | `(action, options?) => UseMutationReturn` | SDK-backed command lifecycle with observability errors |
 
 ### Auth Hooks
 
 | Hook | Signature | Description |
 |------|-----------|-------------|
 | `useAuth` | `() => AuthState & AuthActions` | Full auth state + actions |
+| `useAuthConfig` | `() => AuthConfigState` | Public auth registration/bootstrap/user-property config |
 | `useCurrentUser` | `() => AuthUser \| null` | Current user shorthand |
 | `useRequireAuth` | `(redirectTo?) => AuthUser \| null` | Guard: redirects if not authed |
+| `useUserProperty` | `(key, options?) => UseUserPropertyResult` | Current-user KV property reader/writer for UI settings and gates |
 
 ### State Hooks
 
@@ -2011,6 +2041,8 @@ app.listen(3000);
 |------|-----------|-------------|
 | `useServerState` | `<T>(key, default) => [T, (v: T) => void]` | Server-persisted per-user state |
 | `useServerStateReady` | `() => boolean` | Initial state loaded from server? |
+| `usePreference` | `(key, defaultValue) => UsePreferenceResult` | Named server-state wrapper for user preferences |
+| `useFormDraft` | `(key, initialValue, options?) => UseFormDraftResult` | Object-shaped synced form draft helper |
 
 ### Collection Hooks
 
@@ -2031,20 +2063,47 @@ app.listen(3000);
 | `useOnNewNotification` | `(cb: (n) => void) => void` | Fires on new notification arrival |
 | `useNotificationContext` | `() => UseNotificationsResult` | Context consumer (inside NotificationProvider) |
 
+### Room And Presence Hooks
+
+| Hook | Signature | Description |
+|------|-----------|-------------|
+| `useRoom` | `(roomId) => UseRoomResult` | Live room plus members |
+| `useRoomMembers` | `(roomId) => RoomMemberRecord[]` | Live room members |
+| `useRooms` | `(userId) => RoomRecord[]` | Rooms for a user |
+| `useRoomActions` | `() => RoomActions` | Create/join/leave/delete room actions |
+| `useRoomData` | `(roomId, tableName) => rows[]` | Live table rows filtered by `room_id` |
+| `usePresence` | `(roomId, data?) => UsePresenceResult` | Low-level ephemeral presence heartbeat |
+| `usePresenceList` | `(roomId, options?) => UsePresenceListReturn` | Display-ready presence list with stale filtering |
+| `useTypingIndicator` | `(scope, options?) => UseTypingIndicatorReturn` | Ephemeral typing state with TTL and current typing users |
+
 ### Storage Hooks
 
 | Hook | Signature | Description |
 |------|-----------|-------------|
 | `useUpload` | `() => UseUploadReturn` | Multipart upload with progress |
+| `useUploadQueue` | `() => UseUploadQueueReturn` | Sequential multi-file upload queue |
+| `useUploadDropzone` | `(options) => UseUploadDropzoneReturn` | `react-dropzone` bindings wired to Zero storage uploads |
+| `useStorageFile` | `(driveId, path) => UseStorageFileReturn` | One file/folder metadata, URL, delete, visibility, refresh |
 | `useStorageFolder` | `(driveId, path?) => UseStorageFolderReturn` | Folder listing |
+| `useStorageBrowser` | `(driveId, initialPath?) => UseStorageBrowserReturn` | Folder navigation, selection, uploads, and common actions |
 | `useStorageDrives` | `() => UseStorageDrivesReturn` | Accessible drive list |
 | `useDriveUsage` | `(driveId) => UseDriveUsageReturn` | Drive usage stats |
+| `useDriveQuota` | `(driveId) => UseDriveQuotaReturn` | Drive usage plus derived quota flags |
 | `usePresignedUrl` | `() => UsePresignedUrlReturn` | Create presigned URLs |
 | `useStorageActions` | `() => StorageActions` | Drive/file mutation helpers |
 
 Storage hooks must run inside `AppProvider` or `ClientProvider` so they can use
 the platform SDK client. JSON actions use `client.fetch()`; multipart uploads
 use SDK auth headers with an automatic refresh-and-retry on 401.
+
+### Workflow Hooks
+
+| Hook | Signature | Description |
+|------|-----------|-------------|
+| `useWorkflow` | `(instanceId) => UseWorkflowResult` | Live workflow instance and steps |
+| `useWorkflowList` | `(filter?) => UseWorkflowListResult` | Live workflow instances by status/name |
+| `useWorkflowActions` | `() => WorkflowActions` | Start/cancel/pause/resume/send-event actions |
+| `useWorkflowRun` | `(name, options?) => UseWorkflowRunResult` | Start one workflow by name and watch live progress |
 
 ### Router Hooks
 
@@ -2067,6 +2126,38 @@ use SDK auth headers with an automatic refresh-and-retry on 401.
 | `useDataTable` | `<T>(opts) => UseDataTableReturn<T>` | TanStack Table state management |
 | `useDataTableSource` | `<T>(opts) => DataTableSourceState<T>` | DataTable source resolver for static, full-sync, and lazy sources |
 
+### Generic UI Hooks
+
+| Hook | Signature | Description |
+|------|-----------|-------------|
+| `useAsyncAction` | `(action, options?) => { pending, error, result, run, reset }` | Async button/form action lifecycle |
+| `useAutoHeight` | `(deps?, options?) => { ref, height }` | Element height measurement for animated layout |
+| `useConfirm` | `() => (options) => Promise<boolean>` | Promise-based confirmation dialog inside `ConfirmProvider` |
+| `useControlledState` | `(props) => [value, setValue]` | Controlled/uncontrolled component state |
+| `useDataState` | `(key, ref?, onChange?) => [value, ref]` | `data-*` attribute observer for low-level UI primitives |
+| `useDebouncedCallback` | `(callback, delayOrOptions) => callback & { flush, cancel, isPending }` | Debounced callbacks with lifecycle controls |
+| `useDebouncedValue` | `(value, delayMs) => value` | Debounced UI state |
+| `useDisclosure` | `(options?) => { isOpen, setOpen, open, close, toggle }` | Dialog/drawer/popover open state |
+| `useClickAway` | `(handler, options?) => ref` | Outside-interaction handler for menus, popovers, and dialogs |
+| `useCopyToClipboard` | `(options?) => { copied, value, error, copy, reset }` | Clipboard copy lifecycle state |
+| `useHotkey` | `(combo, handler, options?) => void` | Keyboard shortcuts such as `mod+k` |
+| `useIdle` | `(timeoutMs?, options?) => boolean` | User inactivity state |
+| `useInterval` | `(callback, delayMs, options?) => void` | Pausable interval callback |
+| `useIsInView` | `(ref, options?) => { ref, isInView }` | Viewport visibility state |
+| `useIsMobile` | `() => boolean` | Zero default mobile breakpoint |
+| `useMediaQuery` | `(query, options?) => boolean` | SSR-safe `matchMedia` hook |
+| `useMounted` | `() => boolean` | Hydration/mount state |
+| `useMotionValueState` | `(motionValue) => number` | MotionValue to React state bridge |
+| `useOs` | `(options?) => OperatingSystem` | SSR-safe OS detection |
+| `usePrevious` | `(value) => previousValue` | Previous render value |
+| `useStableCallback` | `(callback) => callback` | Stable identity, latest implementation callback |
+| `useTextSelection` | `() => Selection \| null` | Current non-collapsed page text selection |
+| `useThrottledCallback` | `(callback, waitMs, options?) => callback & { cancel, flush, isPending }` | Throttled callbacks |
+| `useThrottledValue` | `(value, waitMs?, options?) => value` | Throttled UI state |
+| `useTimeout` | `(callback, delayMs) => void` | Pausable one-shot timeout |
+
+See [Frontend Hooks](frontend/hooks.md) for usage examples and hook boundary rules.
+
 ---
 
 ## Full Export List
@@ -2074,19 +2165,19 @@ use SDK auth headers with an automatic refresh-and-retry on 401.
 Everything available from `@platform/frontend`:
 
 ### Functions & Classes
-`createClient`, `getClient`, `AuthClient`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`
+`createClient`, `getClient`, `AuthClient`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
 
 ### React Components
-`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `Link`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
+`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
 
 ### React Hooks
-`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, `useStatus`, `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useServerState`, `useServerStateReady`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useUpload`, `useStorageFolder`, `useStorageDrives`, `useDriveUsage`, `usePresignedUrl`, `useStorageActions`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`
+`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
 
 ### Constants
-`STORAGE_TABLES`
+`STORAGE_TABLES`, `zeroAnimatedIconNames`, `zeroAnimatedIcons`
 
 ### Types
-`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `RegisterParams`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `InferRow`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseStorageFolderReturn`, `UseStorageDrivesReturn`, `UseDriveUsageReturn`, `UsePresignedUrlReturn`, `StorageActions`, `DriveRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`
+`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `RegisterParams`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `DriveRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
 
 Server-only (from `@platform/server`): `App`, `AppConfig`, `ResolvedConfig`, `AuthPluginConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `createAuthPlugin`, `createAuthMiddleware`, `getTokenService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `emitPlatformCode`, `createObservabilityPlugin`
 

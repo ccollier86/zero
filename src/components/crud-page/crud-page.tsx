@@ -6,8 +6,8 @@ import type { Row } from '../../sync/types';
 import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { RowAction } from '../data-table/data-table-row-actions';
 import type { NavigationAction } from '../ui/record-navigation-bar';
-import { useCollection, useLazyCollection } from '../../frontend/client/hooks';
-import type { LazyCollectionOptions } from '../../frontend/client/hooks';
+import { useCollection, useLazyCollection } from '../../frontend/client/data-hooks';
+import type { LazyCollectionOptions } from '../../frontend/client/data-hooks';
 import { DataTable } from '../data-table';
 import {
   ensureRowPrimaryKey,

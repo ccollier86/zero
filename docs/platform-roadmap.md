@@ -189,29 +189,28 @@ const { upload, uploading, progress, error } = useUpload();
 
 ### 2B: Vector Search
 
-In-process vector storage and similarity search. sqlite-vec or similar.
+Implemented as an opt-in local zvec-backed vector store. See
+[Vector Store](./vector.md) for the current API.
 
 **Developer API**
 ```ts
-import { createVectorPlugin, getVectors } from '@platform/server';
+import { getVectorStore } from '@platform/server';
 
-app.use(createVectorPlugin({
-  dimensions: 1536,           // OpenAI embedding size
-  metric: 'cosine',           // 'cosine' | 'euclidean' | 'dot'
-}));
-
-const vec = getVectors();
+const vec = getVectorStore();
+if (!vec) throw new Error('Vector store is not enabled.');
 
 // Store embeddings
 await vec.upsert('documents', {
   id: 'doc-123',
-  vector: embedding,         // number[]
+  vector: embedding,
+  text: 'My document text',
   metadata: { title: 'My Doc', category: 'legal' },
 });
 
 // Search
-const results = await vec.search('documents', queryEmbedding, {
-  limit: 10,
+const results = await vec.query('documents', {
+  vector: queryEmbedding,
+  topK: 10,
   filter: { category: 'legal' },
   minScore: 0.7,
 });
@@ -520,7 +519,7 @@ Machine-readable rules for what connects to what:
 - `useServerState` for UI preferences, `useCollection` for domain data, `useEphemeral` for transient shared state
 - File at `app/foo/page.tsx` = route `/foo`
 - File at `app/api/foo/route.ts` = API at `/api/foo`
-- Use animated icons from platform, never emojis, never external icon packs unless lucide-react
+- Use animated icons from `@platform/frontend/icons` by default, never emojis for actions/states/navigation, and use raw `lucide-react` only when Zero does not ship the needed animated icon.
 
 **Pre-built Assemblies**
 Complete, tested combinations as starting points:

@@ -262,6 +262,34 @@ storage plugin declares its own auth middleware dependency for typed
 
 ---
 
+## Vector Store
+
+Local zvec-backed vector storage is available when enabled with
+`createApp({ vector })`. It stores app-owned embeddings, text, and metadata in
+process without a separate vector server.
+
+```ts
+import { createAIVectorBridge, getAI, getVectorStore } from '@platform/server';
+
+const ai = getAI();
+const vectors = getVectorStore();
+if (!ai || !vectors) throw new Error('AI/vector services are not enabled.');
+
+const docs = createAIVectorBridge({ ai, vectors })
+  .scope('knowledge', { bucket: 'docs' });
+
+await docs.embedAndUpsert({
+  id: 'docs:chunk-1',
+  text: 'Zero combines AI embeddings with local vector search.',
+});
+```
+
+The vector service owns storage and search only. AI owns embeddings. Scoped
+helpers make bucket, tenant, room, or session isolation simple without forcing
+a multi-tenant auth model into every app. See [Vector Store](./vector.md).
+
+---
+
 ## Workflows — Durable Multi-Step Processes
 
 Define workflows as step graphs with conditions, branching, retry with exponential backoff, event-based waiting, and crash recovery.
@@ -679,6 +707,6 @@ const { users } = await client.listAuthAdminUsers();
 | Styling | Tailwind CSS |
 | UI primitives | Radix UI |
 | Animation | Framer Motion |
-| Icons | Lucide React |
+| Icons | Animate UI animated Lucide icons via `@platform/frontend/icons`; raw `lucide-react` only for missing shapes |
 
 Everything runs in one process. Zero network hops between components. SQLite write -> onChange -> pub/sub broadcast completes synchronously before yielding the event loop.

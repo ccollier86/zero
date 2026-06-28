@@ -113,6 +113,103 @@ describe('runPlatformDoctor', () => {
     expect(hasFinding(report, 'migrations.startup.disabled')).toBe(true);
     expect(hasFinding(report, 'sync.lazy.index_guidance')).toBe(true);
   });
+
+  test('checks AI provider readiness, aliases, and status endpoint access', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        users: { id: 'text primary key' },
+      },
+      auth: false,
+      ai: {
+        autoDetect: false,
+        providers: {
+          local: { type: 'openai-compatible', apiKey: 'test-key' },
+          groq: { type: 'groq', apiKey: 'test-key' },
+          bespoke: { type: 'custom', apiKey: 'test-key' },
+        },
+        aliases: {
+          fast: 'local/model',
+          smart: 'not-qualified',
+          image: 'groq/image-model',
+          speech: 'missing/tts',
+        },
+        statusEndpoint: { enabled: true, read: 'admin' },
+      },
+    }, { env: { NODE_ENV: 'production' } });
+
+    expect(report.ok).toBe(true);
+    expect(hasFinding(report, 'ai.provider.base_url_missing')).toBe(true);
+    expect(hasFinding(report, 'ai.provider.custom_adapter_missing')).toBe(true);
+    expect(hasFinding(report, 'ai.alias.provider_inactive')).toBe(true);
+    expect(hasFinding(report, 'ai.alias.invalid_model_reference')).toBe(true);
+    expect(hasFinding(report, 'ai.alias.capability_unsupported')).toBe(true);
+    expect(hasFinding(report, 'ai.alias.provider_missing')).toBe(true);
+    expect(hasFinding(report, 'ai.status_endpoint.requires_auth')).toBe(true);
+  });
+
+  test('checks vector paths, metadata index guidance, and embedding readiness', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        docs: { id: 'text primary key' },
+      },
+      auth: false,
+      storageDir: './.storage',
+      vector: {
+        defaultIndex: 'docs',
+        indexes: {
+          docs: {
+            dimensions: 768,
+            path: './.storage/vectors',
+            readOnly: true,
+            metadata: {
+              bucket: { type: 'string', indexed: false },
+            },
+          },
+          copy: {
+            dimensions: 768,
+            path: './.storage/vectors',
+          },
+          build: {
+            dimensions: 8192,
+            path: './.build/vector',
+            metadata: {
+              tenantId: { type: 'string', indexed: false },
+            },
+          },
+        },
+      },
+    }, { env: {} });
+
+    expect(report.ok).toBe(false);
+    expect(hasFinding(report, 'storage.auth_required')).toBe(true);
+    expect(hasFinding(report, 'vector.ai.disabled')).toBe(true);
+    expect(hasFinding(report, 'vector.index.path_duplicate')).toBe(true);
+    expect(hasFinding(report, 'vector.index.path_overlaps_storage')).toBe(true);
+    expect(hasFinding(report, 'vector.index.path_overlaps_build_output')).toBe(true);
+    expect(hasFinding(report, 'vector.index.read_only')).toBe(true);
+    expect(hasFinding(report, 'vector.index.dimensions_high')).toBe(true);
+    expect(hasFinding(report, 'vector.metadata.scope_field_unindexed')).toBe(true);
+  });
+
+  test('checks auth login routes and production observability readiness', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        users: { id: 'text primary key' },
+      },
+      auth: true,
+      email: false,
+      loginPath: '/signin',
+      publicPaths: ['/login', '/forgot-password'],
+      observability: false,
+    }, { env: { NODE_ENV: 'production' } });
+
+    expect(report.ok).toBe(true);
+    expect(hasFinding(report, 'auth.login_path.not_public')).toBe(true);
+    expect(hasFinding(report, 'observability.disabled.production')).toBe(true);
+  });
 });
 
 function hasFinding(

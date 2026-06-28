@@ -72,6 +72,23 @@ export const OBS_CODES = {
   EMAIL_SEND_FAILED: code('email', 'send.failed', 'error', 'Email send failed.'),
   EMAIL_CONSOLE_PREVIEW: code('email', 'console.preview', 'info', 'Console email provider captured a preview.'),
 
+  AI_CONFIGURED: code('ai', 'configured', 'info', 'AI runtime configured.'),
+  AI_PROVIDER_ENABLED: code('ai', 'provider.enabled', 'info', 'AI provider enabled.'),
+  AI_PROVIDER_SKIPPED: code('ai', 'provider.skipped', 'warn', 'AI provider skipped.'),
+  AI_PROVIDER_FAILED: code('ai', 'provider.failed', 'error', 'AI provider setup failed.'),
+  AI_MODEL_ALIAS_UNRESOLVED: code('ai', 'model_alias.unresolved', 'warn', 'AI model alias is unresolved.'),
+  AI_REQUEST_STARTED: code('ai', 'request.started', 'debug', 'AI request started.'),
+  AI_REQUEST_COMPLETED: code('ai', 'request.completed', 'info', 'AI request completed.'),
+  AI_REQUEST_FAILED: code('ai', 'request.failed', 'error', 'AI request failed.'),
+  AI_TOOL_FAILED: code('ai', 'tool.failed', 'error', 'AI tool execution failed.'),
+  AI_STATUS_ACCESS_DENIED: code('ai', 'status.access_denied', 'warn', 'AI status endpoint access denied.'),
+
+  VECTOR_CONFIGURED: code('vector', 'configured', 'info', 'Vector runtime configured.'),
+  VECTOR_INDEX_READY: code('vector', 'index.ready', 'info', 'Vector index ready.'),
+  VECTOR_INDEX_FAILED: code('vector', 'index.failed', 'error', 'Vector index failed to initialize.'),
+  VECTOR_OPERATION_COMPLETED: code('vector', 'operation.completed', 'debug', 'Vector operation completed.'),
+  VECTOR_OPERATION_FAILED: code('vector', 'operation.failed', 'error', 'Vector operation failed.'),
+
   STORAGE_STARTED: code('storage', 'started', 'info', 'Storage plugin started.'),
   STORAGE_STOPPED: code('storage', 'stopped', 'info', 'Storage plugin stopped.'),
 
@@ -109,6 +126,8 @@ export const OBS_CODES = {
   FRONTEND_AUTH_SESSION_REDIRECT: code('frontend', 'auth.session_redirect', 'warn', 'Frontend redirected after auth session ended.'),
   FRONTEND_ADMIN_USER_ACTION_FAILED: code('frontend', 'admin_user.action_failed', 'error', 'Admin user-management action failed.'),
   FRONTEND_STORAGE_ACTION_FAILED: code('frontend', 'storage.action_failed', 'error', 'Storage management action failed.'),
+  FRONTEND_DATA_PAGE_FAILED: code('frontend', 'data_page.failed', 'error', 'Frontend data page query failed.'),
+  FRONTEND_MUTATION_FAILED: code('frontend', 'mutation.failed', 'error', 'Frontend mutation action failed.'),
 
   MIGRATOR_LOG: code('migrations', 'log', 'info', 'Migration runner emitted a log message.'),
   MIGRATOR_FAILED: code('migrations', 'failed', 'error', 'Migration failed.'),

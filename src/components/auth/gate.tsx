@@ -9,7 +9,7 @@
  */
 
 import * as React from 'react';
-import { useAuth, useCurrentUser } from '../../frontend/client/hooks';
+import { useAuth, useCurrentUser } from '../../frontend/client/auth-hooks';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

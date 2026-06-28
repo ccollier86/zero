@@ -3,6 +3,10 @@ import type { SyncPolicy } from '../../sync/sync-policy';
 import type { ObservabilityConfig } from '../../observability/types';
 import type { AuthBehaviorConfig } from '../../auth/types';
 import type { AppIdentityConfig, EmailConfig } from '../../email/types';
+import { resolveAIConfig } from '../../ai/ai-env';
+import type { AIConfig, ResolvedAIConfig } from '../../ai/ai-types';
+import { resolveVectorConfig } from '../../vector/vector-config';
+import type { ResolvedVectorConfig, VectorConfig } from '../../vector/vector-types';
 
 // ─── App Configuration ─────────────────────────────────────────────────────
 
@@ -117,6 +121,23 @@ export interface AppConfig {
    */
   email?: boolean | EmailConfig;
 
+  /**
+   * Platform AI configuration.
+   *
+   * `true` enables env-based provider auto-detection. Object config can add
+   * explicit providers, aliases, and status endpoint options. Default: false.
+   */
+  ai?: boolean | AIConfig;
+
+  /**
+   * Platform vector-store configuration.
+   *
+   * `true` enables a default local zvec index. Object config can define named
+   * indexes, dimensions, metadata filter fields, and storage paths.
+   * Default: false.
+   */
+  vector?: boolean | VectorConfig;
+
   /** Enable per-user server-persisted state. Default: false */
   stateSync?: boolean;
 
@@ -186,6 +207,8 @@ export interface ResolvedConfig {
   tables: Record<string, TableSchema>;
   auth: false | (AuthBehaviorConfig & { accessTokenTTL?: string; refreshTokenTTL?: string });
   email: false | EmailConfig;
+  ai: false | ResolvedAIConfig;
+  vector: false | ResolvedVectorConfig;
   stateSync: boolean;
   syncPolicy?: SyncPolicy;
   storageDir: string;
@@ -210,7 +233,10 @@ export interface ResolvedConfig {
   tableColumns: Map<string, string[]>;
 }
 
-export function resolveConfig(config: AppConfig): ResolvedConfig {
+export function resolveConfig(
+  config: AppConfig,
+  env?: Record<string, string | undefined>
+): ResolvedConfig {
   const auth = config.auth === true
     ? {}
     : config.auth === false || config.auth === undefined
@@ -221,6 +247,8 @@ export function resolveConfig(config: AppConfig): ResolvedConfig {
     : config.email === false || config.email === undefined
       ? false
       : config.email;
+  const ai = resolveAIConfig(config.ai, env);
+  const vector = resolveVectorConfig(config.vector, env);
   const stateSync = config.stateSync ?? false;
 
   if (stateSync && auth === false) {
@@ -269,6 +297,8 @@ export function resolveConfig(config: AppConfig): ResolvedConfig {
     tables: normalized,
     auth,
     email,
+    ai,
+    vector,
     stateSync,
     syncPolicy: config.syncPolicy,
     syncDefaults,

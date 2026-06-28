@@ -5,7 +5,7 @@ typed config files that `createApp()` can discover or explicitly load.
 
 The first target for this protocol is auth metadata, access policies, tenancy,
 and avatars. After that shape is proven, the same protocol can be applied to
-storage, sync defaults, observability, migrations, and future systems.
+storage, sync defaults, observability, AI, migrations, and future systems.
 
 ## Goals
 
@@ -34,6 +34,8 @@ zero/
   storage.ts
   sync.ts
   observability.ts
+  ai.ts
+  vector.ts
 ```
 
 `server.ts` stays small:
@@ -87,6 +89,8 @@ Future files:
 | `zero/storage.ts` | drives, file limits, MIME policy, public/private defaults |
 | `zero/sync.ts` | sync defaults, lazy/full policy, snapshot limits |
 | `zero/observability.ts` | sinks, endpoint access, trace thresholds |
+| `zero/ai.ts` | provider aliases, explicit providers, status endpoint |
+| `zero/vector.ts` | vector indexes, dimensions, metadata filter fields |
 | `zero/migrations.ts` | migration safety defaults, doctor strictness, paths |
 
 ## Module Contract
@@ -179,6 +183,13 @@ createApp({
       },
     },
   },
+  ai: true,
+  vector: Bun.env.ZERO_VECTOR_ENABLED === 'true'
+    ? {
+        dataDir: Bun.env.ZERO_VECTOR_DATA_DIR ?? './data/vector',
+        defaultDimensions: Number(Bun.env.ZERO_VECTOR_DEFAULT_DIMENSIONS ?? 1536),
+      }
+    : false,
 });
 ```
 
@@ -198,6 +209,28 @@ Relevant environment variables are shown in `.env.example`:
 | `ACCESS_TOKEN_TTL` | Access token lifetime. |
 | `REFRESH_TOKEN_TTL` | Refresh token lifetime. |
 | `AUTH_SIGNING_KEY` | Optional externally managed ES256 private JWK. |
+| `OPENAI_API_KEY` | Enables OpenAI when `ai: true`. |
+| `ANTHROPIC_API_KEY` | Enables Anthropic when `ai: true`. |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables Google Generative AI when `ai: true`. |
+| `GROQ_API_KEY` | Enables Groq when `ai: true`. |
+| `XAI_API_KEY` | Enables xAI when `ai: true`. |
+| `COHERE_API_KEY` | Enables Cohere when `ai: true`. |
+| `LLAMA_API_KEY` / `META_LLAMA_API_KEY` | Enables the custom Meta Llama provider when `ai: true`. |
+| `DEEPSEEK_API_KEY` | Enables DeepSeek via OpenAI-compatible adapter when `ai: true`. |
+| `PERPLEXITY_API_KEY` / `PERPLEXITYAI_API_KEY` | Enables Perplexity via OpenAI-compatible adapter when `ai: true`. |
+| `VOYAGE_API_KEY` | Enables Voyage embeddings via OpenAI-compatible adapter when `ai: true`. |
+| `DEEPGRAM_API_KEY` | Enables Deepgram transcription and speech when `ai: true`. |
+| `{PROVIDER_ID}_API_KEY` | Optional convention for explicit non-catalog AI providers when `apiKey` is omitted, for example `LOCAL_API_KEY`. |
+| `{PROVIDER_ID}_BASE_URL` | Optional convention for explicit non-catalog AI providers when `baseURL` is omitted, for example `LOCAL_BASE_URL`. |
+| `ZERO_AI_FAST_MODEL` | Optional `fast` alias override. |
+| `ZERO_AI_SMART_MODEL` | Optional `smart` alias override. |
+| `ZERO_AI_EMBEDDING_MODEL` | Optional `embedding` alias override. |
+| `ZERO_AI_IMAGE_MODEL` | Optional `image` alias override. |
+| `ZERO_AI_TRANSCRIPTION_MODEL` | Optional `transcription` alias override. |
+| `ZERO_AI_SPEECH_MODEL` | Optional `speech` alias override. |
+| `ZERO_VECTOR_ENABLED` | Starter-app convention for enabling inline vector config. |
+| `ZERO_VECTOR_DATA_DIR` | Default local zvec collection directory. |
+| `ZERO_VECTOR_DEFAULT_DIMENSIONS` | Default vector dimensions for `vector: true`. |
 
 Config-file discovery/scaffolding remains planned. Inline config uses the same
 contract that future `zero/auth.ts` or `config/auth.ts` files should export.
@@ -255,15 +288,25 @@ default. `--strict` makes warnings fail for CI.
 Current checks cover:
 
 1. Invalid `createApp()` config such as `stateSync` without auth.
-2. Missing or multiple primary-key declarations in ReactiveDB tables.
-3. Invalid natural identity fields.
-4. Invalid auth action-token TTL/cooldown duration strings.
-5. Auth account email flows with email disabled.
-6. Missing `app.publicUrl`, sender address, or Resend API key for email-driven
+2. Explicit `storageDir` without auth, because platform storage only mounts
+   when auth is enabled.
+3. Missing or multiple primary-key declarations in ReactiveDB tables.
+4. Invalid natural identity fields.
+5. Invalid auth action-token TTL/cooldown duration strings.
+6. Auth account email flows with email disabled.
+7. Missing `app.publicUrl`, sender address, or Resend API key for email-driven
    account flows.
-7. File-backed databases with startup migrations disabled.
-8. Auth-enabled apps without an app `syncPolicy`.
-9. Lazy/auto sync index guidance for `/api/data` filters and sorting.
+8. File-backed databases with startup migrations disabled.
+9. Auth-enabled apps without an app `syncPolicy`.
+10. Login route access when `loginPath` is missing from `publicPaths`.
+11. Lazy/auto sync index guidance for `/api/data` filters and sorting.
+12. Observability disabled in production, unreadable endpoint policy, and
+    endpoint/store mismatches.
+13. AI provider readiness, custom OpenAI-compatible base URLs, aliases,
+    capability mismatches, and status endpoint access policy.
+14. Vector path collisions, storage/build-output path overlap, read-only
+    indexes, unusually high dimensions, embedding alias readiness, and
+    unindexed scope metadata fields.
 
 Future config-file doctor checks should validate:
 
@@ -274,7 +317,8 @@ Future config-file doctor checks should validate:
 5. Authz metadata marked user-writable.
 6. Tenancy configured without matching table columns/policies.
 7. Storage/avatar config without storage support.
-8. Observability endpoint enabled with unsafe production access.
+8. App-owned policy files that reference missing tables, columns, or auth
+   metadata keys.
 
 ## Rollout Plan
 
