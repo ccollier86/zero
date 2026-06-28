@@ -21,7 +21,7 @@ Four components, one shared database. Auth is an Elysia plugin that defines tabl
 │                     │  (shared)     │                                │
 │                     │               │                                │
 │                     │ users         │◄── broadcast (public)          │
-│                     │ user_properties│◄── broadcast (public)          │
+│                     │ user_properties│◄── direct SQL (composite PK)   │
 │                     │ _credentials  │◄── internal (no broadcast)     │
 │                     │ _refresh_tkns │◄── internal (no broadcast)     │
 │                     │ _auth_config  │◄── internal (no broadcast)     │
@@ -38,9 +38,9 @@ Four components, one shared database. Auth is an Elysia plugin that defines tabl
 Elysia plugin — owns authentication logic, routes, and service lifecycle.
 
 **Owns:**
-- Table definitions for `users`, `user_properties`, `_credentials`, `_refresh_tokens`, `_auth_config`
-- Registration, login, refresh, logout routes
-- Service lifecycle (UserStore + TokenService creation in `onStart`, cleanup in `onStop`)
+- Table definitions for `users`, `user_properties`, `_credentials`, `_refresh_tokens`, `_auth_action_tokens`, `_auth_config`
+- Registration, login, refresh, logout, password-change, and account lifecycle routes
+- Service lifecycle (UserStore, TokenService, UserPropertyService, AuthActionTokenService, and AccountEmailService creation in `onStart`, cleanup in `onStop`)
 - Derived `authStore` and `tokenService` in global Elysia context
 
 **Does not own:**
@@ -550,8 +550,8 @@ Both plugins define tables on the same database, but each plugin owns its own ta
 | `user_properties` | Auth plugin | Public | Yes — extensible metadata |
 | `_credentials` | Auth plugin | Internal | No — password hashes stay server-side |
 | `_refresh_tokens` | Auth plugin | Internal | No — token hashes are sensitive |
+| `_auth_action_tokens` | Auth plugin | Internal | No — reset/setup token hashes are sensitive |
 | `_auth_config` | Auth plugin | Internal | No — signing keys are sensitive |
-| `_audit_log` | Auth plugin | Internal | No — audit events are sensitive |
 | `todos`, etc. | Sync plugin (app config) | Public | Yes — application data |
 | `_changes` | ReactiveDB (auto) | Internal | No — ring buffer for replay |
 
@@ -676,14 +676,18 @@ Each component does one thing. Auth doesn't know about WebSockets. Sync doesn't 
 
 ```
 src/auth/
-├── user-store.ts           # SQLite operations: users, _credentials, user_properties, _refresh_tokens
-├── token-service.ts        # JWT signing/verification (jose), keypair mgmt, refresh rotation
-├── auth.plugin.ts          # Elysia plugin — lifecycle, derive, routes
-├── auth.middleware.ts       # Elysia middleware — stateless JWT verify, resolves authContext + guards
-├── guards.ts               # requireAuth, requireAdmin — pure guard functions
-├── activity-tracker.ts     # ActivityTracker class — in-memory audit sessions
-├── audit.middleware.ts      # Elysia middleware — wires tracker into request lifecycle + ReactiveDB
-├── types.ts                # AuthContext, UserRecord, TokenPair, AuditSession, AuditEvent, config
+├── user-store.ts           # SQLite operations: users, properties, credentials, refresh/action tokens
+├── token-service.ts        # JWT signing/verification, keypair mgmt, refresh rotation
+├── action-token-service.ts # One-time setup/reset token generation and consumption
+├── account-email-service.ts # Auth lifecycle email delivery through platform email
+├── auth.plugin.ts          # Main Elysia plugin — lifecycle, derive, public auth routes
+├── auth-admin.plugin.ts    # Admin user-management routes
+├── auth-account.plugin.ts  # Forgot/reset/setup routes
+├── auth.middleware.ts      # Elysia middleware — resolves authContext + guards
+├── auth-config.ts          # Auth config normalization
+├── auth-context.ts         # Shared Authorization header extraction
+├── user-property-service.ts # Configured property validation/defaults
+├── types.ts                # AuthContext, UserRecord, token/config/error types
 └── index.ts                # Public API: all exports
 ```
 

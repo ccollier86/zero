@@ -82,7 +82,7 @@ Register a user — every client subscribed to the `users` table sees them appea
 | **Argon2id passwords** | `Bun.password.hash()` — native, zero dependencies, memory-hard |
 | **ES256 JWTs** | ECDSA P-256 via `jose` — compact, fast verification, JWKS-compatible |
 | **Stateless verification** | Access tokens verified with public key only — no DB lookup per request |
-| **Reactive user data** | User profile, role changes broadcast to all connected clients via ReactiveDB |
+| **Reactive user rows** | User profile and role changes use ReactiveDB; properties are joined into auth payloads |
 | **Revocable refresh** | Refresh tokens are opaque UUIDs, SHA-256 hashed in DB, rotated on use |
 | **Zero sensitive broadcast** | Password hashes live in `_credentials` (internal table) — never broadcast |
 
@@ -109,7 +109,7 @@ A **standalone auth primitive** that composes with the sync engine. It owns user
 
 - **Not an identity provider.** No OAuth flows, no SAML, no social login. It's username/password auth with JWTs. Add OAuth on top if you need it.
 - **Not multi-tenant.** Single database, single namespace. All users share one `users` table.
-- **Not a user management UI.** It's an API. Build admin screens on top of the reactive data.
+- **Not a full user management UI.** It ships admin user-management routes and a mock/admin page shell, but a production admin screen can be app-specific.
 - **Not a permissions framework.** It provides `role` on the user and `authContext` in middleware. Row-level access control, RBAC policies — that's application code on top.
 
 ## Comparison
@@ -127,14 +127,14 @@ A **standalone auth primitive** that composes with the sync engine. It owns user
 
 ## Integration with Sync Engine
 
-The auth system and sync engine share a **single ReactiveDB instance**. Auth defines its tables (`users`, `user_properties`, `_credentials`, `_refresh_tokens`, `_auth_config`) on the same database that the sync engine broadcasts from. No bridge, no event forwarding, no extra plumbing.
+The auth system and sync engine share a **single ReactiveDB instance**. Auth defines its tables (`users`, `user_properties`, `_credentials`, `_refresh_tokens`, `_auth_config`) in the same database the sync engine uses, while only ReactiveDB-managed public tables broadcast as live table streams. No bridge, no event forwarding, no extra plumbing.
 
 ```
                     Shared ReactiveDB
                   ┌───────────────────────────────────────┐
                   │                                       │
   Auth Plugin ──► │  users (public)         ── broadcast  │ ◄── Sync Plugin
-  defineTable()   │  user_properties        ── broadcast  │     onChange → publish
+  defineTable()   │  user_properties        ── direct SQL │     onChange → publish
                   │  _credentials           ── internal   │
                   │  _refresh_tokens        ── internal   │
                   │  _auth_config           ── internal   │
@@ -146,7 +146,12 @@ The auth system and sync engine share a **single ReactiveDB instance**. Auth def
                   └───────────────────────────────────────┘
 ```
 
-**Public tables** (`users`, `user_properties`, `todos`, etc.) — changes broadcast to subscribed WebSocket clients via the sync engine's `onChange → server.publish()` path.
+**Reactive public tables** (`users`, app tables, and other single-PK platform tables) — changes broadcast to subscribed WebSocket clients via the sync engine's `onChange → server.publish()` path.
+
+`user_properties` is created with raw SQL because it uses a composite primary
+key `(user_id, key)`. Auth joins those properties into `/auth/me`, login,
+register, and admin user responses, but property mutations are not a standalone
+ReactiveDB table stream.
 
 **Internal tables** (`_` prefix) — changes tracked in the ring buffer for seq continuity but never broadcast. The `_` prefix convention is established by ReactiveDB's `_changes` table. Auth extends it to `_credentials`, `_refresh_tokens`, and `_auth_config`.
 
@@ -160,21 +165,165 @@ See [Architecture](./architecture.md) for the full component diagram and data fl
 | [User Store](./user-store.md) | SQLite schema, CRUD, properties KV, password hashing with Bun.password |
 | [Token Service](./token-service.md) | JWT lifecycle, ECDSA keypair management, refresh rotation, JWKS |
 | [Guards & Audit](./guards-and-audit.md) | Role-based route protection, automatic activity tracking (routes, data access, mutations, sessions) |
+| [Admin User Management](./admin-user-management-plan.md) | Implemented registration policy, admin user routes, configured user properties, and UI gate contract |
+| [Email And Account Lifecycle](./email-account-lifecycle-plan.md) | Platform email foundation, Resend default adapter, and planned reset/setup flows |
 | [Metadata, Access Control, And Avatars Plan](./metadata-access-avatar-plan.md) | Planned configurable authz metadata, policy helpers, tenancy, adaptive admin UI, storage-backed avatars |
 
 ## File Organization
 
 ```
 src/auth/
-├── user-store.ts           # SQLite operations: users, _credentials, user_properties, _refresh_tokens
-├── token-service.ts        # JWT signing/verification (jose), keypair mgmt, refresh rotation
-├── auth.plugin.ts          # Elysia plugin — lifecycle, derive, routes
-├── auth.middleware.ts       # Elysia middleware — stateless JWT verify, resolves authContext + guards
-├── guards.ts               # requireAuth, requireAdmin — pure functions (~20 lines)
-├── activity-tracker.ts     # ActivityTracker class — in-memory audit sessions (~150 lines)
-├── audit.middleware.ts      # Elysia middleware — wires tracker into request lifecycle + ReactiveDB (~60 lines)
-├── types.ts                # AuthContext, UserRecord, TokenPair, AuditSession, AuditEvent, config
+├── auth.plugin.ts              # Public auth routes, lifecycle, table setup
+├── auth-admin.plugin.ts        # Admin-only user-management routes
+├── auth.middleware.ts          # Stateless JWT verify, authContext, requireAuth/requireAdmin
+├── auth-config.ts              # Auth config helper and normalization
+├── auth-context.ts             # Authorization header to AuthContext helper
+├── token-service.ts            # JWT signing/verification, keypair mgmt, refresh rotation
+├── user-property-service.ts    # Configured user property validation/defaults
+├── user-store.ts               # SQLite operations: users, credentials, properties, tokens
+├── types.ts                    # AuthContext, UserRecord, TokenPair, config, AuthError
 └── index.ts                # Public API: all exports
 ```
 
-Eight files. Each under 400 lines. Single responsibility per file.
+Single responsibility per file: routes stay in Elysia plugins, validation and
+defaults live in services, and SQL stays in `UserStore`.
+
+## Registration And Admin Users
+
+The first account is a bootstrap path:
+
+1. If there are zero users, `POST /auth/register` is always available.
+2. The first registered user always receives role `admin`.
+3. After bootstrap, `auth.registration.mode` controls public registration.
+
+```ts
+createApp({
+  app: {
+    name: 'Acme CRM',
+    publicUrl: Bun.env.APP_PUBLIC_URL ?? 'http://localhost:3000',
+  },
+  email: Bun.env.RESEND_API_KEY
+    ? {
+        from: Bun.env.EMAIL_FROM ?? 'Acme CRM <noreply@example.com>',
+        replyTo: Bun.env.EMAIL_REPLY_TO,
+        provider: 'resend',
+        resend: { apiKey: Bun.env.RESEND_API_KEY },
+      }
+    : false,
+  auth: {
+    registration: { mode: 'admin-only' },
+    accountEmails: {
+      adminCreatedUser: Boolean(Bun.env.RESEND_API_KEY),
+      passwordReset: Boolean(Bun.env.RESEND_API_KEY),
+      actionTokenTTL: Bun.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
+    },
+  },
+});
+```
+
+Supported post-bootstrap modes:
+
+| Mode | Behavior |
+| --- | --- |
+| `public` | Public `/auth/register` remains open and creates `user` accounts. |
+| `admin-only` | Public registration is closed; admins create users through `/auth/admin/users`. |
+| `disabled` | Public and platform admin creation are closed after bootstrap. |
+
+Public UI can read:
+
+```txt
+GET /auth/config
+```
+
+Admin UI can read and manage:
+
+```txt
+GET    /auth/admin/config
+GET    /auth/admin/users
+GET    /auth/admin/users/:userId
+POST   /auth/admin/users
+PATCH  /auth/admin/users/:userId
+DELETE /auth/admin/users/:userId
+PUT    /auth/admin/users/:userId/properties/:key
+PATCH  /auth/admin/users/:userId/properties
+DELETE /auth/admin/users/:userId/properties/:key
+POST   /auth/admin/users/:userId/reset-password
+POST   /auth/admin/users/:userId/send-setup-email
+POST   /auth/admin/users/:userId/send-password-reset
+POST   /auth/admin/users/:userId/suspend
+POST   /auth/admin/users/:userId/activate
+POST   /auth/admin/users/:userId/revoke-sessions
+```
+
+Admin routes require an admin Bearer token. Deleting or demoting the last admin
+is rejected. Direct password resets remain available for manual workflows and
+revoke existing refresh tokens. The preferred email-driven reset/setup routes
+create one-time action tokens, send account lifecycle email through the
+platform email service, mark the account as requiring a password change, and
+revoke existing sessions.
+
+Public account lifecycle routes:
+
+```txt
+POST /auth/forgot-password
+GET  /auth/action-token/:token
+POST /auth/reset-password
+POST /auth/setup-password
+```
+
+`POST /auth/forgot-password` always returns `{ ok: true }` when the request is
+accepted so it does not reveal whether an email address exists. Reset/setup
+tokens are opaque, stored only as hashes, expire according to
+`auth.accountEmails.actionTokenTTL`, and are consumed once.
+
+Login, refresh, auth middleware, and `requireAuth()` enforce account state:
+
+| State | Behavior |
+| --- | --- |
+| `active` | Normal login and token use. |
+| `active` with `passwordChangeRequired` | Login returns `PASSWORD_CHANGE_REQUIRED`; existing tokens no longer authenticate. |
+| `suspended` | Login returns `ACCOUNT_SUSPENDED`; existing tokens no longer authenticate. |
+
+The root `.env.example` documents the common auth/email environment variables:
+`APP_NAME`, `APP_PUBLIC_URL`, `EMAIL_FROM`, `EMAIL_REPLY_TO`,
+`RESEND_API_KEY`, `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL`,
+`AUTH_ACTION_TOKEN_TTL`, and optional `AUTH_SIGNING_KEY`.
+
+## Configured User Properties
+
+Apps can configure known user property fields inline with `createApp()` today:
+
+```ts
+createApp({
+  auth: {
+    registration: { mode: 'admin-only' },
+    userProperties: {
+      department: {
+        type: 'enum',
+        values: ['accounting', 'operations', 'management'],
+        editableBy: 'admin',
+      },
+      notificationsEnabled: {
+        type: 'boolean',
+        default: true,
+        editableBy: 'user',
+      },
+    },
+  },
+});
+```
+
+Configured defaults apply on registration/admin creation and are lazily
+backfilled on login or `/auth/me` without overwriting existing values.
+Configured fields validate type/options and edit authority:
+
+| `editableBy` | Meaning |
+| --- | --- |
+| `user` | Current user and admins may edit through platform routes. |
+| `admin` | Admin routes may edit; current-user routes reject writes. |
+| `system` | Only internal service/system calls should write. |
+| `none` | Protected from user/admin platform routes. |
+
+Unknown property keys remain allowed by default for compatibility. Set
+`strictUserProperties: true` to reject unknown current-user/admin property
+writes through the platform routes.

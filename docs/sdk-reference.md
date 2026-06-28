@@ -462,6 +462,7 @@ function LoginPage() {
 | Hook | Returns | Description |
 |------|---------|-------------|
 | `useAuth()` | `AuthState & AuthActions` | Full auth state + login/logout/register/refresh |
+| `useAuthConfig()` | `AuthConfigState` | Public registration/bootstrap config for auth UI |
 | `useCurrentUser()` | `AuthUser \| null` | Just the user object |
 | `useRequireAuth(redirectTo?)` | `AuthUser \| null` | Redirects to `/login` if not authenticated |
 
@@ -475,6 +476,7 @@ interface AuthUser {
   firstName: string | null;
   lastName: string | null;
   role: string;
+  properties: Record<string, string>;
 }
 ```
 
@@ -486,6 +488,11 @@ const client = createClient({ ... });
 // Top-level (recommended) — most common auth operations
 await client.login('alice', 'password123');
 await client.register({ username: 'bob', email: 'bob@example.com', password: 'secret' });
+const authConfig = await client.getAuthConfig();
+await client.forgotPassword('alice@example.com');
+const action = await client.inspectActionToken('emailed-token');
+await client.resetPassword('emailed-token', 'new-password123');
+await client.setupPassword('emailed-token', 'first-password123');
 await client.logout();
 console.log(client.user);            // AuthUser | null
 console.log(client.isAuthenticated); // boolean
@@ -493,9 +500,21 @@ console.log(client.isAuthenticated); // boolean
 // Additional auth operations
 await client.changePassword('old', 'new');
 await client.setProperty('theme', 'dark');
+await client.setProperty('notificationsEnabled', false);
 const theme = await client.getProperty('theme');
 await client.refresh();
 ```
+
+Property gates are exported from the frontend barrel for UI-only visibility:
+
+```tsx
+<PropertyGate propertyKey="department" allow={['accounting', 'management']}>
+  <DepartmentTools />
+</PropertyGate>
+```
+
+Use backend checks for sensitive routes or data access; property gates only
+control what is rendered.
 
 ---
 

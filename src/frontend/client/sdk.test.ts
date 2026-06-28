@@ -29,6 +29,7 @@ describe('createClient auth configuration', () => {
     expect(client.isAuthenticated).toBe(false);
     expect(client.token).toBeNull();
     await expect(client.login('alice', 'password')).rejects.toThrow(AUTH_DISABLED_MESSAGE);
+    await expect(client.forgotPassword('alice@example.com')).rejects.toThrow(AUTH_DISABLED_MESSAGE);
   });
 
   test('rejects state sync unless auth is enabled', () => {

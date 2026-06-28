@@ -16,6 +16,7 @@ import { STORAGE_TABLES } from '../../storage/types';
 import { createDataQueryPlugin } from '../../sync/data-query.plugin';
 import { createRouterPlugin } from './router-plugin';
 import { buildClientBundle } from './client-bundle';
+import { configureEmail } from '../../email';
 import type { AppConfig } from './types';
 import { resolveConfig } from './types';
 import { applyTableSyncResolution, resolveTableSyncModes } from './sync-mode-resolver';
@@ -75,6 +76,7 @@ function addPlatformSnapshotTables(snapshotTables: Set<string>): void {
 export async function createApp(userConfig: AppConfig) {
   const config = resolveConfig(userConfig);
   configureObservability(config.observability);
+  const emailRuntime = configureEmail(config.email, config.app);
   addPlatformSnapshotTables(config.snapshotTables);
   const platformSyncPolicy = config.auth !== false
     ? createDefaultSyncPolicy({
@@ -159,6 +161,10 @@ export async function createApp(userConfig: AppConfig) {
         db,
         accessTokenTTL: config.auth.accessTokenTTL,
         refreshTokenTTL: config.auth.refreshTokenTTL,
+        registration: config.auth.registration,
+        accountEmails: config.auth.accountEmails,
+        userProperties: config.auth.userProperties,
+        strictUserProperties: config.auth.strictUserProperties,
       })
     );
 
@@ -258,6 +264,7 @@ export async function createApp(userConfig: AppConfig) {
       platformConfig: {
         url: '', // Derived from request.url at runtime
         auth: config.auth !== false,
+        email: emailRuntime.enabled,
         stateSync: config.stateSync,
         tableSyncModes: config.resolvedSyncModes,
       },

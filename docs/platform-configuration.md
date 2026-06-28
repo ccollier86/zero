@@ -141,6 +141,63 @@ createApp({
 
 Every config file should compile into a normalized internal config.
 
+Current auth behavior config can be passed inline today:
+
+```ts
+createApp({
+  app: {
+    name: Bun.env.APP_NAME ?? 'Acme CRM',
+    publicUrl: Bun.env.APP_PUBLIC_URL ?? 'https://crm.example.com',
+    supportEmail: Bun.env.APP_SUPPORT_EMAIL,
+  },
+  db,
+  tables,
+  email: Bun.env.RESEND_API_KEY
+    ? {
+        from: Bun.env.EMAIL_FROM ?? 'Acme CRM <noreply@example.com>',
+        replyTo: Bun.env.EMAIL_REPLY_TO,
+        provider: 'resend',
+        resend: {
+          apiKey: Bun.env.RESEND_API_KEY,
+        },
+      }
+    : false,
+  auth: {
+    registration: { mode: 'admin-only' },
+    accountEmails: {
+      adminCreatedUser: Boolean(Bun.env.RESEND_API_KEY),
+      passwordReset: Boolean(Bun.env.RESEND_API_KEY),
+      actionTokenTTL: Bun.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
+    },
+    userProperties: {
+      department: {
+        type: 'enum',
+        values: ['accounting', 'operations'],
+        editableBy: 'admin',
+      },
+    },
+  },
+});
+```
+
+Relevant environment variables are shown in `.env.example`:
+
+| Variable | Used for |
+| --- | --- |
+| `APP_NAME` | App display name in system email. |
+| `APP_PUBLIC_URL` | Public origin used to build reset/setup links. Required for account email. |
+| `APP_SUPPORT_EMAIL` | Optional support/reply identity. |
+| `EMAIL_FROM` | Default sender for platform email. |
+| `EMAIL_REPLY_TO` | Optional reply-to address. |
+| `RESEND_API_KEY` | Enables the default Resend email provider. |
+| `AUTH_ACTION_TOKEN_TTL` | Expiration for setup/reset action tokens. |
+| `ACCESS_TOKEN_TTL` | Access token lifetime. |
+| `REFRESH_TOKEN_TTL` | Refresh token lifetime. |
+| `AUTH_SIGNING_KEY` | Optional externally managed ES256 private JWK. |
+
+Config-file discovery/scaffolding remains planned. Inline config uses the same
+contract that future `zero/auth.ts` or `config/auth.ts` files should export.
+
 Admin UI and platform doctor should read the effective normalized config, not
 raw user-authored files.
 

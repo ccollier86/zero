@@ -8,4 +8,15 @@ export { OTPInput, type OTPInputProps } from './otp-input';
 export { SocialLoginGroup, type SocialLoginGroupProps, type SocialProvider } from './social-login-group';
 export { AuthLayout, type AuthLayoutProps } from './auth-layout';
 export { AuthHeader, type AuthHeaderProps } from './auth-header';
-export { Gate, useGate, type GateProps } from './gate';
+export {
+  Gate,
+  HasFlag,
+  HasProperty,
+  PropertyGate,
+  useGate,
+  usePropertyGate,
+  type GateProps,
+  type HasFlagProps,
+  type PropertyGateProps,
+  type PropertyGateValue,
+} from './gate';

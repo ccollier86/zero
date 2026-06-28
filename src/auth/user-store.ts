@@ -1,6 +1,20 @@
+/**
+ * user-store.ts
+ *
+ * Owns SQLite persistence for auth users, credentials, user properties,
+ * refresh tokens, and auth config. This store hides SQL details from Elysia
+ * route handlers; it does not verify request tokens or make HTTP decisions.
+ */
+
 import type { Statement } from 'bun:sqlite';
 import type { ReactiveDB } from '../sync/reactive-db';
-import type { UserRecord, RefreshTokenRecord } from './types';
+import type {
+  AuthActionTokenRecord,
+  AuthActionTokenType,
+  RefreshTokenRecord,
+  UserRecord,
+  UserStatus,
+} from './types';
 import { AuthError } from './types';
 
 // ─── SQL Row Types ─────────────────────────────────────────────────────────
@@ -12,6 +26,8 @@ interface UserRow {
   first_name: string | null;
   last_name: string | null;
   role: string;
+  status: UserStatus;
+  password_change_required: number;
   created_at: number;
   updated_at: number | null;
 }
@@ -36,9 +52,25 @@ interface RefreshTokenRow {
   revoked_at: number | null;
 }
 
+interface AuthActionTokenRow {
+  token_id: string;
+  user_id: string;
+  type: AuthActionTokenType;
+  token_hash: string;
+  expires_at: number;
+  consumed_at: number | null;
+  created_at: number;
+  created_by: string | null;
+  metadata: string | null;
+}
+
 interface ConfigRow {
   key: string;
   value: string;
+}
+
+interface CountRow {
+  count: number;
 }
 
 // ─── UserStore ─────────────────────────────────────────────────────────────
@@ -47,7 +79,8 @@ interface ConfigRow {
  * SQLite operations for auth data.
  *
  * Two write paths:
- * - Public tables (users, user_properties) → through ReactiveDB for reactivity
+ * - Public users table → through ReactiveDB for reactivity
+ * - User properties table → direct SQL because it has a composite primary key
  * - Internal tables (_credentials, _refresh_tokens, _auth_config) → direct prepared statements
  *
  * All statements prepared once in constructor, reused per call.
@@ -59,6 +92,8 @@ export class UserStore {
     getUserByUsername: Statement;
     getUserByEmail: Statement;
     listUsers: Statement;
+    countUsers: Statement;
+    countUsersByRole: Statement;
 
     // Credentials (internal — direct SQL, no broadcast)
     insertCredential: Statement;
@@ -78,6 +113,12 @@ export class UserStore {
     revokeAllUserTokens: Statement;
     deleteExpiredTokens: Statement;
 
+    // Action tokens (internal — direct SQL)
+    insertActionToken: Statement;
+    getActionTokenByHash: Statement;
+    consumeActionToken: Statement;
+    deleteExpiredActionTokens: Statement;
+
     // Auth config (internal — direct SQL)
     getConfig: Statement;
     setConfig: Statement;
@@ -90,6 +131,8 @@ export class UserStore {
       getUserByUsername: db.prepare('SELECT * FROM users WHERE username = ?'),
       getUserByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
       listUsers: db.prepare('SELECT * FROM users ORDER BY created_at DESC'),
+      countUsers: db.prepare('SELECT COUNT(*) as count FROM users'),
+      countUsersByRole: db.prepare('SELECT COUNT(*) as count FROM users WHERE role = ?'),
 
       // Credentials
       insertCredential: db.prepare(
@@ -133,6 +176,20 @@ export class UserStore {
         'DELETE FROM _refresh_tokens WHERE expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)'
       ),
 
+      // Action tokens
+      insertActionToken: db.prepare(
+        'INSERT INTO _auth_action_tokens (token_id, user_id, type, token_hash, expires_at, created_at, created_by, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ),
+      getActionTokenByHash: db.prepare(
+        'SELECT * FROM _auth_action_tokens WHERE token_hash = ?'
+      ),
+      consumeActionToken: db.prepare(
+        'UPDATE _auth_action_tokens SET consumed_at = ? WHERE token_id = ? AND consumed_at IS NULL'
+      ),
+      deleteExpiredActionTokens: db.prepare(
+        'DELETE FROM _auth_action_tokens WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?)'
+      ),
+
       // Auth config
       getConfig: db.prepare('SELECT value FROM _auth_config WHERE key = ?'),
       setConfig: db.prepare(
@@ -155,6 +212,9 @@ export class UserStore {
     firstName?: string;
     lastName?: string;
     role?: string;
+    status?: UserStatus;
+    passwordChangeRequired?: boolean;
+    properties?: Record<string, string>;
   }): Promise<UserRecord> {
     // Check uniqueness upfront — ReactiveDB uses INSERT OR REPLACE which
     // silently resolves UNIQUE conflicts by deleting the conflicting row.
@@ -181,12 +241,18 @@ export class UserStore {
         first_name: params.firstName ?? null,
         last_name: params.lastName ?? null,
         role: params.role ?? 'user',
+        status: params.status ?? 'active',
+        password_change_required: params.passwordChangeRequired ? 1 : 0,
         created_at: now,
         updated_at: null,
       });
 
       // Internal table — direct SQL, no broadcast
       this.stmts.insertCredential.run(userId, passwordHash);
+
+      for (const [key, value] of Object.entries(params.properties ?? {})) {
+        this.stmts.insertProperty.run(userId, key, value);
+      }
 
       return this.toUserRecord(
         this.stmts.getUserById.get(userId) as UserRow,
@@ -233,6 +299,22 @@ export class UserStore {
   }
 
   /**
+   * Count all user rows.
+   */
+  countUsers(): number {
+    const row = this.stmts.countUsers.get() as CountRow;
+    return row.count;
+  }
+
+  /**
+   * Count users by role.
+   */
+  countUsersByRole(role: string): number {
+    const row = this.stmts.countUsersByRole.get(role) as CountRow;
+    return row.count;
+  }
+
+  /**
    * Update user fields. Uses ReactiveDB for broadcast.
    * Returns updated UserRecord or null if user not found.
    */
@@ -244,6 +326,8 @@ export class UserStore {
       firstName: string;
       lastName: string;
       role: string;
+      status: UserStatus;
+      passwordChangeRequired: boolean;
     }>
   ): UserRecord | null {
     // Map camelCase to snake_case
@@ -253,6 +337,10 @@ export class UserStore {
     if (partial.firstName !== undefined) mapped.first_name = partial.firstName;
     if (partial.lastName !== undefined) mapped.last_name = partial.lastName;
     if (partial.role !== undefined) mapped.role = partial.role;
+    if (partial.status !== undefined) mapped.status = partial.status;
+    if (partial.passwordChangeRequired !== undefined) {
+      mapped.password_change_required = partial.passwordChangeRequired ? 1 : 0;
+    }
 
     // Check uniqueness upfront for fields being changed
     if (partial.username !== undefined) {
@@ -307,12 +395,56 @@ export class UserStore {
     if (!valid) return false;
 
     const newHash = await Bun.password.hash(newPassword);
-    this.stmts.updateCredential.run(newHash, userId);
-
-    // Force re-login on all devices
-    this.revokeAllUserTokens(userId);
+    this.db.transaction(() => {
+      this.stmts.updateCredential.run(newHash, userId);
+      this.updateUser(userId, { passwordChangeRequired: false });
+      // Force re-login on all devices
+      this.revokeAllUserTokens(userId);
+    });
 
     return true;
+  }
+
+  /**
+   * Set a user's password without requiring the current password.
+   *
+   * Intended for admin reset flows. Revokes all refresh tokens so existing
+   * sessions cannot continue with the old credential state.
+   */
+  async resetPassword(
+    userId: string,
+    newPassword: string,
+    options: { passwordChangeRequired?: boolean } = {}
+  ): Promise<boolean> {
+    if (!this.getUserById(userId)) return false;
+
+    const newHash = await Bun.password.hash(newPassword);
+    this.db.transaction(() => {
+      this.stmts.updateCredential.run(newHash, userId);
+      this.updateUser(userId, {
+        passwordChangeRequired: options.passwordChangeRequired ?? false,
+      });
+      this.revokeAllUserTokens(userId);
+    });
+
+    return true;
+  }
+
+  /**
+   * Mark an account as requiring a password change and revoke refresh tokens.
+   */
+  requirePasswordChange(userId: string): boolean {
+    const updated = this.updateUser(userId, { passwordChangeRequired: true });
+    if (!updated) return false;
+    this.revokeAllUserTokens(userId);
+    return true;
+  }
+
+  /**
+   * Clear the forced password-change flag without changing credentials.
+   */
+  clearPasswordChangeRequired(userId: string): boolean {
+    return this.updateUser(userId, { passwordChangeRequired: false }) !== null;
   }
 
   // ─── Properties KV ───────────────────────────────────────────────────
@@ -323,6 +455,17 @@ export class UserStore {
    */
   setProperty(userId: string, key: string, value: string): void {
     this.stmts.insertProperty.run(userId, key, value);
+  }
+
+  /**
+   * Set multiple user properties.
+   */
+  setProperties(userId: string, properties: Record<string, string>): void {
+    this.db.transaction(() => {
+      for (const [key, value] of Object.entries(properties)) {
+        this.stmts.insertProperty.run(userId, key, value);
+      }
+    });
   }
 
   /**
@@ -414,6 +557,71 @@ export class UserStore {
     return result.changes;
   }
 
+  // ─── Action Tokens ─────────────────────────────────────────────────
+
+  /**
+   * Store a hashed one-time auth action token.
+   */
+  storeActionToken(params: {
+    tokenId: string;
+    userId: string;
+    type: AuthActionTokenType;
+    tokenHash: string;
+    expiresAt: number;
+    createdAt: number;
+    createdBy?: string | null;
+    metadata?: Record<string, unknown>;
+  }): AuthActionTokenRecord {
+    this.stmts.insertActionToken.run(
+      params.tokenId,
+      params.userId,
+      params.type,
+      params.tokenHash,
+      params.expiresAt,
+      params.createdAt,
+      params.createdBy ?? null,
+      JSON.stringify(params.metadata ?? {})
+    );
+
+    return {
+      tokenId: params.tokenId,
+      userId: params.userId,
+      type: params.type,
+      tokenHash: params.tokenHash,
+      expiresAt: params.expiresAt,
+      consumedAt: null,
+      createdAt: params.createdAt,
+      createdBy: params.createdBy ?? null,
+      metadata: params.metadata ?? {},
+    };
+  }
+
+  /**
+   * Look up a one-time auth action token by hash.
+   */
+  getActionTokenByHash(tokenHash: string): AuthActionTokenRecord | null {
+    const row = this.stmts.getActionTokenByHash.get(tokenHash) as AuthActionTokenRow | null;
+    if (!row) return null;
+    return this.toActionTokenRecord(row);
+  }
+
+  /**
+   * Mark an action token consumed. Returns false if it was already consumed.
+   */
+  consumeActionToken(tokenId: string): boolean {
+    const result = this.stmts.consumeActionToken.run(Date.now(), tokenId);
+    return result.changes > 0;
+  }
+
+  /**
+   * Delete expired and consumed action tokens. Cleanup operation.
+   */
+  deleteExpiredActionTokens(): number {
+    const now = Date.now();
+    const result = this.stmts.deleteExpiredActionTokens.run(now, now);
+    return result.changes;
+  }
+
   // ─── Auth Config ─────────────────────────────────────────────────────
 
   /**
@@ -455,9 +663,37 @@ export class UserStore {
       firstName: row.first_name,
       lastName: row.last_name,
       role: row.role,
+      status: row.status ?? 'active',
+      passwordChangeRequired: Boolean(row.password_change_required),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       properties,
     };
+  }
+
+  private toActionTokenRecord(row: AuthActionTokenRow): AuthActionTokenRecord {
+    return {
+      tokenId: row.token_id,
+      userId: row.user_id,
+      type: row.type,
+      tokenHash: row.token_hash,
+      expiresAt: row.expires_at,
+      consumedAt: row.consumed_at,
+      createdAt: row.created_at,
+      createdBy: row.created_by,
+      metadata: parseMetadata(row.metadata),
+    };
+  }
+}
+
+function parseMetadata(value: string | null): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
   }
 }

@@ -93,10 +93,15 @@ interface Client {
   readonly token: string | null;
   login(username: string, password: string): Promise<AuthUser>;
   register(params: RegisterParams): Promise<AuthUser>;
+  getAuthConfig(): Promise<AuthPublicConfig>;
+  forgotPassword(email: string): Promise<void>;
+  inspectActionToken(token: string): Promise<AuthActionTokenInfo>;
+  resetPassword(token: string, newPassword: string): Promise<AuthUser>;
+  setupPassword(token: string, newPassword: string): Promise<AuthUser>;
   logout(): Promise<void>;
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
   refresh(): Promise<void>;
-  setProperty(key: string, value: string): Promise<void>;
+  setProperty(key: string, value: unknown): Promise<void>;
   getProperty(key: string): Promise<string | null>;
   getProperties(): Promise<Record<string, string>>;
   deleteProperty(key: string): Promise<void>;
@@ -122,6 +127,43 @@ interface Client {
   disconnect(): void;
 }
 ```
+
+### Auth Registration Config
+
+`client.getAuthConfig()` reads `GET /auth/config` and is safe for public auth
+UI decisions:
+
+```ts
+const config = await client.getAuthConfig();
+
+if (config.registration.publicRegistrationEnabled) {
+  // show register link/form
+}
+```
+
+The built-in `LoginForm` and `RegisterForm` use the same config by default.
+After the first admin account exists, `registration.mode: 'admin-only'` hides
+public registration UI while keeping login available.
+
+### User Property Gates
+
+Current-user properties are included in `user.properties`. The frontend barrel
+exports lightweight UI gates:
+
+```tsx
+import { PropertyGate, HasFlag } from '@platform/frontend';
+
+<PropertyGate propertyKey="department" allow={['accounting', 'management']}>
+  <DepartmentTools />
+</PropertyGate>
+
+<HasFlag propertyKey="notificationsEnabled">
+  <NotificationSettings />
+</HasFlag>
+```
+
+These gates only control UI visibility. Protect sensitive data and actions
+with backend route/query authorization as well.
 
 ### FetchError
 
@@ -654,6 +696,8 @@ interface UserRecord {
   firstName: string | null;
   lastName: string | null;
   role: string;                  // 'user' | 'admin'
+  status: 'active' | 'suspended';
+  passwordChangeRequired: boolean;
   createdAt: number;             // Unix timestamp ms
   updatedAt: number | null;
   properties: Record<string, string>;  // Extensible KV metadata
@@ -1128,6 +1172,16 @@ interface AuthHookResult {
 
   /** Log in with username and password. Throws on invalid credentials. */
   login(username: string, password: string): Promise<void>;
+
+  /** Request a password reset email. Does not reveal account existence. */
+  forgotPassword(email: string): Promise<void>;
+
+  /** Inspect a setup/reset token without consuming it. */
+  inspectActionToken(token: string): Promise<AuthActionTokenInfo | null>;
+
+  /** Complete password reset/setup from an emailed token. */
+  resetPassword(token: string, newPassword: string): Promise<void>;
+  setupPassword(token: string, newPassword: string): Promise<void>;
 
   /** Log out. Revokes server-side refresh token, clears local state. */
   logout(): Promise<void>;

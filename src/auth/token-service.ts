@@ -6,8 +6,9 @@ import type {
   TokenPair,
   AccessTokenPayload,
   UserRecord,
+  AuthContext,
 } from './types';
-import { AUTH_DEFAULTS } from './types';
+import { AUTH_DEFAULTS, AuthError } from './types';
 
 // ─── TTL Parsing ───────────────────────────────────────────────────────────
 
@@ -255,6 +256,27 @@ export class TokenService {
     }
   }
 
+  /**
+   * Resolve an access token into request auth context.
+   *
+   * Unlike `verifyAccessToken`, this checks the current user row when the
+   * UserStore is wired so suspended and forced-reset accounts fail closed.
+   */
+  async resolveAuthContext(token: string): Promise<AuthContext | null> {
+    const payload = await this.verifyAccessToken(token);
+    if (!payload) return null;
+
+    if (!this.userStore) {
+      return { userId: payload.sub, email: payload.email, role: payload.role };
+    }
+
+    const user = this.userStore.getUserById(payload.sub);
+    if (!user) return null;
+    if (user.status === 'suspended' || user.passwordChangeRequired) return null;
+
+    return { userId: user.userId, email: user.email, role: user.role };
+  }
+
   // ─── Token Pair Issuance ─────────────────────────────────────────────
 
   /**
@@ -265,6 +287,7 @@ export class TokenService {
     if (!this.userStore) {
       throw new Error('TokenService: UserStore not wired');
     }
+    assertUserCanReceiveTokens(user);
 
     const accessToken = await this.signAccessToken(user);
 
@@ -315,6 +338,7 @@ export class TokenService {
     // Look up the user for the new access token claims
     const user = this.userStore.getUserById(record.userId);
     if (!user) return null; // User deleted between token issuance and refresh
+    assertUserCanReceiveTokens(user);
 
     // Issue new pair
     return this.issueTokenPair(user);
@@ -366,5 +390,14 @@ export class TokenService {
     const hasher = new Bun.CryptoHasher('sha256');
     hasher.update(token);
     return hasher.digest('hex');
+  }
+}
+
+function assertUserCanReceiveTokens(user: UserRecord): void {
+  if (user.status === 'suspended') {
+    throw new AuthError('Account is suspended', 'ACCOUNT_SUSPENDED', 403);
+  }
+  if (user.passwordChangeRequired) {
+    throw new AuthError('Password change required', 'PASSWORD_CHANGE_REQUIRED', 403);
   }
 }

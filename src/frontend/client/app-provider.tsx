@@ -30,6 +30,7 @@ type TableInput = ClientTableDef | { clientTable: ClientTableDef };
 interface BrowserPlatformConfig {
   url?: string;
   auth?: boolean;
+  email?: boolean;
   stateSync?: boolean;
   tableSyncModes?: Record<string, SyncMode>;
 }

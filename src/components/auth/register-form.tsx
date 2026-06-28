@@ -4,7 +4,7 @@ import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { cn } from '@/lib/utils';
-import { useAuth } from '../../frontend/client/hooks';
+import { useAuth, useAuthConfig } from '../../frontend/client/hooks';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +26,8 @@ interface RegisterFormProps {
   loginHref?: string;
   fields?: FieldName[];
   showPasswordStrength?: boolean;
+  respectRegistrationPolicy?: boolean;
+  unavailable?: React.ReactNode;
   socialProviders?: SocialProvider[];
   className?: string;
 }
@@ -48,10 +50,13 @@ function RegisterForm({
   loginHref = '#login',
   fields = ['email', 'password'],
   showPasswordStrength = true,
+  respectRegistrationPolicy = true,
+  unavailable = null,
   socialProviders,
   className,
 }: RegisterFormProps) {
   const { register, isLoading, error } = useAuth();
+  const authConfig = useAuthConfig();
   const [form, setForm] = React.useState({
     email: '',
     username: '',
@@ -64,6 +69,10 @@ function RegisterForm({
 
   const displayError = localError ?? error;
   const hasNames = fields.includes('firstName') || fields.includes('lastName');
+  const registrationClosed =
+    respectRegistrationPolicy &&
+    authConfig.config !== null &&
+    !authConfig.canRegister;
 
   function update(field: string) {
     return (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -85,6 +94,10 @@ function RegisterForm({
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Registration failed');
     }
+  }
+
+  if (registrationClosed) {
+    return <>{unavailable}</>;
   }
 
   return (

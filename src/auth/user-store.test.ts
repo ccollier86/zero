@@ -18,6 +18,8 @@ function setupAuthTables(db: ReactiveDB): void {
     first_name: 'text',
     last_name: 'text',
     role: "text not null default 'user'",
+    status: "text not null default 'active'",
+    password_change_required: 'integer not null default 0',
     created_at: 'integer not null',
     updated_at: 'integer',
   });
@@ -53,6 +55,24 @@ function setupAuthTables(db: ReactiveDB): void {
   `);
   db.exec(
     'CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON _refresh_tokens(token_hash)'
+  );
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS _auth_action_tokens (
+      token_id    TEXT PRIMARY KEY,
+      user_id     TEXT NOT NULL,
+      type        TEXT NOT NULL,
+      token_hash  TEXT NOT NULL,
+      expires_at  INTEGER NOT NULL,
+      consumed_at INTEGER,
+      created_at  INTEGER NOT NULL,
+      created_by  TEXT,
+      metadata    TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_hash ON _auth_action_tokens(token_hash)'
   );
 
   db.exec(`
@@ -115,6 +135,38 @@ describe('UserStore — User CRUD', () => {
       role: 'admin',
     });
     expect(user.role).toBe('admin');
+  });
+
+  test('createUser stores lifecycle status and password-change flag', async () => {
+    const user = await store.createUser({
+      username: 'setup',
+      email: 'setup@example.com',
+      password: 'password123',
+      status: 'active',
+      passwordChangeRequired: true,
+    });
+
+    expect(user.status).toBe('active');
+    expect(user.passwordChangeRequired).toBe(true);
+    expect(store.getUserById(user.userId)!.passwordChangeRequired).toBe(true);
+  });
+
+  test('createUser stores initial properties atomically', async () => {
+    const user = await store.createUser({
+      username: 'withprops',
+      email: 'withprops@example.com',
+      password: 'password123',
+      properties: {
+        plan: 'pro',
+        notificationsEnabled: 'true',
+      },
+    });
+
+    expect(user.properties).toEqual({
+      plan: 'pro',
+      notificationsEnabled: 'true',
+    });
+    expect(store.getProperty(user.userId, 'plan')).toBe('pro');
   });
 
   test('createUser throws DUPLICATE_USERNAME on username conflict', async () => {
@@ -216,6 +268,24 @@ describe('UserStore — User CRUD', () => {
     // Newest first
     expect(users[0].username).toBe('second');
     expect(users[1].username).toBe('first');
+  });
+
+  test('countUsers and countUsersByRole report current users', async () => {
+    await store.createUser({
+      username: 'admin',
+      email: 'admin@example.com',
+      password: 'password123',
+      role: 'admin',
+    });
+    await store.createUser({
+      username: 'user',
+      email: 'user@example.com',
+      password: 'password123',
+    });
+
+    expect(store.countUsers()).toBe(2);
+    expect(store.countUsersByRole('admin')).toBe(1);
+    expect(store.countUsersByRole('user')).toBe(1);
   });
 
   test('updateUser updates fields and sets updated_at', async () => {
@@ -360,6 +430,37 @@ describe('UserStore — Password', () => {
       await store.updatePassword(user.userId, 'wrong', 'newpass123')
     ).toBe(false);
   });
+
+  test('resetPassword changes password and revokes tokens without current password', async () => {
+    const user = await store.createUser({
+      username: 'resetme',
+      email: 'resetme@example.com',
+      password: 'oldpassword1',
+    });
+    store.storeRefreshToken('tok_reset', user.userId, 'reset_hash', Date.now() + 86400000);
+
+    expect(await store.resetPassword(user.userId, 'newpassword1')).toBe(true);
+    expect(await store.verifyPassword(user.userId, 'oldpassword1')).toBe(false);
+    expect(await store.verifyPassword(user.userId, 'newpassword1')).toBe(true);
+    expect(store.getRefreshTokenByHash('reset_hash')!.revokedAt).not.toBeNull();
+  });
+
+  test('resetPassword returns false for missing user', async () => {
+    expect(await store.resetPassword('u_missing', 'newpassword1')).toBe(false);
+  });
+
+  test('requirePasswordChange marks account and revokes tokens', async () => {
+    const user = await store.createUser({
+      username: 'force',
+      email: 'force@example.com',
+      password: 'password123',
+    });
+    store.storeRefreshToken('tok_force', user.userId, 'force_hash', Date.now() + 86400000);
+
+    expect(store.requirePasswordChange(user.userId)).toBe(true);
+    expect(store.getUserById(user.userId)!.passwordChangeRequired).toBe(true);
+    expect(store.getRefreshTokenByHash('force_hash')!.revokedAt).not.toBeNull();
+  });
 });
 
 // ─── Properties KV ────────────────────────────────────────────────────────
@@ -397,6 +498,20 @@ describe('UserStore — Properties', () => {
 
     const props = store.getProperties(userId);
     expect(props).toEqual({ theme: 'dark', lang: 'en' });
+  });
+
+  test('setProperties upserts multiple values', () => {
+    store.setProperty(userId, 'theme', 'dark');
+
+    store.setProperties(userId, {
+      theme: 'light',
+      plan: 'pro',
+    });
+
+    expect(store.getProperties(userId)).toEqual({
+      theme: 'light',
+      plan: 'pro',
+    });
   });
 
   test('deleteProperty removes a single property', () => {
@@ -525,5 +640,59 @@ describe('UserStore — Auth Config', () => {
     store.setConfig('key1', 'value1');
     store.setConfig('key1', 'value2');
     expect(store.getConfig('key1')).toBe('value2');
+  });
+});
+
+// ─── Auth Action Tokens ───────────────────────────────────────────────────
+
+describe('UserStore — Auth Action Tokens', () => {
+  test('storeActionToken and getActionTokenByHash', async () => {
+    const user = await store.createUser({
+      username: 'tokenuser',
+      email: 'tokenuser@example.com',
+      password: 'password123',
+    });
+
+    const record = store.storeActionToken({
+      tokenId: 'aat_1',
+      userId: user.userId,
+      type: 'password_reset',
+      tokenHash: 'hash_reset',
+      expiresAt: Date.now() + 3600000,
+      createdAt: Date.now(),
+      createdBy: null,
+      metadata: { source: 'test' },
+    });
+
+    expect(record.tokenId).toBe('aat_1');
+    expect(record.metadata.source).toBe('test');
+
+    const found = store.getActionTokenByHash('hash_reset');
+    expect(found).not.toBeNull();
+    expect(found!.userId).toBe(user.userId);
+    expect(found!.type).toBe('password_reset');
+    expect(found!.consumedAt).toBeNull();
+    expect(found!.metadata.source).toBe('test');
+  });
+
+  test('consumeActionToken is one-time', async () => {
+    const user = await store.createUser({
+      username: 'consumeuser',
+      email: 'consumeuser@example.com',
+      password: 'password123',
+    });
+
+    store.storeActionToken({
+      tokenId: 'aat_consume',
+      userId: user.userId,
+      type: 'account_setup',
+      tokenHash: 'hash_consume',
+      expiresAt: Date.now() + 3600000,
+      createdAt: Date.now(),
+    });
+
+    expect(store.consumeActionToken('aat_consume')).toBe(true);
+    expect(store.consumeActionToken('aat_consume')).toBe(false);
+    expect(store.getActionTokenByHash('hash_consume')!.consumedAt).not.toBeNull();
   });
 });

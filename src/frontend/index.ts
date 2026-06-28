@@ -42,7 +42,7 @@ export type { Api } from './client/api';
 
 // ─── Auth Client (vanilla JS) ────────────────────────────────────────────
 export { AuthClient } from './client/auth-client';
-export type { AuthUser, RegisterParams } from './client/auth-client';
+export type { AuthPublicConfig, AuthUser, RegisterParams } from './client/auth-client';
 
 // ─── React: Providers ────────────────────────────────────────────────────
 export { AppProvider } from './client/app-provider';
@@ -82,6 +82,7 @@ export {
   useStatus,
   // Auth
   useAuth,
+  useAuthConfig,
   useCurrentUser,
   useRequireAuth,
   // State (re-exported from sync/client)
@@ -96,6 +97,7 @@ export {
 export type {
   AuthState,
   AuthActions,
+  AuthConfigState,
   LazyCollectionResult,
   LazyCollectionOptions,
   CollectionResult,
@@ -223,12 +225,12 @@ export {
   LoginForm, RegisterForm, ForgotPasswordForm, OTPVerification,
   PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup,
   AuthLayout, AuthHeader,
-  Gate, useGate,
+  Gate, HasFlag, HasProperty, PropertyGate, useGate, usePropertyGate,
 } from '../components/auth';
 export type {
   LoginFormProps, RegisterFormProps, ForgotPasswordFormProps,
   OTPVerificationProps, SocialProvider,
-  GateProps,
+  GateProps, HasFlagProps, PropertyGateProps, PropertyGateValue,
 } from '../components/auth';
 
 // ─── Validation Primitives ──────────────────────────────────────────────

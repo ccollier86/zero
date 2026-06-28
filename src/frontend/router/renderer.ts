@@ -39,6 +39,7 @@ export function invalidateAll(): void {
 export interface PlatformConfig {
   url: string;
   auth?: boolean;
+  email?: boolean;
   stateSync?: boolean;
   tableSyncModes?: Record<string, SyncMode>;
 }

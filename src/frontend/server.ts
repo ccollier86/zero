@@ -33,8 +33,29 @@ export type { RouteConfig, LoaderContext, PageMeta } from './router/types';
 // ─── Auth ───────────────────────────────────────────────────────────────
 export { createAuthPlugin, getAuthStore, getTokenService } from '../auth/auth.plugin';
 export { createAuthMiddleware } from '../auth/auth.middleware';
+export { AccountEmailService } from '../auth/account-email-service';
+export { AuthActionTokenService } from '../auth/action-token-service';
+export { defineAuthConfig, resolveAuthBehaviorConfig } from '../auth/auth-config';
+export { UserPropertyService } from '../auth/user-property-service';
 export { AuthError, AUTH_DEFAULTS } from '../auth/types';
-export type { AuthContext, AuthPluginConfig, UserRecord } from '../auth/types';
+export type {
+  AuthAccountEmailConfig,
+  AuthActionTokenRecord,
+  AuthActionTokenType,
+  AuthBehaviorConfig,
+  AuthContext,
+  AuthPluginConfig,
+  AuthRegistrationConfig,
+  AuthRegistrationMode,
+  ResolvedAuthAccountEmailConfig,
+  ResolvedAuthBehaviorConfig,
+  ResolvedUserPropertyFieldConfig,
+  UserStatus,
+  UserPropertyEditableBy,
+  UserPropertyFieldConfig,
+  UserPropertyFieldType,
+  UserRecord,
+} from '../auth/types';
 
 // ─── Schema ─────────────────────────────────────────────────────────────
 export { defineSchema, defineTable, schema, field } from '../schema';
@@ -92,6 +113,29 @@ export type {
   PermissionLevel,
   GrantPermissionParams,
 } from '../storage';
+
+// ─── Email: Server ──────────────────────────────────────────────────────
+export {
+  ConsoleEmailProvider,
+  EmailError,
+  EmailService,
+  MemoryEmailProvider,
+  NoopEmailProvider,
+  ResendEmailProvider,
+  configureEmail,
+  getEmailRuntime,
+  getEmailService,
+} from '../email';
+export type {
+  AppIdentityConfig,
+  BuiltInEmailProvider,
+  EmailConfig,
+  EmailMessage,
+  EmailProvider,
+  EmailRuntime,
+  EmailSendResult,
+  ResendEmailProviderConfig,
+} from '../email';
 
 // ─── Observability: Server ──────────────────────────────────────────────
 export {

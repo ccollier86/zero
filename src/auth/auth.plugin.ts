@@ -1,8 +1,25 @@
+/**
+ * auth.plugin.ts
+ *
+ * Main Elysia controller for Zero auth. This file owns route registration,
+ * plugin lifecycle, and HTTP validation; user persistence, token operations,
+ * auth-context extraction, and user-property validation live in dedicated
+ * services.
+ */
+
 import { Elysia, t } from 'elysia';
 import { UserStore } from './user-store';
 import { TokenService } from './token-service';
-import { AuthError } from './types';
+import { AuthError, type UserRecord } from './types';
 import type { AuthPluginConfig } from './types';
+import { extractAuthContext } from './auth-context';
+import { createAuthAdminPlugin } from './auth-admin.plugin';
+import { createAuthAccountPlugin } from './auth-account.plugin';
+import { resolveAuthBehaviorConfig } from './auth-config';
+import { UserPropertyService } from './user-property-service';
+import { AuthActionTokenService } from './action-token-service';
+import { AccountEmailService } from './account-email-service';
+import { getEmailRuntime } from '../email';
 import type { ReactiveDB } from '../sync/reactive-db';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
@@ -11,6 +28,9 @@ import { emitPlatformCode } from '../observability/sink';
 
 let _userStore: UserStore | null = null;
 let _tokenService: TokenService | null = null;
+let _propertyService: UserPropertyService | null = null;
+let _actionTokenService: AuthActionTokenService | null = null;
+let _accountEmailService: AccountEmailService | null = null;
 
 /**
  * Get the UserStore instance. Returns null if the auth plugin hasn't started.
@@ -37,6 +57,26 @@ export function getTokenService(): TokenService | null {
  * Internal tables (_prefix) are created via raw SQL — no broadcast.
  */
 function defineAuthTables(db: ReactiveDB): void {
+  // Create/upgrade users before defineTable() prepares statements for all
+  // lifecycle columns. Existing databases may have been created before these
+  // columns existed.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      user_id                  TEXT PRIMARY KEY,
+      username                 TEXT UNIQUE NOT NULL,
+      email                    TEXT UNIQUE NOT NULL,
+      first_name               TEXT,
+      last_name                TEXT,
+      role                     TEXT NOT NULL DEFAULT 'user',
+      status                   TEXT NOT NULL DEFAULT 'active',
+      password_change_required INTEGER NOT NULL DEFAULT 0,
+      created_at               INTEGER NOT NULL,
+      updated_at               INTEGER
+    )
+  `);
+  ensureColumn(db, 'users', 'status', "TEXT NOT NULL DEFAULT 'active'");
+  ensureColumn(db, 'users', 'password_change_required', 'INTEGER NOT NULL DEFAULT 0');
+
   // Public: users — reactive, broadcast to sync subscribers
   db.defineTable('users', {
     user_id: 'text primary key',
@@ -45,6 +85,8 @@ function defineAuthTables(db: ReactiveDB): void {
     first_name: 'text',
     last_name: 'text',
     role: "text not null default 'user'",
+    status: "text not null default 'active'",
+    password_change_required: 'integer not null default 0',
     created_at: 'integer not null',
     updated_at: 'integer',
   });
@@ -89,6 +131,28 @@ function defineAuthTables(db: ReactiveDB): void {
     'CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON _refresh_tokens(user_id)'
   );
 
+  // Internal: _auth_action_tokens — hashed reset/setup tokens, never broadcast
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS _auth_action_tokens (
+      token_id    TEXT PRIMARY KEY,
+      user_id     TEXT NOT NULL,
+      type        TEXT NOT NULL,
+      token_hash  TEXT NOT NULL,
+      expires_at  INTEGER NOT NULL,
+      consumed_at INTEGER,
+      created_at  INTEGER NOT NULL,
+      created_by  TEXT,
+      metadata    TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_hash ON _auth_action_tokens(token_hash)'
+  );
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_user ON _auth_action_tokens(user_id)'
+  );
+
   // Internal: _auth_config — signing key storage, never broadcast
   db.exec(`
     CREATE TABLE IF NOT EXISTS _auth_config (
@@ -96,6 +160,18 @@ function defineAuthTables(db: ReactiveDB): void {
       value TEXT NOT NULL
     )
   `);
+}
+
+function ensureColumn(
+  db: ReactiveDB,
+  table: string,
+  column: string,
+  definition: string
+): void {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!rows.some((row) => row.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 // ─── Error Handler ────────────────────────────────────────────────────────
@@ -120,6 +196,8 @@ function authErrorResponse(err: AuthError) {
  * Composition: mount BEFORE auth middleware, which needs getTokenService().
  */
 export function createAuthPlugin(config: AuthPluginConfig) {
+  const authConfig = resolveAuthBehaviorConfig(config);
+
   return new Elysia({ name: 'auth', prefix: '/auth' })
 
     // ─── Lifecycle ─────────────────────────────────────
@@ -132,6 +210,12 @@ export function createAuthPlugin(config: AuthPluginConfig) {
 
       // Create UserStore (synchronous — just prepares statements)
       _userStore = new UserStore(config.db);
+      _propertyService = new UserPropertyService(authConfig);
+      _actionTokenService = new AuthActionTokenService(
+        _userStore,
+        authConfig.accountEmails.actionTokenTTL
+      );
+      _accountEmailService = new AccountEmailService(getEmailRuntime, authConfig);
 
       // Create TokenService (async — loads or generates keypair)
       _tokenService = await TokenService.create({
@@ -151,6 +235,9 @@ export function createAuthPlugin(config: AuthPluginConfig) {
     .onStop(() => {
       _userStore = null;
       _tokenService = null;
+      _propertyService = null;
+      _actionTokenService = null;
+      _accountEmailService = null;
       emitPlatformCode(OBS_CODES.AUTH_STOPPED);
     })
 
@@ -168,12 +255,61 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       }
     })
 
+    .use(createAuthAccountPlugin({
+      getUserStore: () => _userStore,
+      getTokenService: () => _tokenService,
+      getActionTokenService: () => _actionTokenService,
+      getAccountEmailService: () => _accountEmailService,
+      getAuthConfig: () => authConfig,
+    }))
+
+    .use(createAuthAdminPlugin({
+      getUserStore: () => _userStore,
+      getTokenService: () => _tokenService,
+      getPropertyService: () => _propertyService,
+      getActionTokenService: () => _actionTokenService,
+      getAccountEmailService: () => _accountEmailService,
+      getAuthConfig: () => authConfig,
+    }))
+
+    // ─── GET /auth/config ───────────────────────────────
+    .get('/config', () => {
+      if (!_userStore) {
+        throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
+      }
+
+      const userCount = _userStore.countUsers();
+        return {
+          registration: {
+            ...authConfig.registration,
+            bootstrapRequired: userCount === 0,
+            publicRegistrationEnabled: userCount === 0 || authConfig.registration.mode === 'public',
+            userCount,
+          },
+          accountEmails: {
+            adminCreatedUser: authConfig.accountEmails.adminCreatedUser && getEmailRuntime().enabled,
+            passwordReset: authConfig.accountEmails.passwordReset && getEmailRuntime().enabled,
+            passwordChangedNotice: authConfig.accountEmails.passwordChangedNotice && getEmailRuntime().enabled,
+          },
+        };
+      })
+
     // ─── POST /auth/register ───────────────────────────
     .post(
       '/register',
       async ({ body }) => {
-        if (!_userStore || !_tokenService) {
+        if (!_userStore || !_tokenService || !_propertyService) {
           throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
+        }
+
+        const userCount = _userStore.countUsers();
+        const isBootstrap = userCount === 0;
+
+        if (!isBootstrap && authConfig.registration.mode !== 'public') {
+          emitPlatformCode(OBS_CODES.AUTH_REGISTRATION_DISABLED, {
+            metadata: { mode: authConfig.registration.mode },
+          });
+          throw new AuthError('Registration disabled', 'REGISTRATION_DISABLED', 403);
         }
 
         const user = await _userStore.createUser({
@@ -182,22 +318,20 @@ export function createAuthPlugin(config: AuthPluginConfig) {
           password: body.password,
           firstName: body.firstName,
           lastName: body.lastName,
+          role: isBootstrap ? 'admin' : 'user',
+          properties: _propertyService.getDefaultProperties(),
         });
 
         const tokens = await _tokenService.issueTokenPair(user);
 
-        return {
-          user: {
+        if (isBootstrap && user.role === 'admin') {
+          emitPlatformCode(OBS_CODES.AUTH_FIRST_ADMIN_BOOTSTRAPPED, {
             userId: user.userId,
-            username: user.username,
-            email: user.email,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            role: user.role,
-            properties: user.properties,
-            createdAt: user.createdAt,
-            updatedAt: user.updatedAt,
-          },
+          });
+        }
+
+        return {
+          user: toAuthUserResponse(user),
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken,
         };
@@ -222,7 +356,7 @@ export function createAuthPlugin(config: AuthPluginConfig) {
         }
 
         // Look up user by username or email
-        const user =
+        let user =
           _userStore.getUserByUsername(body.username) ??
           _userStore.getUserByEmail(body.username);
 
@@ -246,20 +380,21 @@ export function createAuthPlugin(config: AuthPluginConfig) {
           );
         }
 
+        if (user.status === 'suspended') {
+          throw new AuthError('Account is suspended', 'ACCOUNT_SUSPENDED', 403);
+        }
+
+        if (user.passwordChangeRequired) {
+          throw new AuthError('Password change required', 'PASSWORD_CHANGE_REQUIRED', 403);
+        }
+
+        _propertyService?.applyMissingDefaults(user.userId, _userStore);
+        user = _userStore.getUserById(user.userId)!;
+
         const tokens = await _tokenService.issueTokenPair(user);
 
         return {
-          user: {
-            userId: user.userId,
-            username: user.username,
-            email: user.email,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            role: user.role,
-            properties: user.properties,
-            createdAt: user.createdAt,
-            updatedAt: user.updatedAt,
-          },
+          user: toAuthUserResponse(user),
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken,
         };
@@ -356,6 +491,9 @@ export function createAuthPlugin(config: AuthPluginConfig) {
         if (!user) {
           throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
         }
+        if (user.status === 'suspended') {
+          throw new AuthError('Account is suspended', 'ACCOUNT_SUSPENDED', 403);
+        }
 
         const tokens = await _tokenService.issueTokenPair(user);
 
@@ -388,24 +526,15 @@ export function createAuthPlugin(config: AuthPluginConfig) {
         throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
       }
 
-      return {
-        userId: user.userId,
-        username: user.username,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-        properties: user.properties,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-      };
+      _propertyService?.applyMissingDefaults(user.userId, _userStore);
+      return toAuthUserResponse(_userStore.getUserById(user.userId)!);
     })
 
     // ─── PUT /auth/me/properties/:key ──────────────────
     .put(
       '/me/properties/:key',
       async ({ params, body, request }) => {
-        if (!_userStore || !_tokenService) {
+        if (!_userStore || !_tokenService || !_propertyService) {
           throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
         }
 
@@ -414,12 +543,24 @@ export function createAuthPlugin(config: AuthPluginConfig) {
           throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
         }
 
-        _userStore.setProperty(authContext.userId, params.key, body.value);
+        let value: string;
+        try {
+          value = _propertyService.validateWrite(params.key, body.value, 'user');
+        } catch (err) {
+          emitPlatformCode(OBS_CODES.AUTH_USER_PROPERTY_REJECTED, {
+            error: err,
+            userId: authContext.userId,
+            metadata: { key: params.key },
+          });
+          throw err;
+        }
+
+        _userStore.setProperty(authContext.userId, params.key, value);
         return { ok: true };
       },
       {
         params: t.Object({ key: t.String({ minLength: 1 }) }),
-        body: t.Object({ value: t.String() }),
+        body: t.Object({ value: t.Unknown() }),
       }
     )
 
@@ -441,7 +582,7 @@ export function createAuthPlugin(config: AuthPluginConfig) {
     .get(
       '/me/properties/:key',
       async ({ params, request }) => {
-        if (!_userStore || !_tokenService) {
+        if (!_userStore || !_tokenService || !_propertyService) {
           throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
         }
 
@@ -466,7 +607,7 @@ export function createAuthPlugin(config: AuthPluginConfig) {
     .delete(
       '/me/properties/:key',
       async ({ params, request }) => {
-        if (!_userStore || !_tokenService) {
+        if (!_userStore || !_tokenService || !_propertyService) {
           throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
         }
 
@@ -475,7 +616,16 @@ export function createAuthPlugin(config: AuthPluginConfig) {
           throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
         }
 
-        _userStore.deleteProperty(authContext.userId, params.key);
+        try {
+          _propertyService.deleteProperty(authContext.userId, params.key, 'user', _userStore);
+        } catch (err) {
+          emitPlatformCode(OBS_CODES.AUTH_USER_PROPERTY_REJECTED, {
+            error: err,
+            userId: authContext.userId,
+            metadata: { key: params.key },
+          });
+          throw err;
+        }
         return { ok: true };
       },
       {
@@ -493,24 +643,23 @@ export function createAuthPlugin(config: AuthPluginConfig) {
     });
 }
 
-// ─── Internal Helper ──────────────────────────────────────────────────────
+// ─── Internal Helpers ─────────────────────────────────────────────────────
 
 /**
- * Extract auth context from a request's Authorization header.
- * Used by routes that need auth (me, change-password) WITHIN the auth plugin.
- *
- * The auth middleware (separate file) handles this globally for all other routes.
+ * Return the public user payload used by auth route responses.
  */
-async function extractAuthContext(
-  request: Request,
-  tokenService: TokenService
-): Promise<{ userId: string; email: string; role: string } | null> {
-  const header = request.headers.get('authorization');
-  if (!header?.startsWith('Bearer ')) return null;
-
-  const token = header.slice(7);
-  const payload = await tokenService.verifyAccessToken(token);
-  if (!payload) return null;
-
-  return { userId: payload.sub, email: payload.email, role: payload.role };
+function toAuthUserResponse(user: UserRecord): UserRecord {
+  return {
+    userId: user.userId,
+    username: user.username,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    role: user.role,
+    status: user.status,
+    passwordChangeRequired: user.passwordChangeRequired,
+    properties: user.properties,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  };
 }

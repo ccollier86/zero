@@ -9,6 +9,7 @@
 import { Elysia } from 'elysia';
 import type { TokenService } from './token-service';
 import { AuthError, type AuthContext } from './types';
+import type { AccessTokenPayload } from './types';
 
 /**
  * Auth middleware — resolves `authContext` + typed helpers into global Elysia context.
@@ -42,15 +43,7 @@ export function createAuthMiddleware(
           const header = request.headers.get('authorization');
           if (header?.startsWith('Bearer ')) {
             const token = header.slice(7);
-            const payload = await tokenService.verifyAccessToken(token);
-
-            if (payload) {
-              authContext = {
-                userId: payload.sub,
-                email: payload.email,
-                role: payload.role as 'user' | 'admin',
-              };
-            }
+            authContext = await resolveContext(tokenService, token);
           }
         }
 
@@ -68,4 +61,17 @@ export function createAuthMiddleware(
         };
       }
     );
+}
+
+async function resolveContext(
+  tokenService: TokenService,
+  token: string
+): Promise<AuthContext | null> {
+  if (typeof tokenService.resolveAuthContext === 'function') {
+    return tokenService.resolveAuthContext(token);
+  }
+
+  const payload = await tokenService.verifyAccessToken(token) as AccessTokenPayload | null;
+  if (!payload) return null;
+  return { userId: payload.sub, email: payload.email, role: payload.role };
 }

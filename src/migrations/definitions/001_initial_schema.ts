@@ -42,6 +42,8 @@ export const migration: Migration = {
         first_name TEXT,
         last_name  TEXT,
         role       TEXT NOT NULL DEFAULT 'user',
+        status     TEXT NOT NULL DEFAULT 'active',
+        password_change_required INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER
       )
@@ -78,6 +80,23 @@ export const migration: Migration = {
     `);
     db.run('CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON _refresh_tokens(token_hash)');
     db.run('CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON _refresh_tokens(user_id)');
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS _auth_action_tokens (
+        token_id    TEXT PRIMARY KEY,
+        user_id     TEXT NOT NULL,
+        type        TEXT NOT NULL,
+        token_hash  TEXT NOT NULL,
+        expires_at  INTEGER NOT NULL,
+        consumed_at INTEGER,
+        created_at  INTEGER NOT NULL,
+        created_by  TEXT,
+        metadata    TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      )
+    `);
+    db.run('CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_hash ON _auth_action_tokens(token_hash)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_user ON _auth_action_tokens(user_id)');
 
     db.run(`
       CREATE TABLE IF NOT EXISTS _auth_config (
@@ -291,6 +310,7 @@ export const migration: Migration = {
     db.run('DROP TABLE IF EXISTS notification_receipts');
     db.run('DROP TABLE IF EXISTS notifications');
     db.run('DROP TABLE IF EXISTS _auth_config');
+    db.run('DROP TABLE IF EXISTS _auth_action_tokens');
     db.run('DROP TABLE IF EXISTS _refresh_tokens');
     db.run('DROP TABLE IF EXISTS _credentials');
     db.run('DROP TABLE IF EXISTS user_properties');

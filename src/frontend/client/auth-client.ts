@@ -9,6 +9,8 @@ export interface AuthUser {
   firstName: string | null;
   lastName: string | null;
   role: string;
+  status: 'active' | 'suspended';
+  passwordChangeRequired: boolean;
   properties: Record<string, string>;
   createdAt: number;
   updatedAt: number | null;
@@ -74,6 +76,48 @@ function createAuthStore() {
         accessToken: event.accessToken,
         refreshToken: event.refreshToken,
       }),
+      'auth.properties.patch': (
+        ctx: AuthStoreContext,
+        event: { properties: Record<string, string> }
+      ): AuthStoreContext => ctx.user
+        ? {
+            ...ctx,
+            user: {
+              ...ctx.user,
+              properties: {
+                ...ctx.user.properties,
+                ...event.properties,
+              },
+            },
+          }
+        : ctx,
+      'auth.properties.replace': (
+        ctx: AuthStoreContext,
+        event: { properties: Record<string, string> }
+      ): AuthStoreContext => ctx.user
+        ? {
+            ...ctx,
+            user: {
+              ...ctx.user,
+              properties: event.properties,
+            },
+          }
+        : ctx,
+      'auth.properties.delete': (
+        ctx: AuthStoreContext,
+        event: { key: string }
+      ): AuthStoreContext => {
+        if (!ctx.user) return ctx;
+        const properties = { ...ctx.user.properties };
+        delete properties[event.key];
+        return {
+          ...ctx,
+          user: {
+            ...ctx.user,
+            properties,
+          },
+        };
+      },
       'auth.clearError': (ctx: AuthStoreContext): AuthStoreContext => ({
         ...ctx,
         error: null,
@@ -94,6 +138,31 @@ export interface RegisterParams {
   password: string;
   firstName?: string;
   lastName?: string;
+}
+
+export interface AuthPublicConfig {
+  registration: {
+    mode: 'public' | 'admin-only' | 'disabled';
+    bootstrapRequired: boolean;
+    publicRegistrationEnabled: boolean;
+    userCount?: number;
+  };
+  accountEmails?: {
+    adminCreatedUser: boolean;
+    passwordReset: boolean;
+    passwordChangedNotice: boolean;
+  };
+}
+
+export interface AuthActionTokenInfo {
+  valid: boolean;
+  type: 'account_setup' | 'password_reset' | 'admin_password_reset' | 'email_verification';
+  expiresAt: number;
+  user: {
+    userId: string;
+    username: string;
+    email: string;
+  };
 }
 
 export const AUTH_DISABLED_MESSAGE =
@@ -227,6 +296,58 @@ export class AuthClient {
     return data.user;
   }
 
+  async getConfig(): Promise<AuthPublicConfig> {
+    const res = await fetch(`${this.baseUrl}/auth/config`);
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(getAuthResponseError(res, body, 'Failed to load auth config'));
+    }
+
+    return res.json();
+  }
+
+  /**
+   * Request a password reset email.
+   *
+   * The backend always returns a generic success response so callers do not
+   * learn whether an email address exists.
+   */
+  async forgotPassword(email: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(getAuthResponseError(res, body, 'Failed to request password reset'));
+    }
+  }
+
+  /** Inspect a reset/setup token without consuming it. */
+  async inspectActionToken(token: string): Promise<AuthActionTokenInfo> {
+    const res = await fetch(`${this.baseUrl}/auth/action-token/${encodeURIComponent(token)}`);
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(getAuthResponseError(res, body, 'Invalid or expired action token'));
+    }
+
+    return res.json();
+  }
+
+  /** Complete a password reset from an emailed reset token. */
+  async resetPassword(token: string, newPassword: string): Promise<AuthUser> {
+    return this.completePasswordAction('/auth/reset-password', token, newPassword);
+  }
+
+  /** Complete first-password setup from an emailed setup token. */
+  async setupPassword(token: string, newPassword: string): Promise<AuthUser> {
+    return this.completePasswordAction('/auth/setup-password', token, newPassword);
+  }
+
   async logout(): Promise<void> {
     const { refreshToken } = this.ctx;
     if (refreshToken) {
@@ -302,9 +423,40 @@ export class AuthClient {
     this.persistRefreshToken(data.refreshToken);
   }
 
+  private async completePasswordAction(
+    path: '/auth/reset-password' | '/auth/setup-password',
+    token: string,
+    newPassword: string
+  ): Promise<AuthUser> {
+    this.send('auth.loading', {});
+
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, newPassword }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      const msg = getAuthResponseError(res, body, 'Failed to update password');
+      this.send('auth.error', { error: msg });
+      throw new Error(msg);
+    }
+
+    const data = await res.json();
+    this.send('auth.success', {
+      user: data.user,
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+    });
+
+    this.persistRefreshToken(data.refreshToken);
+    return data.user;
+  }
+
   // ─── Property KV ─────────────────────────────────────────────────
 
-  async setProperty(key: string, value: string): Promise<void> {
+  async setProperty(key: string, value: unknown): Promise<void> {
     const res = await this.fetchWithAuth(
       `${this.baseUrl}/auth/me/properties/${encodeURIComponent(key)}`,
       {
@@ -317,6 +469,9 @@ export class AuthClient {
       const body = await res.json().catch(() => ({ error: 'Failed to set property' }));
       throw new Error(body.error ?? 'Failed to set property');
     }
+    this.send('auth.properties.patch', {
+      properties: { [key]: serializeAuthPropertyValue(value) },
+    });
   }
 
   async getProperty(key: string): Promise<string | null> {
@@ -329,6 +484,9 @@ export class AuthClient {
       throw new Error(body.error ?? 'Failed to get property');
     }
     const data = await res.json();
+    this.send('auth.properties.patch', {
+      properties: { [key]: data.value },
+    });
     return data.value;
   }
 
@@ -339,6 +497,7 @@ export class AuthClient {
       throw new Error(body.error ?? 'Failed to get properties');
     }
     const data = await res.json();
+    this.send('auth.properties.replace', { properties: data.properties });
     return data.properties;
   }
 
@@ -351,6 +510,7 @@ export class AuthClient {
       const body = await res.json().catch(() => ({ error: 'Failed to delete property' }));
       throw new Error(body.error ?? 'Failed to delete property');
     }
+    this.send('auth.properties.delete', { key });
   }
 
   /** Subscribe to auth state changes. Returns unsubscribe. */
@@ -444,4 +604,10 @@ export class AuthClient {
       localStorage.removeItem(REFRESH_TOKEN_KEY);
     }
   }
+}
+
+function serializeAuthPropertyValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value) ?? String(value);
 }

@@ -12,11 +12,11 @@ import {
 import type { ReactNode } from 'react';
 import type { Row } from '../../sync/types';
 import type { Client, ClientConfig, InternalClient } from './sdk';
-import type { AuthUser, RegisterParams } from './auth-client';
+import type { AuthActionTokenInfo, AuthPublicConfig, AuthUser, RegisterParams } from './auth-client';
 import { createClient, getClient } from './sdk';
 import { createAuthDisabledError } from './auth-client';
 
-export type { AuthUser, RegisterParams };
+export type { AuthActionTokenInfo, AuthPublicConfig, AuthUser, RegisterParams };
 
 // Re-export state hooks
 export { useServerState, useServerStateReady } from '../../sync/client/state-hooks';
@@ -116,10 +116,15 @@ export interface AuthState {
 export interface AuthActions {
   login: (username: string, password: string) => Promise<void>;
   register: (params: RegisterParams) => Promise<void>;
+  getConfig: () => Promise<AuthPublicConfig | null>;
+  forgotPassword: (email: string) => Promise<void>;
+  inspectActionToken: (token: string) => Promise<AuthActionTokenInfo | null>;
+  resetPassword: (token: string, newPassword: string) => Promise<void>;
+  setupPassword: (token: string, newPassword: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
-  setProperty: (key: string, value: string) => Promise<void>;
+  setProperty: (key: string, value: unknown) => Promise<void>;
   getProperty: (key: string) => Promise<string | null>;
   getProperties: () => Promise<Record<string, string>>;
   deleteProperty: (key: string) => Promise<void>;
@@ -134,6 +139,11 @@ const SSR_AUTH_DEFAULTS: AuthState & AuthActions = {
   error: null,
   login: SSR_AUTH_NOOP as any,
   register: SSR_AUTH_NOOP as any,
+  getConfig: async () => null,
+  forgotPassword: SSR_AUTH_NOOP as any,
+  inspectActionToken: async () => null,
+  resetPassword: SSR_AUTH_NOOP as any,
+  setupPassword: SSR_AUTH_NOOP as any,
   logout: SSR_AUTH_NOOP as any,
   refresh: SSR_AUTH_NOOP as any,
   changePassword: SSR_AUTH_NOOP as any,
@@ -205,6 +215,48 @@ export function useAuth(): AuthState & AuthActions {
     [authClient, authDisabled],
   );
 
+  const getConfig = useCallback(
+    async () => {
+      if (authClient) return authClient.getConfig();
+      if (authDisabled) throw createAuthDisabledError();
+      return null;
+    },
+    [authClient, authDisabled],
+  );
+
+  const forgotPassword = useCallback(
+    async (email: string) => {
+      if (authClient) await authClient.forgotPassword(email);
+      else if (authDisabled) throw createAuthDisabledError();
+    },
+    [authClient, authDisabled],
+  );
+
+  const inspectActionToken = useCallback(
+    async (token: string) => {
+      if (authClient) return authClient.inspectActionToken(token);
+      if (authDisabled) throw createAuthDisabledError();
+      return null;
+    },
+    [authClient, authDisabled],
+  );
+
+  const resetPassword = useCallback(
+    async (token: string, newPassword: string) => {
+      if (authClient) await authClient.resetPassword(token, newPassword);
+      else if (authDisabled) throw createAuthDisabledError();
+    },
+    [authClient, authDisabled],
+  );
+
+  const setupPassword = useCallback(
+    async (token: string, newPassword: string) => {
+      if (authClient) await authClient.setupPassword(token, newPassword);
+      else if (authDisabled) throw createAuthDisabledError();
+    },
+    [authClient, authDisabled],
+  );
+
   const refresh = useCallback(
     async () => {
       if (authClient) await authClient.refresh();
@@ -222,7 +274,7 @@ export function useAuth(): AuthState & AuthActions {
   );
 
   const setProperty = useCallback(
-    async (key: string, value: string) => {
+    async (key: string, value: unknown) => {
       if (authClient) await authClient.setProperty(key, value);
       else if (authDisabled) throw createAuthDisabledError();
     },
@@ -264,6 +316,11 @@ export function useAuth(): AuthState & AuthActions {
     error: state.error,
     login,
     register,
+    getConfig,
+    forgotPassword,
+    inspectActionToken,
+    resetPassword,
+    setupPassword,
     logout,
     refresh,
     changePassword,
@@ -271,6 +328,63 @@ export function useAuth(): AuthState & AuthActions {
     getProperty,
     getProperties,
     deleteProperty,
+  };
+}
+
+export interface AuthConfigState {
+  config: AuthPublicConfig | null;
+  isLoading: boolean;
+  error: string | null;
+  canRegister: boolean;
+  bootstrapRequired: boolean;
+  reload: () => Promise<void>;
+}
+
+/**
+ * Loads the public auth config used by auth UI to mirror backend policy.
+ *
+ * Returns null config during SSR or when auth has not been configured yet.
+ * Components should treat a loaded `canRegister: false` as authoritative.
+ */
+export function useAuthConfig(): AuthConfigState {
+  const client = useClientMaybe() as InternalClient | null;
+  const authClient = client?.auth ?? null;
+  const authDisabled = client !== null && authClient === null;
+  const [config, setConfig] = useState<AuthPublicConfig | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    if (!authClient) {
+      setConfig(null);
+      setIsLoading(false);
+      setError(authDisabled ? createAuthDisabledError().message : null);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+    try {
+      setConfig(await authClient.getConfig());
+    } catch (err) {
+      setConfig(null);
+      setError(err instanceof Error ? err.message : 'Failed to load auth config');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [authClient, authDisabled]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return {
+    config,
+    isLoading,
+    error,
+    canRegister: config?.registration.publicRegistrationEnabled ?? false,
+    bootstrapRequired: config?.registration.bootstrapRequired ?? false,
+    reload,
   };
 }
 

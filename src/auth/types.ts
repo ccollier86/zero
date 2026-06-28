@@ -15,6 +15,9 @@ export interface AuthContext {
 
 // ─── User Record ───────────────────────────────────────────────────────────
 
+/** Account status enforced by login, refresh, and admin lifecycle routes. */
+export type UserStatus = 'active' | 'suspended';
+
 /**
  * Public user record — safe to expose (no password hash).
  * Maps from the `users` table + joined `user_properties`.
@@ -26,6 +29,8 @@ export interface UserRecord {
   firstName: string | null;
   lastName: string | null;
   role: string;
+  status: UserStatus;
+  passwordChangeRequired: boolean;
   createdAt: number;
   updatedAt: number | null;
   properties: Record<string, string>;
@@ -62,12 +67,122 @@ export interface RefreshTokenRecord {
   revokedAt: number | null;
 }
 
+/** One-time auth action token purpose. */
+export type AuthActionTokenType =
+  | 'account_setup'
+  | 'password_reset'
+  | 'admin_password_reset'
+  | 'email_verification';
+
+/** Internal hashed auth action token record. Raw tokens are never stored. */
+export interface AuthActionTokenRecord {
+  tokenId: string;
+  userId: string;
+  type: AuthActionTokenType;
+  tokenHash: string;
+  expiresAt: number;
+  consumedAt: number | null;
+  createdAt: number;
+  createdBy: string | null;
+  metadata: Record<string, unknown>;
+}
+
 // ─── Configuration ─────────────────────────────────────────────────────────
+
+/** Public registration mode after the first-user bootstrap account exists. */
+export type AuthRegistrationMode = 'public' | 'admin-only' | 'disabled';
+
+/** Configuration for public registration and first-user bootstrap. */
+export interface AuthRegistrationConfig {
+  /** Public registration mode after bootstrap. Default: 'public'. */
+  mode?: AuthRegistrationMode;
+}
+
+/** Auth/account lifecycle email switches. */
+export interface AuthAccountEmailConfig {
+  /** Send setup links for admin-created accounts when possible. Default: false. */
+  adminCreatedUser?: boolean;
+  /** Enable user/admin password reset email flows. Default: true. */
+  passwordReset?: boolean;
+  /** Send notification email after password changes. Default: false. */
+  passwordChangedNotice?: boolean;
+  /** One-time action token TTL. Supports `s`, `m`, `h`, and `d`. Default: '1h'. */
+  actionTokenTTL?: string;
+  /** Public reset page path appended to app.publicUrl. Default: '/reset-password'. */
+  resetPath?: string;
+  /** Public setup page path appended to app.publicUrl. Default: '/setup-password'. */
+  setupPath?: string;
+}
+
+/** Normalized auth/account lifecycle email switches. */
+export interface ResolvedAuthAccountEmailConfig {
+  adminCreatedUser: boolean;
+  passwordReset: boolean;
+  passwordChangedNotice: boolean;
+  actionTokenTTL: string;
+  resetPath: string;
+  setupPath: string;
+}
+
+/** Supported configured user property field types. */
+export type UserPropertyFieldType = 'string' | 'enum' | 'boolean' | 'number';
+
+/** Which actor may edit a configured user property field. */
+export type UserPropertyEditableBy = 'user' | 'admin' | 'system' | 'none';
+
+/** Developer-authored config for one user key/value property. */
+export interface UserPropertyFieldConfig {
+  /** Field value type used for validation and admin UI controls. */
+  type?: UserPropertyFieldType;
+  /** Optional admin/profile UI label. */
+  label?: string;
+  /** Allowed values for enum fields. */
+  values?: string[];
+  /** Default value applied on user creation and optional lazy backfill. */
+  default?: string | number | boolean;
+  /** Who may update this field through platform routes. Default: 'user'. */
+  editableBy?: UserPropertyEditableBy;
+  /** Optional admin/profile UI helper text. */
+  description?: string;
+}
+
+/** Normalized user property field config. */
+export interface ResolvedUserPropertyFieldConfig {
+  key: string;
+  type: UserPropertyFieldType;
+  label?: string;
+  values?: string[];
+  default?: string;
+  editableBy: UserPropertyEditableBy;
+  description?: string;
+}
+
+/** Developer-authored auth behavior config. */
+export interface AuthBehaviorConfig {
+  /** Public registration and first-user bootstrap behavior. */
+  registration?: AuthRegistrationConfig;
+  /** Account lifecycle email behavior. */
+  accountEmails?: AuthAccountEmailConfig;
+  /** Configured user key/value property fields. */
+  userProperties?: Record<string, UserPropertyFieldConfig>;
+  /** Whether unknown current-user property writes should be rejected. Default: false. */
+  strictUserProperties?: boolean;
+}
+
+/** Normalized auth behavior config used by backend services and routes. */
+export interface ResolvedAuthBehaviorConfig {
+  registration: {
+    mode: AuthRegistrationMode;
+  };
+  accountEmails: ResolvedAuthAccountEmailConfig;
+  userProperties: Record<string, ResolvedUserPropertyFieldConfig>;
+  strictUserProperties: boolean;
+}
 
 /**
  * Configuration for createAuthPlugin().
  */
-export interface AuthPluginConfig {
+export interface AuthPluginConfig extends AuthBehaviorConfig {
   /** Shared ReactiveDB instance — auth defines its tables here */
   db: ReactiveDB;
 

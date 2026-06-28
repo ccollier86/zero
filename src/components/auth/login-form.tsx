@@ -4,7 +4,7 @@ import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { cn } from '@/lib/utils';
-import { useAuth } from '../../frontend/client/hooks';
+import { useAuth, useAuthConfig } from '../../frontend/client/hooks';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,6 +23,7 @@ interface LoginFormProps {
   showForgotPassword?: boolean;
   forgotPasswordHref?: string;
   showRegisterLink?: boolean;
+  respectRegistrationPolicy?: boolean;
   registerHref?: string;
   socialProviders?: SocialProvider[];
   className?: string;
@@ -35,16 +36,23 @@ function LoginForm({
   showForgotPassword = true,
   forgotPasswordHref = '#forgot-password',
   showRegisterLink = true,
+  respectRegistrationPolicy = true,
   registerHref = '#register',
   socialProviders,
   className,
 }: LoginFormProps) {
   const { login, isLoading, error } = useAuth();
+  const authConfig = useAuthConfig();
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [localError, setLocalError] = React.useState<string | null>(null);
 
   const displayError = localError ?? error;
+  const canShowRegisterLink =
+    showRegisterLink &&
+    (!respectRegistrationPolicy ||
+      authConfig.config === null ||
+      authConfig.canRegister);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -145,7 +153,7 @@ function LoginForm({
         <SocialLoginGroup providers={socialProviders} />
       )}
 
-      {showRegisterLink && (
+      {canShowRegisterLink && (
         <p className="text-center text-xs text-muted-foreground">
           Don&apos;t have an account?{' '}
           <a href={registerHref} className="text-primary hover:underline">

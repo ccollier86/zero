@@ -94,7 +94,10 @@ src/
 | `src/auth/auth.plugin.ts` | Elysia plugin — defines user tables, token service, REST routes |
 | `src/auth/auth.middleware.ts` | `createAuthMiddleware()` — resolve-based, provides `requireAuth/requireAdmin` |
 | `src/auth/auth.models.ts` | TypeBox request/response schemas |
-| `src/auth/types.ts` | AuthContext, AuthError, UserRecord, AUTH_DEFAULTS |
+| `src/auth/action-token-service.ts` | Hash-only setup/reset action token generation, inspection, and consumption |
+| `src/auth/account-email-service.ts` | Auth lifecycle email delivery through the platform email runtime |
+| `src/auth/auth-account.plugin.ts` | Forgot-password, action-token inspect, reset-password, and setup-password routes |
+| `src/auth/types.ts` | AuthContext, AuthError, UserRecord, action token types, AUTH_DEFAULTS |
 | `src/auth/index.ts` | Barrel exports |
 
 **Client:**
@@ -239,8 +242,8 @@ Button, Input, Label, Textarea, Select, Badge, Card, FormField, Table, ScrollAre
 **`src/components/animate-ui/` — 174 animated components:**
 Organized into `primitives/` (raw building blocks) and `components/` (pre-styled compositions). Categories: buttons, radix UI (animated), effects, text animations, backgrounds, community components.
 
-**`src/components/auth/` — 12 auth UI blocks:**
-LoginForm, RegisterForm, ForgotPasswordForm, OTPVerification, PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup, AuthLayout, AuthHeader, Gate, useGate.
+**`src/components/auth/` — auth UI blocks:**
+LoginForm, RegisterForm, ForgotPasswordForm, OTPVerification, PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup, AuthLayout, AuthHeader, Gate, PropertyGate, HasProperty, HasFlag, useGate, usePropertyGate.
 
 ---
 

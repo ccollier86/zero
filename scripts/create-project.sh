@@ -169,8 +169,16 @@ echo "[4/5] Creating starter app..."
 cat > "$PROJECT_DIR/app/server.ts" << 'SERVER'
 import { createApp } from '../src/frontend';
 
+const PORT = Number(process.env.PORT ?? 3000);
+const hasEmail = Boolean(process.env.RESEND_API_KEY);
+
 const app = await createApp({
-  db: { mode: ':memory:' },
+  app: {
+    name: process.env.APP_NAME ?? 'Zero App',
+    publicUrl: process.env.APP_PUBLIC_URL ?? `http://localhost:${PORT}`,
+    supportEmail: process.env.APP_SUPPORT_EMAIL,
+  },
+  db: { mode: process.env.DB_PATH ?? ':memory:' },
   tables: {
     // Define your tables here:
     // todos: {
@@ -180,15 +188,56 @@ const app = await createApp({
     //   created_at: 'integer not null',
     // },
   },
-  auth: true,
+  email: hasEmail
+    ? {
+        from: process.env.EMAIL_FROM ?? 'Zero App <noreply@example.com>',
+        replyTo: process.env.EMAIL_REPLY_TO,
+        provider: 'resend',
+        resend: {
+          apiKey: process.env.RESEND_API_KEY,
+        },
+      }
+    : false,
+  auth: {
+    registration: { mode: 'admin-only' },
+    accountEmails: {
+      adminCreatedUser: hasEmail,
+      passwordReset: hasEmail,
+      actionTokenTTL: process.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
+    },
+  },
   stateSync: true,
 });
 
-const PORT = Number(process.env.PORT ?? 3000);
 app.listen(PORT);
 
 console.log(`\n  Server running at http://localhost:${PORT}\n`);
 SERVER
+
+# Environment example
+cat > "$PROJECT_DIR/.env.example" << 'ENV'
+# Zero app runtime
+PORT=3000
+DB_PATH=./data/app.db
+APP_NAME="Zero App"
+APP_PUBLIC_URL=http://localhost:3000
+APP_SUPPORT_EMAIL=support@example.com
+
+# Auth token lifetimes
+ACCESS_TOKEN_TTL=15m
+REFRESH_TOKEN_TTL=7d
+AUTH_ACTION_TOKEN_TTL=1h
+
+# Optional managed signing key.
+# Leave blank to let Zero generate and store an ES256 keypair in the app DB.
+AUTH_SIGNING_KEY=
+
+# System email for auth/account lifecycle.
+# Resend is the default provider when email is enabled.
+EMAIL_FROM="Zero App <noreply@example.com>"
+EMAIL_REPLY_TO=support@example.com
+RESEND_API_KEY=
+ENV
 
 # Home page
 cat > "$PROJECT_DIR/app/page.tsx" << 'PAGE'

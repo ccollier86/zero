@@ -81,13 +81,14 @@ console.log(client.isAuthenticated); // true
 | Component | What it does |
 |-----------|-------------|
 | `<LoginForm>` | Email/password login with social providers, forgot password link |
-| `<RegisterForm>` | Registration with field selection, password strength meter |
+| `<RegisterForm>` | Registration with field selection, password strength meter, and registration-policy awareness |
 | `<ForgotPasswordForm>` | Password reset flow |
 | `<OTPVerification>` | OTP input with auto-focus |
 | `<PasswordInput>` | Password field with show/hide toggle |
 | `<PasswordStrength>` | Real-time password strength indicator |
 | `<SocialLoginGroup>` | Google, GitHub, Microsoft, Apple OAuth buttons |
 | `<AuthLayout>` | Centered card layout for auth pages |
+| `<PropertyGate>` / `<HasFlag>` | UI-only visibility gates based on current-user properties |
 | `<Gate allow={['admin']}>` | Role-based conditional rendering |
 
 ---

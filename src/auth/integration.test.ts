@@ -3,12 +3,14 @@ import { Elysia } from 'elysia';
 import { createReactiveDB, ReactiveDB } from '../sync/reactive-db';
 import { createAuthPlugin, getTokenService } from './auth.plugin';
 import { createAuthMiddleware } from './auth.middleware';
+import { configureEmail, MemoryEmailProvider } from '../email';
 
 // ─── Test Setup ───────────────────────────────────────────────────────────
 
 let db: ReactiveDB;
 let app: any;
 let baseUrl: string;
+let bootstrapAdminToken: string;
 
 beforeAll(async () => {
   db = createReactiveDB({ mode: 'memory' });
@@ -34,18 +36,41 @@ afterAll(() => {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
-async function post(path: string, body: object, token?: string): Promise<{ status: number; data: any }> {
+async function requestJson(
+  url: string,
+  method: string,
+  path: string,
+  body?: object,
+  token?: string
+): Promise<{ status: number; data: any }> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${baseUrl}${path}`, {
-    method: 'POST',
+  const res = await fetch(`${url}${path}`, {
+    method,
     headers,
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
-  return { status: res.status, data: await res.json() };
+  const data = await res.json().catch(() => null);
+  return { status: res.status, data };
+}
+
+async function post(path: string, body: object, token?: string): Promise<{ status: number; data: any }> {
+  return requestJson(baseUrl, 'POST', path, body, token);
+}
+
+async function patch(path: string, body: object, token?: string): Promise<{ status: number; data: any }> {
+  return requestJson(baseUrl, 'PATCH', path, body, token);
+}
+
+async function put(path: string, body: object, token?: string): Promise<{ status: number; data: any }> {
+  return requestJson(baseUrl, 'PUT', path, body, token);
+}
+
+async function del(path: string, token?: string): Promise<{ status: number; data: any }> {
+  return requestJson(baseUrl, 'DELETE', path, undefined, token);
 }
 
 async function get(path: string, token?: string): Promise<{ status: number; data: any }> {
@@ -56,10 +81,48 @@ async function get(path: string, token?: string): Promise<{ status: number; data
   return { status: res.status, data: await res.json() };
 }
 
+async function startAuthApp(config: Omit<Parameters<typeof createAuthPlugin>[0], 'db'> = {}) {
+  const localDb = createReactiveDB({ mode: 'memory' });
+  const localApp = new Elysia()
+    .use(createAuthPlugin({ db: localDb, ...config }))
+    .use(createAuthMiddleware(getTokenService))
+    .get('/api/whoami', (ctx: any) => {
+      if (!ctx.authContext) return new Response('Unauthorized', { status: 401 });
+      return { userId: ctx.authContext.userId, role: ctx.authContext.role };
+    });
+  localApp.listen(0);
+  const url = `http://localhost:${localApp.server!.port}`;
+
+  return {
+    db: localDb,
+    app: localApp,
+    url,
+    async stop() {
+      await localApp.stop();
+      localDb.dispose();
+    },
+  };
+}
+
+function extractTokenFromEmail(text: string): string {
+  const match = text.match(/token=([A-Za-z0-9_-]+)/);
+  if (!match) throw new Error(`No token found in email text: ${text}`);
+  return match[1];
+}
+
 // ─── Registration ─────────────────────────────────────────────────────────
 
 describe('Auth Plugin — Registration', () => {
-  test('POST /auth/register creates user and returns tokens', async () => {
+  test('GET /auth/config reports first-user bootstrap before users exist', async () => {
+    const { status, data } = await get('/auth/config');
+
+    expect(status).toBe(200);
+    expect(data.registration.bootstrapRequired).toBe(true);
+    expect(data.registration.publicRegistrationEnabled).toBe(true);
+    expect(data.registration.userCount).toBe(0);
+  });
+
+  test('POST /auth/register bootstraps first user as admin and returns tokens', async () => {
     const { status, data } = await post('/auth/register', {
       username: 'alice',
       email: 'alice@test.com',
@@ -73,9 +136,19 @@ describe('Auth Plugin — Registration', () => {
     expect(data.user.email).toBe('alice@test.com');
     expect(data.user.firstName).toBe('Alice');
     expect(data.user.lastName).toBe('Smith');
-    expect(data.user.role).toBe('user');
+    expect(data.user.role).toBe('admin');
     expect(data.accessToken).toBeDefined();
     expect(data.refreshToken).toBeDefined();
+    bootstrapAdminToken = data.accessToken;
+  });
+
+  test('GET /auth/config reports public registration after bootstrap by default', async () => {
+    const { status, data } = await get('/auth/config');
+
+    expect(status).toBe(200);
+    expect(data.registration.bootstrapRequired).toBe(false);
+    expect(data.registration.publicRegistrationEnabled).toBe(true);
+    expect(data.registration.userCount).toBeGreaterThan(0);
   });
 
   test('POST /auth/register rejects duplicate username', async () => {
@@ -116,6 +189,133 @@ describe('Auth Plugin — Registration', () => {
       password: 'short',
     });
     expect(res2.status).toBe(422);
+  });
+});
+
+// ─── Admin Users ──────────────────────────────────────────────────────────
+
+describe('Auth Plugin — Admin Users', () => {
+  test('admin can inspect config and manage users/properties/passwords', async () => {
+    const config = await get('/auth/admin/config', bootstrapAdminToken);
+    expect(config.status).toBe(200);
+    expect(config.data.registration.publicRegistrationEnabled).toBe(true);
+
+    const created = await post(
+      '/auth/admin/users',
+      {
+        username: 'managed',
+        email: 'managed@test.com',
+        password: 'oldpassword1',
+        firstName: 'Managed',
+        lastName: 'User',
+        properties: { department: 'ops' },
+      },
+      bootstrapAdminToken
+    );
+    expect(created.status).toBe(200);
+    expect(created.data.user.role).toBe('user');
+    expect(created.data.user.properties.department).toBe('ops');
+
+    const userId = created.data.user.userId;
+
+    const property = await put(
+      `/auth/admin/users/${userId}/properties/plan`,
+      { value: 'pro' },
+      bootstrapAdminToken
+    );
+    expect(property.status).toBe(200);
+
+    const updated = await patch(
+      `/auth/admin/users/${userId}`,
+      {
+        lastName: 'Updated',
+        properties: { featureFlag: 'enabled' },
+      },
+      bootstrapAdminToken
+    );
+    expect(updated.status).toBe(200);
+    expect(updated.data.user.lastName).toBe('Updated');
+    expect(updated.data.user.properties.plan).toBe('pro');
+    expect(updated.data.user.properties.featureFlag).toBe('enabled');
+
+    const reset = await post(
+      `/auth/admin/users/${userId}/reset-password`,
+      { password: 'newpassword1' },
+      bootstrapAdminToken
+    );
+    expect(reset.status).toBe(200);
+
+    const oldLogin = await post('/auth/login', {
+      username: 'managed',
+      password: 'oldpassword1',
+    });
+    expect(oldLogin.status).toBe(401);
+
+    const newLogin = await post('/auth/login', {
+      username: 'managed',
+      password: 'newpassword1',
+    });
+    expect(newLogin.status).toBe(200);
+
+    const revoked = await post(
+      `/auth/admin/users/${userId}/revoke-sessions`,
+      {},
+      bootstrapAdminToken
+    );
+    expect(revoked.status).toBe(200);
+
+    const refresh = await post('/auth/refresh', {
+      refreshToken: newLogin.data.refreshToken,
+    });
+    expect(refresh.status).toBe(401);
+
+    const deleted = await del(`/auth/admin/users/${userId}`, bootstrapAdminToken);
+    expect(deleted.status).toBe(200);
+
+    const missing = await get(`/auth/admin/users/${userId}`, bootstrapAdminToken);
+    expect(missing.status).toBe(404);
+  });
+
+  test('non-admin cannot access admin user routes', async () => {
+    const reg = await post('/auth/register', {
+      username: 'notadmin',
+      email: 'notadmin@test.com',
+      password: 'password123',
+    });
+
+    const res = await get('/auth/admin/users', reg.data.accessToken);
+    expect(res.status).toBe(403);
+  });
+
+  test('admin can promote a user to admin', async () => {
+    const created = await post(
+      '/auth/admin/users',
+      {
+        username: 'promoteme',
+        email: 'promoteme@test.com',
+        password: 'password123',
+      },
+      bootstrapAdminToken
+    );
+    expect(created.status).toBe(200);
+    expect(created.data.user.role).toBe('user');
+
+    const promoted = await patch(
+      `/auth/admin/users/${created.data.user.userId}`,
+      { role: 'admin' },
+      bootstrapAdminToken
+    );
+    expect(promoted.status).toBe(200);
+    expect(promoted.data.user.role).toBe('admin');
+
+    const login = await post('/auth/login', {
+      username: 'promoteme',
+      password: 'password123',
+    });
+    expect(login.status).toBe(200);
+
+    const adminRoute = await get('/auth/admin/users', login.data.accessToken);
+    expect(adminRoute.status).toBe(200);
   });
 });
 
@@ -444,5 +644,426 @@ describe('Auth Plugin — Full Flow', () => {
       refreshToken: login.data.refreshToken,
     });
     expect(badRefresh.status).toBe(401);
+  });
+});
+
+// ─── Registration Policy And Configured Properties ────────────────────────
+
+describe('Auth Plugin — Registration Policy And Configured Properties', () => {
+  test('admin-only mode keeps bootstrap open, then requires admin-created users', async () => {
+    const local = await startAuthApp({
+      registration: {
+        mode: 'admin-only',
+      },
+      userProperties: {
+        plan: {
+          type: 'enum',
+          values: ['free', 'pro'],
+          default: 'free',
+          editableBy: 'admin',
+        },
+        notificationsEnabled: {
+          type: 'boolean',
+          default: true,
+          editableBy: 'user',
+        },
+      },
+    });
+
+    try {
+      const bootstrap = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'owner',
+        email: 'owner@test.com',
+        password: 'password123',
+      });
+      expect(bootstrap.status).toBe(200);
+      expect(bootstrap.data.user.role).toBe('admin');
+      expect(bootstrap.data.user.properties.plan).toBe('free');
+      expect(bootstrap.data.user.properties.notificationsEnabled).toBe('true');
+
+      const closed = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'closed',
+        email: 'closed@test.com',
+        password: 'password123',
+      });
+      expect(closed.status).toBe(403);
+      expect(closed.data.code).toBe('REGISTRATION_DISABLED');
+
+      const adminConfig = await requestJson(
+        local.url,
+        'GET',
+        '/auth/admin/config',
+        undefined,
+        bootstrap.data.accessToken
+      );
+      expect(adminConfig.status).toBe(200);
+      expect(adminConfig.data.registration.publicRegistrationEnabled).toBe(false);
+      expect(adminConfig.data.userProperties.plan.values).toEqual(['free', 'pro']);
+
+      const created = await requestJson(
+        local.url,
+        'POST',
+        '/auth/admin/users',
+        {
+          username: 'worker',
+          email: 'worker@test.com',
+          password: 'password123',
+          properties: { plan: 'pro' },
+        },
+        bootstrap.data.accessToken
+      );
+      expect(created.status).toBe(200);
+      expect(created.data.user.properties.plan).toBe('pro');
+      expect(created.data.user.properties.notificationsEnabled).toBe('true');
+
+      const workerLogin = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'worker',
+        password: 'password123',
+      });
+      expect(workerLogin.status).toBe(200);
+
+      const forbiddenProperty = await requestJson(
+        local.url,
+        'PUT',
+        '/auth/me/properties/plan',
+        { value: 'free' },
+        workerLogin.data.accessToken
+      );
+      expect(forbiddenProperty.status).toBe(403);
+      expect(forbiddenProperty.data.code).toBe('PROPERTY_FORBIDDEN');
+
+      const userEditableProperty = await requestJson(
+        local.url,
+        'PUT',
+        '/auth/me/properties/notificationsEnabled',
+        { value: false },
+        workerLogin.data.accessToken
+      );
+      expect(userEditableProperty.status).toBe(200);
+
+      const me = await requestJson(
+        local.url,
+        'GET',
+        '/auth/me',
+        undefined,
+        workerLogin.data.accessToken
+      );
+      expect(me.status).toBe(200);
+      expect(me.data.properties.notificationsEnabled).toBe('false');
+
+      const invalidAdminProperty = await requestJson(
+        local.url,
+        'PUT',
+        `/auth/admin/users/${created.data.user.userId}/properties/plan`,
+        { value: 'enterprise' },
+        bootstrap.data.accessToken
+      );
+      expect(invalidAdminProperty.status).toBe(400);
+      expect(invalidAdminProperty.data.code).toBe('INVALID_PROPERTY_VALUE');
+    } finally {
+      await local.stop();
+    }
+  });
+});
+
+// ─── Account Lifecycle Email Flows ────────────────────────────────────────
+
+describe('Auth Plugin — Account Lifecycle Email Flows', () => {
+  test('forgot password sends a reset email and token resets the password once', async () => {
+    const provider = new MemoryEmailProvider();
+    configureEmail({
+      from: 'Zero <noreply@test.com>',
+      provider,
+    }, {
+      name: 'Zero Test',
+      publicUrl: 'https://app.test',
+    });
+
+    const local = await startAuthApp({
+      accountEmails: {
+        passwordReset: true,
+      },
+    });
+
+    try {
+      const registered = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'resetme',
+        email: 'resetme@test.com',
+        password: 'oldpassword1',
+      });
+      expect(registered.status).toBe(200);
+
+      const forgot = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'resetme@test.com',
+      });
+      expect(forgot.status).toBe(200);
+      expect(forgot.data.ok).toBe(true);
+      expect(provider.messages).toHaveLength(1);
+      expect(provider.messages[0].message.to).toBe('resetme@test.com');
+
+      const token = extractTokenFromEmail(provider.messages[0].message.text);
+      const inspected = await requestJson(local.url, 'GET', `/auth/action-token/${token}`);
+      expect(inspected.status).toBe(200);
+      expect(inspected.data.type).toBe('password_reset');
+
+      const reset = await requestJson(local.url, 'POST', '/auth/reset-password', {
+        token,
+        newPassword: 'newpassword1',
+      });
+      expect(reset.status).toBe(200);
+      expect(reset.data.accessToken).toBeDefined();
+      expect(reset.data.user.passwordChangeRequired).toBe(false);
+
+      const oldLogin = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'resetme',
+        password: 'oldpassword1',
+      });
+      expect(oldLogin.status).toBe(401);
+
+      const newLogin = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'resetme',
+        password: 'newpassword1',
+      });
+      expect(newLogin.status).toBe(200);
+
+      const replay = await requestJson(local.url, 'POST', '/auth/reset-password', {
+        token,
+        newPassword: 'anotherpassword1',
+      });
+      expect(replay.status).toBe(400);
+      expect(replay.data.code).toBe('ACTION_TOKEN_CONSUMED');
+    } finally {
+      await local.stop();
+      configureEmail(false);
+    }
+  });
+
+  test('admin-forced reset emails revoke sessions and block old access tokens', async () => {
+    const provider = new MemoryEmailProvider();
+    configureEmail({
+      from: 'Zero <noreply@test.com>',
+      provider,
+    }, {
+      name: 'Zero Test',
+      publicUrl: 'https://app.test',
+    });
+
+    const local = await startAuthApp({
+      registration: { mode: 'admin-only' },
+      accountEmails: {
+        passwordReset: true,
+      },
+    });
+
+    try {
+      const admin = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'owner',
+        email: 'owner-reset@test.com',
+        password: 'password123',
+      });
+      expect(admin.status).toBe(200);
+
+      const created = await requestJson(
+        local.url,
+        'POST',
+        '/auth/admin/users',
+        {
+          username: 'worker-reset',
+          email: 'worker-reset@test.com',
+          password: 'oldpassword1',
+        },
+        admin.data.accessToken
+      );
+      expect(created.status).toBe(200);
+
+      const login = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'worker-reset',
+        password: 'oldpassword1',
+      });
+      expect(login.status).toBe(200);
+
+      const forced = await requestJson(
+        local.url,
+        'POST',
+        `/auth/admin/users/${created.data.user.userId}/send-password-reset`,
+        {},
+        admin.data.accessToken
+      );
+      expect(forced.status).toBe(200);
+      expect(provider.messages).toHaveLength(1);
+
+      const refresh = await requestJson(local.url, 'POST', '/auth/refresh', {
+        refreshToken: login.data.refreshToken,
+      });
+      expect(refresh.status).toBe(401);
+
+      const protectedRoute = await requestJson(
+        local.url,
+        'GET',
+        '/api/whoami',
+        undefined,
+        login.data.accessToken
+      );
+      expect(protectedRoute.status).toBe(401);
+
+      const blockedLogin = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'worker-reset',
+        password: 'oldpassword1',
+      });
+      expect(blockedLogin.status).toBe(403);
+      expect(blockedLogin.data.code).toBe('PASSWORD_CHANGE_REQUIRED');
+
+      const token = extractTokenFromEmail(provider.messages[0].message.text);
+      const reset = await requestJson(local.url, 'POST', '/auth/reset-password', {
+        token,
+        newPassword: 'newpassword1',
+      });
+      expect(reset.status).toBe(200);
+
+      const newLogin = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'worker-reset',
+        password: 'newpassword1',
+      });
+      expect(newLogin.status).toBe(200);
+    } finally {
+      await local.stop();
+      configureEmail(false);
+    }
+  });
+
+  test('admin-created account can be completed through setup email without exposing a password', async () => {
+    const provider = new MemoryEmailProvider();
+    configureEmail({
+      from: 'Zero <noreply@test.com>',
+      provider,
+    }, {
+      name: 'Zero Test',
+      publicUrl: 'https://app.test',
+    });
+
+    const local = await startAuthApp({
+      registration: { mode: 'admin-only' },
+      accountEmails: {
+        adminCreatedUser: true,
+      },
+    });
+
+    try {
+      const admin = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'setup-owner',
+        email: 'setup-owner@test.com',
+        password: 'password123',
+      });
+      expect(admin.status).toBe(200);
+
+      const created = await requestJson(
+        local.url,
+        'POST',
+        '/auth/admin/users',
+        {
+          username: 'setup-worker',
+          email: 'setup-worker@test.com',
+          sendSetupEmail: true,
+        },
+        admin.data.accessToken
+      );
+      expect(created.status).toBe(200);
+      expect(created.data.setupEmailSent).toBe(true);
+      expect(created.data.user.passwordChangeRequired).toBe(true);
+      expect(provider.messages).toHaveLength(1);
+
+      const token = extractTokenFromEmail(provider.messages[0].message.text);
+      const setup = await requestJson(local.url, 'POST', '/auth/setup-password', {
+        token,
+        newPassword: 'firstpassword1',
+      });
+      expect(setup.status).toBe(200);
+      expect(setup.data.user.passwordChangeRequired).toBe(false);
+
+      const login = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'setup-worker',
+        password: 'firstpassword1',
+      });
+      expect(login.status).toBe(200);
+    } finally {
+      await local.stop();
+      configureEmail(false);
+    }
+  });
+
+  test('suspended accounts cannot log in or use old tokens', async () => {
+    const local = await startAuthApp({
+      registration: { mode: 'admin-only' },
+    });
+
+    try {
+      const admin = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'suspend-owner',
+        email: 'suspend-owner@test.com',
+        password: 'password123',
+      });
+      expect(admin.status).toBe(200);
+
+      const created = await requestJson(
+        local.url,
+        'POST',
+        '/auth/admin/users',
+        {
+          username: 'suspended-worker',
+          email: 'suspended-worker@test.com',
+          password: 'password123',
+        },
+        admin.data.accessToken
+      );
+      const login = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'suspended-worker',
+        password: 'password123',
+      });
+      expect(login.status).toBe(200);
+
+      const suspended = await requestJson(
+        local.url,
+        'POST',
+        `/auth/admin/users/${created.data.user.userId}/suspend`,
+        {},
+        admin.data.accessToken
+      );
+      expect(suspended.status).toBe(200);
+      expect(suspended.data.user.status).toBe('suspended');
+
+      const blockedLogin = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'suspended-worker',
+        password: 'password123',
+      });
+      expect(blockedLogin.status).toBe(403);
+      expect(blockedLogin.data.code).toBe('ACCOUNT_SUSPENDED');
+
+      const protectedRoute = await requestJson(
+        local.url,
+        'GET',
+        '/api/whoami',
+        undefined,
+        login.data.accessToken
+      );
+      expect(protectedRoute.status).toBe(401);
+
+      const activated = await requestJson(
+        local.url,
+        'POST',
+        `/auth/admin/users/${created.data.user.userId}/activate`,
+        {},
+        admin.data.accessToken
+      );
+      expect(activated.status).toBe(200);
+      expect(activated.data.user.status).toBe('active');
+
+      const allowedLogin = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'suspended-worker',
+        password: 'password123',
+      });
+      expect(allowedLogin.status).toBe(200);
+    } finally {
+      await local.stop();
+    }
   });
 });

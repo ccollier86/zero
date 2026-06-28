@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS users (
   first_name TEXT,
   last_name  TEXT,
   role       TEXT NOT NULL DEFAULT 'user',
+  status     TEXT NOT NULL DEFAULT 'active',
+  password_change_required INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER
 );
@@ -54,22 +56,27 @@ CREATE TABLE IF NOT EXISTS _refresh_tokens (
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON _refresh_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON _refresh_tokens(user_id);
 
+-- One-time setup/reset tokens — hashed, consumed once
+CREATE TABLE IF NOT EXISTS _auth_action_tokens (
+  token_id    TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  type        TEXT NOT NULL,
+  token_hash  TEXT NOT NULL,
+  expires_at  INTEGER NOT NULL,
+  consumed_at INTEGER,
+  created_at  INTEGER NOT NULL,
+  created_by  TEXT,
+  metadata    TEXT,
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_hash ON _auth_action_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_user ON _auth_action_tokens(user_id);
+
 -- Signing keypair + auth configuration
 CREATE TABLE IF NOT EXISTS _auth_config (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-
--- Audit log — structured event log for auth operations
-CREATE TABLE IF NOT EXISTS _audit_log (
-  id         TEXT PRIMARY KEY,
-  user_id    TEXT NOT NULL,
-  event_type TEXT NOT NULL,
-  data       TEXT,
-  ts         INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_audit_log_user ON _audit_log(user_id);
-CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON _audit_log(ts);
 ```
 
 ### Schema Design Decisions
@@ -87,6 +94,10 @@ writes use prepared statements directly and do not emit ReactiveDB change
 events.
 
 **Why `_refresh_tokens` stores hashes:** Same principle as passwords — if the database is compromised, raw tokens are not exposed. `SHA-256(token)` is stored; the raw token exists only on the client side.
+
+**Why `_auth_action_tokens` stores hashes:** Setup/reset links are bearer
+credentials. Zero generates opaque random tokens, stores only
+`SHA-256(token)`, and consumes the row once the password action succeeds.
 
 ## Prepared Statements
 
@@ -118,6 +129,12 @@ class UserStore {
     revokeRefreshToken: Statement;
     revokeAllUserTokens: Statement;
     deleteExpiredTokens: Statement;
+
+    // Action tokens (internal table — direct db.exec)
+    insertActionToken: Statement;
+    getActionTokenByHash: Statement;
+    consumeActionToken: Statement;
+    deleteExpiredActionTokens: Statement;
 
     // Auth config (internal table — direct db.exec)
     getConfig: Statement;
@@ -156,6 +173,9 @@ async createUser(params: {
   firstName?: string;
   lastName?: string;
   role?: string;
+  status?: 'active' | 'suspended';
+  passwordChangeRequired?: boolean;
+  properties?: Record<string, string>;
 }): Promise<UserRecord>
 ```
 
@@ -164,7 +184,9 @@ async createUser(params: {
 2. Hash password: `await Bun.password.hash(params.password)` (Argon2id, automatic)
 3. Wrap in `db.transaction()`:
    - `db.insert('users', { user_id, username, email, first_name, last_name, role, created_at })` — emits change, broadcast
+   - lifecycle fields default to `status = 'active'` and `password_change_required = 0` unless provided
    - `this.stmts.insertCredential.run(user_id, passwordHash)` — internal, no broadcast
+   - configured initial properties are inserted into `user_properties` when provided
 4. Return `UserRecord` (no password_hash)
 
 **Transaction ensures atomicity** — if credential insert fails, the user row is rolled back. Since this runs inside `db.transaction()`, the `users` change event is deferred until commit (see [ReactiveDB transactions](../realtime-sync/reactive-db.md#transactions)).
@@ -192,6 +214,17 @@ getUserById(userId: string): UserRecord | null {
 }
 ```
 
+### listUsers / countUsers / countUsersByRole
+
+```ts
+listUsers(): UserRecord[]
+countUsers(): number
+countUsersByRole(role: string): number
+```
+
+`listUsers()` returns newest users first with joined properties. Count helpers
+are used by first-user bootstrap and last-admin safety checks.
+
 ### updateUser
 
 ```ts
@@ -201,6 +234,8 @@ updateUser(userId: string, partial: Partial<{
   firstName: string;
   lastName: string;
   role: string;
+  status: 'active' | 'suspended';
+  passwordChangeRequired: boolean;
 }>): UserRecord | null
 ```
 
@@ -212,7 +247,10 @@ Uses `db.update('users', userId, { ...mapped, updated_at: Date.now() })`. The Re
 deleteUser(userId: string): boolean
 ```
 
-Uses `db.delete('users', userId)`. SQLite `ON DELETE CASCADE` removes `_credentials`, `user_properties`, and `_refresh_tokens` rows automatically. The `db.delete()` call emits a change event for the `users` table — subscribers see the user disappear.
+Uses `db.delete('users', userId)`. SQLite `ON DELETE CASCADE` removes
+`_credentials`, `user_properties`, `_refresh_tokens`, and
+`_auth_action_tokens` rows automatically. The `db.delete()` call emits a
+change event for the `users` table — subscribers see the user disappear.
 
 ### verifyPassword
 
@@ -238,14 +276,25 @@ async updatePassword(userId: string, currentPassword: string, newPassword: strin
 
 **Steps:**
 1. Verify current password via `verifyPassword()`
-2. If valid: `await Bun.password.hash(newPassword)`, `this.stmts.updateCredential.run(userId, newHash)`
+2. If valid: `await Bun.password.hash(newPassword)`, `this.stmts.updateCredential.run(newHash, userId)`
 3. Revoke all refresh tokens for user (force re-login on all devices)
 4. Return success boolean
+
+### resetPassword
+
+```ts
+async resetPassword(userId: string, newPassword: string): Promise<boolean>
+```
+
+Admin reset flow. It does not require the current password, but it does verify
+the user exists. On success it hashes the new password and revokes all refresh
+tokens so existing sessions must re-authenticate.
 
 ### Properties KV
 
 ```ts
 setProperty(userId: string, key: string, value: string): void
+setProperties(userId: string, properties: Record<string, string>): void
 getProperty(userId: string, key: string): string | null
 getProperties(userId: string): Record<string, string>
 deleteProperty(userId: string, key: string): void
@@ -254,6 +303,11 @@ deleteProperty(userId: string, key: string): void
 `setProperty` uses a prepared `INSERT OR REPLACE` statement. `deleteProperty`
 uses a prepared `DELETE` statement. These methods are low-level store methods;
 HTTP routes should enforce configured metadata policy before calling them.
+`setProperties` wraps multiple property upserts in one transaction.
+
+`createUser()` also accepts an optional `properties` map so registration and
+admin creation can store configured defaults atomically with the user and
+credential rows.
 
 **Use cases:**
 - Notification preferences: `setProperty(userId, 'notifications_enabled', 'true')`
@@ -295,6 +349,20 @@ getRefreshTokenByHash(tokenHash: string): RefreshTokenRecord | null {
   } as RefreshTokenRecord;
 }
 ```
+
+### action tokens
+
+```ts
+storeActionToken(params): AuthActionTokenRecord
+getActionTokenByHash(tokenHash: string): AuthActionTokenRecord | null
+consumeActionToken(tokenId: string): boolean
+deleteExpiredActionTokens(): number
+```
+
+All operate on `_auth_action_tokens` and never store raw reset/setup tokens.
+`consumeActionToken()` only succeeds once. `AuthActionTokenService` wraps these
+methods to generate raw tokens, hash them, enforce TTL/type checks, and emit
+observability events.
 
 `deleteExpiredTokens()` is a cleanup operation — called periodically (cron or on refresh) to purge expired/revoked tokens:
 
@@ -392,6 +460,8 @@ interface UserRecord {
   firstName: string | null;
   lastName: string | null;
   role: string;
+  status: 'active' | 'suspended';
+  passwordChangeRequired: boolean;
   createdAt: number;
   updatedAt: number | null;
   properties: Record<string, string>;
@@ -404,6 +474,18 @@ interface RefreshTokenRecord {
   expiresAt: number;
   createdAt: number;
   revokedAt: number | null;
+}
+
+interface AuthActionTokenRecord {
+  tokenId: string;
+  userId: string;
+  type: 'account_setup' | 'password_reset' | 'admin_password_reset' | 'email_verification';
+  tokenHash: string;
+  expiresAt: number;
+  consumedAt: number | null;
+  createdAt: number;
+  createdBy: string | null;
+  metadata: Record<string, unknown>;
 }
 ```
 

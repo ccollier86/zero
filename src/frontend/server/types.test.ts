@@ -28,6 +28,66 @@ describe('resolveConfig', () => {
     expect(config.stateSync).toBe(true);
   });
 
+  test('preserves auth registration and user property config', () => {
+    const config = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: {
+        registration: { mode: 'admin-only' },
+        accountEmails: {
+          adminCreatedUser: true,
+          passwordReset: true,
+          actionTokenTTL: '2h',
+        },
+        userProperties: {
+          department: {
+            type: 'enum',
+            values: ['accounting', 'operations'],
+            editableBy: 'admin',
+          },
+        },
+      },
+    });
+
+    expect(config.auth).not.toBe(false);
+    if (config.auth !== false) {
+      expect(config.auth.registration?.mode).toBe('admin-only');
+      expect(config.auth.accountEmails?.adminCreatedUser).toBe(true);
+      expect(config.auth.accountEmails?.actionTokenTTL).toBe('2h');
+      expect(config.auth.userProperties?.department.values).toEqual([
+        'accounting',
+        'operations',
+      ]);
+    }
+  });
+
+  test('preserves app identity and email config', () => {
+    const config = resolveConfig({
+      app: {
+        name: 'Zero CRM',
+        publicUrl: 'https://crm.example.com',
+      },
+      db: { mode: 'memory' },
+      tables,
+      email: {
+        from: 'Zero CRM <noreply@example.com>',
+        provider: 'resend',
+        resend: {
+          apiKey: 'test_key',
+        },
+      },
+    });
+
+    expect(config.app.name).toBe('Zero CRM');
+    expect(config.app.publicUrl).toBe('https://crm.example.com');
+    expect(config.email).not.toBe(false);
+    if (config.email !== false) {
+      expect(config.email.from).toBe('Zero CRM <noreply@example.com>');
+      expect(config.email.provider).toBe('resend');
+      expect(config.email.resend?.apiKey).toBe('test_key');
+    }
+  });
+
   test('rejects state sync when auth is omitted', () => {
     expect(() =>
       resolveConfig({

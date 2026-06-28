@@ -6,7 +6,7 @@ import { createStateStore, routeStateMessage } from '../../sync/client/state-sto
 import { EphemeralClient } from '../../sync/client/ephemeral-client';
 import { createEphemeralStore, routeEphemeralMessage } from '../../sync/client/ephemeral-store';
 import { AuthClient, createAuthDisabledError } from './auth-client';
-import type { AuthUser, RegisterParams } from './auth-client';
+import type { AuthActionTokenInfo, AuthPublicConfig, AuthUser, RegisterParams } from './auth-client';
 import { createApi } from './api';
 import type { Api } from './api';
 import { NOTIFICATION_TABLES } from '../../notifications/types';
@@ -30,7 +30,7 @@ export type { SyncClient };
 
 export type { Collection } from './collection';
 
-export type { AuthUser, RegisterParams };
+export type { AuthActionTokenInfo, AuthPublicConfig, AuthUser, RegisterParams };
 
 // ─── FetchError ─────────────────────────────────────────────────────────────
 
@@ -125,6 +125,21 @@ export interface Client {
   /** Register a new account. Returns the authenticated user. */
   register(params: RegisterParams): Promise<AuthUser>;
 
+  /** Load public auth config for registration/bootstrap UI decisions. */
+  getAuthConfig(): Promise<AuthPublicConfig>;
+
+  /** Request a password reset email. Always generic on success. */
+  forgotPassword(email: string): Promise<void>;
+
+  /** Inspect a reset/setup token without consuming it. */
+  inspectActionToken(token: string): Promise<AuthActionTokenInfo>;
+
+  /** Complete a password reset from an emailed reset token. */
+  resetPassword(token: string, newPassword: string): Promise<AuthUser>;
+
+  /** Complete first-password setup from an emailed setup token. */
+  setupPassword(token: string, newPassword: string): Promise<AuthUser>;
+
   /** Log out and clear tokens. */
   logout(): Promise<void>;
 
@@ -138,7 +153,7 @@ export interface Client {
   refresh(): Promise<void>;
 
   /** Set a user property (key-value). */
-  setProperty(key: string, value: string): Promise<void>;
+  setProperty(key: string, value: unknown): Promise<void>;
 
   /** Get a user property by key. Returns null if not found. */
   getProperty(key: string): Promise<string | null>;
@@ -452,10 +467,15 @@ export function createClient(config: ClientConfig): Client {
     get token() { return authClient?.accessToken ?? null; },
     login: async (username: string, password: string) => requireAuthClient().login(username, password),
     register: async (params: RegisterParams) => requireAuthClient().register(params),
+    getAuthConfig: async () => requireAuthClient().getConfig(),
+    forgotPassword: async (email: string) => requireAuthClient().forgotPassword(email),
+    inspectActionToken: async (token: string) => requireAuthClient().inspectActionToken(token),
+    resetPassword: async (token: string, newPassword: string) => requireAuthClient().resetPassword(token, newPassword),
+    setupPassword: async (token: string, newPassword: string) => requireAuthClient().setupPassword(token, newPassword),
     logout: async () => requireAuthClient().logout(),
     changePassword: async (currentPassword: string, newPassword: string) => requireAuthClient().changePassword(currentPassword, newPassword),
     refresh: async () => { await requireAuthClient().refresh(); },
-    setProperty: async (key: string, value: string) => requireAuthClient().setProperty(key, value),
+    setProperty: async (key: string, value: unknown) => requireAuthClient().setProperty(key, value),
     getProperty: async (key: string) => requireAuthClient().getProperty(key),
     getProperties: async () => requireAuthClient().getProperties(),
     deleteProperty: async (key: string) => requireAuthClient().deleteProperty(key),

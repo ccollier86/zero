@@ -1,6 +1,8 @@
 import type { ClientTableDef, DeclaredSyncMode, SyncMode, TableSchema } from '../../sync/types';
 import type { SyncPolicy } from '../../sync/sync-policy';
 import type { ObservabilityConfig } from '../../observability/types';
+import type { AuthBehaviorConfig } from '../../auth/types';
+import type { AppIdentityConfig, EmailConfig } from '../../email/types';
 
 // ─── App Configuration ─────────────────────────────────────────────────────
 
@@ -71,6 +73,9 @@ export interface ResolvedSyncDefaults {
  * building a full-stack app with the platform.
  */
 export interface AppConfig {
+  /** App identity used by system UI and platform emails. */
+  app?: AppIdentityConfig;
+
   /** Database configuration */
   db: {
     /** ':memory:' for RAM-only, or a file path for durable storage */
@@ -99,10 +104,18 @@ export interface AppConfig {
    * - `true`: auth with defaults (15m access, 7d refresh)
    * - object: auth with custom TTLs
    */
-  auth?: boolean | {
+  auth?: boolean | (AuthBehaviorConfig & {
     accessTokenTTL?: string;
     refreshTokenTTL?: string;
-  };
+  });
+
+  /**
+   * Platform email configuration.
+   *
+   * `true` enables the default Resend provider. Object config can select a
+   * built-in provider or pass a custom EmailProvider. Default: false.
+   */
+  email?: boolean | EmailConfig;
 
   /** Enable per-user server-persisted state. Default: false */
   stateSync?: boolean;
@@ -168,9 +181,11 @@ export interface AppConfig {
 
 /** Resolved config with defaults filled in. */
 export interface ResolvedConfig {
+  app: AppIdentityConfig;
   db: { mode: 'memory' | (string & {}); ringBufferDepth?: number };
   tables: Record<string, TableSchema>;
-  auth: false | { accessTokenTTL?: string; refreshTokenTTL?: string };
+  auth: false | (AuthBehaviorConfig & { accessTokenTTL?: string; refreshTokenTTL?: string });
+  email: false | EmailConfig;
   stateSync: boolean;
   syncPolicy?: SyncPolicy;
   storageDir: string;
@@ -201,6 +216,11 @@ export function resolveConfig(config: AppConfig): ResolvedConfig {
     : config.auth === false || config.auth === undefined
       ? false
       : config.auth;
+  const email = config.email === true
+    ? {}
+    : config.email === false || config.email === undefined
+      ? false
+      : config.email;
   const stateSync = config.stateSync ?? false;
 
   if (stateSync && auth === false) {
@@ -244,9 +264,11 @@ export function resolveConfig(config: AppConfig): ResolvedConfig {
   }
 
   return {
+    app: config.app ?? {},
     db: config.db,
     tables: normalized,
     auth,
+    email,
     stateSync,
     syncPolicy: config.syncPolicy,
     syncDefaults,

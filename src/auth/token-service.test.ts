@@ -20,6 +20,8 @@ function setupAuthTables(db: ReactiveDB): void {
     first_name: 'text',
     last_name: 'text',
     role: "text not null default 'user'",
+    status: "text not null default 'active'",
+    password_change_required: 'integer not null default 0',
     created_at: 'integer not null',
     updated_at: 'integer',
   });
@@ -49,6 +51,19 @@ function setupAuthTables(db: ReactiveDB): void {
   `);
   db.exec(
     'CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON _refresh_tokens(token_hash)'
+  );
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS _auth_action_tokens (
+      token_id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+      type TEXT NOT NULL, token_hash TEXT NOT NULL,
+      expires_at INTEGER NOT NULL, consumed_at INTEGER,
+      created_at INTEGER NOT NULL, created_by TEXT, metadata TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_hash ON _auth_action_tokens(token_hash)'
   );
 
   db.exec(`
