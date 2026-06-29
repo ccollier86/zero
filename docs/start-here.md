@@ -160,7 +160,9 @@ Use middleware matchers for cross-cutting app policy. `path`, `method`, and
 `predicate` decide whether middleware applies; `auth`, `role`, and
 `properties` enforce server-side access once it applies. Property matchers use
 the configured `auth.userProperties` store, so the same keys can drive admin UI,
-backend policy, and later frontend gates.
+backend policy, and later frontend gates. Resource policy work will tighten
+this further by requiring policy-used properties to be explicitly trusted and
+not self-editable.
 
 App-owned backend handlers receive a lazy `zero` service context. Use canonical
 names in new code: `zero.db`, `zero.auth`, `zero.ai`, `zero.vector`,

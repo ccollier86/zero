@@ -382,6 +382,12 @@ Unknown property keys remain allowed by default for compatibility. Set
 `strictUserProperties: true` to reject unknown current-user/admin property
 writes through the platform routes.
 
+Planned resource policy integration will add an explicit `useInPolicies: true`
+flag for configured properties that may be used in backend authorization
+policy. That flag should only be valid for admin/system/none-editable fields,
+not user-editable preferences such as `theme` or `notificationsEnabled`. See
+[Phase 5: Resource And Policy API Plan](../framework/phase-5-resource-policy-plan.md).
+
 `GET /auth/config` exposes only fields with `editableBy: 'user'` so public
 account settings can adapt without leaking admin-only metadata policy. The
 admin config endpoint exposes all configured fields for the `UserManagement`

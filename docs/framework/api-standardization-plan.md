@@ -326,7 +326,7 @@ Add a high-level resource abstraction for common data-driven apps:
 defineResource({
   table: 'customers',
   primaryKey: 'customer_id',
-  policy: ownerPolicy('owner_id'),
+  policy: ownerPolicy({ userField: 'owner_id', create: 'stamp' }),
   actions: ['list', 'get', 'create', 'update', 'delete'],
 });
 ```
@@ -343,20 +343,34 @@ Resource definitions can eventually produce:
 Policy presets should include:
 
 ```ts
-ownerPolicy('owner_id')
+ownerPolicy({ userField: 'owner_id', create: 'stamp' })
 adminOnly()
 authenticatedOnly()
 publicReadUserWrite()
 readOnly()
 metadataPolicy({ department: 'accounting' })
+anyOf(policyA, policyB)
+allOf(policyA, policyB)
 ```
+
+Metadata policies must only reference configured, trusted auth user properties.
+Phase 5 should extend `auth.userProperties` with `useInPolicies: true` and
+reject policy use of unknown or self-editable user properties. For example,
+`department` may be used in policy only when it is configured as admin/system
+controlled and explicitly opted into policy use; a user-editable setting such
+as `theme` must not be accepted as an authorization claim.
 
 Acceptance criteria:
 
 1. Resource API is optional, not required for custom apps.
 2. Generated endpoints enforce authorization server-side.
 3. Policies compose with platform protected table rules.
-4. Docs explain when to use resource API versus custom endpoints.
+4. Metadata policy cannot use unknown or self-editable user properties.
+5. Owner policy supports safe create stamping and row/query constraints.
+6. Docs explain when to use resource API versus custom endpoints.
+
+Implementation plan:
+[Phase 5: Resource And Policy API Plan](./phase-5-resource-policy-plan.md).
 
 ## Phase 6: Actions
 
