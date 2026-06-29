@@ -17,6 +17,7 @@ correct that path if it is in scope.
 ## Create An App
 
 For the package-mode framework surface and remaining package-mode work, see
+[Framework Docs](./framework/README.md) and
 [Framework Developer Surface](./framework-developer-surface.md).
 The repository also includes `examples/package-mode` as a small generated-app
 fixture that imports Zero through `@zero/framework/*`.
