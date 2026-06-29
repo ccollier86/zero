@@ -110,6 +110,47 @@ export {
 } from './server/server-route-loader';
 export type { ServerRouteLoaderOptions, ServerRoutePlugin } from './server/server-route-loader';
 
+// ─── Resources: Server ─────────────────────────────────────────────────
+export {
+  adminOnly,
+  allOf,
+  anyOf,
+  authenticatedOnly,
+  customPolicy,
+  evaluateResourcePolicy,
+  metadataPolicy,
+  ownerPolicy,
+  publicReadUserWrite,
+  readOnly,
+  validateResourcePolicy,
+} from '../resources';
+export type {
+  CustomResourcePolicyCallback,
+  CustomResourcePolicyOptions,
+  OwnerPolicyCreateMode,
+  OwnerPolicyOptions,
+  ResourceAction,
+  ResourceDataConstraint,
+  ResourceFieldConstraint,
+  ResourceMetadataRequirement,
+  ResourceMetadataRequirementOperators,
+  ResourceMetadataRequirements,
+  ResourceMaybePromise,
+  ResourcePolicy,
+  ResourcePolicyAuthConfig,
+  ResourcePolicyContext,
+  ResourcePolicyDecision,
+  ResourcePolicyDecisionInput,
+  ResourcePolicyDenyReason,
+  ResourcePolicyKind,
+  ResourcePolicyResource,
+  ResourcePolicyScalar,
+  ResourcePolicyUser,
+  ResourcePolicyValidationCode,
+  ResourcePolicyValidationContext,
+  ResourcePolicyValidationIssue,
+} from '../resources';
+
 // ─── Sync / ReactiveDB: Server ─────────────────────────────────────────
 export {
   ReactiveDB,

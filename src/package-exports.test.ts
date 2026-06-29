@@ -56,15 +56,19 @@ import { Migrator } from '@zero/framework/migrations';
 import { createNotificationPlugin } from '@zero/framework/notifications';
 import { OBS_CODES } from '@zero/framework/observability';
 import { OBS_CODES as PURE_OBS_CODES } from '@zero/framework/observability/codes';
+import { ownerPolicy as resourcesOwnerPolicy } from '@zero/framework/resources';
 import { createRoomPlugin } from '@zero/framework/rooms';
 import { createSchedulerPlugin } from '@zero/framework/scheduler';
 import { defineTable, encodeFieldValue, field } from '@zero/framework/schema';
 import {
+  adminOnly,
   createApp,
   getAI,
   getEmailService,
   getVectorStore,
   getWorkflowService,
+  metadataPolicy,
+  ownerPolicy,
 } from '@zero/framework/server';
 import { createStoragePlugin } from '@zero/framework/storage';
 import { createSyncPlugin } from '@zero/framework/sync';
@@ -76,6 +80,7 @@ export const serverSymbols = {
   createApp,
   createAuthPlugin,
   isPolicyTrustedUserProperty,
+  adminOnly,
   createNotificationPlugin,
   createRoomPlugin,
   createSchedulerPlugin,
@@ -90,9 +95,12 @@ export const serverSymbols = {
   getEmailService,
   getVectorStore,
   getWorkflowService,
+  metadataPolicy,
   Migrator,
   OBS_CODES,
+  ownerPolicy,
   PURE_OBS_CODES,
+  resourcesOwnerPolicy,
   runPlatformDoctor,
   WorkflowService,
 };

@@ -164,6 +164,13 @@ backend policy, and later frontend gates. For resource policies, mark
 authorization-grade properties with `useInPolicies: true`; Zero rejects that
 flag on self-editable user preferences.
 
+For server-side resource authorization, use the policy core exported from
+`@zero/framework/server`: `ownerPolicy()`, `metadataPolicy()`, `adminOnly()`,
+`anyOf()`, `allOf()`, `validateResourcePolicy()`, and
+`evaluateResourcePolicy()`. The core is ready for custom server code today;
+generated CRUD, `/api/data`, sync, and doctor integration are being layered on
+in later resource slices.
+
 App-owned backend handlers receive a lazy `zero` service context. Use canonical
 names in new code: `zero.db`, `zero.auth`, `zero.ai`, `zero.vector`,
 `zero.email`, `zero.storage`, `zero.notifications`, `zero.scheduler`,

@@ -29,6 +29,9 @@ vector, workflows, observability, or migrations.
 - [Phase 5: Resource And Policy API Plan](./phase-5-resource-policy-plan.md):
   planned resource declarations, trusted user-property policy rules, CRUD
   generation, `/api/data`, sync, and doctor integration.
+- [Resource Policy Core](./resource-policy.md): implemented server-side policy
+  helpers, trusted metadata validation, owner constraints, composition, and
+  evaluator contract used by later resource integrations.
 - [Framework Developer Surface](../framework-developer-surface.md): current
   package-mode usage surface, imports, generated app shape, and examples.
 

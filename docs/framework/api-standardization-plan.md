@@ -318,7 +318,7 @@ Implementation details live in
 
 ## Phase 5: Resource And Policy API
 
-Status: planned
+Status: in progress; policy core implemented
 
 Add a high-level resource abstraction for common data-driven apps:
 
@@ -360,6 +360,12 @@ same trust rule. For example, `department` may be used in policy only when it
 is configured as admin/system controlled and explicitly opted into policy use;
 a user-editable setting such as `theme` must not be accepted as an
 authorization claim.
+
+The framework now ships the policy core through `@zero/framework/server` and
+`@zero/framework/resources`: policy helpers, metadata validation, owner list
+constraints, create stamping, `anyOf`/`allOf` composition, and
+`evaluateResourcePolicy()`. Resource declarations, generated CRUD, `/api/data`,
+sync, and doctor integrations are still planned follow-up slices.
 
 Acceptance criteria:
 

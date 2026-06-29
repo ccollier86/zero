@@ -1,6 +1,6 @@
 # Phase 5: Resource And Policy API Plan
 
-Status: planned, slice 1 implemented
+Status: planned, slices 1-2 implemented
 
 Phase 5 introduces a high-level resource contract for common data-driven apps.
 The goal is to let app code declare tables, actions, and authorization policy
@@ -269,7 +269,9 @@ Doctor should check:
    tests.
 
 2. **Resource Policy Core**
-   Add policy helper types, constructors, validation, and evaluator unit tests.
+   Implemented. Added policy helper types, constructors, trusted metadata
+   validation, owner constraints/stamping, any/all composition, custom policy
+   fail-closed behavior, public exports, and evaluator unit tests.
 
 3. **Resource Definition And Registry**
    Add `defineResource()`, resource registry, loader hooks, and validation.
