@@ -17,6 +17,8 @@ vector, workflows, observability, or migrations.
 - [Phase 1: Backend Extensions](./phase-1-backend-extensions.md): contract for
   Zero-native endpoints, routers, middleware, plugins, loader behavior, and
   acceptance criteria.
+- [Phase 2: Middleware Matchers And Policy](./phase-2-middleware-policy.md):
+  planned matcher and authorization policy contract for app-owned middleware.
 - [Framework Developer Surface](../framework-developer-surface.md): current
   package-mode usage surface, imports, generated app shape, and examples.
 

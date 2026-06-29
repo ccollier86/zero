@@ -173,7 +173,18 @@ defineMiddleware({
       department: ['accounting', 'management'],
     },
   },
-  run: async ({ next }) => next(),
+  run: async ({ request, user, zero }) => {
+    zero.observability.emitEvent({
+      level: 'info',
+      category: 'app.audit',
+      code: 'APP_ACCOUNTING_ACCESS',
+      message: 'Accounting route accessed.',
+      metadata: {
+        path: new URL(request.url).pathname,
+        userId: user.userId,
+      },
+    });
+  },
 });
 ```
 
@@ -183,8 +194,10 @@ Matcher goals:
 2. Auth requirements should be enforced server-side.
 3. Metadata/property checks should use the same configured user property system
    as auth/admin UI.
-4. Frontend gates and backend matchers should share vocabulary.
-5. Doctor should warn on impossible or unsafe matchers.
+4. Path/method should decide applicability, while auth/role/properties should
+   be fail-closed authorization requirements once a route applies.
+5. Frontend gates and backend matchers should share vocabulary.
+6. Doctor should warn on impossible or unsafe matchers in a later CLI phase.
 
 Follow-up auth idea:
 
@@ -200,15 +213,22 @@ auth: {
 }
 ```
 
-Public-registration defaults must not let users self-assign privileged metadata
-unless the app explicitly allows that key/value.
+Existing `auth.userProperties` defaults already apply to public/bootstrap
+registration and admin-created accounts. Phase 2 should use that system instead
+of adding a second default metadata config unless implementation uncovers a
+real gap. Public-registration defaults must not let users self-assign
+privileged metadata unless the app explicitly allows that key/value.
 
 Acceptance criteria:
 
 1. Middleware can target route patterns without becoming global accidentally.
 2. User metadata/property checks are documented and covered by tests.
-3. Open-registration default metadata is either implemented or captured as a
-   separate auth phase before matchers depend on it.
+3. Matchers fail closed when auth, role, or property requirements are not met.
+4. Matcher and policy evaluation live outside `server-extensions.ts` so
+   resources/actions can reuse them later.
+5. Open-registration default metadata is confirmed through existing
+   `auth.userProperties` behavior or captured as a separate auth phase before
+   matchers depend on it.
 
 ## Phase 3: Unified Backend Context
 
@@ -467,7 +487,7 @@ the deeper examples.
 
 ## Tracking Checklist
 
-- [ ] Phase 1: Zero-native backend extension APIs.
+- [x] Phase 1: Zero-native backend extension APIs.
 - [ ] Phase 2: Middleware matchers and metadata policy.
 - [ ] Phase 3: Unified backend `zero` context.
 - [ ] Phase 4: Service API smoothing.
