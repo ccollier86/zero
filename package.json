@@ -2,6 +2,10 @@
   "name": "@zero/framework",
   "version": "1.0.1",
   "type": "module",
+  "bin": {
+    "zero": "./src/cli/run.ts",
+    "create-zero": "./src/create-zero/run.ts"
+  },
   "exports": {
     ".": {
       "types": "./src/frontend/index.ts",
@@ -72,6 +76,8 @@
     "migrate:status": "bun run src/migrations/run.ts --status",
     "migrate:doctor": "bun run src/migrations/run.ts --doctor",
     "migrate:plan": "bun run src/migrations/run.ts --plan",
+    "create-zero": "bun run src/create-zero/run.ts",
+    "zero": "bun run src/cli/run.ts",
     "version:bump": "bun run scripts/bump-version.ts"
   },
   "devDependencies": {

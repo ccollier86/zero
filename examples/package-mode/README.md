@@ -10,5 +10,11 @@ Run from the repository root while this fixture is being developed:
 bun build examples/package-mode/app/server.ts --target bun --outdir .zero/package-mode-fixture-build
 ```
 
+Create a new app from this shape with:
+
+```sh
+create-zero my-app
+```
+
 Generated starter projects should use the same structure, but with Zero
 installed as a dependency instead of living in this repository.

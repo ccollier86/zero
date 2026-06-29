@@ -21,6 +21,21 @@ For the package-mode framework surface and remaining package-mode work, see
 The repository also includes `examples/package-mode` as a small generated-app
 fixture that imports Zero through `@zero/framework/*`.
 
+Create a new app with:
+
+```sh
+create-zero my-app
+cd my-app
+bun install
+bun run dev
+```
+
+Inside this repository, the same scaffolder is available as:
+
+```sh
+bun run create-zero -- my-app
+```
+
 Put app config in `zero.config.ts` so the server, platform doctor, and future
 tools read the same source:
 

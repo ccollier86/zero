@@ -10,6 +10,7 @@ import { describe, expect, test } from 'bun:test';
 
 interface PackageJson {
   scripts?: Record<string, string>;
+  bin?: Record<string, string>;
 }
 
 const packageJson = await Bun.file('package.json').json() as PackageJson;
@@ -37,5 +38,12 @@ describe('package build scripts', () => {
       const entrypoint = scriptEntrypoint(scriptName);
       expect(await Bun.file(entrypoint).exists()).toBe(true);
     }
+  });
+
+  test('CLI bins point at existing TypeScript entrypoints', async () => {
+    expect(packageJson.bin?.zero).toBe('./src/cli/run.ts');
+    expect(packageJson.bin?.['create-zero']).toBe('./src/create-zero/run.ts');
+    expect(await Bun.file(packageJson.bin!.zero).exists()).toBe(true);
+    expect(await Bun.file(packageJson.bin!['create-zero']).exists()).toBe(true);
   });
 });

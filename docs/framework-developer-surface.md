@@ -3,8 +3,8 @@
 This document maps how an app developer should use Zero when it behaves like an
 installed framework. It is intentionally honest about the current branch state:
 the runtime, package export map, and app-owned Elysia route loader exist on this
-branch; a package-mode fixture now verifies those imports. `create-zero` and
-`zero add` are still being added.
+branch; `create-zero` now writes a fixture-derived starter app. `zero add` is
+still being added.
 
 ## Current And Target Imports
 
@@ -39,32 +39,21 @@ but new app code should use `@zero/framework/*`.
 
 ## Generated App Shape
 
-`create-zero` should generate app-owned files only:
+`create-zero` generates app-owned files only:
 
 ```txt
 app/
   layout.tsx
   page.tsx
-  api/
+  server.ts
 server/
   routes/
-  services/
-  workflows/
 db/
   schema.ts
-  migrations/
-zero/
-  auth.ts
-  sync.ts
-  storage.ts
-  ai.ts
-  vector.ts
-  observability.ts
-components/
-hooks/
-lib/
 zero.config.ts
 .env.example
+package.json
+README.md
 ```
 
 Zero-owned runtime stays in `node_modules/@zero/framework`. App-owned generated
@@ -275,9 +264,9 @@ framework commands:
 ```json
 {
   "scripts": {
-    "migrate": "zero migrate",
-    "migrate:status": "zero migrate --status",
-    "migrate:plan": "zero migrate --plan",
+    "migrate": "zero migrate --db ./data/app.db",
+    "migrate:status": "zero migrate --status --db ./data/app.db",
+    "migrate:plan": "zero migrate --plan --schema ./db/schema.ts --db ./data/app.db",
     "doctor": "zero doctor"
   }
 }
@@ -634,7 +623,6 @@ by default.
 
 ## Current Gaps To Close
 
-1. Add `create-zero` project scaffolding.
-2. Add `zero add` for copying selected components/hooks into app source.
-3. Decide whether package exports should point at source `.ts` files long-term
+1. Add `zero add` for copying selected components/hooks into app source.
+2. Decide whether package exports should point at source `.ts` files long-term
    or a built `dist/` artifact for non-Bun consumers.
