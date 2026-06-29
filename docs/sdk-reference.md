@@ -1115,13 +1115,25 @@ prefetchRoute('/custom');
 
 ### `<ThemeProvider>`
 
-Wraps your app with dark/light/system theme support (via next-themes).
+Wraps your app with dark/light/system theme support (via next-themes). Zero's
+platform stylesheet is built and linked by `createApp()`, and the default theme
+follows the user's system preference unless overridden.
 
 ```tsx
-<ThemeProvider defaultTheme="dark" storageKey="my-app-theme">
+<ThemeProvider defaultTheme="system" storageKey="my-app-theme">
   <App />
 </ThemeProvider>
 ```
+
+The platform stylesheet defines the shared UI token contract used by base
+components and Animate UI wrappers: `background`, `card`, `popover`, `muted`,
+`accent`, `input`, `border`, `ring`, and semantic state colors. Apps can
+retheme by overriding those CSS variables, while keeping component classes on
+tokens instead of one-off color literals.
+
+Core cards and overlays are designed around an 8px-or-smaller radius scale,
+subtle borders, and restrained shadows. When changing reusable UI primitives,
+verify both light and dark mode with a screenshot pass.
 
 ### `<ThemeTogglerButton>`
 
@@ -1543,7 +1555,11 @@ The notification plugin automatically registers a cleanup job:
 
 ## UI Components
 
-All base components are exported from `@platform/frontend`. They follow the shadcn pattern: composable, `data-slot` attributes, Tailwind styling, `cn()` for className merging.
+All base components are exported from `@platform/frontend`. They follow the
+shadcn pattern: composable, `data-slot` attributes, Tailwind styling, `cn()` for
+className merging, and tokenized light/dark/system surfaces. Buttons, inputs,
+selects, tables, badges, cards, dialogs, popovers, dropdowns, and tabs share
+the same radius, border, focus-ring, and surface vocabulary.
 
 ### Layout & Container
 
@@ -1593,7 +1609,7 @@ All base components are exported from `@platform/frontend`. They follow the shad
 
 | Component | Description |
 |-----------|-------------|
-| `Toaster` | Toast notification container (dark theme, via Sonner) |
+| `Toaster` | Theme-aware toast notification container (via Sonner) |
 | `toast()` | Trigger toast: `toast('Saved!')`, `toast.error('Failed')`, `toast.success('Done')` |
 | `NotificationProvider` | Auto-fires toasts for new persistent notifications (see [Notifications](#notifications)) |
 

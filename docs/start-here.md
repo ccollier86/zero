@@ -87,6 +87,33 @@ const app = await createApp(config);
 app.listen(config.port ?? 3000);
 ```
 
+Zero builds and links the platform stylesheet automatically when `createApp()`
+starts. Wrap app UI in `ThemeProvider` to enable the default light/dark/system
+token contract:
+
+```tsx
+import type { ReactNode } from 'react';
+import { ThemeProvider, Toaster } from '@platform/frontend';
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <ThemeProvider defaultTheme="system" storageKey="zero-theme">
+      <div className="min-h-screen bg-background text-foreground font-sans antialiased">
+        {children}
+        <Toaster />
+      </div>
+    </ThemeProvider>
+  );
+}
+```
+
+The core UI primitives and Animate UI wrappers share the same token contract:
+`background`, `card`, `popover`, `muted`, `accent`, `input`, `border`, `ring`,
+and semantic state colors. Keep new components on those tokens, keep ordinary
+cards at `rounded-lg` or smaller, and check both light and dark modes before
+shipping shared UI changes. Zero keeps Playwright available as a dev dependency
+for local screenshot checks against running or static routes.
+
 Run the platform doctor against an exported config module:
 
 ```txt

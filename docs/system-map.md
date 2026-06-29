@@ -349,6 +349,7 @@ LoginForm, RegisterForm, ForgotPasswordForm, PasswordActionForm, ChangePasswordF
 | `src/frontend/server/app-factory.ts` | `createApp()` — composes all plugins in order |
 | `src/frontend/server/router-plugin.ts` | File-based router — scans app/ dir, SSR, API routes |
 | `src/frontend/server/client-bundle.ts` | Builds client bundle with Bun.build |
+| `src/frontend/server/style-bundle.ts` | Builds hashed platform CSS from Tailwind/theme tokens and app source candidates |
 | `src/frontend/server/types.ts` | AppConfig, ResolvedConfig |
 
 **Router:**

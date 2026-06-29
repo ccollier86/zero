@@ -29,23 +29,30 @@ export default function Home() {
 ```tsx
 // ─── app/layout.tsx — wraps every page ─────────────────
 
-import { AppProvider } from '@platform/frontend';
+import { AppProvider, ThemeProvider, Toaster } from '@platform/frontend';
 import { tables } from './lib/schemas';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <AppProvider
-      url={typeof window !== 'undefined' ? window.location.origin : ''}
-      tables={tables}
-      auth
-    >
-      {children}
-    </AppProvider>
+    <ThemeProvider defaultTheme="system" storageKey="zero-theme">
+      <AppProvider
+        url={typeof window !== 'undefined' ? window.location.origin : ''}
+        tables={tables}
+        auth
+      >
+        {children}
+        <Toaster />
+      </AppProvider>
+    </ThemeProvider>
   );
 }
 ```
 
 > **Note:** `hydrate.tsx` provides `RouterProvider` + `ErrorBoundary` only -- it does NOT create `AppProvider`. The root layout is the sole owner of `AppProvider` (SDK client, sync, auth). `AppProvider` auto-detects if a `RouterProvider` already exists and skips creating a duplicate. `__PLATFORM_CONFIG__` no longer carries `tables`; it carries runtime settings like `auth`, `stateSync`, and resolved `tableSyncModes`.
+
+> **Theme:** `createApp()` builds and links Zero's platform stylesheet from
+> `src/frontend/styles/globals.css`. The default token contract includes light,
+> dark, and system modes through `ThemeProvider`.
 
 ```ts
 // ─── app/server.ts — one file, everything ──────────────
@@ -117,7 +124,9 @@ A **fullstack runtime** that composes the sync engine, auth system, and a file-b
 ## What This Is NOT
 
 - **Not Next.js.** No Vercel deployment target, no edge runtime, no ISR. It's a self-hosted Bun server with file-based routing conventions inspired by Next.js.
-- **Not a component library.** The UI library (animate-ui) is pre-installed but not designed here. This is the routing, rendering, and data layer.
+- **Not only a component library.** Zero includes tokenized UI primitives,
+  Animate UI wrappers, and app-ready organisms, but this frontend runtime is
+  also the routing, rendering, auth, sync, and data layer.
 - **Not serverless.** Single process, single binary. Designed for a VM, container, or bare metal — not Lambda.
 - **Not a build tool.** Bun is the build tool. This configures it, doesn't replace it.
 

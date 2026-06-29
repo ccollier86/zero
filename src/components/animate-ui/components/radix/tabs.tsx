@@ -31,10 +31,10 @@ type TabsListProps = TabsListPrimitiveProps;
 
 function TabsList({ className, ...props }: TabsListProps) {
   return (
-    <TabsHighlightPrimitive className="absolute z-0 inset-0 border border-transparent rounded-md bg-background dark:border-border-strong dark:bg-input/50 shadow-sm">
+    <TabsHighlightPrimitive className="absolute inset-0 z-0 rounded-md border border-border/80 bg-card shadow-xs dark:shadow-none">
       <TabsListPrimitive
         className={cn(
-          'bg-muted text-muted-foreground inline-flex h-9 w-fit items-center justify-center rounded-lg p-[3px]',
+          'inline-flex h-9 w-fit items-center justify-center rounded-lg bg-muted p-[3px] text-muted-foreground',
           className,
         )}
         {...props}

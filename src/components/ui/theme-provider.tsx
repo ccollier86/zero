@@ -11,7 +11,7 @@ type ThemeProviderProps = ComponentProps<typeof NextThemesProvider>;
  *
  * @example
  * ```tsx
- * <ThemeProvider defaultTheme="dark" storageKey="platform-theme">
+ * <ThemeProvider defaultTheme="system" storageKey="platform-theme">
  *   <App />
  * </ThemeProvider>
  * ```
@@ -20,7 +20,7 @@ function ThemeProvider({ children, ...props }: ThemeProviderProps) {
   return (
     <NextThemesProvider
       attribute="class"
-      defaultTheme="dark"
+      defaultTheme="system"
       enableSystem
       disableTransitionOnChange
       {...props}

@@ -128,14 +128,14 @@ function TagInput({
     <div ref={containerRef} className="relative" data-slot="tag-input">
       <div
         className={cn(
-          'flex min-h-9 w-full flex-wrap items-center gap-1.5 rounded-md border border-input bg-transparent px-3 py-1.5 shadow-xs transition-[color,box-shadow]',
-          'focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50',
+          'flex min-h-9 w-full flex-wrap items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 shadow-xs transition-[border-color,box-shadow,color]',
+          'hover:border-border-strong focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-bg-inset/45',
           disabled && 'cursor-not-allowed opacity-50',
           className,
         )}
         onClick={() => inputRef.current?.focus()}
       >
-        <AnimatePresence mode="popLayout">
+        <AnimatePresence mode="popLayout" initial={false}>
           {tags.map((tag, index) => (
             <motion.div
               key={allowDuplicates ? `${tag}-${index}` : tag}
@@ -183,7 +183,7 @@ function TagInput({
 
       {/* Suggestions dropdown */}
       {showSuggestions && filteredSuggestions.length > 0 && (
-        <div className="bg-popover text-popover-foreground absolute z-50 mt-1 w-full rounded-md border shadow-md">
+        <div className="absolute z-50 mt-1 w-full rounded-md border border-border/85 bg-popover text-popover-foreground shadow-lg dark:shadow-none">
           {filteredSuggestions.map((suggestion) => (
             <button
               key={suggestion}

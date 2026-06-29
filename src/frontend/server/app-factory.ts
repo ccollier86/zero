@@ -16,6 +16,7 @@ import { STORAGE_TABLES } from '../../storage/types';
 import { createDataQueryPlugin } from '../../sync/data-query.plugin';
 import { createRouterPlugin } from './router-plugin';
 import { buildClientBundle } from './client-bundle';
+import { buildPlatformStyles } from './style-bundle';
 import { configureEmail } from '../../email';
 import { createAIPlugin } from '../../ai';
 import type { AppConfig } from './types';
@@ -89,6 +90,7 @@ export async function createApp(userConfig: AppConfig) {
 
   // ─── Build client bundle ────────────────────────────────
   let clientEntry: string | undefined;
+  let cssPath: string | undefined;
   try {
     const bundle = await buildClientBundle(config.outDir, config.appDir);
     clientEntry = bundle.publicPath;
@@ -98,6 +100,18 @@ export async function createApp(userConfig: AppConfig) {
   } catch (err) {
     // Client bundle is optional — SSR still works without hydration
     emitPlatformCode(OBS_CODES.APP_CLIENT_BUNDLE_FAILED, {
+      error: err,
+      metadata: { outDir: config.outDir, appDir: config.appDir },
+    });
+  }
+  try {
+    const styles = await buildPlatformStyles(config.outDir, config.appDir);
+    cssPath = styles.publicPath;
+    emitPlatformCode(OBS_CODES.APP_STYLES_READY, {
+      metadata: { publicPath: styles.publicPath },
+    });
+  } catch (err) {
+    emitPlatformCode(OBS_CODES.APP_STYLES_FAILED, {
       error: err,
       metadata: { outDir: config.outDir, appDir: config.appDir },
     });
@@ -278,6 +292,7 @@ export async function createApp(userConfig: AppConfig) {
     createRouterPlugin({
       appDir: config.appDir,
       clientEntry,
+      cssPath,
       platformConfig: {
         url: '', // Derived from request.url at runtime
         auth: config.auth !== false,

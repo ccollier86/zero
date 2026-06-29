@@ -88,6 +88,8 @@ cat > "$PROJECT_DIR/package.json" << PKGJSON
     "@radix-ui/react-toggle-group": "^1.1.11",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/vite": "^4.2.1",
+    "@tailwindcss/node": "4.2.1",
+    "@tailwindcss/oxide": "4.2.1",
     "@tanstack/react-table": "^8.21.3",
     "@xstate/store": "^3.16.0",
     "class-variance-authority": "^0.7.1",
@@ -260,10 +262,12 @@ ENV
 cat > "$PROJECT_DIR/app/page.tsx" << 'PAGE'
 export default function Home() {
   return (
-    <div style={{ padding: '2rem', fontFamily: 'system-ui' }}>
-      <h1>It works.</h1>
-      <p>Edit <code>app/page.tsx</code> to get started.</p>
-    </div>
+    <main className="mx-auto max-w-2xl px-4 py-16">
+      <h1 className="text-3xl font-semibold tracking-tight">It works.</h1>
+      <p className="mt-2 text-muted-foreground">
+        Edit <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-sm">app/page.tsx</code> to get started.
+      </p>
+    </main>
   );
 }
 
@@ -274,8 +278,18 @@ PAGE
 
 # Layout
 cat > "$PROJECT_DIR/app/layout.tsx" << 'LAYOUT'
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return children;
+import type { ReactNode } from 'react';
+import { ThemeProvider, Toaster } from '../src/frontend';
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <ThemeProvider defaultTheme="system" storageKey="zero-theme">
+      <div className="min-h-screen bg-background text-foreground font-sans antialiased">
+        {children}
+        <Toaster />
+      </div>
+    </ThemeProvider>
+  );
 }
 LAYOUT
 

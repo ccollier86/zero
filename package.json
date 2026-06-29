@@ -1,6 +1,6 @@
 {
   "name": "@platform/core",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "test": "bun test",
@@ -19,6 +19,7 @@
     "@types/bun": "latest",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "playwright": "^1.61.1",
     "typescript": "^5.7.0"
   },
   "dependencies": {
@@ -64,6 +65,8 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-table": "^8.21.3",
+    "@tailwindcss/node": "4.2.1",
+    "@tailwindcss/oxide": "4.2.1",
     "@xstate/store": "^3.16.0",
     "@zvec/zvec": "0.5.0",
     "ai": "6.0.5",

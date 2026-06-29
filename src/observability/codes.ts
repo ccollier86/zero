@@ -28,6 +28,8 @@ function code(
 export const OBS_CODES = {
   APP_CLIENT_BUNDLE_READY: code('app', 'client_bundle.ready', 'info', 'Client bundle is ready.'),
   APP_CLIENT_BUNDLE_FAILED: code('app', 'client_bundle.failed', 'warn', 'Client bundle build failed; SSR-only mode is active.'),
+  APP_STYLES_READY: code('app', 'styles.ready', 'info', 'Platform stylesheet is ready.'),
+  APP_STYLES_FAILED: code('app', 'styles.failed', 'warn', 'Platform stylesheet build failed; pages may render unstyled.'),
   APP_LISTENING: code('app', 'listening', 'info', 'Application server is listening.'),
   APP_SHUTDOWN_SIGNAL: code('app', 'shutdown.signal', 'info', 'Shutdown signal received.'),
   APP_REQUEST_FAILED: code('app', 'request.failed', 'error', 'Request failed.'),
@@ -128,6 +130,7 @@ export const OBS_CODES = {
   FRONTEND_STORAGE_ACTION_FAILED: code('frontend', 'storage.action_failed', 'error', 'Storage management action failed.'),
   FRONTEND_DATA_PAGE_FAILED: code('frontend', 'data_page.failed', 'error', 'Frontend data page query failed.'),
   FRONTEND_MUTATION_FAILED: code('frontend', 'mutation.failed', 'error', 'Frontend mutation action failed.'),
+  FRONTEND_COPY_FAILED: code('frontend', 'copy.failed', 'error', 'Clipboard copy action failed.'),
 
   MIGRATOR_LOG: code('migrations', 'log', 'info', 'Migration runner emitted a log message.'),
   MIGRATOR_FAILED: code('migrations', 'failed', 'error', 'Migration failed.'),
