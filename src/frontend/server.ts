@@ -27,11 +27,18 @@ export type {
   TableSyncDefaultConfig,
 } from './server/types';
 export {
-  createLazyServerRouteServices,
   createServerRoute,
-  getServerRouteServices,
 } from './server/server-route';
-export type { ServerRouteOptions, ServerRouteServices } from './server/server-route';
+export type { ServerRouteOptions } from './server/server-route';
+export {
+  createLazyServerRouteServices,
+  getServerRouteServices,
+} from './server/server-services';
+export type {
+  ServerAuthServices,
+  ServerObservabilityServices,
+  ServerRouteServices,
+} from './server/server-services';
 export {
   ZERO_SERVER_EXTENSION_KIND,
   applyServerExtension,

@@ -20,6 +20,9 @@ vector, workflows, observability, or migrations.
 - [Phase 2: Middleware Matchers And Policy](./phase-2-middleware-policy.md):
   implemented matcher and authorization policy contract for app-owned
   middleware.
+- [Phase 3: Unified Backend Context](./phase-3-backend-context.md): canonical
+  app-facing `zero` backend service context, compatibility aliases, and lazy
+  optional-service behavior.
 - [Framework Developer Surface](../framework-developer-surface.md): current
   package-mode usage surface, imports, generated app shape, and examples.
 

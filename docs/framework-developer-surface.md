@@ -255,6 +255,28 @@ export default defineRouter({
 });
 ```
 
+The `zero` object is the canonical backend service context for app-owned
+server code:
+
+| Name | Use |
+| --- | --- |
+| `zero.db` | ReactiveDB reads/writes. |
+| `zero.auth` | Auth store/token helpers; values are `null` when auth is disabled. |
+| `zero.ai` | Internal AI service, when enabled. |
+| `zero.vector` | Vector service, when enabled. |
+| `zero.email` | Email service; noop-backed when email is disabled. |
+| `zero.storage` | Storage service, when enabled. |
+| `zero.notifications` | Notification service, when enabled. |
+| `zero.scheduler` | Scheduler service, when mounted. |
+| `zero.workflows` | Workflow service, when enabled. |
+| `zero.observability` | Event emitters plus runtime/sink/store inspection. |
+
+Compatibility aliases remain available: `zero.syncDB`, `zero.vectors`,
+`zero.workflowRegistry`, and `zero.auth.getTokenService()`. New code should
+prefer the canonical names. Optional services return `null` when disabled or
+not started; `zero.db` throws if app-owned server routes are mounted before the
+sync plugin.
+
 Use `defineMiddleware()` for named app-owned middleware. The `matcher` decides
 where middleware applies and which server-side policy must pass before `run()`
 executes:

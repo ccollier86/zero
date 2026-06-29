@@ -185,7 +185,8 @@ Plugins are for advanced app integration. Regular API routes should prefer
 
 ## Backend Context
 
-Phase 1 introduces canonical service names while keeping compatibility aliases:
+The app-owned backend context now exposes canonical service names while keeping
+compatibility aliases:
 
 ```ts
 zero.db
@@ -205,8 +206,11 @@ zero.observability
 
 `zero.db` and `zero.syncDB` point to the same ReactiveDB instance.
 `zero.vector` and `zero.vectors` point to the same optional vector service.
-The `zero` object is lazy-resolved, so raw Elysia routes loaded through the same
-bundle do not need the database unless they actually access a Zero service.
+`zero.auth` exposes lazy store/token helpers, and `zero.observability` exposes
+emitters plus runtime/sink/store inspection. The `zero` object is lazy-resolved,
+so raw Elysia routes loaded through the same bundle do not need optional
+services unless they actually access them. See
+[`phase-3-backend-context.md`](./phase-3-backend-context.md).
 
 ## Auth Semantics
 

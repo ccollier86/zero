@@ -162,6 +162,13 @@ Use middleware matchers for cross-cutting app policy. `path`, `method`, and
 the configured `auth.userProperties` store, so the same keys can drive admin UI,
 backend policy, and later frontend gates.
 
+App-owned backend handlers receive a lazy `zero` service context. Use canonical
+names in new code: `zero.db`, `zero.auth`, `zero.ai`, `zero.vector`,
+`zero.email`, `zero.storage`, `zero.notifications`, `zero.scheduler`,
+`zero.workflows`, and `zero.observability`. Older aliases still work:
+`zero.syncDB`, `zero.vectors`, `zero.workflowRegistry`, and
+`zero.auth.getTokenService()`.
+
 The core UI primitives and Animate UI wrappers share the same token contract:
 `background`, `card`, `popover`, `muted`, `accent`, `input`, `border`, `ring`,
 and semantic state colors. Keep new components on those tokens, keep ordinary

@@ -234,9 +234,9 @@ Acceptance criteria:
 
 ## Phase 3: Unified Backend Context
 
-Status: planned
+Status: implemented
 
-Standardize app backend context around:
+App backend context is standardized around:
 
 ```ts
 zero.db
@@ -251,12 +251,13 @@ zero.workflows
 zero.observability
 ```
 
-Keep compatibility aliases:
+Compatibility aliases remain supported:
 
 ```ts
 zero.syncDB
 zero.vectors
 zero.workflowRegistry
+zero.auth.getTokenService()
 ```
 
 Acceptance criteria:
@@ -264,8 +265,11 @@ Acceptance criteria:
 1. New examples use canonical names.
 2. Existing apps keep working.
 3. Type hints are clear for nullable optional systems such as AI/vector/storage.
-4. Services are exposed consistently in endpoints, routers, middleware, plugins,
-   actions, jobs, and workflows.
+4. Services are exposed consistently in endpoints, routers, middleware,
+   plugins, raw `createServerRoute()` routes, and server-side jobs/workflows
+   that call `createLazyServerRouteServices()`.
+5. `zero.auth` exposes lazy store/token service helpers, and
+   `zero.observability` exposes runtime/sink/store inspection alongside emitters.
 
 ## Phase 4: Service API Smoothing
 
@@ -491,7 +495,7 @@ the deeper examples.
 
 - [x] Phase 1: Zero-native backend extension APIs.
 - [x] Phase 2: Middleware matchers and metadata policy.
-- [ ] Phase 3: Unified backend `zero` context.
+- [x] Phase 3: Unified backend `zero` context.
 - [ ] Phase 4: Service API smoothing.
 - [ ] Phase 5: Resource and policy API.
 - [ ] Phase 6: Actions.

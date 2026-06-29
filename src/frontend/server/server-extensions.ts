@@ -10,11 +10,13 @@ import type { AnyElysia, MaybePromise } from 'elysia';
 
 import { AuthError, type AuthContext } from '../../auth/types';
 import {
-  createLazyServerRouteServices,
   createServerRoute,
+} from './server-route';
+import {
+  createLazyServerRouteServices,
   getServerRouteServices,
   type ServerRouteServices,
-} from './server-route';
+} from './server-services';
 import {
   evaluateMiddlewareApplicability,
   inheritMatcherAuth,
