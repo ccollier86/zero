@@ -12,6 +12,7 @@ import type {
   ResolvedAuthAccountEmailConfig,
   ResolvedAuthBehaviorConfig,
   ResolvedUserPropertyFieldConfig,
+  UserPropertyEditableBy,
   UserPropertyFieldConfig,
   UserPropertyFieldType,
 } from './types';
@@ -21,6 +22,12 @@ const VALID_PROPERTY_TYPES = new Set<UserPropertyFieldType>([
   'enum',
   'boolean',
   'number',
+]);
+
+const POLICY_TRUSTED_EDITORS = new Set<UserPropertyEditableBy>([
+  'admin',
+  'system',
+  'none',
 ]);
 
 /**
@@ -84,18 +91,35 @@ function normalizeUserProperties(
       throw new Error(`[auth] Enum user property "${key}" must define values.`);
     }
 
+    const editableBy = field.editableBy ?? 'user';
+    const useInPolicies = field.useInPolicies ?? false;
+    if (useInPolicies && !POLICY_TRUSTED_EDITORS.has(editableBy)) {
+      throw new Error(
+        `[auth] User property "${key}" cannot set useInPolicies: true while editableBy is "${editableBy}".`
+      );
+    }
+
     normalized[key] = {
       key,
       type,
       label: field.label,
       values: field.values,
       default: field.default === undefined ? undefined : String(field.default),
-      editableBy: field.editableBy ?? 'user',
+      editableBy,
+      useInPolicies,
       description: field.description,
     };
   }
 
   return normalized;
+}
+
+/**
+ * Return true when a resolved user property can be trusted by authorization
+ * policy. Resource policy uses this instead of checking editability ad hoc.
+ */
+export function isPolicyTrustedUserProperty(field: ResolvedUserPropertyFieldConfig): boolean {
+  return field.useInPolicies && POLICY_TRUSTED_EDITORS.has(field.editableBy);
 }
 
 function inferPropertyType(field: UserPropertyFieldConfig): UserPropertyFieldType {

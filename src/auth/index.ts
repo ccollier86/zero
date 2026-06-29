@@ -7,7 +7,11 @@ export { UserStore } from './user-store';
 export { TokenService } from './token-service';
 export { AuthActionTokenService } from './action-token-service';
 export { AccountEmailService } from './account-email-service';
-export { defineAuthConfig, resolveAuthBehaviorConfig } from './auth-config';
+export {
+  defineAuthConfig,
+  isPolicyTrustedUserProperty,
+  resolveAuthBehaviorConfig,
+} from './auth-config';
 export { UserPropertyService } from './user-property-service';
 
 // ─── Types ────────────────────────────────────────────────────────────────

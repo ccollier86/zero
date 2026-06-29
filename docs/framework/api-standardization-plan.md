@@ -354,11 +354,12 @@ allOf(policyA, policyB)
 ```
 
 Metadata policies must only reference configured, trusted auth user properties.
-Phase 5 should extend `auth.userProperties` with `useInPolicies: true` and
-reject policy use of unknown or self-editable user properties. For example,
-`department` may be used in policy only when it is configured as admin/system
-controlled and explicitly opted into policy use; a user-editable setting such
-as `theme` must not be accepted as an authorization claim.
+`auth.userProperties` now supports `useInPolicies: true` and rejects that flag
+on self-editable properties. The resource policy evaluator must enforce that
+same trust rule. For example, `department` may be used in policy only when it
+is configured as admin/system controlled and explicitly opted into policy use;
+a user-editable setting such as `theme` must not be accepted as an
+authorization claim.
 
 Acceptance criteria:
 

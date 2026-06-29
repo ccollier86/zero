@@ -184,6 +184,7 @@ export default defineAuthConfig({
       label: 'Department',
       values: ['accounting', 'operations', 'management'],
       editableBy: 'admin',
+      useInPolicies: true,
     },
     notificationsEnabled: {
       type: 'boolean',

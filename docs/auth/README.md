@@ -356,6 +356,7 @@ createApp({
         type: 'enum',
         values: ['accounting', 'operations', 'management'],
         editableBy: 'admin',
+        useInPolicies: true,
       },
       notificationsEnabled: {
         type: 'boolean',
@@ -382,10 +383,10 @@ Unknown property keys remain allowed by default for compatibility. Set
 `strictUserProperties: true` to reject unknown current-user/admin property
 writes through the platform routes.
 
-Planned resource policy integration will add an explicit `useInPolicies: true`
-flag for configured properties that may be used in backend authorization
-policy. That flag should only be valid for admin/system/none-editable fields,
-not user-editable preferences such as `theme` or `notificationsEnabled`. See
+Set `useInPolicies: true` only on fields that backend authorization policies
+may use as trusted claims. Zero rejects this flag on `editableBy: 'user'`
+fields, so self-editable preferences such as `theme` or
+`notificationsEnabled` cannot accidentally become access-control inputs. See
 [Phase 5: Resource And Policy API Plan](../framework/phase-5-resource-policy-plan.md).
 
 `GET /auth/config` exposes only fields with `editableBy: 'user'` so public

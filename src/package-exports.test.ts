@@ -49,7 +49,7 @@ async function buildSmokeEntry(fileName: string, source: string, target: 'bun' |
 
 const serverSmokeSource = `
 import { AIService } from '@zero/framework/ai';
-import { createAuthPlugin } from '@zero/framework/auth';
+import { createAuthPlugin, isPolicyTrustedUserProperty } from '@zero/framework/auth';
 import { runPlatformDoctor } from '@zero/framework/doctor';
 import { EmailService } from '@zero/framework/email';
 import { Migrator } from '@zero/framework/migrations';
@@ -75,6 +75,7 @@ export const serverSymbols = {
   AIService,
   createApp,
   createAuthPlugin,
+  isPolicyTrustedUserProperty,
   createNotificationPlugin,
   createRoomPlugin,
   createSchedulerPlugin,

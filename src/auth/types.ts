@@ -148,6 +148,11 @@ export interface UserPropertyFieldConfig {
   default?: string | number | boolean;
   /** Who may update this field through platform routes. Default: 'user'. */
   editableBy?: UserPropertyEditableBy;
+  /**
+   * Whether backend authorization policies may use this property as a trusted
+   * claim. Only admin/system/none-editable fields may opt in.
+   */
+  useInPolicies?: boolean;
   /** Optional admin/profile UI helper text. */
   description?: string;
 }
@@ -160,6 +165,7 @@ export interface ResolvedUserPropertyFieldConfig {
   values?: string[];
   default?: string;
   editableBy: UserPropertyEditableBy;
+  useInPolicies: boolean;
   description?: string;
 }
 

@@ -156,7 +156,11 @@ export { createAuthPlugin, getAuthStore, getTokenService } from '../auth/auth.pl
 export { createAuthMiddleware } from '../auth/auth.middleware';
 export { AccountEmailService } from '../auth/account-email-service';
 export { AuthActionTokenService } from '../auth/action-token-service';
-export { defineAuthConfig, resolveAuthBehaviorConfig } from '../auth/auth-config';
+export {
+  defineAuthConfig,
+  isPolicyTrustedUserProperty,
+  resolveAuthBehaviorConfig,
+} from '../auth/auth-config';
 export { UserPropertyService } from '../auth/user-property-service';
 export { AuthError, AUTH_DEFAULTS } from '../auth/types';
 export type {

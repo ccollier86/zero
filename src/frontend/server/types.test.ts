@@ -62,6 +62,7 @@ describe('resolveConfig', () => {
             type: 'enum',
             values: ['accounting', 'operations'],
             editableBy: 'admin',
+            useInPolicies: true,
           },
         },
       },
@@ -76,6 +77,7 @@ describe('resolveConfig', () => {
         'accounting',
         'operations',
       ]);
+      expect(config.auth.userProperties?.department.useInPolicies).toBe(true);
     }
   });
 

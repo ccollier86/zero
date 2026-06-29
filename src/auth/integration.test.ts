@@ -661,6 +661,7 @@ describe('Auth Plugin — Registration Policy And Configured Properties', () => 
           values: ['free', 'pro'],
           default: 'free',
           editableBy: 'admin',
+          useInPolicies: true,
         },
         notificationsEnabled: {
           type: 'boolean',
@@ -692,6 +693,7 @@ describe('Auth Plugin — Registration Policy And Configured Properties', () => 
       const publicConfig = await requestJson(local.url, 'GET', '/auth/config');
       expect(publicConfig.status).toBe(200);
       expect(publicConfig.data.userProperties.notificationsEnabled.type).toBe('boolean');
+      expect(publicConfig.data.userProperties.notificationsEnabled.useInPolicies).toBe(false);
       expect(publicConfig.data.userProperties.plan).toBeUndefined();
 
       const adminConfig = await requestJson(
@@ -704,6 +706,7 @@ describe('Auth Plugin — Registration Policy And Configured Properties', () => 
       expect(adminConfig.status).toBe(200);
       expect(adminConfig.data.registration.publicRegistrationEnabled).toBe(false);
       expect(adminConfig.data.userProperties.plan.values).toEqual(['free', 'pro']);
+      expect(adminConfig.data.userProperties.plan.useInPolicies).toBe(true);
 
       const created = await requestJson(
         local.url,

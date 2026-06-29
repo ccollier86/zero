@@ -180,6 +180,7 @@ createApp({
         type: 'enum',
         values: ['accounting', 'operations'],
         editableBy: 'admin',
+        useInPolicies: true,
       },
     },
   },

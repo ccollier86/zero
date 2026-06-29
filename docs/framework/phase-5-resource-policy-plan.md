@@ -1,6 +1,6 @@
 # Phase 5: Resource And Policy API Plan
 
-Status: planned
+Status: planned, slice 1 implemented
 
 Phase 5 introduces a high-level resource contract for common data-driven apps.
 The goal is to let app code declare tables, actions, and authorization policy
@@ -46,7 +46,7 @@ usage remain supported.
 Metadata policies can only use trusted auth user properties.
 
 Current auth config already has typed `userProperties` and `editableBy`.
-Phase 5 should extend that config with a policy trust flag:
+Phase 5 slice 1 extends that config with a policy trust flag:
 
 ```ts
 auth: {
@@ -178,11 +178,11 @@ Files likely involved:
 
 Changes:
 
-1. Add `useInPolicies?: boolean` to authored user property config.
-2. Add `useInPolicies: boolean` to resolved config.
-3. Normalize default to `false`.
-4. Reject `useInPolicies: true` when `editableBy: 'user'`.
-5. Keep public config exposing only user-editable fields; do not leak
+1. Done: add `useInPolicies?: boolean` to authored user property config.
+2. Done: add `useInPolicies: boolean` to resolved config.
+3. Done: normalize default to `false`.
+4. Done: reject `useInPolicies: true` when `editableBy: 'user'`.
+5. Done: keep public config exposing only user-editable fields; do not leak
    policy-only metadata to public clients.
 
 ### Existing Middleware Policy
@@ -265,7 +265,8 @@ Doctor should check:
 ## Implementation Slices
 
 1. **Trusted User Property Contract**
-   Add `useInPolicies`, normalization, validation, and docs/tests.
+   Implemented. Added `useInPolicies`, normalization, validation, docs, and
+   tests.
 
 2. **Resource Policy Core**
    Add policy helper types, constructors, validation, and evaluator unit tests.

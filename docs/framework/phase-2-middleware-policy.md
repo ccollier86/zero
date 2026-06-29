@@ -52,6 +52,7 @@ auth: {
       values: ['accounting', 'operations'],
       default: 'operations',
       editableBy: 'admin',
+      useInPolicies: true,
     },
     notificationsEnabled: {
       type: 'boolean',
