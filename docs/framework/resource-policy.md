@@ -1,9 +1,9 @@
 # Resource Policy Core
 
 Zero resource policy is the framework-independent authorization core for the
-upcoming resource API. It is available today for server-side code and will be
-reused by generated CRUD routes, `/api/data`, sync mutations, and doctor checks
-in later Phase 5 slices.
+resource API. It is available today for server-side code and registered
+resource definitions. Generated CRUD routes, `/api/data`, sync mutations, and
+doctor checks will reuse this contract in later Phase 5 slices.
 
 Import from the server surface:
 
@@ -12,7 +12,9 @@ import {
   adminOnly,
   allOf,
   anyOf,
+  defineResource,
   evaluateResourcePolicy,
+  getResourceRegistry,
   metadataPolicy,
   ownerPolicy,
   validateResourcePolicy,
@@ -22,8 +24,76 @@ import {
 Or from the focused subpath:
 
 ```ts
-import { ownerPolicy } from '@zero/framework/resources';
+import { defineResource, ownerPolicy } from '@zero/framework/resources';
 ```
+
+## Resource Definitions
+
+Declare app-owned resources inline in `zero.config.ts` or in conventional
+`server/resources` modules:
+
+```ts
+// server/resources/tickets.ts
+import {
+  adminOnly,
+  anyOf,
+  defineResource,
+  metadataPolicy,
+  ownerPolicy,
+} from '@zero/framework/server';
+
+export default defineResource({
+  table: 'tickets',
+  primaryKey: 'ticket_id',
+  actions: ['list', 'get', 'create', 'update', 'delete'],
+  policy: {
+    list: metadataPolicy({ department: ['support', 'management'] }),
+    get: anyOf(
+      ownerPolicy({ userField: 'created_by' }),
+      metadataPolicy({ department: ['support', 'management'] }),
+      adminOnly()
+    ),
+    create: ownerPolicy({ userField: 'created_by', create: 'stamp' }),
+    update: anyOf(ownerPolicy({ userField: 'created_by' }), adminOnly()),
+    delete: adminOnly(),
+  },
+});
+```
+
+`createApp()` loads `server/resources` by default and also accepts inline
+definitions:
+
+```ts
+createApp({
+  db: { mode: 'memory' },
+  tables,
+  resources: [
+    defineResource({
+      table: 'tickets',
+      policy: ownerPolicy({ userField: 'created_by' }),
+    }),
+  ],
+});
+```
+
+Resource modules may export `default`, `resource`, or `resources`.
+Set `serverResourcesDir: false` to disable filesystem discovery.
+
+Registration validates:
+
+- resource names and backing tables are unique;
+- the table exists in `createApp({ tables })`;
+- the configured or inferred primary key matches the table schema;
+- every declared action has a policy;
+- nested policy validation passes, including trusted metadata checks.
+
+Read registered resources from server code:
+
+```ts
+const tickets = getResourceRegistry().getByTable('tickets');
+```
+
+App-owned route handlers can also use `zero.resources`.
 
 ## Trusted Metadata
 
@@ -143,6 +213,6 @@ Validation currently checks:
 
 ## Current Limits
 
-This document covers the policy core only. Phase 5 follow-up slices will add
-`defineResource()`, a resource registry, generated CRUD routes, `/api/data`
-integration, sync policy integration, and doctor checks.
+This document covers resource definitions and the policy core. Phase 5
+follow-up slices will add generated CRUD routes, `/api/data` integration, sync
+policy integration, and doctor checks.

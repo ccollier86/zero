@@ -7,6 +7,7 @@ import { resolveAIConfig } from '../../ai/ai-env';
 import type { AIConfig, ResolvedAIConfig } from '../../ai/ai-types';
 import { resolveVectorConfig } from '../../vector/vector-config';
 import type { ResolvedVectorConfig, VectorConfig } from '../../vector/vector-types';
+import type { ResourceDefinition } from '../../resources';
 
 // ─── App Configuration ─────────────────────────────────────────────────────
 
@@ -150,6 +151,14 @@ export interface AppConfig {
   syncPolicy?: SyncPolicy;
 
   /**
+   * App-owned resource definitions.
+   *
+   * Resource definitions are validated at startup and later reused by generated
+   * CRUD, `/api/data`, sync policy, and doctor integrations.
+   */
+  resources?: readonly ResourceDefinition[];
+
+  /**
    * Default sync behavior for tables that do not explicitly declare `_sync`.
    *
    * By default omitted mode is `auto`: startup counts rows, keeps small tables
@@ -201,6 +210,14 @@ export interface AppConfig {
    * callbacks, or arrays of routes. Set to false to disable route discovery.
    */
   serverRoutesDir?: string | false;
+
+  /**
+   * App-owned Zero resource module directory. Default: './server/resources'.
+   *
+   * Modules may export `defineResource()` output or arrays from default,
+   * resource, or resources. Set to false to disable resource discovery.
+   */
+  serverResourcesDir?: string | false;
 
   /** Port to listen on. Default: 3000 */
   port?: number;
@@ -257,6 +274,7 @@ export interface ResolvedConfig {
   vector: false | ResolvedVectorConfig;
   stateSync: boolean;
   syncPolicy?: SyncPolicy;
+  resources: readonly ResourceDefinition[];
   storageDir: string;
   appDir: string;
   outDir: string;
@@ -265,6 +283,7 @@ export interface ResolvedConfig {
   serverMiddlewareDir: string | false;
   serverEndpointsDir: string | false;
   serverRoutesDir: string | false;
+  serverResourcesDir: string | false;
   port: number;
   migrate: boolean;
   observability?: ObservabilityConfig | false;
@@ -352,6 +371,7 @@ export function resolveConfig(
     vector,
     stateSync,
     syncPolicy: config.syncPolicy,
+    resources: config.resources ?? [],
     syncDefaults,
     storageDir: config.storageDir ?? '.storage',
     appDir: config.appDir ?? './app',
@@ -361,6 +381,7 @@ export function resolveConfig(
     serverMiddlewareDir: config.serverMiddlewareDir ?? './server/middleware',
     serverEndpointsDir: config.serverEndpointsDir ?? './server/endpoints',
     serverRoutesDir: config.serverRoutesDir ?? './server/routes',
+    serverResourcesDir: config.serverResourcesDir ?? './server/resources',
     port: config.port ?? 3000,
     migrate: config.migrate ?? true,
     observability: config.observability,

@@ -56,15 +56,17 @@ import { Migrator } from '@zero/framework/migrations';
 import { createNotificationPlugin } from '@zero/framework/notifications';
 import { OBS_CODES } from '@zero/framework/observability';
 import { OBS_CODES as PURE_OBS_CODES } from '@zero/framework/observability/codes';
-import { ownerPolicy as resourcesOwnerPolicy } from '@zero/framework/resources';
+import { defineResource as defineSubpathResource, ownerPolicy as resourcesOwnerPolicy } from '@zero/framework/resources';
 import { createRoomPlugin } from '@zero/framework/rooms';
 import { createSchedulerPlugin } from '@zero/framework/scheduler';
 import { defineTable, encodeFieldValue, field } from '@zero/framework/schema';
 import {
   adminOnly,
   createApp,
+  defineResource,
   getAI,
   getEmailService,
+  getResourceRegistry,
   getVectorStore,
   getWorkflowService,
   metadataPolicy,
@@ -87,12 +89,15 @@ export const serverSymbols = {
   createStoragePlugin,
   createSyncPlugin,
   createVectorPlugin,
+  defineResource,
+  defineSubpathResource,
   defineTable,
   EmailService,
   field,
   encodeFieldValue,
   getAI,
   getEmailService,
+  getResourceRegistry,
   getVectorStore,
   getWorkflowService,
   metadataPolicy,

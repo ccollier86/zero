@@ -39,6 +39,8 @@ import type { StorageService } from '../../storage';
 import { getStorageService } from '../../storage';
 import type { WorkflowRegistry, WorkflowService } from '../../workflows';
 import { getWorkflowRegistry, getWorkflowService } from '../../workflows';
+import type { ResourceRegistry } from '../../resources';
+import { getResourceRegistry } from '../../resources';
 
 /** Auth services exposed under `zero.auth` in app-owned backend code. */
 export interface ServerAuthServices {
@@ -112,6 +114,8 @@ export interface ServerRouteServices {
   readonly workflows: WorkflowService | null;
   /** Backwards-compatible alias for workflow registration. */
   readonly workflowRegistry: WorkflowRegistry | null;
+  /** Registered app resource definitions and policy metadata. */
+  readonly resources: ResourceRegistry;
   /** Observability emitters, sinks, and runtime inspection. */
   readonly observability: ServerObservabilityServices;
 }
@@ -176,6 +180,9 @@ function createServerRouteServices(): ServerRouteServices {
     },
     get workflowRegistry() {
       return getWorkflowRegistry();
+    },
+    get resources() {
+      return getResourceRegistry();
     },
     observability: createServerObservabilityServices(),
   };

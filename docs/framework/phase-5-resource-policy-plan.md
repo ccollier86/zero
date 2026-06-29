@@ -1,6 +1,6 @@
 # Phase 5: Resource And Policy API Plan
 
-Status: planned, slices 1-2 implemented
+Status: planned, slices 1-3 implemented
 
 Phase 5 introduces a high-level resource contract for common data-driven apps.
 The goal is to let app code declare tables, actions, and authorization policy
@@ -274,7 +274,9 @@ Doctor should check:
    fail-closed behavior, public exports, and evaluator unit tests.
 
 3. **Resource Definition And Registry**
-   Add `defineResource()`, resource registry, loader hooks, and validation.
+   Implemented. Added `defineResource()`, inline `createApp({ resources })`,
+   `server/resources` discovery, process resource registry, `zero.resources`,
+   and registration-time validation for table/pk/action/policy issues.
 
 4. **CRUD Generation**
    Generate safe resource routes using existing Zero endpoint/router machinery.

@@ -26,6 +26,11 @@ import { applyTableSyncResolution, resolveTableSyncModes } from './sync-mode-res
 import { Migrator, migrations } from '../../migrations';
 import { OBS_CODES, configureObservability, createObservabilityPlugin, emitPlatformCode } from '../../observability';
 import { createVectorPlugin } from '../../vector';
+import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
+import {
+  configureResourceRegistry,
+  loadResourceDefinitions,
+} from '../../resources';
 
 // ─── App Factory ───────────────────────────────────────────────────────────
 
@@ -270,7 +275,17 @@ export async function createApp(userConfig: AppConfig) {
     })
   );
 
-  // 6.6. App-owned backend extensions — mounted before health and file-router catch-all
+  // 6.6. App-owned resources — validate definitions before app routes can use them
+  const loadedResources = await loadResourceDefinitions({
+    resourcesDir: config.serverResourcesDir,
+  });
+  configureResourceRegistry({
+    resources: [...config.resources, ...loadedResources],
+    tables: config.tables,
+    authConfig: resolveAuthBehaviorConfig(config.auth === false ? {} : config.auth),
+  });
+
+  // 6.7. App-owned backend extensions — mounted before health and file-router catch-all
   const serverRoutePlugins = await loadServerRoutePlugins({
     extensionDirs: [
       { kind: 'plugins', dir: config.serverPluginsDir },

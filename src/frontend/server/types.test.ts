@@ -44,6 +44,7 @@ describe('resolveConfig', () => {
     expect(config.serverMiddlewareDir).toBe('./server/middleware');
     expect(config.serverEndpointsDir).toBe('./server/endpoints');
     expect(config.serverRoutesDir).toBe('./server/routes');
+    expect(config.serverResourcesDir).toBe('./server/resources');
   });
 
   test('preserves auth registration and user property config', () => {

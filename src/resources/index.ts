@@ -1,4 +1,31 @@
 export {
+  RESOURCE_ACTIONS,
+  ZERO_RESOURCE_DEFINITION_KIND,
+  defineResource,
+  isResourceDefinition,
+  isResourcePolicy,
+} from './resource-definition';
+
+export {
+  ResourceRegistry,
+  ResourceRegistryError,
+  configureResourceRegistry,
+  getResourceRegistry,
+  validateResourceDefinitions,
+} from './resource-registry';
+
+export {
+  ResourceLoaderError,
+  collectResourceFiles,
+  loadResourceDefinitions,
+} from './resource-loader';
+
+export {
+  inferTablePrimaryKey,
+  tableHasColumn,
+} from './resource-schema';
+
+export {
   adminOnly,
   allOf,
   anyOf,
@@ -11,6 +38,24 @@ export {
   readOnly,
   validateResourcePolicy,
 } from './resource-policy';
+
+export type {
+  ResourceDefinition,
+  ResourceDefinitionOptions,
+  ResourcePolicyInput,
+} from './resource-definition';
+
+export type {
+  ConfigureResourceRegistryOptions,
+  RegisteredResourceDefinition,
+  ResourceRegistryIssue,
+  ResourceRegistryIssueCode,
+  ResourceRegistryValidationContext,
+} from './resource-registry';
+
+export type {
+  ResourceLoaderOptions,
+} from './resource-loader';
 
 export type {
   CustomResourcePolicyCallback,

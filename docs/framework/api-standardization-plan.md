@@ -318,7 +318,7 @@ Implementation details live in
 
 ## Phase 5: Resource And Policy API
 
-Status: in progress; policy core implemented
+Status: in progress; policy core and resource registry implemented
 
 Add a high-level resource abstraction for common data-driven apps:
 
@@ -361,11 +361,12 @@ is configured as admin/system controlled and explicitly opted into policy use;
 a user-editable setting such as `theme` must not be accepted as an
 authorization claim.
 
-The framework now ships the policy core through `@zero/framework/server` and
-`@zero/framework/resources`: policy helpers, metadata validation, owner list
-constraints, create stamping, `anyOf`/`allOf` composition, and
-`evaluateResourcePolicy()`. Resource declarations, generated CRUD, `/api/data`,
-sync, and doctor integrations are still planned follow-up slices.
+The framework now ships resource definitions and the policy core through
+`@zero/framework/server` and `@zero/framework/resources`: `defineResource()`,
+`server/resources` discovery, a process resource registry, policy helpers,
+metadata validation, owner list constraints, create stamping, `anyOf`/`allOf`
+composition, and `evaluateResourcePolicy()`. Generated CRUD, `/api/data`, sync,
+and doctor integrations are still planned follow-up slices.
 
 Acceptance criteria:
 

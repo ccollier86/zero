@@ -92,6 +92,8 @@ export const OBS_CODES = {
   VECTOR_OPERATION_FAILED: code('vector', 'operation.failed', 'error', 'Vector operation failed.'),
 
   RESOURCE_POLICY_EVALUATION_FAILED: code('resource', 'policy.evaluation_failed', 'warn', 'Resource policy evaluation failed; request was denied.'),
+  RESOURCE_REGISTRY_READY: code('resource', 'registry.ready', 'info', 'Resource registry is ready.'),
+  RESOURCE_LOAD_FAILED: code('resource', 'load.failed', 'error', 'App-owned resource module failed to load.'),
 
   STORAGE_STARTED: code('storage', 'started', 'info', 'Storage plugin started.'),
   STORAGE_STOPPED: code('storage', 'stopped', 'info', 'Storage plugin stopped.'),

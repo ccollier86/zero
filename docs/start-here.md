@@ -150,11 +150,13 @@ Use the generated `server/` folders for app-owned backend code:
 | `server/middleware/` | Named app middleware created with `defineMiddleware()` and structured `matcher` policy. |
 | `server/endpoints/` | Single HTTP endpoints created with `defineEndpoint()`. |
 | `server/routes/` | Grouped `defineRouter()` routes and raw Elysia escape-hatch plugins. |
+| `server/resources/` | Resource declarations created with `defineResource()` for future CRUD/data/sync integration. |
 
-Zero loads those folders in that order and ignores missing folders. Endpoint,
-router, middleware, and plugin helpers are exported from
-`@zero/framework/server`; raw Elysia plugins remain supported when a route needs
-framework-level control.
+Zero loads backend extension folders in that order and ignores missing folders.
+Resource definitions are loaded before backend extensions so routes can inspect
+`zero.resources`. Endpoint, router, middleware, plugin, and resource helpers are
+exported from `@zero/framework/server`; raw Elysia plugins remain supported when
+a route needs framework-level control.
 
 Use middleware matchers for cross-cutting app policy. `path`, `method`, and
 `predicate` decide whether middleware applies; `auth`, `role`, and
@@ -165,17 +167,18 @@ authorization-grade properties with `useInPolicies: true`; Zero rejects that
 flag on self-editable user preferences.
 
 For server-side resource authorization, use the policy core exported from
-`@zero/framework/server`: `ownerPolicy()`, `metadataPolicy()`, `adminOnly()`,
-`anyOf()`, `allOf()`, `validateResourcePolicy()`, and
-`evaluateResourcePolicy()`. The core is ready for custom server code today;
-generated CRUD, `/api/data`, sync, and doctor integration are being layered on
+`@zero/framework/server`: `defineResource()`, `ownerPolicy()`,
+`metadataPolicy()`, `adminOnly()`, `anyOf()`, `allOf()`,
+`validateResourcePolicy()`, and `evaluateResourcePolicy()`. Resource
+definitions can live in `server/resources` or `createApp({ resources })`.
+Generated CRUD, `/api/data`, sync, and doctor integration are being layered on
 in later resource slices.
 
 App-owned backend handlers receive a lazy `zero` service context. Use canonical
 names in new code: `zero.db`, `zero.auth`, `zero.ai`, `zero.vector`,
 `zero.email`, `zero.storage`, `zero.notifications`, `zero.scheduler`,
-`zero.workflows`, and `zero.observability`. Older aliases still work:
-`zero.syncDB`, `zero.vectors`, `zero.workflowRegistry`, and
+`zero.workflows`, `zero.resources`, and `zero.observability`. Older aliases
+still work: `zero.syncDB`, `zero.vectors`, `zero.workflowRegistry`, and
 `zero.auth.getTokenService()`.
 
 Inside those services, prefer the small standard method vocabulary:
