@@ -11,6 +11,14 @@ import { Elysia } from 'elysia';
 import { createSyncPlugin, getSyncDB } from './sync.plugin';
 import { createDefaultSyncPolicy } from './sync-policy';
 import type { ServerMessage, SyncTokenVerifier } from './types';
+import {
+  adminOnly,
+  anyOf,
+  defineResource,
+  ownerPolicy,
+  ResourceRegistry,
+  ResourceSyncPolicyService,
+} from '../resources';
 
 interface TestApp {
   stop(): void;
@@ -92,6 +100,50 @@ function createAuthFilteredApp() {
             return true;
           },
         },
+      })
+    )
+    .listen(0);
+}
+
+function createResourceSyncApp() {
+  const verifier = createVerifier();
+  const tables = {
+    tickets: {
+      id: 'text primary key',
+      title: 'text not null',
+      owner_id: 'text not null',
+    },
+  };
+  const registry = new ResourceRegistry();
+  registry.register(
+    defineResource({
+      table: 'tickets',
+      policy: {
+        list: anyOf(adminOnly(), ownerPolicy({ userField: 'owner_id' })),
+        get: anyOf(adminOnly(), ownerPolicy({ userField: 'owner_id' })),
+        create: anyOf(adminOnly(), ownerPolicy({ userField: 'owner_id' })),
+        update: anyOf(adminOnly(), ownerPolicy({ userField: 'owner_id' })),
+        delete: adminOnly(),
+      },
+    }),
+    {
+      tables,
+      authConfig: { userProperties: {} },
+    }
+  );
+
+  return new Elysia()
+    .use(
+      createSyncPlugin({
+        db: { mode: 'memory', ringBufferDepth: 100 },
+        tables,
+        auth: {
+          getTokenVerifier: () => verifier,
+        },
+        resourcePolicy: new ResourceSyncPolicyService({
+          registry,
+          authConfig: { userProperties: {} },
+        }),
       })
     )
     .listen(0);
@@ -334,6 +386,254 @@ describe('sync policy WebSocket integration', () => {
     }
 
     secondUser.close();
+    admin.close();
+  });
+
+  test('filters row-constrained resource snapshots and live changes per connection', async () => {
+    const testApp = createResourceSyncApp();
+    app = testApp;
+    const db = getSyncDB();
+
+    expect(db).not.toBeNull();
+    db!.insert('tickets', {
+      id: 'user-ticket',
+      title: 'User Ticket',
+      owner_id: 'user-1',
+    });
+    db!.insert('tickets', {
+      id: 'other-ticket',
+      title: 'Other Ticket',
+      owner_id: 'user-2',
+    });
+
+    const user = await connectWS(getUrl(testApp, 'user-token'));
+    user.ws.send(
+      JSON.stringify({
+        type: 'sync.subscribe',
+        tables: ['tickets'],
+        snapshot: ['tickets'],
+        lastSeq: 0,
+      })
+    );
+
+    const userSnapshot = await user.waitForMessage((msg) => msg.type === 'sync.snapshot');
+    expect(userSnapshot.type).toBe('sync.snapshot');
+    if (userSnapshot.type === 'sync.snapshot') {
+      expect(userSnapshot.tables.tickets).toEqual({
+        'user-ticket': {
+          id: 'user-ticket',
+          title: 'User Ticket',
+          owner_id: 'user-1',
+        },
+      });
+    }
+
+    const admin = await connectWS(getUrl(testApp, 'admin-token'));
+    admin.ws.send(
+      JSON.stringify({
+        type: 'sync.subscribe',
+        tables: ['tickets'],
+        snapshot: ['tickets'],
+        lastSeq: 0,
+      })
+    );
+
+    const adminSnapshot = await admin.waitForMessage((msg) => msg.type === 'sync.snapshot');
+    expect(adminSnapshot.type).toBe('sync.snapshot');
+    if (adminSnapshot.type === 'sync.snapshot') {
+      expect(Object.keys(adminSnapshot.tables.tickets ?? {}).sort()).toEqual([
+        'other-ticket',
+        'user-ticket',
+      ]);
+    }
+
+    db!.insert('tickets', {
+      id: 'new-user-ticket',
+      title: 'New User Ticket',
+      owner_id: 'user-1',
+    });
+    const visibleInsert = await user.waitForMessage(
+      (msg) => msg.type === 'sync.change' && msg.rowId === 'new-user-ticket'
+    );
+    expect(visibleInsert.type).toBe('sync.change');
+    if (visibleInsert.type === 'sync.change') {
+      expect(visibleInsert.op).toBe('INSERT');
+      expect(visibleInsert.row?.owner_id).toBe('user-1');
+    }
+
+    db!.update('tickets', 'new-user-ticket', { owner_id: 'user-2' });
+    const movedOut = await user.waitForMessage(
+      (msg) =>
+        msg.type === 'sync.change' &&
+        msg.rowId === 'new-user-ticket' &&
+        msg.op === 'DELETE'
+    );
+    expect(movedOut.type).toBe('sync.change');
+    if (movedOut.type === 'sync.change') {
+      expect(movedOut.op).toBe('DELETE');
+      expect(movedOut.row).toBeNull();
+    }
+
+    db!.update('tickets', 'other-ticket', { owner_id: 'user-1' });
+    const movedIn = await user.waitForMessage(
+      (msg) => msg.type === 'sync.change' && msg.rowId === 'other-ticket'
+    );
+    expect(movedIn.type).toBe('sync.change');
+    if (movedIn.type === 'sync.change') {
+      expect(movedIn.op).toBe('UPDATE');
+      expect(movedIn.row?.owner_id).toBe('user-1');
+    }
+
+    user.close();
+    admin.close();
+  });
+
+  test('filters row-constrained resource reconnect catchup', async () => {
+    const testApp = createResourceSyncApp();
+    app = testApp;
+    const db = getSyncDB();
+
+    expect(db).not.toBeNull();
+    db!.insert('tickets', {
+      id: 'user-ticket',
+      title: 'User Ticket',
+      owner_id: 'user-1',
+    });
+
+    const first = await connectWS(getUrl(testApp, 'user-token'));
+    first.ws.send(
+      JSON.stringify({
+        type: 'sync.subscribe',
+        tables: ['tickets'],
+        snapshot: ['tickets'],
+        lastSeq: 0,
+      })
+    );
+
+    const snapshot = await first.waitForMessage((msg) => msg.type === 'sync.snapshot');
+    expect(snapshot.type).toBe('sync.snapshot');
+    if (snapshot.type !== 'sync.snapshot') throw new Error('Expected snapshot');
+    first.close();
+
+    db!.insert('tickets', {
+      id: 'after-user',
+      title: 'After User',
+      owner_id: 'user-1',
+    });
+    db!.insert('tickets', {
+      id: 'after-other',
+      title: 'After Other',
+      owner_id: 'user-2',
+    });
+    db!.update('tickets', 'user-ticket', { owner_id: 'user-2' });
+
+    const second = await connectWS(getUrl(testApp, 'user-token'));
+    second.ws.send(
+      JSON.stringify({
+        type: 'sync.subscribe',
+        tables: ['tickets'],
+        snapshot: ['tickets'],
+        lastSeq: snapshot.seq,
+      })
+    );
+
+    const catchup = await second.waitForMessage((msg) => msg.type === 'sync.catchup');
+    expect(catchup.type).toBe('sync.catchup');
+    if (catchup.type === 'sync.catchup') {
+      expect(catchup.changes.map((change) => ({
+        rowId: change.rowId,
+        op: change.op,
+        owner: change.row?.owner_id,
+      }))).toEqual([
+        { rowId: 'after-user', op: 'INSERT', owner: 'user-1' },
+        { rowId: 'user-ticket', op: 'DELETE', owner: undefined },
+      ]);
+    }
+
+    second.close();
+  });
+
+  test('enforces resource policies on direct sync mutations', async () => {
+    const testApp = createResourceSyncApp();
+    app = testApp;
+    const db = getSyncDB();
+
+    expect(db).not.toBeNull();
+    db!.insert('tickets', {
+      id: 'other-ticket',
+      title: 'Other Ticket',
+      owner_id: 'user-2',
+    });
+
+    const user = await connectWS(getUrl(testApp, 'user-token'));
+    user.ws.send(
+      JSON.stringify({
+        type: 'sync.mutate',
+        ref: 'create-ticket',
+        table: 'tickets',
+        op: 'INSERT',
+        row: {
+          id: 'created-ticket',
+          title: 'Created Ticket',
+          owner_id: 'attacker-id',
+        },
+      })
+    );
+
+    const createAck = await user.waitForMessage(
+      (msg) => msg.type === 'sync.ack' && msg.ref === 'create-ticket'
+    );
+    expect(createAck.type).toBe('sync.ack');
+    if (createAck.type === 'sync.ack') {
+      expect(createAck.ok).toBe(true);
+    }
+    expect(db!.get('tickets', 'created-ticket')?.owner_id).toBe('user-1');
+
+    user.ws.send(
+      JSON.stringify({
+        type: 'sync.mutate',
+        ref: 'update-other',
+        table: 'tickets',
+        op: 'UPDATE',
+        rowId: 'other-ticket',
+        row: { title: 'Should Not Update' },
+      })
+    );
+
+    const deniedUpdate = await user.waitForMessage(
+      (msg) => msg.type === 'sync.ack' && msg.ref === 'update-other'
+    );
+    expect(deniedUpdate).toMatchObject({
+      type: 'sync.ack',
+      ref: 'update-other',
+      seq: null,
+      ok: false,
+      error: 'Forbidden',
+    });
+    expect(db!.get('tickets', 'other-ticket')?.title).toBe('Other Ticket');
+
+    const admin = await connectWS(getUrl(testApp, 'admin-token'));
+    admin.ws.send(
+      JSON.stringify({
+        type: 'sync.mutate',
+        ref: 'admin-update',
+        table: 'tickets',
+        op: 'UPDATE',
+        rowId: 'other-ticket',
+        row: { title: 'Admin Updated' },
+      })
+    );
+
+    const adminAck = await admin.waitForMessage(
+      (msg) => msg.type === 'sync.ack' && msg.ref === 'admin-update'
+    );
+    expect(adminAck.type).toBe('sync.ack');
+    if (adminAck.type === 'sync.ack') {
+      expect(adminAck.ok).toBe(true);
+    }
+    expect(db!.get('tickets', 'other-ticket')?.title).toBe('Admin Updated');
+
+    user.close();
     admin.close();
   });
 });

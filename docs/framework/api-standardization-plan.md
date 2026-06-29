@@ -318,7 +318,7 @@ Implementation details live in
 
 ## Phase 5: Resource And Policy API
 
-Status: in progress; policy core, resource registry, generated CRUD routes, and `/api/data` policy implemented
+Status: in progress; policy core, resource registry, generated CRUD routes, `/api/data` policy, and WebSocket sync policy implemented
 
 Add a high-level resource abstraction for common data-driven apps:
 
@@ -331,15 +331,21 @@ defineResource({
 });
 ```
 
-Resource definitions can produce generated CRUD routes and protect `/api/data`
-lazy reads today. They will later feed the remaining integrations:
+Resource definitions can produce generated CRUD routes, protect `/api/data`
+lazy reads, and enforce WebSocket sync read/mutation policy today. They will
+later feed frontend and diagnostics integrations.
+
+Implemented server integrations:
 
 1. Safe CRUD endpoints.
 2. `/api/data` query policy.
-3. Sync policy.
-4. Frontend hooks.
-5. Default DataTable/MasterDetail wiring.
-6. Doctor checks for indexes, primary keys, and policy gaps.
+3. WebSocket sync read/mutation policy.
+
+Remaining integrations:
+
+1. Frontend hooks.
+2. Default DataTable/MasterDetail wiring.
+3. Doctor checks for indexes, primary keys, and policy gaps.
 
 Policy presets should include:
 
@@ -368,8 +374,11 @@ The framework now ships resource definitions and the policy core through
 metadata validation, owner list constraints, create stamping, `anyOf`/`allOf`
 composition, `evaluateResourcePolicy()`, generated CRUD routes mounted at
 `/api/resources` by default, and registered-resource policy enforcement for
-`/api/data` lazy reads. Sync and doctor integrations are still planned follow-up
-slices.
+`/api/data` lazy reads and WebSocket sync. Sync allows unconstrained resource
+list policies through the normal fast path, applies row filters for
+row-constrained resource lists, and enforces resource create/update/delete
+policy for direct `sync.mutate` writes. Doctor integration is still a planned
+follow-up slice.
 
 Acceptance criteria:
 

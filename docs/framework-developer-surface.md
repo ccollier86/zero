@@ -137,7 +137,7 @@ composition, and startup behavior.
 | System | How it appears |
 | --- | --- |
 | ReactiveDB | Always created by sync plugin; app tables come from `tables`. |
-| WebSocket sync | Always mounted at `/sync`. Auth-aware when auth is enabled. |
+| WebSocket sync | Always mounted at `/sync`. Auth-aware and resource-policy-aware when auth/resources are enabled. |
 | Auth | Mounted when `auth !== false`; adds `/auth/*`, request helpers, and protected page redirects. |
 | Observability | Mounted by default; exposes protected Zero observability routes. |
 | AI | Mounted when `ai !== false`; decorates Elysia context with `ai` and exposes optional status endpoint. |
@@ -422,6 +422,13 @@ const events = useDataPage('events', {
 
 Auth and sync policy checks happen server-side. Frontend gates are convenience
 UX only.
+
+Registered resources add one more server-side guard. Unconstrained resource
+`list` policies can use the normal WebSocket sync fast path. Row-constrained
+resource lists, such as owner-only rows, use per-connection row filters for
+snapshots, catchup, and live changes. Direct WebSocket mutations against
+registered resources evaluate `create`, `update`, and `delete` policy before
+writing.
 
 ## Migrations
 

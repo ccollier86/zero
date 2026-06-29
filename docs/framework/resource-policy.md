@@ -2,8 +2,9 @@
 
 Zero resource policy is the framework-independent authorization core for the
 resource API. It is available today for server-side code and registered
-resource definitions. Generated CRUD routes use this contract today; `/api/data`,
-sync mutations, and doctor checks will reuse it in later Phase 5 slices.
+resource definitions. Generated CRUD routes, `/api/data`, and WebSocket sync
+reads/mutations all enforce registered resource policy. Doctor checks will
+reuse the same contract in a later Phase 5 slice.
 
 Import from the server surface:
 
@@ -112,7 +113,7 @@ The `:resource` segment is the resource name. It defaults to the backing table
 name unless `defineResource({ name })` is provided.
 
 Disable generated routes when a resource should only feed custom routes,
-`/api/data` policy, or future sync policy integration:
+`/api/data` policy, or sync policy integration:
 
 ```ts
 createApp({
@@ -193,6 +194,46 @@ GET /api/data?table=tickets&filter=status:open&order=created_at&dir=desc
 If `tickets` is registered with `ownerPolicy({ userField: 'created_by' })`, the
 effective SQL filters include both `status = 'open'` and
 `created_by = auth.userId`.
+
+## WebSocket Sync Integration
+
+Registered resources also participate in `/sync` authorization:
+
+- WebSocket readable tables are still checked by `syncPolicy.canReadTable`
+  first.
+- If a readable table is a registered resource, Zero evaluates its `list`
+  policy when the socket opens.
+- If `list` denies, the table is not subscribable over WebSocket sync.
+- If `list` allows without constraints, the table can use normal table-wide
+  snapshots, catchup, and live broadcasts.
+- If `list` allows with row-level constraints, such as
+  `ownerPolicy({ userField: 'owner_id' })`, Zero installs a per-connection row
+  filter for snapshots, catchup, and live changes.
+
+Admins can still receive full-table sync while normal users receive filtered
+sync with:
+
+```ts
+list: anyOf(adminOnly(), ownerPolicy({ userField: 'owner_id' }))
+```
+
+For an admin, `adminOnly()` creates an unconstrained allow branch, so full-table
+sync can be used. For a normal owner, `ownerPolicy()` creates an owner
+constraint, so Zero sends only rows owned by that user. If a row moves out of a
+user's filter during an update, the user receives a `DELETE` change for that
+row so stale data is removed from the local store.
+
+Direct `sync.mutate` writes also evaluate resource policy for registered
+resources:
+
+- `INSERT` maps to `create` and applies `stampedInput`, so
+  `ownerPolicy({ create: 'stamp' })` overwrites caller-supplied owner fields.
+- `UPDATE` maps to `update`, loads the current row, and evaluates row policy
+  before writing.
+- `DELETE` maps to `delete`, loads the current row, and evaluates row policy
+  before deleting.
+- Platform protected table policy still composes with resource policy using
+  deny-wins behavior.
 
 ## Trusted Metadata
 
@@ -285,9 +326,10 @@ type ResourcePolicyDecision = {
 
 `ownerPolicy()` returns a field equality constraint for `list`, for example
 `created_by = auth.userId`. Generated CRUD and `/api/data` translate those
-constraints today; sync integrations will reuse the same decision shape later. For
-`create: 'stamp'`, the decision includes `stampedInput`, which generated
-endpoints write instead of trusting caller input.
+constraints into SQL. WebSocket sync translates those constraints into
+per-connection row filters. For `create: 'stamp'`, the decision includes
+`stampedInput`, which generated endpoints and direct sync creates write instead
+of trusting caller input.
 
 ## Validation
 
@@ -313,5 +355,6 @@ Validation currently checks:
 ## Current Limits
 
 This document covers resource definitions, generated CRUD routes, `/api/data`
-read integration, and the policy core. Phase 5 follow-up slices will add sync
-policy integration and doctor checks.
+read integration, WebSocket sync read/mutation integration, and the policy
+core. Phase 5 follow-up slices will add doctor checks and frontend resource
+ergonomics.

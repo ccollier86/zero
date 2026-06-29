@@ -202,7 +202,7 @@ export class ReactiveDB {
     // Read back the full row to get any defaults applied by SQLite
     const fullRow = def.stmts.getOne.get(pk) as Row;
 
-    const change = this.createChange(table, op, pk, fullRow);
+    const change = this.createChange(table, op, pk, fullRow, existing);
     this.recordAndEmit(change);
     return change;
   }
@@ -247,7 +247,7 @@ export class ReactiveDB {
     // Read back the full row
     const fullRow = def.stmts.getOne.get(id) as Row;
 
-    const change = this.createChange(table, 'UPDATE', id, fullRow);
+    const change = this.createChange(table, 'UPDATE', id, fullRow, existing);
     this.recordAndEmit(change);
     return change;
   }
@@ -266,7 +266,7 @@ export class ReactiveDB {
 
     def.stmts.delete.run(id);
 
-    const change = this.createChange(table, 'DELETE', id, null);
+    const change = this.createChange(table, 'DELETE', id, null, existing);
     this.recordAndEmit(change);
     return change;
   }
@@ -577,15 +577,21 @@ export class ReactiveDB {
         op      TEXT NOT NULL,
         row_id  TEXT NOT NULL,
         data    TEXT,
+        previous_data TEXT,
         ts      INTEGER NOT NULL
       )
     `);
+
+    const columns = this.db.prepare('PRAGMA table_info(_changes)').all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === 'previous_data')) {
+      this.db.run('ALTER TABLE _changes ADD COLUMN previous_data TEXT');
+    }
   }
 
   private prepareChangeStatements(): ChangeStatements {
     return {
       insert: this.db.prepare(
-        'INSERT INTO _changes (seq, tbl, op, row_id, data, ts) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO _changes (seq, tbl, op, row_id, data, previous_data, ts) VALUES (?, ?, ?, ?, ?, ?, ?)'
       ),
       prune: this.db.prepare('DELETE FROM _changes WHERE seq <= ?'),
       after: this.db.prepare('SELECT * FROM _changes WHERE seq > ? ORDER BY seq'),
@@ -674,13 +680,20 @@ export class ReactiveDB {
     return ++this.seq;
   }
 
-  private createChange(table: string, op: ChangeOp, rowId: string, row: Row | null): Change {
+  private createChange(
+    table: string,
+    op: ChangeOp,
+    rowId: string,
+    row: Row | null,
+    previousRow: Row | null = null
+  ): Change {
     return {
       seq: this.nextSeq(),
       table,
       op,
       rowId,
       row,
+      previousRow,
       ts: Date.now(),
     };
   }
@@ -710,6 +723,7 @@ export class ReactiveDB {
    */
   private recordChange(change: Change): void {
     const data = change.row ? JSON.stringify(change.row) : null;
+    const previousData = change.previousRow ? JSON.stringify(change.previousRow) : null;
 
     if (this.inTransaction) {
       // Already inside a transaction — just run the statements
@@ -719,6 +733,7 @@ export class ReactiveDB {
         change.op,
         change.rowId,
         data,
+        previousData,
         change.ts
       );
       const cutoff = change.seq - this.ringBufferDepth;
@@ -734,6 +749,7 @@ export class ReactiveDB {
           change.op,
           change.rowId,
           data,
+          previousData,
           change.ts
         );
         const cutoff = change.seq - this.ringBufferDepth;
@@ -790,6 +806,7 @@ function deserializeChangeRow(row: ChangeRow): Change {
     op: row.op as ChangeOp,
     rowId: row.row_id,
     row: row.data ? JSON.parse(row.data) : null,
+    previousRow: row.previous_data ? JSON.parse(row.previous_data) : null,
     ts: row.ts,
   };
 }

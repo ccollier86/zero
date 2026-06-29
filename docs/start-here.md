@@ -150,7 +150,7 @@ Use the generated `server/` folders for app-owned backend code:
 | `server/middleware/` | Named app middleware created with `defineMiddleware()` and structured `matcher` policy. |
 | `server/endpoints/` | Single HTTP endpoints created with `defineEndpoint()`. |
 | `server/routes/` | Grouped `defineRouter()` routes and raw Elysia escape-hatch plugins. |
-| `server/resources/` | Resource declarations created with `defineResource()` for generated CRUD, `/api/data` policy, and future sync integration. |
+| `server/resources/` | Resource declarations created with `defineResource()` for generated CRUD, `/api/data` policy, and WebSocket sync policy. |
 
 Zero loads backend extension folders in that order and ignores missing folders.
 Resource definitions are loaded before backend extensions so routes can inspect
@@ -176,8 +176,12 @@ Generated CRUD routes are enabled by default at `/api/resources/:resource` and
 pass `resourceRoutes: { prefix, defaultLimit, maxLimit }` to customize them.
 Generated route writes go through ReactiveDB and enforce resource policies
 server-side. `/api/data` also enforces registered resource `list` policy for
-lazy tables, including owner constraints and trusted metadata checks. Sync and
-doctor integration are being layered on in later resource slices.
+lazy tables, including owner constraints and trusted metadata checks. WebSocket
+sync enforces registered resource policy too: unconstrained `list` policies can
+use the normal fast sync path, row-constrained `list` policies use
+per-connection row-filtered sync, and direct sync mutations evaluate resource
+create/update/delete policy server-side. Doctor checks are being layered on in
+a later resource slice.
 
 App-owned backend handlers receive a lazy `zero` service context. Use canonical
 names in new code: `zero.db`, `zero.auth`, `zero.ai`, `zero.vector`,

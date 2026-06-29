@@ -24,6 +24,7 @@ import type {
   EphemeralSetMessage,
   EphemeralDeleteMessage,
   Row,
+  SyncResourcePolicyAdapter,
 } from './types';
 import type { StateManager } from './state-manager';
 import type { EphemeralStateManager } from './ephemeral-manager';
@@ -41,6 +42,7 @@ import {
 } from './ephemeral-handler';
 import { allowAllSyncPolicy, evaluateSyncMutationPolicy } from './sync-policy';
 import type { SyncPolicy } from './sync-policy';
+import { filterSyncRows, projectSyncChange } from './row-filter';
 
 /**
  * Route an incoming WebSocket message to the appropriate handler.
@@ -48,7 +50,7 @@ import type { SyncPolicy } from './sync-policy';
  * Accepts either a raw JSON string or a pre-parsed object (Elysia
  * auto-parses JSON WebSocket messages into objects).
  */
-export function routeMessage(
+export async function routeMessage(
   ws: ServerWebSocket<SyncSocketData>,
   raw: string | Record<string, unknown>,
   db: ReactiveDB,
@@ -56,8 +58,9 @@ export function routeMessage(
   stateManager?: StateManager | null,
   ephemeralManager?: EphemeralStateManager | null,
   policy: SyncPolicy = allowAllSyncPolicy,
-  snapshotTables?: Set<string>
-): void {
+  snapshotTables?: Set<string>,
+  resourcePolicy?: SyncResourcePolicyAdapter
+): Promise<void> {
   let msg: { type: string; [key: string]: unknown };
 
   if (typeof raw === 'string') {
@@ -79,7 +82,14 @@ export function routeMessage(
       handleSubscribe(ws, msg as unknown as SyncSubscribeMessage, db, snapshotTables);
       break;
     case 'sync.mutate':
-      handleMutate(ws, msg as unknown as SyncMutateMessage, db, server, policy);
+      await handleMutate(
+        ws,
+        msg as unknown as SyncMutateMessage,
+        db,
+        server,
+        policy,
+        resourcePolicy
+      );
       break;
     case 'state.subscribe':
       if (stateManager) handleStateSubscribe(ws, stateManager, server);
@@ -131,6 +141,10 @@ function handleSubscribe(
   // Intersect requested tables with allowed tables
   const allowed = ws.data.allowedTables;
   const subscribeTables = tables.filter((t) => allowed.has(t) && db.hasTable(t));
+  const rowFilters = ws.data.resourceRowFilters ?? new Map();
+  const rowFilteredSubscribedTables = ws.data.rowFilteredSubscribedTables ?? new Set();
+  ws.data.resourceRowFilters = rowFilters;
+  ws.data.rowFilteredSubscribedTables = rowFilteredSubscribedTables;
 
   // Determine which tables to include in snapshot. A platform app may provide
   // snapshotTables to enforce resolved lazy/full modes server-side.
@@ -138,8 +152,15 @@ function handleSubscribe(
     subscribeTables.includes(table) && (!snapshotTables || snapshotTables.has(table))
   );
 
-  // Subscribe to Bun pub/sub topics for ALL requested tables (live changes flow for all)
+  // Subscribe to Bun pub/sub topics for unfiltered tables. Row-filtered tables
+  // are delivered directly by sync.plugin.ts so they never receive broad table
+  // broadcasts.
   for (const table of subscribeTables) {
+    if (rowFilters.has(table)) {
+      rowFilteredSubscribedTables.add(table);
+      continue;
+    }
+
     const topic = `sync:${table}`;
     if (!ws.data.subscribedTopics.has(topic)) {
       ws.subscribe(topic);
@@ -149,13 +170,13 @@ function handleSubscribe(
 
   if (lastSeq === 0) {
     // Fresh connect — send snapshot (only for snapshotList tables)
-    sendSnapshot(ws, snapshotList, db);
+    sendSnapshot(ws, snapshotList, db, rowFilters);
   } else {
     // Reconnect — try catchup from ring buffer
     const changes = db.getChangesAfter(lastSeq);
     if (changes === null) {
       // Gap too large (seq pruned from ring buffer) — send full snapshot
-      sendSnapshot(ws, snapshotList, db);
+      sendSnapshot(ws, snapshotList, db, rowFilters);
     } else if (changes.length === 0) {
       // Already up to date — send empty snapshot to confirm seq
       const snapshot: SyncSnapshotMessage = {
@@ -169,14 +190,11 @@ function handleSubscribe(
       // Send catchup — only changes for subscribed tables
       const filteredChanges = changes
         .filter((c) => subscribeTables.includes(c.table))
-        .map((c) => ({
-          seq: c.seq,
-          table: c.table,
-          op: c.op,
-          rowId: c.rowId,
-          row: c.row,
+        .map((change) => projectSyncChange(change, rowFilters.get(change.table)))
+        .filter((change): change is NonNullable<typeof change> => Boolean(change))
+        .map((change) => ({
+          ...change,
           origin: '', // Historical changes have no meaningful origin
-          ts: c.ts,
         }));
 
       const catchup: SyncCatchupMessage = {
@@ -196,24 +214,17 @@ function handleSubscribe(
 function sendSnapshot(
   ws: ServerWebSocket<SyncSocketData>,
   tables: string[],
-  db: ReactiveDB
+  db: ReactiveDB,
+  rowFilters?: Map<string, { matches(row: Row): boolean }>
 ): void {
   const tableData: Record<string, Record<string, Row>> = {};
 
   for (const table of tables) {
-    const rows = db.query(table);
+    const rows = filterSyncRows(db.query(table), rowFilters?.get(table));
     const keyed: Record<string, Row> = {};
-
-    // We need the primary key — get it from the table name
-    // ReactiveDB stores TableDef internally; for snapshots we key by the first column
-    // that looks like a PK. Since we always have the full row, use the 'id' convention
-    // or find the PK from the row itself.
-    // Actually, we need the PK info. Let's add a method to ReactiveDB for this.
-    // For now, we'll use the rows as-is and let the client determine PK from its table defs.
 
     // Key rows by their primary key
     for (const row of rows) {
-      // Get PK value — we need ReactiveDB to expose this
       const pkValue = getRowPrimaryKey(db, table, row);
       keyed[pkValue] = row;
     }
@@ -247,17 +258,18 @@ function getRowPrimaryKey(db: ReactiveDB, table: string, row: Row): string {
  * 2. Apply to ReactiveDB (which triggers onChange → server.publish)
  * 3. Send sync.ack to the originating client
  *
- * Note: The onChange listener in the sync plugin publishes sync.change
- * to ALL subscribers via server.publish(). The ack is sent AFTER the
- * publish (order doesn't matter — they serve different purposes).
+ * Note: The onChange listener in the sync plugin publishes sync.change through
+ * broad table topics and per-connection row-filtered deliveries. The ack is
+ * sent AFTER publish (order doesn't matter — they serve different purposes).
  */
-function handleMutate(
+async function handleMutate(
   ws: ServerWebSocket<SyncSocketData>,
   msg: SyncMutateMessage,
   db: ReactiveDB,
   server: { publish: (topic: string, data: string) => void },
-  policy: SyncPolicy
-): void {
+  policy: SyncPolicy,
+  resourcePolicy?: SyncResourcePolicyAdapter
+): Promise<void> {
   const { ref, table, op, rowId, row } = msg;
 
   if (!ref || typeof ref !== 'string') return;
@@ -282,54 +294,78 @@ function handleMutate(
     return;
   }
 
+  let mutationRow = row;
+  if (op === 'INSERT') {
+    if (!mutationRow || typeof mutationRow !== 'object') {
+      sendAck(ws, ref, false, null, 'INSERT requires a row');
+      return;
+    }
+  } else if (op === 'UPDATE') {
+    if (!rowId || typeof rowId !== 'string') {
+      sendAck(ws, ref, false, null, 'UPDATE requires rowId');
+      return;
+    }
+    if (!mutationRow || typeof mutationRow !== 'object') {
+      sendAck(ws, ref, false, null, 'UPDATE requires row (partial)');
+      return;
+    }
+  } else if (!rowId || typeof rowId !== 'string') {
+    sendAck(ws, ref, false, null, 'DELETE requires rowId');
+    return;
+  }
+
+  if (resourcePolicy) {
+    const resourceDecision = await resourcePolicy.authorizeMutation({
+      table,
+      op,
+      rowId,
+      row: mutationRow,
+      authContext: ws.data.authContext,
+      loadRow: (tableName, id) => db.get(tableName, id),
+    });
+
+    if (!resourceDecision.ok) {
+      sendAck(ws, ref, false, null, resourceDecision.reason);
+      return;
+    }
+
+    if (resourceDecision.row !== undefined) {
+      mutationRow = resourceDecision.row;
+    }
+  }
+
   try {
     let change;
 
     switch (op) {
       case 'INSERT': {
-        if (!row || typeof row !== 'object') {
-          sendAck(ws, ref, false, null, 'INSERT requires a row');
-          return;
-        }
         // Store the connection ID on a thread-local-like variable so the
         // onChange listener can include it in the published message
         currentMutationOrigin = ws.data.connectionId;
-        change = db.insert(table, row as Row);
+        change = db.insert(table, mutationRow as Row);
         currentMutationOrigin = null;
         break;
       }
 
       case 'UPDATE': {
-        if (!rowId || typeof rowId !== 'string') {
-          sendAck(ws, ref, false, null, 'UPDATE requires rowId');
-          return;
-        }
-        if (!row || typeof row !== 'object') {
-          sendAck(ws, ref, false, null, 'UPDATE requires row (partial)');
-          return;
-        }
         currentMutationOrigin = ws.data.connectionId;
-        change = db.update(table, rowId, row as Partial<Row>);
+        change = db.update(table, rowId!, mutationRow as Partial<Row>);
         currentMutationOrigin = null;
 
         if (!change) {
-          sendAck(ws, ref, false, null, `Row not found: ${rowId}`);
+          sendAck(ws, ref, false, null, `Row not found: ${rowId!}`);
           return;
         }
         break;
       }
 
       case 'DELETE': {
-        if (!rowId || typeof rowId !== 'string') {
-          sendAck(ws, ref, false, null, 'DELETE requires rowId');
-          return;
-        }
         currentMutationOrigin = ws.data.connectionId;
-        change = db.delete(table, rowId);
+        change = db.delete(table, rowId!);
         currentMutationOrigin = null;
 
         if (!change) {
-          sendAck(ws, ref, false, null, `Row not found: ${rowId}`);
+          sendAck(ws, ref, false, null, `Row not found: ${rowId!}`);
           return;
         }
         break;

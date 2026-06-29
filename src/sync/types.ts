@@ -78,6 +78,9 @@ export interface Change {
   /** Full row after mutation (null for DELETE) */
   row: Row | null;
 
+  /** Full row before mutation, used internally for filtered DELETE fanout. */
+  previousRow?: Row | null;
+
   /** Server timestamp in milliseconds (Date.now()) */
   ts: number;
 }
@@ -142,6 +145,7 @@ export interface ChangeRow {
   op: string;
   row_id: string;
   data: string | null;
+  previous_data?: string | null;
   ts: number;
 }
 
@@ -176,6 +180,14 @@ export interface SyncPluginConfig {
    * client mutation.
    */
   policy?: SyncPolicy;
+  /**
+   * Optional resource-policy adapter for registered Zero resources.
+   *
+   * Platform apps use this to narrow WebSocket-readable tables and to enforce
+   * generated resource policies on direct sync mutations. Standalone sync apps
+   * can omit it to keep the original table-policy-only behavior.
+   */
+  resourcePolicy?: SyncResourcePolicyAdapter;
   /**
    * Optional table allow-list for full snapshot payloads.
    *
@@ -242,6 +254,57 @@ export interface SyncSocketData {
   stateSubscribed: boolean;
   /** Ephemeral topics this socket has subscribed to */
   ephemeralTopics: Set<string>;
+  /** Tables with row-filtered resource sync access for this socket. */
+  resourceRowFilters: Map<string, SyncRowFilter>;
+  /** Row-filtered tables this socket requested over sync.subscribe. */
+  rowFilteredSubscribedTables: Set<string>;
+}
+
+/** Context passed to resource-aware sync table filtering. */
+export interface SyncResourceTableAccessContext {
+  tableNames: Iterable<string>;
+  authContext: SyncAuthContext | null;
+}
+
+/** Synchronous row predicate returned by a resource policy adapter. */
+export interface SyncRowFilter {
+  matches(row: Row): boolean;
+}
+
+/** Connection-time table access resolved from resource policy. */
+export interface SyncResourceTableAccess {
+  readableTables: Set<string>;
+  rowFilters: Map<string, SyncRowFilter>;
+}
+
+/** Context passed to resource-aware sync mutation authorization. */
+export interface SyncResourceMutationContext {
+  table: string;
+  op: ChangeOp;
+  rowId?: string;
+  row?: Row | Partial<Row>;
+  authContext: SyncAuthContext | null;
+  loadRow: (table: string, rowId: string) => Row | null;
+}
+
+/** Resource-aware sync mutation authorization result. */
+export type SyncResourceMutationDecision =
+  | { ok: true; row?: Row | Partial<Row> }
+  | { ok: false; reason: string; code?: string };
+
+/**
+ * Adapter consumed by the sync layer to enforce registered resource policy.
+ *
+ * The sync package owns WebSocket transport; resource modules implement this
+ * boundary so sync does not depend on app resource definitions directly.
+ */
+export interface SyncResourcePolicyAdapter {
+  resolveTableAccess(
+    context: SyncResourceTableAccessContext
+  ): Promise<SyncResourceTableAccess>;
+  authorizeMutation(
+    context: SyncResourceMutationContext
+  ): Promise<SyncResourceMutationDecision>;
 }
 
 // ─── Wire Protocol Messages ─────────────────────────────────────────────────

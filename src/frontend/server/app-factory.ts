@@ -30,6 +30,7 @@ import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
 import {
   configureResourceRegistry,
   createResourceCrudPlugin,
+  ResourceSyncPolicyService,
   loadResourceDefinitions,
 } from '../../resources';
 
@@ -94,6 +95,20 @@ export async function createApp(userConfig: AppConfig) {
       })
     : undefined;
   const syncPolicy = combineSyncPolicies(platformSyncPolicy, config.syncPolicy);
+  const loadedResources = await loadResourceDefinitions({
+    resourcesDir: config.serverResourcesDir,
+  });
+  const resourceAuthConfig = resolveAuthBehaviorConfig(config.auth === false ? {} : config.auth);
+  const resourceRegistry = configureResourceRegistry({
+    resources: [...config.resources, ...loadedResources],
+    tables: config.tables,
+    authConfig: resourceAuthConfig,
+  });
+  const resourceSyncPolicy = new ResourceSyncPolicyService({
+    registry: resourceRegistry,
+    authConfig: resourceAuthConfig,
+    getUserStore: config.auth !== false ? getAuthStore : undefined,
+  });
 
   // ─── Build client bundle ────────────────────────────────
   let clientEntry: string | undefined;
@@ -152,6 +167,7 @@ export async function createApp(userConfig: AppConfig) {
       tables: config.tables,
       stateSync: config.stateSync,
       policy: syncPolicy,
+      resourcePolicy: resourceSyncPolicy,
       snapshotTables: config.snapshotTables,
       auth: config.auth !== false
         ? {
@@ -265,17 +281,6 @@ export async function createApp(userConfig: AppConfig) {
     const db = getSyncDB()!;
     app.use(createStoragePlugin({ db, localDir: config.storageDir }));
   }
-
-  // 6.6. App-owned resources — validate definitions before app routes can use them
-  const loadedResources = await loadResourceDefinitions({
-    resourcesDir: config.serverResourcesDir,
-  });
-  const resourceAuthConfig = resolveAuthBehaviorConfig(config.auth === false ? {} : config.auth);
-  const resourceRegistry = configureResourceRegistry({
-    resources: [...config.resources, ...loadedResources],
-    tables: config.tables,
-    authConfig: resourceAuthConfig,
-  });
 
   // 6.7. Data query — lazy-table reads plus registered resource read policy
   app.use(

@@ -798,6 +798,10 @@ used by WebSocket subscriptions. When a lazy table is registered with
 adds safe owner constraints to the SQL query. For large lazy tables, add SQLite
 indexes in migrations for columns you filter, sort, or constrain by frequently.
 
+For registered resources, unconstrained `list` policy uses the normal full-sync
+fast path. Owner-only or otherwise row-constrained resource lists use
+per-connection row filters for snapshots, catchup, and live changes.
+
 ### Load options
 
 ```ts
@@ -816,7 +820,10 @@ Lazy tables still subscribe to WebSocket change events. When another user insert
 - **UPDATE:** If the row is already in the local store, it updates. If not, it's ignored.
 - **DELETE:** If the row is in the local store, it's removed. If not, it's ignored.
 
-This means: once you `load()` a set of rows, they stay live — real-time updates from other users are reflected. You just don't get the initial dump of every row that ever existed.
+This means: once you `load()` an authorized set of rows, those rows stay live.
+For row-constrained resource tables, sync changes are filtered per connection;
+when an update moves a row out of scope, the client receives a delete for that
+row.
 
 ---
 
@@ -1948,7 +1955,7 @@ app.listen(3000);
 `@zero/framework/server` is only needed here in `app/server.ts`. All other app code imports from `@zero/framework/react`.
 
 The server provides:
-- `/sync` — WebSocket endpoint for real-time data sync, WebSocket token auth, read policy, and mutation policy
+- `/sync` — WebSocket endpoint for real-time data sync, WebSocket token auth, sync policy, and registered resource read/mutation policy
 - `/api/auth/*` — JWT authentication endpoints
 - `/api/_zero/observability/events` — protected recent event read + frontend event ingest
 - `/notifications/*` — Notification CRUD + receipt tracking (via `createNotificationPlugin`)
@@ -2005,6 +2012,14 @@ const config = resolveConfig({
 ```
 
 For custom rules, pass a `SyncPolicy` with `canReadTable`, `canMutateTable`, `canInsert`, `canUpdate`, or `canDelete`. Mutation callbacks receive `table`, `op`, `rowId`, `row`, and `authContext`, so row ownership checks can live in app policy without changing the sync engine.
+
+Registered resources add higher-level policy on top of sync policy. If a
+resource `list` policy allows all rows for the current user, the table uses the
+normal fast WebSocket path. If the resource `list` policy returns row
+constraints, such as owner-only data, Zero applies a per-connection row filter
+to snapshots, catchup, and live changes. Direct `sync.mutate` writes against
+registered resources evaluate `create`, `update`, and `delete` policy
+server-side, including owner create stamping.
 
 #### Observability
 

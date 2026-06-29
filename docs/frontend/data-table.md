@@ -49,6 +49,11 @@ This is the fastest default path. It uses the same `client.collection(table)`
 source as `useCollection()`, including auth headers, reconnect behavior, and
 optimistic mutation state.
 
+For registered resources, full-sync mode respects resource `list` policy.
+Unconstrained policies use the normal fast path; owner-only or otherwise
+row-constrained policies use per-connection row-filtered snapshots and live
+changes.
+
 ### Lazy Backend Reads
 
 Use lazy mode for large tables or filtered history/audit views that should not

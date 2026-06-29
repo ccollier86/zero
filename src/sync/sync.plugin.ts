@@ -8,6 +8,7 @@
  */
 
 import { Elysia, t } from 'elysia';
+import type { ServerWebSocket } from 'bun';
 import { createReactiveDB, ReactiveDB } from './reactive-db';
 import { routeMessage, currentMutationOrigin } from './message-handler';
 import { StateManager } from './state-manager';
@@ -15,9 +16,11 @@ import { EphemeralStateManager } from './ephemeral-manager';
 import { cleanupEphemeralForSocket } from './ephemeral-handler';
 import { resolveSyncAuthContext } from './sync-auth';
 import { allowAllSyncPolicy, getReadableSyncTables } from './sync-policy';
+import { projectSyncChange } from './row-filter';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import type {
+  Change,
   SyncPluginConfig,
   SyncSocketData,
   SyncChangeMessage,
@@ -59,6 +62,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
   let connectionCounter = 0;
   const policy = config.policy ?? allowAllSyncPolicy;
   const db = createReactiveDB(config.db);
+  const activeSockets = new Set<ServerWebSocket<SyncSocketData>>();
 
   for (const [name, schema] of Object.entries(config.tables)) {
     db.defineTable(name, schema);
@@ -81,20 +85,14 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         // Don't publish changes for _ prefix tables (internal)
         if (change.table.startsWith('_')) return;
 
-        const msg: SyncChangeMessage = {
-          type: 'sync.change',
-          seq: change.seq,
-          table: change.table,
-          op: change.op,
-          rowId: change.rowId,
-          row: change.row,
-          origin: currentMutationOrigin ?? '',
-          ts: change.ts,
-        };
+        const msg = createSyncChangeMessage(change);
 
-        // server.publish sends to ALL subscribers (including the mutating socket).
-        // The originating client uses the `origin` field to reconcile.
+        // server.publish sends to all broad table subscribers. Row-filtered
+        // subscribers are not subscribed to this topic; they receive a direct
+        // filtered message below.
         server.publish(`sync:${change.table}`, JSON.stringify(msg));
+
+        publishFilteredChange(activeSockets, change);
       });
 
       // Create StateManager if state sync is enabled
@@ -120,6 +118,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
       _stateManager = null;
       _ephemeralManager?.dispose();
       _ephemeralManager = null;
+      activeSockets.clear();
       db.dispose(); // Triggers explicit WAL checkpoint before close
       if (_db === db) _db = null;
       emitPlatformCode(OBS_CODES.SYNC_STOPPED, {
@@ -158,6 +157,8 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         data.authContext = null;
         data.authResolved = false;
         data.allowedTables = new Set();
+        data.resourceRowFilters = new Map();
+        data.rowFilteredSubscribedTables = new Set();
         data.stateSubscribed = false;
         data.ephemeralTopics = new Set();
         data.query = (ws.data as { query?: { token?: string } }).query ?? {};
@@ -170,20 +171,32 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         data.authContext = auth.authContext;
         data.authResolved = true;
 
-        data.allowedTables = getReadableSyncTables(
+        const syncReadableTables = getReadableSyncTables(
           db.getTableNames().filter((table) => !table.startsWith('_')),
           data.authContext,
           policy
         );
+        if (config.resourcePolicy) {
+          const access = await config.resourcePolicy.resolveTableAccess({
+            tableNames: syncReadableTables,
+            authContext: data.authContext,
+          });
+          data.allowedTables = access.readableTables;
+          data.resourceRowFilters = access.rowFilters;
+        } else {
+          data.allowedTables = syncReadableTables;
+        }
+
+        activeSockets.add(ws as unknown as ServerWebSocket<SyncSocketData>);
       },
 
-      message(ws, message) {
+      async message(ws, message) {
         const data = ws.data as unknown as SyncSocketData;
         if (!data.authResolved) return;
 
         // Elysia auto-parses JSON WebSocket messages — `message` is already an object.
         // routeMessage accepts both string and pre-parsed objects.
-        routeMessage(
+        await routeMessage(
           ws as any,
           message as string | Record<string, unknown>,
           db,
@@ -191,11 +204,13 @@ export function createSyncPlugin(config: SyncPluginConfig) {
           _stateManager,
           _ephemeralManager,
           policy,
-          config.snapshotTables
+          config.snapshotTables,
+          config.resourcePolicy
         );
       },
 
       close(ws, code, reason) {
+        activeSockets.delete(ws as unknown as ServerWebSocket<SyncSocketData>);
         // Bun automatically unsubscribes from all pub/sub topics on close.
         // Clean up ephemeral manager subscriptions and presence data.
         if (_ephemeralManager) {
@@ -210,4 +225,38 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         // ring buffer catchup on reconnect.
       },
     });
+}
+
+function createSyncChangeMessage(change: Change): SyncChangeMessage {
+  return {
+    type: 'sync.change',
+    seq: change.seq,
+    table: change.table,
+    op: change.op,
+    rowId: change.rowId,
+    row: change.row,
+    origin: currentMutationOrigin ?? '',
+    ts: change.ts,
+  };
+}
+
+function publishFilteredChange(
+  sockets: Set<ServerWebSocket<SyncSocketData>>,
+  change: Change
+): void {
+  for (const socket of sockets) {
+    if (!socket.data.rowFilteredSubscribedTables.has(change.table)) continue;
+    const filter = socket.data.resourceRowFilters.get(change.table);
+    if (!filter) continue;
+
+    const projected = projectSyncChange(change, filter);
+    if (!projected) continue;
+
+    const msg: SyncChangeMessage = {
+      type: 'sync.change',
+      ...projected,
+      origin: currentMutationOrigin ?? '',
+    };
+    socket.send(JSON.stringify(msg));
+  }
 }

@@ -258,12 +258,23 @@ Implemented in slice 5 for lazy list reads:
 
 Resource policy should compose with the existing sync policy:
 
-1. Read/subscription policy can use resource table registration.
-2. Mutation policy can evaluate insert/update/delete against resource policies.
-3. Owner `create: 'stamp'` is difficult for direct sync mutations because sync
-   currently sends raw rows; either stamp server-side in mutation handling or
-   deny direct sync creates for stamped resources and require generated routes.
-4. Platform protected tables remain protected by default.
+Implemented in slice 6:
+
+1. Done: read/subscription policy uses resource table registration after the
+   existing sync read policy.
+2. Done: unconstrained resource `list` policies remain sync-safe for full-table
+   snapshots, catchup, and live broadcasts.
+3. Done: row-constrained resource `list` policies become per-connection row
+   filters for snapshots, catchup, and live changes.
+4. Done: direct sync `INSERT`/`UPDATE`/`DELETE` maps to resource
+   `create`/`update`/`delete` policies.
+5. Done: owner `create: 'stamp'` is applied server-side before direct sync
+   inserts write to ReactiveDB.
+6. Done: update/delete load the existing row before evaluating row-level
+   resource policy.
+7. Done: platform protected tables remain protected by default.
+8. Done: updates that move a row out of a user's filter are projected as
+   `DELETE` changes so local stores do not retain stale rows.
 
 ### Doctor
 
@@ -307,7 +318,9 @@ Doctor should check:
    no-list fail-closed behavior, and focused data-query tests.
 
 6. **Sync Policy Integration**
-   Compose resource policy with WebSocket read and mutation policy.
+   Implemented. Composes resource policy with WebSocket read and mutation
+   policy. Row-constrained resources use per-connection row-filtered sync, and
+   direct sync creates apply owner stamping.
 
 7. **Doctor And Docs**
    Add resource/policy doctor checks and update Start Here, framework docs,
@@ -320,8 +333,8 @@ Doctor should check:
 3. Metadata policy cannot use unknown or self-editable user properties.
 4. Owner policy supports query constraints and safe create stamping.
 5. Generated CRUD routes enforce policy for every action.
-6. `/api/data` and sync understand registered resource policy or warn when
-   policy cannot be safely applied.
+6. `/api/data` and sync understand registered resource policy or fail closed
+   when policy cannot be safely applied.
 7. Doctor explains unsafe resource policy config and can fail in strict mode.
 8. Tests cover auth property trust, policy evaluator decisions, generated CRUD,
    `/api/data`, sync mutation decisions, and doctor warnings.

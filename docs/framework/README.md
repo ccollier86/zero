@@ -28,7 +28,8 @@ vector, workflows, observability, or migrations.
   backend code.
 - [Phase 5: Resource And Policy API Plan](./phase-5-resource-policy-plan.md):
   resource declarations, trusted user-property policy rules, generated CRUD,
-  `/api/data` policy integration, and planned sync/doctor integration.
+  `/api/data` policy integration, WebSocket sync policy integration, and
+  planned doctor integration.
 - [Resource Policy Core](./resource-policy.md): implemented server-side policy
   helpers, trusted metadata validation, owner constraints, composition, and
   evaluator contract used by resource integrations.

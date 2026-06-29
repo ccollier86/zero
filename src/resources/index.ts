@@ -39,6 +39,10 @@ export {
 } from './resource-crud-service';
 
 export {
+  ResourceSyncPolicyService,
+} from './resource-sync-policy';
+
+export {
   buildResourceListQueryPlan,
   quoteResourceIdentifier,
 } from './resource-query';
@@ -93,6 +97,10 @@ export type {
   ResourceCrudServiceOptions,
   ResourceCrudSuccess,
 } from './resource-crud-service';
+
+export type {
+  ResourceSyncPolicyServiceOptions,
+} from './resource-sync-policy';
 
 export type {
   ResourceListQueryInput,

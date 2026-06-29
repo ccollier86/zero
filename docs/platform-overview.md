@@ -39,7 +39,7 @@ rows are present locally.
 - Ack timeout detection (10s) — if the server goes silent, the client treats it as a rejection
 - Send buffer — mutations while disconnected are queued and flushed on reconnect
 
-**Sync policy:** WebSocket auth verifies `?token=...` during connection open when auth is enabled. Readable tables are derived from `SyncPolicy.canReadTable`; direct client writes are checked separately through `canMutateTable`, `canInsert`, `canUpdate`, and `canDelete`. `createApp()` protects service-owned platform tables from direct sync mutation by default, while app-owned tables keep the fast optimistic write path unless you configure stricter policy.
+**Sync policy:** WebSocket auth verifies `?token=...` during connection open when auth is enabled. Readable tables are derived from `SyncPolicy.canReadTable`; direct client writes are checked separately through `canMutateTable`, `canInsert`, `canUpdate`, and `canDelete`. `createApp()` protects service-owned platform tables from direct sync mutation by default, while app-owned tables keep the fast optimistic write path unless you configure stricter policy. If an app table is registered with `defineResource()`, WebSocket sync also enforces resource policy: unconstrained `list` policies use the normal fast path, row-constrained lists use per-connection row filters, and direct `sync.mutate` writes evaluate resource create/update/delete policy.
 
 **Migrations:** Zero uses explicit migration files plus first-class tooling for
 schema history, drift detection, draft migration planning, rollback, and
@@ -639,7 +639,7 @@ const app = createApp(config);
 app.listen(3000);
 ```
 
-This single call wires up: ReactiveDB, WebSocket sync, auth (JWT + user store), state sync, ephemeral KV, rooms, notifications, workflows, scheduler, file-based router, auto `/api/data` endpoint for lazy tables, SSR, and static file serving.
+This single call wires up: ReactiveDB, WebSocket sync, auth (JWT + user store), state sync, ephemeral KV, rooms, notifications, workflows, scheduler, file-based router, resource policy, auto `/api/data` endpoint for lazy tables, SSR, and static file serving.
 
 To make app-owned tables read-only or role-gated over direct sync writes, pass a `syncPolicy`. Platform defaults still compose with your policy using deny-wins semantics.
 

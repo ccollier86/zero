@@ -529,6 +529,14 @@ enforces that resource's `list` policy and applies safe owner constraints to
 the SQL query. Add SQLite indexes in migrations for columns used heavily in
 `filter`, `order`, or policy constraints.
 
+Registered resource policy also affects WebSocket sync. A resource whose
+`list` policy allows all rows uses the normal full-sync fast path. A resource
+whose `list` policy returns row constraints, such as owner-only data, uses a
+per-connection row filter for snapshots, catchup, and live changes. Direct
+optimistic mutations still go through WebSocket, but registered resources
+evaluate `create`, `update`, and `delete` policy on the server before the write
+is accepted.
+
 **Manual load (advanced):**
 
 ```ts
@@ -538,7 +546,11 @@ col.load(records, { replace: true });   // Replace ALL rows with these
 col.clear();                            // Empty the local store (no server delete)
 ```
 
-**Live changes still work:** Lazy tables subscribe to WebSocket change events. Once you `load()` a set of rows, they stay live — real-time updates from other users are reflected. You just don't get the initial dump of every row.
+**Live changes still work:** Lazy tables subscribe to WebSocket change events.
+Once you `load()` an authorized set of rows, those rows stay live. Resource
+tables with row-constrained `list` policy also receive filtered sync changes;
+when an update moves a row out of scope, the client receives a delete for that
+row so stale data is removed.
 
 ---
 

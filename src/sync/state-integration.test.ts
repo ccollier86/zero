@@ -144,6 +144,8 @@ function createMockWs(userId: string | null = 'test-user') {
     authContext: userId ? { userId, email: 'test@test.com', role: 'user' } : null,
     authResolved: true,
     allowedTables: new Set(),
+    resourceRowFilters: new Map(),
+    rowFilteredSubscribedTables: new Set(),
     query: {},
     stateSubscribed: false,
     ephemeralTopics: new Set<string>(),
