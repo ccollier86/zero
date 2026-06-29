@@ -12,7 +12,13 @@ import { createAuthPlugin, getAuthStore, getTokenService } from '../auth/auth.pl
 import type { UserRecord } from '../auth/types';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import { createStoragePlugin, getStorageService } from './storage.plugin';
-import type { DriveRecord, DriveUsage, StorageAdapter } from './types';
+import type {
+  DriveRecord,
+  DriveUsage,
+  FileInfo,
+  StorageAdapter,
+  StorageUploadGrant,
+} from './types';
 
 let db: ReactiveDB;
 let app: ReturnType<typeof createApp> | null = null;
@@ -20,11 +26,12 @@ let baseUrl = '';
 
 function createTestAdapter(): StorageAdapter {
   return {
-    async writeBlob() {
+    async writeBlob(data) {
+      const bytes = await readBytes(data);
       return {
         checksum: `test_${crypto.randomUUID()}`,
-        size: 0,
-        headBytes: new Uint8Array(),
+        size: bytes.length,
+        headBytes: bytes.slice(0, 512),
       };
     },
     async readBlob() {
@@ -41,6 +48,31 @@ function createTestAdapter(): StorageAdapter {
       return 0;
     },
   };
+}
+
+async function readBytes(data: ReadableStream<Uint8Array> | Uint8Array | Blob): Promise<Uint8Array> {
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof Blob) return new Uint8Array(await data.arrayBuffer());
+
+  const reader = data.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    chunks.push(value);
+    total += value.length;
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
 }
 
 function createApp(db: ReactiveDB) {
@@ -120,7 +152,7 @@ afterAll(() => {
 });
 
 describe('storage route auth', () => {
-  test('canonical grouped service aliases cover drives, objects, and permissions', async () => {
+  test('canonical grouped service aliases cover drives, objects, permissions, and uploads', async () => {
     const { user } = await createUser();
     const service = getStorageService()!;
     const drive = service.drives.create(user.userId, { name: 'Alias docs' });
@@ -143,6 +175,14 @@ describe('storage route auth', () => {
     expect(service.permissions.get(permission.permission_id)?.grant_value).toBe('editor');
     expect(service.permissions.checkAccess(drive.drive_id, null, 'someone', 'editor', {}, 'read')).toBe(true);
     expect(service.permissions.revoke(permission.permission_id)).toBe(true);
+
+    const uploadGrant = await service.uploads.create(drive.drive_id, {
+      path: '/reports/direct-grant.txt',
+      expiresIn: 60,
+    });
+    expect(uploadGrant.driveId).toBe(drive.drive_id);
+    expect(uploadGrant.path).toBe('/reports/direct-grant.txt');
+    expect(uploadGrant.token.length).toBeGreaterThan(20);
 
     expect(await service.objects.delete(drive.drive_id, '/reports')).toBe(true);
     expect(service.drives.delete(drive.drive_id)).toBe(true);
@@ -253,5 +293,157 @@ describe('storage route auth', () => {
     );
     expect(adminEdit.status).toBe(200);
     expect(adminEdit.data.name).toBe('Admin edit');
+  });
+
+  test('creates scoped upload grants that allow public upload but keep private read policy', async () => {
+    const { token } = await createUser();
+    const created = await createDrive(token, { name: 'Intake uploads' });
+
+    const grant = await requestJson<StorageUploadGrant>(
+      `/storage/drives/${created.data.drive_id}/upload-grants`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          path: '/intake/int_1/id-front.png',
+          expiresIn: 60,
+          maxSize: 1024,
+          contentTypes: ['image/png', 'image/jpeg'],
+          metadata: { intakeId: 'int_1', kind: 'id-front' },
+          flow: 'intake',
+          resource: { type: 'intake', id: 'int_1' },
+        }),
+      },
+      token
+    );
+
+    expect(grant.status).toBe(200);
+    expect(grant.data.public).toBe(false);
+    expect(grant.data.overwrite).toBe(false);
+    expect(grant.data.contentTypes).toEqual(['image/png', 'image/jpeg']);
+
+    const pngBytes = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+    ]);
+    const uploaded = await requestJson<FileInfo>(
+      `/storage/upload-grants/${grant.data.token}`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'image/png' },
+        body: new Blob([pngBytes], { type: 'image/png' }),
+      }
+    );
+
+    expect(uploaded.status).toBe(201);
+    expect(uploaded.data.path).toBe('/intake/int_1/id-front.png');
+    expect(uploaded.data.isPublic).toBe(false);
+    expect(uploaded.data.createdBy).toBeNull();
+    expect(uploaded.data.metadata.intakeId).toBe('int_1');
+    expect(uploaded.data.metadata.storageUploadGrantId).toBe(grant.data.grantId);
+    expect(uploaded.data.metadata.storageUploadResourceType).toBe('intake');
+
+    const anonymousInfo = await requestJson<{ error: string }>(
+      `/storage/drives/${created.data.drive_id}/info/intake/int_1/id-front.png`
+    );
+    expect(anonymousInfo.status).toBe(401);
+
+    const ownerInfo = await requestJson<FileInfo>(
+      `/storage/drives/${created.data.drive_id}/info/intake/int_1/id-front.png`,
+      {},
+      token
+    );
+    expect(ownerInfo.status).toBe(200);
+    expect(ownerInfo.data.path).toBe(uploaded.data.path);
+  });
+
+  test('rejects upload grant creation without write access', async () => {
+    const owner = await createUser();
+    const other = await createUser();
+    const created = await createDrive(owner.token, { name: 'Private uploads' });
+
+    const forbidden = await requestJson<{ error: string }>(
+      `/storage/drives/${created.data.drive_id}/upload-grants`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: '/blocked.txt' }),
+      },
+      other.token
+    );
+
+    expect(forbidden.status).toBe(403);
+
+    const anonymous = await requestJson<{ code: string }>(
+      `/storage/drives/${created.data.drive_id}/upload-grants`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: '/blocked.txt' }),
+      }
+    );
+
+    expect(anonymous.status).toBe(401);
+  });
+
+  test('enforces upload grant max size, content type, and no-overwrite default', async () => {
+    const { token } = await createUser();
+    const created = await createDrive(token, { name: 'Strict uploads' });
+
+    const grant = await requestJson<StorageUploadGrant>(
+      `/storage/drives/${created.data.drive_id}/upload-grants`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          path: '/strict/document.txt',
+          expiresIn: 60,
+          maxSize: 5,
+          contentType: 'text/plain',
+        }),
+      },
+      token
+    );
+
+    expect(grant.status).toBe(200);
+
+    const wrongType = await requestJson<{ error: string }>(
+      `/storage/upload-grants/${grant.data.token}`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }
+    );
+    expect(wrongType.status).toBe(400);
+
+    const tooLarge = await requestJson<{ error: string }>(
+      `/storage/upload-grants/${grant.data.token}`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'text/plain' },
+        body: 'too large',
+      }
+    );
+    expect(tooLarge.status).toBe(413);
+
+    const first = await requestJson<FileInfo>(
+      `/storage/upload-grants/${grant.data.token}`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'text/plain' },
+        body: 'ok',
+      }
+    );
+    expect(first.status).toBe(201);
+
+    const second = await requestJson<{ error: string }>(
+      `/storage/upload-grants/${grant.data.token}`,
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'text/plain' },
+        body: 'ok',
+      }
+    );
+    expect(second.status).toBe(409);
   });
 });

@@ -289,7 +289,7 @@ Prefer Zero's canonical service vocabulary in app-owned backend code:
 | `zero.scheduler` | `create()`, `get()`, `list()`, `run()`, `delete()`, `stop()` |
 | `zero.workflows` | `run()`, `get()`, `list()`, `stop()` |
 | `zero.vector` | `list()`, `search()`, `get()`, `status()` |
-| `zero.storage` | `drives.*`, `objects.*`, and `permissions.*` grouped APIs |
+| `zero.storage` | `drives.*`, `objects.*`, `permissions.*`, and `uploads.*` grouped APIs |
 
 Older names remain compatibility aliases. See
 [Phase 4: Service API Smoothing](./framework/phase-4-service-api-smoothing.md)
@@ -758,7 +758,24 @@ const folder = drive
   : null;
 ```
 
-Permissions and upload authorization stay in backend storage routes.
+Permissions and upload authorization stay in backend storage routes. For public
+flows that still write into private storage, issue scoped upload grants from
+backend code:
+
+```ts
+const grant = await storage?.uploads.create('drv_private_uploads', {
+  path: `/intakes/${intakeId}/insurance-card.png`,
+  expiresIn: 15 * 60,
+  maxSize: 5 * 1024 * 1024,
+  contentTypes: ['image/png', 'image/jpeg', 'application/pdf'],
+  metadata: { intakeId, kind: 'insurance-card' },
+  flow: 'intake',
+  resource: { type: 'intake', id: intakeId },
+});
+```
+
+The browser sends the file to `PUT /storage/upload-grants/:token`. The object
+is private by default and normal storage read permissions still apply.
 
 ## Workflows And Scheduler
 

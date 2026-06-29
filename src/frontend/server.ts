@@ -347,7 +347,13 @@ export type {
 // ─── Storage: Server ────────────────────────────────────────────────────
 export { createStoragePlugin, getStorageService } from '../storage';
 export { StorageService, StorageError, defineStorageTables, LocalStorageAdapter } from '../storage';
-export { createPresignedToken, verifyPresignedToken, detectMimeType } from '../storage';
+export {
+  createPresignedToken,
+  createUploadGrantToken,
+  detectMimeType,
+  verifyPresignedToken,
+  verifyUploadGrantToken,
+} from '../storage';
 export { STORAGE_TABLES } from '../storage';
 export type {
   StorageAdapter,
@@ -356,6 +362,9 @@ export type {
   FileInfo,
   CreateDriveParams,
   UploadOptions,
+  CreateUploadGrantParams,
+  StorageUploadGrant,
+  StorageUploadGrantResource,
   ListResult,
   DriveUsage,
   PermissionLevel,
@@ -364,6 +373,10 @@ export type {
   StorageDriveUpdates,
   StorageObjectApi,
   StoragePermissionApi,
+  StorageServiceOptions,
+  StorageUploadGrantApi,
+  CreateUploadGrantTokenOptions,
+  VerifiedUploadGrant,
 } from '../storage';
 
 // ─── Email: Server ──────────────────────────────────────────────────────

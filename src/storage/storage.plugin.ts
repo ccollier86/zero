@@ -11,6 +11,7 @@ import type { ReactiveDB } from '../sync/reactive-db';
 import { LocalStorageAdapter } from './local-adapter';
 import { StorageService, StorageError, defineStorageTables } from './storage-service';
 import { createPresignedToken, verifyPresignedToken } from './presigned';
+import { verifyUploadGrantToken } from './upload-grant';
 import type { StorageAdapter, StoragePluginConfig, PermissionLevel } from './types';
 import { AuthError } from '../auth/types';
 import { createAuthMiddleware } from '../auth/auth.middleware';
@@ -71,9 +72,12 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // ─── Lifecycle ─────────────────────────────────────
     .onStart(() => {
       defineStorageTables(config.db);
-      _storageService = new StorageService(config.db, adapter);
       _signingSecret = config.signingSecret ?? crypto.randomUUID();
       _defaultTTL = config.defaultPresignedTTL ?? 3600;
+      _storageService = new StorageService(config.db, adapter, {
+        uploadGrantSecret: _signingSecret,
+        defaultPresignedTTL: _defaultTTL,
+      });
       emitPlatformCode(OBS_CODES.STORAGE_STARTED, {
         metadata: { tablesDefined: true },
       });
@@ -300,8 +304,7 @@ export function createStoragePlugin(config: StoragePluginConfig) {
 
         set.headers['content-length'] = String(result.info.sizeBytes);
         return result.stream;
-      },
-      { params: t.Object({ driveId: t.String() }) }
+      }
     )
 
     // ─── Folder Operations ─────────────────────────────
@@ -394,8 +397,7 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const deleted = await svc.deleteObject(params.driveId, filePath);
         if (!deleted) throw new StorageError(404, 'Not found');
         return { ok: true };
-      },
-      { params: t.Object({ driveId: t.String() }) }
+      }
     )
 
     // ─── Visibility ────────────────────────────────────
@@ -509,6 +511,47 @@ export function createStoragePlugin(config: StoragePluginConfig) {
       }
     )
 
+    // POST /storage/drives/:driveId/upload-grants — create a scoped public upload grant
+    .post(
+      '/drives/:driveId/upload-grants',
+      async ({ params, body, requireAuth }) => {
+        const auth = requireAuth();
+        const svc = requireStorage();
+        requireDriveAccess(svc, params.driveId, auth, 'write', body.path);
+
+        return svc.uploads.create(params.driveId, {
+          path: body.path,
+          expiresIn: body.expiresIn,
+          maxSize: body.maxSize,
+          contentType: body.contentType,
+          contentTypes: body.contentTypes,
+          overwrite: body.overwrite,
+          public: body.public,
+          metadata: body.metadata,
+          flow: body.flow,
+          resource: body.resource,
+        });
+      },
+      {
+        params: t.Object({ driveId: t.String() }),
+        body: t.Object({
+          path: t.String({ minLength: 1 }),
+          expiresIn: t.Optional(t.Number({ minimum: 1 })),
+          maxSize: t.Optional(t.Number({ minimum: 1 })),
+          contentType: t.Optional(t.String({ minLength: 1 })),
+          contentTypes: t.Optional(t.Array(t.String({ minLength: 1 }))),
+          overwrite: t.Optional(t.Boolean()),
+          public: t.Optional(t.Boolean()),
+          metadata: t.Optional(t.Record(t.String(), t.Unknown())),
+          flow: t.Optional(t.String({ minLength: 1 })),
+          resource: t.Optional(t.Object({
+            type: t.String({ minLength: 1 }),
+            id: t.String({ minLength: 1 }),
+          })),
+        }),
+      }
+    )
+
     // GET /storage/presigned/:token — execute a presigned download
     .get(
       '/presigned/:token',
@@ -527,6 +570,74 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         set.headers['content-length'] = String(result.info.sizeBytes);
         if (result.info.checksum) set.headers['etag'] = `"${result.info.checksum}"`;
         return result.stream;
+      },
+      { params: t.Object({ token: t.String() }) }
+    )
+
+    // PUT /storage/upload-grants/:token — execute a scoped public upload grant
+    .put(
+      '/upload-grants/:token',
+      async ({ params, request, set }) => {
+        const svc = requireStorage();
+        const verified = await verifyUploadGrantToken(params.token, _signingSecret);
+        if (!verified) throw new StorageError(403, 'Invalid or expired upload grant');
+
+        // Pre-check Content-Length before reading body
+        if (verified.maxSize) {
+          const contentLength = request.headers.get('content-length');
+          if (contentLength) {
+            const declaredSize = parseInt(contentLength, 10);
+            if (!isNaN(declaredSize) && declaredSize > verified.maxSize) {
+              throw new StorageError(413, `File exceeds max size: ${verified.maxSize} bytes`);
+            }
+          }
+        }
+
+        if (verified.contentTypes?.length) {
+          const ct = request.headers.get('content-type');
+          if (!ct || !matchesAnyContentType(ct, verified.contentTypes)) {
+            throw new StorageError(
+              400,
+              `Expected content type: ${verified.contentTypes.join(', ')}`
+            );
+          }
+        }
+
+        const body = request.body;
+        if (!body) throw new StorageError(400, 'No body provided');
+
+        const blob = await request.blob();
+
+        // Double-check actual size after reading
+        if (verified.maxSize && blob.size > verified.maxSize) {
+          throw new StorageError(413, `File exceeds max size: ${verified.maxSize} bytes`);
+        }
+
+        const info = await svc.upload(
+          verified.driveId,
+          verified.path,
+          blob,
+          verified.path.split('/').pop() || 'upload',
+          null,
+          {
+            overwrite: verified.overwrite,
+            public: verified.public,
+            metadata: {
+              ...(verified.metadata ?? {}),
+              storageUploadGrantId: verified.grantId,
+              ...(verified.flow ? { storageUploadFlow: verified.flow } : {}),
+              ...(verified.resource
+                ? {
+                    storageUploadResourceType: verified.resource.type,
+                    storageUploadResourceId: verified.resource.id,
+                  }
+                : {}),
+            },
+          }
+        );
+
+        set.status = 201;
+        return info;
       },
       { params: t.Object({ token: t.String() }) }
     )
@@ -596,8 +707,7 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const info = svc.getFileInfo(params.driveId, filePath);
         if (!info) throw new StorageError(404, 'Not found');
         return info;
-      },
-      { params: t.Object({ driveId: t.String() }) }
+      }
     );
 }
 
@@ -665,5 +775,14 @@ function requireDriveAccessFromContext(
 function matchContentType(actual: string, expected: string): boolean {
   const actualType = actual.split(';')[0].trim().toLowerCase();
   const expectedType = expected.split(';')[0].trim().toLowerCase();
+  if (expectedType === '*') return true;
+  if (expectedType.endsWith('/*')) {
+    const prefix = expectedType.slice(0, -2);
+    return actualType.startsWith(`${prefix}/`);
+  }
   return actualType === expectedType;
+}
+
+function matchesAnyContentType(actual: string, expected: string[]): boolean {
+  return expected.some((item) => matchContentType(actual, item));
 }

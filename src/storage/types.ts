@@ -122,6 +122,67 @@ export interface PresignedUrlOptions {
   contentType?: string;
 }
 
+// ─── Public Upload Grants ─────────────────────────────────────────────────
+
+export interface StorageUploadGrantResource {
+  /** Application resource type to link the upload to, e.g. `intake` or `appointment`. */
+  type: string;
+  /** Application resource id to link the upload to. */
+  id: string;
+}
+
+export interface CreateUploadGrantParams {
+  /** Exact storage path this grant can upload to. */
+  path: string;
+  /** Expiry in seconds. Defaults to the storage plugin TTL. */
+  expiresIn?: number;
+  /** Max uploaded bytes accepted by this grant. */
+  maxSize?: number;
+  /** Single accepted content type. Use `contentTypes` for multiple types. */
+  contentType?: string;
+  /** Accepted content types. Supports exact MIME types and `image/*` wildcards. */
+  contentTypes?: string[];
+  /** Allow replacing an existing object at `path`. Default: false. */
+  overwrite?: boolean;
+  /** Make the uploaded object publicly readable. Default: false. */
+  public?: boolean;
+  /** Metadata written to the storage object after upload. */
+  metadata?: Record<string, unknown>;
+  /** Application flow tag, e.g. `intake` or `profile-avatar`. */
+  flow?: string;
+  /** Optional app resource linkage copied into the token response. */
+  resource?: StorageUploadGrantResource;
+}
+
+export interface StorageUploadGrant {
+  /** Bearer capability used with `PUT /storage/upload-grants/:token`. */
+  token: string;
+  /** Stable grant id embedded in the token for audit/linkage. */
+  grantId: string;
+  /** Target drive. */
+  driveId: string;
+  /** Exact target object path. */
+  path: string;
+  /** Expiry window in seconds. */
+  expiresIn: number;
+  /** Absolute expiry timestamp in unix milliseconds. */
+  expiresAt: number;
+  /** Max uploaded bytes accepted by this grant. */
+  maxSize?: number;
+  /** Accepted request content types. */
+  contentTypes?: string[];
+  /** Whether this grant may overwrite an existing object. */
+  overwrite: boolean;
+  /** Whether the uploaded object will be publicly readable. */
+  public: boolean;
+  /** Metadata written to the uploaded object. */
+  metadata?: Record<string, unknown>;
+  /** Application flow tag. */
+  flow?: string;
+  /** Optional app resource linkage. */
+  resource?: StorageUploadGrantResource;
+}
+
 export interface ListOptions {
   /** Only list files, folders, or both. Default: 'all'. */
   type?: 'file' | 'folder' | 'all';

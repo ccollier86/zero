@@ -1408,6 +1408,52 @@ storage.permissions.grant(drive.drive_id, {
 });
 ```
 
+For public intake, resume-token, avatar, or guest document flows, backend code
+can issue a scoped upload grant. The grant lets an unauthenticated browser
+upload to one exact path, while the uploaded object stays private unless
+`public: true` is set:
+
+```ts
+import { defineEndpoint } from '@zero/framework/server';
+
+export default defineEndpoint({
+  method: 'POST',
+  path: '/api/intake/:id/upload-grant',
+  auth: false,
+  handler: async ({ params, zero }) => {
+    if (!zero.storage) {
+      return Response.json({ error: 'Storage unavailable' }, { status: 503 });
+    }
+
+    const grant = await zero.storage.uploads.create('drv_private_intake', {
+      path: `/intakes/${params.id}/insurance-front.png`,
+      expiresIn: 15 * 60,
+      maxSize: 5 * 1024 * 1024,
+      contentTypes: ['image/png', 'image/jpeg', 'application/pdf'],
+      metadata: { intakeId: params.id, kind: 'insurance-front' },
+      flow: 'intake',
+      resource: { type: 'intake', id: params.id },
+    });
+
+    return grant;
+  },
+});
+```
+
+The browser then uploads with:
+
+```ts
+await fetch(`/storage/upload-grants/${grant.token}`, {
+  method: 'PUT',
+  headers: { 'content-type': file.type },
+  body: file,
+});
+```
+
+Upload grants are signed storage capabilities. They do not grant read access,
+they default to no overwrite, and they add `storageUploadGrantId` plus optional
+flow/resource metadata to the stored object.
+
 The older method names such as `createDrive()`, `listFolder()`, and
 `grantPermission()` remain supported.
 
@@ -1452,6 +1498,8 @@ All routes are prefixed with `/storage`.
 | `POST` | `/drives/:driveId/presign` | read/write | Create a presigned URL |
 | `GET` | `/presigned/:token` | token | Presigned download |
 | `PUT` | `/presigned/:token` | token | Presigned upload |
+| `POST` | `/drives/:driveId/upload-grants` | write | Create a scoped public upload grant |
+| `PUT` | `/upload-grants/:token` | token | Execute a scoped public upload grant |
 | `GET` | `/drives/:driveId/info/*` | read/public | Get file/folder metadata |
 
 ### Standalone Server Mount
@@ -2276,9 +2324,9 @@ Everything available from `@zero/framework/react`:
 `STORAGE_TABLES`, `zeroAnimatedIconNames`, `zeroAnimatedIcons`
 
 ### Types
-`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `RegisterParams`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `DriveRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
+`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `RegisterParams`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `StorageUploadGrant`, `StorageUploadGrantResource`, `DriveRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
 
-Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `ResolvedConfig`, `AuthPluginConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `StorageDriveApi`, `StorageObjectApi`, `StoragePermissionApi`, `PlatformTokenService`, `PlatformActionTokenRecord`, `PlatformResumeTokenRecord`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `createAuthPlugin`, `createAuthMiddleware`, `getTokenService`, `createPlatformTokenPlugin`, `getPlatformTokenService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `emitPlatformCode`, `createObservabilityPlugin`
+Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `ResolvedConfig`, `AuthPluginConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `StorageDriveApi`, `StorageObjectApi`, `StoragePermissionApi`, `StorageUploadGrantApi`, `StorageServiceOptions`, `CreateUploadGrantTokenOptions`, `VerifiedUploadGrant`, `PlatformTokenService`, `PlatformActionTokenRecord`, `PlatformResumeTokenRecord`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `createAuthPlugin`, `createAuthMiddleware`, `getTokenService`, `createPlatformTokenPlugin`, `getPlatformTokenService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `createUploadGrantToken`, `verifyUploadGrantToken`, `emitPlatformCode`, `createObservabilityPlugin`
 
 Sync-only (from `@platform/sync`): `createDefaultSyncPolicy`, `combineSyncPolicies`, `allowAllSyncPolicy`, `getReadableSyncTables`, `evaluateSyncReadPolicy`, `evaluateSyncMutationPolicy`, `SyncPolicy`, `SyncReadPolicyContext`, `SyncMutationPolicyContext`
 

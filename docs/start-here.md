@@ -200,8 +200,8 @@ still work: `zero.syncDB`, `zero.vectors`, `zero.workflowRegistry`, and
 Inside those services, prefer the small standard method vocabulary:
 `create()`, `get()`, `list()`, `update()`, `delete()`, `run()`, `stop()`, and
 `status()` where it fits. Storage is grouped as `storage.drives`,
-`storage.objects`, and `storage.permissions` so calls stay unambiguous. The
-full service alias map is in
+`storage.objects`, `storage.permissions`, and `storage.uploads` so calls stay
+unambiguous. The full service alias map is in
 [Phase 4: Service API Smoothing](./framework/phase-4-service-api-smoothing.md).
 
 The core UI primitives and Animate UI wrappers share the same token contract:
@@ -570,6 +570,27 @@ export function InvoiceDropzone({ driveId }: { driveId: string }) {
   return <StorageDropzone driveId={driveId} path="/invoices" />;
 }
 ```
+
+For public flows where an unauthenticated user must upload into private
+storage, such as intake forms, resume-token flows, ID cards, insurance cards,
+or consent PDFs, create a scoped upload grant from backend code:
+
+```ts
+const grant = await zero.storage?.uploads.create(driveId, {
+  path: `/intakes/${intakeId}/id-front.png`,
+  expiresIn: 15 * 60,
+  maxSize: 5 * 1024 * 1024,
+  contentTypes: ['image/png', 'image/jpeg', 'application/pdf'],
+  metadata: { intakeId, kind: 'id-front' },
+  flow: 'intake',
+  resource: { type: 'intake', id: intakeId },
+});
+```
+
+Return the token to the browser and upload with
+`PUT /storage/upload-grants/:token`. The uploaded object remains private by
+default and the grant cannot overwrite an existing object unless
+`overwrite: true` is set.
 
 ## Configuration Files
 

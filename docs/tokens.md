@@ -137,6 +137,18 @@ The service owns these framework tables:
 Raw tokens are never stored. Do not put raw tokens, passwords, or provider
 secrets in token metadata.
 
+## Pairing With Storage Upload Grants
+
+Resume tokens are a good fit for long public flows such as intake forms. When a
+public user needs to upload private documents during that flow, do not make the
+drive public. Verify the resume token in app backend code, then create a scoped
+storage upload grant with `zero.storage.uploads.create()`. Return that grant to
+the browser and upload with `PUT /storage/upload-grants/:token`.
+
+The resume token controls whether the user may continue the flow. The upload
+grant controls one exact file write. Reads remain governed by normal storage
+permissions.
+
 ## Auth Compatibility
 
 Auth password setup/reset still uses `/auth/action-token/:token`,

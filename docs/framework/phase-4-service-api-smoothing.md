@@ -60,10 +60,18 @@ const permission = storage.permissions.grant(drive.drive_id, {
   grantValue: 'manager',
   permission: 'read',
 });
+
+const grant = await storage.uploads.create(drive.drive_id, {
+  path: '/public-intake/id-front.png',
+  expiresIn: 15 * 60,
+  contentTypes: ['image/png', 'image/jpeg'],
+});
 ```
 
 Existing methods such as `createDrive()`, `getFileInfo()`, `listFolder()`,
 `grantPermission()`, and `checkAccess()` remain supported for compatibility.
+Upload grants are intentionally only exposed through `storage.uploads` because
+they are capability tokens for public upload into private storage.
 
 ## Example Endpoint
 
@@ -101,5 +109,5 @@ Future generated docs and scaffolds should use:
 3. `zero.vector.search/get/status` for vector reads.
 4. `zero.scheduler.create/run/list` for jobs.
 5. `zero.workflows.run/get/list/stop` for workflow instances.
-6. `zero.storage.drives`, `zero.storage.objects`, and
-   `zero.storage.permissions` for backend storage tasks.
+6. `zero.storage.drives`, `zero.storage.objects`, `zero.storage.permissions`,
+   and `zero.storage.uploads` for backend storage tasks.

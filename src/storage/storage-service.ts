@@ -23,8 +23,11 @@ import type {
   GrantPermissionParams,
   PermissionRecord,
   PermissionLevel,
+  CreateUploadGrantParams,
+  StorageUploadGrant,
 } from './types';
 import { detectMimeType } from './mime';
+import { createUploadGrantToken } from './upload-grant';
 
 // ─── SQL Row Types ──────────────────────────────────────────────────────────
 
@@ -120,6 +123,22 @@ export interface StoragePermissionApi {
     userProperties: Record<string, string>,
     requiredLevel: PermissionLevel
   ): boolean;
+}
+
+/** Canonical grouped API for scoped upload grants. */
+export interface StorageUploadGrantApi {
+  /**
+   * Create a short-lived token that allows unauthenticated upload to exactly
+   * one storage path. Uploaded objects are private unless `public` is true.
+   */
+  create(driveId: string, params: CreateUploadGrantParams): Promise<StorageUploadGrant>;
+}
+
+export interface StorageServiceOptions {
+  /** HMAC secret used by storage upload grant tokens. */
+  uploadGrantSecret?: string;
+  /** Default expiry in seconds for upload grants and presigned URLs. */
+  defaultPresignedTTL?: number;
 }
 
 // ─── Table Definitions ──────────────────────────────────────────────────────
@@ -243,9 +262,15 @@ export class StorageService {
       this.checkAccess(driveId, path, userId, userRole, userProperties, requiredLevel),
   };
 
+  /** Canonical grouped API for scoped public-upload grants. */
+  readonly uploads: StorageUploadGrantApi = {
+    create: (driveId, params) => this.createUploadGrant(driveId, params),
+  };
+
   constructor(
     private db: ReactiveDB,
-    private adapter: StorageAdapter
+    private adapter: StorageAdapter,
+    private options: StorageServiceOptions = {}
   ) {
     this.stmts = this.prepareStatements();
   }
@@ -565,6 +590,28 @@ export class StorageService {
 
     this.db.insert('storage_objects', record as unknown as Row);
     return toFileInfo(record);
+  }
+
+  /**
+   * Create a scoped public-upload grant for one exact object path.
+   */
+  async createUploadGrant(
+    driveId: string,
+    params: CreateUploadGrantParams
+  ): Promise<StorageUploadGrant> {
+    const drive = this.getDrive(driveId);
+    if (!drive) throw new StorageError(404, `Drive not found: ${driveId}`);
+    if (!this.options.uploadGrantSecret) {
+      throw new StorageError(500, 'Storage upload grants are not configured');
+    }
+
+    const expiresIn = params.expiresIn ?? this.options.defaultPresignedTTL ?? 3600;
+    return createUploadGrantToken({
+      ...params,
+      driveId,
+      expiresIn,
+      secret: this.options.uploadGrantSecret,
+    });
   }
 
   async download(

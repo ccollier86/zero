@@ -246,6 +246,9 @@ await upload(driveId, file, { path: '/q2.pdf' });
 **Access model:** storage HTTP routes use the same auth middleware as the rest
 of the backend. Public drives/files can be read anonymously, but private reads
 and all writes go through server-side permission checks.
+For public intake or resume-token flows, backend code can create scoped upload
+grants with `zero.storage.uploads.create()`. Those grants allow a browser to
+upload one file to one path without granting read access or opening the drive.
 
 **Frontend model:** storage hooks use the platform SDK client for auth. JSON
 actions go through `client.fetch()` and multipart uploads use the SDK access

@@ -10,6 +10,8 @@ export type {
   StorageDriveUpdates,
   StorageObjectApi,
   StoragePermissionApi,
+  StorageServiceOptions,
+  StorageUploadGrantApi,
 } from './storage-service';
 
 // Adapter
@@ -18,6 +20,10 @@ export { LocalStorageAdapter } from './local-adapter';
 // Presigned URLs
 export { createPresignedToken, verifyPresignedToken } from './presigned';
 export type { CreatePresignedOptions, VerifiedPresigned } from './presigned';
+
+// Upload grants
+export { createUploadGrantToken, verifyUploadGrantToken } from './upload-grant';
+export type { CreateUploadGrantTokenOptions, VerifiedUploadGrant } from './upload-grant';
 
 // MIME detection
 export { detectMimeType } from './mime';
@@ -34,6 +40,9 @@ export type {
   CreateDriveParams,
   UploadOptions,
   PresignedUrlOptions,
+  CreateUploadGrantParams,
+  StorageUploadGrant,
+  StorageUploadGrantResource,
   ListOptions,
   ListResult,
   DriveUsage,
