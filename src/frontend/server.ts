@@ -27,6 +27,35 @@ export type {
   TableSyncDefaultConfig,
 } from './server/types';
 
+// ─── Sync / ReactiveDB: Server ─────────────────────────────────────────
+export {
+  ReactiveDB,
+  allowAllSyncPolicy,
+  combineSyncPolicies,
+  createDefaultSyncPolicy,
+  createReactiveDB,
+  evaluateSyncMutationPolicy,
+  evaluateSyncReadPolicy,
+  getEphemeralManager,
+  getReadableSyncTables,
+  getSyncDB,
+} from '../sync';
+export type {
+  Change,
+  ChangeListener,
+  ChangeOp,
+  DeclaredSyncMode,
+  DefaultSyncPolicyConfig,
+  ReactiveDBConfig,
+  Row,
+  SyncMutationPolicyContext,
+  SyncPolicy,
+  SyncPolicyDecision,
+  SyncPolicyEvaluation,
+  SyncReadPolicyContext,
+  TableSchema,
+} from '../sync';
+
 // ─── Platform Doctor ───────────────────────────────────────────────────
 export { runPlatformDoctor } from '../doctor/platform-doctor';
 export type {

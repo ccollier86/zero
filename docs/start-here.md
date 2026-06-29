@@ -16,6 +16,9 @@ correct that path if it is in scope.
 
 ## Create An App
 
+For the package-mode framework surface and the current import gaps, see
+[Framework Developer Surface](./framework-developer-surface.md).
+
 Put app config in `zero.config.ts` so the server, platform doctor, and future
 tools read the same source:
 
