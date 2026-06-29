@@ -79,8 +79,10 @@ db/
   schema.ts
 zero.config.ts
 .env.example
+.gitignore
 package.json
 README.md
+tsconfig.json
 ```
 
 Zero-owned runtime stays in `node_modules/@zero/framework`. App-owned generated

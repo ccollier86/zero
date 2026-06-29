@@ -6,7 +6,7 @@
  * by the package-mode fixture tests.
  */
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
@@ -34,6 +34,8 @@ describe('scaffoldZeroApp', () => {
       expect(result.packageName).toBe('acme-crm');
       expect(result.filesWritten).toContain('zero.config.ts');
       expect(result.filesWritten).toContain('server/routes/customers.ts');
+      expect(result.filesWritten).toContain('tsconfig.json');
+      expect(result.filesWritten).toContain('.gitignore');
 
       const packageJson = JSON.parse(await readFile(join(targetDir, 'package.json'), 'utf8')) as {
         dependencies: Record<string, string>;
@@ -41,6 +43,17 @@ describe('scaffoldZeroApp', () => {
       };
       expect(packageJson.dependencies['@zero/framework']).toBe('file:../zero-framework');
       expect(packageJson.scripts.doctor).toBe('zero doctor --config ./zero.config.ts');
+
+      const tsconfig = JSON.parse(await readFile(join(targetDir, 'tsconfig.json'), 'utf8')) as {
+        compilerOptions: { paths: Record<string, string[]> };
+      };
+      expect(tsconfig.compilerOptions.paths['@/components/*']).toEqual(['./components/*']);
+
+      const gitignore = await readFile(join(targetDir, '.gitignore'), 'utf8');
+      expect(gitignore).toContain('.zero');
+      expect(gitignore).toContain('*.db-wal');
+
+      await linkFrameworkPackage(targetDir);
 
       const build = await Bun.build({
         entrypoints: [join(targetDir, 'app/server.ts')],
@@ -73,3 +86,9 @@ describe('scaffoldZeroApp', () => {
     }
   });
 });
+
+async function linkFrameworkPackage(targetDir: string): Promise<void> {
+  const scopeDir = join(targetDir, 'node_modules/@zero');
+  await mkdir(scopeDir, { recursive: true });
+  await symlink(process.cwd(), join(scopeDir, 'framework'), 'dir');
+}

@@ -130,7 +130,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 During startup, Zero also generates client build glue in `.zero/generated`.
 Those files connect the app route manifest to Zero's hydration runtime and are
 safe to delete; `createApp()` regenerates them before bundling the browser
-entry. Keep `.zero/` ignored in app repositories.
+entry. Keep `.zero/` ignored in app repositories. Generated apps include a
+`tsconfig.json` with `@/*`, `@/components/*`, `@/hooks/*`, and `@/lib/*`
+aliases so app-owned components can stay portable and easy to customize.
 
 The core UI primitives and Animate UI wrappers share the same token contract:
 `background`, `card`, `popover`, `muted`, `accent`, `input`, `border`, `ring`,

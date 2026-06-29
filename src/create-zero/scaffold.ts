@@ -51,6 +51,10 @@ export async function scaffoldZeroApp(options: ScaffoldZeroAppOptions): Promise<
   await copyTemplate(templateDir, targetDir, filesWritten);
   await writeGeneratedPackageJson(targetDir, packageName, options.zeroDependency);
   filesWritten.push('package.json');
+  await writeGeneratedTsConfig(targetDir);
+  filesWritten.push('tsconfig.json');
+  await writeGeneratedGitignore(targetDir);
+  filesWritten.push('.gitignore');
   await writeGeneratedReadme(targetDir, packageName);
   filesWritten.push('README.md');
 
@@ -130,6 +134,61 @@ async function writeGeneratedPackageJson(
   };
 
   await writeFile(join(targetDir, 'package.json'), `${JSON.stringify(packageJson, null, 2)}\n`);
+}
+
+async function writeGeneratedTsConfig(targetDir: string): Promise<void> {
+  const tsconfig = {
+    compilerOptions: {
+      target: 'ES2022',
+      module: 'ESNext',
+      moduleResolution: 'bundler',
+      lib: ['ES2022', 'DOM', 'DOM.Iterable'],
+      types: ['bun'],
+      strict: true,
+      skipLibCheck: true,
+      esModuleInterop: true,
+      forceConsistentCasingInFileNames: true,
+      resolveJsonModule: true,
+      jsx: 'react-jsx',
+      jsxImportSource: 'react',
+      baseUrl: '.',
+      paths: {
+        '@/*': ['./*'],
+        '@/components/*': ['./components/*'],
+        '@/hooks/*': ['./hooks/*'],
+        '@/lib/*': ['./lib/*'],
+      },
+    },
+    include: [
+      'app/**/*.ts',
+      'app/**/*.tsx',
+      'server/**/*.ts',
+      'server/**/*.tsx',
+      'db/**/*.ts',
+      'zero.config.ts',
+      '.zero/generated/**/*.ts',
+      '.zero/generated/**/*.tsx',
+    ],
+    exclude: ['node_modules', 'dist', '.build'],
+  };
+
+  await writeFile(join(targetDir, 'tsconfig.json'), `${JSON.stringify(tsconfig, null, 2)}\n`);
+}
+
+async function writeGeneratedGitignore(targetDir: string): Promise<void> {
+  const body = `node_modules
+dist
+.build
+.zero
+data
+.env
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+`;
+
+  await writeFile(join(targetDir, '.gitignore'), body);
 }
 
 async function getDefaultZeroDependency(): Promise<string> {
