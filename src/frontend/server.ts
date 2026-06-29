@@ -15,7 +15,7 @@
 // ─── App Factory ────────────────────────────────────────────────────────
 export { createApp } from './server/app-factory';
 export type { App } from './server/app-factory';
-export { resolveConfig } from './server/types';
+export { defineZeroConfig, resolveConfig } from './server/types';
 export type {
   AppConfig,
   AppTableInput,

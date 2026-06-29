@@ -209,6 +209,17 @@ export interface AppConfig {
   loginPath?: string;
 }
 
+/**
+ * Define a Zero app config while preserving literal inference.
+ *
+ * This helper is intentionally runtime-neutral: it returns the same object
+ * passed in, and `createApp()` remains responsible for applying defaults and
+ * validating cross-feature constraints.
+ */
+export function defineZeroConfig<const TConfig extends AppConfig>(config: TConfig): TConfig {
+  return config;
+}
+
 // ─── Internal ──────────────────────────────────────────────────────────────
 
 /** Resolved config with defaults filled in. */

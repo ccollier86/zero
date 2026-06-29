@@ -18,12 +18,14 @@ correct that path if it is in scope.
 
 For the package-mode framework surface and remaining package-mode work, see
 [Framework Developer Surface](./framework-developer-surface.md).
+The repository also includes `examples/package-mode` as a small generated-app
+fixture that imports Zero through `@zero/framework/*`.
 
 Put app config in `zero.config.ts` so the server, platform doctor, and future
 tools read the same source:
 
 ```ts
-import type { AppConfig } from '@zero/framework/server';
+import { defineZeroConfig } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
 const PORT = Number(Bun.env.PORT ?? 3000);
@@ -39,7 +41,7 @@ const hasAI = Boolean(
 );
 const hasVector = Bun.env.ZERO_VECTOR_ENABLED === 'true';
 
-const config = {
+const config = defineZeroConfig({
   app: {
     name: Bun.env.APP_NAME ?? 'Zero App',
     publicUrl: Bun.env.APP_PUBLIC_URL ?? `http://localhost:${PORT}`,
@@ -74,7 +76,7 @@ const config = {
     : false,
   stateSync: true,
   port: PORT,
-} satisfies AppConfig;
+});
 
 export default config;
 export { config };

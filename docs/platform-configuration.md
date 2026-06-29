@@ -41,17 +41,17 @@ zero/
 `server.ts` stays small:
 
 ```ts
-import { createApp } from '@zero/framework/server';
+import { createApp, defineZeroConfig } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
-const app = await createApp({
+const config = defineZeroConfig({
   db: { mode: './data/app.db' },
   tables,
   auth: true,
-  configDir: './zero',
 });
 
-app.listen(3000);
+const app = await createApp(config);
+app.listen(config.port ?? 3000);
 ```
 
 `createApp()` should load known config files from `configDir` when present.

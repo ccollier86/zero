@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { resolveConfig } from './types';
+import { defineZeroConfig, resolveConfig } from './types';
 
 const tables = {
   todos: {
@@ -16,6 +16,19 @@ const tables = {
 };
 
 describe('resolveConfig', () => {
+  test('defineZeroConfig returns the same app config object', () => {
+    const input = {
+      db: { mode: 'memory' },
+      tables,
+      ai: false,
+    } as const;
+
+    const config = defineZeroConfig(input);
+
+    expect(config).toBe(input);
+    expect(config.ai).toBe(false);
+  });
+
   test('allows state sync when auth is enabled', () => {
     const config = resolveConfig({
       db: { mode: 'memory' },

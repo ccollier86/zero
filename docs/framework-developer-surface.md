@@ -3,8 +3,8 @@
 This document maps how an app developer should use Zero when it behaves like an
 installed framework. It is intentionally honest about the current branch state:
 the runtime, package export map, and app-owned Elysia route loader exist on this
-branch; `create-zero`, a package-mode fixture, and `zero add` are still being
-added.
+branch; a package-mode fixture now verifies those imports. `create-zero` and
+`zero add` are still being added.
 
 ## Current And Target Imports
 
@@ -75,10 +75,10 @@ build glue lives in `.zero/generated` and should be ignored.
 The app server should stay small:
 
 ```ts
-import { createApp, type AppConfig } from '@zero/framework/server';
+import { createApp, defineZeroConfig } from '@zero/framework/server';
 import { tables } from './db/schema';
 
-const config = {
+const config = defineZeroConfig({
   app: {
     name: process.env.APP_NAME ?? 'Zero App',
     publicUrl: process.env.APP_PUBLIC_URL,
@@ -101,11 +101,15 @@ const config = {
   generatedDir: './.zero/generated',
   outDir: './.build',
   port: Number(process.env.PORT ?? 3000),
-} satisfies AppConfig;
+});
 
 const app = await createApp(config);
 app.listen(config.port);
 ```
+
+`defineZeroConfig()` preserves literal type inference and returns the same
+object. `createApp()` still owns runtime defaulting, validation, plugin
+composition, and startup behavior.
 
 `createApp()` currently installs these systems when configured:
 
@@ -630,9 +634,7 @@ by default.
 
 ## Current Gaps To Close
 
-1. Add typed config helpers such as `defineZeroConfig()`.
-2. Add `create-zero` project scaffolding.
-3. Add a package-mode fixture app that imports the framework like a dependency.
-4. Add `zero add` for copying selected components/hooks into app source.
-5. Decide whether package exports should point at source `.ts` files long-term
+1. Add `create-zero` project scaffolding.
+2. Add `zero add` for copying selected components/hooks into app source.
+3. Decide whether package exports should point at source `.ts` files long-term
    or a built `dist/` artifact for non-Bun consumers.
