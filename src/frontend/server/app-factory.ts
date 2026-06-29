@@ -1,7 +1,7 @@
 import { Elysia } from 'elysia';
 import { createSyncPlugin } from '../../sync/sync.plugin';
 import { combineSyncPolicies, createDefaultSyncPolicy } from '../../sync/sync-policy';
-import { createAuthPlugin, getTokenService } from '../../auth/auth.plugin';
+import { createAuthPlugin, getAuthStore, getTokenService } from '../../auth/auth.plugin';
 import { createAuthMiddleware } from '../../auth/auth.middleware';
 import { getSyncDB } from '../../sync/sync.plugin';
 import { createSchedulerPlugin, getScheduler } from '../../scheduler';
@@ -29,6 +29,7 @@ import { createVectorPlugin } from '../../vector';
 import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
 import {
   configureResourceRegistry,
+  createResourceCrudPlugin,
   loadResourceDefinitions,
 } from '../../resources';
 
@@ -279,13 +280,28 @@ export async function createApp(userConfig: AppConfig) {
   const loadedResources = await loadResourceDefinitions({
     resourcesDir: config.serverResourcesDir,
   });
-  configureResourceRegistry({
+  const resourceAuthConfig = resolveAuthBehaviorConfig(config.auth === false ? {} : config.auth);
+  const resourceRegistry = configureResourceRegistry({
     resources: [...config.resources, ...loadedResources],
     tables: config.tables,
-    authConfig: resolveAuthBehaviorConfig(config.auth === false ? {} : config.auth),
+    authConfig: resourceAuthConfig,
   });
 
-  // 6.7. App-owned backend extensions — mounted before health and file-router catch-all
+  // 6.7. Generated resource CRUD — resource policy enforced server-side
+  if (config.resourceRoutes !== false) {
+    app.use(
+      createResourceCrudPlugin({
+        registry: resourceRegistry,
+        tables: config.tables,
+        authConfig: resourceAuthConfig,
+        getTokenService: config.auth !== false ? getTokenService : undefined,
+        getUserStore: config.auth !== false ? getAuthStore : undefined,
+        ...config.resourceRoutes,
+      })
+    );
+  }
+
+  // 6.8. App-owned backend extensions — mounted before health and file-router catch-all
   const serverRoutePlugins = await loadServerRoutePlugins({
     extensionDirs: [
       { kind: 'plugins', dir: config.serverPluginsDir },

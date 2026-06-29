@@ -150,7 +150,7 @@ Use the generated `server/` folders for app-owned backend code:
 | `server/middleware/` | Named app middleware created with `defineMiddleware()` and structured `matcher` policy. |
 | `server/endpoints/` | Single HTTP endpoints created with `defineEndpoint()`. |
 | `server/routes/` | Grouped `defineRouter()` routes and raw Elysia escape-hatch plugins. |
-| `server/resources/` | Resource declarations created with `defineResource()` for future CRUD/data/sync integration. |
+| `server/resources/` | Resource declarations created with `defineResource()` for generated CRUD and future data/sync integration. |
 
 Zero loads backend extension folders in that order and ignores missing folders.
 Resource definitions are loaded before backend extensions so routes can inspect
@@ -171,8 +171,12 @@ For server-side resource authorization, use the policy core exported from
 `metadataPolicy()`, `adminOnly()`, `anyOf()`, `allOf()`,
 `validateResourcePolicy()`, and `evaluateResourcePolicy()`. Resource
 definitions can live in `server/resources` or `createApp({ resources })`.
-Generated CRUD, `/api/data`, sync, and doctor integration are being layered on
-in later resource slices.
+Generated CRUD routes are enabled by default at `/api/resources/:resource` and
+`/api/resources/:resource/:id`; set `resourceRoutes: false` to disable them or
+pass `resourceRoutes: { prefix, defaultLimit, maxLimit }` to customize them.
+Generated route writes go through ReactiveDB and enforce resource policies
+server-side. `/api/data`, sync, and doctor integration are being layered on in
+later resource slices.
 
 App-owned backend handlers receive a lazy `zero` service context. Use canonical
 names in new code: `zero.db`, `zero.auth`, `zero.ai`, `zero.vector`,

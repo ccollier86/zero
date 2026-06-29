@@ -1,6 +1,6 @@
 # Phase 5: Resource And Policy API Plan
 
-Status: planned, slices 1-3 implemented
+Status: planned, slices 1-4 implemented
 
 Phase 5 introduces a high-level resource contract for common data-driven apps.
 The goal is to let app code declare tables, actions, and authorization policy
@@ -215,17 +215,25 @@ Keep route generation separate from policy evaluation.
 
 ### CRUD Route Generation
 
+Implemented in slice 4. Generated CRUD is mounted by default at
+`/api/resources/:resource` and `/api/resources/:resource/:id`, and can be
+disabled with `resourceRoutes: false` or customized with
+`resourceRoutes: { prefix, defaultLimit, maxLimit }`.
+
 Generated CRUD should compile to Zero endpoint/router primitives and Elysia
 validation:
 
-1. `list`: validate pagination/filter input, apply policy constraints.
-2. `get`: load by primary key, then evaluate policy with row.
-3. `create`: validate input, apply create policy/stamping, write through
+1. Done: `list` validates pagination/filter/sort input, applies policy
+   constraints, and runs parameterized SQL.
+2. Done: `get` loads by primary key, then evaluates policy with row.
+3. Done: `create` validates input, applies create policy/stamping, writes through
    `zero.db.create()`.
-4. `update`: load existing row, evaluate policy, strip primary key changes,
-   write through `zero.db.update()`.
-5. `delete`: load existing row, evaluate policy, write through
+4. Done: `update` loads existing row, evaluates policy, strips primary key
+   changes, and writes through `zero.db.update()`.
+5. Done: `delete` loads existing row, evaluates policy, and writes through
    `zero.db.delete()`.
+6. Done: metadata policies hydrate trusted user properties from the auth store.
+7. Done: generated route writes flow through ReactiveDB change emission.
 
 ### `/api/data`
 
@@ -279,7 +287,10 @@ Doctor should check:
    and registration-time validation for table/pk/action/policy issues.
 
 4. **CRUD Generation**
-   Generate safe resource routes using existing Zero endpoint/router machinery.
+   Implemented. Added generated `/api/resources` CRUD routes, list
+   filter/sort/pagination, policy constraint SQL translation, create stamping,
+   primary-key-safe updates, ReactiveDB writes, route config, public exports,
+   and createApp integration tests.
 
 5. **`/api/data` Integration**
    Apply resource read constraints and row checks to generic data reads.

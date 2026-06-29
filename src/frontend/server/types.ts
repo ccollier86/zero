@@ -7,7 +7,7 @@ import { resolveAIConfig } from '../../ai/ai-env';
 import type { AIConfig, ResolvedAIConfig } from '../../ai/ai-types';
 import { resolveVectorConfig } from '../../vector/vector-config';
 import type { ResolvedVectorConfig, VectorConfig } from '../../vector/vector-types';
-import type { ResourceDefinition } from '../../resources';
+import type { ResourceCrudRoutesConfig, ResourceDefinition } from '../../resources';
 
 // ─── App Configuration ─────────────────────────────────────────────────────
 
@@ -159,6 +159,14 @@ export interface AppConfig {
   resources?: readonly ResourceDefinition[];
 
   /**
+   * Generated CRUD routes for registered resources.
+   *
+   * Defaults to enabled at `/api/resources`. Set to false when resources are
+   * used only for custom routes or future data/sync policy integration.
+   */
+  resourceRoutes?: boolean | ResourceCrudRoutesConfig;
+
+  /**
    * Default sync behavior for tables that do not explicitly declare `_sync`.
    *
    * By default omitted mode is `auto`: startup counts rows, keeps small tables
@@ -275,6 +283,7 @@ export interface ResolvedConfig {
   stateSync: boolean;
   syncPolicy?: SyncPolicy;
   resources: readonly ResourceDefinition[];
+  resourceRoutes: false | ResourceCrudRoutesConfig;
   storageDir: string;
   appDir: string;
   outDir: string;
@@ -372,6 +381,11 @@ export function resolveConfig(
     stateSync,
     syncPolicy: config.syncPolicy,
     resources: config.resources ?? [],
+    resourceRoutes: config.resourceRoutes === false
+      ? false
+      : config.resourceRoutes === true || config.resourceRoutes === undefined
+        ? {}
+        : config.resourceRoutes,
     syncDefaults,
     storageDir: config.storageDir ?? '.storage',
     appDir: config.appDir ?? './app',

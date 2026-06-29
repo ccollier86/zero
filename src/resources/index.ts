@@ -22,8 +22,32 @@ export {
 
 export {
   inferTablePrimaryKey,
+  getResourceTableColumns,
   tableHasColumn,
 } from './resource-schema';
+
+export {
+  createResourcePolicyUser,
+} from './resource-auth';
+
+export {
+  createResourceCrudPlugin,
+} from './resource-crud.plugin';
+
+export {
+  ResourceCrudService,
+} from './resource-crud-service';
+
+export {
+  buildResourceListQueryPlan,
+  quoteResourceIdentifier,
+} from './resource-query';
+
+export {
+  isResourceInputError,
+  sanitizeResourceCreateInput,
+  sanitizeResourceUpdateInput,
+} from './resource-input';
 
 export {
   adminOnly,
@@ -56,6 +80,31 @@ export type {
 export type {
   ResourceLoaderOptions,
 } from './resource-loader';
+
+export type {
+  ResourceCrudPluginConfig,
+  ResourceCrudRoutesConfig,
+} from './resource-crud.plugin';
+
+export type {
+  ResourceCrudFailure,
+  ResourceCrudRequestContext,
+  ResourceCrudResult,
+  ResourceCrudServiceOptions,
+  ResourceCrudSuccess,
+} from './resource-crud-service';
+
+export type {
+  ResourceListQueryInput,
+  ResourceListQueryPlan,
+  ResourceListQueryPlanOptions,
+  ResourceQueryError,
+} from './resource-query';
+
+export type {
+  ResourceInputError,
+  ResourceInputValue,
+} from './resource-input';
 
 export type {
   CustomResourcePolicyCallback,

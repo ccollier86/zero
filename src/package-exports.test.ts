@@ -56,13 +56,14 @@ import { Migrator } from '@zero/framework/migrations';
 import { createNotificationPlugin } from '@zero/framework/notifications';
 import { OBS_CODES } from '@zero/framework/observability';
 import { OBS_CODES as PURE_OBS_CODES } from '@zero/framework/observability/codes';
-import { defineResource as defineSubpathResource, ownerPolicy as resourcesOwnerPolicy } from '@zero/framework/resources';
+import { createResourceCrudPlugin as createSubpathResourceCrudPlugin, defineResource as defineSubpathResource, ownerPolicy as resourcesOwnerPolicy } from '@zero/framework/resources';
 import { createRoomPlugin } from '@zero/framework/rooms';
 import { createSchedulerPlugin } from '@zero/framework/scheduler';
 import { defineTable, encodeFieldValue, field } from '@zero/framework/schema';
 import {
   adminOnly,
   createApp,
+  createResourceCrudPlugin,
   defineResource,
   getAI,
   getEmailService,
@@ -84,6 +85,8 @@ export const serverSymbols = {
   isPolicyTrustedUserProperty,
   adminOnly,
   createNotificationPlugin,
+  createResourceCrudPlugin,
+  createSubpathResourceCrudPlugin,
   createRoomPlugin,
   createSchedulerPlugin,
   createStoragePlugin,

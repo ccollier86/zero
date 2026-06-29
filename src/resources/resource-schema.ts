@@ -26,3 +26,12 @@ export function tableHasColumn(schema: TableSchema | undefined, column: string):
   if (!schema) return false;
   return typeof schema[column] === 'string';
 }
+
+/** Return real SQL column names from a table schema, excluding Zero metadata. */
+export function getResourceTableColumns(schema: TableSchema | undefined): string[] {
+  if (!schema) return [];
+
+  return Object.entries(schema)
+    .filter(([key, value]) => key !== '_identity' && typeof value === 'string')
+    .map(([key]) => key);
+}

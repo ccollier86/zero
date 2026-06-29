@@ -45,6 +45,7 @@ describe('resolveConfig', () => {
     expect(config.serverEndpointsDir).toBe('./server/endpoints');
     expect(config.serverRoutesDir).toBe('./server/routes');
     expect(config.serverResourcesDir).toBe('./server/resources');
+    expect(config.resourceRoutes).toEqual({});
   });
 
   test('preserves auth registration and user property config', () => {
@@ -198,6 +199,28 @@ describe('resolveConfig', () => {
       rowLimit: 50,
       action: 'warn',
       persist: false,
+    });
+  });
+
+  test('preserves generated resource route config', () => {
+    expect(resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      resourceRoutes: false,
+    }).resourceRoutes).toBe(false);
+
+    expect(resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      resourceRoutes: {
+        prefix: '/api/domain',
+        defaultLimit: 25,
+        maxLimit: 100,
+      },
+    }).resourceRoutes).toEqual({
+      prefix: '/api/domain',
+      defaultLimit: 25,
+      maxLimit: 100,
     });
   });
 });

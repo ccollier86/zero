@@ -2,8 +2,8 @@
 
 Zero resource policy is the framework-independent authorization core for the
 resource API. It is available today for server-side code and registered
-resource definitions. Generated CRUD routes, `/api/data`, sync mutations, and
-doctor checks will reuse this contract in later Phase 5 slices.
+resource definitions. Generated CRUD routes use this contract today; `/api/data`,
+sync mutations, and doctor checks will reuse it in later Phase 5 slices.
 
 Import from the server surface:
 
@@ -95,6 +95,76 @@ const tickets = getResourceRegistry().getByTable('tickets');
 
 App-owned route handlers can also use `zero.resources`.
 
+## Generated CRUD Routes
+
+When `createApp()` has registered resources, Zero mounts generated CRUD routes
+by default:
+
+| Action | Method and path |
+| --- | --- |
+| `list` | `GET /api/resources/:resource` |
+| `get` | `GET /api/resources/:resource/:id` |
+| `create` | `POST /api/resources/:resource` |
+| `update` | `PATCH /api/resources/:resource/:id` |
+| `delete` | `DELETE /api/resources/:resource/:id` |
+
+The `:resource` segment is the resource name. It defaults to the backing table
+name unless `defineResource({ name })` is provided.
+
+Disable generated routes when a resource should only feed custom routes or
+future data/sync policy integration:
+
+```ts
+createApp({
+  db: { mode: 'memory' },
+  tables,
+  resources,
+  resourceRoutes: false,
+});
+```
+
+Or customize route behavior:
+
+```ts
+createApp({
+  db: { mode: 'memory' },
+  tables,
+  resources,
+  resourceRoutes: {
+    prefix: '/api/domain',
+    defaultLimit: 50,
+    maxLimit: 500,
+  },
+});
+```
+
+Generated list routes support the same practical query controls as lazy data
+reads:
+
+```txt
+GET /api/resources/tickets?filter=status:open&order=created_at&dir=desc&limit=50&offset=0
+GET /api/resources/tickets?filter=priority:gte:3&filter=status:in:open,pending
+```
+
+Supported filter operators are `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`,
+`contains`, and `in`. Column names are validated against the table schema and
+values are parameterized.
+
+CRUD policy behavior:
+
+- `list` evaluates the resource list policy, then translates returned
+  constraints such as `owner_id = user.userId` into SQL.
+- `get`, `update`, and `delete` load the row first, then evaluate row-level
+  policy.
+- `create` evaluates create policy before writing. `ownerPolicy()` defaults to
+  `create: 'stamp'`, so caller-provided owner fields are overwritten with the
+  authenticated user id.
+- `update` strips primary key changes before writing.
+- writes go through ReactiveDB, so generated route mutations still emit normal
+  sync/change events.
+- `metadataPolicy()` hydrates trusted user properties from the auth user store
+  when auth is enabled.
+
 ## Trusted Metadata
 
 `metadataPolicy()` may only use configured auth user properties that opt into
@@ -185,10 +255,10 @@ type ResourcePolicyDecision = {
 ```
 
 `ownerPolicy()` returns a field equality constraint for `list`, for example
-`created_by = auth.userId`. Generated CRUD and `/api/data` will translate those
-constraints in later slices. For `create: 'stamp'`, the decision includes
-`stampedInput`, which generated endpoints can write instead of trusting caller
-input.
+`created_by = auth.userId`. Generated CRUD translates those constraints today;
+`/api/data` and sync integrations will reuse the same decision shape later. For
+`create: 'stamp'`, the decision includes `stampedInput`, which generated
+endpoints write instead of trusting caller input.
 
 ## Validation
 
@@ -213,6 +283,6 @@ Validation currently checks:
 
 ## Current Limits
 
-This document covers resource definitions and the policy core. Phase 5
-follow-up slices will add generated CRUD routes, `/api/data` integration, sync
+This document covers resource definitions, generated CRUD routes, and the
+policy core. Phase 5 follow-up slices will add `/api/data` integration, sync
 policy integration, and doctor checks.

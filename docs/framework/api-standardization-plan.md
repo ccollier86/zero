@@ -318,7 +318,7 @@ Implementation details live in
 
 ## Phase 5: Resource And Policy API
 
-Status: in progress; policy core and resource registry implemented
+Status: in progress; policy core, resource registry, and generated CRUD routes implemented
 
 Add a high-level resource abstraction for common data-driven apps:
 
@@ -331,7 +331,8 @@ defineResource({
 });
 ```
 
-Resource definitions can eventually produce:
+Resource definitions can produce generated CRUD routes today and will later
+feed the remaining integrations:
 
 1. Safe CRUD endpoints.
 2. `/api/data` query policy.
@@ -365,8 +366,9 @@ The framework now ships resource definitions and the policy core through
 `@zero/framework/server` and `@zero/framework/resources`: `defineResource()`,
 `server/resources` discovery, a process resource registry, policy helpers,
 metadata validation, owner list constraints, create stamping, `anyOf`/`allOf`
-composition, and `evaluateResourcePolicy()`. Generated CRUD, `/api/data`, sync,
-and doctor integrations are still planned follow-up slices.
+composition, `evaluateResourcePolicy()`, and generated CRUD routes mounted at
+`/api/resources` by default. `/api/data`, sync, and doctor integrations are
+still planned follow-up slices.
 
 Acceptance criteria:
 
