@@ -3,8 +3,8 @@
 This document maps how an app developer should use Zero when it behaves like an
 installed framework. It is intentionally honest about the current branch state:
 the runtime, package export map, and app-owned Elysia route loader exist on this
-branch; `create-zero` now writes a fixture-derived starter app. `zero add` is
-still being added.
+branch; `create-zero` now writes a fixture-derived starter app, and `zero add`
+copies selected component/hook source into app-owned code.
 
 ## Current And Target Imports
 
