@@ -129,7 +129,7 @@ Impact:
 
 ### 4.3 Import Alias Drift
 
-Docs consistently use `@platform/frontend`, but `tsconfig.json` defines `@platform/react` instead.
+Docs consistently use `@zero/framework/react`, but `tsconfig.json` defines `@platform/react` instead.
 
 Impact:
 
@@ -137,9 +137,9 @@ Impact:
 2. Some source files still use `@platform/react`.
 3. The public import surface is less clear than intended.
 
-Current direction: add `@platform/frontend` aliases and migrate source/docs toward that as the canonical app import. Keep compatibility aliases if needed.
+Current direction: add `@zero/framework/react` aliases and migrate source/docs toward that as the canonical app import. Keep compatibility aliases if needed.
 
-Status: fixed in 7.9. `@platform/frontend` is now the canonical client-safe alias, source no longer imports `@platform/react`, and `@platform/react` remains as a compatibility alias for older client-subpath imports.
+Status: fixed in 7.9. `@zero/framework/react` is now the canonical client-safe alias, source no longer imports `@platform/react`, and `@platform/react` remains as a compatibility alias for older client-subpath imports.
 
 ### 4.4 Auth Defaults Differ
 
@@ -222,13 +222,13 @@ after `client.refresh()`.
 The intended app import should be:
 
 ```ts
-import { defineTable, field, useCollection, CrudPage } from '@platform/frontend';
+import { defineTable, field, useCollection, CrudPage } from '@zero/framework/react';
 ```
 
 Server-only code should use:
 
 ```ts
-import { createApp } from '@platform/server';
+import { createApp } from '@zero/framework/server';
 ```
 
 ### 6.2 Better Platform Diagnostics
@@ -419,7 +419,7 @@ Work:
 3. Done: `LocalStorageAdapter` normalizes hash input to `ArrayBuffer`, clearing the Web Crypto `BufferSource` type mismatch.
 4. Done: `StorageService.updateDrive()` preserves omitted fields in partial updates instead of writing `undefined`.
 5. Done: added storage route tests for unauthenticated writes, private owner reads, public anonymous reads, forbidden non-owner updates, owner updates, and admin updates.
-6. Done: `@platform/server` exports the auth plugin factory/middleware needed by standalone plugin composition examples.
+6. Done: `@zero/framework/server` exports the auth plugin factory/middleware needed by standalone plugin composition examples.
 7. Done: standalone storage requirements are documented.
 
 Verification:
@@ -515,10 +515,10 @@ Status: implemented.
 
 Work:
 
-1. Done: added `@platform/frontend` and `@platform/frontend/*` to `tsconfig.json`.
+1. Done: added `@zero/framework/react` and `@zero/framework/react/*` to `tsconfig.json`.
 2. Done: kept `@platform/react` and `@platform/react/*` as compatibility aliases for older client-subpath imports.
 3. Done: removed the remaining source imports from `@platform/react/hooks`.
-4. Done: updated the schema registry example to augment `@platform/frontend`.
+4. Done: updated the schema registry example to augment `@zero/framework/react`.
 5. Done: updated stale roadmap and scheduler docs import examples away from `@platform/react` / frontend server APIs.
 6. Done: exported registry types from the frontend barrel without colliding with the UI `TableRow` component.
 

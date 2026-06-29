@@ -6,7 +6,7 @@ Everything you need to build full-stack reactive apps with one import.
 import {
   createClient, AppProvider, useAuth, useCollection, useLazyCollection,
   defineTable, field, InferRow, CrudPage, ...
-} from '@platform/frontend';
+} from '@zero/framework/react';
 ```
 
 ---
@@ -39,13 +39,13 @@ import {
 
 ## Quick Start
 
-> **Import aliases:** Use `@platform/frontend` for app code (schema, hooks, components), and `@platform/frontend/icons` for Zero's default animated icon pack. Use `@platform/server` only in `app/server.ts` (for `resolveConfig`, `createApp`). Use `@app/*` for your app code. Never use relative `../../../` paths. See [Path Aliases](frontend/README.md#path-aliases) for the full list.
+> **Import aliases:** Use `@zero/framework/react` for app code (schema, hooks, components), and `@zero/framework/icons` for Zero's default animated icon pack. Use `@zero/framework/server` only in `app/server.ts` (for `resolveConfig`, `createApp`). Use `@app/*` for your app code. Never use relative `../../../` paths. See [Path Aliases](frontend/README.md#path-aliases) for the full list.
 
 ### 1. Define your schema
 
 ```ts
 // app/lib/schemas/todo.ts
-import { defineTable, field } from '@platform/frontend';
+import { defineTable, field } from '@zero/framework/react';
 
 export const todoTable = defineTable('todos', {
   title: field.text({ required: true, label: 'Title' }),
@@ -60,7 +60,7 @@ export const tables = { todos: todoTable };
 ### 2. Create the server
 
 ```ts
-import { resolveConfig } from '@platform/server/types';
+import { resolveConfig } from '@zero/framework/server/types';
 import { tables } from './lib/schemas';
 
 // defineTable() output is auto-detected — no .serverTable extraction needed
@@ -75,7 +75,7 @@ const config = resolveConfig({
 
 ```tsx
 // app/layout.tsx
-import { AppProvider } from '@platform/frontend';
+import { AppProvider } from '@zero/framework/react';
 import { tables } from './lib/schemas';
 
 // defineTable() output is auto-detected — no .clientTable extraction needed
@@ -96,7 +96,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 ### 4. Build features
 
 ```tsx
-import { useCollection, AutoForm, DataTableView, CrudPage } from '@platform/frontend';
+import { useCollection, AutoForm, DataTableView, CrudPage } from '@zero/framework/react';
 
 function TodoApp() {
   const { data, insert, update, remove } = useCollection('todos');
@@ -249,7 +249,7 @@ const attendanceTable = defineTable('attendance', {
 ### Type inference
 
 ```ts
-import type { InferRow } from '@platform/frontend';
+import type { InferRow } from '@zero/framework/react';
 
 // Derive row types directly from a table definition — no hand-written interfaces
 type Todo = InferRow<typeof todoTable>;
@@ -400,7 +400,7 @@ auth state plus local synced table/state data.
 All HTTP shortcuts throw `FetchError` on non-2xx responses:
 
 ```ts
-import { FetchError } from '@platform/frontend';
+import { FetchError } from '@zero/framework/react';
 
 try {
   await client.patch('/api/users/1', { role: 'admin' });
@@ -634,7 +634,7 @@ Full CRUD interface generated from a schema. Two layout modes.
 ### Table layout (default)
 
 ```tsx
-import { CrudPage } from '@platform/frontend';
+import { CrudPage } from '@zero/framework/react';
 
 function ClientsPage() {
   return (
@@ -681,7 +681,7 @@ See [docs/frontend/master-detail.md](./frontend/master-detail.md) for the full
 organism guide and the lower-level detail primitives.
 
 ```tsx
-import { MasterDetailView } from '@platform/frontend';
+import { MasterDetailView } from '@zero/framework/react';
 
 <MasterDetailView
   schema={clientTable.schema}
@@ -744,7 +744,7 @@ in the app database so a table does not flip back and forth between modes.
 You can still pin a table as lazy in `defineTable`:
 
 ```ts
-import { defineTable, field } from '@platform/frontend';
+import { defineTable, field } from '@zero/framework/react';
 
 export const attendanceTable = defineTable('attendance', {
   group_id: field.text({ required: true }),
@@ -1102,7 +1102,7 @@ Client-side navigation link.
 ### Advanced router API
 
 ```ts
-import { registerRoute, matchClientRoute, navigateTo, prefetchRoute } from '@platform/frontend';
+import { registerRoute, matchClientRoute, navigateTo, prefetchRoute } from '@zero/framework/react';
 
 registerRoute('/custom', { default: CustomPage, loader: myLoader });
 navigateTo('/custom');
@@ -1163,7 +1163,7 @@ app.use(createNotificationPlugin({ db }));
 ### Client Setup
 
 ```ts
-import { createClient } from '@platform/frontend';
+import { createClient } from '@zero/framework/react';
 
 const client = createClient({
   url: 'http://localhost:3000',
@@ -1172,7 +1172,7 @@ const client = createClient({
 ```
 
 ```tsx
-import { AppProvider, NotificationProvider, Toaster } from '@platform/frontend';
+import { AppProvider, NotificationProvider, Toaster } from '@zero/framework/react';
 
 <AppProvider url="http://localhost:3000" tables={myTables} auth>
   <NotificationProvider>
@@ -1384,7 +1384,7 @@ after `client.refresh()` if the server returns 401.
 For admin or owner dashboards, Zero exports an embeddable storage organism:
 
 ```tsx
-import { StorageManagement } from '@platform/frontend';
+import { StorageManagement } from '@zero/framework/react';
 
 function FilesPanel() {
   return <StorageManagement className="h-[42rem]" />;
@@ -1433,7 +1433,7 @@ import { Elysia } from 'elysia';
 import {
   createAuthPlugin,
   createStoragePlugin,
-} from '@platform/server';
+} from '@zero/framework/server';
 
 new Elysia()
   .use(createAuthPlugin({ db }))
@@ -1449,7 +1449,7 @@ Generic centralized scheduler using `croner`. Any plugin can register cron jobs.
 ### Server Setup
 
 ```ts
-import { createSchedulerPlugin } from '@platform/server';
+import { createSchedulerPlugin } from '@zero/framework/server';
 
 // Mount early (before plugins that register jobs)
 app.use(createSchedulerPlugin());
@@ -1460,7 +1460,7 @@ app.use(createSchedulerPlugin({ prefix: '/admin/scheduler' }));
 ### Registering Jobs
 
 ```ts
-import { getScheduler } from '@platform/server';
+import { getScheduler } from '@zero/framework/server';
 
 const scheduler = getScheduler()!;
 
@@ -1555,7 +1555,7 @@ The notification plugin automatically registers a cleanup job:
 
 ## UI Components
 
-All base components are exported from `@platform/frontend`. They follow the
+All base components are exported from `@zero/framework/react`. They follow the
 shadcn pattern: composable, `data-slot` attributes, Tailwind styling, `cn()` for
 className merging, and tokenized light/dark/system surfaces. Buttons, inputs,
 selects, tables, badges, cards, dialogs, popovers, dropdowns, and tabs share
@@ -1799,7 +1799,7 @@ app and platform UI by default, and use `lucide-react` directly only when Zero
 does not ship the icon shape yet.
 
 ```tsx
-import { AnimateIcon, Check, Heart, ZeroIcon } from '@platform/frontend/icons';
+import { AnimateIcon, Check, Heart, ZeroIcon } from '@zero/framework/icons';
 
 <Heart animateOnHover className="size-6" />
 <Check animate className="size-6 text-green-500" />
@@ -1811,8 +1811,8 @@ import { AnimateIcon, Check, Heart, ZeroIcon } from '@platform/frontend/icons';
 <ZeroIcon name="arrow-right" size={18} animateOnHover />
 ```
 
-Direct named icon imports come from `@platform/frontend/icons`. The main
-`@platform/frontend` barrel exports `AnimateIcon`, `ZeroIcon`, and registry
+Direct named icon imports come from `@zero/framework/icons`. The main
+`@zero/framework/react` barrel exports `AnimateIcon`, `ZeroIcon`, and registry
 helpers only so icon names like `Link` do not collide with router components.
 
 ### Complete Icon List
@@ -1883,7 +1883,7 @@ helpers only so icon names like `Link` do not collide with router components.
 | Wifi | `icons/wifi` |
 | X | `icons/x` |
 
-All icons can be imported by name from `@platform/frontend/icons`.
+All icons can be imported by name from `@zero/framework/icons`.
 
 For config-driven UI, use the registry helpers:
 
@@ -1893,7 +1893,7 @@ import {
   hasZeroAnimatedIcon,
   resolveZeroAnimatedIcon,
   zeroAnimatedIconNames,
-} from '@platform/frontend/icons';
+} from '@zero/framework/icons';
 ```
 
 ---
@@ -1905,7 +1905,7 @@ import {
 Creates an Elysia server with built-in auth, sync, file routing, and static serving.
 
 ```ts
-import { resolveConfig, createApp } from '@platform/server';
+import { resolveConfig, createApp } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
 const config = resolveConfig({
@@ -1917,7 +1917,7 @@ const app = createApp(config);
 app.listen(3000);
 ```
 
-`@platform/server` is only needed here in `app/server.ts`. All other app code imports from `@platform/frontend`.
+`@zero/framework/server` is only needed here in `app/server.ts`. All other app code imports from `@zero/framework/react`.
 
 The server provides:
 - `/sync` — WebSocket endpoint for real-time data sync, WebSocket token auth, read policy, and mutation policy
@@ -2010,7 +2010,7 @@ is enabled. See [Observability](observability.md).
 #### Plugins
 
 ```ts
-import { createApp, createSchedulerPlugin, createNotificationPlugin } from '@platform/server';
+import { createApp, createSchedulerPlugin, createNotificationPlugin } from '@zero/framework/server';
 
 const app = createApp(config);
 
@@ -2178,7 +2178,7 @@ See [Frontend Hooks](frontend/hooks.md) for usage examples and hook boundary rul
 
 ## Full Export List
 
-Everything available from `@platform/frontend`:
+Everything available from `@zero/framework/react`:
 
 ### Functions & Classes
 `createClient`, `getClient`, `AuthClient`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
@@ -2195,7 +2195,7 @@ Everything available from `@platform/frontend`:
 ### Types
 `Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `RegisterParams`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `DriveRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
 
-Server-only (from `@platform/server`): `App`, `AppConfig`, `ResolvedConfig`, `AuthPluginConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `createAuthPlugin`, `createAuthMiddleware`, `getTokenService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `emitPlatformCode`, `createObservabilityPlugin`
+Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `ResolvedConfig`, `AuthPluginConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `createAuthPlugin`, `createAuthMiddleware`, `getTokenService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `emitPlatformCode`, `createObservabilityPlugin`
 
 Sync-only (from `@platform/sync`): `createDefaultSyncPolicy`, `combineSyncPolicies`, `allowAllSyncPolicy`, `getReadableSyncTables`, `evaluateSyncReadPolicy`, `evaluateSyncMutationPolicy`, `SyncPolicy`, `SyncReadPolicyContext`, `SyncMutationPolicyContext`
 

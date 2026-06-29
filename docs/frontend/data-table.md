@@ -10,7 +10,7 @@ be wired with a schema plus a source.
 ## Fast Path
 
 ```tsx
-import { DataTableView } from '@platform/frontend';
+import { DataTableView } from '@zero/framework/react';
 import { todoTable } from '@app/lib/schema';
 
 export function TodoTable() {
@@ -275,7 +275,7 @@ import {
   useDataTable,
   useDataTableSource,
   buildDataTableLazyQuery,
-} from '@platform/frontend';
+} from '@zero/framework/react';
 ```
 
 Important types:
@@ -291,5 +291,5 @@ import type {
   DataTableInitialState,
   DataTableFilters,
   RowAction,
-} from '@platform/frontend';
+} from '@zero/framework/react';
 ```

@@ -170,6 +170,14 @@ export interface AppConfig {
   /** Generated framework/app glue directory. Default: './.zero/generated' */
   generatedDir?: string;
 
+  /**
+   * App-owned Elysia route module directory. Default: './server/routes'.
+   *
+   * Each module should export an Elysia plugin, preferably created with
+   * `createServerRoute()`. Set to false to disable server route discovery.
+   */
+  serverRoutesDir?: string | false;
+
   /** Port to listen on. Default: 3000 */
   port?: number;
 
@@ -218,6 +226,7 @@ export interface ResolvedConfig {
   appDir: string;
   outDir: string;
   generatedDir: string;
+  serverRoutesDir: string | false;
   port: number;
   migrate: boolean;
   observability?: ObservabilityConfig | false;
@@ -310,6 +319,7 @@ export function resolveConfig(
     appDir: config.appDir ?? './app',
     outDir: config.outDir ?? './.build',
     generatedDir: config.generatedDir ?? './.zero/generated',
+    serverRoutesDir: config.serverRoutesDir ?? './server/routes',
     port: config.port ?? 3000,
     migrate: config.migrate ?? true,
     observability: config.observability,

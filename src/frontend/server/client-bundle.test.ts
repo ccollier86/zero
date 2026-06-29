@@ -45,7 +45,7 @@ describe('client bundle generated artifacts', () => {
       expect(manifest).toContain("load: () => import('@app/page')");
       expect(manifest).toContain("() => import('@app/layout')");
       expect(manifest).toContain('export const serverRoutes: string[] = ["/about"];');
-      expect(entry).toContain("import { startHydration } from '@platform/react/hydrate-runtime';");
+      expect(entry).toContain("import { startHydration } from '@zero/framework/react/hydrate-runtime';");
       expect(entry).toContain("import { routes, serverRoutes } from './route-manifest';");
       expect(entry).toContain('startHydration({ routes, serverRoutes });');
     } finally {

@@ -2,8 +2,9 @@
 
 This document maps how an app developer should use Zero when it behaves like an
 installed framework. It is intentionally honest about the current branch state:
-the runtime exists, but package-mode exports, `create-zero`, and user Elysia
-route loading are still being added.
+the runtime, package export map, and app-owned Elysia route loader exist on this
+branch; `create-zero`, a package-mode fixture, and `zero add` are still being
+added.
 
 ## Current And Target Imports
 
@@ -14,8 +15,7 @@ import { createApp, type AppConfig } from '@platform/server';
 import { AppProvider, Button, useCollection } from '@platform/frontend';
 ```
 
-Target package-mode imports should look like this once the package export map is
-in place:
+Package-mode imports now use the `@zero/framework` export map:
 
 ```ts
 import { createApp, type AppConfig } from '@zero/framework/server';
@@ -23,8 +23,19 @@ import { AppProvider, Button, useCollection } from '@zero/framework/react';
 import { defineSchema, defineTable } from '@zero/framework/schema';
 ```
 
-The names above are the intended developer surface. Until the package name is
-final, use the current `@platform/*` aliases in this repository.
+The current `@platform/*` aliases still work in this repository for compatibility,
+but new app code should use `@zero/framework/*`.
+
+| Import | Use For |
+| --- | --- |
+| `@zero/framework/server` | `createApp()`, `createServerRoute()`, backend services, plugins, config types. |
+| `@zero/framework/react` | Client-safe components, hooks, SDK helpers, auth UI, storage UI. |
+| `@zero/framework/schema` | Data model/table DSL. |
+| `@zero/framework/icons` | Default Animate UI icon pack. |
+| `@zero/framework/ai` | AI service contracts when importing the AI layer directly. |
+| `@zero/framework/vector` | Vector store contracts when importing the vector layer directly. |
+| `@zero/framework/sync` | ReactiveDB and sync contracts when importing sync directly. |
+| `@zero/framework/styles.css` | Packaged Zero stylesheet for app entrypoints that need explicit CSS import. |
 
 ## Generated App Shape
 
@@ -86,6 +97,7 @@ const config = {
     defaultDimensions: Number(process.env.ZERO_VECTOR_DEFAULT_DIMENSIONS ?? 1536),
   },
   appDir: './app',
+  serverRoutesDir: './server/routes',
   generatedDir: './.zero/generated',
   outDir: './.build',
   port: Number(process.env.PORT ?? 3000),
@@ -111,6 +123,7 @@ app.listen(config.port);
 | Workflows | Mounted when auth is enabled. |
 | Storage | Mounted when auth is enabled. |
 | `/api/data` | Mounted for lazy tables and guarded by sync policy/auth integration. |
+| App Elysia routes | Loaded from `serverRoutesDir` before health and file-router catch-all. |
 | File router | Mounted last; handles `app/**/page.tsx`, `layout.tsx`, `route.ts`, and 404s. |
 
 ## Data Models And ReactiveDB
@@ -184,18 +197,19 @@ export async function POST({ request, auth }: LoaderContext) {
 }
 ```
 
-Next package-mode slice should add `server/routes/**/*.ts` Elysia plugin loading.
-Those route modules should get typed Elysia context directly:
+For richer backend routes, add Elysia plugins under `server/routes/**/*.ts`.
+Use `createServerRoute()` to get typed auth helpers and a `zero` service object:
 
 ```ts
-import { Elysia, t } from 'elysia';
+import { t } from 'elysia';
+import { createServerRoute } from '@zero/framework/server';
 
-export default new Elysia({ name: 'app.customers', prefix: '/api/customers' })
+export default createServerRoute({ name: 'app.customers', prefix: '/api/customers' })
   .post(
     '/',
-    ({ body, requireAuth, syncDB }) => {
+    ({ body, requireAuth, zero }) => {
       const user = requireAuth();
-      return syncDB.insert('customers', {
+      return zero.syncDB.insert('customers', {
         customer_id: crypto.randomUUID(),
         name: body.name,
         owner_id: user.userId,
@@ -616,9 +630,9 @@ by default.
 
 ## Current Gaps To Close
 
-1. Add package export map and final package name.
-2. Add `server/routes/**/*.ts` Elysia plugin loader.
-3. Add typed config helpers such as `defineZeroConfig()`.
-4. Add `create-zero` project scaffolding.
-5. Add a package-mode fixture app that imports the framework like a dependency.
-6. Add `zero add` for copying selected components/hooks into app source.
+1. Add typed config helpers such as `defineZeroConfig()`.
+2. Add `create-zero` project scaffolding.
+3. Add a package-mode fixture app that imports the framework like a dependency.
+4. Add `zero add` for copying selected components/hooks into app source.
+5. Decide whether package exports should point at source `.ts` files long-term
+   or a built `dist/` artifact for non-Bun consumers.

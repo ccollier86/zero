@@ -16,7 +16,7 @@ routes in this slice.
 ## Enable Vectors
 
 ```ts
-import { createApp } from '@platform/server';
+import { createApp } from '@zero/framework/server';
 
 const app = await createApp({
   db: { mode: './data/app.db' },
@@ -79,7 +79,7 @@ vector: {
 ## Use From Server Code
 
 ```ts
-import { getVectorStore } from '@platform/server';
+import { getVectorStore } from '@zero/framework/server';
 
 const vectors = getVectorStore();
 if (!vectors) throw new Error('Vector store is not enabled.');
@@ -210,7 +210,7 @@ Use the bridge when you want AI embedding plus vector storage in one small
 helper:
 
 ```ts
-import { createAIVectorBridge, getAI, getVectorStore } from '@platform/server';
+import { createAIVectorBridge, getAI, getVectorStore } from '@zero/framework/server';
 
 const ai = getAI();
 const vectors = getVectorStore();
@@ -255,7 +255,7 @@ The vector plugin mounts before scheduler and workflow plugins, so jobs and
 workflow handlers can use it directly:
 
 ```ts
-import { getAI, getVectorStore } from '@platform/server';
+import { getAI, getVectorStore } from '@zero/framework/server';
 
 registry.registerHandler('indexDocument', async (ctx) => {
   const ai = getAI();

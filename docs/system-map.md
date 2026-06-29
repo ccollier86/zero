@@ -360,7 +360,7 @@ LoginForm, RegisterForm, ForgotPasswordForm, PasswordActionForm, ChangePasswordF
 | `src/frontend/router/matcher.ts` | URL pattern matching |
 | `src/frontend/router/renderer.ts` | React SSR renderer |
 
-**Main barrel export:** `src/frontend/index.ts` (`@platform/frontend`) -- exports everything apps need: `defineTable`, `field`, `defineSchema`, `schema`, `InferRow`, `useCollection`, `useLazyCollection`, `CrudPage`, `AppProvider`, hooks, components. `@platform/server` is only for `app/server.ts`.
+**Main barrel export:** `src/frontend/index.ts` (`@zero/framework/react`) -- exports everything apps need: `defineTable`, `field`, `defineSchema`, `schema`, `InferRow`, `useCollection`, `useLazyCollection`, `CrudPage`, `AppProvider`, hooks, components. `@zero/framework/server` is only for `app/server.ts`.
 
 ---
 
@@ -410,8 +410,8 @@ Server -> Client:  ephemeral.snapshot, ephemeral.change
 
 ## How to Read the Codebase
 
-1. **Start with `src/frontend/index.ts`** (`@platform/frontend`) -- the barrel export shows everything apps can import
-2. **Read `src/frontend/server/app-factory.ts`** -- shows how all plugins compose (`@platform/server`)
+1. **Start with `src/frontend/index.ts`** (`@zero/framework/react`) -- the barrel export shows everything apps can import
+2. **Read `src/frontend/server/app-factory.ts`** -- shows how all plugins compose (`@zero/framework/server`)
 3. **Read `src/sync/types.ts`** -- defines the wire protocol and all core types
 4. **Read `src/sync/sync.plugin.ts`** -- the engine that makes everything real-time
 5. **Read `src/frontend/client/sdk.ts`** -- the client-side wiring

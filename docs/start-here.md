@@ -16,14 +16,14 @@ correct that path if it is in scope.
 
 ## Create An App
 
-For the package-mode framework surface and the current import gaps, see
+For the package-mode framework surface and remaining package-mode work, see
 [Framework Developer Surface](./framework-developer-surface.md).
 
 Put app config in `zero.config.ts` so the server, platform doctor, and future
 tools read the same source:
 
 ```ts
-import type { AppConfig } from '@platform/server';
+import type { AppConfig } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
 const PORT = Number(Bun.env.PORT ?? 3000);
@@ -83,7 +83,7 @@ export { config };
 Then keep `app/server.ts` small:
 
 ```ts
-import { createApp } from '@platform/server';
+import { createApp } from '@zero/framework/server';
 import config from '../zero.config';
 
 const app = await createApp(config);
@@ -96,7 +96,7 @@ token contract:
 
 ```tsx
 import type { ReactNode } from 'react';
-import { ThemeProvider, Toaster } from '@platform/frontend';
+import { ThemeProvider, Toaster } from '@zero/framework/react';
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
@@ -236,7 +236,7 @@ Zero includes these backend capabilities out of the box:
 
 ## Frontend Hook Library
 
-Zero ships app-ready hooks from `@platform/frontend` so frontend work can stay
+Zero ships app-ready hooks from `@zero/framework/react` so frontend work can stay
 fast without each app rewriting auth, sync, storage, workflow, notification,
 room, and UI state glue.
 
@@ -268,11 +268,11 @@ See [Frontend Hooks](./frontend/hooks.md) and [SDK](./frontend/sdk.md).
 ## Default Icons
 
 Zero's default platform icon pack is the Animate UI animated Lucide set. Import
-icons from `@platform/frontend/icons` instead of reaching into internal
+icons from `@zero/framework/icons` instead of reaching into internal
 component folders:
 
 ```tsx
-import { AnimateIcon, Check, Trash, ZeroIcon } from '@platform/frontend/icons';
+import { AnimateIcon, Check, Trash, ZeroIcon } from '@zero/framework/icons';
 
 <Check animate className="text-emerald-600" />;
 
@@ -304,7 +304,7 @@ const app = await createApp({
 Use it only from server code:
 
 ```ts
-import { getAI } from '@platform/server';
+import { getAI } from '@zero/framework/server';
 
 const ai = getAI();
 if (!ai) throw new Error('AI is not enabled.');
@@ -354,7 +354,7 @@ const app = await createApp({
 Use vectors from server code only:
 
 ```ts
-import { createAIVectorBridge, getAI, getVectorStore } from '@platform/server';
+import { createAIVectorBridge, getAI, getVectorStore } from '@zero/framework/server';
 
 const ai = getAI();
 const vectors = getVectorStore();
@@ -402,7 +402,7 @@ activate, revoke sessions, direct reset, setup email, and password reset email.
 For frontend admin dashboards, use the reusable organism instead of a page:
 
 ```tsx
-import { UserManagement } from '@platform/frontend';
+import { UserManagement } from '@zero/framework/react';
 
 export function UsersSettingsPanel() {
   return <UserManagement className="h-[720px]" />;
@@ -418,7 +418,7 @@ Email-driven setup/reset flows validate email readiness before changing account
 state. Forgot-password responses avoid user enumeration and cooldown repeats do
 not send additional emails.
 
-Reusable auth UI blocks are exported from `@platform/frontend`:
+Reusable auth UI blocks are exported from `@zero/framework/react`:
 
 ```tsx
 import {
@@ -428,7 +428,7 @@ import {
   PasswordActionForm,
   RegisterForm,
   UserPropertiesForm,
-} from '@platform/frontend';
+} from '@zero/framework/react';
 ```
 
 `LoginForm`, `RegisterForm`, and `ForgotPasswordForm` read `/auth/config` and
@@ -440,7 +440,7 @@ invalid or mode-mismatched tokens before submit.
 For storage dashboards, embed the reusable organism:
 
 ```tsx
-import { StorageManagement } from '@platform/frontend';
+import { StorageManagement } from '@zero/framework/react';
 
 export function FilesSettingsPanel() {
   return <StorageManagement className="h-[42rem]" />;
@@ -454,7 +454,7 @@ transport.
 For focused upload surfaces, use `StorageDropzone` or `useUploadDropzone`:
 
 ```tsx
-import { StorageDropzone } from '@platform/frontend';
+import { StorageDropzone } from '@zero/framework/react';
 
 export function InvoiceDropzone({ driveId }: { driveId: string }) {
   return <StorageDropzone driveId={driveId} path="/invoices" />;

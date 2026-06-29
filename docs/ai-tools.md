@@ -9,7 +9,7 @@ authorization required by the app.
 
 ```ts
 import { t } from 'elysia';
-import { aiTool, defineAITools, getAI } from '@platform/server';
+import { aiTool, defineAITools, getAI } from '@zero/framework/server';
 
 const tools = defineAITools({
   getCustomer: aiTool({
@@ -78,7 +78,7 @@ handlers.
 Direct use:
 
 ```ts
-import { getAI } from '@platform/server';
+import { getAI } from '@zero/framework/server';
 
 registry.registerHandler('summarizeCustomer', async (ctx) => {
   const ai = getAI();
@@ -97,7 +97,7 @@ registry.registerHandler('summarizeCustomer', async (ctx) => {
 Helper use:
 
 ```ts
-import { createAIWorkflowHandler } from '@platform/server';
+import { createAIWorkflowHandler } from '@zero/framework/server';
 
 registry.registerHandler('summarizeCustomer', createAIWorkflowHandler({
   model: 'smart',

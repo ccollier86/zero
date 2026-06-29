@@ -41,7 +41,7 @@ zero/
 `server.ts` stays small:
 
 ```ts
-import { createApp } from '@platform/server';
+import { createApp } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
 const app = await createApp({
@@ -98,7 +98,7 @@ Future files:
 Each config file should export a default value produced by a typed helper:
 
 ```ts
-import { defineAuthConfig } from '@platform/server';
+import { defineAuthConfig } from '@zero/framework/server';
 
 export default defineAuthConfig({
   access: {

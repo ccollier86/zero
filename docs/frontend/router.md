@@ -301,7 +301,7 @@ the app source tree:
 
 ```tsx
 // .zero/generated/client-entry.tsx
-import { startHydration } from '@platform/react/hydrate-runtime';
+import { startHydration } from '@zero/framework/react/hydrate-runtime';
 import { routes, serverRoutes } from './route-manifest';
 
 startHydration({ routes, serverRoutes });
@@ -410,7 +410,7 @@ API routes export named HTTP method handlers:
 
 ```ts
 // app/api/todos/route.ts
-import type { APIRequest } from '@platform/server';
+import type { APIRequest } from '@zero/framework/server';
 
 export async function GET(req: APIRequest) {
   const todos = req.db.query('SELECT * FROM todos').all();
@@ -465,7 +465,7 @@ Request to `/dashboard/settings` renders:
 
 ```tsx
 // app/dashboard/layout.tsx
-import { useAuth } from '@platform/frontend';
+import { useAuth } from '@zero/framework/react';
 import { redirect } from '@platform/router';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -507,7 +507,7 @@ After initial SSR + hydration, all subsequent navigation is client-side. The syn
 ### 2. Client Navigation (SPA)
 
 ```tsx
-import { Link } from '@platform/frontend';
+import { Link } from '@zero/framework/react';
 
 <Link href="/dashboard/settings">Settings</Link>
 ```
@@ -674,7 +674,7 @@ interface LinkProps {
 ```
 
 ```tsx
-import { Link } from '@platform/frontend';
+import { Link } from '@zero/framework/react';
 
 <Link href="/dashboard/settings">Settings</Link>
 <Link href="/blog/hello-world" prefetch="render">Read more</Link>

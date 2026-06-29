@@ -4,7 +4,7 @@
 
 Implementation order, dependency map, and file inventory for the platform.
 
-> **Status (2026-06-28):** Historical implementation plan. All four phases are built and operational, but prototype-era examples in this file may mention lower-level sync names such as `useTable` or `useSyncStatus`. Current app-facing APIs are documented in [Frontend SDK](./frontend/sdk.md) and [SDK Reference](./sdk-reference.md): use `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, and `useStatus` from `@platform/frontend`.
+> **Status (2026-06-28):** Historical implementation plan. All four phases are built and operational, but prototype-era examples in this file may mention lower-level sync names such as `useTable` or `useSyncStatus`. Current app-facing APIs are documented in [Frontend SDK](./frontend/sdk.md) and [SDK Reference](./sdk-reference.md): use `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, and `useStatus` from `@zero/framework/react`.
 
 Use the current SDK docs for copy-pasteable examples and public export names.
 
@@ -510,7 +510,7 @@ CREATE INDEX IF NOT EXISTS idx_user_state_user ON _user_state(user_id);
 
 - **`useTable` return shape**: Always `UseTableResult<T>` — `{ rows: T[], isLoading, error, insert, update, delete, refetch }`. All examples destructure.
 - **`stateSync` in AppConfig**: `stateSync?: boolean`. When true, state sync handler activates in WS router. Default: false.
-- **`@platform/*` and `@app/*` imports**: tsconfig path aliases, NOT separate packages. `@platform/frontend → src/frontend` (all app code: schema, hooks, components), `@platform/server → src/frontend/server` (only for `app/server.ts`), `@platform/router → src/frontend/router`, `@platform/sync → src/sync`, `@platform/auth → src/auth`, `@/components/* → src/components/*`, `@app/* → app/*`. Always use aliases instead of relative paths -- see `docs/frontend/README.md` for full list.
+- **`@platform/*` and `@app/*` imports**: tsconfig path aliases, NOT separate packages. `@zero/framework/react → src/frontend` (all app code: schema, hooks, components), `@zero/framework/server → src/frontend/server` (only for `app/server.ts`), `@platform/router → src/frontend/router`, `@platform/sync → src/sync`, `@platform/auth → src/auth`, `@/components/* → src/components/*`, `@app/* → app/*`. Always use aliases instead of relative paths -- see `docs/frontend/README.md` for full list.
 - **SSR hooks**: WS-dependent hooks (`useTable`, `useServerState`) are not available during SSR. Server loads initial data, renders HTML, client hydrates, hooks take over with live data. `useAuth()` during SSR reads from request context.
 - **DDL passthrough**: `Record<string, string>` table schemas are SQLite column definitions passed directly to `ReactiveDB.defineTable()`. No transformation.
 - **404 handling**: `not-found.tsx` only. `error.tsx` is future (not V1). No `_error.tsx`.

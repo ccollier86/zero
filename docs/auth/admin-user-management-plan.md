@@ -62,7 +62,7 @@ for private apps.
 Inline config:
 
 ```ts
-import { defineAuthConfig } from '@platform/server';
+import { defineAuthConfig } from '@zero/framework/server';
 
 export default defineAuthConfig({
   registration: {

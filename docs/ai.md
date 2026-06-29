@@ -9,7 +9,7 @@ routes unless a future app/plugin deliberately adds them.
 ## Enable AI
 
 ```ts
-import { createApp } from '@platform/server';
+import { createApp } from '@zero/framework/server';
 
 const app = await createApp({
   db: { mode: './data/app.db' },
@@ -25,7 +25,7 @@ provider keys and Zero will make those providers active at startup.
 ## Use AI In Server Code
 
 ```ts
-import { getAI } from '@platform/server';
+import { getAI } from '@zero/framework/server';
 
 const ai = getAI();
 if (!ai) throw new Error('AI is not enabled.');
@@ -135,7 +135,7 @@ The AI plugin mounts before the scheduler and workflow plugins, so workflow
 handlers and scheduled jobs can use the same server-side service:
 
 ```ts
-import { getAI } from '@platform/server';
+import { getAI } from '@zero/framework/server';
 
 registry.registerHandler('summarizeRecord', async (ctx) => {
   const ai = getAI();
@@ -153,7 +153,7 @@ registry.registerHandler('summarizeRecord', async (ctx) => {
 For common workflow steps, `createAIWorkflowHandler()` wraps that pattern:
 
 ```ts
-import { createAIWorkflowHandler } from '@platform/server';
+import { createAIWorkflowHandler } from '@zero/framework/server';
 
 registry.registerHandler('summarizeRecord', createAIWorkflowHandler({
   model: 'smart',
@@ -186,7 +186,7 @@ AI embeddings and vector storage stay separate. Generate embeddings with
 bridge helper:
 
 ```ts
-import { createAIVectorBridge, getAI, getVectorStore } from '@platform/server';
+import { createAIVectorBridge, getAI, getVectorStore } from '@zero/framework/server';
 
 const ai = getAI();
 const vectors = getVectorStore();

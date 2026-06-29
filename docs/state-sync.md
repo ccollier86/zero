@@ -18,7 +18,7 @@ Most frameworks punt on #2. It lives in `localStorage`, vanishes on cache clear,
 ```ts
 // ─── Server: state sync enabled alongside sync engine ──
 
-import { resolveConfig, createApp } from '@platform/server';
+import { resolveConfig, createApp } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
 const config = resolveConfig({
@@ -35,7 +35,7 @@ app.listen(3000);
 ```ts
 // ─── Client: set state, it persists everywhere ─────────
 
-import { createClient } from '@platform/frontend';
+import { createClient } from '@zero/framework/react';
 
 const client = createClient({ url: 'http://localhost:3000', tables });
 await client.login('alice', 'secret');

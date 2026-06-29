@@ -192,7 +192,7 @@ path for serious apps.
 Example `zero/auth.ts`:
 
 ```ts
-import { defineAuthConfig } from '@platform/server';
+import { defineAuthConfig } from '@zero/framework/server';
 
 export default defineAuthConfig({
   access: {
@@ -234,7 +234,7 @@ bun run zero init-config access
 Generated `zero/auth.ts` template:
 
 ```ts
-import { defineAuthConfig } from '@platform/server';
+import { defineAuthConfig } from '@zero/framework/server';
 
 export default defineAuthConfig({
   /**
@@ -286,7 +286,7 @@ import {
   defineAccessConfig,
   hasPermission,
   sameTenant,
-} from '@platform/server';
+} from '@zero/framework/server';
 
 export default defineAccessConfig({
   tables: {

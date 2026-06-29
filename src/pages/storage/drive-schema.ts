@@ -2,7 +2,7 @@
  * drive-schema.ts
  *
  * Compatibility wrapper for storage drive schema metadata. New imports should
- * use src/components/storage or @platform/frontend component exports.
+ * use src/components/storage or @zero/framework/react component exports.
  */
 
 export {

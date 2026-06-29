@@ -5,7 +5,7 @@
 > **Advanced engine docs:** This page documents the standalone sync engine and
 > its lower-level React bindings. Most Zero apps should use
 > `AppProvider`, `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, and
-> `useStatus` from `@platform/frontend`; see
+> `useStatus` from `@zero/framework/react`; see
 > [Frontend SDK](../../frontend/sdk.md). Use the hooks here only when mounting
 > the sync engine directly without the full Zero frontend SDK.
 

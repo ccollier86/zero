@@ -9,7 +9,7 @@ A self-hosted fullstack runtime — file-based routing on Bun, React 19 streamin
 ```tsx
 // ─── app/page.tsx — this file IS the route ────────────
 
-import { useCollection } from '@platform/frontend';
+import { useCollection } from '@zero/framework/react';
 
 export default function Home() {
   const { data, insert } = useCollection('todos');
@@ -29,7 +29,7 @@ export default function Home() {
 ```tsx
 // ─── app/layout.tsx — wraps every page ─────────────────
 
-import { AppProvider, ThemeProvider, Toaster } from '@platform/frontend';
+import { AppProvider, ThemeProvider, Toaster } from '@zero/framework/react';
 import { tables } from './lib/schemas';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -64,7 +64,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 ```ts
 // ─── app/server.ts — one file, everything ──────────────
 
-import { resolveConfig, createApp } from '@platform/server';
+import { resolveConfig, createApp } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
 const config = resolveConfig({
@@ -193,9 +193,9 @@ The frontend SDK composes these — it doesn't reinvent them:
 References to `@platform/*` and `@app/*` throughout these docs are **tsconfig path aliases**, not separate npm packages. They resolve to directories within the monorepo:
 
 ```
-@platform/frontend → src/frontend           (SDK, hooks, providers, schema, defineTable, field)
-@platform/frontend/icons → src/frontend/icons (default animated icon pack)
-@platform/server   → src/frontend/server    (app factory, resolveConfig — ONLY for app/server.ts)
+@zero/framework/react → src/frontend           (SDK, hooks, providers, schema, defineTable, field)
+@zero/framework/icons → src/frontend/icons (default animated icon pack)
+@zero/framework/server   → src/frontend/server    (app factory, resolveConfig — ONLY for app/server.ts)
 @platform/router   → src/frontend/router    (file-based router types)
 @platform/sync     → src/sync              (sync engine, types)
 @platform/auth     → src/auth              (auth plugin, guards, types)
@@ -208,21 +208,21 @@ References to `@platform/*` and `@app/*` throughout these docs are **tsconfig pa
 **Always use these aliases instead of relative paths.** They eliminate fragile `../../../` chains, make imports readable, and survive file moves without breaking.
 
 **Import rule:** Schema files, pages, and app code import platform APIs from
-`@platform/frontend`, and default animated icons from
-`@platform/frontend/icons`. The only file that imports from `@platform/server`
+`@zero/framework/react`, and default animated icons from
+`@zero/framework/icons`. The only file that imports from `@zero/framework/server`
 is `app/server.ts` (for `resolveConfig` and `createApp`).
 
 ```ts
 // Do this
-import { useCollection, defineTable, field } from '@platform/frontend';
-import { Check } from '@platform/frontend/icons';
+import { useCollection, defineTable, field } from '@zero/framework/react';
+import { Check } from '@zero/framework/icons';
 import { tables } from '@app/lib/schemas';
 import { Button } from '@/components/ui/button';
 
 // Not this
 import { useCollection } from '../../../src/frontend/client/hooks';
 import { Check } from '../../../src/components/animate-ui/icons/check';
-import { defineTable } from '@platform/server';    // wrong — use @platform/frontend
+import { defineTable } from '@zero/framework/server';    // wrong — use @zero/framework/react
 import { Button } from '../../../src/components/ui/button';
 ```
 
@@ -232,10 +232,10 @@ Configure in `tsconfig.json`:
 {
   "compilerOptions": {
     "paths": {
-      "@platform/frontend": ["./src/frontend"],
-      "@platform/frontend/*": ["./src/frontend/*"],
-      "@platform/server": ["./src/frontend/server"],
-      "@platform/server/*": ["./src/frontend/server/*"],
+      "@zero/framework/react": ["./src/frontend"],
+      "@zero/framework/react/*": ["./src/frontend/*"],
+      "@zero/framework/server": ["./src/frontend/server"],
+      "@zero/framework/server/*": ["./src/frontend/server/*"],
       "@platform/router": ["./src/frontend/router"],
       "@platform/router/*": ["./src/frontend/router/*"],
       "@platform/sync": ["./src/sync"],
@@ -281,14 +281,14 @@ src/frontend/
 │   ├── router-context.tsx     # Route params, navigation, pathname
 │   ├── hydrate-runtime.tsx    # Browser hydration runtime used by generated entries
 │   └── hydrate.tsx            # Compatibility export for the hydration runtime
-├── ../hooks/                  # Generic React hooks exported by @platform/frontend
+├── ../hooks/                  # Generic React hooks exported by @zero/framework/react
 ├── icons.ts                   # Public animated icon pack entrypoint
 └── index.ts                   # Public API: createApp, AppProvider, hooks, Link
 ```
 
 Router is pure (no framework dependency). Server wires Elysia plugins. Client
 providers, auth hooks, data hooks, and generic React hooks are split by
-responsibility but exported together through `@platform/frontend`. Zero's
-default animated icon pack is exported from `@platform/frontend/icons`; use it
+responsibility but exported together through `@zero/framework/react`. Zero's
+default animated icon pack is exported from `@zero/framework/icons`; use it
 before reaching for raw `lucide-react` icons. See [Frontend Icons](./icons.md).
 Generated app glue lives outside this tree in `.zero/generated`.

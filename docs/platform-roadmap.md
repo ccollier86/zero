@@ -138,7 +138,7 @@ Simple, in-process file storage. Local disk by default, S3-compatible as optiona
 
 **Developer API**
 ```ts
-import { createStoragePlugin, getStorage } from '@platform/server';
+import { createStoragePlugin, getStorage } from '@zero/framework/server';
 
 // Server setup
 app.use(createStoragePlugin({
@@ -194,7 +194,7 @@ Implemented as an opt-in local zvec-backed vector store. See
 
 **Developer API**
 ```ts
-import { getVectorStore } from '@platform/server';
+import { getVectorStore } from '@zero/framework/server';
 
 const vec = getVectorStore();
 if (!vec) throw new Error('Vector store is not enabled.');
@@ -233,7 +233,7 @@ Event-driven HTTP delivery. When things happen in the app, notify external servi
 
 **Developer API**
 ```ts
-import { createWebhookPlugin, getWebhooks } from '@platform/server';
+import { createWebhookPlugin, getWebhooks } from '@zero/framework/server';
 
 app.use(createWebhookPlugin({ db: lazyDB }));
 
@@ -276,7 +276,7 @@ Receive webhooks from external services with validation and routing.
 **Developer API**
 ```ts
 // File-based route: app/api/webhooks/stripe/route.ts
-import { verifyWebhook } from '@platform/server';
+import { verifyWebhook } from '@zero/framework/server';
 
 export async function POST({ request }: LoaderContext) {
   const event = await verifyWebhook(request, {
@@ -310,7 +310,7 @@ Don't build dashboards. Pipe structured events out to whatever the user already 
 
 **Developer API**
 ```ts
-import { createDrainPlugin } from '@platform/server';
+import { createDrainPlugin } from '@zero/framework/server';
 
 app.use(createDrainPlugin({
   drains: [
@@ -346,7 +346,7 @@ app.use(createDrainPlugin({
 
 **Custom Events**
 ```ts
-import { track } from '@platform/frontend';
+import { track } from '@zero/framework/react';
 
 track('analytics.page_view', { path: '/dashboard', userId });
 track('analytics.feature_used', { feature: 'bulk-import', count: 150 });
@@ -480,7 +480,7 @@ A machine-readable catalog of every component, hook, block, and pattern:
 {
   "components": {
     "DataTableView": {
-      "import": "import { DataTableView } from '@platform/frontend'",
+      "import": "import { DataTableView } from '@zero/framework/react'",
       "props": {
         "schema": { "type": "SchemaDescriptor", "required": true },
         "collection": { "type": "string" },
@@ -519,7 +519,7 @@ Machine-readable rules for what connects to what:
 - `useServerState` for UI preferences, `useCollection` for domain data, `useEphemeral` for transient shared state
 - File at `app/foo/page.tsx` = route `/foo`
 - File at `app/api/foo/route.ts` = API at `/api/foo`
-- Use animated icons from `@platform/frontend/icons` by default, never emojis for actions/states/navigation, and use raw `lucide-react` only when Zero does not ship the needed animated icon.
+- Use animated icons from `@zero/framework/icons` by default, never emojis for actions/states/navigation, and use raw `lucide-react` only when Zero does not ship the needed animated icon.
 
 **Pre-built Assemblies**
 Complete, tested combinations as starting points:

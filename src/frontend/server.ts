@@ -26,6 +26,14 @@ export type {
   SyncDefaultsConfig,
   TableSyncDefaultConfig,
 } from './server/types';
+export { createServerRoute } from './server/server-route';
+export type { ServerRouteOptions, ServerRouteServices } from './server/server-route';
+export {
+  ServerRouteLoaderError,
+  collectServerRouteFiles,
+  loadServerRoutePlugins,
+} from './server/server-route-loader';
+export type { ServerRouteLoaderOptions, ServerRoutePlugin } from './server/server-route-loader';
 
 // ─── Sync / ReactiveDB: Server ─────────────────────────────────────────
 export {

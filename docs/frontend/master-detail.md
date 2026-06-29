@@ -10,7 +10,7 @@ prefer `MasterDetailView`.
 ## Fast Path
 
 ```tsx
-import { MasterDetailView } from '@platform/frontend';
+import { MasterDetailView } from '@zero/framework/react';
 import { clientTable } from '@app/lib/schema';
 
 export function ClientsPanel() {
@@ -267,7 +267,7 @@ import {
   DetailPanel,
   ListDetailLayout,
   RecordNavigationBar,
-} from '@platform/frontend';
+} from '@zero/framework/react';
 
 <ListDetailLayout
   hasSelection={selectedItem != null}
@@ -310,7 +310,7 @@ import {
   DetailPanel,
   ListDetailLayout,
   RecordNavigationBar,
-} from '@platform/frontend';
+} from '@zero/framework/react';
 ```
 
 Important types:
@@ -323,5 +323,5 @@ import type {
   ListDetailLayoutProps,
   RecordNavigationBarProps,
   NavigationAction,
-} from '@platform/frontend';
+} from '@zero/framework/react';
 ```

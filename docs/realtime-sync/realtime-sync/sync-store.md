@@ -4,7 +4,7 @@
 
 > **Advanced engine docs:** This page describes the standalone sync client and
 > lower-level React hooks exported from `@platform/sync/client`. App code that
-> uses the full Zero frontend should prefer `@platform/frontend` hooks:
+> uses the full Zero frontend should prefer `@zero/framework/react` hooks:
 > `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, and `useStatus`.
 
 ## Overview

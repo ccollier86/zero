@@ -291,7 +291,7 @@ The frontend barrel exports a ready-to-embed admin organism. It is not a page;
 place it inside whatever dashboard, tab, or settings view the app owns:
 
 ```tsx
-import { UserManagement } from '@platform/frontend';
+import { UserManagement } from '@zero/framework/react';
 
 function AdminUsersPanel() {
   return <UserManagement className="h-[720px]" />;
@@ -395,7 +395,7 @@ import {
   PasswordActionForm,
   RegisterForm,
   UserPropertiesForm,
-} from '@platform/frontend';
+} from '@zero/framework/react';
 
 function LoginPanel() {
   return <LoginForm forgotPasswordHref="/forgot-password" registerHref="/register" />;

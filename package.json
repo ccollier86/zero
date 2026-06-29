@@ -1,7 +1,66 @@
 {
-  "name": "@platform/core",
+  "name": "@zero/framework",
   "version": "1.0.1",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/frontend/index.ts",
+      "import": "./src/frontend/index.ts"
+    },
+    "./react": {
+      "types": "./src/frontend/index.ts",
+      "import": "./src/frontend/index.ts"
+    },
+    "./react/hydrate-runtime": {
+      "types": "./src/frontend/client/hydrate-runtime.tsx",
+      "import": "./src/frontend/client/hydrate-runtime.tsx"
+    },
+    "./server": {
+      "types": "./src/frontend/server.ts",
+      "import": "./src/frontend/server.ts"
+    },
+    "./schema": {
+      "types": "./src/schema/index.ts",
+      "import": "./src/schema/index.ts"
+    },
+    "./icons": {
+      "types": "./src/frontend/icons.ts",
+      "import": "./src/frontend/icons.ts"
+    },
+    "./ai": {
+      "types": "./src/ai/index.ts",
+      "import": "./src/ai/index.ts"
+    },
+    "./auth": {
+      "types": "./src/auth/index.ts",
+      "import": "./src/auth/index.ts"
+    },
+    "./notifications": {
+      "types": "./src/notifications/index.ts",
+      "import": "./src/notifications/index.ts"
+    },
+    "./observability": {
+      "types": "./src/observability/index.ts",
+      "import": "./src/observability/index.ts"
+    },
+    "./storage": {
+      "types": "./src/storage/index.ts",
+      "import": "./src/storage/index.ts"
+    },
+    "./sync": {
+      "types": "./src/sync/index.ts",
+      "import": "./src/sync/index.ts"
+    },
+    "./vector": {
+      "types": "./src/vector/index.ts",
+      "import": "./src/vector/index.ts"
+    },
+    "./workflows": {
+      "types": "./src/workflows/index.ts",
+      "import": "./src/workflows/index.ts"
+    },
+    "./styles.css": "./src/frontend/styles/globals.css"
+  },
   "scripts": {
     "test": "bun test",
     "dev": "bun --watch app/server.ts",

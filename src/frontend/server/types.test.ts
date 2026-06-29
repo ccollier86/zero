@@ -27,6 +27,7 @@ describe('resolveConfig', () => {
     expect(config.auth).toEqual({});
     expect(config.stateSync).toBe(true);
     expect(config.generatedDir).toBe('./.zero/generated');
+    expect(config.serverRoutesDir).toBe('./server/routes');
   });
 
   test('preserves auth registration and user property config', () => {

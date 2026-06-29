@@ -34,7 +34,7 @@ const { data, insert, update, remove } = useCollection<Todo>('todos');
 Factory for the SDK client. One client per app. Normally created internally by `AppProvider` -- you rarely call this directly.
 
 ```ts
-import { createClient } from '@platform/frontend';
+import { createClient } from '@zero/framework/react';
 
 const client = createClient({
   url: 'http://localhost:3000',
@@ -159,7 +159,7 @@ import {
   PasswordActionForm,
   RegisterForm,
   UserPropertiesForm,
-} from '@platform/frontend';
+} from '@zero/framework/react';
 
 <LoginForm forgotPasswordHref="/forgot-password" registerHref="/register" />
 <RegisterForm loginHref="/login" fields={['email', 'username', 'password']} />
@@ -180,7 +180,7 @@ Current-user properties are included in `user.properties`. The frontend barrel
 exports lightweight UI gates:
 
 ```tsx
-import { AdminGate, PropertyGate, HasFlag, SignedIn, SignedOut } from '@platform/frontend';
+import { AdminGate, PropertyGate, HasFlag, SignedIn, SignedOut } from '@zero/framework/react';
 
 <PropertyGate propertyKey="department" allow={['accounting', 'management']}>
   <DepartmentTools />
@@ -475,7 +475,7 @@ in the app database so a table does not flip back and forth between modes.
 **Declare a lazy table:**
 
 ```ts
-import { defineTable, field } from '@platform/frontend';
+import { defineTable, field } from '@zero/framework/react';
 
 export const attendanceTable = defineTable('attendance', {
   group_id: field.text({ required: true }),
@@ -489,7 +489,7 @@ export const attendanceTable = defineTable('attendance', {
 The platform auto-registers `GET /api/data` for resolved lazy tables. Use the `useLazyCollection` hook:
 
 ```tsx
-import { useLazyCollection } from '@platform/frontend';
+import { useLazyCollection } from '@zero/framework/react';
 
 function GroupAttendance({ groupId }: { groupId: string }) {
   const { data, isLoading, error, refresh } = useLazyCollection(
@@ -949,7 +949,7 @@ Thin wrappers around the core client that integrate with React's rendering cycle
 The root layout is the sole owner of `AppProvider`. `hydrate.tsx` provides only `RouterProvider` + `ErrorBoundary`.
 
 ```tsx
-import { AppProvider } from '@platform/frontend';
+import { AppProvider } from '@zero/framework/react';
 import { tables } from '@app/lib/schemas';
 
 // app/layout.tsx — root layout
@@ -979,7 +979,7 @@ backend.
 
 ### Hook organization
 
-Zero exposes hooks from `@platform/frontend`, but the implementation is split
+Zero exposes hooks from `@zero/framework/react`, but the implementation is split
 by responsibility:
 
 - `client-context.tsx` owns `ClientProvider`, `useClient`, `useClientMaybe`, and SSR fallback checks.
@@ -995,7 +995,7 @@ by responsibility:
 - `src/hooks/*` owns generic React primitives such as `useDisclosure`, `useAsyncAction`, `useDebouncedValue`, `useDebouncedCallback`, `useThrottledValue`, `useClickAway`, `useCopyToClipboard`, `useIdle`, `useOs`, `useTextSelection`, `useMediaQuery`, and `useHotkey`.
 - `use-stick-to-bottom` is re-exported directly as `StickToBottom`, `useStickToBottom`, and `useStickToBottomContext` for smooth AI/chat/log panels.
 
-App code should still import from `@platform/frontend`. Use the lower-level
+App code should still import from `@zero/framework/react`. Use the lower-level
 files only when working inside the platform source. See [Frontend Hooks](./hooks.md).
 
 ### useUserProperty
@@ -1473,7 +1473,7 @@ interface Router {
 Client-side navigation component. Intercepts clicks, navigates without full page reload, preserves shared layouts. Preloads route modules on hover by default.
 
 ```tsx
-import { Link } from '@platform/frontend';
+import { Link } from '@zero/framework/react';
 
 <Link href="/dashboard/settings">Settings</Link>
 <Link href="/blog/hello-world" prefetch="render">Read more</Link>
@@ -1509,7 +1509,7 @@ Valibot schemas for validating mutations, route params, and API inputs. One sche
 Validate before the optimistic apply — bad data never enters the local store.
 
 ```tsx
-import { useCollection } from '@platform/frontend';
+import { useCollection } from '@zero/framework/react';
 import * as v from 'valibot';
 
 const TodoSchema = v.object({
@@ -1626,10 +1626,10 @@ Both paths end up in ReactiveDB. An Eden RPC that calls `syncDB.insert()` on the
 
 ### createApp
 
-Server-side factory. Wires auth, sync, routing, audit, static files into one Elysia instance. `@platform/server` is only needed in `app/server.ts`.
+Server-side factory. Wires auth, sync, routing, audit, static files into one Elysia instance. `@zero/framework/server` is only needed in `app/server.ts`.
 
 ```ts
-import { resolveConfig, createApp } from '@platform/server';
+import { resolveConfig, createApp } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
 const config = resolveConfig({
@@ -1780,7 +1780,7 @@ Three files. Auth, real-time data, optimistic mutations, SSR, file-based routing
 **app/lib/schemas/index.ts:**
 
 ```ts
-import { defineTable, field } from '@platform/frontend';
+import { defineTable, field } from '@zero/framework/react';
 
 export const todoTable = defineTable('todos', {
   title: field.text({ required: true }),
@@ -1793,7 +1793,7 @@ export const tables = { todos: todoTable };
 **app/server.ts:**
 
 ```ts
-import { resolveConfig, createApp } from '@platform/server';
+import { resolveConfig, createApp } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
 const config = resolveConfig({
@@ -1810,7 +1810,7 @@ export type App = typeof app;
 **app/layout.tsx:**
 
 ```tsx
-import { AppProvider } from '@platform/frontend';
+import { AppProvider } from '@zero/framework/react';
 import { tables } from './lib/schemas';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -1833,7 +1833,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 **app/page.tsx:**
 
 ```tsx
-import { useCollection, useAuth, useCurrentUser, Link, InferRow } from '@platform/frontend';
+import { useCollection, useAuth, useCurrentUser, Link, InferRow } from '@zero/framework/react';
 import { todoTable } from '@app/lib/schemas';
 
 type Todo = InferRow<typeof todoTable>;

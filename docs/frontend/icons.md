@@ -4,10 +4,10 @@ Zero's default icon pack is the Animate UI animated Lucide set. Use these icons
 for platform UI and app UI by default. Use `lucide-react` directly only when
 Zero does not ship an animated icon for the shape you need.
 
-Import direct icon components from `@platform/frontend/icons`:
+Import direct icon components from `@zero/framework/icons`:
 
 ```tsx
-import { AnimateIcon, Check, Trash } from '@platform/frontend/icons';
+import { AnimateIcon, Check, Trash } from '@zero/framework/icons';
 
 export function DeleteButton() {
   return (
@@ -29,7 +29,7 @@ Use `ZeroIcon` when the icon is data-driven from config, schema metadata, or a
 generated UI description:
 
 ```tsx
-import { ZeroIcon, hasZeroAnimatedIcon } from '@platform/frontend/icons';
+import { ZeroIcon, hasZeroAnimatedIcon } from '@zero/framework/icons';
 
 function FieldIcon({ icon }: { icon: string }) {
   if (!hasZeroAnimatedIcon(icon)) return null;

@@ -1,6 +1,6 @@
 # Frontend Hooks
 
-Zero exposes two hook layers from `@platform/frontend`:
+Zero exposes two hook layers from `@zero/framework/react`:
 
 1. Generic React hooks for common UI state and browser behavior.
 2. Platform hooks that compose Zero auth, sync, storage, notifications, rooms, workflows, router, and server state.
@@ -9,7 +9,7 @@ Generic hooks live under `src/hooks`. Platform hooks live under `src/frontend/cl
 
 ## Generic Hooks
 
-Import generic hooks from `@platform/frontend`:
+Import generic hooks from `@zero/framework/react`:
 
 ```tsx
 import {
@@ -23,7 +23,7 @@ import {
   useIdle,
   useMediaQuery,
   useThrottledValue,
-} from '@platform/frontend';
+} from '@zero/framework/react';
 ```
 
 | Hook | Use it for |
@@ -108,7 +108,7 @@ feeds. Prefer this library over a custom scroll hook when a panel should stay
 smoothly pinned to the newest content while still letting the user scroll away:
 
 ```tsx
-import { StickToBottom, useStickToBottomContext } from '@platform/frontend';
+import { StickToBottom, useStickToBottomContext } from '@zero/framework/react';
 
 function StreamPanel({ chunks }: { chunks: string[] }) {
   return (
@@ -468,7 +468,7 @@ const compactMode = useUserProperty('compactMode', {
 Hooks should:
 
 - Return stable, predictable UI state.
-- Be SSR-safe when exported from `@platform/frontend`.
+- Be SSR-safe when exported from `@zero/framework/react`.
 - Compose SDK/auth/sync clients instead of duplicating transport.
 - Keep optimistic state and server reconciliation clear.
 

@@ -170,7 +170,7 @@ export interface ModalManagerProps {
  * </ModalManager>
  *
  * // Anywhere in your app:
- * import { modals } from '@platform/frontend';
+ * import { modals } from '@zero/framework/react';
  *
  * modals.open({ title: 'Hello', content: <p>World</p> });
  * const ok = await modals.confirm({ title: 'Sure?', variant: 'destructive', holdToConfirm: true });

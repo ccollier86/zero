@@ -33,7 +33,7 @@ export interface ClientBundleOptions {
 }
 
 const DEFAULT_GENERATED_DIR = '.zero/generated';
-const DEFAULT_HYDRATION_RUNTIME_IMPORT = '@platform/react/hydrate-runtime';
+const DEFAULT_HYDRATION_RUNTIME_IMPORT = '@zero/framework/react/hydrate-runtime';
 const DEFAULT_APP_IMPORT_ALIAS = '@app';
 const ROUTE_MANIFEST_FILE = 'route-manifest.ts';
 const CLIENT_ENTRY_FILE = 'client-entry.tsx';

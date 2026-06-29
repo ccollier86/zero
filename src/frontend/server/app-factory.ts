@@ -15,6 +15,7 @@ import { createStoragePlugin } from '../../storage/storage.plugin';
 import { STORAGE_TABLES } from '../../storage/types';
 import { createDataQueryPlugin } from '../../sync/data-query.plugin';
 import { createRouterPlugin } from './router-plugin';
+import { loadServerRoutePlugins } from './server-route-loader';
 import { buildClientBundle } from './client-bundle';
 import { buildPlatformStyles } from './style-bundle';
 import { configureEmail } from '../../email';
@@ -62,7 +63,7 @@ function addPlatformSnapshotTables(snapshotTables: Set<string>): void {
  *
  * @example
  * ```ts
- * import { createApp } from '@platform/server';
+ * import { createApp } from '@zero/framework/server';
  *
  * const app = await createApp({
  *   db: { mode: 'memory' },
@@ -268,6 +269,16 @@ export async function createApp(userConfig: AppConfig) {
       getTokenService: config.auth !== false ? getTokenService : undefined,
     })
   );
+
+  // 6.6. App-owned Elysia routes — mounted before health and file-router catch-all
+  if (config.serverRoutesDir !== false) {
+    const serverRoutePlugins = await loadServerRoutePlugins({
+      routesDir: config.serverRoutesDir,
+    });
+    for (const serverRoutePlugin of serverRoutePlugins) {
+      app.use(serverRoutePlugin as any);
+    }
+  }
 
   // ─── Process-level WAL safety net ───────────────────────
   // Catches SIGINT/SIGTERM and ensures app.stop() runs (triggers WAL checkpoint).

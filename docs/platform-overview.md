@@ -224,7 +224,7 @@ const unread = useUnreadCount();
 Authenticated drive and file storage with local filesystem blobs by default.
 
 ```tsx
-import { StorageManagement } from '@platform/frontend';
+import { StorageManagement } from '@zero/framework/react';
 
 export function FilesPanel() {
   return <StorageManagement className="h-[42rem]" />;
@@ -269,7 +269,7 @@ Local zvec-backed vector storage is available when enabled with
 process without a separate vector server.
 
 ```ts
-import { createAIVectorBridge, getAI, getVectorStore } from '@platform/server';
+import { createAIVectorBridge, getAI, getVectorStore } from '@zero/framework/server';
 
 const ai = getAI();
 const vectors = getVectorStore();
@@ -310,7 +310,7 @@ SQLite-backed — state survives server restart. Scheduler polls for retries and
 Define your data model once, use it everywhere -- database tables, client sync, form generation, validation, DataTable columns.
 
 ```ts
-import { defineTable, field } from '@platform/frontend';
+import { defineTable, field } from '@zero/framework/react';
 
 export const todoTable = defineTable('todos', {
   title: field.text({ required: true, label: 'Title', placeholder: 'What needs done?' }),
@@ -623,8 +623,8 @@ app/
 ## Server Setup
 
 ```ts
-// app/server.ts — the ONLY file that imports from @platform/server
-import { resolveConfig, createApp } from '@platform/server';
+// app/server.ts — the ONLY file that imports from @zero/framework/server
+import { resolveConfig, createApp } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
 const config = resolveConfig({
@@ -663,7 +663,7 @@ The root layout provides `AppProvider` with the single `tables` object. No manua
 
 ```tsx
 // app/layout.tsx
-import { AppProvider } from '@platform/frontend';
+import { AppProvider } from '@zero/framework/react';
 import { tables } from './lib/schemas';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -688,7 +688,7 @@ come from `createApp()` and can be overridden on the provider.
 
 ```tsx
 // In any page — useCollection is the primary mutation API
-import { useCollection } from '@platform/frontend';
+import { useCollection } from '@zero/framework/react';
 
 const { data: todos, insert, update, remove } = useCollection('todos');
 insert({ title: 'Buy milk' });  // Auto-generates UUID PK
@@ -716,6 +716,6 @@ const { users } = await client.listAuthAdminUsers();
 | Styling | Tailwind CSS |
 | UI primitives | Radix UI |
 | Animation | Framer Motion |
-| Icons | Animate UI animated Lucide icons via `@platform/frontend/icons`; raw `lucide-react` only for missing shapes |
+| Icons | Animate UI animated Lucide icons via `@zero/framework/icons`; raw `lucide-react` only for missing shapes |
 
 Everything runs in one process. Zero network hops between components. SQLite write -> onChange -> pub/sub broadcast completes synchronously before yielding the event loop.

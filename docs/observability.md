@@ -48,7 +48,7 @@ Example console output:
 `createApp()` enables observability by default.
 
 ```ts
-import { createApp } from '@platform/server';
+import { createApp } from '@zero/framework/server';
 
 const app = await createApp({
   db: { mode: './data/app.db' },
@@ -139,7 +139,7 @@ import {
   ConsoleSink,
   MemoryEventStore,
   createApp,
-} from '@platform/server';
+} from '@zero/framework/server';
 
 const store = new MemoryEventStore({ maxEvents: 10_000 });
 
@@ -166,7 +166,7 @@ const app = await createApp({
 Use stable codes from `OBS_CODES`.
 
 ```ts
-import { OBS_CODES, emitPlatformCode } from '@platform/server';
+import { OBS_CODES, emitPlatformCode } from '@zero/framework/server';
 
 emitPlatformCode(OBS_CODES.APP_LISTENING, {
   metadata: { port: 3000 },
@@ -183,7 +183,7 @@ import {
   configureFrontendObservability,
   emitFrontendCode,
   FRONTEND_OBS_CODES,
-} from '@platform/frontend';
+} from '@zero/framework/react';
 
 configureFrontendObservability({
   endpoint: '/api/_zero/observability/events',

@@ -18,7 +18,7 @@ import type { Row } from '../sync/types';
  *   users: { id: string; name: string; email: string };
  * }
  *
- * declare module '@platform/frontend' {
+ * declare module '@zero/framework/react' {
  *   interface Register {
  *     tables: Tables;
  *   }

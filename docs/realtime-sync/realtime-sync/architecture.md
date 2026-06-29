@@ -5,7 +5,7 @@ Four layers, one data flow. Everything happens in a single Bun process.
 > **Advanced engine docs:** This diagram uses lower-level standalone sync hook
 > names. In normal Zero frontend apps, the public app-facing hooks are
 > `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, and `useStatus`
-> from `@platform/frontend`.
+> from `@zero/framework/react`.
 
 ## System Layers
 
