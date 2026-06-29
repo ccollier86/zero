@@ -793,8 +793,10 @@ filter=field:in:a,b,c       # up to 50 values
 
 The endpoint validates table names and columns against the app schema, uses
 parameterized values, caps result size, and enforces the same sync read policy
-used by WebSocket subscriptions. For large lazy tables, add SQLite indexes in
-migrations for columns you filter or sort by frequently.
+used by WebSocket subscriptions. When a lazy table is registered with
+`defineResource()`, `/api/data` also enforces that resource's `list` policy and
+adds safe owner constraints to the SQL query. For large lazy tables, add SQLite
+indexes in migrations for columns you filter, sort, or constrain by frequently.
 
 ### Load options
 

@@ -9,6 +9,18 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 import type { TokenService } from '../auth/token-service';
+import type { UserStore } from '../auth/user-store';
+import {
+  adminOnly,
+  anyOf,
+  defineResource,
+  metadataPolicy,
+  ownerPolicy,
+  readOnly,
+  ResourceRegistry,
+  type ResourcePolicyAuthConfig,
+} from '../resources';
+import type { TableSchema } from './types';
 import { createDataQueryPlugin } from './data-query.plugin';
 import { createSyncPlugin, getSyncDB } from './sync.plugin';
 import type { SyncPolicy } from './sync-policy';
@@ -20,6 +32,42 @@ interface TestApp {
 
 let app: TestApp | null = null;
 
+const testTables = {
+  items: {
+    id: 'text primary key',
+    category: 'text not null',
+    title: 'text not null',
+    priority: 'integer not null',
+  },
+  admin_items: {
+    id: 'text primary key',
+    title: 'text not null',
+  },
+  owned_items: {
+    id: 'text primary key',
+    title: 'text not null',
+    owner_id: 'text not null',
+    priority: 'integer not null',
+  },
+  reports: {
+    id: 'text primary key',
+    title: 'text not null',
+    department: 'text not null',
+  },
+  blocked_items: {
+    id: 'text primary key',
+    title: 'text not null',
+  },
+} satisfies Record<string, TableSchema>;
+
+const tableColumns = new Map([
+  ['items', ['id', 'category', 'title', 'priority']],
+  ['admin_items', ['id', 'title']],
+  ['owned_items', ['id', 'title', 'owner_id', 'priority']],
+  ['reports', ['id', 'title', 'department']],
+  ['blocked_items', ['id', 'title']],
+]);
+
 function createTokenService(): TokenService {
   return {
     async verifyAccessToken(token: string) {
@@ -29,14 +77,54 @@ function createTokenService(): TokenService {
       if (token === 'user-token') {
         return { sub: 'user-1', email: 'user@test.local', role: 'user' };
       }
+      if (token === 'sales-token') {
+        return { sub: 'user-2', email: 'sales@test.local', role: 'user' };
+      }
       return null;
     },
   } as unknown as TokenService;
 }
 
+function createUserStore(): UserStore {
+  return {
+    getUserById(userId: string) {
+      const users: Record<string, any> = {
+        'admin-1': {
+          userId: 'admin-1',
+          email: 'admin@test.local',
+          role: 'admin',
+          status: 'active',
+          passwordChangeRequired: false,
+          properties: { department: 'support' },
+        },
+        'user-1': {
+          userId: 'user-1',
+          email: 'user@test.local',
+          role: 'user',
+          status: 'active',
+          passwordChangeRequired: false,
+          properties: { department: 'support' },
+        },
+        'user-2': {
+          userId: 'user-2',
+          email: 'sales@test.local',
+          role: 'user',
+          status: 'active',
+          passwordChangeRequired: false,
+          properties: { department: 'sales' },
+        },
+      };
+      return users[userId] ?? null;
+    },
+  } as unknown as UserStore;
+}
+
 function createTestApp(options: {
   policy?: SyncPolicy;
   getTokenService?: () => TokenService | null;
+  getUserStore?: () => UserStore | null;
+  resourceRegistry?: ResourceRegistry;
+  resourceAuthConfig?: ResourcePolicyAuthConfig;
   defaultLimit?: number;
   maxLimit?: number;
 } = {}): TestApp {
@@ -44,29 +132,18 @@ function createTestApp(options: {
     .use(
       createSyncPlugin({
         db: { mode: 'memory' },
-        tables: {
-          items: {
-            id: 'text primary key',
-            category: 'text not null',
-            title: 'text not null',
-            priority: 'integer not null',
-          },
-          admin_items: {
-            id: 'text primary key',
-            title: 'text not null',
-          },
-        },
+        tables: testTables,
       })
     )
     .use(
       createDataQueryPlugin({
-        queryableTables: new Set(['items', 'admin_items']),
-        tableColumns: new Map([
-          ['items', ['id', 'category', 'title', 'priority']],
-          ['admin_items', ['id', 'title']],
-        ]),
+        queryableTables: new Set(tableColumns.keys()),
+        tableColumns,
         policy: options.policy,
         getTokenService: options.getTokenService,
+        getUserStore: options.getUserStore,
+        resourceRegistry: options.resourceRegistry,
+        resourceAuthConfig: options.resourceAuthConfig,
         defaultLimit: options.defaultLimit,
         maxLimit: options.maxLimit,
       })
@@ -83,6 +160,61 @@ function seedItems(): void {
   db!.insert('items', { id: 'i3', category: 'a', title: 'Gamma', priority: 3 });
   db!.insert('items', { id: 'i4', category: 'b', title: 'Delta', priority: 4 });
   db!.insert('admin_items', { id: 'admin-1', title: 'Admin only' });
+}
+
+function seedResourceRows(): void {
+  const db = getSyncDB();
+  expect(db).not.toBeNull();
+
+  db!.insert('owned_items', { id: 'o1', title: 'Mine', owner_id: 'user-1', priority: 1 });
+  db!.insert('owned_items', { id: 'o2', title: 'Theirs', owner_id: 'user-2', priority: 2 });
+  db!.insert('reports', { id: 'r1', title: 'Support', department: 'support' });
+  db!.insert('blocked_items', { id: 'b1', title: 'Blocked' });
+}
+
+function createResourceRegistry(authConfig: ResourcePolicyAuthConfig): ResourceRegistry {
+  const registry = new ResourceRegistry();
+  registry.register([
+    defineResource({
+      table: 'owned_items',
+      actions: ['list'],
+      policy: {
+        list: anyOf(adminOnly(), ownerPolicy({ userField: 'owner_id' })),
+      },
+    }),
+    defineResource({
+      table: 'reports',
+      actions: ['list'],
+      policy: {
+        list: metadataPolicy({ department: 'support' }),
+      },
+    }),
+    defineResource({
+      table: 'blocked_items',
+      actions: ['get'],
+      policy: {
+        get: readOnly(),
+      },
+    }),
+  ], {
+    tables: testTables,
+    authConfig,
+  });
+  return registry;
+}
+
+function createResourceAuthConfig(): ResourcePolicyAuthConfig {
+  return {
+    userProperties: {
+      department: {
+        key: 'department',
+        type: 'enum',
+        values: ['support', 'sales'],
+        editableBy: 'admin',
+        useInPolicies: true,
+      },
+    },
+  };
 }
 
 async function getJson(path: string, headers?: HeadersInit): Promise<{
@@ -183,5 +315,66 @@ describe('/api/data', () => {
     });
     expect(admin.status).toBe(200);
     expect(admin.body.rows).toEqual([{ id: 'admin-1', title: 'Admin only' }]);
+  });
+
+  test('applies registered owner resource policy constraints', async () => {
+    const tokenService = createTokenService();
+    const authConfig = createResourceAuthConfig();
+    app = createTestApp({
+      getTokenService: () => tokenService,
+      resourceRegistry: createResourceRegistry(authConfig),
+      resourceAuthConfig: authConfig,
+    });
+    seedResourceRows();
+
+    const user = await getJson('/api/data?table=owned_items&order=priority&dir=asc', {
+      authorization: 'Bearer user-token',
+    });
+    expect(user.status).toBe(200);
+    expect(user.body.rows.map((row: any) => row.id)).toEqual(['o1']);
+
+    const admin = await getJson('/api/data?table=owned_items&order=priority&dir=asc', {
+      authorization: 'Bearer admin-token',
+    });
+    expect(admin.status).toBe(200);
+    expect(admin.body.rows.map((row: any) => row.id)).toEqual(['o1', 'o2']);
+  });
+
+  test('hydrates metadata policy properties for registered data resources', async () => {
+    const tokenService = createTokenService();
+    const userStore = createUserStore();
+    const authConfig = createResourceAuthConfig();
+    app = createTestApp({
+      getTokenService: () => tokenService,
+      getUserStore: () => userStore,
+      resourceRegistry: createResourceRegistry(authConfig),
+      resourceAuthConfig: authConfig,
+    });
+    seedResourceRows();
+
+    const support = await getJson('/api/data?table=reports', {
+      authorization: 'Bearer user-token',
+    });
+    expect(support.status).toBe(200);
+    expect(support.body.rows.map((row: any) => row.id)).toEqual(['r1']);
+
+    const sales = await getJson('/api/data?table=reports', {
+      authorization: 'Bearer sales-token',
+    });
+    expect(sales.status).toBe(403);
+    expect(sales.body.code).toBe('metadata-property');
+  });
+
+  test('fails closed when registered resource has no list action', async () => {
+    const authConfig = createResourceAuthConfig();
+    app = createTestApp({
+      resourceRegistry: createResourceRegistry(authConfig),
+      resourceAuthConfig: authConfig,
+    });
+    seedResourceRows();
+
+    const result = await getJson('/api/data?table=blocked_items');
+    expect(result.status).toBe(403);
+    expect(result.body.code).toBe('resource-list-not-allowed');
   });
 });

@@ -10,6 +10,18 @@
 import { Elysia, t } from 'elysia';
 import { createAuthMiddleware } from '../auth/auth.middleware';
 import type { TokenService } from '../auth/token-service';
+import type { AuthContext } from '../auth/types';
+import type { UserStore } from '../auth/user-store';
+import { OBS_CODES } from '../observability/codes';
+import { errorPlatform } from '../observability/sink';
+import {
+  buildResourceListQueryPlan,
+  createResourcePolicyUser,
+  evaluateResourcePolicy,
+  type ResourceDataConstraint,
+  type ResourcePolicyAuthConfig,
+  type ResourceRegistry,
+} from '../resources';
 import { getSyncDB } from './sync.plugin';
 import { allowAllSyncPolicy, evaluateSyncReadPolicy } from './sync-policy';
 import type { SyncPolicy } from './sync-policy';
@@ -25,6 +37,12 @@ export interface DataQueryConfig {
   policy?: SyncPolicy;
   /** Optional auth token service provider used to resolve HTTP auth context. */
   getTokenService?: () => TokenService | null;
+  /** Optional auth user store provider used to hydrate resource metadata policy. */
+  getUserStore?: () => UserStore | null;
+  /** Optional registered resource registry for resource-protected lazy reads. */
+  resourceRegistry?: ResourceRegistry;
+  /** Auth config used to evaluate resource metadata policy. */
+  resourceAuthConfig?: ResourcePolicyAuthConfig;
   /** Default number of rows returned when limit is omitted. */
   defaultLimit?: number;
   /** Maximum number of rows a single request may return. */
@@ -39,50 +57,8 @@ const MAX_LIMIT = 1000;
 /** Default limit when none specified. */
 const DEFAULT_LIMIT = 500;
 
-/** Pattern for valid SQL identifiers (column names, table names). */
+/** Pattern for valid SQL table identifiers. */
 const SAFE_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-
-type QueryParam = string | number | null;
-
-type FilterOperator =
-  | 'eq'
-  | 'ne'
-  | 'gt'
-  | 'gte'
-  | 'lt'
-  | 'lte'
-  | 'like'
-  | 'contains'
-  | 'in';
-
-interface QueryError {
-  status: number;
-  error: string;
-}
-
-interface FilterClause {
-  sql: string;
-  params: QueryParam[];
-}
-
-interface ParsedPage {
-  limit: number;
-  offset: number;
-}
-
-const FILTER_OPERATORS = new Set<FilterOperator>([
-  'eq',
-  'ne',
-  'gt',
-  'gte',
-  'lt',
-  'lte',
-  'like',
-  'contains',
-  'in',
-]);
-
-const MAX_IN_VALUES = 50;
 
 // ─── Plugin ──────────────────────────────────────────────────────────────────
 
@@ -109,7 +85,7 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
 
   return new Elysia({ name: 'data-query' })
     .use(createAuthMiddleware(config.getTokenService ?? (() => null)))
-    .get('/api/data', ({ query, set, authContext }) => {
+    .get('/api/data', async ({ query, set, authContext }) => {
       const db = getSyncDB();
       if (!db) {
         set.status = 503;
@@ -152,56 +128,50 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
         return { error: `No column metadata for table: ${table}` };
       }
 
-      const allowedColumnSet = new Set(allowedColumns);
-
-      // ─── Parse filters ───────────────────────────────────
-      const filterResult = buildFilterClauses(query.filter, table, allowedColumnSet);
-      if ('error' in filterResult) {
-        set.status = filterResult.status;
-        return { error: filterResult.error };
-      }
-      const filters = filterResult.clauses.map((clause) => clause.sql);
-      const params = filterResult.clauses.flatMap((clause) => clause.params);
-
-      // ─── Validate order column ───────────────────────────
-      const orderResult = buildOrderClause(query.order, query.dir, table, allowedColumnSet);
-      if ('error' in orderResult) {
-        set.status = orderResult.status;
-        return { error: orderResult.error };
+      const resourceDecision = await evaluateDataResourcePolicy(config, table, authContext);
+      if (!resourceDecision.ok) {
+        set.status = resourceDecision.status;
+        return { error: resourceDecision.error, code: resourceDecision.code };
       }
 
-      // ─── Validate pagination ─────────────────────────────
-      const pageResult = parsePagination(query.limit, query.offset, defaultLimit, maxLimit);
-      if ('error' in pageResult) {
-        set.status = pageResult.status;
-        return { error: pageResult.error };
+      const plan = buildResourceListQueryPlan({
+        table,
+        columns: allowedColumns,
+        constraints: resourceDecision.constraints,
+        query,
+        defaultLimit,
+        maxLimit,
+      });
+      if ('error' in plan) {
+        set.status = plan.status;
+        return { error: plan.error };
       }
-      const { limit, offset } = pageResult;
 
-      // ─── Build and execute query ─────────────────────────
-      // Table name is validated against config.queryableTables (a known safe set).
-      // Column names are validated against config.tableColumns (known safe set).
-      // Only filter values use parameterized queries.
-      const whereClause = filters.length > 0
-        ? ` WHERE ${filters.join(' AND ')}`
-        : '';
+      const params = [...plan.params, plan.limit + 1, plan.offset];
+      let resultRows: any[];
+      try {
+        resultRows = db.prepare(plan.sql).all(...(params as any[]));
+      } catch (error) {
+        errorPlatform(OBS_CODES.DATA_QUERY_FAILED, {
+          error,
+          metadata: { table },
+          userId: authContext?.userId,
+        });
+        set.status = 500;
+        return { error: 'Data query failed', code: 'data-query-failed' };
+      }
 
-      const fetchLimit = limit + 1;
-      const sql = `SELECT * FROM ${quoteIdentifier(table)}${whereClause}${orderResult.orderClause} LIMIT ? OFFSET ?`;
-      params.push(fetchLimit, offset);
-
-      const resultRows = db.prepare(sql).all(...(params as any[]));
-      const hasMore = resultRows.length > limit;
-      const rows = hasMore ? resultRows.slice(0, limit) : resultRows;
+      const hasMore = resultRows.length > plan.limit;
+      const rows = hasMore ? resultRows.slice(0, plan.limit) : resultRows;
 
       return {
         rows,
         page: {
-          limit,
-          offset,
+          limit: plan.limit,
+          offset: plan.offset,
           count: rows.length,
           hasMore,
-          nextOffset: hasMore ? offset + limit : null,
+          nextOffset: hasMore ? plan.offset + plan.limit : null,
         },
       };
     }, {
@@ -216,183 +186,45 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
     });
 }
 
-/**
- * Build safe SQL filter fragments from repeatable filter query parameters.
- *
- * Supported forms:
- * - `field:value` keeps the historical equality behavior.
- * - `field:op:value` enables explicit operators such as `gt`, `contains`, or `in`.
- */
-function buildFilterClauses(
-  filterParams: string | string[] | undefined,
+type DataResourcePolicyResult =
+  | { ok: true; constraints?: readonly ResourceDataConstraint[] }
+  | { ok: false; status: number; error: string; code?: string };
+
+async function evaluateDataResourcePolicy(
+  config: DataQueryConfig,
   table: string,
-  allowedColumnSet: Set<string>
-): { clauses: FilterClause[] } | QueryError {
-  const clauses: FilterClause[] = [];
-  if (!filterParams) return { clauses };
+  authContext: AuthContext | null
+): Promise<DataResourcePolicyResult> {
+  const resource = config.resourceRegistry?.getByTable(table);
+  if (!resource) return { ok: true };
 
-  const filterList = Array.isArray(filterParams) ? filterParams : [filterParams];
-
-  for (const expression of filterList) {
-    const parsed = parseFilterExpression(expression);
-    if ('error' in parsed) return parsed;
-
-    const { field, operator, value } = parsed;
-    const column = validateColumn(field, table, allowedColumnSet, 'filter field');
-    if ('error' in column) return column;
-
-    const clause = buildOperatorClause(column.identifier, operator, value);
-    if ('error' in clause) return clause;
-    clauses.push(clause);
+  if (!resource.actions.includes('list') || !resource.policy.list) {
+    return {
+      ok: false,
+      status: 403,
+      error: `Resource '${resource.name}' does not allow list reads`,
+      code: 'resource-list-not-allowed',
+    };
   }
 
-  return { clauses };
-}
+  const decision = await evaluateResourcePolicy(resource.policy.list, {
+    action: 'list',
+    user: createResourcePolicyUser(authContext, config.getUserStore?.() ?? null),
+    resource,
+    authConfig: config.resourceAuthConfig ?? { userProperties: {} },
+  });
 
-function parseFilterExpression(
-  expression: string
-): { field: string; operator: FilterOperator; value: string } | QueryError {
-  const colonIdx = expression.indexOf(':');
-  if (colonIdx === -1) {
-    return { status: 400, error: `Invalid filter format: ${expression}` };
+  if (!decision.allowed) {
+    return {
+      ok: false,
+      status: decision.status ?? 403,
+      error: decision.message ?? 'Forbidden',
+      code: decision.reason,
+    };
   }
-
-  const field = expression.slice(0, colonIdx);
-  const remainder = expression.slice(colonIdx + 1);
-  const opDelimiter = remainder.indexOf(':');
-
-  if (opDelimiter !== -1) {
-    const maybeOperator = remainder.slice(0, opDelimiter).toLowerCase();
-    if (FILTER_OPERATORS.has(maybeOperator as FilterOperator)) {
-      return {
-        field,
-        operator: maybeOperator as FilterOperator,
-        value: remainder.slice(opDelimiter + 1),
-      };
-    }
-  }
-
-  return { field, operator: 'eq', value: remainder };
-}
-
-function buildOperatorClause(
-  column: string,
-  operator: FilterOperator,
-  value: string
-): FilterClause | QueryError {
-  switch (operator) {
-    case 'eq':
-      return { sql: `${column} = ?`, params: [value] };
-    case 'ne':
-      return { sql: `${column} != ?`, params: [value] };
-    case 'gt':
-      return { sql: `${column} > ?`, params: [value] };
-    case 'gte':
-      return { sql: `${column} >= ?`, params: [value] };
-    case 'lt':
-      return { sql: `${column} < ?`, params: [value] };
-    case 'lte':
-      return { sql: `${column} <= ?`, params: [value] };
-    case 'like':
-      return { sql: `${column} LIKE ?`, params: [value] };
-    case 'contains':
-      return {
-        sql: `${column} LIKE ? ESCAPE '\\'`,
-        params: [`%${escapeLikeValue(value)}%`],
-      };
-    case 'in': {
-      const values = value.split(',').map((part) => part.trim()).filter(Boolean);
-      if (values.length === 0) {
-        return { status: 400, error: 'Filter operator "in" requires at least one value' };
-      }
-      if (values.length > MAX_IN_VALUES) {
-        return {
-          status: 400,
-          error: `Filter operator "in" supports at most ${MAX_IN_VALUES} values`,
-        };
-      }
-      return {
-        sql: `${column} IN (${values.map(() => '?').join(', ')})`,
-        params: values,
-      };
-    }
-  }
-}
-
-function buildOrderClause(
-  orderParam: string | undefined,
-  dirParam: string | undefined,
-  table: string,
-  allowedColumnSet: Set<string>
-): { orderClause: string } | QueryError {
-  if (!orderParam) return { orderClause: '' };
-
-  const column = validateColumn(orderParam, table, allowedColumnSet, 'order column');
-  if ('error' in column) return column;
-
-  const direction = (dirParam ?? 'desc').toLowerCase();
-  if (direction !== 'asc' && direction !== 'desc') {
-    return { status: 400, error: 'Sort direction must be "asc" or "desc"' };
-  }
-
-  return { orderClause: ` ORDER BY ${column.identifier} ${direction.toUpperCase()}` };
-}
-
-function parsePagination(
-  limitParam: number | undefined,
-  offsetParam: number | undefined,
-  defaultLimit: number,
-  maxLimit: number
-): ParsedPage | QueryError {
-  const defaultLimitResult = parseInteger(defaultLimit, 'Default limit', 1);
-  if ('error' in defaultLimitResult) return defaultLimitResult;
-
-  const maxLimitResult = parseInteger(maxLimit, 'Max limit', 1);
-  if ('error' in maxLimitResult) return maxLimitResult;
-
-  const limitResult = limitParam === undefined
-    ? { value: defaultLimitResult.value }
-    : parseInteger(limitParam, 'Limit', 1);
-  if ('error' in limitResult) return limitResult;
-
-  const offsetResult = offsetParam === undefined
-    ? { value: 0 }
-    : parseInteger(offsetParam, 'Offset', 0);
-  if ('error' in offsetResult) return offsetResult;
 
   return {
-    limit: Math.min(limitResult.value, maxLimitResult.value),
-    offset: offsetResult.value,
+    ok: true,
+    constraints: decision.constraints,
   };
-}
-
-function parseInteger(value: number, label: string, min: number): { value: number } | QueryError {
-  if (!Number.isInteger(value) || value < min) {
-    const description = min === 0 ? 'a non-negative integer' : 'a positive integer';
-    return { status: 400, error: `${label} must be ${description}` };
-  }
-  return { value };
-}
-
-function validateColumn(
-  column: string,
-  table: string,
-  allowedColumnSet: Set<string>,
-  label: string
-): { identifier: string } | QueryError {
-  if (!SAFE_IDENTIFIER.test(column)) {
-    return { status: 400, error: `Invalid ${label} name: ${column}` };
-  }
-  if (!allowedColumnSet.has(column)) {
-    return { status: 400, error: `Unknown column '${column}' for table '${table}'` };
-  }
-  return { identifier: quoteIdentifier(column) };
-}
-
-function quoteIdentifier(identifier: string): string {
-  return `"${identifier}"`;
-}
-
-function escapeLikeValue(value: string): string {
-  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }

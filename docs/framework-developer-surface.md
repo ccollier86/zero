@@ -147,7 +147,7 @@ composition, and startup behavior.
 | Rooms | Mounted when auth is enabled. |
 | Workflows | Mounted when auth is enabled. |
 | Storage | Mounted when auth is enabled. |
-| `/api/data` | Mounted for lazy tables and guarded by sync policy/auth integration. |
+| `/api/data` | Mounted for lazy tables and guarded by sync policy, auth, and registered resource `list` policy. |
 | App backend extensions | Loaded from `server/plugins`, `server/middleware`, `server/endpoints`, and `server/routes` before health and file-router catch-all. |
 | File router | Mounted last; handles `app/**/page.tsx`, `layout.tsx`, `route.ts`, and 404s. |
 

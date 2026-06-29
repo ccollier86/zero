@@ -70,10 +70,11 @@ be included in startup snapshots.
 ```
 
 Lazy mode reads `/api/data` through the frontend SDK client, so authenticated
-apps reuse the normal auth/refresh transport path. Rows returned from
-`/api/data` are loaded into the table's collection store; future live changes
-for those rows can continue to flow through sync without forcing the whole
-table into a snapshot.
+apps reuse the normal auth/refresh transport path. Registered resource `list`
+policy is enforced server-side for lazy tables before rows are returned. Rows
+returned from `/api/data` are loaded into the table's collection store; future
+live changes for those rows can continue to flow through sync without forcing
+the whole table into a snapshot.
 
 The helper `buildDataTableLazyQuery(table, filters, options)` is exported for
 tests and advanced custom sources.

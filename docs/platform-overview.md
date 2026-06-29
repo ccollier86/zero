@@ -426,7 +426,8 @@ sources. See the full guide in [DataTableView](./frontend/data-table.md).
 
 Full-sync tables use `collection="todos"` and write inline edits back through
 the reactive DB automatically. Lazy tables can fetch through Zero's `/api/data`
-endpoint without hand-writing a hook:
+endpoint without hand-writing a hook; when the table is a registered resource,
+its `list` policy is enforced on those reads too:
 
 ```tsx
 <DataTableView
@@ -456,7 +457,7 @@ Caller-owned data stays simple:
 
 **Features:**
 - **Live binding:** Point it at a collection name, it auto-updates as data changes
-- **Lazy backend reads:** Use `source={{ type: 'lazy', table }}` for `/api/data`
+- **Lazy backend reads:** Use `source={{ type: 'lazy', table }}` for `/api/data` with sync/resource policy enforcement
 - **Inline editing:** Click a cell, edit in-place, Tab to next — changes sync instantly
 - **Sorting/filtering:** Column headers with sort toggles and filter inputs
 - **Composable toolbar:** Search, filters, export, column visibility, and app actions can be shown independently

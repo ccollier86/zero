@@ -524,8 +524,10 @@ operators are `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`, `contains`, and
 
 The endpoint validates table/column names, parameterizes values, caps result
 size, and enforces the same sync read policy used by WebSocket subscriptions.
-Add SQLite indexes in migrations for columns used heavily in `filter` or
-`order`.
+When a lazy table is registered with `defineResource()`, `/api/data` also
+enforces that resource's `list` policy and applies safe owner constraints to
+the SQL query. Add SQLite indexes in migrations for columns used heavily in
+`filter`, `order`, or policy constraints.
 
 **Manual load (advanced):**
 

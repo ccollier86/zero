@@ -48,6 +48,7 @@ export const OBS_CODES = {
   SYNC_MODE_FULL_OVER_LIMIT: code('sync', 'mode.full_over_limit', 'warn', 'Explicit full-sync table exceeds the auto-lazy row limit.'),
   SYNC_MODE_WARN_OVER_LIMIT: code('sync', 'mode.warn_over_limit', 'warn', 'Auto table exceeded the row limit but warning mode kept full sync.'),
   SYNC_POLICY_CALLBACK_FAILED: code('sync', 'policy.callback_failed', 'warn', 'Sync policy callback failed; request was denied.'),
+  DATA_QUERY_FAILED: code('data', 'query.failed', 'error', 'Data query endpoint failed.'),
 
   AUTH_STARTED: code('auth', 'started', 'info', 'Auth plugin started.'),
   AUTH_STOPPED: code('auth', 'stopped', 'info', 'Auth plugin stopped.'),

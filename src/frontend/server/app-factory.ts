@@ -266,16 +266,6 @@ export async function createApp(userConfig: AppConfig) {
     app.use(createStoragePlugin({ db, localDir: config.storageDir }));
   }
 
-  // 6.5. Data query — auto-registers /api/data for resolved lazy-synced tables
-  app.use(
-    createDataQueryPlugin({
-      queryableTables: config.lazyTables,
-      tableColumns: config.tableColumns,
-      policy: syncPolicy,
-      getTokenService: config.auth !== false ? getTokenService : undefined,
-    })
-  );
-
   // 6.6. App-owned resources — validate definitions before app routes can use them
   const loadedResources = await loadResourceDefinitions({
     resourcesDir: config.serverResourcesDir,
@@ -287,7 +277,20 @@ export async function createApp(userConfig: AppConfig) {
     authConfig: resourceAuthConfig,
   });
 
-  // 6.7. Generated resource CRUD — resource policy enforced server-side
+  // 6.7. Data query — lazy-table reads plus registered resource read policy
+  app.use(
+    createDataQueryPlugin({
+      queryableTables: config.lazyTables,
+      tableColumns: config.tableColumns,
+      policy: syncPolicy,
+      getTokenService: config.auth !== false ? getTokenService : undefined,
+      getUserStore: config.auth !== false ? getAuthStore : undefined,
+      resourceRegistry,
+      resourceAuthConfig,
+    })
+  );
+
+  // 6.8. Generated resource CRUD — resource policy enforced server-side
   if (config.resourceRoutes !== false) {
     app.use(
       createResourceCrudPlugin({
@@ -301,7 +304,7 @@ export async function createApp(userConfig: AppConfig) {
     );
   }
 
-  // 6.8. App-owned backend extensions — mounted before health and file-router catch-all
+  // 6.9. App-owned backend extensions — mounted before health and file-router catch-all
   const serverRoutePlugins = await loadServerRoutePlugins({
     extensionDirs: [
       { kind: 'plugins', dir: config.serverPluginsDir },

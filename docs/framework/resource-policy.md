@@ -111,8 +111,8 @@ by default:
 The `:resource` segment is the resource name. It defaults to the backing table
 name unless `defineResource({ name })` is provided.
 
-Disable generated routes when a resource should only feed custom routes or
-future data/sync policy integration:
+Disable generated routes when a resource should only feed custom routes,
+`/api/data` policy, or future sync policy integration:
 
 ```ts
 createApp({
@@ -164,6 +164,35 @@ CRUD policy behavior:
   sync/change events.
 - `metadataPolicy()` hydrates trusted user properties from the auth user store
   when auth is enabled.
+
+## `/api/data` Integration
+
+Resolved lazy tables are still queried through `GET /api/data`, and unregistered
+tables keep the existing sync read policy behavior. When a lazy table is also a
+registered resource, `/api/data` evaluates the resource `list` policy after the
+sync read policy and before SQL execution.
+
+For registered resources:
+
+- a missing or unsupported `list` action fails closed;
+- denied resource policy returns the policy status/message;
+- `ownerPolicy()` list constraints are translated into SQL and ANDed with
+  caller filters;
+- `anyOf(ownerPolicy(...), adminOnly())` lets admins read all rows while owners
+  only read their rows;
+- `metadataPolicy()` hydrates trusted user properties from the auth user store;
+- unsafe or unknown constraint columns fail closed instead of running a broad
+  query.
+
+Example:
+
+```txt
+GET /api/data?table=tickets&filter=status:open&order=created_at&dir=desc
+```
+
+If `tickets` is registered with `ownerPolicy({ userField: 'created_by' })`, the
+effective SQL filters include both `status = 'open'` and
+`created_by = auth.userId`.
 
 ## Trusted Metadata
 
@@ -255,8 +284,8 @@ type ResourcePolicyDecision = {
 ```
 
 `ownerPolicy()` returns a field equality constraint for `list`, for example
-`created_by = auth.userId`. Generated CRUD translates those constraints today;
-`/api/data` and sync integrations will reuse the same decision shape later. For
+`created_by = auth.userId`. Generated CRUD and `/api/data` translate those
+constraints today; sync integrations will reuse the same decision shape later. For
 `create: 'stamp'`, the decision includes `stampedInput`, which generated
 endpoints write instead of trusting caller input.
 
@@ -283,6 +312,6 @@ Validation currently checks:
 
 ## Current Limits
 
-This document covers resource definitions, generated CRUD routes, and the
-policy core. Phase 5 follow-up slices will add `/api/data` integration, sync
-policy integration, and doctor checks.
+This document covers resource definitions, generated CRUD routes, `/api/data`
+read integration, and the policy core. Phase 5 follow-up slices will add sync
+policy integration and doctor checks.

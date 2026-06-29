@@ -1,6 +1,6 @@
 # Phase 5: Resource And Policy API Plan
 
-Status: planned, slices 1-4 implemented
+Status: planned, slices 1-5 implemented
 
 Phase 5 introduces a high-level resource contract for common data-driven apps.
 The goal is to let app code declare tables, actions, and authorization policy
@@ -239,11 +239,20 @@ validation:
 
 Resource policy should be able to protect generic data reads:
 
-1. Unknown/unregistered tables keep existing behavior.
-2. Registered resources can add read constraints for `list`.
-3. `get`-style data access should evaluate row policy after loading.
-4. Doctor should warn when a registered resource cannot safely apply its list
-   policy to `/api/data`.
+Implemented in slice 5 for lazy list reads:
+
+1. Done: unknown/unregistered tables keep existing sync read policy behavior.
+2. Done: registered resources evaluate `list` policy and add safe read
+   constraints to SQL.
+3. Done: policy constraints are ANDed with caller filters and sort/pagination
+   validation stays schema-backed.
+4. Done: metadata policies hydrate trusted auth user properties through the auth
+   store when auth is enabled.
+5. Done: registered resources without `list` fail closed.
+6. Later: `get`-style data access should evaluate row policy after loading if a
+   generic point-read data endpoint is added.
+7. Later: doctor should warn when a registered resource cannot safely apply its
+   list policy to `/api/data`.
 
 ### Sync Policy
 
@@ -293,7 +302,9 @@ Doctor should check:
    and createApp integration tests.
 
 5. **`/api/data` Integration**
-   Apply resource read constraints and row checks to generic data reads.
+   Implemented for lazy list reads. Added resource list policy evaluation to
+   `/api/data`, owner constraint SQL translation, metadata policy hydration,
+   no-list fail-closed behavior, and focused data-query tests.
 
 6. **Sync Policy Integration**
    Compose resource policy with WebSocket read and mutation policy.
