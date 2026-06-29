@@ -223,6 +223,16 @@ export class UserStore {
   // ─── User CRUD ───────────────────────────────────────────────────────
 
   /**
+   * Canonical alias for createUser().
+   *
+   * Use this from app-owned backend code when `zero.auth.store` already makes
+   * the user domain obvious.
+   */
+  async create(params: Parameters<UserStore['createUser']>[0]): Promise<UserRecord> {
+    return this.createUser(params);
+  }
+
+  /**
    * Create a new user with hashed password.
    * Writes user row via ReactiveDB (broadcast) + credential via direct SQL (no broadcast).
    * Atomic — if credential insert fails, user row is rolled back.
@@ -292,6 +302,11 @@ export class UserStore {
     return this.toUserRecord(row, this.loadProperties(userId));
   }
 
+  /** Canonical alias for getUserById(). */
+  get(userId: string): UserRecord | null {
+    return this.getUserById(userId);
+  }
+
   /**
    * Get user by username. Returns null if not found.
    */
@@ -335,6 +350,11 @@ export class UserStore {
     return rows.map((row) =>
       this.toUserRecord(row, this.loadProperties(row.user_id))
     );
+  }
+
+  /** Canonical alias for listUsers(). */
+  list(options: UserListOptions = {}): UserRecord[] {
+    return this.listUsers(options);
   }
 
   /**
@@ -409,6 +429,14 @@ export class UserStore {
     return this.getUserById(userId);
   }
 
+  /** Canonical alias for updateUser(). */
+  update(
+    userId: string,
+    partial: Parameters<UserStore['updateUser']>[1]
+  ): UserRecord | null {
+    return this.updateUser(userId, partial);
+  }
+
   /**
    * Delete a user. Cascades to _credentials, user_properties, _refresh_tokens.
    * Returns true if deleted, false if not found.
@@ -416,6 +444,11 @@ export class UserStore {
   deleteUser(userId: string): boolean {
     const change = this.db.delete('users', userId);
     return change !== null;
+  }
+
+  /** Canonical alias for deleteUser(). */
+  delete(userId: string): boolean {
+    return this.deleteUser(userId);
   }
 
   // ─── Password ────────────────────────────────────────────────────────

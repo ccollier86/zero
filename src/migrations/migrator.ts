@@ -287,6 +287,13 @@ export class Migrator {
   }
 
   /**
+   * Canonical list alias for migration status rows.
+   */
+  list(): MigrationStatus[] {
+    return this.status();
+  }
+
+  /**
    * Force a WAL checkpoint — flushes all WAL pages to the main database file.
    * Call this after migrations or before clean shutdown.
    */

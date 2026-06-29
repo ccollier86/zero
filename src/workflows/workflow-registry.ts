@@ -37,12 +37,27 @@ export class WorkflowRegistry {
     this.definitions.set(definition.name, definition);
   }
 
+  /** Canonical create alias for registerWorkflow(). */
+  create(definition: WorkflowDefinition): void {
+    this.registerWorkflow(definition);
+  }
+
   getWorkflow(name: string): WorkflowDefinition | undefined {
     return this.definitions.get(name);
   }
 
+  /** Canonical get alias for getWorkflow(). */
+  get(name: string): WorkflowDefinition | undefined {
+    return this.getWorkflow(name);
+  }
+
   listWorkflows(): WorkflowDefinition[] {
     return Array.from(this.definitions.values());
+  }
+
+  /** Canonical list alias for listWorkflows(). */
+  list(): WorkflowDefinition[] {
+    return this.listWorkflows();
   }
 
   listHandlers(): string[] {

@@ -169,6 +169,13 @@ names in new code: `zero.db`, `zero.auth`, `zero.ai`, `zero.vector`,
 `zero.syncDB`, `zero.vectors`, `zero.workflowRegistry`, and
 `zero.auth.getTokenService()`.
 
+Inside those services, prefer the small standard method vocabulary:
+`create()`, `get()`, `list()`, `update()`, `delete()`, `run()`, `stop()`, and
+`status()` where it fits. Storage is grouped as `storage.drives`,
+`storage.objects`, and `storage.permissions` so calls stay unambiguous. The
+full service alias map is in
+[Phase 4: Service API Smoothing](./framework/phase-4-service-api-smoothing.md).
+
 The core UI primitives and Animate UI wrappers share the same token contract:
 `background`, `card`, `popover`, `muted`, `accent`, `input`, `border`, `ring`,
 and semantic state colors. Keep new components on those tokens, keep ordinary

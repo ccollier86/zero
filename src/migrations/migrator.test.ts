@@ -46,6 +46,10 @@ describe('Migrator first-class ledger and history', () => {
         checksumMatches: true,
         hasDown: true,
       });
+      expect(migrator.list()[0]).toMatchObject({
+        version: '001',
+        applied: true,
+      });
 
       const ledgerCount = migrator.database
         .prepare('SELECT COUNT(*) AS count FROM _zero_migrations WHERE version = ? AND status = ?')

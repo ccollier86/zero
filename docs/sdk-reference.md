@@ -1379,6 +1379,29 @@ rest of the frontend SDK. Uploads still use `XMLHttpRequest` for progress
 events, but they read the SDK client's in-memory access token and retry once
 after `client.refresh()` if the server returns 401.
 
+### Server Service API
+
+Backend code can use the grouped storage service when it owns the authorization
+context:
+
+```ts
+import { getStorageService } from '@zero/framework/server';
+
+const storage = getStorageService();
+if (!storage) throw new Error('Storage is not enabled.');
+
+const drive = storage.drives.create(user.userId, { name: 'Reports' });
+storage.objects.createFolder(drive.drive_id, '/q2', user.userId);
+storage.permissions.grant(drive.drive_id, {
+  grantType: 'role',
+  grantValue: 'manager',
+  permission: 'read',
+});
+```
+
+The older method names such as `createDrive()`, `listFolder()`, and
+`grantPermission()` remain supported.
+
 ### Storage Management Component
 
 For admin or owner dashboards, Zero exports an embeddable storage organism:
@@ -1464,13 +1487,13 @@ import { getScheduler } from '@zero/framework/server';
 
 const scheduler = getScheduler()!;
 
-scheduler.register({
+scheduler.create({
   name: 'cleanup-expired-sessions',
   pattern: '0 */15 * * * *',   // every 15 minutes (6-field cron with seconds)
   run: () => sessionStore.deleteExpired(),
 });
 
-scheduler.register({
+scheduler.create({
   name: 'daily-report',
   pattern: '0 0 9 * * *',      // 9:00 AM daily
   run: async () => {
@@ -1480,7 +1503,7 @@ scheduler.register({
   timezone: 'America/New_York',
 });
 
-scheduler.register({
+scheduler.create({
   name: 'manual-only-job',
   pattern: '0 0 * * * *',
   run: () => doWork(),
@@ -1505,16 +1528,19 @@ scheduler.register({
 ```ts
 const scheduler = getScheduler()!;
 
-scheduler.register(def)          // Register new job
-scheduler.unregister('name')     // Stop + remove job → boolean
+scheduler.create(def)            // Register new job
+scheduler.delete('name')         // Stop + remove job → boolean
 scheduler.pause('name')          // Pause → boolean
 scheduler.resume('name')         // Resume → boolean
-scheduler.trigger('name')        // Run immediately → boolean
+scheduler.run('name')            // Run immediately → boolean
 scheduler.has('name')            // Check if registered → boolean
-scheduler.getStatus('name')      // Single job status → JobStatus | null
-scheduler.listJobs()             // All jobs → JobStatus[]
-scheduler.stopAll()              // Stop everything (called on shutdown)
+scheduler.get('name')            // Single job status → JobStatus | null
+scheduler.list()                 // All jobs → JobStatus[]
+scheduler.stop()                 // Stop everything (called on shutdown)
 ```
+
+Compatibility aliases remain supported: `register()`, `unregister()`,
+`trigger()`, `getStatus()`, `listJobs()`, and `stopAll()`.
 
 ### `JobStatus`
 
@@ -2195,7 +2221,7 @@ Everything available from `@zero/framework/react`:
 ### Types
 `Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `RegisterParams`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `DriveRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
 
-Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `ResolvedConfig`, `AuthPluginConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `createAuthPlugin`, `createAuthMiddleware`, `getTokenService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `emitPlatformCode`, `createObservabilityPlugin`
+Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `ResolvedConfig`, `AuthPluginConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `StorageDriveApi`, `StorageObjectApi`, `StoragePermissionApi`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `createAuthPlugin`, `createAuthMiddleware`, `getTokenService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `emitPlatformCode`, `createObservabilityPlugin`
 
 Sync-only (from `@platform/sync`): `createDefaultSyncPolicy`, `combineSyncPolicies`, `allowAllSyncPolicy`, `getReadableSyncTables`, `evaluateSyncReadPolicy`, `evaluateSyncMutationPolicy`, `SyncPolicy`, `SyncReadPolicyContext`, `SyncMutationPolicyContext`
 

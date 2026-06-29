@@ -158,7 +158,8 @@ describe('AIService.status', () => {
     expect(config).not.toBe(false);
     if (config === false) return;
 
-    const status = new AIService(config).status();
+    const service = new AIService(config);
+    const status = service.status();
 
     const openai = status.providers.find((provider) => provider.id === 'openai');
     expect(openai?.active).toBe(true);
@@ -168,6 +169,7 @@ describe('AIService.status', () => {
       active: true,
       reason: null,
     });
+    expect(service.getStatus()).toEqual(status);
   });
 
   test('checks alias health against the alias capability', () => {

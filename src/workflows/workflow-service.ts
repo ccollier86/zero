@@ -103,6 +103,15 @@ export class WorkflowService {
     return instanceId;
   }
 
+  /** Canonical run alias for start(). */
+  async run(
+    name: string,
+    input?: unknown,
+    startedBy?: string,
+  ): Promise<string> {
+    return this.start(name, input, startedBy);
+  }
+
   // ─── Advance ────────────────────────────────────────
 
   /**
@@ -221,6 +230,11 @@ export class WorkflowService {
       updated_at: new Date().toISOString(),
       completed_at: new Date().toISOString(),
     });
+  }
+
+  /** Canonical stop alias for cancel(). */
+  stop(instanceId: string): void {
+    this.cancel(instanceId);
   }
 
   pause(instanceId: string): void {
@@ -348,6 +362,11 @@ export class WorkflowService {
     return this.db.queryOne('workflow_instances', instanceId);
   }
 
+  /** Canonical get alias for getInstance(). */
+  get(instanceId: string): Record<string, unknown> | null {
+    return this.getInstance(instanceId);
+  }
+
   getSteps(instanceId: string): WorkflowStepRecord[] {
     return this.db.query('workflow_steps')
       .filter(s => s.instance_id === instanceId)
@@ -383,6 +402,11 @@ export class WorkflowService {
     }
 
     return results;
+  }
+
+  /** Canonical list alias for listInstances(). */
+  list(filter?: Parameters<WorkflowService['listInstances']>[0]): Record<string, unknown>[] {
+    return this.listInstances(filter);
   }
 
   // ─── Internal ───────────────────────────────────────

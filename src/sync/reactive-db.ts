@@ -208,6 +208,16 @@ export class ReactiveDB {
   }
 
   /**
+   * Canonical create alias for insert().
+   *
+   * ReactiveDB insert semantics are preserved: existing primary keys are
+   * replaced and emitted as UPDATE changes.
+   */
+  create(table: string, row: Row): Change {
+    return this.insert(table, row);
+  }
+
+  /**
    * Update a row by merging partial data into the existing row.
    * Returns the Change with the full merged row, or null if the row doesn't exist.
    */
@@ -270,11 +280,21 @@ export class ReactiveDB {
     return def.stmts.getAll.all() as Row[];
   }
 
+  /** Canonical list alias for query(). */
+  list(table: string): Row[] {
+    return this.query(table);
+  }
+
   /** Get a single row by primary key. Returns null if not found. */
   queryOne(table: string, id: string): Row | null {
     this.assertNotDisposed();
     const def = this.getTableDef(table);
     return (def.stmts.getOne.get(id) as Row | null) ?? null;
+  }
+
+  /** Canonical get alias for queryOne(). */
+  get(table: string, id: string): Row | null {
+    return this.queryOne(table, id);
   }
 
   /** Get the ordered natural identity fields for a table, if configured. */

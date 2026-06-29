@@ -233,6 +233,10 @@ export type {
   DriveUsage,
   PermissionLevel,
   GrantPermissionParams,
+  StorageDriveApi,
+  StorageDriveUpdates,
+  StorageObjectApi,
+  StoragePermissionApi,
 } from '../storage';
 
 // ─── Email: Server ──────────────────────────────────────────────────────

@@ -169,6 +169,22 @@ describe('UserStore — User CRUD', () => {
     expect(store.getProperty(user.userId, 'plan')).toBe('pro');
   });
 
+  test('canonical CRUD aliases call the user store lifecycle methods', async () => {
+    const user = await store.create({
+      username: 'aliases',
+      email: 'aliases@example.com',
+      password: 'password123',
+    });
+
+    expect(store.get(user.userId)?.email).toBe('aliases@example.com');
+    expect(store.list().some((listed) => listed.userId === user.userId)).toBe(true);
+
+    const updated = store.update(user.userId, { firstName: 'Alias' });
+    expect(updated?.firstName).toBe('Alias');
+    expect(store.delete(user.userId)).toBe(true);
+    expect(store.get(user.userId)).toBeNull();
+  });
+
   test('createUser throws DUPLICATE_USERNAME on username conflict', async () => {
     await store.createUser({
       username: 'alice',

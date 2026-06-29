@@ -261,6 +261,14 @@ describe('insert', () => {
   test('throws on undefined table', () => {
     expect(() => db.insert('nonexistent', { id: '1' })).toThrow('not defined');
   });
+
+  test('canonical create/get/list aliases preserve insert and query semantics', () => {
+    const change = db.create('todos', { id: '1', title: 'Alias', done: 0 });
+
+    expect(change.op).toBe('INSERT');
+    expect(db.get('todos', '1')).toEqual({ id: '1', title: 'Alias', done: 0 });
+    expect(db.list('todos')).toEqual([{ id: '1', title: 'Alias', done: 0 }]);
+  });
 });
 
 // ─── update ───────────────────────────────────────────────────────────────

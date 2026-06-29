@@ -142,24 +142,33 @@ export class NotificationService {
 
   // ─── Targeting API ──────────────────────────────────────────────────────
 
+  /**
+   * Canonical create alias for broadcast().
+   *
+   * Use notify()/notifyUsers()/notifyRole() when targeting should be explicit.
+   */
+  create(params: CreateNotificationParams, senderId?: string): NotificationRecord {
+    return this.broadcast(params, senderId);
+  }
+
   /** Broadcast to all users. */
   broadcast(params: CreateNotificationParams, senderId?: string): NotificationRecord {
-    return this.create('all', null, params, senderId);
+    return this.createNotification('all', null, params, senderId);
   }
 
   /** Notify a single user. */
   notify(userId: string, params: CreateNotificationParams, senderId?: string): NotificationRecord {
-    return this.create('user', userId, params, senderId);
+    return this.createNotification('user', userId, params, senderId);
   }
 
   /** Notify multiple specific users. */
   notifyUsers(userIds: string[], params: CreateNotificationParams, senderId?: string): NotificationRecord {
-    return this.create('users', JSON.stringify(userIds), params, senderId);
+    return this.createNotification('users', JSON.stringify(userIds), params, senderId);
   }
 
   /** Notify all users with a specific role. */
   notifyRole(role: string, params: CreateNotificationParams, senderId?: string): NotificationRecord {
-    return this.create('role', role, params, senderId);
+    return this.createNotification('role', role, params, senderId);
   }
 
   // ─── Reads ──────────────────────────────────────────────────────────────
@@ -168,6 +177,11 @@ export class NotificationService {
   getById(notificationId: string): NotificationRecord | null {
     const row = this.stmts.getById.get(notificationId) as NotificationRow | null;
     return row as NotificationRecord | null;
+  }
+
+  /** Canonical get alias for getById(). */
+  get(notificationId: string): NotificationRecord | null {
+    return this.getById(notificationId);
   }
 
   /**
@@ -187,6 +201,13 @@ export class NotificationService {
         ...(n as unknown as NotificationRecord),
         receipt: (receiptMap.get(n.notification_id) as NotificationReceiptRecord) ?? null,
       }));
+  }
+
+  /** Canonical list alias for getForUser(). */
+  list(userId: string, userRole: string): Array<NotificationRecord & {
+    receipt: NotificationReceiptRecord | null;
+  }> {
+    return this.getForUser(userId, userRole);
   }
 
   /** Get unread count for a user (accounts for target filtering). */
@@ -361,6 +382,11 @@ export class NotificationService {
     });
   }
 
+  /** Canonical delete alias for deleteNotification(). */
+  delete(notificationId: string): boolean {
+    return this.deleteNotification(notificationId);
+  }
+
   /** Delete all expired notifications. Returns number deleted. */
   deleteExpired(): number {
     const now = Date.now();
@@ -393,7 +419,7 @@ export class NotificationService {
     this.db.insert('notification_receipts', row as unknown as Row);
   }
 
-  private create(
+  private createNotification(
     targetType: NotificationTarget,
     targetValue: string | null,
     params: CreateNotificationParams,

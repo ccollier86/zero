@@ -111,6 +111,10 @@ bun run migrate:plan -- --schema ./app/lib/schemas.ts --write --name "add member
 `--db ./path/app.db` overrides the database path. If omitted, the runner uses
 `DATABASE_PATH` and then `./data/platform.db`.
 
+Programmatic migration runners can call `migrator.run()`,
+`migrator.rollback()`, and `migrator.list()`. The older `migrator.status()`
+name remains supported and returns the same status rows as `list()`.
+
 ## Schema Module Shape
 
 Doctor and plan need a module that exports declared tables. These shapes are

@@ -120,6 +120,34 @@ afterAll(() => {
 });
 
 describe('storage route auth', () => {
+  test('canonical grouped service aliases cover drives, objects, and permissions', async () => {
+    const { user } = await createUser();
+    const service = getStorageService()!;
+    const drive = service.drives.create(user.userId, { name: 'Alias docs' });
+
+    expect(service.drives.get(drive.drive_id)?.name).toBe('Alias docs');
+    expect(service.drives.update(drive.drive_id, { name: 'Alias docs updated' }).name).toBe('Alias docs updated');
+    expect(service.drives.list().some((item) => item.drive_id === drive.drive_id)).toBe(true);
+    expect(service.drives.usage(drive.drive_id).driveId).toBe(drive.drive_id);
+
+    const folder = service.objects.createFolder(drive.drive_id, '/reports', user.userId);
+    expect(folder.path).toBe('/reports');
+    expect(service.objects.get(drive.drive_id, '/reports')?.type).toBe('folder');
+    expect(service.objects.list(drive.drive_id).items.some((item) => item.path === '/reports')).toBe(true);
+
+    const permission = service.permissions.grant(drive.drive_id, {
+      grantType: 'role',
+      grantValue: 'editor',
+      permission: 'read',
+    });
+    expect(service.permissions.get(permission.permission_id)?.grant_value).toBe('editor');
+    expect(service.permissions.checkAccess(drive.drive_id, null, 'someone', 'editor', {}, 'read')).toBe(true);
+    expect(service.permissions.revoke(permission.permission_id)).toBe(true);
+
+    expect(await service.objects.delete(drive.drive_id, '/reports')).toBe(true);
+    expect(service.drives.delete(drive.drive_id)).toBe(true);
+  });
+
   test('requires auth for creating drives', async () => {
     const result = await requestJson<{ code: string; error: string }>(
       '/storage/drives',

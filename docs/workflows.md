@@ -21,12 +21,12 @@
 └─────────────────────────────────────────────────────────┘
 ```
 
-The registry holds handler functions and workflow definitions in memory. The service orchestrates full lifecycle operations (start, advance, cancel, retry polling). The executor runs a single step, handling waitFor/condition/retry logic. All state is persisted to SQLite via ReactiveDB — tables have no `_` prefix, so changes broadcast through the sync layer for real-time observability.
+The registry holds handler functions and workflow definitions in memory. The service orchestrates full lifecycle operations (run/start, advance, stop/cancel, retry polling). The executor runs a single step, handling waitFor/condition/retry logic. All state is persisted to SQLite via ReactiveDB — tables have no `_` prefix, so changes broadcast through the sync layer for real-time observability.
 
 ## Data Flow
 
 ### Start Path
-1. **`start(name, input)`** — looks up definition by name from registry
+1. **`run(name, input)`** — looks up definition by name from registry
 2. **Create instance** — inserts `workflow_instances` row with `status=running`
 3. **Create steps** — inserts one `workflow_steps` row per step definition, all `status=pending`
 4. **Execute first step** — calls `advance(instanceId)` to begin execution
@@ -173,12 +173,15 @@ interface WorkflowDefinition {
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `start` | `(name, input, startedBy?) => instanceId` | Create instance + steps from definition, execute first step |
+| `run` | `(name, input, startedBy?) => instanceId` | Create instance + steps from definition, execute first step |
 | `advance` | `(instanceId) => void` | Execute next pending step; complete workflow if all steps done |
 | `sendEvent` | `(instanceId, eventName, payload) => void` | Deliver event to waiting step, trigger execution |
-| `cancel` | `(instanceId) => void` | Set workflow and all pending/waiting steps to cancelled |
+| `stop` | `(instanceId) => void` | Set workflow and all pending/waiting steps to cancelled |
 | `pause` | `(instanceId) => void` | Set workflow to paused, halt advancement |
 | `resume` | `(instanceId) => void` | Set workflow back to running, re-advance |
+
+Compatibility aliases remain supported: `start()` for `run()` and `cancel()`
+for `stop()`.
 
 ### Scheduler Methods
 
@@ -209,7 +212,7 @@ registry.registerHandler('create-record', async (ctx) => {
   return await createPatientRecord(ctx.workflowInput);
 });
 
-registry.registerWorkflow({
+registry.create({
   name: 'patient-intake',
   steps: [
     { name: 'Verify Insurance', handler: 'verify-insurance' },
@@ -218,6 +221,8 @@ registry.registerWorkflow({
   ],
 });
 ```
+
+`registerWorkflow()` remains supported for existing apps.
 
 ## SDK Integration
 

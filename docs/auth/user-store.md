@@ -163,6 +163,17 @@ class UserStore {
 
 ## Operations
 
+When the user domain is already obvious from context, app-owned backend code
+can use the Phase 4 aliases:
+
+| Canonical | Explicit compatibility method |
+| --- | --- |
+| `create(params)` | `createUser(params)` |
+| `get(userId)` | `getUserById(userId)` |
+| `list(options?)` | `listUsers(options?)` |
+| `update(userId, partial)` | `updateUser(userId, partial)` |
+| `delete(userId)` | `deleteUser(userId)` |
+
 ### createUser
 
 ```ts

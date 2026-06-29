@@ -85,6 +85,17 @@ afterAll(() => {
 });
 
 describe('notification receipt routes', () => {
+  test('canonical service aliases create, read, list, and delete notifications', async () => {
+    const { user } = await createUser();
+    const service = getNotificationService()!;
+    const notification = service.create({ title: 'Alias broadcast' });
+
+    expect(service.get(notification.notification_id)?.title).toBe('Alias broadcast');
+    expect(service.list(user.userId, user.role).some((item) => item.notification_id === notification.notification_id)).toBe(true);
+    expect(service.delete(notification.notification_id)).toBe(true);
+    expect(service.get(notification.notification_id)).toBeNull();
+  });
+
   test('requires auth for receipt mutations', async () => {
     const { user } = await createUser();
     const notification = createNotification(user.userId, 'Needs auth');

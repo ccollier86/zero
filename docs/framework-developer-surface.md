@@ -211,7 +211,7 @@ export async function POST({ request, auth }: LoaderContext) {
   const db = getSyncDB();
   if (!db) return Response.json({ error: 'Database unavailable' }, { status: 503 });
 
-  const change = db.insert('customers', {
+  const change = db.create('customers', {
     customer_id: crypto.randomUUID(),
     name: body.name,
     owner_id: auth.userId,
@@ -243,7 +243,7 @@ export default defineRouter({
         name: t.String(),
       }),
       handler: ({ body, user, zero }) => {
-        return zero.db.insert('customers', {
+        return zero.db.create('customers', {
           customer_id: crypto.randomUUID(),
           name: body.name,
           owner_id: user.userId,
@@ -276,6 +276,22 @@ Compatibility aliases remain available: `zero.syncDB`, `zero.vectors`,
 prefer the canonical names. Optional services return `null` when disabled or
 not started; `zero.db` throws if app-owned server routes are mounted before the
 sync plugin.
+
+Prefer Zero's canonical service vocabulary in app-owned backend code:
+
+| Service | Preferred methods |
+| --- | --- |
+| `zero.db` | `create()`, `get()`, `list()`, `update()`, `delete()` |
+| `zero.auth.store` | `create()`, `get()`, `list()`, `update()`, `delete()` |
+| `zero.notifications` | `create()`, `get()`, `list()`, `delete()` |
+| `zero.scheduler` | `create()`, `get()`, `list()`, `run()`, `delete()`, `stop()` |
+| `zero.workflows` | `run()`, `get()`, `list()`, `stop()` |
+| `zero.vector` | `list()`, `search()`, `get()`, `status()` |
+| `zero.storage` | `drives.*`, `objects.*`, and `permissions.*` grouped APIs |
+
+Older names remain compatibility aliases. See
+[Phase 4: Service API Smoothing](./framework/phase-4-service-api-smoothing.md)
+for the full mapping.
 
 Use `defineMiddleware()` for named app-owned middleware. The `matcher` decides
 where middleware applies and which server-side policy must pass before `run()`
@@ -353,7 +369,7 @@ export default createServerRoute({ name: 'app.raw-customers', prefix: '/api/cust
     ({ body, requireAuth, zero }) => {
       const user = requireAuth();
 
-      return zero.db.insert('customers', {
+      return zero.db.create('customers', {
         customer_id: crypto.randomUUID(),
         name: body.name,
         owner_id: user.userId,
@@ -567,7 +583,7 @@ await vectors?.upsert('documents', [{
   },
 }]);
 
-const matches = await vectors?.query('documents', {
+const matches = await vectors?.search('documents', {
   vector: queryEmbedding,
   topK: 10,
   filter: {
@@ -687,6 +703,11 @@ Server code can use the service for backend-owned storage tasks:
 import { getStorageService } from '@zero/framework/server';
 
 const storage = getStorageService();
+const userId = 'u_123';
+const drive = storage?.drives.create(userId, { name: 'Reports' });
+const folder = drive
+  ? storage?.objects.createFolder(drive.drive_id, '/q2', userId)
+  : null;
 ```
 
 Permissions and upload authorization stay in backend storage routes.
@@ -704,14 +725,14 @@ getWorkflowRegistry()?.registerHandler('sendWelcomeEmail', async (ctx) => {
   return { ok: true };
 });
 
-getWorkflowRegistry()?.registerWorkflow({
+getWorkflowRegistry()?.create({
   name: 'customer-onboarding',
   steps: [
     { name: 'Send welcome email', handler: 'sendWelcomeEmail' },
   ],
 });
 
-await getWorkflowService()?.start('customer-onboarding', {
+await getWorkflowService()?.run('customer-onboarding', {
   customerId: 'cust_1',
 });
 ```

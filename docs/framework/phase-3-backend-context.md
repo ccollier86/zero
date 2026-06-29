@@ -25,7 +25,7 @@ export default defineEndpoint({
   path: '/api/customers',
   auth: 'user',
   handler({ body, user, zero }) {
-    return zero.db.insert('customers', {
+    return zero.db.create('customers', {
       customer_id: crypto.randomUUID(),
       owner_id: user.userId,
       name: (body as { name: string }).name,

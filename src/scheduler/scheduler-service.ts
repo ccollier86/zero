@@ -67,6 +67,11 @@ export class SchedulerService {
     });
   }
 
+  /** Canonical create alias for register(). */
+  create(def: JobDefinition): void {
+    this.register(def);
+  }
+
   /**
    * Unregister and permanently stop a job.
    * Returns true if found and stopped, false if not found.
@@ -80,6 +85,11 @@ export class SchedulerService {
       metadata: { name },
     });
     return true;
+  }
+
+  /** Canonical delete alias for unregister(). */
+  delete(name: string): boolean {
+    return this.unregister(name);
   }
 
   /** Pause a job (reversible). */
@@ -106,6 +116,11 @@ export class SchedulerService {
     return true;
   }
 
+  /** Canonical run alias for trigger(). */
+  run(name: string): boolean {
+    return this.trigger(name);
+  }
+
   /** Get status of a single job. */
   getStatus(name: string): JobStatus | null {
     const entry = this.jobs.get(name);
@@ -113,9 +128,19 @@ export class SchedulerService {
     return this.toStatus(entry);
   }
 
+  /** Canonical get alias for getStatus(). */
+  get(name: string): JobStatus | null {
+    return this.getStatus(name);
+  }
+
   /** List all registered jobs and their status. */
   listJobs(): JobStatus[] {
     return Array.from(this.jobs.values()).map((e) => this.toStatus(e));
+  }
+
+  /** Canonical list alias for listJobs(). */
+  list(): JobStatus[] {
+    return this.listJobs();
   }
 
   /** Check if a job is registered. */
@@ -130,6 +155,11 @@ export class SchedulerService {
     }
     this.jobs.clear();
     emitPlatformCode(OBS_CODES.SCHEDULER_ALL_STOPPED);
+  }
+
+  /** Canonical stop alias for stopAll(). */
+  stop(): void {
+    this.stopAll();
   }
 
   // ─── Internal ───────────────────────────────────────────────────────────

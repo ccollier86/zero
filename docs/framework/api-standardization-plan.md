@@ -106,7 +106,7 @@ export default defineEndpoint({
     name: t.String(),
   }),
   handler: async ({ body, user, zero }) => {
-    return zero.db.insert('customers', {
+    return zero.db.create('customers', {
       customer_id: crypto.randomUUID(),
       owner_id: user.userId,
       name: body.name,
@@ -126,7 +126,7 @@ export default defineRouter({
     defineEndpoint({
       method: 'GET',
       path: '/',
-      handler: ({ zero }) => zero.db.query('customers'),
+      handler: ({ zero }) => zero.db.list('customers'),
     }),
   ],
 });
@@ -273,7 +273,7 @@ Acceptance criteria:
 
 ## Phase 4: Service API Smoothing
 
-Status: planned
+Status: implemented
 
 Audit every backend service for naming consistency:
 
@@ -312,6 +312,9 @@ Acceptance criteria:
 2. Rough legacy names get compatibility aliases when practical.
 3. New names appear in docs and generated examples.
 4. Tests cover aliases when compatibility matters.
+
+Implementation details live in
+[Phase 4: Service API Smoothing](./phase-4-service-api-smoothing.md).
 
 ## Phase 5: Resource And Policy API
 
@@ -368,7 +371,7 @@ export const createCustomer = defineAction({
     name: t.String(),
   }),
   run: async ({ input, user, zero }) => {
-    return zero.db.insert('customers', {
+    return zero.db.create('customers', {
       customer_id: crypto.randomUUID(),
       owner_id: user.userId,
       name: input.name,
@@ -496,7 +499,7 @@ the deeper examples.
 - [x] Phase 1: Zero-native backend extension APIs.
 - [x] Phase 2: Middleware matchers and metadata policy.
 - [x] Phase 3: Unified backend `zero` context.
-- [ ] Phase 4: Service API smoothing.
+- [x] Phase 4: Service API smoothing.
 - [ ] Phase 5: Resource and policy API.
 - [ ] Phase 6: Actions.
 - [ ] Phase 7: Frontend parity.

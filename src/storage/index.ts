@@ -5,6 +5,12 @@ export { createStoragePlugin, getStorageService } from './storage.plugin';
 
 // Service
 export { StorageService, StorageError, defineStorageTables } from './storage-service';
+export type {
+  StorageDriveApi,
+  StorageDriveUpdates,
+  StorageObjectApi,
+  StoragePermissionApi,
+} from './storage-service';
 
 // Adapter
 export { LocalStorageAdapter } from './local-adapter';

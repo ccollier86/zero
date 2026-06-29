@@ -43,6 +43,85 @@ export class StorageError extends Error {
   }
 }
 
+export type StorageDriveUpdates = Partial<
+  Pick<DriveRecord, 'name' | 'max_size_bytes' | 'max_file_size_bytes' | 'allowed_mime_types'>
+>;
+
+/** Canonical grouped API for storage drive metadata operations. */
+export interface StorageDriveApi {
+  /** Create a drive owned by `ownerId`. */
+  create(ownerId: string, params: CreateDriveParams): DriveRecord;
+  /** Read one drive by id. */
+  get(driveId: string): DriveRecord | null;
+  /** Update mutable drive settings. */
+  update(driveId: string, updates: StorageDriveUpdates): DriveRecord;
+  /** List all drives without user filtering. */
+  list(): DriveRecord[];
+  /** List drives visible to a concrete user/security context. */
+  listForUser(userId: string, userRole: string | null, userProperties?: Record<string, string>): DriveRecord[];
+  /** Delete a drive, its object metadata, and tracked blob references. */
+  delete(driveId: string): boolean;
+  /** Return aggregate usage for one drive. */
+  usage(driveId: string): DriveUsage;
+  /** Toggle drive-level public read visibility. */
+  setVisibility(driveId: string, isPublic: boolean): DriveRecord;
+}
+
+/** Canonical grouped API for storage object and folder operations. */
+export interface StorageObjectApi {
+  /** Upload file bytes and create or overwrite object metadata. */
+  upload(
+    driveId: string,
+    path: string,
+    data: ReadableStream<Uint8Array> | Uint8Array | Blob,
+    fileName: string,
+    userId: string | null,
+    options?: UploadOptions
+  ): Promise<FileInfo>;
+  /** Download a full file by drive/path. */
+  download(driveId: string, path: string): Promise<{ stream: ReadableStream<Uint8Array>; info: FileInfo } | null>;
+  /** Download a byte range for media/file streaming. */
+  downloadRange(
+    driveId: string,
+    path: string,
+    start: number,
+    end: number
+  ): Promise<{ stream: ReadableStream<Uint8Array>; info: FileInfo } | null>;
+  /** Read file or folder metadata by path. */
+  get(driveId: string, path: string): FileInfo | null;
+  /** List children under a folder path. */
+  list(driveId: string, parentPath?: string, options?: ListOptions): ListResult;
+  /** Move a file or folder to a new path. */
+  move(driveId: string, fromPath: string, toPath: string): Promise<FileInfo>;
+  /** Copy a file to a new path. */
+  copy(driveId: string, fromPath: string, toPath: string): Promise<FileInfo>;
+  /** Delete a file or folder subtree. */
+  delete(driveId: string, path: string): Promise<boolean>;
+  /** Create a folder and any missing parent folders. */
+  createFolder(driveId: string, path: string, userId: string | null, isPublic?: boolean): FileInfo;
+  /** Toggle object-level public read visibility. */
+  setVisibility(driveId: string, path: string, isPublic: boolean): FileInfo;
+}
+
+/** Canonical grouped API for storage permission operations. */
+export interface StoragePermissionApi {
+  /** Grant drive or object access to a role, user, or user property. */
+  grant(driveId: string, params: GrantPermissionParams): PermissionRecord;
+  /** Read one permission by id. */
+  get(permissionId: string): PermissionRecord | null;
+  /** Revoke a permission by id. */
+  revoke(permissionId: string): boolean;
+  /** Check whether a concrete user/security context has enough access. */
+  checkAccess(
+    driveId: string,
+    path: string | null,
+    userId: string | null,
+    userRole: string | null,
+    userProperties: Record<string, string>,
+    requiredLevel: PermissionLevel
+  ): boolean;
+}
+
 // ─── Table Definitions ──────────────────────────────────────────────────────
 
 /**
@@ -124,6 +203,45 @@ export function defineStorageTables(db: ReactiveDB): void {
  */
 export class StorageService {
   private stmts!: ReturnType<typeof this.prepareStatements>;
+
+  /** Canonical grouped API for drive metadata. */
+  readonly drives: StorageDriveApi = {
+    create: (ownerId, params) => this.createDrive(ownerId, params),
+    get: (driveId) => this.getDrive(driveId),
+    update: (driveId, updates) => this.updateDrive(driveId, updates),
+    list: () => this.listDrives(),
+    listForUser: (userId, userRole, userProperties = {}) =>
+      this.listDrivesForUser(userId, userRole, userProperties),
+    delete: (driveId) => this.deleteDrive(driveId),
+    usage: (driveId) => this.getDriveUsage(driveId),
+    setVisibility: (driveId, isPublic) => this.setDriveVisibility(driveId, isPublic),
+  };
+
+  /** Canonical grouped API for files and folders. */
+  readonly objects: StorageObjectApi = {
+    upload: (driveId, path, data, fileName, userId, options = {}) =>
+      this.upload(driveId, path, data, fileName, userId, options),
+    download: (driveId, path) => this.download(driveId, path),
+    downloadRange: (driveId, path, start, end) =>
+      this.downloadRange(driveId, path, start, end),
+    get: (driveId, path) => this.getFileInfo(driveId, path),
+    list: (driveId, parentPath, options) => this.listFolder(driveId, parentPath, options),
+    move: (driveId, fromPath, toPath) => this.moveObject(driveId, fromPath, toPath),
+    copy: (driveId, fromPath, toPath) => this.copyObject(driveId, fromPath, toPath),
+    delete: (driveId, path) => this.deleteObject(driveId, path),
+    createFolder: (driveId, path, userId, isPublic = false) =>
+      this.createFolder(driveId, path, userId, isPublic),
+    setVisibility: (driveId, path, isPublic) => this.setVisibility(driveId, path, isPublic),
+  };
+
+  /** Canonical grouped API for storage grants and access checks. */
+  readonly permissions: StoragePermissionApi = {
+    grant: (driveId, params) => this.grantPermission(driveId, params),
+    get: (permissionId) => this.getPermission(permissionId),
+    revoke: (permissionId) => this.revokePermission(permissionId),
+    checkAccess: (driveId, path, userId, userRole, userProperties, requiredLevel) =>
+      this.checkAccess(driveId, path, userId, userRole, userProperties, requiredLevel),
+  };
 
   constructor(
     private db: ReactiveDB,
@@ -238,7 +356,7 @@ export class StorageService {
    */
   updateDrive(
     driveId: string,
-    updates: Partial<Pick<DriveRecord, 'name' | 'max_size_bytes' | 'max_file_size_bytes' | 'allowed_mime_types'>>
+    updates: StorageDriveUpdates
   ): DriveRecord {
     const drive = this.getDrive(driveId);
     if (!drive) throw new StorageError(404, `Drive not found: ${driveId}`);

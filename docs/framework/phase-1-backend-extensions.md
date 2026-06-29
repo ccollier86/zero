@@ -76,7 +76,7 @@ export default defineEndpoint({
     name: t.String(),
   }),
   handler: async ({ body, user, zero }) => {
-    return zero.db.insert('customers', {
+    return zero.db.create('customers', {
       customer_id: crypto.randomUUID(),
       owner_id: user.userId,
       name: body.name,
@@ -115,7 +115,7 @@ export default defineRouter({
     defineEndpoint({
       method: 'GET',
       path: '/',
-      handler: ({ zero }) => zero.db.query('customers'),
+      handler: ({ zero }) => zero.db.list('customers'),
     }),
   ],
 });

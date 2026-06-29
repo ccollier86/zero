@@ -41,6 +41,11 @@ export class VectorService {
     return this.registry.listIndexes();
   }
 
+  /** Canonical list alias for listIndexes(). */
+  list(): string[] {
+    return this.listIndexes();
+  }
+
   /** Insert or update vector records in an index, defaulting to the default index. */
   async upsert(records: VectorRecord | readonly VectorRecord[]): Promise<VectorWriteResult>;
   async upsert(index: string, records: VectorRecord | readonly VectorRecord[]): Promise<VectorWriteResult>;
@@ -75,6 +80,19 @@ export class VectorService {
     return this.runOperation('query', index, undefined, options.filter, () => this.registry.getIndex(index).query(options));
   }
 
+  /** Search alias for query(). */
+  async search(options: VectorQueryOptions): Promise<StoredVectorRecord[]>;
+  async search(index: string, options: VectorQueryOptions): Promise<StoredVectorRecord[]>;
+  async search(
+    indexOrOptions: string | VectorQueryOptions,
+    maybeOptions?: VectorQueryOptions
+  ): Promise<StoredVectorRecord[]> {
+    if (typeof indexOrOptions === 'string') {
+      return this.query(indexOrOptions, maybeOptions!);
+    }
+    return this.query(indexOrOptions);
+  }
+
   /** Fetch records by id from an index, defaulting to the default index. */
   async fetch(ids: string | readonly string[], options?: VectorFetchOptions): Promise<StoredVectorRecord[]>;
   async fetch(index: string, ids: string | readonly string[], options?: VectorFetchOptions): Promise<StoredVectorRecord[]>;
@@ -85,6 +103,20 @@ export class VectorService {
   ): Promise<StoredVectorRecord[]> {
     const { index, ids, options } = parseFetchArgs(indexOrIds, maybeIdsOrOptions, maybeOptions);
     return this.runOperation('fetch', index, ids.length, undefined, () => this.registry.getIndex(index).fetch(ids, options));
+  }
+
+  /** Canonical get alias for fetch(). */
+  async get(ids: string | readonly string[], options?: VectorFetchOptions): Promise<StoredVectorRecord[]>;
+  async get(index: string, ids: string | readonly string[], options?: VectorFetchOptions): Promise<StoredVectorRecord[]>;
+  async get(
+    indexOrIds: string | readonly string[],
+    maybeIdsOrOptions?: string | readonly string[] | VectorFetchOptions,
+    maybeOptions?: VectorFetchOptions
+  ): Promise<StoredVectorRecord[]> {
+    if (typeof maybeIdsOrOptions === 'string' || isStringArray(maybeIdsOrOptions)) {
+      return this.fetch(indexOrIds as string, maybeIdsOrOptions, maybeOptions);
+    }
+    return this.fetch(indexOrIds, maybeIdsOrOptions);
   }
 
   /** Delete records by id from an index, defaulting to the default index. */
@@ -125,6 +157,20 @@ export class VectorService {
   stats(index: string): Promise<VectorStats>;
   stats(index?: string): Promise<VectorStats | VectorStats[]> {
     return this.registry.stats(index);
+  }
+
+  /** Canonical status alias for stats(). */
+  status(): Promise<VectorStats[]>;
+  status(index: string): Promise<VectorStats>;
+  status(index?: string): Promise<VectorStats | VectorStats[]> {
+    return index === undefined ? this.stats() : this.stats(index);
+  }
+
+  /** Explicit getStatus alias for stats(). */
+  getStatus(): Promise<VectorStats[]>;
+  getStatus(index: string): Promise<VectorStats>;
+  getStatus(index?: string): Promise<VectorStats | VectorStats[]> {
+    return index === undefined ? this.stats() : this.stats(index);
   }
 
   /** Optimize one index or every configured index. */
@@ -207,10 +253,20 @@ export class VectorScope {
     });
   }
 
+  /** Search alias for scoped query(). */
+  search(options: VectorQueryOptions): Promise<StoredVectorRecord[]> {
+    return this.query(options);
+  }
+
   /** Fetch records by id, then apply the scope filter in memory to prevent leaks. */
   async fetch(ids: string | readonly string[], options?: VectorFetchOptions): Promise<StoredVectorRecord[]> {
     const records = await this.service.fetch(this.index, ids, options);
     return records.filter((record) => recordMatchesVectorFilter(record, this.filter));
+  }
+
+  /** Canonical get alias for scoped fetch(). */
+  get(ids: string | readonly string[], options?: VectorFetchOptions): Promise<StoredVectorRecord[]> {
+    return this.fetch(ids, options);
   }
 
   /** Delete records in this scope that also match the caller filter. */
@@ -221,6 +277,11 @@ export class VectorScope {
   /** Return stats for the underlying index. */
   stats(): Promise<VectorStats> {
     return this.service.stats(this.index);
+  }
+
+  /** Canonical status alias for scoped stats(). */
+  status(): Promise<VectorStats> {
+    return this.stats();
   }
 }
 

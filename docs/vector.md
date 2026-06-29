@@ -94,7 +94,7 @@ await vectors.upsert('knowledge', [{
   },
 }]);
 
-const matches = await vectors.query('knowledge', {
+const matches = await vectors.search('knowledge', {
   vector: queryEmbedding,
   topK: 8,
   filter: {
@@ -113,11 +113,23 @@ await vectors.upsert({
   text: 'A default-index chunk.',
 });
 
-const matches = await vectors.query({
+const matches = await vectors.search({
   vector: queryEmbedding,
   topK: 5,
 });
 ```
+
+`query()` remains supported as a compatibility alias for existing apps.
+
+Other canonical service helpers:
+
+```ts
+const indexes = vectors.list();
+const records = await vectors.get('knowledge', ['doc_1', 'doc_2']);
+const status = await vectors.status('knowledge');
+```
+
+`listIndexes()`, `fetch()`, and `stats()` remain supported.
 
 ## Filters
 
@@ -129,7 +141,7 @@ catches unknown fields before the query reaches zvec.
 Supported operators:
 
 ```ts
-await vectors.query('knowledge', {
+await vectors.search('knowledge', {
   vector,
   filter: {
     bucket: 'docs',
@@ -167,9 +179,9 @@ Array/FTS-specific zvec operators are not exposed through Zero's first vector
 filter API. Add a focused adapter extension later if an app needs them.
 
 `id` filters use the document id you pass to `upsert()`. Internally, the zvec
-adapter mirrors that id into an indexed scalar field so `query()` and
-`deleteWhere()` can use the same structured filter syntax. App metadata cannot
-declare `_zero_id`; it is reserved for the adapter.
+adapter mirrors that id into an indexed scalar field so `search()`/`query()`
+and `deleteWhere()` can use the same structured filter syntax. App metadata
+cannot declare `_zero_id`; it is reserved for the adapter.
 
 ## Scopes
 
@@ -186,7 +198,7 @@ await kb.upsert({
   text: 'Scoped content',
 });
 
-const matches = await kb.query({
+const matches = await kb.search({
   vector: queryVector,
   filter: { source: 'manual' },
 });
@@ -194,7 +206,8 @@ const matches = await kb.query({
 
 Scope behavior:
 
-1. Reads and `deleteWhere()` are ANDed with the scope filter.
+1. Reads through `search()`/`query()` and `deleteWhere()` are ANDed with the
+   scope filter.
 2. Upserts copy simple equality values such as `{ bucket: 'client-a' }` into
    record metadata.
 3. Scoped fetches filter returned records in memory so an id guess cannot leak

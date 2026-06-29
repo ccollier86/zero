@@ -27,6 +27,23 @@ describe('VectorService', () => {
     expect(store.lastQuery?.filter).toEqual({ bucket: 'docs' });
   });
 
+  it('provides canonical list/search/get/status aliases', async () => {
+    const { service, store } = createTestService();
+
+    await service.upsert({ id: 'a', vector: [1, 2, 3], text: 'Alpha' });
+
+    expect(service.list()).toEqual(['docs']);
+
+    const searched = await service.search({ filter: { source: 'alias' } });
+    expect(searched.map((record) => record.id)).toEqual(['a']);
+    expect(store.lastQuery?.filter).toEqual({ source: 'alias' });
+
+    expect((await service.get('a')).map((record) => record.id)).toEqual(['a']);
+    expect((await service.get('docs', 'a')).map((record) => record.id)).toEqual(['a']);
+    expect((await service.status())[0].index).toBe('docs');
+    expect((await service.getStatus('docs')).index).toBe('docs');
+  });
+
   it('stamps scope equality metadata on writes and merges query filters', async () => {
     const { service, store } = createTestService();
     const scope = service.scope('docs', { bucket: 'docs' });
@@ -36,6 +53,9 @@ describe('VectorService', () => {
 
     await scope.query({ vector: [1, 2, 3], filter: { status: 'open' } });
     expect(store.lastQuery?.filter).toEqual({ $and: [{ bucket: 'docs' }, { status: 'open' }] });
+
+    await scope.search({ vector: [1, 2, 3], filter: { status: 'closed' } });
+    expect(store.lastQuery?.filter).toEqual({ $and: [{ bucket: 'docs' }, { status: 'closed' }] });
   });
 
   it('filters scoped fetches in memory to avoid id-guess leaks', async () => {
@@ -47,6 +67,9 @@ describe('VectorService', () => {
 
     const records = await service.scope('docs', { bucket: 'docs' }).fetch(['a', 'b']);
     expect(records.map((record) => record.id)).toEqual(['a']);
+
+    const aliased = await service.scope('docs', { bucket: 'docs' }).get(['a', 'b']);
+    expect(aliased.map((record) => record.id)).toEqual(['a']);
   });
 });
 

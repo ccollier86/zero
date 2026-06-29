@@ -23,6 +23,9 @@ vector, workflows, observability, or migrations.
 - [Phase 3: Unified Backend Context](./phase-3-backend-context.md): canonical
   app-facing `zero` backend service context, compatibility aliases, and lazy
   optional-service behavior.
+- [Phase 4: Service API Smoothing](./phase-4-service-api-smoothing.md):
+  canonical service method aliases and grouped storage APIs for app-owned
+  backend code.
 - [Framework Developer Surface](../framework-developer-surface.md): current
   package-mode usage surface, imports, generated app shape, and examples.
 

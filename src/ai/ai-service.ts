@@ -85,6 +85,11 @@ export class AIService {
     };
   }
 
+  /** Canonical getStatus alias for status(). */
+  getStatus(): AIStatus {
+    return this.status();
+  }
+
   /** Create a chainable conversation builder for multi-turn model calls. */
   conversation(options: AIConversationOptions = {}): AIConversation {
     return new AIConversationBuilder(this, options);
