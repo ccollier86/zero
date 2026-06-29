@@ -136,7 +136,6 @@ Current non-test direct console usage appears in:
 - `app/server.ts`
 - `src/auth/auth.plugin.ts`
 - `src/frontend/client/error-boundary.tsx`
-- `src/frontend/client/hydrate.tsx`
 - `src/frontend/client/notification-hooks.ts`
 - `src/frontend/router/renderer.ts`
 - `src/frontend/router/route-tree.ts`

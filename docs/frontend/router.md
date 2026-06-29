@@ -294,52 +294,50 @@ The shell (`<h1>Dashboard</h1>` + fallbacks) streams to the client immediately. 
 
 ### Hydration
 
-The client bundle hydrates the server-rendered HTML:
+The client bundle hydrates the server-rendered HTML through a generated app
+entry. Zero writes the route manifest and entry under `.zero/generated` so the
+framework runtime can later live in `node_modules` while route files remain in
+the app source tree:
 
 ```tsx
-// src/frontend/client/hydrate.tsx
-import { hydrateRoot } from 'react-dom/client';
-import { RouterProvider, ErrorBoundary } from './router-context';
+// .zero/generated/client-entry.tsx
+import { startHydration } from '@platform/react/hydrate-runtime';
+import { routes, serverRoutes } from './route-manifest';
 
-// hydrate.tsx only provides RouterProvider + ErrorBoundary.
-// The app's root layout (app/layout.tsx) is the sole owner of AppProvider.
-// __PLATFORM_CONFIG__ no longer carries tables.
-
-const routeData = (window as any).__ROUTE_DATA__;
-
-async function hydrate() {
-  const { default: Page } = await import(routeData.pageModule);
-  const layouts = await Promise.all(
-    routeData.layoutModules.map((m: string) => import(m))
-  );
-
-  let element = <Page params={routeData.params} />;
-  for (let i = layouts.length - 1; i >= 0; i--) {
-    const Layout = layouts[i].default;
-    element = <Layout>{element}</Layout>;
-  }
-
-  hydrateRoot(
-    document,
-    <ErrorBoundary>
-      <RouterProvider>{element}</RouterProvider>
-    </ErrorBoundary>,
-  );
-}
-
-hydrate();
+startHydration({ routes, serverRoutes });
 ```
 
-**Route data injection:** The server renders a `<script>` tag with `__ROUTE_DATA__` containing the matched route info (page module path, layout module paths, params). The client uses this to import the same modules and hydrate. The `AppProvider` (which holds the SDK client, sync engine, and auth) is created by the root layout, not by hydrate.tsx.
+`hydrate-runtime` provides `RouterProvider` and `ErrorBoundary` only. The app's
+root layout remains the sole owner of `AppProvider` for SDK client, sync, auth,
+and state behavior.
+
+**Route data injection:** The server renders a `<script>` tag with
+`__ROUTE_DATA__` containing the matched pattern, params, and loader data. The
+generated manifest maps that pattern to static dynamic imports so Bun can
+code-split client pages and layouts. `__PLATFORM_CONFIG__` carries runtime
+settings like auth, state sync, and resolved table sync modes; it does not carry
+table definitions.
 
 ## Client Bundle
 
-Bun builds the client-side JavaScript from the hydration entry point:
+Bun builds the client-side JavaScript from the generated app entry point:
 
 ```ts
-async function buildClientBundle(appDir: string, outDir: string): Promise<void> {
+async function buildClientBundle(
+  outDir: string,
+  appDir = './app',
+  options = { generatedDir: './.zero/generated' },
+): Promise<void> {
+  const manifestPath = generateRouteManifest({
+    appDir,
+    generatedDir: options.generatedDir,
+  });
+  const entrypoint = generateClientEntry({
+    generatedDir: options.generatedDir,
+  });
+
   const result = await Bun.build({
-    entrypoints: [`${appDir}/../src/frontend/client/hydrate.tsx`],
+    entrypoints: [entrypoint],
     outdir: outDir,
     target: 'browser',
     splitting: true,       // Code-split per route
@@ -357,7 +355,14 @@ async function buildClientBundle(appDir: string, outDir: string): Promise<void> 
 }
 ```
 
-**Code splitting:** `splitting: true` lets Bun automatically code-split. Each route's page module becomes a separate chunk. The client only downloads the JavaScript for the current route.
+**Code splitting:** `splitting: true` lets Bun automatically code-split. Each
+client route's page module becomes a separate chunk. Server-only pages are
+recorded in the manifest as `serverRoutes` and fall back to full page
+navigation.
+
+**Generated files:** `.zero/generated` is app-owned build glue and should stay
+ignored. It is safe to delete; `createApp()` regenerates it before the client
+bundle is built.
 
 **When to build:**
 - Development: build on startup, rebuild on file change (Bun file watcher)
@@ -375,7 +380,7 @@ function createRouterPlugin(config: RouterConfig) {
 
   return new Elysia({ name: 'router' })
     .onStart(async () => {
-      await buildClientBundle(config.appDir, config.outDir);
+      await buildClientBundle(config.outDir, config.appDir);
     })
     // API routes — matched first (higher priority)
     .all('/api/*', async ({ request, path }) => {

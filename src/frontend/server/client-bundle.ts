@@ -1,4 +1,12 @@
-import { resolve, join, relative, dirname } from 'path';
+/**
+ * client-bundle.ts
+ *
+ * Builds Zero's browser bundle and app-owned generated route artifacts. This
+ * file owns bundle generation only; it does not hydrate React, render routes,
+ * or serve static assets.
+ */
+
+import { resolve, join, relative, dirname, isAbsolute } from 'path';
 import { existsSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'fs';
 import { scanRoutes, hasUseClientDirective } from '../router/scanner';
 import { buildRouteTree } from '../router/route-tree';
@@ -15,11 +23,26 @@ export interface BundleResult {
   rebuilt: boolean;
 }
 
+export interface ClientBundleOptions {
+  /** Directory for generated app-owned route manifest and client entry files. */
+  generatedDir?: string;
+  /** Import specifier for Zero's browser hydration runtime. */
+  hydrationRuntimeImport?: string;
+  /** Import alias that maps to the configured app directory. */
+  appImportAlias?: string;
+}
+
+const DEFAULT_GENERATED_DIR = '.zero/generated';
+const DEFAULT_HYDRATION_RUNTIME_IMPORT = '@platform/react/hydrate-runtime';
+const DEFAULT_APP_IMPORT_ALIAS = '@app';
+const ROUTE_MANIFEST_FILE = 'route-manifest.ts';
+const CLIENT_ENTRY_FILE = 'client-entry.tsx';
+
 /**
  * Build the client-side JS bundle using Bun.build().
  *
- * Entry point: src/frontend/client/hydrate.tsx
- * Outputs to: outDir/client.js
+ * The entry point is generated into `.zero/generated` so package-mode apps do
+ * not need Zero source files copied into their project tree.
  *
  * The bundle includes:
  * - React + ReactDOM (for hydration)
@@ -29,9 +52,11 @@ export interface BundleResult {
  */
 export async function buildClientBundle(
   outDir: string,
-  appDir: string = './app'
+  appDir: string = './app',
+  options: ClientBundleOptions = {}
 ): Promise<BundleResult> {
   const absOut = resolve(outDir);
+  const generatedDir = resolve(options.generatedDir ?? DEFAULT_GENERATED_DIR);
 
   // Clean stale build artifacts before writing new ones.
   // Bun.build with splitting generates chunk-[hash].js files with unique hashes
@@ -49,10 +74,16 @@ export async function buildClientBundle(
     mkdirSync(absOut, { recursive: true });
   }
 
-  // Generate route manifest BEFORE Bun.build so imports are analyzed
-  generateRouteManifest(appDir);
-
-  const entrypoint = resolve('src/frontend/client/hydrate.tsx');
+  // Generate route manifest and client entry BEFORE Bun.build so imports are analyzed.
+  generateRouteManifest({
+    appDir,
+    generatedDir,
+    appImportAlias: options.appImportAlias ?? DEFAULT_APP_IMPORT_ALIAS,
+  });
+  const entrypoint = generateClientEntry({
+    generatedDir,
+    hydrationRuntimeImport: options.hydrationRuntimeImport ?? DEFAULT_HYDRATION_RUNTIME_IMPORT,
+  });
 
   const result = await Bun.build({
     entrypoints: [entrypoint],
@@ -89,8 +120,21 @@ export async function buildClientBundle(
 
 // ─── Route Manifest Generation ─────────────────────────────────────────────
 
-const MANIFEST_DIR = resolve('src/frontend/client/_generated');
-const MANIFEST_PATH = join(MANIFEST_DIR, 'route-manifest.ts');
+export interface RouteManifestGenerationOptions {
+  /** File-based app route directory to scan. */
+  appDir: string;
+  /** Destination directory for the generated manifest. */
+  generatedDir?: string;
+  /** Alias that resolves to appDir from the app tsconfig. Default: '@app'. */
+  appImportAlias?: string;
+}
+
+export interface ClientEntryGenerationOptions {
+  /** Destination directory for the generated browser entry. */
+  generatedDir?: string;
+  /** Import specifier for the hydration runtime. */
+  hydrationRuntimeImport?: string;
+}
 
 /**
  * Generate a route manifest file that maps URL patterns to dynamic imports.
@@ -98,7 +142,11 @@ const MANIFEST_PATH = join(MANIFEST_DIR, 'route-manifest.ts');
  * The manifest contains static `import()` expressions so Bun.build can
  * analyze them and code-split each route into its own chunk.
  */
-function generateRouteManifest(appDir: string): void {
+export function generateRouteManifest(options: RouteManifestGenerationOptions): string {
+  const appDir = resolve(options.appDir);
+  const generatedDir = resolve(options.generatedDir ?? DEFAULT_GENERATED_DIR);
+  const manifestPath = join(generatedDir, ROUTE_MANIFEST_FILE);
+  const appImportAlias = options.appImportAlias ?? DEFAULT_APP_IMPORT_ALIAS;
   const files = scanRoutes(appDir);
   const root = buildRouteTree(files);
 
@@ -110,11 +158,10 @@ function generateRouteManifest(appDir: string): void {
     isClient: boolean;
   }> = [];
 
-  collectRouteEntries(root, [], [], entries, resolve(appDir));
+  collectRouteEntries(root, [], [], entries, appDir, generatedDir, appImportAlias);
 
-  // Ensure _generated directory exists
-  if (!existsSync(MANIFEST_DIR)) {
-    mkdirSync(MANIFEST_DIR, { recursive: true });
+  if (!existsSync(generatedDir)) {
+    mkdirSync(generatedDir, { recursive: true });
   }
 
   // Split into client routes (have "use client") and server-only routes
@@ -159,7 +206,35 @@ function generateRouteManifest(appDir: string): void {
   lines.push('];');
   lines.push('');
 
-  writeFileSync(MANIFEST_PATH, lines.join('\n'));
+  writeFileSync(manifestPath, lines.join('\n'));
+
+  return manifestPath;
+}
+
+/**
+ * Generate the app-specific browser entry that connects Zero's hydration
+ * runtime with the generated route manifest.
+ */
+export function generateClientEntry(options: ClientEntryGenerationOptions = {}): string {
+  const generatedDir = resolve(options.generatedDir ?? DEFAULT_GENERATED_DIR);
+  const entryPath = join(generatedDir, CLIENT_ENTRY_FILE);
+  const hydrationRuntimeImport = options.hydrationRuntimeImport ?? DEFAULT_HYDRATION_RUNTIME_IMPORT;
+
+  if (!existsSync(generatedDir)) {
+    mkdirSync(generatedDir, { recursive: true });
+  }
+
+  writeFileSync(entryPath, [
+    '// AUTO-GENERATED by client-bundle.ts — do not edit',
+    '',
+    `import { startHydration } from '${hydrationRuntimeImport}';`,
+    `import { routes, serverRoutes } from './${ROUTE_MANIFEST_FILE.replace(/\.ts$/, '')}';`,
+    '',
+    'startHydration({ routes, serverRoutes });',
+    '',
+  ].join('\n'));
+
+  return entryPath;
 }
 
 /**
@@ -171,7 +246,9 @@ function collectRouteEntries(
   patternSegments: string[],
   layoutPaths: string[],
   entries: Array<{ pattern: string; pageImport: string; layoutImports: string[]; isClient: boolean }>,
-  appDir: string
+  appDir: string,
+  generatedDir: string,
+  appImportAlias: string
 ): void {
   // Accumulate layouts at this level
   const currentLayouts = node.layoutPath
@@ -189,8 +266,10 @@ function collectRouteEntries(
 
     entries.push({
       pattern,
-      pageImport: toManifestImport(node.pagePath),
-      layoutImports: currentLayouts.map(toManifestImport),
+      pageImport: toManifestImport(node.pagePath, appDir, generatedDir, appImportAlias),
+      layoutImports: currentLayouts.map((layoutPath) =>
+        toManifestImport(layoutPath, appDir, generatedDir, appImportAlias)
+      ),
       isClient,
     });
   }
@@ -202,26 +281,33 @@ function collectRouteEntries(
       [...patternSegments, child.segment],
       currentLayouts,
       entries,
-      appDir
+      appDir,
+      generatedDir,
+      appImportAlias
     );
   }
 }
 
 /**
- * Convert an absolute file path to a `@app/` aliased import.
- * Strips .tsx/.ts extensions (Bun resolves them).
- * Relies on `@app/*` path alias in tsconfig.json mapping to `./app/*`.
+ * Convert an absolute app file path to the configured app import alias.
+ *
+ * Falls back to a relative import when a route file is outside appDir so tests
+ * and custom route trees still generate analyzable dynamic import specifiers.
  */
-function toManifestImport(absolutePath: string): string {
-  // Find the /app/ segment and build @app/ alias from there
-  const appIdx = absolutePath.lastIndexOf('/app/');
-  if (appIdx !== -1) {
-    const afterApp = absolutePath.slice(appIdx + 5); // skip "/app/"
-    const withoutExt = afterApp.replace(/\.(tsx?|jsx?)$/, '');
-    return `@app/${withoutExt}`;
+function toManifestImport(
+  absolutePath: string,
+  appDir: string,
+  generatedDir: string,
+  appImportAlias: string
+): string {
+  const relativeToApp = relative(appDir, absolutePath);
+
+  if (!relativeToApp.startsWith('..') && !isAbsolute(relativeToApp)) {
+    const withoutExt = relativeToApp.replace(/\.(tsx?|jsx?)$/, '');
+    return `${appImportAlias}/${withoutExt}`;
   }
-  // Fallback to relative path
-  const rel = relative(MANIFEST_DIR, absolutePath);
+
+  const rel = relative(generatedDir, absolutePath);
   const withoutExt = rel.replace(/\.(tsx?|jsx?)$/, '');
   return withoutExt.startsWith('.') ? withoutExt : './' + withoutExt;
 }

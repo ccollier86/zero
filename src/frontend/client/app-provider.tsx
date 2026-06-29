@@ -235,8 +235,8 @@ export function AppProvider({
     }
   );
 
-  // Wrap in RouterProvider only if not already inside one
-  // (hydrate.tsx provides the outer RouterProvider)
+  // Wrap in RouterProvider only if not already inside one.
+  // The generated client entry calls hydrate-runtime, which provides the outer RouterProvider.
   if (!hasRouter) {
     tree = createElement(RouterProvider, { initialPathname, initialParams, children: tree });
   }

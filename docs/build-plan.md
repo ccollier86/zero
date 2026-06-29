@@ -654,8 +654,8 @@ src/frontend/client/
 │   ├── usePathname() → string
 │   └── useRouter() → { push, replace, back, isNavigating, prefetch }
 │
-└── hydrate.tsx             ~50 lines
-    └── Client entry — hydrateRoot + AppProvider + ClientRouter init
+└── hydrate-runtime.tsx     ~200 lines
+    └── Browser hydration runtime used by .zero/generated/client-entry.tsx
 ```
 
 **Public API:**

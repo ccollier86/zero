@@ -48,7 +48,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 }
 ```
 
-> **Note:** `hydrate.tsx` provides `RouterProvider` + `ErrorBoundary` only -- it does NOT create `AppProvider`. The root layout is the sole owner of `AppProvider` (SDK client, sync, auth). `AppProvider` auto-detects if a `RouterProvider` already exists and skips creating a duplicate. `__PLATFORM_CONFIG__` no longer carries `tables`; it carries runtime settings like `auth`, `stateSync`, and resolved `tableSyncModes`.
+> **Note:** Zero now generates the browser entry and route manifest under
+> `.zero/generated`. That entry calls `hydrate-runtime`, which provides
+> `RouterProvider` + `ErrorBoundary` only -- it does NOT create `AppProvider`.
+> The root layout is the sole owner of `AppProvider` (SDK client, sync, auth).
+> `AppProvider` auto-detects if a `RouterProvider` already exists and skips
+> creating a duplicate. `__PLATFORM_CONFIG__` no longer carries `tables`; it
+> carries runtime settings like `auth`, `stateSync`, and resolved
+> `tableSyncModes`.
 
 > **Theme:** `createApp()` builds and links Zero's platform stylesheet from
 > `src/frontend/styles/globals.css`. The default token contract includes light,
@@ -272,7 +279,8 @@ src/frontend/
 │   ├── hooks.ts               # Compatibility barrel for app-facing hook imports
 │   ├── link.tsx               # <Link> component — client-side navigation
 │   ├── router-context.tsx     # Route params, navigation, pathname
-│   └── hydrate.tsx            # Client entry — hydrateRoot + provider setup
+│   ├── hydrate-runtime.tsx    # Browser hydration runtime used by generated entries
+│   └── hydrate.tsx            # Compatibility export for the hydration runtime
 ├── ../hooks/                  # Generic React hooks exported by @platform/frontend
 ├── icons.ts                   # Public animated icon pack entrypoint
 └── index.ts                   # Public API: createApp, AppProvider, hooks, Link
@@ -283,3 +291,4 @@ providers, auth hooks, data hooks, and generic React hooks are split by
 responsibility but exported together through `@platform/frontend`. Zero's
 default animated icon pack is exported from `@platform/frontend/icons`; use it
 before reaching for raw `lucide-react` icons. See [Frontend Icons](./icons.md).
+Generated app glue lives outside this tree in `.zero/generated`.

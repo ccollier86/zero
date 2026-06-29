@@ -167,6 +167,9 @@ export interface AppConfig {
   /** Client bundle output directory. Default: './.build' */
   outDir?: string;
 
+  /** Generated framework/app glue directory. Default: './.zero/generated' */
+  generatedDir?: string;
+
   /** Port to listen on. Default: 3000 */
   port?: number;
 
@@ -214,6 +217,7 @@ export interface ResolvedConfig {
   storageDir: string;
   appDir: string;
   outDir: string;
+  generatedDir: string;
   port: number;
   migrate: boolean;
   observability?: ObservabilityConfig | false;
@@ -305,6 +309,7 @@ export function resolveConfig(
     storageDir: config.storageDir ?? '.storage',
     appDir: config.appDir ?? './app',
     outDir: config.outDir ?? './.build',
+    generatedDir: config.generatedDir ?? './.zero/generated',
     port: config.port ?? 3000,
     migrate: config.migrate ?? true,
     observability: config.observability,

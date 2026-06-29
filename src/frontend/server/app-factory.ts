@@ -92,7 +92,9 @@ export async function createApp(userConfig: AppConfig) {
   let clientEntry: string | undefined;
   let cssPath: string | undefined;
   try {
-    const bundle = await buildClientBundle(config.outDir, config.appDir);
+    const bundle = await buildClientBundle(config.outDir, config.appDir, {
+      generatedDir: config.generatedDir,
+    });
     clientEntry = bundle.publicPath;
     emitPlatformCode(OBS_CODES.APP_CLIENT_BUNDLE_READY, {
       metadata: { publicPath: bundle.publicPath },

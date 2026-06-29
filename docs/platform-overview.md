@@ -532,6 +532,10 @@ HTML automatically. The default token contract supports light, dark, and system
 themes through `ThemeProvider`, and `ThemeTogglerButton` provides the animated
 mode switch.
 
+The browser client entry and route manifest are generated into `.zero/generated`
+before bundling. This keeps app-owned route glue outside framework source and is
+the first step toward package-mode apps where Zero lives in `node_modules`.
+
 ### Core Primitives (35 components)
 Button (6 variants), Input, Label, Textarea, Select, Badge, Card (Header/Title/Description/Content/Footer), FormField (Label/Control/Description/Message), Table, ScrollArea, Separator, Skeleton, Avatar (with fallback), Breadcrumb, Pagination, Calendar, Command palette, Combobox (searchable), DatePicker, DateRangePicker, TagInput, StatCard, Chart, ValidationMeter, ValidationRules.
 
