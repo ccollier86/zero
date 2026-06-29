@@ -69,6 +69,17 @@ export const OBS_CODES = {
   AUTH_ACCOUNT_SUSPENDED: code('auth', 'account.suspended', 'warn', 'Auth account suspended.'),
   AUTH_ACCOUNT_REACTIVATED: code('auth', 'account.reactivated', 'info', 'Auth account reactivated.'),
 
+  TOKENS_STARTED: code('tokens', 'started', 'info', 'Platform token service started.'),
+  TOKENS_STOPPED: code('tokens', 'stopped', 'info', 'Platform token service stopped.'),
+  TOKENS_ACTION_CREATED: code('tokens', 'action.created', 'info', 'Platform action token created.'),
+  TOKENS_ACTION_CONSUMED: code('tokens', 'action.consumed', 'info', 'Platform action token consumed.'),
+  TOKENS_ACTION_REJECTED: code('tokens', 'action.rejected', 'warn', 'Platform action token rejected.'),
+  TOKENS_RESUME_CREATED: code('tokens', 'resume.created', 'info', 'Platform resume token created.'),
+  TOKENS_RESUME_VERIFIED: code('tokens', 'resume.verified', 'debug', 'Platform resume token verified.'),
+  TOKENS_RESUME_ROTATED: code('tokens', 'resume.rotated', 'info', 'Platform resume token rotated.'),
+  TOKENS_RESUME_REVOKED: code('tokens', 'resume.revoked', 'warn', 'Platform resume token revoked.'),
+  TOKENS_RESUME_REJECTED: code('tokens', 'resume.rejected', 'warn', 'Platform resume token rejected.'),
+
   EMAIL_CONFIGURED: code('email', 'configured', 'info', 'Email runtime configured.'),
   EMAIL_SEND_REQUESTED: code('email', 'send.requested', 'info', 'Email send requested.'),
   EMAIL_SENT: code('email', 'sent', 'info', 'Email sent.'),

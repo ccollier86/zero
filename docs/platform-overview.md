@@ -62,6 +62,7 @@ protected `/api/_zero/observability/events` endpoint. See
 - **Persistent browser sessions:** refresh-token restore, 401 retry, sync reconnect with fresh tokens
 - **Role-based middleware:** `requireAuth()` and `requireAdmin()` — fully typed, zero casts
 - **User properties:** arbitrary KV per user (`setProperty`, `getProperty`)
+- **Platform tokens:** generic one-time action tokens plus resumable public-flow tokens
 - **React integration:** `useAuth()` returns full state + actions in one call
 - **Top-level SDK access:** `client.login()`, `client.logout()`, `client.user` — no namespace required
 
@@ -259,6 +260,33 @@ visibility changes.
 `createStoragePlugin()` yourself, mount `createAuthPlugin({ db })` first; the
 storage plugin declares its own auth middleware dependency for typed
 `authContext` and `requireAuth()`.
+
+---
+
+## Platform Tokens
+
+`createApp()` mounts a generic token service for secure links and public
+continuation flows. Use action tokens for consume-once verification or approval
+links, and resume tokens for long forms that users may continue later.
+
+```ts
+const verification = zero.tokens?.createActionToken({
+  purpose: 'intake.email.verify',
+  subject: { type: 'intake-draft', id: draftId },
+  scope: 'clinic-intake',
+  ttl: '30m',
+});
+
+const resume = zero.tokens?.createResumeToken({
+  flow: 'clinic-intake',
+  resource: { type: 'intake-draft', id: draftId },
+  ttl: '14d',
+});
+```
+
+Tokens are hash-only in SQLite, emit through observability, and are available
+from `zero.tokens`, `getPlatformTokenService()`, and `@zero/framework/tokens`.
+See [Platform Tokens](./tokens.md).
 
 ---
 

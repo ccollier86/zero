@@ -38,7 +38,7 @@ Four components, one shared database. Auth is an Elysia plugin that defines tabl
 Elysia plugin — owns authentication logic, routes, and service lifecycle.
 
 **Owns:**
-- Table definitions for `users`, `user_properties`, `_credentials`, `_refresh_tokens`, `_auth_action_tokens`, `_auth_config`
+- Table definitions for `users`, `user_properties`, `_credentials`, `_refresh_tokens`, legacy `_auth_action_tokens`, `_auth_config`
 - Registration, login, refresh, logout, password-change, and account lifecycle routes
 - Service lifecycle (UserStore, TokenService, UserPropertyService, AuthActionTokenService, and AccountEmailService creation in `onStart`, cleanup in `onStop`)
 - Derived `authStore` and `tokenService` in global Elysia context
@@ -544,7 +544,9 @@ Both plugins define tables on the same database, but each plugin owns its own ta
 | `user_properties` | Auth plugin | Public | Yes — extensible metadata |
 | `_credentials` | Auth plugin | Internal | No — password hashes stay server-side |
 | `_refresh_tokens` | Auth plugin | Internal | No — token hashes are sensitive |
-| `_auth_action_tokens` | Auth plugin | Internal | No — reset/setup token hashes are sensitive |
+| `_auth_action_tokens` | Auth plugin | Internal | No — legacy reset/setup token hashes are sensitive |
+| `_zero_action_tokens` | Platform token plugin | Internal | No — generic action token hashes are sensitive |
+| `_zero_resume_tokens` | Platform token plugin | Internal | No — generic resume token hashes are sensitive |
 | `_auth_config` | Auth plugin | Internal | No — signing keys are sensitive |
 | `todos`, etc. | Sync plugin (app config) | Public | Yes — application data |
 | `_changes` | ReactiveDB (auto) | Internal | No — ring buffer for replay |
@@ -673,9 +675,9 @@ Each component does one thing. Auth doesn't know about WebSockets. Sync doesn't 
 
 ```
 src/auth/
-├── user-store.ts           # SQLite operations: users, properties, credentials, refresh/action tokens
+├── user-store.ts           # SQLite operations: users, properties, credentials, refresh tokens, legacy action tokens
 ├── token-service.ts        # JWT signing/verification, keypair mgmt, refresh rotation
-├── action-token-service.ts # One-time setup/reset token generation and consumption
+├── action-token-service.ts # Auth wrapper over generic platform action tokens
 ├── account-email-service.ts # Auth lifecycle email delivery through platform email
 ├── auth.plugin.ts          # Main Elysia plugin — lifecycle, derive, public auth routes
 ├── auth-admin.plugin.ts    # Admin user-management routes

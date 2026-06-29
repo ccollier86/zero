@@ -41,6 +41,8 @@ import type { WorkflowRegistry, WorkflowService } from '../../workflows';
 import { getWorkflowRegistry, getWorkflowService } from '../../workflows';
 import type { ResourceRegistry } from '../../resources';
 import { getResourceRegistry } from '../../resources';
+import type { PlatformTokenService } from '../../tokens';
+import { getPlatformTokenService } from '../../tokens';
 
 /** Auth services exposed under `zero.auth` in app-owned backend code. */
 export interface ServerAuthServices {
@@ -94,6 +96,8 @@ export interface ServerRouteServices {
   readonly syncDB: ReactiveDB;
   /** Auth store/token helpers. Values are null when auth is disabled. */
   readonly auth: ServerAuthServices;
+  /** Generic platform action/resume token service. */
+  readonly tokens: PlatformTokenService | null;
   /** Internal AI service, when configured. */
   readonly ai: AIService | null;
   /** Primary vector store handle for app-owned server code, when configured. */
@@ -151,6 +155,9 @@ function createServerRouteServices(): ServerRouteServices {
       return requireSyncDB();
     },
     auth: createServerAuthServices(),
+    get tokens() {
+      return getPlatformTokenService();
+    },
     get ai() {
       return getAI();
     },

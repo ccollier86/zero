@@ -241,6 +241,7 @@ App backend context is standardized around:
 ```ts
 zero.db
 zero.auth
+zero.tokens
 zero.ai
 zero.vector
 zero.email
@@ -268,8 +269,19 @@ Acceptance criteria:
 4. Services are exposed consistently in endpoints, routers, middleware,
    plugins, raw `createServerRoute()` routes, and server-side jobs/workflows
    that call `createLazyServerRouteServices()`.
-5. `zero.auth` exposes lazy store/token service helpers, and
+5. `zero.auth` exposes lazy store/token service helpers, `zero.tokens`
+   exposes generic action/resume token helpers, and
    `zero.observability` exposes runtime/sink/store inspection alongside emitters.
+
+Implemented token surface:
+
+1. `createApp()` mounts `createPlatformTokenPlugin()` after sync and before
+   auth.
+2. App-owned server code can call `zero.tokens.createActionToken()`,
+   `inspectActionToken()`, `consumeActionToken()`, `createResumeToken()`,
+   `verifyResumeToken()`, `rotateResumeToken()`, and `revokeResumeToken()`.
+3. Auth reset/setup flows delegate to generic action tokens while retaining the
+   existing auth routes and frontend contracts.
 
 ## Phase 4: Service API Smoothing
 

@@ -262,6 +262,7 @@ server code:
 | --- | --- |
 | `zero.db` | ReactiveDB reads/writes. |
 | `zero.auth` | Auth store/token helpers; values are `null` when auth is disabled. |
+| `zero.tokens` | Generic action/resume token service for secure links and public continuation flows. |
 | `zero.ai` | Internal AI service, when enabled. |
 | `zero.vector` | Vector service, when enabled. |
 | `zero.email` | Email service; noop-backed when email is disabled. |
@@ -283,6 +284,7 @@ Prefer Zero's canonical service vocabulary in app-owned backend code:
 | --- | --- |
 | `zero.db` | `create()`, `get()`, `list()`, `update()`, `delete()` |
 | `zero.auth.store` | `create()`, `get()`, `list()`, `update()`, `delete()` |
+| `zero.tokens` | `createActionToken()`, `inspectActionToken()`, `consumeActionToken()`, `createResumeToken()`, `verifyResumeToken()`, `rotateResumeToken()`, `revokeResumeToken()` |
 | `zero.notifications` | `create()`, `get()`, `list()`, `delete()` |
 | `zero.scheduler` | `create()`, `get()`, `list()`, `run()`, `delete()`, `stop()` |
 | `zero.workflows` | `run()`, `get()`, `list()`, `stop()` |
@@ -638,6 +640,45 @@ await getEmailService().send({
 ```
 
 Auth account lifecycle emails use this same runtime.
+
+## Platform Tokens
+
+`createApp()` mounts the generic platform token service automatically. Server
+routes, middleware, plugins, jobs, and workflows can use `zero.tokens` for
+one-time actions and long-lived continuation links.
+
+Use action tokens for consume-once flows:
+
+```ts
+const verification = zero.tokens?.createActionToken({
+  purpose: 'intake.email.verify',
+  subject: { type: 'intake-draft', id: draftId },
+  scope: 'clinic-intake',
+  ttl: '30m',
+});
+
+const verified = zero.tokens?.consumeActionToken(token, {
+  purposes: ['intake.email.verify'],
+  scope: 'clinic-intake',
+});
+```
+
+Use resume tokens for long public forms that can be continued later:
+
+```ts
+const resume = zero.tokens?.createResumeToken({
+  flow: 'clinic-intake',
+  resource: { type: 'intake-draft', id: draftId },
+  ttl: '14d',
+});
+
+const draft = zero.tokens?.verifyResumeToken(token, {
+  flow: 'clinic-intake',
+  resource: { type: 'intake-draft', id: draftId },
+});
+```
+
+See [Platform Tokens](./tokens.md) for the full contract.
 
 ## Notifications
 

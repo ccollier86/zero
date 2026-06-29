@@ -6,7 +6,9 @@
  */
 
 import { beforeEach, afterEach, describe, expect, test } from 'bun:test';
+import { configureObservability } from '../observability';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
+import { configurePlatformTokens, resetPlatformTokens, type PlatformTokenService } from '../tokens';
 import { UserStore } from './user-store';
 import { AuthActionTokenService } from './action-token-service';
 import { AuthError } from './types';
@@ -14,15 +16,19 @@ import { AuthError } from './types';
 let db: ReactiveDB;
 let store: UserStore;
 let service: AuthActionTokenService;
+let platformTokens: PlatformTokenService;
 
 beforeEach(() => {
+  configureObservability({ console: false });
   db = createReactiveDB({ mode: 'memory' });
   setupAuthTables(db);
+  platformTokens = configurePlatformTokens({ db });
   store = new UserStore(db);
-  service = new AuthActionTokenService(store, '1h');
+  service = new AuthActionTokenService(store, '1h', '5m', platformTokens);
 });
 
 afterEach(() => {
+  resetPlatformTokens();
   db.dispose();
 });
 
@@ -42,7 +48,9 @@ describe('AuthActionTokenService', () => {
 
     expect(created.rawToken).toBeString();
     expect(created.record.tokenHash).not.toBe(created.rawToken);
-    expect(store.getActionTokenByHash(created.record.tokenHash)).not.toBeNull();
+    const row = db.prepare('SELECT token_hash FROM _zero_action_tokens WHERE token_id = ?')
+      .get(created.record.tokenId) as { token_hash: string };
+    expect(row.token_hash).toBe(created.record.tokenHash);
   });
 
   test('inspect validates and consume marks the token used once', async () => {
@@ -69,7 +77,7 @@ describe('AuthActionTokenService', () => {
       password: 'password123',
     });
     const created = expiredService.create({ userId: user.userId, type: 'password_reset' });
-    db.prepare('UPDATE _auth_action_tokens SET expires_at = ? WHERE token_id = ?')
+    db.prepare('UPDATE _zero_action_tokens SET expires_at = ? WHERE token_id = ?')
       .run(Date.now() - 1, created.record.tokenId);
 
     expect(() => expiredService.inspect(created.rawToken)).toThrow('Action token has expired');
@@ -98,7 +106,7 @@ describe('AuthActionTokenService', () => {
       password: 'password123',
     });
     const created = service.create({ userId: user.userId, type: 'password_reset' });
-    db.prepare('UPDATE _auth_action_tokens SET expires_at = ? WHERE token_id = ?')
+    db.prepare('UPDATE _zero_action_tokens SET expires_at = ? WHERE token_id = ?')
       .run(Date.now() - 1, created.record.tokenId);
 
     expect(service.cleanupExpired()).toBe(1);

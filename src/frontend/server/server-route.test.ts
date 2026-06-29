@@ -33,6 +33,7 @@ describe('createServerRoute', () => {
             expect(zero.auth.store).toBe(zero.auth.userStore);
             expect(zero.auth.tokens).toBe(zero.auth.tokenService);
             expect(zero.auth.getTokenService()).toBe(zero.auth.tokenService);
+            expect(zero.tokens).toBeNull();
             expect(zero.email).toBe(getEmailService());
             expect(zero.observability.runtime).toBe(zero.observability.getRuntime());
             expect(zero.observability.sink).toBe(zero.observability.getSink());

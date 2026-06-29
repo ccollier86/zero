@@ -87,6 +87,10 @@
       "types": "./src/storage/index.ts",
       "import": "./src/storage/index.ts"
     },
+    "./tokens": {
+      "types": "./src/tokens/index.ts",
+      "import": "./src/tokens/index.ts"
+    },
     "./sync": {
       "types": "./src/sync/index.ts",
       "import": "./src/sync/index.ts"

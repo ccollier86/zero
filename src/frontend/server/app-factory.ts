@@ -26,6 +26,7 @@ import { applyTableSyncResolution, resolveTableSyncModes } from './sync-mode-res
 import { Migrator, migrations } from '../../migrations';
 import { OBS_CODES, configureObservability, createObservabilityPlugin, emitPlatformCode } from '../../observability';
 import { createVectorPlugin } from '../../vector';
+import { createPlatformTokenPlugin } from '../../tokens';
 import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
 import {
   configureResourceRegistry,
@@ -178,6 +179,9 @@ export async function createApp(userConfig: AppConfig) {
         : undefined,
     })
   );
+
+  // 1.5. Platform tokens — generic action/resume token service for auth and app flows
+  app.use(createPlatformTokenPlugin({ db: getSyncDB()! }));
 
   app.onStart(() => {
     const db = getSyncDB();

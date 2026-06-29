@@ -56,21 +56,9 @@ CREATE TABLE IF NOT EXISTS _refresh_tokens (
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON _refresh_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON _refresh_tokens(user_id);
 
--- One-time setup/reset tokens — hashed, consumed once
-CREATE TABLE IF NOT EXISTS _auth_action_tokens (
-  token_id    TEXT PRIMARY KEY,
-  user_id     TEXT NOT NULL,
-  type        TEXT NOT NULL,
-  token_hash  TEXT NOT NULL,
-  expires_at  INTEGER NOT NULL,
-  consumed_at INTEGER,
-  created_at  INTEGER NOT NULL,
-  created_by  TEXT,
-  metadata    TEXT,
-  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_hash ON _auth_action_tokens(token_hash);
-CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_user ON _auth_action_tokens(user_id);
+-- Legacy one-time setup/reset tokens — retained for old outstanding links.
+-- New auth reset/setup links use _zero_action_tokens via PlatformTokenService.
+CREATE TABLE IF NOT EXISTS _auth_action_tokens (...);
 
 -- Signing keypair + auth configuration
 CREATE TABLE IF NOT EXISTS _auth_config (
@@ -95,9 +83,11 @@ events.
 
 **Why `_refresh_tokens` stores hashes:** Same principle as passwords — if the database is compromised, raw tokens are not exposed. `SHA-256(token)` is stored; the raw token exists only on the client side.
 
-**Why `_auth_action_tokens` stores hashes:** Setup/reset links are bearer
-credentials. Zero generates opaque random tokens, stores only
-`SHA-256(token)`, and consumes the row once the password action succeeds.
+**Why action token tables store hashes:** Setup/reset links and app action
+links are bearer credentials. Zero generates opaque random tokens, stores only
+`SHA-256(token)`, and consumes the action token once the action succeeds. New
+auth links are stored in `_zero_action_tokens`; `_auth_action_tokens` remains a
+legacy compatibility table for previously issued auth links.
 
 ## Prepared Statements
 
@@ -361,7 +351,7 @@ getRefreshTokenByHash(tokenHash: string): RefreshTokenRecord | null {
 }
 ```
 
-### action tokens
+### legacy auth action tokens
 
 ```ts
 storeActionToken(params): AuthActionTokenRecord
@@ -371,11 +361,11 @@ countRecentActionTokens(params): number
 deleteExpiredActionTokens(): number
 ```
 
-All operate on `_auth_action_tokens` and never store raw reset/setup tokens.
-`consumeActionToken()` only succeeds once. `countRecentActionTokens()` supports
-account email cooldown checks for active unconsumed tokens. `AuthActionTokenService`
-wraps these methods to generate raw tokens, hash them, enforce TTL/type/cooldown
-checks, clean stale records, and emit observability events.
+These methods operate on `_auth_action_tokens` for legacy compatibility and
+never store raw reset/setup tokens. Current reset/setup flows use
+`PlatformTokenService` and `_zero_action_tokens`; `AuthActionTokenService`
+wraps the platform service while falling back to this legacy table for old
+outstanding links.
 
 `deleteExpiredTokens()` is a cleanup operation — called periodically (cron or on refresh) to purge expired/revoked tokens:
 

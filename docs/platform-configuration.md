@@ -218,6 +218,11 @@ Relevant environment variables are shown in `.env.example`:
 | `COHERE_API_KEY` | Enables Cohere when `ai: true`. |
 | `LLAMA_API_KEY` / `META_LLAMA_API_KEY` | Enables the custom Meta Llama provider when `ai: true`. |
 | `DEEPSEEK_API_KEY` | Enables DeepSeek via OpenAI-compatible adapter when `ai: true`. |
+
+Generic platform action/resume tokens do not require environment variables.
+They are mounted by `createApp()` and use per-call TTL/cooldown options. Auth
+setup/reset email flows still read `AUTH_ACTION_TOKEN_TTL` and
+`AUTH_ACCOUNT_EMAIL_COOLDOWN` for their action-token defaults.
 | `PERPLEXITY_API_KEY` / `PERPLEXITYAI_API_KEY` | Enables Perplexity via OpenAI-compatible adapter when `ai: true`. |
 | `VOYAGE_API_KEY` | Enables Voyage embeddings via OpenAI-compatible adapter when `ai: true`. |
 | `DEEPGRAM_API_KEY` | Enables Deepgram transcription and speech when `ai: true`. |

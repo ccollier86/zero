@@ -275,6 +275,36 @@ export type {
   UserRecord,
 } from '../auth/types';
 
+// ─── Platform Tokens: Server ────────────────────────────────────────────
+export {
+  PLATFORM_TOKEN_DEFAULTS,
+  PlatformTokenError,
+  PlatformTokenService,
+  PlatformTokenStore,
+  configurePlatformTokens,
+  createPlatformTokenPlugin,
+  definePlatformTokenTables,
+  getPlatformTokenService,
+  getPlatformTokenStore,
+  resetPlatformTokens,
+} from '../tokens';
+export type {
+  CreatePlatformActionTokenOptions,
+  CreatePlatformResumeTokenOptions,
+  CreatedPlatformActionToken,
+  CreatedPlatformResumeToken,
+  PlatformActionTokenLookupOptions,
+  PlatformActionTokenRecord,
+  PlatformResumeResource,
+  PlatformResumeTokenLookupOptions,
+  PlatformResumeTokenRecord,
+  PlatformTokenCreateBase,
+  PlatformTokenPluginConfig,
+  PlatformTokenServiceConfig,
+  PlatformTokenSubject,
+  RotatePlatformResumeTokenOptions,
+} from '../tokens';
+
 // ─── Schema ─────────────────────────────────────────────────────────────
 export { defineSchema, defineTable, schema, field } from '../schema';
 export type {

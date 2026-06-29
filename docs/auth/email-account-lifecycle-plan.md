@@ -238,27 +238,15 @@ ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
 ALTER TABLE users ADD COLUMN password_change_required INTEGER NOT NULL DEFAULT 0;
 ```
 
-Recommended action token table:
+Current action token storage:
 
 ```sql
-CREATE TABLE IF NOT EXISTS _auth_action_tokens (
-  token_id TEXT PRIMARY KEY,
-  user_id TEXT NOT NULL,
-  type TEXT NOT NULL,
-  token_hash TEXT NOT NULL,
-  expires_at INTEGER NOT NULL,
-  consumed_at INTEGER,
-  created_at INTEGER NOT NULL,
-  created_by TEXT,
-  metadata TEXT,
-  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_hash
-  ON _auth_action_tokens(token_hash);
-CREATE INDEX IF NOT EXISTS idx_auth_action_tokens_user
-  ON _auth_action_tokens(user_id);
+CREATE TABLE IF NOT EXISTS _zero_action_tokens (...);
 ```
+
+Auth reset/setup links now use the generic platform action-token service.
+`_auth_action_tokens` remains as a legacy compatibility table so previously
+issued reset/setup emails can still be inspected and consumed until they expire.
 
 Token types:
 
@@ -441,9 +429,9 @@ Do not log raw tokens, reset URLs, passwords, or provider secrets.
 Status: implemented.
 
 1. Add migrations for `users.status`, `users.password_change_required`, and
-   `_auth_action_tokens`.
-2. Add store methods for action token creation, verification, consumption, and
-   cleanup.
+   action token storage.
+2. Add service methods for action token creation, verification, consumption,
+   compatibility fallback, and cleanup.
 3. Add service unit tests.
 
 ### Phase 3: Password Reset And Setup Routes

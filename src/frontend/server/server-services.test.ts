@@ -20,6 +20,7 @@ import {
 import { getAI } from '../../ai';
 import { getVectorStore } from '../../vector';
 import { getResourceRegistry } from '../../resources';
+import { getPlatformTokenService } from '../../tokens';
 import { createLazyServerRouteServices, getServerRouteServices } from './server-services';
 
 describe('server service context', () => {
@@ -36,6 +37,7 @@ describe('server service context', () => {
     expect(zero.auth.getStore()).toBe(zero.auth.store);
     expect(zero.auth.getUserStore()).toBe(zero.auth.userStore);
     expect(zero.auth.getTokenService()).toBe(zero.auth.tokenService);
+    expect(zero.tokens).toBe(getPlatformTokenService());
 
     expect(zero.ai).toBe(getAI());
     expect(zero.vector).toBe(getVectorStore());

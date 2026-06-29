@@ -98,7 +98,7 @@ src/
 | `src/auth/auth-admin.plugin.ts` | Admin user-management routes and capability/config response |
 | `src/auth/auth-config.ts` | Auth behavior config normalization and typed config helper |
 | `src/auth/auth.models.ts` | TypeBox request/response schemas |
-| `src/auth/action-token-service.ts` | Hash-only setup/reset action token generation, inspection, and consumption |
+| `src/auth/action-token-service.ts` | Auth compatibility wrapper over platform action tokens, with legacy-token fallback |
 | `src/auth/account-email-service.ts` | Auth lifecycle email delivery through the platform email runtime |
 | `src/auth/auth-account.plugin.ts` | Forgot-password, action-token inspect, reset-password, and setup-password routes |
 | `src/auth/types.ts` | AuthContext, AuthError, UserRecord, action token types, AUTH_DEFAULTS |
@@ -125,6 +125,27 @@ src/
 | `src/doctor/run.ts` | CLI presentation for `bun run doctor` |
 
 **Key pattern:** Warnings do not fail by default; `--strict` makes warnings fail for CI. Migration drift stays in `migrate:doctor`.
+
+---
+
+## System 2.2: Platform Tokens
+
+**What:** Generic hash-only action and resume tokens for secure links,
+verification, invites, password lifecycle, and long public continuation flows.
+
+**Files:**
+| File | Purpose |
+|------|---------|
+| `src/tokens/token.plugin.ts` | Elysia lifecycle + `getPlatformTokenService()` singleton |
+| `src/tokens/token-service.ts` | Action/resume token business rules |
+| `src/tokens/token-store.ts` | SQLite persistence for `_zero_action_tokens` and `_zero_resume_tokens` |
+| `src/tokens/token-types.ts` | Public token contracts and errors |
+| `src/tokens/token-utils.ts` | Opaque token, hash, TTL, and metadata helpers |
+| `src/tokens/index.ts` | Barrel exports and `@zero/framework/tokens` subpath |
+
+**Key pattern:** Raw tokens are returned once and never stored. Action tokens
+are consume-once. Resume tokens are reusable until expiry, revocation, or
+rotation.
 
 ---
 

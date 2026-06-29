@@ -67,6 +67,7 @@ import {
   defineResource,
   getAI,
   getEmailService,
+  getPlatformTokenService,
   getResourceRegistry,
   getVectorStore,
   getWorkflowService,
@@ -75,6 +76,7 @@ import {
 } from '@zero/framework/server';
 import { createStoragePlugin } from '@zero/framework/storage';
 import { createSyncPlugin } from '@zero/framework/sync';
+import { PlatformTokenService } from '@zero/framework/tokens';
 import { createVectorPlugin } from '@zero/framework/vector';
 import { WorkflowService } from '@zero/framework/workflows';
 
@@ -100,6 +102,7 @@ export const serverSymbols = {
   encodeFieldValue,
   getAI,
   getEmailService,
+  getPlatformTokenService,
   getResourceRegistry,
   getVectorStore,
   getWorkflowService,
@@ -107,6 +110,7 @@ export const serverSymbols = {
   Migrator,
   OBS_CODES,
   ownerPolicy,
+  PlatformTokenService,
   PURE_OBS_CODES,
   resourcesOwnerPolicy,
   runPlatformDoctor,

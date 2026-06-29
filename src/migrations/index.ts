@@ -13,6 +13,7 @@
 import type { Migration } from './types';
 import { migration as m001 } from './definitions/001_initial_schema';
 import { migration as m002 } from './definitions/002_auth_account_lifecycle';
+import { migration as m003 } from './definitions/003_platform_tokens';
 
 export { Migrator, type MigratorConfig, type MigrationStatus } from './migrator';
 export type {
@@ -45,4 +46,5 @@ export { runMigrationDoctor } from './migration-doctor';
 export const migrations: Migration[] = [
   m001,
   m002,
+  m003,
 ];

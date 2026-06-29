@@ -283,8 +283,8 @@ is rejected. `GET /auth/admin/users` is paginated and supports `search`,
 `role`, and `status` filters. Direct password resets remain available for
 manual workflows by default, revoke existing refresh tokens, and can be disabled
 with `auth.accountEmails.manualPasswordReset: false`. The preferred
-email-driven reset/setup routes create one-time action tokens, send account
-lifecycle email through the platform email service, mark the account as
+email-driven reset/setup routes create one-time platform action tokens, send
+account lifecycle email through the platform email service, mark the account as
 requiring a password change, and revoke existing sessions.
 
 The frontend barrel exports a ready-to-embed admin organism. It is not a page;

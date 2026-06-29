@@ -20,6 +20,7 @@ import { UserPropertyService } from './user-property-service';
 import { AuthActionTokenService } from './action-token-service';
 import { AccountEmailService } from './account-email-service';
 import { getEmailRuntime } from '../email';
+import { getPlatformTokenService } from '../tokens';
 import type { ReactiveDB } from '../sync/reactive-db';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
@@ -217,7 +218,8 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       _actionTokenService = new AuthActionTokenService(
         _userStore,
         authConfig.accountEmails.actionTokenTTL,
-        authConfig.accountEmails.requestCooldown
+        authConfig.accountEmails.requestCooldown,
+        getPlatformTokenService()
       );
       _accountEmailService = new AccountEmailService(getEmailRuntime, authConfig);
 

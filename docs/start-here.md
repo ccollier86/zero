@@ -2,7 +2,7 @@
 
 Zero is a Bun/Elysia full-stack app platform. The goal is fast data-driven app
 development without wiring separate backend services for auth, storage, sync,
-workflows, notifications, state, or email account flows.
+workflows, notifications, state, platform tokens, or email account flows.
 
 Before platform work, read:
 
@@ -21,6 +21,11 @@ For the package-mode framework surface and remaining package-mode work, see
 [Framework Developer Surface](./framework-developer-surface.md).
 The repository also includes `examples/package-mode` as a small generated-app
 fixture that imports Zero through `@zero/framework/*`.
+
+Core backend primitives include ReactiveDB, generated resources, WebSocket
+sync, auth, email, storage, workflows, notifications, AI, vector storage, and
+[platform tokens](./tokens.md) for one-time actions plus resumable public
+flows.
 
 Create a new app with:
 
