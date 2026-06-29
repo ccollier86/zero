@@ -115,6 +115,8 @@ export const OBS_CODES = {
   ROUTER_LAYOUT_CONFIG_FAILED: code('router', 'layout_config.failed', 'warn', 'Router layout config import failed.'),
   ROUTER_SERVER_ROUTES_LOADED: code('router', 'server_routes.loaded', 'info', 'App-owned Elysia server routes loaded.'),
   ROUTER_SERVER_ROUTE_LOAD_FAILED: code('router', 'server_route.load_failed', 'error', 'App-owned Elysia server route failed to load.'),
+  ROUTER_MIDDLEWARE_MATCHER_INVALID: code('router', 'middleware.matcher_invalid', 'warn', 'App-owned middleware matcher is invalid.'),
+  ROUTER_MIDDLEWARE_POLICY_AUTH_UNAVAILABLE: code('router', 'middleware_policy.auth_unavailable', 'warn', 'App-owned middleware policy requires auth services that are unavailable.'),
   RENDERER_PAGE_EXPORT_MISSING: code('renderer', 'page_export.missing', 'error', 'Page module has no default export.'),
   RENDERER_SSR_ERROR: code('renderer', 'ssr.error', 'error', 'Streaming SSR reported an error.'),
   RENDERER_FATAL_ERROR: code('renderer', 'fatal.error', 'error', 'Route rendering failed.'),

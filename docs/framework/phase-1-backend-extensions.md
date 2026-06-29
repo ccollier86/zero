@@ -146,7 +146,7 @@ export default defineMiddleware({
 });
 ```
 
-Phase 1 middleware supports:
+Phase 1 introduced:
 
 1. `name`.
 2. Optional `path` matcher or matcher array. String matchers support exact
@@ -159,8 +159,9 @@ Middleware is scoped to the app-owned extension bundle created by the loader.
 It wraps app-owned endpoints/routes loaded from the configured server folders
 without leaking into Zero's built-in platform routes.
 
-Phase 2 will extend this with richer matchers for method, role, user
-properties, and metadata.
+Phase 2 extends this with structured `matcher` policy for method, role, and
+configured user properties. See
+[`phase-2-middleware-policy.md`](./phase-2-middleware-policy.md).
 
 ### `defineZeroPlugin()`
 

@@ -157,9 +157,10 @@ Acceptance criteria:
 
 ## Phase 2: Middleware Matchers And Policy
 
-Status: planned
+Status: implemented
 
-Middleware matchers should support path, method, auth, role, and user metadata:
+Middleware matchers support path, method, auth, role, and configured user
+properties:
 
 ```ts
 defineMiddleware({
@@ -188,18 +189,18 @@ defineMiddleware({
 });
 ```
 
-Matcher goals:
+Implemented matcher behavior:
 
-1. Path patterns should be simple and predictable.
-2. Auth requirements should be enforced server-side.
-3. Metadata/property checks should use the same configured user property system
+1. Path patterns are simple and predictable.
+2. Auth requirements are enforced server-side.
+3. Metadata/property checks use the same configured user property system
    as auth/admin UI.
-4. Path/method should decide applicability, while auth/role/properties should
-   be fail-closed authorization requirements once a route applies.
-5. Frontend gates and backend matchers should share vocabulary.
+4. Path/method decide applicability, while auth/role/properties are fail-closed
+   authorization requirements once a route applies.
+5. Frontend gates and backend matchers can share vocabulary.
 6. Doctor should warn on impossible or unsafe matchers in a later CLI phase.
 
-Follow-up auth idea:
+Later auth polish:
 
 ```ts
 auth: {
@@ -214,10 +215,11 @@ auth: {
 ```
 
 Existing `auth.userProperties` defaults already apply to public/bootstrap
-registration and admin-created accounts. Phase 2 should use that system instead
-of adding a second default metadata config unless implementation uncovers a
-real gap. Public-registration defaults must not let users self-assign
-privileged metadata unless the app explicitly allows that key/value.
+registration and admin-created accounts. Phase 2 uses that system instead of
+adding a second default metadata config. A future auth phase may add an
+explicit open-registration default metadata shape, but public registration must
+not let users self-assign privileged metadata unless the app explicitly allows
+that key/value.
 
 Acceptance criteria:
 
@@ -227,8 +229,8 @@ Acceptance criteria:
 4. Matcher and policy evaluation live outside `server-extensions.ts` so
    resources/actions can reuse them later.
 5. Open-registration default metadata is confirmed through existing
-   `auth.userProperties` behavior or captured as a separate auth phase before
-   matchers depend on it.
+   `auth.userProperties` behavior; any extra public-registration metadata
+   defaults are captured as a separate auth phase.
 
 ## Phase 3: Unified Backend Context
 
@@ -488,7 +490,7 @@ the deeper examples.
 ## Tracking Checklist
 
 - [x] Phase 1: Zero-native backend extension APIs.
-- [ ] Phase 2: Middleware matchers and metadata policy.
+- [x] Phase 2: Middleware matchers and metadata policy.
 - [ ] Phase 3: Unified backend `zero` context.
 - [ ] Phase 4: Service API smoothing.
 - [ ] Phase 5: Resource and policy API.

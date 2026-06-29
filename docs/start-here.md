@@ -147,7 +147,7 @@ Use the generated `server/` folders for app-owned backend code:
 | Folder | Preferred use |
 | --- | --- |
 | `server/plugins/` | Advanced app plugins created with `defineZeroPlugin()` or raw Elysia plugins. |
-| `server/middleware/` | Named app middleware created with `defineMiddleware()`. |
+| `server/middleware/` | Named app middleware created with `defineMiddleware()` and structured `matcher` policy. |
 | `server/endpoints/` | Single HTTP endpoints created with `defineEndpoint()`. |
 | `server/routes/` | Grouped `defineRouter()` routes and raw Elysia escape-hatch plugins. |
 
@@ -155,6 +155,12 @@ Zero loads those folders in that order and ignores missing folders. Endpoint,
 router, middleware, and plugin helpers are exported from
 `@zero/framework/server`; raw Elysia plugins remain supported when a route needs
 framework-level control.
+
+Use middleware matchers for cross-cutting app policy. `path`, `method`, and
+`predicate` decide whether middleware applies; `auth`, `role`, and
+`properties` enforce server-side access once it applies. Property matchers use
+the configured `auth.userProperties` store, so the same keys can drive admin UI,
+backend policy, and later frontend gates.
 
 The core UI primitives and Animate UI wrappers share the same token contract:
 `background`, `card`, `popover`, `muted`, `accent`, `input`, `border`, `ring`,

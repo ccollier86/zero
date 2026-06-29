@@ -8,28 +8,35 @@
 
 import type { AnyElysia, MaybePromise } from 'elysia';
 
-import type { AuthContext } from '../../auth/types';
+import { AuthError, type AuthContext } from '../../auth/types';
 import {
   createLazyServerRouteServices,
   createServerRoute,
   getServerRouteServices,
   type ServerRouteServices,
 } from './server-route';
+import {
+  evaluateMiddlewareApplicability,
+  inheritMatcherAuth,
+  normalizeHttpMethod,
+  normalizeMiddlewareMatcher,
+  type ZeroAuthRequirement,
+  type ZeroHttpMethod,
+  type ZeroHttpMethodInput,
+  type ZeroMiddlewareMatcher,
+  type ZeroPathMatcher,
+} from './server-matcher';
+import {
+  enforceServerPolicy,
+} from './server-policy';
 
 export const ZERO_SERVER_EXTENSION_KIND = Symbol.for('zero.server.extension.kind');
 
-const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD']);
 const EXTENSION_KINDS = new Set(['endpoint', 'router', 'middleware', 'plugin']);
 
 export type ZeroServerExtensionKind = 'endpoint' | 'router' | 'middleware' | 'plugin';
-export type ZeroAuthRequirement = false | 'optional' | 'user' | 'admin';
-export type ZeroHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD';
-export type ZeroHttpMethodInput = ZeroHttpMethod | Lowercase<ZeroHttpMethod>;
 export type ZeroLifecycleHook = ((context: ZeroLifecycleContext) => MaybePromise<unknown>) | Array<(context: ZeroLifecycleContext) => MaybePromise<unknown>>;
-export type ZeroRouteMatcher =
-  | string
-  | RegExp
-  | ((context: ZeroLifecycleContext) => MaybePromise<boolean>);
+export type ZeroRouteMatcher = ZeroPathMatcher;
 export type InferValidationSchema<TSchema> = TSchema extends { static: infer TStatic }
   ? TStatic
   : unknown;
@@ -136,20 +143,43 @@ export interface ZeroRouterDefinition extends ZeroRouterOptions {
 }
 
 /** Options accepted by defineMiddleware(). */
-export interface ZeroMiddlewareOptions<TAuth extends ZeroAuthRequirement | undefined = undefined> {
+export type ZeroMiddlewareUser<
+  TAuth extends ZeroAuthRequirement | undefined = undefined,
+  TMatcher extends ZeroMiddlewareMatcher | undefined = undefined
+> =
+  TAuth extends 'user' | 'admin'
+    ? AuthContext
+    : TMatcher extends { auth: 'user' | 'admin' }
+      ? AuthContext
+      : TMatcher extends { role: string | string[] }
+        ? AuthContext
+        : TMatcher extends { properties: Record<string, unknown> }
+          ? AuthContext
+          : AuthContext | null;
+
+export interface ZeroMiddlewareOptions<
+  TAuth extends ZeroAuthRequirement | undefined = undefined,
+  TMatcher extends ZeroMiddlewareMatcher | undefined = undefined
+> {
   /** Stable middleware name used by traces and diagnostics. */
   name: string;
   /** Optional matcher. Omit to apply to every app-owned extension route. */
   path?: ZeroRouteMatcher | ZeroRouteMatcher[];
   /** Auth policy required before middleware runs. */
   auth?: TAuth;
+  /** Structured matcher for path, method, predicate, auth, role, and user properties. */
+  matcher?: TMatcher;
   /** Runs before matching app-owned extension route handlers. */
-  run: (context: ZeroLifecycleContext<unknown, unknown, unknown, unknown, ZeroLifecycleUser<TAuth>>) => MaybePromise<unknown>;
+  run: (context: ZeroLifecycleContext<unknown, unknown, unknown, unknown, ZeroMiddlewareUser<TAuth, TMatcher>>) => MaybePromise<unknown>;
 }
 
 /** A validated Zero-native middleware definition. */
-export interface ZeroMiddlewareDefinition<TAuth extends ZeroAuthRequirement | undefined = undefined> extends ZeroMiddlewareOptions<TAuth> {
+export interface ZeroMiddlewareDefinition<
+  TAuth extends ZeroAuthRequirement | undefined = undefined,
+  TMatcher extends ZeroMiddlewareMatcher | undefined = undefined
+> extends ZeroMiddlewareOptions<TAuth, TMatcher> {
   readonly kind: 'middleware';
+  readonly normalizedMatcher: ZeroMiddlewareMatcher;
   readonly [ZERO_SERVER_EXTENSION_KIND]: 'middleware';
 }
 
@@ -174,7 +204,7 @@ export interface ZeroPluginDefinition extends ZeroPluginOptions {
 }
 
 export type AnyZeroEndpointDefinition = ZeroEndpointDefinition<any, any, any, any, any, any>;
-export type AnyZeroMiddlewareDefinition = ZeroMiddlewareDefinition<any>;
+export type AnyZeroMiddlewareDefinition = ZeroMiddlewareDefinition<any, any>;
 
 export type ZeroServerExtension =
   | AnyZeroEndpointDefinition
@@ -215,12 +245,18 @@ export function defineRouter(options: ZeroRouterOptions): ZeroRouterDefinition {
 }
 
 /** Create a validated Zero-native middleware definition. */
-export function defineMiddleware<const TAuth extends ZeroAuthRequirement | undefined = undefined>(
-  options: ZeroMiddlewareOptions<TAuth>
-): ZeroMiddlewareDefinition<TAuth> {
+export function defineMiddleware<
+  const TAuth extends ZeroAuthRequirement | undefined = undefined,
+  const TMatcher extends ZeroMiddlewareMatcher | undefined = undefined
+>(
+  options: ZeroMiddlewareOptions<TAuth, TMatcher>
+): ZeroMiddlewareDefinition<TAuth, TMatcher> {
   assertExtensionName(options.name, 'middleware');
 
-  return markExtension('middleware', options);
+  return markExtension('middleware', {
+    ...options,
+    normalizedMatcher: normalizeMiddlewareMatcher(options),
+  });
 }
 
 /** Create a validated Zero-native plugin definition. */
@@ -270,6 +306,7 @@ export async function createServerExtensionApp(options: {
   name?: string;
 }): Promise<AnyElysia> {
   let app = createServerRoute({ name: options.name ?? 'zero.app.server-extensions' }) as AnyElysia;
+  app = applyAuthErrorHandler(app);
 
   for (const extension of options.extensions) {
     app = await applyServerExtension(app, extension);
@@ -351,17 +388,17 @@ function applyMiddleware(
   middleware: ZeroMiddlewareDefinition,
   inheritedAuth: ZeroAuthRequirement
 ): AnyElysia {
-  const auth = resolveAuthRequirement(middleware.auth, inheritedAuth);
+  const matcher = inheritMatcherAuth(middleware.normalizedMatcher, inheritedAuth);
 
   return (app as AnyElysia & {
     onBeforeHandle(handler: (context: unknown) => MaybePromise<unknown>): AnyElysia;
   }).onBeforeHandle(async function zeroMiddlewareHandler(context: unknown) {
     const matchContext = createLifecycleContext(context, 'optional');
-    if (!(await matchesMiddleware(middleware.path, matchContext))) return undefined;
+    const applicability = await evaluateMiddlewareApplicability(matcher, matchContext);
+    if (!applicability.applies) return undefined;
 
-    const handlerContext = auth === 'optional'
-      ? matchContext
-      : createLifecycleContext(context, auth);
+    const user = enforceServerPolicy(matcher, matchContext);
+    const handlerContext = createLifecycleContextWithUser(context, user);
 
     return middleware.run(handlerContext);
   });
@@ -384,6 +421,22 @@ function applyAuthGuard(app: AnyElysia, auth: ZeroAuthRequirement): AnyElysia {
   return (app as AnyElysia & {
     onBeforeHandle(handler: (context: unknown) => MaybePromise<unknown>): AnyElysia;
   }).onBeforeHandle(guard);
+}
+
+function applyAuthErrorHandler(app: AnyElysia): AnyElysia {
+  return (app as AnyElysia & {
+    onError(handler: (context: { error: unknown; set: { status?: number } }) => unknown): AnyElysia;
+  }).onError(function mapZeroExtensionAuthError({ error, set }) {
+    if (error instanceof AuthError) {
+      set.status = error.status;
+      return {
+        error: error.message,
+        code: error.code,
+      };
+    }
+
+    return undefined;
+  });
 }
 
 function buildRouteOptions(endpoint: ZeroEndpointDefinition, auth: ZeroAuthRequirement): Record<string, unknown> {
@@ -423,6 +476,12 @@ function createAuthGuard(auth: ZeroAuthRequirement): ((context: unknown) => void
 function createLifecycleContext(context: unknown, auth: ZeroAuthRequirement): ZeroLifecycleContext {
   const current = asContext(context);
   const user = resolveRequestUser(current, auth);
+
+  return createLifecycleContextWithUser(context, user);
+}
+
+function createLifecycleContextWithUser(context: unknown, user: AuthContext | null): ZeroLifecycleContext {
+  const current = asContext(context);
   const zero = current.zero ?? getServerRouteServices();
 
   return {
@@ -436,30 +495,8 @@ function createLifecycleContext(context: unknown, auth: ZeroAuthRequirement): Ze
 function resolveRequestUser(context: ZeroLifecycleContext, auth: ZeroAuthRequirement): AuthContext | null {
   if (auth === 'admin') return context.requireAdmin();
   if (auth === 'user') return context.requireAuth();
+  if (auth === false) return null;
   return context.authContext ?? null;
-}
-
-async function matchesMiddleware(
-  matcher: ZeroMiddlewareOptions['path'],
-  context: ZeroLifecycleContext
-): Promise<boolean> {
-  if (!matcher) return true;
-  const matchers = Array.isArray(matcher) ? matcher : [matcher];
-  const pathname = new URL(context.request.url).pathname;
-
-  for (const current of matchers) {
-    if (typeof current === 'string' && matchesPathString(current, pathname)) return true;
-    if (current instanceof RegExp && current.test(pathname)) return true;
-    if (typeof current === 'function' && await current(context)) return true;
-  }
-
-  return false;
-}
-
-function matchesPathString(pattern: string, pathname: string): boolean {
-  if (pattern === '*' || pattern === '/*') return true;
-  if (pattern.endsWith('*')) return pathname.startsWith(pattern.slice(0, -1));
-  return pathname === pattern;
 }
 
 function prependHook(
@@ -481,15 +518,6 @@ function usePlugin(app: AnyElysia, plugin: ServerRoutePlugin): AnyElysia {
 
 function asContext(context: unknown): ZeroLifecycleContext {
   return context as ZeroLifecycleContext;
-}
-
-function normalizeHttpMethod(method: ZeroHttpMethodInput): ZeroHttpMethod {
-  const normalized = method.toUpperCase();
-  if (!HTTP_METHODS.has(normalized)) {
-    throw new Error(`[server-extensions] Unsupported HTTP method: ${method}`);
-  }
-
-  return normalized as ZeroHttpMethod;
 }
 
 function resolveAuthRequirement(

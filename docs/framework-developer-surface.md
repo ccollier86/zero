@@ -255,15 +255,55 @@ export default defineRouter({
 });
 ```
 
-Use `defineMiddleware()` for named app-owned middleware:
+Use `defineMiddleware()` for named app-owned middleware. The `matcher` decides
+where middleware applies and which server-side policy must pass before `run()`
+executes:
 
 ```ts
 import { defineMiddleware } from '@zero/framework/server';
 
 export default defineMiddleware({
-  name: 'audit',
+  name: 'accounting-audit',
+  matcher: {
+    path: '/api/accounting/:path*',
+    method: ['GET', 'POST'],
+    auth: 'user',
+    role: ['admin', 'manager'],
+    properties: {
+      department: ['accounting', 'management'],
+    },
+  },
+  run({ request, user, zero }) {
+    zero.observability.emitEvent({
+      level: 'info',
+      category: 'app.audit',
+      code: 'APP_ACCOUNTING_ACCESS',
+      message: 'Accounting route accessed.',
+      metadata: {
+        path: new URL(request.url).pathname,
+        userId: user.userId,
+      },
+    });
+  },
+});
+```
+
+Matcher `path` supports exact paths, trailing `*` prefixes, `:path*` rest
+prefixes, single-segment params such as `/users/:userId`, regular expressions,
+and predicate functions. `path`, `method`, and `predicate` control
+applicability; `auth`, `role`, and `properties` are fail-closed authorization
+requirements once the middleware applies. `role` and `properties` imply
+authenticated user access and property checks read the configured
+`auth.userProperties` store.
+
+Phase 1 middleware fields still work:
+
+```ts
+export default defineMiddleware({
+  name: 'legacy-audit',
   path: '/api/customers/*',
-  run({ request, auth, zero }) {
+  auth: 'user',
+  run({ request, user, zero }) {
     zero.observability.emitEvent({
       level: 'info',
       category: 'app.audit',
@@ -271,7 +311,7 @@ export default defineMiddleware({
       message: 'Customer route accessed.',
       metadata: {
         path: new URL(request.url).pathname,
-        userId: auth?.userId,
+        userId: user.userId,
       },
     });
   },

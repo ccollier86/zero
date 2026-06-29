@@ -1,14 +1,14 @@
 # Phase 2: Middleware Matchers And Policy
 
-Status: planned
+Status: implemented
 
 Phase 1 gave package-mode apps a Zero-native middleware declaration and a
 scoped app-owned extension bundle. Phase 2 makes that middleware useful for
 real app security and routing policy by adding structured matchers for path,
 method, auth, role, and configured user properties.
 
-This phase should build a reusable policy/matcher core that later resource,
-action, workflow, and frontend gate work can share. It should not become a
+This phase adds a reusable policy/matcher core that later resource, action,
+workflow, and frontend gate work can share. It is not a
 one-off middleware-only implementation.
 
 ## Goals
@@ -62,10 +62,10 @@ auth: {
 }
 ```
 
-Defaults are already applied when users are created through public/bootstrap
-registration and admin-created accounts. Phase 2 should use this existing
-property store for matcher checks. No new `registration.defaultProperties`
-shape is needed unless implementation uncovers a real gap.
+Defaults are applied when users are created through public/bootstrap
+registration and admin-created accounts. Middleware property matchers use this
+existing property store. There is no second middleware-specific metadata
+store.
 
 ## Public API
 
@@ -124,7 +124,7 @@ matcher: {
 
 ## Matcher Contract
 
-Proposed matcher type:
+Public matcher types are exported from `@zero/framework/server`:
 
 ```ts
 type ZeroMiddlewareMatcher = {
@@ -133,13 +133,13 @@ type ZeroMiddlewareMatcher = {
   auth?: false | 'optional' | 'user' | 'admin';
   role?: string | string[];
   properties?: Record<string, ZeroPropertyRequirement>;
-  predicate?: (context: ZeroLifecycleContext) => MaybePromise<boolean>;
+  predicate?: (context: ZeroMatcherContext) => MaybePromise<boolean>;
 };
 
 type ZeroPathMatcher =
   | string
   | RegExp
-  | ((context: ZeroLifecycleContext) => MaybePromise<boolean>);
+  | ((context: ZeroMatcherContext) => MaybePromise<boolean>);
 
 type ZeroPropertyRequirement =
   | string
@@ -166,8 +166,8 @@ Supported string patterns:
 | `/users/:userId` | Single path segment parameter. |
 | `*` or `/*` | Any path in the app-owned extension bundle. |
 
-Path matching should be deterministic and local. Do not add a heavy routing
-dependency for this phase unless the small compiler becomes unsafe or unclear.
+Path matching is deterministic and local; it does not add a route-matching
+dependency.
 
 ## Policy Semantics
 
@@ -186,11 +186,22 @@ rejected:
 | Missing/invalid auth for `auth: 'user'`, `auth: 'admin'`, role, or properties | `401` |
 | Authenticated user lacks required role | `403` |
 | Authenticated user lacks required property/value | `403` |
-| Property policy requires auth while auth plugin is unavailable | `401` or clear auth-not-ready error |
+| Property policy requires auth while auth plugin is unavailable | `401` |
 
 `role` and `properties` imply `auth: 'user'` even when `auth` is omitted.
-`auth: 'admin'` should remain equivalent to requiring an authenticated user with
+`auth: 'admin'` remains equivalent to requiring an authenticated user with
 admin role.
+
+Zero maps middleware policy denials to JSON auth errors inside the app-owned
+extension bundle:
+
+```json
+{ "error": "Unauthorized", "code": "UNAUTHORIZED" }
+```
+
+```json
+{ "error": "Forbidden", "code": "FORBIDDEN" }
+```
 
 ## Implementation Slices
 
@@ -257,7 +268,7 @@ Do not emit noisy observability events for every normal deny by default.
 Emit stable observability codes only for configuration/runtime problems such as
 property checks requiring auth services that are unavailable.
 
-Potential new codes:
+Stable observability codes:
 
 1. `ROUTER_MIDDLEWARE_MATCHER_INVALID`
 2. `ROUTER_MIDDLEWARE_POLICY_AUTH_UNAVAILABLE`
@@ -311,13 +322,13 @@ Update:
 
 ## Acceptance Criteria
 
-- [ ] `defineMiddleware()` accepts structured `matcher`.
-- [ ] Existing `path` and `auth` middleware fields still work.
-- [ ] Path/method applicability and auth/role/property authorization are
+- [x] `defineMiddleware()` accepts structured `matcher`.
+- [x] Existing `path` and `auth` middleware fields still work.
+- [x] Path/method applicability and auth/role/property authorization are
   separate and tested.
-- [ ] Property checks use existing auth user properties.
-- [ ] Protected matchers fail closed when auth is missing or insufficient.
-- [ ] Middleware remains scoped to app-owned extension routes.
-- [ ] Matcher/policy logic is split out of `server-extensions.ts`.
-- [ ] Docs and examples explain matcher semantics.
-- [ ] Obsiian phase tracking is updated.
+- [x] Property checks use existing auth user properties.
+- [x] Protected matchers fail closed when auth is missing or insufficient.
+- [x] Middleware remains scoped to app-owned extension routes.
+- [x] Matcher/policy logic is split out of `server-extensions.ts`.
+- [x] Docs and examples explain matcher semantics.
+- [x] Obsiian phase tracking is updated.

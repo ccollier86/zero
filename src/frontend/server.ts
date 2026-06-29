@@ -48,11 +48,8 @@ export type {
   AnyZeroEndpointDefinition,
   AnyZeroMiddlewareDefinition,
   InferValidationSchema,
-  ZeroAuthRequirement,
   ZeroEndpointDefinition,
   ZeroEndpointOptions,
-  ZeroHttpMethod,
-  ZeroHttpMethodInput,
   ZeroLifecycleContext,
   ZeroLifecycleHook,
   ZeroLifecycleUser,
@@ -61,7 +58,6 @@ export type {
   ZeroPluginDefinition,
   ZeroPluginOptions,
   ZeroPluginSetupContext,
-  ZeroRouteMatcher,
   ZeroRouterChild,
   ZeroRouterDefinition,
   ZeroRouterOptions,
@@ -69,6 +65,37 @@ export type {
   ZeroServerExtensionKind,
   ZeroServerExtensionMountable,
 } from './server/server-extensions';
+export {
+  evaluateMiddlewareApplicability,
+  inheritMatcherAuth,
+  normalizeHttpMethod,
+  normalizeMiddlewareMatcher,
+} from './server/server-matcher';
+export type {
+  MaybePromise as ZeroMaybePromise,
+  ZeroAuthRequirement,
+  ZeroHttpMethod,
+  ZeroHttpMethodInput,
+  ZeroMatcherContext,
+  ZeroMatcherEvaluation,
+  ZeroMiddlewareMatcher,
+  ZeroPathMatcher,
+  ZeroPolicyScalar,
+  ZeroPropertyRequirement,
+  ZeroRouteMatcher,
+} from './server/server-matcher';
+export {
+  enforceServerPolicy,
+  evaluateServerPolicy,
+  getEffectiveAuthRequirement,
+} from './server/server-policy';
+export type {
+  ZeroPolicyContext,
+  ZeroPolicyDenyReason,
+  ZeroPolicyEvaluation,
+  ZeroPolicyEvaluationOptions,
+  ZeroPolicyUserPropertyStore,
+} from './server/server-policy';
 export {
   ServerRouteLoaderError,
   collectServerRouteFiles,
