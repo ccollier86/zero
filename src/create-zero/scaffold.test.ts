@@ -6,7 +6,7 @@
  * by the package-mode fixture tests.
  */
 
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
@@ -36,6 +36,9 @@ describe('scaffoldZeroApp', () => {
       expect(result.filesWritten).toContain('server/routes/customers.ts');
       expect(result.filesWritten).toContain('tsconfig.json');
       expect(result.filesWritten).toContain('.gitignore');
+      await expect(stat(join(targetDir, 'server', 'plugins')).then((value) => value.isDirectory())).resolves.toBe(true);
+      await expect(stat(join(targetDir, 'server', 'middleware')).then((value) => value.isDirectory())).resolves.toBe(true);
+      await expect(stat(join(targetDir, 'server', 'endpoints')).then((value) => value.isDirectory())).resolves.toBe(true);
 
       const packageJson = JSON.parse(await readFile(join(targetDir, 'package.json'), 'utf8')) as {
         dependencies: Record<string, string>;

@@ -26,8 +26,49 @@ export type {
   SyncDefaultsConfig,
   TableSyncDefaultConfig,
 } from './server/types';
-export { createServerRoute } from './server/server-route';
+export {
+  createLazyServerRouteServices,
+  createServerRoute,
+  getServerRouteServices,
+} from './server/server-route';
 export type { ServerRouteOptions, ServerRouteServices } from './server/server-route';
+export {
+  ZERO_SERVER_EXTENSION_KIND,
+  applyServerExtension,
+  createServerExtensionApp,
+  createServerExtensionBundle,
+  defineEndpoint,
+  defineMiddleware,
+  defineRouter,
+  defineZeroPlugin,
+  isServerRoutePlugin,
+  isZeroServerExtension,
+} from './server/server-extensions';
+export type {
+  AnyZeroEndpointDefinition,
+  AnyZeroMiddlewareDefinition,
+  InferValidationSchema,
+  ZeroAuthRequirement,
+  ZeroEndpointDefinition,
+  ZeroEndpointOptions,
+  ZeroHttpMethod,
+  ZeroHttpMethodInput,
+  ZeroLifecycleContext,
+  ZeroLifecycleHook,
+  ZeroLifecycleUser,
+  ZeroMiddlewareDefinition,
+  ZeroMiddlewareOptions,
+  ZeroPluginDefinition,
+  ZeroPluginOptions,
+  ZeroPluginSetupContext,
+  ZeroRouteMatcher,
+  ZeroRouterChild,
+  ZeroRouterDefinition,
+  ZeroRouterOptions,
+  ZeroServerExtension,
+  ZeroServerExtensionKind,
+  ZeroServerExtensionMountable,
+} from './server/server-extensions';
 export {
   ServerRouteLoaderError,
   collectServerRouteFiles,

@@ -270,14 +270,17 @@ export async function createApp(userConfig: AppConfig) {
     })
   );
 
-  // 6.6. App-owned Elysia routes — mounted before health and file-router catch-all
-  if (config.serverRoutesDir !== false) {
-    const serverRoutePlugins = await loadServerRoutePlugins({
-      routesDir: config.serverRoutesDir,
-    });
-    for (const serverRoutePlugin of serverRoutePlugins) {
-      app.use(serverRoutePlugin as any);
-    }
+  // 6.6. App-owned backend extensions — mounted before health and file-router catch-all
+  const serverRoutePlugins = await loadServerRoutePlugins({
+    extensionDirs: [
+      { kind: 'plugins', dir: config.serverPluginsDir },
+      { kind: 'middleware', dir: config.serverMiddlewareDir },
+      { kind: 'endpoints', dir: config.serverEndpointsDir },
+      { kind: 'routes', dir: config.serverRoutesDir },
+    ],
+  });
+  for (const serverRoutePlugin of serverRoutePlugins) {
+    app.use(serverRoutePlugin as any);
   }
 
   // ─── Process-level WAL safety net ───────────────────────

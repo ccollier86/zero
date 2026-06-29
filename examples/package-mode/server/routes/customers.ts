@@ -1,34 +1,41 @@
 /**
  * customers.ts
  *
- * App-owned Elysia routes for the package-mode fixture. This file owns HTTP
+ * App-owned customer routes for the package-mode fixture. This file owns HTTP
  * validation and request orchestration only; platform services come from the
- * `zero` route context provided by createServerRoute().
+ * Zero-native endpoint context.
  */
 
 import { t } from 'elysia';
-import { createServerRoute } from '@zero/framework/server';
+import { defineEndpoint, defineRouter } from '@zero/framework/server';
 
-export default createServerRoute({ name: 'fixture.customers', prefix: '/api/customers' })
-  .get('/health', () => ({
-    ok: true,
-    feature: 'package-mode-routes',
-  }))
-  .post(
-    '/',
-    ({ body, requireAuth, zero }) => {
-      const user = requireAuth();
-
-      return zero.syncDB.insert('customers', {
-        customer_id: crypto.randomUUID(),
-        name: body.name,
-        owner_id: user.userId,
-        created_at: Date.now(),
-      }).row;
-    },
-    {
+export default defineRouter({
+  name: 'fixture.customers',
+  prefix: '/api/customers',
+  endpoints: [
+    defineEndpoint({
+      method: 'GET',
+      path: '/health',
+      handler: () => ({
+        ok: true,
+        feature: 'package-mode-routes',
+      }),
+    }),
+    defineEndpoint({
+      method: 'POST',
+      path: '/',
+      auth: 'user',
       body: t.Object({
         name: t.String({ minLength: 1 }),
       }),
-    }
-  );
+      handler: ({ body, user, zero }) => {
+        return zero.db.insert('customers', {
+          customer_id: crypto.randomUUID(),
+          name: body.name,
+          owner_id: user.userId,
+          created_at: Date.now(),
+        }).row;
+      },
+    }),
+  ],
+});

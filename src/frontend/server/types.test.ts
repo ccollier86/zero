@@ -40,6 +40,9 @@ describe('resolveConfig', () => {
     expect(config.auth).toEqual({});
     expect(config.stateSync).toBe(true);
     expect(config.generatedDir).toBe('./.zero/generated');
+    expect(config.serverPluginsDir).toBe('./server/plugins');
+    expect(config.serverMiddlewareDir).toBe('./server/middleware');
+    expect(config.serverEndpointsDir).toBe('./server/endpoints');
     expect(config.serverRoutesDir).toBe('./server/routes');
   });
 

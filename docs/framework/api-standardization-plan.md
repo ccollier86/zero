@@ -74,7 +74,7 @@ exists and ignore it when it does not.
 
 ## Phase 1: Zero-Native Backend Extensions
 
-Status: planned
+Status: implemented
 
 Add app-owned extension declarations:
 
@@ -137,7 +137,6 @@ Preferred plugin shape:
 ```ts
 export default defineZeroPlugin({
   name: 'billing',
-  stage: 'beforeAppRoutes',
   setup: ({ app, zero }) => {
     return app.get('/api/billing/status', ({ requireAuth }) => {
       const user = requireAuth();
@@ -149,8 +148,8 @@ export default defineZeroPlugin({
 
 Acceptance criteria:
 
-1. `server/endpoints`, `server/routes`, `server/middleware`, and
-   `server/plugins` are loaded from app source.
+1. `server/plugins`, `server/middleware`, `server/endpoints`, and
+   `server/routes` are loaded from app source.
 2. Existing raw Elysia route modules continue to work.
 3. Zero endpoint/router/middleware/plugin modules are normalized by the loader.
 4. Tests prove loaded extensions can use auth helpers and `zero` services.

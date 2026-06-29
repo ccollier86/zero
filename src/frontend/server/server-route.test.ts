@@ -27,7 +27,9 @@ describe('createServerRoute', () => {
       .use(
         createServerRoute({ name: 'test.customers', prefix: '/api/customers' })
           .post('/', ({ body, zero }) => {
-            const change = zero.syncDB.insert('customers', {
+            expect(zero.db).toBe(zero.syncDB);
+
+            const change = zero.db.insert('customers', {
               customer_id: 'cust_1',
               name: (body as { name: string }).name,
             });

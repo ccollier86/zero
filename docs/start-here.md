@@ -91,6 +91,13 @@ const config = defineZeroConfig({
       }
     : false,
   stateSync: true,
+  appDir: './app',
+  serverPluginsDir: './server/plugins',
+  serverMiddlewareDir: './server/middleware',
+  serverEndpointsDir: './server/endpoints',
+  serverRoutesDir: './server/routes',
+  generatedDir: './.zero/generated',
+  outDir: './.build',
   port: PORT,
 });
 
@@ -134,6 +141,20 @@ safe to delete; `createApp()` regenerates them before bundling the browser
 entry. Keep `.zero/` ignored in app repositories. Generated apps include a
 `tsconfig.json` with `@/*`, `@/components/*`, `@/hooks/*`, and `@/lib/*`
 aliases so app-owned components can stay portable and easy to customize.
+
+Use the generated `server/` folders for app-owned backend code:
+
+| Folder | Preferred use |
+| --- | --- |
+| `server/plugins/` | Advanced app plugins created with `defineZeroPlugin()` or raw Elysia plugins. |
+| `server/middleware/` | Named app middleware created with `defineMiddleware()`. |
+| `server/endpoints/` | Single HTTP endpoints created with `defineEndpoint()`. |
+| `server/routes/` | Grouped `defineRouter()` routes and raw Elysia escape-hatch plugins. |
+
+Zero loads those folders in that order and ignores missing folders. Endpoint,
+router, middleware, and plugin helpers are exported from
+`@zero/framework/server`; raw Elysia plugins remain supported when a route needs
+framework-level control.
 
 The core UI primitives and Animate UI wrappers share the same token contract:
 `background`, `card`, `popover`, `muted`, `accent`, `input`, `border`, `ring`,

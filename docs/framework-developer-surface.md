@@ -115,6 +115,9 @@ const config = defineZeroConfig({
     defaultDimensions: Number(process.env.ZERO_VECTOR_DEFAULT_DIMENSIONS ?? 1536),
   },
   appDir: './app',
+  serverPluginsDir: './server/plugins',
+  serverMiddlewareDir: './server/middleware',
+  serverEndpointsDir: './server/endpoints',
   serverRoutesDir: './server/routes',
   generatedDir: './.zero/generated',
   outDir: './.build',
@@ -145,7 +148,7 @@ composition, and startup behavior.
 | Workflows | Mounted when auth is enabled. |
 | Storage | Mounted when auth is enabled. |
 | `/api/data` | Mounted for lazy tables and guarded by sync policy/auth integration. |
-| App Elysia routes | Loaded from `serverRoutesDir` before health and file-router catch-all. |
+| App backend extensions | Loaded from `server/plugins`, `server/middleware`, `server/endpoints`, and `server/routes` before health and file-router catch-all. |
 | File router | Mounted last; handles `app/**/page.tsx`, `layout.tsx`, `route.ts`, and 404s. |
 
 ## Data Models And ReactiveDB
@@ -219,19 +222,76 @@ export async function POST({ request, auth }: LoaderContext) {
 }
 ```
 
-For richer backend routes, add Elysia plugins under `server/routes/**/*.ts`.
-Use `createServerRoute()` to get typed auth helpers and a `zero` service object:
+For richer backend routes, prefer Zero-native endpoint/router declarations under
+`server/endpoints/**/*.ts` and `server/routes/**/*.ts`. They compile to Elysia
+internally, inherit platform auth helpers, and receive a lazy `zero` service
+object:
+
+```ts
+import { t } from 'elysia';
+import { defineEndpoint, defineRouter } from '@zero/framework/server';
+
+export default defineRouter({
+  name: 'app.customers',
+  prefix: '/api/customers',
+  endpoints: [
+    defineEndpoint({
+      method: 'POST',
+      path: '/',
+      auth: 'user',
+      body: t.Object({
+        name: t.String(),
+      }),
+      handler: ({ body, user, zero }) => {
+        return zero.db.insert('customers', {
+          customer_id: crypto.randomUUID(),
+          name: body.name,
+          owner_id: user.userId,
+          created_at: Date.now(),
+        }).row;
+      },
+    }),
+  ],
+});
+```
+
+Use `defineMiddleware()` for named app-owned middleware:
+
+```ts
+import { defineMiddleware } from '@zero/framework/server';
+
+export default defineMiddleware({
+  name: 'audit',
+  path: '/api/customers/*',
+  run({ request, auth, zero }) {
+    zero.observability.emitEvent({
+      level: 'info',
+      category: 'app.audit',
+      code: 'APP_CUSTOMERS_ACCESS',
+      message: 'Customer route accessed.',
+      metadata: {
+        path: new URL(request.url).pathname,
+        userId: auth?.userId,
+      },
+    });
+  },
+});
+```
+
+Raw Elysia remains the escape hatch. Put raw plugins in `server/routes/**/*.ts`
+and use `createServerRoute()` when they need Zero helpers:
 
 ```ts
 import { t } from 'elysia';
 import { createServerRoute } from '@zero/framework/server';
 
-export default createServerRoute({ name: 'app.customers', prefix: '/api/customers' })
+export default createServerRoute({ name: 'app.raw-customers', prefix: '/api/customers' })
   .post(
     '/',
     ({ body, requireAuth, zero }) => {
       const user = requireAuth();
-      return zero.syncDB.insert('customers', {
+
+      return zero.db.insert('customers', {
         customer_id: crypto.randomUUID(),
         name: body.name,
         owner_id: user.userId,

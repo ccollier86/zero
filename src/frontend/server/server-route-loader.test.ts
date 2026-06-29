@@ -1,16 +1,18 @@
 /**
  * server-route-loader.test.ts
  *
- * Verifies app-owned Elysia route discovery for package-mode apps. These tests
- * cover loader behavior and plugin mounting only; platform service context is
- * tested in server-route.test.ts.
+ * Verifies app-owned backend extension discovery for package-mode apps. These
+ * tests cover loader behavior and plugin mounting only; service context is
+ * tested in server-route.test.ts and server-extensions.test.ts.
  */
 
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 
+import { createSyncPlugin } from '../../sync';
 import {
   ServerRouteLoaderError,
   collectServerRouteFiles,
@@ -74,7 +76,7 @@ describe('server route loader', () => {
       ]);
 
       const plugins = await loadServerRoutePlugins({ routesDir });
-      expect(plugins).toHaveLength(2);
+      expect(plugins).toHaveLength(1);
 
       let app = new Elysia();
       for (const plugin of plugins) app = app.use(plugin as any);
@@ -88,6 +90,120 @@ describe('server route loader', () => {
 
       expect(health).toEqual({ ok: true });
       expect(status).toEqual({ status: 'ready' });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  test('loads Zero extensions from conventional folders in scoped order', async () => {
+    const rootDir = await createTempRoot();
+    const serverDir = join(rootDir, 'server');
+    const pluginsDir = join(serverDir, 'plugins');
+    const middlewareDir = join(serverDir, 'middleware');
+    const endpointsDir = join(serverDir, 'endpoints');
+    const routesDir = join(serverDir, 'routes');
+
+    try {
+      await mkdir(pluginsDir, { recursive: true });
+      await mkdir(middlewareDir, { recursive: true });
+      await mkdir(endpointsDir, { recursive: true });
+      await mkdir(routesDir, { recursive: true });
+      const serverImport = pathToFileURL(join(process.cwd(), 'src/frontend/server.ts')).href;
+
+      await writeFile(
+        join(pluginsDir, 'status-plugin.ts'),
+        [
+          `import { defineZeroPlugin } from '${serverImport}';`,
+          "export default defineZeroPlugin({",
+          "  name: 'test.status-plugin',",
+          "  setup({ app }) {",
+          "    return app.get('/api/zero/plugin-status', () => ({ plugin: true }));",
+          "  }",
+          "});",
+          '',
+        ].join('\n')
+      );
+
+      await writeFile(
+        join(middlewareDir, 'headers.ts'),
+        [
+          `import { defineMiddleware } from '${serverImport}';`,
+          "export default defineMiddleware({",
+          "  name: 'test.headers',",
+          "  path: '/api/zero/*',",
+          "  run(context) {",
+          "    (context as any).set.headers['x-zero-extension'] = 'yes';",
+          "  }",
+          "});",
+          '',
+        ].join('\n')
+      );
+
+      await writeFile(
+        join(endpointsDir, 'ping.ts'),
+        [
+          `import { defineEndpoint } from '${serverImport}';`,
+          "export default defineEndpoint({",
+          "  method: 'GET',",
+          "  path: '/api/zero/ping',",
+          "  handler({ zero }) {",
+          "    return { ok: Boolean(zero.db), alias: zero.db === zero.syncDB };",
+          "  }",
+          "});",
+          '',
+        ].join('\n')
+      );
+
+      await writeFile(
+        join(routesDir, 'group.ts'),
+        [
+          `import { defineEndpoint, defineRouter } from '${serverImport}';`,
+          "export default defineRouter({",
+          "  name: 'test.group',",
+          "  prefix: '/api/zero/group',",
+          "  endpoints: [",
+          "    defineEndpoint({ method: 'GET', path: '/health', handler: () => ({ ready: true }) })",
+          "  ]",
+          "});",
+          '',
+        ].join('\n')
+      );
+
+      const plugins = await loadServerRoutePlugins({
+        extensionDirs: [
+          { kind: 'plugins', dir: pluginsDir },
+          { kind: 'middleware', dir: middlewareDir },
+          { kind: 'endpoints', dir: endpointsDir },
+          { kind: 'routes', dir: routesDir },
+        ],
+      });
+
+      expect(plugins).toHaveLength(1);
+
+      let app = new Elysia()
+        .use(createSyncPlugin({
+          db: { mode: 'memory' },
+          tables: {
+            customers: {
+              customer_id: 'text primary key',
+              name: 'text not null',
+            },
+          },
+        }))
+        .get('/api/outside', () => ({ outside: true }));
+
+      for (const plugin of plugins) app = app.use(plugin as any);
+
+      const ping = await app.handle(new Request('http://localhost/api/zero/ping'));
+      const group = await app.handle(new Request('http://localhost/api/zero/group/health'));
+      const pluginStatus = await app.handle(new Request('http://localhost/api/zero/plugin-status'));
+      const outside = await app.handle(new Request('http://localhost/api/outside'));
+
+      await expect(ping.json()).resolves.toEqual({ ok: true, alias: true });
+      await expect(group.json()).resolves.toEqual({ ready: true });
+      await expect(pluginStatus.json()).resolves.toEqual({ plugin: true });
+      expect(ping.headers.get('x-zero-extension')).toBe('yes');
+      expect(outside.headers.get('x-zero-extension')).toBeNull();
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

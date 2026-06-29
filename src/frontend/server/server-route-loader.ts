@@ -1,29 +1,55 @@
 /**
  * server-route-loader.ts
  *
- * Discovers and imports app-owned Elysia route plugins from `server/routes`.
- * This file owns filesystem route-module loading only; it does not define app
- * routes, mutate platform services, or inspect React file-router modules.
+ * Discovers and imports app-owned backend extensions from package-mode server
+ * folders. This file owns filesystem module loading only; extension shape and
+ * Elysia mounting live in server-extensions.ts.
  */
 
 import { existsSync, statSync } from 'fs';
 import { readdir } from 'fs/promises';
 import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
-import type { AnyElysia, MaybePromise } from 'elysia';
 
 import { OBS_CODES } from '../../observability/codes';
 import { emitPlatformCode } from '../../observability/sink';
+import {
+  createServerExtensionApp,
+  isServerRoutePlugin,
+  isZeroServerExtension,
+  type ServerRoutePlugin,
+  type ZeroServerExtensionMountable,
+} from './server-extensions';
 
 const ROUTE_MODULE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
+const EXPORT_KEYS = [
+  'default',
+  'endpoint',
+  'endpoints',
+  'middleware',
+  'plugin',
+  'plugins',
+  'router',
+  'routers',
+  'routes',
+] as const;
 
-/** Elysia plugin shapes accepted from app-owned route modules. */
-export type ServerRoutePlugin = AnyElysia | ((app: AnyElysia) => MaybePromise<AnyElysia>);
+export type { ServerRoutePlugin } from './server-extensions';
+
+export type ServerRouteExtensionDirectoryKind = 'plugins' | 'middleware' | 'endpoints' | 'routes';
+
+/** One app-owned backend extension directory to scan. */
+export interface ServerRouteExtensionDirectory {
+  kind: ServerRouteExtensionDirectoryKind;
+  dir?: string | false;
+}
 
 /** Options for loading app-owned Elysia server route modules. */
 export interface ServerRouteLoaderOptions {
-  /** Directory to scan recursively. Defaults to `./server/routes`. */
+  /** Backwards-compatible route directory. Defaults to `./server/routes`. */
   routesDir?: string;
+  /** Ordered extension directories. When provided, routesDir is ignored. */
+  extensionDirs?: ServerRouteExtensionDirectory[];
 }
 
 /** Error thrown when an app-owned route module has an invalid export. */
@@ -35,45 +61,57 @@ export class ServerRouteLoaderError extends Error {
 }
 
 /**
- * Load app-owned Elysia route plugins from a routes directory.
+ * Load app-owned backend extensions from configured server directories.
  *
  * Missing directories resolve to an empty list so generated starter apps can
- * opt into server routes only when they add files. Invalid route modules throw
- * because silently skipping user API code would hide production defects.
+ * opt into server routes only when they add files. Invalid modules throw
+ * because silently skipping user backend code would hide production defects.
  */
 export async function loadServerRoutePlugins(
   options: ServerRouteLoaderOptions = {}
 ): Promise<ServerRoutePlugin[]> {
-  const routesDir = resolve(options.routesDir ?? './server/routes');
-  if (!existsSync(routesDir)) return [];
+  const directories = resolveExtensionDirectories(options);
+  const loadedFiles: string[] = [];
+  const extensions: ZeroServerExtensionMountable[] = [];
 
-  const files = await collectServerRouteFiles(routesDir);
-  const plugins: ServerRoutePlugin[] = [];
+  for (const directory of directories) {
+    if (!directory.dir) continue;
 
-  for (const filePath of files) {
-    try {
-      const routeModule = await import(pathToFileURL(filePath).href);
-      plugins.push(...normalizeServerRouteModule(routeModule, filePath));
-    } catch (error) {
-      emitPlatformCode(OBS_CODES.ROUTER_SERVER_ROUTE_LOAD_FAILED, {
-        error,
-        metadata: { filePath },
-      });
-      throw error;
+    const resolvedDir = resolve(directory.dir);
+    if (!existsSync(resolvedDir)) continue;
+
+    const files = await collectServerRouteFiles(resolvedDir);
+    for (const filePath of files) {
+      try {
+        const routeModule = await import(pathToFileURL(filePath).href);
+        extensions.push(...normalizeServerRouteModule(routeModule, filePath));
+        loadedFiles.push(filePath);
+      } catch (error) {
+        emitPlatformCode(OBS_CODES.ROUTER_SERVER_ROUTE_LOAD_FAILED, {
+          error,
+          metadata: { directoryKind: directory.kind, filePath },
+        });
+        throw error;
+      }
     }
   }
 
-  if (plugins.length > 0) {
+  if (extensions.length > 0) {
     emitPlatformCode(OBS_CODES.ROUTER_SERVER_ROUTES_LOADED, {
       metadata: {
-        routesDir,
-        modules: files.length,
-        plugins: plugins.length,
+        directories: directories.map((directory) => ({
+          kind: directory.kind,
+          dir: directory.dir ? resolve(directory.dir) : false,
+        })),
+        modules: loadedFiles.length,
+        plugins: extensions.length,
       },
     });
   }
 
-  return plugins;
+  return extensions.length === 0
+    ? []
+    : [await createServerExtensionApp({ extensions })];
 }
 
 /**
@@ -121,37 +159,56 @@ function isRouteModuleFile(fileName: string): boolean {
   return false;
 }
 
-function normalizeServerRouteModule(module: unknown, filePath: string): ServerRoutePlugin[] {
-  const value = getRouteExport(module);
-  const plugins = Array.isArray(value) ? value : [value];
+function normalizeServerRouteModule(module: unknown, filePath: string): ZeroServerExtensionMountable[] {
+  const extensions = getRouteExports(module);
 
-  if (plugins.length === 0 || plugins.some((plugin) => !isServerRoutePlugin(plugin))) {
+  if (extensions.length === 0 || extensions.some((extension) => !isValidServerExtensionExport(extension))) {
     throw new ServerRouteLoaderError(
-      `[server-routes] ${filePath} must export an Elysia plugin, plugin callback, or array from default/routes/plugin.`,
+      `[server-routes] ${filePath} must export a Zero endpoint/router/middleware/plugin, Elysia plugin, plugin callback, or array from default/routes/plugin/endpoints/middleware.`,
       filePath
     );
   }
 
-  return plugins as ServerRoutePlugin[];
+  return extensions;
 }
 
-function getRouteExport(module: unknown): unknown {
-  if (!module || typeof module !== 'object') return undefined;
-  const value = module as {
-    default?: unknown;
-    plugin?: unknown;
-    routes?: unknown;
-  };
-  return value.default ?? value.plugin ?? value.routes;
+function getRouteExports(module: unknown): ZeroServerExtensionMountable[] {
+  if (!module || typeof module !== 'object') return [];
+
+  const exports = module as Record<string, unknown>;
+  const values: ZeroServerExtensionMountable[] = [];
+  const seen = new Set<unknown>();
+
+  for (const key of EXPORT_KEYS) {
+    const value = exports[key];
+    if (value === undefined) continue;
+
+    for (const current of flattenExport(value)) {
+      if (current === undefined || seen.has(current)) continue;
+      seen.add(current);
+      values.push(current as ZeroServerExtensionMountable);
+    }
+  }
+
+  return values;
 }
 
-function isServerRoutePlugin(value: unknown): value is ServerRoutePlugin {
-  if (typeof value === 'function') return true;
-  if (!value || typeof value !== 'object') return false;
+function flattenExport(value: unknown): unknown[] {
+  if (!Array.isArray(value)) return [value];
+  return value.flatMap((entry) => flattenExport(entry));
+}
 
-  const candidate = value as {
-    handle?: unknown;
-    use?: unknown;
-  };
-  return typeof candidate.handle === 'function' && typeof candidate.use === 'function';
+function isValidServerExtensionExport(value: unknown): boolean {
+  return isZeroServerExtension(value) || isServerRoutePlugin(value);
+}
+
+function resolveExtensionDirectories(options: ServerRouteLoaderOptions): ServerRouteExtensionDirectory[] {
+  if (options.extensionDirs) return options.extensionDirs;
+
+  return [
+    {
+      kind: 'routes',
+      dir: options.routesDir ?? './server/routes',
+    },
+  ];
 }

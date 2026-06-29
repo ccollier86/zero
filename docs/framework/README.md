@@ -14,6 +14,9 @@ vector, workflows, observability, or migrations.
 - [API Standardization Plan](./api-standardization-plan.md): phased plan for
   Zero-native backend extensions, middleware matchers, resources, actions,
   frontend parity, generators, and documentation standardization.
+- [Phase 1: Backend Extensions](./phase-1-backend-extensions.md): contract for
+  Zero-native endpoints, routers, middleware, plugins, loader behavior, and
+  acceptance criteria.
 - [Framework Developer Surface](../framework-developer-surface.md): current
   package-mode usage surface, imports, generated app shape, and examples.
 

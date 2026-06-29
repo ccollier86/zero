@@ -2,7 +2,16 @@
 
 This fixture shows the target app shape for a generated Zero app. It imports
 the framework through `@zero/framework/*` only; app-owned code lives beside the
-config, pages, data schema, and server routes.
+config, pages, data schema, and app-owned server extension folders.
+
+Backend code can live in:
+
+| Folder | Purpose |
+| --- | --- |
+| `server/plugins/` | Advanced app plugins. |
+| `server/middleware/` | Named app middleware. |
+| `server/endpoints/` | Single Zero-native endpoints. |
+| `server/routes/` | Grouped routers and raw Elysia escape-hatch plugins. |
 
 Run from the repository root while this fixture is being developed:
 

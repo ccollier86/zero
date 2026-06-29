@@ -49,6 +49,7 @@ export async function scaffoldZeroApp(options: ScaffoldZeroAppOptions): Promise<
 
   const filesWritten: string[] = [];
   await copyTemplate(templateDir, targetDir, filesWritten);
+  await ensureGeneratedDirectories(targetDir);
   await writeGeneratedPackageJson(targetDir, packageName, options.zeroDependency);
   filesWritten.push('package.json');
   await writeGeneratedTsConfig(targetDir);
@@ -97,6 +98,15 @@ async function collectFiles(rootDir: string, currentDir: string, files: string[]
     }
     if (entry.isFile()) files.push(entryPath.slice(rootDir.length + 1));
   }
+}
+
+async function ensureGeneratedDirectories(targetDir: string): Promise<void> {
+  await Promise.all([
+    mkdir(join(targetDir, 'server', 'plugins'), { recursive: true }),
+    mkdir(join(targetDir, 'server', 'middleware'), { recursive: true }),
+    mkdir(join(targetDir, 'server', 'endpoints'), { recursive: true }),
+    mkdir(join(targetDir, 'server', 'routes'), { recursive: true }),
+  ]);
 }
 
 async function writeGeneratedPackageJson(
@@ -218,7 +228,8 @@ bun run doctor
 bun run migrate:status
 \`\`\`
 
-App code lives in \`app/\`, \`server/routes/\`, \`db/schema.ts\`, and
+App code lives in \`app/\`, \`server/endpoints/\`, \`server/routes/\`,
+\`server/middleware/\`, \`server/plugins/\`, \`db/schema.ts\`, and
 \`zero.config.ts\`. Zero framework code stays in \`node_modules/@zero/framework\`.
 `;
 

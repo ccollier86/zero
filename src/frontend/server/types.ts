@@ -171,10 +171,34 @@ export interface AppConfig {
   generatedDir?: string;
 
   /**
-   * App-owned Elysia route module directory. Default: './server/routes'.
+   * App-owned Zero/Elysia plugin module directory. Default: './server/plugins'.
    *
-   * Each module should export an Elysia plugin, preferably created with
-   * `createServerRoute()`. Set to false to disable server route discovery.
+   * Modules may export `defineZeroPlugin()` output, raw Elysia plugins, or
+   * plugin callbacks. Set to false to disable plugin discovery.
+   */
+  serverPluginsDir?: string | false;
+
+  /**
+   * App-owned Zero middleware module directory. Default: './server/middleware'.
+   *
+   * Modules may export `defineMiddleware()` output or arrays of middleware.
+   * Set to false to disable middleware discovery.
+   */
+  serverMiddlewareDir?: string | false;
+
+  /**
+   * App-owned Zero endpoint module directory. Default: './server/endpoints'.
+   *
+   * Modules may export `defineEndpoint()` output or arrays of endpoints.
+   * Set to false to disable endpoint discovery.
+   */
+  serverEndpointsDir?: string | false;
+
+  /**
+   * App-owned Zero/Elysia route module directory. Default: './server/routes'.
+   *
+   * Modules may export `defineRouter()` output, raw Elysia plugins, plugin
+   * callbacks, or arrays of routes. Set to false to disable route discovery.
    */
   serverRoutesDir?: string | false;
 
@@ -237,6 +261,9 @@ export interface ResolvedConfig {
   appDir: string;
   outDir: string;
   generatedDir: string;
+  serverPluginsDir: string | false;
+  serverMiddlewareDir: string | false;
+  serverEndpointsDir: string | false;
   serverRoutesDir: string | false;
   port: number;
   migrate: boolean;
@@ -330,6 +357,9 @@ export function resolveConfig(
     appDir: config.appDir ?? './app',
     outDir: config.outDir ?? './.build',
     generatedDir: config.generatedDir ?? './.zero/generated',
+    serverPluginsDir: config.serverPluginsDir ?? './server/plugins',
+    serverMiddlewareDir: config.serverMiddlewareDir ?? './server/middleware',
+    serverEndpointsDir: config.serverEndpointsDir ?? './server/endpoints',
     serverRoutesDir: config.serverRoutesDir ?? './server/routes',
     port: config.port ?? 3000,
     migrate: config.migrate ?? true,
