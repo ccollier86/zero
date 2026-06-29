@@ -55,9 +55,10 @@ import { EmailService } from '@zero/framework/email';
 import { Migrator } from '@zero/framework/migrations';
 import { createNotificationPlugin } from '@zero/framework/notifications';
 import { OBS_CODES } from '@zero/framework/observability';
+import { OBS_CODES as PURE_OBS_CODES } from '@zero/framework/observability/codes';
 import { createRoomPlugin } from '@zero/framework/rooms';
 import { createSchedulerPlugin } from '@zero/framework/scheduler';
-import { defineTable, field } from '@zero/framework/schema';
+import { defineTable, encodeFieldValue, field } from '@zero/framework/schema';
 import {
   createApp,
   getAI,
@@ -83,12 +84,14 @@ export const serverSymbols = {
   defineTable,
   EmailService,
   field,
+  encodeFieldValue,
   getAI,
   getEmailService,
   getVectorStore,
   getWorkflowService,
   Migrator,
   OBS_CODES,
+  PURE_OBS_CODES,
   runPlatformDoctor,
   WorkflowService,
 };
@@ -111,10 +114,15 @@ import {
   useCollection,
 } from '@zero/framework/react';
 import { createSyncClient } from '@zero/framework/sync/client';
+import { createIdentityId } from '@zero/framework/sync/identity';
+import type { Row } from '@zero/framework/sync/types';
+
+const row: Row = {};
 
 export const clientSymbols = {
   Button,
   Check,
+  createIdentityId,
   createSyncClient,
   DataTable,
   DataTableView,
@@ -127,5 +135,6 @@ export const clientSymbols = {
   UiButton,
   useCollection,
   useDisclosure,
+  row,
 };
 `;

@@ -1,5 +1,6 @@
 export { field } from './field-types';
 export type { FieldType, FieldMeta, FieldDef } from './field-types';
+export { decodeFieldValue, encodeFieldValue } from './field-codecs';
 
 export { defineSchema, defineTable, schema } from './define-schema';
 export type { SchemaDescriptor, TableDefinition, ClientTableDef, SchemaConfig, Schema } from './define-schema';

@@ -655,12 +655,33 @@ import { useDisclosure } from '@zero/framework/hooks';
 import { Button } from '@zero/framework/components/ui/button';
 ```
 
-Long-term, `zero add <component>` should copy selected components/hooks into
-the app source tree for customization. Do not copy the entire component library
-by default.
+Use `zero add` only when the app needs to customize source. It copies selected
+files into the app, follows app-owned alias dependencies, and rewrites
+framework-internal imports to public `@zero/framework/*` package paths:
+
+```sh
+zero add components/ui/button
+zero add components/data-table
+zero add hooks modals --dry-run
+zero add components/storage --target ./my-app
+```
+
+Supported source-copy targets:
+
+| Target | Copies |
+| --- | --- |
+| `components/ui/<name>` | One UI primitive plus app-owned dependencies such as `lib/utils.ts`. |
+| `components/auth` | Auth forms, password flows, and auth visibility gates. |
+| `components/data-table` | Data table, toolbar, pagination, row actions, and dependencies. |
+| `components/master-detail` | Master-detail primitives and dependencies. |
+| `components/storage` | Storage management, file browser, drive list, dropzone, and dependencies. |
+| `hooks` | Generic React hook library. |
+| `modals` | Modal manager primitives. |
+
+Existing files are skipped by default. Use `--force` to overwrite, or
+`--dry-run` to inspect the copy plan first.
 
 ## Current Gaps To Close
 
-1. Add `zero add` for copying selected components/hooks into app source.
-2. Decide whether package exports should point at source `.ts` files long-term
+1. Decide whether package exports should point at source `.ts` files long-term
    or a built `dist/` artifact for non-Bun consumers.

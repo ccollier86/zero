@@ -67,6 +67,10 @@
       "types": "./src/observability/index.ts",
       "import": "./src/observability/index.ts"
     },
+    "./observability/codes": {
+      "types": "./src/observability/codes.ts",
+      "import": "./src/observability/codes.ts"
+    },
     "./rooms": {
       "types": "./src/rooms/index.ts",
       "import": "./src/rooms/index.ts"
@@ -86,6 +90,14 @@
     "./sync/client": {
       "types": "./src/sync/client/index.ts",
       "import": "./src/sync/client/index.ts"
+    },
+    "./sync/identity": {
+      "types": "./src/sync/identity.ts",
+      "import": "./src/sync/identity.ts"
+    },
+    "./sync/types": {
+      "types": "./src/sync/types.ts",
+      "import": "./src/sync/types.ts"
     },
     "./vector": {
       "types": "./src/vector/index.ts",

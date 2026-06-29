@@ -16,5 +16,12 @@ Create a new app from this shape with:
 create-zero my-app
 ```
 
+Customize packaged UI or hook source with:
+
+```sh
+zero add components/ui/button
+zero add components/data-table
+```
+
 Generated starter projects should use the same structure, but with Zero
 installed as a dependency instead of living in this repository.

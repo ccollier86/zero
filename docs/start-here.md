@@ -169,6 +169,18 @@ hooks, and SDK helpers. Direct subsystem imports such as
 `@zero/framework/sync/client`, and `@zero/framework/components/data-table` are
 available when a file should depend on one specific feature.
 
+Use packaged imports first. When an app needs to customize component or hook
+source, copy selected pieces with `zero add`:
+
+```sh
+zero add components/ui/button
+zero add components/data-table
+zero add hooks modals --dry-run
+```
+
+`zero add` skips existing files unless `--force` is provided and rewrites copied
+framework-internal imports to public `@zero/framework/*` paths.
+
 ## Environment
 
 Common variables:

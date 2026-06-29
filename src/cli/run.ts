@@ -13,6 +13,11 @@ const command = args[0];
 const commandArgs = args.slice(1);
 
 switch (command) {
+  case 'add': {
+    const { runZeroAddCli } = await import('../add/run');
+    process.exitCode = await runZeroAddCli(commandArgs);
+    break;
+  }
   case 'create': {
     const { runCreateZeroCli } = await import('../create-zero/run');
     process.exitCode = await runCreateZeroCli(commandArgs);
@@ -52,6 +57,7 @@ function printUsage(): void {
   console.log('Usage: zero <command> [...args]');
   console.log('');
   console.log('Commands:');
+  console.log('  add      Copy selected components/hooks into an app');
   console.log('  create   Create a new Zero app');
   console.log('  doctor   Run platform doctor');
   console.log('  migrate  Run migrations');
