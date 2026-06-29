@@ -74,6 +74,24 @@ export type {
   RecordResult,
 } from './data-composition-hooks';
 
+export {
+  useResourceActions,
+  useResourceClient,
+  useResourceList,
+  useResourceRecord,
+} from './resource-hooks';
+export type {
+  ResourceActionsResult,
+  ResourceListHookResult,
+  ResourceRecordResult,
+  UseResourceListOptions,
+  UseResourceRecordOptions,
+} from './resource-hooks';
+
+export {
+  buildResourceListQuery,
+} from './query-params';
+
 export { useDataSelection } from './data-selection-hooks';
 export type {
   DataSelectionMode,

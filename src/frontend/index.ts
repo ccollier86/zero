@@ -33,7 +33,19 @@ export type {
 
 // ─── SDK Core (vanilla JS — no React required) ──────────────────────────
 export { createClient, getClient, FetchError } from './client/sdk';
-export type { Client, Collection, ClientConfig, FetchInit, SyncClient, InternalClient } from './client/sdk';
+export type {
+  Client,
+  Collection,
+  ClientConfig,
+  FetchInit,
+  InternalClient,
+  ResourceClient,
+  ResourceClientOptions,
+  ResourceDeleteResult,
+  ResourceListResult,
+  ResourceRowResult,
+  SyncClient,
+} from './client/sdk';
 export type { IdentityKey, IdentityValue } from '../sync/identity';
 
 // ─── Typed API (Eden Treaty) ────────────────────────────────────────────
@@ -92,9 +104,14 @@ export {
   useRow,
   useRecord,
   useRecordByIdentity,
+  useResourceActions,
+  useResourceClient,
+  useResourceList,
+  useResourceRecord,
   useQuery,
   useStatus,
   buildDataPageQuery,
+  buildResourceListQuery,
   useConnectionHealth,
   useMutation,
   // Auth
@@ -136,6 +153,11 @@ export type {
   DataSelectionMode,
   IdentityRecordResult,
   RecordResult,
+  ResourceActionsResult,
+  ResourceListHookResult,
+  ResourceRecordResult,
+  UseResourceListOptions,
+  UseResourceRecordOptions,
   UseDataSelectionOptions,
   UseDataSelectionReturn,
   UseFormDraftOptions,

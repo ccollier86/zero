@@ -139,6 +139,7 @@ export const OBS_CODES = {
   FRONTEND_ADMIN_USER_ACTION_FAILED: code('frontend', 'admin_user.action_failed', 'error', 'Admin user-management action failed.'),
   FRONTEND_STORAGE_ACTION_FAILED: code('frontend', 'storage.action_failed', 'error', 'Storage management action failed.'),
   FRONTEND_DATA_PAGE_FAILED: code('frontend', 'data_page.failed', 'error', 'Frontend data page query failed.'),
+  FRONTEND_RESOURCE_ACTION_FAILED: code('frontend', 'resource.action_failed', 'error', 'Frontend generated-resource action failed.'),
   FRONTEND_MUTATION_FAILED: code('frontend', 'mutation.failed', 'error', 'Frontend mutation action failed.'),
   FRONTEND_COPY_FAILED: code('frontend', 'copy.failed', 'error', 'Clipboard copy action failed.'),
 

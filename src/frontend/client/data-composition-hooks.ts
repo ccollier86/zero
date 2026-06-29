@@ -18,34 +18,32 @@ import type { IdentityKey } from '../../sync/identity';
 import type { Row } from '../../sync/types';
 import { OBS_CODES } from '../../observability/codes';
 import { emitFrontendCode } from './observability';
+import {
+  buildDataPageQuery,
+  normalizePage,
+  normalizePageSize,
+  stableValueKey,
+  type DataFilterExpression,
+  type DataFilterOperator,
+  type DataFilterPrimitive,
+  type DataFilterValue,
+  type DataPageFilters,
+  type DataPageInfo,
+  type DataPageSort,
+} from './query-params';
 import { useClientMaybe } from './client-context';
 import { useCollection, useRow } from './data-hooks';
 
-export type DataFilterOperator =
-  | 'eq'
-  | 'ne'
-  | 'gt'
-  | 'gte'
-  | 'lt'
-  | 'lte'
-  | 'like'
-  | 'contains'
-  | 'in';
-
-export type DataFilterPrimitive = string | number | boolean | null | undefined;
-
-export interface DataFilterExpression {
-  op?: DataFilterOperator;
-  value: DataFilterPrimitive | DataFilterPrimitive[];
-}
-
-export type DataFilterValue = DataFilterPrimitive | DataFilterPrimitive[] | DataFilterExpression;
-export type DataPageFilters = Record<string, DataFilterValue>;
-
-export interface DataPageSort {
-  field: string;
-  dir?: 'asc' | 'desc';
-}
+export { buildDataPageQuery } from './query-params';
+export type {
+  DataFilterExpression,
+  DataFilterOperator,
+  DataFilterPrimitive,
+  DataFilterValue,
+  DataPageFilters,
+  DataPageInfo,
+  DataPageSort,
+} from './query-params';
 
 export interface DataPageOptions {
   filters?: DataPageFilters;
@@ -54,14 +52,6 @@ export interface DataPageOptions {
   initialPage?: number;
   autoLoad?: boolean;
   replaceCollection?: boolean;
-}
-
-export interface DataPageInfo {
-  limit: number;
-  offset: number;
-  count: number;
-  hasMore: boolean;
-  nextOffset: number | null;
 }
 
 export interface DataPageResult<T extends Row> {
@@ -88,83 +78,6 @@ export interface DataPageResult<T extends Row> {
 interface DataPageResponse<T extends Row> {
   rows: T[];
   page?: DataPageInfo;
-}
-
-function stableValueKey(value: unknown): string {
-  if (!value || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableValueKey).join(',')}]`;
-  return `{${Object.entries(value as Record<string, unknown>)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, next]) => `${JSON.stringify(key)}:${stableValueKey(next)}`)
-    .join(',')}}`;
-}
-
-function normalizePage(page: number): number {
-  return Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
-}
-
-function normalizePageSize(pageSize: number | undefined): number {
-  if (!pageSize || !Number.isFinite(pageSize)) return 50;
-  return Math.max(1, Math.floor(pageSize));
-}
-
-function appendFilter(params: URLSearchParams, field: string, filter: DataFilterValue): void {
-  if (Array.isArray(filter)) {
-    const values = filter.filter((value) => value !== null && value !== undefined);
-    if (values.length > 0) params.append('filter', `${field}:in:${values.map(String).join(',')}`);
-    return;
-  }
-
-  if (filter && typeof filter === 'object') {
-    const expression = filter as DataFilterExpression;
-    if (Array.isArray(expression.value)) {
-      const values = expression.value.filter((value) => value !== null && value !== undefined);
-      if (values.length > 0) params.append('filter', `${field}:${expression.op ?? 'in'}:${values.map(String).join(',')}`);
-      return;
-    }
-    if (expression.value !== null && expression.value !== undefined) {
-      const op = expression.op ?? 'eq';
-      params.append('filter', op === 'eq'
-        ? `${field}:${String(expression.value)}`
-        : `${field}:${op}:${String(expression.value)}`);
-    }
-    return;
-  }
-
-  if (filter !== null && filter !== undefined) {
-    params.append('filter', `${field}:${String(filter)}`);
-  }
-}
-
-/**
- * Build the `/api/data` query string for `useDataPage`.
- *
- * Exported for tests and advanced integrations that need identical query
- * encoding without running the React hook.
- */
-export function buildDataPageQuery(
-  table: string,
-  filters: DataPageFilters,
-  sort: DataPageSort | null,
-  page: number,
-  pageSize: number,
-): string {
-  const limit = normalizePageSize(pageSize);
-  const offset = (normalizePage(page) - 1) * limit;
-  const params = new URLSearchParams({ table });
-
-  for (const [field, filter] of Object.entries(filters)) {
-    appendFilter(params, field, filter);
-  }
-
-  if (sort?.field) {
-    params.set('order', sort.field);
-    params.set('dir', sort.dir ?? 'desc');
-  }
-
-  params.set('limit', String(limit));
-  params.set('offset', String(offset));
-  return `/api/data?${params}`;
 }
 
 /**

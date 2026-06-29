@@ -119,6 +119,7 @@ interface Client {
 
   // ─── Data ────────────────────────────────────────────────────
   collection<T extends Row>(name: string): Collection<T>;
+  resource<T extends Row>(name: string): ResourceClient<T>;
   readonly state: StateClient | null;
   readonly ephemeral: EphemeralClient;
 
@@ -536,6 +537,62 @@ per-connection row filter for snapshots, catchup, and live changes. Direct
 optimistic mutations still go through WebSocket, but registered resources
 evaluate `create`, `update`, and `delete` policy on the server before the write
 is accepted.
+
+### Generated Resource Client
+
+`client.resource(name)` wraps generated `/api/resources/:resource` routes with
+the same authenticated fetch path as `client.get()` and `client.post()`:
+
+```ts
+const tickets = client.resource<TicketRow>('tickets');
+
+const list = await tickets.list({
+  filters: { status: ['new', 'open'] },
+  sort: { field: 'created_at', dir: 'desc' },
+  limit: 25,
+  offset: 0,
+});
+
+const ticket = await tickets.get('ticket_123');
+const created = await tickets.create({ title: 'New ticket' });
+const updated = await tickets.update(ticket.ticket_id, { status: 'closed' });
+await tickets.remove(ticket.ticket_id);
+```
+
+`list()` accepts the same filter operators, sort shape, `limit`, and `offset`
+used by `/api/data`. It returns `{ rows, page }`. `get()`, `create()`, and
+`update()` return the row body from the generated resource route. `remove()` is
+an alias for `delete()` and returns `{ deleted, id }`.
+
+When the server customizes generated routes:
+
+```ts
+createApp({
+  resourceRoutes: { prefix: '/api/clinic/resources' },
+});
+```
+
+configure the SDK once:
+
+```ts
+createClient({
+  url: 'http://localhost:3000',
+  tables,
+  auth: true,
+  resourcePrefix: '/api/clinic/resources',
+});
+```
+
+or override per call:
+
+```ts
+client.resource('tickets', { prefix: '/api/clinic/resources' });
+```
+
+Use `client.resource()` and `useResourceList()` when the screen should go
+through generated resource CRUD routes. Use `client.collection()`,
+`useCollection()`, or `useDataPage()` when the screen is primarily reading from
+the live ReactiveDB collection store.
 
 **Manual load (advanced):**
 
@@ -1000,6 +1057,8 @@ by responsibility:
 - `auth-hooks.ts` owns `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, and `useUserProperty`.
 - `data-hooks.ts` owns `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, and `useStatus`.
 - `data-composition-hooks.ts` owns `useDataPage`, `useRecord`, and `useRecordByIdentity`.
+- `resource-client.ts` owns the vanilla generated-resource CRUD client used by `client.resource()`.
+- `resource-hooks.ts` owns `useResourceClient`, `useResourceList`, `useResourceRecord`, and `useResourceActions`.
 - `data-selection-hooks.ts` owns reusable selected-row state for tables and detail views.
 - `mutation-hooks.ts` and `connection-health-hooks.ts` own mutation lifecycle and sync/auth health state.
 - `presence-list-hooks.ts` and `typing-indicator-hooks.ts` own display-ready room presence and ephemeral typing state.

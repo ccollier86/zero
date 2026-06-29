@@ -350,6 +350,7 @@ Platform-specific hooks include:
 | --- | --- |
 | Auth/session | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty` |
 | Live data | `useCollection`, `useLazyCollection`, `useDataPage`, `useRecord`, `useRecordByIdentity`, `useDataSelection` |
+| Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
 | Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageBrowser`, `useDriveQuota` |
 | Rooms/presence | `usePresence`, `usePresenceList`, `useTypingIndicator`, `useEphemeral`, `useEphemeralTopic` |
 | Workflows/notifications | `useWorkflowRun`, `useWorkflow`, `useWorkflowList`, `useNotifications`, `useUnreadCount` |

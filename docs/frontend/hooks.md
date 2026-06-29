@@ -187,6 +187,7 @@ Platform hooks require `AppProvider` or `ClientProvider` in the browser. They ar
 | Client | `useClient`, `useClientMaybe`, `useIsServer` |
 | Auth | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty` |
 | Reactive data | `useCollection`, `useLazyCollection`, `useDataPage`, `useRow`, `useRecord`, `useRecordByIdentity`, `useQuery`, `useStatus` |
+| Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
 | Data UI state | `useDataSelection` |
 | Mutations/health | `useMutation`, `useConnectionHealth` |
 | Server state | `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft` |
@@ -201,7 +202,8 @@ Platform hooks require `AppProvider` or `ClientProvider` in the browser. They ar
 Zero keeps existing platform hooks as canonical instead of adding duplicate
 aliases. Use `useDataPage` for paged `/api/data` screens, `useRecord` /
 `useRecordByIdentity` for detail records, `useWorkflowRun` for start-and-watch
-workflow UI, and `useNotifications` for notification lists and counts.
+workflow UI, `useResourceList` for generated resource CRUD screens, and
+`useNotifications` for notification lists and counts.
 
 ### Data Screens
 
@@ -255,6 +257,48 @@ membership.upsert({ team_id: teamId, user_id: userId, role: 'admin' });
 
 This uses Zero's deterministic natural-identity sync ID support while keeping
 the platform's single-column sync primary-key invariant.
+
+### Resource Screens
+
+Resource hooks call generated `/api/resources/:resource` routes through the SDK
+client, so auth headers, token refresh, resource policy, and `FetchError`
+behavior stay centralized.
+
+```tsx
+import { useResourceList, useResourceRecord } from '@zero/framework/react';
+
+function Tickets() {
+  const tickets = useResourceList<TicketRow>('tickets', {
+    filters: { status: ['new', 'open'] },
+    sort: { field: 'created_at', dir: 'desc' },
+    pageSize: 25,
+  });
+
+  return (
+    <DataTableView
+      data={tickets.rows}
+      loading={tickets.loading}
+      onNextPage={tickets.hasMore ? tickets.nextPage : undefined}
+    />
+  );
+}
+
+function TicketDetails({ ticketId }: { ticketId: string }) {
+  const ticket = useResourceRecord<TicketRow>('tickets', ticketId);
+
+  return (
+    <button onClick={() => ticket.update({ status: 'closed' })}>
+      Close
+    </button>
+  );
+}
+```
+
+Use `useResourceActions(resource)` when a form owns its own data state and only
+needs generated create/update/delete calls. Use `useDataPage(table)` or
+`useCollection(table)` when the screen should read from the live ReactiveDB
+collection store. Resource hooks are route/policy focused; sync hooks are
+live-store focused.
 
 `useDataSelection(rows, options?)` owns reusable selected-row state for tables,
 detail views, and bulk actions:

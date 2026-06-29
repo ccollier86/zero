@@ -129,6 +129,7 @@ import {
   StickToBottom,
   ThemeProvider,
   useCollection,
+  useResourceList,
 } from '@zero/framework/react';
 import { createSyncClient } from '@zero/framework/sync/client';
 import { createIdentityId } from '@zero/framework/sync/identity';
@@ -151,6 +152,7 @@ export const clientSymbols = {
   ThemeProvider,
   UiButton,
   useCollection,
+  useResourceList,
   useDisclosure,
   row,
 };

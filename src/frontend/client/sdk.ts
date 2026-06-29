@@ -26,6 +26,7 @@ import { ROOM_TABLES } from '../../rooms/types';
 import { WORKFLOW_TABLES } from '../../workflows/types';
 import { STORAGE_TABLES } from '../../storage/types';
 import { createCollection, type Collection } from './collection';
+import { createResourceClient, type ResourceClient, type ResourceClientOptions } from './resource-client';
 
 /**
  * All platform-internal tables that hooks depend on.
@@ -41,6 +42,15 @@ const PLATFORM_TABLES: Record<string, ClientTableDef> = {
 export type { SyncClient };
 
 export type { Collection } from './collection';
+
+export type {
+  ResourceClient,
+  ResourceClientOptions,
+  ResourceDeleteResult,
+  ResourceListOptions,
+  ResourceListResult,
+  ResourceRowResult,
+} from './resource-client';
 
 export type {
   AuthActionTokenInfo,
@@ -121,6 +131,9 @@ export interface ClientConfig {
 
   /** Max reconnect attempts. Default: Infinity */
   maxReconnectAttempts?: number;
+
+  /** Generated resource route prefix. Default: `/api/resources`. */
+  resourcePrefix?: string;
 
   /** Called on unrecoverable connection error. */
   onError?: (error: string) => void;
@@ -284,6 +297,9 @@ export interface Client {
   /** Get a typed collection for a table. */
   collection<T extends Row = Row>(name: string): Collection<T>;
 
+  /** Get a generated-resource CRUD client. */
+  resource<T extends Row = Row>(name: string, options?: ResourceClientOptions): ResourceClient<T>;
+
   // ─── Connection ──────────────────────────────────────────────────
 
   /** Connect the WebSocket when autoConnect was disabled. */
@@ -367,6 +383,7 @@ export function createClient(config: ClientConfig): Client {
     stateSync = false,
     autoConnect = true,
     maxReconnectAttempts,
+    resourcePrefix = '/api/resources',
     onError,
     onReconnect,
   } = config;
@@ -493,6 +510,7 @@ export function createClient(config: ClientConfig): Client {
 
   // ─── Collection Cache ─────────────────────────────────────────────
   const collections = new Map<string, Collection<any>>();
+  const resourceClients = new Map<string, ResourceClient<any>>();
 
   let previousAuthToken = currentAuthToken();
   const unsubscribeAuth = authClient?.subscribe(() => {
@@ -516,6 +534,20 @@ export function createClient(config: ClientConfig): Client {
     col = createCollection<T>(name, syncClient, tables[name]);
     collections.set(name, col);
     return col as Collection<T>;
+  }
+
+  function getResource<T extends Row>(
+    name: string,
+    options: ResourceClientOptions = {}
+  ): ResourceClient<T> {
+    const prefix = options.prefix ?? resourcePrefix;
+    const cacheKey = `${prefix}:${name}`;
+    const existing = resourceClients.get(cacheKey);
+    if (existing) return existing as ResourceClient<T>;
+
+    const next = createResourceClient<T>(name, { fetch: clientFetch }, { prefix });
+    resourceClients.set(cacheKey, next);
+    return next;
   }
 
   // ─── Authenticated Fetch ────────────────────────────────────────
@@ -610,6 +642,10 @@ export function createClient(config: ClientConfig): Client {
       return getCollection<T>(name);
     },
 
+    resource<T extends Row>(name: string, options?: ResourceClientOptions): ResourceClient<T> {
+      return getResource<T>(name, options);
+    },
+
     get connected() {
       return syncClient.connected;
     },
@@ -637,6 +673,7 @@ export function createClient(config: ClientConfig): Client {
       stateClient?.dispose();
       ephemeralClient.dispose();
       collections.clear();
+      resourceClients.clear();
       _instance = null;
     },
   };

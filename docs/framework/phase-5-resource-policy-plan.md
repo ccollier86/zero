@@ -5,7 +5,7 @@ Status: planned, slices 1-7 implemented
 Phase 5 introduces a high-level resource contract for common data-driven apps.
 The goal is to let app code declare tables, actions, and authorization policy
 once, then reuse that policy for generated CRUD routes, `/api/data`, sync
-mutations, doctor checks, and later frontend resource hooks.
+mutations, doctor checks, and frontend resource hooks.
 
 This phase must start with the authorization model. Resource endpoints are only
 useful if they are hard to misconfigure.

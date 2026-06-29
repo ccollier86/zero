@@ -272,6 +272,8 @@ src/frontend/
 │   ├── auth-hooks.ts          # useAuth, useAuthConfig, useUserProperty
 │   ├── data-hooks.ts          # useCollection, useLazyCollection, useRow, useQuery, useStatus
 │   ├── data-composition-hooks.ts # useDataPage, useRecord, useRecordByIdentity
+│   ├── resource-client.ts     # Vanilla generated-resource CRUD client
+│   ├── resource-hooks.ts      # useResourceClient, useResourceList, useResourceRecord, useResourceActions
 │   ├── mutation-hooks.ts      # useMutation
 │   ├── connection-health-hooks.ts # useConnectionHealth
 │   ├── preference-hooks.ts    # usePreference, useFormDraft

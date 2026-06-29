@@ -394,7 +394,7 @@ Implementation plan:
 
 ## Phase 6: Actions
 
-Status: planned
+Status: slice 1 implemented
 
 Add server actions for common commands:
 
@@ -435,7 +435,7 @@ Each backend feature should have an obvious frontend hook/component story:
 | Backend Feature | Frontend Surface |
 | --- | --- |
 | Auth | `useAuth()`, `useCurrentUser()`, `SignedIn`, `AdminGate`, `PropertyGate`. |
-| Resources | `useResource()`, `useResourceRecord()`, generated DataTable helpers. |
+| Resources | `client.resource()`, `useResourceClient()`, `useResourceList()`, `useResourceRecord()`, `useResourceActions()`, generated DataTable helpers. |
 | Actions | `useAction()`, action status/loading/error state. |
 | Storage | `useStorageBrowser()`, `StorageManagement`, `StorageDropzone`, future `Image`. |
 | Notifications | `useNotifications()`, `NotificationCenter`. |
@@ -448,6 +448,15 @@ Acceptance criteria:
 1. Frontend hooks reuse SDK transport/auth.
 2. Hooks are SSR-safe.
 3. Components stay render-focused and do not own transport policy.
+
+Implemented slice 1:
+
+1. Added `client.resource(name)` for generated `/api/resources` CRUD routes.
+2. Added shared frontend query encoding for `/api/data` and generated resource
+   lists.
+3. Added `useResourceClient`, `useResourceList`, `useResourceRecord`, and
+   `useResourceActions` as route/policy-focused React hooks.
+4. Exported the resource APIs from `@zero/framework/react`.
 
 ## Phase 8: Framework Conveniences Borrowed From Other Frameworks
 
