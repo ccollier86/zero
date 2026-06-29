@@ -28,14 +28,41 @@ but new app code should use `@zero/framework/*`.
 
 | Import | Use For |
 | --- | --- |
-| `@zero/framework/server` | `createApp()`, `createServerRoute()`, backend services, plugins, config types. |
+| `@zero/framework/server` | Composition root, `createApp()`, `createServerRoute()`, backend service getters, plugins, config types. |
 | `@zero/framework/react` | Client-safe components, hooks, SDK helpers, auth UI, storage UI. |
 | `@zero/framework/schema` | Data model/table DSL. |
 | `@zero/framework/icons` | Default Animate UI icon pack. |
-| `@zero/framework/ai` | AI service contracts when importing the AI layer directly. |
-| `@zero/framework/vector` | Vector store contracts when importing the vector layer directly. |
-| `@zero/framework/sync` | ReactiveDB and sync contracts when importing sync directly. |
 | `@zero/framework/styles.css` | Packaged Zero stylesheet for app entrypoints that need explicit CSS import. |
+| `@zero/framework/ai` | AI service contracts when importing the AI layer directly. |
+| `@zero/framework/auth` | Auth plugin, store, token, and auth config contracts. |
+| `@zero/framework/doctor` | Programmatic platform doctor use. Generated apps usually call `zero doctor`. |
+| `@zero/framework/email` | Email providers/service contracts for custom adapters. App code usually calls `getEmailService()` from `server`. |
+| `@zero/framework/migrations` | Programmatic migration planning/status. Generated apps usually call `zero migrate`. |
+| `@zero/framework/notifications` | Notification plugin/service contracts. React hooks/components come from `react`. |
+| `@zero/framework/observability` | Backend sink, event, and code contracts. Server routes can also import these from `server`. |
+| `@zero/framework/rooms` | Rooms and presence server contracts. React hooks come from `react`. |
+| `@zero/framework/scheduler` | Scheduler service/plugin contracts. |
+| `@zero/framework/storage` | Storage server contracts and adapters. React hooks/components come from `react`. |
+| `@zero/framework/sync` | ReactiveDB and sync server contracts. |
+| `@zero/framework/sync/client` | Lower-level WebSocket sync client primitives. Prefer `react` hooks in browser UI. |
+| `@zero/framework/vector` | Vector store contracts when importing the vector layer directly. |
+| `@zero/framework/workflows` | Workflow registry/service contracts. React workflow hooks come from `react`. |
+| `@zero/framework/hooks` | Generic React hook library when importing hooks without the full React barrel. |
+| `@zero/framework/modals` | Modal manager primitives when importing without the full React barrel. |
+| `@zero/framework/components/auth` | Auth UI blocks and gates. Also exported from `react`. |
+| `@zero/framework/components/data-table` | Data table primitives. Also exported from `react`. |
+| `@zero/framework/components/master-detail` | Master-detail primitives. Also exported from `react`. |
+| `@zero/framework/components/storage` | Storage management/dropzone UI. Also exported from `react`. |
+| `@zero/framework/components/ui/<name>` | Direct UI primitive imports such as `button`, `input`, or `table`. |
+
+Rule of thumb:
+
+1. Use `@zero/framework/server` inside `app/server.ts`, `zero.config.ts`, and
+   backend route modules when you want the app-level service getters.
+2. Use the direct subsystem paths when writing adapters, tests, platform tools,
+   or code that should depend on one specific Zero subsystem.
+3. Use `@zero/framework/react` in browser UI first. Reach for direct component
+   paths only when you want a narrow import.
 
 ## Generated App Shape
 
@@ -267,7 +294,7 @@ framework commands:
     "migrate": "zero migrate --db ./data/app.db",
     "migrate:status": "zero migrate --status --db ./data/app.db",
     "migrate:plan": "zero migrate --plan --schema ./db/schema.ts --db ./data/app.db",
-    "doctor": "zero doctor"
+    "doctor": "zero doctor --config ./zero.config.ts"
   }
 }
 ```
@@ -615,6 +642,15 @@ import {
   useStorageBrowser,
   useIdle,
 } from '@zero/framework/react';
+```
+
+Narrow imports are also supported:
+
+```tsx
+import { DataTableView } from '@zero/framework/components/data-table';
+import { LoginForm } from '@zero/framework/components/auth';
+import { useDisclosure } from '@zero/framework/hooks';
+import { Button } from '@zero/framework/components/ui/button';
 ```
 
 Long-term, `zero add <component>` should copy selected components/hooks into

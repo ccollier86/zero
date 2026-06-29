@@ -41,7 +41,7 @@ tools read the same source:
 
 ```ts
 import { defineZeroConfig } from '@zero/framework/server';
-import { tables } from './lib/schemas';
+import { tables } from './db/schema';
 
 const PORT = Number(Bun.env.PORT ?? 3000);
 const hasEmail = Boolean(Bun.env.RESEND_API_KEY);
@@ -156,9 +156,16 @@ fail by default; use `--strict` in CI.
 Use `migrate:doctor` and `migrate:plan` for database drift:
 
 ```txt
-bun run migrate:doctor -- --schema ./app/lib/schemas.ts --strict
-bun run migrate:plan -- --schema ./app/lib/schemas.ts --write
+bun run migrate:plan -- --schema ./db/schema.ts --write
+zero migrate --doctor --schema ./db/schema.ts --strict
 ```
+
+Use `@zero/framework/server` for app startup, backend routes, and server
+service getters. Use `@zero/framework/react` for browser-safe components,
+hooks, and SDK helpers. Direct subsystem imports such as
+`@zero/framework/email`, `@zero/framework/ai`, `@zero/framework/vector`,
+`@zero/framework/sync/client`, and `@zero/framework/components/data-table` are
+available when a file should depend on one specific feature.
 
 ## Environment
 

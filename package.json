@@ -39,6 +39,26 @@
       "types": "./src/auth/index.ts",
       "import": "./src/auth/index.ts"
     },
+    "./doctor": {
+      "types": "./src/doctor/index.ts",
+      "import": "./src/doctor/index.ts"
+    },
+    "./email": {
+      "types": "./src/email/index.ts",
+      "import": "./src/email/index.ts"
+    },
+    "./hooks": {
+      "types": "./src/hooks/index.ts",
+      "import": "./src/hooks/index.ts"
+    },
+    "./migrations": {
+      "types": "./src/migrations/index.ts",
+      "import": "./src/migrations/index.ts"
+    },
+    "./modals": {
+      "types": "./src/modals/index.ts",
+      "import": "./src/modals/index.ts"
+    },
     "./notifications": {
       "types": "./src/notifications/index.ts",
       "import": "./src/notifications/index.ts"
@@ -46,6 +66,14 @@
     "./observability": {
       "types": "./src/observability/index.ts",
       "import": "./src/observability/index.ts"
+    },
+    "./rooms": {
+      "types": "./src/rooms/index.ts",
+      "import": "./src/rooms/index.ts"
+    },
+    "./scheduler": {
+      "types": "./src/scheduler/index.ts",
+      "import": "./src/scheduler/index.ts"
     },
     "./storage": {
       "types": "./src/storage/index.ts",
@@ -55,6 +83,10 @@
       "types": "./src/sync/index.ts",
       "import": "./src/sync/index.ts"
     },
+    "./sync/client": {
+      "types": "./src/sync/client/index.ts",
+      "import": "./src/sync/client/index.ts"
+    },
     "./vector": {
       "types": "./src/vector/index.ts",
       "import": "./src/vector/index.ts"
@@ -62,6 +94,26 @@
     "./workflows": {
       "types": "./src/workflows/index.ts",
       "import": "./src/workflows/index.ts"
+    },
+    "./components/auth": {
+      "types": "./src/components/auth/index.ts",
+      "import": "./src/components/auth/index.ts"
+    },
+    "./components/data-table": {
+      "types": "./src/components/data-table/index.ts",
+      "import": "./src/components/data-table/index.ts"
+    },
+    "./components/master-detail": {
+      "types": "./src/components/master-detail/index.ts",
+      "import": "./src/components/master-detail/index.ts"
+    },
+    "./components/storage": {
+      "types": "./src/components/storage/index.ts",
+      "import": "./src/components/storage/index.ts"
+    },
+    "./components/ui/*": {
+      "types": "./src/components/ui/*.tsx",
+      "import": "./src/components/ui/*.tsx"
     },
     "./styles.css": "./src/frontend/styles/globals.css"
   },
