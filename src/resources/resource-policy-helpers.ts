@@ -25,6 +25,7 @@ import type {
   ResourceMetadataRequirement,
   ResourceMetadataRequirements,
   ResourcePolicy,
+  ResourcePolicyDiagnostics,
   ResourcePolicyDecision,
   ResourcePolicyKind,
   ResourcePolicyScalar,
@@ -46,6 +47,8 @@ export function adminOnly(): ResourcePolicy {
       });
     }
     return allowResourcePolicyDecision();
+  }, undefined, {
+    authenticatedActions: ['list', 'get', 'create', 'update', 'delete'],
   });
 }
 
@@ -54,6 +57,8 @@ export function authenticatedOnly(): ResourcePolicy {
   return createResourcePolicy('authenticated', ({ user }) => {
     if (!user) return denyResourcePolicyDecision('unauthorized', 401, 'Unauthorized');
     return allowResourcePolicyDecision();
+  }, undefined, {
+    authenticatedActions: ['list', 'get', 'create', 'update', 'delete'],
   });
 }
 
@@ -62,6 +67,8 @@ export function readOnly(): ResourcePolicy {
   return createResourcePolicy('read-only', ({ action }) => {
     if (action === 'list' || action === 'get') return allowResourcePolicyDecision();
     return denyResourcePolicyDecision('read-only', 403, 'Resource is read-only');
+  }, undefined, {
+    publicActions: ['list', 'get'],
   });
 }
 
@@ -71,6 +78,9 @@ export function publicReadUserWrite(): ResourcePolicy {
     if (action === 'list' || action === 'get') return allowResourcePolicyDecision();
     if (!user) return denyResourcePolicyDecision('unauthorized', 401, 'Unauthorized');
     return allowResourcePolicyDecision();
+  }, undefined, {
+    publicActions: ['list', 'get'],
+    authenticatedActions: ['create', 'update', 'delete'],
   });
 }
 
@@ -153,6 +163,11 @@ export function ownerPolicy(options: OwnerPolicyOptions): ResourcePolicy {
         path: 'owner.userField',
         severity: 'error',
       }];
+    },
+    {
+      ownerField: options.userField,
+      ownerCreateMode: createMode,
+      authenticatedActions: ['list', 'get', 'create', 'update', 'delete'],
     }
   );
 }
@@ -185,7 +200,11 @@ export function metadataPolicy(requirements: ResourceMetadataRequirements): Reso
 
       return allowResourcePolicyDecision();
     },
-    ({ authConfig }) => validateMetadataPolicy(requirements, authConfig)
+    ({ authConfig }) => validateMetadataPolicy(requirements, authConfig),
+    {
+      metadataKeys: Object.keys(requirements),
+      authenticatedActions: ['list', 'get', 'create', 'update', 'delete'],
+    }
   );
 
   return policy;
@@ -228,7 +247,8 @@ export function anyOf(...policies: ResourcePolicy[]): ResourcePolicy {
         stampedInput: combineAnyOfStampedInput(allowedDecisions),
       });
     },
-    (context) => validateCompositePolicy('anyOf', policies, context)
+    (context) => validateCompositePolicy('anyOf', policies, context),
+    { children: policies }
   );
 }
 
@@ -276,7 +296,8 @@ export function allOf(...policies: ResourcePolicy[]): ResourcePolicy {
         stampedInput,
       });
     },
-    (context) => validateCompositePolicy('allOf', policies, context)
+    (context) => validateCompositePolicy('allOf', policies, context),
+    { children: policies }
   );
 }
 
@@ -307,15 +328,18 @@ export function customPolicy(
       });
       return denyResourcePolicyDecision('policy-error', 500, 'Resource policy callback failed');
     }
+  }, undefined, {
+    customName: name,
   });
 }
 
 function createResourcePolicy(
   kind: ResourcePolicyKind,
   evaluate: ResourcePolicy['evaluate'],
-  validate?: ResourcePolicy['validate']
+  validate?: ResourcePolicy['validate'],
+  diagnostics?: ResourcePolicyDiagnostics
 ): ResourcePolicy {
-  return { kind, evaluate, validate };
+  return { kind, evaluate, validate, diagnostics };
 }
 
 function findDeniedMetadata(

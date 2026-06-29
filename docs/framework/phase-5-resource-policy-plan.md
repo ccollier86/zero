@@ -1,6 +1,6 @@
 # Phase 5: Resource And Policy API Plan
 
-Status: planned, slices 1-5 implemented
+Status: planned, slices 1-7 implemented
 
 Phase 5 introduces a high-level resource contract for common data-driven apps.
 The goal is to let app code declare tables, actions, and authorization policy
@@ -251,8 +251,8 @@ Implemented in slice 5 for lazy list reads:
 5. Done: registered resources without `list` fail closed.
 6. Later: `get`-style data access should evaluate row policy after loading if a
    generic point-read data endpoint is added.
-7. Later: doctor should warn when a registered resource cannot safely apply its
-   list policy to `/api/data`.
+7. Done: doctor warns when a registered resource lacks a list policy or uses
+   a custom list policy whose row scope cannot be proven statically.
 
 ### Sync Policy
 
@@ -278,17 +278,21 @@ Implemented in slice 6:
 
 ### Doctor
 
-Doctor should check:
+Implemented in slice 7:
 
-1. Resource table exists.
-2. Primary key matches schema.
-3. Owner field exists.
-4. Metadata policy keys exist in `auth.userProperties`.
-5. Metadata policy keys have `useInPolicies: true`.
-6. No policy key is self-editable.
-7. Public write/delete policies are explicit.
-8. Owner/list constraints have useful indexes.
-9. `/api/data` and sync behavior is clear for each resource.
+1. Done: resource table exists.
+2. Done: primary key matches schema.
+3. Done: owner field exists.
+4. Done: metadata policy keys exist in `auth.userProperties`.
+5. Done: metadata policy keys have `useInPolicies: true`.
+6. Done: self-editable policy keys are rejected by auth config and resource
+   policy validation.
+7. Done: public or statically uninspectable write/delete policies produce
+   doctor warnings.
+8. Done: owner/list constraints produce index guidance unless the field is
+   already primary key, unique, or part of `_identity`.
+9. Done: `/api/data` and sync behavior is explained for missing list policies,
+   custom list policies, and row-filtered owner constraints.
 
 ## Implementation Slices
 
@@ -323,8 +327,10 @@ Doctor should check:
    direct sync creates apply owner stamping.
 
 7. **Doctor And Docs**
-   Add resource/policy doctor checks and update Start Here, framework docs,
-   auth docs, data API docs, and sync docs.
+   Implemented. Added static policy inspection metadata, resource validation
+   reuse in platform doctor, owner-column registration validation, custom-list
+   scope warnings, auth-disabled resource warnings, public/uninspectable write
+   warnings, owner-field index guidance, and updated Start Here/framework docs.
 
 ## Acceptance Criteria
 

@@ -14,8 +14,9 @@ import type {
   ResourcePolicyAuthConfig,
   ResourcePolicyValidationIssue,
 } from './resource-policy-types';
+import { getPolicyOwnerFields } from './resource-policy-inspection';
 import { validateResourcePolicy } from './resource-policy-validation';
-import { inferTablePrimaryKey } from './resource-schema';
+import { inferTablePrimaryKey, tableHasColumn } from './resource-schema';
 
 /** Registered resource with primary key resolved against the app table schema. */
 export interface RegisteredResourceDefinition extends Omit<ResourceDefinition, 'primaryKey'> {
@@ -30,6 +31,7 @@ export type ResourceRegistryIssueCode =
   | 'resource-primary-key-missing'
   | 'resource-primary-key-mismatch'
   | 'resource-policy-missing'
+  | 'resource-owner-field-missing'
   | ResourcePolicyValidationIssue['code'];
 
 /** Structured registration-time resource validation issue. */
@@ -195,6 +197,22 @@ export function validateResourceDefinitions(
           severity: 'error',
           metadata: policyIssue.metadata,
         });
+      }
+
+      if (schema) {
+        for (const ownerField of getPolicyOwnerFields(policy)) {
+          if (tableHasColumn(schema, ownerField)) continue;
+          issues.push({
+            code: 'resource-owner-field-missing',
+            message: `Resource "${resource.name}" ownerPolicy references missing column "${ownerField}" on table "${resource.table}".`,
+            resource: resource.name,
+            table: resource.table,
+            action,
+            path: `policy.${action}.owner.${ownerField}`,
+            severity: 'error',
+            metadata: { field: ownerField },
+          });
+        }
       }
     }
   }

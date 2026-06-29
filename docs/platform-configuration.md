@@ -308,6 +308,10 @@ Current checks cover:
 14. Vector path collisions, storage/build-output path overlap, read-only
     indexes, unusually high dimensions, embedding alias readiness, and
     unindexed scope metadata fields.
+15. Resource registration and policy shape: missing tables, primary-key
+    mismatches, missing owner columns, untrusted metadata keys, auth-disabled
+    protected resources, missing list policies, custom list policy scope, public
+    or uninspectable write policies, and owner-field index guidance.
 
 Future config-file doctor checks should validate:
 
@@ -318,8 +322,8 @@ Future config-file doctor checks should validate:
 5. Authz metadata marked user-writable.
 6. Tenancy configured without matching table columns/policies.
 7. Storage/avatar config without storage support.
-8. App-owned policy files that reference missing tables, columns, or auth
-   metadata keys.
+8. Loading conventional app-owned policy/resource files directly in doctor when
+   a config module relies only on `server/resources`.
 
 ## Rollout Plan
 

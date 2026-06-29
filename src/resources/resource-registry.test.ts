@@ -137,6 +137,12 @@ describe('resource definitions and registry', () => {
         actions: ['list'],
         policy: metadataPolicy({ theme: 'dark' }),
       }),
+      defineResource({
+        name: 'project-owner',
+        table: 'projects',
+        actions: ['list'],
+        policy: ownerPolicy({ userField: 'owner_id' }),
+      }),
     ];
 
     const issues = validateResourceDefinitions(invalid, { tables, authConfig });
@@ -144,6 +150,7 @@ describe('resource definitions and registry', () => {
     expect(issues.map((issue) => issue.code)).toContain('resource-primary-key-mismatch');
     expect(issues.map((issue) => issue.code)).toContain('resource-policy-missing');
     expect(issues.map((issue) => issue.code)).toContain('metadata-property-untrusted');
+    expect(issues.map((issue) => issue.code)).toContain('resource-owner-field-missing');
   });
 
   test('registry rejects duplicate resource names and tables', () => {

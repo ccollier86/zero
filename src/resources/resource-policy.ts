@@ -11,6 +11,14 @@ export {
 } from './resource-policy-helpers';
 
 export { evaluateResourcePolicy } from './resource-policy-evaluator';
+export {
+  allowsPublicAction,
+  getPolicyMetadataKeys,
+  getPolicyOwnerFields,
+  hasCustomPolicyBranch,
+  requiresAuthenticatedUser,
+  type ResourcePolicyStaticDecision,
+} from './resource-policy-inspection';
 export { validateResourcePolicy } from './resource-policy-validation';
 
 export type {
@@ -30,6 +38,7 @@ export type {
   ResourcePolicyContext,
   ResourcePolicyDecision,
   ResourcePolicyDecisionInput,
+  ResourcePolicyDiagnostics,
   ResourcePolicyDenyReason,
   ResourcePolicyKind,
   ResourcePolicyResource,

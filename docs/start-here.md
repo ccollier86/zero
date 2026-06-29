@@ -180,8 +180,10 @@ lazy tables, including owner constraints and trusted metadata checks. WebSocket
 sync enforces registered resource policy too: unconstrained `list` policies can
 use the normal fast sync path, row-constrained `list` policies use
 per-connection row-filtered sync, and direct sync mutations evaluate resource
-create/update/delete policy server-side. Doctor checks are being layered on in
-a later resource slice.
+create/update/delete policy server-side. Platform doctor validates registered
+resource shape, missing owner columns, trusted metadata keys, auth-disabled
+protected resources, list-policy behavior for `/api/data` and sync, and
+owner-field index guidance.
 
 App-owned backend handlers receive a lazy `zero` service context. Use canonical
 names in new code: `zero.db`, `zero.auth`, `zero.ai`, `zero.vector`,
@@ -215,8 +217,9 @@ bun run doctor -- --config ./zero.config.ts --json
 `doctor` checks app config, table primary keys and natural identities, auth
 email readiness, login/public route safety, storage/auth mismatch, migration
 startup policy, sync policy/index guidance, observability endpoint readiness,
-AI provider/alias readiness, and vector index/storage safety. Warnings do not
-fail by default; use `--strict` in CI.
+AI provider/alias readiness, vector index/storage safety, and resource policy
+shape for generated CRUD, `/api/data`, and WebSocket sync. Warnings do not fail
+by default; use `--strict` in CI.
 
 Use `migrate:doctor` and `migrate:plan` for database drift:
 

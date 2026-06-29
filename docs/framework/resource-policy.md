@@ -3,8 +3,8 @@
 Zero resource policy is the framework-independent authorization core for the
 resource API. It is available today for server-side code and registered
 resource definitions. Generated CRUD routes, `/api/data`, and WebSocket sync
-reads/mutations all enforce registered resource policy. Doctor checks will
-reuse the same contract in a later Phase 5 slice.
+reads/mutations all enforce registered resource policy. Platform doctor checks
+reuse the same contract for static validation and safety guidance.
 
 Import from the server surface:
 
@@ -15,9 +15,11 @@ import {
   anyOf,
   defineResource,
   evaluateResourcePolicy,
+  getPolicyOwnerFields,
   getResourceRegistry,
   metadataPolicy,
   ownerPolicy,
+  requiresAuthenticatedUser,
   validateResourcePolicy,
 } from '@zero/framework/server';
 ```
@@ -351,10 +353,38 @@ Validation currently checks:
 - metadata keys have `useInPolicies: true`;
 - owner policy has a non-empty `userField`;
 - `anyOf()` and `allOf()` have at least one child policy.
+- registered resources reference existing tables;
+- registered resource primary keys match the table primary key;
+- registered `ownerPolicy({ userField })` values reference real table columns.
+
+## Doctor Checks
+
+Run platform doctor after adding or changing resources:
+
+```txt
+bun run doctor -- --config ./zero.config.ts
+bun run doctor -- --config ./zero.config.ts --strict
+```
+
+Resource doctor checks cover:
+
+- registration errors such as missing tables, primary-key mismatches, missing
+  action policies, missing owner columns, and untrusted metadata keys;
+- resources that require auth while `auth` is disabled;
+- registered resources without a `list` policy, because `/api/data` and
+  WebSocket sync reads for that table fail closed;
+- custom `list` policy branches whose row scope cannot be proven statically;
+- write/delete policies with public or uninspectable custom access;
+- owner/list fields that should usually be indexed for `/api/data` and
+  row-filtered sync.
+
+Doctor uses static policy metadata attached by Zero's policy helpers. It does
+not execute `customPolicy()` callbacks. If a custom list policy is intended to
+scope rows, return explicit constraints from that policy and cover the behavior
+with tests.
 
 ## Current Limits
 
 This document covers resource definitions, generated CRUD routes, `/api/data`
 read integration, WebSocket sync read/mutation integration, and the policy
-core. Phase 5 follow-up slices will add doctor checks and frontend resource
-ergonomics.
+core. Phase 5 follow-up slices will add frontend resource ergonomics.

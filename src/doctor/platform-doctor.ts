@@ -15,6 +15,15 @@ import type { AICapability, ResolvedAIConfig, ResolvedAIProviderConfig } from '.
 import type { AuthBehaviorConfig } from '../auth/types';
 import type { EmailConfig } from '../email/types';
 import type { TableSchema } from '../sync/types';
+import type { ResourceAction, ResourceDefinition } from '../resources';
+import {
+  allowsPublicAction,
+  getPolicyOwnerFields,
+  hasCustomPolicyBranch,
+  inferTablePrimaryKey,
+  requiresAuthenticatedUser,
+  validateResourceDefinitions,
+} from '../resources';
 import { resolveConfig, type AppConfig, type AppTableInput, type ResolvedConfig } from '../frontend/server/types';
 
 export type PlatformDoctorSeverity = 'info' | 'warning' | 'error';
@@ -64,6 +73,8 @@ const VECTOR_SCOPE_METADATA_FIELDS = new Set([
   'updatedAt',
 ]);
 
+const WRITE_RESOURCE_ACTIONS = new Set<ResourceAction>(['create', 'update', 'delete']);
+
 /**
  * Run platform-level checks against a createApp config object.
  *
@@ -98,6 +109,7 @@ export function runPlatformDoctor(
     checkAuthAndEmail(resolved, findings, env);
     checkMigrations(resolved, findings);
     checkSyncPolicy(resolved, findings);
+    checkResources(resolved, findings);
     checkAuthPublicPaths(resolved, findings);
     checkObservability(resolved, findings, env);
     checkAI(resolved, findings, env);
@@ -281,6 +293,150 @@ function checkSyncPolicy(
         message: `Table "${tableName}" uses auto sync. If it becomes lazy, index frequent /api/data filter and sort columns.`,
       });
     }
+  }
+}
+
+/** Validate registered resources and explain data/sync policy behavior. */
+function checkResources(
+  resolved: ResolvedConfig,
+  findings: PlatformDoctorFinding[]
+): void {
+  if (resolved.resources.length === 0) return;
+
+  const authConfig = resolveAuthBehaviorConfig(
+    resolved.auth === false ? {} : resolved.auth as AuthBehaviorConfig
+  );
+
+  for (const issue of validateResourceDefinitions(resolved.resources, {
+    tables: resolved.tables,
+    authConfig,
+  })) {
+    addFinding(findings, {
+      severity: 'error',
+      code: `resource.${issue.code}`,
+      path: issue.path
+        ? `resources.${issue.resource ?? issue.table}.${issue.path}`
+        : `resources.${issue.resource ?? issue.table ?? 'unknown'}`,
+      message: issue.message,
+      hint: resourceValidationHint(issue.code),
+      docs: './docs/framework/resource-policy.md',
+    });
+  }
+
+  for (const resource of resolved.resources) {
+    checkResourceListPolicy(resource, resolved, findings);
+    checkResourceAuthShape(resource, resolved, findings);
+    checkResourcePublicWrites(resource, findings);
+  }
+}
+
+/** Emit warnings for resource reads that affect `/api/data` and sync. */
+function checkResourceListPolicy(
+  resource: ResourceDefinition,
+  resolved: ResolvedConfig,
+  findings: PlatformDoctorFinding[]
+): void {
+  const listPolicy = resource.policy.list;
+  const path = `resources.${resource.name}.policy.list`;
+  if (!listPolicy) {
+    addFinding(findings, {
+      severity: 'warning',
+      code: 'resource.list_policy.missing',
+      path,
+      message: `Resource "${resource.name}" is registered for table "${resource.table}" without a list policy. /api/data and WebSocket sync reads for that table fail closed.`,
+      hint: 'Add a list policy when the table should be readable through platform data/sync APIs, or keep it omitted intentionally for write-only/custom access.',
+      docs: './docs/framework/resource-policy.md#generic-data-and-sync-policy',
+    });
+    return;
+  }
+
+  if (hasCustomPolicyBranch(listPolicy)) {
+    addFinding(findings, {
+      severity: 'warning',
+      code: 'resource.list_policy.custom_static_unknown',
+      path,
+      message: `Resource "${resource.name}" list policy includes a custom policy branch, so doctor cannot statically prove its /api/data and sync row scope.`,
+      hint: 'Return explicit constraints from custom list policies when they are intended to scope rows, and cover the behavior with tests.',
+      docs: './docs/framework/resource-policy.md#custom-policy',
+    });
+  }
+
+  const ownerFields = getPolicyOwnerFields(listPolicy);
+  for (const field of ownerFields) {
+    if (!isLikelyIndexedResourceField(resolved.tables[resource.table], field)) {
+      addFinding(findings, {
+        severity: 'warning',
+        code: 'resource.owner_field.index_guidance',
+        path,
+        message: `Resource "${resource.name}" list policy filters by "${field}". Add a migration index for this column when the table can grow.`,
+        hint: 'Owner/list constraints feed /api/data filters and row-filtered sync; indexed owner columns keep those paths fast.',
+        docs: './docs/framework/resource-policy.md#generic-data-and-sync-policy',
+      });
+    }
+  }
+
+  if (ownerFields.length > 0) {
+    addFinding(findings, {
+      severity: 'info',
+      code: 'resource.sync.row_filtered',
+      path,
+      message: `Resource "${resource.name}" uses owner/list constraints. WebSocket sync will use per-connection row filters for table "${resource.table}".`,
+      hint: 'Rows moving out of scope are projected as DELETE changes so client stores do not retain stale data.',
+      docs: './docs/framework/resource-policy.md#websocket-sync',
+    });
+  }
+}
+
+/** Warn when resource policies require auth but the app has auth disabled. */
+function checkResourceAuthShape(
+  resource: ResourceDefinition,
+  resolved: ResolvedConfig,
+  findings: PlatformDoctorFinding[]
+): void {
+  if (resolved.auth !== false) return;
+
+  for (const action of resource.actions) {
+    const policy = resource.policy[action];
+    if (!policy) continue;
+    if (requiresAuthenticatedUser(policy, action) !== 'yes') continue;
+
+    addFinding(findings, {
+      severity: 'warning',
+      code: 'resource.auth_required_but_disabled',
+      path: `resources.${resource.name}.policy.${action}`,
+      message: `Resource "${resource.name}" ${action} policy requires an authenticated user, but auth is disabled.`,
+      hint: 'Enable auth, switch this action to a public policy, or disable generated routes/data/sync access for this resource.',
+      docs: './docs/framework/resource-policy.md',
+    });
+  }
+}
+
+/** Warn when a resource write/delete action is publicly allowed or unknown. */
+function checkResourcePublicWrites(
+  resource: ResourceDefinition,
+  findings: PlatformDoctorFinding[]
+): void {
+  for (const action of resource.actions) {
+    if (!WRITE_RESOURCE_ACTIONS.has(action)) continue;
+
+    const policy = resource.policy[action];
+    if (!policy) continue;
+
+    const publicAccess = allowsPublicAction(policy, action);
+    if (publicAccess === 'no') continue;
+
+    addFinding(findings, {
+      severity: 'warning',
+      code: publicAccess === 'yes'
+        ? 'resource.public_write_policy'
+        : 'resource.public_write_policy_uninspectable',
+      path: `resources.${resource.name}.policy.${action}`,
+      message: publicAccess === 'yes'
+        ? `Resource "${resource.name}" ${action} policy statically allows public writes.`
+        : `Resource "${resource.name}" ${action} policy includes a custom branch, so doctor cannot prove public write access is denied.`,
+      hint: 'Use authenticatedOnly(), ownerPolicy(), metadataPolicy(), or adminOnly() for write/delete actions unless public writes are intentional.',
+      docs: './docs/framework/resource-policy.md',
+    });
   }
 }
 
@@ -748,6 +904,37 @@ function isPathPublic(pathname: string, publicPaths: readonly string[]): boolean
 
 function trimTrailingSlash(value: string): string {
   return value.endsWith('/') && value.length > 1 ? value.slice(0, -1) : value;
+}
+
+function resourceValidationHint(code: string): string | undefined {
+  switch (code) {
+    case 'resource-table-missing':
+      return 'Add the table to createApp({ tables }) or update the resource table name.';
+    case 'resource-primary-key-missing':
+    case 'resource-primary-key-mismatch':
+      return 'Resource primary keys must match the single string sync primary key declared on the table.';
+    case 'resource-policy-missing':
+      return 'Every action listed on a resource needs an explicit policy.';
+    case 'resource-owner-field-missing':
+      return 'Add the owner column to the table schema or update ownerPolicy({ userField }).';
+    case 'metadata-property-unknown':
+    case 'metadata-property-untrusted':
+      return 'Configure auth.userProperties for every metadataPolicy key and set useInPolicies: true only on admin/system/none-editable fields.';
+    default:
+      return undefined;
+  }
+}
+
+function isLikelyIndexedResourceField(
+  schema: TableSchema | undefined,
+  field: string
+): boolean {
+  if (!schema) return false;
+  if (inferTablePrimaryKey(schema) === field) return true;
+  if (schema._identity?.includes(field)) return true;
+
+  const definition = schema[field];
+  return typeof definition === 'string' && /\b(primary\s+key|unique)\b/i.test(definition);
 }
 
 /** Return whether two relative or absolute disk paths overlap. */

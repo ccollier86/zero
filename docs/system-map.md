@@ -120,7 +120,7 @@ src/
 **Files:**
 | File | Purpose |
 |------|---------|
-| `src/doctor/platform-doctor.ts` | Pure app config checks for auth/email, schema PKs, storage, sync policy, migrations, observability, AI, vector, and index guidance |
+| `src/doctor/platform-doctor.ts` | Pure app config checks for auth/email, schema PKs, storage, sync policy, resources, migrations, observability, AI, vector, and index guidance |
 | `src/doctor/config-loader.ts` | Loads an explicit `zero.config.ts`/`config/zero.config.ts` module for CLI checks |
 | `src/doctor/run.ts` | CLI presentation for `bun run doctor` |
 

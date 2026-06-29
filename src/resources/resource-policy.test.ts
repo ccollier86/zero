@@ -17,10 +17,15 @@ import {
   authenticatedOnly,
   customPolicy,
   evaluateResourcePolicy,
+  allowsPublicAction,
+  getPolicyMetadataKeys,
+  getPolicyOwnerFields,
+  hasCustomPolicyBranch,
   metadataPolicy,
   ownerPolicy,
   publicReadUserWrite,
   readOnly,
+  requiresAuthenticatedUser,
   validateResourcePolicy,
 } from './resource-policy';
 
@@ -275,6 +280,25 @@ describe('resource policy core', () => {
       code: 'composite-policy-empty',
       path: 'allOf',
     }]);
+  });
+
+  test('policy inspection exposes static metadata without evaluation', () => {
+    const policy = anyOf(
+      allOf(
+        metadataPolicy({ department: 'support' }),
+        ownerPolicy({ userField: 'owner_id' })
+      ),
+      customPolicy(() => true, { name: 'runtime-override' }),
+      readOnly()
+    );
+
+    expect(getPolicyOwnerFields(policy)).toEqual(['owner_id']);
+    expect(getPolicyMetadataKeys(policy)).toEqual(['department']);
+    expect(hasCustomPolicyBranch(policy)).toBe(true);
+    expect(allowsPublicAction(policy, 'list')).toBe('yes');
+    expect(allowsPublicAction(policy, 'delete')).toBe('unknown');
+    expect(requiresAuthenticatedUser(publicReadUserWrite(), 'create')).toBe('yes');
+    expect(requiresAuthenticatedUser(publicReadUserWrite(), 'list')).toBe('no');
   });
 });
 

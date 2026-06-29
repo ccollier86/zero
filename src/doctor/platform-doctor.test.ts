@@ -8,6 +8,16 @@
 import { describe, expect, test } from 'bun:test';
 import { runPlatformDoctor } from './platform-doctor';
 import type { AppConfig } from '../frontend/server/types';
+import {
+  adminOnly,
+  allOf,
+  anyOf,
+  customPolicy,
+  defineResource,
+  metadataPolicy,
+  ownerPolicy,
+  readOnly,
+} from '../resources';
 
 describe('runPlatformDoctor', () => {
   test('warns by default but only fails strict mode for warnings', () => {
@@ -209,6 +219,97 @@ describe('runPlatformDoctor', () => {
     expect(report.ok).toBe(true);
     expect(hasFinding(report, 'auth.login_path.not_public')).toBe(true);
     expect(hasFinding(report, 'observability.disabled.production')).toBe(true);
+  });
+
+  test('checks resource registration errors and policy/data/sync guidance', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        tickets: {
+          ticket_id: 'text primary key',
+          title: 'text not null',
+          owner_id: 'text not null',
+        },
+        projects: {
+          project_id: 'text primary key',
+          title: 'text not null',
+        },
+      },
+      auth: {
+        userProperties: {
+          department: {
+            type: 'enum',
+            values: ['support', 'management'],
+            editableBy: 'admin',
+            useInPolicies: true,
+          },
+        },
+      },
+      resources: [
+        defineResource({
+          name: 'ticket',
+          table: 'tickets',
+          policy: {
+            list: anyOf(
+              ownerPolicy({ userField: 'owner_id' }),
+              metadataPolicy({ department: 'support' })
+            ),
+            get: ownerPolicy({ userField: 'owner_id' }),
+            create: ownerPolicy({ userField: 'owner_id' }),
+            update: customPolicy(() => true, { name: 'runtime-update' }),
+            delete: adminOnly(),
+          },
+        }),
+        defineResource({
+          name: 'project',
+          table: 'projects',
+          actions: ['list'],
+          policy: ownerPolicy({ userField: 'missing_owner_id' }),
+        }),
+        defineResource({
+          name: 'internal',
+          table: 'projects',
+          actions: ['get'],
+          policy: readOnly(),
+        }),
+      ],
+    }, { env: {} });
+
+    expect(report.ok).toBe(false);
+    expect(hasFinding(report, 'resource.resource-owner-field-missing')).toBe(true);
+    expect(hasFinding(report, 'resource.owner_field.index_guidance')).toBe(true);
+    expect(hasFinding(report, 'resource.sync.row_filtered')).toBe(true);
+    expect(hasFinding(report, 'resource.public_write_policy_uninspectable')).toBe(true);
+    expect(hasFinding(report, 'resource.list_policy.missing')).toBe(true);
+  });
+
+  test('warns when resources require auth but auth is disabled', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        todos: {
+          id: 'text primary key',
+          title: 'text not null',
+          owner_id: 'text not null',
+          _identity: ['owner_id', 'title'],
+        },
+      },
+      auth: false,
+      resources: [
+        defineResource({
+          table: 'todos',
+          actions: ['list', 'create'],
+          policy: {
+            list: allOf(ownerPolicy({ userField: 'owner_id' })),
+            create: ownerPolicy({ userField: 'owner_id' }),
+          },
+        }),
+      ],
+    }, { env: {} });
+
+    expect(report.ok).toBe(true);
+    expect(hasFinding(report, 'resource.auth_required_but_disabled')).toBe(true);
+    expect(hasFinding(report, 'resource.owner_field.index_guidance')).toBe(false);
   });
 });
 

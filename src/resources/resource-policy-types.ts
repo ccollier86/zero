@@ -94,6 +94,7 @@ export interface ResourcePolicy {
   readonly kind: ResourcePolicyKind;
   evaluate(context: ResourcePolicyContext): ResourceMaybePromise<ResourcePolicyDecisionInput>;
   validate?(context: ResourcePolicyValidationContext): ResourcePolicyValidationIssue[];
+  readonly diagnostics?: ResourcePolicyDiagnostics;
 }
 
 /** Policy helper names used for validation and diagnostics. */
@@ -107,6 +108,17 @@ export type ResourcePolicyKind =
   | 'any-of'
   | 'all-of'
   | 'custom';
+
+/** Static metadata used by doctor and registration validation. */
+export interface ResourcePolicyDiagnostics {
+  ownerField?: string;
+  ownerCreateMode?: OwnerPolicyCreateMode;
+  metadataKeys?: readonly string[];
+  publicActions?: readonly ResourceAction[];
+  authenticatedActions?: readonly ResourceAction[];
+  children?: readonly ResourcePolicy[];
+  customName?: string;
+}
 
 /** Context used to validate resource policies before registration. */
 export interface ResourcePolicyValidationContext {
