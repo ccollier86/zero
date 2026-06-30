@@ -655,6 +655,14 @@ complete end to end.
 
 ### Slice 8: Vector Storage Modes
 
+Status: partially implemented for safe file-backed vector storage. Zero uses
+zvec's native collection WAL for durability and now reopens existing
+collections with `ZVecOpen()` instead of trying to recreate them. A real
+adapter test proves records survive dispose plus fresh adapter reopen. Hot
+vector mode is still gated; do not claim memory-backed vector storage until the
+current zvec API proves that active queries are memory-backed and snapshots can
+restore correctly.
+
 - Add vector mode config.
 - Implement or explicitly gate hot vector snapshot support based on zvec
   capabilities.

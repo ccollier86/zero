@@ -37,6 +37,27 @@ const app = await createApp({
 | text field | `text` |
 | metadata JSON field | `_metadata` |
 
+## Storage And Recovery
+
+Zero uses zvec's native collection storage for vector durability. zvec provides
+write-ahead logging for persisted collections, so Zero does not add a separate
+vector journal/checkpoint layer.
+
+Runtime behavior:
+
+1. First access to an index opens the collection lazily.
+2. If the configured path does not exist, Zero creates the collection.
+3. If the configured path already contains a zvec collection, Zero reopens it
+   with `ZVecOpen()` so zvec can recover through its own WAL.
+4. Empty pre-created collection directories are treated as new paths and
+   recreated.
+5. `VectorService.dispose()` closes opened zvec collections on app shutdown.
+
+This is different from SQL hot snapshots and Zero KV/cache recovery. Vector
+storage currently uses zvec's file-backed durability. A future hot vector mode
+should only be exposed if Zero can prove zvec supports memory-backed active
+queries plus safe snapshot restore.
+
 For production apps, explicit index config is better:
 
 ```ts

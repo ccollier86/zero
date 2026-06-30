@@ -7,7 +7,8 @@
  * objects to app code.
  */
 
-import { mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { OBS_CODES } from '../observability/codes';
@@ -217,10 +218,14 @@ export class ZvecAdapter implements VectorIndexStore {
       await mkdir(dirname(this.config.path), { recursive: true });
       this.module = await this.loader();
       const schema = this.createSchema(this.module);
-      this.collection = this.module.ZVecCreateAndOpen(this.config.path, schema, {
+      const options = {
         readOnly: this.config.readOnly,
         enableMMAP: this.config.enableMMAP,
-      });
+      };
+      const mode = await resolveCollectionOpenMode(this.config.path);
+      this.collection = mode === 'open'
+        ? this.module.ZVecOpen(this.config.path, options)
+        : this.module.ZVecCreateAndOpen(this.config.path, schema, options);
       emitVectorIndexReady({
         index: this.config.name,
         documents: this.collection.stats.docCount,
@@ -486,6 +491,21 @@ function vectorToArray(vector: unknown): number[] | undefined {
 
 function statusArray(status: ZVecStatus | ZVecStatus[]): ZVecStatus[] {
   return Array.isArray(status) ? status : [status];
+}
+
+async function resolveCollectionOpenMode(collectionPath: string): Promise<'create' | 'open'> {
+  if (!existsSync(collectionPath)) return 'create';
+
+  const stats = await stat(collectionPath);
+  if (stats.isDirectory()) {
+    const entries = await readdir(collectionPath);
+    if (entries.length === 0) {
+      await rm(collectionPath, { recursive: true, force: true });
+      return 'create';
+    }
+  }
+
+  return 'open';
 }
 
 function writeResult(statuses: readonly ZVecStatus[], ids: readonly string[]): VectorWriteResult {

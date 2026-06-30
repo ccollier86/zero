@@ -340,7 +340,9 @@ await docs.embedAndUpsert({
 
 The vector service owns storage and search only. AI owns embeddings. Scoped
 helpers make bucket, tenant, room, or session isolation simple without forcing
-a multi-tenant auth model into every app. See [Vector Store](./vector.md).
+a multi-tenant auth model into every app. Persisted zvec collections recover
+through zvec's native WAL when Zero reopens an existing index path. See
+[Vector Store](./vector.md).
 
 ---
 

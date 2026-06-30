@@ -1,3 +1,5 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, expect, it } from 'bun:test';
 
 import { resolveVectorConfig } from './vector-config';
@@ -87,6 +89,81 @@ describe('ZvecAdapter', () => {
       score: 0.94,
     });
   });
+
+  it('reopens an existing zvec collection instead of recreating it', async () => {
+    const root = await mkdtemp(join(process.cwd(), '.zero/zvec-adapter-open-'));
+    const config = resolveVectorConfig({
+      dataDir: root,
+      defaultIndex: 'docs',
+      indexes: {
+        docs: {
+          dimensions: 3,
+          path: join(root, 'docs'),
+        },
+      },
+    }, {});
+    if (config === false) throw new Error('Expected vector config.');
+
+    try {
+      await mkdir(config.indexes.docs.path, { recursive: true });
+      await writeFile(join(config.indexes.docs.path, 'manifest.1'), '');
+      const collection = new FakeCollection();
+      const module = fakeZvecModule(collection);
+      const adapter = new ZvecAdapter({
+        config: config.indexes.docs,
+        loader: async () => module,
+      });
+
+      await adapter.stats();
+
+      expect(module.openCalls).toBe(1);
+      expect(module.createCalls).toBe(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('recovers records after dispose and reopen through zvec WAL storage', async () => {
+    const root = await mkdtemp(join(process.cwd(), '.zero/zvec-adapter-recovery-'));
+    const config = resolveVectorConfig({
+      dataDir: root,
+      defaultIndex: 'docs',
+      indexes: {
+        docs: {
+          dimensions: 3,
+          path: join(root, 'docs'),
+          metadata: {
+            bucket: 'string',
+          },
+        },
+      },
+    }, {});
+    if (config === false) throw new Error('Expected vector config.');
+
+    try {
+      const first = new ZvecAdapter({ config: config.indexes.docs });
+      await first.upsert([{
+        id: 'doc_1',
+        vector: [0.1, 0.2, 0.3],
+        text: 'Durable vector document',
+        metadata: { bucket: 'docs' },
+      }]);
+      await first.dispose();
+
+      const second = new ZvecAdapter({ config: config.indexes.docs });
+      const records = await second.fetch(['doc_1']);
+      await second.dispose();
+
+      expect(records).toEqual([{
+        id: 'doc_1',
+        text: 'Durable vector document',
+        metadata: { bucket: 'docs' },
+        score: 0,
+      }]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 class FakeCollection {
@@ -128,6 +205,8 @@ class FakeCollection {
 
 function fakeZvecModule(collection: FakeCollection) {
   return {
+    createCalls: 0,
+    openCalls: 0,
     ZVecDataType: {
       STRING: 2,
       BOOL: 3,
@@ -149,6 +228,13 @@ function fakeZvecModule(collection: FakeCollection) {
     ZVecCollectionSchema: class {
       constructor(readonly params: unknown) {}
     },
-    ZVecCreateAndOpen: () => collection,
+    ZVecCreateAndOpen() {
+      this.createCalls += 1;
+      return collection;
+    },
+    ZVecOpen() {
+      this.openCalls += 1;
+      return collection;
+    },
   } as any;
 }
