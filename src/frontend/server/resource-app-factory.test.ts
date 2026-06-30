@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, test } from 'bun:test';
 
+import { clearKvService, getKvService } from '../../kv';
 import { clearPlatformSQLiteService, getPlatformSQLiteService } from '../../persistence';
 import { defineResource, getResourceRegistry, readOnly } from '../../resources';
 import { createApp } from './app-factory';
@@ -66,6 +67,7 @@ describe('createApp resource registration', () => {
         appDir,
         outDir: join(rootDir, 'out'),
         observability: false,
+        kv: false,
       });
 
       const registry = getResourceRegistry();
@@ -116,6 +118,7 @@ describe('createApp resource registration', () => {
         outDir: join(rootDir, 'out'),
         observability: false,
         auth: false,
+        kv: false,
       });
 
       const response = await app.handle(new Request('http://localhost/api/sql', {
@@ -134,7 +137,101 @@ describe('createApp resource registration', () => {
       await rm(rootDir, { recursive: true, force: true });
     }
   });
+
+  test('mounts durable platform KV for app-owned backend routes and recovers after restart', async () => {
+    const rootDir = await createTempRoot();
+    const routesDir = join(rootDir, 'server', 'routes');
+    const appDir = join(rootDir, 'app');
+    const kvDir = join(rootDir, 'data', 'kv');
+    const serverImport = pathToFileURL(join(process.cwd(), 'src/frontend/server.ts')).href;
+
+    try {
+      await mkdir(routesDir, { recursive: true });
+      await mkdir(appDir, { recursive: true });
+      await writeFile(
+        join(routesDir, 'kv.ts'),
+        [
+          `import { createServerRoute } from '${serverImport}';`,
+          "export default createServerRoute({ name: 'test.kv', prefix: '/api/kv' })",
+          "  .post('/write', async ({ zero }) => {",
+          "    await zero.kv?.set('demo:message', 'persisted');",
+          "    await zero.counter?.increment('demo:hits', 2);",
+          "    return { value: zero.kv?.get('demo:message'), hits: zero.counter?.value('demo:hits') ?? 0 };",
+          "  })",
+          "  .get('/read', ({ zero }) => ({",
+          "    mounted: Boolean(zero.kv),",
+          "    value: zero.kv?.get('demo:message') ?? null,",
+          "    hits: zero.counter?.value('demo:hits') ?? 0,",
+          "  }));",
+          '',
+        ].join('\n')
+      );
+
+      const first = await createKvTestApp({ rootDir, routesDir, appDir, kvDir });
+      first.listen(0);
+      const firstBaseUrl = `http://localhost:${first.server!.port}`;
+      const writeResponse = await fetch(`${firstBaseUrl}/api/kv/write`, { method: 'POST' });
+      expect(writeResponse.status).toBe(200);
+      await expect(writeResponse.json()).resolves.toEqual({ value: 'persisted', hits: 2 });
+      await first.stop();
+
+      const second = await createKvTestApp({ rootDir, routesDir, appDir, kvDir });
+      second.listen(0);
+      const secondBaseUrl = `http://localhost:${second.server!.port}`;
+      const readResponse = await fetch(`${secondBaseUrl}/api/kv/read`);
+      expect(readResponse.status).toBe(200);
+      await expect(readResponse.json()).resolves.toEqual({
+        mounted: true,
+        value: 'persisted',
+        hits: 2,
+      });
+      await second.stop();
+    } finally {
+      await cleanupPlatformKvService();
+      cleanupPlatformSQLiteService();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });
+
+async function createKvTestApp(input: {
+  rootDir: string;
+  routesDir: string;
+  appDir: string;
+  kvDir: string;
+}) {
+  return createApp({
+    db: { mode: 'memory' },
+    tables: {
+      notes: {
+        note_id: 'text primary key',
+        title: 'text not null',
+      },
+    },
+    kv: {
+      baseDir: input.kvDir,
+      durability: 'always',
+      fsyncMs: 60_000,
+      checkpointIntervalMs: 60_000,
+    },
+    serverResourcesDir: false,
+    serverPluginsDir: false,
+    serverMiddlewareDir: false,
+    serverEndpointsDir: false,
+    serverRoutesDir: input.routesDir,
+    appDir: input.appDir,
+    outDir: join(input.rootDir, `out-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+    observability: false,
+    auth: false,
+  });
+}
+
+async function cleanupPlatformKvService(): Promise<void> {
+  const service = getKvService();
+  if (!service) return;
+  await service.stop();
+  clearKvService(service);
+}
 
 function cleanupPlatformSQLiteService(): void {
   const service = getPlatformSQLiteService();

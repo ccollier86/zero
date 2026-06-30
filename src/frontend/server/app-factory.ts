@@ -20,6 +20,7 @@ import { buildClientBundle } from './client-bundle';
 import { buildPlatformStyles } from './style-bundle';
 import { configureEmail } from '../../email';
 import { createAIPlugin } from '../../ai';
+import { createKvPlugin } from '../../kv';
 import type { AppConfig } from './types';
 import { resolveConfig } from './types';
 import { applyTableSyncResolution, resolveTableSyncModes } from './sync-mode-resolver';
@@ -304,6 +305,11 @@ async function mountPlatformApp({
     app.use(createVectorPlugin({
       config: config.vector,
     }));
+  }
+
+  // 2.8. KV/cache — memory-first app cache with journal/checkpoint recovery
+  if (config.kv !== false) {
+    app.use(createKvPlugin(config.kv));
   }
 
   // 3. Scheduler — provides cron job registration for other plugins

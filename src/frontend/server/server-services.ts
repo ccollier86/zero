@@ -43,6 +43,8 @@ import type { ResourceRegistry } from '../../resources';
 import { getResourceRegistry } from '../../resources';
 import type { PlatformTokenService } from '../../tokens';
 import { getPlatformTokenService } from '../../tokens';
+import type { KvCounterService, KvLimiterService, KvService } from '../../kv';
+import { getKvService } from '../../kv';
 import type { PlatformSQLiteService } from '../../persistence';
 import { getPlatformSQLiteService } from '../../persistence';
 
@@ -104,6 +106,12 @@ export interface ServerRouteServices {
   readonly auth: ServerAuthServices;
   /** Generic platform action/resume token service. */
   readonly tokens: PlatformTokenService | null;
+  /** Platform KV/cache service, when mounted. */
+  readonly kv: KvService | null;
+  /** Platform counter helpers, when KV is mounted. */
+  readonly counter: KvCounterService | null;
+  /** Platform rate limiter helpers, when KV is mounted. */
+  readonly limiter: KvLimiterService | null;
   /** Internal AI service, when configured. */
   readonly ai: AIService | null;
   /** Primary vector store handle for app-owned server code, when configured. */
@@ -169,6 +177,15 @@ function createServerRouteServices(): ServerRouteServices {
     auth: createServerAuthServices(),
     get tokens() {
       return getPlatformTokenService();
+    },
+    get kv() {
+      return getKvService();
+    },
+    get counter() {
+      return getKvService()?.counters ?? null;
+    },
+    get limiter() {
+      return getKvService()?.limiter ?? null;
     },
     get ai() {
       return getAI();

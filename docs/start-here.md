@@ -268,11 +268,14 @@ service getters. Use `@zero/framework/react/app-provider`,
 `@zero/framework/react` barrel remains available as a convenience export, but
 generated apps should prefer narrow imports. Direct subsystem imports such as
 `@zero/framework/email`, `@zero/framework/ai`, `@zero/framework/vector`,
-`@zero/framework/persistence`, `@zero/framework/sync/client`, and
+`@zero/framework/persistence`, `@zero/framework/kv`,
+`@zero/framework/sync/client`, and
 `@zero/framework/components/data-table` are available when a file should depend
 on one specific feature. `persistence` is the advanced server-side SQLite
 foundation; generated apps should normally let `createApp()` own it and use
-`zero.sql` from backend routes when direct SQL is needed.
+`zero.sql` from backend routes when direct SQL is needed. `kv` is the advanced
+server-side cache/KV package; generated apps normally use `zero.kv`,
+`zero.counter`, and `zero.limiter` from backend routes.
 
 Use packaged imports first. When an app needs to customize component or hook
 source, copy selected pieces with `zero add`:
@@ -307,6 +310,8 @@ Common variables:
 | `AUTH_ACCOUNT_EMAIL_COOLDOWN` | Cooldown for active setup/reset emails per user/type. |
 | `AUTH_MANUAL_PASSWORD_RESET` | `false` disables direct admin password replacement. |
 | `AUTH_SIGNING_KEY` | Optional externally managed ES256 private JWK. |
+| `ZERO_KV_BASE_DIR` | Optional app convention for KV journal/checkpoint files. Defaults to `./data/kv`. |
+| `ZERO_KV_DURABILITY` | Optional app convention for KV durability: `everysec` or `always`. |
 | `OPENAI_API_KEY` | Enables OpenAI in the AI layer. |
 | `ANTHROPIC_API_KEY` | Enables Anthropic in the AI layer. |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables Google Generative AI in the AI layer. |

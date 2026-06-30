@@ -20,6 +20,7 @@ const hasAI = Boolean(
     || Bun.env.LLAMA_API_KEY
 );
 const hasVector = Bun.env.ZERO_VECTOR_ENABLED === 'true';
+const kvDurability = Bun.env.ZERO_KV_DURABILITY === 'always' ? 'always' : 'everysec';
 
 export const config = defineZeroConfig({
   app: {
@@ -62,6 +63,10 @@ export const config = defineZeroConfig({
         defaultDimensions: Number(Bun.env.ZERO_VECTOR_DEFAULT_DIMENSIONS ?? 1536),
       }
     : false,
+  kv: {
+    baseDir: Bun.env.ZERO_KV_BASE_DIR ?? './data/kv',
+    durability: kvDurability,
+  },
   stateSync: true,
   appDir: './app',
   serverPluginsDir: './server/plugins',

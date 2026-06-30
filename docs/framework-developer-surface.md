@@ -41,6 +41,7 @@ but new app code should use `@zero/framework/*`.
 | `@zero/framework/auth` | Auth plugin, store, token, and auth config contracts. |
 | `@zero/framework/doctor` | Programmatic platform doctor use. Generated apps usually call `zero doctor`. |
 | `@zero/framework/email` | Email providers/service contracts for custom adapters. App code usually calls `getEmailService()` from `server`. |
+| `@zero/framework/kv` | Server-side KV/cache service, counters, limiters, and manual Elysia plugin. App code usually uses `zero.kv` from backend routes. |
 | `@zero/framework/migrations` | Programmatic migration planning/status. Generated apps usually call `zero migrate`. |
 | `@zero/framework/notifications` | Notification plugin/service contracts. React hooks/components come from `react`. |
 | `@zero/framework/observability` | Backend sink, event, and code contracts. Server routes can also import these from `server`. |
@@ -159,6 +160,7 @@ SQLite's file/WAL path.
 | Observability | Mounted by default; exposes protected Zero observability routes. |
 | AI | Mounted when `ai !== false`; decorates Elysia context with `ai` and exposes optional status endpoint. |
 | Vector | Mounted when `vector !== false`; decorates Elysia context with `vectors`; no public routes by default. |
+| KV/cache | Mounted by default; app-owned backend routes can use `zero.kv`, `zero.counter`, and `zero.limiter`. |
 | Scheduler | Always mounted for platform jobs. |
 | Notifications | Mounted when auth is enabled. |
 | Rooms | Mounted when auth is enabled. |
@@ -293,6 +295,31 @@ Use `zero.db` when you want ReactiveDB change tracking and websocket sync. Use
 queries, and internal platform tables. Both point at the same platform
 persistence foundation when mounted through `createApp()`.
 
+## Backend KV/Cache Access
+
+`createApp()` mounts durable memory-first KV/cache by default. Use it for
+server-side cache values, counters, rate limits, short-lived workflow
+coordination, and resume/intake scratch state that should survive normal
+restarts without requiring Redis:
+
+```ts
+import { createServerRoute } from '@zero/framework/server';
+
+export default createServerRoute({ name: 'intake.progress', prefix: '/api/intake' })
+  .post('/draft/:id', async ({ params, body, zero }) => {
+    const draft = zero.kv?.namespace('intake-drafts');
+
+    await draft?.set(params.id, body, { ttlMs: 14 * 24 * 60 * 60 * 1000 });
+    await zero.counter?.increment('intake:draft-saves');
+
+    return { saved: true };
+  });
+```
+
+Set `kv: false` only when an app intentionally does not want this service.
+Tests may use `kv: { durability: 'memory' }`; generated apps should keep the
+default durable `everysec` mode or use `always` for stronger per-write flushes.
+
 The `zero` object is the canonical backend service context for app-owned
 server code:
 
@@ -301,6 +328,9 @@ server code:
 | `zero.db` | ReactiveDB reads/writes. |
 | `zero.auth` | Auth store/token helpers; values are `null` when auth is disabled. |
 | `zero.tokens` | Generic action/resume token service for secure links and public continuation flows. |
+| `zero.kv` | Durable memory-first KV/cache service. |
+| `zero.counter` | Counter helpers backed by KV. |
+| `zero.limiter` | Rate limiter helpers backed by KV. |
 | `zero.ai` | Internal AI service, when enabled. |
 | `zero.vector` | Vector service, when enabled. |
 | `zero.email` | Email service; noop-backed when email is disabled. |
@@ -323,6 +353,9 @@ Prefer Zero's canonical service vocabulary in app-owned backend code:
 | `zero.db` | `create()`, `get()`, `list()`, `update()`, `delete()` |
 | `zero.auth.store` | `create()`, `get()`, `list()`, `update()`, `delete()` |
 | `zero.tokens` | `createActionToken()`, `inspectActionToken()`, `consumeActionToken()`, `createResumeToken()`, `verifyResumeToken()`, `rotateResumeToken()`, `revokeResumeToken()` |
+| `zero.kv` | `get()`, `set()`, `delete()`, `getOrSet()`, `compareAndSet()`, `namespace()` |
+| `zero.counter` | `increment()`, `decrement()`, `value()`, `reset()` |
+| `zero.limiter` | `fixedWindow()`, `tokenBucket()`, `slidingWindow()` |
 | `zero.notifications` | `create()`, `get()`, `list()`, `delete()` |
 | `zero.scheduler` | `create()`, `get()`, `list()`, `run()`, `delete()`, `stop()` |
 | `zero.workflows` | `run()`, `get()`, `list()`, `stop()` |

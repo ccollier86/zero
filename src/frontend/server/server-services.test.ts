@@ -18,6 +18,7 @@ import {
   getPlatformSink,
 } from '../../observability';
 import { getAI } from '../../ai';
+import { getKvService } from '../../kv';
 import { getVectorStore } from '../../vector';
 import { getResourceRegistry } from '../../resources';
 import { getPlatformTokenService } from '../../tokens';
@@ -41,6 +42,9 @@ describe('server service context', () => {
     expect(zero.tokens).toBe(getPlatformTokenService());
     expect(zero.sql).toBe(getPlatformSQLiteService());
     expect(zero.sqlite).toBe(zero.sql);
+    expect(zero.kv).toBe(getKvService());
+    expect(zero.counter).toBe(getKvService()?.counters ?? null);
+    expect(zero.limiter).toBe(getKvService()?.limiter ?? null);
 
     expect(zero.ai).toBe(getAI());
     expect(zero.vector).toBe(getVectorStore());

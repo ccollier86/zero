@@ -2090,6 +2090,7 @@ The server provides:
 - `/api/auth/*` — JWT authentication endpoints
 - `/api/_zero/observability/events` — protected recent event read + frontend event ingest
 - `zero.tokens` — server-side generic action/resume token service for secure links and public continuation flows
+- `zero.kv`, `zero.counter`, `zero.limiter` — server-side KV/cache, counters, and rate limiting
 - `/notifications/*` — Notification CRUD + receipt tracking (via `createNotificationPlugin`)
 - `/storage/*` — Authenticated drive and file storage routes (via `createStoragePlugin`)
 - `/scheduler/*` — Admin job management (via `createSchedulerPlugin`)
@@ -2191,6 +2192,26 @@ zero.tokens?.verifyResumeToken(token, {
 ```
 
 See [Platform Tokens](./tokens.md).
+
+#### Platform KV/cache
+
+`createApp()` mounts durable memory-first KV/cache by default. App-owned
+backend routes can use `zero.kv` for values and namespaces, `zero.counter` for
+counters, and `zero.limiter` for common rate-limit shapes.
+
+```ts
+await zero.kv?.set('draft:123', { step: 4 }, { ttlMs: 86_400_000 });
+await zero.counter?.increment('draft:saves');
+
+const result = await zero.limiter?.fixedWindow('login:ip:127.0.0.1', {
+  limit: 5,
+  windowMs: 60_000,
+});
+```
+
+Omit `kv` to use durable defaults under `./data/kv`, set `kv: false` to
+disable, or pass `kv: { durability: 'always' }` for stronger per-write fsync.
+See [Platform KV/cache](./kv.md).
 
 #### Observability
 

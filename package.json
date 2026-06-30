@@ -59,6 +59,10 @@
       "types": "./src/hooks/index.ts",
       "import": "./src/hooks/index.ts"
     },
+    "./kv": {
+      "types": "./src/kv/index.ts",
+      "import": "./src/kv/index.ts"
+    },
     "./migrations": {
       "types": "./src/migrations/index.ts",
       "import": "./src/migrations/index.ts"

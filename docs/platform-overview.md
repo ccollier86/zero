@@ -293,6 +293,29 @@ See [Platform Tokens](./tokens.md).
 
 ---
 
+## Platform KV/Cache
+
+`createApp()` mounts a server-side KV/cache service by default. It is
+memory-first for active reads and uses journal/checkpoint files under
+`./data/kv` for restart recovery.
+
+```ts
+await zero.kv?.set('intake:draft:123', formState, { ttlMs: 14 * 24 * 60 * 60 * 1000 });
+await zero.counter?.increment('intake:draft-saves');
+
+const allowed = await zero.limiter?.fixedWindow('email:verify:ip:1.2.3.4', {
+  limit: 5,
+  windowMs: 60_000,
+});
+```
+
+Use it for server cache values, counters, rate limits, workflow coordination,
+and recoverable app scratch state. Use SQL, object storage, or vector storage
+when data should be queried relationally, stored as files, or searched by
+embedding. See [Platform KV/cache](./kv.md).
+
+---
+
 ## Vector Store
 
 Local zvec-backed vector storage is available when enabled with
@@ -696,7 +719,10 @@ const app = createApp(config);
 app.listen(3000);
 ```
 
-This single call wires up: ReactiveDB, WebSocket sync, auth (JWT + user store), state sync, ephemeral KV, rooms, notifications, workflows, scheduler, file-based router, resource policy, auto `/api/data` endpoint for lazy tables, SSR, and static file serving.
+This single call wires up: ReactiveDB, WebSocket sync, auth (JWT + user store),
+state sync, platform KV/cache, ephemeral KV, rooms, notifications, workflows,
+scheduler, file-based router, resource policy, auto `/api/data` endpoint for
+lazy tables, SSR, and static file serving.
 
 To make app-owned tables read-only or role-gated over direct sync writes, pass a `syncPolicy`. Platform defaults still compose with your policy using deny-wins semantics.
 

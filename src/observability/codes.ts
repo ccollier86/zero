@@ -50,6 +50,11 @@ export const OBS_CODES = {
   SYNC_POLICY_CALLBACK_FAILED: code('sync', 'policy.callback_failed', 'warn', 'Sync policy callback failed; request was denied.'),
   DATA_QUERY_FAILED: code('data', 'query.failed', 'error', 'Data query endpoint failed.'),
 
+  KV_STARTED: code('kv', 'started', 'info', 'Platform KV/cache service started.'),
+  KV_STOPPED: code('kv', 'stopped', 'info', 'Platform KV/cache service stopped.'),
+  KV_START_FAILED: code('kv', 'start.failed', 'error', 'Platform KV/cache service failed to start.'),
+  KV_STOP_FAILED: code('kv', 'stop.failed', 'error', 'Platform KV/cache service failed to stop cleanly.'),
+
   AUTH_STARTED: code('auth', 'started', 'info', 'Auth plugin started.'),
   AUTH_STOPPED: code('auth', 'stopped', 'info', 'Auth plugin stopped.'),
   AUTH_FIRST_ADMIN_BOOTSTRAPPED: code('auth', 'first_admin.bootstrapped', 'info', 'First admin user bootstrapped.'),

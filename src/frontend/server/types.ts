@@ -8,6 +8,7 @@ import type { AIConfig, ResolvedAIConfig } from '../../ai/ai-types';
 import { resolveVectorConfig } from '../../vector/vector-config';
 import type { ResolvedVectorConfig, VectorConfig } from '../../vector/vector-types';
 import type { ResourceCrudRoutesConfig, ResourceDefinition } from '../../resources';
+import type { KvServiceConfig } from '../../kv';
 
 // ─── App Configuration ─────────────────────────────────────────────────────
 
@@ -133,6 +134,16 @@ export interface AppConfig {
    * Default: false.
    */
   vector?: boolean | VectorConfig;
+
+  /**
+   * Platform KV/cache configuration.
+   *
+   * Enabled by default with durable memory-first recovery under `./data/kv`.
+   * Set to false to disable. Tests may explicitly pass `{ durability:
+   * 'memory' }`, but generated apps should keep the default journal/checkpoint
+   * recovery path.
+   */
+  kv?: boolean | KvServiceConfig;
 
   /** Enable per-user server-persisted state. Default: false */
   stateSync?: boolean;
@@ -275,6 +286,7 @@ export interface ResolvedConfig {
   email: false | EmailConfig;
   ai: false | ResolvedAIConfig;
   vector: false | ResolvedVectorConfig;
+  kv: false | KvServiceConfig;
   stateSync: boolean;
   syncPolicy?: SyncPolicy;
   resources: readonly ResourceDefinition[];
@@ -323,6 +335,7 @@ export function resolveConfig(
       : config.email;
   const ai = resolveAIConfig(config.ai, env);
   const vector = resolveVectorConfig(config.vector, env);
+  const kv = resolveKvConfig(config.kv);
   const stateSync = config.stateSync ?? false;
 
   if (stateSync && auth === false) {
@@ -373,6 +386,7 @@ export function resolveConfig(
     email,
     ai,
     vector,
+    kv,
     stateSync,
     syncPolicy: config.syncPolicy,
     resources: config.resources ?? [],
@@ -401,6 +415,17 @@ export function resolveConfig(
     declaredSyncModes,
     resolvedSyncModes: {},
     tableColumns,
+  };
+}
+
+/** Normalize app KV config while keeping the default durable, not ephemeral. */
+function resolveKvConfig(config: AppConfig['kv']): false | KvServiceConfig {
+  if (config === false) return false;
+  const explicit = config === true || config === undefined ? {} : config;
+  return {
+    baseDir: './data/kv',
+    durability: 'everysec',
+    ...explicit,
   };
 }
 

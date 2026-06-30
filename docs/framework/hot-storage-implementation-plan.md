@@ -578,12 +578,23 @@ Infrastructure work is not complete without restart/recovery tests:
   clock behavior.
 - No persistence or Elysia plugin in this slice.
 
+Status: implemented. The memory-engine slice is exported from
+`@zero/framework/kv` and documented in [Platform KV/cache](../kv.md). Runtime
+journal/checkpoint recovery and `createApp()` mounting are implemented by the
+later KV service and app-factory slices.
+
 ### Slice 3: KV Journal, Checkpoint, Recovery
 
 - Add append-only journal, checkpoint writer/reader, serializer, and recovery.
 - Add durability modes: `everysec`, `always`, and `memory`.
 - Add tests for restart recovery, checkpoint compaction, replay after
   checkpoint, expired-entry recovery, and corrupted-record handling.
+
+Status: implemented for the standalone persistence primitives. `KvFileJournal`,
+`KvCheckpointStore`, and `recoverKvMemoryEngine()` exist with focused tests for
+checkpoint restore, journal replay, expired checkpoint entries, and corrupt
+journal fail/skip behavior. Background everysec timers and checkpoint cadence
+belong to the service/runtime slice.
 
 ### Slice 4: KV Service And Elysia Plugin
 
@@ -592,6 +603,15 @@ Infrastructure work is not complete without restart/recovery tests:
 - Expose `zero.kv`, `zero.counter`, and `zero.limiter`.
 - Route all warnings/errors through Zero observability codes.
 - Add docs and package exports.
+
+Status: implemented as standalone service/plugin infrastructure. `KvService`
+owns durable write ordering, recovery startup, fsync/checkpoint timers,
+namespace helpers, counters, fixed-window/token-bucket/sliding-window limiters,
+and lifecycle stop flushing. `createKvPlugin()` exposes `kv`, `kvService`,
+`counter`, and `limiter` on Elysia context, and `getKvService()` is available
+for lazy server services. `createApp()` now mounts the plugin by default and
+exposes the service to app-owned backend routes through `zero.kv`,
+`zero.counter`, and `zero.limiter`.
 
 ### Slice 5: SQL Persistence Primitive
 
@@ -620,16 +640,18 @@ second database.
 
 ### Slice 7: App Factory Wiring
 
-Status: partially implemented for SQL on this branch. `createApp()` creates the
-platform SQLite service first, runs migrations against that handle, injects it
-into ReactiveDB through the sync plugin, and app-owned backend routes can use
-`zero.sql`/`zero.sqlite`. KV/cache and vector still need their storage-mode
-integration slices before this phase is complete end to end.
+Status: implemented for SQL and KV/cache on this branch. `createApp()` creates
+the platform SQLite service first, runs migrations against that handle, injects
+it into ReactiveDB through the sync plugin, and app-owned backend routes can use
+`zero.sql`/`zero.sqlite`. `createApp()` also mounts durable KV/cache by default
+under `./data/kv`, with `kv: false` available for apps that intentionally opt
+out. Vector still needs the storage-mode integration slice before this phase is
+complete end to end.
 
 - `createApp()` creates platform storage first.
 - Sync, auth, tokens, resources, workflows, scheduler, storage, AI, vector, and
   app routes receive the shared platform services.
-- Generated apps default to durable hot SQL plus enabled KV once stable.
+- Generated apps default to durable hot SQL plus enabled KV.
 
 ### Slice 8: Vector Storage Modes
 

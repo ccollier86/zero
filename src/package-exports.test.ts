@@ -52,6 +52,12 @@ import { AIService } from '@zero/framework/ai';
 import { createAuthPlugin, isPolicyTrustedUserProperty } from '@zero/framework/auth';
 import { runPlatformDoctor } from '@zero/framework/doctor';
 import { EmailService } from '@zero/framework/email';
+import {
+  createKvPlugin as createKvPluginSubpath,
+  getKvService as getKvServiceSubpath,
+  KvMemoryEngine as KvMemoryEngineSubpath,
+  KvService as KvServiceSubpath,
+} from '@zero/framework/kv';
 import { Migrator } from '@zero/framework/migrations';
 import { createNotificationPlugin } from '@zero/framework/notifications';
 import { OBS_CODES } from '@zero/framework/observability';
@@ -67,13 +73,17 @@ import {
   createResourceCrudPlugin,
   createUploadGrantToken,
   defineResource,
-  getPlatformSQLiteService,
   getAI,
   getEmailService,
+  getKvService,
   getPlatformTokenService,
+  getPlatformSQLiteService,
   getResourceRegistry,
   getVectorStore,
   getWorkflowService,
+  createKvPlugin,
+  KvMemoryEngine,
+  KvService,
   metadataPolicy,
   ownerPolicy,
   verifyUploadGrantToken,
@@ -94,6 +104,8 @@ export const serverSymbols = {
   createAuthPlugin,
   isPolicyTrustedUserProperty,
   adminOnly,
+  createKvPlugin,
+  createKvPluginSubpath,
   createNotificationPlugin,
   createPlatformSQLiteService,
   createResourceCrudPlugin,
@@ -113,12 +125,18 @@ export const serverSymbols = {
   encodeFieldValue,
   getAI,
   getEmailService,
+  getKvService,
+  getKvServiceSubpath,
   getPlatformTokenService,
   getPlatformSQLiteService,
   getResourceRegistry,
   getVectorStore,
   getWorkflowService,
   metadataPolicy,
+  KvMemoryEngine,
+  KvMemoryEngineSubpath,
+  KvService,
+  KvServiceSubpath,
   Migrator,
   OBS_CODES,
   ownerPolicy,

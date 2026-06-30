@@ -27,6 +27,7 @@ src/
   notifications/           <- Notification service + plugin
   ai/                      <- Internal AI service, provider registry, tools, conversations, Meta adapter
   vector/                  <- zvec-backed local vector store, filters, AI bridge
+  kv/                      <- Platform KV/cache service, TTL/LRU indexes, journal/checkpoint recovery, Elysia plugin
   rooms/                   <- Rooms, presence
   scheduler/               <- Cron job scheduler
   workflows/               <- Durable workflow engine
@@ -146,6 +147,31 @@ verification, invites, password lifecycle, and long public continuation flows.
 **Key pattern:** Raw tokens are returned once and never stored. Action tokens
 are consume-once. Resume tokens are reusable until expiry, revocation, or
 rotation.
+
+---
+
+## System 2.3: Platform KV/Cache
+
+**What:** Server-side Redis-style KV/cache with memory-first reads and
+journal/checkpoint recovery. Mounted by `createApp()` by default and exposed to
+app-owned backend routes as `zero.kv`, `zero.counter`, and `zero.limiter`.
+
+**Files:**
+| File | Purpose |
+|------|---------|
+| `src/kv/kv-memory-engine.ts` | Hot in-memory `Map` engine with TTL, LRU, CAS, counters, and entry metadata |
+| `src/kv/kv-journal.ts` | Append-only JSONL mutation journal |
+| `src/kv/kv-checkpoint.ts` | Atomic checkpoint read/write |
+| `src/kv/kv-recovery.ts` | Checkpoint restore plus journal replay |
+| `src/kv/kv-service.ts` | App-facing service, write ordering, timers, final flush/checkpoint |
+| `src/kv/kv-counter-service.ts` | Counter helpers |
+| `src/kv/kv-limiter-service.ts` | Fixed-window, token-bucket, and sliding-window limiters |
+| `src/kv/kv.plugin.ts` | Elysia lifecycle plugin and `getKvService()` singleton |
+| `src/kv/index.ts` | `@zero/framework/kv` and server export surface |
+
+**Key pattern:** Active cache reads stay in memory. Disk exists for recovery
+artifacts only. Generated apps use durable `everysec` journal/checkpoint
+settings under `./data/kv` unless they explicitly set `kv: false`.
 
 ---
 

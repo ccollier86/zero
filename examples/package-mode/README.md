@@ -75,6 +75,8 @@ folders:
 The starter uses SQLite `hot` mode by default: active relational data stays in
 process memory and Zero writes snapshot recovery files under `./data`. Set
 `DB_PATH=./data/app.db` when you want explicit SQLite file/WAL mode instead.
+The starter also mounts the platform KV/cache service by default with journal
+and checkpoint files under `ZERO_KV_BASE_DIR` or `./data/kv`.
 
 ## Package-Mode Imports
 

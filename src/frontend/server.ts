@@ -245,6 +245,44 @@ export type {
   SQLiteStorageMode,
 } from '../persistence';
 
+// ─── KV / Cache: Server ─────────────────────────────────────────────────
+export {
+  KvCheckpointStore,
+  KvCounterService,
+  KvError,
+  KvFileJournal,
+  KvLimiterService,
+  KvMemoryEngine,
+  KvNamespace,
+  KvService,
+  KvTtlIndex,
+  clearKvService,
+  createKvPlugin,
+  getKvService,
+  recoverKvMemoryEngine,
+} from '../kv';
+export type {
+  KvClock,
+  KvCompareAndSetResult,
+  KvCounterOptions,
+  KvEvictionPolicy,
+  KvFixedWindowOptions,
+  KvJournalDurability,
+  KvLimiterResult,
+  KvMemoryEngineOptions,
+  KvMemoryEngineStats,
+  KvPluginConfig,
+  KvRecoveryCorruptRecordPolicy,
+  KvRecoveryResult,
+  KvServiceConfig,
+  KvServiceStatus,
+  KvSetOptions,
+  KvSlidingWindowOptions,
+  KvTokenBucketOptions,
+  ZeroKvEntry,
+  ZeroKvKind,
+} from '../kv';
+
 // ─── Platform Doctor ───────────────────────────────────────────────────
 export { runPlatformDoctor } from '../doctor/platform-doctor';
 export type {

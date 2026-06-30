@@ -38,6 +38,9 @@ vector, workflows, observability, or migrations.
   phased plan for the Zero-owned KV/cache engine, SQL persistence primitive,
   ReactiveDB refactor, vector storage modes, doctor checks, and generated app
   defaults.
+- [Platform KV/cache](../kv.md): Zero-owned memory-first KV/cache service,
+  journal/checkpoint recovery, app-facing `zero.kv`, counters, limiters, and
+  `createApp()` defaults.
 - [Resource Policy Core](./resource-policy.md): implemented server-side policy
   helpers, trusted metadata validation, owner constraints, composition, and
   evaluator contract used by resource integrations.

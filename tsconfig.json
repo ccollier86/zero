@@ -47,6 +47,7 @@
       "@zero/framework/icons": ["./src/frontend/icons"],
       "@zero/framework/ai": ["./src/ai"],
       "@zero/framework/auth": ["./src/auth"],
+      "@zero/framework/kv": ["./src/kv"],
       "@zero/framework/notifications": ["./src/notifications"],
       "@zero/framework/observability": ["./src/observability"],
       "@zero/framework/persistence": ["./src/persistence"],
