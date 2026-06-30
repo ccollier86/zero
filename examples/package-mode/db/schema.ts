@@ -20,6 +20,17 @@ export const customers = defineTable(
   }
 );
 
+/**
+ * Shared app table definitions.
+ *
+ * `createApp()` extracts `.serverTable`; `AppProvider` extracts `.clientTable`.
+ * Keeping one object avoids server/client schema drift in package-mode apps.
+ */
 export const tables = {
+  customers,
+};
+
+/** Raw server tables for lower-level tests or direct sync plugin usage. */
+export const serverTables = {
   customers: customers.serverTable,
 };

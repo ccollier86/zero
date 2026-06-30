@@ -11,7 +11,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 
-const PLATFORM_CSS_ENTRYPOINT = 'src/frontend/styles/globals.css';
+const PLATFORM_SOURCE_DIR = resolve(import.meta.dir, '../..');
+const PLATFORM_CSS_ENTRYPOINT = resolve(import.meta.dir, '../styles/globals.css');
 const STYLE_FILE_PREFIX = 'platform.';
 const STYLE_FILE_SUFFIX = '.css';
 const runtimeRequire = createRequire(import.meta.url);
@@ -65,7 +66,7 @@ export async function buildPlatformStyles(
 
   removeStaleStyleBundles(absOut);
 
-  const entrypoint = resolve(PLATFORM_CSS_ENTRYPOINT);
+  const entrypoint = PLATFORM_CSS_ENTRYPOINT;
   const css = readFileSync(entrypoint, 'utf8');
   const { compile } = loadTailwindCompiler();
   const compiler = await compile(css, {
@@ -97,7 +98,7 @@ export async function buildPlatformStyles(
 export function scanTailwindCandidates(appDir: string = './app'): string[] {
   const { Scanner } = loadTailwindScanner();
   const sources: SourceEntry[] = [
-    { base: resolve('src'), pattern: '**/*.{ts,tsx,js,jsx}', negated: false },
+    { base: PLATFORM_SOURCE_DIR, pattern: '**/*.{ts,tsx,js,jsx}', negated: false },
   ];
   const resolvedAppDir = resolve(appDir);
 

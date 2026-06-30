@@ -12,7 +12,7 @@ import { describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 
 import { createSyncPlugin } from '../../sync';
-import { tables } from '../../../examples/package-mode/db/schema';
+import { serverTables } from '../../../examples/package-mode/db/schema';
 import { loadServerRoutePlugins } from './server-route-loader';
 
 describe('package-mode fixture', () => {
@@ -41,7 +41,7 @@ describe('package-mode fixture', () => {
     let app = new Elysia()
       .use(createSyncPlugin({
         db: { mode: 'memory' },
-        tables,
+        tables: serverTables,
       }));
 
     for (const plugin of plugins) app = app.use(plugin as any);

@@ -27,6 +27,8 @@ export interface RouterPluginOptions {
   routeTree?: RouteNode;
   /** App directory to scan. Used if routeTree not provided. */
   appDir?: string;
+  /** Build artifact directory that backs `/_build/*`. Default: './.build'. */
+  outDir?: string;
   /** Public URL path to the client JS bundle */
   clientEntry?: string;
   /** Public URL path to the CSS file */
@@ -63,13 +65,13 @@ export interface RouterPluginOptions {
  */
 export function createRouterPlugin(options: RouterPluginOptions) {
   const appDir = options.appDir ?? './app';
+  const outDir = resolve(options.outDir ?? '.build');
   const routeTree = options.routeTree ?? buildRouteTree(scanRoutes(appDir));
 
   return new Elysia({ name: 'router' })
 
     // Serve static build artifacts (JS chunks, source maps)
     .get('/_build/*', async ({ params }) => {
-      const outDir = resolve('.build');
       const filePath = resolve(outDir, (params as any)['*']);
 
       // Path traversal protection — resolved path must stay inside outDir

@@ -8,15 +8,21 @@
  */
 
 import type { ReactNode } from 'react';
-import { ThemeProvider, Toaster } from '@zero/framework/react';
+import { AppProvider, ThemeProvider, Toaster } from '@zero/framework/react';
+import { tables } from '../db/schema';
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <ThemeProvider defaultTheme="system" storageKey="zero-theme">
-      <div className="min-h-screen bg-background text-foreground font-sans antialiased">
-        {children}
+      <AppProvider
+        url={typeof window !== 'undefined' ? window.location.origin : ''}
+        tables={tables}
+      >
+        <div className="min-h-screen bg-background text-foreground font-sans antialiased">
+          {children}
+        </div>
         <Toaster />
-      </div>
+      </AppProvider>
     </ThemeProvider>
   );
 }

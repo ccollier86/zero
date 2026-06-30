@@ -64,6 +64,7 @@ import {
   adminOnly,
   createApp,
   createResourceCrudPlugin,
+  createUploadGrantToken,
   defineResource,
   getAI,
   getEmailService,
@@ -73,8 +74,13 @@ import {
   getWorkflowService,
   metadataPolicy,
   ownerPolicy,
+  verifyUploadGrantToken,
 } from '@zero/framework/server';
-import { createStoragePlugin } from '@zero/framework/storage';
+import {
+  createStoragePlugin,
+  createUploadGrantToken as createSubpathUploadGrantToken,
+  verifyUploadGrantToken as verifySubpathUploadGrantToken,
+} from '@zero/framework/storage';
 import { createSyncPlugin } from '@zero/framework/sync';
 import { PlatformTokenService } from '@zero/framework/tokens';
 import { createVectorPlugin } from '@zero/framework/vector';
@@ -92,7 +98,9 @@ export const serverSymbols = {
   createRoomPlugin,
   createSchedulerPlugin,
   createStoragePlugin,
+  createSubpathUploadGrantToken,
   createSyncPlugin,
+  createUploadGrantToken,
   createVectorPlugin,
   defineResource,
   defineSubpathResource,
@@ -114,6 +122,8 @@ export const serverSymbols = {
   PURE_OBS_CODES,
   resourcesOwnerPolicy,
   runPlatformDoctor,
+  verifySubpathUploadGrantToken,
+  verifyUploadGrantToken,
   WorkflowService,
 };
 `;

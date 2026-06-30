@@ -121,20 +121,27 @@ app.listen(config.port ?? 3000);
 ```
 
 Zero builds and links the platform stylesheet automatically when `createApp()`
-starts. Wrap app UI in `ThemeProvider` to enable the default light/dark/system
-token contract:
+starts. The root layout owns `ThemeProvider` and `AppProvider`: theme controls
+the light/dark/system token contract, while `AppProvider` wires the SDK,
+ReactiveDB sync, auth behavior, and client route safety net.
 
 ```tsx
 import type { ReactNode } from 'react';
-import { ThemeProvider, Toaster } from '@zero/framework/react';
+import { AppProvider, ThemeProvider, Toaster } from '@zero/framework/react';
+import { tables } from '../db/schema';
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <ThemeProvider defaultTheme="system" storageKey="zero-theme">
-      <div className="min-h-screen bg-background text-foreground font-sans antialiased">
-        {children}
+      <AppProvider
+        url={typeof window !== 'undefined' ? window.location.origin : ''}
+        tables={tables}
+      >
+        <div className="min-h-screen bg-background text-foreground font-sans antialiased">
+          {children}
+        </div>
         <Toaster />
-      </div>
+      </AppProvider>
     </ThemeProvider>
   );
 }
@@ -144,8 +151,9 @@ During startup, Zero also generates client build glue in `.zero/generated`.
 Those files connect the app route manifest to Zero's hydration runtime and are
 safe to delete; `createApp()` regenerates them before bundling the browser
 entry. Keep `.zero/` ignored in app repositories. Generated apps include a
-`tsconfig.json` with `@/*`, `@/components/*`, `@/hooks/*`, and `@/lib/*`
-aliases so app-owned components can stay portable and easy to customize.
+`tsconfig.json` with `@app/*`, `@/*`, `@/components/*`, `@/hooks/*`, and
+`@/lib/*` aliases so app-owned routes, components, hooks, and helpers stay
+portable and easy to customize.
 
 Use the generated `server/` folders for app-owned backend code:
 

@@ -350,6 +350,7 @@ export async function createApp(userConfig: AppConfig) {
   app.use(
     createRouterPlugin({
       appDir: config.appDir,
+      outDir: config.outDir,
       clientEntry,
       cssPath,
       platformConfig: {

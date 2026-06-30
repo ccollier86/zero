@@ -214,10 +214,10 @@ export function defineSchema<
  *   done: field.boolean({ default: false }),
  * });
  *
- * // Server
- * createApp({ tables: { todos: todos.serverTable } });
+ * // Full-stack app
+ * createApp({ tables: { todos } });
  *
- * // Client
+ * // Lower-level clients can still pass the client shape directly:
  * createClient({ tables: { todos: todos.clientTable } });
  * ```
  */

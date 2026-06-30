@@ -34,3 +34,11 @@ zero add components/data-table
 
 Generated starter projects should use the same structure, but with Zero
 installed as a dependency instead of living in this repository.
+
+The root layout owns `AppProvider` and receives the shared `tables` object from
+`db/schema.ts`. Keep that shared shape in generated apps: `createApp()` extracts
+server table definitions, while `AppProvider` extracts client table definitions
+for hooks like `useCollection()`.
+
+Generated apps include an `@app/*` path alias for file-router client manifests,
+plus `@/*`, `@/components/*`, `@/hooks/*`, and `@/lib/*` for app-owned source.

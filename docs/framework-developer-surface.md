@@ -153,27 +153,27 @@ composition, and startup behavior.
 
 ## Data Models And ReactiveDB
 
-Define schemas once and pass their server tables to `createApp()`:
+Define schemas once and pass the shared table definitions to `createApp()` and
+`AppProvider`. `createApp()` extracts `.serverTable`; `AppProvider` extracts
+`.clientTable`.
 
 ```ts
-import { defineSchema, defineTable } from '@zero/framework/schema';
+import { defineTable, field } from '@zero/framework/schema';
 
-export const customers = defineTable({
-  name: 'customers',
-  columns: {
-    customer_id: 'text primary key',
-    name: 'text not null',
-    owner_id: 'text',
-    created_at: 'integer not null',
+export const customers = defineTable(
+  'customers',
+  {
+    name: field.text({ label: 'Name', required: true, tableVisible: true }),
+    owner_id: field.text({ label: 'Owner', tableVisible: false }),
+    created_at: field.number({ label: 'Created At', integer: true, tableVisible: true }),
   },
-  sync: 'auto',
-});
+  {
+    pk: 'customer_id',
+    sync: 'auto',
+  }
+);
 
-export const db = defineSchema({
-  customers,
-});
-
-export const tables = db.serverTables;
+export const tables = { customers };
 ```
 
 Frontend code uses the SDK/hooks:

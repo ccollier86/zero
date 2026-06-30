@@ -164,6 +164,7 @@ async function writeGeneratedTsConfig(targetDir: string): Promise<void> {
       baseUrl: '.',
       paths: {
         '@/*': ['./*'],
+        '@app/*': ['./app/*'],
         '@/components/*': ['./components/*'],
         '@/hooks/*': ['./hooks/*'],
         '@/lib/*': ['./lib/*'],
