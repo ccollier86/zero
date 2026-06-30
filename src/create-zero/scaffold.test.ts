@@ -181,7 +181,7 @@ function assert(condition: unknown, message: string): asserts condition {
 
 const app = await createApp({
   ...config,
-  db: { mode: 'memory' },
+  db: { mode: 'ephemeral' },
   auth: false,
   stateSync: false,
   email: false,

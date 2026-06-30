@@ -44,6 +44,7 @@ but new app code should use `@zero/framework/*`.
 | `@zero/framework/migrations` | Programmatic migration planning/status. Generated apps usually call `zero migrate`. |
 | `@zero/framework/notifications` | Notification plugin/service contracts. React hooks/components come from `react`. |
 | `@zero/framework/observability` | Backend sink, event, and code contracts. Server routes can also import these from `server`. |
+| `@zero/framework/persistence` | Advanced SQLite persistence foundation: hot snapshot, file/WAL, ephemeral modes, statement cache, transactions, and buffer pool. Most apps should let `createApp()` own this and use `zero.sql` in backend routes. |
 | `@zero/framework/rooms` | Rooms and presence server contracts. React hooks come from `react`. |
 | `@zero/framework/scheduler` | Scheduler service/plugin contracts. |
 | `@zero/framework/storage` | Storage server contracts and adapters. React hooks/components come from `react`. |
@@ -110,9 +111,13 @@ const config = defineZeroConfig({
     publicUrl: process.env.APP_PUBLIC_URL,
     supportEmail: process.env.APP_SUPPORT_EMAIL,
   },
-  db: {
-    mode: process.env.DB_PATH ?? './data/app.db',
-  },
+  db: process.env.DB_PATH
+    ? { mode: 'file', path: process.env.DB_PATH }
+    : {
+        mode: 'hot',
+        path: './data/app.db',
+        snapshotPath: './data/app.snapshot.db',
+      },
   tables,
   auth: true,
   stateSync: true,
@@ -138,15 +143,17 @@ app.listen(config.port);
 
 `defineZeroConfig()` preserves literal type inference and returns the same
 object. `createApp()` still owns runtime defaulting, validation, plugin
-composition, and startup behavior. For durable SQLite paths, `createApp()`
-creates missing parent directories before migrations and sync open the database,
-so generated apps can start from a fresh folder with `./data/app.db`.
+composition, and startup behavior. New apps should prefer SQLite `hot` mode
+when they want the fastest in-memory active database with snapshot recovery,
+or explicit `file` mode when every committed write should flow directly through
+SQLite's file/WAL path.
 
 `createApp()` currently installs these systems when configured:
 
 | System | How it appears |
 | --- | --- |
 | ReactiveDB | Always created by sync plugin; app tables come from `tables`. |
+| Shared SQL | Always created before plugins; app-owned backend routes can use `zero.sql`/`zero.sqlite` for backend-only SQL. |
 | WebSocket sync | Always mounted at `/sync`. Auth-aware and resource-policy-aware when auth/resources are enabled. |
 | Auth | Mounted when `auth !== false`; adds `/auth/*`, request helpers, and protected page redirects. |
 | Observability | Mounted by default; exposes protected Zero observability routes. |
@@ -265,6 +272,26 @@ export default defineRouter({
   ],
 });
 ```
+
+## Backend SQL Access
+
+`createApp()` owns the platform SQLite service. App-owned backend routes should
+use the injected Zero service context instead of opening `new Database()`:
+
+```ts
+import { createServerRoute } from '@zero/framework/server';
+
+export default createServerRoute({ name: 'reports', prefix: '/api/reports' })
+  .get('/', ({ zero }) => {
+    const rows = zero.sql?.raw.prepare('SELECT * FROM reports').all() ?? [];
+    return rows;
+  });
+```
+
+Use `zero.db` when you want ReactiveDB change tracking and websocket sync. Use
+`zero.sql`/`zero.sqlite` for backend-only SQL, migrations-style setup, reporting
+queries, and internal platform tables. Both point at the same platform
+persistence foundation when mounted through `createApp()`.
 
 The `zero` object is the canonical backend service context for app-owned
 server code:

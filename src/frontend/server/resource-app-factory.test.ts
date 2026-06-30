@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, test } from 'bun:test';
 
+import { clearPlatformSQLiteService, getPlatformSQLiteService } from '../../persistence';
 import { defineResource, getResourceRegistry, readOnly } from '../../resources';
 import { createApp } from './app-factory';
 
@@ -71,7 +72,72 @@ describe('createApp resource registration', () => {
       expect(registry.getByTable('tickets')?.primaryKey).toBe('ticket_id');
       expect(registry.getByTable('projects')?.primaryKey).toBe('project_id');
     } finally {
+      cleanupPlatformSQLiteService();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  test('exposes the shared platform SQL service to app-owned backend routes', async () => {
+    const rootDir = await createTempRoot();
+    const routesDir = join(rootDir, 'server', 'routes');
+    const appDir = join(rootDir, 'app');
+    const serverImport = pathToFileURL(join(process.cwd(), 'src/frontend/server.ts')).href;
+
+    try {
+      await mkdir(routesDir, { recursive: true });
+      await mkdir(appDir, { recursive: true });
+      await writeFile(
+        join(routesDir, 'sql.ts'),
+        [
+          `import { createServerRoute } from '${serverImport}';`,
+          "export default createServerRoute({ name: 'test.sql', prefix: '/api/sql' })",
+          "  .post('/', ({ zero }) => {",
+          "    zero.sql?.raw.prepare('INSERT INTO notes (note_id, title) VALUES (?, ?)').run('note_1', 'Shared SQL');",
+          "    return zero.db.queryOne('notes', 'note_1');",
+          "  });",
+          '',
+        ].join('\n')
+      );
+
+      const app = await createApp({
+        db: { mode: 'memory' },
+        tables: {
+          notes: {
+            note_id: 'text primary key',
+            title: 'text not null',
+          },
+        },
+        serverResourcesDir: false,
+        serverPluginsDir: false,
+        serverMiddlewareDir: false,
+        serverEndpointsDir: false,
+        serverRoutesDir: routesDir,
+        appDir,
+        outDir: join(rootDir, 'out'),
+        observability: false,
+        auth: false,
+      });
+
+      const response = await app.handle(new Request('http://localhost/api/sql', {
+        method: 'POST',
+      }));
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        note_id: 'note_1',
+        title: 'Shared SQL',
+      });
+
+      cleanupPlatformSQLiteService();
+    } finally {
+      cleanupPlatformSQLiteService();
       await rm(rootDir, { recursive: true, force: true });
     }
   });
 });
+
+function cleanupPlatformSQLiteService(): void {
+  const service = getPlatformSQLiteService();
+  service?.close();
+  clearPlatformSQLiteService(service);
+}

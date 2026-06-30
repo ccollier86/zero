@@ -64,8 +64,12 @@ export interface MigrationStatus {
 }
 
 export interface MigratorConfig {
-  /** Path to the SQLite database file. */
-  dbPath: string;
+  /** Path to the SQLite database file, used for backups and standalone CLI runs. */
+  dbPath?: string;
+  /** Existing SQLite handle. When provided, caller owns lifecycle by default. */
+  database?: Database;
+  /** Close an injected database on dispose. Default: false for injected handles. */
+  ownsDatabase?: boolean;
   /** Ordered list of migrations to apply. */
   migrations: Migration[];
   /** Apply WAL pragmas before running. Default: true. */

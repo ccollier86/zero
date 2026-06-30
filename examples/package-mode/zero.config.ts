@@ -27,9 +27,13 @@ export const config = defineZeroConfig({
     publicUrl: Bun.env.APP_PUBLIC_URL ?? `http://localhost:${PORT}`,
     supportEmail: Bun.env.APP_SUPPORT_EMAIL,
   },
-  db: {
-    mode: Bun.env.DB_PATH ?? './data/app.db',
-  },
+  db: Bun.env.DB_PATH
+    ? { mode: 'file', path: Bun.env.DB_PATH }
+    : {
+        mode: 'hot',
+        path: './data/app.db',
+        snapshotPath: './data/app.snapshot.db',
+      },
   tables,
   auth: {
     registration: { mode: 'admin-only' },

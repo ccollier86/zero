@@ -64,7 +64,7 @@ folders:
 
 | Location | Owns |
 | --- | --- |
-| `zero.config.ts` | App name, database path, enabled platform systems, output paths, port. |
+| `zero.config.ts` | App name, SQLite storage mode/paths, enabled platform systems, output paths, port. |
 | `db/schema.ts` | App table definitions shared by backend and frontend. |
 | `app/` | File-router layouts/pages and client UI. |
 | `server/endpoints/` | Single Zero-native API endpoints. |
@@ -72,9 +72,9 @@ folders:
 | `server/middleware/` | Named app middleware and matchers. |
 | `server/plugins/` | Advanced app plugins. |
 
-`createApp()` creates missing parent directories for durable SQLite database
-paths, so a fresh generated app can start with `DB_PATH=./data/app.db` without
-manual setup.
+The starter uses SQLite `hot` mode by default: active relational data stays in
+process memory and Zero writes snapshot recovery files under `./data`. Set
+`DB_PATH=./data/app.db` when you want explicit SQLite file/WAL mode instead.
 
 ## Package-Mode Imports
 

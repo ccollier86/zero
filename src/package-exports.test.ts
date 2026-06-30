@@ -56,6 +56,7 @@ import { Migrator } from '@zero/framework/migrations';
 import { createNotificationPlugin } from '@zero/framework/notifications';
 import { OBS_CODES } from '@zero/framework/observability';
 import { OBS_CODES as PURE_OBS_CODES } from '@zero/framework/observability/codes';
+import { createPlatformSQLiteService } from '@zero/framework/persistence';
 import { createResourceCrudPlugin as createSubpathResourceCrudPlugin, defineResource as defineSubpathResource, ownerPolicy as resourcesOwnerPolicy } from '@zero/framework/resources';
 import { createRoomPlugin } from '@zero/framework/rooms';
 import { createSchedulerPlugin } from '@zero/framework/scheduler';
@@ -66,6 +67,7 @@ import {
   createResourceCrudPlugin,
   createUploadGrantToken,
   defineResource,
+  getPlatformSQLiteService,
   getAI,
   getEmailService,
   getPlatformTokenService,
@@ -93,6 +95,7 @@ export const serverSymbols = {
   isPolicyTrustedUserProperty,
   adminOnly,
   createNotificationPlugin,
+  createPlatformSQLiteService,
   createResourceCrudPlugin,
   createSubpathResourceCrudPlugin,
   createRoomPlugin,
@@ -111,6 +114,7 @@ export const serverSymbols = {
   getAI,
   getEmailService,
   getPlatformTokenService,
+  getPlatformSQLiteService,
   getResourceRegistry,
   getVectorStore,
   getWorkflowService,

@@ -72,7 +72,13 @@ const config = defineZeroConfig({
     publicUrl: Bun.env.APP_PUBLIC_URL ?? `http://localhost:${PORT}`,
     supportEmail: Bun.env.APP_SUPPORT_EMAIL,
   },
-  db: { mode: Bun.env.DB_PATH ?? './data/app.db' },
+  db: Bun.env.DB_PATH
+    ? { mode: 'file', path: Bun.env.DB_PATH }
+    : {
+        mode: 'hot',
+        path: './data/app.db',
+        snapshotPath: './data/app.snapshot.db',
+      },
   tables,
   email: hasEmail
     ? {
@@ -262,8 +268,11 @@ service getters. Use `@zero/framework/react/app-provider`,
 `@zero/framework/react` barrel remains available as a convenience export, but
 generated apps should prefer narrow imports. Direct subsystem imports such as
 `@zero/framework/email`, `@zero/framework/ai`, `@zero/framework/vector`,
-`@zero/framework/sync/client`, and `@zero/framework/components/data-table` are
-available when a file should depend on one specific feature.
+`@zero/framework/persistence`, `@zero/framework/sync/client`, and
+`@zero/framework/components/data-table` are available when a file should depend
+on one specific feature. `persistence` is the advanced server-side SQLite
+foundation; generated apps should normally let `createApp()` own it and use
+`zero.sql` from backend routes when direct SQL is needed.
 
 Use packaged imports first. When an app needs to customize component or hook
 source, copy selected pieces with `zero add`:
@@ -285,7 +294,7 @@ Common variables:
 | Variable | Purpose |
 | --- | --- |
 | `PORT` | HTTP port. |
-| `DB_PATH` | SQLite file path, or `:memory:` for temporary DBs. |
+| `DB_PATH` | Optional SQLite file-mode path. Omit it in generated apps to use hot SQLite with snapshot recovery. |
 | `APP_NAME` | Display name used by system email. |
 | `APP_PUBLIC_URL` | Public origin for setup/reset links. |
 | `APP_SUPPORT_EMAIL` | Optional support/reply identity. |

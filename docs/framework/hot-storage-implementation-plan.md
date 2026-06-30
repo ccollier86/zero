@@ -244,7 +244,7 @@ Target files:
 - `src/persistence/statement-cache.ts`
 - `src/persistence/transaction-manager.ts`
 - `src/persistence/buffer-pool.ts`
-- `src/persistence/platform-storage.ts`
+- `src/persistence/platform-sqlite.ts`
 
 Modes:
 
@@ -595,6 +595,10 @@ Infrastructure work is not complete without restart/recovery tests:
 
 ### Slice 5: SQL Persistence Primitive
 
+Status: implemented on this branch as `src/persistence` and exported through
+`@zero/framework/persistence`. ReactiveDB and `createApp()` now consume it
+through the shared SQL service described in Slice 6 and Slice 7.
+
 - Port the ai-gateway SQLite connection/snapshot/checkpoint pattern into
   `src/persistence`.
 - Add hot/file/ephemeral tests.
@@ -602,12 +606,25 @@ Infrastructure work is not complete without restart/recovery tests:
 
 ### Slice 6: ReactiveDB Refactor
 
+Status: implemented on this branch as a broader SQL-runtime expansion:
+ReactiveDB accepts injected `Database` and `PlatformSQLiteService` handles,
+legacy configs route through `createPlatformSQLiteService`, `createApp()`
+creates the shared SQL service first, migrations run on that handle, and
+backend routes can use `zero.sql` for direct backend-only SQL without opening a
+second database.
+
 - Make ReactiveDB accept an injected `Database`.
 - Route legacy ReactiveDB config through the new persistence primitive.
 - Make DB lifecycle ownership explicit.
 - Add restart tests proving hot snapshot mode preserves rows.
 
 ### Slice 7: App Factory Wiring
+
+Status: partially implemented for SQL on this branch. `createApp()` creates the
+platform SQLite service first, runs migrations against that handle, injects it
+into ReactiveDB through the sync plugin, and app-owned backend routes can use
+`zero.sql`/`zero.sqlite`. KV/cache and vector still need their storage-mode
+integration slices before this phase is complete end to end.
 
 - `createApp()` creates platform storage first.
 - Sync, auth, tokens, resources, workflows, scheduler, storage, AI, vector, and

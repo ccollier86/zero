@@ -49,6 +49,7 @@
       "@zero/framework/auth": ["./src/auth"],
       "@zero/framework/notifications": ["./src/notifications"],
       "@zero/framework/observability": ["./src/observability"],
+      "@zero/framework/persistence": ["./src/persistence"],
       "@zero/framework/storage": ["./src/storage"],
       "@zero/framework/sync": ["./src/sync"],
       "@zero/framework/vector": ["./src/vector"],

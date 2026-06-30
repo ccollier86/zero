@@ -1,4 +1,4 @@
-import type { ClientTableDef, DeclaredSyncMode, SyncMode, TableSchema } from '../../sync/types';
+import type { ClientTableDef, DeclaredSyncMode, ReactiveDBConfig, SyncMode, TableSchema } from '../../sync/types';
 import type { SyncPolicy } from '../../sync/sync-policy';
 import type { ObservabilityConfig } from '../../observability/types';
 import type { AuthBehaviorConfig } from '../../auth/types';
@@ -81,13 +81,8 @@ export interface AppConfig {
   /** App identity used by system UI and platform emails. */
   app?: AppIdentityConfig;
 
-  /** Database configuration */
-  db: {
-    /** ':memory:' for RAM-only, or a file path for durable storage */
-    mode: 'memory' | (string & {});
-    /** Ring buffer depth for reconnect replay. Default: 1000 */
-    ringBufferDepth?: number;
-  };
+  /** Database configuration. Uses the platform SQLite persistence foundation. */
+  db: ReactiveDBConfig;
 
   /**
    * Table definitions — accepts ANY of:
@@ -274,7 +269,7 @@ export function defineZeroConfig<const TConfig extends AppConfig>(config: TConfi
 /** Resolved config with defaults filled in. */
 export interface ResolvedConfig {
   app: AppIdentityConfig;
-  db: { mode: 'memory' | (string & {}); ringBufferDepth?: number };
+  db: ReactiveDBConfig;
   tables: Record<string, TableSchema>;
   auth: false | (AuthBehaviorConfig & { accessTokenTTL?: string; refreshTokenTTL?: string });
   email: false | EmailConfig;

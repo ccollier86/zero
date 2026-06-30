@@ -21,6 +21,7 @@ import { getAI } from '../../ai';
 import { getVectorStore } from '../../vector';
 import { getResourceRegistry } from '../../resources';
 import { getPlatformTokenService } from '../../tokens';
+import { getPlatformSQLiteService } from '../../persistence';
 import { createLazyServerRouteServices, getServerRouteServices } from './server-services';
 
 describe('server service context', () => {
@@ -38,6 +39,8 @@ describe('server service context', () => {
     expect(zero.auth.getUserStore()).toBe(zero.auth.userStore);
     expect(zero.auth.getTokenService()).toBe(zero.auth.tokenService);
     expect(zero.tokens).toBe(getPlatformTokenService());
+    expect(zero.sql).toBe(getPlatformSQLiteService());
+    expect(zero.sqlite).toBe(zero.sql);
 
     expect(zero.ai).toBe(getAI());
     expect(zero.vector).toBe(getVectorStore());

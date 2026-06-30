@@ -43,6 +43,8 @@ import type { ResourceRegistry } from '../../resources';
 import { getResourceRegistry } from '../../resources';
 import type { PlatformTokenService } from '../../tokens';
 import { getPlatformTokenService } from '../../tokens';
+import type { PlatformSQLiteService } from '../../persistence';
+import { getPlatformSQLiteService } from '../../persistence';
 
 /** Auth services exposed under `zero.auth` in app-owned backend code. */
 export interface ServerAuthServices {
@@ -94,6 +96,10 @@ export interface ServerRouteServices {
   readonly db: ReactiveDB;
   /** Backwards-compatible alias for the primary reactive database handle. */
   readonly syncDB: ReactiveDB;
+  /** Shared platform SQLite foundation for backend-only SQL access. */
+  readonly sql: PlatformSQLiteService | null;
+  /** Explicit alias for the shared platform SQLite foundation. */
+  readonly sqlite: PlatformSQLiteService | null;
   /** Auth store/token helpers. Values are null when auth is disabled. */
   readonly auth: ServerAuthServices;
   /** Generic platform action/resume token service. */
@@ -153,6 +159,12 @@ function createServerRouteServices(): ServerRouteServices {
     },
     get syncDB() {
       return requireSyncDB();
+    },
+    get sql() {
+      return getPlatformSQLiteService();
+    },
+    get sqlite() {
+      return getPlatformSQLiteService();
     },
     auth: createServerAuthServices(),
     get tokens() {

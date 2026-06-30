@@ -342,7 +342,7 @@ Owns transaction helpers:
 - `batchInsert(table, rows)` only if safely quoted/validated, or leave batch
   insert to ReactiveDB to avoid string assembly risk.
 
-### `src/persistence/platform-storage.ts`
+### `src/persistence/platform-sqlite.ts`
 
 Owns construction and lifecycle for the full local storage runtime:
 
@@ -795,6 +795,12 @@ the detailed phased work plan and KV/cache file layout.
 
 ### Phase 1: Port SQL Persistence Primitive
 
+Status: implemented on this branch as `src/persistence` with the
+`@zero/framework/persistence` export. The follow-up runtime wiring is also in
+place: `createApp()` creates one shared SQLite service, migrations run on that
+handle, ReactiveDB consumes it, and app-owned backend routes can inspect/use it
+through `zero.sql`.
+
 - Add `src/persistence` files listed above.
 - Add focused tests for:
   - hot mode writes survive service close/reopen through snapshot
@@ -806,6 +812,11 @@ the detailed phased work plan and KV/cache file layout.
 
 ### Phase 2: Refactor ReactiveDB Onto SQL Storage
 
+Status: implemented on this branch for SQL. ReactiveDB accepts injected
+`PlatformSQLiteService` and raw `Database` handles, routes standalone legacy
+configs through `createPlatformSQLiteService`, and makes disposal ownership
+explicit.
+
 - Accept an injected Bun SQLite `Database`.
 - Keep legacy config support.
 - Stop creating `new Database(':memory:')` directly except through the
@@ -813,6 +824,14 @@ the detailed phased work plan and KV/cache file layout.
 - Make `dispose()` ownership-aware.
 - Verify existing ReactiveDB tests still pass.
 - Add a restart test proving hot snapshot mode persists table rows.
+
+### Phase 2.5: Wire `createApp()` To Shared SQL
+
+Status: implemented on this branch for SQL. `createApp()` constructs the
+platform SQLite service before migrations and plugin composition, passes it
+into the sync plugin, and exposes the same service as `zero.sql`/`zero.sqlite`
+for app-owned backend routes. KV/cache and vector still have their own later
+storage-mode alignment work.
 
 ### Phase 3: Port Real Platform KV/Cache
 

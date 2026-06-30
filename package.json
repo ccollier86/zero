@@ -79,6 +79,10 @@
       "types": "./src/observability/codes.ts",
       "import": "./src/observability/codes.ts"
     },
+    "./persistence": {
+      "types": "./src/persistence/index.ts",
+      "import": "./src/persistence/index.ts"
+    },
     "./rooms": {
       "types": "./src/rooms/index.ts",
       "import": "./src/rooms/index.ts"

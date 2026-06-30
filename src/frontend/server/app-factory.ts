@@ -1,6 +1,4 @@
 import { Elysia } from 'elysia';
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
 import { createSyncPlugin } from '../../sync/sync.plugin';
 import { combineSyncPolicies, createDefaultSyncPolicy } from '../../sync/sync-policy';
 import { createAuthPlugin, getAuthStore, getTokenService } from '../../auth/auth.plugin';
@@ -29,6 +27,7 @@ import { Migrator, migrations } from '../../migrations';
 import { OBS_CODES, configureObservability, createObservabilityPlugin, emitPlatformCode } from '../../observability';
 import { createVectorPlugin } from '../../vector';
 import { createPlatformTokenPlugin } from '../../tokens';
+import { createPlatformSQLiteService, type PlatformSQLiteService } from '../../persistence';
 import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
 import {
   configureResourceRegistry,
@@ -89,8 +88,12 @@ function addPlatformSnapshotTables(snapshotTables: Set<string>): void {
  */
 export async function createApp(userConfig: AppConfig) {
   const config = resolveConfig(userConfig);
-  ensureDatabaseDirectory(config.db.mode);
+  if (config.db.database && !config.db.sqlite) {
+    throw new Error('[app] createApp({ db.database }) bypasses the platform SQL service. Pass db.sqlite or a platform storage config instead.');
+  }
   configureObservability(config.observability);
+  const sqlite = config.db.sqlite ?? createPlatformSQLiteService(config.db);
+  const ownsSqlite = !config.db.sqlite;
   const emailRuntime = configureEmail(config.email, config.app);
   addPlatformSnapshotTables(config.snapshotTables);
   const platformSyncPolicy = config.auth !== false
@@ -146,43 +149,105 @@ export async function createApp(userConfig: AppConfig) {
   }
 
   // ─── Run database migrations ──────────────────────────────
-  // Migrations run BEFORE the server starts, on the raw database file.
-  // This ensures schema is up to date even if plugins haven't loaded yet.
-  // Skipped for in-memory databases (they start fresh every time).
-  if (config.db.mode !== 'memory' && config.migrate) {
-    const migrator = new Migrator({
-      dbPath: config.db.mode,
-      migrations,
-    });
-    try {
-      migrator.run();
-    } finally {
-      migrator.dispose();
+  // Migrations run BEFORE the server starts against the shared platform SQL
+  // handle. This keeps backend-only SQL, ReactiveDB, and platform services on
+  // the same persistence boundary.
+  try {
+    if (shouldRunMigrations(sqlite, config.migrate)) {
+      const migrator = new Migrator({
+        database: sqlite.raw,
+        dbPath: sqlite.snapshotPath ?? sqlite.path ?? ':memory:',
+        migrations,
+        applyPragmas: false,
+        createBackups: sqlite.mode === 'file',
+      });
+      try {
+        migrator.run();
+      } finally {
+        migrator.dispose();
+      }
+      sqlite.snapshot?.snapshotSync();
     }
+  } catch (error) {
+    if (ownsSqlite) sqlite.close();
+    throw error;
   }
 
-  // ─── Assemble Elysia app ────────────────────────────────
-  const app = new Elysia({ name: 'platform' });
+  try {
+    // ─── Assemble Elysia app ────────────────────────────────
+    const app = new Elysia({ name: 'platform' });
 
-  // 1. Sync engine — always first (provides the DB)
-  app.use(
-    createSyncPlugin({
-      db: config.db,
-      tables: config.tables,
-      stateSync: config.stateSync,
-      policy: syncPolicy,
-      resourcePolicy: resourceSyncPolicy,
-      snapshotTables: config.snapshotTables,
-      auth: config.auth !== false
-        ? {
-            // Auth routes are mounted after sync, so the verifier is resolved lazily
-            // when a WebSocket opens rather than during plugin composition.
-            getTokenVerifier: getTokenService,
-          }
-        : undefined,
-    })
-  );
+    app.onStart(() => {
+      sqlite.start();
+    });
 
+    // 1. Sync engine — always first (provides ReactiveDB over shared SQL)
+    app.use(
+      createSyncPlugin({
+        db: {
+          ...config.db,
+          sqlite,
+        },
+        tables: config.tables,
+        stateSync: config.stateSync,
+        policy: syncPolicy,
+        resourcePolicy: resourceSyncPolicy,
+        snapshotTables: config.snapshotTables,
+        auth: config.auth !== false
+          ? {
+              // Auth routes are mounted after sync, so the verifier is resolved lazily
+              // when a WebSocket opens rather than during plugin composition.
+              getTokenVerifier: getTokenService,
+            }
+          : undefined,
+      })
+    );
+
+    app.onStop(() => {
+      if (ownsSqlite) sqlite.close();
+    });
+
+    return await mountPlatformApp({
+      app,
+      config,
+      syncPolicy,
+      resourceRegistry,
+      resourceAuthConfig,
+      emailRuntime,
+      clientEntry,
+      cssPath,
+    });
+  } catch (error) {
+    if (ownsSqlite) sqlite.close();
+    throw error;
+  }
+}
+
+interface MountPlatformAppInput {
+  app: Elysia;
+  config: ReturnType<typeof resolveConfig>;
+  syncPolicy: ReturnType<typeof combineSyncPolicies>;
+  resourceRegistry: ReturnType<typeof configureResourceRegistry>;
+  resourceAuthConfig: ReturnType<typeof resolveAuthBehaviorConfig>;
+  emailRuntime: ReturnType<typeof configureEmail>;
+  clientEntry?: string;
+  cssPath?: string;
+}
+
+function shouldRunMigrations(sqlite: PlatformSQLiteService, migrate: boolean): boolean {
+  return migrate && sqlite.mode !== 'ephemeral';
+}
+
+async function mountPlatformApp({
+  app,
+  config,
+  syncPolicy,
+  resourceRegistry,
+  resourceAuthConfig,
+  emailRuntime,
+  clientEntry,
+  cssPath,
+}: MountPlatformAppInput) {
   // 1.5. Platform tokens — generic action/resume token service for auth and app flows
   app.use(createPlatformTokenPlugin({ db: getSyncDB()! }));
 
@@ -382,12 +447,3 @@ export async function createApp(userConfig: AppConfig) {
 
 /** Type helper — export the app type for Eden Treaty typed client. */
 export type App = Awaited<ReturnType<typeof createApp>>;
-
-/**
- * Ensure durable SQLite paths can be opened from a fresh generated app.
- * Bun SQLite creates the database file, but not missing parent directories.
- */
-function ensureDatabaseDirectory(mode: AppConfig['db']['mode']): void {
-  if (mode === 'memory' || mode === ':memory:') return;
-  mkdirSync(dirname(resolve(mode)), { recursive: true });
-}

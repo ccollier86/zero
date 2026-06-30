@@ -10,6 +10,7 @@ import { describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 
 import { getEmailService } from '../../email';
+import { clearPlatformSQLiteService, getPlatformSQLiteService } from '../../persistence';
 import { createSyncPlugin } from '../../sync';
 import { createServerRoute } from './server-route';
 
@@ -29,6 +30,8 @@ describe('createServerRoute', () => {
         createServerRoute({ name: 'test.customers', prefix: '/api/customers' })
           .post('/', ({ body, zero }) => {
             expect(zero.db).toBe(zero.syncDB);
+            expect(zero.sql).toBe(zero.db.getSQLiteService());
+            expect(zero.sqlite).toBe(zero.sql);
             expect(zero.vector).toBe(zero.vectors);
             expect(zero.auth.store).toBe(zero.auth.userStore);
             expect(zero.auth.tokens).toBe(zero.auth.tokenService);
@@ -48,16 +51,22 @@ describe('createServerRoute', () => {
           })
       );
 
-    const response = await app.handle(new Request('http://localhost/api/customers', {
-      method: 'POST',
-      body: JSON.stringify({ name: 'Ada' }),
-      headers: { 'Content-Type': 'application/json' },
-    }));
+    try {
+      const response = await app.handle(new Request('http://localhost/api/customers', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'Ada' }),
+        headers: { 'Content-Type': 'application/json' },
+      }));
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      customer_id: 'cust_1',
-      name: 'Ada',
-    });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        customer_id: 'cust_1',
+        name: 'Ada',
+      });
+    } finally {
+      const service = getPlatformSQLiteService();
+      service?.close();
+      clearPlatformSQLiteService(service);
+    }
   });
 });

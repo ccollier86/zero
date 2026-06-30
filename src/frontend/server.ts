@@ -232,6 +232,19 @@ export type {
   TableSchema,
 } from '../sync';
 
+// ─── Persistence: Server ────────────────────────────────────────────────
+export {
+  createPlatformSQLiteService,
+  getPlatformSQLiteService,
+  requirePlatformSQLiteService,
+} from '../persistence';
+export type {
+  PlatformSQLiteDiagnostics,
+  PlatformSQLiteService,
+  SQLiteStorageConfig,
+  SQLiteStorageMode,
+} from '../persistence';
+
 // ─── Platform Doctor ───────────────────────────────────────────────────
 export { runPlatformDoctor } from '../doctor/platform-doctor';
 export type {

@@ -1,4 +1,5 @@
 import type { Database, Statement } from 'bun:sqlite';
+import type { PlatformSQLiteService, SQLiteStorageConfig } from '../persistence';
 import type { SyncPolicy } from './sync-policy';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
@@ -6,12 +7,37 @@ import type { SyncPolicy } from './sync-policy';
 /**
  * ReactiveDB configuration.
  *
- * `mode: 'memory'` creates an in-memory database (fast, ephemeral).
- * Any other string is treated as a file path for durable storage.
+ * Prefer `sqlite` or `database` when the platform runtime already owns the
+ * SQL service. Legacy `mode: 'memory'` and file-path configs remain valid and
+ * are routed through the platform persistence foundation internally.
  */
-export interface ReactiveDBConfig {
-  /** ':memory:' for RAM-only, or a file path for durable storage */
-  mode: 'memory' | (string & {});
+export interface ReactiveDBConfig extends SQLiteStorageConfig {
+  /** Platform-owned SQLite service. Preferred for createApp/runtime wiring. */
+  sqlite?: PlatformSQLiteService;
+
+  /** Existing Bun SQLite handle. Caller owns PRAGMAs and lifecycle by default. */
+  database?: Database;
+
+  /**
+   * Legacy mode or new platform storage mode.
+   *
+   * `memory` and `:memory:` map to ephemeral. Arbitrary strings are treated as
+   * SQLite file paths for compatibility.
+   */
+  mode?: SQLiteStorageConfig['mode'];
+
+  /**
+   * Close an injected raw `database` during dispose. Ignored for `sqlite`,
+   * where the service owner controls lifecycle. Default: false.
+   */
+  ownsDatabase?: boolean;
+
+  /**
+   * Clear the process-local `_changes` ring buffer during startup.
+   *
+   * Defaults to true for durable/hot modes and false for ephemeral modes.
+   */
+  clearChangesOnStart?: boolean;
 
   /** Ring buffer depth for reconnect replay. Default: 1000 */
   ringBufferDepth?: number;
@@ -156,10 +182,7 @@ export interface ChangeRow {
  */
 export interface SyncPluginConfig {
   /** Database configuration */
-  db: {
-    mode: 'memory' | (string & {});
-    ringBufferDepth?: number;
-  };
+  db: ReactiveDBConfig;
   /** Table schemas to define on startup */
   tables: Record<string, TableSchema>;
   /** Enable per-user state sync (requires auth) */

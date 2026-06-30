@@ -367,17 +367,42 @@ transaction<T>(fn: () => T): T {
 
 ```ts
 interface ReactiveDBConfig {
-  /** ':memory:' for RAM-only, or a file path for durable storage */
-  mode: 'memory' | string;
+  /** Storage mode. `memory` and `:memory:` are legacy aliases for ephemeral. */
+  mode?: 'hot' | 'file' | 'ephemeral' | 'memory' | ':memory:' | string;
+
+  /** File path for hot/file mode. Bare string `mode` values also mean file paths. */
+  path?: string;
+
+  /** Snapshot path for hot mode. */
+  snapshotPath?: string;
+
+  /** Existing platform SQLite service. Used by createApp() runtime wiring. */
+  sqlite?: PlatformSQLiteService;
+
+  /** Existing raw Bun SQLite handle. Caller owns PRAGMAs/lifecycle by default. */
+  database?: Database;
 
   /** Ring buffer depth for reconnect replay (default: 1000) */
   ringBufferDepth?: number;
 }
 ```
 
+When `ReactiveDB` is mounted through `createApp()`, it does not decide the root
+SQLite storage policy. `createApp()` creates the shared platform SQLite service
+first, runs migrations against that handle, then injects the service into
+ReactiveDB. App-owned backend routes can use the same foundation through
+`zero.sql`/`zero.sqlite` without opening a second database.
+
+Standalone `createReactiveDB()` calls remain supported for tests and low-level
+sync usage. Legacy `{ mode: 'memory' }` maps to `ephemeral`; `{ mode:
+'./data/app.db' }` remains a file/WAL shortcut; new durable in-memory apps
+should use `{ mode: 'hot', path: './data/app.db', snapshotPath:
+'./data/app.snapshot.db' }`.
+
 ### PRAGMA Stack
 
-Same as `src/persistence/sqlite-hot-store.ts`:
+The platform SQLite foundation applies the PRAGMA stack according to storage
+mode:
 
 ```sql
 PRAGMA journal_mode = WAL;
@@ -388,9 +413,11 @@ PRAGMA temp_store = MEMORY;
 PRAGMA wal_autocheckpoint = 1000;
 ```
 
-**For `:memory:` mode:** WAL and mmap are irrelevant (everything is in RAM), but the PRAGMAs are harmless and keep the code path identical.
+**For ephemeral/hot modes:** active pages are in process memory. Hot mode adds
+snapshot recovery on interval/shutdown.
 
-**For file mode:** WAL gives concurrent reads during writes, NORMAL sync balances durability with speed, large cache and mmap keep hot data in memory.
+**For file mode:** WAL gives concurrent reads during writes, NORMAL sync
+balances durability with speed, large cache and mmap keep hot data in memory.
 
 ## System Tables
 
@@ -424,10 +451,13 @@ db.query('todos');
 
 // Cleanup
 unsub();
-db.dispose();  // Closes SQLite connection
+db.dispose();  // Closes only handles ReactiveDB owns
 ```
 
-`dispose()` closes the SQLite database. After disposal, all methods throw. The sync plugin calls this in `onStop`.
+`dispose()` closes SQLite only when ReactiveDB created the platform SQLite
+service or was explicitly told to own an injected raw database. When `createApp()`
+injects the shared service, app/plugin lifecycle owns shutdown. After disposal,
+all methods throw. The sync plugin calls this in `onStop`.
 
 ## Error Handling
 

@@ -48,6 +48,7 @@ export class Migrator {
   private migrations: Migration[];
   private log: (...args: unknown[]) => void;
   private dbPath: string;
+  private ownsDatabase: boolean;
   private allowDestructive: boolean;
   private allowDestructiveDown: boolean;
   private backupDir: string;
@@ -57,16 +58,21 @@ export class Migrator {
   private artifacts: MigrationArtifacts;
 
   constructor(config: MigratorConfig) {
-    this.db = new Database(config.dbPath);
-    this.dbPath = config.dbPath;
+    if (!config.database && !config.dbPath) {
+      throw new Error('[migrator] dbPath is required when database is not provided.');
+    }
+
+    this.db = config.database ?? new Database(config.dbPath!);
+    this.dbPath = config.dbPath ?? ':memory:';
+    this.ownsDatabase = config.database ? config.ownsDatabase ?? false : true;
     this.migrations = config.migrations;
     this.log = config.log ?? defaultMigratorLog;
     this.allowDestructive = config.allowDestructive ?? false;
     this.allowDestructiveDown = config.allowDestructiveDown ?? false;
-    this.backupDir = config.backupDir ?? join(dirname(config.dbPath), 'backups');
+    this.backupDir = config.backupDir ?? join(dirname(this.dbPath), 'backups');
     this.createBackups = config.createBackups ?? true;
 
-    if (config.applyPragmas !== false) {
+    if (config.applyPragmas ?? !config.database) {
       this.applyPragmas();
     }
 
@@ -298,9 +304,15 @@ export class Migrator {
    * Call this after migrations or before clean shutdown.
    */
   checkpoint(): void {
-    const result = this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as
-      | { busy: number; checkpointed: number; log: number }
-      | null;
+    let result: { busy: number; checkpointed: number; log: number } | null;
+    try {
+      result = this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as
+        | { busy: number; checkpointed: number; log: number }
+        | null;
+    } catch {
+      this.log('[migrator] WAL checkpoint skipped for non-WAL database');
+      return;
+    }
 
     if (result && result.busy > 0) {
       this.log('[migrator] WAL checkpoint: some pages busy, retrying with PASSIVE...');
@@ -315,7 +327,7 @@ export class Migrator {
    */
   dispose(): void {
     this.checkpoint();
-    this.db.close();
+    if (this.ownsDatabase) this.db.close();
   }
 
   /**

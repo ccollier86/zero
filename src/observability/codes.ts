@@ -111,6 +111,13 @@ export const OBS_CODES = {
   STORAGE_STARTED: code('storage', 'started', 'info', 'Storage plugin started.'),
   STORAGE_STOPPED: code('storage', 'stopped', 'info', 'Storage plugin stopped.'),
 
+  PERSISTENCE_SQL_OPENED: code('persistence', 'sql.opened', 'info', 'SQLite persistence service opened.'),
+  PERSISTENCE_SQL_CLOSED: code('persistence', 'sql.closed', 'info', 'SQLite persistence service closed.'),
+  PERSISTENCE_SQL_SNAPSHOT_WRITTEN: code('persistence', 'sql_snapshot.written', 'debug', 'SQLite hot snapshot written.'),
+  PERSISTENCE_SQL_SNAPSHOT_FAILED: code('persistence', 'sql_snapshot.failed', 'error', 'SQLite hot snapshot failed.'),
+  PERSISTENCE_SQL_CHECKPOINT_COMPLETED: code('persistence', 'sql_checkpoint.completed', 'debug', 'SQLite WAL checkpoint completed.'),
+  PERSISTENCE_SQL_CHECKPOINT_FAILED: code('persistence', 'sql_checkpoint.failed', 'error', 'SQLite WAL checkpoint failed.'),
+
   NOTIFICATIONS_STARTED: code('notifications', 'started', 'info', 'Notifications plugin started.'),
   NOTIFICATIONS_STOPPED: code('notifications', 'stopped', 'info', 'Notifications plugin stopped.'),
   NOTIFICATIONS_CLEANUP: code('notifications', 'cleanup.expired', 'info', 'Expired notifications were cleaned up.'),

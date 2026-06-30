@@ -1,4 +1,4 @@
-import { Database } from 'bun:sqlite';
+import type { Database } from 'bun:sqlite';
 import {
   createIdentityId,
   getIdentityValues,
@@ -8,6 +8,7 @@ import {
 } from './identity';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
+import { createPlatformSQLiteService, type PlatformSQLiteService } from '../persistence';
 import type {
   ReactiveDBConfig,
   TableSchema,
@@ -21,6 +22,14 @@ import type {
 } from './types';
 
 const DEFAULT_RING_BUFFER_DEPTH = 1000;
+
+interface ReactiveDBRuntime {
+  database: Database;
+  sqlite: PlatformSQLiteService | null;
+  ownsSQLiteService: boolean;
+  ownsDatabase: boolean;
+  clearChangesOnStart: boolean;
+}
 
 /**
  * ReactiveDB — SQLite wrapper that makes every write observable.
@@ -36,6 +45,10 @@ const DEFAULT_RING_BUFFER_DEPTH = 1000;
  */
 export class ReactiveDB {
   private db: Database;
+  private sqlite: PlatformSQLiteService | null;
+  private ownsSQLiteService: boolean;
+  private ownsDatabase: boolean;
+  private clearChangesOnStart: boolean;
   private tables: Map<string, TableDef> = new Map();
   private listeners: ChangeListener[] = [];
   private seq = 0;
@@ -48,18 +61,21 @@ export class ReactiveDB {
   private deferredChanges: Change[] | null = null;
 
   constructor(config: ReactiveDBConfig) {
-    const dbPath = config.mode === 'memory' ? ':memory:' : config.mode;
-    this.db = new Database(dbPath);
+    const runtime = createReactiveDBRuntime(config);
+    this.db = runtime.database;
+    this.sqlite = runtime.sqlite;
+    this.ownsSQLiteService = runtime.ownsSQLiteService;
+    this.ownsDatabase = runtime.ownsDatabase;
+    this.clearChangesOnStart = runtime.clearChangesOnStart;
     this.ringBufferDepth = config.ringBufferDepth ?? DEFAULT_RING_BUFFER_DEPTH;
 
-    this.applyPragmas();
     this.createChangesTable();
     this.changeStmts = this.prepareChangeStatements();
 
-    // Truncate stale _changes from previous process (file mode).
+    // Truncate stale _changes from previous process (durable/hot modes).
     // On restart, seq resets to 0 — old entries would have conflicting seq numbers.
     // All clients must reconnect after restart (WS drops), so they get fresh snapshots.
-    if (config.mode !== 'memory') {
+    if (this.clearChangesOnStart) {
       this.db.run('DELETE FROM _changes');
     }
   }
@@ -517,6 +533,16 @@ export class ReactiveDB {
     return this.seq;
   }
 
+  /** Return the platform SQLite service backing this ReactiveDB, if present. */
+  getSQLiteService(): PlatformSQLiteService | null {
+    return this.sqlite;
+  }
+
+  /** Return the raw Bun SQLite handle for advanced platform internals. */
+  getRawDatabase(): Database {
+    return this.db;
+  }
+
   // ─── Lifecycle ──────────────────────────────────────────────────────────
 
   /**
@@ -546,16 +572,11 @@ export class ReactiveDB {
     this.tables.clear();
     this.listeners.length = 0;
 
-    // Explicit WAL checkpoint before close — ensures all WAL pages
-    // are written to the main database file. Without this, a crash
-    // between dispose() and process exit could leave data only in WAL.
-    try {
-      this.db.run('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      // Best effort — database may already be in an error state
+    if (this.ownsSQLiteService) {
+      this.sqlite?.close();
+    } else if (this.ownsDatabase) {
+      this.db.close();
     }
-
-    this.db.close();
   }
 
   // ─── Private ────────────────────────────────────────────────────────────
@@ -798,6 +819,39 @@ export function createReactiveDB(config: ReactiveDBConfig): ReactiveDB {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
+
+function createReactiveDBRuntime(config: ReactiveDBConfig): ReactiveDBRuntime {
+  if (config.sqlite) {
+    return {
+      database: config.sqlite.raw,
+      sqlite: config.sqlite,
+      ownsSQLiteService: false,
+      ownsDatabase: false,
+      clearChangesOnStart: config.clearChangesOnStart ?? config.sqlite.mode !== 'ephemeral',
+    };
+  }
+
+  if (config.database) {
+    return {
+      database: config.database,
+      sqlite: null,
+      ownsSQLiteService: false,
+      ownsDatabase: config.ownsDatabase ?? false,
+      clearChangesOnStart: config.clearChangesOnStart ?? true,
+    };
+  }
+
+  const sqlite = createPlatformSQLiteService(config);
+  sqlite.start();
+
+  return {
+    database: sqlite.raw,
+    sqlite,
+    ownsSQLiteService: true,
+    ownsDatabase: false,
+    clearChangesOnStart: config.clearChangesOnStart ?? sqlite.mode !== 'ephemeral',
+  };
+}
 
 function deserializeChangeRow(row: ChangeRow): Change {
   return {

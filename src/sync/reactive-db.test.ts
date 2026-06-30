@@ -1,4 +1,9 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createPlatformSQLiteService } from '../persistence';
 import { createReactiveDB, ReactiveDB } from './reactive-db';
 import type { Change } from './types';
 
@@ -782,6 +787,67 @@ describe('file mode', () => {
       fs.unlinkSync(`${path}-shm`);
     } catch {
       // Files may not exist
+    }
+  });
+});
+
+// ─── Platform Persistence Foundation ─────────────────────────────────────
+
+describe('platform SQLite integration', () => {
+  test('uses an injected platform SQLite service without owning its lifecycle', () => {
+    const sqlite = createPlatformSQLiteService({ mode: 'ephemeral' });
+    const reactive = createReactiveDB({ sqlite });
+
+    reactive.defineTable('items', { id: 'text primary key', name: 'text' });
+    reactive.insert('items', { id: '1', name: 'Shared handle' });
+    expect(reactive.queryOne('items', '1')).toEqual({ id: '1', name: 'Shared handle' });
+
+    reactive.dispose();
+
+    expect(() => sqlite.raw.prepare('SELECT 1 AS ok').get()).not.toThrow();
+    sqlite.close();
+  });
+
+  test('does not close an injected raw database by default', () => {
+    const raw = new Database(':memory:');
+    const reactive = createReactiveDB({ database: raw, clearChangesOnStart: false });
+
+    reactive.defineTable('items', { id: 'text primary key', name: 'text' });
+    reactive.insert('items', { id: '1', name: 'Raw handle' });
+    reactive.dispose();
+
+    expect(() => raw.prepare('SELECT 1 AS ok').get()).not.toThrow();
+    raw.close();
+  });
+
+  test('routes owned hot mode through the platform snapshot service', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zero-reactive-hot-'));
+    const dbPath = join(dir, 'app.db');
+    const snapshotPath = join(dir, 'app.snapshot.db');
+
+    try {
+      const first = createReactiveDB({
+        mode: 'hot',
+        path: dbPath,
+        snapshotPath,
+        snapshotIntervalMs: 60_000,
+      });
+      first.defineTable('items', { id: 'text primary key', name: 'text' });
+      first.insert('items', { id: '1', name: 'Hot row' });
+      first.dispose();
+
+      const second = createReactiveDB({
+        mode: 'hot',
+        path: dbPath,
+        snapshotPath,
+        snapshotIntervalMs: 60_000,
+      });
+      second.defineTable('items', { id: 'text primary key', name: 'text' });
+
+      expect(second.queryOne('items', '1')).toEqual({ id: '1', name: 'Hot row' });
+      second.dispose();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

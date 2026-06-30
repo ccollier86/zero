@@ -19,6 +19,10 @@ import { allowAllSyncPolicy, getReadableSyncTables } from './sync-policy';
 import { projectSyncChange } from './row-filter';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
+import {
+  clearPlatformSQLiteService,
+  setPlatformSQLiteService,
+} from '../persistence';
 import type {
   Change,
   SyncPluginConfig,
@@ -62,6 +66,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
   let connectionCounter = 0;
   const policy = config.policy ?? allowAllSyncPolicy;
   const db = createReactiveDB(config.db);
+  const sqlite = db.getSQLiteService();
   const activeSockets = new Set<ServerWebSocket<SyncSocketData>>();
 
   for (const [name, schema] of Object.entries(config.tables)) {
@@ -69,6 +74,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
   }
 
   _db = db;
+  if (sqlite) setPlatformSQLiteService(sqlite);
 
   return new Elysia({ name: 'sync' })
 
@@ -105,7 +111,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
 
       emitPlatformCode(OBS_CODES.SYNC_STARTED, {
         metadata: {
-          db: config.db.mode === 'memory' ? ':memory:' : config.db.mode,
+          db: describeSyncDatabase(config.db, db),
           tables: Object.keys(config.tables),
           stateSync: Boolean(config.stateSync),
         },
@@ -119,10 +125,11 @@ export function createSyncPlugin(config: SyncPluginConfig) {
       _ephemeralManager?.dispose();
       _ephemeralManager = null;
       activeSockets.clear();
-      db.dispose(); // Triggers explicit WAL checkpoint before close
+      db.dispose();
       if (_db === db) _db = null;
+      if (sqlite) clearPlatformSQLiteService(sqlite);
       emitPlatformCode(OBS_CODES.SYNC_STOPPED, {
-        metadata: { walCheckpointed: true },
+        metadata: { db: describeSyncDatabase(config.db, db) },
       });
     })
 
@@ -225,6 +232,19 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         // ring buffer catchup on reconnect.
       },
     });
+}
+
+function describeSyncDatabase(config: SyncPluginConfig['db'], db: ReactiveDB): string {
+  const sqlite = db.getSQLiteService();
+  if (sqlite) {
+    return sqlite.mode === 'ephemeral'
+      ? ':memory:'
+      : sqlite.snapshotPath ?? sqlite.path ?? sqlite.mode;
+  }
+
+  if (config.database) return '[injected database]';
+  if (config.mode === 'memory' || config.mode === ':memory:') return ':memory:';
+  return config.path ?? config.mode ?? '[platform sqlite]';
 }
 
 function createSyncChangeMessage(change: Change): SyncChangeMessage {
