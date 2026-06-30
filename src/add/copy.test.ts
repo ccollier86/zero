@@ -35,7 +35,7 @@ describe('addZeroSource', () => {
       expect(result.filesPlanned).not.toContain('components/ui/button.test.tsx');
 
       const button = await readFile(join(targetDir, 'components/ui/button.tsx'), 'utf8');
-      expect(button).toContain("from \"@/lib/utils\"");
+      expect(button).toMatch(/from ['"]@\/lib\/utils['"]/);
 
       const second = await addZeroSource({
         targetDir,

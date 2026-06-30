@@ -215,6 +215,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
           cssPath: options.cssPath,
           platformConfig: derivedConfig,
           loaderContext: loaderCtx,
+          appDir,
         });
 
         // ISR: cache the response
@@ -244,6 +245,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         cssPath: options.cssPath,
         platformConfig: derivedConfig,
         loaderContext: loaderCtx,
+        appDir,
       });
     });
 }

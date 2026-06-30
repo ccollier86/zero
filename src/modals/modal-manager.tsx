@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
-import { XIcon } from 'lucide-react';
 
 import {
   Dialog,
@@ -12,6 +11,7 @@ import {
   DialogClose,
   DialogTitle,
 } from '@/components/animate-ui/primitives/radix/dialog';
+import { AnimateIcon, X } from '@/components/animate-ui/icons';
 import { cn } from '@/lib/utils';
 import { modalStore } from './modal-store';
 import { modals } from './modal-events';
@@ -129,10 +129,16 @@ function ModalRenderer({
 
           {/* Close button */}
           {modal.showCloseButton !== false && (
-            <DialogClose className="ring-offset-background focus:ring-ring absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4">
-              <XIcon />
-              <span className="sr-only">Close</span>
-            </DialogClose>
+            <AnimateIcon asChild animateOnHover animateOnTap>
+              <DialogClose
+                className="ring-offset-background focus:ring-ring absolute top-4 right-4 inline-flex size-8 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <X className="size-4" />
+                <span className="sr-only">Close</span>
+              </DialogClose>
+            </AnimateIcon>
           )}
 
           {/* Content */}
@@ -196,11 +202,11 @@ export function ModalManager({ children }: ModalManagerProps) {
   return (
     <>
       {children}
-      {state.modals.map((modal, idx) => (
+      {state.modals.map((modal) => (
         <ModalRenderer
           key={modal.id}
           modal={modal}
-          isClosing={idx === state.closingIndex}
+          isClosing={state.closingIds.includes(modal.id)}
         />
       ))}
     </>

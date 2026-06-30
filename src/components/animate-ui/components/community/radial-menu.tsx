@@ -1,27 +1,33 @@
 'use client';
 
 import * as React from 'react';
-import { LucideIcon } from 'lucide-react';
 import { motion, AnimatePresence, type Transition } from 'motion/react';
 import { ContextMenu } from '@base-ui-components/react/context-menu';
+import { AnimateIcon } from '@/components/animate-ui/icons/icon';
 import { cn } from '@/lib/utils';
 
-type RadialMenuProps = {
+type RadialMenuIcon = React.ComponentType<{
+  className?: string;
+  size?: number;
+  style?: React.CSSProperties;
+}>;
+
+export type RadialMenuItem = {
+  id: number;
+  label: string;
+  icon: RadialMenuIcon;
+};
+
+export type RadialMenuProps = {
   children?: React.ReactNode;
-  menuItems: MenuItem[];
+  menuItems: RadialMenuItem[];
   size?: number;
   iconSize?: number;
   bandWidth?: number;
   innerGap?: number;
   outerGap?: number;
   outerRingWidth?: number;
-  onSelect?: (item: MenuItem) => void;
-};
-
-type MenuItem = {
-  id: number;
-  label: string;
-  icon: LucideIcon;
+  onSelect?: (item: RadialMenuItem) => void;
 };
 
 type Point = { x: number; y: number };
@@ -244,7 +250,8 @@ function RadialMenu({
                                 el as HTMLElement | null;
                             }}
                             onFocus={() => setActiveIndex(index)}
-                            onClick={() => {
+                            onClick={(event) => {
+                              event.stopPropagation();
                               onSelect?.(item);
                             }}
                             aria-label={item.label}
@@ -256,9 +263,11 @@ function RadialMenu({
                               },
                             )}
                           >
-                            <Icon
-                              style={{ height: iconSize, width: iconSize }}
-                            />
+                            <AnimateIcon animate={isActive} className="grid place-items-center">
+                              <Icon
+                                style={{ height: iconSize, width: iconSize }}
+                              />
+                            </AnimateIcon>
                           </ContextMenu.Item>
                         </foreignObject>
                       </g>

@@ -30,6 +30,14 @@ vector, workflows, observability, or migrations.
   resource declarations, trusted user-property policy rules, generated CRUD,
   `/api/data` policy integration, WebSocket sync policy integration, and
   platform doctor integration.
+- [Hot Storage Architecture](./hot-storage-architecture.md): target
+  high-performance storage architecture for hot SQLite snapshots, file/WAL
+  mode, persistent cache/KV alignment, vector storage, and ReactiveDB
+  refactoring.
+- [Hot Storage Implementation Plan](./hot-storage-implementation-plan.md):
+  phased plan for the Zero-owned KV/cache engine, SQL persistence primitive,
+  ReactiveDB refactor, vector storage modes, doctor checks, and generated app
+  defaults.
 - [Resource Policy Core](./resource-policy.md): implemented server-side policy
   helpers, trusted metadata validation, owner constraints, composition, and
   evaluator contract used by resource integrations.

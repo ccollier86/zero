@@ -25,6 +25,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/animate-ui/components/animate/tooltip';
+import { useGlobalTooltip } from '@/components/animate-ui/primitives/animate/tooltip';
 import {
   Highlight,
   HighlightItem,
@@ -548,7 +549,7 @@ const sidebarMenuButtonActiveVariants = cva(
 );
 
 const sidebarMenuButtonVariants = cva(
-  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-hidden ring-sidebar-ring transition-[width,height,padding] [&:not([data-highlight])]:hover:bg-sidebar-accent [&:not([data-highlight])]:hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground [&:not([data-highlight])]:data-[state=open]:hover:bg-sidebar-accent [&:not([data-highlight])]:data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0',
+  'peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm outline-hidden ring-sidebar-ring transition-[width,height,padding] [&:not([data-highlight])]:hover:bg-sidebar-accent [&:not([data-highlight])]:hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground [&:not([data-highlight])]:data-[state=open]:hover:bg-sidebar-accent [&:not([data-highlight])]:data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 group-data-[collapsible=icon]:[&>span]:hidden group-data-[collapsible=icon]:[&>div:not(:first-child)]:hidden group-data-[collapsible=icon]:[&_.sidebar-menu-button-collapsible-hidden]:hidden',
   {
     variants: {
       variant: {
@@ -607,16 +608,43 @@ function SidebarMenuButton({
     return button;
   }
 
-  if (typeof tooltip === 'string') {
-    tooltip = {
-      children: tooltip,
-    };
-  }
+  const tooltipProps = typeof tooltip === 'string' ? { children: tooltip } : tooltip;
+
+  return (
+    <CollapsedSidebarTooltip
+      enabled={state === 'collapsed' && !isMobile}
+      tooltip={tooltipProps}
+    >
+      {button}
+    </CollapsedSidebarTooltip>
+  );
+}
+
+function CollapsedSidebarTooltip({
+  children,
+  enabled,
+  tooltip,
+}: {
+  children: React.ReactElement;
+  enabled: boolean;
+  tooltip: React.ComponentProps<typeof TooltipContent>;
+}) {
+  const { hideImmediate } = useGlobalTooltip();
+
+  React.useEffect(() => {
+    if (!enabled) hideImmediate();
+    return () => hideImmediate();
+  }, [enabled, hideImmediate]);
+
+  if (!enabled) return children;
 
   return (
     <Tooltip side="right" align="center">
-      <TooltipTrigger asChild>{button}</TooltipTrigger>
-      <TooltipContent hidden={state !== 'collapsed' || isMobile} {...tooltip} />
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent
+        {...tooltip}
+        className={cn('pointer-events-none', tooltip.className)}
+      />
     </Tooltip>
   );
 }

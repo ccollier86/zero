@@ -7,6 +7,7 @@
  */
 
 import { resolve, join, relative, dirname, isAbsolute } from 'path';
+import { createRequire } from 'module';
 import { existsSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'fs';
 import { scanRoutes, hasUseClientDirective } from '../router/scanner';
 import { buildRouteTree } from '../router/route-tree';
@@ -57,6 +58,7 @@ export async function buildClientBundle(
 ): Promise<BundleResult> {
   const absOut = resolve(outDir);
   const generatedDir = resolve(options.generatedDir ?? DEFAULT_GENERATED_DIR);
+  const appDependencyAliasPlugin = createAppDependencyAliasPlugin(appDir);
 
   // Clean stale build artifacts before writing new ones.
   // Bun.build with splitting generates chunk-[hash].js files with unique hashes
@@ -97,6 +99,7 @@ export async function buildClientBundle(
     define: {
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'development'),
     },
+    plugins: [appDependencyAliasPlugin],
     external: [],
   });
 
@@ -116,6 +119,37 @@ export async function buildClientBundle(
   const publicPath = `/_build/${fileName}`;
 
   return { jsPath, publicPath, rebuilt: true };
+}
+
+/**
+ * Resolve singleton browser dependencies from the app package, not from the
+ * framework source tree. This keeps React module identity stable when Zero is
+ * installed through `file:` or a symlink during package-mode development.
+ */
+function createAppDependencyAliasPlugin(appDir: string) {
+  const appRoot = resolve(appDir, '..');
+  const requireFromApp = createRequire(join(appRoot, 'package.json'));
+  const cache = new Map<string, string>();
+
+  return {
+    name: 'zero-app-dependency-alias',
+    setup(build: any) {
+      build.onResolve({ filter: /^(react|react-dom)(\/.*)?$/ }, (args: { path: string }) => {
+        const cached = cache.get(args.path);
+        if (cached) return { path: cached };
+
+        let resolved: string;
+        try {
+          resolved = requireFromApp.resolve(args.path);
+        } catch {
+          throw new Error(`[client-bundle] Could not resolve "${args.path}" from ${appRoot}. Install compatible react and react-dom dependencies in the app.`);
+        }
+
+        cache.set(args.path, resolved);
+        return { path: resolved };
+      });
+    },
+  };
 }
 
 // ─── Route Manifest Generation ─────────────────────────────────────────────
@@ -261,8 +295,11 @@ function collectRouteEntries(
       ? '/' + patternSegments.join('/')
       : '/';
 
-    // Check if this page has "use client" directive
-    const isClient = hasUseClientDirective(node.pagePath);
+    // A client page or any inherited client layout makes the route hydrate.
+    // The renderer uses the same boundary rule when deciding whether to emit
+    // route data and the browser bundle script.
+    const isClient = hasUseClientDirective(node.pagePath)
+      || currentLayouts.some((layoutPath) => hasUseClientDirective(layoutPath));
 
     entries.push({
       pattern,

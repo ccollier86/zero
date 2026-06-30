@@ -19,7 +19,9 @@ Package-mode imports now use the `@zero/framework` export map:
 
 ```ts
 import { createApp, type AppConfig } from '@zero/framework/server';
-import { AppProvider, Button, useCollection } from '@zero/framework/react';
+import { AppProvider } from '@zero/framework/react/app-provider';
+import { useCollection } from '@zero/framework/react/hooks';
+import { Button } from '@zero/framework/components/ui/button';
 import { defineSchema, defineTable } from '@zero/framework/schema';
 ```
 
@@ -30,6 +32,8 @@ but new app code should use `@zero/framework/*`.
 | --- | --- |
 | `@zero/framework/server` | Composition root, `createApp()`, `createServerRoute()`, backend service getters, plugins, config types. |
 | `@zero/framework/react` | Client-safe components, hooks, SDK helpers, auth UI, storage UI. |
+| `@zero/framework/react/app-provider` | Narrow AppProvider import for package-mode layouts. |
+| `@zero/framework/react/hooks` | Narrow app-facing platform hooks such as `useCollection()`, `useLazyCollection()`, `useAuth()`, rooms, notifications, and workflow hooks. |
 | `@zero/framework/schema` | Data model/table DSL. |
 | `@zero/framework/icons` | Default Animate UI icon pack. |
 | `@zero/framework/styles.css` | Packaged Zero stylesheet for app entrypoints that need explicit CSS import. |
@@ -52,6 +56,7 @@ but new app code should use `@zero/framework/*`.
 | `@zero/framework/components/auth` | Auth UI blocks and gates. Also exported from `react`. |
 | `@zero/framework/components/data-table` | Data table primitives. Also exported from `react`. |
 | `@zero/framework/components/kanban` | Kanban board primitives and movement helpers. Also exported from `react`. |
+| `@zero/framework/components/radial-menu` | Radial context menu organism. Also exported from `react`. |
 | `@zero/framework/components/master-detail` | Master-detail primitives. Also exported from `react`. |
 | `@zero/framework/components/storage` | Storage management/dropzone UI. Also exported from `react`. |
 | `@zero/framework/components/ui/<name>` | Direct UI primitive imports such as `button`, `input`, or `table`. |
@@ -62,8 +67,10 @@ Rule of thumb:
    backend route modules when you want the app-level service getters.
 2. Use the direct subsystem paths when writing adapters, tests, platform tools,
    or code that should depend on one specific Zero subsystem.
-3. Use `@zero/framework/react` in browser UI first. Reach for direct component
-   paths only when you want a narrow import.
+3. Use narrow frontend imports in generated/package-mode apps:
+   `@zero/framework/react/app-provider`, `@zero/framework/react/hooks`, and
+   `@zero/framework/components/*`. The broad `@zero/framework/react` barrel
+   remains a convenience import, but it intentionally exposes a large surface.
 
 ## Generated App Shape
 
@@ -131,7 +138,9 @@ app.listen(config.port);
 
 `defineZeroConfig()` preserves literal type inference and returns the same
 object. `createApp()` still owns runtime defaulting, validation, plugin
-composition, and startup behavior.
+composition, and startup behavior. For durable SQLite paths, `createApp()`
+creates missing parent directories before migrations and sync open the database,
+so generated apps can start from a fresh folder with `./data/app.db`.
 
 `createApp()` currently installs these systems when configured:
 
@@ -182,7 +191,8 @@ Frontend code uses the SDK/hooks:
 ```tsx
 'use client';
 
-import { DataTable, useCollection } from '@zero/framework/react';
+import { useCollection } from '@zero/framework/react/hooks';
+import { DataTable } from '@zero/framework/components/data-table';
 
 export default function CustomersPage() {
   const customers = useCollection('customers');
@@ -860,6 +870,7 @@ Narrow imports are also supported:
 ```tsx
 import { DataTableView } from '@zero/framework/components/data-table';
 import { KanbanBoard } from '@zero/framework/components/kanban';
+import { RadialMenu } from '@zero/framework/components/radial-menu';
 import { LoginForm } from '@zero/framework/components/auth';
 import { useDisclosure } from '@zero/framework/hooks';
 import { Button } from '@zero/framework/components/ui/button';

@@ -52,7 +52,11 @@ describe('scaffoldZeroApp', () => {
         compilerOptions: { paths: Record<string, string[]> };
       };
       expect(tsconfig.compilerOptions.paths['@app/*']).toEqual(['./app/*']);
-      expect(tsconfig.compilerOptions.paths['@/components/*']).toEqual(['./components/*']);
+      expect(tsconfig.compilerOptions.paths['@/components/*']).toEqual([
+        './components/*',
+        './node_modules/@zero/framework/src/components/*',
+      ]);
+      expect(tsconfig.compilerOptions.paths.react).toEqual(['./node_modules/@types/react']);
 
       const gitignore = await readFile(join(targetDir, '.gitignore'), 'utf8');
       expect(gitignore).toContain('.zero');

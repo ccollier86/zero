@@ -284,6 +284,105 @@ export type {
   ProjectKanbanMoveResult,
 } from '../components/kanban';
 
+// ─── Radial Context Menu ────────────────────────────────────────────────
+export { RadialMenu } from '../components/radial-menu';
+export type { RadialMenuItem, RadialMenuProps } from '../components/radial-menu';
+
+// ─── App Shell ─────────────────────────────────────────────────────────
+export {
+  AppShell,
+  AppShellHeader,
+  AppShellBreadcrumbs,
+  AppShellSidebar,
+} from '../components/app-shell';
+export type {
+  AppShellProps,
+  AppShellHeaderProps,
+  AppShellBreadcrumbsProps,
+  AppShellSidebarProps,
+  AppShellPreset,
+  AppShellIcon,
+  AppShellBrand,
+  AppShellBreadcrumb,
+  AppShellWorkspace,
+  AppShellWorkspaceConfig,
+  AppShellMenuItem,
+  AppShellNavItem,
+  AppShellNavGroup,
+  AppShellUser,
+  AppShellHeaderConfig,
+} from '../components/app-shell';
+export {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupAction,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInput,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuAction,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSkeleton,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarSeparator,
+  SidebarTrigger,
+  useSidebar,
+} from '../components/sidebar';
+export {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuCheckboxItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+} from '../components/dropdown-menu';
+export {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+  useCollapsible,
+} from '../components/collapsible';
+export type {
+  DropdownMenuProps,
+  DropdownMenuTriggerProps,
+  DropdownMenuContentProps,
+  DropdownMenuGroupProps,
+  DropdownMenuItemProps,
+  DropdownMenuCheckboxItemProps,
+  DropdownMenuRadioGroupProps,
+  DropdownMenuRadioItemProps,
+  DropdownMenuLabelProps,
+  DropdownMenuSeparatorProps,
+  DropdownMenuShortcutProps,
+  DropdownMenuSubProps,
+  DropdownMenuSubTriggerProps,
+  DropdownMenuSubContentProps,
+} from '../components/dropdown-menu';
+export type {
+  CollapsibleProps,
+  CollapsibleTriggerProps,
+  CollapsibleContentProps,
+  CollapsibleContextType,
+} from '../components/collapsible';
+
 // ─── UI Components ──────────────────────────────────────────────────────
 export { Button, buttonVariants } from '../components/ui/button';
 export { Input } from '../components/ui/input';
@@ -303,6 +402,15 @@ export { ScrollArea, ScrollBar } from '../components/ui/scroll-area';
 export { Separator } from '../components/ui/separator';
 export { Skeleton } from '../components/ui/skeleton';
 export { Avatar, AvatarImage, AvatarFallback } from '../components/ui/avatar';
+export {
+  Breadcrumb,
+  BreadcrumbList,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+  BreadcrumbEllipsis,
+} from '../components/ui/breadcrumb';
 export {
   FormField, FormLabel, FormControl, FormDescription, FormMessage,
 } from '../components/ui/form-field';

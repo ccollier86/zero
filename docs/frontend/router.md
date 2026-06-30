@@ -211,6 +211,20 @@ function matchURL(tree: RouteNode, pathname: string): MatchResult | null {
 
 The matcher returns all layouts from root to the matched page — the renderer nests them.
 
+## Render Modes
+
+Zero uses the top-level `"use client"` directive as a route boundary.
+
+| Route shape | Server behavior | Browser behavior |
+| --- | --- | --- |
+| No `"use client"` on the matched page or layouts | Streams HTML with React SSR. | No route bundle is shipped unless another client entry needs it. |
+| `"use client"` on the matched page or any matched layout | Emits the HTML shell, route data, platform config, CSS, and the generated client bundle. It does not execute client hooks during SSR. | The generated browser bundle mounts the route and handles client-side navigation. |
+
+This matters in package-mode apps. Zero resolves SSR and browser React from the
+consuming app package, and client routes avoid server-side hook execution across
+local `file:` or symlinked framework installs. Keep layouts/pages that call
+React hooks, `AppProvider`, or `useCollection()` marked with `"use client"`.
+
 ## React 19 Streaming SSR
 
 ### renderToReadableStream on Bun

@@ -130,19 +130,32 @@ export const serverSymbols = {
 
 const clientSmokeSource = `
 import { LoginForm } from '@zero/framework/components/auth';
+import { AppShell as AppShellSubpath } from '@zero/framework/components/app-shell';
+import { Collapsible as CollapsibleSubpath } from '@zero/framework/components/collapsible';
 import { DataTableView } from '@zero/framework/components/data-table';
+import { DropdownMenu as DropdownMenuSubpath } from '@zero/framework/components/dropdown-menu';
 import { KanbanBoard as KanbanBoardSubpath } from '@zero/framework/components/kanban';
 import { MasterDetailView } from '@zero/framework/components/master-detail';
+import { RadialMenu as RadialMenuSubpath } from '@zero/framework/components/radial-menu';
+import { Sidebar as SidebarSubpath } from '@zero/framework/components/sidebar';
 import { StorageManagement } from '@zero/framework/components/storage';
 import { Button as UiButton } from '@zero/framework/components/ui/button';
+import { ThemeProvider as ThemeProviderSubpath } from '@zero/framework/components/ui/theme-provider';
+import { Toaster } from '@zero/framework/components/ui/sonner';
 import { useDisclosure } from '@zero/framework/hooks';
 import { Check } from '@zero/framework/icons';
 import { ModalManager } from '@zero/framework/modals';
+import { AppProvider } from '@zero/framework/react/app-provider';
+import { useCollection as useCollectionSubpath, useResourceList as useResourceListSubpath } from '@zero/framework/react/hooks';
 import {
   Button,
+  AppShell,
+  Collapsible,
   DataTable,
+  DropdownMenu,
   groupKanbanItemIds,
   KanbanBoard,
+  RadialMenu,
   projectKanbanMove,
   StickToBottom,
   ThemeProvider,
@@ -157,23 +170,37 @@ const row: Row = {};
 
 export const clientSymbols = {
   Button,
+  AppProvider,
+  AppShell,
+  AppShellSubpath,
   Check,
+  Collapsible,
+  CollapsibleSubpath,
   createIdentityId,
   createSyncClient,
   DataTable,
   DataTableView,
+  DropdownMenu,
+  DropdownMenuSubpath,
   groupKanbanItemIds,
   KanbanBoard,
   KanbanBoardSubpath,
   LoginForm,
   MasterDetailView,
   ModalManager,
+  RadialMenu,
+  RadialMenuSubpath,
+  SidebarSubpath,
   StickToBottom,
   StorageManagement,
   ThemeProvider,
+  ThemeProviderSubpath,
+  Toaster,
   UiButton,
   useCollection,
+  useCollectionSubpath,
   useResourceList,
+  useResourceListSubpath,
   useDisclosure,
   projectKanbanMove,
   row,

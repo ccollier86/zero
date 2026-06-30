@@ -336,6 +336,7 @@ store, or public frontend API.
 | `src/components/data-table/animated-cell.tsx` | Animated cell transitions |
 | `src/components/kanban/kanban-board.tsx` | `<KanbanBoard>` / `<KanbanTaskCard>` - tokenized drag-and-drop board organism |
 | `src/components/kanban/kanban-utils.ts` | Pure column grouping and drag projection helpers |
+| `src/components/radial-menu/index.ts` | Public package export for the animated radial context menu |
 | `src/components/master-detail/master-detail-page.tsx` | `<MasterDetailView>` / `<MasterDetailPage>` — list + detail organism |
 | `src/components/master-detail/use-master-detail-state.ts` | Live data and selected-row state for master-detail views |
 | `src/components/master-detail/master-detail-selection.ts` | Pure primary-key-aware selection resolution |

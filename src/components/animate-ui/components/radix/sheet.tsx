@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { AnimateIcon, X } from '@/components/animate-ui/icons';
 import {
   Sheet as SheetPrimitive,
   SheetTrigger as SheetTriggerPrimitive,
@@ -22,7 +23,6 @@ import {
   type SheetDescriptionProps as SheetDescriptionPrimitiveProps,
 } from '@/components/animate-ui/primitives/radix/sheet';
 import { cn } from '@/lib/utils';
-import { XIcon } from 'lucide-react';
 
 type SheetProps = SheetPrimitiveProps;
 
@@ -81,10 +81,12 @@ function SheetContent({
       >
         {children}
         {showCloseButton && (
-          <SheetClose className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none">
-            <XIcon className="size-4" />
-            <span className="sr-only">Close</span>
-          </SheetClose>
+          <AnimateIcon asChild animateOnHover animateOnTap>
+            <SheetClose className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 inline-flex size-8 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0">
+              <X className="size-4" />
+              <span className="sr-only">Close</span>
+            </SheetClose>
+          </AnimateIcon>
         )}
       </SheetContentPrimitive>
     </SheetPortalPrimitive>

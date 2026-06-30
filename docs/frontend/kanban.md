@@ -53,6 +53,9 @@ export function ProjectBoard({ tasks }: { tasks: TaskCard[] }) {
       getItemTitle={(task) => task.title}
       getItemDescription={(task) => task.description}
       getItemBadge={(task) => task.priority}
+      onItemClick={(task) => {
+        console.log('edit card', task.id);
+      }}
       onItemMove={(move: KanbanItemMove<BoardColumn, TaskCard>) => {
         console.log(move.itemId, move.toColumnId, move.toIndex);
       }}
@@ -68,6 +71,11 @@ number of columns in the order the board should render them.
 
 The board is controlled. It previews drag movement internally, then calls
 `onItemMove` after drop. Persist the result by updating your source data.
+Use `onItemClick` for card edit dialogs, detail panels, or context menus; the
+component suppresses click events that are caused by drag/drop.
+When opening a modal from `onItemClick`, use Zero's `modals.open` manager so
+the app keeps the platform's shared portal, animation, escape handling, and
+stacking behavior.
 
 ```tsx
 import { useMemo } from 'react';
@@ -141,6 +149,11 @@ or lazy reads, then pass the visible rows as `items`. For live boards where all
 visible cards should react across clients, `useCollection()` is the simplest
 path.
 
+For a complete reference app, read [LaunchBoard](./launchboard.md). It wires
+`defineTable()`, `createApp()`, `AppProvider`, `useCollection()`, `AppShell`,
+`KanbanBoard`, and the platform modal manager into one ReactiveDB-backed
+example.
+
 ## Custom Cards
 
 Use `renderItem` when the default card is too small for the domain.
@@ -153,6 +166,7 @@ Use `renderItem` when the default card is too small for the domain.
   getColumnTitle={(column) => column.title}
   getItemId={(ticket) => ticket.ticket_id}
   getItemColumnId={(ticket) => ticket.status}
+  onItemClick={(ticket) => console.log('open ticket', ticket.ticket_id)}
   renderItem={({ item, isDragging }) => (
     <TicketCard ticket={item} dragging={isDragging} />
   )}
@@ -189,6 +203,7 @@ provided.
 | `getColumnId` / `getItemId` | Stable ids for drag state and React keys. |
 | `getItemColumnId` | Reads which column owns each item. |
 | `onItemMove` | Persist a completed move. Receives source/target columns, indexes, flat board order, and per-column ordered item ids. |
+| `onItemClick` | Open a caller-owned edit dialog, detail panel, or context menu for a card. |
 | `renderItem` | Fully custom card renderer. |
 | `renderColumnHeader` | Fully custom lane header renderer. |
 | `getItemTitle`, `getItemDescription`, `getItemBadge` | Default-card content helpers. |

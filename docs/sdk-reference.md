@@ -1092,7 +1092,9 @@ Headless hook for full table state control. Pass `primaryKey` to override
 
 `KanbanBoard` is a tokenized drag-and-drop board organism for records grouped
 by caller-owned columns. It is controlled: pass `columns` and `items`, then
-persist completed drops in `onItemMove`.
+persist completed drops in `onItemMove`. Use `onItemClick` with Zero's
+`modals.open` manager for edit/detail surfaces so modal behavior stays
+consistent with the rest of the platform.
 
 See [docs/frontend/kanban.md](./frontend/kanban.md) for the full reactive DB
 wiring guide and custom card examples.
@@ -1112,6 +1114,9 @@ function TaskBoard({ columns }) {
       getItemId={(task) => task.id}
       getItemColumnId={(task) => task.column_id}
       getItemTitle={(task) => task.title}
+      onItemClick={(task) => {
+        console.log('edit card', task.id);
+      }}
       onItemMove={(move) => {
         for (const columnId of new Set([move.fromColumnId, move.toColumnId])) {
           const itemIds = move.orderedColumnItemIds[columnId] ?? [];
@@ -1126,6 +1131,29 @@ function TaskBoard({ columns }) {
 ```
 
 Use `zero add components/kanban` when an app needs editable component source.
+
+### Radial Menu
+
+Zero exposes the animated radial context menu through a package-safe subpath:
+
+```tsx
+import { RadialMenu } from '@zero/framework/components/radial-menu';
+import { Copy, Settings, Trash } from '@zero/framework/icons';
+
+<RadialMenu
+  menuItems={[
+    { id: 1, label: 'Edit', icon: Settings },
+    { id: 2, label: 'Duplicate', icon: Copy },
+    { id: 3, label: 'Delete', icon: Trash },
+  ]}
+  onSelect={(item) => runAction(item.id)}
+>
+  <button type="button">Right-click me</button>
+</RadialMenu>
+```
+
+Use it for compact item-level actions such as sidebar records, board items, or
+canvas nodes. Keep destructive behavior behind a confirmation modal.
 
 ---
 
@@ -1690,6 +1718,9 @@ the same radius, border, focus-ring, and surface vocabulary.
 
 | Component | Description |
 |-----------|-------------|
+| `AppShell`, `AppShellHeader`, `AppShellBreadcrumbs`, `AppShellSidebar` | App-ready dashboard/admin shell with Animate UI/Radix sidebar, optional breadcrumbs/header content, workspace switcher, nested nav, item action menus, footer user menu, and shell presets |
+| `SidebarProvider`, `Sidebar`, `SidebarInset`, `SidebarTrigger`, `SidebarContent`, `SidebarHeader`, `SidebarFooter`, `SidebarRail`, `SidebarMenu`, `SidebarMenuButton`, `SidebarMenuAction` | Low-level sidebar primitives for custom shells |
+| `Breadcrumb`, `BreadcrumbList`, `BreadcrumbItem`, `BreadcrumbLink`, `BreadcrumbPage`, `BreadcrumbSeparator`, `BreadcrumbEllipsis` | Tokenized breadcrumb primitives used by `AppShellBreadcrumbs` |
 | `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter` | Card container with semantic sections |
 | `ScrollArea`, `ScrollBar` | Custom scrollable container |
 | `Separator` | Horizontal/vertical divider |
@@ -1780,14 +1811,16 @@ Modular notification components that compose together. Use individually or via `
 
 ## Animated Components
 
-From the [animate-ui](https://animate-ui.com) library. Import directly from component paths.
+From the [animate-ui](https://animate-ui.com) library. App code should import
+from Zero's public package paths, not internal source aliases.
 
 ### Radix Components (Animated)
 
 Animated wrappers around Radix UI primitives. All include enter/exit transitions.
 
 ```tsx
-import { Dialog, DialogContent, DialogTrigger } from '@/components/animate-ui/components/radix/dialog';
+import { Sidebar, SidebarProvider } from '@zero/framework/components/sidebar';
+import { DropdownMenu, DropdownMenuTrigger } from '@zero/framework/components/dropdown-menu';
 ```
 
 | Component | Sub-exports |
@@ -1804,7 +1837,7 @@ import { Dialog, DialogContent, DialogTrigger } from '@/components/animate-ui/co
 | **Progress** | `Progress` (animated bar) |
 | **RadioGroup** | `RadioGroup`, `RadioGroupItem` |
 | **Sheet** | `Sheet`, `SheetTrigger`, `SheetClose`, `SheetContent`, `SheetHeader`, `SheetFooter`, `SheetTitle`, `SheetDescription` |
-| **Sidebar** | `Sidebar`, `SidebarProvider`, `SidebarTrigger`, `SidebarContent`, `SidebarHeader`, `SidebarFooter`, `SidebarMenu`, `SidebarMenuItem`, `SidebarMenuButton`, `SidebarGroup`, `SidebarGroupLabel`, `SidebarGroupContent`, `SidebarRail`, `SidebarInset`, `useSidebar` |
+| **Sidebar** | `Sidebar`, `SidebarProvider`, `SidebarTrigger`, `SidebarContent`, `SidebarHeader`, `SidebarFooter`, `SidebarMenu`, `SidebarMenuItem`, `SidebarMenuButton`, `SidebarMenuAction`, `SidebarMenuSub`, `SidebarMenuSubButton`, `SidebarGroup`, `SidebarGroupLabel`, `SidebarGroupContent`, `SidebarRail`, `SidebarInset`, `useSidebar` |
 | **Switch** | `Switch` (animated toggle) |
 | **Tabs** | `Tabs`, `TabsList`, `TabsTrigger`, `TabsContents`, `TabsContent` |
 | **Toggle** | `Toggle`, `toggleVariants` |
@@ -1849,6 +1882,9 @@ import { GradientBackground } from '@/components/animate-ui/components/backgroun
 ```tsx
 import { FlipCard } from '@/components/animate-ui/components/community/flip-card';
 ```
+
+`RadialMenu` is also available from
+`@zero/framework/components/radial-menu` for package-mode apps.
 
 | Component | Description |
 |-----------|-------------|
@@ -1935,6 +1971,11 @@ import { AnimateIcon, Check, Heart, ZeroIcon } from '@zero/framework/icons';
 
 <ZeroIcon name="arrow-right" size={18} animateOnHover />
 ```
+
+Named icon imports are animation-capable. Zero's shared `Button` automatically
+drives nested Zero icons on hover and tap. Outside `Button`, icons stay static
+unless `animate`, `animateOnHover`, `animateOnTap`, or an `AnimateIcon` parent
+drives them.
 
 Direct named icon imports come from `@zero/framework/icons`. The main
 `@zero/framework/react` barrel exports `AnimateIcon`, `ZeroIcon`, and registry

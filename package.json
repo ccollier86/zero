@@ -15,9 +15,17 @@
       "types": "./src/frontend/index.ts",
       "import": "./src/frontend/index.ts"
     },
+    "./react/app-provider": {
+      "types": "./src/frontend/client/app-provider.tsx",
+      "import": "./src/frontend/client/app-provider.tsx"
+    },
     "./react/hydrate-runtime": {
       "types": "./src/frontend/client/hydrate-runtime.tsx",
       "import": "./src/frontend/client/hydrate-runtime.tsx"
+    },
+    "./react/hooks": {
+      "types": "./src/frontend/client/hooks.ts",
+      "import": "./src/frontend/client/hooks.ts"
     },
     "./server": {
       "types": "./src/frontend/server.ts",
@@ -119,13 +127,33 @@
       "types": "./src/components/auth/index.ts",
       "import": "./src/components/auth/index.ts"
     },
+    "./components/app-shell": {
+      "types": "./src/components/app-shell/index.ts",
+      "import": "./src/components/app-shell/index.ts"
+    },
+    "./components/collapsible": {
+      "types": "./src/components/collapsible/index.ts",
+      "import": "./src/components/collapsible/index.ts"
+    },
     "./components/data-table": {
       "types": "./src/components/data-table/index.ts",
       "import": "./src/components/data-table/index.ts"
     },
+    "./components/dropdown-menu": {
+      "types": "./src/components/dropdown-menu/index.ts",
+      "import": "./src/components/dropdown-menu/index.ts"
+    },
     "./components/kanban": {
       "types": "./src/components/kanban/index.ts",
       "import": "./src/components/kanban/index.ts"
+    },
+    "./components/radial-menu": {
+      "types": "./src/components/radial-menu/index.ts",
+      "import": "./src/components/radial-menu/index.ts"
+    },
+    "./components/sidebar": {
+      "types": "./src/components/sidebar/index.ts",
+      "import": "./src/components/sidebar/index.ts"
     },
     "./components/master-detail": {
       "types": "./src/components/master-detail/index.ts",
@@ -160,8 +188,14 @@
     "@types/bun": "latest",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
     "playwright": "^1.61.1",
     "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "react": ">=19.2.0 <20",
+    "react-dom": ">=19.2.0 <20"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "3.0.2",
@@ -228,9 +262,7 @@
     "next-themes": "^0.4.6",
     "postcss": "^8.5.8",
     "radix-ui": "^1.4.3",
-    "react": "^19.2.4",
     "react-day-picker": "^9.14.0",
-    "react-dom": "^19.2.4",
     "react-dropzone": "^15.0.0",
     "react-use-measure": "^2.1.7",
     "recharts": "^3.7.0",

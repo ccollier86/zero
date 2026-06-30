@@ -4,19 +4,19 @@ Zero's default icon pack is the Animate UI animated Lucide set. Use these icons
 for platform UI and app UI by default. Use `lucide-react` directly only when
 Zero does not ship an animated icon for the shape you need.
 
-Import direct icon components from `@zero/framework/icons`:
+Import direct icon components from `@zero/framework/icons`. Zero's shared
+`Button` automatically drives nested Zero animated icons on hover and tap:
 
 ```tsx
-import { AnimateIcon, Check, Trash } from '@zero/framework/icons';
+import { Button } from '@zero/framework/components/ui/button';
+import { Check, Trash } from '@zero/framework/icons';
 
 export function DeleteButton() {
   return (
-    <button type="button">
-      <AnimateIcon animateOnHover>
-        <Trash size={18} />
-      </AnimateIcon>
+    <Button type="button" variant="ghost">
+      <Trash size={18} />
       Delete
-    </button>
+    </Button>
   );
 }
 
@@ -24,6 +24,29 @@ export function SavedState() {
   return <Check animate className="text-emerald-600" />;
 }
 ```
+
+Direct icon imports are animation-capable, but non-button surfaces still need a
+trigger. Use `animate`, `animateOnHover`, or `animateOnTap` on the icon itself
+for icon-only controls, or wrap custom action surfaces in `AnimateIcon`:
+
+```tsx
+import { AnimateIcon, Plus } from '@zero/framework/icons';
+
+export function NewItemButton() {
+  return (
+    <AnimateIcon animateOnHover animateOnTap>
+      <button type="button">
+        <Plus size={16} />
+        New item
+      </button>
+    </AnimateIcon>
+  );
+}
+```
+
+Platform-owned interactive surfaces such as `Button`, `AppShell` sidebar rows,
+`DropdownMenu` rows rendered by AppShell, `ModalManager` close buttons, and the
+packaged dialog/sheet close buttons already wire this trigger for you.
 
 Use `ZeroIcon` when the icon is data-driven from config, schema metadata, or a
 generated UI description:

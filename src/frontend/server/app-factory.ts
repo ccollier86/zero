@@ -1,4 +1,6 @@
 import { Elysia } from 'elysia';
+import { mkdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { createSyncPlugin } from '../../sync/sync.plugin';
 import { combineSyncPolicies, createDefaultSyncPolicy } from '../../sync/sync-policy';
 import { createAuthPlugin, getAuthStore, getTokenService } from '../../auth/auth.plugin';
@@ -87,6 +89,7 @@ function addPlatformSnapshotTables(snapshotTables: Set<string>): void {
  */
 export async function createApp(userConfig: AppConfig) {
   const config = resolveConfig(userConfig);
+  ensureDatabaseDirectory(config.db.mode);
   configureObservability(config.observability);
   const emailRuntime = configureEmail(config.email, config.app);
   addPlatformSnapshotTables(config.snapshotTables);
@@ -379,3 +382,12 @@ export async function createApp(userConfig: AppConfig) {
 
 /** Type helper — export the app type for Eden Treaty typed client. */
 export type App = Awaited<ReturnType<typeof createApp>>;
+
+/**
+ * Ensure durable SQLite paths can be opened from a fresh generated app.
+ * Bun SQLite creates the database file, but not missing parent directories.
+ */
+function ensureDatabaseDirectory(mode: AppConfig['db']['mode']): void {
+  if (mode === 'memory' || mode === ':memory:') return;
+  mkdirSync(dirname(resolve(mode)), { recursive: true });
+}

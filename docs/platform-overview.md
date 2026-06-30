@@ -605,6 +605,9 @@ Built on Motion + radix-ui:
 - **Community components:** FlipCard, ManagementBar, MotionCarousel, NotificationList, PinList, PlayfulTodolist, RadialIntro, RadialMenu, RadialNav, ShareButton, UserPresenceAvatar
 
 ### Layout Components
+- `<AppShell>` — app-ready dashboard/admin shell with Animate UI/Radix sidebar, optional breadcrumbs/header content, workspace switcher, nested nav, item action menus, and footer user menu
+- `<AppShellBreadcrumbs>` — shell breadcrumb renderer backed by Zero's breadcrumb primitive
+- Sidebar primitives — `SidebarProvider`, `Sidebar`, `SidebarInset`, `SidebarTrigger`, menu groups, nested menu, rail, and action slots for custom shells
 - `<ListDetailLayout>` — animated two-column split
 - `<DetailPanel>` — right-side detail view
 - `<RecordNavigationBar>` — toolbar with actions for the current record

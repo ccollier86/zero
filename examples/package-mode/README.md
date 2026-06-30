@@ -43,3 +43,60 @@ for hooks like `useCollection()`.
 
 Generated apps include an `@app/*` path alias for file-router client manifests,
 plus `@/*`, `@/components/*`, `@/hooks/*`, and `@/lib/*` for app-owned source.
+The `@/components/*`, `@/hooks/*`, and `@/lib/*` aliases check app-owned source
+first, then fall back to Zero's packaged source. That lets copied components
+override framework defaults without breaking package-mode typecheck.
+
+## Configuration Shape
+
+The server entry should stay thin:
+
+```ts
+import { createApp } from '@zero/framework/server';
+import config from '../zero.config';
+
+const app = await createApp(config);
+app.listen(config.port);
+```
+
+Runtime settings belong in `zero.config.ts`. App features belong in the app
+folders:
+
+| Location | Owns |
+| --- | --- |
+| `zero.config.ts` | App name, database path, enabled platform systems, output paths, port. |
+| `db/schema.ts` | App table definitions shared by backend and frontend. |
+| `app/` | File-router layouts/pages and client UI. |
+| `server/endpoints/` | Single Zero-native API endpoints. |
+| `server/routes/` | Grouped routers and raw Elysia escape-hatch plugins. |
+| `server/middleware/` | Named app middleware and matchers. |
+| `server/plugins/` | Advanced app plugins. |
+
+`createApp()` creates missing parent directories for durable SQLite database
+paths, so a fresh generated app can start with `DB_PATH=./data/app.db` without
+manual setup.
+
+## Package-Mode Imports
+
+The broad `@zero/framework/react` barrel remains available for quick app code.
+For production starters and larger apps, prefer narrow imports so TypeScript and
+the browser bundle only touch the surface being used:
+
+```tsx
+import { AppProvider } from '@zero/framework/react/app-provider';
+import { useCollection } from '@zero/framework/react/hooks';
+import { Button } from '@zero/framework/components/ui/button';
+import { KanbanBoard } from '@zero/framework/components/kanban';
+```
+
+Generated apps pin `react`, `react-dom`, and their type packages to the
+framework-tested versions. Zero resolves SSR and browser bundle React from the
+app package so package-mode apps avoid duplicate React copies when using a local
+`file:` dependency during framework development.
+
+## Client Routes
+
+Routes or layouts with a top-level `"use client"` directive are mounted by the
+browser bundle. The server still resolves metadata, loader data, route data, and
+platform config, but it does not execute client hooks during SSR. Server-only
+routes without `"use client"` continue to stream HTML through React SSR.

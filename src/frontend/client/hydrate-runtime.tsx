@@ -8,7 +8,7 @@
  * observability only; it does not scan route files or generate build artifacts.
  */
 
-import { hydrateRoot } from 'react-dom/client';
+import { createRoot, hydrateRoot } from 'react-dom/client';
 import {
   createElement,
   useEffect,
@@ -42,6 +42,7 @@ declare global {
       pattern: string;
       params: Record<string, string>;
       loaderData: unknown;
+      renderMode?: 'client' | 'ssr';
     };
     __PLATFORM_CONFIG__?: {
       url: string;
@@ -123,22 +124,26 @@ export async function startHydration(manifest: HydrationManifest): Promise<void>
       serverRoutes: manifest.serverRoutes,
     });
 
-    hydrateRoot(
-      rootEl,
-      createElement(
-        ErrorBoundary,
-        {
-          children: createElement(
-            RouterProvider,
-            {
-              initialPathname: location.pathname,
-              initialParams: routeData.params,
-              children: shell,
-            }
-          ),
-        }
-      )
+    const app = createElement(
+      ErrorBoundary,
+      {
+        children: createElement(
+          RouterProvider,
+          {
+            initialPathname: location.pathname,
+            initialParams: routeData.params,
+            children: shell,
+          }
+        ),
+      }
     );
+
+    if (routeData.renderMode === 'client') {
+      createRoot(rootEl).render(app);
+      return;
+    }
+
+    hydrateRoot(rootEl, app);
   } catch (err) {
     emitFrontendCode(OBS_CODES.FRONTEND_HYDRATE_FAILED, {
       error: err,

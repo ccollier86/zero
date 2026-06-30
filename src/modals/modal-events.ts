@@ -80,10 +80,10 @@ function confirm(options: OpenConfirmOptions): Promise<boolean> {
 function close(id: string): void {
   const state = modalStore.getSnapshot().context;
   const modal = state.modals.find((m) => m.id === id);
-  if (modal) {
-    modal._resolve?.(false);
-    modal.onClose?.();
-  }
+  if (!modal || state.closingIds.includes(id)) return;
+
+  modal._resolve?.(false);
+  modal.onClose?.();
   modalStore.send({ type: 'close', id });
 }
 
@@ -92,7 +92,9 @@ function close(id: string): void {
  */
 function closeLast(): void {
   const state = modalStore.getSnapshot().context;
-  const last = state.modals[state.modals.length - 1];
+  const last = [...state.modals]
+    .reverse()
+    .find((modal) => !state.closingIds.includes(modal.id));
   if (last) close(last.id);
 }
 

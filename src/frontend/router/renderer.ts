@@ -1,5 +1,7 @@
-import { createElement } from 'react';
-import { renderToReadableStream } from 'react-dom/server';
+import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import type { ReactNode } from 'react';
 import type { SyncMode } from '../../sync/types';
 import type { MatchResult, RouteModule, PageMeta, LoaderContext, RouteConfig } from './types';
 import { serverErrorHtml, notFoundHtml } from '../client/error-boundary';
@@ -10,6 +12,16 @@ import { emitPlatformCode } from '../../observability/sink';
 // ─── Module Cache ──────────────────────────────────────────────────────────
 
 const moduleCache = new Map<string, RouteModule>();
+
+type ReactRuntime = typeof import('react');
+type ReactDomServerRuntime = typeof import('react-dom/server');
+
+interface SsrReactRuntime {
+  createElement: ReactRuntime['createElement'];
+  renderToReadableStream: ReactDomServerRuntime['renderToReadableStream'];
+}
+
+const reactRuntimeCache = new Map<string, Promise<SsrReactRuntime>>();
 
 /**
  * Import a route module, caching the result.
@@ -32,6 +44,46 @@ export function invalidateModule(path: string): void {
 /** Clear all cached modules. */
 export function invalidateAll(): void {
   moduleCache.clear();
+}
+
+/**
+ * Load React from the consuming app rather than from the framework source tree.
+ *
+ * Package-mode development often installs Zero through `file:` or a symlink.
+ * In that shape the framework repo can still have its own dev dependency copy
+ * of React, while the app has another copy. React hooks require a single module
+ * identity between components and renderer, so SSR resolves both `react` and
+ * `react-dom/server` through the app directory.
+ */
+async function loadSsrReactRuntime(appDir = './app'): Promise<SsrReactRuntime> {
+  const appRoot = resolve(appDir, '..');
+  const cacheKey = appRoot;
+  const cached = reactRuntimeCache.get(cacheKey);
+  if (cached) return cached;
+
+  const runtime = (async () => {
+    const requireFromApp = createRequire(pathToFileURL(resolve(appRoot, 'package.json')).href);
+    const [reactPath, reactDomServerPath] = [
+      requireFromApp.resolve('react'),
+      requireFromApp.resolve('react-dom/server'),
+    ];
+    const [react, reactDomServer] = await Promise.all([
+      import(pathToFileURL(reactPath).href) as Promise<ReactRuntime>,
+      import(pathToFileURL(reactDomServerPath).href) as Promise<ReactDomServerRuntime>,
+    ]);
+
+    if (typeof react.createElement !== 'function' || typeof reactDomServer.renderToReadableStream !== 'function') {
+      throw new Error('[renderer] Could not resolve React SSR runtime from the app. Install compatible react and react-dom dependencies.');
+    }
+
+    return {
+      createElement: react.createElement,
+      renderToReadableStream: reactDomServer.renderToReadableStream,
+    };
+  })();
+
+  reactRuntimeCache.set(cacheKey, runtime);
+  return runtime;
 }
 
 // ─── Renderer ──────────────────────────────────────────────────────────────
@@ -59,19 +111,21 @@ export interface RenderOptions {
   platformConfig?: PlatformConfig;
   /** Enriched loader context (with auth, redirect helper) from router plugin */
   loaderContext?: LoaderContext;
+  /** App route directory, used to resolve React from the consuming app. */
+  appDir?: string;
 }
 
 /**
  * Render a matched route to a ReadableStream using React 19 streaming SSR.
  *
- * 1. Loads all layout + page modules
+ * 1. Loads the matched page module, and layout modules for SSR routes
  * 2. Runs loader if present
  * 3. Nests layouts outside-in: Root > Section > Page
  * 4. Injects __ROUTE_DATA__ + __PLATFORM_CONFIG__ into <head>
  * 5. Streams HTML via renderToReadableStream
  */
 export async function renderRoute(options: RenderOptions): Promise<Response> {
-  const { match, request, clientEntry, cssPath, platformConfig, loaderContext } = options;
+  const { match, request, clientEntry, cssPath, platformConfig, loaderContext, appDir } = options;
   const isDev = process.env.NODE_ENV !== 'production';
 
   // If no page matched and we have a not-found path, render that
@@ -86,11 +140,14 @@ export async function renderRoute(options: RenderOptions): Promise<Response> {
   const isNotFound = !match.pagePath;
 
   try {
-    // Load all modules in parallel
-    const [pageModule, ...layoutModules] = await Promise.all([
-      loadModule(pagePath),
-      ...match.layouts.map(loadModule),
-    ]);
+    // Check if this route crosses a client component boundary.
+    // Server routes render HTML directly. Client routes render an app shell and
+    // let the browser bundle mount the route, which keeps package-mode apps on
+    // one React module identity even when Zero is installed through `file:`.
+    const isClientRoute = hasUseClientDirective(pagePath)
+      || match.layouts.some((layoutPath) => hasUseClientDirective(layoutPath));
+
+    const pageModule = await loadModule(pagePath);
 
     // Run page loader if present — use enriched context from router plugin
     const loaderCtx: LoaderContext = loaderContext ?? {
@@ -124,7 +181,24 @@ export async function renderRoute(options: RenderOptions): Promise<Response> {
       });
     }
 
-    let element = createElement(PageComponent, {
+    const htmlHead = buildHtmlHead(
+      meta,
+      cssPath,
+      isClientRoute ? match : undefined,
+      isClientRoute ? loaderData : undefined,
+      isClientRoute ? platformConfig : undefined,
+      isClientRoute ? 'client' : 'ssr',
+      isClientRoute ? clientEntry : undefined,
+    );
+
+    if (isClientRoute) {
+      return htmlShellResponse('', htmlHead, isNotFound ? 404 : 200);
+    }
+
+    const { createElement, renderToReadableStream } = await loadSsrReactRuntime(appDir);
+    const layoutModules = await Promise.all(match.layouts.map(loadModule));
+
+    let element: ReactNode = createElement(PageComponent, {
       params: match.params,
       ...(loaderData != null ? { data: loaderData } : {}),
     } as any);
@@ -137,19 +211,9 @@ export async function renderRoute(options: RenderOptions): Promise<Response> {
       }
     }
 
-    // Check if this page is a client component ("use client" directive)
-    // Server components: render to HTML only, zero JS shipped
-    // Client components: render to HTML + ship JS for hydration
-    const isClientPage = hasUseClientDirective(pagePath);
-
     // Render to streaming HTML
     const ssrErrors: unknown[] = [];
     const stream = await renderToReadableStream(element, {
-      // Only ship client JS for "use client" pages.
-      // Must use bootstrapModules (not bootstrapScripts) because the bundle
-      // is built with format:'esm' — browsers reject import/export in regular <script> tags.
-      // bootstrapModules emits <script type="module"> which handles ESM correctly.
-      bootstrapModules: isClientPage && clientEntry ? [clientEntry] : undefined,
       onError(error: unknown) {
         ssrErrors.push(error);
         emitPlatformCode(OBS_CODES.RENDERER_SSR_ERROR, {
@@ -159,9 +223,6 @@ export async function renderRoute(options: RenderOptions): Promise<Response> {
       },
     });
 
-    // Build HTML shell with meta + CSS + route data
-    // Only inject __ROUTE_DATA__ and __PLATFORM_CONFIG__ for client pages
-    const htmlHead = buildHtmlHead(meta, cssPath, isClientPage ? match : undefined, isClientPage ? loaderData : undefined, isClientPage ? platformConfig : undefined);
     const wrappedStream = wrapWithHtmlShell(stream, htmlHead);
 
     return new Response(wrappedStream, {
@@ -211,7 +272,9 @@ function buildHtmlHead(
   cssPath?: string,
   match?: MatchResult,
   loaderData?: unknown,
-  platformConfig?: PlatformConfig
+  platformConfig?: PlatformConfig,
+  renderMode?: 'client' | 'ssr',
+  clientEntry?: string,
 ): string {
   const parts: string[] = [
     '<meta charset="utf-8">',
@@ -234,6 +297,7 @@ function buildHtmlHead(
       pattern: match.pattern,
       params: match.params,
       loaderData: loaderData ?? null,
+      renderMode: renderMode ?? 'ssr',
     };
     parts.push(
       `<script>window.__ROUTE_DATA__=${serializeForScript(routeData)}</script>`
@@ -247,6 +311,10 @@ function buildHtmlHead(
     );
   }
 
+  if (clientEntry) {
+    parts.push(`<script type="module" src="${escapeHtml(clientEntry)}"></script>`);
+  }
+
   return parts.join('\n    ');
 }
 
@@ -256,6 +324,21 @@ function escapeHtml(str: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function htmlShellResponse(body: string, headContent: string, status: number): Response {
+  return new Response(`<!DOCTYPE html>
+<html lang="en">
+  <head>
+    ${headContent}
+  </head>
+  <body>
+    <div id="root">${body}</div>
+  </body>
+</html>`, {
+    status,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
 }
 
 /**

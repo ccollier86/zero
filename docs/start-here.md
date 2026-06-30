@@ -21,6 +21,10 @@ For the package-mode framework surface and remaining package-mode work, see
 [Framework Developer Surface](./framework-developer-surface.md).
 The repository also includes `examples/package-mode` as a small generated-app
 fixture that imports Zero through `@zero/framework/*`.
+The in-repo `app/launchboard` app is the larger frontend reference: it uses
+AppShell, ReactiveDB collections, KanbanBoard, and the platform modal manager
+together. See [LaunchBoard](./frontend/launchboard.md) before building
+dashboard/work-queue style apps.
 
 Core backend primitives include ReactiveDB, generated resources, WebSocket
 sync, auth, email, storage, workflows, notifications, AI, vector storage, and
@@ -127,7 +131,9 @@ ReactiveDB sync, auth behavior, and client route safety net.
 
 ```tsx
 import type { ReactNode } from 'react';
-import { AppProvider, ThemeProvider, Toaster } from '@zero/framework/react';
+import { AppProvider } from '@zero/framework/react/app-provider';
+import { ThemeProvider } from '@zero/framework/components/ui/theme-provider';
+import { Toaster } from '@zero/framework/components/ui/sonner';
 import { tables } from '../db/schema';
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -219,6 +225,14 @@ cards at `rounded-lg` or smaller, and check both light and dark modes before
 shipping shared UI changes. Zero keeps Playwright available as a dev dependency
 for local screenshot checks against running or static routes.
 
+For dashboards, admin tools, data apps, and internal products, start with
+`AppShell` from `@zero/framework/components/app-shell`. It provides the default
+Animate UI/Radix sidebar, top workspace switcher, nested/expandable nav,
+three-dot item action menus, footer user menu, and optional breadcrumb/header
+row. Use `header` when breadcrumbs are not needed; the row can hold title,
+filters, search, or actions. Drop to `@zero/framework/components/sidebar` only
+when the shell cannot express the layout.
+
 Run the platform doctor against an exported config module:
 
 ```txt
@@ -242,8 +256,11 @@ zero migrate --doctor --schema ./db/schema.ts --strict
 ```
 
 Use `@zero/framework/server` for app startup, backend routes, and server
-service getters. Use `@zero/framework/react` for browser-safe components,
-hooks, and SDK helpers. Direct subsystem imports such as
+service getters. Use `@zero/framework/react/app-provider`,
+`@zero/framework/react/hooks`, and direct component subpaths such as
+`@zero/framework/components/ui/button` for browser UI. The broad
+`@zero/framework/react` barrel remains available as a convenience export, but
+generated apps should prefer narrow imports. Direct subsystem imports such as
 `@zero/framework/email`, `@zero/framework/ai`, `@zero/framework/vector`,
 `@zero/framework/sync/client`, and `@zero/framework/components/data-table` are
 available when a file should depend on one specific feature.
@@ -401,6 +418,10 @@ import { AnimateIcon, Check, Trash, ZeroIcon } from '@zero/framework/icons';
 
 <ZeroIcon name="arrow-right" size={18} animateOnHover />;
 ```
+
+Zero's shared `Button` automatically animates nested Zero icons on hover and
+tap. Outside `Button`, imported icons animate only when `animate`,
+`animateOnHover`, `animateOnTap`, or an `AnimateIcon` parent is present.
 
 Use animated platform icons for app and platform UI by default. Use
 `lucide-react` directly only when Zero does not provide the icon shape yet.

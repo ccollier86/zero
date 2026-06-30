@@ -132,13 +132,13 @@ async function writeGeneratedPackageJson(
     dependencies: {
       '@zero/framework': zeroDependency ?? await getDefaultZeroDependency(),
       elysia: '^1.4.27',
-      react: '^19.2.4',
-      'react-dom': '^19.2.4',
+      react: '19.2.4',
+      'react-dom': '19.2.4',
     },
     devDependencies: {
       '@types/bun': 'latest',
-      '@types/react': '^19.2.14',
-      '@types/react-dom': '^19.2.3',
+      '@types/react': '19.2.14',
+      '@types/react-dom': '19.2.3',
       typescript: '^5.7.0',
     },
   };
@@ -165,9 +165,15 @@ async function writeGeneratedTsConfig(targetDir: string): Promise<void> {
       paths: {
         '@/*': ['./*'],
         '@app/*': ['./app/*'],
-        '@/components/*': ['./components/*'],
-        '@/hooks/*': ['./hooks/*'],
-        '@/lib/*': ['./lib/*'],
+        '@/components/*': ['./components/*', './node_modules/@zero/framework/src/components/*'],
+        '@/hooks/*': ['./hooks/*', './node_modules/@zero/framework/src/hooks/*'],
+        '@/lib/*': ['./lib/*', './node_modules/@zero/framework/src/lib/*'],
+        react: ['./node_modules/@types/react'],
+        'react/jsx-runtime': ['./node_modules/@types/react/jsx-runtime'],
+        'react/jsx-dev-runtime': ['./node_modules/@types/react/jsx-dev-runtime'],
+        'react-dom': ['./node_modules/@types/react-dom'],
+        'react-dom/client': ['./node_modules/@types/react-dom/client'],
+        'react-dom/server': ['./node_modules/@types/react-dom/server'],
       },
     },
     include: [

@@ -101,6 +101,6 @@ export type OpenConfirmOptions = ConfirmModalOptions & {
 export interface ModalStoreState {
   /** Stack of open modals */
   modals: ModalInstance[];
-  /** Index of the modal currently animating out (-1 = none) */
-  closingIndex: number;
+  /** Modal IDs currently animating out before removal. */
+  closingIds: string[];
 }

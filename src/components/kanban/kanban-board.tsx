@@ -109,6 +109,11 @@ interface ProjectionState {
   itemColumnIds: Record<string, string>;
 }
 
+interface DragBaseState {
+  itemIds: string[];
+  itemColumnIds: Record<string, string>;
+}
+
 const ITEM_PREFIX = 'item:';
 const COLUMN_PREFIX = 'column:';
 
@@ -148,6 +153,8 @@ export function KanbanBoard<TColumn, TItem>({
   const [activeItemId, setActiveItemId] = React.useState<string | null>(null);
   const [projection, setProjection] = React.useState<ProjectionState | null>(null);
   const movedRef = React.useRef(false);
+  const dragBaseRef = React.useRef<DragBaseState | null>(null);
+  const lastMoveRef = React.useRef<ProjectKanbanMoveResult | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -208,20 +215,25 @@ export function KanbanBoard<TColumn, TItem>({
     (activeId: string, target: KanbanTarget) =>
       projectKanbanMove({
         columnIds,
-        itemIds: effectiveItemIds,
-        itemColumnIds: effectiveItemColumnIds,
+        itemIds: dragBaseRef.current?.itemIds ?? baseItemIds,
+        itemColumnIds: dragBaseRef.current?.itemColumnIds ?? baseItemColumnIds,
         activeId,
         target,
       }),
-    [columnIds, effectiveItemColumnIds, effectiveItemIds],
+    [baseItemColumnIds, baseItemIds, columnIds],
   );
 
   const handleDragStart = React.useCallback((event: DragStartEvent) => {
     const itemId = decodeItemId(event.active.id);
     if (!itemId) return;
     movedRef.current = false;
+    dragBaseRef.current = {
+      itemIds: baseItemIds,
+      itemColumnIds: baseItemColumnIds,
+    };
+    lastMoveRef.current = null;
     setActiveItemId(itemId);
-  }, []);
+  }, [baseItemColumnIds, baseItemIds]);
 
   const handleDragOver = React.useCallback((event: DragOverEvent) => {
     const itemId = decodeItemId(event.active.id);
@@ -232,6 +244,7 @@ export function KanbanBoard<TColumn, TItem>({
     if (!next) return;
 
     movedRef.current = true;
+    lastMoveRef.current = next;
     setProjection({
       itemIds: next.itemIds,
       itemColumnIds: next.itemColumnIds,
@@ -241,19 +254,31 @@ export function KanbanBoard<TColumn, TItem>({
   const handleDragEnd = React.useCallback((event: DragEndEvent) => {
     const itemId = decodeItemId(event.active.id);
     const target = decodeTargetId(event.over?.id);
-    const next = itemId && target ? projectMove(itemId, target) : null;
+    const projectedMove = itemId && target ? projectMove(itemId, target) : null;
+    const next = projectedMove ?? lastMoveRef.current;
+    const hadMove = movedRef.current;
 
     if (next && itemId) {
       emitMove(next, itemId);
     }
 
-    movedRef.current = false;
+    if (hadMove) {
+      window.setTimeout(() => {
+        movedRef.current = false;
+      }, 0);
+    } else {
+      movedRef.current = false;
+    }
+    dragBaseRef.current = null;
+    lastMoveRef.current = null;
     setActiveItemId(null);
     setProjection(null);
   }, [projectMove]);
 
   const handleDragCancel = React.useCallback(() => {
     movedRef.current = false;
+    dragBaseRef.current = null;
+    lastMoveRef.current = null;
     setActiveItemId(null);
     setProjection(null);
   }, []);
@@ -319,9 +344,13 @@ export function KanbanBoard<TColumn, TItem>({
                         key={itemId}
                         id={itemId}
                         disabled={disabled}
+                        active={activeItemId === itemId}
                         className={getItemClassName?.(item)}
                         onClick={() => {
-                          if (movedRef.current) return;
+                          if (movedRef.current) {
+                            movedRef.current = false;
+                            return;
+                          }
                           onItemClick?.(item, {
                             column,
                             columnId,
@@ -507,6 +536,7 @@ function KanbanColumn({
 interface SortableKanbanItemProps {
   id: string;
   disabled: boolean;
+  active: boolean;
   className?: string;
   onClick?: () => void;
   children: (isDragging: boolean) => React.ReactNode;
@@ -515,6 +545,7 @@ interface SortableKanbanItemProps {
 function SortableKanbanItem({
   id,
   disabled,
+  active,
   className,
   onClick,
   children,
@@ -525,25 +556,27 @@ function SortableKanbanItem({
     setNodeRef,
     transform,
     transition,
-    isDragging,
   } = useSortable({ id: encodeItemId(id), disabled });
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0 : 1,
   };
 
   return (
     <motion.div
       ref={setNodeRef}
       data-slot="kanban-sortable-item"
-      className={cn('cursor-grab touch-manipulation outline-none active:cursor-grabbing', className)}
+      className={cn(
+        'cursor-grab touch-manipulation opacity-100 outline-none transition-opacity active:cursor-grabbing',
+        active && 'opacity-0',
+        className,
+      )}
       style={style}
       layout
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: isDragging ? 0 : 1, y: 0 }}
-      exit={{ opacity: 0, y: -6 }}
+      initial={{ y: 6 }}
+      animate={{ y: 0 }}
+      exit={{ y: -6 }}
       transition={{ duration: 0.16 }}
       {...attributes}
       tabIndex={disabled ? -1 : attributes.tabIndex ?? 0}
@@ -556,7 +589,7 @@ function SortableKanbanItem({
       }}
       {...listeners}
     >
-      {children(isDragging)}
+      {children(active)}
     </motion.div>
   );
 }
