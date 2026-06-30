@@ -254,6 +254,7 @@ source, copy selected pieces with `zero add`:
 ```sh
 zero add components/ui/button
 zero add components/data-table
+zero add components/kanban
 zero add hooks modals --dry-run
 ```
 
@@ -496,6 +497,7 @@ Zero includes reusable frontend organisms for fast data-driven screens:
 | Organism | Use it for | Docs |
 | --- | --- | --- |
 | `DataTableView` | Schema-aware tables with full-sync, lazy `/api/data`, or caller-owned sources. | [docs/frontend/data-table.md](./frontend/data-table.md) |
+| `KanbanBoard` | Drag-and-drop status boards, pipelines, queues, and workflow lanes backed by caller-owned or live data. | [docs/frontend/kanban.md](./frontend/kanban.md) |
 | `MasterDetailView` | A table/list plus detail panel, generated edit form, custom detail body, and record navigation. | [docs/frontend/master-detail.md](./frontend/master-detail.md) |
 | `DetailPanel` / `ListDetailLayout` / `RecordNavigationBar` | Custom detail screens that need the polished shell without the full organism. | [docs/frontend/master-detail.md](./frontend/master-detail.md#low-level-detail-primitives) |
 

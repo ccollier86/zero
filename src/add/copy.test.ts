@@ -82,6 +82,38 @@ describe('addZeroSource', () => {
       await rm(targetDir, { recursive: true, force: true });
     }
   });
+
+  test('copies kanban source with its app-owned dependencies', async () => {
+    const targetDir = await createTempApp();
+
+    try {
+      const result = await addZeroSource({
+        targetDir,
+        items: ['components/kanban'],
+      });
+
+      expect(result.filesWritten).toContain('components/kanban/kanban-board.tsx');
+      expect(result.filesWritten).toContain('components/kanban/kanban-utils.ts');
+      expect(result.filesWritten).toContain('components/ui/avatar.tsx');
+      expect(result.filesWritten).toContain('components/ui/badge.tsx');
+      expect(result.filesWritten).toContain('components/ui/scroll-area.tsx');
+      expect(result.filesWritten).toContain('lib/utils.ts');
+
+      await writeFile(
+        join(targetDir, 'entry.tsx'),
+        "import { KanbanBoard } from './components/kanban';\nexport { KanbanBoard };\n"
+      );
+
+      const build = await Bun.build({
+        entrypoints: [join(targetDir, 'entry.tsx')],
+        outdir: join(targetDir, 'dist-kanban'),
+        target: 'browser',
+      });
+      expect(build.success).toBe(true);
+    } finally {
+      await rm(targetDir, { recursive: true, force: true });
+    }
+  });
 });
 
 async function writeTestTsConfig(targetDir: string): Promise<void> {

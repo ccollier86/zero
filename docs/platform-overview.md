@@ -499,6 +499,29 @@ Caller-owned data stays simple:
 - **Column overrides:** Override labels, renderers, widths, sorting, filtering, and editability
 - **Animated transitions:** Smooth cell updates via Motion
 
+### KanbanBoard
+
+`KanbanBoard` provides a tokenized drag-and-drop board for records grouped by
+caller-owned columns. Use it for pipelines, task boards, queues, intake triage,
+and workflow lanes. It is controlled, so apps persist drops through
+`onItemMove` with `useCollection().update()` or another data source.
+
+```tsx
+<KanbanBoard
+  columns={columns}
+  items={tasks}
+  getColumnId={(column) => column.id}
+  getColumnTitle={(column) => column.title}
+  getItemId={(task) => task.id}
+  getItemColumnId={(task) => task.column_id}
+  getItemTitle={(task) => task.title}
+  onItemMove={(move) => updateTask(move.itemId, { column_id: move.toColumnId })}
+/>
+```
+
+See [KanbanBoard](./frontend/kanban.md) for reactive DB wiring and source-copy
+usage.
+
 ### MasterDetailView / MasterDetailPage — List + Detail Layout
 
 See the full organism and low-level detail primitive guide in

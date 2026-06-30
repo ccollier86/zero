@@ -131,6 +131,7 @@ export const serverSymbols = {
 const clientSmokeSource = `
 import { LoginForm } from '@zero/framework/components/auth';
 import { DataTableView } from '@zero/framework/components/data-table';
+import { KanbanBoard as KanbanBoardSubpath } from '@zero/framework/components/kanban';
 import { MasterDetailView } from '@zero/framework/components/master-detail';
 import { StorageManagement } from '@zero/framework/components/storage';
 import { Button as UiButton } from '@zero/framework/components/ui/button';
@@ -140,6 +141,9 @@ import { ModalManager } from '@zero/framework/modals';
 import {
   Button,
   DataTable,
+  groupKanbanItemIds,
+  KanbanBoard,
+  projectKanbanMove,
   StickToBottom,
   ThemeProvider,
   useCollection,
@@ -158,6 +162,9 @@ export const clientSymbols = {
   createSyncClient,
   DataTable,
   DataTableView,
+  groupKanbanItemIds,
+  KanbanBoard,
+  KanbanBoardSubpath,
   LoginForm,
   MasterDetailView,
   ModalManager,
@@ -168,6 +175,7 @@ export const clientSymbols = {
   useCollection,
   useResourceList,
   useDisclosure,
+  projectKanbanMove,
   row,
 };
 `;

@@ -171,6 +171,7 @@ Auth, sync, and router all share one ReactiveDB. The router renders pages with R
 | [SDK](./sdk.md) | `createApp()` server factory, `<AppProvider>`, auth hooks, router hooks, Eden typed RPC, SSR → hydration → live data flow |
 | [Hooks](./hooks.md) | Generic React hooks, platform-specific hooks, user-property hooks, and hook responsibility boundaries |
 | [DataTableView](./data-table.md) | Schema-aware table organism, full-sync/lazy/data sources, inline editing, toolbar, column overrides |
+| [KanbanBoard](./kanban.md) | Tokenized drag-and-drop board organism for ordered records grouped by caller-owned columns |
 | [MasterDetailView](./master-detail.md) | List/detail organism, generated detail forms, custom detail rendering, navigation, low-level detail primitives |
 | [Migrations](../migrations.md) | First-class migration files, schema history, doctor, migrate-plan, rollback, backups |
 | [Observability](../observability.md) | Stable event codes, default console + memory store, protected event endpoint, frontend sink |

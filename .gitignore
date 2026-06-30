@@ -10,3 +10,5 @@ dist/
 bun.lock
 src/frontend/client/_generated/
 projects/
+app/
+zero

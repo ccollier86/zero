@@ -30,6 +30,7 @@ Customize packaged UI or hook source with:
 ```sh
 zero add components/ui/button
 zero add components/data-table
+zero add components/kanban
 ```
 
 Generated starter projects should use the same structure, but with Zero

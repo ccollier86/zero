@@ -268,6 +268,22 @@ export type {
   UseDataTableSourceOptions,
 } from '../components/data-table';
 
+// ─── Kanban Board ──────────────────────────────────────────────────────
+export {
+  KanbanBoard,
+  KanbanTaskCard,
+  groupKanbanItemIds,
+  projectKanbanMove,
+} from '../components/kanban';
+export type {
+  KanbanBoardProps,
+  KanbanItemMove,
+  KanbanTaskCardProps,
+  KanbanTarget,
+  ProjectKanbanMoveInput,
+  ProjectKanbanMoveResult,
+} from '../components/kanban';
+
 // ─── UI Components ──────────────────────────────────────────────────────
 export { Button, buttonVariants } from '../components/ui/button';
 export { Input } from '../components/ui/input';
