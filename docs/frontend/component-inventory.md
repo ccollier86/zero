@@ -45,6 +45,7 @@ classes through the component tree.
 | Public navigation | Public-page navigation for marketing/docs/content routes. | `@zero/framework/components/navbar` or `@zero/framework/react` | `ResizableNavbar` |
 | Public heroes | Public-page opening sections with background slots and actions. | `@zero/framework/components/hero` or `@zero/framework/react` | `Hero`, `HeroBackground`, `HeroImageBackground` |
 | Public text effects | Public landing/docs/content text motion. | `@zero/framework/components/text-effects` or `@zero/framework/react` | `TextGenerateEffect`, `TypewriterEffect`, `FlipWords` |
+| Public content sections | Landing/docs/content sections using the public token lane. | `@zero/framework/components/*` or `@zero/framework/react` | `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList` |
 | App shell | Default app chrome for dashboards, admin tools, and data apps. | `@zero/framework/components/app-shell` | `AppShell`, `AppShellSidebar` |
 | Data organisms | Feature-complete screens or major widgets wired for schemas/live data. | `@zero/framework/react` | `DataTableView`, `KanbanBoard`, `MasterDetailView`, `CrudPage` |
 | Domain organisms | Platform feature UI with backend/client assumptions. | `@zero/framework/react` | `UserManagement`, `StorageManagement` |
@@ -57,13 +58,15 @@ classes through the component tree.
 3. Start with `Hero` for public route opening sections.
 4. Use `TextGenerateEffect`, `TypewriterEffect`, and `FlipWords` for public
    text motion instead of custom one-off heading animations.
-5. Use base `ui/` primitives instead of raw HTML controls.
-6. Use generated/data organisms when a schema or collection exists.
-7. Use Animate UI Radix wrappers for overlays and menus instead of duplicating
+5. Use `Faq`, `ExpandableCards`, `BentoGrid`, and `AnimatedList` for common
+   public content sections before copying external snippets.
+6. Use base `ui/` primitives instead of raw HTML controls.
+7. Use generated/data organisms when a schema or collection exists.
+8. Use Animate UI Radix wrappers for overlays and menus instead of duplicating
    Radix setup.
-8. Use Zero animated icons by default. Use `lucide-react` directly only when an
+9. Use Zero animated icons by default. Use `lucide-react` directly only when an
    icon is not in Zero's animated set.
-9. Keep app-specific source outside `src/components`; promote only reusable
+10. Keep app-specific source outside `src/components`; promote only reusable
    components with docs and export decisions.
 
 ## Base Primitives
@@ -117,6 +120,10 @@ radius, font, and light/dark behavior used by dashboard components.
 | `WavyBackground` | `hero/wavy-background.tsx` | Canvas-driven wave background used by the `wavy` Hero preset and available for custom Hero backgrounds. |
 | `ResizableNavbar` | `navbar/resizable-navbar.tsx` | Fixed public navbar that detaches into a floating blurred capsule after scroll, includes desktop magnetic hover state, mobile menu, brand slot, links, and actions. |
 | `TextGenerateEffect`, `TypewriterEffect`, `FlipWords` | `text-effects/*` | Motion text effects for public headings, Hero slots, and content page accents. |
+| `Faq` | `faq/faq.tsx` | Public FAQ accordion with optional generated answer text. |
+| `ExpandableCards` | `expandable-card/expandable-card.tsx` | Shared-layout card expansion for public feature cards, case studies, and content teasers. |
+| `BentoGrid`, `BentoGridItem`, `BentoGridSkeleton` | `bento-grid/bento-grid.tsx` | Tokenized public bento grid adapted from the Aceternity pattern. |
+| `AnimatedList`, `AnimatedListItem`, `AnimatedListCard` | `animated-list/animated-list.tsx` | Magic UI style sequenced reveal list with a tokenized event-card skin. |
 
 ## Forms And Generated Input UI
 

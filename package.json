@@ -139,6 +139,14 @@
       "types": "./src/components/app-shell/index.ts",
       "import": "./src/components/app-shell/index.ts"
     },
+    "./components/animated-list": {
+      "types": "./src/components/animated-list/index.ts",
+      "import": "./src/components/animated-list/index.ts"
+    },
+    "./components/bento-grid": {
+      "types": "./src/components/bento-grid/index.ts",
+      "import": "./src/components/bento-grid/index.ts"
+    },
     "./components/collapsible": {
       "types": "./src/components/collapsible/index.ts",
       "import": "./src/components/collapsible/index.ts"
@@ -150,6 +158,14 @@
     "./components/dropdown-menu": {
       "types": "./src/components/dropdown-menu/index.ts",
       "import": "./src/components/dropdown-menu/index.ts"
+    },
+    "./components/expandable-card": {
+      "types": "./src/components/expandable-card/index.ts",
+      "import": "./src/components/expandable-card/index.ts"
+    },
+    "./components/faq": {
+      "types": "./src/components/faq/index.ts",
+      "import": "./src/components/faq/index.ts"
     },
     "./components/hero": {
       "types": "./src/components/hero/index.ts",

@@ -22,9 +22,29 @@ const STATIC_TARGETS: AddableTarget[] = [
     description: 'Auth forms, password flows, and auth visibility gates.',
   },
   {
+    id: 'components/animated-list',
+    sourceRel: 'components/animated-list',
+    description: 'Public animated list and tokenized event-card skin.',
+  },
+  {
+    id: 'components/bento-grid',
+    sourceRel: 'components/bento-grid',
+    description: 'Public bento grid layout and tokenized bento cards.',
+  },
+  {
     id: 'components/data-table',
     sourceRel: 'components/data-table',
     description: 'DataTable, DataTableView, toolbar, pagination, and row actions.',
+  },
+  {
+    id: 'components/expandable-card',
+    sourceRel: 'components/expandable-card',
+    description: 'Public shared-layout expandable cards.',
+  },
+  {
+    id: 'components/faq',
+    sourceRel: 'components/faq',
+    description: 'Public FAQ accordion with generated answer text.',
   },
   {
     id: 'components/hero',

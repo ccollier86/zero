@@ -370,6 +370,10 @@ store, or public frontend API.
 | `src/components/text-effects/text-generate-effect.tsx` | Public word-by-word text reveal component |
 | `src/components/text-effects/typewriter-effect.tsx` | Public segmented typewriter text effect |
 | `src/components/text-effects/flip-words.tsx` | Public rotating inline word effect |
+| `src/components/faq/faq.tsx` | Public FAQ accordion with optional generated answer text |
+| `src/components/expandable-card/expandable-card.tsx` | Public shared-layout expandable card gallery |
+| `src/components/bento-grid/bento-grid.tsx` | Public bento grid layout, item, and skeleton components |
+| `src/components/animated-list/animated-list.tsx` | Public sequenced animated list and event-card skin |
 | `src/components/master-detail/master-detail-page.tsx` | `<MasterDetailView>` / `<MasterDetailPage>` — list + detail organism |
 | `src/components/master-detail/use-master-detail-state.ts` | Live data and selected-row state for master-detail views |
 | `src/components/master-detail/master-detail-selection.ts` | Pure primary-key-aware selection resolution |

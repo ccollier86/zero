@@ -169,6 +169,33 @@ describe('addZeroSource', () => {
     }
   });
 
+  test('copies public landing components with shared dependencies', async () => {
+    const targetDir = await createTempApp();
+
+    try {
+      const result = await addZeroSource({
+        targetDir,
+        items: [
+          'components/faq',
+          'components/expandable-card',
+          'components/bento-grid',
+          'components/animated-list',
+        ],
+      });
+
+      expect(result.filesWritten).toContain('components/faq/faq.tsx');
+      expect(result.filesWritten).toContain('components/expandable-card/expandable-card.tsx');
+      expect(result.filesWritten).toContain('components/bento-grid/bento-grid.tsx');
+      expect(result.filesWritten).toContain('components/animated-list/animated-list.tsx');
+      expect(result.filesWritten).toContain('components/text-effects/text-generate-effect.tsx');
+      expect(result.filesWritten).toContain('components/animate-ui/icons/zero-icon.tsx');
+      expect(result.filesWritten).toContain('hooks/use-click-away.ts');
+      expect(result.filesWritten).toContain('lib/utils.ts');
+    } finally {
+      await rm(targetDir, { recursive: true, force: true });
+    }
+  });
+
   test('copies resizable navbar source with its animated icon dependencies', async () => {
     const targetDir = await createTempApp();
 

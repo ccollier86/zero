@@ -127,6 +127,8 @@ function printUsage(): void {
   console.log('Examples:');
   console.log('  zero add components/ui/button');
   console.log('  zero add components/data-table --target ./my-app');
+  console.log('  zero add components/bento-grid components/faq');
+  console.log('  zero add components/expandable-card components/animated-list');
   console.log('  zero add components/hero');
   console.log('  zero add components/kanban');
   console.log('  zero add components/navbar');
