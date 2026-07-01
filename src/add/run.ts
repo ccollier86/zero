@@ -128,6 +128,7 @@ function printUsage(): void {
   console.log('  zero add components/ui/button');
   console.log('  zero add components/data-table --target ./my-app');
   console.log('  zero add components/kanban');
+  console.log('  zero add components/navbar');
   console.log('  zero add hooks modals --dry-run');
   console.log('');
   console.log('Run `zero add --list` to see supported items.');

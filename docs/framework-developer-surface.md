@@ -60,6 +60,7 @@ but new app code should use `@zero/framework/*`.
 | `@zero/framework/components/kanban` | Kanban board primitives and movement helpers. Also exported from `react`. |
 | `@zero/framework/components/radial-menu` | Radial context menu organism. Also exported from `react`. |
 | `@zero/framework/components/master-detail` | Master-detail primitives. Also exported from `react`. |
+| `@zero/framework/components/navbar` | Public-page resizable navbar. Also exported from `react`. |
 | `@zero/framework/components/storage` | Storage management/dropzone UI. Also exported from `react`. |
 | `@zero/framework/components/ui/<name>` | Direct UI primitive imports such as `button`, `input`, or `table`. |
 
@@ -941,6 +942,7 @@ Narrow imports are also supported:
 import { DataTableView } from '@zero/framework/components/data-table';
 import { KanbanBoard } from '@zero/framework/components/kanban';
 import { RadialMenu } from '@zero/framework/components/radial-menu';
+import { ResizableNavbar } from '@zero/framework/components/navbar';
 import { LoginForm } from '@zero/framework/components/auth';
 import { useDisclosure } from '@zero/framework/hooks';
 import { Button } from '@zero/framework/components/ui/button';
@@ -954,6 +956,7 @@ framework-internal imports to public `@zero/framework/*` package paths:
 zero add components/ui/button
 zero add components/data-table
 zero add components/kanban
+zero add components/navbar
 zero add hooks modals --dry-run
 zero add components/storage --target ./my-app
 ```
@@ -967,6 +970,7 @@ Supported source-copy targets:
 | `components/data-table` | Data table, toolbar, pagination, row actions, and dependencies. |
 | `components/kanban` | Kanban board, task card, movement helpers, and dependencies. |
 | `components/master-detail` | Master-detail primitives and dependencies. |
+| `components/navbar` | Resizable public-page navbar and its animated icon/button dependencies. |
 | `components/storage` | Storage management, file browser, drive list, dropzone, and dependencies. |
 | `hooks` | Generic React hook library. |
 | `modals` | Modal manager primitives. |

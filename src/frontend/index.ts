@@ -302,6 +302,15 @@ export type {
 export { RadialMenu } from '../components/radial-menu';
 export type { RadialMenuItem, RadialMenuProps } from '../components/radial-menu';
 
+// ─── Public Navigation ─────────────────────────────────────────────────
+export { ResizableNavbar } from '../components/navbar';
+export type {
+  ResizableNavbarAction,
+  ResizableNavbarBrand,
+  ResizableNavbarItem,
+  ResizableNavbarProps,
+} from '../components/navbar';
+
 // ─── App Shell ─────────────────────────────────────────────────────────
 export {
   AppShell,

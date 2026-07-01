@@ -363,6 +363,7 @@ store, or public frontend API.
 | `src/components/kanban/kanban-board.tsx` | `<KanbanBoard>` / `<KanbanTaskCard>` - tokenized drag-and-drop board organism |
 | `src/components/kanban/kanban-utils.ts` | Pure column grouping and drag projection helpers |
 | `src/components/radial-menu/index.ts` | Public package export for the animated radial context menu |
+| `src/components/navbar/resizable-navbar.tsx` | Public-page `<ResizableNavbar>` using the frontend public token lane |
 | `src/components/master-detail/master-detail-page.tsx` | `<MasterDetailView>` / `<MasterDetailPage>` — list + detail organism |
 | `src/components/master-detail/use-master-detail-state.ts` | Live data and selected-row state for master-detail views |
 | `src/components/master-detail/master-detail-selection.ts` | Pure primary-key-aware selection resolution |
@@ -376,6 +377,12 @@ Button, Input, Label, Textarea, Select, Badge, Card, FormField, Table, ScrollAre
 
 **`src/components/animate-ui/` — 174 animated components:**
 Organized into `primitives/` (raw building blocks) and `components/` (pre-styled compositions). Categories: buttons, radix UI (animated), effects, text animations, backgrounds, community components.
+
+**Public/frontend token lane:**
+`src/frontend/styles/globals.css` exposes `public-background`,
+`public-surface`, `public-glass`, `public-accent`, `public-border`, and
+`public-ring` alongside the core app tokens so website/docs/landing components
+can have a richer visual language without changing dashboard defaults.
 
 **`src/components/auth/` — auth UI blocks:**
 LoginForm, RegisterForm, ForgotPasswordForm, PasswordActionForm, ChangePasswordForm, UserPropertiesForm, OTPVerification, PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup, AuthLayout, AuthHeader, Gate, AdminGate, SignedIn, SignedOut, PropertyGate, HasProperty, HasFlag, useGate, usePropertyGate.

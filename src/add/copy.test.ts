@@ -114,6 +114,39 @@ describe('addZeroSource', () => {
       await rm(targetDir, { recursive: true, force: true });
     }
   });
+
+  test('copies resizable navbar source with its animated icon dependencies', async () => {
+    const targetDir = await createTempApp();
+
+    try {
+      const result = await addZeroSource({
+        targetDir,
+        items: ['components/navbar'],
+      });
+
+      expect(result.filesWritten).toContain('components/navbar/resizable-navbar.tsx');
+      expect(result.filesWritten).toContain('components/navbar/resizable-navbar.types.ts');
+      expect(result.filesWritten).toContain('components/ui/button.tsx');
+      expect(result.filesWritten).toContain('components/animate-ui/icons/menu.tsx');
+      expect(result.filesWritten).toContain('components/animate-ui/icons/x.tsx');
+      expect(result.filesWritten).toContain('components/animate-ui/icons/icon.tsx');
+      expect(result.filesWritten).toContain('lib/utils.ts');
+
+      await writeFile(
+        join(targetDir, 'entry.tsx'),
+        "import { ResizableNavbar } from './components/navbar';\nexport { ResizableNavbar };\n"
+      );
+
+      const build = await Bun.build({
+        entrypoints: [join(targetDir, 'entry.tsx')],
+        outdir: join(targetDir, 'dist-navbar'),
+        target: 'browser',
+      });
+      expect(build.success).toBe(true);
+    } finally {
+      await rm(targetDir, { recursive: true, force: true });
+    }
+  });
 });
 
 async function writeTestTsConfig(targetDir: string): Promise<void> {

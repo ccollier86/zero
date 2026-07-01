@@ -167,6 +167,10 @@
       "types": "./src/components/master-detail/index.ts",
       "import": "./src/components/master-detail/index.ts"
     },
+    "./components/navbar": {
+      "types": "./src/components/navbar/index.ts",
+      "import": "./src/components/navbar/index.ts"
+    },
     "./components/storage": {
       "types": "./src/components/storage/index.ts",
       "import": "./src/components/storage/index.ts"

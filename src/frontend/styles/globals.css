@@ -45,6 +45,21 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
+  --color-public-background: var(--public-background);
+  --color-public-foreground: var(--public-foreground);
+  --color-public-surface: var(--public-surface);
+  --color-public-surface-foreground: var(--public-surface-foreground);
+  --color-public-surface-raised: var(--public-surface-raised);
+  --color-public-glass: var(--public-glass);
+  --color-public-glass-foreground: var(--public-glass-foreground);
+  --color-public-muted: var(--public-muted);
+  --color-public-muted-foreground: var(--public-muted-foreground);
+  --color-public-accent: var(--public-accent);
+  --color-public-accent-foreground: var(--public-accent-foreground);
+  --color-public-accent-soft: var(--public-accent-soft);
+  --color-public-border: var(--public-border);
+  --color-public-ring: var(--public-ring);
+
   --color-sidebar: var(--sidebar);
   --color-sidebar-background: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -121,6 +136,28 @@
   --chart-3: oklch(61.2% 0.145 151);
   --chart-4: oklch(72.6% 0.155 73);
   --chart-5: oklch(63.4% 0.19 12);
+
+  --public-background: oklch(98.8% 0.009 255);
+  --public-foreground: oklch(17.5% 0.028 257);
+  --public-surface: oklch(100% 0 0);
+  --public-surface-foreground: var(--public-foreground);
+  --public-surface-raised: oklch(99.4% 0.006 255);
+  --public-glass: oklch(100% 0 0 / 0.76);
+  --public-glass-foreground: var(--public-foreground);
+  --public-muted: oklch(94.6% 0.013 255);
+  --public-muted-foreground: oklch(48% 0.027 257);
+  --public-accent: oklch(57.5% 0.205 262);
+  --public-accent-foreground: oklch(99% 0 0);
+  --public-accent-soft: oklch(92% 0.041 262 / 0.92);
+  --public-border: oklch(85.4% 0.02 255 / 0.8);
+  --public-ring: oklch(63% 0.19 262);
+  --public-shadow-floating:
+    0 0 24px rgb(34 42 53 / 0.06),
+    0 1px 1px rgb(0 0 0 / 0.05),
+    0 0 0 1px rgb(34 42 53 / 0.04),
+    0 0 4px rgb(34 42 53 / 0.08),
+    0 16px 68px rgb(47 48 55 / 0.08),
+    inset 0 1px 0 rgb(255 255 255 / 0.6);
 }
 
 .dark {
@@ -173,6 +210,28 @@
   --chart-3: oklch(72.5% 0.135 151);
   --chart-4: oklch(80% 0.13 73);
   --chart-5: oklch(72.5% 0.155 12);
+
+  --public-background: oklch(11.8% 0.019 260);
+  --public-foreground: oklch(96.8% 0.006 250);
+  --public-surface: oklch(16.8% 0.022 260);
+  --public-surface-foreground: var(--public-foreground);
+  --public-surface-raised: oklch(20.2% 0.026 260);
+  --public-glass: oklch(13.8% 0.021 260 / 0.82);
+  --public-glass-foreground: var(--public-foreground);
+  --public-muted: oklch(24% 0.025 260);
+  --public-muted-foreground: oklch(74.5% 0.018 250);
+  --public-accent: oklch(67% 0.19 258);
+  --public-accent-foreground: oklch(13% 0.022 258);
+  --public-accent-soft: oklch(100% 0 0 / 0.1);
+  --public-border: oklch(100% 0 0 / 0.12);
+  --public-ring: oklch(70% 0.17 258);
+  --public-shadow-floating:
+    0 0 24px rgb(0 0 0 / 0.22),
+    0 1px 1px rgb(255 255 255 / 0.05),
+    0 0 0 1px rgb(255 255 255 / 0.08),
+    0 0 4px rgb(0 0 0 / 0.28),
+    0 16px 68px rgb(0 0 0 / 0.35),
+    inset 0 1px 0 rgb(255 255 255 / 0.1);
 }
 
 @layer base {
@@ -199,9 +258,26 @@
     color: var(--color-foreground);
   }
 
+  :where(.zero-public, [data-zero-surface="public"]) {
+    color: var(--color-public-foreground);
+  }
+
+  :where(.zero-public-page, [data-zero-page="public"]) {
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 50% -20%, color-mix(in oklch, var(--color-public-accent) 12%, transparent), transparent 36rem),
+      var(--color-public-background);
+    color: var(--color-public-foreground);
+  }
+
   ::selection {
     background: color-mix(in oklch, var(--color-primary) 24%, transparent);
     color: var(--color-foreground);
+  }
+
+  :where(.zero-public, .zero-public-page, [data-zero-surface="public"], [data-zero-page="public"]) ::selection {
+    background: color-mix(in oklch, var(--color-public-accent) 28%, transparent);
+    color: var(--color-public-foreground);
   }
 
   :focus-visible {

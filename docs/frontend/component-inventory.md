@@ -16,7 +16,7 @@ The intended stack is:
 | --- | --- |
 | Zero public API | Stable imports and docs for apps and agents. Apps should use Zero paths, not raw internal Animate UI source paths. |
 | Animate UI source | Preferred implementation source for animated Radix primitives, icons, menus, sidebars, dialogs, tooltips, tabs, toggles, and tasteful interaction effects. |
-| Zero token layer | Shared light/dark/system design contract for surfaces, borders, rings, semantic states, shadows, and radius. |
+| Zero token layer | Shared light/dark/system design contract with a quiet core app lane and a richer public/frontend lane. |
 | Zero polish layer | Consistent animation, icon trigger behavior, accessibility defaults, app-ready names, and framework-specific wiring. |
 
 When Animate UI offers multiple versions of a pattern, Zero chooses one
@@ -42,6 +42,7 @@ classes through the component tree.
 | Base primitives | Small tokenized building blocks. Prefer these over raw HTML controls. | `@zero/framework/components/ui/button` or `@zero/framework/react` | `Button`, `Input`, `Select`, `Card` |
 | Composed primitives | Small multi-part controls built from base primitives or Radix. | `@zero/framework/react` | `DatePicker`, `Combobox`, `TagInput`, `CommandDialog` |
 | Layout primitives | Reusable page and panel structure, not app-specific. | `@zero/framework/react` | `DetailPanel`, `ListDetailLayout`, `RecordNavigationBar` |
+| Public navigation | Public-page navigation for marketing/docs/content routes. | `@zero/framework/components/navbar` or `@zero/framework/react` | `ResizableNavbar` |
 | App shell | Default app chrome for dashboards, admin tools, and data apps. | `@zero/framework/components/app-shell` | `AppShell`, `AppShellSidebar` |
 | Data organisms | Feature-complete screens or major widgets wired for schemas/live data. | `@zero/framework/react` | `DataTableView`, `KanbanBoard`, `MasterDetailView`, `CrudPage` |
 | Domain organisms | Platform feature UI with backend/client assumptions. | `@zero/framework/react` | `UserManagement`, `StorageManagement` |
@@ -50,13 +51,14 @@ classes through the component tree.
 ## Use-First Rules
 
 1. Start with `AppShell` for dashboard/admin/data apps.
-2. Use base `ui/` primitives instead of raw HTML controls.
-3. Use generated/data organisms when a schema or collection exists.
-4. Use Animate UI Radix wrappers for overlays and menus instead of duplicating
+2. Start with `ResizableNavbar` for public landing/docs/content page navigation.
+3. Use base `ui/` primitives instead of raw HTML controls.
+4. Use generated/data organisms when a schema or collection exists.
+5. Use Animate UI Radix wrappers for overlays and menus instead of duplicating
    Radix setup.
-5. Use Zero animated icons by default. Use `lucide-react` directly only when an
+6. Use Zero animated icons by default. Use `lucide-react` directly only when an
    icon is not in Zero's animated set.
-6. Keep app-specific source outside `src/components`; promote only reusable
+7. Keep app-specific source outside `src/components`; promote only reusable
    components with docs and export decisions.
 
 ## Base Primitives
@@ -90,8 +92,20 @@ These are the lowest-level app-facing controls in `src/components/ui`.
 | `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis` | `ui/pagination.tsx` | Page navigation primitives. |
 | `DropdownMenu` and subparts | `components/dropdown-menu` | Public animated dropdown menu wrapper. Prefer this over raw Radix menu. |
 | `Collapsible`, `CollapsibleTrigger`, `CollapsibleContent` | `components/collapsible` | Public animated collapsible wrapper. |
+| `ResizableNavbar` | `components/navbar` | Public-page navbar that detaches/shrinks on scroll and uses magnetic hover highlighting between links. |
 | `Sidebar` primitives | `components/sidebar` | Public low-level Animate UI sidebar wrapper. Use directly only when `AppShell` is not enough. |
 | `AppShell`, `AppShellHeader`, `AppShellBreadcrumbs`, `AppShellSidebar` | `components/app-shell` | App-ready shell with workspace switcher, sidebar nav, breadcrumbs/header row, actions, footer/user menu, and theme toggle. |
+
+## Public Page Components
+
+These are for public websites, documentation, landing pages, and content
+surfaces. They should use the public/frontend token lane from
+[Design Tokens](./design-tokens.md) while still sharing the base primitives,
+radius, font, and light/dark behavior used by dashboard components.
+
+| Component | File | Role |
+| --- | --- | --- |
+| `ResizableNavbar` | `navbar/resizable-navbar.tsx` | Fixed public navbar that detaches into a floating blurred capsule after scroll, includes desktop magnetic hover state, mobile menu, brand slot, links, and actions. |
 
 ## Forms And Generated Input UI
 

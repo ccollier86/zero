@@ -37,6 +37,11 @@ const STATIC_TARGETS: AddableTarget[] = [
     description: 'Master-detail data display primitives.',
   },
   {
+    id: 'components/navbar',
+    sourceRel: 'components/navbar',
+    description: 'Resizable public-page navbar with scroll and hover motion.',
+  },
+  {
     id: 'components/storage',
     sourceRel: 'components/storage',
     description: 'Storage management, file browser, drive list, and dropzone UI.',

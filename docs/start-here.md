@@ -23,6 +23,9 @@ For the package-mode framework surface and remaining package-mode work, see
 For frontend composition, reusable UI, Animate UI wrappers, app shells, forms,
 and data organisms, start with the
 [Component Inventory](./frontend/component-inventory.md).
+For styling decisions, read [Frontend Design Tokens](./frontend/design-tokens.md):
+Zero now has a quiet core app lane for dashboards and a richer public/frontend
+lane for docs, marketing, blogs, landing pages, and public flows.
 The repository also includes `examples/package-mode` as a small generated-app
 fixture that imports Zero through `@zero/framework/*`.
 The in-repo LaunchBoard app is the larger frontend reference: it keeps root
@@ -315,6 +318,11 @@ and semantic state colors. Keep new components on those tokens, keep ordinary
 cards at `rounded-lg` or smaller, and check both light and dark modes before
 shipping shared UI changes. Zero keeps Playwright available as a dev dependency
 for local screenshot checks against running or static routes.
+Public-page components should use the second token lane instead:
+`public-background`, `public-surface`, `public-glass`, `public-accent`,
+`public-border`, and `public-ring`. Wrap public route trees with
+`zero-public-page` or `data-zero-page="public"` so the page and promoted public
+components share the same visual language.
 Before adding or replacing shared UI, check the
 [Component Inventory](./frontend/component-inventory.md). It separates base
 primitives, composed controls, app shells, data organisms, domain organisms,
@@ -327,6 +335,11 @@ three-dot item action menus, footer user menu, and optional breadcrumb/header
 row. Use `header` when breadcrumbs are not needed; the row can hold title,
 filters, search, or actions. Drop to `@zero/framework/components/sidebar` only
 when the shell cannot express the layout.
+
+For public landing pages, docs, blogs, and content route trees, start with
+`ResizableNavbar` from `@zero/framework/components/navbar`. It stays attached
+at the top of the page, then shrinks into a floating blurred navbar on scroll,
+with magnetic desktop hover and a mobile menu powered by the same item data.
 
 Run the platform doctor against an exported config module:
 
@@ -359,8 +372,9 @@ generated apps should prefer narrow imports. Direct subsystem imports such as
 `@zero/framework/email`, `@zero/framework/ai`, `@zero/framework/vector`,
 `@zero/framework/persistence`, `@zero/framework/kv`,
 `@zero/framework/sync/client`, and
-`@zero/framework/components/data-table` are available when a file should depend
-on one specific feature. `persistence` is the advanced server-side SQLite
+`@zero/framework/components/data-table`, and
+`@zero/framework/components/navbar` are available when a file should depend on
+one specific feature. `persistence` is the advanced server-side SQLite
 foundation; generated apps should normally let `createApp()` own it and use
 `zero.sql` from backend routes when direct SQL is needed. `kv` is the advanced
 server-side cache/KV package; generated apps normally use `zero.kv`,
@@ -373,6 +387,7 @@ source, copy selected pieces with `zero add`:
 zero add components/ui/button
 zero add components/data-table
 zero add components/kanban
+zero add components/navbar
 zero add hooks modals --dry-run
 ```
 

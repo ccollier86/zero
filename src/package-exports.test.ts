@@ -158,6 +158,7 @@ import { DataTableView } from '@zero/framework/components/data-table';
 import { DropdownMenu as DropdownMenuSubpath } from '@zero/framework/components/dropdown-menu';
 import { KanbanBoard as KanbanBoardSubpath } from '@zero/framework/components/kanban';
 import { MasterDetailView } from '@zero/framework/components/master-detail';
+import { ResizableNavbar as ResizableNavbarSubpath } from '@zero/framework/components/navbar';
 import { RadialMenu as RadialMenuSubpath } from '@zero/framework/components/radial-menu';
 import { Sidebar as SidebarSubpath } from '@zero/framework/components/sidebar';
 import { StorageManagement } from '@zero/framework/components/storage';
@@ -178,6 +179,7 @@ import {
   groupKanbanItemIds,
   KanbanBoard,
   RadialMenu,
+  ResizableNavbar,
   projectKanbanMove,
   StickToBottom,
   ThemeTogglerButton,
@@ -215,6 +217,8 @@ export const clientSymbols = {
   ModalManager,
   RadialMenu,
   RadialMenuSubpath,
+  ResizableNavbar,
+  ResizableNavbarSubpath,
   SidebarSubpath,
   StickToBottom,
   StorageManagement,
