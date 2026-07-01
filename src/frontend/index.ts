@@ -302,7 +302,7 @@ export type {
 export { RadialMenu } from '../components/radial-menu';
 export type { RadialMenuItem, RadialMenuProps } from '../components/radial-menu';
 
-// ─── Public Navigation ─────────────────────────────────────────────────
+// ─── Public Page Components ────────────────────────────────────────────
 export { ResizableNavbar } from '../components/navbar';
 export type {
   ResizableNavbarAction,
@@ -310,6 +310,19 @@ export type {
   ResizableNavbarItem,
   ResizableNavbarProps,
 } from '../components/navbar';
+export {
+  Hero,
+  HeroActions,
+  HeroBackground,
+  HeroImageBackground,
+} from '../components/hero';
+export type {
+  HeroAction,
+  HeroBackgroundOptions,
+  HeroBackgroundPreset,
+  HeroImageBackgroundProps,
+  HeroProps,
+} from '../components/hero';
 
 // ─── App Shell ─────────────────────────────────────────────────────────
 export {

@@ -27,6 +27,11 @@ const STATIC_TARGETS: AddableTarget[] = [
     description: 'DataTable, DataTableView, toolbar, pagination, and row actions.',
   },
   {
+    id: 'components/hero',
+    sourceRel: 'components/hero',
+    description: 'Public-page Hero section with tokenized backgrounds and actions.',
+  },
+  {
     id: 'components/kanban',
     sourceRel: 'components/kanban',
     description: 'Tokenized drag-and-drop Kanban board organism.',

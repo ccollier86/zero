@@ -156,6 +156,7 @@ import { AppShell as AppShellSubpath } from '@zero/framework/components/app-shel
 import { Collapsible as CollapsibleSubpath } from '@zero/framework/components/collapsible';
 import { DataTableView } from '@zero/framework/components/data-table';
 import { DropdownMenu as DropdownMenuSubpath } from '@zero/framework/components/dropdown-menu';
+import { Hero as HeroSubpath } from '@zero/framework/components/hero';
 import { KanbanBoard as KanbanBoardSubpath } from '@zero/framework/components/kanban';
 import { MasterDetailView } from '@zero/framework/components/master-detail';
 import { ResizableNavbar as ResizableNavbarSubpath } from '@zero/framework/components/navbar';
@@ -177,6 +178,7 @@ import {
   DataTable,
   DropdownMenu,
   groupKanbanItemIds,
+  Hero,
   KanbanBoard,
   RadialMenu,
   ResizableNavbar,
@@ -210,6 +212,8 @@ export const clientSymbols = {
   DropdownMenu,
   DropdownMenuSubpath,
   groupKanbanItemIds,
+  Hero,
+  HeroSubpath,
   KanbanBoard,
   KanbanBoardSubpath,
   LoginForm,

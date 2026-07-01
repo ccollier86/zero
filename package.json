@@ -151,6 +151,10 @@
       "types": "./src/components/dropdown-menu/index.ts",
       "import": "./src/components/dropdown-menu/index.ts"
     },
+    "./components/hero": {
+      "types": "./src/components/hero/index.ts",
+      "import": "./src/components/hero/index.ts"
+    },
     "./components/kanban": {
       "types": "./src/components/kanban/index.ts",
       "import": "./src/components/kanban/index.ts"

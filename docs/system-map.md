@@ -363,6 +363,8 @@ store, or public frontend API.
 | `src/components/kanban/kanban-board.tsx` | `<KanbanBoard>` / `<KanbanTaskCard>` - tokenized drag-and-drop board organism |
 | `src/components/kanban/kanban-utils.ts` | Pure column grouping and drag projection helpers |
 | `src/components/radial-menu/index.ts` | Public package export for the animated radial context menu |
+| `src/components/hero/hero.tsx` | Public-page `<Hero>` section using the frontend public token lane |
+| `src/components/hero/hero-background.tsx` | Hero preset/custom/image background helpers |
 | `src/components/navbar/resizable-navbar.tsx` | Public-page `<ResizableNavbar>` using the frontend public token lane |
 | `src/components/master-detail/master-detail-page.tsx` | `<MasterDetailView>` / `<MasterDetailPage>` — list + detail organism |
 | `src/components/master-detail/use-master-detail-state.ts` | Live data and selected-row state for master-detail views |

@@ -43,6 +43,7 @@ classes through the component tree.
 | Composed primitives | Small multi-part controls built from base primitives or Radix. | `@zero/framework/react` | `DatePicker`, `Combobox`, `TagInput`, `CommandDialog` |
 | Layout primitives | Reusable page and panel structure, not app-specific. | `@zero/framework/react` | `DetailPanel`, `ListDetailLayout`, `RecordNavigationBar` |
 | Public navigation | Public-page navigation for marketing/docs/content routes. | `@zero/framework/components/navbar` or `@zero/framework/react` | `ResizableNavbar` |
+| Public heroes | Public-page opening sections with background slots and actions. | `@zero/framework/components/hero` or `@zero/framework/react` | `Hero`, `HeroBackground`, `HeroImageBackground` |
 | App shell | Default app chrome for dashboards, admin tools, and data apps. | `@zero/framework/components/app-shell` | `AppShell`, `AppShellSidebar` |
 | Data organisms | Feature-complete screens or major widgets wired for schemas/live data. | `@zero/framework/react` | `DataTableView`, `KanbanBoard`, `MasterDetailView`, `CrudPage` |
 | Domain organisms | Platform feature UI with backend/client assumptions. | `@zero/framework/react` | `UserManagement`, `StorageManagement` |
@@ -52,13 +53,14 @@ classes through the component tree.
 
 1. Start with `AppShell` for dashboard/admin/data apps.
 2. Start with `ResizableNavbar` for public landing/docs/content page navigation.
-3. Use base `ui/` primitives instead of raw HTML controls.
-4. Use generated/data organisms when a schema or collection exists.
-5. Use Animate UI Radix wrappers for overlays and menus instead of duplicating
+3. Start with `Hero` for public route opening sections.
+4. Use base `ui/` primitives instead of raw HTML controls.
+5. Use generated/data organisms when a schema or collection exists.
+6. Use Animate UI Radix wrappers for overlays and menus instead of duplicating
    Radix setup.
-6. Use Zero animated icons by default. Use `lucide-react` directly only when an
+7. Use Zero animated icons by default. Use `lucide-react` directly only when an
    icon is not in Zero's animated set.
-7. Keep app-specific source outside `src/components`; promote only reusable
+8. Keep app-specific source outside `src/components`; promote only reusable
    components with docs and export decisions.
 
 ## Base Primitives
@@ -93,6 +95,7 @@ These are the lowest-level app-facing controls in `src/components/ui`.
 | `DropdownMenu` and subparts | `components/dropdown-menu` | Public animated dropdown menu wrapper. Prefer this over raw Radix menu. |
 | `Collapsible`, `CollapsibleTrigger`, `CollapsibleContent` | `components/collapsible` | Public animated collapsible wrapper. |
 | `ResizableNavbar` | `components/navbar` | Public-page navbar that detaches/shrinks on scroll and uses magnetic hover highlighting between links. |
+| `Hero`, `HeroBackground`, `HeroImageBackground` | `components/hero` | Public-page hero section with tokenized background presets, custom background slot, actions, and rich title support. |
 | `Sidebar` primitives | `components/sidebar` | Public low-level Animate UI sidebar wrapper. Use directly only when `AppShell` is not enough. |
 | `AppShell`, `AppShellHeader`, `AppShellBreadcrumbs`, `AppShellSidebar` | `components/app-shell` | App-ready shell with workspace switcher, sidebar nav, breadcrumbs/header row, actions, footer/user menu, and theme toggle. |
 
@@ -105,6 +108,8 @@ radius, font, and light/dark behavior used by dashboard components.
 
 | Component | File | Role |
 | --- | --- | --- |
+| `Hero` | `hero/hero.tsx` | Full-bleed public hero section using the public token lane, rich title slot, description, actions, and optional child content. |
+| `HeroBackground`, `HeroImageBackground` | `hero/hero-background.tsx` | Built-in preset backgrounds plus custom/image background helpers for Hero and future public sections. |
 | `ResizableNavbar` | `navbar/resizable-navbar.tsx` | Fixed public navbar that detaches into a floating blurred capsule after scroll, includes desktop magnetic hover state, mobile menu, brand slot, links, and actions. |
 
 ## Forms And Generated Input UI

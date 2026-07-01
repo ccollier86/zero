@@ -127,6 +127,7 @@ function printUsage(): void {
   console.log('Examples:');
   console.log('  zero add components/ui/button');
   console.log('  zero add components/data-table --target ./my-app');
+  console.log('  zero add components/hero');
   console.log('  zero add components/kanban');
   console.log('  zero add components/navbar');
   console.log('  zero add hooks modals --dry-run');
