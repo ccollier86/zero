@@ -7,7 +7,8 @@ import type { ScannedFile } from './scanner';
  * Create a new empty route node.
  */
 function createNode(segment: string): RouteNode {
-  const isDynamic = segment.startsWith('[') && segment.endsWith(']');
+  const isGroup = segment.startsWith('(') && segment.endsWith(')');
+  const isDynamic = !isGroup && segment.startsWith('[') && segment.endsWith(']');
   const isCatchAll = isDynamic && segment.startsWith('[...');
 
   let paramName: string | undefined;
@@ -20,6 +21,7 @@ function createNode(segment: string): RouteNode {
   return {
     segment,
     children: new Map(),
+    isGroup,
     isDynamic,
     paramName,
     isCatchAll,

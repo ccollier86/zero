@@ -786,19 +786,33 @@ The SDK keeps the user logged in across normal access-token expiry:
 5. Logout, rejected refresh, revoked refresh token, or unknown 401 clears auth state and resets local synced table/state data.
 
 When auth is enabled, `AppProvider` watches auth state on the client. If the
-user becomes unauthenticated on a non-public route, it redirects to `loginPath`
-and appends `?redirect=<current-url>`. Server rendering uses the same
-`publicPaths` and `loginPath` config for protected route responses.
+user becomes unauthenticated on a protected route, it removes the protected
+subtree from the screen, redirects to `loginPath`, and appends
+`?redirect=<current-url>`. Server rendering uses the same route auth policy for
+direct protected route responses.
 
-Configure those paths in `createApp()`:
+For protected-first apps, configure public paths in `createApp()`:
 
 ```ts
 createApp({
   auth: true,
+  routeAuth: 'protected-by-default',
   publicPaths: ['/login', '/register', '/forgot-password'],
   loginPath: '/login',
 });
 ```
+
+For public-first apps, use route-owned auth boundaries:
+
+```ts
+createApp({
+  auth: true,
+  routeAuth: 'explicit',
+  loginPath: '/login',
+});
+```
+
+Then export `config.auth` from protected layouts or pages.
 
 Or override them in the root provider:
 

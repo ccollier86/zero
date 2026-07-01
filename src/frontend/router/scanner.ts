@@ -11,7 +11,7 @@ export interface ScannedFile {
   absolutePath: string;
   /** Path relative to appDir (e.g., 'about/page.tsx') */
   relativePath: string;
-  /** Route segments (e.g., ['about']) */
+  /** Layout-tree segments, including route groups like `(public)`. */
   segments: string[];
   /** File type: page, layout, route, not-found */
   kind: 'page' | 'layout' | 'route' | 'not-found';
@@ -65,10 +65,11 @@ export function scanRoutes(appDir: string): ScannedFile[] {
     else if (file.startsWith('not-found.')) kind = 'not-found';
     else continue;
 
-    // Build segments — strip route groups (parenthesized dirs)
+    // Build layout-tree segments. Route groups are preserved here so sibling
+    // groups can own separate layouts while matchers omit them from URLs.
     const segments = dir === '.'
       ? []
-      : dir.split('/').filter((s) => !s.startsWith('('));
+      : dir.split('/');
 
     files.push({
       absolutePath,

@@ -1,5 +1,15 @@
 // ─── Client-Side Route Matching ────────────────────────────────────────────
 
+import type { ReactNode } from 'react';
+
+/** Route module shape loaded by the browser route manifest. */
+export interface ClientRouteModule {
+  default?: (props: any) => ReactNode;
+  config?: {
+    auth?: boolean | 'required' | 'admin';
+  };
+}
+
 /**
  * A client-side route entry (generated from the route tree at build time
  * or discovered from the server's route manifest).
@@ -12,9 +22,9 @@ export interface ClientRoute {
   /** Param names extracted from the pattern */
   paramNames: string[];
   /** Dynamic import function for the page module */
-  load: () => Promise<{ default: any }>;
+  load: () => Promise<ClientRouteModule>;
   /** Dynamic import functions for layout modules (root → leaf order) */
-  layouts: Array<() => Promise<{ default: any }>>;
+  layouts: Array<() => Promise<ClientRouteModule>>;
   /** Whether this is a catch-all route */
   isCatchAll: boolean;
 }
@@ -28,7 +38,7 @@ export interface ClientMatch {
 // ─── Route Registry ────────────────────────────────────────────────────────
 
 const routes: ClientRoute[] = [];
-const moduleCache = new Map<string, { default: any }>();
+const moduleCache = new Map<string, ClientRouteModule>();
 
 /**
  * Register a client-side route.
@@ -36,8 +46,8 @@ const moduleCache = new Map<string, { default: any }>();
  */
 export function registerRoute(
   pattern: string,
-  load: () => Promise<{ default: any }>,
-  layouts: Array<() => Promise<{ default: any }>> = []
+  load: () => Promise<ClientRouteModule>,
+  layouts: Array<() => Promise<ClientRouteModule>> = []
 ): void {
   const { regex, paramNames, isCatchAll } = compilePattern(pattern);
   routes.push({ pattern, regex, paramNames, load, layouts, isCatchAll });
@@ -78,7 +88,7 @@ export function matchClientRoute(pathname: string): ClientMatch | null {
 /**
  * Load a route's module (with caching).
  */
-export async function loadRouteModule(route: ClientRoute): Promise<{ default: any }> {
+export async function loadRouteModule(route: ClientRoute): Promise<ClientRouteModule> {
   const cached = moduleCache.get(route.pattern);
   if (cached) return cached;
 
@@ -90,7 +100,7 @@ export async function loadRouteModule(route: ClientRoute): Promise<{ default: an
 /**
  * Load layout modules for a route (with caching).
  */
-export async function loadLayoutModules(route: ClientRoute): Promise<Array<{ default: any }>> {
+export async function loadLayoutModules(route: ClientRoute): Promise<ClientRouteModule[]> {
   return Promise.all(
     route.layouts.map(async (load, i) => {
       const key = `${route.pattern}::layout::${i}`;
@@ -121,8 +131,8 @@ export function prefetchRoute(pathname: string): void {
 export async function navigateTo(
   pathname: string
 ): Promise<{
-  module: { default: any };
-  layoutModules: Array<{ default: any }>;
+  module: ClientRouteModule & { default: any };
+  layoutModules: ClientRouteModule[];
   params: Record<string, string>;
   route: ClientRoute;
 } | null> {
@@ -134,8 +144,10 @@ export async function navigateTo(
     loadLayoutModules(match.route),
   ]);
 
+  if (!mod.default) return null;
+
   return {
-    module: mod,
+    module: mod as ClientRouteModule & { default: any },
     layoutModules: layoutMods,
     params: match.params,
     route: match.route,

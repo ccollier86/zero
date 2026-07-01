@@ -221,6 +221,21 @@ describe('runPlatformDoctor', () => {
     expect(hasFinding(report, 'observability.disabled.production')).toBe(true);
   });
 
+  test('does not require loginPath in publicPaths for explicit route auth', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        users: { id: 'text primary key' },
+      },
+      auth: true,
+      routeAuth: 'explicit',
+      loginPath: '/signin',
+      publicPaths: ['/login'],
+    });
+
+    expect(hasFinding(report, 'auth.login_path.not_public')).toBe(false);
+  });
+
   test('checks resource registration errors and policy/data/sync guidance', () => {
     const report = runPlatformDoctor({
       db: { mode: ':memory:' },

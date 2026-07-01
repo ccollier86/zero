@@ -112,13 +112,15 @@ const config = defineZeroConfig({
     publicUrl: process.env.APP_PUBLIC_URL,
     supportEmail: process.env.APP_SUPPORT_EMAIL,
   },
-  db: process.env.DB_PATH
-    ? { mode: 'file', path: process.env.DB_PATH }
-    : {
-        mode: 'hot',
-        path: './data/app.db',
-        snapshotPath: './data/app.snapshot.db',
-      },
+  db: {
+    mode: process.env.DB_MODE === 'file'
+      ? 'file'
+      : process.env.DB_MODE === 'ephemeral'
+        ? 'ephemeral'
+        : 'hot',
+    path: process.env.DB_PATH ?? './data/app.db',
+    snapshotPath: process.env.DB_SNAPSHOT_PATH ?? './data/app.snapshot.db',
+  },
   tables,
   auth: true,
   stateSync: true,

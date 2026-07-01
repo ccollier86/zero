@@ -7,6 +7,10 @@ one-off local state:
 - `defineTable()` in `app/launchboard/schema.ts`
 - `createApp({ tables })` and server-side seeding in `app/server.ts`
 - `<AppProvider tables={tables}>` in `app/layout.tsx`
+- `app/(launchboard)/layout.tsx` for route-owned AppShell chrome while keeping
+  the app mounted at `/`
+- `LaunchBoardProvider` in `app/launchboard/launchboard-context.tsx` for the
+  route branch data and modal boundary
 - `useCollection()` in `app/launchboard/use-launchboard-data.ts`
 - `AppShell` for the category switcher, board navigation, breadcrumbs, and
   sidebar action menus
@@ -37,9 +41,25 @@ collections and sync back over Zero's WebSocket path.
 
 ## Shell Pattern
 
-Categories map to `AppShell workspaces`. Boards map to a sidebar nav group.
-The active board exposes nested column rows, while board-specific edit,
-duplicate, and delete controls use AppShell nav item `actions`.
+LaunchBoard keeps `app/layout.tsx` as providers only. Its app chrome lives in a
+URL-less route group so the board still renders at `/`:
+
+```txt
+app/
+  layout.tsx                    # ThemeProvider, AppProvider, Toaster
+  (launchboard)/
+    layout.tsx                  # LaunchBoardShell / AppShell
+    page.tsx                    # /
+  launchboard/
+    launchboard-context.tsx     # ReactiveDB + modal actions provider
+    launchboard-shell.tsx       # AppShell workspace/nav/header config
+    launchboard-page.tsx        # Kanban content only
+```
+
+Categories map to `AppShell workspaces`. Boards map to a sidebar nav group. The
+active board exposes nested column rows with per-column counts, while
+board-specific edit, duplicate, and delete controls use AppShell nav item
+`actions`.
 
 ```tsx
 <AppShell
@@ -84,7 +104,8 @@ duplicate, and delete controls use AppShell nav item `actions`.
 
 Do not hand-roll an app shell for this class of app. Configure `AppShell`
 first, then drop down to sidebar primitives only if the shell contract cannot
-express the product.
+express the product. Keep shell/navigation code in a layout-owned component and
+keep route pages focused on the actual app surface.
 
 ## ReactiveDB Mutation Pattern
 
@@ -155,6 +176,18 @@ From the repository root:
 ```sh
 PORT=3000 bun app/server.ts
 ```
+
+LaunchBoard uses Zero's hot SQLite runtime by default:
+
+- `DB_MODE=hot`
+- `DB_PATH=./data/launchboard.db`
+- `DB_SNAPSHOT_PATH=./data/launchboard.snapshot.db`
+
+The active database runs in memory while the app is live. `createApp()` writes
+periodic and shutdown snapshots, then restores from the snapshot on the next
+start. Set `DB_MODE=file` to use direct SQLite/WAL mode, or `DB_MODE=ephemeral`
+for throwaway testing. Delete the LaunchBoard files under `./data` when you
+want the deterministic seed to run again from a blank database.
 
 If you change framework components such as `AppShell`, restart the server so
 the browser bundle is rebuilt from the current source.

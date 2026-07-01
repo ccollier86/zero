@@ -231,6 +231,8 @@ await vec.delete('documents', 'doc-123');
 
 Event-driven HTTP delivery. When things happen in the app, notify external services.
 
+Detailed plan: [Webhooks Plan](./webhooks.md).
+
 **Developer API**
 ```ts
 import { createWebhookPlugin, getWebhooks } from '@zero/framework/server';
@@ -272,6 +274,8 @@ hooks.emit('client.created', {
 ### 2D: Webhooks — Inbound
 
 Receive webhooks from external services with validation and routing.
+
+Detailed plan: [Webhooks Plan](./webhooks.md).
 
 **Developer API**
 ```ts

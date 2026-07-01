@@ -2,6 +2,7 @@ node_modules/
 dist/
 .build/
 .zero/
+data/
 *.db
 *.db-wal
 *.db-shm
@@ -10,5 +11,4 @@ dist/
 bun.lock
 src/frontend/client/_generated/
 projects/
-app/
 zero

@@ -8,6 +8,7 @@ import { serverErrorHtml, notFoundHtml } from '../client/error-boundary';
 import { hasUseClientDirective } from './scanner';
 import { OBS_CODES } from '../../observability/codes';
 import { emitPlatformCode } from '../../observability/sink';
+import type { RouteAuthMode } from './auth-policy';
 
 // ─── Module Cache ──────────────────────────────────────────────────────────
 
@@ -95,6 +96,7 @@ export interface PlatformConfig {
   stateSync?: boolean;
   tableSyncModes?: Record<string, SyncMode>;
   publicPaths?: string[];
+  routeAuth?: RouteAuthMode;
   loginPath?: string;
 }
 

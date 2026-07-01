@@ -24,11 +24,16 @@ import { ErrorBoundary } from './error-boundary';
 import { usePathname, useRouter } from './router-context';
 import { OBS_CODES } from '../../observability/codes';
 import { emitFrontendCode } from './observability';
+import {
+  RouteAuthProvider,
+  getRouteAuthRequirementFromModules,
+} from './route-auth-context';
+import type { EffectiveRouteAuthRequirement } from '../router/auth-policy';
 
 export interface HydrationManifestEntry {
   pattern: string;
-  load: () => Promise<{ default: any }>;
-  layouts: Array<() => Promise<{ default: any }>>;
+  load: () => Promise<RouteModuleWithConfig>;
+  layouts: Array<() => Promise<RouteModuleWithConfig>>;
 }
 
 export interface HydrationManifest {
@@ -49,6 +54,9 @@ declare global {
       auth?: boolean;
       stateSync?: boolean;
       tableSyncModes?: Record<string, SyncMode>;
+      publicPaths?: string[];
+      routeAuth?: 'protected-by-default' | 'explicit';
+      loginPath?: string;
     };
   }
 }
@@ -58,6 +66,7 @@ interface ShellState {
   layouts: Array<(props: { children?: ReactNode; params?: Record<string, string> }) => ReactNode>;
   params: Record<string, string>;
   loaderData: unknown;
+  routeAuthRequirement: EffectiveRouteAuthRequirement;
 }
 
 interface ShellProps {
@@ -65,7 +74,21 @@ interface ShellProps {
   initialLayouts: Array<(props: any) => ReactNode>;
   initialParams: Record<string, string>;
   initialLoaderData: unknown;
+  initialRouteAuthRequirement: EffectiveRouteAuthRequirement;
   serverRoutes: string[];
+}
+
+interface RouteModuleWithConfig {
+  default?: (props: any) => ReactNode;
+  config?: {
+    auth?: boolean | 'required' | 'admin';
+  };
+}
+
+function hasDefaultComponent(
+  component: RouteModuleWithConfig['default'],
+): component is NonNullable<RouteModuleWithConfig['default']> {
+  return Boolean(component);
 }
 
 /**
@@ -114,13 +137,18 @@ export async function startHydration(manifest: HydrationManifest): Promise<void>
 
     const layoutComponents = layoutMods
       .map((module) => module.default)
-      .filter(Boolean);
+      .filter(hasDefaultComponent);
+    const routeAuthRequirement = getRouteAuthRequirementFromModules([
+      ...layoutMods,
+      pageMod,
+    ]);
 
     const shell = createElement(Shell, {
       initialPage: Page,
       initialLayouts: layoutComponents,
       initialParams: routeData.params,
       initialLoaderData: routeData.loaderData,
+      initialRouteAuthRequirement: routeAuthRequirement,
       serverRoutes: manifest.serverRoutes,
     });
 
@@ -169,6 +197,7 @@ function Shell({
   initialLayouts,
   initialParams,
   initialLoaderData,
+  initialRouteAuthRequirement,
   serverRoutes,
 }: ShellProps) {
   const [current, setCurrent] = useState<ShellState>({
@@ -176,6 +205,7 @@ function Shell({
     layouts: initialLayouts,
     params: initialParams,
     loaderData: initialLoaderData,
+    routeAuthRequirement: initialRouteAuthRequirement,
   });
 
   const pathname = usePathname();
@@ -201,7 +231,11 @@ function Shell({
 
       const layoutComponents = result.layoutModules
         .map((module) => module.default)
-        .filter(Boolean);
+        .filter(hasDefaultComponent);
+      const routeAuthRequirement = getRouteAuthRequirementFromModules([
+        ...result.layoutModules,
+        result.module,
+      ]);
 
       startTransition(() => {
         setCurrent({
@@ -209,6 +243,7 @@ function Shell({
           layouts: layoutComponents,
           params: result.params,
           loaderData: undefined,
+          routeAuthRequirement,
         });
         setParams(result.params);
         setIsNavigating(false);
@@ -228,7 +263,10 @@ function Shell({
     element = createElement(Layout, { params: current.params }, element);
   }
 
-  return element;
+  return createElement(RouteAuthProvider, {
+    requirement: current.routeAuthRequirement,
+    children: element,
+  });
 }
 
 /** Return whether navigation must fall back to a full server request. */

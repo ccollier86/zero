@@ -56,7 +56,20 @@ app/
 | Catch-all | `[...path]/page.tsx` | `/docs/a/b/c` | `{ path: ['a', 'b', 'c'] }` |
 | Group | `(marketing)/page.tsx` | `/pricing` | — (group stripped from URL) |
 
-Groups (`(name)/`) organize files without affecting the URL. Use them for shared layouts across unrelated routes.
+Groups (`(name)/`) organize files without affecting the URL. Use them for
+shared layouts across sibling route branches, such as `(public)` and
+`(dashboard)`.
+
+You can use a group at the root when a route needs app chrome at `/` but the
+root layout should stay provider-only:
+
+```txt
+app/
+├── layout.tsx                  # providers only
+└── (launchboard)/
+    ├── layout.tsx              # AppShell
+    └── page.tsx                # /
+```
 
 ## Route Scanning
 
@@ -72,14 +85,15 @@ function scanRoutes(appDir: string): RawRoute[] {
   const routes: RawRoute[] = [];
 
   for (const path of glob.scanSync(appDir)) {
-    // path = "blog/[slug]/page.tsx"
-    // → segments = ["blog", "[slug]"]
-    // → urlPattern = "/blog/:slug"
+    // path = "(dashboard)/dashboard/page.tsx"
+    // → segments = ["(dashboard)", "dashboard"]
+    // → urlPattern = "/dashboard"
     const segments = path.replace(/\/page\.tsx$/, '').split('/');
     routes.push({
       filePath: `${appDir}/${path}`,
-      segments: segments.filter(s => !s.startsWith('(')),  // strip groups
-      rawSegments: segments,
+      // Keep group segments for layout nesting. Matchers and generated
+      // manifests omit groups from URL patterns.
+      segments,
     });
   }
 
@@ -123,6 +137,7 @@ interface RouteNode {
   layout: RouteModule | null;         // Lazy-loaded layout component
   apiRoute: APIRouteModule | null;    // API handlers (GET, POST, etc.)
   children: Map<string, RouteNode>;   // Static children
+  isGroup: boolean;                   // "(public)" / "(dashboard)", no URL segment
   dynamicChild: RouteNode | null;     // Single [param] child
   catchAllChild: RouteNode | null;    // Single [...param] child
 }
@@ -475,31 +490,76 @@ Request to `/dashboard/settings` renders:
 </RootLayout>
 ```
 
+### Route Groups And Separate Shells
+
+Use route groups when unrelated URL branches need different layouts without
+adding extra URL segments:
+
+```txt
+app/
+├── layout.tsx                  # providers only
+├── (public)/
+│   ├── layout.tsx              # public shell, no AppShell
+│   ├── page.tsx                # /
+│   └── intake/
+│       └── resume/
+│           └── [token]/
+│               └── page.tsx    # /intake/resume/:token
+└── (dashboard)/
+    ├── layout.tsx              # AppShell + auth config
+    └── dashboard/
+        └── page.tsx            # /dashboard
+```
+
+Groups are preserved in the route tree so their layouts apply, but omitted
+from URL patterns. `/dashboard` renders:
+
+```tsx
+<RootLayout>
+  <DashboardLayout>
+    <DashboardPage />
+  </DashboardLayout>
+</RootLayout>
+```
+
+`/intake/resume/abc` renders:
+
+```tsx
+<RootLayout>
+  <PublicLayout>
+    <ResumeIntakePage />
+  </PublicLayout>
+</RootLayout>
+```
+
+Do not put dashboard chrome in `app/layout.tsx` unless every route in the app
+should use it. Put `ThemeProvider`, `AppProvider`, and `Toaster` in root; put
+`AppShell` in the dashboard/app route layout.
+
 ### Auth-Gated Layout
 
 ```tsx
 // app/dashboard/layout.tsx
-import { useAuth } from '@zero/framework/react';
-import { redirect } from '@platform/router';
+import { AppShell, type RouteConfig } from '@zero/framework/react';
+
+export const config: RouteConfig = {
+  auth: 'required',
+};
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { user, isAuthenticated } = useAuth();
-
-  if (!isAuthenticated) {
-    redirect('/login');
-    return null;
-  }
-
-  return (
-    <div className="dashboard">
-      <Sidebar user={user} />
-      <main>{children}</main>
-    </div>
-  );
+  return <AppShell>{children}</AppShell>;
 }
 ```
 
-The auth check runs in the layout. Every page under `/dashboard/*` is automatically protected. No per-route guard needed — the layout hierarchy handles it.
+The auth config runs on the server before rendering the layout or page. During
+client navigation, Zero carries the matched route auth config through
+hydration. If the user logs out or refresh fails while on a protected route,
+`AppProvider` removes the protected subtree and redirects to `loginPath`.
+
+For public-first apps, use `routeAuth: 'explicit'` in `createApp()` and add
+`config.auth` only to protected page/layout branches. For internal tools, keep
+the default `routeAuth: 'protected-by-default'` and list login/reset routes in
+`publicPaths`.
 
 ## Client-Side Navigation
 

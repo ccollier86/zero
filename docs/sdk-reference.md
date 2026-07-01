@@ -475,9 +475,10 @@ function LoginPage() {
 
 `AppProvider` also owns the default client-side protected-route behavior when
 auth is enabled. If a restored or refreshed session fails and the current path
-is not public, it redirects to `loginPath` with a `redirect` query parameter.
-The defaults come from `createApp()` and can be overridden with
-`<AppProvider publicPaths={...} loginPath="/login" />`.
+is protected, it removes protected route content and redirects to `loginPath`
+with a `redirect` query parameter. The defaults come from `createApp()` and can
+be overridden with `<AppProvider routeAuth="explicit" publicPaths={...}
+loginPath="/login" />`.
 
 ### AuthUser shape
 
@@ -869,6 +870,7 @@ Schema-driven form. Zero manual field wiring.
   card={{ title: 'New Todo', description: 'Create a new item' }}
   fields={{
     title: { autoFocus: true },
+    done: { useSwitch: true },
     notes: { hidden: true },
   }}
   submitLabel="Create"
@@ -881,6 +883,11 @@ Schema-driven form. Zero manual field wiring.
 ### `useForm(options)`
 
 Headless form hook for custom layouts.
+
+`collection` may be a collection object or a collection name. A collection name
+requires `<AppProvider>` or `<ClientProvider>` so Zero can resolve the SDK
+client. Forms that provide only `onSubmit`, or pass a collection object
+directly, can run without a client provider.
 
 ```tsx
 function CustomForm() {
@@ -1219,8 +1226,28 @@ verify both light and dark mode with a screenshot pass.
 Animated button that cycles through light → dark → system.
 
 ```tsx
-<ThemeTogglerButton variant="ghost" size="icon" />
+<ThemeTogglerButton variant="ghost" size="default" modes={['light', 'dark']} />
 ```
+
+### `<Toaster>`
+
+Zero's Sonner host for app feedback and notification toasts. Mount it once in
+the root layout under `ThemeProvider`. The default host uses Zero's token
+contract for popover surfaces, borders, shadows, semantic state rails, and
+state icons, so `toast.success`, `toast.error`, `toast.warning`, and
+`toast.info` match the rest of the component system.
+
+```tsx
+import { ThemeProvider, Toaster } from '@zero/framework/react';
+
+<ThemeProvider defaultTheme="system" storageKey="zero-theme">
+  <App />
+  <Toaster />
+</ThemeProvider>
+```
+
+Apps can still pass normal Sonner props when they need a different position,
+duration, icon set, or class override.
 
 ---
 
@@ -1714,6 +1741,9 @@ className merging, and tokenized light/dark/system surfaces. Buttons, inputs,
 selects, tables, badges, cards, dialogs, popovers, dropdowns, and tabs share
 the same radius, border, focus-ring, and surface vocabulary.
 
+For the layered component map, source-folder status, and known overlap cleanup
+targets, see [Component Inventory](frontend/component-inventory.md).
+
 ### Layout & Container
 
 | Component | Description |
@@ -1765,7 +1795,7 @@ the same radius, border, focus-ring, and surface vocabulary.
 
 | Component | Description |
 |-----------|-------------|
-| `Toaster` | Theme-aware toast notification container (via Sonner) |
+| `Toaster` | Zero-themed toast notification container with Sonner behavior |
 | `toast()` | Trigger toast: `toast('Saved!')`, `toast.error('Failed')`, `toast.success('Done')` |
 | `NotificationProvider` | Auto-fires toasts for new persistent notifications (see [Notifications](#notifications)) |
 

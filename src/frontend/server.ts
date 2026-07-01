@@ -26,6 +26,18 @@ export type {
   SyncDefaultsConfig,
   TableSyncDefaultConfig,
 } from './server/types';
+export type {
+  EffectiveRouteAuthRequirement,
+  RouteAuthMode,
+  RouteAuthRequirement,
+} from './router/auth-policy';
+export {
+  isPublicPath,
+  mergeRouteAuthRequirements,
+  normalizeRouteAuthRequirement,
+  resolveRouteAuthMode,
+  shouldRequireAuthForRoute,
+} from './router/auth-policy';
 export {
   createServerRoute,
 } from './server/server-route';

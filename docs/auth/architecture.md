@@ -495,9 +495,10 @@ The implemented client recovery path is refresh-token based:
 6. Logout, rejected refresh, token replay, or an unrefreshable 401 clears auth state and resets local synced table/state data.
 
 `AppProvider` provides the default UI safety net. When auth is enabled and the
-client becomes unauthenticated on a non-public route, it redirects to
-`loginPath` with a `redirect` query parameter. The server router uses the same
-`publicPaths` and `loginPath` settings during SSR/protected route handling.
+client becomes unauthenticated on a protected route, it removes protected route
+content and redirects to `loginPath` with a `redirect` query parameter. The
+server router uses the same route-auth mode, layout/page `config.auth`,
+`publicPaths`, and `loginPath` settings during SSR/protected route handling.
 
 Push-based inactivity messages over a personal `auth:{userId}` WebSocket topic
 belong to the deferred user-activity audit system. They are not part of the

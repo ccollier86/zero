@@ -6,6 +6,7 @@
  */
 
 import { defineZeroConfig } from '@zero/framework/server';
+import type { SQLiteStorageConfig, SQLiteStorageMode } from '@zero/framework/server';
 import { tables } from './db/schema';
 
 const PORT = Number(Bun.env.PORT ?? 3000);
@@ -28,13 +29,7 @@ export const config = defineZeroConfig({
     publicUrl: Bun.env.APP_PUBLIC_URL ?? `http://localhost:${PORT}`,
     supportEmail: Bun.env.APP_SUPPORT_EMAIL,
   },
-  db: Bun.env.DB_PATH
-    ? { mode: 'file', path: Bun.env.DB_PATH }
-    : {
-        mode: 'hot',
-        path: './data/app.db',
-        snapshotPath: './data/app.snapshot.db',
-      },
+  db: resolveDatabaseConfig(),
   tables,
   auth: {
     registration: { mode: 'admin-only' },
@@ -46,6 +41,7 @@ export const config = defineZeroConfig({
       requestCooldown: Bun.env.AUTH_ACCOUNT_EMAIL_COOLDOWN ?? '5m',
     },
   },
+  routeAuth: 'explicit',
   email: hasEmail
     ? {
         provider: 'resend',
@@ -79,3 +75,25 @@ export const config = defineZeroConfig({
 });
 
 export default config;
+
+/** Resolve app database config from env while keeping hot mode as the default. */
+function resolveDatabaseConfig(): SQLiteStorageConfig {
+  const mode = resolveDatabaseMode(Bun.env.DB_MODE);
+  const path = Bun.env.DB_PATH ?? './data/app.db';
+  const snapshotPath = Bun.env.DB_SNAPSHOT_PATH ?? './data/app.snapshot.db';
+
+  if (mode === 'ephemeral') return { mode };
+  if (mode === 'file') return { mode, path };
+
+  return {
+    mode,
+    path,
+    snapshotPath,
+  };
+}
+
+function resolveDatabaseMode(value: string | undefined): SQLiteStorageMode {
+  if (!value) return 'hot';
+  if (value === 'hot' || value === 'file' || value === 'ephemeral') return value;
+  throw new Error(`DB_MODE must be "hot", "file", or "ephemeral"; received "${value}".`);
+}

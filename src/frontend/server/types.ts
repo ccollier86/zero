@@ -9,6 +9,10 @@ import { resolveVectorConfig } from '../../vector/vector-config';
 import type { ResolvedVectorConfig, VectorConfig } from '../../vector/vector-types';
 import type { ResourceCrudRoutesConfig, ResourceDefinition } from '../../resources';
 import type { KvServiceConfig } from '../../kv';
+import {
+  resolveRouteAuthMode,
+  type RouteAuthMode,
+} from '../router/auth-policy';
 
 // ─── App Configuration ─────────────────────────────────────────────────────
 
@@ -252,10 +256,20 @@ export interface AppConfig {
 
   /**
    * Paths that don't require authentication (exact + prefix match).
-   * Only used when auth is enabled.
+   * Only used by the global protected-by-default auth guard.
    * Default: ['/login', '/register', '/forgot-password']
    */
   publicPaths?: string[];
+
+  /**
+   * Auth strategy for page routes when auth is enabled.
+   *
+   * - `protected-by-default`: all page routes require auth unless publicPaths match.
+   * - `explicit`: routes are public unless a page/layout exports config.auth.
+   *
+   * Default: `protected-by-default` for backwards compatibility.
+   */
+  routeAuth?: RouteAuthMode;
 
   /**
    * Redirect target for unauthenticated users.
@@ -304,6 +318,7 @@ export interface ResolvedConfig {
   migrate: boolean;
   observability?: ObservabilityConfig | false;
   publicPaths: string[];
+  routeAuth: RouteAuthMode;
   loginPath: string;
   /** Table names with lazy sync mode — auto-registered for /api/data queries. */
   lazyTables: Set<string>;
@@ -337,6 +352,7 @@ export function resolveConfig(
   const vector = resolveVectorConfig(config.vector, env);
   const kv = resolveKvConfig(config.kv);
   const stateSync = config.stateSync ?? false;
+  const routeAuth = resolveRouteAuthMode(config.routeAuth, auth !== false);
 
   if (stateSync && auth === false) {
     throw new Error('[app] stateSync requires auth: true because server state is keyed by authenticated user.');
@@ -409,6 +425,7 @@ export function resolveConfig(
     migrate: config.migrate ?? true,
     observability: config.observability,
     publicPaths: config.publicPaths ?? ['/login', '/register', '/forgot-password'],
+    routeAuth,
     loginPath: config.loginPath ?? '/login',
     lazyTables,
     snapshotTables,

@@ -6,6 +6,7 @@ import { matchRoute } from '../router/matcher';
 import { renderRoute } from '../router/renderer';
 import type { PlatformConfig } from '../router/renderer';
 import type { RouteNode, ApiHandler, LoaderContext, RouteConfig } from '../router/types';
+import { isPublicPath, type RouteAuthMode } from '../router/auth-policy';
 import { OBS_CODES } from '../../observability/codes';
 import { emitPlatformCode } from '../../observability/sink';
 
@@ -42,6 +43,8 @@ export interface RouterPluginOptions {
    * API routes (route.ts) are not affected — they use requireAuth/requireAdmin.
    */
   authGuard?: {
+    /** Global route auth strategy. Default: 'protected-by-default'. */
+    routeAuth?: RouteAuthMode;
     /** Paths that don't require authentication (exact + prefix match). Default: ['/login'] */
     publicPaths?: string[];
     /** Redirect target for unauthenticated users. Default: '/login' */
@@ -119,10 +122,14 @@ export function createRouterPlugin(options: RouterPluginOptions) {
       // 0. Global auth guard — redirect unauthenticated users before any imports
       //    API routes excluded (they return 401 JSON via requireAuth/requireAdmin)
       if (options.authGuard && !match.apiRoutePath) {
-        const { publicPaths = ['/login'], loginPath = '/login' } = options.authGuard;
-        const isPublic = pathname.startsWith('/_build') ||
-          publicPaths.some(p => pathname === p || pathname.startsWith(p + '/'));
-        if (!isPublic && !loaderCtx.auth) {
+        const {
+          routeAuth = 'protected-by-default',
+          publicPaths = ['/login'],
+          loginPath = '/login',
+        } = options.authGuard;
+        const globalGuardApplies = routeAuth === 'protected-by-default';
+        const isPublic = pathname.startsWith('/_build') || isPublicPath(pathname, publicPaths);
+        if (globalGuardApplies && !isPublic && !loaderCtx.auth) {
           return new Response(null, {
             status: 302,
             headers: { Location: loginPath },
@@ -164,7 +171,11 @@ export function createRouterPlugin(options: RouterPluginOptions) {
           const layoutModule = await import(layoutPath);
           const layoutConfig: RouteConfig | undefined = layoutModule.config;
           if (layoutConfig) {
-            const middlewareResult = await runRouteMiddleware(layoutConfig, loaderCtx);
+            const middlewareResult = await runRouteMiddleware(
+              layoutConfig,
+              loaderCtx,
+              options.authGuard?.loginPath,
+            );
             if (middlewareResult) return middlewareResult;
           }
         } catch (err) {
@@ -184,7 +195,11 @@ export function createRouterPlugin(options: RouterPluginOptions) {
 
         if (routeConfig) {
           // Run route-level middleware (auth guards, custom middleware)
-          const middlewareResult = await runRouteMiddleware(routeConfig, loaderCtx);
+          const middlewareResult = await runRouteMiddleware(
+            routeConfig,
+            loaderCtx,
+            options.authGuard?.loginPath,
+          );
           if (middlewareResult) return middlewareResult;
 
           // ISR: check cache
@@ -254,13 +269,14 @@ export function createRouterPlugin(options: RouterPluginOptions) {
 
 async function runRouteMiddleware(
   config: RouteConfig,
-  ctx: LoaderContext
+  ctx: LoaderContext,
+  loginPath = '/login',
 ): Promise<Response | null> {
   // Auth guard
   if (config.auth) {
     if (!ctx.auth) {
       // Not authenticated — redirect to login
-      return ctx.redirect('/login');
+      return ctx.redirect(loginPath);
     }
     if (config.auth === 'admin' && ctx.auth.role !== 'admin') {
       return new Response('Forbidden', { status: 403 });

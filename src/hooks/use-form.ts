@@ -1,3 +1,11 @@
+/**
+ * use-form.ts
+ *
+ * Owns Zero's headless React form state hook. It manages values, validation,
+ * dirty state, and optional collection submit wiring; rendering remains in
+ * form components and persistence policy remains in the SDK/collections.
+ */
+
 import {
   useState,
   useCallback,
@@ -11,7 +19,8 @@ import type { SchemaDescriptor } from '../schema/define-schema';
 import type { FieldMeta } from '../schema/field-types';
 import type { Row } from '../sync/types';
 import type { Collection } from '../frontend/client/sdk';
-import { useClient } from '../frontend/client/hooks';
+import { useClientMaybe } from '../frontend/client/hooks';
+import { areFormValuesEqual } from './form-value-utils';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -50,20 +59,33 @@ export interface UseFormReturn<T extends Row = Row> {
   fieldNames: readonly string[];
 }
 
-// ─── Hook ───────────────────────────────────────────────────────────────────
-
+/**
+ * Manage schema-backed form state with optional collection create/update.
+ *
+ * A string `collection` resolves through `ClientProvider`; an object
+ * collection or custom `onSubmit` can run without a client provider.
+ */
 export function useForm<T extends Row = Row>(
   options: UseFormOptions<T>,
 ): UseFormReturn<T> {
   const { schema, defaultValues, mode = 'create', editId, onSubmit, onSuccess, onError } = options;
 
-  // Resolve collection — string name resolves via client.collection() (requires ClientProvider)
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  const client = useClient();
-  const resolvedByName = typeof options.collection === 'string'
-    ? client.collection<T>(options.collection)
-    : null;
-  const collection = resolvedByName ?? (typeof options.collection === 'object' ? options.collection : null);
+  const client = useClientMaybe();
+  const collection = useMemo((): Collection<T> | null => {
+    if (typeof options.collection === 'string') {
+      if (!client) {
+        if (typeof window !== 'undefined') {
+          throw new Error('useForm with collection name must be used within <AppProvider> or <ClientProvider>.');
+        }
+
+        return null;
+      }
+
+      return client.collection<T>(options.collection);
+    }
+
+    return options.collection ?? null;
+  }, [client, options.collection]);
 
   const initialValues = useMemo(() => {
     const defaults = schema.decodeRow(schema.getDefaults());
@@ -98,7 +120,7 @@ export function useForm<T extends Row = Row>(
   const isDirty = useMemo(() => {
     const init = initialRef.current;
     for (const key of schema.fieldNames) {
-      if (values[key] !== init[key]) return true;
+      if (!areFormValuesEqual(values[key], init[key])) return true;
     }
     return false;
   }, [values, schema.fieldNames]);
@@ -118,12 +140,12 @@ export function useForm<T extends Row = Row>(
 
   // ─── Full validation ───────────────────────────────────────────────
 
-  const validateAll = useCallback((): boolean => {
-    const result = schema.validate(values);
+  const collectValidationErrors = useCallback((candidateValues: Record<string, unknown>): Record<string, string> => {
+    const result = schema.validate(candidateValues);
     if (result.success) {
-      setErrors({});
-      return true;
+      return {};
     }
+
     const newErrors: Record<string, string> = {};
     for (const issue of result.issues) {
       const path = (issue as any).path?.[0]?.key as string | undefined;
@@ -131,14 +153,18 @@ export function useForm<T extends Row = Row>(
         newErrors[path] = issue.message;
       }
     }
+    return newErrors;
+  }, [schema]);
+
+  const validateAll = useCallback((): Record<string, string> => {
+    const newErrors = collectValidationErrors(values);
     setErrors(newErrors);
-    return false;
-  }, [schema, values]);
+    return newErrors;
+  }, [collectValidationErrors, values]);
 
   const isValid = useMemo(() => {
-    const result = schema.validate(values);
-    return result.success;
-  }, [schema, values]);
+    return Object.keys(collectValidationErrors(values)).length === 0;
+  }, [collectValidationErrors, values]);
 
   // ─── Register ───────────────────────────────────────────────────────
 
@@ -205,10 +231,10 @@ export function useForm<T extends Row = Row>(
       // Mark all fields as touched
       setTouched(new Set(schema.fieldNames));
 
-      if (!validateAll()) {
-        // Focus first error field
+      const validationErrors = validateAll();
+      if (Object.keys(validationErrors).length > 0) {
         for (const name of schema.fieldNames) {
-          if (errors[name]) {
+          if (validationErrors[name]) {
             fieldRefs.current.get(name)?.focus();
             break;
           }
@@ -240,7 +266,7 @@ export function useForm<T extends Row = Row>(
         setIsSubmitting(false);
       }
     },
-    [isSubmitting, schema.fieldNames, validateAll, values, onSubmit, collection, mode, editId, onSuccess, onError, errors],
+    [isSubmitting, schema, validateAll, values, onSubmit, collection, mode, editId, onSuccess, onError],
   );
 
   // ─── Utilities ──────────────────────────────────────────────────────

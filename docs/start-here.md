@@ -8,7 +8,8 @@ Before platform work, read:
 
 1. [Engineering Standards](./engineering-standards.md)
 2. [Observability](./observability.md)
-3. [Releasing Zero](./releasing.md)
+3. [Component Inventory](./frontend/component-inventory.md)
+4. [Releasing Zero](./releasing.md)
 
 New reusable platform logs, warnings, caught errors, and lifecycle events should
 go through the observability boundary. When touching code that bypasses it,
@@ -19,12 +20,17 @@ correct that path if it is in scope.
 For the package-mode framework surface and remaining package-mode work, see
 [Framework Docs](./framework/README.md) and
 [Framework Developer Surface](./framework-developer-surface.md).
+For frontend composition, reusable UI, Animate UI wrappers, app shells, forms,
+and data organisms, start with the
+[Component Inventory](./frontend/component-inventory.md).
 The repository also includes `examples/package-mode` as a small generated-app
 fixture that imports Zero through `@zero/framework/*`.
-The in-repo `app/launchboard` app is the larger frontend reference: it uses
-AppShell, ReactiveDB collections, KanbanBoard, and the platform modal manager
-together. See [LaunchBoard](./frontend/launchboard.md) before building
-dashboard/work-queue style apps.
+The in-repo LaunchBoard app is the larger frontend reference: it keeps root
+providers in `app/layout.tsx`, mounts its shell at `/` through
+`app/(launchboard)/layout.tsx`, and uses AppShell, ReactiveDB collections,
+KanbanBoard, and the platform modal manager together. See
+[LaunchBoard](./frontend/launchboard.md) before building dashboard/work-queue
+style apps.
 
 Core backend primitives include ReactiveDB, generated resources, WebSocket
 sync, auth, email, storage, workflows, notifications, AI, vector storage, and
@@ -72,13 +78,15 @@ const config = defineZeroConfig({
     publicUrl: Bun.env.APP_PUBLIC_URL ?? `http://localhost:${PORT}`,
     supportEmail: Bun.env.APP_SUPPORT_EMAIL,
   },
-  db: Bun.env.DB_PATH
-    ? { mode: 'file', path: Bun.env.DB_PATH }
-    : {
-        mode: 'hot',
-        path: './data/app.db',
-        snapshotPath: './data/app.snapshot.db',
-      },
+  db: {
+    mode: Bun.env.DB_MODE === 'file'
+      ? 'file'
+      : Bun.env.DB_MODE === 'ephemeral'
+        ? 'ephemeral'
+        : 'hot',
+    path: Bun.env.DB_PATH ?? './data/app.db',
+    snapshotPath: Bun.env.DB_SNAPSHOT_PATH ?? './data/app.snapshot.db',
+  },
   tables,
   email: hasEmail
     ? {
@@ -98,6 +106,7 @@ const config = defineZeroConfig({
       requestCooldown: Bun.env.AUTH_ACCOUNT_EMAIL_COOLDOWN ?? '5m',
     },
   },
+  routeAuth: 'explicit',
   ai: hasAI ? true : false,
   vector: hasVector
     ? {
@@ -167,6 +176,71 @@ entry. Keep `.zero/` ignored in app repositories. Generated apps include a
 `@/lib/*` aliases so app-owned routes, components, hooks, and helpers stay
 portable and easy to customize.
 
+## Choose Your App Shape
+
+Keep `app/layout.tsx` boring by default: global providers, theme, toaster,
+modal manager, and shared `AppProvider` setup only. Put visual shells and auth
+boundaries lower in the route tree.
+
+Public-first apps, such as appointment request or intake flows with a protected
+staff dashboard, should opt into route-owned auth:
+
+```ts
+const config = defineZeroConfig({
+  db,
+  tables,
+  auth: true,
+  routeAuth: 'explicit',
+  loginPath: '/login',
+});
+```
+
+Then protect the dashboard layout:
+
+```tsx
+// app/(dashboard)/layout.tsx
+import { AppShell, type RouteConfig } from '@zero/framework/react';
+
+export const config: RouteConfig = {
+  auth: 'required',
+};
+
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  return <AppShell>{children}</AppShell>;
+}
+```
+
+Use route groups for separate layout branches without changing URLs:
+
+```txt
+app/
+  layout.tsx                    # providers only
+  (public)/
+    layout.tsx                  # public shell, no AppShell
+    page.tsx                    # /
+    intake/resume/[token]/page.tsx
+  (dashboard)/
+    layout.tsx                  # AppShell + config.auth
+    dashboard/page.tsx          # /dashboard
+```
+
+Internal tools can keep the default protected-first behavior:
+
+```ts
+defineZeroConfig({
+  db,
+  tables,
+  auth: true,
+  routeAuth: 'protected-by-default',
+  publicPaths: ['/login', '/forgot-password'],
+});
+```
+
+In both modes, Zero watches auth state in the browser. If a session expires,
+logout runs, or refresh fails while the user is on a protected route, the
+protected subtree is removed from the screen and the browser redirects to
+`loginPath` with a `redirect` query parameter.
+
 Use the generated `server/` folders for app-owned backend code:
 
 | Folder | Preferred use |
@@ -230,6 +304,10 @@ and semantic state colors. Keep new components on those tokens, keep ordinary
 cards at `rounded-lg` or smaller, and check both light and dark modes before
 shipping shared UI changes. Zero keeps Playwright available as a dev dependency
 for local screenshot checks against running or static routes.
+Before adding or replacing shared UI, check the
+[Component Inventory](./frontend/component-inventory.md). It separates base
+primitives, composed controls, app shells, data organisms, domain organisms,
+and Animate UI source groups so agents do not duplicate platform pieces.
 
 For dashboards, admin tools, data apps, and internal products, start with
 `AppShell` from `@zero/framework/components/app-shell`. It provides the default
@@ -297,7 +375,9 @@ Common variables:
 | Variable | Purpose |
 | --- | --- |
 | `PORT` | HTTP port. |
-| `DB_PATH` | Optional SQLite file-mode path. Omit it in generated apps to use hot SQLite with snapshot recovery. |
+| `DB_MODE` | SQLite runtime mode. Use `hot` for memory-first snapshot recovery, `file` for direct SQLite/WAL, or `ephemeral` for tests. |
+| `DB_PATH` | SQLite source path used by `hot` and `file` modes. |
+| `DB_SNAPSHOT_PATH` | Snapshot recovery path used by `hot` mode. |
 | `APP_NAME` | Display name used by system email. |
 | `APP_PUBLIC_URL` | Public origin for setup/reset links. |
 | `APP_SUPPORT_EMAIL` | Optional support/reply identity. |
@@ -414,6 +494,10 @@ clone. These generic utilities will continue expanding as the frontend library
 is polished.
 
 See [Frontend Hooks](./frontend/hooks.md) and [SDK](./frontend/sdk.md).
+
+For generated CRUD forms, staged forms, and the planned intake-grade form
+layer, see [Form Library](./frontend/forms.md). Use the existing Zero form
+components and tokenized inputs before creating custom form controls.
 
 ## Default Icons
 

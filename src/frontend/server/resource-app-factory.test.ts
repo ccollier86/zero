@@ -6,6 +6,7 @@
  * and sync enforcement are covered by later Phase 5 slices.
  */
 
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -138,6 +139,76 @@ describe('createApp resource registration', () => {
     }
   });
 
+  test('persists app ReactiveDB rows across hot SQLite app restarts', async () => {
+    const rootDir = await createTempRoot();
+    const routesDir = join(rootDir, 'server', 'routes');
+    const appDir = join(rootDir, 'app');
+    const dbPath = join(rootDir, 'data', 'launchboard.db');
+    const snapshotPath = join(rootDir, 'data', 'launchboard.snapshot.db');
+    const serverImport = pathToFileURL(join(process.cwd(), 'src/frontend/server.ts')).href;
+    let firstApp: Awaited<ReturnType<typeof createApp>> | undefined;
+    let secondApp: Awaited<ReturnType<typeof createApp>> | undefined;
+
+    try {
+      await mkdir(routesDir, { recursive: true });
+      await mkdir(appDir, { recursive: true });
+      await writeFile(
+        join(routesDir, 'launchboard.ts'),
+        [
+          `import { createServerRoute } from '${serverImport}';`,
+          "export default createServerRoute({ name: 'test.launchboard', prefix: '/api/launchboard' })",
+          "  .post('/category', ({ zero }) => {",
+          "    zero.db.insert('launch_categories', {",
+          "      category_id: 'category-persisted',",
+          "      name: 'Persisted Category',",
+          "      color: 'bg-amber-500',",
+          "      sort_order: 0,",
+          "    });",
+          "    return zero.db.queryOne('launch_categories', 'category-persisted');",
+          "  })",
+          "  .get('/category', ({ zero, status }) => {",
+          "    const row = zero.db.queryOne('launch_categories', 'category-persisted');",
+          "    return row ?? status(404, { error: 'missing' });",
+          "  });",
+          '',
+        ].join('\n')
+      );
+
+      firstApp = await createHotLaunchboardTestApp({ rootDir, routesDir, appDir, dbPath, snapshotPath });
+      firstApp.listen(0);
+      const firstBaseUrl = `http://localhost:${firstApp.server!.port}`;
+      const writeResponse = await fetch(`${firstBaseUrl}/api/launchboard/category`, { method: 'POST' });
+      expect(writeResponse.status).toBe(200);
+      await expect(writeResponse.json()).resolves.toEqual({
+        category_id: 'category-persisted',
+        name: 'Persisted Category',
+        color: 'bg-amber-500',
+        sort_order: 0,
+      });
+
+      await firstApp.stop();
+      firstApp = undefined;
+      expect(existsSync(snapshotPath)).toBe(true);
+
+      secondApp = await createHotLaunchboardTestApp({ rootDir, routesDir, appDir, dbPath, snapshotPath });
+      secondApp.listen(0);
+      const secondBaseUrl = `http://localhost:${secondApp.server!.port}`;
+      const readResponse = await fetch(`${secondBaseUrl}/api/launchboard/category`);
+      expect(readResponse.status).toBe(200);
+      await expect(readResponse.json()).resolves.toEqual({
+        category_id: 'category-persisted',
+        name: 'Persisted Category',
+        color: 'bg-amber-500',
+        sort_order: 0,
+      });
+    } finally {
+      await firstApp?.stop();
+      await secondApp?.stop();
+      cleanupPlatformSQLiteService();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   test('mounts durable platform KV for app-owned backend routes and recovers after restart', async () => {
     const rootDir = await createTempRoot();
     const routesDir = join(rootDir, 'server', 'routes');
@@ -193,6 +264,41 @@ describe('createApp resource registration', () => {
     }
   });
 });
+
+async function createHotLaunchboardTestApp(input: {
+  rootDir: string;
+  routesDir: string;
+  appDir: string;
+  dbPath: string;
+  snapshotPath: string;
+}) {
+  return createApp({
+    db: {
+      mode: 'hot',
+      path: input.dbPath,
+      snapshotPath: input.snapshotPath,
+      snapshotIntervalMs: 60_000,
+    },
+    tables: {
+      launch_categories: {
+        category_id: 'text primary key',
+        name: 'text not null',
+        color: 'text not null',
+        sort_order: 'integer not null',
+      },
+    },
+    serverResourcesDir: false,
+    serverPluginsDir: false,
+    serverMiddlewareDir: false,
+    serverEndpointsDir: false,
+    serverRoutesDir: input.routesDir,
+    appDir: input.appDir,
+    outDir: join(input.rootDir, `out-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+    observability: false,
+    auth: false,
+    kv: false,
+  });
+}
 
 async function createKvTestApp(input: {
   rootDir: string;

@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Checkbox } from '@/components/animate-ui/components/radix/checkbox';
+import { Switch } from '@/components/animate-ui/components/radix/switch';
 import {
   FormField,
   FormLabel,
@@ -54,7 +55,14 @@ export function FieldRenderer({
     <FormField name={name} error={error} description={meta.description}>
       <FormLabel>{label}</FormLabel>
       <FormControl>
-        {renderInput(meta, { value, onChange, onBlur, ref, autoFocus: overrides?.autoFocus })}
+        {renderInput(meta, {
+          value,
+          onChange,
+          onBlur,
+          ref,
+          autoFocus: overrides?.autoFocus,
+          useSwitch: overrides?.useSwitch,
+        })}
       </FormControl>
       {meta.description && <FormDescription>{meta.description}</FormDescription>}
       <FormMessage />
@@ -72,9 +80,10 @@ function renderInput(
     onBlur: () => void;
     ref: (el: HTMLElement | null) => void;
     autoFocus?: boolean;
+    useSwitch?: boolean;
   },
 ): React.ReactElement {
-  const { value, onChange, onBlur, ref, autoFocus } = props;
+  const { value, onChange, onBlur, ref, autoFocus, useSwitch } = props;
 
   switch (meta.type) {
     case 'text':
@@ -127,6 +136,19 @@ function renderInput(
       );
 
     case 'boolean':
+      if (useSwitch) {
+        return (
+          <div className="flex items-center gap-2 pt-1">
+            <Switch
+              checked={value === true}
+              onCheckedChange={(checked) => onChange(checked === true)}
+              onBlur={onBlur}
+              ref={ref as any}
+            />
+          </div>
+        );
+      }
+
       return (
         <div className="flex items-center gap-2 pt-1">
           <Checkbox

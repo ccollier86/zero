@@ -28,4 +28,5 @@ export type {
   AppShellNavGroup,
   AppShellUser,
   AppShellHeaderConfig,
+  AppShellThemeToggleConfig,
 } from './app-shell.types';

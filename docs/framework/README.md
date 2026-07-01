@@ -44,6 +44,13 @@ vector, workflows, observability, or migrations.
 - [Resource Policy Core](./resource-policy.md): implemented server-side policy
   helpers, trusted metadata validation, owner constraints, composition, and
   evaluator contract used by resource integrations.
+- [Frontend Component Inventory](../frontend/component-inventory.md): canonical
+  map of Zero UI primitives, Animate UI wrappers, app shells, forms, data
+  organisms, domain organisms, import paths, and use-first rules for app and
+  agent development.
+- [Router](../frontend/router.md): file-router layouts, route groups,
+  public-first vs protected-first route auth, and dashboard/AppShell placement
+  rules.
 - [Framework Developer Surface](../framework-developer-surface.md): current
   package-mode usage surface, imports, generated app shape, and examples.
 

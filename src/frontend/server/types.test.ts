@@ -46,6 +46,30 @@ describe('resolveConfig', () => {
     expect(config.serverRoutesDir).toBe('./server/routes');
     expect(config.serverResourcesDir).toBe('./server/resources');
     expect(config.resourceRoutes).toEqual({});
+    expect(config.routeAuth).toBe('protected-by-default');
+  });
+
+  test('supports explicit route auth for public-first apps', () => {
+    const config = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: true,
+      routeAuth: 'explicit',
+    });
+
+    expect(config.auth).not.toBe(false);
+    expect(config.routeAuth).toBe('explicit');
+  });
+
+  test('defaults authless apps to explicit route auth', () => {
+    const config = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: false,
+    });
+
+    expect(config.auth).toBe(false);
+    expect(config.routeAuth).toBe('explicit');
   });
 
   test('preserves auth registration and user property config', () => {

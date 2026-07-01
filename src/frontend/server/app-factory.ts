@@ -400,8 +400,9 @@ async function mountPlatformApp({
     app.use(serverRoutePlugin as any);
   }
 
-  // ─── Process-level WAL safety net ───────────────────────
-  // Catches SIGINT/SIGTERM and ensures app.stop() runs (triggers WAL checkpoint).
+  // ─── Process-level persistence safety net ───────────────
+  // Catches SIGINT/SIGTERM and ensures app.stop() runs (triggers hot snapshots
+  // or file-mode WAL checkpoints).
   // Without this, Ctrl+C or container SIGTERM may skip onStop hooks.
   let shuttingDown = false;
   const gracefulShutdown = async (signal: string) => {
@@ -434,12 +435,14 @@ async function mountPlatformApp({
         stateSync: config.stateSync,
         tableSyncModes: config.resolvedSyncModes,
         publicPaths: config.publicPaths,
+        routeAuth: config.routeAuth,
         loginPath: config.loginPath,
       },
       // When auth is enabled, protect all page routes by default
       ...(config.auth !== false
         ? {
             authGuard: {
+              routeAuth: config.routeAuth,
               publicPaths: config.publicPaths,
               loginPath: config.loginPath,
             },

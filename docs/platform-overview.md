@@ -413,7 +413,7 @@ export const tables = { todos: todoTable };
 />
 ```
 
-Generates the full form from the schema: inputs, validation, error messages, submit/reset buttons. Supports create and edit modes. Grid layout with configurable columns. Optional Card wrapper.
+Generates the full form from the schema: inputs, validation, error messages, submit/reset buttons. Supports create and edit modes. Grid layout with configurable columns. Optional Card wrapper. `collection` can be a collection object or table name, and boolean fields can use the animated switch renderer with `fields={{ enabled: { useSwitch: true } }}`.
 
 ### Wizard — Multi-Step Forms
 
@@ -456,7 +456,7 @@ return (
 );
 ```
 
-Per-field validation on blur, full validation on submit, dirty tracking, first-error focus, collection auto-save.
+Per-field validation on blur, full validation on submit, structural dirty tracking for arrays/plain objects, first-error focus, and collection auto-save. Custom-submit forms can omit `collection` and use `onSubmit` without requiring `AppProvider`.
 
 ---
 
@@ -768,9 +768,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
 When auth is enabled, `AppProvider` also handles client-side auth loss on
 protected routes. If a stored refresh token is rejected or an authenticated call
-cannot refresh, it clears the local synced data and redirects non-public paths
-to `loginPath` with a `redirect` query parameter. `publicPaths` and `loginPath`
-come from `createApp()` and can be overridden on the provider.
+cannot refresh, it clears the local synced data, removes protected route
+content, and redirects to `loginPath` with a `redirect` query parameter.
+`routeAuth`, `publicPaths`, and `loginPath` come from `createApp()` and can be
+overridden on the provider.
 
 ```tsx
 // In any page — useCollection is the primary mutation API

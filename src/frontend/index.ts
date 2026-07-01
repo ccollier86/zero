@@ -214,6 +214,7 @@ export type {
 
 // ─── Toast ──────────────────────────────────────────────────────────────
 export { Toaster } from '../components/ui/sonner';
+export type { ToasterProps } from '../components/ui/sonner';
 export { toast } from 'sonner';
 
 // ─── Client Router (for advanced use) ───────────────────────────────────
@@ -225,6 +226,19 @@ export {
 } from './client/client-router';
 
 // ─── Router Types ────────────────────────────────────────────────────────
+export type {
+  EffectiveRouteAuthRequirement,
+  RouteAuthMode,
+  RouteAuthRequirement,
+} from './router/auth-policy';
+export {
+  isPublicPath,
+  mergeRouteAuthRequirements,
+  normalizeRouteAuthRequirement,
+  resolveRouteAuthMode,
+  shouldRequireAuthForRoute,
+} from './router/auth-policy';
+
 export type {
   RouteModule,
   RouteNode,
@@ -311,6 +325,7 @@ export type {
   AppShellNavGroup,
   AppShellUser,
   AppShellHeaderConfig,
+  AppShellThemeToggleConfig,
 } from '../components/app-shell';
 export {
   Sidebar,

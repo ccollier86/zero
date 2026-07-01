@@ -107,6 +107,53 @@ redirected to the configured login path with a `redirect` query string.
 Configure public paths and the login route in `createApp()` or override them on
 `<AppProvider publicPaths={...} loginPath="/login" />`.
 
+## Route Auth Modes
+
+Zero supports two page-route auth strategies when `auth` is enabled.
+
+Protected-first apps use the default:
+
+```ts
+createApp({
+  auth: true,
+  routeAuth: 'protected-by-default',
+  publicPaths: ['/login', '/register', '/forgot-password'],
+  loginPath: '/login',
+});
+```
+
+Every page route requires auth unless it matches `publicPaths`. This is best
+for internal dashboards and admin tools.
+
+Public-first apps should opt into route-owned auth:
+
+```ts
+createApp({
+  auth: true,
+  routeAuth: 'explicit',
+  loginPath: '/login',
+});
+```
+
+In explicit mode, pages are public unless a page or layout exports auth config:
+
+```tsx
+import type { RouteConfig } from '@zero/framework/react';
+
+export const config: RouteConfig = {
+  auth: 'required',
+};
+```
+
+Use this for apps where `/` is public, such as appointment request, intake,
+marketing, or token-resume flows, while `/dashboard/*` remains protected.
+
+Layout/page `config.auth` is server-enforced before rendering. The browser
+hydration runtime also tracks the matched route auth requirement. If the user
+logs out, a refresh token is rejected, or auth becomes unauthenticated while on
+a protected route, `AppProvider` removes the protected subtree from the screen
+and redirects to `loginPath?redirect=<current-url>`.
+
 ## Stack
 
 | Component | Technology | Role |

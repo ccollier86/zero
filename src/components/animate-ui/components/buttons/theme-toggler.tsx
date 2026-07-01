@@ -1,5 +1,13 @@
 'use client';
 
+/**
+ * theme-toggler.tsx
+ *
+ * Public Zero wrapper for Animate UI's theme transition primitive. This file
+ * owns the button affordance only; ThemeProvider owns theme persistence and app
+ * shells decide where the control is rendered.
+ */
+
 import * as React from 'react';
 import { useTheme } from 'next-themes';
 import { Monitor, Moon, Sun } from 'lucide-react';
@@ -53,13 +61,17 @@ function ThemeTogglerButton({
   onImmediateChange,
   onClick,
   className,
+  type = 'button',
+  title,
+  'aria-label': ariaLabel,
   ...props
 }: ThemeTogglerButtonProps) {
   const { theme, resolvedTheme, setTheme } = useTheme();
+  const currentTheme = resolveCurrentTheme(theme, resolvedTheme, modes);
 
   return (
     <ThemeTogglerPrimitive
-      theme={theme as ThemeSelection}
+      theme={currentTheme}
       resolvedTheme={resolvedTheme as Resolved}
       setTheme={setTheme}
       direction={direction}
@@ -69,6 +81,9 @@ function ThemeTogglerButton({
         <button
           data-slot="theme-toggler-button"
           className={cn(buttonVariants({ variant, size, className }))}
+          type={type}
+          title={title ?? 'Switch theme'}
+          aria-label={ariaLabel ?? `Switch theme from ${effective}`}
           onClick={(e) => {
             onClick?.(e);
             toggleTheme(getNextTheme(effective, modes));
@@ -80,6 +95,17 @@ function ThemeTogglerButton({
       )}
     </ThemeTogglerPrimitive>
   );
+}
+
+function resolveCurrentTheme(
+  theme: string | undefined,
+  resolvedTheme: string | undefined,
+  modes: ThemeSelection[],
+): ThemeSelection {
+  if (modes.includes('system') && theme === 'system') return 'system';
+  if (theme === 'light' || theme === 'dark') return theme;
+  if (resolvedTheme === 'dark') return 'dark';
+  return 'light';
 }
 
 export { ThemeTogglerButton, type ThemeTogglerButtonProps };

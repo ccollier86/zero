@@ -2,6 +2,33 @@
 
 All notable Zero Platform changes are tracked here.
 
+## 1.1.0 - 2026-07-01
+
+Framework-mode release that turns Zero into a package-first app platform while
+preserving the in-repo LaunchBoard reference app as a durable example.
+
+### Framework Runtime
+
+- Added package-mode app composition through public `@zero/framework/*` exports, config-driven app startup, app-owned server routes, middleware, plugins, and service access.
+- Added file-router route groups, route-owned layout branches, explicit route auth metadata, and client-side protected-route blanking/redirect behavior when auth is lost.
+- Added a provider-only root layout plus route-group AppShell pattern so public flows, dashboards, and root-mounted app shells can coexist cleanly.
+- Wired shared hot SQLite persistence into the platform runtime with memory-backed operation, snapshot recovery, file mode, and ephemeral mode options.
+- Added durable platform KV/cache runtime with checkpoint/journal recovery, counters, namespaces, TTL, LRU eviction, and rate-limiter helpers.
+- Reopened existing zvec collections cleanly so vector storage can recover and reuse persisted collections across restarts.
+
+### Frontend And Reference App
+
+- Preserved LaunchBoard as a tracked reference app under `app/`, using AppShell, ReactiveDB, platform modals, Radix-backed forms/selects, KanbanBoard, theme switching, and hot persistence.
+- Added the route-group LaunchBoard structure at `/`: `app/(launchboard)/layout.tsx` owns shell chrome while `app/launchboard/launchboard-page.tsx` owns board content.
+- Improved AppShell with the Animate UI/Radix sidebar pattern, workspace switcher, nested nav, breadcrumb/header row, theme toggler support, action menus, and animated icon handling.
+- Improved form helpers, Radix-backed field rendering, Sonner styling, component inventory docs, forms docs, and frontend SDK docs.
+
+### Tooling And Docs
+
+- Expanded platform doctor coverage for route auth, package-mode config, resource policies, and newer runtime guidance.
+- Updated start-here, framework, AppShell, router, LaunchBoard, SDK, auth, token, platform configuration, roadmap, and package-mode example docs.
+- Added durable docs for webhooks and component inventory so app-building agents can discover existing Zero surfaces before creating duplicates.
+
 ## 1.0.0 - 2026-06-28
 
 Initial versioned platform release.

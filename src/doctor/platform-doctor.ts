@@ -446,6 +446,7 @@ function checkAuthPublicPaths(
   findings: PlatformDoctorFinding[]
 ): void {
   if (resolved.auth === false) return;
+  if (resolved.routeAuth === 'explicit') return;
   if (isPathPublic(resolved.loginPath, resolved.publicPaths)) return;
 
   addFinding(findings, {
@@ -454,7 +455,7 @@ function checkAuthPublicPaths(
     path: 'publicPaths',
     message: `loginPath "${resolved.loginPath}" is not included in publicPaths, so unauthenticated users may be redirected to a protected route.`,
     hint: `Add "${resolved.loginPath}" to publicPaths or change loginPath to an existing public login route.`,
-    docs: './docs/start-here.md#auth-defaults',
+    docs: './docs/start-here.md#choose-your-app-shape',
   });
 }
 

@@ -149,6 +149,52 @@ The resume token controls whether the user may continue the flow. The upload
 grant controls one exact file write. Reads remain governed by normal storage
 permissions.
 
+## Pairing With Autosaved Forms
+
+Autosaved form drafts should use this token service directly. Do not build a
+form-specific token table. Store the safe `record.tokenId` on the draft row and
+on revision/audit rows, but never store the raw token.
+
+```ts
+const resume = zero.tokens.createResumeToken({
+  flow: 'clinic-intake',
+  resource: { type: 'form-draft', id: draftId },
+  subject: { type: 'email', id: email },
+  ttl: '14d',
+  metadata: {
+    formId: 'clinic-intake',
+    formVersion: '1.0.0',
+  },
+});
+
+await formDrafts.markResumeToken({
+  draftId,
+  activeResumeTokenId: resume.record.tokenId,
+  resumeExpiresAt: resume.record.expiresAt,
+});
+```
+
+When a browser autosaves, verify the raw token first and stamp the draft
+revision with the returned token id:
+
+```ts
+const verified = zero.tokens.verifyResumeToken(rawToken, {
+  flow: 'clinic-intake',
+  resource: { type: 'form-draft', id: draftId },
+});
+
+await formDrafts.saveRevision({
+  draftId,
+  values,
+  actorType: 'resume-token',
+  actorTokenId: verified.tokenId,
+});
+```
+
+The token record remains the source of truth for hash validation, expiration,
+revocation, rotation, `lastUsedAt`, flow, resource, and subject. The form draft
+row only keeps safe pointers and form state.
+
 ## Auth Compatibility
 
 Auth password setup/reset still uses `/auth/action-token/:token`,

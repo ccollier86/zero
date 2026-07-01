@@ -59,7 +59,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
 > **Theme:** `createApp()` builds and links Zero's platform stylesheet from
 > `src/frontend/styles/globals.css`. The default token contract includes light,
-> dark, and system modes through `ThemeProvider`.
+> dark, and system modes through `ThemeProvider`. Mount Zero's `Toaster` once
+> under that provider so feedback toasts inherit the same popover, semantic
+> color, radius, and shadow tokens as the rest of the UI.
 
 ```ts
 // ─── app/server.ts — one file, everything ──────────────
@@ -172,6 +174,8 @@ Auth, sync, and router all share one ReactiveDB. The router renders pages with R
 | [Hooks](./hooks.md) | Generic React hooks, platform-specific hooks, user-property hooks, and hook responsibility boundaries |
 | [AppShell](./app-shell.md) | App-ready dashboard shell with Animate UI/Radix sidebar, workspace switcher, nested nav, user menu, optional breadcrumbs, and shell presets |
 | [Sidebar](./sidebar.md) | Low-level sidebar primitives for custom shells: provider, inset, rail, groups, nested menu, actions, and footer user menus |
+| [Component Inventory](./component-inventory.md) | Layered map of base primitives, composed controls, organisms, domain UI, Animate UI source groups, and cleanup targets |
+| [Form Library](./forms.md) | Current form stack, CRUD boundaries, intake-grade roadmap, draft adapters, public resume flows, attachments, consents, and PDF/workflow composition |
 | [DataTableView](./data-table.md) | Schema-aware table organism, full-sync/lazy/data sources, inline editing, toolbar, column overrides |
 | [KanbanBoard](./kanban.md) | Tokenized drag-and-drop board organism for ordered records grouped by caller-owned columns |
 | [LaunchBoard](./launchboard.md) | Reference app showing AppShell + ReactiveDB + KanbanBoard + platform modals in one package-mode example |
@@ -189,6 +193,7 @@ The frontend SDK composes these — it doesn't reinvent them:
 | Auth system | [docs/auth/](../auth/README.md) | Register, login, refresh, logout routes, reactive `users` table, JWT middleware, guards |
 | State sync | [docs/state-sync.md](../state-sync.md) | `useServerState`, per-user persistent KV, device sync, form drafts, UI preferences |
 | App shell | [AppShell](./app-shell.md) and [Sidebar](./sidebar.md) | `AppShell`, optional breadcrumbs/header content, workspace switcher, nested nav, three-dot item actions, footer user menu, and raw sidebar primitives |
+| Forms | [Form Library](./forms.md) | `useForm`, `AutoForm`, `Wizard`, generated fields, current limits, and the planned intake-grade blueprint/draft/attachment layer |
 | Storage | [Hooks](./hooks.md#storage-workflows) | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `StorageDropzone`, and storage browser helpers |
 | Rooms and ephemeral sync | [Hooks](./hooks.md#presence-and-typing) | `usePresence`, `usePresenceList`, `useTypingIndicator`, `useEphemeral`, and `useEphemeralTopic` |
 | Observability | [docs/observability.md](../observability.md) | Backend/frontend event sink, default inspection endpoint, configurable adapters |

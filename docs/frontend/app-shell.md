@@ -9,6 +9,39 @@ optional breadcrumbs, and content below with `p-4 pt-0`.
 Use `AppShell` before hand-rolling a sidebar/header layout. Drop down to the
 sidebar primitives only when the shell config cannot express the design.
 
+## Where AppShell Belongs
+
+`AppShell` is route chrome, not the global app provider layer. Put it in the
+layout branch that should look like an application dashboard:
+
+```txt
+app/
+  layout.tsx                    # ThemeProvider, AppProvider, Toaster
+  (public)/layout.tsx           # public flow shell, no AppShell
+  (public)/page.tsx             # /
+  (dashboard)/layout.tsx        # AppShell + config.auth
+  (dashboard)/dashboard/page.tsx # /dashboard
+```
+
+Do not put `AppShell` in `app/layout.tsx` unless every route should inherit the
+dashboard shell, including login, public intake, marketing, and token-resume
+flows. For public-first apps, use `createApp({ auth: true, routeAuth:
+'explicit' })` and export `config.auth` from the dashboard layout.
+
+Route groups can also mount a dashboard shell at the root URL without moving
+AppShell into the root provider layout:
+
+```txt
+app/
+  layout.tsx                    # providers only
+  (launchboard)/
+    layout.tsx                  # AppShell
+    page.tsx                    # /
+```
+
+That is the LaunchBoard pattern: `app/(launchboard)/layout.tsx` owns the shell
+and `app/launchboard/launchboard-page.tsx` owns only the board content.
+
 ## Default Dashboard Shell
 
 ```tsx
@@ -70,6 +103,7 @@ import { Button } from '@zero/framework/react';
     title: 'LaunchBoard',
     subtitle: '2 categories / 4 boards / 18 cards',
     actions: <Button>New card</Button>,
+    themeToggle: true,
   }}
 >
   <BoardWorkspace />
@@ -216,6 +250,48 @@ while styling it as a create button instead of another navigation target:
   onSelect: openCreateBoard,
 }
 ```
+
+## Theme Toggle
+
+Use `header.themeToggle` to render Zero's packaged Animate UI
+`ThemeTogglerButton` in the integrated header row. The shell default is a
+two-state light/dark control with the View Transition swipe effect when the
+browser supports it.
+
+```tsx
+<AppShell
+  brand={{ name: 'Zero App' }}
+  nav={nav}
+  header={{
+    title: 'Dashboard',
+    themeToggle: true,
+  }}
+>
+  <Dashboard />
+</AppShell>
+```
+
+Pass a config object when the app needs a different direction or wants to
+include `system` in the cycle:
+
+```tsx
+<AppShell
+  nav={nav}
+  header={{
+    themeToggle: {
+      modes: ['light', 'dark', 'system'],
+      direction: 'rtl',
+      variant: 'ghost',
+      size: 'default',
+    },
+  }}
+>
+  <Dashboard />
+</AppShell>
+```
+
+Keep `ThemeProvider` in the root layout. `AppShell` renders the button; it does
+not own theme persistence.
 
 ## Item Action Menus
 

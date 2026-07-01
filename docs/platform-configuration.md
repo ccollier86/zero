@@ -304,7 +304,8 @@ Current checks cover:
    account flows.
 8. File-backed databases with startup migrations disabled.
 9. Auth-enabled apps without an app `syncPolicy`.
-10. Login route access when `loginPath` is missing from `publicPaths`.
+10. Login route access when protected-by-default auth is used and `loginPath`
+    is missing from `publicPaths`.
 11. Lazy/auto sync index guidance for `/api/data` filters and sorting.
 12. Observability disabled in production, unreadable endpoint policy, and
     endpoint/store mismatches.

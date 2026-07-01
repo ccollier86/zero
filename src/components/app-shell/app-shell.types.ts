@@ -8,6 +8,7 @@
  */
 
 import type * as React from 'react';
+import type { ThemeTogglerButtonProps } from '@/components/animate-ui/components/buttons/theme-toggler';
 import type {
   ZeroAnimatedIconComponent,
   ZeroAnimatedIconName,
@@ -107,6 +108,8 @@ export interface AppShellUser {
   onLogout?(): void;
 }
 
+export type AppShellThemeToggleConfig = Omit<ThemeTogglerButtonProps, 'children'>;
+
 export interface AppShellHeaderConfig {
   hide?: boolean;
   showSidebarTrigger?: boolean;
@@ -116,6 +119,7 @@ export interface AppShellHeaderConfig {
   leading?: React.ReactNode;
   content?: React.ReactNode;
   actions?: React.ReactNode;
+  themeToggle?: boolean | AppShellThemeToggleConfig;
   trailing?: React.ReactNode;
   className?: string;
 }

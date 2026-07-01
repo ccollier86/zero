@@ -80,4 +80,47 @@ describe('client bundle generated artifacts', () => {
       await rm(rootDir, { recursive: true, force: true });
     }
   });
+
+  test('omits route group folders from generated client route patterns', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'zero-client-route-groups-'));
+    const appDir = join(rootDir, 'app');
+    const generatedDir = join(rootDir, '.zero', 'generated');
+
+    try {
+      await mkdir(join(appDir, '(public)'), { recursive: true });
+      await mkdir(join(appDir, '(dashboard)', 'dashboard'), { recursive: true });
+      await writeFile(
+        join(appDir, 'layout.tsx'),
+        "'use client';\nexport default function Root({ children }: any) { return children; }\n"
+      );
+      await writeFile(
+        join(appDir, '(public)', 'layout.tsx'),
+        "'use client';\nexport default function Public({ children }: any) { return children; }\n"
+      );
+      await writeFile(
+        join(appDir, '(public)', 'page.tsx'),
+        "'use client';\nexport default function Home() { return null; }\n"
+      );
+      await writeFile(
+        join(appDir, '(dashboard)', 'layout.tsx'),
+        "'use client';\nexport const config = { auth: 'required' };\nexport default function Dashboard({ children }: any) { return children; }\n"
+      );
+      await writeFile(
+        join(appDir, '(dashboard)', 'dashboard', 'page.tsx'),
+        "'use client';\nexport default function DashboardPage() { return null; }\n"
+      );
+
+      const manifestPath = generateRouteManifest({ appDir, generatedDir });
+      const manifest = await readFile(manifestPath, 'utf8');
+
+      expect(manifest).toContain("pattern: '/'");
+      expect(manifest).toContain("pattern: '/dashboard'");
+      expect(manifest).not.toContain("pattern: '/(public)'");
+      expect(manifest).not.toContain("pattern: '/(dashboard)/dashboard'");
+      expect(manifest).toContain("() => import('@app/(public)/layout')");
+      expect(manifest).toContain("() => import('@app/(dashboard)/layout')");
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
 });

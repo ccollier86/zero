@@ -24,81 +24,146 @@ export function matchRoute(root: RouteNode, pathname: string): MatchResult {
 
   const params: Record<string, string> = {};
   const layouts: string[] = [];
-  const patternSegments: string[] = [];
   let notFoundPath: string | undefined;
 
   // Always collect root layout
   if (root.layoutPath) layouts.push(root.layoutPath);
   if (root.notFoundPath) notFoundPath = root.notFoundPath;
 
-  let current = root;
+  const result = matchFromNode({
+    node: root,
+    segments,
+    index: 0,
+    params,
+    layouts,
+    patternSegments: [],
+    notFoundPath,
+  });
 
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
-    let matched: RouteNode | undefined;
+  if (result) return result;
 
-    // 1. Exact static match
-    matched = current.children.get(segment);
+  return {
+    pattern: '/',
+    params,
+    layouts,
+    pagePath: null,
+    notFoundPath,
+    apiRoutePath: null,
+  };
+}
 
-    // 2. Dynamic segment — check all children for [param]
-    if (!matched) {
-      for (const child of current.children.values()) {
-        if (child.isDynamic && !child.isCatchAll) {
-          matched = child;
-          params[child.paramName!] = segment;
-          break;
-        }
-      }
-    }
+interface MatchTraversalState {
+  node: RouteNode;
+  segments: string[];
+  index: number;
+  params: Record<string, string>;
+  layouts: string[];
+  patternSegments: string[];
+  notFoundPath?: string;
+}
 
-    // 3. Catch-all — consumes rest of URL
-    if (!matched) {
-      for (const child of current.children.values()) {
-        if (child.isCatchAll) {
-          matched = child;
-          params[child.paramName!] = segments.slice(i).join('/');
-          // Collect layout + return immediately (catch-all consumes everything)
-          if (matched.layoutPath) layouts.push(matched.layoutPath);
-          if (matched.notFoundPath) notFoundPath = matched.notFoundPath;
-          patternSegments.push(matched.segment);
-          return {
-            pattern: '/' + patternSegments.join('/'),
-            params,
-            layouts,
-            pagePath: matched.pagePath ?? null,
-            notFoundPath,
-            apiRoutePath: matched.apiRoutePath ?? null,
-          };
-        }
-      }
-    }
+function matchFromNode(state: MatchTraversalState): MatchResult | null {
+  const notFoundPath = state.node.notFoundPath ?? state.notFoundPath;
 
-    if (!matched) {
-      // No match — 404
+  if (state.index >= state.segments.length) {
+    if (state.node.pagePath || state.node.apiRoutePath) {
       return {
-        pattern: '/' + patternSegments.join('/'),
-        params,
-        layouts,
-        pagePath: null,
+        pattern: formatPattern(state.patternSegments),
+        params: state.params,
+        layouts: state.layouts,
+        pagePath: state.node.pagePath ?? null,
         notFoundPath,
-        apiRoutePath: null,
+        apiRoutePath: state.node.apiRoutePath ?? null,
       };
     }
 
-    patternSegments.push(matched.segment);
-    current = matched;
-
-    // Collect layout at each level
-    if (current.layoutPath) layouts.push(current.layoutPath);
-    if (current.notFoundPath) notFoundPath = current.notFoundPath;
+    return matchGroupChildren({ ...state, notFoundPath });
   }
 
-  return {
-    pattern: patternSegments.length > 0 ? '/' + patternSegments.join('/') : '/',
-    params,
-    layouts,
-    pagePath: current.pagePath ?? null,
-    notFoundPath,
-    apiRoutePath: current.apiRoutePath ?? null,
-  };
+  const segment = state.segments[state.index]!;
+
+  // 1. Exact static match
+  const exact = state.node.children.get(segment);
+  if (exact && !exact.isGroup) {
+    const matched = descendIntoChild(state, exact, {
+      index: state.index + 1,
+      patternSegments: [...state.patternSegments, exact.segment],
+      notFoundPath,
+    });
+    if (matched) return matched;
+  }
+
+  // 2. Dynamic segment — check all non-group children for [param]
+  for (const child of state.node.children.values()) {
+    if (child.isGroup || !child.isDynamic || child.isCatchAll) continue;
+
+    const matched = descendIntoChild(
+      { ...state, params: { ...state.params, [child.paramName!]: segment } },
+      child,
+      {
+        index: state.index + 1,
+        patternSegments: [...state.patternSegments, child.segment],
+        notFoundPath,
+      },
+    );
+    if (matched) return matched;
+  }
+
+  // 3. Catch-all — consumes the rest of the URL
+  for (const child of state.node.children.values()) {
+    if (child.isGroup || !child.isCatchAll) continue;
+
+    const matched = descendIntoChild(
+      {
+        ...state,
+        params: {
+          ...state.params,
+          [child.paramName!]: state.segments.slice(state.index).join('/'),
+        },
+      },
+      child,
+      {
+        index: state.segments.length,
+        patternSegments: [...state.patternSegments, child.segment],
+        notFoundPath,
+      },
+    );
+    if (matched) return matched;
+  }
+
+  return matchGroupChildren({ ...state, notFoundPath });
+}
+
+function descendIntoChild(
+  state: MatchTraversalState,
+  child: RouteNode,
+  next: Pick<MatchTraversalState, 'index' | 'patternSegments' | 'notFoundPath'>,
+): MatchResult | null {
+  return matchFromNode({
+    ...state,
+    node: child,
+    index: next.index,
+    layouts: child.layoutPath ? [...state.layouts, child.layoutPath] : state.layouts,
+    patternSegments: next.patternSegments,
+    notFoundPath: next.notFoundPath,
+  });
+}
+
+function matchGroupChildren(state: MatchTraversalState): MatchResult | null {
+  for (const child of state.node.children.values()) {
+    if (!child.isGroup) continue;
+
+    const matched = descendIntoChild(state, child, {
+      index: state.index,
+      patternSegments: state.patternSegments,
+      notFoundPath: state.notFoundPath,
+    });
+    if (matched) return matched;
+  }
+
+  return null;
+}
+
+function formatPattern(patternSegments: string[]): string {
+  return patternSegments.length > 0 ? '/' + patternSegments.join('/') : '/';
 }

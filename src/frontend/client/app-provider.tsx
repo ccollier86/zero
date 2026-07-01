@@ -20,6 +20,11 @@ import { SyncProvider } from '../../sync/client/hooks';
 import { ErrorBoundary } from './error-boundary';
 import { ModalManager } from '../../modals';
 import { FRONTEND_OBS_CODES, emitFrontendCode } from './observability';
+import { useRouteAuthRequirement } from './route-auth-context';
+import {
+  shouldRequireAuthForRoute,
+  type RouteAuthMode,
+} from '../router/auth-policy';
 
 // ─── AppProvider ───────────────────────────────────────────────────────────
 
@@ -36,6 +41,7 @@ interface BrowserPlatformConfig {
   stateSync?: boolean;
   tableSyncModes?: Record<string, SyncMode>;
   publicPaths?: string[];
+  routeAuth?: RouteAuthMode;
   loginPath?: string;
 }
 
@@ -117,6 +123,8 @@ export interface AppProviderProps {
   initialParams?: Record<string, string>;
   /** Paths that do not require auth. Defaults to injected server config. */
   publicPaths?: string[];
+  /** Route auth strategy. Defaults to injected server config. */
+  routeAuth?: RouteAuthMode;
   /** Login route for client-side auth redirects. Defaults to injected server config. */
   loginPath?: string;
   /** Custom error fallback component. */
@@ -162,6 +170,7 @@ export function AppProvider({
   initialPathname,
   initialParams,
   publicPaths,
+  routeAuth,
   loginPath,
   errorFallback,
   children,
@@ -184,6 +193,7 @@ export function AppProvider({
   const authEnabled = auth ?? platformConfig.auth ?? false;
   const stateSyncEnabled = stateSync ?? platformConfig.stateSync ?? false;
   const resolvedPublicPaths = publicPaths ?? platformConfig.publicPaths ?? ['/login', '/register', '/forgot-password'];
+  const resolvedRouteAuth = routeAuth ?? platformConfig.routeAuth ?? 'protected-by-default';
   const resolvedLoginPath = loginPath ?? platformConfig.loginPath ?? '/login';
   assertAppProviderConfig(authEnabled, stateSyncEnabled, auth, stateSync, platformConfig);
   const resolvedTables = resolveProviderTables(tables, platformConfig.tableSyncModes);
@@ -211,13 +221,13 @@ export function AppProvider({
   const internal = client as InternalClient;
   const guardedChildren = authEnabled
     ? createElement(
-        Fragment,
-        null,
-        createElement(AuthSessionRedirector, {
+        AuthRouteGuard,
+        {
           loginPath: resolvedLoginPath,
           publicPaths: resolvedPublicPaths,
-        }),
-        children,
+          routeAuth: resolvedRouteAuth,
+          children,
+        },
       )
     : children;
 
@@ -244,20 +254,31 @@ export function AppProvider({
   return createElement(ErrorBoundary, { fallback: errorFallback }, tree);
 }
 
-function AuthSessionRedirector({
+function AuthRouteGuard({
   loginPath,
   publicPaths,
+  routeAuth,
+  children,
 }: {
   loginPath: string;
   publicPaths: string[];
+  routeAuth: RouteAuthMode;
+  children?: ReactNode;
 }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const routeRequirement = useRouteAuthRequirement();
+  const routeRequiresAuth = shouldRequireAuthForRoute({
+    routeAuth,
+    pathname,
+    publicPaths,
+    routeRequirement,
+  });
+  const routeRequiresAdmin = routeRequirement === 'admin';
 
   useEffect(() => {
-    if (isLoading || isAuthenticated) return;
-    if (isPublicPath(pathname, publicPaths)) return;
+    if (isLoading || !routeRequiresAuth || isAuthenticated) return;
 
     const from = `${pathname}${window.location.search}${window.location.hash}`;
     const target = withRedirectParam(loginPath, from);
@@ -265,13 +286,17 @@ function AuthSessionRedirector({
       metadata: { from: pathname, to: loginPath },
     });
     router.replace(target);
-  }, [isAuthenticated, isLoading, loginPath, pathname, publicPaths, router]);
+  }, [isAuthenticated, isLoading, loginPath, pathname, routeRequiresAuth, router]);
 
-  return null;
-}
+  if (!isLoading && routeRequiresAuth && !isAuthenticated) {
+    return null;
+  }
 
-function isPublicPath(pathname: string, publicPaths: string[]): boolean {
-  return publicPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  if (!isLoading && routeRequiresAdmin && isAuthenticated && user?.role !== 'admin') {
+    return null;
+  }
+
+  return createElement(Fragment, null, children);
 }
 
 function withRedirectParam(loginPath: string, from: string): string {

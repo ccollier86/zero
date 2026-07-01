@@ -180,6 +180,7 @@ import {
   RadialMenu,
   projectKanbanMove,
   StickToBottom,
+  ThemeTogglerButton,
   ThemeProvider,
   useCollection,
   useResourceList,
@@ -187,8 +188,10 @@ import {
 import { createSyncClient } from '@zero/framework/sync/client';
 import { createIdentityId } from '@zero/framework/sync/identity';
 import type { Row } from '@zero/framework/sync/types';
+import type { ToasterProps } from '@zero/framework/react';
 
 const row: Row = {};
+const toasterProps: ToasterProps = {};
 
 export const clientSymbols = {
   Button,
@@ -217,6 +220,7 @@ export const clientSymbols = {
   StorageManagement,
   ThemeProvider,
   ThemeProviderSubpath,
+  ThemeTogglerButton,
   Toaster,
   UiButton,
   useCollection,
@@ -226,5 +230,6 @@ export const clientSymbols = {
   useDisclosure,
   projectKanbanMove,
   row,
+  toasterProps,
 };
 `;

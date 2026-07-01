@@ -6,10 +6,9 @@ import type { FieldMeta } from '../../schema/field-types';
 import { useForm, type UseFormOptions } from '../../hooks/use-form';
 import { FieldRenderer } from './field-renderer';
 import { Button } from '@/components/ui/button';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import type { Row } from '../../sync/types';
-import type { Collection } from '../../frontend/client/sdk';
 import { AnimateIcon } from '@/components/animate-ui/icons/icon';
 import { Loader } from '@/components/animate-ui/icons/loader';
 
@@ -23,7 +22,7 @@ interface FieldOverrides {
 
 export interface AutoFormProps<T extends Row = Row> {
   schema: SchemaDescriptor;
-  collection?: Collection<T>;
+  collection?: UseFormOptions<T>['collection'];
   mode?: 'create' | 'edit';
   editId?: string;
   defaultValues?: Partial<T>;

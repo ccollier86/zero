@@ -313,9 +313,13 @@ function collectRouteEntries(
 
   // Recurse into children
   for (const child of node.children.values()) {
+    const childPatternSegments = child.isGroup
+      ? patternSegments
+      : [...patternSegments, child.segment];
+
     collectRouteEntries(
       child,
-      [...patternSegments, child.segment],
+      childPatternSegments,
       currentLayouts,
       entries,
       appDir,

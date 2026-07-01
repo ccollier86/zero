@@ -74,9 +74,54 @@ folders:
 
 The starter uses SQLite `hot` mode by default: active relational data stays in
 process memory and Zero writes snapshot recovery files under `./data`. Set
-`DB_PATH=./data/app.db` when you want explicit SQLite file/WAL mode instead.
+`DB_MODE=file` when you want explicit SQLite file/WAL mode instead, and use
+`DB_PATH` / `DB_SNAPSHOT_PATH` to override the default storage files.
 The starter also mounts the platform KV/cache service by default with journal
 and checkpoint files under `ZERO_KV_BASE_DIR` or `./data/kv`.
+
+## Layout And Auth Boundaries
+
+Keep `app/layout.tsx` as the provider root: `ThemeProvider`, `AppProvider`,
+global styles, toaster, and modal support. Put route-specific shells in nested
+layouts or page components.
+
+Public-first apps should use route-owned auth:
+
+```ts
+defineZeroConfig({
+  auth: true,
+  routeAuth: 'explicit',
+  loginPath: '/login',
+  // ...
+});
+```
+
+Then protect the dashboard branch with a layout:
+
+```tsx
+// app/(dashboard)/layout.tsx
+import { AppShell, type RouteConfig } from '@zero/framework/react';
+
+export const config: RouteConfig = { auth: 'required' };
+
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  return <AppShell>{children}</AppShell>;
+}
+```
+
+Use route groups for sibling layout branches without changing URLs:
+
+```txt
+app/
+  layout.tsx
+  (public)/page.tsx
+  (public)/intake/resume/[token]/page.tsx
+  (dashboard)/layout.tsx
+  (dashboard)/dashboard/page.tsx
+```
+
+Internal dashboard-only apps can keep `routeAuth: 'protected-by-default'` and
+list login/reset routes in `publicPaths`.
 
 ## Package-Mode Imports
 

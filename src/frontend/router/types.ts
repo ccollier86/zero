@@ -47,6 +47,8 @@ export interface RouteNode {
   apiRoutePath?: string;
   /** Child route nodes keyed by segment name */
   children: Map<string, RouteNode>;
+  /** Whether this segment is a URL-less route group, e.g. `(public)`. */
+  isGroup: boolean;
   /** Whether this segment is dynamic (e.g., [id]) */
   isDynamic: boolean;
   /** Parameter name for dynamic segments (e.g., 'id') */
