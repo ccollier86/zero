@@ -20,13 +20,13 @@ export async function highlightCodeBlockHtml(
 ): Promise<string> {
   const { codeToHtml } = await import('shiki');
 
-  return codeToHtml(code, {
+  return normalizeCodeBlockLineHtml(await codeToHtml(code, {
     lang: normalizeLanguage(language),
     themes: {
       light: theme.light,
       dark: theme.dark,
     },
-  });
+  }));
 }
 
 /**
@@ -39,9 +39,20 @@ export function buildFallbackCodeBlockHtml(code: string): string {
   const lines = code.length > 0 ? code.split('\n') : [''];
   const lineHtml = lines
     .map((line) => `<span class="line">${escapeHtml(line) || '&nbsp;'}</span>`)
-    .join('\n');
+    .join('');
 
   return `<pre class="shiki zero-code-block-fallback" tabindex="0"><code>${lineHtml}</code></pre>`;
+}
+
+/**
+ * Remove preserved newline text nodes between Shiki line spans.
+ *
+ * Shiki emits a newline between adjacent `.line` spans. Zero renders each line
+ * span as its own row for line numbers, so preserving that text node inside
+ * `<pre>` creates a visual blank row between code lines.
+ */
+export function normalizeCodeBlockLineHtml(html: string): string {
+  return html.replaceAll('</span>\n<span class="line">', '</span><span class="line">');
 }
 
 function normalizeLanguage(language: string): string {
