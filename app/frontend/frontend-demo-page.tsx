@@ -98,17 +98,23 @@ export function FrontendDemoPage() {
       <FeaturesSection
         id="features"
         eyebrow="Deploy faster"
-        title="A better workflow for serious full-stack apps"
+        title={
+          <>
+            A better workflow for{' '}
+            <span className="block text-public-accent">serious full-stack apps</span>
+          </>
+        }
         description="Zero gives app code a single framework surface for data, sync, auth, UI, AI, storage, workflows, and deployment."
         features={frontendDemoFeatures}
         visual={
           <CodeBlock
             files={frontendDemoCodeFiles}
-            defaultFileId="server"
+            defaultFileId="page"
             showLineNumbers
             className="lg:translate-x-2"
           />
         }
+        framed={false}
         className="pb-32 pt-0"
       />
     </main>
@@ -144,42 +150,6 @@ const frontendDemoFeatures = [
 
 const frontendDemoCodeFiles = [
   {
-    id: 'server',
-    filename: 'app/server.ts',
-    language: 'ts',
-    code: `import { createApp, defineZeroConfig } from '@zero/framework/server';
-import { defineTable, field } from '@zero/framework/schema';
-
-const tasks = defineTable(
-  'tasks',
-  {
-    title: field.text({ label: 'Title', required: true }),
-    status: field.text({ label: 'Status', required: true }),
-    priority: field.select(
-      [
-        { label: 'Low', value: 'low' },
-        { label: 'Normal', value: 'normal' },
-        { label: 'High', value: 'high' },
-      ],
-      { label: 'Priority', defaultValue: 'normal' },
-    ),
-  },
-  { pk: 'task_id', sync: 'full' },
-);
-
-const config = defineZeroConfig({
-  db: { mode: 'hot', path: './data/app.db' },
-  tables: { tasks },
-  auth: true,
-  stateSync: true,
-  ai: true,
-  vector: true,
-});
-
-const app = await createApp(config);
-app.listen(3000);`,
-  },
-  {
     id: 'page',
     filename: 'app/page.tsx',
     language: 'tsx',
@@ -190,20 +160,21 @@ app.listen(3000);`,
 } from '@zero/framework/react';
 
 export default function TasksPage() {
-  const { data, insert, update } = useCollection('tasks');
+  const tasks = useCollection('tasks');
 
   return (
     <AppShell breadcrumbs={[{ label: 'Tasks' }]}>
-      <Button onClick={() => insert({ title: 'New task', status: 'queued' })}>
+      <Button onClick={() => tasks.insert({ title: 'New task', done: false })}>
         Add task
       </Button>
+
       <div className="mt-4 grid gap-2">
-        {data.map((task) => (
+        {tasks.data.map((task) => (
           <Button
             key={task.task_id}
             variant="ghost"
             className="justify-start"
-            onClick={() => update(task.task_id, { status: 'done' })}
+            onClick={() => tasks.update(task.task_id, { done: true })}
           >
             {task.title}
           </Button>
@@ -212,5 +183,30 @@ export default function TasksPage() {
     </AppShell>
   );
 }`,
+  },
+  {
+    id: 'schema',
+    filename: 'db/schema.ts',
+    language: 'ts',
+    code: `import { defineTable, field } from '@zero/framework/schema';
+
+export const tasks = defineTable(
+  'tasks',
+  {
+    title: field.text({ required: true }),
+    done: field.boolean(),
+  },
+  { pk: 'task_id', sync: 'full' },
+);`,
+  },
+  {
+    id: 'server',
+    filename: 'app/server.ts',
+    language: 'ts',
+    code: `import { createApp } from '@zero/framework/server';
+import config from '../zero.config';
+
+const app = await createApp(config);
+app.listen(3000);`,
   },
 ] as const;
