@@ -6,7 +6,9 @@ and stay independent from `Hero` so app code can compose them anywhere a
 `ReactNode` is accepted.
 
 Use these effects sparingly. The plain sentence should remain readable and
-meaningful without animation.
+meaningful without animation. For public heroes, prefer one or two focused text
+effects around a stable sentence instead of stacking every available effect in
+one heading.
 
 ## Import
 
@@ -106,7 +108,7 @@ be used without forking the Hero component:
 <Hero
   title={
     <>
-      <TextGenerateEffect words="Build serious apps with" />
+      <span>Build serious apps with</span>
       <span className="block text-public-accent">
         <TypewriterEffect
           words={[
@@ -126,6 +128,10 @@ be used without forking the Hero component:
   }
 />
 ```
+
+When the whole Hero has its own entrance animation, gate or delay text effects
+until that parent entrance completes. That keeps the first viewport calm and
+prevents several independent animations from competing on initial load.
 
 ## Source Copy
 
