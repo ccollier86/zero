@@ -325,6 +325,17 @@ export type {
   HeroProps,
   WavyBackgroundProps,
 } from '../components/hero';
+export { CodeBlock } from '../components/code-block';
+export type {
+  CodeBlockFile,
+  CodeBlockProps,
+  CodeBlockTheme,
+} from '../components/code-block';
+export { FeaturesSection } from '../components/features';
+export type {
+  FeatureSectionItem,
+  FeaturesSectionProps,
+} from '../components/features';
 export {
   FlipWords,
   TextGenerateEffect,

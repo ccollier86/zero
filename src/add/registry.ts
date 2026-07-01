@@ -32,6 +32,11 @@ const STATIC_TARGETS: AddableTarget[] = [
     description: 'Public bento grid layout and tokenized bento cards.',
   },
   {
+    id: 'components/code-block',
+    sourceRel: 'components/code-block',
+    description: 'Public code block with Shiki highlighting, tabs, and copy action.',
+  },
+  {
     id: 'components/data-table',
     sourceRel: 'components/data-table',
     description: 'DataTable, DataTableView, toolbar, pagination, and row actions.',
@@ -45,6 +50,11 @@ const STATIC_TARGETS: AddableTarget[] = [
     id: 'components/faq',
     sourceRel: 'components/faq',
     description: 'Public FAQ accordion with generated answer text.',
+  },
+  {
+    id: 'components/features',
+    sourceRel: 'components/features',
+    description: 'Public feature section with icon bullets and a flexible visual slot.',
   },
   {
     id: 'components/hero',

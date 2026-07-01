@@ -155,11 +155,13 @@ import { LoginForm } from '@zero/framework/components/auth';
 import { AppShell as AppShellSubpath } from '@zero/framework/components/app-shell';
 import { AnimatedList as AnimatedListSubpath } from '@zero/framework/components/animated-list';
 import { BentoGrid as BentoGridSubpath } from '@zero/framework/components/bento-grid';
+import { CodeBlock as CodeBlockSubpath } from '@zero/framework/components/code-block';
 import { Collapsible as CollapsibleSubpath } from '@zero/framework/components/collapsible';
 import { DataTableView } from '@zero/framework/components/data-table';
 import { DropdownMenu as DropdownMenuSubpath } from '@zero/framework/components/dropdown-menu';
 import { ExpandableCards as ExpandableCardsSubpath } from '@zero/framework/components/expandable-card';
 import { Faq as FaqSubpath } from '@zero/framework/components/faq';
+import { FeaturesSection as FeaturesSectionSubpath } from '@zero/framework/components/features';
 import { Hero as HeroSubpath } from '@zero/framework/components/hero';
 import { KanbanBoard as KanbanBoardSubpath } from '@zero/framework/components/kanban';
 import { MasterDetailView } from '@zero/framework/components/master-detail';
@@ -183,11 +185,13 @@ import {
   AnimatedListCard,
   BentoGrid,
   BentoGridItem,
+  CodeBlock,
   Collapsible,
   DataTable,
   DropdownMenu,
   ExpandableCards,
   Faq,
+  FeaturesSection,
   FlipWords,
   groupKanbanItemIds,
   Hero,
@@ -223,6 +227,8 @@ export const clientSymbols = {
   BentoGrid,
   BentoGridItem,
   BentoGridSubpath,
+  CodeBlock,
+  CodeBlockSubpath,
   Check,
   Collapsible,
   CollapsibleSubpath,
@@ -236,6 +242,8 @@ export const clientSymbols = {
   ExpandableCardsSubpath,
   Faq,
   FaqSubpath,
+  FeaturesSection,
+  FeaturesSectionSubpath,
   groupKanbanItemIds,
   Hero,
   HeroSubpath,

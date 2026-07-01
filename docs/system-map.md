@@ -367,6 +367,8 @@ store, or public frontend API.
 | `src/components/hero/hero-background.tsx` | Hero preset/custom/image background helpers |
 | `src/components/hero/wavy-background.tsx` | Canvas-driven wavy Hero background preset/helper |
 | `src/components/navbar/resizable-navbar.tsx` | Public-page `<ResizableNavbar>` using the frontend public token lane |
+| `src/components/code-block/code-block.tsx` | Public-page `<CodeBlock>` with Shiki highlighting, tabs, line numbers, and copy |
+| `src/components/features/features-section.tsx` | Public-page `<FeaturesSection>` with icon bullets and a flexible visual slot |
 | `src/components/text-effects/text-generate-effect.tsx` | Public word-by-word text reveal component |
 | `src/components/text-effects/typewriter-effect.tsx` | Public segmented typewriter text effect |
 | `src/components/text-effects/flip-words.tsx` | Public rotating inline word effect |

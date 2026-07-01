@@ -165,6 +165,7 @@ export const OBS_CODES = {
   FRONTEND_RESOURCE_ACTION_FAILED: code('frontend', 'resource.action_failed', 'error', 'Frontend generated-resource action failed.'),
   FRONTEND_MUTATION_FAILED: code('frontend', 'mutation.failed', 'error', 'Frontend mutation action failed.'),
   FRONTEND_COPY_FAILED: code('frontend', 'copy.failed', 'error', 'Clipboard copy action failed.'),
+  FRONTEND_CODE_HIGHLIGHT_FAILED: code('frontend', 'code_highlight.failed', 'warn', 'Frontend code block highlighting failed.'),
 
   MIGRATOR_LOG: code('migrations', 'log', 'info', 'Migration runner emitted a log message.'),
   MIGRATOR_FAILED: code('migrations', 'failed', 'error', 'Migration failed.'),

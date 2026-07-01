@@ -347,8 +347,10 @@ forking the section component. Use `TextGenerateEffect`, `TypewriterEffect`,
 and `FlipWords` from `@zero/framework/components/text-effects` for public
 heading and landing-copy motion. For common public sections, use the promoted
 Zero components before copying external snippets:
-`Faq`, `ExpandableCards`, `BentoGrid`, and `AnimatedList`. Their usage contract
-is documented in [Public Components](./frontend/public-components.md).
+`FeaturesSection`, `CodeBlock`, `Faq`, `ExpandableCards`, `BentoGrid`, and
+`AnimatedList`. `FeaturesSection` accepts an image, screenshot, chart,
+`CodeBlock`, or custom React visual slot. Their usage contract is documented in
+[Public Components](./frontend/public-components.md).
 
 Run the platform doctor against an exported config module:
 
@@ -386,6 +388,8 @@ generated apps should prefer narrow imports. Direct subsystem imports such as
 `@zero/framework/components/hero`, and
 `@zero/framework/components/text-effects`,
 `@zero/framework/components/faq`,
+`@zero/framework/components/features`,
+`@zero/framework/components/code-block`,
 `@zero/framework/components/expandable-card`,
 `@zero/framework/components/bento-grid`, and
 `@zero/framework/components/animated-list` are available when a file should
@@ -402,6 +406,8 @@ source, copy selected pieces with `zero add`:
 zero add components/ui/button
 zero add components/data-table
 zero add components/faq
+zero add components/features
+zero add components/code-block
 zero add components/expandable-card
 zero add components/bento-grid
 zero add components/animated-list

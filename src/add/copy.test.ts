@@ -196,6 +196,40 @@ describe('addZeroSource', () => {
     }
   });
 
+  test('copies public feature and code block sections with shared dependencies', async () => {
+    const targetDir = await createTempApp();
+
+    try {
+      const result = await addZeroSource({
+        targetDir,
+        items: ['components/features', 'components/code-block'],
+      });
+
+      expect(result.filesWritten).toContain('components/features/features-section.tsx');
+      expect(result.filesWritten).toContain('components/features/features-section.types.ts');
+      expect(result.filesWritten).toContain('components/code-block/code-block.tsx');
+      expect(result.filesWritten).toContain('components/code-block/code-block-highlight.ts');
+      expect(result.filesWritten).toContain('components/ui/button.tsx');
+      expect(result.filesWritten).toContain('hooks/use-copy-to-clipboard.ts');
+      expect(result.filesWritten).toContain('components/animate-ui/icons/zero-icon.tsx');
+      expect(result.filesWritten).toContain('lib/utils.ts');
+
+      await writeFile(
+        join(targetDir, 'entry.tsx'),
+        "import { CodeBlock } from './components/code-block';\nimport { FeaturesSection } from './components/features';\nexport { CodeBlock, FeaturesSection };\n"
+      );
+
+      const build = await Bun.build({
+        entrypoints: [join(targetDir, 'entry.tsx')],
+        outdir: join(targetDir, 'dist-public-feature'),
+        target: 'browser',
+      });
+      expect(build.success).toBe(true);
+    } finally {
+      await rm(targetDir, { recursive: true, force: true });
+    }
+  });
+
   test('copies resizable navbar source with its animated icon dependencies', async () => {
     const targetDir = await createTempApp();
 

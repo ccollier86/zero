@@ -18,8 +18,10 @@ import {
   BentoGrid,
   BentoGridItem,
   BentoGridSkeleton,
+  CodeBlock,
   ExpandableCards,
   Faq,
+  FeaturesSection,
 } from '@zero/framework/react';
 ```
 
@@ -30,6 +32,8 @@ import { Faq } from '@zero/framework/components/faq';
 import { ExpandableCards } from '@zero/framework/components/expandable-card';
 import { BentoGrid, BentoGridItem } from '@zero/framework/components/bento-grid';
 import { AnimatedList, AnimatedListCard } from '@zero/framework/components/animated-list';
+import { CodeBlock } from '@zero/framework/components/code-block';
+import { FeaturesSection } from '@zero/framework/components/features';
 ```
 
 If an app needs to own and modify source:
@@ -39,6 +43,88 @@ zero add components/faq
 zero add components/expandable-card
 zero add components/bento-grid
 zero add components/animated-list
+zero add components/code-block
+zero add components/features
+```
+
+## Code Block
+
+`CodeBlock` renders a tokenized public code surface with Shiki highlighting,
+light/dark themes, optional line numbers, file tabs, and a copy action. Use it
+for docs, framework websites, SDK examples, and public feature sections that
+should show real code instead of a static screenshot.
+
+```tsx
+import { CodeBlock } from '@zero/framework/components/code-block';
+
+const files = [
+  {
+    id: 'server',
+    filename: 'app/server.ts',
+    language: 'ts',
+    code: `import { createApp } from '@zero/framework/server';
+
+const app = await createApp(config);
+app.listen(3000);`,
+  },
+  {
+    id: 'page',
+    filename: 'app/page.tsx',
+    language: 'tsx',
+    code: `import { useCollection } from '@zero/framework/react';
+
+export default function Page() {
+  const tasks = useCollection('tasks');
+  return <pre>{JSON.stringify(tasks.data, null, 2)}</pre>;
+}`,
+  },
+];
+
+export function DocsExample() {
+  return <CodeBlock files={files} defaultFileId="server" />;
+}
+```
+
+The component falls back to escaped plain text while Shiki loads or if a
+language fails. Highlight failures are reported through Zero's frontend
+observability boundary instead of direct console logging.
+
+## Feature Section
+
+`FeaturesSection` renders a public feature showcase with an eyebrow, headline,
+copy, icon bullets, and a flexible `visual` slot. Most product sites will pass
+an image, chart, app screenshot, video preview, or custom React visual. Docs
+and framework sites can pass `CodeBlock` to show real Zero code without taking
+screenshots.
+
+```tsx
+import { CodeBlock } from '@zero/framework/components/code-block';
+import { FeaturesSection } from '@zero/framework/components/features';
+
+export function PlatformFeature() {
+  return (
+    <FeaturesSection
+      eyebrow="Deploy faster"
+      title="A better workflow for full-stack apps"
+      description="Define data once, subscribe from React, and ship one Bun server."
+      features={[
+        {
+          id: 'data',
+          iconName: 'layers',
+          title: 'Schema-driven data',
+          description: 'Tables, generated UI, sync, and lazy data APIs share one contract.',
+        },
+        {
+          id: 'sync',
+          iconName: 'radio',
+          title: 'Live by default',
+          description: 'ReactiveDB and WebSocket sync keep app views current.',
+        },
+      ]}
+      visual={<CodeBlock code="const app = await createApp(config);" language="ts" />}
+    />
+  );
+}
 ```
 
 ## FAQ
@@ -186,3 +272,4 @@ Zero's implementations were adapted to the platform from:
 - Aceternity expandable cards: <https://ui.aceternity.com/components/expandable-card>
 - Aceternity bento grid: <https://ui.aceternity.com/components/bento-grid>
 - Magic UI animated list: <https://magicui.design/docs/components/animated-list>
+- Kibo UI code block API reference: <https://www.kibo-ui.com/components/code-block>

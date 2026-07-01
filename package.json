@@ -147,6 +147,10 @@
       "types": "./src/components/bento-grid/index.ts",
       "import": "./src/components/bento-grid/index.ts"
     },
+    "./components/code-block": {
+      "types": "./src/components/code-block/index.ts",
+      "import": "./src/components/code-block/index.ts"
+    },
     "./components/collapsible": {
       "types": "./src/components/collapsible/index.ts",
       "import": "./src/components/collapsible/index.ts"
@@ -166,6 +170,10 @@
     "./components/faq": {
       "types": "./src/components/faq/index.ts",
       "import": "./src/components/faq/index.ts"
+    },
+    "./components/features": {
+      "types": "./src/components/features/index.ts",
+      "import": "./src/components/features/index.ts"
     },
     "./components/hero": {
       "types": "./src/components/hero/index.ts",
