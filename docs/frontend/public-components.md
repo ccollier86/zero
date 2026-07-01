@@ -52,7 +52,12 @@ zero add components/features
 `CodeBlock` renders a tokenized public code surface with Shiki highlighting,
 light/dark themes, optional line numbers, file tabs, and a copy action. Use it
 for docs, framework websites, SDK examples, and public feature sections that
-should show real code instead of a static screenshot.
+should show real code instead of a static screenshot. Set `minLines` when
+multiple tabs have different source lengths and the visual should not collapse
+while switching files. Use `activeFileId` with `onFileChange` when a page wants
+controlled tab state, for example an auto-advancing landing-page demo. Use
+`contentKey` plus `contentClassName` for caller-owned code-content transitions
+without remounting or moving the CodeBlock shell.
 
 ```tsx
 import { CodeBlock } from '@zero/framework/components/code-block';
@@ -81,7 +86,7 @@ export default function Page() {
 ];
 
 export function DocsExample() {
-  return <CodeBlock files={files} defaultFileId="server" />;
+  return <CodeBlock files={files} defaultFileId="server" minLines={14} />;
 }
 ```
 

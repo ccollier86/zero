@@ -43,10 +43,14 @@ export interface CodeBlockProps extends Omit<React.ComponentProps<'div'>, 'onCop
   filename?: string;
   /** Initial active file id when `files` contains multiple entries. */
   defaultFileId?: string;
+  /** Controlled active file id for custom tab orchestration. */
+  activeFileId?: string;
   /** Render line numbers beside code lines. */
   showLineNumbers?: boolean;
   /** Render the copy action in the header. */
   copyButton?: boolean;
+  /** Minimum number of code rows reserved by the viewport for stable tab height. */
+  minLines?: number;
   /** Shiki light/dark theme pair. */
   theme?: CodeBlockTheme;
   /** Called after the active file changes. */
@@ -59,6 +63,8 @@ export interface CodeBlockProps extends Omit<React.ComponentProps<'div'>, 'onCop
   headerClassName?: string;
   /** Code viewport class override. */
   viewportClassName?: string;
+  /** Optional key for the code content wrapper, useful for caller-owned transitions. */
+  contentKey?: React.Key;
   /** Code content class override. */
   contentClassName?: string;
 }

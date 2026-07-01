@@ -16,6 +16,7 @@ import {
   TypewriterEffect,
   ZeroIcon,
 } from '@zero/framework/react';
+import * as React from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 
 /** Render the disposable public landing demo for Zero frontend components. */
@@ -46,9 +47,14 @@ export function FrontendDemoPage() {
       />
 
       <motion.div
-        initial={reduceMotion ? false : { opacity: 0, y: 20, filter: 'blur(14px)' }}
-        animate={reduceMotion ? undefined : { opacity: 1, y: 0, filter: 'blur(0px)' }}
-        transition={{ duration: 0.72, ease: [0.22, 1, 0.36, 1] }}
+        initial={reduceMotion ? false : { opacity: 0, y: 42, scale: 0.985, filter: 'blur(18px)' }}
+        animate={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
+        transition={{
+          duration: 1.18,
+          ease: [0.16, 1, 0.3, 1],
+          opacity: { duration: 0.92, ease: 'easeOut' },
+          filter: { duration: 1.05, ease: 'easeOut' },
+        }}
       >
         <Hero
           eyebrow={
@@ -68,7 +74,7 @@ export function FrontendDemoPage() {
                     { text: 'framework.', className: 'text-public-accent' },
                   ]}
                   cursorClassName="bg-public-accent"
-                  startDelay={0}
+                  startDelay={180}
                 />
               </span>
             </>
@@ -106,18 +112,52 @@ export function FrontendDemoPage() {
         }
         description="Zero gives app code a single framework surface for data, sync, auth, UI, AI, storage, workflows, and deployment."
         features={frontendDemoFeatures}
-        visual={
-          <CodeBlock
-            files={frontendDemoCodeFiles}
-            defaultFileId="page"
-            showLineNumbers
-            className="lg:translate-x-2"
-          />
-        }
+        visual={<FrontendDemoCodeVisual />}
         framed={false}
         className="pb-32 pt-0"
       />
     </main>
+  );
+}
+
+function FrontendDemoCodeVisual() {
+  const reduceMotion = useReducedMotion();
+  const [activeFileId, setActiveFileId] = React.useState('page');
+
+  React.useEffect(() => {
+    if (reduceMotion) return undefined;
+
+    const timer = window.setTimeout(() => {
+      setActiveFileId((current) => current === 'page' ? 'server' : 'page');
+    }, 5400);
+
+    return () => window.clearTimeout(timer);
+  }, [activeFileId, reduceMotion]);
+
+  return (
+    <>
+      <style>
+        {`@keyframes zero-demo-code-fade {
+          0% { opacity: 0.42; filter: blur(7px); transform: translateY(4px); }
+          100% { opacity: 1; filter: blur(0); transform: translateY(0); }
+        }`}
+      </style>
+      <CodeBlock
+        files={frontendDemoCodeFiles}
+        activeFileId={activeFileId}
+        defaultFileId="page"
+        showLineNumbers
+        minLines={22}
+        className="lg:translate-x-2"
+        contentKey={activeFileId}
+        contentClassName={
+          reduceMotion
+            ? undefined
+            : 'animate-[zero-demo-code-fade_520ms_cubic-bezier(0.22,1,0.36,1)]'
+        }
+        onFileChange={(file) => setActiveFileId(file.id)}
+      />
+    </>
   );
 }
 
@@ -138,7 +178,7 @@ const frontendDemoFeatures = [
     id: 'reactive',
     iconName: 'radio',
     title: 'Reactive data without socket work.',
-    description: 'Define a table once, subscribe from React, and let Zero handle snapshots, live changes, and policy checks.',
+    description: 'Subscribe from React, mutate through Zero, and let snapshots, live changes, and policy checks stay aligned.',
   },
   {
     id: 'polished',
@@ -159,12 +199,26 @@ const frontendDemoCodeFiles = [
   useCollection,
 } from '@zero/framework/react';
 
+type TaskRow = {
+  task_id: string;
+  title: string;
+  status: 'queued' | 'working' | 'done';
+  created_at: number;
+};
+
 export default function TasksPage() {
-  const tasks = useCollection('tasks');
+  const tasks = useCollection<TaskRow>('tasks');
+
+  const addTask = () => tasks.insert({
+    task_id: crypto.randomUUID(),
+    title: 'Review intake flow',
+    status: 'queued',
+    created_at: Date.now(),
+  });
 
   return (
     <AppShell breadcrumbs={[{ label: 'Tasks' }]}>
-      <Button onClick={() => tasks.insert({ title: 'New task', done: false })}>
+      <Button onClick={addTask}>
         Add task
       </Button>
 
@@ -174,9 +228,9 @@ export default function TasksPage() {
             key={task.task_id}
             variant="ghost"
             className="justify-start"
-            onClick={() => tasks.update(task.task_id, { done: true })}
+            onClick={() => tasks.update(task.task_id, { status: 'done' })}
           >
-            {task.title}
+            {task.title} · {task.status}
           </Button>
         ))}
       </div>
@@ -185,28 +239,55 @@ export default function TasksPage() {
 }`,
   },
   {
-    id: 'schema',
-    filename: 'db/schema.ts',
-    language: 'ts',
-    code: `import { defineTable, field } from '@zero/framework/schema';
-
-export const tasks = defineTable(
-  'tasks',
-  {
-    title: field.text({ required: true }),
-    done: field.boolean(),
-  },
-  { pk: 'task_id', sync: 'full' },
-);`,
-  },
-  {
     id: 'server',
-    filename: 'app/server.ts',
+    filename: 'server/routes/tasks.ts',
     language: 'ts',
-    code: `import { createApp } from '@zero/framework/server';
-import config from '../zero.config';
+    code: `import { t } from 'elysia';
+import {
+  defineEndpoint,
+  defineRouter,
+} from '@zero/framework/server';
 
-const app = await createApp(config);
-app.listen(3000);`,
+export default defineRouter({
+  name: 'tasks.actions',
+  prefix: '/api/tasks',
+  auth: 'user',
+  endpoints: [
+    defineEndpoint({
+      method: 'POST',
+      path: '/:taskId/brief',
+      params: t.Object({
+        taskId: t.String(),
+      }),
+      body: t.Object({
+        notes: t.String({ minLength: 1 }),
+      }),
+      handler: async ({ params, body, user, zero }) => {
+        const task = zero.db.get('tasks', params.taskId);
+        if (!task) return { ok: false, reason: 'missing-task' };
+
+        const summary = zero.ai
+          ? await zero.ai.generateText({
+              model: 'fast',
+              prompt: \`Summarize this task: \${body.notes}\`,
+            }).then((result) => result.text)
+          : body.notes;
+
+        zero.db.update('tasks', params.taskId, {
+          status: 'working',
+          summary,
+          updated_by: user.userId,
+        });
+
+        await zero.kv?.namespace('task-activity').set(params.taskId, {
+          summarizedAt: Date.now(),
+          userId: user.userId,
+        });
+
+        return { ok: true, summary };
+      },
+    }),
+  ],
+});`,
   },
 ] as const;

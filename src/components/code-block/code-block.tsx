@@ -34,6 +34,8 @@ const DEFAULT_THEME = {
   light: 'github-light',
   dark: 'github-dark-default',
 } as const;
+const CODE_BLOCK_LINE_HEIGHT_REM = 1.421875;
+const CODE_BLOCK_VERTICAL_PADDING_REM = 2;
 
 /** Render a tokenized, copyable public code block with optional file tabs. */
 export function CodeBlock({
@@ -42,8 +44,10 @@ export function CodeBlock({
   language = 'tsx',
   filename,
   defaultFileId,
+  activeFileId: controlledActiveFileId,
   showLineNumbers = true,
   copyButton = true,
+  minLines,
   theme = DEFAULT_THEME,
   onFileChange,
   onCopy,
@@ -51,6 +55,7 @@ export function CodeBlock({
   className,
   headerClassName,
   viewportClassName,
+  contentKey,
   contentClassName,
   ...props
 }: CodeBlockProps) {
@@ -58,9 +63,10 @@ export function CodeBlock({
     () => normalizeCodeFiles(files, { code, language, filename }),
     [code, filename, files, language],
   );
-  const [activeFileId, setActiveFileId] = React.useState(
+  const [uncontrolledActiveFileId, setUncontrolledActiveFileId] = React.useState(
     () => defaultFileId ?? normalizedFiles[0]?.id ?? DEFAULT_CODE_FILE.id,
   );
+  const activeFileId = controlledActiveFileId ?? uncontrolledActiveFileId;
   const activeFile = normalizedFiles.find((file) => file.id === activeFileId)
     ?? normalizedFiles[0]
     ?? DEFAULT_CODE_FILE;
@@ -68,13 +74,19 @@ export function CodeBlock({
     buildFallbackCodeBlockHtml(activeFile.code),
   );
   const { copied, copy } = useCopyToClipboard({ timeoutMs: 1600 });
+  const stableMinLines = normalizeMinLines(minLines);
+  const viewportStyle = stableMinLines
+    ? ({
+        minHeight: `${(stableMinLines * CODE_BLOCK_LINE_HEIGHT_REM) + CODE_BLOCK_VERTICAL_PADDING_REM}rem`,
+      } satisfies React.CSSProperties)
+    : undefined;
 
   React.useEffect(() => {
     if (normalizedFiles.some((file) => file.id === activeFileId)) return;
     const firstFile = normalizedFiles[0] ?? DEFAULT_CODE_FILE;
-    setActiveFileId(firstFile.id);
+    if (!controlledActiveFileId) setUncontrolledActiveFileId(firstFile.id);
     onFileChange?.(firstFile);
-  }, [activeFileId, normalizedFiles, onFileChange]);
+  }, [activeFileId, controlledActiveFileId, normalizedFiles, onFileChange]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -106,10 +118,10 @@ export function CodeBlock({
 
   const handleFileSelect = React.useCallback(
     (file: CodeBlockFile) => {
-      setActiveFileId(file.id);
+      if (!controlledActiveFileId) setUncontrolledActiveFileId(file.id);
       onFileChange?.(file);
     },
-    [onFileChange],
+    [controlledActiveFileId, onFileChange],
   );
 
   const handleCopy = React.useCallback(async () => {
@@ -173,14 +185,21 @@ export function CodeBlock({
           'relative max-h-[34rem] overflow-auto bg-public-background/70',
           viewportClassName,
         )}
+        style={viewportStyle}
       >
         <div
+          key={contentKey}
           className={cn('min-w-full py-4', contentClassName)}
           dangerouslySetInnerHTML={{ __html: highlightedHtml }}
         />
       </div>
     </div>
   );
+}
+
+function normalizeMinLines(minLines: number | undefined): number | undefined {
+  if (typeof minLines !== 'number' || !Number.isFinite(minLines)) return undefined;
+  return Math.max(1, Math.floor(minLines));
 }
 
 interface CodeBlockFileTabsProps {
