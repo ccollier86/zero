@@ -163,6 +163,7 @@ import { ResizableNavbar as ResizableNavbarSubpath } from '@zero/framework/compo
 import { RadialMenu as RadialMenuSubpath } from '@zero/framework/components/radial-menu';
 import { Sidebar as SidebarSubpath } from '@zero/framework/components/sidebar';
 import { StorageManagement } from '@zero/framework/components/storage';
+import { TextGenerateEffect as TextGenerateEffectSubpath } from '@zero/framework/components/text-effects';
 import { Button as UiButton } from '@zero/framework/components/ui/button';
 import { ThemeProvider as ThemeProviderSubpath } from '@zero/framework/components/ui/theme-provider';
 import { Toaster } from '@zero/framework/components/ui/sonner';
@@ -177,6 +178,7 @@ import {
   Collapsible,
   DataTable,
   DropdownMenu,
+  FlipWords,
   groupKanbanItemIds,
   Hero,
   KanbanBoard,
@@ -184,10 +186,13 @@ import {
   ResizableNavbar,
   projectKanbanMove,
   StickToBottom,
+  TextGenerateEffect,
   ThemeTogglerButton,
   ThemeProvider,
+  TypewriterEffect,
   useCollection,
   useResourceList,
+  WavyBackground,
 } from '@zero/framework/react';
 import { createSyncClient } from '@zero/framework/sync/client';
 import { createIdentityId } from '@zero/framework/sync/identity';
@@ -226,16 +231,21 @@ export const clientSymbols = {
   SidebarSubpath,
   StickToBottom,
   StorageManagement,
+  TextGenerateEffect,
+  TextGenerateEffectSubpath,
   ThemeProvider,
   ThemeProviderSubpath,
   ThemeTogglerButton,
   Toaster,
+  TypewriterEffect,
   UiButton,
   useCollection,
   useCollectionSubpath,
   useResourceList,
   useResourceListSubpath,
   useDisclosure,
+  FlipWords,
+  WavyBackground,
   projectKanbanMove,
   row,
   toasterProps,

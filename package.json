@@ -175,6 +175,10 @@
       "types": "./src/components/navbar/index.ts",
       "import": "./src/components/navbar/index.ts"
     },
+    "./components/text-effects": {
+      "types": "./src/components/text-effects/index.ts",
+      "import": "./src/components/text-effects/index.ts"
+    },
     "./components/storage": {
       "types": "./src/components/storage/index.ts",
       "import": "./src/components/storage/index.ts"

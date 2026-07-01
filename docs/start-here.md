@@ -343,7 +343,9 @@ with magnetic desktop hover and a mobile menu powered by the same item data.
 Pair it with `Hero` from `@zero/framework/components/hero` for the opening
 section. `Hero` accepts public token backgrounds, custom image/visual slots,
 and rich React title content so animated text effects can be added without
-forking the section component.
+forking the section component. Use `TextGenerateEffect`, `TypewriterEffect`,
+and `FlipWords` from `@zero/framework/components/text-effects` for public
+heading and landing-copy motion.
 
 Run the platform doctor against an exported config module:
 
@@ -378,8 +380,9 @@ generated apps should prefer narrow imports. Direct subsystem imports such as
 `@zero/framework/sync/client`, and
 `@zero/framework/components/data-table`, and
 `@zero/framework/components/navbar`, and
-`@zero/framework/components/hero` are available when a file should depend on one
-specific feature. `persistence` is the advanced server-side SQLite
+`@zero/framework/components/hero`, and
+`@zero/framework/components/text-effects` are available when a file should
+depend on one specific feature. `persistence` is the advanced server-side SQLite
 foundation; generated apps should normally let `createApp()` own it and use
 `zero.sql` from backend routes when direct SQL is needed. `kv` is the advanced
 server-side cache/KV package; generated apps normally use `zero.kv`,
@@ -394,6 +397,7 @@ zero add components/data-table
 zero add components/hero
 zero add components/kanban
 zero add components/navbar
+zero add components/text-effects
 zero add hooks modals --dry-run
 ```
 

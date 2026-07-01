@@ -128,6 +128,7 @@ describe('addZeroSource', () => {
       expect(result.filesWritten).toContain('components/hero/hero-background.tsx');
       expect(result.filesWritten).toContain('components/hero/hero-actions.tsx');
       expect(result.filesWritten).toContain('components/hero/hero.types.ts');
+      expect(result.filesWritten).toContain('components/hero/wavy-background.tsx');
       expect(result.filesWritten).toContain('components/ui/button.tsx');
       expect(result.filesWritten).toContain('components/animate-ui/components/backgrounds/gradient.tsx');
       expect(result.filesWritten).toContain('components/animate-ui/components/backgrounds/stars.tsx');
@@ -144,6 +145,25 @@ describe('addZeroSource', () => {
         target: 'browser',
       });
       expect(build.success).toBe(true);
+    } finally {
+      await rm(targetDir, { recursive: true, force: true });
+    }
+  });
+
+  test('copies public text effects source with motion dependencies', async () => {
+    const targetDir = await createTempApp();
+
+    try {
+      const result = await addZeroSource({
+        targetDir,
+        items: ['components/text-effects'],
+      });
+
+      expect(result.filesWritten).toContain('components/text-effects/text-generate-effect.tsx');
+      expect(result.filesWritten).toContain('components/text-effects/typewriter-effect.tsx');
+      expect(result.filesWritten).toContain('components/text-effects/flip-words.tsx');
+      expect(result.filesWritten).toContain('components/text-effects/index.ts');
+      expect(result.filesWritten).toContain('lib/utils.ts');
     } finally {
       await rm(targetDir, { recursive: true, force: true });
     }

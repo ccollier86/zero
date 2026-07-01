@@ -178,6 +178,7 @@ Auth, sync, and router all share one ReactiveDB. The router renders pages with R
 | [Sidebar](./sidebar.md) | Low-level sidebar primitives for custom shells: provider, inset, rail, groups, nested menu, actions, and footer user menus |
 | [Resizable Navbar](./navbar.md) | Public-page navbar that detaches/shrinks on scroll, uses magnetic desktop hover, and renders a mobile menu from the same data |
 | [Hero](./hero.md) | Public-page hero section with public token lane styling, background presets/custom background slots, actions, and rich title support |
+| [Text Effects](./text-effects.md) | Public text effects for Hero titles, landing-page copy, docs headers, and content pages |
 | [Component Inventory](./component-inventory.md) | Layered map of base primitives, composed controls, organisms, domain UI, Animate UI source groups, and cleanup targets |
 | [Form Library](./forms.md) | Current form stack, CRUD boundaries, intake-grade roadmap, draft adapters, public resume flows, attachments, consents, and PDF/workflow composition |
 | [DataTableView](./data-table.md) | Schema-aware table organism, full-sync/lazy/data sources, inline editing, toolbar, column overrides |
@@ -200,6 +201,7 @@ The frontend SDK composes these — it doesn't reinvent them:
 | App shell | [AppShell](./app-shell.md) and [Sidebar](./sidebar.md) | `AppShell`, optional breadcrumbs/header content, workspace switcher, nested nav, three-dot item actions, footer user menu, and raw sidebar primitives |
 | Public navigation | [Resizable Navbar](./navbar.md) | `ResizableNavbar` for docs, marketing, landing, and other public route trees |
 | Public heroes | [Hero](./hero.md) | `Hero`, `HeroBackground`, and `HeroImageBackground` for public route opening sections |
+| Public text effects | [Text Effects](./text-effects.md) | `TextGenerateEffect`, `TypewriterEffect`, and `FlipWords` for landing copy and rich Hero titles |
 | Forms | [Form Library](./forms.md) | `useForm`, `AutoForm`, `Wizard`, generated fields, current limits, and the planned intake-grade blueprint/draft/attachment layer |
 | Storage | [Hooks](./hooks.md#storage-workflows) | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `StorageDropzone`, and storage browser helpers |
 | Rooms and ephemeral sync | [Hooks](./hooks.md#presence-and-typing) | `usePresence`, `usePresenceList`, `useTypingIndicator`, `useEphemeral`, and `useEphemeralTopic` |

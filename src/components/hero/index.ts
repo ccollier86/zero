@@ -8,6 +8,8 @@
 export { Hero } from './hero';
 export { HeroActions } from './hero-actions';
 export { HeroBackground, HeroImageBackground } from './hero-background';
+export { WavyBackground } from './wavy-background';
+export type { WavyBackgroundProps } from './wavy-background';
 export type {
   HeroAction,
   HeroBackgroundOptions,

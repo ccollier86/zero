@@ -63,6 +63,7 @@ but new app code should use `@zero/framework/*`.
 | `@zero/framework/components/master-detail` | Master-detail primitives. Also exported from `react`. |
 | `@zero/framework/components/navbar` | Public-page resizable navbar. Also exported from `react`. |
 | `@zero/framework/components/storage` | Storage management/dropzone UI. Also exported from `react`. |
+| `@zero/framework/components/text-effects` | Public text effects for Hero titles and landing copy. Also exported from `react`. |
 | `@zero/framework/components/ui/<name>` | Direct UI primitive imports such as `button`, `input`, or `table`. |
 
 Rule of thumb:
@@ -927,8 +928,11 @@ Default usage should import packaged components and hooks:
 import {
   Button,
   DataTable,
+  Hero,
   MasterDetailView,
   LoginForm,
+  ResizableNavbar,
+  TextGenerateEffect,
   UserManagement,
   useAuth,
   useDataPage,
@@ -945,6 +949,7 @@ import { Hero } from '@zero/framework/components/hero';
 import { KanbanBoard } from '@zero/framework/components/kanban';
 import { RadialMenu } from '@zero/framework/components/radial-menu';
 import { ResizableNavbar } from '@zero/framework/components/navbar';
+import { TextGenerateEffect } from '@zero/framework/components/text-effects';
 import { LoginForm } from '@zero/framework/components/auth';
 import { useDisclosure } from '@zero/framework/hooks';
 import { Button } from '@zero/framework/components/ui/button';
@@ -960,6 +965,7 @@ zero add components/data-table
 zero add components/hero
 zero add components/kanban
 zero add components/navbar
+zero add components/text-effects
 zero add hooks modals --dry-run
 zero add components/storage --target ./my-app
 ```
@@ -976,6 +982,7 @@ Supported source-copy targets:
 | `components/master-detail` | Master-detail primitives and dependencies. |
 | `components/navbar` | Resizable public-page navbar and its animated icon/button dependencies. |
 | `components/storage` | Storage management, file browser, drive list, dropzone, and dependencies. |
+| `components/text-effects` | Public text effects for Hero titles, landing copy, and docs/content headings. |
 | `hooks` | Generic React hook library. |
 | `modals` | Modal manager primitives. |
 

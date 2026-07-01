@@ -17,6 +17,7 @@ export type HeroBackgroundPreset =
   | 'gradient'
   | 'stars'
   | 'bubbles'
+  | 'wavy'
   | 'hexagon'
   | 'none';
 

@@ -365,7 +365,11 @@ store, or public frontend API.
 | `src/components/radial-menu/index.ts` | Public package export for the animated radial context menu |
 | `src/components/hero/hero.tsx` | Public-page `<Hero>` section using the frontend public token lane |
 | `src/components/hero/hero-background.tsx` | Hero preset/custom/image background helpers |
+| `src/components/hero/wavy-background.tsx` | Canvas-driven wavy Hero background preset/helper |
 | `src/components/navbar/resizable-navbar.tsx` | Public-page `<ResizableNavbar>` using the frontend public token lane |
+| `src/components/text-effects/text-generate-effect.tsx` | Public word-by-word text reveal component |
+| `src/components/text-effects/typewriter-effect.tsx` | Public segmented typewriter text effect |
+| `src/components/text-effects/flip-words.tsx` | Public rotating inline word effect |
 | `src/components/master-detail/master-detail-page.tsx` | `<MasterDetailView>` / `<MasterDetailPage>` — list + detail organism |
 | `src/components/master-detail/use-master-detail-state.ts` | Live data and selected-row state for master-detail views |
 | `src/components/master-detail/master-detail-selection.ts` | Pure primary-key-aware selection resolution |

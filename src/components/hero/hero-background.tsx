@@ -15,6 +15,7 @@ import { GradientBackground } from '@/components/animate-ui/components/backgroun
 import { HexagonBackground } from '@/components/animate-ui/components/backgrounds/hexagon';
 import { StarsBackground } from '@/components/animate-ui/components/backgrounds/stars';
 import { cn } from '@/lib/utils';
+import { WavyBackground } from './wavy-background';
 import type {
   HeroBackgroundOptions,
   HeroBackgroundPreset,
@@ -133,6 +134,14 @@ function HeroPresetBackground({
             fifth: '255,193,77',
             sixth: '123,255,191',
           }}
+        />
+      );
+    case 'wavy':
+      return (
+        <WavyBackground
+          className={cn('absolute inset-0 bg-public-background', className)}
+          waveOpacity={0.54}
+          blur={10}
         />
       );
     case 'hexagon':

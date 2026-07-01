@@ -130,6 +130,7 @@ function printUsage(): void {
   console.log('  zero add components/hero');
   console.log('  zero add components/kanban');
   console.log('  zero add components/navbar');
+  console.log('  zero add components/text-effects');
   console.log('  zero add hooks modals --dry-run');
   console.log('');
   console.log('Run `zero add --list` to see supported items.');

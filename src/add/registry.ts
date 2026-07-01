@@ -52,6 +52,11 @@ const STATIC_TARGETS: AddableTarget[] = [
     description: 'Storage management, file browser, drive list, and dropzone UI.',
   },
   {
+    id: 'components/text-effects',
+    sourceRel: 'components/text-effects',
+    description: 'Public text effects for Hero titles and landing-page copy.',
+  },
+  {
     id: 'hooks',
     sourceRel: 'hooks',
     description: 'Generic React hooks provided by Zero.',

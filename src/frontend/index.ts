@@ -315,6 +315,7 @@ export {
   HeroActions,
   HeroBackground,
   HeroImageBackground,
+  WavyBackground,
 } from '../components/hero';
 export type {
   HeroAction,
@@ -322,7 +323,19 @@ export type {
   HeroBackgroundPreset,
   HeroImageBackgroundProps,
   HeroProps,
+  WavyBackgroundProps,
 } from '../components/hero';
+export {
+  FlipWords,
+  TextGenerateEffect,
+  TypewriterEffect,
+} from '../components/text-effects';
+export type {
+  FlipWordsProps,
+  TextGenerateEffectProps,
+  TypewriterEffectProps,
+  TypewriterWord,
+} from '../components/text-effects';
 
 // ─── App Shell ─────────────────────────────────────────────────────────
 export {

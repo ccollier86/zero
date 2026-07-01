@@ -17,7 +17,7 @@ import { Hero } from '@zero/framework/react';
 Narrow package-mode import:
 
 ```tsx
-import { Hero, HeroImageBackground } from '@zero/framework/components/hero';
+import { Hero, HeroImageBackground, WavyBackground } from '@zero/framework/components/hero';
 ```
 
 ## Basic Usage
@@ -60,8 +60,27 @@ Built-in presets:
 <Hero title="Launch faster" background={{ preset: 'gradient' }} />
 <Hero title="Launch faster" background={{ preset: 'stars', interactive: true }} />
 <Hero title="Launch faster" background={{ preset: 'bubbles', interactive: true }} />
+<Hero title="Launch faster" background={{ preset: 'wavy' }} />
 <Hero title="Launch faster" background={{ preset: 'hexagon' }} />
 <Hero title="Launch faster" background={{ preset: 'none' }} />
+```
+
+Use `WavyBackground` directly when a page needs custom wave colors, opacity, or
+speed:
+
+```tsx
+<Hero
+  title="Launch faster"
+  background={{
+    custom: (
+      <WavyBackground
+        className="size-full"
+        colors={['#38bdf8', '#818cf8', '#e879f9']}
+        speed="slow"
+      />
+    ),
+  }}
+/>
 ```
 
 For product, person, venue, or object-focused pages, prefer a real or generated
@@ -98,14 +117,30 @@ backgrounds can be used immediately:
 
 ## Text Effects
 
-`title` is a `ReactNode`. Use a plain string for normal headings or pass a text
-effect component for the part that should animate:
+`title` is a `ReactNode`. Use a plain string for normal headings or pass Zero's
+text-effect components for the part that should animate:
 
 ```tsx
+import { FlipWords, TextGenerateEffect, TypewriterEffect } from '@zero/framework/components/text-effects';
+
 <Hero
   title={
     <>
-      Build apps with <MyTextEffect text="less wiring" />.
+      <TextGenerateEffect words="Build apps with" />
+      <span className="block text-public-accent">
+        <TypewriterEffect
+          words={[
+            { text: 'one' },
+            { text: 'Zero' },
+            { text: 'framework.' },
+          ]}
+        />
+      </span>
+    </>
+  }
+  description={
+    <>
+      One platform for <FlipWords words={['dashboards', 'docs', 'public flows']} />.
     </>
   }
 />
@@ -113,6 +148,8 @@ effect component for the part that should animate:
 
 Keep the H1 readable without animation. Text effects should enhance a phrase,
 not carry the entire meaning of the hero.
+
+See [Text Effects](./text-effects.md) for the standalone APIs.
 
 ## Layout
 
