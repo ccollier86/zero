@@ -211,6 +211,12 @@ try {
   assert(html.includes('/_build/client.'), 'client bundle was not linked into SSR HTML');
   assert(html.includes('/_build/platform.'), 'platform stylesheet was not linked into SSR HTML');
 
+  const sitemap = await app.handle(new Request('http://localhost/sitemap.xml'));
+  const sitemapXml = await sitemap.text();
+  assert(sitemap.status === 200, \`sitemap failed: \${sitemap.status} \${sitemapXml}\`);
+  assert(sitemap.headers.get('content-type')?.includes('application/xml'), 'sitemap content type missing');
+  assert(sitemapXml.includes('<loc>http://localhost:3000/</loc>'), 'sitemap root route missing');
+
   const jsFiles = [...new Bun.Glob('client.*.js').scanSync({ cwd: './custom-build' })];
   const cssFiles = [...new Bun.Glob('platform.*.css').scanSync({ cwd: './custom-build' })];
   assert(jsFiles.length > 0, 'client bundle missing from custom outDir');

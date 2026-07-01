@@ -9,6 +9,8 @@ import type { RouteNode, ApiHandler, LoaderContext, RouteConfig } from '../route
 import { isPublicPath, type RouteAuthMode } from '../router/auth-policy';
 import { OBS_CODES } from '../../observability/codes';
 import { emitPlatformCode } from '../../observability/sink';
+import { generateSitemapXml } from './sitemap';
+import type { ResolvedSitemapConfig } from './types';
 
 // ─── ISR Cache ────────────────────────────────────────────────────────────
 
@@ -50,6 +52,13 @@ export interface RouterPluginOptions {
     /** Redirect target for unauthenticated users. Default: '/login' */
     loginPath?: string;
   };
+  /** Optional automatic sitemap route mounted before the file-router catch-all. */
+  sitemap?: {
+    config: ResolvedSitemapConfig;
+    publicUrl?: string;
+    routeAuth: RouteAuthMode;
+    publicPaths: string[];
+  };
 }
 
 /**
@@ -71,7 +80,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
   const outDir = resolve(options.outDir ?? '.build');
   const routeTree = options.routeTree ?? buildRouteTree(scanRoutes(appDir));
 
-  return new Elysia({ name: 'router' })
+  const router = new Elysia({ name: 'router' })
 
     // Serve static build artifacts (JS chunks, source maps)
     .get('/_build/*', async ({ params }) => {
@@ -94,7 +103,28 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         });
       }
       return new Response('Not Found', { status: 404 });
-    })
+    });
+
+  if (options.sitemap) {
+    router.get(options.sitemap.config.path, async ({ request }) => {
+      const body = await generateSitemapXml({
+        routeTree,
+        config: options.sitemap!.config,
+        requestUrl: request.url,
+        publicUrl: options.sitemap!.publicUrl,
+        routeAuth: options.sitemap!.routeAuth,
+        publicPaths: options.sitemap!.publicPaths,
+      });
+
+      return new Response(body, {
+        headers: {
+          'Content-Type': 'application/xml; charset=utf-8',
+        },
+      });
+    });
+  }
+
+  return router
 
     // Catch-all: try API routes first, then SSR pages
     .all('/*', async ({ request, set, ...ctx }) => {

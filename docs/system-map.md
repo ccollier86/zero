@@ -398,7 +398,8 @@ LoginForm, RegisterForm, ForgotPasswordForm, PasswordActionForm, ChangePasswordF
 | File | Purpose |
 |------|---------|
 | `src/frontend/server/app-factory.ts` | `createApp()` — composes all plugins in order |
-| `src/frontend/server/router-plugin.ts` | File-based router — scans app/ dir, SSR, API routes |
+| `src/frontend/server/router-plugin.ts` | File-based router — scans app/ dir, SSR, API routes, sitemap route |
+| `src/frontend/server/sitemap.ts` | Generates sitemap XML from public static file-router pages and manual entries |
 | `src/frontend/server/client-bundle.ts` | Builds client bundle with Bun.build |
 | `src/frontend/server/style-bundle.ts` | Builds hashed platform CSS from Tailwind/theme tokens and app source candidates |
 | `src/frontend/server/types.ts` | AppConfig, ResolvedConfig |

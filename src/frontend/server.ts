@@ -21,8 +21,12 @@ export type {
   AppTableInput,
   AutoLazyAction,
   ResolvedConfig,
+  ResolvedSitemapConfig,
   ResolvedSyncDefaults,
   ResolvedTableSyncDefault,
+  SitemapChangeFrequency,
+  SitemapConfig,
+  SitemapEntry,
   SyncDefaultsConfig,
   TableSyncDefaultConfig,
 } from './server/types';

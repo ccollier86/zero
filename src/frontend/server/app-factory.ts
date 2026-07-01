@@ -448,6 +448,16 @@ async function mountPlatformApp({
             },
           }
         : {}),
+      ...(config.sitemap
+        ? {
+            sitemap: {
+              config: config.sitemap,
+              publicUrl: config.app.publicUrl,
+              routeAuth: config.routeAuth,
+              publicPaths: config.publicPaths,
+            },
+          }
+        : {}),
     })
   );
 

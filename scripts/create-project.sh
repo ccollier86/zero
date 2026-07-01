@@ -210,6 +210,13 @@ const config = {
       requestCooldown: process.env.AUTH_ACCOUNT_EMAIL_COOLDOWN ?? '5m',
     },
   },
+  routeAuth: 'explicit',
+  sitemap: {
+    enabled: true,
+    changefreq: 'weekly',
+    priority: 0.7,
+    exclude: ['/login', '/forgot-password', '/reset-password'],
+  },
   stateSync: true,
   port: PORT,
 } satisfies AppConfig;

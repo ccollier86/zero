@@ -238,6 +238,10 @@ bun run migrate:status
 App code lives in \`app/\`, \`server/endpoints/\`, \`server/routes/\`,
 \`server/middleware/\`, \`server/plugins/\`, \`db/schema.ts\`, and
 \`zero.config.ts\`. Zero framework code stays in \`node_modules/@zero/framework\`.
+
+\`/sitemap.xml\` is enabled from public static file-router pages. Add dynamic
+URLs through \`sitemap.entries\` in \`zero.config.ts\` when your app can enumerate
+them.
 `;
 
   await writeFile(join(targetDir, 'README.md'), body);

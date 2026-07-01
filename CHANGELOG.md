@@ -2,6 +2,31 @@
 
 All notable Zero Platform changes are tracked here.
 
+## 1.2.0 - 2026-07-01
+
+Sitemap release for package-mode apps and public route discovery.
+
+### Framework Runtime
+
+- Added opt-in `sitemap` app config for serving request-time XML sitemaps from
+  public static file-router pages.
+- Added automatic route discovery that omits API routes, dynamic routes,
+  catch-all routes, protected page/layout branches, and route-group folder
+  names from sitemap output.
+- Added manual sitemap entries, default `changefreq`/`priority`, public URL
+  normalization, path excludes, and fail-closed behavior when route config
+  cannot be imported safely.
+
+### Tooling And Docs
+
+- Updated `create-zero`, the package-mode fixture, and the legacy
+  `create-project` script so generated apps show the sitemap setup.
+- Added sitemap coverage to router, start-here, platform configuration,
+  framework, system map, package-mode, and frontend docs.
+- Added tests for sitemap config normalization, XML generation, auth/public
+  route filtering, generated-app smoke behavior, and router mounting before the
+  catch-all route.
+
 ## 1.1.0 - 2026-07-01
 
 Framework-mode release that turns Zero into a package-first app platform while

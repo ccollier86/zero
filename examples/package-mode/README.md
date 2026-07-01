@@ -64,7 +64,7 @@ folders:
 
 | Location | Owns |
 | --- | --- |
-| `zero.config.ts` | App name, SQLite storage mode/paths, enabled platform systems, output paths, port. |
+| `zero.config.ts` | App name/public URL, SQLite storage mode/paths, enabled platform systems, sitemap, output paths, port. |
 | `db/schema.ts` | App table definitions shared by backend and frontend. |
 | `app/` | File-router layouts/pages and client UI. |
 | `server/endpoints/` | Single Zero-native API endpoints. |
@@ -78,6 +78,9 @@ process memory and Zero writes snapshot recovery files under `./data`. Set
 `DB_PATH` / `DB_SNAPSHOT_PATH` to override the default storage files.
 The starter also mounts the platform KV/cache service by default with journal
 and checkpoint files under `ZERO_KV_BASE_DIR` or `./data/kv`.
+It also enables `/sitemap.xml` from public static routes. Keep utility pages
+such as login/reset flows in `sitemap.exclude`, and add dynamic pages through
+`sitemap.entries` after your app can enumerate concrete URLs.
 
 ## Layout And Auth Boundaries
 

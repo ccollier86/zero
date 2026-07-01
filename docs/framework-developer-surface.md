@@ -123,6 +123,13 @@ const config = defineZeroConfig({
   },
   tables,
   auth: true,
+  routeAuth: 'explicit',
+  sitemap: {
+    enabled: true,
+    changefreq: 'weekly',
+    priority: 0.7,
+    exclude: ['/login', '/forgot-password', '/reset-password'],
+  },
   stateSync: true,
   email: Boolean(process.env.RESEND_API_KEY),
   ai: true,
@@ -168,6 +175,7 @@ SQLite's file/WAL path.
 | Rooms | Mounted when auth is enabled. |
 | Workflows | Mounted when auth is enabled. |
 | Storage | Mounted when auth is enabled. |
+| Sitemap | Mounted when `sitemap` is enabled; discovers public static file-router pages and omits protected, API, and dynamic routes unless explicitly listed. |
 | `/api/data` | Mounted for lazy tables and guarded by sync policy, auth, and registered resource `list` policy. |
 | App backend extensions | Loaded from `server/plugins`, `server/middleware`, `server/endpoints`, and `server/routes` before health and file-router catch-all. |
 | File router | Mounted last; handles `app/**/page.tsx`, `layout.tsx`, `route.ts`, and 404s. |

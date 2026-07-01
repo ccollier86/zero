@@ -107,6 +107,12 @@ const config = defineZeroConfig({
     },
   },
   routeAuth: 'explicit',
+  sitemap: {
+    enabled: true,
+    changefreq: 'weekly',
+    priority: 0.7,
+    exclude: ['/login', '/forgot-password', '/reset-password'],
+  },
   ai: hasAI ? true : false,
   vector: hasVector
     ? {
@@ -138,6 +144,11 @@ import config from '../zero.config';
 const app = await createApp(config);
 app.listen(config.port ?? 3000);
 ```
+
+`sitemap: true` serves `/sitemap.xml` from public static page routes. Object
+config lets you set defaults, exclude public utility pages, and add manual
+entries for dynamic routes. Details live in
+[Frontend Router: Sitemap](./frontend/router.md#sitemap).
 
 Zero builds and links the platform stylesheet automatically when `createApp()`
 starts. The root layout owns `ThemeProvider` and `AppProvider`: theme controls

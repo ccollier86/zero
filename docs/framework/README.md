@@ -49,8 +49,8 @@ vector, workflows, observability, or migrations.
   organisms, domain organisms, import paths, and use-first rules for app and
   agent development.
 - [Router](../frontend/router.md): file-router layouts, route groups,
-  public-first vs protected-first route auth, and dashboard/AppShell placement
-  rules.
+  public-first vs protected-first route auth, automatic sitemap generation, and
+  dashboard/AppShell placement rules.
 - [Framework Developer Surface](../framework-developer-surface.md): current
   package-mode usage surface, imports, generated app shape, and examples.
 

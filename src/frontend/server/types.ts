@@ -61,6 +61,49 @@ export interface SyncDefaultsConfig {
   tables?: Record<string, DeclaredSyncMode | TableSyncDefaultConfig>;
 }
 
+/** Sitemap change frequency values accepted by sitemap.xml. */
+export type SitemapChangeFrequency =
+  | 'always'
+  | 'hourly'
+  | 'daily'
+  | 'weekly'
+  | 'monthly'
+  | 'yearly'
+  | 'never';
+
+/** One explicit sitemap entry supplied by app config. */
+export interface SitemapEntry {
+  href: string;
+  lastmod?: string | Date;
+  changefreq?: SitemapChangeFrequency;
+  priority?: number;
+}
+
+/**
+ * Automatic sitemap configuration.
+ *
+ * Static public page routes are discovered from the file router. Use entries
+ * only for dynamic pages or deliberate overrides, and exclude for paths that
+ * should not appear even when they are public.
+ */
+export interface SitemapConfig {
+  enabled?: boolean;
+  path?: string;
+  changefreq?: SitemapChangeFrequency;
+  priority?: number;
+  entries?: readonly SitemapEntry[];
+  exclude?: readonly string[];
+}
+
+/** Normalized sitemap config consumed by the router plugin. */
+export interface ResolvedSitemapConfig {
+  path: string;
+  changefreq?: SitemapChangeFrequency;
+  priority?: number;
+  entries: readonly SitemapEntry[];
+  exclude: readonly string[];
+}
+
 /** Normalized per-table sync defaults. */
 export interface ResolvedTableSyncDefault {
   mode?: DeclaredSyncMode;
@@ -272,6 +315,15 @@ export interface AppConfig {
   routeAuth?: RouteAuthMode;
 
   /**
+   * Automatically serve a sitemap from public static page routes.
+   *
+   * `true` mounts `/sitemap.xml`. Object config can change the path, default
+   * priority/changefreq, add manual dynamic entries, or exclude public paths.
+   * Default: false.
+   */
+  sitemap?: boolean | SitemapConfig;
+
+  /**
    * Redirect target for unauthenticated users.
    * Default: '/login'
    */
@@ -319,6 +371,7 @@ export interface ResolvedConfig {
   observability?: ObservabilityConfig | false;
   publicPaths: string[];
   routeAuth: RouteAuthMode;
+  sitemap: false | ResolvedSitemapConfig;
   loginPath: string;
   /** Table names with lazy sync mode — auto-registered for /api/data queries. */
   lazyTables: Set<string>;
@@ -353,6 +406,7 @@ export function resolveConfig(
   const kv = resolveKvConfig(config.kv);
   const stateSync = config.stateSync ?? false;
   const routeAuth = resolveRouteAuthMode(config.routeAuth, auth !== false);
+  const sitemap = resolveSitemapConfig(config.sitemap);
 
   if (stateSync && auth === false) {
     throw new Error('[app] stateSync requires auth: true because server state is keyed by authenticated user.');
@@ -426,6 +480,7 @@ export function resolveConfig(
     observability: config.observability,
     publicPaths: config.publicPaths ?? ['/login', '/register', '/forgot-password'],
     routeAuth,
+    sitemap,
     loginPath: config.loginPath ?? '/login',
     lazyTables,
     snapshotTables,
@@ -433,6 +488,26 @@ export function resolveConfig(
     resolvedSyncModes: {},
     tableColumns,
   };
+}
+
+/** Normalize sitemap config while keeping the feature opt-in. */
+function resolveSitemapConfig(config: AppConfig['sitemap']): false | ResolvedSitemapConfig {
+  if (config === undefined || config === false) return false;
+  const explicit = config === true ? {} : config;
+  if (explicit.enabled === false) return false;
+
+  return {
+    path: normalizeSitemapPath(explicit.path),
+    changefreq: explicit.changefreq,
+    priority: explicit.priority,
+    entries: explicit.entries ?? [],
+    exclude: explicit.exclude ?? [],
+  };
+}
+
+function normalizeSitemapPath(path: string | undefined): string {
+  if (!path) return '/sitemap.xml';
+  return path.startsWith('/') ? path : `/${path}`;
 }
 
 /** Normalize app KV config while keeping the default durable, not ephemeral. */

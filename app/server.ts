@@ -15,9 +15,14 @@ const port = Number(Bun.env.PORT ?? 3000);
 const dbConfig = resolveLaunchBoardDatabaseConfig();
 
 const app = await createApp({
+  app: {
+    name: 'LaunchBoard',
+    publicUrl: Bun.env.APP_PUBLIC_URL ?? `http://localhost:${port}`,
+  },
   db: dbConfig,
   tables,
   auth: false,
+  sitemap: true,
   appDir: './app',
   port,
 });

@@ -80,6 +80,7 @@ const config = resolveConfig({
 //   File-based routes from app/ directory
 //   POST /auth/register, /auth/login, /auth/refresh, /auth/logout
 //   GET  /api/data (auto-registered for lazy tables)
+//   GET  /sitemap.xml (when enabled from public static routes)
 //   WS   /sync (reactive — all table changes broadcast)
 //   SSR  with React 19 streaming
 ```

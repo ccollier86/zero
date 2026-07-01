@@ -72,6 +72,57 @@ describe('resolveConfig', () => {
     expect(config.routeAuth).toBe('explicit');
   });
 
+  test('keeps sitemap disabled by default', () => {
+    const config = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+    });
+
+    expect(config.sitemap).toBe(false);
+  });
+
+  test('normalizes enabled sitemap config', () => {
+    const config = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      sitemap: {
+        path: 'site-map.xml',
+        changefreq: 'weekly',
+        priority: 0.6,
+        entries: [{ href: '/blog/first-post' }],
+        exclude: ['/dashboard'],
+      },
+    });
+
+    expect(config.sitemap).toEqual({
+      path: '/site-map.xml',
+      changefreq: 'weekly',
+      priority: 0.6,
+      entries: [{ href: '/blog/first-post' }],
+      exclude: ['/dashboard'],
+    });
+  });
+
+  test('normalizes sitemap boolean and object disable', () => {
+    const enabled = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      sitemap: true,
+    });
+    expect(enabled.sitemap).not.toBe(false);
+    if (enabled.sitemap !== false) {
+      expect(enabled.sitemap.path).toBe('/sitemap.xml');
+      expect(enabled.sitemap.entries).toEqual([]);
+      expect(enabled.sitemap.exclude).toEqual([]);
+    }
+
+    expect(resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      sitemap: { enabled: false },
+    }).sitemap).toBe(false);
+  });
+
   test('preserves auth registration and user property config', () => {
     const config = resolveConfig({
       db: { mode: 'memory' },

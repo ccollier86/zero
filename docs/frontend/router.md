@@ -561,6 +561,56 @@ For public-first apps, use `routeAuth: 'explicit'` in `createApp()` and add
 the default `routeAuth: 'protected-by-default'` and list login/reset routes in
 `publicPaths`.
 
+## Sitemap
+
+Zero can serve `/sitemap.xml` directly from the file-router tree:
+
+```ts
+import { defineZeroConfig } from '@zero/framework/server';
+
+export default defineZeroConfig({
+  app: {
+    name: 'Acme CRM',
+    publicUrl: 'https://crm.example.com',
+  },
+  db,
+  tables,
+  routeAuth: 'explicit',
+  sitemap: {
+    enabled: true,
+    changefreq: 'weekly',
+    priority: 0.7,
+    entries: [
+      {
+        href: '/blog/launch-notes',
+        lastmod: '2026-07-01',
+        changefreq: 'monthly',
+        priority: 0.8,
+      },
+    ],
+    exclude: ['/login', '/forgot-password', '/reset-password'],
+  },
+});
+```
+
+Discovery rules:
+
+1. Static public `page.tsx` routes are included automatically.
+2. API route files are never included.
+3. Dynamic routes like `[slug]` and catch-all routes are not guessed. Add them
+   through `sitemap.entries` after your app knows the concrete URLs.
+4. Route groups such as `(public)` and `(dashboard)` apply layouts and auth but
+   do not appear in sitemap URLs.
+5. Routes protected by `config.auth` on a page or parent layout are omitted.
+6. In `routeAuth: 'protected-by-default'`, only paths covered by `publicPaths`
+   are included.
+7. `sitemap.exclude` removes matching paths and child paths even when they are
+   public.
+
+Set `app.publicUrl` in production so `<loc>` values are stable behind proxies.
+When it is omitted, Zero uses the request origin, which is useful for local
+development.
+
 ## Client-Side Navigation
 
 **Key insight: since table data is already live on the client via the sync engine, most navigations don't need data fetching at all. Navigation = swap component + update URL.**

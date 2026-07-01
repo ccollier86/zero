@@ -91,6 +91,7 @@ Future files:
 | `zero/observability.ts` | sinks, endpoint access, trace thresholds |
 | `zero/ai.ts` | provider aliases, explicit providers, status endpoint |
 | `zero/vector.ts` | vector indexes, dimensions, metadata filter fields |
+| `zero/sitemap.ts` | future sitemap/SEO defaults and route metadata overrides |
 | `zero/migrations.ts` | migration safety defaults, doctor strictness, paths |
 
 ## Module Contract
@@ -259,6 +260,56 @@ GET /api/_zero/observability/config
 
 Admin-only responses should omit secrets and include enough structure for UI
 components to adapt.
+
+## Sitemap
+
+Zero can serve a request-time `sitemap.xml` from the file router. Enable it in
+the app config:
+
+```ts
+import { defineZeroConfig } from '@zero/framework/server';
+
+export default defineZeroConfig({
+  app: {
+    name: 'Acme CRM',
+    publicUrl: 'https://crm.example.com',
+  },
+  db,
+  tables,
+  auth: true,
+  routeAuth: 'explicit',
+  sitemap: {
+    enabled: true,
+    changefreq: 'weekly',
+    priority: 0.7,
+    entries: [
+      {
+        href: '/blog/launch-notes',
+        lastmod: '2026-07-01',
+        changefreq: 'monthly',
+        priority: 0.8,
+      },
+    ],
+    exclude: ['/login', '/forgot-password', '/reset-password'],
+  },
+});
+```
+
+Behavior:
+
+1. `sitemap: true` mounts `/sitemap.xml` with safe defaults.
+2. Static public `page.tsx` routes are discovered automatically.
+3. Route groups such as `(marketing)` do not appear in URLs.
+4. API routes, dynamic routes such as `[slug]`, catch-all routes, and protected
+   page/layout branches are omitted by default.
+5. Dynamic content belongs in `entries`, where the app can provide concrete
+   URLs from its own content model.
+6. `exclude` removes matching paths and child paths even when the route is
+   otherwise public.
+
+`app.publicUrl` is used for absolute `<loc>` values. If it is not set, Zero
+falls back to the request origin, which is useful in local development but less
+predictable behind production proxies.
 
 ## Templates
 

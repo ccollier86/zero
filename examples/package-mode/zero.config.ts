@@ -42,6 +42,12 @@ export const config = defineZeroConfig({
     },
   },
   routeAuth: 'explicit',
+  sitemap: {
+    enabled: true,
+    changefreq: 'weekly',
+    priority: 0.7,
+    exclude: ['/login', '/forgot-password', '/reset-password'],
+  },
   email: hasEmail
     ? {
         provider: 'resend',
