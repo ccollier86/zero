@@ -19,9 +19,9 @@ composition.
 
 ### Public Demo And Docs
 
-- Expanded the `/frontend` demo into a fuller landing-page composition using
-  Zero public sections, text effects, code blocks, FAQ, CTA, footer, and the
-  public design-token lane.
+- Expanded the public component docs and examples around landing-page
+  composition using Zero public sections, text effects, code blocks, FAQ, CTA,
+  footer, and the public design-token lane.
 - Polished the reusable footer layout with labeled navigation, CTA copy,
   resource/social links, responsive overflow-safe footer actions, and stronger
   full-width visual hierarchy.
