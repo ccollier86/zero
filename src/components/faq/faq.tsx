@@ -27,12 +27,15 @@ export function Faq({
   allowMultiple = false,
   animateAnswers = true,
   className,
+  headerClassName,
+  listClassName,
   itemClassName,
   questionClassName,
   answerClassName,
   emptyState,
   ...props
 }: FaqProps) {
+  const hasHeader = Boolean(title || description);
   const [openIds, setOpenIds] = React.useState<Set<string>>(
     () => new Set(defaultOpenIds),
   );
@@ -58,20 +61,22 @@ export function Faq({
       className={cn('zero-public mx-auto w-full max-w-5xl px-4 py-16 sm:px-6 lg:px-8', className)}
       {...props}
     >
-      <div className="mx-auto max-w-2xl text-center">
-        {title ? (
-          <h2 className="text-3xl font-semibold tracking-normal text-public-foreground sm:text-4xl">
-            {title}
-          </h2>
-        ) : null}
-        {description ? (
-          <p className="mt-4 text-base leading-7 text-public-muted-foreground">
-            {description}
-          </p>
-        ) : null}
-      </div>
+      {hasHeader ? (
+        <div className={cn('mx-auto max-w-2xl text-center', headerClassName)}>
+          {title ? (
+            <h2 className="text-balance text-4xl font-semibold leading-tight text-public-foreground sm:text-5xl">
+              {title}
+            </h2>
+          ) : null}
+          {description ? (
+            <p className="mt-4 text-base leading-7 text-public-muted-foreground">
+              {description}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
-      <div className="mx-auto mt-10 grid max-w-3xl gap-3">
+      <div className={cn('mx-auto grid max-w-3xl gap-3', hasHeader && 'mt-10', listClassName)}>
         {items.length === 0 ? (
           <div className="rounded-lg border border-public-border bg-public-surface p-6 text-sm text-public-muted-foreground shadow-[var(--public-shadow-floating)]">
             {emptyState ?? 'No questions have been added yet.'}

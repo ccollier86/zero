@@ -347,7 +347,7 @@ forking the section component. Use `TextGenerateEffect`, `TypewriterEffect`,
 and `FlipWords` from `@zero/framework/components/text-effects` for public
 heading and landing-copy motion. For common public sections, use the promoted
 Zero components before copying external snippets:
-`FeaturesSection`, `CodeBlock`, `Faq`, `ExpandableCards`, `BentoGrid`, and
+`FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, and
 `AnimatedList`. `FeaturesSection` accepts an image, screenshot, chart,
 `CodeBlock`, or custom React visual slot. Their usage contract is documented in
 [Public Components](./frontend/public-components.md).

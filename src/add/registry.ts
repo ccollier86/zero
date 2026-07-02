@@ -37,6 +37,11 @@ const STATIC_TARGETS: AddableTarget[] = [
     description: 'Public code block with Shiki highlighting, tabs, and copy action.',
   },
   {
+    id: 'components/cta',
+    sourceRel: 'components/cta',
+    description: 'Public call-to-action section with Hero-compatible actions.',
+  },
+  {
     id: 'components/data-table',
     sourceRel: 'components/data-table',
     description: 'DataTable, DataTableView, toolbar, pagination, and row actions.',
@@ -55,6 +60,11 @@ const STATIC_TARGETS: AddableTarget[] = [
     id: 'components/features',
     sourceRel: 'components/features',
     description: 'Public feature section with icon bullets and a flexible visual slot.',
+  },
+  {
+    id: 'components/footer',
+    sourceRel: 'components/footer',
+    description: 'Full-width public footer section with brand, labeled nav, action copy, actions, and social links.',
   },
   {
     id: 'components/hero',

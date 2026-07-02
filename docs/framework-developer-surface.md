@@ -59,10 +59,12 @@ but new app code should use `@zero/framework/*`.
 | `@zero/framework/components/animated-list` | Public animated list and event-card skin. Also exported from `react`. |
 | `@zero/framework/components/bento-grid` | Public bento grid layout and cards. Also exported from `react`. |
 | `@zero/framework/components/code-block` | Public Shiki code block with tabs, line numbers, and copy action. Also exported from `react`. |
+| `@zero/framework/components/cta` | Public call-to-action section with Hero-compatible actions. Also exported from `react`. |
 | `@zero/framework/components/data-table` | Data table primitives. Also exported from `react`. |
 | `@zero/framework/components/expandable-card` | Public shared-layout expandable cards. Also exported from `react`. |
 | `@zero/framework/components/faq` | Public FAQ accordion with generated answer support. Also exported from `react`. |
 | `@zero/framework/components/features` | Public feature section with icon bullets and flexible image/code/custom visual slot. Also exported from `react`. |
+| `@zero/framework/components/footer` | Full-width public footer band with brand, labeled nav links, action copy, actions, and social links. Also exported from `react`. |
 | `@zero/framework/components/hero` | Public-page Hero section and background helpers. Also exported from `react`. |
 | `@zero/framework/components/kanban` | Kanban board primitives and movement helpers. Also exported from `react`. |
 | `@zero/framework/components/radial-menu` | Radial context menu organism. Also exported from `react`. |
@@ -936,10 +938,12 @@ import {
   AnimatedList,
   BentoGrid,
   CodeBlock,
+  CtaSection,
   DataTable,
   ExpandableCards,
   Faq,
   FeaturesSection,
+  FooterSection,
   Hero,
   MasterDetailView,
   LoginForm,
@@ -959,6 +963,8 @@ Narrow imports are also supported:
 import { DataTableView } from '@zero/framework/components/data-table';
 import { Faq } from '@zero/framework/components/faq';
 import { FeaturesSection } from '@zero/framework/components/features';
+import { CtaSection } from '@zero/framework/components/cta';
+import { FooterSection } from '@zero/framework/components/footer';
 import { CodeBlock } from '@zero/framework/components/code-block';
 import { ExpandableCards } from '@zero/framework/components/expandable-card';
 import { BentoGrid } from '@zero/framework/components/bento-grid';
@@ -982,6 +988,8 @@ zero add components/ui/button
 zero add components/data-table
 zero add components/faq
 zero add components/features
+zero add components/cta
+zero add components/footer
 zero add components/code-block
 zero add components/expandable-card
 zero add components/bento-grid
@@ -1003,10 +1011,12 @@ Supported source-copy targets:
 | `components/animated-list` | Public animated list, list item, event-card skin, and motion dependencies. |
 | `components/bento-grid` | Public bento grid layout, item, skeleton, and dependencies. |
 | `components/code-block` | Public Shiki code block, tabs, copy action, and dependencies. |
+| `components/cta` | Public call-to-action section with Hero-compatible actions and dependencies. |
 | `components/data-table` | Data table, toolbar, pagination, row actions, and dependencies. |
 | `components/expandable-card` | Public shared-layout expandable cards and close/outside-click dependencies. |
 | `components/faq` | Public FAQ accordion, generated answer text, icons, and dependencies. |
 | `components/features` | Public feature showcase section, icon bullets, visual slot, and dependencies. |
+| `components/footer` | Full-width public footer band with brand, labeled nav links, action copy, actions, social links, and dependencies. |
 | `components/hero` | Public-page Hero section, background helpers, actions, and dependencies. |
 | `components/kanban` | Kanban board, task card, movement helpers, and dependencies. |
 | `components/master-detail` | Master-detail primitives and dependencies. |

@@ -336,6 +336,14 @@ export type {
   FeatureSectionItem,
   FeaturesSectionProps,
 } from '../components/features';
+export { CtaSection } from '../components/cta';
+export type { CtaSectionProps } from '../components/cta';
+export { FooterSection } from '../components/footer';
+export type {
+  FooterSectionBrand,
+  FooterSectionLink,
+  FooterSectionProps,
+} from '../components/footer';
 export {
   FlipWords,
   TextGenerateEffect,

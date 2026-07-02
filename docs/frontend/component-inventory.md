@@ -45,7 +45,7 @@ classes through the component tree.
 | Public navigation | Public-page navigation for marketing/docs/content routes. | `@zero/framework/components/navbar` or `@zero/framework/react` | `ResizableNavbar` |
 | Public heroes | Public-page opening sections with background slots and actions. | `@zero/framework/components/hero` or `@zero/framework/react` | `Hero`, `HeroBackground`, `HeroImageBackground` |
 | Public text effects | Public landing/docs/content text motion. | `@zero/framework/components/text-effects` or `@zero/framework/react` | `TextGenerateEffect`, `TypewriterEffect`, `FlipWords` |
-| Public content sections | Landing/docs/content sections using the public token lane. | `@zero/framework/components/*` or `@zero/framework/react` | `FeaturesSection`, `CodeBlock`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList` |
+| Public content sections | Landing/docs/content sections using the public token lane. | `@zero/framework/components/*` or `@zero/framework/react` | `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList` |
 | App shell | Default app chrome for dashboards, admin tools, and data apps. | `@zero/framework/components/app-shell` | `AppShell`, `AppShellSidebar` |
 | Data organisms | Feature-complete screens or major widgets wired for schemas/live data. | `@zero/framework/react` | `DataTableView`, `KanbanBoard`, `MasterDetailView`, `CrudPage` |
 | Domain organisms | Platform feature UI with backend/client assumptions. | `@zero/framework/react` | `UserManagement`, `StorageManagement` |
@@ -58,7 +58,7 @@ classes through the component tree.
 3. Start with `Hero` for public route opening sections.
 4. Use `TextGenerateEffect`, `TypewriterEffect`, and `FlipWords` for public
    text motion instead of custom one-off heading animations.
-5. Use `FeaturesSection`, `CodeBlock`, `Faq`, `ExpandableCards`, `BentoGrid`,
+5. Use `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`,
    and `AnimatedList` for common public content sections before copying
    external snippets.
 6. Use base `ui/` primitives instead of raw HTML controls.
@@ -105,6 +105,8 @@ These are the lowest-level app-facing controls in `src/components/ui`.
 | `Hero`, `HeroBackground`, `HeroImageBackground`, `WavyBackground` | `components/hero` | Public-page hero section with tokenized background presets, custom background slot, actions, wavy canvas background, and rich title support. |
 | `TextGenerateEffect`, `TypewriterEffect`, `FlipWords` | `components/text-effects` | Public text effects for Hero titles, landing copy, docs headers, and content pages. |
 | `CodeBlock` | `components/code-block` | Tokenized Shiki code block with tabs, line numbers, copy action, and observability-backed fallback. |
+| `CtaSection` | `components/cta` | Public call-to-action section with title, supporting copy, and Hero-compatible actions. |
+| `FooterSection` | `components/footer` | Full-width public footer band with brand, labeled nav links, Hero-compatible actions, supporting action copy, copyright, and animated icon links. |
 | `FeaturesSection` | `components/features` | Public feature showcase with icon bullets and a flexible image/code/custom visual slot. |
 | `Sidebar` primitives | `components/sidebar` | Public low-level Animate UI sidebar wrapper. Use directly only when `AppShell` is not enough. |
 | `AppShell`, `AppShellHeader`, `AppShellBreadcrumbs`, `AppShellSidebar` | `components/app-shell` | App-ready shell with workspace switcher, sidebar nav, breadcrumbs/header row, actions, footer/user menu, and theme toggle. |
@@ -124,6 +126,8 @@ radius, font, and light/dark behavior used by dashboard components.
 | `ResizableNavbar` | `navbar/resizable-navbar.tsx` | Fixed public navbar that detaches into a floating blurred capsule after scroll, includes desktop magnetic hover state, mobile menu, brand slot, links, and actions. |
 | `TextGenerateEffect`, `TypewriterEffect`, `FlipWords` | `text-effects/*` | Motion text effects for public headings, Hero slots, and content page accents. |
 | `CodeBlock` | `code-block/code-block.tsx` | Public code surface with Shiki highlighting, optional file tabs, line numbers, and copy action. |
+| `CtaSection` | `cta/cta-section.tsx` | Compact public CTA surface with optional eyebrow, title, description, and Hero-compatible actions. |
+| `FooterSection` | `footer/footer-section.tsx` | Full-width public footer band with brand block, optional link/action/social labels, optional action copy, social links, and copyright text. |
 | `FeaturesSection` | `features/features-section.tsx` | Public feature section with content column, icon bullets, and flexible visual slot for images, screenshots, code blocks, charts, or custom React. |
 | `Faq` | `faq/faq.tsx` | Public FAQ accordion with optional generated answer text. |
 | `ExpandableCards` | `expandable-card/expandable-card.tsx` | Shared-layout card expansion for public feature cards, case studies, and content teasers. |

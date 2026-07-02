@@ -19,9 +19,11 @@ import {
   BentoGridItem,
   BentoGridSkeleton,
   CodeBlock,
+  CtaSection,
   ExpandableCards,
   Faq,
   FeaturesSection,
+  FooterSection,
 } from '@zero/framework/react';
 ```
 
@@ -33,7 +35,9 @@ import { ExpandableCards } from '@zero/framework/components/expandable-card';
 import { BentoGrid, BentoGridItem } from '@zero/framework/components/bento-grid';
 import { AnimatedList, AnimatedListCard } from '@zero/framework/components/animated-list';
 import { CodeBlock } from '@zero/framework/components/code-block';
+import { CtaSection } from '@zero/framework/components/cta';
 import { FeaturesSection } from '@zero/framework/components/features';
+import { FooterSection } from '@zero/framework/components/footer';
 ```
 
 If an app needs to own and modify source:
@@ -44,7 +48,9 @@ zero add components/expandable-card
 zero add components/bento-grid
 zero add components/animated-list
 zero add components/code-block
+zero add components/cta
 zero add components/features
+zero add components/footer
 ```
 
 ## Code Block
@@ -100,7 +106,8 @@ observability boundary instead of direct console logging.
 copy, icon bullets, and a flexible `visual` slot. Most product sites will pass
 an image, chart, app screenshot, video preview, or custom React visual. Docs
 and framework sites can pass `CodeBlock` to show real Zero code without taking
-screenshots.
+screenshots. Default `iconName` bullets use Zero's animated icon registry and
+trigger their icon animation when the feature row is hovered.
 
 ```tsx
 import { CodeBlock } from '@zero/framework/components/code-block';
@@ -132,12 +139,83 @@ export function PlatformFeature() {
 }
 ```
 
+## CTA Section
+
+`CtaSection` renders a compact public call-to-action surface with an optional
+eyebrow, title, description, and the same `HeroAction` button contract used by
+`Hero`. Use it near the end of landing pages, docs pages, onboarding screens,
+or content pages where the next action should be obvious without building a
+custom card.
+
+```tsx
+import { CtaSection } from '@zero/framework/components/cta';
+
+export function ProductCta() {
+  return (
+    <CtaSection
+      eyebrow="Build with Zero"
+      title="Start with the platform, then make it yours"
+      description="Use the defaults to move quickly, then swap adapters, copy source, or theme the public token lane when the product needs it."
+      actions={[
+        { label: 'Open app', href: '/' },
+        { label: 'Read docs', href: '/docs', variant: 'outline' },
+      ]}
+    />
+  );
+}
+```
+
+## Footer Section
+
+`FooterSection` renders a full-width public footer band with a brand block,
+footer navigation, optional labeled link columns, optional Hero-compatible
+actions, supporting action copy, copyright text, and animated icon links. Use it
+for landing pages, docs sites, public intake flows, and product pages that need
+a polished closing surface without hand-assembling footer layout.
+
+```tsx
+import { FooterSection } from '@zero/framework/components/footer';
+import { ZeroIcon } from '@zero/framework/icons';
+
+export function ProductFooter() {
+  return (
+    <FooterSection
+      brand={{
+        label: 'Zero',
+        href: '/',
+        mark: <ZeroIcon name="layers" className="size-5" />,
+        description: 'A full-stack framework surface for fast production app composition.',
+      }}
+      links={[
+        { label: 'Overview', href: '/' },
+        { label: 'Features', href: '/#features' },
+        { label: 'Docs', href: '/docs' },
+      ]}
+      linksTitle="Explore"
+      actionTitle="Build the next app"
+      actionDescription="Start from working platform pieces, then customize what the product needs."
+      actions={[{ label: 'Open app', href: '/', variant: 'outline' }]}
+      socialTitle="Resources"
+      socialLinks={[
+        {
+          label: 'Docs',
+          href: '/docs',
+          icon: <ZeroIcon name="link" className="size-5" />,
+        },
+      ]}
+      copyright="© 2026 Zero Framework. All rights reserved."
+    />
+  );
+}
+```
+
 ## FAQ
 
 `Faq` renders an accessible accordion section. String answers use
 `TextGenerateEffect` by default, so expanded answers reveal word-by-word. Pass
 `animateAnswers={false}` for static answers or when the answer is rich React
-content.
+content. Pass `title={null}` with `className`/`listClassName` when a page
+supplies its own heading or places the accordion inside a custom layout.
 
 ```tsx
 import { Faq } from '@zero/framework/components/faq';

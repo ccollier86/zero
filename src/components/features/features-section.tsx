@@ -10,6 +10,7 @@
 
 import * as React from 'react';
 
+import { AnimateIcon } from '@/components/animate-ui/icons';
 import { ZeroIcon } from '@/components/animate-ui/icons/zero-icon';
 import { cn } from '@/lib/utils';
 
@@ -97,21 +98,28 @@ export function FeaturesSection({
 
 function FeatureSectionBullet({ feature }: { feature: FeatureSectionItem }) {
   return (
-    <div className="grid grid-cols-[2.25rem_minmax(0,1fr)] gap-4">
-      <span className="mt-1 flex size-9 items-center justify-center rounded-md border border-public-border bg-public-surface text-public-accent shadow-sm">
-        {renderFeatureIcon(feature)}
-      </span>
-      <div className="min-w-0">
-        <div className="text-base font-semibold leading-7 text-public-foreground">
-          {feature.title}
-        </div>
-        {feature.description ? (
-          <div className="mt-1 text-base leading-7 text-public-muted-foreground">
-            {feature.description}
+    <AnimateIcon
+      animateOnHover
+      completeOnStop
+      asChild
+      className="grid grid-cols-[2.25rem_minmax(0,1fr)] gap-4"
+    >
+      <div>
+        <span className="mt-1 flex size-9 items-center justify-center rounded-md border border-public-border bg-public-surface text-public-accent shadow-sm">
+          {renderFeatureIcon(feature)}
+        </span>
+        <div className="min-w-0">
+          <div className="text-base font-semibold leading-7 text-public-foreground">
+            {feature.title}
           </div>
-        ) : null}
+          {feature.description ? (
+            <div className="mt-1 text-base leading-7 text-public-muted-foreground">
+              {feature.description}
+            </div>
+          ) : null}
+        </div>
       </div>
-    </div>
+    </AnimateIcon>
   );
 }
 

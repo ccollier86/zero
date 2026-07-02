@@ -1,6 +1,6 @@
 {
   "name": "@zero/framework",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "type": "module",
   "bin": {
     "zero": "./src/cli/run.ts",
@@ -151,6 +151,10 @@
       "types": "./src/components/code-block/index.ts",
       "import": "./src/components/code-block/index.ts"
     },
+    "./components/cta": {
+      "types": "./src/components/cta/index.ts",
+      "import": "./src/components/cta/index.ts"
+    },
     "./components/collapsible": {
       "types": "./src/components/collapsible/index.ts",
       "import": "./src/components/collapsible/index.ts"
@@ -174,6 +178,10 @@
     "./components/features": {
       "types": "./src/components/features/index.ts",
       "import": "./src/components/features/index.ts"
+    },
+    "./components/footer": {
+      "types": "./src/components/footer/index.ts",
+      "import": "./src/components/footer/index.ts"
     },
     "./components/hero": {
       "types": "./src/components/hero/index.ts",

@@ -196,17 +196,22 @@ describe('addZeroSource', () => {
     }
   });
 
-  test('copies public feature and code block sections with shared dependencies', async () => {
+  test('copies public feature, CTA, footer, and code block sections with shared dependencies', async () => {
     const targetDir = await createTempApp();
 
     try {
       const result = await addZeroSource({
         targetDir,
-        items: ['components/features', 'components/code-block'],
+        items: ['components/features', 'components/cta', 'components/footer', 'components/code-block'],
       });
 
       expect(result.filesWritten).toContain('components/features/features-section.tsx');
       expect(result.filesWritten).toContain('components/features/features-section.types.ts');
+      expect(result.filesWritten).toContain('components/cta/cta-section.tsx');
+      expect(result.filesWritten).toContain('components/cta/cta-section.types.ts');
+      expect(result.filesWritten).toContain('components/footer/footer-section.tsx');
+      expect(result.filesWritten).toContain('components/footer/footer-section.types.ts');
+      expect(result.filesWritten).toContain('components/hero/hero-actions.tsx');
       expect(result.filesWritten).toContain('components/code-block/code-block.tsx');
       expect(result.filesWritten).toContain('components/code-block/code-block-highlight.ts');
       expect(result.filesWritten).toContain('components/ui/button.tsx');
@@ -216,7 +221,7 @@ describe('addZeroSource', () => {
 
       await writeFile(
         join(targetDir, 'entry.tsx'),
-        "import { CodeBlock } from './components/code-block';\nimport { FeaturesSection } from './components/features';\nexport { CodeBlock, FeaturesSection };\n"
+        "import { CodeBlock } from './components/code-block';\nimport { CtaSection } from './components/cta';\nimport { FeaturesSection } from './components/features';\nimport { FooterSection } from './components/footer';\nexport { CodeBlock, CtaSection, FeaturesSection, FooterSection };\n"
       );
 
       const build = await Bun.build({

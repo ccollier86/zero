@@ -633,6 +633,7 @@ Built on Motion + radix-ui:
 - `<AppShell>` — app-ready dashboard/admin shell with Animate UI/Radix sidebar, optional breadcrumbs/header content, workspace switcher, nested nav, item action menus, and footer user menu
 - `<AppShellBreadcrumbs>` — shell breadcrumb renderer backed by Zero's breadcrumb primitive
 - Sidebar primitives — `SidebarProvider`, `Sidebar`, `SidebarInset`, `SidebarTrigger`, menu groups, nested menu, rail, and action slots for custom shells
+- Public sections — `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, and `AnimatedList` for public websites, docs, landing pages, and content routes
 - `<ListDetailLayout>` — animated two-column split
 - `<DetailPanel>` — right-side detail view
 - `<RecordNavigationBar>` — toolbar with actions for the current record

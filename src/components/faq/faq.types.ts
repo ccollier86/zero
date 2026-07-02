@@ -25,6 +25,8 @@ export interface FaqProps extends Omit<React.ComponentProps<'section'>, 'title'>
   defaultOpenIds?: readonly string[];
   allowMultiple?: boolean;
   animateAnswers?: boolean;
+  headerClassName?: string;
+  listClassName?: string;
   itemClassName?: string;
   questionClassName?: string;
   answerClassName?: string;

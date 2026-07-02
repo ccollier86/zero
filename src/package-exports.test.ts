@@ -156,12 +156,14 @@ import { AppShell as AppShellSubpath } from '@zero/framework/components/app-shel
 import { AnimatedList as AnimatedListSubpath } from '@zero/framework/components/animated-list';
 import { BentoGrid as BentoGridSubpath } from '@zero/framework/components/bento-grid';
 import { CodeBlock as CodeBlockSubpath } from '@zero/framework/components/code-block';
+import { CtaSection as CtaSectionSubpath } from '@zero/framework/components/cta';
 import { Collapsible as CollapsibleSubpath } from '@zero/framework/components/collapsible';
 import { DataTableView } from '@zero/framework/components/data-table';
 import { DropdownMenu as DropdownMenuSubpath } from '@zero/framework/components/dropdown-menu';
 import { ExpandableCards as ExpandableCardsSubpath } from '@zero/framework/components/expandable-card';
 import { Faq as FaqSubpath } from '@zero/framework/components/faq';
 import { FeaturesSection as FeaturesSectionSubpath } from '@zero/framework/components/features';
+import { FooterSection as FooterSectionSubpath } from '@zero/framework/components/footer';
 import { Hero as HeroSubpath } from '@zero/framework/components/hero';
 import { KanbanBoard as KanbanBoardSubpath } from '@zero/framework/components/kanban';
 import { MasterDetailView } from '@zero/framework/components/master-detail';
@@ -186,6 +188,7 @@ import {
   BentoGrid,
   BentoGridItem,
   CodeBlock,
+  CtaSection,
   Collapsible,
   DataTable,
   DropdownMenu,
@@ -193,6 +196,7 @@ import {
   Faq,
   FeaturesSection,
   FlipWords,
+  FooterSection,
   groupKanbanItemIds,
   Hero,
   KanbanBoard,
@@ -229,6 +233,8 @@ export const clientSymbols = {
   BentoGridSubpath,
   CodeBlock,
   CodeBlockSubpath,
+  CtaSection,
+  CtaSectionSubpath,
   Check,
   Collapsible,
   CollapsibleSubpath,
@@ -244,6 +250,8 @@ export const clientSymbols = {
   FaqSubpath,
   FeaturesSection,
   FeaturesSectionSubpath,
+  FooterSection,
+  FooterSectionSubpath,
   groupKanbanItemIds,
   Hero,
   HeroSubpath,

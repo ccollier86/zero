@@ -2,6 +2,33 @@
 
 All notable Zero Platform changes are tracked here.
 
+## 1.2.1 - 2026-07-02
+
+Patch release for the public frontend component lane and Zero website/demo
+composition.
+
+### Frontend Components
+
+- Added reusable `CtaSection` and `FooterSection` public components with
+  package exports, `@zero/framework/react` barrel exports, and `zero add`
+  registry support.
+- Improved `FeaturesSection` icon bullets so Zero animated icons trigger from
+  feature-row hover instead of rendering as static decoration.
+- Expanded `Faq` composition support with custom header/list class hooks and
+  title-less layouts for pages that provide their own section heading.
+
+### Public Demo And Docs
+
+- Expanded the `/frontend` demo into a fuller landing-page composition using
+  Zero public sections, text effects, code blocks, FAQ, CTA, footer, and the
+  public design-token lane.
+- Polished the reusable footer layout with labeled navigation, CTA copy,
+  resource/social links, responsive overflow-safe footer actions, and stronger
+  full-width visual hierarchy.
+- Updated public component docs, component inventory, framework surface docs,
+  SDK reference, start-here guidance, package exports tests, and `zero add`
+  copy coverage for the new frontend components.
+
 ## 1.2.0 - 2026-07-01
 
 Sitemap release for package-mode apps and public route discovery.
