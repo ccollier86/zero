@@ -1,9 +1,23 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { Elysia } from 'elysia';
 import { createReactiveDB, ReactiveDB } from '../sync/reactive-db';
-import { createAuthPlugin, getTokenService } from './auth.plugin';
+import { createAuthPlugin, getAuthEmailOutbox, getTokenService } from './auth.plugin';
 import { createAuthMiddleware } from './auth.middleware';
-import { configureEmail, MemoryEmailProvider } from '../email';
+import {
+  configureEmail,
+  MemoryEmailProvider,
+  type EmailMessage,
+  type EmailProvider,
+} from '../email';
+import {
+  configureObservability,
+  getObservabilityRuntime,
+  MemoryEventStore,
+  OBS_CODES,
+} from '../observability';
+import { defineAuthEmailTemplates } from './auth-email-templates';
+import { generateTotpCode } from './mfa-totp';
+import { PAGE_SESSION_COOKIE_NAME } from './page-session';
 
 // ─── Test Setup ───────────────────────────────────────────────────────────
 
@@ -36,13 +50,19 @@ afterAll(() => {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
+interface JsonResponse {
+  status: number;
+  data: any;
+  headers: Headers;
+}
+
 async function requestJson(
   url: string,
   method: string,
   path: string,
   body?: object,
   token?: string
-): Promise<{ status: number; data: any }> {
+): Promise<JsonResponse> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -54,31 +74,34 @@ async function requestJson(
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => null);
-  return { status: res.status, data };
+  if (path === '/auth/forgot-password' || path === '/auth/resend-verification') {
+    await getAuthEmailOutbox()?.processDue();
+  }
+  return { status: res.status, data, headers: res.headers };
 }
 
-async function post(path: string, body: object, token?: string): Promise<{ status: number; data: any }> {
+async function post(path: string, body: object, token?: string): Promise<JsonResponse> {
   return requestJson(baseUrl, 'POST', path, body, token);
 }
 
-async function patch(path: string, body: object, token?: string): Promise<{ status: number; data: any }> {
+async function patch(path: string, body: object, token?: string): Promise<JsonResponse> {
   return requestJson(baseUrl, 'PATCH', path, body, token);
 }
 
-async function put(path: string, body: object, token?: string): Promise<{ status: number; data: any }> {
+async function put(path: string, body: object, token?: string): Promise<JsonResponse> {
   return requestJson(baseUrl, 'PUT', path, body, token);
 }
 
-async function del(path: string, token?: string): Promise<{ status: number; data: any }> {
+async function del(path: string, token?: string): Promise<JsonResponse> {
   return requestJson(baseUrl, 'DELETE', path, undefined, token);
 }
 
-async function get(path: string, token?: string): Promise<{ status: number; data: any }> {
+async function get(path: string, token?: string): Promise<JsonResponse> {
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const res = await fetch(`${baseUrl}${path}`, { headers });
-  return { status: res.status, data: await res.json() };
+  return { status: res.status, data: await res.json(), headers: res.headers };
 }
 
 async function startAuthApp(config: Omit<Parameters<typeof createAuthPlugin>[0], 'db'> = {}) {
@@ -110,6 +133,42 @@ function extractTokenFromEmail(text: string): string {
   return match[1];
 }
 
+function extractOtpFromEmail(text: string): string {
+  const match = text.match(/\b\d{6}\b/);
+  if (!match) throw new Error(`No OTP code found in email text: ${text}`);
+  return match[0];
+}
+
+function cookiePair(setCookie: string): string {
+  return setCookie.split(';', 1)[0]!;
+}
+
+function cookieValue(cookie: string): string {
+  return decodeURIComponent(cookie.slice(cookie.indexOf('=') + 1));
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for async auth work');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+function expectActivePageSession(response: JsonResponse): void {
+  const setCookie = response.headers.get('set-cookie');
+  expect(setCookie).toContain(`${PAGE_SESSION_COOKIE_NAME}=`);
+  expect(setCookie).toContain('HttpOnly');
+  expect(setCookie).not.toContain('Max-Age=0');
+}
+
+function expectClearedPageSession(response: JsonResponse): void {
+  const setCookie = response.headers.get('set-cookie');
+  expect(setCookie).toContain(`${PAGE_SESSION_COOKIE_NAME}=`);
+  expect(setCookie).toContain('HttpOnly');
+  expect(setCookie).toContain('Max-Age=0');
+}
+
 // ─── Registration ─────────────────────────────────────────────────────────
 
 describe('Auth Plugin — Registration', () => {
@@ -120,6 +179,15 @@ describe('Auth Plugin — Registration', () => {
     expect(data.registration.bootstrapRequired).toBe(true);
     expect(data.registration.publicRegistrationEnabled).toBe(true);
     expect(data.registration.userCount).toBe(0);
+    expect(data.mfa).toMatchObject({
+      enabled: false,
+      policy: 'optional',
+      methods: ['email', 'totp'],
+      availableMethods: [],
+      allowUserChoice: true,
+      allowMultipleMethods: false,
+      ready: true,
+    });
   });
 
   test('POST /auth/register bootstraps first user as admin and returns tokens', async () => {
@@ -181,6 +249,10 @@ describe('Auth Plugin — Registration', () => {
       password: 'password123',
     });
     expect(res1.status).toBe(422);
+    expect(res1.data).toEqual({
+      error: 'Invalid auth request',
+      code: 'AUTH_VALIDATION_FAILED',
+    });
 
     // Password too short
     const res2 = await post('/auth/register', {
@@ -189,6 +261,10 @@ describe('Auth Plugin — Registration', () => {
       password: 'short',
     });
     expect(res2.status).toBe(422);
+    expect(res2.data).toEqual({
+      error: 'Invalid auth request',
+      code: 'AUTH_VALIDATION_FAILED',
+    });
   });
 });
 
@@ -199,6 +275,14 @@ describe('Auth Plugin — Admin Users', () => {
     const config = await get('/auth/admin/config', bootstrapAdminToken);
     expect(config.status).toBe(200);
     expect(config.data.registration.publicRegistrationEnabled).toBe(true);
+    expect(config.data.mfa).toMatchObject({
+      enabled: false,
+      policy: 'optional',
+      methods: ['email', 'totp'],
+      availableMethods: [],
+      ready: true,
+    });
+    expect(config.data.capabilities.mfa).toBe(false);
 
     const created = await post(
       '/auth/admin/users',
@@ -456,6 +540,147 @@ describe('Auth Plugin — Logout', () => {
 
 // ─── Me Endpoint ──────────────────────────────────────────────────────────
 
+describe('Auth Plugin — Page Session Cookie', () => {
+  test('login, refresh, and logout synchronize a refresh-bound HttpOnly cookie', async () => {
+    await post('/auth/register', {
+      username: 'page-cookie-flow',
+      email: 'page-cookie-flow@test.com',
+      password: 'password123',
+    });
+
+    const loginResponse = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: 'page-cookie-flow',
+        password: 'password123',
+      }),
+    });
+    const login = await loginResponse.json();
+    const loginSetCookie = loginResponse.headers.get('set-cookie');
+
+    expect(loginResponse.status).toBe(200);
+    expect(loginSetCookie).toContain(`${PAGE_SESSION_COOKIE_NAME}=`);
+    expect(loginSetCookie).toContain('HttpOnly');
+    expect(loginSetCookie).toContain('SameSite=Lax');
+    expect(loginSetCookie).toContain('Path=/');
+
+    const loginCookie = cookiePair(loginSetCookie!);
+    const loginPageToken = cookieValue(loginCookie);
+    expect(await getTokenService()!.resolvePageSessionToken(loginPageToken)).toMatchObject({
+      userId: login.user.userId,
+      role: login.user.role,
+    });
+
+    // Ambient page identity must not authenticate ordinary auth APIs.
+    const cookieOnlyMe = await fetch(`${baseUrl}/auth/me`, {
+      headers: { Cookie: loginCookie },
+    });
+    expect(cookieOnlyMe.status).toBe(401);
+
+    const refreshResponse = await fetch(`${baseUrl}/auth/refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: loginCookie,
+      },
+      body: JSON.stringify({ refreshToken: login.refreshToken }),
+    });
+    const refreshed = await refreshResponse.json();
+    const refreshSetCookie = refreshResponse.headers.get('set-cookie');
+    const refreshedCookie = cookiePair(refreshSetCookie!);
+    const refreshedPageToken = cookieValue(refreshedCookie);
+
+    expect(refreshResponse.status).toBe(200);
+    expect(refreshedCookie).not.toBe(loginCookie);
+    expect(await getTokenService()!.resolvePageSessionToken(loginPageToken)).toBeNull();
+    expect(await getTokenService()!.resolvePageSessionToken(refreshedPageToken)).toMatchObject({
+      userId: login.user.userId,
+    });
+
+    const logoutResponse = await fetch(`${baseUrl}/auth/logout`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: refreshedCookie,
+      },
+      body: JSON.stringify({ refreshToken: refreshed.refreshToken }),
+    });
+    const logoutSetCookie = logoutResponse.headers.get('set-cookie');
+
+    expect(logoutResponse.status).toBe(200);
+    expect(logoutSetCookie).toContain(`${PAGE_SESSION_COOKIE_NAME}=`);
+    expect(logoutSetCookie).toContain('Max-Age=0');
+    expect(await getTokenService()!.resolvePageSessionToken(refreshedPageToken)).toBeNull();
+  });
+
+  test('a rejected refresh clears and revokes the cookie-bound session', async () => {
+    const loginResponse = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: 'page-cookie-flow',
+        password: 'password123',
+      }),
+    });
+    const loginCookie = cookiePair(loginResponse.headers.get('set-cookie')!);
+    const pageToken = cookieValue(loginCookie);
+
+    const refreshResponse = await fetch(`${baseUrl}/auth/refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: loginCookie,
+      },
+      body: JSON.stringify({ refreshToken: 'invalid-refresh-token' }),
+    });
+
+    expect(refreshResponse.status).toBe(401);
+    expect(refreshResponse.headers.get('set-cookie')).toContain('Max-Age=0');
+    expect(await getTokenService()!.resolvePageSessionToken(pageToken)).toBeNull();
+  });
+
+  test('generic admin eligibility updates revoke rather than temporarily gate page sessions', async () => {
+    const created = await post(
+      '/auth/admin/users',
+      {
+        username: 'page-cookie-admin-update',
+        email: 'page-cookie-admin-update@test.com',
+        password: 'password123',
+      },
+      bootstrapAdminToken
+    );
+    const loginResponse = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: 'page-cookie-admin-update',
+        password: 'password123',
+      }),
+    });
+    const pageToken = cookieValue(
+      cookiePair(loginResponse.headers.get('set-cookie')!)
+    );
+    expect(await getTokenService()!.resolvePageSessionToken(pageToken)).not.toBeNull();
+
+    const suspended = await patch(
+      `/auth/admin/users/${created.data.user.userId}`,
+      { status: 'suspended' },
+      bootstrapAdminToken
+    );
+    expect(suspended.status).toBe(200);
+    expect(await getTokenService()!.resolvePageSessionToken(pageToken)).toBeNull();
+
+    const reactivated = await patch(
+      `/auth/admin/users/${created.data.user.userId}`,
+      { status: 'active' },
+      bootstrapAdminToken
+    );
+    expect(reactivated.status).toBe(200);
+    expect(await getTokenService()!.resolvePageSessionToken(pageToken)).toBeNull();
+  });
+});
+
 describe('Auth Plugin — Me', () => {
   test('GET /auth/me returns user data with valid token', async () => {
     const reg = await post('/auth/register', {
@@ -497,7 +722,7 @@ describe('Auth Plugin — Change Password', () => {
       password: 'oldpassword1',
     });
 
-    const { status, data } = await post(
+    const changed = await post(
       '/auth/change-password',
       {
         currentPassword: 'oldpassword1',
@@ -506,9 +731,10 @@ describe('Auth Plugin — Change Password', () => {
       reg.data.accessToken
     );
 
-    expect(status).toBe(200);
-    expect(data.accessToken).toBeDefined();
-    expect(data.refreshToken).toBeDefined();
+    expect(changed.status).toBe(200);
+    expect(changed.data.accessToken).toBeDefined();
+    expect(changed.data.refreshToken).toBeDefined();
+    expectActivePageSession(changed);
 
     // Old password should no longer work
     const login = await post('/auth/login', {
@@ -650,6 +876,46 @@ describe('Auth Plugin — Full Flow', () => {
 // ─── Registration Policy And Configured Properties ────────────────────────
 
 describe('Auth Plugin — Registration Policy And Configured Properties', () => {
+  test('public registration applies configured default user properties', async () => {
+    const local = await startAuthApp({
+      userProperties: {
+        department: {
+          type: 'enum',
+          values: ['operations', 'clinical'],
+          default: 'operations',
+          editableBy: 'admin',
+        },
+        notificationsEnabled: {
+          type: 'boolean',
+          default: true,
+          editableBy: 'user',
+        },
+      },
+    });
+
+    try {
+      const owner = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'property-owner',
+        email: 'property-owner@test.com',
+        password: 'password123',
+      });
+      expect(owner.status).toBe(200);
+      expect(owner.data.user.properties.department).toBe('operations');
+      expect(owner.data.user.properties.notificationsEnabled).toBe('true');
+
+      const user = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'property-user',
+        email: 'property-user@test.com',
+        password: 'password123',
+      });
+      expect(user.status).toBe(200);
+      expect(user.data.user.properties.department).toBe('operations');
+      expect(user.data.user.properties.notificationsEnabled).toBe('true');
+    } finally {
+      await local.stop();
+    }
+  });
+
   test('admin-only mode keeps bootstrap open, then requires admin-created users', async () => {
     const local = await startAuthApp({
       registration: {
@@ -768,8 +1034,311 @@ describe('Auth Plugin — Registration Policy And Configured Properties', () => 
       );
       expect(invalidAdminProperty.status).toBe(400);
       expect(invalidAdminProperty.data.code).toBe('INVALID_PROPERTY_VALUE');
+
+      const customProperty = await requestJson(
+        local.url,
+        'PUT',
+        `/auth/admin/users/${created.data.user.userId}/properties/shift`,
+        { value: 'night' },
+        bootstrap.data.accessToken
+      );
+      expect(customProperty.status).toBe(200);
+
+      const customSaved = await requestJson(
+        local.url,
+        'GET',
+        `/auth/admin/users/${created.data.user.userId}`,
+        undefined,
+        bootstrap.data.accessToken
+      );
+      expect(customSaved.data.user.properties.shift).toBe('night');
+
+      const customDeleted = await requestJson(
+        local.url,
+        'DELETE',
+        `/auth/admin/users/${created.data.user.userId}/properties/shift`,
+        undefined,
+        bootstrap.data.accessToken
+      );
+      expect(customDeleted.status).toBe(200);
+
+      const afterDelete = await requestJson(
+        local.url,
+        'GET',
+        `/auth/admin/users/${created.data.user.userId}`,
+        undefined,
+        bootstrap.data.accessToken
+      );
+      expect(afterDelete.data.user.properties.shift).toBeUndefined();
     } finally {
       await local.stop();
+    }
+  });
+
+  test('disabled registration mode keeps bootstrap open, then blocks all user creation', async () => {
+    const local = await startAuthApp({
+      registration: {
+        mode: 'disabled',
+      },
+    });
+
+    try {
+      const bootstrap = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'disabled-owner',
+        email: 'disabled-owner@test.com',
+        password: 'password123',
+      });
+      expect(bootstrap.status).toBe(200);
+      expect(bootstrap.data.user.role).toBe('admin');
+
+      const closed = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'closed-disabled',
+        email: 'closed-disabled@test.com',
+        password: 'password123',
+      });
+      expect(closed.status).toBe(403);
+      expect(closed.data.code).toBe('REGISTRATION_DISABLED');
+
+      const adminCreated = await requestJson(
+        local.url,
+        'POST',
+        '/auth/admin/users',
+        {
+          username: 'blocked-worker',
+          email: 'blocked-worker@test.com',
+          password: 'password123',
+        },
+        bootstrap.data.accessToken
+      );
+      expect(adminCreated.status).toBe(403);
+      expect(adminCreated.data.code).toBe('REGISTRATION_DISABLED');
+    } finally {
+      await local.stop();
+    }
+  });
+});
+
+// ─── MFA Flows ────────────────────────────────────────────────────────────
+
+describe('Auth Plugin — MFA Flows', () => {
+  test('required TOTP setup gates registration and login until MFA succeeds', async () => {
+    const local = await startAuthApp({
+      mfa: {
+        enabled: true,
+        policy: 'required',
+        methods: ['totp'],
+        totp: {
+          issuer: 'Zero Tests',
+          encryptionKey: 'totp-secret-key',
+        },
+      },
+    });
+
+    try {
+      const registered = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'mfa-owner',
+        email: 'mfa-owner@test.com',
+        password: 'password123',
+      });
+      expect(registered.status).toBe(200);
+      expect(registered.data.accessToken).toBeUndefined();
+      expect(registered.data.mfaSetupRequired).toBe(true);
+      expect(registered.data.mfaSetupToken).toBeString();
+
+      const setup = await requestJson(local.url, 'POST', '/auth/mfa/setup', {
+        setupToken: registered.data.mfaSetupToken,
+        method: 'totp',
+      });
+      expect(setup.status).toBe(200);
+      expect(setup.data.method.type).toBe('totp');
+      expect(setup.data.totp.secret).toBeString();
+      expect(setup.data.totp.otpauthUrl).toContain('otpauth://totp/');
+
+      const setupCode = generateTotpCode({ secret: setup.data.totp.secret });
+      const verifiedSetup = await requestJson(local.url, 'POST', '/auth/mfa/setup/verify', {
+        verificationToken: setup.data.verificationToken,
+        code: setupCode,
+      });
+      expect(verifiedSetup.status).toBe(200);
+      expect(verifiedSetup.data.accessToken).toBeDefined();
+      expect(verifiedSetup.data.refreshToken).toBeDefined();
+      expect(verifiedSetup.data.method.status).toBe('active');
+      expectActivePageSession(verifiedSetup);
+
+      const login = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'mfa-owner',
+        password: 'password123',
+      });
+      expect(login.status).toBe(200);
+      expect(login.data.accessToken).toBeUndefined();
+      expect(login.data.mfaChallengeRequired).toBe(true);
+      expect(login.data.mfaChallenge.method.type).toBe('totp');
+      expect(login.data.mfaChallenge.challengeToken).toBeString();
+
+      const challengeCode = generateTotpCode({ secret: setup.data.totp.secret });
+      const verifiedChallenge = await requestJson(local.url, 'POST', '/auth/mfa/challenge/verify', {
+        challengeToken: login.data.mfaChallenge.challengeToken,
+        code: challengeCode,
+      });
+      expect(verifiedChallenge.status).toBe(200);
+      expect(verifiedChallenge.data.accessToken).toBeDefined();
+      expect(verifiedChallenge.data.refreshToken).toBeDefined();
+      expect(verifiedChallenge.data.user.username).toBe('mfa-owner');
+      expectActivePageSession(verifiedChallenge);
+    } finally {
+      await local.stop();
+    }
+  });
+
+  test('email MFA sends a one-time code without requiring a public app URL', async () => {
+    const provider = new MemoryEmailProvider();
+    configureEmail({
+      from: 'Zero <noreply@test.com>',
+      provider,
+    }, {
+      name: 'Zero Test',
+    });
+
+    const local = await startAuthApp({
+      mfa: {
+        enabled: true,
+        policy: 'required',
+        methods: ['email'],
+      },
+    });
+
+    try {
+      const registered = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'email-mfa-owner',
+        email: 'email-mfa-owner@test.com',
+        password: 'password123',
+      });
+      expect(registered.status).toBe(200);
+      expect(registered.data.mfaSetupRequired).toBe(true);
+
+      const setup = await requestJson(local.url, 'POST', '/auth/mfa/setup', {
+        setupToken: registered.data.mfaSetupToken,
+        method: 'email',
+      });
+      expect(setup.status).toBe(200);
+      expect(setup.data.challenge.delivery).toBe('email');
+      expect(provider.messages).toHaveLength(1);
+
+      const setupCode = extractOtpFromEmail(provider.messages[0].message.text);
+      const verifiedSetup = await requestJson(local.url, 'POST', '/auth/mfa/setup/verify', {
+        verificationToken: setup.data.verificationToken,
+        code: setupCode,
+      });
+      expect(verifiedSetup.status).toBe(200);
+      expect(verifiedSetup.data.accessToken).toBeDefined();
+      expectActivePageSession(verifiedSetup);
+
+      const login = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'email-mfa-owner',
+        password: 'password123',
+      });
+      expect(login.status).toBe(200);
+      expect(login.data.mfaChallengeRequired).toBe(true);
+      expect(provider.messages).toHaveLength(2);
+
+      const challengeCode = extractOtpFromEmail(provider.messages[1].message.text);
+      const verifiedChallenge = await requestJson(local.url, 'POST', '/auth/mfa/challenge/verify', {
+        challengeToken: login.data.mfaChallenge.challengeToken,
+        code: challengeCode,
+      });
+      expect(verifiedChallenge.status).toBe(200);
+      expect(verifiedChallenge.data.accessToken).toBeDefined();
+      expectActivePageSession(verifiedChallenge);
+    } finally {
+      await local.stop();
+      configureEmail(false);
+    }
+  });
+
+  test('optional MFA requested during email-gated registration starts after email verification', async () => {
+    const provider = new MemoryEmailProvider();
+    configureEmail({
+      from: 'Zero <noreply@test.com>',
+      provider,
+    }, {
+      name: 'Zero Test',
+      publicUrl: 'https://app.test',
+    });
+
+    const local = await startAuthApp({
+      account: {
+        requireEmailVerification: true,
+      },
+      mfa: {
+        enabled: true,
+        policy: 'optional',
+        methods: ['totp'],
+        totp: {
+          issuer: 'Zero Tests',
+          encryptionKey: 'totp-secret-key',
+        },
+      },
+    });
+
+    try {
+      const admin = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'optional-mfa-owner',
+        email: 'optional-mfa-owner@test.com',
+        password: 'password123',
+      });
+      expect(admin.status).toBe(200);
+      expect(admin.data.accessToken).toBeDefined();
+      expect(provider.messages).toHaveLength(0);
+
+      const registered = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'optional-mfa-user',
+        email: 'optional-mfa-user@test.com',
+        password: 'password123',
+        mfaEnrollment: true,
+      });
+      expect(registered.status).toBe(200);
+      expect(registered.data.accessToken).toBeUndefined();
+      expect(registered.data.user.emailVerificationRequired).toBe(true);
+      expect(provider.messages).toHaveLength(1);
+
+      const blockedLogin = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'optional-mfa-user',
+        password: 'password123',
+      });
+      expect(blockedLogin.status).toBe(403);
+      expect(blockedLogin.data.code).toBe('EMAIL_VERIFICATION_REQUIRED');
+
+      const token = extractTokenFromEmail(provider.messages[0].message.text);
+      const verifiedEmail = await requestJson(local.url, 'POST', '/auth/verify-email', {
+        token,
+      });
+      expect(verifiedEmail.status).toBe(200);
+      expect(verifiedEmail.data.accessToken).toBeUndefined();
+      expect(verifiedEmail.data.refreshToken).toBeUndefined();
+      expect(verifiedEmail.data.mfaSetupRequired).toBe(true);
+      expect(verifiedEmail.data.mfaSetupToken).toBeString();
+      expect(verifiedEmail.data.mfa.methods).toEqual(['totp']);
+
+      const setup = await requestJson(local.url, 'POST', '/auth/mfa/setup', {
+        setupToken: verifiedEmail.data.mfaSetupToken,
+        method: 'totp',
+      });
+      expect(setup.status).toBe(200);
+      expect(setup.data.totp.secret).toBeString();
+
+      const setupCode = generateTotpCode({ secret: setup.data.totp.secret });
+      const verifiedSetup = await requestJson(local.url, 'POST', '/auth/mfa/setup/verify', {
+        verificationToken: setup.data.verificationToken,
+        code: setupCode,
+      });
+      expect(verifiedSetup.status).toBe(200);
+      expect(verifiedSetup.data.accessToken).toBeDefined();
+      expect(verifiedSetup.data.refreshToken).toBeDefined();
+      expect(verifiedSetup.data.user.username).toBe('optional-mfa-user');
+      expectActivePageSession(verifiedSetup);
+    } finally {
+      await local.stop();
+      configureEmail(false);
     }
   });
 });
@@ -819,8 +1388,11 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
         newPassword: 'newpassword1',
       });
       expect(reset.status).toBe(200);
-      expect(reset.data.accessToken).toBeDefined();
+      expect(reset.data.accessToken).toBeUndefined();
+      expect(reset.data.passwordUpdated).toBe(true);
+      expect(reset.data.signInRequired).toBe(true);
       expect(reset.data.user.passwordChangeRequired).toBe(false);
+      expectClearedPageSession(reset);
 
       const oldLogin = await requestJson(local.url, 'POST', '/auth/login', {
         username: 'resetme',
@@ -840,6 +1412,102 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       });
       expect(replay.status).toBe(400);
       expect(replay.data.code).toBe('ACTION_TOKEN_CONSUMED');
+    } finally {
+      await local.stop();
+      configureEmail(false);
+    }
+  });
+
+  test('password reset completes before a fresh-login MFA challenge is attempted', async () => {
+    let failDelivery = false;
+    let deliveryAttempts = 0;
+    const deliveredMessages: EmailMessage[] = [];
+    const provider: EmailProvider = {
+      name: 'switchable-mfa-delivery',
+      async send(message) {
+        deliveryAttempts += 1;
+        if (failDelivery) throw new Error('Simulated provider outage');
+        deliveredMessages.push(message);
+        return {
+          provider: this.name,
+          accepted: Array.isArray(message.to) ? message.to : [message.to],
+        };
+      },
+    };
+    configureEmail({
+      from: 'Zero <noreply@test.com>',
+      provider,
+    }, {
+      name: 'Zero Test',
+      publicUrl: 'https://app.test',
+    });
+
+    const local = await startAuthApp({
+      accountEmails: { passwordReset: true },
+      mfa: {
+        enabled: true,
+        policy: 'required',
+        methods: ['email'],
+      },
+    });
+
+    try {
+      const registered = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'mfa-reset-owner',
+        email: 'mfa-reset-owner@test.com',
+        password: 'oldpassword1',
+      });
+      expect(registered.status).toBe(200);
+      expect(registered.data.mfaSetupRequired).toBe(true);
+
+      const mfaSetup = await requestJson(local.url, 'POST', '/auth/mfa/setup', {
+        setupToken: registered.data.mfaSetupToken,
+        method: 'email',
+      });
+      expect(mfaSetup.status).toBe(200);
+
+      const setupCode = extractOtpFromEmail(deliveredMessages[0]!.text);
+      const verifiedSetup = await requestJson(local.url, 'POST', '/auth/mfa/setup/verify', {
+        verificationToken: mfaSetup.data.verificationToken,
+        code: setupCode,
+      });
+      expect(verifiedSetup.status).toBe(200);
+
+      const forgot = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'mfa-reset-owner@test.com',
+      });
+      expect(forgot.status).toBe(200);
+      expect(deliveredMessages).toHaveLength(2);
+
+      const token = extractTokenFromEmail(deliveredMessages[1]!.text);
+      failDelivery = true;
+      const reset = await requestJson(local.url, 'POST', '/auth/reset-password', {
+        token,
+        newPassword: 'newpassword1',
+      });
+      expect(reset.status).toBe(200);
+      expect(reset.data).toMatchObject({
+        passwordUpdated: true,
+        signInRequired: true,
+      });
+      expect(deliveryAttempts).toBe(2);
+      expectClearedPageSession(reset);
+
+      const oldLogin = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'mfa-reset-owner',
+        password: 'oldpassword1',
+      });
+      expect(oldLogin.status).toBe(401);
+      expect(oldLogin.data.code).toBe('INVALID_CREDENTIALS');
+
+      failDelivery = false;
+      const newLogin = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'mfa-reset-owner',
+        password: 'newpassword1',
+      });
+      expect(newLogin.status).toBe(200);
+      expect(newLogin.data.mfaChallengeRequired).toBe(true);
+      expect(deliveryAttempts).toBe(3);
     } finally {
       await local.stop();
       configureEmail(false);
@@ -919,6 +1587,400 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(first.status).toBe(200);
       expect(second.status).toBe(200);
       expect(provider.messages).toHaveLength(1);
+    } finally {
+      await local.stop();
+      configureEmail(false);
+    }
+  });
+
+  test('forgot password logs privacy-safe sent and suppressed outcomes', async () => {
+    const previousObservabilityConfig = getObservabilityRuntime().config;
+    const events = new MemoryEventStore();
+    configureObservability({ console: false, store: events });
+
+    const provider = new MemoryEmailProvider();
+    configureEmail({
+      from: 'Zero <noreply@test.com>',
+      provider,
+    }, {
+      name: 'Zero Test',
+      publicUrl: 'https://app.test',
+    });
+
+    const local = await startAuthApp({
+      accountEmails: {
+        passwordReset: true,
+        requestCooldown: '5m',
+      },
+    });
+
+    try {
+      const active = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'logged-reset',
+        email: 'logged-reset@test.com',
+        password: 'oldpassword1',
+      });
+      const suspended = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'suspended-reset',
+        email: 'suspended-reset@test.com',
+        password: 'oldpassword1',
+      });
+      expect(active.status).toBe(200);
+      expect(suspended.status).toBe(200);
+      local.db.prepare("UPDATE users SET status = 'suspended' WHERE user_id = ?")
+        .run(suspended.data.user.userId);
+
+      const unknownReset = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'private-missing-address@test.com',
+      });
+      const suspendedReset = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'suspended-reset@test.com',
+      });
+      const deliveredReset = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'logged-reset@test.com',
+      });
+      const cooldownReset = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'logged-reset@test.com',
+      });
+
+      expect(unknownReset.status).toBe(200);
+      expect(suspendedReset.status).toBe(200);
+      expect(deliveredReset.status).toBe(200);
+      expect(cooldownReset.status).toBe(200);
+      expect(provider.messages).toHaveLength(1);
+
+      const suppressedEvents = events.query({
+        code: OBS_CODES.AUTH_PASSWORD_RESET_SUPPRESSED.code,
+      }).events;
+      expect(suppressedEvents.map((event) => event.metadata?.reason)).toEqual([
+        'account_not_found',
+        'account_suspended',
+        'cooldown',
+      ]);
+
+      const sentEvents = events.query({
+        code: OBS_CODES.AUTH_PASSWORD_RESET_SENT.code,
+      }).events;
+      expect(sentEvents).toHaveLength(1);
+      expect(sentEvents[0].userId).toBe(active.data.user.userId);
+
+      const outcomeLog = JSON.stringify([...suppressedEvents, ...sentEvents]);
+      expect(outcomeLog).not.toContain('private-missing-address@test.com');
+      expect(outcomeLog).not.toContain('suspended-reset@test.com');
+      expect(outcomeLog).not.toContain('logged-reset@test.com');
+    } finally {
+      await local.stop();
+      configureEmail(false);
+      configureObservability(previousObservabilityConfig);
+    }
+  });
+
+  test('forgot password cleans failed tokens and retries durably in the background', async () => {
+    const previousObservabilityConfig = getObservabilityRuntime().config;
+    const events = new MemoryEventStore();
+    configureObservability({ console: false, store: events });
+
+    let attempts = 0;
+    const deliveredMessages: EmailMessage[] = [];
+    const provider: EmailProvider = {
+      name: 'fail-once',
+      async send(message) {
+        attempts += 1;
+        if (attempts === 1) throw new Error('Simulated provider failure');
+        deliveredMessages.push(message);
+        return {
+          provider: this.name,
+          accepted: Array.isArray(message.to) ? message.to : [message.to],
+        };
+      },
+    };
+    configureEmail({
+      from: 'Zero <noreply@test.com>',
+      provider,
+    }, {
+      name: 'Zero Test',
+      publicUrl: 'https://app.test',
+    });
+
+    const local = await startAuthApp({
+      accountEmails: {
+        passwordReset: true,
+        requestCooldown: '5m',
+      },
+    });
+
+    try {
+      const registered = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'retry-reset',
+        email: 'retry-reset@test.com',
+        password: 'oldpassword1',
+      });
+      expect(registered.status).toBe(200);
+
+      const unknown = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'unknown-retry-reset@test.com',
+      });
+      const failed = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'retry-reset@test.com',
+      });
+      expect(failed.status).toBe(unknown.status);
+      expect(failed.data).toEqual(unknown.data);
+      expect(failed.status).toBe(200);
+      expect(failed.data.ok).toBe(true);
+
+      const failedEvents = events.query({
+        code: OBS_CODES.AUTH_PASSWORD_RESET_DELIVERY_FAILED.code,
+      }).events;
+      expect(failedEvents).toHaveLength(1);
+      expect(failedEvents[0].userId).toBe(registered.data.user.userId);
+      expect(failedEvents[0].metadata).toEqual({
+        source: 'forgot-password',
+        cleanupSucceeded: true,
+      });
+      const failedOutcomeLog = JSON.stringify(failedEvents[0]);
+      expect(failedOutcomeLog).not.toContain('retry-reset@test.com');
+      expect(failedOutcomeLog).not.toContain('fail-once');
+
+      const retried = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'retry-reset@test.com',
+      });
+      expect(retried.status).toBe(200);
+      expect(retried.data.ok).toBe(true);
+      await waitUntil(() => attempts === 2);
+      expect(attempts).toBe(2);
+      expect(deliveredMessages).toHaveLength(1);
+
+      const activeTokens = local.db.prepare(
+        `SELECT COUNT(*) as count
+         FROM _auth_action_tokens
+         WHERE type = 'password_reset' AND consumed_at IS NULL`
+      ).get() as { count: number };
+      expect(activeTokens.count).toBe(1);
+    } finally {
+      await local.stop();
+      configureEmail(false);
+      configureObservability(previousObservabilityConfig);
+    }
+  });
+
+  test('email verification gates public registration until the emailed token is consumed', async () => {
+    const provider = new MemoryEmailProvider();
+    configureEmail({
+      from: 'Zero <noreply@test.com>',
+      provider,
+    }, {
+      name: 'Zero Test',
+      publicUrl: 'https://app.test',
+    });
+
+    const local = await startAuthApp({
+      account: {
+        requireEmailVerification: true,
+      },
+    });
+
+    try {
+      const admin = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'verify-owner',
+        email: 'verify-owner@test.com',
+        password: 'password123',
+      });
+      expect(admin.status).toBe(200);
+      expect(admin.data.accessToken).toBeDefined();
+      expect(provider.messages).toHaveLength(0);
+
+      const registered = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'verify-me',
+        email: 'verify-me@test.com',
+        password: 'password123',
+      });
+      expect(registered.status).toBe(200);
+      expect(registered.data.accessToken).toBeUndefined();
+      expect(registered.data.refreshToken).toBeUndefined();
+      expect(registered.data.user.emailVerificationRequired).toBe(true);
+      expect(registered.data.user.emailVerifiedAt).toBeNull();
+      expect(provider.messages).toHaveLength(1);
+      expect(provider.messages[0].message.to).toBe('verify-me@test.com');
+      expect(provider.messages[0].message.subject).toBe('Verify your Zero Test email');
+
+      const blockedLogin = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'verify-me',
+        password: 'password123',
+      });
+      expect(blockedLogin.status).toBe(403);
+      expect(blockedLogin.data.code).toBe('EMAIL_VERIFICATION_REQUIRED');
+
+      const token = extractTokenFromEmail(provider.messages[0].message.text);
+      const inspected = await requestJson(local.url, 'GET', `/auth/action-token/${token}`);
+      expect(inspected.status).toBe(200);
+      expect(inspected.data.type).toBe('email_verification');
+
+      const verified = await requestJson(local.url, 'POST', '/auth/verify-email', {
+        token,
+      });
+      expect(verified.status).toBe(200);
+      expect(verified.data.accessToken).toBeDefined();
+      expect(verified.data.refreshToken).toBeDefined();
+      expect(verified.data.user.emailVerificationRequired).toBe(false);
+      expect(typeof verified.data.user.emailVerifiedAt).toBe('number');
+      expectActivePageSession(verified);
+
+      const protectedRoute = await requestJson(
+        local.url,
+        'GET',
+        '/api/whoami',
+        undefined,
+        verified.data.accessToken
+      );
+      expect(protectedRoute.status).toBe(200);
+
+      const replay = await requestJson(local.url, 'POST', '/auth/verify-email', {
+        token,
+      });
+      expect(replay.status).toBe(400);
+      expect(replay.data.code).toBe('ACTION_TOKEN_CONSUMED');
+    } finally {
+      await local.stop();
+      configureEmail(false);
+    }
+  });
+
+  test('email verification validates email config before creating gated users', async () => {
+    configureEmail(false);
+    const local = await startAuthApp({
+      account: {
+        requireEmailVerification: true,
+      },
+    });
+
+    try {
+      const admin = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'verify-config-owner',
+        email: 'verify-config-owner@test.com',
+        password: 'password123',
+      });
+      expect(admin.status).toBe(200);
+
+      const gated = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'verify-config-user',
+        email: 'verify-config-user@test.com',
+        password: 'password123',
+      });
+      expect(gated.status).toBe(503);
+      expect(gated.data.code).toBe('EMAIL_NOT_CONFIGURED');
+
+      const row = local.db
+        .prepare("SELECT COUNT(*) as count FROM users WHERE email = 'verify-config-user@test.com'")
+        .get() as { count: number };
+      expect(row.count).toBe(0);
+    } finally {
+      await local.stop();
+      configureEmail(false);
+    }
+  });
+
+  test('resend verification hides unknown and cooldown repeat requests', async () => {
+    const provider = new MemoryEmailProvider();
+    configureEmail({
+      from: 'Zero <noreply@test.com>',
+      provider,
+    }, {
+      name: 'Zero Test',
+      publicUrl: 'https://app.test',
+    });
+
+    const local = await startAuthApp({
+      account: {
+        requireEmailVerification: true,
+      },
+      accountEmails: {
+        requestCooldown: '5m',
+      },
+    });
+
+    try {
+      const admin = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'verify-resend-owner',
+        email: 'verify-resend-owner@test.com',
+        password: 'password123',
+      });
+      expect(admin.status).toBe(200);
+
+      const unknown = await requestJson(local.url, 'POST', '/auth/resend-verification', {
+        email: 'missing@test.com',
+      });
+      expect(unknown.status).toBe(200);
+      expect(provider.messages).toHaveLength(0);
+
+      const registered = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'verify-resend-user',
+        email: 'verify-resend-user@test.com',
+        password: 'password123',
+      });
+      expect(registered.status).toBe(200);
+      expect(provider.messages).toHaveLength(1);
+
+      const first = await requestJson(local.url, 'POST', '/auth/resend-verification', {
+        email: 'verify-resend-user@test.com',
+      });
+      const second = await requestJson(local.url, 'POST', '/auth/resend-verification', {
+        email: 'verify-resend-user@test.com',
+      });
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(provider.messages).toHaveLength(1);
+    } finally {
+      await local.stop();
+      configureEmail(false);
+    }
+  });
+
+  test('forgot password uses auth branding and custom email template overrides', async () => {
+    const provider = new MemoryEmailProvider();
+    configureEmail({
+      from: 'Zero <noreply@test.com>',
+      provider,
+    }, {
+      name: 'Runtime Name',
+      publicUrl: 'https://app.test',
+    });
+
+    const local = await startAuthApp({
+      branding: {
+        appName: 'Branded Auth',
+        brandColor: '#155eef',
+      },
+      accountEmails: {
+        passwordReset: true,
+      },
+      emails: defineAuthEmailTemplates({
+        passwordReset: (ctx) => ({
+          subject: `Custom ${ctx.branding.appName}`,
+          text: `${ctx.defaultText}\n\nTemplate key: ${ctx.key}`,
+          html: ctx.defaultHtml,
+        }),
+      }),
+    });
+
+    try {
+      const registered = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'custom-template-reset',
+        email: 'custom-template-reset@test.com',
+        password: 'oldpassword1',
+      });
+      expect(registered.status).toBe(200);
+
+      const forgot = await requestJson(local.url, 'POST', '/auth/forgot-password', {
+        email: 'custom-template-reset@test.com',
+      });
+      expect(forgot.status).toBe(200);
+      expect(provider.messages).toHaveLength(1);
+
+      const message = provider.messages[0].message;
+      expect(message.subject).toBe('Custom Branded Auth');
+      expect(message.text).toContain('A password reset was requested for your Branded Auth account.');
+      expect(message.text).toContain('Template key: passwordReset');
+      expect(extractTokenFromEmail(message.text)).toBeTruthy();
     } finally {
       await local.stop();
       configureEmail(false);
@@ -1006,6 +2068,9 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
         newPassword: 'newpassword1',
       });
       expect(reset.status).toBe(200);
+      expect(reset.data.passwordUpdated).toBe(true);
+      expect(reset.data.signInRequired).toBe(true);
+      expectClearedPageSession(reset);
 
       const newLogin = await requestJson(local.url, 'POST', '/auth/login', {
         username: 'worker-reset',
@@ -1172,6 +2237,9 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       });
       expect(setup.status).toBe(200);
       expect(setup.data.user.passwordChangeRequired).toBe(false);
+      expect(setup.data.passwordUpdated).toBe(true);
+      expect(setup.data.signInRequired).toBe(true);
+      expectClearedPageSession(setup);
 
       const login = await requestJson(local.url, 'POST', '/auth/login', {
         username: 'setup-worker',

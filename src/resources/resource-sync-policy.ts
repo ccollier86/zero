@@ -37,7 +37,7 @@ export interface ResourceSyncPolicyServiceOptions {
 }
 
 type ResourceSyncReadDecision =
-  | { ok: true; filter?: SyncRowFilter }
+  | { ok: true; filter?: SyncRowFilter; fingerprint: string }
   | { ok: false; reason: string; code?: string };
 
 type ResourceSyncDenyDecision = { ok: false; reason: string; code?: string };
@@ -57,15 +57,22 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
   ): Promise<SyncResourceTableAccess> {
     const readable = new Set<string>();
     const rowFilters = new Map<string, SyncRowFilter>();
+    const fingerprints: Array<[string, string]> = [];
 
     for (const table of context.tableNames) {
       const decision = await this.evaluateSyncRead(table, context.authContext);
       if (!decision.ok) continue;
       readable.add(table);
       if (decision.filter) rowFilters.set(table, decision.filter);
+      fingerprints.push([table, decision.fingerprint]);
     }
 
-    return { readableTables: readable, rowFilters };
+    fingerprints.sort(([left], [right]) => left.localeCompare(right));
+    return {
+      readableTables: readable,
+      rowFilters,
+      policyFingerprint: JSON.stringify(fingerprints),
+    };
   }
 
   /** Authorize and optionally stamp one direct sync mutation. */
@@ -144,7 +151,7 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     authContext: SyncAuthContext | null
   ): Promise<ResourceSyncReadDecision> {
     const resource = this.options.registry.getByTable(table);
-    if (!resource) return { ok: true };
+    if (!resource) return { ok: true, fingerprint: 'unmanaged' };
 
     if (!this.supportsAction(resource, 'list')) {
       return {
@@ -158,10 +165,14 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     if (!decision.allowed) return policyDenied(decision);
 
     if (decision.constraints && decision.constraints.length > 0) {
-      return { ok: true, filter: createConstraintRowFilter(decision.constraints) };
+      return {
+        ok: true,
+        filter: createConstraintRowFilter(decision.constraints),
+        fingerprint: JSON.stringify(decision.constraints),
+      };
     }
 
-    return { ok: true };
+    return { ok: true, fingerprint: 'unfiltered' };
   }
 
   private evaluatePolicy(

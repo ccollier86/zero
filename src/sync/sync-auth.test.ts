@@ -68,6 +68,74 @@ describe('resolveSyncAuthContext', () => {
     });
   });
 
+  test('rejects signature-only payloads without hydrated identity', async () => {
+    const result = await resolveSyncAuthContext('native-token', {
+      getTokenVerifier: () => ({
+        async verifyAccessToken() {
+          return { sub: 'user-1' };
+        },
+      }),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      closeCode: 4001,
+      reason: 'Invalid auth token',
+    });
+  });
+
+  test('prefers live account resolution over signature-only verification', async () => {
+    let signatureOnlyVerifierCalled = false;
+    const verifier: SyncTokenVerifier = {
+      async resolveAuthContext() {
+        return null;
+      },
+      async verifyAccessToken() {
+        signatureOnlyVerifierCalled = true;
+        return { sub: 'suspended', email: 'user@test.local', role: 'user' };
+      },
+    };
+
+    const result = await resolveSyncAuthContext('signed-but-revoked', {
+      getTokenVerifier: () => verifier,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      closeCode: 4001,
+      reason: 'Invalid auth token',
+    });
+    expect(signatureOnlyVerifierCalled).toBe(false);
+  });
+
+  test('uses current role and identity returned by live account resolution', async () => {
+    const verifier: SyncTokenVerifier = {
+      async resolveAuthContext() {
+        return {
+          userId: 'user-1',
+          email: 'renamed@test.local',
+          role: 'admin',
+        };
+      },
+      async verifyAccessToken() {
+        return { sub: 'user-1', email: 'old@test.local', role: 'user' };
+      },
+    };
+
+    const result = await resolveSyncAuthContext('current-token', {
+      getTokenVerifier: () => verifier,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      authContext: {
+        userId: 'user-1',
+        email: 'renamed@test.local',
+        role: 'admin',
+      },
+    });
+  });
+
   test('maps a user token to sync auth context', async () => {
     const result = await resolveSyncAuthContext('user-token', {
       getTokenVerifier: () => createVerifier(),

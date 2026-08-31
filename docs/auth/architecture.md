@@ -12,7 +12,7 @@ Four components, one shared database. Auth is an Elysia plugin that defines tabl
 │  │  Auth Plugin    │   │  Auth Middleware   │   │  Sync Plugin     │  │
 │  │                 │   │                   │   │                  │  │
 │  │ POST /auth/*    │   │ derive authContext │   │ WS /sync         │  │
-│  │ GET /auth/me    │   │ (stateless JWT)   │   │ onChange→publish  │  │
+│  │ GET /auth/me    │   │ (live resolution) │   │ onChange→publish  │  │
 │  │ GET /auth/jwks  │   │                   │   │                  │  │
 │  └────────┬────────┘   └───────────────────┘   └────────┬─────────┘  │
 │           │                                              │           │
@@ -25,6 +25,7 @@ Four components, one shared database. Auth is an Elysia plugin that defines tabl
 │                     │ _credentials  │◄── internal (no broadcast)     │
 │                     │ _refresh_tkns │◄── internal (no broadcast)     │
 │                     │ _auth_config  │◄── internal (no broadcast)     │
+│                     │ _auth_email_outbox │◄── durable auth delivery  │
 │                     │ todos         │◄── broadcast (app table)       │
 │                     │ _changes      │◄── internal (ring buffer)      │
 │                     └───────────────┘                                │
@@ -35,23 +36,61 @@ Four components, one shared database. Auth is an Elysia plugin that defines tabl
 
 ### Auth Plugin (`auth.plugin.ts`)
 
-Elysia plugin — owns authentication logic, routes, and service lifecycle.
+Elysia composition root — owns plugin lifecycle wiring, shared auth error
+mapping, global service derives, and subplugin registration.
 
 **Owns:**
-- Table definitions for `users`, `user_properties`, `_credentials`, `_refresh_tokens`, legacy `_auth_action_tokens`, `_auth_config`
-- Registration, login, refresh, logout, password-change, and account lifecycle routes
-- Service lifecycle (UserStore, TokenService, UserPropertyService, AuthActionTokenService, and AccountEmailService creation in `onStart`, cleanup in `onStop`)
-- Derived `authStore` and `tokenService` in global Elysia context
+- Resolving auth behavior config once.
+- Calling `startAuthRuntime()` and `stopAuthRuntime()` from Elysia lifecycle.
+- Deriving runtime auth services into global Elysia context.
+- Mounting session, account, admin, MFA, and current-user property route plugins.
 
 **Does not own:**
-- The database (receives shared ReactiveDB via config)
-- JWT verification on arbitrary routes (that's the middleware)
-- WebSocket broadcast (that's the sync engine via ReactiveDB onChange)
-- Access control policies (that's application code)
+- Table definitions (that's `auth-schema.ts`).
+- Service construction details (that's `auth-runtime.ts`).
+- Registration, login, refresh, logout, password-change, or `/me` route bodies (that's `auth-session.plugin.ts`).
+- Current-user property routes (that's `auth-user-properties.plugin.ts`).
+- JWT verification on arbitrary routes (that's the middleware).
+- WebSocket broadcast (that's the sync engine via ReactiveDB onChange).
+- Access control policies (that's application code).
+
+### Auth Runtime (`auth-runtime.ts`)
+
+Service lifecycle boundary for auth.
+
+**Owns:**
+- Creating `UserStore`, `TokenService`, `UserPropertyService`,
+  `AuthActionTokenService`, `AccountEmailService`, `AuthEmailOutbox`,
+  `MfaMethodStore`, `MfaService`, `MfaChallengeStore`, and
+  `MfaChallengeService`.
+- Enabling SQLite foreign keys and calling auth schema setup at startup.
+- Resetting service singletons at shutdown.
+- Exporting typed getters used by auth subplugins and middleware.
+
+### Auth Schema (`auth-schema.ts`)
+
+Schema setup boundary for auth.
+
+**Owns:**
+- Creating/upgrading `users`, `user_properties`, `_credentials`,
+  `_refresh_tokens`, `_auth_action_tokens`, `_auth_email_outbox`,
+  `_auth_mfa_methods`, `_auth_mfa_challenges`, `_auth_mfa_recovery_codes`, and
+  `_auth_config`.
+- Keeping raw SQL table setup out of route controllers.
+
+### Auth Session Routes (`auth-session.plugin.ts`)
+
+Elysia controller for core session and identity routes.
+
+**Owns:**
+- `/auth/config`, `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/change-password`, `/auth/me`, and `/auth/jwks`.
+- Delegating MFA continuation decisions to `auth-mfa-response.ts`.
+- Setting, rotating, revoking, or clearing the page cookie when session state changes.
 
 ### Auth Middleware (`auth.middleware.ts`)
 
-Stateless JWT verification — separate from the auth plugin. Cross-cutting concern.
+JWT verification plus live user/session resolution — separate from the auth
+plugin and applied as a cross-cutting concern.
 
 **Owns:**
 - Extracting Bearer token from `Authorization` header
@@ -59,9 +98,10 @@ Stateless JWT verification — separate from the auth plugin. Cross-cutting conc
 - Resolving `authContext` and auth guard helpers into Elysia context
 
 **Does not own:**
-- Token issuance (that's the auth plugin)
+- Token issuance (that's `TokenService`, called by session/account/MFA routes)
 - Access control decisions (that's each route — middleware just provides context)
-- Refresh token handling (that's the auth plugin's `/auth/refresh` route)
+- Refresh token handling (that's `auth-session.plugin.ts`)
+- Page-session cookie authentication (that's `page-session.ts` plus the page router)
 
 **AuthContext shape:**
 
@@ -90,6 +130,20 @@ interface AuthContext {
 
 This keeps the middleware simple and pushes authorization decisions to the edge — the route handler that knows what it needs.
 
+### Page Session (`page-session.ts`)
+
+Server-rendered pages have a separate ambient credential. Completed auth flows
+set a host-only, HttpOnly, `SameSite=Lax` cookie containing a signed page JWT
+with `sub` and the backing refresh-session ID (`sid`). The page router resolves
+it only after ruling out an actual `route.ts` handler and only for `GET` or
+`HEAD`. Any explicit `Authorization` header remains authoritative.
+
+Validation verifies the dedicated `auth-page-session` issuer, then requires an
+active, unexpired `_refresh_tokens` row and a currently eligible user. Rotation,
+logout, password changes, suspension, deletion, and admin session revocation
+therefore invalidate SSR identity immediately. Global middleware, auth APIs,
+server extensions, unsafe methods, and WebSocket sync remain Bearer-only.
+
 ### User Store (`user-store.ts`)
 
 SQLite operations on auth tables. Same prepared-statement pattern as `src/persistence/sqlite-hot-store.ts`.
@@ -98,7 +152,7 @@ SQLite operations on auth tables. Same prepared-statement pattern as `src/persis
 - User CRUD (create, read, update, delete)
 - Credential management (hash storage, password verification)
 - User properties KV (set, get, delete, list)
-- Refresh token storage (insert, lookup by hash, revoke)
+- Refresh token storage (insert, lookup by hash or session ID, revoke)
 - Auth config storage (keypair persistence)
 
 **Does not own:**
@@ -114,6 +168,7 @@ JWT signing, verification, keypair management, refresh rotation.
 - ECDSA P-256 keypair lifecycle (generate, persist, load)
 - Access token signing and verification via `jose`
 - Refresh token generation, hashing, rotation
+- Dedicated page-session JWT issuance and live refresh-session validation
 - JWKS public key export
 
 **Does not own:**
@@ -128,7 +183,7 @@ Same conventions as every other plugin in this codebase:
 | Convention | Auth implementation | Existing precedent |
 |------------|--------------------|--------------------|
 | Factory function | `createAuthPlugin(config)` | `createIngestionQueuePlugin(getMemoryService)` |
-| `onStart` / `onStop` lifecycle | Define tables, init keypair, create services / cleanup | `persistence.plugin.ts` — init stores / dispose |
+| `onStart` / `onStop` lifecycle | Delegate to `auth-runtime.ts` for schema/services / cleanup | `persistence.plugin.ts` — init stores / dispose |
 | `derive({ as: 'global' })` | Expose `authStore`, `tokenService` | `persistence.plugin.ts` — exposes `persistence` |
 | Lazy getter export | `getAuthStore()`, `getTokenService()` | `getPersistenceColdStore()`, `getKnowledgeMemoryService()` |
 | Named plugin | `new Elysia({ name: 'auth', prefix: '/auth' })` | `new Elysia({ name: 'persistence' })` |
@@ -140,110 +195,18 @@ Same conventions as every other plugin in this codebase:
 ```ts
 // src/auth/auth.plugin.ts
 
-import Elysia, { t } from 'elysia';
-import { UserStore } from './user-store';
-import { TokenService } from './token-service';
-import type { AuthPluginConfig } from './types';
-
-let _authStore: UserStore | null = null;
-let _tokenService: TokenService | null = null;
-
-/** Lazy getter — other plugins/routes access the UserStore */
-export function getAuthStore(): UserStore | null {
-  return _authStore;
-}
-
-/** Lazy getter — middleware and external services access the TokenService */
-export function getTokenService(): TokenService | null {
-  return _tokenService;
-}
-
 export function createAuthPlugin(config: AuthPluginConfig) {
+  const authConfig = resolveAuthBehaviorConfig(config);
+
   return new Elysia({ name: 'auth', prefix: '/auth' })
-
-    // ─── Lifecycle ──────────────────────────────────────
-    .onStart(async () => {
-      // Define public tables on the shared ReactiveDB
-      config.db.defineTable('users', {
-        user_id:    'text primary key',
-        username:   'text unique not null',
-        email:      'text unique not null',
-        first_name: 'text',
-        last_name:  'text',
-        role:       'text not null default \'user\'',
-        created_at: 'integer not null',
-        updated_at: 'integer',
-      });
-      config.db.defineTable('user_properties', {
-        user_id: 'text not null',
-        key:     'text not null',
-        value:   'text',
-      }, 'PRIMARY KEY (user_id, key)');
-
-      // Internal tables — raw SQL for _ prefix
-      config.db.exec(`
-        CREATE TABLE IF NOT EXISTS _credentials (
-          user_id TEXT PRIMARY KEY,
-          password_hash TEXT NOT NULL,
-          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-        );
-        CREATE TABLE IF NOT EXISTS _refresh_tokens (
-          token_id TEXT PRIMARY KEY,
-          user_id TEXT NOT NULL,
-          token_hash TEXT NOT NULL,
-          expires_at INTEGER NOT NULL,
-          created_at INTEGER NOT NULL,
-          revoked_at INTEGER,
-          FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-        );
-        CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON _refresh_tokens(token_hash);
-        CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON _refresh_tokens(user_id);
-        CREATE TABLE IF NOT EXISTS _auth_config (
-          key TEXT PRIMARY KEY,
-          value TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS _audit_log (
-          id TEXT PRIMARY KEY,
-          user_id TEXT NOT NULL,
-          event_type TEXT NOT NULL,
-          data TEXT,
-          ts INTEGER NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_audit_log_user ON _audit_log(user_id);
-        CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON _audit_log(ts);
-      `);
-
-      // Create services
-      _authStore = new UserStore(config.db);
-      _tokenService = await TokenService.create({
-        db: config.db,
-        accessTokenTTL: config.accessTokenTTL,
-        refreshTokenTTL: config.refreshTokenTTL,
-      });
-
-      console.log('[auth] Enabled');
-    })
-
-    .onStop(() => {
-      _authStore = null;
-      _tokenService = null;
-      console.log('[auth] Stopped');
-    })
-
-    // ─── Derive: expose services to all routes/plugins ──
-    .derive({ as: 'global' }, () => ({
-      authStore: _authStore,
-      tokenService: _tokenService,
-    }))
-
-    // ─── Routes ─────────────────────────────────────────
-    .post('/register', ...)     // → { accessToken, refreshToken, user }
-    .post('/login', ...)        // → { accessToken, refreshToken, user }
-    .post('/refresh', ...)      // → { accessToken, refreshToken }
-    .post('/logout', ...)       // → revoke refresh token (see Logout below)
-    .post('/change-password', ...)  // → change password (requires auth)
-    .get('/me', ...)            // → current user + properties (requires auth)
-    .get('/jwks', ...)          // → public key in JWK Set format
+    .onStart(() => startAuthRuntime(config, authConfig))
+    .onStop(() => stopAuthRuntime())
+    .derive({ as: 'global' }, () => getAuthRuntimeContext())
+    .use(createAuthSessionPlugin({ /* runtime getters */ }))
+    .use(createAuthAccountPlugin({ /* runtime getters */ }))
+    .use(createAuthMfaPlugin({ /* runtime getters */ }))
+    .use(createAuthAdminPlugin({ /* runtime getters */ }))
+    .use(createAuthUserPropertiesPlugin({ /* runtime getters */ }));
 }
 ```
 
@@ -365,11 +328,13 @@ Client                  Auth Middleware            TokenService          Route H
   │  Authorization: Bearer  │                          │                      │
   │   eyJhbGci...           │                          │                      │
   │ ───────────────────────►│                          │                      │
-  │                         │  verifyAccessToken(jwt)  │                      │
+  │                         │  resolveAuthContext(jwt) │                      │
   │                         │ ────────────────────────►│                      │
-  │                         │                          │  jose.jwtVerify()    │
-  │                         │                          │  check exp, alg      │
-  │                         │    payload               │                      │
+  │                         │                          │  verify signature,   │
+  │                         │                          │  expiry + issuer;    │
+  │                         │                          │  load current user,  │
+  │                         │                          │  generation/session  │
+  │                         │    current authContext   │                      │
   │                         │ ◄────────────────────────│                      │
   │                         │                          │                      │
   │                         │  derive: authContext =    │                      │
@@ -381,7 +346,11 @@ Client                  Auth Middleware            TokenService          Route H
   │ ◄────────────────────────────────────────────────────────────────────────│
 ```
 
-No database lookup during verification. The access token carries all claims. Stateless.
+Cryptographic JWT verification is stateless, but request authentication is
+not. `resolveAuthContext()` rehydrates the current user, checks account gates
+and `authGeneration`, and validates the live refresh family for native tokens.
+This makes suspension, password/security transitions, native sign-out, and
+native refresh-replay revocation effective without waiting for JWT expiry.
 
 ### Token Refresh
 
@@ -422,33 +391,32 @@ Old refresh token is always revoked — even if the new one is generated. One-ti
 
 ### Logout
 
-`POST /auth/logout` requires **both** tokens:
-
-- **Access token** in `Authorization: Bearer` header — verified by auth middleware, proves identity
-- **Refresh token** in JSON body `{ refreshToken }` — identifies which token to revoke
+`POST /auth/logout` accepts an optional refresh token in
+`{ refreshToken? }`. It does not require Bearer auth: logout must remain able to
+expire the HttpOnly page cookie even when the access token and browser-managed
+refresh token have already been lost.
 
 ```
 Client                    Auth Plugin               TokenService          UserStore
   │                           │                         │                    │
   │  POST /auth/logout        │                         │                    │
-  │  Authorization: Bearer    │                         │                    │
-  │    eyJhbGci...            │                         │                    │
-  │  { refreshToken: "abc" }  │                         │                    │
+  │  Cookie: page-session     │                         │                    │
+  │  { refreshToken?: "abc" } │                         │                    │
   │ ─────────────────────────►│                         │                    │
-  │                           │  (middleware verified    │                    │
-  │                           │   access token →         │                    │
-  │                           │   authContext.userId)    │                    │
-  │                           │                         │                    │
-  │                           │  revokeByHash(hash)     │                    │
-  │                           │ ───────────────────────►│                    │
-  │                           │                         │  SET revoked_at    │
+  │                           │  revoke optional raw    │                    │
+  │                           │  refresh token and the  │                    │
+  │                           │  cookie-bound session   │                    │
+  │                           │ ───────────────────────►│  SET revoked_at    │
   │                           │                         │ ──────────────────►│
   │                           │                         │                    │
+  │  Set-Cookie: expired      │                         │                    │
   │  { ok: true }             │                         │                    │
   │ ◄─────────────────────────│                         │                    │
 ```
 
-Both required: the access token proves the caller is the user who owns the refresh token. Without the access token, anyone holding a stolen refresh token could selectively revoke tokens. Without the refresh token, the server wouldn't know which token to revoke (a user can have multiple active refresh tokens across devices).
+The endpoint is idempotent. Possession of either credential only permits
+revoking that same credential's backing refresh row; it cannot select another
+user or session. The cookie is always expired in the response.
 
 ### Change Password
 
@@ -481,7 +449,11 @@ Client                    Auth Plugin               UserStore
   │ ◄─────────────────────────│                         │
 ```
 
-After password change, all refresh tokens for the user are revoked — forces re-login on all devices. The current session's access token remains valid until it expires (stateless, no way to revoke), but the next refresh attempt will fail.
+After password change, all previous refresh-backed sessions are revoked. The
+successful change-password response issues a fresh token pair and page cookie
+for the current browser; other devices must log in again. Older JWTs can remain
+cryptographically valid until `exp`, but Zero request authentication rejects
+them immediately because the user's security generation changed.
 
 ### Session Expiration And Client Recovery
 
@@ -489,10 +461,11 @@ The implemented client recovery path is refresh-token based:
 
 1. Access tokens are short-lived and stored only in memory.
 2. Refresh tokens are opaque, stored hashed in `_refresh_tokens`, persisted by the browser SDK, and rotated on every refresh.
-3. Browser startup exchanges the stored refresh token for a fresh access token, then loads `/auth/me`.
-4. Authenticated HTTP calls that receive 401 call `/auth/refresh` and retry once.
-5. The sync WebSocket reads the current access token every time it opens or reconnects, so login/restore/refresh cannot leave sync using a stale token.
-6. Logout, rejected refresh, token replay, or an unrefreshable 401 clears auth state and resets local synced table/state data.
+3. A signed HttpOnly page JWT is bound to the same refresh row and authenticates direct safe page requests during SSR.
+4. Browser startup exchanges the stored refresh token for a fresh access token, then loads `/auth/me`.
+5. Authenticated HTTP calls that receive 401 call `/auth/refresh` and retry once.
+6. The sync WebSocket reads the current access token every time it opens or reconnects, so login/restore/refresh cannot leave sync using a stale token.
+7. Logout, rejected refresh, token replay, or an unrefreshable 401 clears auth state and resets local synced table/state data.
 
 `AppProvider` provides the default UI safety net. When auth is enabled and the
 client becomes unauthenticated on a protected route, it removes protected route
@@ -596,20 +569,20 @@ This is cleaner than stripping fields from broadcast payloads. The data separati
 ### Plugin ordering
 
 ```ts
-const app = new Elysia()
+const app = installAuthStopBarrier(new Elysia()
   // 1. Auth plugin — defines users/credentials tables, provides /auth/* routes
   .use(createAuthPlugin({ db }))
 
-  // 2. Auth middleware — stateless JWT verify, resolves authContext and guard helpers on every request
+  // 2. Auth middleware — verifies JWT and resolves live authContext on every request
   .use(createAuthMiddleware(getTokenService))
 
   // 3. Sync plugin — defines app tables, provides WS /sync with real-time broadcast
   .use(createSyncPlugin({ db, tables: { ... } }))
 
   // 4. App routes — can use both authContext and syncDB
-  .get('/api/todos', ({ authContext, syncDB }) => { ... })
+  .get('/api/todos', ({ authContext, syncDB }) => { ... }));
 
-  .listen(3000);
+app.listen(3000);
 ```
 
 **Why this order:**
@@ -625,33 +598,52 @@ The ReactiveDB is created **outside** any plugin and passed in:
 ```ts
 const db = createReactiveDB({ mode: 'memory' });
 
-const app = new Elysia()
+const app = installAuthStopBarrier(new Elysia()
   .use(createAuthPlugin({ db }))
-  .use(createSyncPlugin({ db, tables: { ... } }))
-  .listen(3000);
+  .use(createSyncPlugin({ db, tables: { ... } })));
+
+app.listen(3000);
 ```
 
 Neither plugin creates the database. Neither plugin owns it. Both receive it. This is dependency inversion — the composition root (app.ts) decides the database strategy (memory vs. file), and plugins just use it.
+
+For standalone composition, apply `installAuthStopBarrier()` to the finished
+root app. It makes `await app.stop()` join auth email delivery before the
+composition root disposes `db`. `createApp()` installs its own full-platform
+barrier and does not need this helper.
 
 ### WebSocket auth
 
 The auth middleware derives `authContext` on HTTP requests only. WebSocket
 connections use the sync plugin's explicit auth bridge: the browser sync client
-adds the latest access token as `?token=...` whenever it opens or reconnects,
-and sync calls the auth token verifier during the WebSocket `open` lifecycle.
+sends the latest access token in a `sync.auth` message immediately after the
+WebSocket opens. The server does not subscribe the socket or process sync
+messages until it replies with `sync.auth.ready`. Keeping bearer tokens out of
+the URL prevents them from being copied into proxy and access logs.
 
 ```ts
 createSyncPlugin({
   db,
   tables,
   auth: {
-    required: false,
+    required: true,
     getTokenVerifier: getTokenService,
   },
 });
 ```
 
-If the token is valid, sync stores `{ userId, email, role }` on `ws.data.authContext`. State sync and presence use that identity for per-user behavior. Invalid provided tokens close the socket with code `4001`; missing tokens are allowed unless sync auth is configured as required.
+If the token is valid, sync resolves the current account and stores its auth
+context on the socket. State sync and presence use that identity for per-user
+behavior. Invalid or missing credentials close a required socket with code
+`4001`. `createApp()` defaults sync to required whenever app auth is enabled;
+an intentionally public app must opt in with `syncAuth: 'public'`.
+
+The server revalidates authenticated sockets before inbound work and on a
+short interval. Token expiry, suspension, forced password change, generation
+revocation, or a change to property-derived table/row permissions closes the
+socket and removes its subscriptions. Reconnect then performs a fresh auth and
+policy evaluation. Legacy `?token=` handling exists only behind the sync
+plugin's explicit temporary compatibility option and is disabled by default.
 
 The sync engine's policy mechanism (see [Subscription And Mutation Policy](../realtime-sync/realtime-sync/README.md#subscription-and-mutation-policy)) uses the verified WebSocket identity when policy callbacks need user context. Auth provides `{ userId, email, role }`; sync derives readable tables through `SyncPolicy.canReadTable` and checks direct `sync.mutate` writes through `canMutateTable`, `canInsert`, `canUpdate`, and `canDelete`.
 
@@ -680,9 +672,16 @@ src/auth/
 ├── token-service.ts        # JWT signing/verification, keypair mgmt, refresh rotation
 ├── action-token-service.ts # Auth wrapper over generic platform action tokens
 ├── account-email-service.ts # Auth lifecycle email delivery through platform email
-├── auth.plugin.ts          # Main Elysia plugin — lifecycle, derive, public auth routes
+├── auth.plugin.ts          # Composition root — lifecycle, derive, subplugin mounting
+├── auth-runtime.ts         # Service startup/shutdown and runtime getters
+├── auth-schema.ts          # Table creation and compatibility upgrades
+├── auth-session.plugin.ts  # Config/register/login/refresh/logout/me/jwks routes
+├── auth-user-properties.plugin.ts # Current-user property routes
 ├── auth-admin.plugin.ts    # Admin user-management routes
 ├── auth-account.plugin.ts  # Forgot/reset/setup routes
+├── auth-mfa.plugin.ts      # MFA setup/challenge routes
+├── auth-mfa-response.ts    # Session-vs-MFA completion helper
+├── auth-user-response.ts   # Public auth user response mapper
 ├── auth.middleware.ts      # Elysia middleware — resolves authContext + guards
 ├── auth-config.ts          # Auth config normalization
 ├── auth-context.ts         # Shared Authorization header extraction
@@ -695,8 +694,12 @@ src/auth/
 |------|---------------|------------|
 | `user-store.ts` | All SQLite operations for auth tables | ~300 |
 | `token-service.ts` | JWT + keypair + refresh rotation | ~250 |
-| `auth.plugin.ts` | Elysia plugin (lifecycle, derive, 6 routes) | ~200 |
-| `auth.middleware.ts` | Stateless JWT verification middleware | ~50 |
+| `auth.plugin.ts` | Auth composition root only | ~90 |
+| `auth-runtime.ts` | Auth service lifecycle and getters | ~130 |
+| `auth-schema.ts` | Auth table setup and compatibility columns | ~180 |
+| `auth-session.plugin.ts` | Core session and identity route controller | ~360 |
+| `auth-user-properties.plugin.ts` | Current-user property route controller | ~130 |
+| `auth.middleware.ts` | JWT verification and live auth-context middleware | ~80 |
 | `guards.ts` | `requireAuth`, `requireAdmin` pure functions | ~20 |
 | `activity-tracker.ts` | In-memory audit sessions, ReactiveDB listener | ~150 |
 | `audit.middleware.ts` | Elysia hooks (onBefore/onAfter), wires tracker | ~60 |

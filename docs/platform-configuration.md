@@ -5,7 +5,8 @@ typed config files that `createApp()` can discover or explicitly load.
 
 The first target for this protocol is auth metadata, access policies, tenancy,
 and avatars. After that shape is proven, the same protocol can be applied to
-storage, sync defaults, observability, AI, migrations, and future systems.
+storage, sync defaults, observability, AI, PDF rendering, migrations, and
+future systems.
 
 ## Goals
 
@@ -30,12 +31,19 @@ app/
   server.ts
 zero/
   auth.ts
+  auth-emails/
+    index.ts
+    account-setup.ts
+    password-reset.ts
+    email-verification.ts
+    email-otp.ts
   access.ts
   storage.ts
   sync.ts
   observability.ts
   ai.ts
   vector.ts
+  pdf.ts
 ```
 
 `server.ts` stays small:
@@ -79,7 +87,8 @@ V1 focused config files:
 
 | File | System |
 | --- | --- |
-| `zero/auth.ts` | auth metadata, tenancy, avatar config |
+| `zero/auth.ts` | registration, email verification, MFA, auth branding, user metadata, tenancy, avatar config |
+| `zero/auth-emails/` | optional auth/account email template overrides, one template per file with `index.ts` as the registry |
 | `zero/access.ts` | table/route/storage/action policy helpers |
 
 Future files:
@@ -91,6 +100,7 @@ Future files:
 | `zero/observability.ts` | sinks, endpoint access, trace thresholds |
 | `zero/ai.ts` | provider aliases, explicit providers, status endpoint |
 | `zero/vector.ts` | vector indexes, dimensions, metadata filter fields |
+| `zero/pdf.ts` | print defaults, browser path, resource policy, render limits |
 | `zero/sitemap.ts` | future sitemap/SEO defaults and route metadata overrides |
 | `zero/migrations.ts` | migration safety defaults, doctor strictness, paths |
 
@@ -102,8 +112,16 @@ Each config file should export a default value produced by a typed helper:
 import { defineAuthConfig } from '@zero/framework/server';
 
 export default defineAuthConfig({
-  access: {
-    groups: ['accounting', 'management'],
+  registration: {
+    mode: 'admin-only',
+  },
+  userProperties: {
+    department: {
+      type: 'enum',
+      values: ['accounting', 'operations'],
+      editableBy: 'admin',
+      useInPolicies: true,
+    },
   },
 });
 ```
@@ -169,12 +187,22 @@ createApp({
     : false,
   auth: {
     registration: { mode: 'admin-only' },
+    account: {
+      requireEmailVerification: Bun.env.AUTH_REQUIRE_EMAIL_VERIFICATION === 'true',
+      emailVerificationPath: Bun.env.AUTH_EMAIL_VERIFICATION_PATH ?? '/verify-email',
+    },
     accountEmails: {
       adminCreatedUser: Boolean(Bun.env.RESEND_API_KEY),
       passwordReset: Boolean(Bun.env.RESEND_API_KEY),
       manualPasswordReset: Bun.env.AUTH_MANUAL_PASSWORD_RESET !== 'false',
       actionTokenTTL: Bun.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
       requestCooldown: Bun.env.AUTH_ACCOUNT_EMAIL_COOLDOWN ?? '5m',
+    },
+    branding: {
+      appName: Bun.env.APP_NAME ?? 'Acme CRM',
+      logoUrl: Bun.env.APP_LOGO_URL,
+      supportEmail: Bun.env.APP_SUPPORT_EMAIL,
+      brandColor: Bun.env.AUTH_EMAIL_BRAND_COLOR,
     },
     userProperties: {
       department: {
@@ -192,8 +220,257 @@ createApp({
         defaultDimensions: Number(Bun.env.ZERO_VECTOR_DEFAULT_DIMENSIONS ?? 1536),
       }
     : false,
+  pdf: Bun.env.ZERO_PDF_ENABLED === 'true'
+    ? {
+        browser: {
+          executablePath: Bun.env.ZERO_PDF_EXECUTABLE_PATH,
+        },
+      }
+    : false,
 });
 ```
+
+### Native installed-app authentication
+
+Native desktop/mobile clients and Chrome extensions are registered under
+`auth.nativeApps`. A non-empty client list enables the OIDC Authorization Code
+provider with PKCE and uses `${app.publicUrl}/auth` as its issuer. An explicit
+issuer may provide the same canonical `/auth` URL, but the current provider
+deliberately rejects a different origin so token audience and authenticated
+API requests cannot diverge. Client IDs are publishable and never have
+secrets. See
+[Desktop, Mobile, and Chrome Extension Authentication](./auth/native-app-auth.md).
+
+Native auth automatically applies per-source admission using Bun's direct
+socket peer and ignores spoofed forwarding headers. When Zero is behind a
+reverse proxy, set
+`auth.nativeApps.requestAdmission.trustedProxyRanges` to the proxy's exact IP
+or CIDR ranges. Only then does Zero walk `X-Forwarded-For` from the trusted
+socket toward the first untrusted client address. A custom sanitized header can
+be selected with `forwardedForHeader`; universal `/0` trust ranges are rejected.
+Public client IDs cannot protect shared global/per-client caps, so
+multi-replica deployments should additionally rate limit the authorize
+endpoint at their shared edge. Zero persists only a
+process-pseudonymous HMAC of the resolved source, never the raw identifier.
+
+A production-oriented configuration can make the defaults explicit:
+
+```ts
+export default defineZeroConfig({
+  app: {
+    name: 'Acme',
+    publicUrl: 'https://app.acme.example',
+  },
+  auth: {
+    accessTokenTTL: '15m',
+    nativeApps: {
+      enabled: true,
+      // Optional; when present it must normalize to the same public origin.
+      issuer: 'https://app.acme.example/auth',
+      requestTTL: '15m',
+      codeTTL: '3m',
+      refreshTokenTTL: '30d',
+      clients: [{
+        clientId: 'acme-desktop',
+        name: 'Acme Desktop',
+        redirectUris: [
+          'http://127.0.0.1/oauth/callback',
+          'http://[::1]/oauth/callback',
+        ],
+        scopes: ['openid', 'profile', 'email'],
+      }],
+      requestAdmission: {
+        cleanupBatchSize: 100,
+        maxOutstandingGlobal: 1_000,
+        maxOutstandingPerClient: 100,
+        maxOutstandingPerSource: 20,
+        rollingWindow: '1m',
+        maxAdmissionsGlobal: 300,
+        maxAdmissionsPerClient: 60,
+        maxAdmissionsPerSource: 20,
+        // Set only when the direct peer really is one of these proxies.
+        trustedProxyRanges: ['10.0.0.0/8', 'fd00::/8'],
+        forwardedForHeader: 'x-forwarded-for',
+      },
+      refreshRotation: {
+        cleanupBatchSize: 100,
+        minRotationInterval: '30s',
+        maxRotationsPerFamily: 4_096,
+        maxActiveFamiliesPerUserClient: 10,
+      },
+    },
+  },
+});
+```
+
+Do not copy the example proxy ranges unless they exactly describe your network.
+A directly exposed Zero process needs no proxy configuration: it safely uses
+the Bun socket peer and ignores forwarded headers. A platform whose trusted
+edge exposes a non-IP identity may supply `sourceKey(context)` instead, but
+`sourceKey` cannot be combined with proxy ranges or `forwardedForHeader`.
+
+#### Native config reference
+
+| Path | Default and validation |
+|---|---|
+| `auth.nativeApps.enabled` | Defaults to `true` when `clients` is non-empty; explicit `false` disables the provider |
+| `auth.nativeApps.issuer` | Optional canonical HTTPS `/auth` issuer, or loopback HTTP in development; must share `app.publicUrl`'s origin |
+| `auth.nativeApps.requestTTL` | `15m`; positive duration no greater than 1 hour |
+| `auth.nativeApps.codeTTL` | `3m`; positive duration no greater than 10 minutes |
+| `auth.nativeApps.refreshTokenTTL` | `30d`; positive duration no greater than 365 days |
+| `clients[].clientId` | Required unique public identifier, 1–128 unreserved characters |
+| `clients[].name` | Required non-empty trimmed consent-page name |
+| `clients[].redirectUris` | Required non-empty unique list of supported native redirects |
+| `clients[].scopes` | Defaults to `openid profile email`; only those values are supported and `openid` is required |
+| `requestAdmission.cleanupBatchSize` | `100`; integer from 1 through 10,000 |
+| `requestAdmission.maxOutstandingGlobal` | `1000`; integer from 1 through 1,000,000 |
+| `requestAdmission.maxOutstandingPerClient` | `100`; integer from 1 through 1,000,000 |
+| `requestAdmission.maxOutstandingPerSource` | `20`; integer from 1 through 1,000,000 |
+| `requestAdmission.rollingWindow` | `1m`; positive duration no greater than 1 day |
+| `requestAdmission.maxAdmissionsGlobal` | `300`; integer from 1 through 1,000,000 per rolling window |
+| `requestAdmission.maxAdmissionsPerClient` | `60`; integer from 1 through 1,000,000 per client/window |
+| `requestAdmission.maxAdmissionsPerSource` | `20`; integer from 1 through 1,000,000 per source/window |
+| `requestAdmission.trustedProxyRanges` | Empty; exact IPv4/IPv6 addresses or CIDRs only, with universal `/0` ranges rejected |
+| `requestAdmission.forwardedForHeader` | `x-forwarded-for`; a custom value requires at least one trusted proxy range |
+| `requestAdmission.sourceKey` | Default safe socket-peer resolver; custom callback is mutually exclusive with proxy options |
+| `refreshRotation.cleanupBatchSize` | `100`; integer from 1 through 10,000 |
+| `refreshRotation.minRotationInterval` | `30s`; may be `0s`, maximum 1 hour |
+| `refreshRotation.maxRotationsPerFamily` | `4096`; integer from 1 through 100,000; exhausted families are revoked |
+| `refreshRotation.maxActiveFamiliesPerUserClient` | `10`; integer from 1 through 1,000; oldest excess family is evicted |
+
+All duration strings use an integer followed by `s`, `m`, `h`, or `d`. Native
+refresh lifetime is separate from the normal web `auth.refreshTokenTTL`.
+Native access tokens use the normal `auth.accessTokenTTL` (15 minutes by
+default), the exact app origin as audience, and the same managed ES256 signing
+key as the rest of Zero auth.
+
+#### Redirect and lifecycle configuration
+
+Supported redirect classes are exact claimed HTTPS URLs, reverse-domain
+private-use schemes using the single-slash form, and IP-literal HTTP loopback.
+Only a desktop loopback port may vary between registered and requested URLs.
+Fragments, credentials, duplicate query keys, reserved response query keys,
+`localhost` callbacks, non-loopback HTTP, and wildcard Chrome callbacks are
+rejected.
+
+The external browser uses `loginPath` and `registrationPath`, which default to
+`/login` and `/register`. Zero derives the standard auth lifecycle pages into
+`publicPaths`; if the app supplies `publicPaths` explicitly, that list is
+authoritative and must include every custom login, registration, verification,
+forgot/reset, and setup-password path. Native registration still obeys
+`auth.registration`, verification obeys `auth.account`, and MFA obeys
+`auth.mfa`.
+
+Sign out installed clients before changing their server URL, client ID,
+redirect strategy, or credential namespace. The generic native SDK derives
+storage from issuer/client, so changing either without signing out can leave an
+old server family active. The Chrome preview additionally binds server, client,
+persistence, and namespace behind one extension-global marker and rejects an
+unsafe in-place change.
+
+#### Doctor, migration, and deployment
+
+Run:
+
+```sh
+bun run doctor -- --config ./zero.config.ts --strict
+```
+
+Doctor reports missing/invalid public origins, split issuer/API origins,
+enabled providers without clients, malformed/duplicate clients, unsupported
+identity scopes, invalid TTLs, unsafe redirects, and malformed or ambiguous
+proxy admission policy.
+
+`createApp()` runs the platform migration registry by default for durable
+databases. Native auth uses migrations `005` and `006`; the hardening migration
+requires a guarded backup and the migrator snapshots hot/WAL-backed state
+safely. For an existing deployment, review and back up the correct database
+before startup. `zero update` updates framework dependency artifacts only and
+never chooses or runs an application migration command.
+
+At a reverse proxy or ingress, preserve the canonical HTTPS origin and configure
+only proxy ranges Zero actually sees as its direct peer. Apply shared edge rate
+limits if more than one process accepts native authorization. Keep the auth
+signing key and database lifecycle stable under the same production practices
+as web auth. After deployment, verify the discovery document at
+`/auth/.well-known/openid-configuration`, then exercise browser registration,
+MFA/recovery, callback, rotation, revocation, protected HTTP, and Sync on real
+targets.
+
+Richer auth behavior should keep the same protocol and can move into
+`zero/auth.ts` instead of growing inline `createApp()` config:
+
+```ts
+import {
+  defineAuthConfig,
+  defineAuthEmailTemplates,
+} from '@zero/framework/server';
+import { authEmailTemplates } from './auth-emails';
+
+export default defineAuthConfig({
+  account: {
+    requireEmailVerification: Bun.env.AUTH_REQUIRE_EMAIL_VERIFICATION === 'true',
+    emailVerificationPath: '/verify-email',
+  },
+  mfa: {
+    enabled: Bun.env.AUTH_MFA_ENABLED === 'true',
+    policy: Bun.env.AUTH_MFA_POLICY ?? 'optional',
+    methods: parseList(Bun.env.AUTH_MFA_METHODS, ['email', 'totp']),
+    allowUserChoice: true,
+    allowMultipleMethods: false,
+    recoveryCodes: false, // reserved for a later recovery-code flow
+    totp: {
+      // Authenticator/TOTP is self-hosted by Zero. Issuer defaults to app.name.
+      encryptionKey: Bun.env.AUTH_TOTP_ENCRYPTION_KEY,
+      qrRobustness: 'M',
+    },
+  },
+  branding: {
+    appName: Bun.env.APP_NAME,
+    logoUrl: Bun.env.APP_LOGO_URL,
+    supportEmail: Bun.env.APP_SUPPORT_EMAIL,
+    brandColor: Bun.env.AUTH_EMAIL_BRAND_COLOR,
+  },
+  emails: defineAuthEmailTemplates(authEmailTemplates),
+});
+```
+
+`zero/auth-emails/` is optional. Current account setup and password reset
+emails render branded defaults using `app.name`, `app.publicUrl`, logo URL,
+support email, and brand color. When app overrides are present, each template
+should live in its own file and `index.ts` should only compose the registry:
+
+```ts
+// zero/auth-emails/index.ts
+import { defineAuthEmailTemplates } from '@zero/framework/server';
+
+import { passwordResetEmail } from './password-reset';
+
+export const authEmailTemplates = defineAuthEmailTemplates({
+  passwordReset: passwordResetEmail,
+});
+```
+
+```ts
+// zero/auth-emails/password-reset.ts
+import type { AuthEmailTemplate } from '@zero/framework/server';
+
+export const passwordResetEmail: AuthEmailTemplate = (ctx) => ({
+  subject: `Reset your ${ctx.branding.appName} password`,
+  text: ctx.defaultText,
+  html: ctx.defaultHtml,
+});
+```
+
+Active template keys today are `accountSetup`, `passwordReset`, and
+`emailVerification` and `emailOtp`. Reserved typed keys for upcoming
+account-notice slices include `passwordChanged`, `mfaEnabled`, `mfaDisabled`,
+and `recoveryCodesRegenerated`. MFA setup and login challenge routes are active
+when `AUTH_MFA_ENABLED=true`.
+
+Recovery-code storage is reserved for a later MFA slice. Leave
+`auth.mfa.recoveryCodes` false until the recovery-code generation and
+verification routes ship.
 
 Relevant environment variables are shown in `.env.example`:
 
@@ -201,16 +478,24 @@ Relevant environment variables are shown in `.env.example`:
 | --- | --- |
 | `APP_NAME` | App display name in system email. |
 | `APP_PUBLIC_URL` | Public origin used to build reset/setup links. Required for account email. |
+| `APP_LOGO_URL` | Optional logo used by auth pages and branded system email. |
 | `APP_SUPPORT_EMAIL` | Optional support/reply identity. |
+| `AUTH_EMAIL_BRAND_COLOR` | Optional default accent color for branded auth email. |
 | `EMAIL_FROM` | Default sender for platform email. |
 | `EMAIL_REPLY_TO` | Optional reply-to address. |
 | `RESEND_API_KEY` | Enables the default Resend email provider. |
-| `AUTH_ACTION_TOKEN_TTL` | Expiration for setup/reset action tokens. |
-| `AUTH_ACCOUNT_EMAIL_COOLDOWN` | Cooldown between active setup/reset emails for the same user and token type. |
+| `AUTH_REQUIRE_EMAIL_VERIFICATION` | Require email verification before public-registered users receive tokens. |
+| `AUTH_EMAIL_VERIFICATION_PATH` | Public page path used in email verification links. Defaults to `/verify-email`. |
+| `AUTH_MFA_ENABLED` | Enables first-party MFA setup and login challenges. |
+| `AUTH_MFA_POLICY` | MFA policy: `optional`, `required`, or `admin-required`. |
+| `AUTH_MFA_METHODS` | Comma list such as `email,totp`. |
+| `AUTH_TOTP_ENCRYPTION_KEY` | Encryption key for self-hosted authenticator/TOTP secrets at rest. Required once TOTP enrollment is enabled. |
+| `AUTH_ACTION_TOKEN_TTL` | Expiration for setup/reset/verification action tokens. |
+| `AUTH_ACCOUNT_EMAIL_COOLDOWN` | Cooldown between active setup/reset/verification emails for the same user and token type. |
 | `AUTH_MANUAL_PASSWORD_RESET` | Set to `false` to disable direct admin password replacement and require email-driven reset flows. |
 | `ACCESS_TOKEN_TTL` | Access token lifetime. |
 | `REFRESH_TOKEN_TTL` | Refresh token lifetime. |
-| `AUTH_SIGNING_KEY` | Optional externally managed ES256 private JWK. |
+| `AUTH_SIGNING_KEY` | Optional externally managed ES256 private JWK as raw JSON or base64; PEM is not supported. Missing `kid` is derived deterministically from the public key. |
 | `OPENAI_API_KEY` | Enables OpenAI when `ai: true`. |
 | `ANTHROPIC_API_KEY` | Enables Anthropic when `ai: true`. |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables Google Generative AI when `ai: true`. |
@@ -220,10 +505,6 @@ Relevant environment variables are shown in `.env.example`:
 | `LLAMA_API_KEY` / `META_LLAMA_API_KEY` | Enables the custom Meta Llama provider when `ai: true`. |
 | `DEEPSEEK_API_KEY` | Enables DeepSeek via OpenAI-compatible adapter when `ai: true`. |
 
-Generic platform action/resume tokens do not require environment variables.
-They are mounted by `createApp()` and use per-call TTL/cooldown options. Auth
-setup/reset email flows still read `AUTH_ACTION_TOKEN_TTL` and
-`AUTH_ACCOUNT_EMAIL_COOLDOWN` for their action-token defaults.
 | `PERPLEXITY_API_KEY` / `PERPLEXITYAI_API_KEY` | Enables Perplexity via OpenAI-compatible adapter when `ai: true`. |
 | `VOYAGE_API_KEY` | Enables Voyage embeddings via OpenAI-compatible adapter when `ai: true`. |
 | `DEEPGRAM_API_KEY` | Enables Deepgram transcription and speech when `ai: true`. |
@@ -238,6 +519,11 @@ setup/reset email flows still read `AUTH_ACTION_TOKEN_TTL` and
 | `ZERO_VECTOR_ENABLED` | Starter-app convention for enabling inline vector config. |
 | `ZERO_VECTOR_DATA_DIR` | Default local zvec collection directory. |
 | `ZERO_VECTOR_DEFAULT_DIMENSIONS` | Default vector dimensions for `vector: true`. |
+
+Generic platform action/resume tokens do not require environment variables.
+They are mounted by `createApp()` and use per-call TTL/cooldown options. Auth
+setup/reset email flows still read `AUTH_ACTION_TOKEN_TTL` and
+`AUTH_ACCOUNT_EMAIL_COOLDOWN` for their action-token defaults.
 
 Config-file discovery/scaffolding remains planned. Inline config uses the same
 contract that future `zero/auth.ts` or `config/auth.ts` files should export.
@@ -337,6 +623,7 @@ Zero now includes an app-level platform doctor:
 ```txt
 bun run doctor -- --config ./zero.config.ts
 bun run doctor -- --config ./zero.config.ts --strict
+bun run doctor -- --config ./zero.config.ts --json
 ```
 
 The platform doctor checks createApp config and warnings do not fail by
@@ -354,9 +641,10 @@ Current checks cover:
 7. Missing `app.publicUrl`, sender address, or Resend API key for email-driven
    account flows.
 8. File-backed databases with startup migrations disabled.
-9. Auth-enabled apps without an app `syncPolicy`.
-10. Login route access when protected-by-default auth is used and `loginPath`
-    is missing from `publicPaths`.
+9. Auth-enabled app tables not covered by an app `syncPolicy` or registered
+   resource policy.
+10. Login, registration, verification, reset, and setup route access when
+    protected-by-default auth uses an explicit `publicPaths` list.
 11. Lazy/auto sync index guidance for `/api/data` filters and sorting.
 12. Observability disabled in production, unreadable endpoint policy, and
     endpoint/store mismatches.
@@ -369,6 +657,44 @@ Current checks cover:
     mismatches, missing owner columns, untrusted metadata keys, auth-disabled
     protected resources, missing list policies, custom list policy scope, public
     or uninspectable write policies, and owner-field index guidance.
+16. App source usage audit: raw controls instead of Zero UI primitives, custom
+    modal/toast/sidebar systems, missing app root providers, direct
+    package/internal imports, direct backend provider usage, backend `console`
+    calls, and files above the responsibility threshold.
+17. Native app auth issuer/public URL readiness, registered public clients,
+    identity scopes, lifetimes, and desktop/mobile redirect safety.
+
+Usage-audit options:
+
+```txt
+bun run doctor -- --config ./zero.config.ts --no-usage-audit
+bun run doctor -- --config ./zero.config.ts --max-file-lines 400
+bun run doctor -- --config ./zero.config.ts --usage-include app --usage-include server
+bun run doctor -- --config ./zero.config.ts --usage-exclude app/vendor/**
+```
+
+When an app creates non-unique indexes through migrations or startup
+compatibility code, declare them so Doctor can distinguish real index gaps from
+indexes it cannot infer from the table schema:
+
+```ts
+export default defineZeroConfig({
+  // ...
+  doctor: {
+    indexedFields: {
+      tickets: ['owner_id'],
+    },
+  },
+});
+```
+
+This is a diagnostic hint only. The app still needs to create the actual SQLite
+index with a migration or intentional startup compatibility code.
+
+The default scan roots are app-owned code: `app/`, configured `server/*`
+extension directories, `components/`, `hooks/`, and `lib/`. Doctor skips
+`node_modules`, `.zero`, `.build`, `dist`, generated files, tests, and vendored
+source by default.
 
 Future config-file doctor checks should validate:
 
@@ -381,6 +707,10 @@ Future config-file doctor checks should validate:
 7. Storage/avatar config without storage support.
 8. Loading conventional app-owned policy/resource files directly in doctor when
    a config module relies only on `server/resources`.
+9. Email verification or email OTP enabled without ready email config.
+10. Authenticator/TOTP enabled without an encryption key.
+11. MFA required with no enabled method.
+12. Auth branding values that point at missing local assets in generated apps.
 
 ## Rollout Plan
 

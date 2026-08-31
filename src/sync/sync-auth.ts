@@ -49,21 +49,44 @@ export async function resolveSyncAuthContext(
     };
   }
 
-  const payload = await verifier.verifyAccessToken(token);
-  if (!payload) {
+  try {
+    if (verifier.resolveAuthContext) {
+      const authContext = await verifier.resolveAuthContext(token);
+      return authContext
+        ? { ok: true, authContext }
+        : invalidTokenResolution();
+    }
+
+    // Compatibility for standalone sync integrations. Platform auth always
+    // exposes resolveAuthContext so current account gates are enforced.
+    const payload = await verifier.verifyAccessToken(token);
+    if (
+      !payload ||
+      typeof payload.email !== 'string' ||
+      typeof payload.role !== 'string'
+    ) return invalidTokenResolution();
+
+    return {
+      ok: true,
+      authContext: {
+        userId: payload.sub,
+        email: payload.email,
+        role: payload.role,
+      },
+    };
+  } catch {
     return {
       ok: false,
-      closeCode: 4001,
-      reason: 'Invalid auth token',
+      closeCode: 1011,
+      reason: 'Auth resolution failed',
     };
   }
+}
 
+function invalidTokenResolution(): SyncAuthResolution {
   return {
-    ok: true,
-    authContext: {
-      userId: payload.sub,
-      email: payload.email,
-      role: payload.role,
-    },
+    ok: false,
+    closeCode: 4001,
+    reason: 'Invalid auth token',
   };
 }

@@ -41,7 +41,8 @@ export interface RouterPluginOptions {
   /**
    * Global auth guard for page routes.
    * Redirects unauthenticated users to loginPath for all non-public routes.
-   * Reads `authContext` from Elysia's resolve chain (set by auth middleware).
+   * Bearer identity comes from Elysia's resolve chain. A page-only resolver can
+   * additionally restore SSR identity from a server-readable session cookie.
    * API routes (route.ts) are not affected — they use requireAuth/requireAdmin.
    */
   authGuard?: {
@@ -51,6 +52,12 @@ export interface RouterPluginOptions {
     publicPaths?: string[];
     /** Redirect target for unauthenticated users. Default: '/login' */
     loginPath?: string;
+    /** Resolve ambient identity for safe page requests only. Never used by APIs. */
+    resolvePageAuth?: (
+      request: Request
+    ) => Promise<NonNullable<LoaderContext['auth']> | null>;
+    /** Build a deletion header after an attempted page credential is rejected. */
+    clearRejectedPageSession?: (request: Request) => string | null;
   };
   /** Optional automatic sitemap route mounted before the file-router catch-all. */
   sitemap?: {
@@ -149,39 +156,21 @@ export function createRouterPlugin(options: RouterPluginOptions) {
           }),
       };
 
-      // 0. Global auth guard — redirect unauthenticated users before any imports
-      //    API routes excluded (they return 401 JSON via requireAuth/requireAdmin)
-      if (options.authGuard && !match.apiRoutePath) {
-        const {
-          routeAuth = 'protected-by-default',
-          publicPaths = ['/login'],
-          loginPath = '/login',
-        } = options.authGuard;
-        const globalGuardApplies = routeAuth === 'protected-by-default';
-        const isPublic = pathname.startsWith('/_build') || isPublicPath(pathname, publicPaths);
-        if (globalGuardApplies && !isPublic && !loaderCtx.auth) {
-          return new Response(null, {
-            status: 302,
-            headers: { Location: loginPath },
-          });
-        }
-      }
-
       // 1. API route — check if this path has a route.ts with matching method
       if (match.apiRoutePath) {
         const routeModule = await import(match.apiRoutePath);
-
-        // Run route-level middleware if config is exported
-        const routeConfig: RouteConfig | undefined = routeModule.config;
-        if (routeConfig) {
-          const middlewareResult = await runRouteMiddleware(routeConfig, loaderCtx);
-          if (middlewareResult) return middlewareResult;
-        }
-
         const method = request.method.toUpperCase();
         const handler: ApiHandler | undefined = routeModule[method];
 
+        // Cookie identity is deliberately unavailable here. Only run the API
+        // route's middleware when this method actually has an API handler;
+        // colocated page requests must be allowed to continue to page routing.
         if (handler) {
+          const routeConfig: RouteConfig | undefined = routeModule.config;
+          if (routeConfig) {
+            const middlewareResult = await runRouteMiddleware(routeConfig, loaderCtx);
+            if (middlewareResult) return middlewareResult;
+          }
           return handler(loaderCtx);
         }
 
@@ -193,6 +182,46 @@ export function createRouterPlugin(options: RouterPluginOptions) {
       }
 
       // 2. Page route — SSR
+
+      // Resolve the HttpOnly page session only after a real API handler has
+      // been ruled out. The resolver itself limits cookies to GET/HEAD and
+      // refuses fallback when an Authorization header was supplied.
+      if (!loaderCtx.auth && options.authGuard?.resolvePageAuth) {
+        loaderCtx.auth =
+          (await options.authGuard.resolvePageAuth(request)) ?? undefined;
+      }
+      const rejectedPageSessionHeader = loaderCtx.auth
+        ? null
+        : options.authGuard?.clearRejectedPageSession?.(request) ?? null;
+
+      // Global page guard. Keeping this below API dispatch preserves strict
+      // Bearer-only authentication for route.ts handlers.
+      if (options.authGuard) {
+        const {
+          routeAuth = 'protected-by-default',
+          publicPaths = [
+            '/login',
+            '/register',
+            '/forgot-password',
+            '/reset-password',
+            '/setup-password',
+            '/verify-email',
+          ],
+          loginPath = '/login',
+        } = options.authGuard;
+        const globalGuardApplies = routeAuth === 'protected-by-default';
+        const isPublic =
+          pathname.startsWith('/_build') || isPublicPath(pathname, publicPaths);
+        if (globalGuardApplies && !isPublic && !loaderCtx.auth) {
+          return withPrivatePageHeaders(
+            new Response(null, {
+              status: 302,
+              headers: { Location: loginPath },
+            }),
+            rejectedPageSessionHeader
+          );
+        }
+      }
 
       // Check layout configs for auth guards (walk root → leaf)
       // Layouts can export `config: RouteConfig` to enforce auth on all children.
@@ -206,7 +235,19 @@ export function createRouterPlugin(options: RouterPluginOptions) {
               loaderCtx,
               options.authGuard?.loginPath,
             );
-            if (middlewareResult) return middlewareResult;
+            if (middlewareResult) {
+              if (
+                loaderCtx.auth ||
+                layoutConfig.auth ||
+                rejectedPageSessionHeader
+              ) {
+                return withPrivatePageHeaders(
+                  middlewareResult,
+                  rejectedPageSessionHeader
+                );
+              }
+              return middlewareResult;
+            }
           }
         } catch (err) {
           // Layout import failed — log and skip (global authGuard handles the common case)
@@ -230,10 +271,27 @@ export function createRouterPlugin(options: RouterPluginOptions) {
             loaderCtx,
             options.authGuard?.loginPath,
           );
-          if (middlewareResult) return middlewareResult;
+          if (middlewareResult) {
+            if (
+              loaderCtx.auth ||
+              routeConfig.auth ||
+              rejectedPageSessionHeader
+            ) {
+              return withPrivatePageHeaders(
+                middlewareResult,
+                rejectedPageSessionHeader
+              );
+            }
+            return middlewareResult;
+          }
 
           // ISR: check cache
-          if (routeConfig.revalidate && routeConfig.revalidate > 0) {
+          if (
+            !loaderCtx.auth &&
+            !rejectedPageSessionHeader &&
+            routeConfig.revalidate &&
+            routeConfig.revalidate > 0
+          ) {
             const cached = isrCache.get(pathname);
             if (cached && Date.now() - cached.timestamp < cached.maxAge * 1000) {
               return new Response(cached.body, {
@@ -264,7 +322,13 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         });
 
         // ISR: cache the response
-        if (routeConfig?.revalidate && routeConfig.revalidate > 0 && response.status === 200) {
+        if (
+          !loaderCtx.auth &&
+          !rejectedPageSessionHeader &&
+          routeConfig?.revalidate &&
+          routeConfig.revalidate > 0 &&
+          response.status === 200
+        ) {
           // Clone the response body for caching
           const body = await response.clone().text();
           isrCache.set(pathname, {
@@ -275,7 +339,9 @@ export function createRouterPlugin(options: RouterPluginOptions) {
           });
         }
 
-        return response;
+        return loaderCtx.auth || rejectedPageSessionHeader
+          ? withPrivatePageHeaders(response, rejectedPageSessionHeader)
+          : response;
       }
 
       // Derive platform config URL from the actual request
@@ -283,7 +349,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         ? { ...options.platformConfig, url: url.origin }
         : undefined;
 
-      return renderRoute({
+      const response = await renderRoute({
         match,
         request,
         clientEntry: options.clientEntry,
@@ -292,6 +358,9 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         loaderContext: loaderCtx,
         appDir,
       });
+      return loaderCtx.auth || rejectedPageSessionHeader
+        ? withPrivatePageHeaders(response, rejectedPageSessionHeader)
+        : response;
     });
 }
 
@@ -320,4 +389,31 @@ async function runRouteMiddleware(
   }
 
   return null;
+}
+
+function withPrivatePageHeaders(
+  response: Response,
+  rejectedCookieHeader?: string | null
+): Response {
+  const headers = new Headers(response.headers);
+  headers.set('Cache-Control', 'private, no-store');
+  if (rejectedCookieHeader) {
+    headers.append('Set-Cookie', rejectedCookieHeader);
+  }
+
+  const vary = new Set(
+    (headers.get('Vary') ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+  vary.add('Cookie');
+  vary.add('Authorization');
+  headers.set('Vary', [...vary].join(', '));
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }

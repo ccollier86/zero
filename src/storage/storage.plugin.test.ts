@@ -14,9 +14,13 @@ import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import { createStoragePlugin, getStorageService } from './storage.plugin';
 import type {
   DriveRecord,
+  DriveRecordWithAccess,
   DriveUsage,
   FileInfo,
+  ListResult,
+  PermissionRecord,
   StorageAdapter,
+  StorageAccessCapabilities,
   StorageUploadGrant,
 } from './types';
 
@@ -219,6 +223,31 @@ describe('storage route auth', () => {
     expect(owner.data.some((drive) => drive.drive_id === created.data.drive_id)).toBe(true);
   });
 
+  test('protects direct private drive reads from authenticated non-owners', async () => {
+    const owner = await createUser();
+    const other = await createUser();
+    const created = await createDrive(owner.token, { name: 'Direct private docs' });
+
+    const forbidden = await requestJson<{ error: string }>(
+      `/storage/drives/${created.data.drive_id}`,
+      {},
+      other.token
+    );
+
+    expect(forbidden.status).toBe(403);
+
+    const allowed = await requestJson<DriveRecordWithAccess>(
+      `/storage/drives/${created.data.drive_id}`,
+      {},
+      owner.token
+    );
+
+    expect(allowed.status).toBe(200);
+    expect(allowed.data.drive_id).toBe(created.data.drive_id);
+    expect(allowed.data.access.canAdmin).toBe(true);
+    expect(allowed.data.access.isOwner).toBe(true);
+  });
+
   test('keeps public drives readable without auth', async () => {
     const { token } = await createUser();
     const created = await createDrive(token, { name: 'Public docs', public: true });
@@ -233,6 +262,29 @@ describe('storage route auth', () => {
     const fetched = await requestJson<DriveRecord>(`/storage/drives/${created.data.drive_id}`);
     expect(fetched.status).toBe(200);
     expect(fetched.data.drive_id).toBe(created.data.drive_id);
+  });
+
+  test('allows anonymous read for public objects inside private drives', async () => {
+    const { user } = await createUser();
+    const service = getStorageService()!;
+    const drive = service.drives.create(user.userId, { name: 'Private public files' });
+
+    const info = await service.objects.upload(
+      drive.drive_id,
+      '/public/readme.txt',
+      new TextEncoder().encode('ok'),
+      'readme.txt',
+      user.userId,
+      { public: true },
+    );
+
+    const anonymousInfo = await requestJson<FileInfo>(
+      `/storage/drives/${drive.drive_id}/info/public/readme.txt`
+    );
+
+    expect(anonymousInfo.status).toBe(200);
+    expect(anonymousInfo.data.path).toBe(info.path);
+    expect(anonymousInfo.data.isPublic).toBe(true);
   });
 
   test('protects private read endpoints and allows the owner', async () => {
@@ -293,6 +345,191 @@ describe('storage route auth', () => {
     );
     expect(adminEdit.status).toBe(200);
     expect(adminEdit.data.name).toBe('Admin edit');
+  });
+
+  test('exposes effective storage capabilities and admin permission listing', async () => {
+    const owner = await createUser();
+    const editor = await createUser('editor');
+    const qa = await createUser();
+    getAuthStore()!.setProperty(qa.user.userId, 'department', 'qa');
+    const created = await createDrive(owner.token, { name: 'Granted docs' });
+
+    const roleGrant = await requestJson<PermissionRecord>(
+      `/storage/drives/${created.data.drive_id}/permissions`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          grantType: 'role',
+          grantValue: 'editor',
+          permission: 'write',
+        }),
+      },
+      owner.token
+    );
+    expect(roleGrant.status).toBe(200);
+    expect(roleGrant.data.grant_type).toBe('role');
+
+    const propertyGrant = await requestJson<PermissionRecord>(
+      `/storage/drives/${created.data.drive_id}/permissions`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          grantType: 'property',
+          grantKey: 'department',
+          grantValue: 'qa',
+          permission: 'read',
+        }),
+      },
+      owner.token
+    );
+    expect(propertyGrant.status).toBe(200);
+    expect(propertyGrant.data.grant_key).toBe('department');
+
+    const permissions = await requestJson<{ permissions: PermissionRecord[] }>(
+      `/storage/drives/${created.data.drive_id}/permissions`,
+      {},
+      owner.token
+    );
+    expect(permissions.status).toBe(200);
+    expect(permissions.data.permissions.map((item) => item.permission_id)).toContain(roleGrant.data.permission_id);
+    expect(permissions.data.permissions.map((item) => item.permission_id)).toContain(propertyGrant.data.permission_id);
+
+    const editorAccess = await requestJson<StorageAccessCapabilities>(
+      `/storage/drives/${created.data.drive_id}/capabilities`,
+      {},
+      editor.token
+    );
+    expect(editorAccess.status).toBe(200);
+    expect(editorAccess.data.canRead).toBe(true);
+    expect(editorAccess.data.canWrite).toBe(true);
+    expect(editorAccess.data.canAdmin).toBe(false);
+    expect(editorAccess.data.effectiveAccess).toBe('write');
+
+    const editorList = await requestJson<DriveRecordWithAccess[]>('/storage/drives', {}, editor.token);
+    const listed = editorList.data.find((drive) => drive.drive_id === created.data.drive_id);
+    expect(editorList.status).toBe(200);
+    expect(listed?.access.effectiveAccess).toBe('write');
+
+    const qaAccess = await requestJson<StorageAccessCapabilities>(
+      `/storage/drives/${created.data.drive_id}/capabilities`,
+      {},
+      qa.token
+    );
+    expect(qaAccess.status).toBe(200);
+    expect(qaAccess.data.effectiveAccess).toBe('read');
+
+    const forbiddenPermissions = await requestJson<{ error: string }>(
+      `/storage/drives/${created.data.drive_id}/permissions`,
+      {},
+      editor.token
+    );
+    expect(forbiddenPermissions.status).toBe(403);
+  });
+
+  test('honors object-scoped grants on object routes and cleans grants on delete', async () => {
+    const owner = await createUser();
+    const collaborator = await createUser();
+    const service = getStorageService()!;
+    const drive = service.drives.create(owner.user.userId, { name: 'Object grant docs' });
+
+    await service.objects.upload(
+      drive.drive_id,
+      '/shared/note.txt',
+      new TextEncoder().encode('shared'),
+      'note.txt',
+      owner.user.userId,
+    );
+
+    const grant = await requestJson<PermissionRecord>(
+      `/storage/drives/${drive.drive_id}/permissions`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          objectPath: '/shared/note.txt',
+          grantType: 'user',
+          grantValue: collaborator.user.userId,
+          permission: 'write',
+        }),
+      },
+      owner.token,
+    );
+    expect(grant.status).toBe(200);
+    expect(grant.data.object_id).toBeTruthy();
+
+    const driveRead = await requestJson<{ error: string }>(
+      `/storage/drives/${drive.drive_id}`,
+      {},
+      collaborator.token,
+    );
+    expect(driveRead.status).toBe(403);
+
+    const objectAccess = await requestJson<StorageAccessCapabilities>(
+      `/storage/drives/${drive.drive_id}/capabilities?path=${encodeURIComponent('/shared/note.txt')}`,
+      {},
+      collaborator.token,
+    );
+    expect(objectAccess.status).toBe(200);
+    expect(objectAccess.data.effectiveAccess).toBe('write');
+
+    const objectInfo = await requestJson<FileInfo>(
+      `/storage/drives/${drive.drive_id}/info/shared/note.txt`,
+      {},
+      collaborator.token,
+    );
+    expect(objectInfo.status).toBe(200);
+    expect(objectInfo.data.path).toBe('/shared/note.txt');
+
+    const deleted = await requestJson<{ ok: boolean }>(
+      `/storage/drives/${drive.drive_id}/files/shared/note.txt`,
+      { method: 'DELETE' },
+      collaborator.token,
+    );
+    expect(deleted.status).toBe(200);
+    expect(deleted.data.ok).toBe(true);
+    expect(service.permissions.get(grant.data.permission_id)).toBeNull();
+  });
+
+  test('applies folder listing type filters, sorting, and totals consistently', async () => {
+    const { user, token } = await createUser();
+    const service = getStorageService()!;
+    const drive = service.drives.create(user.userId, { name: 'Sorted docs' });
+
+    service.objects.createFolder(drive.drive_id, '/zeta-folder', user.userId);
+    await service.objects.upload(
+      drive.drive_id,
+      '/alpha.txt',
+      new TextEncoder().encode('a'),
+      'alpha.txt',
+      user.userId,
+    );
+    await service.objects.upload(
+      drive.drive_id,
+      '/beta.txt',
+      new TextEncoder().encode('b'),
+      'beta.txt',
+      user.userId,
+    );
+
+    const files = await requestJson<ListResult>(
+      `/storage/drives/${drive.drive_id}/list?type=file&sortBy=name&sortDir=desc`,
+      {},
+      token
+    );
+    expect(files.status).toBe(200);
+    expect(files.data.total).toBe(2);
+    expect(files.data.items.map((item) => item.name)).toEqual(['beta.txt', 'alpha.txt']);
+
+    const folders = await requestJson<ListResult>(
+      `/storage/drives/${drive.drive_id}/list?type=folder`,
+      {},
+      token
+    );
+    expect(folders.status).toBe(200);
+    expect(folders.data.total).toBe(1);
+    expect(folders.data.items[0]?.name).toBe('zeta-folder');
   });
 
   test('creates scoped upload grants that allow public upload but keep private read policy', async () => {

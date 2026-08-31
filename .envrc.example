@@ -1,0 +1,33 @@
+# Copy to .envrc and run `direnv allow` if this project uses direnv.
+# Keep real secrets out of this file.
+
+export PROJECT_NAME="${PROJECT_NAME:-$(basename "$PWD")}"
+export DEV_DRIVE="${DEV_DRIVE:-/Volumes/code-bank}"
+
+if [ -d "$DEV_DRIVE" ]; then
+  export DEV_CACHE="$DEV_DRIVE/caches"
+  export DEV_BUILD_ROOT="$DEV_DRIVE/build"
+  export DEV_RELEASE_ROOT="$DEV_DRIVE/releases"
+  export PROJECT_BUILD_DIR="$DEV_BUILD_ROOT/$PROJECT_NAME"
+  export PROJECT_RELEASE_DIR="$DEV_RELEASE_ROOT/$PROJECT_NAME"
+  export PROJECT_ARTIFACT_DIR="$DEV_DRIVE/artifacts/$PROJECT_NAME"
+  export PROJECT_SCRATCH_DIR="$DEV_DRIVE/tmp/scratch/$PROJECT_NAME"
+  export PROJECT_LOG_DIR="$DEV_DRIVE/logs/$PROJECT_NAME"
+
+  export CARGO_HOME="$DEV_CACHE/cargo/home"
+  export RUSTUP_HOME="$DEV_CACHE/rustup/home"
+  export CARGO_TARGET_DIR="$PROJECT_BUILD_DIR/rust-target"
+  export SCCACHE_DIR="$DEV_CACHE/sccache"
+  export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-40G}"
+
+  export GRADLE_USER_HOME="$DEV_CACHE/gradle/home"
+  export BUN_INSTALL_CACHE_DIR="$DEV_CACHE/bun/install-cache"
+  export NPM_CONFIG_CACHE="$DEV_CACHE/npm"
+  export UV_CACHE_DIR="$DEV_CACHE/uv"
+  export PIP_CACHE_DIR="$DEV_CACHE/pip"
+
+  mkdir -p "$PROJECT_BUILD_DIR" \
+    "$PROJECT_RELEASE_DIR/dev" "$PROJECT_RELEASE_DIR/nightly" \
+    "$PROJECT_RELEASE_DIR/stable" "$PROJECT_RELEASE_DIR/diagnostics" \
+    "$PROJECT_SCRATCH_DIR" "$PROJECT_LOG_DIR"
+fi

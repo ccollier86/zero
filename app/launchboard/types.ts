@@ -1,14 +1,18 @@
 /**
  * types.ts
  *
- * App-local LaunchBoard data contracts. Persistence, seed data, and UI
+ * App-local LaunchBoard data contracts. Persistence, resource policy, and UI
  * composition live in separate files so the demo mirrors normal Zero app
  * structure.
  */
 
 export type CardPriority = 'low' | 'medium' | 'high';
 
-export interface LaunchCategory extends Record<string, unknown> {
+export interface LaunchOwnedRow extends Record<string, unknown> {
+  owner_id: string;
+}
+
+export interface LaunchCategory extends LaunchOwnedRow {
   category_id: string;
   name: string;
   description?: string;
@@ -16,7 +20,7 @@ export interface LaunchCategory extends Record<string, unknown> {
   sort_order: number;
 }
 
-export interface LaunchBoard extends Record<string, unknown> {
+export interface LaunchBoard extends LaunchOwnedRow {
   board_id: string;
   category_id: string;
   name: string;
@@ -24,7 +28,7 @@ export interface LaunchBoard extends Record<string, unknown> {
   sort_order: number;
 }
 
-export interface LaunchColumn extends Record<string, unknown> {
+export interface LaunchColumn extends LaunchOwnedRow {
   column_id: string;
   board_id: string;
   title: string;
@@ -32,7 +36,7 @@ export interface LaunchColumn extends Record<string, unknown> {
   sort_order: number;
 }
 
-export interface LaunchCard extends Record<string, unknown> {
+export interface LaunchCard extends LaunchOwnedRow {
   card_id: string;
   board_id: string;
   column_id: string;
@@ -40,13 +44,6 @@ export interface LaunchCard extends Record<string, unknown> {
   description?: string;
   priority: CardPriority;
   sort_order: number;
-}
-
-export interface LaunchBoardSeedData {
-  categories: LaunchCategory[];
-  boards: LaunchBoard[];
-  columns: LaunchColumn[];
-  cards: LaunchCard[];
 }
 
 export interface CategoryInput {

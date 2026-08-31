@@ -10,6 +10,7 @@ import { defineTable, field } from '@zero/framework/schema';
 export const launchCategories = defineTable(
   'launch_categories',
   {
+    owner_id: field.text({ label: 'Owner', required: true, tableVisible: false }),
     name: field.text({ label: 'Name', required: true, tableVisible: true }),
     description: field.text({ label: 'Description', tableVisible: true }),
     color: field.text({ label: 'Color', required: true, tableVisible: false }),
@@ -21,6 +22,7 @@ export const launchCategories = defineTable(
 export const launchBoards = defineTable(
   'launch_boards',
   {
+    owner_id: field.text({ label: 'Owner', required: true, tableVisible: false }),
     category_id: field.text({ label: 'Category', required: true, tableVisible: true }),
     name: field.text({ label: 'Name', required: true, tableVisible: true }),
     description: field.text({ label: 'Description', tableVisible: true }),
@@ -32,6 +34,7 @@ export const launchBoards = defineTable(
 export const launchColumns = defineTable(
   'launch_columns',
   {
+    owner_id: field.text({ label: 'Owner', required: true, tableVisible: false }),
     board_id: field.text({ label: 'Board', required: true, tableVisible: true }),
     title: field.text({ label: 'Title', required: true, tableVisible: true }),
     accent: field.text({ label: 'Accent', required: true, tableVisible: false }),
@@ -43,6 +46,7 @@ export const launchColumns = defineTable(
 export const launchCards = defineTable(
   'launch_cards',
   {
+    owner_id: field.text({ label: 'Owner', required: true, tableVisible: false }),
     board_id: field.text({ label: 'Board', required: true, tableVisible: true }),
     column_id: field.text({ label: 'Column', required: true, tableVisible: true }),
     title: field.text({ label: 'Title', required: true, tableVisible: true }),

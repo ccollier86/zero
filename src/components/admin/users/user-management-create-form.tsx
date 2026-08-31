@@ -42,7 +42,7 @@ interface CreateFormState {
   role: string;
   password: string;
   sendSetupEmail: boolean;
-  passwordChangeRequired: boolean;
+  mfaRequired: boolean;
   properties: Record<string, unknown>;
 }
 
@@ -64,7 +64,7 @@ export function UserManagementCreateForm({
     role: roleOptions[0]?.value ?? 'user',
     password: '',
     sendSetupEmail: defaultSendSetupEmail,
-    passwordChangeRequired: defaultSendSetupEmail,
+    mfaRequired: false,
     properties: {},
   });
   const [error, setError] = React.useState<string | null>(null);
@@ -102,7 +102,7 @@ export function UserManagementCreateForm({
           role: state.role,
           password: state.password,
           sendSetupEmail: setupEmailReady ? state.sendSetupEmail : false,
-          passwordChangeRequired: state.passwordChangeRequired || state.sendSetupEmail,
+          mfaRequired: state.mfaRequired,
           properties: state.properties,
         }));
       } catch (err) {
@@ -115,7 +115,7 @@ export function UserManagementCreateForm({
   );
 
   return (
-    <form className="space-y-5" onSubmit={handleSubmit}>
+    <form className="space-y-5" onSubmit={handleSubmit} aria-busy={submitting}>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="zero-admin-create-username">Username</Label>
@@ -154,9 +154,9 @@ export function UserManagementCreateForm({
           />
         </div>
         <div className="space-y-2">
-          <Label>Role</Label>
+          <Label htmlFor="zero-admin-create-role">Role</Label>
           <Select value={state.role} onValueChange={(value) => update('role', value)}>
-            <SelectTrigger>
+            <SelectTrigger id="zero-admin-create-role">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -188,25 +188,20 @@ export function UserManagementCreateForm({
           <label className="flex items-center gap-2 text-sm">
             <Checkbox
               checked={state.sendSetupEmail}
-              onCheckedChange={(checked) => {
-                const sendSetupEmail = checked === true;
-                setState((current) => ({
-                  ...current,
-                  sendSetupEmail,
-                  passwordChangeRequired: sendSetupEmail || current.passwordChangeRequired,
-                }));
-              }}
+              onCheckedChange={(checked) => update('sendSetupEmail', checked === true)}
             />
             Send account setup email
           </label>
         )}
-        <label className="flex items-center gap-2 text-sm">
-          <Checkbox
-            checked={state.passwordChangeRequired}
-            onCheckedChange={(checked) => update('passwordChangeRequired', checked === true)}
-          />
-          Require password change
-        </label>
+        {config?.capabilities.mfa && (
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={state.mfaRequired}
+              onCheckedChange={(checked) => update('mfaRequired', checked === true)}
+            />
+            Require MFA
+          </label>
+        )}
       </div>
 
       <UserPropertyControls
@@ -221,7 +216,7 @@ export function UserManagementCreateForm({
         }}
       />
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
 
       <div className="flex justify-end gap-2">
         <Button type="submit" disabled={submitting}>

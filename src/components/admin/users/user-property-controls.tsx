@@ -23,12 +23,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../../ui/select';
+import { cn } from '../../../lib/utils';
 
 export interface UserPropertyControlsProps {
   config: AuthAdminConfig | null;
   values: Record<string, unknown>;
   onChange: (key: string, value: unknown) => void;
   disabled?: boolean;
+  compact?: boolean;
 }
 
 /** Render controls for admin-editable configured user property fields. */
@@ -37,18 +39,20 @@ export function UserPropertyControls({
   values,
   onChange,
   disabled = false,
+  compact = false,
 }: UserPropertyControlsProps) {
   const fields = getAdminEditablePropertyFields(config);
   if (fields.length === 0) return null;
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
+    <div className={cn('grid sm:grid-cols-2', compact ? 'gap-3' : 'gap-4')}>
       {fields.map((field) => (
         <UserPropertyControl
           key={field.key}
           field={field}
           value={values[field.key] ?? field.default ?? defaultPropertyValue(field)}
           disabled={disabled}
+          compact={compact}
           onChange={(value) => onChange(field.key, value)}
         />
       ))}
@@ -82,21 +86,23 @@ function UserPropertyControl({
   field,
   value,
   disabled,
+  compact,
   onChange,
 }: {
   field: AuthAdminUserPropertyConfig;
   value: unknown;
   disabled: boolean;
+  compact: boolean;
   onChange: (value: unknown) => void;
 }) {
   const id = React.useId();
   const label = field.label ?? formatPropertyLabel(field.key);
 
   return (
-    <div className="space-y-2">
+    <div className={compact ? 'space-y-1.5' : 'space-y-2'}>
       <Label htmlFor={id}>{label}</Label>
       {renderPropertyInput({ id, field, value, disabled, onChange })}
-      {field.description && (
+      {field.description && !compact && (
         <p className="text-xs text-muted-foreground">{field.description}</p>
       )}
     </div>

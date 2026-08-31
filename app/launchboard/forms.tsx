@@ -22,7 +22,7 @@ import {
   Textarea,
 } from '@zero/framework/react';
 
-import { COLUMN_ACCENTS } from './seed';
+import { COLUMN_ACCENTS } from './options';
 import type {
   BoardInput,
   CardInput,

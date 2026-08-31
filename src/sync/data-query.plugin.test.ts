@@ -95,6 +95,9 @@ function createUserStore(): UserStore {
           role: 'admin',
           status: 'active',
           passwordChangeRequired: false,
+          emailVerifiedAt: 1,
+          emailVerificationRequired: false,
+          mfaRequired: false,
           properties: { department: 'support' },
         },
         'user-1': {
@@ -103,6 +106,9 @@ function createUserStore(): UserStore {
           role: 'user',
           status: 'active',
           passwordChangeRequired: false,
+          emailVerifiedAt: 1,
+          emailVerificationRequired: false,
+          mfaRequired: false,
           properties: { department: 'support' },
         },
         'user-2': {
@@ -111,6 +117,9 @@ function createUserStore(): UserStore {
           role: 'user',
           status: 'active',
           passwordChangeRequired: false,
+          emailVerifiedAt: 1,
+          emailVerificationRequired: false,
+          mfaRequired: false,
           properties: { department: 'sales' },
         },
       };

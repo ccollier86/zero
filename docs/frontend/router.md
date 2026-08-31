@@ -239,6 +239,8 @@ This matters in package-mode apps. Zero resolves SSR and browser React from the
 consuming app package, and client routes avoid server-side hook execution across
 local `file:` or symlinked framework installs. Keep layouts/pages that call
 React hooks, `AppProvider`, or `useCollection()` marked with `"use client"`.
+Whitespace, a byte-order mark, and leading file or line comments may precede
+the directive; `"use client"` must still be the first executable statement.
 
 ## React 19 Streaming SSR
 
@@ -556,6 +558,22 @@ client navigation, Zero carries the matched route auth config through
 hydration. If the user logs out or refresh fails while on a protected route,
 `AppProvider` removes the protected subtree and redirects to `loginPath`.
 
+For a direct navigation or browser refresh, the server restores page identity
+from Zero's signed HttpOnly page-session cookie before it evaluates these
+guards. That credential is accepted only for matched `GET`/`HEAD` pages and is
+validated against its live refresh-session row and current user. It is never
+used for `route.ts` APIs, unsafe methods, app server plugins, or WebSocket sync;
+those continue to require `Authorization: Bearer ...`. An explicit invalid
+Authorization header does not fall back to the cookie.
+
+Because the cookie is intentionally limited to safe methods, page loaders and
+page middleware reached by `GET`/`HEAD` must remain read-only. Put state changes
+in Bearer-authorized API or server-plugin endpoints.
+
+Authenticated SSR responses bypass ISR and are returned with
+`Cache-Control: private, no-store` plus `Vary: Cookie, Authorization`, preventing
+personalized loader output from entering the pathname-only public page cache.
+
 For public-first apps, use `routeAuth: 'explicit'` in `createApp()` and add
 `config.auth` only to protected page/layout branches. For internal tools, keep
 the default `routeAuth: 'protected-by-default'` and list login/reset routes in
@@ -621,11 +639,12 @@ After initial SSR + hydration, all subsequent navigation is client-side. The syn
 
 ```
 1. Browser requests GET /dashboard/settings
-2. Server matches URL → loads route module → loads layouts
-3. React 19 renderToReadableStream — HTML streams progressively (Suspense boundaries)
-4. bootstrapScripts loads client bundle
-5. Client calls hydrateRoot() — app becomes interactive
-6. Sync engine connects, useCollection hooks take over with live data
+2. Server resolves Bearer identity or the page-only HttpOnly session
+3. Server matches URL → evaluates page/layout auth → loads route modules
+4. React 19 renderToReadableStream — HTML streams progressively (Suspense boundaries)
+5. bootstrapScripts loads client bundle
+6. Client calls hydrateRoot() — app becomes interactive
+7. Sync engine connects with the Bearer access token; live hooks take over
 ```
 
 ### 2. Client Navigation (SPA)

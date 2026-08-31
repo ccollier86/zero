@@ -11,7 +11,6 @@
 import * as React from 'react';
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { Search } from '../../animate-ui/icons/search';
-import { AnimateIcon } from '../../animate-ui/icons/icon';
 import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
 import {
@@ -161,9 +160,7 @@ export function UserManagementListControls({
 
       {isLoading && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground" aria-live="polite">
-          <AnimateIcon animate loop>
-            <RefreshCw className="size-3" />
-          </AnimateIcon>
+          <RefreshCw className="size-3 animate-spin" />
           Loading users
         </div>
       )}

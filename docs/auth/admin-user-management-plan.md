@@ -5,7 +5,7 @@ permissions/RBAC/tenant plan for now.
 
 ## Implementation Status
 
-Backend support is implemented:
+Platform support is implemented:
 
 1. First-user bootstrap always creates an admin.
 2. `registration.mode` controls post-bootstrap public registration.
@@ -15,15 +15,24 @@ Backend support is implemented:
 5. Built-in auth forms can read `/auth/config` and hide public registration
    when the backend closes it.
 6. Client UI gates (`PropertyGate`, `HasProperty`, `HasFlag`) are exported.
+7. Admin MFA status, requirement, enrollment reset, and email-verification
+   lifecycle routes are mounted below `/auth/admin/users/:userId`.
+8. Security transitions durably invalidate refresh/page sessions and previously
+   issued access and auth-transition tokens.
+9. The production `UserManagement` organism exposes auth readiness, per-user
+   security state, and capability-gated lifecycle actions.
+10. Administrator setup/reset email is delivery-first: the password gate and
+    session revocation occur only after recipient acceptance, with explicit
+    recovery for an already-stranded gate.
 
 Deferred:
 
 1. Config-file discovery/scaffolding under a `zero/` or `config/` folder.
-2. A production admin user-management page wired to `/auth/admin`.
-3. Auth/account lifecycle email, password reset, setup links, and forced
-   password-change flow. See [Platform Email And Account Lifecycle Plan](./email-account-lifecycle-plan.md).
-4. Full metadata/RBAC/tenant/query enforcement.
-5. Avatar storage integration.
+2. MFA recovery-code generation, display, and verification.
+3. Per-device/session inventory and individual-session revocation.
+4. Administrator impersonation and bulk user actions.
+5. Full metadata/RBAC/tenant/query enforcement.
+6. Avatar storage integration.
 
 ## Goal
 
@@ -92,9 +101,9 @@ itself from injected/effective config.
 
 ## Admin User API
 
-Admin routes should be protected by `requireAdmin()`.
+Admin routes are protected by `requireAdmin()`.
 
-Recommended routes:
+Implemented routes:
 
 ```txt
 GET    /auth/admin/config
@@ -111,17 +120,71 @@ DELETE /auth/admin/users/:userId/properties/:key
 POST   /auth/admin/users/:userId/reset-password
 POST   /auth/admin/users/:userId/send-setup-email
 POST   /auth/admin/users/:userId/send-password-reset
+POST   /auth/admin/users/:userId/clear-password-change-requirement
 POST   /auth/admin/users/:userId/suspend
 POST   /auth/admin/users/:userId/activate
 POST   /auth/admin/users/:userId/revoke-sessions
+
+GET    /auth/admin/users/:userId/mfa
+POST   /auth/admin/users/:userId/mfa/require
+POST   /auth/admin/users/:userId/mfa/clear-requirement
+POST   /auth/admin/users/:userId/mfa/reset
+POST   /auth/admin/users/:userId/send-verification-email
+POST   /auth/admin/users/:userId/verify-email
 ```
 
 `GET /auth/admin/users` returns `{ users, page }`; `page` includes `limit`,
 `offset`, `count`, `total`, `hasMore`, and `nextOffset`.
 
+The admin security endpoints return these exact top-level response shapes:
+
+| Route | Response |
+| --- | --- |
+| `GET /auth/admin/users/:userId/mfa` | `{ methods, required, requirement }` |
+| `POST /auth/admin/users/:userId/mfa/require` | `{ user }` |
+| `POST /auth/admin/users/:userId/mfa/clear-requirement` | `{ user }` |
+| `POST /auth/admin/users/:userId/mfa/reset` | `{ ok: true, deletedMethods, invalidatedChallenges }` |
+| `POST /auth/admin/users/:userId/send-verification-email` | `{ ok: true }` |
+| `POST /auth/admin/users/:userId/verify-email` | `{ user }` |
+| `POST /auth/admin/users/:userId/clear-password-change-requirement` | `{ user }` |
+
+`requirement` is one of `user`, `global`, `admin-role`, or `none`. Requiring or
+clearing the per-user requirement, resetting MFA, manually verifying an email,
+changing security-sensitive account state, or explicitly revoking sessions
+revokes refresh tokens and increments the user's auth generation. Page sessions
+are refresh-bound, while access and auth-transition token resolution rejects an
+older generation, so reactivating an account cannot revive previously issued
+credentials.
+
+Manual verification is an explicit opt-in:
+
+```ts
+export default defineAuthConfig({
+  account: {
+    allowAdminMarkEmailVerified: false,
+  },
+});
+```
+
+`allowAdminMarkEmailVerified` defaults to `false`.
+`GET /auth/admin/config` reports the resolved value as both
+`account.allowAdminMarkEmailVerified` and
+`capabilities.adminMarkEmailVerified`; the Users UI shows the manual override
+only when that capability is true. Sending a normal verification email remains
+a separate readiness-gated action.
+
 Direct `reset-password` is controlled by
 `auth.accountEmails.manualPasswordReset`. Set it to `false` to force admin
 reset flows through emailed action links.
+
+Setup/reset email actions validate real email readiness and require the
+provider boundary to accept the intended recipient before setting
+`passwordChangeRequired` or revoking sessions. A failed delivery removes its
+token and leaves an existing user ungated; failed setup delivery during admin
+creation removes the new account. Generic profile updates cannot newly enable
+the gate. The clear-requirement route is an explicit, audited recovery for
+another user whose gate already exists; it leaves the password unchanged and
+invalidates sessions plus outstanding action links.
 
 Admin user creation should accept:
 
@@ -133,7 +196,9 @@ Admin user creation should accept:
   firstName?: string;
   lastName?: string;
   role?: 'user' | 'admin' | string;
+  // Accepted only as part of sendSetupEmail delivery; raw gate creation fails.
   passwordChangeRequired?: boolean;
+  mfaRequired?: boolean;
   sendSetupEmail?: boolean;
   properties?: Record<string, string>;
 }
@@ -149,14 +214,18 @@ Admin update should support:
 6. Password reset.
 7. Session revocation.
 
-Safety rules:
+Enforced safety rules:
 
 1. Do not allow deleting the last admin.
 2. Do not allow demoting the last admin.
-3. Consider requiring an explicit confirmation flag to delete the current
-   admin's own account.
-4. Resetting a password should revoke existing refresh tokens.
-5. Deleting a user should cascade credentials, properties, and refresh tokens.
+3. Do not allow suspending or otherwise locking the last active admin.
+4. Reject destructive self-admin transitions such as self-demotion,
+   self-suspension, self-delete, self-password reset, and self-MFA reset.
+5. Resetting a password revokes every existing session and token generation.
+6. Deleting a user cascades credentials, properties, and refresh tokens.
+7. Never gate an account before setup/reset delivery is accepted.
+8. Clearing a stranded gate cannot target the acting administrator and revokes
+   every existing session/action-link generation.
 
 ## Configured User Properties
 
@@ -211,7 +280,7 @@ Supported field types for this slice:
 | `boolean` | Serialized as `true` or `false` |
 | `number` | Serialized as a decimal string |
 
-The admin UI should render controls from this config:
+The admin UI renders controls from this config:
 
 | Field type | Admin UI control |
 | --- | --- |
@@ -258,25 +327,34 @@ protect configured admin-only keys.
 
 ## Admin UI Behavior
 
-The existing mock user-management page is not yet wired to these routes. A
-production admin user-management UI should read:
+The reusable `UserManagement` organism is wired to the admin routes. It reads:
 
 ```txt
 GET /auth/admin/config
 ```
 
-and adapt:
+and adapts:
 
-1. Show whether public registration is enabled after bootstrap.
+1. Show compact readiness warnings only when configured email, verification,
+   or MFA capabilities are not operationally ready.
 2. Show configured property fields on create-user forms.
 3. Apply defaults in the create-user form.
 4. Let admins edit configured properties later.
-5. Show unconfigured existing properties in an advanced/raw KV section.
+5. Show unconfigured existing properties in an additional key/value section
+   when `strictUserProperties` is false.
+6. Show selected-user security state only when it needs attention: pending
+   verification, password setup, MFA enrollment, enrolled methods, or errors.
+7. Capability-gate setup/reset emails, manual password reset, confirmed
+   password-gate recovery, resend/mark verification, MFA require/clear/reset,
+   session revocation, suspend/activate, and delete actions.
+8. Serialize sensitive actions and require confirmation for destructive
+   transitions. The backend remains authoritative for every invariant.
 
-This will give developers a simple way to configure app-specific user metadata
-without building a custom user-management screen for every app. Until that UI
-slice is implemented, apps can call the admin routes directly through the SDK's
-authenticated `client.get/post/patch/delete` helpers.
+This gives developers a simple way to configure app-specific user metadata
+without building a custom user-management screen for every app. Apps that need
+a custom admin surface can call the top-level SDK helpers, including
+`listAuthAdminUsers`, `setAuthAdminUserProperty`, and
+`deleteAuthAdminUserProperty`.
 
 ## Auth UI Adaptation
 

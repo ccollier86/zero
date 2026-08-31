@@ -14,21 +14,24 @@ import { routeMessage, currentMutationOrigin } from './message-handler';
 import { StateManager } from './state-manager';
 import { EphemeralStateManager } from './ephemeral-manager';
 import { cleanupEphemeralForSocket } from './ephemeral-handler';
-import { resolveSyncAuthContext } from './sync-auth';
-import { allowAllSyncPolicy, getReadableSyncTables } from './sync-policy';
-import { projectSyncChange } from './row-filter';
+import {
+  createSyncAuthReadyMessage,
+  parseSyncAuthMessage,
+} from './sync-auth-message';
+import { createSyncSocketAuthRuntime } from './sync-socket-auth';
+import { allowAllSyncPolicy } from './sync-policy';
+import { deliverSyncChange } from './sync-change-delivery';
+import { clearSyncBackpressure } from './sync-wire-send';
+import { SyncMutationReceiptStore } from './sync-mutation-receipt-store';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
+import { emitPlatformCode, warnPlatform } from '../observability/sink';
 import {
   clearPlatformSQLiteService,
   setPlatformSQLiteService,
 } from '../persistence';
 import type {
-  Change,
   SyncPluginConfig,
   SyncSocketData,
-  SyncChangeMessage,
-  TableSchema,
 } from './types';
 
 /** Module-level DB reference for cross-plugin access. */
@@ -68,10 +71,18 @@ export function createSyncPlugin(config: SyncPluginConfig) {
   const db = createReactiveDB(config.db);
   const sqlite = db.getSQLiteService();
   const activeSockets = new Set<ServerWebSocket<SyncSocketData>>();
+  const socketAuth = createSyncSocketAuthRuntime({
+    auth: config.auth,
+    db,
+    policy,
+    resourcePolicy: config.resourcePolicy,
+    activeSockets,
+  });
 
   for (const [name, schema] of Object.entries(config.tables)) {
     db.defineTable(name, schema);
   }
+  const mutationReceipts = new SyncMutationReceiptStore(db);
 
   _db = db;
   if (sqlite) setPlatformSQLiteService(sqlite);
@@ -79,26 +90,21 @@ export function createSyncPlugin(config: SyncPluginConfig) {
   return new Elysia({ name: 'sync' })
 
     // ─── Lifecycle ──────────────────────────────────────
-    .onStart(({ server }) => {
+    .onStart(() => {
       // Register onChange BEFORE any connections arrive.
       // Every write to ReactiveDB publishes to the appropriate topic.
       // This is the single broadcast path — works for WS mutations,
       // HTTP route writes, background jobs, transactions — everything.
       _db = db;
       _unsubChange = db.onChange((change) => {
-        if (!server) return;
-
         // Don't publish changes for _ prefix tables (internal)
         if (change.table.startsWith('_')) return;
-
-        const msg = createSyncChangeMessage(change);
-
-        // server.publish sends to all broad table subscribers. Row-filtered
-        // subscribers are not subscribed to this topic; they receive a direct
-        // filtered message below.
-        server.publish(`sync:${change.table}`, JSON.stringify(msg));
-
-        publishFilteredChange(activeSockets, change);
+        deliverSyncChange(
+          activeSockets,
+          change,
+          db.syncEpoch,
+          currentMutationOrigin ?? '',
+        );
       });
 
       // Create StateManager if state sync is enabled
@@ -109,11 +115,22 @@ export function createSyncPlugin(config: SyncPluginConfig) {
       // Always create EphemeralStateManager for ephemeral KV + presence
       _ephemeralManager = new EphemeralStateManager();
 
+      if (config.auth?.required && config.auth.modeDefaulted) {
+        warnPlatform(OBS_CODES.SYNC_AUTH_REQUIRED_DEFAULTED, {
+          metadata: {
+            hint: "Set syncAuth: 'public' only when anonymous sync is deliberate.",
+          },
+        });
+      }
+
       emitPlatformCode(OBS_CODES.SYNC_STARTED, {
         metadata: {
           db: describeSyncDatabase(config.db, db),
           tables: Object.keys(config.tables),
           stateSync: Boolean(config.stateSync),
+          authMode: config.auth
+            ? config.auth.required ? 'required' : 'public'
+            : 'disabled',
         },
       });
     })
@@ -124,6 +141,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
       _stateManager = null;
       _ephemeralManager?.dispose();
       _ephemeralManager = null;
+      socketAuth.dispose();
       activeSockets.clear();
       db.dispose();
       if (_db === db) _db = null;
@@ -140,7 +158,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
 
     // ─── WebSocket handler at /sync ─────────────────────
     .ws('/sync', {
-      // Query params: only `token` for auth
+      // Kept in the schema only for the explicit, temporary compatibility flag.
       query: t.Object({
         token: t.Optional(t.String()),
       }),
@@ -149,6 +167,8 @@ export function createSyncPlugin(config: SyncPluginConfig) {
       idleTimeout: 120,
       sendPings: true,
       maxPayloadLength: 1_048_576, // 1MB
+      backpressureLimit: 1_048_576,
+      closeOnBackpressureLimit: true,
       publishToSelf: true,
       perMessageDeflate: false,
 
@@ -161,8 +181,13 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         data.connectionId = connectionId;
         data.subscribedTopics = new Set();
         data.lastSeq = 0;
+        data.syncSubscribedTables = new Set();
+        data.syncBackpressured = false;
         data.authContext = null;
+        data.authToken = undefined;
         data.authResolved = false;
+        data.authorizationFingerprint = null;
+        data.authorizationScope = null;
         data.allowedTables = new Set();
         data.resourceRowFilters = new Map();
         data.rowFilteredSubscribedTables = new Set();
@@ -170,54 +195,75 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         data.ephemeralTopics = new Set();
         data.query = (ws.data as { query?: { token?: string } }).query ?? {};
 
-        const auth = await resolveSyncAuthContext(data.query.token, config.auth);
-        if (!auth.ok) {
-          ws.close(auth.closeCode, auth.reason);
+        const socket = ws as unknown as ServerWebSocket<SyncSocketData>;
+        if (data.query.token) {
+          if (!config.auth?.allowLegacyQueryToken) {
+            socket.close(4001, 'Query token authentication disabled');
+            return;
+          }
+          await socketAuth.authorize(socket, data.query.token);
           return;
         }
-        data.authContext = auth.authContext;
-        data.authResolved = true;
 
-        const syncReadableTables = getReadableSyncTables(
-          db.getTableNames().filter((table) => !table.startsWith('_')),
-          data.authContext,
-          policy
-        );
-        if (config.resourcePolicy) {
-          const access = await config.resourcePolicy.resolveTableAccess({
-            tableNames: syncReadableTables,
-            authContext: data.authContext,
-          });
-          data.allowedTables = access.readableTables;
-          data.resourceRowFilters = access.rowFilters;
+        if (!config.auth) {
+          await socketAuth.authorize(socket);
         } else {
-          data.allowedTables = syncReadableTables;
+          socketAuth.waitForRequiredHandshake(socket);
         }
-
-        activeSockets.add(ws as unknown as ServerWebSocket<SyncSocketData>);
       },
 
       async message(ws, message) {
         const data = ws.data as unknown as SyncSocketData;
-        if (!data.authResolved) return;
+        const socket = ws as unknown as ServerWebSocket<SyncSocketData>;
+        const wireMessage = message as string | Record<string, unknown>;
+        const authMessage = parseSyncAuthMessage(wireMessage);
+
+        if (authMessage.matched) {
+          if (!authMessage.ok) {
+            socket.close(4001, 'Invalid auth handshake');
+            return;
+          }
+
+          if (!data.authResolved) {
+            const authorized = await socketAuth.authorize(socket, authMessage.token);
+            if (!authorized) return;
+          }
+
+          socket.send(JSON.stringify(
+            createSyncAuthReadyMessage(data.authContext !== null)
+          ));
+          return;
+        }
+
+        // Legacy no-token clients can still enter deliberately public sync.
+        // Required mode fails closed until the explicit auth message arrives.
+        if (!data.authResolved) {
+          const authorized = await socketAuth.authorize(socket);
+          if (!authorized) return;
+        } else if (!(await socketAuth.revalidate(socket))) {
+          return;
+        }
 
         // Elysia auto-parses JSON WebSocket messages — `message` is already an object.
         // routeMessage accepts both string and pre-parsed objects.
         await routeMessage(
           ws as any,
-          message as string | Record<string, unknown>,
+          wireMessage,
           db,
           { publish: (topic: string, data: string) => ws.publish(topic, data) },
           _stateManager,
           _ephemeralManager,
           policy,
           config.snapshotTables,
-          config.resourcePolicy
+          config.resourcePolicy,
+          mutationReceipts,
         );
       },
 
       close(ws, code, reason) {
-        activeSockets.delete(ws as unknown as ServerWebSocket<SyncSocketData>);
+        const socket = ws as unknown as ServerWebSocket<SyncSocketData>;
+        activeSockets.delete(socket);
+        socketAuth.clearSocket(socket);
         // Bun automatically unsubscribes from all pub/sub topics on close.
         // Clean up ephemeral manager subscriptions and presence data.
         if (_ephemeralManager) {
@@ -226,10 +272,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
       },
 
       drain(ws) {
-        // Socket ready for more data after backpressure.
-        // For this implementation, we don't pause sends — changes are
-        // delivered via pub/sub and lost messages are recovered via
-        // ring buffer catchup on reconnect.
+        clearSyncBackpressure(ws as unknown as ServerWebSocket<SyncSocketData>);
       },
     });
 }
@@ -245,38 +288,4 @@ function describeSyncDatabase(config: SyncPluginConfig['db'], db: ReactiveDB): s
   if (config.database) return '[injected database]';
   if (config.mode === 'memory' || config.mode === ':memory:') return ':memory:';
   return config.path ?? config.mode ?? '[platform sqlite]';
-}
-
-function createSyncChangeMessage(change: Change): SyncChangeMessage {
-  return {
-    type: 'sync.change',
-    seq: change.seq,
-    table: change.table,
-    op: change.op,
-    rowId: change.rowId,
-    row: change.row,
-    origin: currentMutationOrigin ?? '',
-    ts: change.ts,
-  };
-}
-
-function publishFilteredChange(
-  sockets: Set<ServerWebSocket<SyncSocketData>>,
-  change: Change
-): void {
-  for (const socket of sockets) {
-    if (!socket.data.rowFilteredSubscribedTables.has(change.table)) continue;
-    const filter = socket.data.resourceRowFilters.get(change.table);
-    if (!filter) continue;
-
-    const projected = projectSyncChange(change, filter);
-    if (!projected) continue;
-
-    const msg: SyncChangeMessage = {
-      type: 'sync.change',
-      ...projected,
-      origin: currentMutationOrigin ?? '',
-    };
-    socket.send(JSON.stringify(msg));
-  }
 }

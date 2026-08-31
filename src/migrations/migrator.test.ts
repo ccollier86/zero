@@ -5,9 +5,9 @@
  * history, safety gates, backups, and rollback.
  */
 
-import type { Database } from 'bun:sqlite';
+import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Migrator } from './migrator';
@@ -133,13 +133,69 @@ describe('Migrator first-class ledger and history', () => {
       log: () => {},
     });
     try {
+      allowed.database.run('CREATE TABLE live_before_backup (value text NOT NULL)');
+      allowed.database.run("INSERT INTO live_before_backup VALUES ('committed-in-wal')");
       expect(allowed.run()).toEqual(['002']);
-      const artifactCount = allowed.database
-        .prepare('SELECT COUNT(*) AS count FROM _zero_migration_artifacts WHERE migration_version = ? AND kind = ?')
-        .get('002', 'backup') as { count: number };
-      expect(artifactCount.count).toBe(1);
+      const artifact = allowed.database
+        .prepare('SELECT path FROM _zero_migration_artifacts WHERE migration_version = ? AND kind = ?')
+        .get('002', 'backup') as { path: string };
+      expect(statSync(artifact.path).mode & 0o777).toBe(0o600);
+      const backup = new Database(artifact.path, { readonly: true });
+      try {
+        expect(backup.query('SELECT value FROM live_before_backup').get())
+          .toEqual({ value: 'committed-in-wal' });
+        expect(() => backup.query('SELECT * FROM migrated').get()).toThrow();
+      } finally {
+        backup.close();
+      }
     } finally {
       allowed.dispose();
+    }
+  });
+
+  test('backs up a live hot-mode handle before its snapshot file exists', () => {
+    const root = mkdtempSync(join(tmpdir(), 'zero-hot-migration-'));
+    tempDirs.push(root);
+    const snapshotPath = join(root, 'data', 'app.snapshot.db');
+    const backupDir = join(root, 'backups');
+    const database = new Database(':memory:');
+    database.run('CREATE TABLE live_hot_data (value text NOT NULL)');
+    database.run("INSERT INTO live_hot_data VALUES ('not-yet-snapshotted')");
+    const migration: Migration = {
+      version: '006',
+      description: 'guarded hot migration',
+      safety: 'guarded',
+      backupRequired: true,
+      up(db: Database) {
+        db.run('CREATE TABLE migrated_hot_data (id text primary key)');
+      },
+    };
+    const migrator = new Migrator({
+      database,
+      dbPath: snapshotPath,
+      backupDir,
+      migrations: [migration],
+      createBackups: true,
+      log: () => {},
+    });
+
+    try {
+      expect(existsSync(snapshotPath)).toBe(false);
+      expect(migrator.run()).toEqual(['006']);
+      const artifact = database
+        .prepare('SELECT path FROM _zero_migration_artifacts WHERE migration_version = ?')
+        .get('006') as { path: string };
+      const backup = new Database(artifact.path, { readonly: true });
+      try {
+        expect(backup.query('SELECT value FROM live_hot_data').get())
+          .toEqual({ value: 'not-yet-snapshotted' });
+        expect(() => backup.query('SELECT * FROM migrated_hot_data').get()).toThrow();
+      } finally {
+        backup.close();
+      }
+    } finally {
+      migrator.dispose();
+      database.close();
     }
   });
 });

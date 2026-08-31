@@ -10,12 +10,18 @@
 
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import type { AuthActionTokenInfo } from '../../frontend/client/auth-client';
+import type {
+  AuthActionTokenInfo,
+  AuthMfaChallengeRequiredResult,
+  AuthMfaSetupRequiredResult,
+} from '../../frontend/client/auth-client';
 import { useAuth } from '../../frontend/client/auth-hooks';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AuthHeader } from '@/components/auth/auth-header';
+import { MFAContinuation } from '@/components/auth/mfa-continuation';
 import { PasswordInput } from '@/components/auth/password-input';
 import { AnimateIcon } from '@/components/animate-ui/icons/icon';
 import { CircleCheck } from '@/components/animate-ui/icons/circle-check';
@@ -26,9 +32,17 @@ import {
   isPasswordActionModeMismatch,
   resolvePasswordAction,
 } from './password-action-policy';
+import {
+  authFeedbackAnimate,
+  authFeedbackExit,
+  authFeedbackInitial,
+  authPresenceTransition,
+} from './auth-motion';
+import { isMfaContinuationResult } from './auth-continuation';
+import { useNativeAuthRoute } from './use-native-auth-route';
 
 export interface PasswordActionFormProps {
-  token: string;
+  token?: string;
   mode?: 'auto' | 'reset' | 'setup';
   loginHref?: string;
   onSuccess?: () => void;
@@ -45,18 +59,34 @@ export function PasswordActionForm({
 }: PasswordActionFormProps) {
   const { inspectActionToken, resetPassword, setupPassword } = useAuth();
   const [tokenInfo, setTokenInfo] = React.useState<AuthActionTokenInfo | null>(null);
+  const [tokenInput, setTokenInput] = React.useState('');
+  const [manualToken, setManualToken] = React.useState('');
   const [loadingToken, setLoadingToken] = React.useState(true);
   const [submitting, setSubmitting] = React.useState(false);
   const [password, setPassword] = React.useState('');
   const [confirm, setConfirm] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   const [complete, setComplete] = React.useState(false);
+  const [mfaContinuation, setMfaContinuation] = React.useState<
+    AuthMfaSetupRequiredResult | AuthMfaChallengeRequiredResult | null
+  >(null);
+  const activeToken = (token?.trim() || manualToken.trim()).trim();
+  const continuedLoginHref = useNativeAuthRoute(loginHref);
 
   React.useEffect(() => {
     let active = true;
+    if (!activeToken) {
+      setLoadingToken(false);
+      setError(null);
+      setTokenInfo(null);
+      return () => {
+        active = false;
+      };
+    }
+
     setLoadingToken(true);
     setError(null);
-    inspectActionToken(token)
+    inspectActionToken(activeToken)
       .then((info) => {
         if (!active) return;
         setTokenInfo(info);
@@ -74,17 +104,18 @@ export function PasswordActionForm({
     return () => {
       active = false;
     };
-  }, [inspectActionToken, token]);
+  }, [activeToken, inspectActionToken]);
 
   const action = resolvePasswordAction(mode, tokenInfo);
   const actionMismatch = isPasswordActionModeMismatch(mode, tokenInfo);
   const titleAction = action ?? (mode === 'setup' ? 'setup' : 'reset');
   const title = titleAction === 'setup' ? 'Set password' : 'Reset password';
   const displayError = error ?? (actionMismatch ? 'This link does not match this password action.' : null);
+  const shouldShowTokenEntry = !activeToken || (!tokenInfo && Boolean(displayError));
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (!action || submitting) return;
+    if (!action || submitting || !activeToken) return;
 
     if (password.length < 8) {
       setError('Password must be at least 8 characters.');
@@ -98,8 +129,13 @@ export function PasswordActionForm({
     setSubmitting(true);
     setError(null);
     try {
-      if (action === 'setup') await setupPassword(token, password);
-      else await resetPassword(token, password);
+      const result = action === 'setup'
+        ? await setupPassword(activeToken, password)
+        : await resetPassword(activeToken, password);
+      if (isMfaContinuationResult(result)) {
+        setMfaContinuation(result);
+        return;
+      }
       setComplete(true);
       onSuccess?.();
     } catch (err) {
@@ -108,6 +144,17 @@ export function PasswordActionForm({
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function handleTokenSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    const nextToken = tokenInput.trim();
+    if (!nextToken) {
+      setError('Enter the token from your email.');
+      return;
+    }
+    setError(null);
+    setManualToken(nextToken);
   }
 
   if (loadingToken) {
@@ -120,31 +167,94 @@ export function PasswordActionForm({
     );
   }
 
+  if (mfaContinuation) {
+    return (
+      <MFAContinuation
+        result={mfaContinuation}
+        onSuccess={onSuccess}
+        onBack={() => setMfaContinuation(null)}
+        className={className}
+      />
+    );
+  }
+
   if (complete) {
     return (
       <div className={cn('space-y-4', className)}>
-        <AuthHeader title="Password updated" description="You can continue with the signed-in session or return to sign in." />
+        <AuthHeader
+          title="Password updated"
+          description="Sign in with your new password to continue."
+        />
         <div className="flex items-center gap-2 rounded-md border border-green-500/30 bg-green-500/5 px-3 py-2 text-sm text-green-600">
           <AnimateIcon animate>
             <CircleCheck size={16} />
           </AnimateIcon>
           Password updated successfully.
         </div>
-        <a href={loginHref} className="block text-center text-sm text-primary hover:underline">
+        <a href={continuedLoginHref} className="block text-center text-sm text-primary hover:underline">
           Back to sign in
         </a>
       </div>
     );
   }
 
+  if (shouldShowTokenEntry) {
+    return (
+      <form onSubmit={handleTokenSubmit} className={cn('space-y-4', className)}>
+        <AuthHeader
+          title={mode === 'setup' ? 'Set password' : 'Reset password'}
+          description="Paste the token from your email to continue."
+        />
+
+        <div className="space-y-1.5">
+          <Label htmlFor="password-action-token" className="text-sm font-medium">Email token</Label>
+          <Input
+            id="password-action-token"
+            value={tokenInput}
+            onChange={(event) => setTokenInput(event.target.value)}
+            autoComplete="one-time-code"
+            placeholder="Paste token"
+            className={cn('h-10 text-sm', error && 'ring-[1px] ring-destructive/30')}
+          />
+        </div>
+
+        <AnimatePresence>
+          {displayError && (
+            <motion.div
+              initial={authFeedbackInitial}
+              animate={authFeedbackAnimate}
+              exit={authFeedbackExit}
+              transition={authPresenceTransition}
+              className="overflow-hidden"
+            >
+              <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5" role="alert">
+                <AnimateIcon animate>
+                  <CircleX size={16} className="mt-px flex-shrink-0 text-destructive" />
+                </AnimateIcon>
+                <p className="text-xs font-medium leading-relaxed text-destructive">{displayError}</p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <Button type="submit" className="h-10 w-full">
+          Continue
+        </Button>
+        <a href={continuedLoginHref} className="block text-center text-sm text-primary hover:underline">
+          Back to sign in
+        </a>
+      </form>
+    );
+  }
+
   return (
-    <form onSubmit={handleSubmit} className={cn('space-y-3', className)}>
+    <form onSubmit={handleSubmit} className={cn('space-y-4', className)}>
       <AuthHeader
         title={title}
         description={tokenInfo ? `For ${tokenInfo.user.email}` : 'Enter a new password to continue'}
       />
 
-      <div className="space-y-3">
+      <div className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="password-action-new" className="text-sm font-medium">New password</Label>
           <PasswordInput
@@ -154,7 +264,7 @@ export function PasswordActionForm({
             autoComplete="new-password"
             showStrength
             required
-            className="h-8 text-sm"
+            className="h-10 text-sm"
           />
         </div>
         <div className="space-y-1.5">
@@ -165,7 +275,7 @@ export function PasswordActionForm({
             onChange={(event) => setConfirm(event.target.value)}
             autoComplete="new-password"
             required
-            className="h-8 text-sm"
+            className="h-10 text-sm"
           />
         </div>
       </div>
@@ -173,9 +283,10 @@ export function PasswordActionForm({
       <AnimatePresence>
         {displayError && (
           <motion.div
-            initial={{ opacity: 0, height: 0, y: -4 }}
-            animate={{ opacity: 1, height: 'auto', y: 0 }}
-            exit={{ opacity: 0, height: 0, y: -4 }}
+            initial={authFeedbackInitial}
+            animate={authFeedbackAnimate}
+            exit={authFeedbackExit}
+            transition={authPresenceTransition}
             className="overflow-hidden"
           >
             <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5" role="alert">
@@ -188,7 +299,7 @@ export function PasswordActionForm({
         )}
       </AnimatePresence>
 
-      <Button type="submit" size="sm" className="h-8 w-full" disabled={!action || submitting}>
+      <Button type="submit" className="h-10 w-full" disabled={!action || submitting}>
         {submitting ? (
           <AnimateIcon animate loop>
             <Loader size={16} />

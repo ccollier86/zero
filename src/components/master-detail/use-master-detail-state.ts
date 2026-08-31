@@ -13,28 +13,34 @@ import {
   useEffect,
   useMemo,
   useState,
-  useSyncExternalStore,
 } from 'react';
 import type { Row } from '../../sync/types';
-import { useClientMaybe } from '../../frontend/client/client-context';
+import type { LazyCollectionOptions } from '../../frontend/client/data-hooks';
+import {
+  useDataTableSource,
+  type DataTableFilters,
+  type DataTableSource,
+  type DataTableSourceActions,
+  type DataTableSourceState,
+} from '../data-table/data-table-source';
 import { requireRowPrimaryKey } from '../data-table/row-identity';
 import { resolveMasterDetailSelection } from './master-detail-selection';
 
-const NOOP_UNSUBSCRIBE = () => {};
-const EMPTY_RECORD: Record<string, never> = {};
-const EMPTY_ARRAY: never[] = [];
-
-export interface MasterDetailLiveActions<T extends Row> {
-  insert: (row: T) => void;
-  update: (id: string, partial: Partial<T>) => void;
-  remove: (id: string) => void;
-  load: (rows: T[], options?: { replace?: boolean }) => void;
-  clear: () => void;
-}
+export type MasterDetailLiveActions<T extends Row> = DataTableSourceActions<T>;
 
 export interface UseMasterDetailStateOptions<T extends Row> {
+  /** Explicit data source contract shared with DataTableView. */
+  source?: DataTableSource<T>;
+  /** Static rows used when `source` and `collection` are omitted. */
   data?: T[];
+  /** Live collection name. Prefer `source` for new generic data-source code. */
   collection?: string;
+  /** Fetch `collection` through `/api/data` before rendering rows. */
+  lazy?: boolean;
+  /** Lazy `/api/data` equality filters. */
+  filters?: DataTableFilters;
+  /** Lazy `/api/data` ordering, limit, and offset options. */
+  lazyOptions?: LazyCollectionOptions;
   primaryKey: string;
   selectedId?: string | null;
   defaultSelectedId?: string | null;
@@ -56,75 +62,25 @@ export interface UseMasterDetailStateReturn<T extends Row> {
   selectPrevious: () => void;
   selectNext: () => void;
   liveActions: MasterDetailLiveActions<T> | null;
-}
-
-/**
- * Return live collection data when `collection` is provided.
- *
- * This mirrors `useCollection` behavior without conditionally calling a hook,
- * allowing master-detail views to keep list and detail state in one place.
- */
-function useOptionalLiveActions<T extends Row>(
-  collection: string | undefined,
-): { data: T[] | null; actions: MasterDetailLiveActions<T> | null } {
-  const client = useClientMaybe();
-
-  if (collection && !client && typeof window !== 'undefined') {
-    throw new Error(
-      'MasterDetailPage with collection must be used within <AppProvider> or <ClientProvider>.',
-    );
-  }
-
-  const col = useMemo(
-    () => collection && client ? client.collection<T>(collection) : null,
-    [client, collection],
-  );
-
-  const subscribe = useCallback(
-    (cb: () => void) => col ? col.subscribe(cb) : NOOP_UNSUBSCRIBE,
-    [col],
-  );
-
-  const byId = useSyncExternalStore(
-    subscribe,
-    () => col ? col.getAll() : EMPTY_RECORD as Record<string, T>,
-    () => EMPTY_RECORD as Record<string, T>,
-  );
-
-  const data = useMemo(
-    () => col ? Object.values(byId) : null,
-    [byId, col],
-  );
-
-  const insert = useCallback((row: T) => col?.insert(row), [col]);
-  const update = useCallback(
-    (id: string, partial: Partial<T>) => col?.update(id, partial),
-    [col],
-  );
-  const remove = useCallback((id: string) => col?.remove(id), [col]);
-  const load = useCallback(
-    (rows: T[], options?: { replace?: boolean }) => col?.load(rows, options),
-    [col],
-  );
-  const clear = useCallback(() => col?.clear(), [col]);
-
-  const actions = useMemo<MasterDetailLiveActions<T> | null>(
-    () => col ? { insert, update, remove, load, clear } : null,
-    [clear, col, insert, load, remove, update],
-  );
-
-  return { data, actions };
+  sourceType: DataTableSourceState<T>['sourceType'];
+  isLoading: boolean;
+  error: Error | string | null;
+  refresh: () => void;
 }
 
 /**
  * Resolve data and selection state for a master-detail component.
  *
- * Supports static rows, a live collection name, controlled selection, and
- * uncontrolled selection with optional first-row auto-selection.
+ * Supports the same data-source contract as DataTableView, plus controlled
+ * selection and uncontrolled selection with optional first-row auto-selection.
  */
 export function useMasterDetailState<T extends Row>({
+  source,
   data: dataProp,
   collection,
+  lazy,
+  filters,
+  lazyOptions,
   primaryKey,
   selectedId: selectedIdProp,
   defaultSelectedId,
@@ -132,8 +88,15 @@ export function useMasterDetailState<T extends Row>({
   onSelect,
   onSelectedIdChange,
 }: UseMasterDetailStateOptions<T>): UseMasterDetailStateReturn<T> {
-  const live = useOptionalLiveActions<T>(collection);
-  const data = live.data ?? dataProp ?? (EMPTY_ARRAY as T[]);
+  const resolvedSource = useDataTableSource<T>({
+    source,
+    data: dataProp,
+    collection,
+    lazy,
+    filters,
+    lazyOptions,
+  });
+  const data = resolvedSource.data;
   const isControlled = selectedIdProp !== undefined;
   const [internalSelectedId, setInternalSelectedId] = useState<string | null>(
     defaultSelectedId ?? null,
@@ -210,6 +173,10 @@ export function useMasterDetailState<T extends Row>({
     selectId,
     selectPrevious,
     selectNext,
-    liveActions: live.actions,
+    liveActions: resolvedSource.actions,
+    sourceType: resolvedSource.sourceType,
+    isLoading: resolvedSource.isLoading,
+    error: resolvedSource.error,
+    refresh: resolvedSource.refresh,
   };
 }

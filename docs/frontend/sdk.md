@@ -6,8 +6,8 @@ The developer-facing API for database, auth, real-time, and persistent state. Tw
 // Core client — works anywhere
 const client = createClient({ url: 'http://localhost:3000', tables });
 
-// Auth — top-level
-await client.login('alice', 'password123');
+// Auth — top-level. May return a session or an MFA continuation.
+const authResult = await client.login('alice', 'password123');
 
 // Auth admin — typed user-management helpers
 const { users } = await client.listAuthAdminUsers();
@@ -93,13 +93,17 @@ interface Client {
   readonly user: AuthUser | null;
   readonly isAuthenticated: boolean;
   readonly token: string | null;
-  login(username: string, password: string): Promise<AuthUser>;
-  register(params: RegisterParams): Promise<AuthUser>;
+  login(username: string, password: string): Promise<AuthCompletionResult>;
+  register(params: RegisterParams): Promise<AuthCompletionResult>;
   getAuthConfig(): Promise<AuthPublicConfig>;
   forgotPassword(email: string): Promise<void>;
   inspectActionToken(token: string): Promise<AuthActionTokenInfo>;
-  resetPassword(token: string, newPassword: string): Promise<AuthUser>;
-  setupPassword(token: string, newPassword: string): Promise<AuthUser>;
+  resetPassword(token: string, newPassword: string): Promise<AuthCompletionResult>;
+  setupPassword(token: string, newPassword: string): Promise<AuthCompletionResult>;
+  listMfaMethods(): Promise<{ methods: AuthMfaMethod[]; required: boolean }>;
+  startMfaSetup(params: { setupToken?: string; method: AuthMfaMethodType; label?: string }): Promise<AuthMfaSetupStartResult>;
+  verifyMfaSetup(params: { verificationToken: string; code: string }): Promise<AuthMfaSetupVerifyResult>;
+  verifyMfaChallenge(params: { challengeToken: string; code: string }): Promise<AuthSessionResult>;
   logout(): Promise<void>;
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
   refresh(): Promise<void>;
@@ -107,6 +111,22 @@ interface Client {
   getProperty(key: string): Promise<string | null>;
   getProperties(): Promise<Record<string, string>>;
   deleteProperty(key: string): Promise<void>;
+
+  // ─── Auth Admin ─────────────────────────────────────────────
+  getAuthAdminConfig(): Promise<AuthAdminConfig>;
+  listAuthAdminUsers(params?: AuthAdminUserListParams): Promise<AuthAdminUserListResult>;
+  getAuthAdminUser(userId: string): Promise<AuthUser>;
+  createAuthAdminUser(params: AuthAdminCreateUserParams): Promise<{ user: AuthUser; setupEmailSent: boolean }>;
+  updateAuthAdminUser(userId: string, params: AuthAdminUpdateUserParams): Promise<AuthUser>;
+  setAuthAdminUserProperty(userId: string, key: string, value: unknown): Promise<void>;
+  deleteAuthAdminUserProperty(userId: string, key: string): Promise<void>;
+  deleteAuthAdminUser(userId: string): Promise<void>;
+  sendAuthAdminSetupEmail(userId: string): Promise<boolean>;
+  sendAuthAdminPasswordReset(userId: string): Promise<void>;
+  resetAuthAdminPassword(userId: string, password: string): Promise<void>;
+  suspendAuthAdminUser(userId: string): Promise<AuthUser>;
+  activateAuthAdminUser(userId: string): Promise<AuthUser>;
+  revokeAuthAdminUserSessions(userId: string): Promise<void>;
 
   // ─── HTTP (JSON fetch; auth headers when auth is enabled) ─────
   /** Auto-prepends server URL, auto-JSON, auto-auth, throws FetchError on non-2xx */
@@ -157,23 +177,75 @@ import {
   ChangePasswordForm,
   ForgotPasswordForm,
   LoginForm,
+  MFAEnrollmentForm,
+  MFAManagementPanel,
   PasswordActionForm,
+  QRCode,
   RegisterForm,
   UserPropertiesForm,
 } from '@zero/framework/react';
 
-<LoginForm forgotPasswordHref="/forgot-password" registerHref="/register" />
-<RegisterForm loginHref="/login" fields={['email', 'username', 'password']} />
+<LoginForm
+  forgotPasswordHref="/forgot-password"
+  identifierAutoComplete="email"
+  identifierLabel="Email"
+  registerHref="/register"
+/>
+<RegisterForm loginHref="/login" />
 <ForgotPasswordForm loginHref="/login" />
 <PasswordActionForm token={tokenFromUrl} mode="auto" loginHref="/login" />
+<PasswordActionForm mode="reset" loginHref="/login" />
 <UserPropertiesForm />
+<MFAManagementPanel />
 <ChangePasswordForm />
 ```
 
 `PasswordActionForm` inspects `/auth/action-token/:token` and calls the reset
 or setup route based on token type. Invalid, expired, unsupported, or
-mode-mismatched tokens keep submit disabled. `UserPropertiesForm` renders only
-`editableBy: 'user'` property fields exposed by `/auth/config`.
+mode-mismatched tokens keep submit disabled. If `token` is omitted, it renders a
+token-paste step for email clients or routes that cannot preserve the query
+string. Login, registration, email verification, and password action forms route
+MFA setup/challenge responses into shared continuation UI before a session is
+persisted. `UserPropertiesForm` renders only `editableBy: 'user'` property
+fields exposed by `/auth/config`.
+
+### Admin User Management
+
+Use `UserManagement` for the default drop-in admin panel:
+
+```tsx
+import { UserManagement } from '@zero/framework/react';
+
+export function UsersSettingsPanel() {
+  return <UserManagement className="h-[720px]" />;
+}
+```
+
+The organism self-wires to the admin auth SDK. It supports backend pagination,
+search, role/status filters, create, update, promote, suspend, activate,
+delete, session revoke, direct reset when enabled, setup email, password reset
+email, and configured user-property editing.
+
+Configured `auth.userProperties` become typed controls. Enum fields render as
+selects, booleans as checkboxes, and strings/numbers as tokenized inputs. If
+`strictUserProperties` is false, the component also exposes an additional
+key/value editor for unconfigured custom metadata. If strict mode is true, only
+configured fields are editable and the server rejects unknown keys.
+
+For custom admin dashboards, use the same top-level SDK methods directly:
+
+```ts
+const { users, total } = await client.listAuthAdminUsers({
+  search: 'ops',
+  role: 'user',
+  status: 'active',
+  limit: 50,
+});
+
+await client.setAuthAdminUserProperty(userId, 'department', 'operations');
+await client.deleteAuthAdminUserProperty(userId, 'legacyFlag');
+await client.sendAuthAdminPasswordReset(userId);
+```
 
 ### User Property Gates
 
@@ -631,11 +703,30 @@ interface AuthClient {
 
   // ─── Actions ─────────────────────────────────────────
 
-  /** Register a new user. Automatically logs in on success. */
-  register(params: RegisterParams): Promise<AuthResult>;
+  /** Register a new user. Returns a session or auth continuation state. */
+  register(params: RegisterParams): Promise<AuthCompletionResult>;
 
-  /** Log in with username and password. */
-  login(username: string, password: string): Promise<AuthResult>;
+  /** Log in with username and password. Returns a session or MFA challenge. */
+  login(username: string, password: string): Promise<AuthCompletionResult>;
+
+  /** Start MFA setup from a session or setup token. */
+  startMfaSetup(params: {
+    setupToken?: string;
+    method: 'email' | 'totp';
+    label?: string;
+  }): Promise<AuthMfaSetupStartResult>;
+
+  /** Verify MFA setup. Auth-flow setup returns a full session. */
+  verifyMfaSetup(params: {
+    verificationToken: string;
+    code: string;
+  }): Promise<AuthMfaSetupVerifyResult>;
+
+  /** Verify an MFA login challenge and receive a full session. */
+  verifyMfaChallenge(params: {
+    challengeToken: string;
+    code: string;
+  }): Promise<AuthSessionResult>;
 
   /** Log out. Revokes refresh token server-side, clears local state. */
   logout(): Promise<void>;
@@ -664,9 +755,13 @@ const result = await client.register({
   lastName: 'Johnson',        // optional
 });
 
-// result.user = { userId: 'u_...', username: 'alice', email: 'alice@example.com', role: 'user', ... }
-// result.accessToken = 'eyJhbG...'
-// result.refreshToken = 'a1b2c3d4-...'
+if ('accessToken' in result) {
+  // Full session: result.user, result.accessToken, result.refreshToken
+}
+
+if ('mfaSetupRequired' in result) {
+  // Continue with client.startMfaSetup({ setupToken: result.mfaSetupToken, ... })
+}
 ```
 
 **RegisterParams:**
@@ -678,6 +773,7 @@ interface RegisterParams {
   password: string;
   firstName?: string;
   lastName?: string;
+  mfaEnrollment?: boolean;
 }
 ```
 
@@ -685,11 +781,12 @@ interface RegisterParams {
 
 1. `POST /auth/register` with credentials
 2. Server hashes password (Argon2id via `Bun.password.hash()`), creates user in `users` table, stores hash in `_credentials`
-3. Server generates access token (ES256 JWT, 15min TTL) and refresh token (opaque UUID, SHA-256 hashed in `_refresh_tokens`, 7d TTL)
-4. Returns tokens + user record
-5. SDK stores access token in memory, refresh token in `localStorage`
-6. SDK connects/reconnects WebSocket with the new token — server gates table subscriptions based on auth
-7. Because `users` is a reactive table, every connected client sees the new user appear
+3. If email verification or MFA setup is required, the server returns a typed continuation state instead of app tokens
+4. Otherwise the server generates access token (ES256 JWT, 15min TTL) and refresh token (opaque UUID, SHA-256 hashed in `_refresh_tokens`, 7d TTL)
+5. SDK stores access token in memory and refresh token in `localStorage` only when a full session is returned
+6. The server also sets a signed HttpOnly page-session cookie bound to that refresh session
+7. SDK connects/reconnects WebSocket with the new access token — server gates table subscriptions based on Bearer auth
+8. Because `users` is a reactive table, every connected client sees the new user appear
 
 **Errors:**
 
@@ -704,18 +801,18 @@ interface RegisterParams {
 ```ts
 const result = await client.login('alice', 's3cret!');
 
-// result.user = { userId: 'u_...', username: 'alice', ... }
-// result.accessToken = 'eyJhbG...'
-// result.refreshToken = 'a1b2c3d4-...'
+if ('mfaChallengeRequired' in result) {
+  // Show OTP/authenticator prompt, then call client.verifyMfaChallenge(...)
+}
 ```
 
 **What happens:**
 
 1. `POST /auth/login` with username + password
 2. Server looks up user by username, verifies password via `Bun.password.verify()`
-3. On success: generates new token pair, returns with user record
-4. SDK stores tokens, reconnects WebSocket with auth
-5. `client.user` is now set, `client.isAuthenticated` is `true`
+3. On success without MFA: generates a new token pair, returns the user record, and sets the page-session cookie
+4. On success with MFA: returns `mfaChallengeRequired` or `mfaSetupRequired` without app tokens
+5. SDK stores tokens and reconnects WebSocket only after a full session is returned
 6. Any `onChange` listeners fire with the user
 
 **Errors:**
@@ -725,6 +822,35 @@ const result = await client.login('alice', 's3cret!');
 | `Invalid credentials` | `INVALID_CREDENTIALS` | Wrong username or password |
 | `User not found` | `USER_NOT_FOUND` | Username doesn't exist |
 
+### MFA Continuation
+
+MFA setup and challenge responses are not errors. They are typed continuation
+states returned before a full app session exists.
+
+```ts
+const result = await client.login('alice', 's3cret!');
+
+if ('mfaSetupRequired' in result) {
+  const setup = await client.startMfaSetup({
+    setupToken: result.mfaSetupToken,
+    method: 'totp',
+  });
+
+  // Show setup.totp.otpauthUrl as a QR code, then collect the first code.
+  const completed = await client.verifyMfaSetup({
+    verificationToken: setup.verificationToken,
+    code: form.code,
+  });
+}
+
+if ('mfaChallengeRequired' in result) {
+  const completed = await client.verifyMfaChallenge({
+    challengeToken: result.mfaChallenge.challengeToken,
+    code: form.code,
+  });
+}
+```
+
 ### Logout
 
 ```ts
@@ -733,14 +859,16 @@ await client.logout();
 
 **What happens:**
 
-1. `POST /auth/logout` with the refresh token
-2. Server revokes the refresh token in `_refresh_tokens` (sets `revoked_at`)
-3. SDK clears access token from memory, refresh token from `localStorage`
-4. SDK disconnects WebSocket (no more authenticated subscriptions)
-5. `client.user` is `null`, `client.isAuthenticated` is `false`
-6. Any `onChange` listeners fire with `null`
+1. `POST /auth/logout`, including the refresh token when one is available
+2. Server revokes both the supplied refresh token and the refresh session bound to the page cookie
+3. Server expires the HttpOnly page cookie
+4. SDK waits for that response, then clears access token from memory and refresh token from `localStorage`
+5. SDK disconnects WebSocket (no more authenticated subscriptions)
+6. `client.user` is `null`, `client.isAuthenticated` is `false`
+7. Any `onChange` listeners fire with `null`
 
-Logout is idempotent — calling it when already logged out is a no-op.
+Logout is idempotent. It still contacts the server when local token state is
+already empty because JavaScript cannot inspect or clear the HttpOnly cookie.
 
 ### Refresh
 
@@ -754,8 +882,9 @@ await client.refresh();
 2. `POST /auth/refresh` with the refresh token
 3. Server verifies: hash matches, not expired, not revoked
 4. Server **rotates** — revokes old refresh token, issues new access + refresh pair
-5. SDK stores the new access token in memory and the new refresh token in `localStorage`
-6. Resolves when refresh completes
+5. Server replaces the page cookie with a credential bound to the new refresh row
+6. SDK stores the new access token in memory and the new refresh token in `localStorage`
+7. Resolves when refresh completes
 
 **Automatic refresh:** The SDK intercepts 401 responses from authenticated
 HTTP calls and automatically refreshes before retrying once. The component
@@ -774,16 +903,18 @@ never sees a recoverable expired-access-token 401.
 ### Session Persistence And Expiry
 
 The access token is short-lived and memory-only. The refresh token is persisted
-in `localStorage`, rotated on every refresh, and used to restore the browser
-session after reload.
+in `localStorage`, rotated on every refresh, and used to restore the hydrated
+browser client. A separate HttpOnly page credential restores identity for the
+initial server-rendered document request, before JavaScript can run.
 
 The SDK keeps the user logged in across normal access-token expiry:
 
 1. Startup with a stored refresh token calls `/auth/refresh`, then `/auth/me`.
-2. Authenticated HTTP calls that receive 401 refresh and retry once.
-3. Sync opens and reconnects with the latest access token instead of a stale token captured at startup.
-4. Login, registration, and refresh reconnect sync when the auth token changes.
-5. Logout, rejected refresh, revoked refresh token, or unknown 401 clears auth state and resets local synced table/state data.
+2. Direct and refreshed `GET`/`HEAD` pages can use the server-readable page cookie during SSR.
+3. Authenticated HTTP calls that receive 401 refresh and retry once.
+4. Sync opens and reconnects with the latest access token instead of a stale token captured at startup.
+5. Login, registration, and refresh reconnect sync when the auth token changes.
+6. Logout, rejected refresh, revoked refresh token, or unknown 401 clears auth state and resets local synced table/state data.
 
 When auth is enabled, `AppProvider` watches auth state on the client. If the
 user becomes unauthenticated on a protected route, it removes the protected
@@ -797,7 +928,7 @@ For protected-first apps, configure public paths in `createApp()`:
 createApp({
   auth: true,
   routeAuth: 'protected-by-default',
-  publicPaths: ['/login', '/register', '/forgot-password'],
+  publicPaths: ['/login', '/register', '/forgot-password', '/reset-password', '/setup-password', '/verify-email'],
   loginPath: '/login',
 });
 ```
@@ -840,26 +971,60 @@ interface UserRecord {
   role: string;                  // 'user' | 'admin'
   status: 'active' | 'suspended';
   passwordChangeRequired: boolean;
+  emailVerifiedAt: number | null;
+  emailVerificationRequired: boolean;
+  mfaRequired: boolean;
   createdAt: number;             // Unix timestamp ms
   updatedAt: number | null;
   properties: Record<string, string>;  // Extensible KV metadata
 }
 
-interface AuthResult {
+interface AuthSessionResult {
   user: UserRecord;
   accessToken: string;
   refreshToken: string;
 }
+
+type AuthCompletionResult =
+  | AuthSessionResult
+  | {
+      user: UserRecord;
+      mfaSetupRequired: true;
+      mfaSetupToken: string;
+      mfa: { methods: Array<'email' | 'totp'>; allowUserChoice: boolean };
+    }
+  | {
+      user: UserRecord;
+      mfaChallengeRequired: true;
+      mfaChallenge: {
+        method: AuthMfaMethod;
+        challenge?: AuthMfaChallenge;
+        challengeToken: string;
+      };
+    };
 ```
+
+`POST /auth/register` normally returns a token pair. When
+`auth.account.requireEmailVerification` is enabled for a post-bootstrap public
+registration, it returns only `user` with `emailVerificationRequired: true`.
+Call `verifyEmail(token)` after the emailed link/token is consumed to receive
+the next auth completion result. When MFA setup or challenge is required, the
+SDK returns `mfaSetupRequired` or `mfaChallengeRequired` and does not persist a
+session until the corresponding MFA verification call returns an
+`AuthSessionResult`.
 
 ### Token Storage
 
 | Token | Storage | Why |
 |-------|---------|-----|
-| Access token | In-memory only (JS variable) | Short-lived (15min), stateless verification. Never touches disk — XSS can read `localStorage` but can't read a JS closure. |
+| Access token | In-memory only (JS variable) | Short-lived (15min). Signature verification is stateless; Zero requests also enforce live user/session state. Never touches disk — XSS can read `localStorage` but can't read a JS closure. |
 | Refresh token | `localStorage` | Long-lived (7d), survives page refresh. Server stores only the SHA-256 hash — compromised token can be revoked. |
+| Page session | Signed JWT in a host-only HttpOnly `SameSite=Lax` cookie | Lets SSR authenticate direct safe page navigation before JavaScript runs; validation is bound to the live refresh row and current user. |
 
-**Why not httpOnly cookies:** The sync engine WebSocket needs the token for connection auth. Browsers can't set cookies on WebSocket upgrade requests. The token goes as a query parameter on WS connect.
+The credentials intentionally have separate jobs. The page cookie is accepted
+only for matched `GET`/`HEAD` pages. APIs, mutations, `route.ts` handlers, and
+WebSocket sync still require the in-memory Bearer access token, avoiding a new
+ambient-cookie CSRF boundary for data changes.
 
 ---
 
@@ -1392,24 +1557,40 @@ interface AuthHookResult {
   /** Whether a user is currently authenticated. */
   isAuthenticated: boolean;
 
-  /** Whether the current user has 'admin' role. */
-  isAdmin: boolean;
+  /** Current auth loading/error state. */
+  isLoading: boolean;
+  error: string | null;
 
-  /** Register a new user. Automatically logs in on success. Throws on validation/duplicate errors. */
-  register(params: RegisterParams): Promise<void>;
+  /** Register a new user. Returns a session, email-verification user state, or MFA continuation. */
+  register(params: RegisterParams): Promise<AuthCompletionResult | null>;
 
-  /** Log in with username and password. Throws on invalid credentials. */
-  login(username: string, password: string): Promise<void>;
+  /** Log in with username/email and password. Returns a session or MFA continuation. */
+  login(username: string, password: string): Promise<AuthCompletionResult | null>;
+
+  /** Load public auth config for policy-aware UI. */
+  getConfig(): Promise<AuthPublicConfig | null>;
 
   /** Request a password reset email. Does not reveal account existence. */
   forgotPassword(email: string): Promise<void>;
+
+  /** Request another verification email. Does not reveal account existence. */
+  resendVerificationEmail(email: string): Promise<void>;
+
+  /** Verify an email action token. Returns a session or MFA continuation. */
+  verifyEmail(token: string): Promise<AuthCompletionResult | null>;
 
   /** Inspect a setup/reset token without consuming it. */
   inspectActionToken(token: string): Promise<AuthActionTokenInfo | null>;
 
   /** Complete password reset/setup from an emailed token. */
-  resetPassword(token: string, newPassword: string): Promise<void>;
-  setupPassword(token: string, newPassword: string): Promise<void>;
+  resetPassword(token: string, newPassword: string): Promise<AuthCompletionResult | null>;
+  setupPassword(token: string, newPassword: string): Promise<AuthCompletionResult | null>;
+
+  /** Current-user MFA methods and enrollment/challenge actions. */
+  listMfaMethods(): Promise<{ methods: AuthMfaMethod[]; required: boolean } | null>;
+  startMfaSetup(params: { setupToken?: string; method: AuthMfaMethodType; label?: string }): Promise<AuthMfaSetupStartResult | null>;
+  verifyMfaSetup(params: { verificationToken: string; code: string }): Promise<AuthMfaSetupVerifyResult | null>;
+  verifyMfaChallenge(params: { challengeToken: string; code: string }): Promise<AuthSessionResult | null>;
 
   /** Log out. Revokes server-side refresh token, clears local state. */
   logout(): Promise<void>;
@@ -1678,21 +1859,27 @@ Valibot throws `ValiError` with structured `issues` on failure. The framework's 
 For requests outside the sync engine — one-off queries, file uploads, streaming, server actions. Eden Treaty generates a fully typed client from the Elysia server type.
 
 ```ts
-// lib/api.ts
-import { treaty } from '@elysiajs/eden';
-import type { App } from '../server';
+import { useClient } from '@zero/framework/frontend';
 
-export const api = treaty<App>(window.location.origin);
-```
-
-```tsx
-import { api } from '@/lib/api';
+const client = useClient();
 
 // Fully typed — autocomplete for every route, param, response
-const { data, error } = await api.api.todos.get();
-const { data: created } = await api.api.todos.post({ title: 'New' });
-const { data: transcript } = await api.api.sessions[sessionId].transcript.get();
+const { data, error } = await client.api.api.todos.get();
+const { data: created } = await client.api.api.todos.post({ title: 'New' });
+const { data: transcript } = await client.api.api.sessions[sessionId].transcript.get();
+
+// File values are encoded as multipart FormData by Eden.
+const { data: parsed } = await client.api.api.documents.parse.post({ file });
 ```
+
+Use the `client.api` instance supplied by Zero instead of constructing a
+second raw Treaty client. It owns bearer injection, waits for an in-flight
+session restore, and retries once with the rotated token after a 401. Multipart
+bodies remain multipart on that retry; do not set `Content-Type` manually
+because the browser must generate its boundary. Automatic retry applies to
+replayable request bodies such as JSON, text, and `FormData`; a one-shot
+`ReadableStream` request body cannot be replayed and needs an endpoint-specific
+upload protocol instead.
 
 **When to use sync hooks vs. Eden:**
 

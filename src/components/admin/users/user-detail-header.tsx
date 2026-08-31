@@ -20,12 +20,15 @@ export interface UserDetailHeaderProps {
   className?: string;
 }
 
-/** Render the selected user's avatar, name, email, role, and join date. */
+/** Render the selected user's compact identity, role, and lifecycle state. */
 export function UserDetailHeader({ user, className }: UserDetailHeaderProps) {
   const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username;
+  const identity = user.username.toLowerCase() === user.email.toLowerCase()
+    ? user.email
+    : `@${user.username} · ${user.email}`;
 
   return (
-    <div className={cn('flex items-center gap-4', className)}>
+    <div className={cn('flex items-center gap-3', className)}>
       <AnimatePresence mode="wait">
         <motion.div
           key={user.id}
@@ -34,8 +37,8 @@ export function UserDetailHeader({ user, className }: UserDetailHeaderProps) {
           exit={{ scale: 0, opacity: 0 }}
           transition={{ type: 'spring', stiffness: 300, damping: 25 }}
         >
-          <Avatar className="size-16">
-            <AvatarFallback className="bg-primary text-primary-foreground text-lg">
+          <Avatar className="size-11">
+            <AvatarFallback className="bg-primary text-sm text-primary-foreground">
               {getInitials(user)}
             </AvatarFallback>
           </Avatar>
@@ -43,21 +46,16 @@ export function UserDetailHeader({ user, className }: UserDetailHeaderProps) {
       </AnimatePresence>
 
       <div className="min-w-0 flex-1">
-        <h2 className="truncate text-lg font-semibold">{fullName}</h2>
-        <p className="truncate text-sm text-muted-foreground">
-          @{user.username} &middot; {user.email}
-        </p>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          <Badge variant={user.role === 'admin' ? 'default' : 'outline'}>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <h2 className="min-w-0 truncate text-base font-semibold">{fullName}</h2>
+          <Badge className="h-5 px-1.5 text-[11px]" variant={user.role === 'admin' ? 'default' : 'outline'}>
             {user.role}
           </Badge>
-          <Badge variant={user.status === 'active' ? 'secondary' : 'outline'}>
+          <Badge className="h-5 px-1.5 text-[11px]" variant={user.status === 'active' ? 'secondary' : 'outline'}>
             {user.status}
           </Badge>
-          <span className="text-xs text-muted-foreground">
-            Joined {formatDate(user.createdAt)}
-          </span>
         </div>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">{identity}</p>
       </div>
     </div>
   );
@@ -71,11 +69,4 @@ function getInitials(user: UserManagementUser): string {
     .map((part) => part.charAt(0))
     .join('')
     .toUpperCase();
-}
-
-function formatDate(timestamp: number): string {
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    year: 'numeric',
-  }).format(timestamp);
 }

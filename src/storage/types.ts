@@ -13,6 +13,28 @@ export interface DriveRecord {
   created_at: number;
 }
 
+export interface StorageAccessCapabilities {
+  /** Highest effective permission for the current caller. */
+  effectiveAccess: PermissionLevel | null;
+  /** Caller can read metadata and objects. */
+  canRead: boolean;
+  /** Caller can create, update, move, copy, or delete objects. */
+  canWrite: boolean;
+  /** Caller can manage drive settings, visibility, and grants. */
+  canAdmin: boolean;
+  /** Caller owns the drive. */
+  isOwner: boolean;
+  /** Caller is a platform admin. */
+  isPlatformAdmin: boolean;
+  /** Drive or object is public for read access. */
+  isPublic: boolean;
+}
+
+export interface DriveRecordWithAccess extends DriveRecord {
+  /** Access resolved for the current request context. */
+  access: StorageAccessCapabilities;
+}
+
 export interface CreateDriveParams {
   name: string;
   /** Max total drive size in bytes. 0 = unlimited. */
@@ -85,6 +107,11 @@ export interface PermissionRecord {
   grant_value: string;
   permission: PermissionLevel;
   created_at: number;
+}
+
+export interface ListPermissionsOptions {
+  /** Include object-level permissions for this path instead of drive-level only. */
+  objectPath?: string;
 }
 
 export interface GrantPermissionParams {

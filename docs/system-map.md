@@ -24,9 +24,13 @@ src/
   sync/                    <- Core engine: ReactiveDB + WebSocket sync + state sync + ephemeral KV
   sync/client/             <- Client-side sync: stores, clients, React hooks
   auth/                    <- Authentication: JWT, user store, middleware
+  auth/native/             <- Native public-client config, redirect, PKCE, and admission policy
+  auth/oidc/               <- Native OIDC routes, request/code/session stores, and rotation
+  native/                  <- Platform-neutral TypeScript native auth SDK and broker
   notifications/           <- Notification service + plugin
   ai/                      <- Internal AI service, provider registry, tools, conversations, Meta adapter
   vector/                  <- zvec-backed local vector store, filters, AI bridge
+  pdf/                     <- Browser-grade PDF service, Chromium adapter, resource policy, storage bridge
   kv/                      <- Platform KV/cache service, TTL/LRU indexes, journal/checkpoint recovery, Elysia plugin
   rooms/                   <- Rooms, presence
   scheduler/               <- Cron job scheduler
@@ -89,19 +93,32 @@ src/
 
 ## System 2: Authentication
 
-**What:** JWT-based auth with user store, token rotation, role-based middleware.
+**What:** JWT-based auth with user store, token rotation, Bearer middleware, and refresh-bound SSR page sessions.
 
 **Files:**
 | File | Purpose |
 |------|---------|
-| `src/auth/auth.plugin.ts` | Elysia plugin — defines user tables, token service, REST routes |
+| `src/auth/auth.plugin.ts` | Auth composition root — lifecycle, derives, and subplugin mounting |
+| `src/auth/auth-runtime.ts` | Auth service startup/shutdown and runtime getters |
+| `src/auth/auth-schema.ts` | Auth table creation and compatibility upgrades |
+| `src/auth/auth-session.plugin.ts` | Core config/register/login/refresh/logout/me/jwks routes |
+| `src/auth/auth-user-properties.plugin.ts` | Current-user configurable property routes |
 | `src/auth/auth.middleware.ts` | `createAuthMiddleware()` — resolve-based, provides `requireAuth/requireAdmin` |
+| `src/auth/page-session.ts` | HttpOnly page-cookie issue/resolve/revoke helpers; safe SSR pages only |
 | `src/auth/auth-admin.plugin.ts` | Admin user-management routes and capability/config response |
+| `src/auth/auth-mfa.plugin.ts` | MFA setup/challenge routes |
+| `src/auth/auth-mfa-response.ts` | Session-vs-MFA completion helper |
+| `src/auth/auth-user-response.ts` | Public auth user response mapper |
 | `src/auth/auth-config.ts` | Auth behavior config normalization and typed config helper |
-| `src/auth/auth.models.ts` | TypeBox request/response schemas |
 | `src/auth/action-token-service.ts` | Auth compatibility wrapper over platform action tokens, with legacy-token fallback |
 | `src/auth/account-email-service.ts` | Auth lifecycle email delivery through the platform email runtime |
 | `src/auth/auth-account.plugin.ts` | Forgot-password, action-token inspect, reset-password, and setup-password routes |
+| `src/auth/mfa-challenge-service.ts` | MFA enrollment/challenge policy, email OTP, and TOTP verification |
+| `src/auth/mfa-challenge-store.ts` | MFA challenge persistence and attempt tracking |
+| `src/auth/mfa-method-store.ts` | MFA method persistence for email/TOTP enrollment state |
+| `src/auth/mfa-secret-crypto.ts` | Encryption/decryption for authenticator secrets at rest |
+| `src/auth/mfa-service.ts` | MFA config/readiness helper for public/admin auth config responses |
+| `src/auth/mfa-totp.ts` | RFC 6238 TOTP generation and verification helpers |
 | `src/auth/types.ts` | AuthContext, AuthError, UserRecord, action token types, AUTH_DEFAULTS |
 | `src/auth/index.ts` | Barrel exports |
 
@@ -110,7 +127,39 @@ src/
 |------|---------|
 | `src/frontend/client/auth-client.ts` | AuthClient — login/register/logout/refresh, @xstate/store for state |
 
-**Key pattern:** Auth guard uses Elysia's `resolve()` (not `derive()`) for type propagation across plugin boundaries. Named plugin with deduplication.
+### Installed-app authentication map
+
+Desktop, mobile, Tauri, and Chrome integrations all authenticate through the
+same Zero auth plugin and user store. The current parent-repository sources are:
+
+| Area | Files | Responsibility |
+|---|---|---|
+| Public-client policy | `src/auth/native/` | Config validation, issuer/redirect classification, PKCE request parsing, safe continuation parsing, source admission, and proxy trust |
+| OIDC provider | `src/auth/oidc/` | Discovery, authorization/consent, code exchange, refresh rotation, revocation, UserInfo, persistence, replay handling, and live-family validation |
+| Runtime composition | `src/auth/auth-runtime.ts`, `src/auth/auth.plugin.ts` | Mount provider only when enabled and share users, signing keys, account gates, and auth context |
+| TypeScript client core | `src/native/` | Strict discovery, PKCE, callback/ID-token checks, secure-vault envelopes, session lifecycle, authenticated fetch, process broker, IPC proxy, and Sync adapter |
+| Web continuation UI | `src/components/auth/` | Preserve validated authorization through login, registration, verification, recovery, and MFA |
+| Sync bridge | `src/native/sync-auth.ts`, `src/sync/sync-socket-revalidation.ts` | Refresh-aware socket auth plus cache purge/account-change lifecycle and live policy revalidation |
+| Configuration diagnostics | `src/doctor/native-auth-checks.ts`, `src/doctor/native-auth-origin-checks.ts` | Issuer/public URL, clients, redirects, TTL, and admission-policy checks |
+| Database evolution | `src/migrations/definitions/005_native_app_auth.ts`, `006_native_auth_hardening.ts` | Native request/code/family tables, indexes, registration intent, and guarded schema repair |
+| Packaged host recipes | `examples/native-auth/` | Dependency-free TypeScript contracts for desktop loopback, mobile browser sessions, and broker IPC |
+
+The `@zero/framework/native` TypeScript entry point is implemented in this
+tree. Independently versioned `zero-native-auth`/`tauri-plugin-zero-auth` and
+`@zero/chrome-auth` development repositories are deliberately not part of the
+framework tree, package, create template, or updater. The Rust/Tauri packages
+are Phase 0 design scaffolds; the Chrome adapter is a private MV3 preview. The
+canonical parent docs remain complete even when those ignored development
+checkouts are absent.
+
+**Key native pattern:** the access JWT's audience is the exact Zero app origin,
+the ID token's audience is the public client ID, and both use the same `/auth`
+issuer. HTTP auth rechecks the current user generation, registered client, and
+live refresh family before producing the normal `AuthContext`. OIDC scopes
+release identity claims; app authorization remains endpoint, middleware,
+resource, and Sync policy.
+
+**Key pattern:** Elysia auth context stays Bearer-only. The file router separately resolves the page cookie only after ruling out a `route.ts` handler, preserving the API/CSRF boundary.
 
 ---
 
@@ -121,7 +170,7 @@ src/
 **Files:**
 | File | Purpose |
 |------|---------|
-| `src/doctor/platform-doctor.ts` | Pure app config checks for auth/email, schema PKs, storage, sync policy, resources, migrations, observability, AI, vector, and index guidance |
+| `src/doctor/platform-doctor.ts` | Pure app config checks for auth/email, schema PKs, storage, sync policy, resources, migrations, observability, AI, vector, PDF, and index guidance |
 | `src/doctor/config-loader.ts` | Loads an explicit `zero.config.ts`/`config/zero.config.ts` module for CLI checks |
 | `src/doctor/run.ts` | CLI presentation for `bun run doctor` |
 
@@ -276,6 +325,37 @@ store, or public frontend API.
 
 ---
 
+## System 4.3: PDF Rendering
+
+**What:** Server-only HTML/CSS-to-PDF rendering with a shared lazy Chromium
+process, isolated browser contexts, bounded queueing, strict resource policy,
+direct Zero storage composition, and replaceable renderer/storage adapters.
+
+**Docs:** [PDF Rendering](./pdf.md)
+
+**Files:**
+| File | Purpose |
+|------|---------|
+| `src/pdf/pdf-types.ts` | Public PDF config, render, resource, adapter, storage, and status contracts |
+| `src/pdf/pdf-config.ts` | Secure defaults, limits, browser config, and print-option normalization |
+| `src/pdf/pdf-document.ts` | Full-document/fragment composition and supplemental CSS/base metadata |
+| `src/pdf/pdf-content-policy.ts` | Renderer CSP for inline resource, script, worker, form, and object enforcement |
+| `src/pdf/pdf-resource-policy.ts` | Remote/local/private-network resource decisions and safe diagnostics |
+| `src/pdf/pdf-render-queue.ts` | Concurrency and queue-pressure boundary |
+| `src/pdf/playwright-pdf-renderer.ts` | Lazy Playwright Chromium lifecycle and browser rendering adapter |
+| `src/pdf/pdf-storage-writer.ts` | Narrow adapter into Zero storage |
+| `src/pdf/pdf-service.ts` | Framework-neutral rendering/storage orchestration and observability |
+| `src/pdf/pdf.plugin.ts` | Named Elysia decoration and shutdown lifecycle |
+| `src/pdf/pdf-browser-install.ts` | Managed Chromium status/install operations |
+| `src/pdf/run.ts` | `zero pdf install/status` CLI |
+| `src/pdf/index.ts` | Server-only PDF barrel exports |
+
+**Key pattern:** Zero mounts no public PDF route. App endpoints and workflows
+own validation/authorization, while `zero.pdf` owns bounded rendering. Browser
+startup is lazy and process-wide; each render receives an isolated context.
+
+---
+
 ## System 5: Workflows
 
 **What:** Durable multi-step workflow engine with retry, timeout, branching.
@@ -399,7 +479,10 @@ Organized into `primitives/` (raw building blocks) and `components/` (pre-styled
 can have a richer visual language without changing dashboard defaults.
 
 **`src/components/auth/` — auth UI blocks:**
-LoginForm, RegisterForm, ForgotPasswordForm, PasswordActionForm, ChangePasswordForm, UserPropertiesForm, OTPVerification, PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup, AuthLayout, AuthHeader, Gate, AdminGate, SignedIn, SignedOut, PropertyGate, HasProperty, HasFlag, useGate, usePropertyGate.
+LoginForm, RegisterForm, ForgotPasswordForm, EmailVerificationForm, PasswordActionForm, ChangePasswordForm, UserPropertiesForm, MFAContinuation, MFAEnrollmentForm, MFAChallengeForm, MFAManagementPanel, OTPVerification, PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup, AuthLayout, AuthHeader, Gate, AdminGate, SignedIn, SignedOut, PropertyGate, HasProperty, HasFlag, useGate, usePropertyGate.
+
+**`src/components/qr-code/` — QR primitive:**
+QRCode for token-aware authenticator setup and app-owned QR flows.
 
 ---
 
@@ -441,18 +524,19 @@ LoginForm, RegisterForm, ForgotPasswordForm, PasswordActionForm, ChangePasswordF
 
 ```
 1. Sync engine          (provides ReactiveDB — must be first)
-2. Auth plugin          (defines user tables on shared DB)
-3. Auth middleware       (resolve-based, provides requireAuth/requireAdmin)
+2. Platform tokens      (shared DB-backed action/resume token service)
+3. Auth + middleware    (optional account runtime and request policy)
 4. Observability        (sink endpoint + global error reporting)
 5. AI                   (optional internal provider service)
-6. Scheduler            (cron jobs — used by notifications + workflows)
-7. Notifications        (depends on auth + scheduler)
-8. Rooms                (depends on auth)
-9. Workflows            (depends on auth + scheduler)
-10. Storage             (depends on auth)
-11. Data query          (`/api/data` for lazy tables)
-12. Health check        (/api/health)
-13. File-based router   (catch-all — must be last)
+6. Vector               (optional local vector storage)
+7. PDF                  (optional lazy Chromium renderer)
+8. KV/cache             (optional durable memory-first service)
+9. Scheduler            (cron jobs — used by notifications + workflows)
+10. Notifications/rooms/workflows (auth-dependent services)
+11. Storage             (auth-dependent object storage)
+12. Data query/resources (lazy data and generated CRUD policy)
+13. App backend extensions
+14. Health/sitemap/file router (file router remains last)
 ```
 
 ---

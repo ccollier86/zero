@@ -20,7 +20,7 @@ Four layers, one data flow. Everything happens in a single Bun process.
 ├────────────────────── WebSocket ─────────────────────────┤
 │                   Sync Plugin (Elysia)                   │
 │   .ws('/sync') — per-socket data, mutation routing       │
-│   db.onChange() → server.publish(topic) (native pub/sub) │
+│   db.onChange() → projected, status-checked direct sends │
 ├─────────────────────────────────────────────────────────┤
 │                      ReactiveDB                          │
 │   bun:sqlite — defineTable, prepared CRUD, change events │
@@ -68,7 +68,11 @@ See [ReactiveDB deep dive](./reactive-db.md).
 
 ### SyncServer (Elysia Plugin)
 
-The sync plugin — `createSyncPlugin()` — is an Elysia plugin that wraps ReactiveDB lifecycle + a `.ws('/sync')` handler. Uses **Bun's native pub/sub topics** for broadcasting — no manual connection sets, no broadcast loops. Each table subscription maps to a topic. Bun handles fan-out internally at the C/uWebSocket layer.
+The sync plugin — `createSyncPlugin()` — is an Elysia plugin that wraps
+ReactiveDB lifecycle + a `.ws('/sync')` handler. Table changes use a small
+active-socket set and direct Bun `send()` calls so Zero can project row policy,
+track a per-socket predecessor cursor, and react to backpressure status.
+State/ephemeral channels continue to use Bun topics where those semantics fit.
 
 **Owns:**
 - ReactiveDB lifecycle (`onStart` creates, `onStop` disposes — same pattern as `persistence.plugin.ts`)
@@ -76,31 +80,23 @@ The sync plugin — `createSyncPlugin()` — is an Elysia plugin that wraps Reac
 - Lazy getter `getSyncDB()` — cross-plugin access (same pattern as `getPersistenceColdStore()`)
 - WebSocket lifecycle (via Elysia `.ws()` — `open`, `message`, `close`, `drain`)
 - Per-socket state (via `ws.data` — typed `SyncSocketData`, available in all handlers)
-- Table-to-topic mapping (`sync:todos`, `sync:users` — one topic per table)
-- Subscription gating (`SyncPolicy.canReadTable` derives `allowedTables` at WebSocket open)
+- Per-socket subscribed-table and last-delivered-cursor state
+- Subscription gating (`SyncPolicy.canReadTable` derives `allowedTables` during auth and revalidation)
 - Mutation policy (`SyncPolicy.canMutateTable` and operation callbacks gate direct writes)
 - Mutation dispatch (accepted client request → ReactiveDB write → ack back to caller)
-- Change broadcast (ReactiveDB `onChange` → `server.publish(topic)` — Bun fans out)
-- Reconnect handling (client sends `lastSeq` → replay missed changes via `ws.send()`)
+- Change delivery (ReactiveDB `onChange` → policy projection → status-checked direct send)
+- Reconnect handling (`epoch` + opaque authorization `scope` + `lastSeq`)
 
 **Does not own:**
 - Client-side state (that's SyncClient)
 - React rendering (that's the hooks layer)
 - Auth/permissions rules (external — the application supplies token verification and `SyncPolicy`)
 
-**Why Bun native pub/sub instead of a manual `Set<Connection>` + broadcast loop:**
-
-The existing codebase uses `Set<ClientConnection>` with a manual broadcast loop (`src/server/session-orchestrator.ts`). That works, but for the sync engine we can do better:
-
-| Manual broadcast | Bun native pub/sub |
-|-----------------|-------------------|
-| JS iterates Set, calls `send()` per connection | Single `server.publish(topic, msg)` — Bun handles fan-out at the C layer |
-| Must track broken connections and clean up | Bun removes closed sockets from topics automatically |
-| Must manage subscription sets manually | `ws.subscribe(topic)` / `ws.unsubscribe(topic)` — native |
-| Corking requires manual batching | `open`, `message`, and `drain` callbacks are auto-corked |
-| No backpressure awareness | `send()` returns `-1` (backpressure), `0` (dropped), `1+` (sent) |
-
-For 2–4 users the performance difference is negligible, but the code is dramatically simpler. Zero connection tracking code. Zero cleanup code. The plugin becomes almost entirely routing logic.
+**Why direct table delivery:** native topic publish does not report status for
+each recipient and cannot attach that recipient's projected predecessor cursor.
+At Zero's intended small-team concurrency, iterating the active sockets is
+cheap and makes correctness explicit: `-1` is queued backpressure, `0` closes
+for replay, and a successful queue advances only that socket's cursor.
 
 **Data flow through the plugin:**
 
@@ -112,30 +108,27 @@ For 2–4 users the performance difference is negligible, but the code is dramat
            │  2. Switch on message type:            │
            │     sync.subscribe →                   │
            │       intersect with readable tables   │
-           │       ws.subscribe('sync:{table}')     │
-           │       send snapshot or catchup         │
+           │       compare epoch + auth scope        │
+           │       send replacement or catchup       │
            │     sync.mutate → dispatch below       │
            │                                       │
            │  On sync.mutate:                       │
            │  3. Validate: table exists,            │
            │     SyncPolicy allows mutation         │
            │  4. Call db.insert/update/delete        │
-           │     (onChange fires synchronously →     │
-           │      server.publish to ALL subscribers) │
+           │     (onChange fires synchronously)      │
            │  5. ws.send(sync.ack) to caller        │
            │                                       │
            │  db.onChange registered in onStart:     │
-           │  server.publish(                       │
-           │    'sync:' + change.table,             │
-           │    JSON.stringify(sync.change msg       │
-           │      with origin = connection ID)      │
-           │  )                                     │
-           │  Bun delivers to all subscribed        │
-           │  sockets automatically                 │
+           │  project for each subscribed socket    │
+           │  attach epoch/scope/prevSeq             │
+           │  check that socket's send() status      │
            └──────────────────────────────────────┘
 ```
 
-**Any write to ReactiveDB broadcasts — not just WS mutations.** An HTTP route calling `syncDB.insert()` triggers the same `onChange` → `server.publish()` path. Background jobs, timers, other plugins — any write source. One broadcast code path for everything.
+**Any write to ReactiveDB delivers — not just WS mutations.** An HTTP route
+calling `syncDB.insert()` triggers the same `onChange` → projected direct-send
+path. Background jobs, timers, other plugins, and WS writes share it.
 
 ### Wire Protocol (Transport)
 
@@ -190,16 +183,16 @@ This is the fundamental data flow. Every mutation follows this path:
 │           │    sync.ack       │           │    onChange()   │          │
 │           │ ←──────────────── │           │ ←────────────── │          │
 │           │                   │           │                 │          │
-│           │    sync.change    │           │  server.publish │          │
-│           │ ←──────────────── │ ←─(topic) │  ('sync:todos') │          │
+│           │    sync.change    │           │  direct deliver │          │
+│           │ ←──────────────── │ ←──────── │  (per socket)   │          │
 └──────────┘                   │           │                 └──────────┘
                                 │           │
 ┌──────────┐    sync.change    │           │
-│  Client B │ ←──(topic sub)─── │           │
+│  Client B │ ←──── direct ───── │           │
 └──────────┘                   │           │
 
 ┌──────────┐    sync.change
-│  Client C │ ←──(topic sub)─── (same publish, Bun delivers)
+│  Client C │ ←──── direct ───── (same projected delivery pass)
 └──────────┘
 ```
 
@@ -211,7 +204,8 @@ This is the fundamental data flow. Every mutation follows this path:
 4. **Sync plugin** receives the message, validates it, calls `db.insert('todos', row)`
 5. **ReactiveDB** writes to SQLite, increments `seq`, emits change event
 6. **onChange listener** (registered in `onStart`) receives the change event
-7. onChange calls `server.publish('sync:todos', changeJSON)` with `origin` set to Client A's connection ID — Bun delivers to all sockets subscribed to `sync:todos` (including Client A)
+7. onChange projects the change for each readable subscribed socket, attaches
+   that socket's `prevSeq`, and checks its direct `send()` result
 8. Plugin sends `sync.ack { ref, seq, ok: true }` to Client A via `ws.send()` (direct, only to caller)
 9. Each subscribed client receives the change, routes it via `store.send()`, @xstate/store updates
 10. React re-renders via `useSyncExternalStore`
@@ -232,23 +226,30 @@ Client A:  insert({id:'1', title:'Buy milk'})
                                                 │
                                         ┌───────┘
                                         ▼
-Server:                    ReactiveDB.insert() → onChange
+Server:            transaction(data + receipt) → onChange
                            │                          │
                            ▼                          ▼
-               server.publish('sync:todos', change)   ws.send(sync.ack)
-               (to ALL subscribers, includes origin)  (to originator only)
+               direct projected sync.change           ws.send(sync.ack)
+               (status checked per socket)             (to originator only)
                            │                          │
                     ┌──────┘                   ┌──────┘
                     ▼                          ▼
 Client A:  ← sync.change { origin:'connA', ... }
            │   └── Replace optimistic row with server's canonical state.
            │
-           ← sync.ack { ref:'abc', ok: true }
-               └── Remove from pending queue.
+           ← sync.ack { ref:'abc', ok: true, change:{...canonical} }
+               └── Install canonical result and remove the pending ref.
 
-Client B:  ← sync.change (via topic subscription)
+Client B:  ← sync.change (direct projected delivery)
                └── store.send('sync.change', ...) — new row appears. Re-render.
 ```
+
+The successful data write and its principal-scoped mutation receipt share one
+SQLite transaction. If the ack is lost, the client waits for a new baseline and
+resends the same ref with a higher attempt number. A matching receipt returns
+the current canonical row without a second write. A missing receipt fails
+closed, so a restart or pruned replay window cannot duplicate non-idempotent
+work.
 
 **On rejection:**
 
@@ -284,8 +285,8 @@ app.ws('/sync', {
                               // through NATs, firewalls, load balancers. No custom heartbeat needed.
   maxPayloadLength: 1_048_576, // 1MB max message. Snapshots of 1000 rows ≈ 200KB — plenty of room.
   backpressureLimit: 1_048_576, // 1MB buffer before backpressure kicks in.
-  closeOnBackpressureLimit: false, // Don't kill slow clients — let drain() handle it.
-  publishToSelf: true,        // Mutating client also receives the change via topic (updates lastSeq).
+  closeOnBackpressureLimit: true, // Reconnect/replay is safer than silent loss.
+  publishToSelf: true,        // Retained for extension channels using Bun topics.
   perMessageDeflate: false,    // Compression off. At 2-4 users, CPU cost > bandwidth savings.
 
   // ─── Lifecycle ─────────────────────────────────────────
@@ -310,13 +311,13 @@ app.ws('/sync', {
 
 | Concern | Our approach |
 |---------|-------------|
-| **Backpressure** | Check `ws.send()` return value: `-1` = backpressure (message queued), `0` = dropped, `1+` = bytes sent. On `-1`, `drain` callback fires when ready. For changes, backpressure is acceptable — the client will catch up via the ring buffer on reconnect if messages are dropped. |
-| **Reconnect (client)** | Exponential backoff with jitter: `Math.min(1000 * 2^attempt + random(0,1000), 30000)`. On reconnect, send `sync.subscribe { lastSeq }` — server replays missed changes or sends snapshot. |
-| **WebSocket auth** | The sync plugin can receive an auth bridge with a lazy token verifier. Provided tokens are verified in `open`; invalid tokens close with `4001`. Missing tokens remain allowed unless sync auth is configured as required. |
-| **Subscription gating** | The sync plugin intersects the client's `sync.subscribe` request with `ws.data.allowedTables`, which is derived from `SyncPolicy.canReadTable` at WebSocket open. |
+| **Backpressure** | `-1` marks queued backpressure until `drain`; `0` closes with `1013`; the hard one-megabyte limit also closes. Reconnect resumes from the last client-accepted cursor. |
+| **Reconnect (client)** | Exponential backoff with jitter. Send `sync.subscribe { epoch, scope, lastSeq }`; replay when comparable, otherwise replace every cache. |
+| **WebSocket auth** | The sync plugin can receive an auth bridge with a lazy token verifier. The first `sync.auth` message is verified before application messages; invalid or missing required credentials close with `4001`. |
+| **Subscription gating** | The sync plugin intersects the client's `sync.subscribe` request with `ws.data.allowedTables`, derived from the live account and `SyncPolicy.canReadTable` during the auth handshake and revalidation. |
 | **Mutation gating** | `sync.mutate` is checked separately through `SyncPolicy.canMutateTable` and the optional `canInsert`, `canUpdate`, and `canDelete` callbacks. Read access does not imply write access. |
-| **Per-connection state** | `ws.data` holds `SyncSocketData` (allowedTables, subscribedTopics, lastSeq, authContext). Typed via Elysia's WS data generic. Available in all lifecycle handlers. |
-| **Transaction batching** | ReactiveDB transactions emit multiple changes. Each `server.publish()` call within an auto-corked `message` handler batches into one packet. For changes emitted from `onChange` (outside a handler), wrap in `ws.cork()` if needed. |
+| **Per-connection state** | `ws.data` holds allowed/subscribed tables, last queued seq, backpressure state, auth context, opaque scope, and row filters. |
+| **Transaction delivery** | ReactiveDB transactions emit committed changes in order; every subscribed socket gets a predecessor-linked stream. |
 
 ## Process Model
 
@@ -330,7 +331,7 @@ Everything runs in a **single Bun process**. The sync plugin is one `.use()` cal
 │  │  .use(syncPlugin)  ← single plugin, self-contained │  │
 │  │    │                                                │  │
 │  │    ├─ onStart: createReactiveDB(), defineTable(),   │  │
-│  │    │           onChange → server.publish()          │  │
+│  │    │           onChange → direct delivery           │  │
 │  │    ├─ derive: { syncDB } into global context        │  │
 │  │    ├─ .ws('/sync'): WS handler (subscribe, mutate)  │  │
 │  │    └─ onStop: db.dispose()                          │  │
@@ -343,13 +344,15 @@ Everything runs in a **single Bun process**. The sync plugin is one `.use()` cal
 │  ┌─ ReactiveDB (owned by sync plugin) ─────────────────┐ │
 │  │  bun:sqlite (:memory: or WAL file)                   │ │
 │  │  Tables: user-defined + _changes                      │ │
-│  │  onChange registered in onStart → server.publish()      │ │
+│  │  onChange registered in onStart → direct delivery       │ │
 │  └──────────────────────────────────────────────────────┘ │
 │                                                           │
 └───────────────────────────────────────────────────────────┘
 ```
 
-No separate database process. No message queue. No cache layer. No manual connection management. SQLite is the database and the event log. Bun's WebSocket handles all connection lifecycle and fan-out. The plugin is pure routing logic.
+No separate database process, message queue, or cache layer is required.
+SQLite is the database and replay log. The plugin keeps only the active socket
+set needed for policy projection, delivery status, and predecessor cursors.
 
 ## Elysia Plugin Architecture
 
@@ -358,7 +361,7 @@ The sync engine is an **Elysia plugin** — same pattern as every other subsyste
 | Convention | Sync engine implementation | Existing precedent |
 |------------|---------------------------|-------------------|
 | Factory function | `createSyncPlugin(config)` | `createIngestionQueuePlugin(getMemoryService)` |
-| `onStart` / `onStop` lifecycle | Create ReactiveDB, define tables, register onChange → `server.publish()` / dispose | `persistence.plugin.ts` — init + crash recovery / dispose |
+| `onStart` / `onStop` lifecycle | Create ReactiveDB, define tables, register projected onChange delivery / dispose | `persistence.plugin.ts` — init + crash recovery / dispose |
 | `derive({ as: 'global' })` | Expose `syncDB` to all routes and plugins | `persistence.plugin.ts` — exposes `persistence` |
 | Lazy getter export | `getSyncDB()` for cross-plugin access | `getPersistenceColdStore()`, `getKnowledgeMemoryService()` |
 | Named plugin | `new Elysia({ name: 'sync' })` | `new Elysia({ name: 'persistence' })`, `new Elysia({ name: 'audio-ws' })` |
@@ -387,7 +390,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
   return new Elysia({ name: 'sync' })
 
     // ─── Lifecycle ────────────────────────────────────
-    .onStart(({ server }) => {
+    .onStart(() => {
       _db = createReactiveDB(config.db);
 
       // Define tables from config
@@ -395,25 +398,9 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         _db.defineTable(name, schema);
       }
 
-      // Register onChange in onStart — before any WS connections arrive.
-      // server.publish() is a no-op if no sockets are subscribed yet.
       _unsubChange = _db.onChange((change) => {
-        server.publish(
-          `sync:${change.table}`,
-          JSON.stringify({
-            type: 'sync.change',
-            seq: change.seq,
-            table: change.table,
-            op: change.op,
-            rowId: change.rowId,
-            row: change.row,
-            origin: change.origin,
-            ts: change.ts,
-          })
-        );
+        deliverSyncChange(activeSockets, change, _db.syncEpoch, currentOrigin);
       });
-
-      console.log(`[sync] Enabled (${config.db.mode === 'memory' ? ':memory:' : config.db.mode})`);
     })
 
     .onStop(() => {
@@ -421,7 +408,6 @@ export function createSyncPlugin(config: SyncPluginConfig) {
       _unsubChange = null;
       _db?.dispose();
       _db = null;
-      console.log('[sync] Stopped');
     })
 
     // ─── Derive: expose syncDB to all routes/plugins ─
@@ -442,66 +428,46 @@ export function createSyncPlugin(config: SyncPluginConfig) {
       idleTimeout: 120,
       sendPings: true,
       maxPayloadLength: 1_048_576,
+      backpressureLimit: 1_048_576,
+      closeOnBackpressureLimit: true,
       publishToSelf: true,
       perMessageDeflate: false,
 
-      open(ws) { /* verify token, subscribe topics, send snapshot/catchup */ },
+      open(ws) { /* verify token and initialize cursor/scope state */ },
       message(ws, message) { /* route: sync.subscribe | sync.mutate */ },
-      close(ws) { /* Bun auto-unsubscribes from all topics */ },
-      drain(ws) { /* resume paused sends */ },
+      close(ws) { /* remove from active sockets and clear auth runtime */ },
+      drain(ws) { /* clear the socket's backpressure marker */ },
     });
 }
 ```
 
-### Broadcasting: `server.publish()` via onChange
+### Projected direct delivery via onChange
 
-The critical integration point: ReactiveDB's `onChange` listener needs to broadcast changes to all subscribed WebSockets. This uses Bun's `server.publish(topic, data)`. The `onChange` listener is registered in the sync plugin's `onStart` lifecycle — before any WebSocket connections arrive. It is **not** deferred to the first socket open.
+ReactiveDB's `onChange` listener delivers every committed change through the
+same policy-aware path. It is registered during `onStart`, before connections
+arrive. Each eligible socket gets a message containing the runtime epoch,
+opaque authorization scope, and that socket's previous delivered cursor.
 
 ```ts
 // Inside the plugin's onStart lifecycle:
 
-.onStart(({ server }) => {
+.onStart(() => {
   _db = createReactiveDB(config.db);
 
   for (const [name, schema] of Object.entries(config.tables)) {
     _db.defineTable(name, schema);
   }
 
-  // Register onChange listener immediately — broadcasts to all future subscribers.
-  // If no sockets are subscribed yet, server.publish() is a no-op.
   _unsubChange = _db.onChange((change) => {
-    server.publish(
-      `sync:${change.table}`,
-      JSON.stringify({
-        type: 'sync.change',
-        seq: change.seq,
-        table: change.table,
-        op: change.op,
-        rowId: change.rowId,
-        row: change.row,
-        origin: change.origin,
-        ts: change.ts,
-      })
-    );
+    deliverSyncChange(activeSockets, change, _db.syncEpoch, currentOrigin);
   });
-
-  console.log(`[sync] Enabled (${config.db.mode === 'memory' ? ':memory:' : config.db.mode})`);
 })
 ```
 
-**Why `server.publish()` instead of `ws.publish()`:**
-
-| Method | Behavior |
-|--------|----------|
-| `ws.publish(topic, data)` | Sends to all topic subscribers **except** the calling socket |
-| `server.publish(topic, data)` | Sends to **all** topic subscribers, no exclusions |
-
-We use `server.publish()` in the `onChange` listener because:
-1. The mutating client also needs the change (to update `lastSeq` and confirm optimistic state)
-2. The `onChange` listener fires for ALL writes — not just WS mutations. HTTP routes, background jobs, transactions — any write to ReactiveDB broadcasts to all subscribers
-3. Single code path for all broadcast — no special cases
-
-The ack is still sent directly via `ws.send()` to the mutating client only.
+Direct delivery is intentional: topic publish cannot report status for each
+recipient or attach a recipient-specific `prevSeq`. The active socket set is
+small, closed sockets are removed in the WS close hook, and the ack remains a
+separate direct response to the mutating client.
 
 ### Per-Socket Data
 
@@ -518,7 +484,7 @@ interface SyncSocketData {
   /** Last seq sent to this client (for reconnect tracking) */
   lastSeq: number;
 
-  /** Auth identity verified during WebSocket open, or null for anonymous sync */
+  /** Auth identity verified by sync.auth, or null for explicitly public sync */
   authContext: SyncAuthContext | null;
 
   /** True after async WebSocket auth resolution has completed */
@@ -526,7 +492,11 @@ interface SyncSocketData {
 }
 ```
 
-The `allowedTables` field is read-side connection state. The sync plugin derives it at WebSocket open by evaluating `SyncPolicy.canReadTable` against all non-internal ReactiveDB tables. Mutation policy is intentionally separate and evaluated per `sync.mutate` message.
+The `allowedTables` field is read-side connection state. The sync plugin
+derives it after `sync.auth` by evaluating `SyncPolicy.canReadTable` against
+all non-internal ReactiveDB tables, then recomputes it during revalidation.
+Mutation policy is intentionally separate and evaluated per `sync.mutate`
+message.
 
 ### Plugin Config
 
@@ -548,20 +518,37 @@ Tables are defined in the plugin config — not scattered across application cod
 
 ### WebSocket Auth And Sync Policy
 
-HTTP auth middleware does not automatically populate WebSocket context. The sync plugin uses an explicit auth bridge: the app passes a lazy token verifier, and the sync `open` lifecycle verifies `?token=...` before handling messages.
+HTTP auth middleware does not automatically populate WebSocket context. The
+sync plugin uses an explicit auth bridge: the app passes a lazy token verifier,
+and the WebSocket protocol authenticates with a first `sync.auth` message
+before handling subscriptions or application messages.
 
 ```ts
 createSyncPlugin({
   db,
   tables,
   auth: {
-    required: false,
+    required: true,
     getTokenVerifier: getTokenService,
   },
 });
 ```
 
-The verifier is lazy because `createApp()` mounts sync before auth, while WebSocket connections are accepted only after all plugin startup has completed. A valid token becomes `ws.data.authContext`, which state sync and presence can use for per-user behavior. An invalid provided token closes the socket with `4001`.
+The verifier is lazy because `createApp()` mounts sync before auth, while
+WebSocket connections are accepted only after all plugin startup has
+completed. The client opens a clean URL and sends `sync.auth { token }` as its
+first message. The server verifies it, resolves the current account, derives
+table and row permissions, and replies with `sync.auth.ready` before accepting
+subscriptions. An invalid or missing token closes a required socket with
+`4001`. Auth-enabled `createApp()` deployments default to required; public
+sync is an explicit `syncAuth: 'public'` choice.
+
+The server re-resolves both identity and readable-table/row-filter policy
+before inbound work and periodically while connected. A security-generation,
+account, role, property, or resource-policy change closes and unsubscribes the
+socket. The client reconnects with a fresh token and receives a fresh policy.
+Legacy query-string bearer support is an explicit temporary compatibility
+flag, disabled by default; the current Zero client never puts tokens in URLs.
 
 Subscription control remains table-based:
 
@@ -630,7 +617,7 @@ const app = new Elysia()
     if (!syncDB) return { error: 'sync not initialized' };
     syncDB.insert('todos', { id: crypto.randomUUID(), title: 'Seeded todo', done: 0 });
     return { ok: true };
-    // onChange fires → server.publish() → all WS clients see the new row
+    // onChange fires → policy projection + status-checked direct delivery
   })
 
   .listen(3000);

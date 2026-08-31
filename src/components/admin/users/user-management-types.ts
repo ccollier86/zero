@@ -9,7 +9,9 @@
 import type {
   AuthAdminConfig,
   AuthAdminCreateUserParams,
+  AuthAdminMfaResetResult,
   AuthAdminUpdateUserParams,
+  AuthAdminUserMfaStatus,
   AuthAdminUserPage,
   AuthUser,
 } from '../../../frontend/client/auth-client';
@@ -30,6 +32,9 @@ export interface UserManagementUser extends Row {
   role: string;
   status: AuthUser['status'];
   passwordChangeRequired: boolean;
+  emailVerifiedAt: number | null;
+  emailVerificationRequired: boolean;
+  mfaRequired: boolean;
   properties: Record<string, string>;
   createdAt: number;
   updatedAt: number | null;
@@ -50,6 +55,8 @@ export interface UserManagementCreateResult {
 /** Options accepted by the live admin user-management hook. */
 export interface UseAdminUsersOptions {
   enabled?: boolean;
+  /** Load the user list. Set false when only omitted admin config is needed. */
+  loadUsers?: boolean;
   pageSize?: number;
   initialSearch?: string;
   initialRole?: string;
@@ -71,11 +78,19 @@ export interface UseAdminUsersResult {
   loadPage: (offset: number) => Promise<void>;
   createUser: (params: AuthAdminCreateUserParams) => Promise<UserManagementCreateResult>;
   updateUser: (userId: string, params: AuthAdminUpdateUserParams) => Promise<UserManagementUser>;
+  deleteUserProperty: (userId: string, key: string) => Promise<UserManagementUser>;
   deleteUser: (userId: string) => Promise<void>;
   suspendUser: (userId: string) => Promise<UserManagementUser>;
   activateUser: (userId: string) => Promise<UserManagementUser>;
   sendSetupEmail: (userId: string) => Promise<boolean>;
   sendPasswordReset: (userId: string) => Promise<void>;
+  clearPasswordChangeRequirement: (userId: string) => Promise<UserManagementUser>;
   resetPassword: (userId: string, password: string) => Promise<void>;
   revokeSessions: (userId: string) => Promise<void>;
+  getMfaStatus: (userId: string) => Promise<AuthAdminUserMfaStatus>;
+  requireMfa: (userId: string) => Promise<UserManagementUser>;
+  clearMfaRequirement: (userId: string) => Promise<UserManagementUser>;
+  resetMfa: (userId: string) => Promise<AuthAdminMfaResetResult>;
+  sendVerificationEmail: (userId: string) => Promise<void>;
+  verifyEmail: (userId: string) => Promise<UserManagementUser>;
 }

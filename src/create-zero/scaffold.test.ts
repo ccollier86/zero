@@ -11,6 +11,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
+import { LOCAL_FRAMEWORK_DEPENDENCY } from './local-framework-package';
+import { runCreateZeroCli } from './run';
 import { scaffoldZeroApp } from './scaffold';
 
 async function createTempRoot(): Promise<string> {
@@ -20,6 +22,27 @@ async function createTempRoot(): Promise<string> {
 }
 
 describe('scaffoldZeroApp', () => {
+  test('create-zero --local installs a publish-style framework archive', async () => {
+    const rootDir = await createTempRoot();
+    const targetDir = join(rootDir, 'local-app');
+
+    try {
+      const exitCode = await runCreateZeroCli([targetDir, '--local']);
+      expect(exitCode).toBe(0);
+
+      const packageJson = JSON.parse(await readFile(join(targetDir, 'package.json'), 'utf8')) as {
+        dependencies: Record<string, string>;
+      };
+
+      expect(packageJson.dependencies['@zero/framework']).toBe(LOCAL_FRAMEWORK_DEPENDENCY);
+      await expect(
+        stat(join(targetDir, '.zero/framework/zero-framework.tgz')).then((value) => value.isFile())
+      ).resolves.toBe(true);
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   test('creates a package-mode app that builds through public imports', async () => {
     const rootDir = await createTempRoot();
     const targetDir = join(rootDir, 'acme-crm');
@@ -34,12 +57,18 @@ describe('scaffoldZeroApp', () => {
 
       expect(result.packageName).toBe('acme-crm');
       expect(result.filesWritten).toContain('zero.config.ts');
-      expect(result.filesWritten).toContain('server/routes/customers.ts');
+      expect(result.filesWritten).toContain('app/page.tsx');
+      expect(result.filesWritten).toContain('app/layout.tsx');
+      expect(result.filesWritten).toContain('db/schema.ts');
       expect(result.filesWritten).toContain('tsconfig.json');
       expect(result.filesWritten).toContain('.gitignore');
+      await expect(stat(join(targetDir, 'components')).then((value) => value.isDirectory())).resolves.toBe(true);
+      await expect(stat(join(targetDir, 'hooks')).then((value) => value.isDirectory())).resolves.toBe(true);
+      await expect(stat(join(targetDir, 'lib')).then((value) => value.isDirectory())).resolves.toBe(true);
       await expect(stat(join(targetDir, 'server', 'plugins')).then((value) => value.isDirectory())).resolves.toBe(true);
       await expect(stat(join(targetDir, 'server', 'middleware')).then((value) => value.isDirectory())).resolves.toBe(true);
       await expect(stat(join(targetDir, 'server', 'endpoints')).then((value) => value.isDirectory())).resolves.toBe(true);
+      await expect(stat(join(targetDir, 'server', 'resources')).then((value) => value.isDirectory())).resolves.toBe(true);
 
       const packageJson = JSON.parse(await readFile(join(targetDir, 'package.json'), 'utf8')) as {
         dependencies: Record<string, string>;
@@ -47,20 +76,39 @@ describe('scaffoldZeroApp', () => {
       };
       expect(packageJson.dependencies['@zero/framework']).toBe('file:../zero-framework');
       expect(packageJson.scripts.doctor).toBe('zero doctor --config ./zero.config.ts');
+    expect(packageJson.scripts['pdf:install']).toBe('zero pdf install');
+    expect(packageJson.scripts['pdf:status']).toBe('zero pdf status');
 
       const tsconfig = JSON.parse(await readFile(join(targetDir, 'tsconfig.json'), 'utf8')) as {
-        compilerOptions: { paths: Record<string, string[]> };
+        compilerOptions: {
+          paths: Record<string, string[]>;
+          preserveSymlinks: boolean;
+        };
       };
+      expect(tsconfig.compilerOptions.preserveSymlinks).toBe(true);
       expect(tsconfig.compilerOptions.paths['@app/*']).toEqual(['./app/*']);
       expect(tsconfig.compilerOptions.paths['@/components/*']).toEqual([
         './components/*',
         './node_modules/@zero/framework/src/components/*',
+      ]);
+      expect(tsconfig.compilerOptions.paths['@/hooks/*']).toEqual([
+        './hooks/*',
+        './node_modules/@zero/framework/src/hooks/*',
+      ]);
+      expect(tsconfig.compilerOptions.paths['@/lib/*']).toEqual([
+        './lib/*',
+        './node_modules/@zero/framework/src/lib/*',
       ]);
       expect(tsconfig.compilerOptions.paths.react).toEqual(['./node_modules/@types/react']);
 
       const gitignore = await readFile(join(targetDir, '.gitignore'), 'utf8');
       expect(gitignore).toContain('.zero');
       expect(gitignore).toContain('*.db-wal');
+
+      const readme = await readFile(join(targetDir, 'README.md'), 'utf8');
+      expect(readme).toContain('cp .env.example .env');
+      expect(readme).toContain('node_modules/@zero/framework/docs/start-here.md');
+      expect(readme).toContain('server/middleware/');
 
       await linkFrameworkPackage(targetDir);
 
@@ -198,17 +246,10 @@ try {
     throw new Error(\`health failed: \${health.status} \${await readText(health)}\`);
   }
 
-  const route = await app.handle(new Request('http://localhost/api/customers/health'));
-  if (route.status !== 200) {
-    throw new Error(\`route failed: \${route.status} \${await readText(route)}\`);
-  }
-  const routeBody = await route.json() as { ok?: boolean; feature?: string };
-  assert(routeBody.ok === true && routeBody.feature === 'package-mode-routes', 'server route did not load');
-
   const page = await app.handle(new Request('http://localhost/'));
   const html = await page.text();
   assert(page.status === 200, \`page failed: \${page.status} \${html}\`);
-  assert(html.includes('/_build/client.'), 'client bundle was not linked into SSR HTML');
+  assert(html.includes('Build your app from here'), 'starter page content missing');
   assert(html.includes('/_build/platform.'), 'platform stylesheet was not linked into SSR HTML');
 
   const sitemap = await app.handle(new Request('http://localhost/sitemap.xml'));

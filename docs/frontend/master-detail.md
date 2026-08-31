@@ -46,31 +46,55 @@ collection unless `onUpdate` is supplied.
 Use this for the common case where records should be live and editable in the
 browser.
 
-### Caller-Owned Or Lazy Data
+### Lazy `/api/data` Source
 
-`MasterDetailView` intentionally keeps lazy reads outside the organism. Use
-`useLazyCollection()`, custom SDK calls, or another data source, then pass
-`data` and `onUpdate`.
+`MasterDetailView` accepts the same `source` contract as `DataTableView`, so
+large tables can start with a bounded `/api/data` read and stay live for loaded
+rows.
 
 ```tsx
-const users = useLazyCollection<UserRow>('users', {
-  status: 'active',
-}, {
-  order: 'created_at',
-  dir: 'desc',
-  limit: 100,
-});
-
 <MasterDetailView
   schema={userTable.schema}
-  data={users.data}
+  source={{
+    type: 'lazy',
+    table: 'users',
+    filters: { status: 'active' },
+    options: {
+      order: 'created_at',
+      dir: 'desc',
+      limit: 100,
+    },
+  }}
   listColumns={['name', 'email', 'role']}
-  onUpdate={(id, changes) => users.update(id, changes)}
+  editableFields={['name', 'role']}
 />
 ```
 
-This keeps the list/detail component focused on UI composition while the caller
-owns larger query policy, filters, paging, and retry behavior.
+Use this for admin explorers, large operational tables, and views where
+full-syncing the whole table would be wasteful. The generated detail form still
+writes through the loaded collection unless `onUpdate` is supplied.
+
+### Caller-Owned Data
+
+Use `source={{ type: 'data' }}` or `data` when another hook, SDK call, or
+external backend owns loading and writes.
+
+```tsx
+<MasterDetailView
+  schema={userTable.schema}
+  source={{
+    type: 'data',
+    data: users.data,
+    actions: {
+      update: users.update,
+    },
+    isLoading: users.isLoading,
+    error: users.error,
+    refresh: users.refresh,
+  }}
+  listColumns={['name', 'email', 'role']}
+/>
+```
 
 ## Selection
 

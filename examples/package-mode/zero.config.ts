@@ -1,8 +1,8 @@
 /**
  * zero.config.ts
  *
- * App-owned Zero runtime configuration for the package-mode fixture. This file
- * selects platform systems and paths; it does not start the HTTP server.
+ * App-owned Zero runtime configuration. This file selects platform systems and
+ * paths; it does not start the HTTP server.
  */
 
 import { defineZeroConfig } from '@zero/framework/server';
@@ -10,6 +10,7 @@ import type { SQLiteStorageConfig, SQLiteStorageMode } from '@zero/framework/ser
 import { tables } from './db/schema';
 
 const PORT = Number(Bun.env.PORT ?? 3000);
+const APP_NAME = readEnv('APP_NAME') ?? 'Zero App';
 const hasEmail = Boolean(Bun.env.RESEND_API_KEY);
 const hasAI = Boolean(
   Bun.env.OPENAI_API_KEY
@@ -17,30 +18,32 @@ const hasAI = Boolean(
     || Bun.env.GEMINI_API_KEY
     || Bun.env.GOOGLE_API_KEY
     || Bun.env.GROQ_API_KEY
+    || Bun.env.XAI_API_KEY
+    || Bun.env.COHERE_API_KEY
     || Bun.env.META_LLAMA_API_KEY
     || Bun.env.LLAMA_API_KEY
+    || Bun.env.DEEPSEEK_API_KEY
+    || Bun.env.PERPLEXITY_API_KEY
+    || Bun.env.VOYAGE_API_KEY
+    || Bun.env.DEEPGRAM_API_KEY
 );
 const hasVector = Bun.env.ZERO_VECTOR_ENABLED === 'true';
+const hasPdf = Bun.env.ZERO_PDF_ENABLED === 'true';
 const kvDurability = Bun.env.ZERO_KV_DURABILITY === 'always' ? 'always' : 'everysec';
 
 export const config = defineZeroConfig({
   app: {
-    name: Bun.env.APP_NAME ?? 'Zero Fixture',
-    publicUrl: Bun.env.APP_PUBLIC_URL ?? `http://localhost:${PORT}`,
-    supportEmail: Bun.env.APP_SUPPORT_EMAIL,
+    name: APP_NAME,
+    publicUrl: readEnv('APP_PUBLIC_URL') ?? `http://localhost:${PORT}`,
+    supportEmail: readEnv('APP_SUPPORT_EMAIL'),
   },
   db: resolveDatabaseConfig(),
   tables,
-  auth: {
-    registration: { mode: 'admin-only' },
-    accountEmails: {
-      adminCreatedUser: hasEmail,
-      passwordReset: hasEmail,
-      manualPasswordReset: Bun.env.AUTH_MANUAL_PASSWORD_RESET !== 'false',
-      actionTokenTTL: Bun.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
-      requestCooldown: Bun.env.AUTH_ACCOUNT_EMAIL_COOLDOWN ?? '5m',
-    },
-  },
+
+  // Keep the generated starter public. Change this to `true` or an auth
+  // object when your app needs accounts, email verification, MFA, or admin
+  // user management.
+  auth: false,
   routeAuth: 'explicit',
   sitemap: {
     enabled: true,
@@ -51,8 +54,8 @@ export const config = defineZeroConfig({
   email: hasEmail
     ? {
         provider: 'resend',
-        from: Bun.env.EMAIL_FROM ?? 'Zero Fixture <noreply@example.com>',
-        replyTo: Bun.env.EMAIL_REPLY_TO,
+        from: readEnv('EMAIL_FROM') ?? `${APP_NAME} <noreply@example.com>`,
+        replyTo: readEnv('EMAIL_REPLY_TO'),
         resend: {
           apiKey: Bun.env.RESEND_API_KEY,
         },
@@ -65,16 +68,24 @@ export const config = defineZeroConfig({
         defaultDimensions: Number(Bun.env.ZERO_VECTOR_DEFAULT_DIMENSIONS ?? 1536),
       }
     : false,
+  pdf: hasPdf
+    ? {
+        browser: {
+          executablePath: readEnv('ZERO_PDF_EXECUTABLE_PATH'),
+        },
+      }
+    : false,
   kv: {
-    baseDir: Bun.env.ZERO_KV_BASE_DIR ?? './data/kv',
+    baseDir: readEnv('ZERO_KV_BASE_DIR') ?? './data/kv',
     durability: kvDurability,
   },
-  stateSync: true,
+  stateSync: false,
   appDir: './app',
   serverPluginsDir: './server/plugins',
   serverMiddlewareDir: './server/middleware',
   serverEndpointsDir: './server/endpoints',
   serverRoutesDir: './server/routes',
+  serverResourcesDir: './server/resources',
   generatedDir: './.zero/generated',
   outDir: './.build',
   port: PORT,
@@ -85,8 +96,8 @@ export default config;
 /** Resolve app database config from env while keeping hot mode as the default. */
 function resolveDatabaseConfig(): SQLiteStorageConfig {
   const mode = resolveDatabaseMode(Bun.env.DB_MODE);
-  const path = Bun.env.DB_PATH ?? './data/app.db';
-  const snapshotPath = Bun.env.DB_SNAPSHOT_PATH ?? './data/app.snapshot.db';
+  const path = readEnv('DB_PATH') ?? './data/app.db';
+  const snapshotPath = readEnv('DB_SNAPSHOT_PATH') ?? './data/app.snapshot.db';
 
   if (mode === 'ephemeral') return { mode };
   if (mode === 'file') return { mode, path };
@@ -102,4 +113,11 @@ function resolveDatabaseMode(value: string | undefined): SQLiteStorageMode {
   if (!value) return 'hot';
   if (value === 'hot' || value === 'file' || value === 'ephemeral') return value;
   throw new Error(`DB_MODE must be "hot", "file", or "ephemeral"; received "${value}".`);
+}
+
+function readEnv(name: string): string | undefined {
+  const value = Bun.env[name];
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }

@@ -39,7 +39,19 @@ rows are present locally.
 - Ack timeout detection (10s) — if the server goes silent, the client treats it as a rejection
 - Send buffer — mutations while disconnected are queued and flushed on reconnect
 
-**Sync policy:** WebSocket auth verifies `?token=...` during connection open when auth is enabled. Readable tables are derived from `SyncPolicy.canReadTable`; direct client writes are checked separately through `canMutateTable`, `canInsert`, `canUpdate`, and `canDelete`. `createApp()` protects service-owned platform tables from direct sync mutation by default, while app-owned tables keep the fast optimistic write path unless you configure stricter policy. If an app table is registered with `defineResource()`, WebSocket sync also enforces resource policy: unconstrained `list` policies use the normal fast path, row-constrained lists use per-connection row filters, and direct `sync.mutate` writes evaluate resource create/update/delete policy.
+**Sync policy:** The client sends bearer auth in the first WebSocket message,
+never in the URL, and waits for `sync.auth.ready` before subscribing. Readable
+tables are derived from `SyncPolicy.canReadTable`; direct client writes are
+checked separately through `canMutateTable`, `canInsert`, `canUpdate`, and
+`canDelete`. Auth-enabled apps default to required sync auth. Connected sockets
+periodically re-resolve account and property-derived read policy, closing when
+permissions change. `createApp()` protects service-owned platform tables from
+direct sync mutation by default, while app-owned tables keep the fast
+optimistic write path unless you configure stricter policy. If an app table is
+registered with `defineResource()`, WebSocket sync also enforces resource
+policy: unconstrained `list` policies use the normal fast path, row-constrained
+lists use per-connection row filters, and direct `sync.mutate` writes evaluate
+resource create/update/delete policy.
 
 **Migrations:** Zero uses explicit migration files plus first-class tooling for
 schema history, drift detection, draft migration planning, rollback, and
@@ -87,14 +99,20 @@ console.log(client.isAuthenticated); // true
 | `<LoginForm>` | Username/email login with auth config-aware links and lifecycle error states |
 | `<RegisterForm>` | Registration with field selection, password strength meter, and policy-aware loading/closure states |
 | `<ForgotPasswordForm>` | SDK-backed password reset email request with policy-aware loading/disabled states |
+| `<EmailVerificationForm>` | Email verification link/token flow that signs users in after verification |
 | `<PasswordActionForm>` | Reset/setup password flow for valid emailed action tokens |
 | `<ChangePasswordForm>` | Current-user password change form |
 | `<UserPropertiesForm>` | Current-user editable property settings from `/auth/config` |
+| `<MFAContinuation>` | Shared MFA setup/challenge branch for incomplete auth responses |
+| `<MFAEnrollmentForm>` | Email OTP or authenticator enrollment flow |
+| `<MFAChallengeForm>` | Login MFA challenge verification flow |
+| `<MFAManagementPanel>` | Current-user MFA status and setup panel |
 | `<OTPVerification>` | OTP input with auto-focus |
+| `<QRCode>` | Token-aware QR primitive used for authenticator setup |
 | `<PasswordInput>` | Password field with show/hide toggle |
 | `<PasswordStrength>` | Real-time password strength indicator |
 | `<SocialLoginGroup>` | Google, GitHub, Microsoft, Apple OAuth buttons |
-| `<AuthLayout>` | Centered card layout for auth pages |
+| `<AuthLayout>` | Tokenized centered auth page shell with logo/image slot, static backgrounds, responsive form card, and shared full-card entrance motion |
 | `<SignedIn>` / `<SignedOut>` | Auth-state visibility gates |
 | `<PropertyGate>` / `<HasFlag>` | UI-only visibility gates based on current-user properties |
 | `<Gate allow={['admin']}>` / `<AdminGate>` | Role-based conditional rendering |
@@ -237,6 +255,7 @@ Or compose the lower-level hooks yourself:
 ```tsx
 const { drives } = useStorageDrives();
 const { upload, progress } = useUpload();
+const { capabilities } = useDriveCapabilities(driveId);
 const actions = useStorageActions();
 
 await actions.createDrive('Reports');
@@ -244,11 +263,20 @@ await upload(driveId, file, { path: '/q2.pdf' });
 ```
 
 **Access model:** storage HTTP routes use the same auth middleware as the rest
-of the backend. Public drives/files can be read anonymously, but private reads
-and all writes go through server-side permission checks.
+of the backend. Public drives and public objects can be read anonymously, but
+private reads and all writes go through server-side permission checks. Drives
+support owner access plus explicit grants by role, exact user ID, or trusted
+auth user-property key/value. The drive list and `useDriveCapabilities()` expose
+effective `read`, `write`, and `admin` capabilities so UI can disable controls
+without duplicating backend policy.
 For public intake or resume-token flows, backend code can create scoped upload
 grants with `zero.storage.uploads.create()`. Those grants allow a browser to
 upload one file to one path without granting read access or opening the drive.
+
+**Admin UI:** `StorageManagement` is a full dashboard organism. It lists
+accessible drives, shows effective access, manages settings, lists/adds/revokes
+permission grants, browses files, filters/sorts folders, uploads through
+`StorageDropzone`, and creates presigned download links for protected files.
 
 **Frontend model:** storage hooks use the platform SDK client for auth. JSON
 actions go through `client.fetch()` and multipart uploads use the SDK access
@@ -262,7 +290,12 @@ visibility changes.
 **Standalone server:** `createApp()` mounts storage automatically. If you mount
 `createStoragePlugin()` yourself, mount `createAuthPlugin({ db })` first; the
 storage plugin declares its own auth middleware dependency for typed
-`authContext` and `requireAuth()`.
+`authContext` and `requireAuth()`. Apply `installAuthStopBarrier()` to the final
+standalone Elysia app so `await app.stop()` joins auth delivery before the
+composition root disposes its injected database. `createApp()` already owns
+that lifecycle ordering. All active `createApp()` instances share one
+SIGINT/SIGTERM dispatcher; normal stops unregister from it, and a process signal
+joins every registered app before one final exit.
 
 ---
 
@@ -343,6 +376,36 @@ helpers make bucket, tenant, room, or session isolation simple without forcing
 a multi-tenant auth model into every app. Persisted zvec collections recover
 through zvec's native WAL when Zero reopens an existing index path. See
 [Vector Store](./vector.md).
+
+---
+
+## PDF Rendering
+
+Zero can render modern HTML and print CSS into PDF without a separate Python
+service or internal HTTP hop. Enable `pdf: true`, install the pinned Chromium
+runtime with `bun run pdf:install`, and call the server-only `zero.pdf` service
+from an endpoint, workflow, job, or app service.
+
+```ts
+const document = await zero.pdf?.renderToStorage(
+  {
+    html: '<article class="consent">...</article>',
+    css: '@page { size: Letter; margin: 0.5in; }',
+    document: { title: 'Consent to treatment' },
+  },
+  {
+    driveId: 'patient-documents',
+    path: `/intakes/${intakeId}/consent.pdf`,
+    public: false,
+  }
+);
+```
+
+The default Chromium adapter supports Grid, Flexbox, web fonts, print media,
+CSS page sizing, page breaks, backgrounds, headers/footers, and tagged PDFs.
+Rendering is bounded by input/output, timeout, concurrency, and queue limits.
+Remote resources and JavaScript are denied by default, and no public PDF route
+is mounted. See [PDF Rendering](./pdf.md).
 
 ---
 
@@ -574,16 +637,20 @@ subscribes once through the reactive DB, feeds both the list and detail panel,
 and writes detail-form updates back to the collection unless `onUpdate` is
 provided.
 
-For lazy tables or custom backends, pass `data` and `onUpdate` explicitly:
+For lazy tables, use the same source contract as `DataTableView` so
+`MasterDetailView` can issue the bounded `/api/data` read and keep loaded rows
+live:
 
 ```tsx
-const users = useLazyCollection<UserRow>('users', { department: 'ops' });
-
 <MasterDetailView
   schema={userSchema}
-  data={users.data}
+  source={{
+    type: 'lazy',
+    table: 'users',
+    filters: { department: 'ops' },
+    options: { limit: 100, order: 'created_at', dir: 'desc' },
+  }}
   listColumns={['name', 'email', 'role']}
-  onUpdate={(id, changes) => users.update(id, changes)}
 />
 ```
 

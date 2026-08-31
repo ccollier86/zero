@@ -8,6 +8,7 @@
 
 import type { TokenService } from './token-service';
 import type { AccessTokenPayload, AuthContext } from './types';
+import { readAuthBearerToken } from './auth-bearer-token';
 
 /**
  * Extract auth context from a request's Authorization header.
@@ -19,15 +20,13 @@ export async function extractAuthContext(
   request: Request,
   tokenService: TokenService
 ): Promise<AuthContext | null> {
-  const header = request.headers.get('authorization');
-  if (!header?.startsWith('Bearer ')) return null;
-
-  const token = header.slice(7);
+  const token = readAuthBearerToken(request);
+  if (!token) return null;
   if (typeof tokenService.resolveAuthContext === 'function') {
     return tokenService.resolveAuthContext(token);
   }
 
   const payload = await tokenService.verifyAccessToken(token) as AccessTokenPayload | null;
-  if (!payload) return null;
+  if (!payload || typeof payload.email !== 'string' || typeof payload.role !== 'string') return null;
   return { userId: payload.sub, email: payload.email, role: payload.role };
 }

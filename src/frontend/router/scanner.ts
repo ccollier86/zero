@@ -95,10 +95,9 @@ export function scanRoutes(appDir: string): ScannedFile[] {
  */
 export function hasUseClientDirective(filePath: string): boolean {
   const content = readFileSync(filePath, 'utf-8');
-  const trimmed = content.trimStart();
-  // Check for "use client" or 'use client' as the first statement
-  if (trimmed.startsWith('"use client"') || trimmed.startsWith("'use client'")) {
-    return true;
-  }
-  return false;
+  const firstStatement = content
+    .replace(/^\uFEFF/, '')
+    .replace(/^(?:(?:\s+)|(?:\/\/[^\r\n]*(?:\r?\n|$))|(?:\/\*[\s\S]*?\*\/))*/, '');
+
+  return /^(['"])use client\1(?:\s*;|\s|$)/.test(firstStatement);
 }

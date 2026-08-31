@@ -20,6 +20,29 @@ import {
 } from '../resources';
 
 describe('runPlatformDoctor', () => {
+  test('checks PDF executable paths and unsafe renderer policy', () => {
+    const report = runPlatformDoctor({
+      db: { mode: 'memory' },
+      tables: {
+        todos: { id: 'text primary key' },
+      },
+      pdf: {
+        browser: {
+          executablePath: '/definitely/missing/chromium',
+          javaScriptEnabled: true,
+        },
+        resources: {
+          remote: 'allow',
+          blockPrivateNetworks: false,
+        },
+      },
+    }, { env: {} });
+
+    expect(hasFinding(report, 'pdf.browser.executable_missing')).toBe(true);
+    expect(hasFinding(report, 'pdf.resources.remote_unrestricted')).toBe(true);
+    expect(hasFinding(report, 'pdf.resources.private_network_allowed')).toBe(true);
+    expect(hasFinding(report, 'pdf.browser.javascript_enabled')).toBe(true);
+  });
   test('warns by default but only fails strict mode for warnings', () => {
     const config: AppConfig = {
       db: { mode: ':memory:' },
@@ -218,6 +241,7 @@ describe('runPlatformDoctor', () => {
 
     expect(report.ok).toBe(true);
     expect(hasFinding(report, 'auth.login_path.not_public')).toBe(true);
+    expect(hasFinding(report, 'sync.auth.required_defaulted')).toBe(true);
     expect(hasFinding(report, 'observability.disabled.production')).toBe(true);
   });
 
@@ -234,6 +258,34 @@ describe('runPlatformDoctor', () => {
     });
 
     expect(hasFinding(report, 'auth.login_path.not_public')).toBe(false);
+  });
+
+  test('does not treat external publicPaths entries as local auth routes', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, auth: true,
+      loginPath: '/signin', publicPaths: ['https://evil.example/signin'],
+    });
+    expect(hasFinding(report, 'auth.login_path.not_public')).toBe(true);
+  });
+
+  test('checks every enabled auth lifecycle path in an explicit public list', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, email: false,
+      auth: {
+        account: { requireEmailVerification: true, emailVerificationPath: '/confirm' },
+        accountEmails: {
+          passwordReset: true, adminCreatedUser: true,
+          resetPath: '/recover', setupPath: '/activate',
+        },
+      },
+      loginPath: '/signin', registrationPath: '/join', publicPaths: ['/signin'],
+    });
+
+    for (const code of [
+      'auth.registration_path.not_public', 'auth.forgot_path.not_public',
+      'auth.reset_path.not_public', 'auth.setup_path.not_public',
+      'auth.verification_path.not_public',
+    ]) expect(hasFinding(report, code)).toBe(true);
   });
 
   test('checks resource registration errors and policy/data/sync guidance', () => {
@@ -296,6 +348,37 @@ describe('runPlatformDoctor', () => {
     expect(hasFinding(report, 'resource.sync.row_filtered')).toBe(true);
     expect(hasFinding(report, 'resource.public_write_policy_uninspectable')).toBe(true);
     expect(hasFinding(report, 'resource.list_policy.missing')).toBe(true);
+  });
+
+  test('does not warn about open app sync when sync tables are covered by resources', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        tasks: {
+          task_id: 'text primary key',
+          owner_id: 'text not null',
+          title: 'text not null',
+        },
+      },
+      auth: true,
+      email: false,
+      doctor: {
+        indexedFields: {
+          tasks: ['owner_id'],
+        },
+      },
+      resources: [
+        defineResource({
+          table: 'tasks',
+          policy: ownerPolicy({ userField: 'owner_id' }),
+        }),
+      ],
+    }, { env: {} });
+
+    expect(report.ok).toBe(true);
+    expect(hasFinding(report, 'sync.auth_policy.open_app_tables')).toBe(false);
+    expect(hasFinding(report, 'resource.owner_field.index_guidance')).toBe(false);
+    expect(hasFinding(report, 'resource.sync.row_filtered')).toBe(true);
   });
 
   test('warns when resources require auth but auth is disabled', () => {

@@ -161,7 +161,15 @@ createSyncPlugin({
 });
 ```
 
-A client sends `sync.subscribe { tables, snapshot, lastSeq }`. The sync plugin intersects `tables` and `snapshot` with the connection's readable table set, which is derived from `SyncPolicy.canReadTable` during WebSocket open. The client never receives tables it cannot read.
+A client authenticates with `sync.auth { token }`, waits for
+`sync.auth.ready`, then sends
+`sync.subscribe { tables, snapshot, lastSeq, epoch, scope }`. The epoch prevents
+pre-restart cursors from being treated as current; the opaque scope prevents
+cached data from crossing an identity or read-policy boundary.
+The sync plugin intersects `tables` and `snapshot` with the connection's
+readable table set, which is derived from the live account and
+`SyncPolicy.canReadTable` and recomputed during revalidation. The client never
+receives tables it cannot read.
 
 `sync.mutate` is checked separately with `SyncPolicy.canMutateTable` and the optional `canInsert`, `canUpdate`, and `canDelete` callbacks. This matters because many platform and app tables should be readable in realtime but writable only through a domain service or HTTP route.
 
@@ -179,5 +187,5 @@ This design doesn't invent new patterns — it composes proven ones already work
 | Prepared-statements-in-constructor | `src/persistence/sqlite-hot-store.ts` — all statements prepared in constructor, reused per call | ReactiveDB prepares all CRUD statements per table at define time |
 | WAL PRAGMAs | `src/persistence/sqlite-hot-store.ts` — WAL, NORMAL sync, 64MB cache, 256MB mmap | Same PRAGMA stack for durable mode |
 | @xstate/store + createSlice | `packages/sdk/src/store/store.ts` — `createStore()` with typed events, `createSlice()` for change-detected subscriptions | SyncStore auto-generates store from table definitions, same slice pattern |
-| Bun native pub/sub | Bun `server.publish(topic)` / `ws.subscribe(topic)` — replaces manual `Set<Connection>` broadcast | onChange → `server.publish('sync:{table}')` — zero connection tracking code |
+| Bun WebSocket delivery | Direct `ws.send()` exposes per-recipient backpressure/drop status | `onChange` projects by socket, attaches `prevSeq`, and checks every send result |
 | WS message routing | `packages/sdk/src/transport/ws-bridge.ts` — `routeMessage()` switch-on-type → `store.send()` dispatch | SyncClient routes `sync.*` messages the same way |

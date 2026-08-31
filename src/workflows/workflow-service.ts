@@ -126,11 +126,27 @@ export class WorkflowService {
     if (!instance || instance.status !== 'running') return;
 
     const steps = this.getSteps(instanceId);
+    const failedStep = steps.find(
+      s => s.status === 'failed' && !s.retry_at,
+    );
+    if (failedStep) {
+      this.db.update('workflow_instances', instanceId, {
+        status: 'failed',
+        error: failedStep.error,
+        current_step: failedStep.step_index,
+        updated_at: new Date().toISOString(),
+      });
+      return;
+    }
+
     const nextStep = steps.find(
       s => s.status === 'pending' || s.status === 'waiting',
     );
 
     if (!nextStep) {
+      // A failed step with a scheduled retry keeps the workflow running.
+      if (steps.some(s => s.status === 'failed' && s.retry_at)) return;
+
       // All steps completed/skipped — workflow is done
       const lastCompleted = steps
         .filter(s => s.status === 'completed')
@@ -146,20 +162,6 @@ export class WorkflowService {
       return;
     }
 
-    // Check if any step has permanently failed
-    const failedStep = steps.find(
-      s => s.status === 'failed' && !s.retry_at,
-    );
-    if (failedStep) {
-      this.db.update('workflow_instances', instanceId, {
-        status: 'failed',
-        error: failedStep.error,
-        current_step: failedStep.step_index,
-        updated_at: new Date().toISOString(),
-      });
-      return;
-    }
-
     // Execute next pending step
     if (nextStep.status === 'pending') {
       this.db.update('workflow_instances', instanceId, {
@@ -167,11 +169,10 @@ export class WorkflowService {
         updated_at: new Date().toISOString(),
       });
 
-      const completed = await this.executor.executeStep(instanceId, nextStep.step_id);
-      if (completed) {
-        // Step completed or skipped — advance to next
-        await this.advance(instanceId);
-      }
+      await this.executor.executeStep(instanceId, nextStep.step_id);
+      // Reconcile success, scheduled retry, or permanent failure atomically
+      // into the owning workflow lifecycle.
+      await this.advance(instanceId);
     }
     // If status is 'waiting', do nothing — sendEvent will resume
   }
@@ -206,15 +207,13 @@ export class WorkflowService {
 
     if (!waitingStep) return false;
 
-    const completed = await this.executor.executeStep(
+    await this.executor.executeStep(
       instanceId,
       waitingStep.step_id,
       { name: eventName, payload },
     );
 
-    if (completed) {
-      await this.advance(instanceId);
-    }
+    await this.advance(instanceId);
 
     return true;
   }
@@ -286,10 +285,8 @@ export class WorkflowService {
       const instance = this.db.queryOne('workflow_instances', step.instance_id);
       if (!instance || instance.status !== 'running') continue;
 
-      const completed = await this.executor.executeStep(step.instance_id, step.step_id);
-      if (completed) {
-        await this.advance(step.instance_id);
-      }
+      await this.executor.executeStep(step.instance_id, step.step_id);
+      await this.advance(step.instance_id);
       count++;
     }
 

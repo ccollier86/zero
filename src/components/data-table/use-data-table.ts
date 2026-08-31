@@ -136,14 +136,14 @@ export function useDataTable<T extends Row>(
         id: name,
         accessorFn: (row) => meta ? decodeFieldValue(meta, row[name]) : row[name],
         header: override?.header ?? meta?.label ?? formatLabel(name),
-        cell: override?.cell
-          ? (context) => override.cell!({
-              row: context.row.original,
-              value: context.getValue(),
-              columnId: name,
-              fieldMeta: meta,
-            })
-          : undefined,
+        ...(override?.cell ? {
+          cell: (context) => override.cell!({
+            row: context.row.original,
+            value: context.getValue(),
+            columnId: name,
+            fieldMeta: meta,
+          }),
+        } : {}),
         enableSorting: override?.sortable ?? meta?.sortable !== false,
         enableColumnFilter: override?.filterable ?? meta?.filterable !== false,
         size: override?.width ?? meta?.columnWidth,

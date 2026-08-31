@@ -6,6 +6,7 @@
  * print CLI output.
  */
 
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import { resolveAuthBehaviorConfig } from '../auth/auth-config';
@@ -25,6 +26,9 @@ import {
   validateResourceDefinitions,
 } from '../resources';
 import { resolveConfig, type AppConfig, type AppTableInput, type ResolvedConfig } from '../frontend/server/types';
+import { runUsageAudit, type UsageAuditOptions } from './usage-audit';
+import { checkNativeAuthConfig } from './native-auth-checks';
+import { authPublicPathFindings } from './auth-public-path-checks';
 
 export type PlatformDoctorSeverity = 'info' | 'warning' | 'error';
 
@@ -50,6 +54,10 @@ export interface PlatformDoctorOptions {
   strict?: boolean;
   /** Environment values used for provider checks. Defaults to process.env. */
   env?: Record<string, string | undefined>;
+  /** Project root used for app-owned source usage scanning. */
+  projectRoot?: string;
+  /** Source usage audit options. Pass false to disable. */
+  usageAudit?: boolean | UsageAuditOptions;
 }
 
 const AI_ALIAS_CAPABILITIES: Record<string, AICapability> = {
@@ -89,6 +97,7 @@ export function runPlatformDoctor(
   const env = options.env ?? process.env;
 
   checkPreResolutionConfig(config, findings);
+  checkNativeAuthConfig(config, findings);
 
   let resolved: ResolvedConfig | null = null;
   try {
@@ -114,6 +123,8 @@ export function runPlatformDoctor(
     checkObservability(resolved, findings, env);
     checkAI(resolved, findings, env);
     checkVector(resolved, findings);
+    checkPdf(resolved, findings);
+    checkUsageAudit(resolved, findings, options);
   }
 
   const hasError = findings.some((finding) => finding.severity === 'error');
@@ -122,6 +133,93 @@ export function runPlatformDoctor(
     findings,
     ok: options.strict ? !hasError && !hasWarning : !hasError,
   };
+}
+
+/** Validate PDF browser provisioning and deliberate resource security choices. */
+function checkPdf(
+  resolved: ResolvedConfig,
+  findings: PlatformDoctorFinding[]
+): void {
+  if (resolved.pdf === false) return;
+  const pdf = resolved.pdf;
+
+  if (!pdf.renderer && pdf.browser.executablePath && !existsSync(pdf.browser.executablePath)) {
+    addFinding(findings, {
+      severity: 'error',
+      code: 'pdf.browser.executable_missing',
+      path: 'pdf.browser.executablePath',
+      message: `The configured PDF Chromium executable does not exist: ${pdf.browser.executablePath}`,
+      hint: 'Fix ZERO_PDF_EXECUTABLE_PATH or remove it and run `zero pdf install`.',
+      docs: './docs/pdf.md#browser-installation',
+    });
+  } else if (!pdf.renderer && !pdf.browser.executablePath) {
+    addFinding(findings, {
+      severity: 'info',
+      code: 'pdf.browser.managed',
+      path: 'pdf',
+      message: 'PDF uses Playwright-managed Chromium. Verify the deploy image with `zero pdf status`.',
+      hint: 'Run `zero pdf install` during image/build provisioning when status reports it missing.',
+      docs: './docs/pdf.md#browser-installation',
+    });
+  }
+
+  if (pdf.resources.remote === 'allowlist' && pdf.resources.allowedOrigins.size === 0) {
+    addFinding(findings, {
+      severity: 'warning',
+      code: 'pdf.resources.allowlist_empty',
+      path: 'pdf.resources.allowedOrigins',
+      message: 'PDF remote resource mode is allowlist, but no origins are configured.',
+      hint: 'Add exact trusted origins or use remote: "deny" for fully inline documents.',
+      docs: './docs/pdf.md#resource-security',
+    });
+  }
+
+  if (pdf.resources.remote === 'allow') {
+    addFinding(findings, {
+      severity: 'warning',
+      code: 'pdf.resources.remote_unrestricted',
+      path: 'pdf.resources.remote',
+      message: 'PDF rendering allows arbitrary remote HTTP(S) resources.',
+      hint: 'Prefer an exact origin allowlist to reduce SSRF and document-tracking risk.',
+      docs: './docs/pdf.md#resource-security',
+    });
+  }
+
+  if (!pdf.resources.blockPrivateNetworks) {
+    addFinding(findings, {
+      severity: 'warning',
+      code: 'pdf.resources.private_network_allowed',
+      path: 'pdf.resources.blockPrivateNetworks',
+      message: 'PDF rendering may request loopback or private-network resources.',
+      hint: 'Keep private-network blocking enabled unless the renderer runs in an isolated trusted network.',
+      docs: './docs/pdf.md#resource-security',
+    });
+  }
+
+  if (pdf.browser.javaScriptEnabled) {
+    addFinding(findings, {
+      severity: 'warning',
+      code: 'pdf.browser.javascript_enabled',
+      path: 'pdf.browser.javaScriptEnabled',
+      message: 'PDF document JavaScript is enabled.',
+      hint: 'Only enable JavaScript for trusted app-owned HTML; never pass unsanitized user markup.',
+      docs: './docs/pdf.md#resource-security',
+    });
+  }
+}
+
+function checkUsageAudit(
+  resolved: ResolvedConfig,
+  findings: PlatformDoctorFinding[],
+  options: PlatformDoctorOptions
+): void {
+  if (!options.projectRoot || options.usageAudit === false) return;
+
+  findings.push(...runUsageAudit({
+    projectRoot: options.projectRoot,
+    resolvedConfig: resolved,
+    options: options.usageAudit,
+  }));
 }
 
 function checkPreResolutionConfig(
@@ -187,7 +285,7 @@ function checkAuthAndEmail(
 ): void {
   if (resolved.auth === false) return;
 
-  const authConfig = resolveAuthBehaviorConfig(resolved.auth as AuthBehaviorConfig);
+  const authConfig = resolveDoctorAuthConfig(resolved.auth as AuthBehaviorConfig);
   if (!isDuration(authConfig.accountEmails.actionTokenTTL)) {
     findings.push({
       severity: 'error',
@@ -268,13 +366,29 @@ function checkSyncPolicy(
   resolved: ResolvedConfig,
   findings: PlatformDoctorFinding[]
 ): void {
-  if (resolved.auth !== false && !resolved.syncPolicy) {
+  if (resolved.syncAuthDefaulted) {
     findings.push({
-      severity: 'warning',
-      code: 'sync.auth_policy.open_app_tables',
-      path: 'syncPolicy',
-      message: 'Auth is enabled but no app syncPolicy is configured. App tables remain fast/open unless a policy is provided.',
+      severity: 'info',
+      code: 'sync.auth.required_defaulted',
+      path: 'syncAuth',
+      message: 'Auth-enabled apps default WebSocket Sync to authenticated-only.',
+      hint: 'Set syncAuth: "public" explicitly only when anonymous table synchronization is intentional.',
+      docs: './docs/realtime-sync/realtime-sync/protocol.md',
     });
+  }
+  if (resolved.auth !== false && !resolved.syncPolicy) {
+    const resourceTables = new Set(resolved.resources.map((resource) => resource.table));
+    const uncoveredTables = [...resolved.declaredSyncModes.keys()]
+      .filter((tableName) => !resourceTables.has(tableName));
+
+    if (uncoveredTables.length > 0) {
+      findings.push({
+        severity: 'warning',
+        code: 'sync.auth_policy.open_app_tables',
+        path: 'syncPolicy',
+        message: `Auth is enabled but no app syncPolicy is configured for uncovered app tables: ${uncoveredTables.join(', ')}.`,
+      });
+    }
   }
 
   for (const [tableName, mode] of resolved.declaredSyncModes) {
@@ -303,7 +417,7 @@ function checkResources(
 ): void {
   if (resolved.resources.length === 0) return;
 
-  const authConfig = resolveAuthBehaviorConfig(
+  const authConfig = resolveDoctorAuthConfig(
     resolved.auth === false ? {} : resolved.auth as AuthBehaviorConfig
   );
 
@@ -328,6 +442,11 @@ function checkResources(
     checkResourceAuthShape(resource, resolved, findings);
     checkResourcePublicWrites(resource, findings);
   }
+}
+
+function resolveDoctorAuthConfig(config: AuthBehaviorConfig) {
+  const { nativeApps: _nativeApps, ...behavior } = config;
+  return resolveAuthBehaviorConfig(behavior);
 }
 
 /** Emit warnings for resource reads that affect `/api/data` and sync. */
@@ -363,7 +482,7 @@ function checkResourceListPolicy(
 
   const ownerFields = getPolicyOwnerFields(listPolicy);
   for (const field of ownerFields) {
-    if (!isLikelyIndexedResourceField(resolved.tables[resource.table], field)) {
+    if (!isLikelyIndexedResourceField(resolved, resource.table, field)) {
       addFinding(findings, {
         severity: 'warning',
         code: 'resource.owner_field.index_guidance',
@@ -445,18 +564,7 @@ function checkAuthPublicPaths(
   resolved: ResolvedConfig,
   findings: PlatformDoctorFinding[]
 ): void {
-  if (resolved.auth === false) return;
-  if (resolved.routeAuth === 'explicit') return;
-  if (isPathPublic(resolved.loginPath, resolved.publicPaths)) return;
-
-  addFinding(findings, {
-    severity: 'warning',
-    code: 'auth.login_path.not_public',
-    path: 'publicPaths',
-    message: `loginPath "${resolved.loginPath}" is not included in publicPaths, so unauthenticated users may be redirected to a protected route.`,
-    hint: `Add "${resolved.loginPath}" to publicPaths or change loginPath to an existing public login route.`,
-    docs: './docs/start-here.md#choose-your-app-shape',
-  });
+  findings.push(...authPublicPathFindings(resolved));
 }
 
 /** Validate observability runtime and endpoint access policy against env/auth. */
@@ -895,18 +1003,6 @@ function addFinding(
   findings.push(finding);
 }
 
-/** Return whether auth middleware should treat a route as public. */
-function isPathPublic(pathname: string, publicPaths: readonly string[]): boolean {
-  return publicPaths.some((publicPath) => {
-    if (publicPath === '/') return true;
-    return pathname === publicPath || pathname.startsWith(`${trimTrailingSlash(publicPath)}/`);
-  });
-}
-
-function trimTrailingSlash(value: string): string {
-  return value.endsWith('/') && value.length > 1 ? value.slice(0, -1) : value;
-}
-
 function resourceValidationHint(code: string): string | undefined {
   switch (code) {
     case 'resource-table-missing':
@@ -927,12 +1023,15 @@ function resourceValidationHint(code: string): string | undefined {
 }
 
 function isLikelyIndexedResourceField(
-  schema: TableSchema | undefined,
+  resolved: ResolvedConfig,
+  tableName: string,
   field: string
 ): boolean {
+  const schema = resolved.tables[tableName];
   if (!schema) return false;
   if (inferTablePrimaryKey(schema) === field) return true;
   if (schema._identity?.includes(field)) return true;
+  if (resolved.doctor.indexedFields?.[tableName]?.includes(field)) return true;
 
   const definition = schema[field];
   return typeof definition === 'string' && /\b(primary\s+key|unique)\b/i.test(definition);

@@ -35,6 +35,7 @@ export function createResourcePolicyUser(
   const user = userStore.getUserById(authContext.userId);
   if (!user) return null;
   if (user.status === 'suspended' || user.passwordChangeRequired) return null;
+  if (user.emailVerificationRequired && !user.emailVerifiedAt) return null;
 
   return {
     userId: user.userId,

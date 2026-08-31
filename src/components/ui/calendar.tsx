@@ -22,6 +22,11 @@ function Calendar({ className, classNames, showOutsideDays = true, ...props }: C
         month: 'flex flex-col gap-4',
         month_caption: 'flex justify-center pt-1 relative items-center w-full',
         caption_label: 'text-sm font-medium',
+        dropdowns: 'flex h-8 items-center justify-center gap-1',
+        dropdown_root:
+          'relative inline-flex h-8 items-center rounded-md border border-input bg-background px-2 text-sm font-medium shadow-xs transition-colors hover:border-border-strong focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-bg-inset/45',
+        dropdown:
+          'absolute inset-0 z-10 cursor-pointer appearance-none opacity-0 disabled:cursor-not-allowed',
         nav: 'flex items-center gap-1',
         button_previous: cn(
           buttonVariants({ variant: 'outline' }),

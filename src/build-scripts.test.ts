@@ -27,7 +27,7 @@ function scriptEntrypoints(scriptName: string): string[] {
 
 describe('package build scripts', () => {
   test('root scripts do not depend on the ignored app playground', () => {
-    for (const scriptName of ['dev', 'build', 'build:binary']) {
+    for (const scriptName of ['dev', 'build', 'build:binary', 'test:package']) {
       const script = packageJson.scripts?.[scriptName] ?? '';
       expect(script).not.toContain('app/');
     }

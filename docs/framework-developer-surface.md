@@ -3,7 +3,7 @@
 This document maps how an app developer should use Zero when it behaves like an
 installed framework. It is intentionally honest about the current branch state:
 the runtime, package export map, and app-owned Elysia route loader exist on this
-branch; `create-zero` now writes a fixture-derived starter app, and `zero add`
+branch; `create-zero` writes a blank package-mode starter app, and `zero add`
 copies selected component/hook source into app-owned code.
 
 ## Current And Target Imports
@@ -28,6 +28,56 @@ import { defineSchema, defineTable } from '@zero/framework/schema';
 The current `@platform/*` aliases still work in this repository for compatibility,
 but new app code should use `@zero/framework/*`.
 
+For local package-mode development before npm publishing, scaffold from this
+checkout:
+
+```sh
+bun run install:local-tools
+zero-new ../my-zero-app
+```
+
+Without the local convenience wrapper:
+
+```sh
+bun run create-zero -- ../my-zero-app --local --install
+```
+
+This packs the checkout with the package publish allowlist and writes the
+generated app's ignored `.zero/framework/zero-framework.tgz` archive into
+`package.json`. Use `--zero <specifier>` when testing a published version or a
+different package source.
+
+To refresh that framework archive later without touching app-owned code, stop
+the app/dev server and run:
+
+```sh
+cd /path/to/my-zero-app
+zero-update
+```
+
+The local-tools installer binds `zero-update` to the checkout that installed
+it. It accepts an optional project directory and forwards to the general
+updater as `zero update --project <dir> --local <checkout>`. Use `--dry-run` to
+inspect the dependency/archive/install plan. Published-package apps instead use
+`bun run zero update --project .`, with `--latest` reserved for an intentional
+move to the newest release. Exactly one `bun.lock` or `bun.lockb` must already
+exist, including for a dry-run; commit the lockfile for checkout-local apps.
+
+The updater directly manages Zero dependency artifacts only; in its default
+mode it never scaffolds app source, rewrites `zero.config.ts` or `.env`, changes
+application data, or runs app-defined scripts. `--check` executes the project's
+existing typecheck and Doctor scripts; review them first because their side
+effects are outside updater rollback. Zero itself never selects a migration
+command. Run `bun run migrate:plan` separately and intentionally against the
+correct database or a safe copy before applying a database change. For local
+apps, the updater regenerates the ignored
+`.zero/framework/zero-framework.tgz` archive from the selected checkout. A
+fresh clone can omit that archive and the managed `.zero/` directories: a
+mutating update creates them, while `--dry-run` only reports the pending
+bootstrap. Existing symlinks or wrong-type entries at managed paths are
+rejected. Never use `create-zero --force` or `zero-new --force` as an update
+mechanism because those commands replace scaffold targets.
+
 | Import | Use For |
 | --- | --- |
 | `@zero/framework/server` | Composition root, `createApp()`, `createServerRoute()`, backend service getters, plugins, config types. |
@@ -39,12 +89,14 @@ but new app code should use `@zero/framework/*`.
 | `@zero/framework/styles.css` | Packaged Zero stylesheet for app entrypoints that need explicit CSS import. |
 | `@zero/framework/ai` | AI service contracts when importing the AI layer directly. |
 | `@zero/framework/auth` | Auth plugin, store, token, and auth config contracts. |
+| `@zero/framework/native` | Platform-neutral desktop/mobile public-client auth SDK. Use the packaged host-bridge recipes in `examples/native-auth`. |
 | `@zero/framework/doctor` | Programmatic platform doctor use. Generated apps usually call `zero doctor`. |
 | `@zero/framework/email` | Email providers/service contracts for custom adapters. App code usually calls `getEmailService()` from `server`. |
 | `@zero/framework/kv` | Server-side KV/cache service, counters, limiters, and manual Elysia plugin. App code usually uses `zero.kv` from backend routes. |
 | `@zero/framework/migrations` | Programmatic migration planning/status. Generated apps usually call `zero migrate`. |
 | `@zero/framework/notifications` | Notification plugin/service contracts. React hooks/components come from `react`. |
 | `@zero/framework/observability` | Backend sink, event, and code contracts. Server routes can also import these from `server`. |
+| `@zero/framework/pdf` | Server-only PDF service, Chromium renderer, storage adapter, config, status, and browser installer contracts. App routes normally use `zero.pdf`. |
 | `@zero/framework/persistence` | Advanced SQLite persistence foundation: hot snapshot, file/WAL, ephemeral modes, statement cache, transactions, and buffer pool. Most apps should let `createApp()` own this and use `zero.sql` in backend routes. |
 | `@zero/framework/rooms` | Rooms and presence server contracts. React hooks come from `react`. |
 | `@zero/framework/scheduler` | Scheduler service/plugin contracts. |
@@ -95,7 +147,14 @@ app/
   page.tsx
   server.ts
 server/
+  endpoints/
+  middleware/
+  plugins/
+  resources/
   routes/
+components/
+hooks/
+lib/
 db/
   schema.ts
 zero.config.ts
@@ -180,6 +239,7 @@ SQLite's file/WAL path.
 | Observability | Mounted by default; exposes protected Zero observability routes. |
 | AI | Mounted when `ai !== false`; decorates Elysia context with `ai` and exposes optional status endpoint. |
 | Vector | Mounted when `vector !== false`; decorates Elysia context with `vectors`; no public routes by default. |
+| PDF | Mounted when `pdf !== false`; exposes lazy `zero.pdf`, starts Chromium on first render, and mounts no public routes. |
 | KV/cache | Mounted by default; app-owned backend routes can use `zero.kv`, `zero.counter`, and `zero.limiter`. |
 | Scheduler | Always mounted for platform jobs. |
 | Notifications | Mounted when auth is enabled. |
@@ -354,6 +414,7 @@ server code:
 | `zero.limiter` | Rate limiter helpers backed by KV. |
 | `zero.ai` | Internal AI service, when enabled. |
 | `zero.vector` | Vector service, when enabled. |
+| `zero.pdf` | Browser-grade PDF service, when enabled. |
 | `zero.email` | Email service; noop-backed when email is disabled. |
 | `zero.storage` | Storage service, when enabled. |
 | `zero.notifications` | Notification service, when enabled. |
@@ -373,7 +434,7 @@ Prefer Zero's canonical service vocabulary in app-owned backend code:
 | --- | --- |
 | `zero.db` | `create()`, `get()`, `list()`, `update()`, `delete()` |
 | `zero.auth.store` | `create()`, `get()`, `list()`, `update()`, `delete()` |
-| `zero.tokens` | `createActionToken()`, `inspectActionToken()`, `consumeActionToken()`, `createResumeToken()`, `verifyResumeToken()`, `rotateResumeToken()`, `revokeResumeToken()` |
+| `zero.tokens` | `createActionToken()`, `inspectActionToken()`, `consumeActionToken()`, `createResumeToken()`, `verifyResumeToken()`, `rotateResumeToken()`, `revokeResumeToken()`, `revokeResumeTokenById()` |
 | `zero.kv` | `get()`, `set()`, `delete()`, `getOrSet()`, `compareAndSet()`, `namespace()` |
 | `zero.counter` | `increment()`, `decrement()`, `value()`, `reset()` |
 | `zero.limiter` | `fixedWindow()`, `tokenBucket()`, `slidingWindow()` |
@@ -381,6 +442,7 @@ Prefer Zero's canonical service vocabulary in app-owned backend code:
 | `zero.scheduler` | `create()`, `get()`, `list()`, `run()`, `delete()`, `stop()` |
 | `zero.workflows` | `run()`, `get()`, `list()`, `stop()` |
 | `zero.vector` | `list()`, `search()`, `get()`, `status()` |
+| `zero.pdf` | `render()`, `renderToStorage()`, `status()`, `close()` |
 | `zero.storage` | `drives.*`, `objects.*`, `permissions.*`, and `uploads.*` grouped APIs |
 
 Older names remain compatibility aliases. See
@@ -697,6 +759,51 @@ Use `createAIVectorBridge()` when the app wants AI embeddings plus vector
 storage through one helper. Zero does not generate embeddings automatically for
 every vector write.
 
+## PDF Rendering
+
+PDF is a server-only, opt-in service. Install Zero's pinned Chromium revision
+once per development machine or deploy image, then enable it in
+`zero.config.ts`:
+
+```sh
+bun run pdf:install
+bun run pdf:status
+```
+
+```ts
+const config = {
+  pdf: {
+    defaults: {
+      format: 'Letter',
+      printBackground: true,
+      preferCSSPageSize: true,
+    },
+    browser: {
+      executablePath: Bun.env.ZERO_PDF_EXECUTABLE_PATH,
+    },
+  },
+} satisfies AppConfig;
+```
+
+Use the lazy service from app-owned server code:
+
+```ts
+if (!zero.pdf) throw new Error('PDF rendering is disabled.');
+
+const rendered = await zero.pdf.render({
+  html: '<main><h1>Assessment</h1></main>',
+  css: '@page { size: Letter; margin: 0.5in; }',
+  document: { title: 'Assessment' },
+});
+```
+
+`renderToStorage()` writes the generated bytes through Zero storage and
+returns both render metadata and the stored object. The default policy disables
+JavaScript and denies remote/file/private-network resources. Enable exact
+origins explicitly when a document needs remote images or fonts. Zero mounts
+no PDF HTTP route; the app owns route validation and authorization. See
+[PDF Rendering](./pdf.md).
+
 ## Email
 
 Email is configured by `createApp()`. `true` enables Resend by default:
@@ -837,6 +944,11 @@ function Files() {
 Use `useUploadDropzone()` directly when the app needs a custom upload surface
 instead of the provided `StorageDropzone` component.
 
+Use `useDriveCapabilities()` before enabling custom storage controls, and use
+`useStoragePermissions()` plus `useStorageActions().grantPermission()` /
+`revokePermission()` for admin grant screens. Grants can target roles, exact
+user IDs, or configured auth user-property values.
+
 Server code can use the service for backend-owned storage tasks:
 
 ```ts
@@ -947,6 +1059,9 @@ import {
   Hero,
   MasterDetailView,
   LoginForm,
+  MFAEnrollmentForm,
+  MFAManagementPanel,
+  QRCode,
   ResizableNavbar,
   TextGenerateEffect,
   UserManagement,
@@ -974,9 +1089,16 @@ import { KanbanBoard } from '@zero/framework/components/kanban';
 import { RadialMenu } from '@zero/framework/components/radial-menu';
 import { ResizableNavbar } from '@zero/framework/components/navbar';
 import { TextGenerateEffect } from '@zero/framework/components/text-effects';
-import { LoginForm } from '@zero/framework/components/auth';
+import { LoginForm, MFAEnrollmentForm } from '@zero/framework/components/auth';
+import { QRCode } from '@zero/framework/components/qr-code';
 import { useDisclosure } from '@zero/framework/hooks';
 import { Button } from '@zero/framework/components/ui/button';
+import { Checkbox } from '@zero/framework/components/ui/checkbox';
+import { Progress } from '@zero/framework/components/ui/progress';
+import {
+  RadioGroup,
+  RadioGroupItem,
+} from '@zero/framework/components/ui/radio-group';
 ```
 
 Use `zero add` only when the app needs to customize source. It copies selected

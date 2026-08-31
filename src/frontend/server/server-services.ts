@@ -47,6 +47,8 @@ import type { KvCounterService, KvLimiterService, KvService } from '../../kv';
 import { getKvService } from '../../kv';
 import type { PlatformSQLiteService } from '../../persistence';
 import { getPlatformSQLiteService } from '../../persistence';
+import type { PdfService } from '../../pdf';
+import { getPdfService } from '../../pdf';
 
 /** Auth services exposed under `zero.auth` in app-owned backend code. */
 export interface ServerAuthServices {
@@ -118,6 +120,8 @@ export interface ServerRouteServices {
   readonly vector: VectorService | null;
   /** Backwards-compatible alias for the primary vector store handle. */
   readonly vectors: VectorService | null;
+  /** Browser-grade PDF rendering service, when configured. */
+  readonly pdf: PdfService | null;
   /** Email sending service. Uses a noop provider when email is disabled. */
   readonly email: EmailService;
   /** Active email runtime for provider/status inspection. */
@@ -195,6 +199,9 @@ function createServerRouteServices(): ServerRouteServices {
     },
     get vectors() {
       return getVectorStore();
+    },
+    get pdf() {
+      return getPdfService();
     },
     get email() {
       return getEmailService();

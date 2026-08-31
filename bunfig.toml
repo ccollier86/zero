@@ -1,0 +1,5 @@
+[test]
+pathIgnorePatterns = [
+  "sdk/zero-native-auth/**",
+  "sdk/zero-chrome-auth/**",
+]

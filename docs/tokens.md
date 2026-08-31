@@ -125,6 +125,13 @@ Revoke when the flow is completed or abandoned:
 zero.tokens.revokeResumeToken(token);
 ```
 
+When an app correctly stores only the safe `record.tokenId`, it may revoke the
+previous active continuation credential without retaining its raw value:
+
+```ts
+zero.tokens.revokeResumeTokenById(activeResumeTokenId);
+```
+
 ## Storage
 
 The service owns these framework tables:

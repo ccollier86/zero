@@ -1,6 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { SyncStoreContext } from './sync-store';
 import type { SyncClient } from './sync-client';
+import { createNativeSyncAuth } from '../../native/sync-auth';
+import { createNativeTestHarness } from '../../native/test-support';
 
 // ─── WebSocket Mock ────────────────────────────────────────────────────────
 
@@ -16,9 +18,12 @@ class MockWebSocket {
 
   static instances: MockWebSocket[] = [];
   static autoOpen = true;
+  static autoAuthReady = true;
+  static autoBaseline = true;
 
   url: string;
   readyState = MockWebSocket.CONNECTING;
+  bufferedAmount = 0;
   sent: string[] = [];
 
   onopen: ((event: Event) => void) | null = null;
@@ -43,6 +48,36 @@ class MockWebSocket {
 
   send(data: string) {
     this.sent.push(data);
+
+    try {
+      const message = JSON.parse(data) as {
+        type?: string;
+        token?: string;
+        lastSeq?: number;
+        epoch?: string;
+        scope?: string;
+        snapshot?: string[];
+      };
+      if (message.type === 'sync.auth') {
+        if (!MockWebSocket.autoAuthReady) return;
+        this.simulateMessage(JSON.stringify({
+          type: 'sync.auth.ready',
+          authenticated: Boolean(message.token),
+        }));
+      } else if (message.type === 'sync.subscribe' && MockWebSocket.autoBaseline) {
+        const epoch = message.epoch ?? 'test-epoch';
+        const scope = message.scope ?? 'test-scope';
+        this.simulateMessage(JSON.stringify(message.epoch ? {
+          type: 'sync.catchup', changes: [], seq: message.lastSeq ?? 0,
+          prevSeq: message.lastSeq ?? 0, epoch, scope,
+        } : {
+          type: 'sync.snapshot', tables: Object.fromEntries(
+            (message.snapshot ?? []).map((table) => [table, {}]),
+          ),
+          seq: 0, epoch, scope, reset: 'preserve-pending',
+        }));
+      }
+    } catch {}
   }
 
   close(code?: number, reason?: string) {
@@ -65,6 +100,8 @@ class MockWebSocket {
   static reset() {
     MockWebSocket.instances = [];
     MockWebSocket.autoOpen = true;
+    MockWebSocket.autoAuthReady = true;
+    MockWebSocket.autoBaseline = true;
   }
 
   static latest(): MockWebSocket {
@@ -113,6 +150,14 @@ async function flushMicrotasks() {
   await new Promise<void>((resolve) => queueMicrotask(resolve));
 }
 
+async function waitForSocketCount(count: number): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (MockWebSocket.instances.length >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(`Expected ${count} WebSocket instances`);
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 describe('createSyncClient', () => {
@@ -142,42 +187,66 @@ describe('createSyncClient', () => {
     client.disconnect();
   });
 
-  test('appends token to URL when provided', async () => {
+  test('sends the token in the first message without placing it in the URL', async () => {
     const client = makeClient({ token: 'my-token' });
     await flushMicrotasks();
 
-    expect(MockWebSocket.latest().url).toBe(
-      'ws://localhost:3000/sync?token=my-token'
-    );
+    const ws = MockWebSocket.latest();
+    expect(ws.url).toBe('ws://localhost:3000/sync');
+    expect(JSON.parse(ws.sent[0])).toEqual({
+      type: 'sync.auth',
+      token: 'my-token',
+    });
 
     client.disconnect();
   });
 
-  test('appends token with & when URL already has query params', async () => {
+  test('preserves non-auth query params without appending the bearer token', async () => {
     const client = makeClient({
       url: 'ws://localhost:3000/sync?room=test',
       token: 'my-token',
     });
     await flushMicrotasks();
 
-    expect(MockWebSocket.latest().url).toBe(
-      'ws://localhost:3000/sync?room=test&token=my-token'
-    );
+    expect(MockWebSocket.latest().url).toBe('ws://localhost:3000/sync?room=test');
 
     client.disconnect();
   });
 
-  test('sends sync.subscribe on open', async () => {
+  test('sends sync.subscribe after the server accepts the auth handshake', async () => {
     const client = makeClient();
     await flushMicrotasks();
 
     const ws = MockWebSocket.latest();
-    expect(ws.sent).toHaveLength(1);
+    expect(ws.sent).toHaveLength(2);
 
-    const msg = JSON.parse(ws.sent[0]);
+    const msg = JSON.parse(ws.sent[1]);
     expect(msg.type).toBe('sync.subscribe');
     expect(msg.tables).toEqual(['todos']);
     expect(msg.lastSeq).toBe(0);
+
+    client.disconnect();
+  });
+
+  test('does not subscribe, flush, or report connected before auth is ready', async () => {
+    MockWebSocket.autoAuthReady = false;
+    const client = makeClient({ token: 'my-token' });
+    await flushMicrotasks();
+
+    const ws = MockWebSocket.latest();
+    expect(ws.sent.map((item) => JSON.parse(item).type)).toEqual(['sync.auth']);
+    expect(client.connected).toBe(false);
+    client.insert('todos', { id: 'waiting', title: 'Buffered', done: 0 });
+    expect(ws.sent.map((item) => JSON.parse(item).type)).toEqual(['sync.auth']);
+
+    ws.simulateMessage(JSON.stringify({
+      type: 'sync.auth.ready',
+      authenticated: true,
+    }));
+
+    expect(ws.sent.map((item) => JSON.parse(item).type))
+      .toEqual(['sync.auth', 'sync.subscribe', 'sync.mutate']);
+    expect(client.connected).toBe(true);
 
     client.disconnect();
   });
@@ -199,19 +268,145 @@ describe('createSyncClient', () => {
     });
     await flushMicrotasks();
 
-    expect(MockWebSocket.latest().url).toBe(
-      'ws://localhost:3000/sync?token=token-1'
-    );
+    expect(MockWebSocket.latest().url).toBe('ws://localhost:3000/sync');
+    expect(JSON.parse(MockWebSocket.latest().sent[0]).token).toBe('token-1');
 
     token = 'token-2';
     client.reconnect();
     await flushMicrotasks();
 
     expect(MockWebSocket.instances).toHaveLength(2);
-    expect(MockWebSocket.latest().url).toBe(
-      'ws://localhost:3000/sync?token=token-2'
-    );
+    expect(MockWebSocket.latest().url).toBe('ws://localhost:3000/sync');
+    expect(JSON.parse(MockWebSocket.latest().sent[0]).token).toBe('token-2');
 
+    client.disconnect();
+  });
+
+  test('awaits an async access-token provider before opening the socket', async () => {
+    let resolveToken!: (token: string) => void;
+    const client = makeClient({
+      getToken: () => new Promise((resolve) => { resolveToken = resolve; }),
+    });
+    await flushMicrotasks();
+    expect(MockWebSocket.instances).toHaveLength(0);
+
+    resolveToken('async-token');
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expect(JSON.parse(MockWebSocket.latest().sent[0]).token).toBe('async-token');
+    client.disconnect();
+  });
+
+  test('refreshes and reconnects after a short-lived token closes with 4001', async () => {
+    let token = 'short-lived';
+    let refreshes = 0;
+    const client = makeClient({
+      getToken: async () => token,
+      refreshAuth: async () => {
+        refreshes += 1;
+        token = 'refreshed-token';
+        return token;
+      },
+    });
+    await flushMicrotasks();
+    await flushMicrotasks();
+    MockWebSocket.latest().simulateClose(4001, 'Invalid auth token');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(refreshes).toBe(1);
+    expect(MockWebSocket.instances).toHaveLength(2);
+    expect(JSON.parse(MockWebSocket.latest().sent[0]).token).toBe('refreshed-token');
+    client.disconnect();
+  });
+
+  for (const reason of ['Sync access changed', 'Auth context changed']) {
+    test(`purges authorization-scoped rows and mutations on ${reason}`, async () => {
+      let token = 'access-before-policy-change';
+      const client = makeClient({
+        getToken: async () => token,
+        refreshAuth: async () => {
+          token = 'access-after-policy-change';
+          return token;
+        },
+      });
+      await flushMicrotasks();
+      await flushMicrotasks();
+      const firstSocket = MockWebSocket.latest();
+      firstSocket.simulateMessage(JSON.stringify({
+        type: 'sync.snapshot', seq: 8,
+        tables: { todos: { private: {
+          id: 'private', title: 'No longer allowed', done: 0,
+        } } },
+      }));
+      client.update('todos', 'private', { title: 'Pending' });
+      client.update('todos', 'private', { title: 'Queued' });
+
+      firstSocket.simulateClose(4001, reason);
+      await waitForSocketCount(2);
+      await flushMicrotasks();
+
+      expect(getCtx(client).todos).toEqual({});
+      expect(getCtx(client)._sync.pending).toEqual([]);
+      expect(getCtx(client)._sync.lastSeq).toBe(0);
+      const recovered = MockWebSocket.latest();
+      recovered.simulateMessage(JSON.stringify({
+        type: 'sync.snapshot', seq: 9,
+        tables: { todos: { private: {
+          id: 'private', title: 'Allowed again', done: 0,
+        } } },
+      }));
+      recovered.sent.length = 0;
+      client.update('todos', 'private', { done: 1 });
+      expect(recovered.sent).toHaveLength(1);
+      client.disconnect();
+    });
+  }
+
+  test('retains cache across an ordinary expired-token refresh', async () => {
+    let token = 'expiring-token';
+    const client = makeClient({
+      getToken: async () => token,
+      refreshAuth: async () => {
+        token = 'replacement-token';
+        return token;
+      },
+    });
+    await flushMicrotasks();
+    await flushMicrotasks();
+    const firstSocket = MockWebSocket.latest();
+    firstSocket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', seq: 4,
+      tables: { todos: { retained: {
+        id: 'retained', title: 'Still authorized', done: 0,
+      } } },
+    }));
+    client.update('todos', 'retained', { done: 1 });
+
+    firstSocket.simulateClose(4001, 'Invalid auth token');
+    await waitForSocketCount(2);
+
+    expect((getCtx(client).todos as Record<string, unknown>).retained).toEqual({
+      id: 'retained', title: 'Still authorized', done: 1,
+    });
+    expect(getCtx(client)._sync.pending).toHaveLength(1);
+    expect(getCtx(client)._sync.lastSeq).toBe(4);
+    client.disconnect();
+  });
+
+  test('reports revoked auth when refresh fails without reconnecting', async () => {
+    const errors: string[] = [];
+    const client = makeClient({
+      getToken: async () => 'revoked-token',
+      refreshAuth: async () => { throw new Error('revoked'); },
+      onAuthFailure: (error) => errors.push(error),
+    });
+    await flushMicrotasks();
+    await flushMicrotasks();
+    MockWebSocket.latest().simulateClose(4001, 'Invalid auth token');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(errors[0]).toContain('Auth refresh failed');
     client.disconnect();
   });
 
@@ -238,6 +433,66 @@ describe('createSyncClient', () => {
     expect(getCtx(client)._sync.pending).toEqual([]);
     expect(getCtx(client).todos).toEqual({});
 
+    client.disconnect();
+  });
+
+  test('native account switching and sign-out purge data before reconnect', async () => {
+    const harness = await createNativeTestHarness();
+    await harness.auth.signIn();
+    const client = makeClient({ ...createNativeSyncAuth(harness.auth) });
+    await waitForSocketCount(1);
+    MockWebSocket.latest().simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', seq: 1,
+      tables: { todos: { private: { id: 'private', title: 'User 1', done: 0 } } },
+    }));
+    expect((getCtx(client).todos as Record<string, unknown>).private).toBeDefined();
+
+    harness.setSubject('user-2');
+    await harness.auth.signIn();
+    await waitForSocketCount(2);
+
+    expect(getCtx(client).todos).toEqual({});
+    expect(MockWebSocket.instances).toHaveLength(2);
+    expect(JSON.parse(MockWebSocket.latest().sent[0]).token).toBe('access-initial-2');
+
+    await harness.auth.signOut();
+    expect(client.connected).toBe(false);
+    expect(getCtx(client).todos).toEqual({});
+    client.disconnect();
+  });
+
+  test('ignores stale-socket data after an authorization reset', async () => {
+    const client = makeClient();
+    await flushMicrotasks();
+    const staleSocket = MockWebSocket.latest();
+
+    client.reset();
+    client.connect();
+    await waitForSocketCount(2);
+    await flushMicrotasks();
+    staleSocket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', seq: 99,
+      tables: { todos: { leaked: {
+        id: 'leaked', title: 'Previous authorization', done: 0,
+      } } },
+    }));
+
+    expect(getCtx(client).todos).toEqual({});
+    expect(getCtx(client)._sync.lastSeq).toBe(0);
+    client.disconnect();
+  });
+
+  test('native bridge never opens an unauthenticated socket during cold start', async () => {
+    const harness = await createNativeTestHarness();
+    const client = makeClient({ ...createNativeSyncAuth(harness.auth) });
+    expect(MockWebSocket.instances).toHaveLength(0);
+
+    await flushMicrotasks();
+    await flushMicrotasks();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(harness.auth.state.status).toBe('anonymous');
+    expect(MockWebSocket.instances).toHaveLength(0);
     client.disconnect();
   });
 
@@ -390,6 +645,29 @@ describe('mutations', () => {
 });
 
 describe('message routing', () => {
+  test('rejects a sequence gap and closes the socket for safe recovery', async () => {
+    let recoveryError = '';
+    const client = makeClient({ onError: (message) => { recoveryError = message; } });
+    await flushMicrotasks();
+    const ws = MockWebSocket.latest();
+    ws.simulateMessage(JSON.stringify({
+      type: 'sync.change', seq: 1, prevSeq: 0,
+      epoch: 'test-epoch', scope: 'test-scope', table: 'todos', op: 'INSERT',
+      rowId: 'kept', row: { id: 'kept', title: 'Kept', done: 0 }, origin: '', ts: 1,
+    }));
+    ws.simulateMessage(JSON.stringify({
+      type: 'sync.change', seq: 3, prevSeq: 2,
+      epoch: 'test-epoch', scope: 'test-scope', table: 'todos', op: 'DELETE',
+      rowId: 'kept', row: null, origin: '', ts: 2,
+    }));
+
+    expect(ws.readyState).toBe(MockWebSocket.CLOSED);
+    expect((getCtx(client).todos as Record<string, any>).kept).toBeDefined();
+    expect(getCtx(client)._sync.lastSeq).toBe(1);
+    expect(recoveryError).toContain('Max reconnect attempts');
+    client.disconnect();
+  });
+
   test('routes sync.snapshot from server', async () => {
     const client = makeClient();
     await flushMicrotasks();
@@ -543,6 +821,80 @@ describe('same-row serialization', () => {
 });
 
 describe('send buffering', () => {
+  test('waits for the authoritative baseline before flushing offline mutations', async () => {
+    MockWebSocket.autoBaseline = false;
+    const client = makeClient();
+    await flushMicrotasks();
+    const ws = MockWebSocket.latest();
+    ws.sent.length = 0;
+
+    client.insert('todos', { id: 'offline', title: 'Offline', done: 0 });
+    expect(ws.sent).toEqual([]);
+    expect(getCtx(client)._sync.pending).toHaveLength(1);
+
+    ws.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot',
+      tables: { todos: {} },
+      seq: 4,
+      epoch: 'server-epoch',
+      scope: 'user-scope',
+      reset: 'preserve-pending',
+    }));
+
+    expect(ws.sent.map((item) => JSON.parse(item).type)).toEqual(['sync.mutate']);
+    expect((getCtx(client).todos as Record<string, any>).offline.title).toBe('Offline');
+    expect(getCtx(client)._sync.pending).toHaveLength(1);
+    client.disconnect();
+  });
+
+  test('replays an uncertain mutation with the same ref and a fenced attempt', async () => {
+    const client = makeClient();
+    await flushMicrotasks();
+    const firstSocket = MockWebSocket.latest();
+    firstSocket.sent.length = 0;
+
+    client.insert('todos', { id: 'uncertain', title: 'Once', done: 0 });
+    const first = firstSocket.sent.map((item) => JSON.parse(item)).find(
+      (message) => message.type === 'sync.mutate',
+    );
+    expect(first.attempt).toBe(1);
+    expect(first.epoch).toBe('test-epoch');
+
+    client.reconnect();
+    await flushMicrotasks();
+    const replay = MockWebSocket.latest().sent.map((item) => JSON.parse(item)).find(
+      (message) => message.type === 'sync.mutate',
+    );
+    expect(replay.ref).toBe(first.ref);
+    expect(replay.epoch).toBe(first.epoch);
+    expect(replay.attempt).toBe(2);
+    expect(getCtx(client)._sync.pending[0].attempts).toBe(2);
+    client.disconnect();
+  });
+
+  test('drops queued mutations when the server reports a changed auth scope', async () => {
+    MockWebSocket.autoBaseline = false;
+    const client = makeClient();
+    await flushMicrotasks();
+    const ws = MockWebSocket.latest();
+    ws.sent.length = 0;
+
+    client.insert('todos', { id: 'private', title: 'Private', done: 0 });
+    ws.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot',
+      tables: { todos: {} },
+      seq: 0,
+      epoch: 'server-epoch',
+      scope: 'replacement-scope',
+      reset: 'purge',
+    }));
+
+    expect(ws.sent).toEqual([]);
+    expect(getCtx(client)._sync.pending).toEqual([]);
+    expect(getCtx(client).todos).toEqual({});
+    client.disconnect();
+  });
+
   test('buffers mutations while disconnected and flushes on reconnect', async () => {
     MockWebSocket.autoOpen = false;
 

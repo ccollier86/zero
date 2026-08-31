@@ -1,0 +1,1867 @@
+# Zero Framework LLM Documentation
+
+This is the main agent-facing documentation bundle for Zero. It should be
+loaded before planning or coding a Zero app. It intentionally repeats the most
+important framework docs in one file so agents use Zero's existing surfaces
+instead of rebuilding them.
+
+Use this file first. Use the linked docs for deeper subsystem details.
+
+## Product Summary
+
+Zero is a Bun/Elysia full-stack app framework for building serious web apps
+quickly from one integrated platform. It combines:
+
+- Bun and Elysia server runtime
+- React frontend runtime
+- file-router pages, layouts, route groups, and route auth metadata
+- ReactiveDB over SQLite
+- WebSocket sync and lazy `/api/data`
+- generated resource CRUD with server-side policy
+- auth, email, account lifecycle, password reset/setup, email verification,
+  and optional MFA
+- installed desktop/mobile/extension OpenID Connect auth with Authorization
+  Code + PKCE, with release status varying by client SDK
+- storage, public upload grants, and storage management UI
+- workflows, scheduler, rooms, presence, notifications, state sync
+- platform tokens for one-time and resumable public flows
+- observability codes/sinks and protected event routes
+- AI provider layer, tool helpers, conversations, embeddings, speech,
+  transcription, image generation
+- zvec-backed vector storage
+- browser-grade HTML/CSS-to-PDF rendering with direct storage composition
+- migrations, schema history, rollback safety, backups, and drift planning
+- reusable hooks, app shells, admin organisms, data tables, master-detail,
+  Kanban, public page components, and animated icon/UI primitives
+
+Zero's app-building rule is simple: **use framework pieces first**. Do not
+recreate auth forms, modal managers, storage browsers, data tables, sidebars,
+app shells, hooks, CRUD/sync plumbing, or backend service wiring unless the
+framework surface is genuinely missing.
+
+## Authoritative Docs
+
+- `README.md`: human repo entry point and local create workflow.
+- `docs/start-here.md`: main platform documentation.
+- `docs/framework/README.md`: installed framework/package-mode docs.
+- `docs/framework-developer-surface.md`: canonical imports and app-owned
+  extension APIs.
+- `docs/frontend/component-inventory.md`: component and UI use-first map.
+- `docs/frontend/router.md`: file router, layouts, route groups, auth
+  boundaries, sitemap.
+- `docs/frontend/sdk.md`: frontend client, hooks, auth, sync, resources.
+- `docs/auth/app-auth-sdk-guide.md`: selection and onboarding for web,
+  TypeScript native, Rust/Tauri, Chrome, and other installed-app clients,
+  including honest package release status.
+- `docs/auth/native-app-auth.md`: desktop/mobile public-client registration,
+  OIDC endpoints, native SDK/broker, system-browser account flows, PKCE,
+  redirects, secure storage, permissions reuse, sync auth, and deployment.
+- `examples/native-auth`: dependency-free desktop loopback and mobile
+  browser-session factories for wiring the native SDK to trusted OS bridges;
+  mobile requires tested global WebCrypto/fetch/URL/TextEncoder compatibility.
+- `docs/pdf.md`: PDF browser setup, rendering API, print options, resource
+  security, storage composition, workflows, errors, and adapters.
+- `docs/engineering-standards.md`: repository engineering rules.
+- `docs/stabilization-plan.md`: release-readiness and stabilization checklist.
+- `docs/doctor-usage-audit-plan.md`: planned doctor checks for catching app
+  code that bypasses Zero APIs/components/services.
+
+## Engineering Rules For Agents
+
+- Read relevant docs before changing code.
+- Use `@zero/framework/*` public imports in package-mode apps.
+- Keep app code outside framework source: `app/`, `server/`, `db/schema.ts`,
+  `zero.config.ts`.
+- Keep `app/server.ts` thin: import config, call `createApp(config)`, listen.
+- Put platform config in `zero.config.ts`.
+- Backend routes should be thin. Business logic belongs in services or small
+  helper modules.
+- Security decisions must be server-side. Frontend gates are UX only.
+- Use Elysia best practices: Elysia instances as controllers/plugins,
+  validation models as runtime/type source of truth, explicit dependencies,
+  named plugins when deduplication matters, and lifecycle scope intentionally.
+- Do not pass full Elysia `Context` into generic services. Destructure and pass
+  only what the service needs.
+- Prefer Zero observability for logs, warnings, caught errors, and lifecycle
+  events.
+- Prefer Zero UI components over raw HTML controls.
+- Do not make one-off palettes. Use design tokens.
+- Keep reusable UI as components/organisms, not forced pages.
+- Update docs when behavior changes.
+
+## Local Create Workflow
+
+Inside this framework checkout, create a local package-mode app:
+
+```sh
+bun run install:local-tools
+zero-new ../my-zero-app
+cd ../my-zero-app
+bun run dev
+```
+
+Without the local convenience wrapper:
+
+```sh
+bun run create-zero -- ../my-zero-app --local --install
+cd ../my-zero-app
+bun run dev
+```
+
+`--local` packs the current checkout with the package publish allowlist, stores
+the archive under the generated app's ignored `.zero/framework/` cache, and
+writes that archive as the `@zero/framework` dependency. This prevents direct
+source linking, duplicate React runtimes, and checkout-only file exposure.
+`--install` runs `bun install` after scaffolding.
+
+Without install:
+
+```sh
+bun run create-zero -- ../my-zero-app --local
+cd ../my-zero-app
+bun install
+bun run dev
+```
+
+Published package shape later:
+
+```sh
+bunx create-zero my-zero-app
+cd my-zero-app
+bun install
+bun run dev
+```
+
+Legacy wrapper:
+
+```sh
+./scripts/create-project.sh ../my-zero-app --skip-install
+```
+
+The wrapper delegates to `create-zero --local`; it must not copy or directly
+link framework source into the app.
+
+## Safe Local Update Workflow
+
+Stop the app/dev server, then refresh an existing checkout-local app without
+regenerating it:
+
+```sh
+cd /path/to/zero-platform
+bun run install:local-tools
+cd /path/to/my-zero-app
+zero-update --dry-run
+zero-update --check
+```
+
+The wrapper is bound to the checkout that installed it and manages only the
+exact `file:./.zero/framework/zero-framework.tgz` dependency, its ignored
+archive cache, the installed framework package, and Bun install state. The app
+must have exactly one committed `bun.lock` or `bun.lockb`, including for a
+dry-run. A clean clone may omit `.zero/`, `.zero/framework/`, the archive, and
+`node_modules`; a mutating update creates the managed cache and installs Zero,
+while `--dry-run` reports the pending bootstrap without creating anything.
+Existing symlinks or wrong-type managed entries are rejected.
+
+The default update does not rewrite app source, configuration, environment
+files, databases, or storage and runs no app-defined scripts. `--check` runs
+the app's existing typecheck and Doctor scripts, whose side effects are outside
+updater rollback. Zero never selects or runs migrations. Never use
+`create-zero --force` or `zero-new --force` as an updater.
+
+## Generated App Shape
+
+`create-zero` generates app-owned files only:
+
+```txt
+app/
+  layout.tsx
+  page.tsx
+  server.ts
+server/
+  endpoints/
+  middleware/
+  plugins/
+  resources/
+  routes/
+components/
+hooks/
+lib/
+db/
+  schema.ts
+zero.config.ts
+.env.example
+.gitignore
+package.json
+README.md
+tsconfig.json
+```
+
+Generated build glue lives in `.zero/generated` and is ignored by git.
+Framework runtime stays in `node_modules/@zero/framework`.
+
+The generated TypeScript aliases resolve app-owned `components/`, `hooks/`,
+and `lib/` files first, then fall back to the installed framework source for
+Zero's internal aliases. App code must still use public `@zero/framework/*`
+imports instead of reaching into `node_modules` directly.
+
+Generated starter `app/layout.tsx` and `app/page.tsx` are server-rendered by
+default. The first public page should ship HTML content and the platform
+stylesheet without client route JavaScript. Add a top-level `"use client"`
+directive only to pages or layouts that need browser hooks, AppShell
+interactivity, ReactiveDB hooks, forms, or other client-side behavior.
+
+## Canonical Imports
+
+Backend startup and server extensions:
+
+```ts
+import {
+  createApp,
+  defineEndpoint,
+  defineMiddleware,
+  defineResource,
+  defineRouter,
+  defineZeroConfig,
+} from '@zero/framework/server';
+```
+
+Schema:
+
+```ts
+import { defineTable, field } from '@zero/framework/schema';
+```
+
+Frontend providers and hooks:
+
+```tsx
+import { AppProvider } from '@zero/framework/react/app-provider';
+import {
+  useAuth,
+  useCollection,
+  useLazyCollection,
+  useResourceList,
+} from '@zero/framework/react/hooks';
+```
+
+UI:
+
+```tsx
+import { AppShell } from '@zero/framework/components/app-shell';
+import { Button } from '@zero/framework/components/ui/button';
+import { DataTableView } from '@zero/framework/components/data-table';
+import { MasterDetailView } from '@zero/framework/components/master-detail';
+import { KanbanBoard } from '@zero/framework/components/kanban';
+```
+
+Icons:
+
+```tsx
+import { AnimateIcon, Check, Trash, ZeroIcon } from '@zero/framework/icons';
+```
+
+Subsystem imports exist for advanced use:
+
+- `@zero/framework/auth`
+- `@zero/framework/email`
+- `@zero/framework/kv`
+- `@zero/framework/migrations`
+- `@zero/framework/notifications`
+- `@zero/framework/observability`
+- `@zero/framework/pdf`
+- `@zero/framework/persistence`
+- `@zero/framework/resources`
+- `@zero/framework/rooms`
+- `@zero/framework/scheduler`
+- `@zero/framework/storage`
+- `@zero/framework/sync`
+- `@zero/framework/sync/client`
+- `@zero/framework/tokens`
+- `@zero/framework/vector`
+- `@zero/framework/workflows`
+
+Use narrow frontend imports in package-mode apps. The broad
+`@zero/framework/react` barrel is available, but it exposes a large surface.
+
+## Composition Root
+
+`zero.config.ts` owns runtime settings:
+
+```ts
+import { defineZeroConfig } from '@zero/framework/server';
+import { tables } from './db/schema';
+
+const PORT = Number(Bun.env.PORT ?? 3000);
+const hasEmail = Boolean(Bun.env.RESEND_API_KEY);
+const hasAI = Boolean(
+  Bun.env.OPENAI_API_KEY ||
+    Bun.env.ANTHROPIC_API_KEY ||
+    Bun.env.GEMINI_API_KEY ||
+    Bun.env.GOOGLE_API_KEY ||
+    Bun.env.GROQ_API_KEY ||
+    Bun.env.LLAMA_API_KEY ||
+    Bun.env.META_LLAMA_API_KEY
+);
+const hasPdf = Bun.env.ZERO_PDF_ENABLED === 'true';
+
+const config = defineZeroConfig({
+  app: {
+    name: Bun.env.APP_NAME ?? 'Zero App',
+    publicUrl: Bun.env.APP_PUBLIC_URL ?? `http://localhost:${PORT}`,
+    supportEmail: Bun.env.APP_SUPPORT_EMAIL,
+  },
+  db: {
+    mode: Bun.env.DB_MODE === 'file'
+      ? 'file'
+      : Bun.env.DB_MODE === 'ephemeral'
+        ? 'ephemeral'
+        : 'hot',
+    path: Bun.env.DB_PATH ?? './data/app.db',
+    snapshotPath: Bun.env.DB_SNAPSHOT_PATH ?? './data/app.snapshot.db',
+  },
+  tables,
+  auth: true,
+  routeAuth: 'explicit',
+  email: hasEmail
+    ? {
+        provider: 'resend',
+        from: Bun.env.EMAIL_FROM ?? 'Zero App <noreply@example.com>',
+        replyTo: Bun.env.EMAIL_REPLY_TO,
+        resend: { apiKey: Bun.env.RESEND_API_KEY },
+      }
+    : false,
+  ai: hasAI ? true : false,
+  vector: Bun.env.ZERO_VECTOR_ENABLED === 'true'
+    ? {
+        dataDir: Bun.env.ZERO_VECTOR_DATA_DIR ?? './data/vector',
+        defaultDimensions: Number(Bun.env.ZERO_VECTOR_DEFAULT_DIMENSIONS ?? 1536),
+      }
+    : false,
+  pdf: hasPdf
+    ? {
+        browser: {
+          executablePath: Bun.env.ZERO_PDF_EXECUTABLE_PATH,
+        },
+      }
+    : false,
+  stateSync: true,
+  sitemap: {
+    enabled: true,
+    changefreq: 'weekly',
+    priority: 0.7,
+    exclude: ['/login', '/forgot-password', '/reset-password'],
+  },
+  appDir: './app',
+  serverPluginsDir: './server/plugins',
+  serverMiddlewareDir: './server/middleware',
+  serverEndpointsDir: './server/endpoints',
+  serverRoutesDir: './server/routes',
+  generatedDir: './.zero/generated',
+  outDir: './.build',
+  port: PORT,
+});
+
+export default config;
+export { config };
+```
+
+`app/server.ts` should stay small:
+
+```ts
+import { createApp } from '@zero/framework/server';
+import config from '../zero.config';
+
+const app = await createApp(config);
+app.listen(config.port ?? 3000);
+```
+
+## Runtime Systems Mounted By createApp
+
+`createApp()` currently installs these systems when configured:
+
+| System | Runtime behavior |
+| --- | --- |
+| ReactiveDB | App tables from `tables`; server writes emit sync changes. |
+| Shared SQL | Platform SQLite service available as `zero.sql`/`zero.sqlite`. |
+| WebSocket sync | Mounted at `/sync`; auth and resource-policy aware. |
+| `/api/data` | Lazy table query API with pagination, sorting, filters, limits, and policy integration. |
+| Auth | `/auth/*`, account lifecycle, tokens, session helpers, route auth. |
+| Email | Resend default or custom provider boundary. |
+| Storage | Local drives, object routes, permissions, uploads, public upload grants. |
+| KV/cache | Durable memory-first KV, counters, limiters. |
+| State sync | Per-user persisted reactive state. |
+| Notifications | Notifications and per-user receipts when auth is enabled. |
+| Rooms/presence | Room membership and presence primitives when auth is enabled. |
+| Workflows | Workflow registry/service when auth is enabled. |
+| Scheduler | Platform jobs. |
+| AI | Server-side AI provider registry/service when enabled. |
+| Vector | zvec-backed vector store when enabled. |
+| PDF | Lazy browser-grade PDF service when enabled; no public routes. |
+| Observability | Stable event codes, sinks, memory store, protected event route. |
+| Migrations | CLI/runtime migration support. |
+| Sitemap | `/sitemap.xml` from public static file-router pages when enabled. |
+| App extensions | Loads `server/plugins`, `server/middleware`, `server/endpoints`, `server/routes`. |
+| File router | Handles `app/**/page.tsx`, `layout.tsx`, `route.ts`, 404s. |
+
+## Backend Service Context
+
+App-owned backend handlers receive a lazy `zero` service context. Prefer
+canonical names:
+
+- `zero.db`: ReactiveDB writes with sync/change tracking
+- `zero.sql` / `zero.sqlite`: direct backend SQL for reporting/internal tables
+- `zero.kv`: durable KV/cache
+- `zero.counter`: counter helper
+- `zero.limiter`: rate limiter helper
+- `zero.auth`: auth helpers
+- `zero.email`: email service
+- `zero.storage`: grouped storage APIs
+- `zero.notifications`: notification service
+- `zero.scheduler`: scheduler service
+- `zero.workflows`: workflow service
+- `zero.ai`: AI service
+- `zero.vector`: vector store
+- `zero.pdf`: browser-grade PDF rendering and storage composition
+- `zero.resources`: resource registry
+- `zero.observability`: observability sink/service
+
+Use `zero.db` for app tables that should sync. Use `zero.sql` for backend-only
+SQL that does not need ReactiveDB change tracking.
+
+## Data Models And ReactiveDB
+
+Define schemas once in `db/schema.ts` and pass the same `tables` object to
+`createApp()` and `AppProvider`.
+
+```ts
+import { defineTable, field } from '@zero/framework/schema';
+
+export const customers = defineTable(
+  'customers',
+  {
+    name: field.text({ label: 'Name', required: true, tableVisible: true }),
+    owner_id: field.text({ label: 'Owner', tableVisible: false }),
+    created_at: field.number({ label: 'Created At', integer: true, tableVisible: true }),
+  },
+  {
+    pk: 'customer_id',
+    sync: 'auto',
+  }
+);
+
+export const tables = { customers };
+```
+
+ReactiveDB-managed tables require one sync primary key. Do not use composite
+primary keys on synced tables. For relationship tables, keep a single sync
+primary key and declare a natural identity:
+
+```ts
+export const memberships = defineTable(
+  'memberships',
+  {
+    team_id: field.text({ required: true }),
+    user_id: field.text({ required: true }),
+    role: field.text({ required: true }),
+  },
+  {
+    pk: 'membership_id',
+    identity: ['team_id', 'user_id'],
+  }
+);
+```
+
+Zero generates deterministic ids from natural identity values and creates a
+unique identity index.
+
+## Sync Modes
+
+Table sync defaults to `auto`.
+
+- Small tables stay in full WebSocket snapshots.
+- Oversized tables auto-resolve to lazy sync.
+- Explicit lazy tables skip initial snapshots and load on demand through
+  `collection.load()`, `useLazyCollection()`, `/api/data`, DataTable source
+  contracts, or MasterDetail source contracts.
+- Live changes still stream after rows are present locally.
+- Ring-buffer reconnect replays missed changes when possible.
+- Same-row optimistic mutations are serialized.
+- Disconnected sends are buffered and flushed on reconnect.
+
+## Frontend Root Provider
+
+Root `app/layout.tsx` should usually own providers only:
+
+```tsx
+'use client';
+
+import type { ReactNode } from 'react';
+import { AppProvider } from '@zero/framework/react/app-provider';
+import { ThemeProvider } from '@zero/framework/components/ui/theme-provider';
+import { Toaster } from '@zero/framework/components/ui/sonner';
+import { tables } from '../db/schema';
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <ThemeProvider defaultTheme="system" storageKey="zero-theme">
+      <AppProvider
+        url={typeof window !== 'undefined' ? window.location.origin : ''}
+        tables={tables}
+      >
+        <div className="min-h-screen bg-background text-foreground font-sans antialiased">
+          {children}
+        </div>
+        <Toaster />
+      </AppProvider>
+    </ThemeProvider>
+  );
+}
+```
+
+Do not force every page into `AppShell` at the root. Put visual shells lower in
+the route tree.
+
+## File Router, Layouts, And Auth Boundaries
+
+Use route groups for sibling layouts without changing URLs:
+
+```txt
+app/
+  layout.tsx
+  (public)/
+    page.tsx
+    intake/resume/[token]/page.tsx
+  (dashboard)/
+    layout.tsx
+    dashboard/page.tsx
+```
+
+Public-first app config:
+
+```ts
+defineZeroConfig({
+  auth: true,
+  routeAuth: 'explicit',
+  loginPath: '/login',
+});
+```
+
+Protected dashboard layout:
+
+```tsx
+import { AppShell, type RouteConfig } from '@zero/framework/react';
+
+export const config: RouteConfig = {
+  auth: 'required',
+};
+
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  return <AppShell>{children}</AppShell>;
+}
+```
+
+Internal app config:
+
+```ts
+defineZeroConfig({
+  auth: true,
+  routeAuth: 'protected-by-default',
+  publicPaths: ['/login', '/forgot-password', '/verify-email'],
+});
+```
+
+If a session expires or refresh fails on a protected route, the browser should
+clear protected UI and redirect to `loginPath` with a `redirect` query.
+
+## Sitemap
+
+Enable sitemap in config:
+
+```ts
+sitemap: {
+  enabled: true,
+  changefreq: 'weekly',
+  priority: 0.7,
+  exclude: ['/login', '/forgot-password', '/reset-password'],
+}
+```
+
+Zero serves `/sitemap.xml` from public static file-router pages. It omits API
+routes, dynamic routes, protected routes, catch-all routes, and route-group
+folder names unless manual entries are configured.
+
+## App-Owned Backend Extensions
+
+Zero loads app-owned backend folders in this order:
+
+| Folder | Purpose |
+| --- | --- |
+| `server/plugins/` | Advanced app plugins created with Zero helpers or raw Elysia plugins. |
+| `server/middleware/` | Named middleware with path/method/predicate matchers and auth policy. |
+| `server/endpoints/` | Single Zero-native endpoints. |
+| `server/routes/` | Grouped routers and raw Elysia escape-hatch plugins. |
+| `server/resources/` | Resource declarations for generated CRUD and policy integration. |
+
+Example router:
+
+```ts
+import { t } from 'elysia';
+import { defineEndpoint, defineRouter } from '@zero/framework/server';
+
+export default defineRouter({
+  name: 'app.customers',
+  prefix: '/api/customers',
+  endpoints: [
+    defineEndpoint({
+      method: 'POST',
+      path: '/',
+      auth: 'user',
+      body: t.Object({
+        name: t.String({ minLength: 1 }),
+      }),
+      handler: ({ body, user, zero }) => {
+        return zero.db.insert('customers', {
+          customer_id: crypto.randomUUID(),
+          name: body.name,
+          owner_id: user.userId,
+          created_at: Date.now(),
+        }).row;
+      },
+    }),
+  ],
+});
+```
+
+Use Elysia validation (`t.Object`, `t.String`, etc.) for runtime validation and
+type inference. Keep route handlers thin.
+
+## Middleware And Policy
+
+Use middleware matchers for cross-cutting server policy. Match by `path`,
+`method`, and optional `predicate`. Enforce with `auth`, `role`, and
+`properties`.
+
+Property matchers use configured auth user properties. Authorization-grade
+properties must be marked trusted in config and must not be self-editable.
+
+Security must live on the server. UI gates can hide buttons, but server policy
+must enforce access.
+
+## Resources And Generated CRUD
+
+Use resources when an app table needs server-side CRUD, `/api/data` policy, and
+WebSocket sync policy integration.
+
+Important helpers:
+
+- `defineResource()`
+- `ownerPolicy()`
+- `metadataPolicy()`
+- `adminOnly()`
+- `anyOf()`
+- `allOf()`
+- `validateResourcePolicy()`
+- `evaluateResourcePolicy()`
+
+Generated routes default to:
+
+- `GET /api/resources/:resource`
+- `GET /api/resources/:resource/:id`
+- `POST /api/resources/:resource`
+- `PATCH /api/resources/:resource/:id`
+- `DELETE /api/resources/:resource/:id`
+
+Generated route writes go through ReactiveDB and enforce resource policies
+server-side.
+
+`/api/data` enforces registered resource `list` policy for lazy tables.
+WebSocket sync enforces resource list/write policy too. Row-constrained list
+policies use row-filtered sync.
+
+## Auth
+
+Zero auth supports:
+
+- enabled/disabled auth
+- first-user bootstrap admin
+- public registration or admin-only registration
+- admin-created users and setup emails
+- password reset/setup action tokens
+- email verification during account creation
+- optional or required MFA
+- email OTP MFA
+- authenticator/TOTP MFA
+- self-hosted TOTP secret encryption
+- refresh token rotation
+- session persistence and refresh
+- admin user management
+- configured public/private user properties
+- property-based backend policy
+- desktop/mobile/extension public clients using the same users and
+  authorization policy
+
+Common auth config:
+
+```ts
+auth: {
+  registration: { mode: 'admin-only' },
+  account: {
+    requireEmailVerification: Bun.env.AUTH_REQUIRE_EMAIL_VERIFICATION === 'true',
+    emailVerificationPath: '/verify-email',
+  },
+  mfa: {
+    enabled: Bun.env.AUTH_MFA_ENABLED === 'true',
+    policy: 'optional',
+    methods: ['email', 'totp'],
+    allowUserChoice: true,
+    allowMultipleMethods: false,
+    recoveryCodes: false,
+    totp: {
+      issuer: Bun.env.APP_NAME ?? 'Zero App',
+      encryptionKey: Bun.env.AUTH_TOTP_ENCRYPTION_KEY,
+    },
+  },
+  accountEmails: {
+    adminCreatedUser: true,
+    passwordReset: true,
+    manualPasswordReset: Bun.env.AUTH_MANUAL_PASSWORD_RESET !== 'false',
+    actionTokenTTL: '1h',
+    requestCooldown: '5m',
+  },
+}
+```
+
+Auth UI components:
+
+- `AuthLayout`
+- `LoginForm`
+- `RegisterForm`
+- `ForgotPasswordForm`
+- `EmailVerificationForm`
+- `PasswordActionForm`
+- `ChangePasswordForm`
+- `PasswordInput`
+- `PasswordStrength`
+- `OTPVerification`
+- `MFAContinuation`
+- `MFAEnrollmentForm`
+- `MFAChallengeForm`
+- `MFAManagementPanel`
+- `UserPropertiesForm`
+- `SignedIn`
+- `SignedOut`
+- `AdminGate`
+- property gates
+
+Use these instead of building custom auth forms unless the app has a strong
+reason.
+
+### Installed app auth
+
+Choose the surface before implementing a host bridge:
+
+- `@zero/framework/native` is the implemented TypeScript native core in the
+  current source. Pin a framework release that includes the export.
+- `zero-native-auth` and `tauri-plugin-zero-auth` are standalone Rust/Tauri
+  Phase 0 `0.0.0` scaffolds. They validate configuration and draft secret-free
+  state only; they do not authenticate, store credentials, handle callbacks,
+  expose Tauri commands, or send authenticated requests.
+- `@zero/chrome-auth` is a standalone private `0.0.0` Chrome MV3 preview. It
+  has no released framework peer range, real-Chrome release gate, or
+  independent security review yet. Do not treat it as an installable registry
+  package.
+
+All installed apps use the system browser and Authorization Code + PKCE. They
+reuse Zero accounts, registration, verification, recovery, MFA, roles, trusted
+properties, endpoint/middleware auth, resources, live revocation, and Sync
+policy. OIDC scopes release identity claims only; they are not application
+permissions. Native apps never receive a client secret, API key, signing key,
+or manually configured public key.
+
+Register one publishable client ID per independently shipped app:
+
+```ts
+app: {
+  name: 'Acme',
+  publicUrl: 'https://app.acme.example',
+},
+auth: {
+  nativeApps: {
+    clients: [{
+      clientId: 'acme-desktop',
+      name: 'Acme Desktop',
+      redirectUris: [
+        'http://127.0.0.1/oauth/callback',
+        'http://[::1]/oauth/callback',
+      ],
+      scopes: ['openid', 'profile', 'email'],
+    }],
+  },
+}
+```
+
+`app.publicUrl` is a canonical HTTPS origin outside exact loopback
+development. The OIDC issuer is that origin plus `/auth`; the access JWT
+audience is the exact app origin and the ID-token audience is the public client
+ID. A separate issuer/API origin is unsupported. The current discovery document
+has no Zero profile-version extension, so third-party clients must validate
+advertised capabilities and pin a tested framework release.
+
+Supported redirects are claimed HTTPS, reverse-domain single-slash private
+schemes, and IP-literal HTTP loopback. Only a loopback port may differ from the
+registered URI. Chrome uses the exact stable
+`https://<extension-id>.chromiumapp.org/zero-auth/callback` returned by
+`chrome.identity.getRedirectURL()`.
+
+Create the preferred TypeScript owner in a trusted JavaScript process:
+
+```ts
+import {
+  createNativeSyncAuth,
+  createZeroNativeAuthBroker,
+} from '@zero/framework/native';
+import { createSyncClient } from '@zero/framework/sync/client';
+
+const auth = createZeroNativeAuthBroker({
+  serverUrl: 'https://app.acme.example',
+  clientId: 'acme-desktop',
+  browser: systemBrowser,
+  callback: callbackAdapter,
+  secureStorage: osSecureVault,
+});
+
+await auth.initialize();
+await auth.signIn();
+const response = await auth.fetch('/api/account');
+
+const syncAuth = createNativeSyncAuth(auth);
+const sync = createSyncClient({
+  url: 'wss://app.acme.example/sync',
+  tables,
+  ...syncAuth,
+});
+```
+
+Use an OS keychain/keystore, never renderer storage or a normal file. Keep one
+broker per process/vault namespace. Electron renderers use the revision-ordered
+broker proxy over narrow IPC. A Rust-first Tauri main process cannot host the
+TypeScript broker, and the broker must not be moved into a Svelte webview; wait
+for the Rust SDK or use a separately threat-modeled trusted JavaScript sidecar
+for a prototype.
+
+Spread the entire Sync adapter. Its lifecycle binder prevents anonymous cold
+start, refreshes after auth closes, purges cached rows/pending mutations on
+sign-out or account change, and reconnects only for an authenticated subject.
+
+Mobile runtimes must provide standards-compatible global WebCrypto
+(`getRandomValues` and `subtle`), `fetch`, `URL`, and `TextEncoder`. Expo/React
+Native compatibility is not assumed. The Chrome preview uses one module-scope
+service-worker owner and a fixed token-free UI message protocol. Privileged
+extension pages remain trusted because Chrome storage is not worker-isolated;
+session mode targets Chrome 116+ and opt-in local persistence Chrome 140+.
+
+Source admission is safe by default: direct deployments use Bun's socket peer
+and ignore forwarded headers. Behind a proxy, configure only exact trusted
+proxy address/CIDR ranges. Do not add a custom `sourceKey` merely because
+client IDs are public; it is for a deployment with a trustworthy non-IP edge
+identity. Multi-process deployments still need shared edge limits; local
+process-pseudonymous admission identities must not be treated as a global edge
+limit.
+
+Run `bun run doctor -- --config ./zero.config.ts --strict`, review the normal
+database migration/backup path, and test browser registration, verification,
+MFA/recovery, callback/cold launch, rotation, revocation, protected HTTP, Sync
+cache purge, and account switching on real targets. Read
+`docs/auth/app-auth-sdk-guide.md`, `docs/auth/native-app-auth.md`, and
+`examples/native-auth/README.md` before implementation.
+
+## Email
+
+Zero email uses a provider boundary. Resend is the default provider when
+configured:
+
+```ts
+email: {
+  provider: 'resend',
+  from: Bun.env.EMAIL_FROM ?? 'Zero App <noreply@example.com>',
+  replyTo: Bun.env.EMAIL_REPLY_TO,
+  resend: { apiKey: Bun.env.RESEND_API_KEY },
+}
+```
+
+Auth/account emails use branded defaults from app config. User apps can replace
+provider behavior through custom provider/adapters. Keep auth email templates
+themeable and app-name aware.
+
+## Platform Tokens
+
+Platform tokens support one-time action tokens and resumable public-flow
+tokens. Use them for:
+
+- password reset/setup
+- email verification
+- public intake resume links
+- upload grants
+- one-time app actions
+
+Token validation should happen server-side. Resume tokens can point to draft
+records or form state records, but the token service should remain generic.
+
+## Storage
+
+Zero storage provides:
+
+- local drives/buckets
+- object routes
+- object metadata
+- drive and object permissions
+- public upload grants
+- scoped upload tokens
+- presigned/private download flows
+- storage hooks
+- storage management UI
+
+Use `zero.storage` server-side. Storage APIs are grouped:
+
+- `storage.drives`
+- `storage.objects`
+- `storage.permissions`
+- `storage.uploads`
+
+Frontend components:
+
+- `StorageManagement`
+- `StorageDriveList`
+- `StorageDriveDetail`
+- `StorageDriveSettingsPanel`
+- `StorageDrivePermissionsPanel`
+- `StorageDropzone`
+- `StorageFileBrowser`
+- `StorageDriveDetailHeader`
+- `StorageFileDetailPanel`
+
+Frontend hooks:
+
+- `useUpload`
+- `useUploadQueue`
+- `useUploadDropzone`
+- `useStorageFile`
+- `useStorageBrowser`
+- `useStorageDrives`
+- `useDriveCapabilities`
+- `useStoragePermissions`
+- `useDriveQuota`
+
+Use the storage organism for admin/storage tooling before writing bespoke UI.
+
+## KV And Persistence
+
+Zero persistence supports:
+
+- `hot`: memory-first active SQLite with snapshot recovery
+- `file`: direct SQLite/WAL mode
+- `ephemeral`: tests/in-memory use
+
+Zero KV/cache is memory-first with journal/checkpoint recovery. It supports:
+
+- namespaced keys
+- TTL
+- LRU bounds
+- counters
+- rate limiters
+- `getOrSet`
+
+Generated apps normally use `zero.kv`, `zero.counter`, and `zero.limiter`
+inside backend routes instead of importing the KV engine directly.
+
+## State Sync, Rooms, Presence, Notifications
+
+State sync:
+
+- per-user server-persisted reactive key/value state
+- useful for preferences and UI state
+
+Hooks:
+
+- `useServerState`
+- `usePreference`
+- `useFormDraft`
+
+Rooms/presence:
+
+- room membership
+- online/idle/away presence
+- typing indicators
+- ephemeral topics
+
+Hooks:
+
+- `usePresence`
+- `usePresenceList`
+- `useTypingIndicator`
+- `useEphemeral`
+- `useEphemeralTopic`
+
+Notifications:
+
+- targeted notifications
+- receipts
+- read/dismiss actions
+- sync-backed UI updates
+
+Hooks:
+
+- `useNotifications`
+- `useUnreadCount`
+
+## Workflows And Scheduler
+
+Zero workflows and scheduler are in-process platform services. Use them for
+app-owned background orchestration, scheduled work, and domain workflows.
+
+Hooks:
+
+- `useWorkflowRun`
+- `useWorkflow`
+- `useWorkflowList`
+
+Server services:
+
+- `zero.workflows`
+- `zero.scheduler`
+
+Future extension points include workflow-trigger webhooks and AI tools that
+can invoke workflows, but do not invent those unless they exist in the current
+framework.
+
+## AI
+
+Zero AI is internal/server-side by default. It is not a public gateway unless
+an app deliberately builds that.
+
+Provider keys enable providers at runtime:
+
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+- `GEMINI_API_KEY` / `GOOGLE_API_KEY`
+- `GROQ_API_KEY`
+- `XAI_API_KEY`
+- `COHERE_API_KEY`
+- `LLAMA_API_KEY` / `META_LLAMA_API_KEY`
+- `DEEPSEEK_API_KEY`
+- `PERPLEXITY_API_KEY`
+- `VOYAGE_API_KEY`
+- `DEEPGRAM_API_KEY`
+
+Aliases:
+
+- `ZERO_AI_FAST_MODEL`
+- `ZERO_AI_SMART_MODEL`
+- `ZERO_AI_EMBEDDING_MODEL`
+- `ZERO_AI_IMAGE_MODEL`
+- `ZERO_AI_TRANSCRIPTION_MODEL`
+- `ZERO_AI_SPEECH_MODEL`
+
+Use `zero.ai` from backend routes. The AI layer supports:
+
+- text generation
+- structured output through the underlying AI SDK where configured
+- embeddings
+- image generation
+- transcription
+- speech
+- conversation helpers
+- tool helpers
+- workflow bridge helpers
+- provider status/readiness
+
+Do not expose provider keys to the frontend.
+
+## Vector Store
+
+Zero vector storage is zvec-backed and local. It provides:
+
+- collections
+- upserts
+- search/query
+- metadata filters/scopes
+- AI embedding bridge helpers
+
+Enable with:
+
+```ts
+vector: {
+  dataDir: Bun.env.ZERO_VECTOR_DATA_DIR ?? './data/vector',
+  defaultDimensions: Number(Bun.env.ZERO_VECTOR_DEFAULT_DIMENSIONS ?? 1536),
+}
+```
+
+Use `zero.vector` server-side. Zero does not need to provide native embedding
+or reranking for every use case; pair vector storage with the AI embedding
+service when needed.
+
+## PDF Rendering
+
+Zero PDF is internal server infrastructure, not a public gateway. Enable it in
+`zero.config.ts`, then install the Playwright Chromium revision once per
+development machine or production image:
+
+```sh
+bun run pdf:install
+bun run pdf:status
+```
+
+Use the canonical server service:
+
+```ts
+if (!zero.pdf) throw new Error('PDF rendering is disabled.');
+
+const rendered = await zero.pdf.render({
+  html: '<main><h1>Patient intake</h1></main>',
+  css: `
+    @page { size: Letter; margin: 0.5in; }
+    body { font-family: system-ui, sans-serif; }
+  `,
+  document: { title: 'Patient intake', lang: 'en' },
+});
+
+return new Response(rendered.bytes, {
+  headers: { 'content-type': rendered.contentType },
+});
+```
+
+Use `zero.pdf.renderToStorage(input, target)` when the generated PDF should be
+written through Zero storage. It returns render metadata plus the canonical
+storage object. Prefer returning object IDs/paths from workflow steps rather
+than putting raw PDF bytes in durable workflow state.
+
+The default Chromium adapter supports modern browser layout, web fonts,
+`@media print`, `@page`, backgrounds, page breaks, header/footer templates,
+and tagged output. Secure defaults disable JavaScript, service workers, and
+downloads; deny remote HTTP(S), `file:`, and private-network resources; and
+enforce HTML/CSS/output byte limits, timeout, concurrency, and queue limits.
+Allow trusted remote assets by exact origin only.
+
+Zero mounts no PDF endpoint. App-owned endpoints own auth, validation, record
+policy, and response behavior. Do not recreate the old Python PDF microservice
+or expose raw renderer options. For direct adapter/types access use
+`@zero/framework/pdf`. See `docs/pdf.md`.
+
+## Migrations
+
+Zero migrations provide:
+
+- explicit migration files
+- migration ledger
+- schema history
+- drift inspection
+- draft migration plans
+- rollback safety classification
+- backups for destructive changes
+- doctor integration
+
+Useful commands:
+
+```sh
+bun run migrate:status
+bun run migrate:plan
+bun run migrate:doctor
+zero migrate --doctor --schema ./db/schema.ts --strict
+```
+
+Do not rely on ad hoc database mutations for app schema changes when migration
+tooling applies.
+
+## Observability
+
+Zero observability provides:
+
+- stable event codes
+- default console sink
+- bounded memory event store
+- protected event endpoint
+- frontend event ingest
+- app/provider sink boundary
+
+New logs, warnings, caught errors, and lifecycle events should flow through the
+observability boundary. Use stable codes/prefixes rather than random console
+messages in reusable framework code.
+
+## Platform Doctor
+
+Run doctor against config:
+
+```sh
+bun run doctor -- --config ./zero.config.ts
+bun run doctor -- --config ./zero.config.ts --strict
+bun run doctor -- --config ./zero.config.ts --json
+zero-doctor --config ./zero.config.ts
+```
+
+Doctor checks include:
+
+- app config
+- primary keys and natural identities
+- auth/email readiness
+- login/public route safety
+- storage/auth mismatch
+- migration startup policy
+- sync policy/index guidance
+- observability endpoint readiness
+- AI provider/alias readiness
+- vector index/storage safety
+- PDF browser path, remote resource policy, private-network access, and
+  JavaScript safety
+- resource policy shape
+- `/api/data` and WebSocket policy implications
+- source usage audit warnings when app code bypasses Zero UI primitives,
+  modal/toast/sidebar systems, icons, data/sync hooks, backend service
+  boundaries, observability, root providers, or public package imports
+- large app-owned source files above the responsibility threshold, default 400
+  lines
+
+Use `--strict` in CI.
+
+Useful usage-audit switches:
+
+```sh
+bun run doctor -- --config ./zero.config.ts --no-usage-audit
+bun run doctor -- --config ./zero.config.ts --max-file-lines 400
+bun run doctor -- --config ./zero.config.ts --usage-include app --usage-include server
+bun run doctor -- --config ./zero.config.ts --usage-exclude app/vendor/**
+```
+
+If an app creates non-unique indexes through migrations or narrow startup
+compatibility code, declare them in config so Doctor can suppress false index
+guidance while still checking real gaps:
+
+```ts
+doctor: {
+  indexedFields: {
+    tickets: ['owner_id'],
+  },
+}
+```
+
+This is only a Doctor hint. The app must still create the real SQLite index.
+
+Agent rule: after generating or editing an app, run doctor and fix usage
+warnings before inventing custom components, services, or framework wiring.
+
+## Frontend Hook Library
+
+Platform hooks:
+
+| Area | Hooks |
+| --- | --- |
+| Auth/session | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty` |
+| Live data | `useCollection`, `useLazyCollection`, `useDataPage`, `useRecord`, `useRecordByIdentity`, `useDataSelection` |
+| Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
+| Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveQuota` |
+| Rooms/presence | `usePresence`, `usePresenceList`, `useTypingIndicator`, `useEphemeral`, `useEphemeralTopic` |
+| Workflows/notifications | `useWorkflowRun`, `useWorkflow`, `useWorkflowList`, `useNotifications`, `useUnreadCount` |
+| State and health | `useServerState`, `usePreference`, `useFormDraft`, `useConnectionHealth`, `useMutation` |
+
+Generic hooks:
+
+- `useAsyncAction`
+- `useClickAway`
+- `useCopyToClipboard`
+- `useDebouncedCallback`
+- `useDebouncedValue`
+- `useDisclosure`
+- `useHotkey`
+- `useIdle`
+- `useInterval`
+- `useMediaQuery`
+- `useMounted`
+- `useOs`
+- `usePrevious`
+- `useStableCallback`
+- `useTextSelection`
+- `useThrottledCallback`
+- `useThrottledValue`
+- `useTimeout`
+- `StickToBottom`
+- `useStickToBottom`
+- `useStickToBottomContext`
+
+Use these before adding new generic hooks.
+
+## UI Design System Rules
+
+- Use Zero components and tokens.
+- Use `AppShell` for dashboards/admin/data apps.
+- Use `ResizableNavbar` for public landing/docs/content navigation.
+- Use `Hero` for public opening sections.
+- Use `TextGenerateEffect`, `TypewriterEffect`, and `FlipWords` for public
+  text motion.
+- Use `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`,
+  `ExpandableCards`, `BentoGrid`, and `AnimatedList` for common public
+  sections.
+- Use base `ui/` primitives instead of raw HTML controls.
+- Use Zero `Select`, not native `<select>`, in shared/platform UI.
+- Use Animate UI/Radix wrappers for overlays, menus, tooltips, dialogs, and
+  collapsibles.
+- Use Zero animated icons by default.
+- Do not use emojis as app action/status icons.
+- Check light and dark modes.
+- Avoid nested cards.
+- Keep UI text inside its container on mobile and desktop.
+- Public pages should use the public token lane:
+  `public-background`, `public-surface`, `public-glass`, `public-accent`,
+  `public-border`, `public-ring`.
+- Wrap public route trees with `zero-public-page` or
+  `data-zero-page="public"` when using public lane components.
+
+## UI Component Inventory
+
+Base primitives:
+
+- `Button`
+- `Input`
+- `Textarea`
+- `Label`
+- `Select`
+- `Checkbox`
+- `Switch`
+- `RadioGroup`
+- `Toggle`
+- `ToggleGroup`
+- `Badge`
+- `Avatar`
+- `Skeleton`
+- `Separator`
+- `ScrollArea`
+- `Table`
+- `Card`
+- `Breadcrumb`
+- `Pagination`
+
+Menus/overlays:
+
+- `DropdownMenu`
+- `Collapsible`
+- `Tooltip`
+- Dialog/modal manager components from Zero
+- Radial menu
+
+App shell:
+
+- `AppShell`
+- `AppShellHeader`
+- `AppShellBreadcrumbs`
+- `AppShellSidebar`
+- low-level sidebar primitives
+
+Public components:
+
+- `ResizableNavbar`
+- `Hero`
+- `HeroBackground`
+- `HeroImageBackground`
+- `WavyBackground`
+- `TextGenerateEffect`
+- `TypewriterEffect`
+- `FlipWords`
+- `CodeBlock`
+- `FeaturesSection`
+- `Faq`
+- `CtaSection`
+- `FooterSection`
+- `ExpandableCards`
+- `BentoGrid`
+- `AnimatedList`
+
+Data organisms:
+
+- `DataTable`
+- `DataTableView`
+- `DataTableToolbar`
+- `DataTablePagination`
+- `DataTableRowActions`
+- `EditableCell`
+- `AnimatedCell`
+- `KanbanBoard`
+- `KanbanTaskCard`
+- `MasterDetailView`
+- `MasterDetailPage`
+- `CrudPage`
+
+Forms:
+
+- `FormField`
+- `FormLabel`
+- `FormControl`
+- `FormDescription`
+- `FormMessage`
+- `FieldRenderer`
+- `AutoForm`
+- `Wizard`
+- `QRCode`
+- auth form components listed above
+
+Admin/domain organisms:
+
+- `UserManagement`
+- `StorageManagement`
+- storage subcomponents listed above
+- notification center components
+
+## AppShell Guidance
+
+Use `AppShell` for dashboards:
+
+- workspace switcher
+- nested/expandable nav
+- sidebar action menus
+- footer user menu
+- optional breadcrumbs/header row
+- optional theme toggle
+- custom header content when breadcrumbs are not needed
+
+Use route-group layouts to apply the shell only to dashboard/private branches.
+Do not build a one-off sidebar unless `AppShell` cannot express the needed UI.
+
+## DataTable And MasterDetail
+
+Use `DataTableView` and `MasterDetailView` for data-heavy views.
+
+Both should be able to consume app data from:
+
+- in-memory array data
+- schema/collection data
+- lazy `/api/data` source contracts
+
+Use lazy data for large tables. Use filters/sorting/pagination contracts
+instead of custom ad hoc fetch code.
+
+## Kanban
+
+Use `KanbanBoard` for work queues and status boards. Persist actual app state
+through ReactiveDB/resources, not local-only UI state. Use the board as a UI
+organism and keep domain ownership in app data tables.
+
+## Modal Manager
+
+Use Zero's modal manager for app modals. Do not create a one-off modal stack.
+If a modal reopens or loops, fix the modal state integration rather than
+forking a new manager.
+
+## Icons
+
+Zero's default icon pack is the Animate UI animated Lucide set.
+
+Use:
+
+```tsx
+import { AnimateIcon, Check, Trash, ZeroIcon } from '@zero/framework/icons';
+```
+
+`Button` automatically animates nested Zero icons on hover/tap. Outside
+`Button`, set `animate`, `animateOnHover`, `animateOnTap`, or wrap with
+`AnimateIcon`.
+
+Use `lucide-react` directly only when Zero does not provide the icon.
+
+## zero add
+
+Use packaged imports first. Copy source only when the app needs to customize:
+
+```sh
+zero add components/ui/button
+zero add components/data-table
+zero add components/kanban
+zero add components/navbar
+zero add components/hero
+zero add components/text-effects
+zero add hooks modals --dry-run
+```
+
+`zero add` skips existing files unless `--force` is provided and rewrites
+framework-internal imports to public `@zero/framework/*` paths.
+
+## Environment Variables
+
+Common:
+
+- `PORT`
+- `APP_NAME`
+- `APP_PUBLIC_URL`
+- `APP_LOGO_URL`
+- `APP_SUPPORT_EMAIL`
+
+Database/KV:
+
+- `DB_MODE`: `hot`, `file`, or `ephemeral`
+- `DB_PATH`
+- `DB_SNAPSHOT_PATH`
+- `ZERO_KV_BASE_DIR`
+- `ZERO_KV_DURABILITY`: `everysec` or `always`
+
+Email/auth:
+
+- `RESEND_API_KEY`
+- `EMAIL_FROM`
+- `EMAIL_REPLY_TO`
+- `AUTH_EMAIL_BRAND_COLOR`
+- `AUTH_REQUIRE_EMAIL_VERIFICATION`
+- `AUTH_EMAIL_VERIFICATION_PATH`
+- `AUTH_MFA_ENABLED`
+- `AUTH_MFA_POLICY`: `optional`, `required`, `admin-required`
+- `AUTH_MFA_METHODS`: `email,totp`
+- `AUTH_TOTP_ENCRYPTION_KEY`
+- `AUTH_ACTION_TOKEN_TTL`
+- `AUTH_ACCOUNT_EMAIL_COOLDOWN`
+- `AUTH_MANUAL_PASSWORD_RESET`
+- `AUTH_SIGNING_KEY`
+- `ACCESS_TOKEN_TTL`
+- `REFRESH_TOKEN_TTL`
+
+AI/vector:
+
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+- `GEMINI_API_KEY`
+- `GOOGLE_API_KEY`
+- `GROQ_API_KEY`
+- `XAI_API_KEY`
+- `COHERE_API_KEY`
+- `LLAMA_API_KEY`
+- `META_LLAMA_API_KEY`
+- `DEEPSEEK_API_KEY`
+- `PERPLEXITY_API_KEY`
+- `VOYAGE_API_KEY`
+- `DEEPGRAM_API_KEY`
+- `ZERO_AI_FAST_MODEL`
+- `ZERO_AI_SMART_MODEL`
+- `ZERO_AI_EMBEDDING_MODEL`
+- `ZERO_AI_IMAGE_MODEL`
+- `ZERO_AI_TRANSCRIPTION_MODEL`
+- `ZERO_AI_SPEECH_MODEL`
+- `ZERO_VECTOR_ENABLED`
+- `ZERO_VECTOR_DATA_DIR`
+- `ZERO_VECTOR_DEFAULT_DIMENSIONS`
+
+PDF:
+
+- `ZERO_PDF_ENABLED`: generated-app convention for enabling `pdf` config
+- `ZERO_PDF_EXECUTABLE_PATH`: optional system-managed Chromium executable;
+  omit when using `bun run pdf:install`
+
+## Package And Distribution
+
+Current package mode is Bun-first:
+
+- package exports point at TypeScript source under `src/`
+- CLI bins point at TypeScript source under `src/`
+- `create-zero` reads `examples/package-mode`
+- package `files` must include `src`, `examples/package-mode`,
+  `examples/native-auth`, `docs`,
+  `README.md`, `llm.txt`, `llms.txt`, and `CHANGELOG.md`
+
+Run:
+
+```sh
+bun run test:package
+```
+
+This verifies create-zero, package exports, package scripts, and packed tarball
+contents, including outside-tree native SDK resolution and desktop/mobile
+recipe compilation.
+
+## Verification
+
+For most code changes:
+
+```sh
+bun run typecheck
+bun run test:package
+bun run build
+```
+
+For broad platform changes:
+
+```sh
+bun test
+git diff --check
+```
+
+Run focused subsystem tests for the touched code. Do not skip tests because the
+change is “just docs” if docs change package commands, generated output, or
+public API guidance.
+
+## Agent Build Checklist
+
+Before planning an app:
+
+1. Read this file.
+2. Identify app shape: public-first, internal-only, or mixed.
+3. Decide route auth mode.
+4. Define data models in `db/schema.ts`.
+5. Use resources/policies for protected CRUD.
+6. Use AppShell for dashboards.
+7. Use public components for landing/content pages.
+8. Use Zero auth/storage/admin/data components before custom UI.
+9. Use Zero hooks before new hooks.
+10. Use backend `zero` service context before opening direct services manually.
+11. Run package/type/build checks after framework changes.
+
+Before creating custom code, ask:
+
+- Does Zero already provide this component?
+- Does Zero already provide this hook?
+- Does Zero already provide this backend service?
+- Does this need server-side policy?
+- Does this data need ReactiveDB sync or backend-only SQL?
+- Does this document need `zero.pdf.render()` or `renderToStorage()`?
+- Does this need a migration?
+- Does this need observability?
+- Does this affect docs?
+
+## Complete Documentation Catalog
+
+Use this catalog to decide which deeper docs to read. Some files are current
+reference docs; others are plans or audits. When a file name includes `plan`,
+`audit`, or `roadmap`, treat it as design/history unless the code and current
+reference docs confirm the behavior is implemented.
+
+### Main Orientation
+
+- [Start Here](docs/start-here.md): main developer entry point covering create
+  app, config, route auth, tables/PK rules, built-in systems, hooks, icons,
+  AI/vector/PDF, and verification.
+- [Platform Overview](docs/platform-overview.md): broad explanation of the
+  platform architecture, ReactiveDB, sync, auth, state sync, rooms, presence,
+  notifications, storage, workflows, frontend pieces, and platform value.
+- [System Map](docs/system-map.md): file-location map for major systems,
+  runtime architecture, frontend/server boundaries, and where to edit.
+- [SDK Reference](docs/sdk-reference.md): large API reference for frontend SDK,
+  hooks, components, icons, storage, auth, and app-facing package exports.
+- [Platform Configuration](docs/platform-configuration.md): config protocol for
+  `zero.config.ts`, app identity, database modes, auth, email, AI, vector, PDF,
+  storage, sync, sitemap, and generated app defaults.
+- [Engineering Standards](docs/engineering-standards.md): repository coding
+  standards, Elysia practices, separation of concerns, comments, docs, tests,
+  and observability requirements.
+- [Elysia Practices Audit](docs/elysia-practices-audit.md): audit of how Zero
+  follows Elysia plugin/controller/service/model/lifecycle best practices.
+- [bun:sqlite Best Practices](docs/bun-sqlite-best-practices.md): guidance for
+  SQLite behavior, WAL, statements, transactions, and performance choices.
+- [Build Plan](docs/build-plan.md): historical/roadmap build plan for earlier
+  platform work; verify against current implementation before relying on it.
+- [Bootstrap Prompt](docs/bootstrap-prompt.md): prompt text for orienting a new
+  assistant on the codebase.
+- [Platform Roadmap](docs/platform-roadmap.md): product/build roadmap and future
+  platform ideas.
+- [Platform Hardening Plan](docs/platform-hardening-plan.md): historical
+  hardening plan for backend, frontend, docs, performance, and security.
+- [Stabilization Plan](docs/stabilization-plan.md): current stabilization,
+  release-readiness, package-mode, docs, and local create-app checklist.
+- [Doctor Usage Audit Plan](docs/doctor-usage-audit-plan.md): planned doctor
+  source scanner for frontend/backend usage warnings when app code bypasses
+  Zero APIs, components, services, or package-mode conventions.
+- [Releasing Zero](docs/releasing.md): version bump, verification, package state,
+  release checklist, git/tag steps, and package-mode release checks.
+
+### Framework And Package Mode
+
+- [Framework Docs](docs/framework/README.md): index for installed
+  framework/package-mode docs, local create workflow, and framework document map.
+- [Framework Developer Surface](docs/framework-developer-surface.md): canonical
+  package imports, generated app shape, composition root, backend extensions,
+  resources, package mode, and frontend/backend usage examples.
+- [Framework API Standardization Plan](docs/framework/api-standardization-plan.md):
+  plan for unifying framework APIs, package-mode behavior, extension loaders,
+  resource APIs, and future generators.
+- [Phase 1: Backend Extensions](docs/framework/phase-1-backend-extensions.md):
+  implemented/target contract for app-owned endpoints, routers, middleware,
+  plugins, loader behavior, and package-mode acceptance criteria.
+- [Phase 2: Middleware Matchers And Policy](docs/framework/phase-2-middleware-policy.md):
+  middleware matcher and authorization policy contract for app-owned middleware.
+- [Phase 3: Unified Backend Context](docs/framework/phase-3-backend-context.md):
+  canonical app-facing `zero` backend service context, service aliases, and
+  lazy optional-service behavior.
+- [Phase 4: Service API Smoothing](docs/framework/phase-4-service-api-smoothing.md):
+  canonical service method aliases and grouped storage APIs for app-owned
+  backend code.
+- [Phase 5: Resource And Policy API Plan](docs/framework/phase-5-resource-policy-plan.md):
+  resource declarations, trusted user-property policy rules, generated CRUD,
+  `/api/data`, WebSocket sync integration, and doctor integration plan.
+- [Resource Policy Core](docs/framework/resource-policy.md): implemented
+  server-side resource policy helpers, trusted metadata validation, owner
+  constraints, composition, and evaluator contract.
+- [Hot Storage Architecture](docs/framework/hot-storage-architecture.md):
+  target architecture for hot SQLite snapshots, file/WAL mode, persistent
+  cache/KV alignment, vector storage, and ReactiveDB refactoring.
+- [Hot Storage Implementation Plan](docs/framework/hot-storage-implementation-plan.md):
+  phased plan for KV/cache engine, SQL persistence primitive, ReactiveDB
+  refactor, vector storage modes, doctor checks, and generated app defaults.
+
+### Frontend, Components, Router, And SDK
+
+- [Frontend Platform](docs/frontend/README.md): frontend docs index and summary
+  of SDK, hooks, app shell, data organisms, public components, LaunchBoard, and
+  UI guidance.
+- [Component Inventory](docs/frontend/component-inventory.md): canonical map of
+  Zero UI primitives, Animate UI wrappers, app shells, forms, data organisms,
+  admin/domain organisms, import paths, and use-first rules.
+- [Frontend Design Tokens](docs/frontend/design-tokens.md): core dashboard token
+  lane, public/frontend token lane, light/dark behavior, styling constraints,
+  and token usage rules.
+- [Frontend Router](docs/frontend/router.md): file-router pages/layouts/routes,
+  route groups, explicit/protected-by-default auth modes, sitemap generation,
+  AppShell placement, and client route behavior.
+- [SDK](docs/frontend/sdk.md): frontend client, auth/session lifecycle,
+  ReactiveDB hooks, resources, storage hooks, notifications, rooms, workflows,
+  and app provider behavior.
+- [Frontend Hooks](docs/frontend/hooks.md): platform hooks and generic hook
+  library, including auth, live data, resources, storage, rooms, workflows,
+  notifications, state, debounce/throttle, idle, OS, and scroll-to-bottom.
+- [Frontend Icons](docs/frontend/icons.md): Zero animated icon pack, import
+  paths, `AnimateIcon`, `ZeroIcon`, button-trigger behavior, and icon rules.
+- [AppShell](docs/frontend/app-shell.md): dashboard shell with Animate UI/Radix
+  sidebar, workspace switcher, nested nav, action menus, breadcrumbs/header row,
+  user footer, and theme toggle.
+- [Sidebar](docs/frontend/sidebar.md): low-level sidebar primitives and how to
+  compose workspace switchers, nested menus, groups, actions, footer menus, and
+  collapsed/icon mode.
+- [DataTableView](docs/frontend/data-table.md): schema-aware table organism,
+  columns, lazy source contracts, filters, pagination, sorting, row actions,
+  toolbar, and integration with `/api/data`.
+- [MasterDetailView](docs/frontend/master-detail.md): master/detail organism,
+  list/table/detail composition, selection state, lazy DataTable-compatible
+  sources, loading/error state, and row actions.
+- [KanbanBoard](docs/frontend/kanban.md): drag/drop board organism, movement
+  helpers, ReactiveDB wiring guidance, cards, columns, and source-copy support.
+- [Form Library](docs/frontend/forms.md): current form components, AutoForm,
+  Wizard, field renderer, generated CRUD forms, known gaps, and intake-grade
+  staged/draft form roadmap.
+- [Public Components](docs/frontend/public-components.md): public/marketing/docs
+  components such as hero, navbar, features, FAQ, CTA, footer, code block,
+  bento, expandable cards, animated list, and public token lane usage.
+- [Hero](docs/frontend/hero.md): public hero component, background presets,
+  WavyBackground, image/custom background slots, action buttons, and title
+  content with text effects.
+- [Resizable Navbar](docs/frontend/navbar.md): public navbar that detaches on
+  scroll, magnetic hover, mobile menu, brand/actions, and package import.
+- [Text Effects](docs/frontend/text-effects.md): `TextGenerateEffect`,
+  `TypewriterEffect`, `FlipWords`, timing guidance, and public text motion.
+- [LaunchBoard Reference App](docs/frontend/launchboard.md): reference app
+  showing root `zero.config.ts`, thin `app/server.ts`, AppShell, ReactiveDB,
+  registered owner resources, row-filtered sync, KanbanBoard, auth bootstrap
+  routes, optional MFA, modals, no seed data, and per-user owner-scoped data.
+
+### Auth And Account Lifecycle
+
+- [Auth System](docs/auth/README.md): main auth documentation covering
+  registration, admin bootstrap, email verification, MFA, password reset/setup,
+  auth UI, config, routes, sessions, user properties, and admin user management.
+- [Auth Architecture](docs/auth/architecture.md): auth plugin architecture,
+  stores, services, routes, frontend clients, tokens, and separation of
+  responsibility.
+- [App Authentication SDK Guide](docs/auth/app-auth-sdk-guide.md): choose the
+  web, TypeScript native, Rust/Tauri, Chrome, or another client surface, then
+  follow server/client onboarding and honest release gates.
+- [Desktop, Mobile, and Chrome Extension Authentication](docs/auth/native-app-auth.md):
+  OIDC Authorization Code + PKCE, public client registration, endpoint
+  contract, SDK/broker setup, account-flow continuation, redirects, secure
+  storage, permissions, Sync, revocation, and deployment.
+- [Native auth integration recipes](examples/native-auth/README.md): narrow
+  trusted JavaScript host bridges for desktop loopback and mobile browser
+  sessions, including the Tauri sidecar boundary and broker IPC.
+- [User Store](docs/auth/user-store.md): user persistence model, user CRUD,
+  roles, lifecycle fields, password hashes, properties, and admin operations.
+- [Token Service](docs/auth/token-service.md): JWT access/refresh tokens,
+  rotation, JWKS, action tokens, refresh token storage, revocation, and replay
+  detection.
+- [Admin User Management Plan](docs/auth/admin-user-management-plan.md): plan and
+  coverage for admin user UI, creation, deletion/suspension, reset flows,
+  properties, roles, and management organism expectations.
+- [Platform Email And Account Lifecycle Plan](docs/auth/email-account-lifecycle-plan.md):
+  plan for account emails, admin-created users, password setup/reset, provider
+  boundary, and lifecycle behavior.
+- [Auth Email Verification and MFA Plan](docs/auth/mfa-email-verification-plan.md):
+  plan/current behavior for email verification, email OTP, authenticator/TOTP,
+  optional/required MFA, enrollment, challenge, and auth UI integration.
+- [Auth Metadata, Access Control, And Avatars Plan](docs/auth/metadata-access-avatar-plan.md):
+  planned advanced user metadata, access control, avatar storage, and future
+  role/group/tenant direction.
+- [Guards & Activity Audit](docs/auth/guards-and-audit.md): plan for auth guards,
+  activity audit trails, regulated app audit needs, and future auditing sinks.
+
+### AI And Vector
+
+- [AI](docs/ai.md): main AI service docs covering server-side AI usage,
+  providers, aliases, text/structured/image/transcription/speech support,
+  conversations, tools, and backend integration.
+- [AI Providers](docs/ai-providers.md): supported provider list, env variables,
+  aliases, provider readiness, default model behavior, and configuration notes.
+- [AI Tools](docs/ai-tools.md): tool registration/use patterns, AI SDK tool
+  integration, workflow bridge concepts, and agentic helper design.
+- [AI Conversations](docs/ai-conversations.md): helpers and patterns for
+  conversation-style message history, cache-backed state, and multi-message
+  calls.
+- [Meta Llama Provider](docs/ai-meta-llama.md): custom Meta Llama provider
+  adapter, env config, request/response mapping, streaming, and provider notes.
+- [Zero AI Layer Plan](docs/ai-layer-plan.md): design plan/history for the
+  internal AI provider layer, provider registry, aliases, tools, and workflow
+  integration.
+- [Vector Store](docs/vector.md): zvec-backed vector persistence, collections,
+  metadata/scopes, search, upsert, AI embedding bridge, config, and examples.
+
+### Data, Sync, KV, Persistence, And Tokens
+
+- [State Sync](docs/state-sync.md): per-user persistent state sync, client hooks,
+  backend routes, optimistic writes, limits, and use cases such as preferences.
+- [Platform KV/cache](docs/kv.md): durable memory-first KV/cache service,
+  checkpoint/journal recovery, counters, namespaces, TTL, LRU, limiters, and
+  `zero.kv` usage.
+- [Platform Tokens](docs/tokens.md): generic one-time/resumable token service,
+  action tokens, resume tokens, validation, use cases, and security rules.
+- [Migrations](docs/migrations.md): migration files, ledger, schema history,
+  rollback safety, backups, drift detection, draft planning, and CLI commands.
+- [Real-Time Sync Engine](docs/realtime-sync/realtime-sync/README.md): deep
+  reference for sync engine architecture, goals, client/server flow, and legacy
+  standalone sync docs.
+- [Real-Time Sync Architecture](docs/realtime-sync/realtime-sync/architecture.md):
+  deeper architecture for server/client sync pieces, WebSocket path, database
+  change emission, and scaling considerations.
+- [Real-Time Sync Wire Protocol](docs/realtime-sync/realtime-sync/protocol.md):
+  wire message formats, sync snapshot/change/ack/catchup messages, mutation
+  protocol, and reconnect behavior.
+- [ReactiveDB Server Design](docs/realtime-sync/realtime-sync/reactive-db.md):
+  server-side ReactiveDB internals, table definitions, transactions, change
+  tracking, and SQLite behavior.
+- [SyncStore Client Design](docs/realtime-sync/realtime-sync/sync-store.md):
+  client-side store design, optimistic state, pending mutations, rollbacks,
+  subscriptions, and React binding details.
+
+### Platform Services
+
+- [PDF Rendering](docs/pdf.md): managed Chromium setup, HTML/print CSS rendering,
+  strict resource policy, limits, storage composition, workflows, stable
+  errors/observability, deployment, and replaceable adapters.
+- [Observability](docs/observability.md): observability event codes, sinks,
+  frontend ingest, memory event store, protected event route, and how new logs,
+  warnings, errors, and lifecycle events should flow.
+- [Observability Audit](docs/observability-audit.md): audit of existing logging
+  and events, gaps, and improvement notes.
+- [Durable Workflow System](docs/workflows.md): workflow service, workflow
+  registry, scheduled/background work concepts, app-facing usage, and future
+  workflow expansion.
+- [Webhooks Plan](docs/webhooks.md): planned inbound/outbound webhook system,
+  signatures, workflow/table triggers, webhook delivery, and future API shape.
+
+### Package, Release, And Maintenance
+
+- [Releasing Zero](docs/releasing.md): package state, source-export strategy,
+  package files, version bump, release verification, changelog, commit, and tag
+  checklist.
+- [Zero Stabilization Plan](docs/stabilization-plan.md): current stabilization
+  plan for repo audit, local create flow, docs, `llms.txt`, package/distribution
+  polish, package smoke tests, and remaining risks.
+- [Doctor Usage Audit Plan](docs/doctor-usage-audit-plan.md): source audit plan
+  for warning agents about raw controls, custom modal/toast/sidebar systems,
+  direct backend service bypasses, internal imports, missing root wiring, and
+  route/policy shape issues.

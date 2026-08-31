@@ -16,19 +16,38 @@ import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/animate-ui/components/radix/checkbox';
 import { PasswordInput } from '@/components/auth/password-input';
 import { AuthHeader } from '@/components/auth/auth-header';
+import { MFAContinuation } from '@/components/auth/mfa-continuation';
 import { SocialLoginGroup, type SocialProvider } from '@/components/auth/social-login-group';
-import { ValidationRules } from '@/components/ui/validation-rules';
+import type {
+  AuthMfaChallengeRequiredResult,
+  AuthMfaSetupRequiredResult,
+} from '../../frontend/client/auth-client';
 import { AnimateIcon } from '@/components/animate-ui/icons/icon';
+import { CircleCheck } from '@/components/animate-ui/icons/circle-check';
 import { CircleX } from '@/components/animate-ui/icons/circle-x';
 import { Loader } from '@/components/animate-ui/icons/loader';
+import { Send } from '@/components/animate-ui/icons/send';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
 import {
   isAuthConfigPending,
   isAuthConfigUnavailable,
   isRegistrationClosed,
 } from './auth-config-ui-policy';
+import {
+  authFeedbackAnimate,
+  authFeedbackExit,
+  authFeedbackInitial,
+  authPresenceTransition,
+} from './auth-motion';
+import { isMfaContinuationResult } from './auth-continuation';
+import {
+  useNativeAuthContinuation,
+  useNativeAuthRoute,
+  useNativeLoginHint,
+} from './use-native-auth-route';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -47,16 +66,6 @@ interface RegisterFormProps {
   className?: string;
 }
 
-// ─── Username validation rules ───────────────────────────────────────────────
-
-function getUsernameRules(username: string) {
-  return [
-    { label: '3-20 characters', met: username.length >= 3 && username.length <= 20 },
-    { label: 'Letters, numbers, underscores only', met: /^[a-zA-Z0-9_]*$/.test(username) && username.length > 0 },
-    { label: 'Starts with a letter', met: /^[a-zA-Z]/.test(username) },
-  ];
-}
-
 // ─── RegisterForm ────────────────────────────────────────────────────────────
 
 /** Render a registration form that adapts to public registration config. */
@@ -71,7 +80,7 @@ function RegisterForm({
   socialProviders,
   className,
 }: RegisterFormProps) {
-  const { register, isLoading, error } = useAuth();
+  const { register, resendVerificationEmail, isLoading, error } = useAuth();
   const authConfig = useAuthConfig();
   const [form, setForm] = React.useState({
     email: '',
@@ -81,13 +90,35 @@ function RegisterForm({
     password: '',
   });
   const [localError, setLocalError] = React.useState<string | null>(null);
-  const [usernameFocused, setUsernameFocused] = React.useState(false);
+  const loginHint = useNativeLoginHint();
+  const nativeContinuation = useNativeAuthContinuation();
+  const [pendingVerificationEmail, setPendingVerificationEmail] = React.useState<string | null>(null);
+  const [resendingVerification, setResendingVerification] = React.useState(false);
+  const [verificationResent, setVerificationResent] = React.useState(false);
+  const [requestMfaEnrollment, setRequestMfaEnrollment] = React.useState(false);
+  const [mfaContinuation, setMfaContinuation] = React.useState<
+    AuthMfaSetupRequiredResult | AuthMfaChallengeRequiredResult | null
+  >(null);
 
   const displayError = localError ?? error;
   const hasNames = fields.includes('firstName') || fields.includes('lastName');
   const configPending = isAuthConfigPending(respectRegistrationPolicy, authConfig);
   const configUnavailable = isAuthConfigUnavailable(respectRegistrationPolicy, authConfig);
   const registrationClosed = isRegistrationClosed(respectRegistrationPolicy, authConfig);
+  const mfaConfig = authConfig.config?.mfa;
+  const canRequestOptionalMfa =
+    Boolean(mfaConfig?.enabled && mfaConfig.ready) &&
+    mfaConfig?.policy === 'optional' &&
+    (mfaConfig.availableMethods.length > 0 || mfaConfig.methods.length > 0);
+  const continuedLoginHref = useNativeAuthRoute(loginHref);
+
+  React.useEffect(() => {
+    if (loginHint) setForm((current) => ({
+      ...current,
+      email: current.email || loginHint,
+      username: current.username || loginHint,
+    }));
+  }, [loginHint]);
 
   function update(field: string) {
     return (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -97,18 +128,46 @@ function RegisterForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLocalError(null);
+    setVerificationResent(false);
     try {
-      await register({
+      const result = await register({
         email: form.email,
         username: form.username || form.email,
         password: form.password,
         ...(form.firstName ? { firstName: form.firstName } : {}),
         ...(form.lastName ? { lastName: form.lastName } : {}),
+        ...(canRequestOptionalMfa && requestMfaEnrollment ? { mfaEnrollment: true } : {}),
+        ...(nativeContinuation ? { nativeContinuation } : {}),
       });
+      if (isMfaContinuationResult(result)) {
+        setMfaContinuation(result);
+        return;
+      }
+      const user = result?.user;
+      if (user?.emailVerificationRequired && !user.emailVerifiedAt) {
+        setPendingVerificationEmail(user.email);
+        return;
+      }
       onSuccess?.();
     } catch (err) {
       reportAuthUiError('register', err);
       setLocalError(getAuthDisplayMessage(err, 'Registration failed'));
+    }
+  }
+
+  async function handleResendVerification() {
+    if (!pendingVerificationEmail || resendingVerification) return;
+    setResendingVerification(true);
+    setVerificationResent(false);
+    setLocalError(null);
+    try {
+      await resendVerificationEmail(pendingVerificationEmail, nativeContinuation ?? undefined);
+      setVerificationResent(true);
+    } catch (err) {
+      reportAuthUiError('resendVerificationEmail', err);
+      setLocalError(getAuthDisplayMessage(err, 'Failed to request verification email'));
+    } finally {
+      setResendingVerification(false);
     }
   }
 
@@ -117,21 +176,103 @@ function RegisterForm({
   }
 
   if (configUnavailable) {
-    return <>{unavailable ?? <RegistrationConfigUnavailable loginHref={loginHref} showLoginLink={showLoginLink} />}</>;
+    return <>{unavailable ?? <RegistrationConfigUnavailable loginHref={continuedLoginHref} showLoginLink={showLoginLink} />}</>;
   }
 
   if (registrationClosed) {
-    return <>{unavailable ?? <RegistrationUnavailable loginHref={loginHref} showLoginLink={showLoginLink} />}</>;
+    return <>{unavailable ?? <RegistrationUnavailable loginHref={continuedLoginHref} showLoginLink={showLoginLink} />}</>;
+  }
+
+  if (mfaContinuation) {
+    return (
+      <MFAContinuation
+        result={mfaContinuation}
+        onSuccess={onSuccess}
+        onBack={() => setMfaContinuation(null)}
+        className={className}
+      />
+    );
+  }
+
+  if (pendingVerificationEmail) {
+    return (
+      <div className={cn('space-y-4', className)}>
+        <AuthHeader
+          title="Check your email"
+          description={`We sent a verification link to ${pendingVerificationEmail}.`}
+        />
+
+        <div className="flex items-start gap-2 rounded-md border border-green-500/30 bg-green-500/5 px-3 py-2.5 text-sm text-green-600">
+          <AnimateIcon animate>
+            <CircleCheck size={16} className="mt-px flex-shrink-0" />
+          </AnimateIcon>
+          Verify your email before signing in.
+        </div>
+
+        <AnimatePresence>
+          {displayError && (
+            <motion.div
+              initial={authFeedbackInitial}
+              animate={authFeedbackAnimate}
+              exit={authFeedbackExit}
+              transition={authPresenceTransition}
+              className="overflow-hidden"
+            >
+              <div
+                className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5"
+                role="alert"
+              >
+                <AnimateIcon animate>
+                  <CircleX size={16} className="mt-px flex-shrink-0 text-destructive" />
+                </AnimateIcon>
+                <p className="text-xs font-medium leading-relaxed text-destructive">
+                  {displayError}
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <Button
+          type="button"
+          variant="outline"
+          className="h-10 w-full"
+          disabled={resendingVerification}
+          onClick={handleResendVerification}
+        >
+          {resendingVerification ? (
+            <AnimateIcon animate loop>
+              <Loader size={16} />
+            </AnimateIcon>
+          ) : (
+            <AnimateIcon animateOnHover>
+              <Send size={16} />
+            </AnimateIcon>
+          )}
+          Send another link
+        </Button>
+
+        {verificationResent && (
+          <p className="text-center text-xs text-muted-foreground">
+            If the account still needs verification, a new link was sent.
+          </p>
+        )}
+
+        <a href={continuedLoginHref} className="block text-center text-sm text-primary hover:underline">
+          Back to sign in
+        </a>
+      </div>
+    );
   }
 
   return (
-    <form onSubmit={handleSubmit} className={cn('space-y-3', className)}>
+    <form onSubmit={handleSubmit} className={cn('space-y-4', className)}>
       <AuthHeader
         title={authConfig.bootstrapRequired ? 'Create first admin' : 'Create account'}
         description={authConfig.bootstrapRequired ? 'The first account becomes the app admin' : 'Enter your details to get started'}
       />
 
-      <div className="space-y-3">
+      <div className="space-y-4">
         {hasNames && (
           <div className="grid grid-cols-2 gap-3">
             {fields.includes('firstName') && (
@@ -143,7 +284,7 @@ function RegisterForm({
                   autoComplete="given-name"
                   value={form.firstName}
                   onChange={update('firstName')}
-                  className="h-8 text-sm"
+                  className="h-10 text-sm"
                 />
               </div>
             )}
@@ -156,7 +297,7 @@ function RegisterForm({
                   autoComplete="family-name"
                   value={form.lastName}
                   onChange={update('lastName')}
-                  className="h-8 text-sm"
+                  className="h-10 text-sm"
                 />
               </div>
             )}
@@ -174,7 +315,7 @@ function RegisterForm({
               required
               value={form.email}
               onChange={update('email')}
-              className={cn('h-8 text-sm', displayError && 'border-destructive/50 focus-visible:ring-destructive/30')}
+              className={cn('h-10 text-sm', displayError && 'ring-[1px] ring-destructive/30')}
             />
           </div>
         )}
@@ -189,17 +330,8 @@ function RegisterForm({
               required
               value={form.username}
               onChange={update('username')}
-              onFocus={() => setUsernameFocused(true)}
-              onBlur={() => setUsernameFocused(false)}
-              className="h-8 text-sm"
+              className="h-10 text-sm"
             />
-            {(usernameFocused || form.username.length > 0) && (
-              <ValidationRules
-                rules={getUsernameRules(form.username)}
-                staggerDelay={40}
-                showOnlyWhenActive={false}
-              />
-            )}
           </div>
         )}
 
@@ -214,8 +346,26 @@ function RegisterForm({
               value={form.password}
               onChange={update('password')}
               showStrength={showPasswordStrength}
-              className={cn('h-8 text-sm', displayError && 'border-destructive/50 focus-visible:ring-destructive/30')}
+              className={cn('h-10 text-sm', displayError && 'ring-[1px] ring-destructive/30')}
             />
+          </div>
+        )}
+
+        {canRequestOptionalMfa && (
+          <div className="flex items-start gap-2 rounded-md border border-border/75 bg-muted/25 p-3">
+            <Checkbox
+              id="reg-mfa-enrollment"
+              size="sm"
+              checked={requestMfaEnrollment}
+              onCheckedChange={(value) => setRequestMfaEnrollment(value === true)}
+              className="mt-0.5"
+            />
+            <Label
+              htmlFor="reg-mfa-enrollment"
+              className="cursor-pointer text-xs font-normal leading-relaxed text-muted-foreground"
+            >
+              Set up two-factor authentication after account creation.
+            </Label>
           </div>
         )}
       </div>
@@ -223,10 +373,10 @@ function RegisterForm({
       <AnimatePresence>
         {displayError && (
           <motion.div
-            initial={{ opacity: 0, height: 0, y: -4 }}
-            animate={{ opacity: 1, height: 'auto', y: 0, x: [0, -6, 6, -4, 4, 0] }}
-            exit={{ opacity: 0, height: 0, y: -4 }}
-            transition={{ duration: 0.4, ease: 'easeOut' }}
+            initial={authFeedbackInitial}
+            animate={authFeedbackAnimate}
+            exit={authFeedbackExit}
+            transition={authPresenceTransition}
             className="overflow-hidden"
           >
             <div
@@ -244,7 +394,7 @@ function RegisterForm({
         )}
       </AnimatePresence>
 
-      <Button type="submit" size="sm" className="w-full h-8" disabled={isLoading || configPending}>
+      <Button type="submit" className="h-10 w-full" disabled={isLoading || configPending}>
         {isLoading ? (
           <AnimateIcon animate loop>
             <Loader size={16} />
@@ -261,7 +411,7 @@ function RegisterForm({
       {showLoginLink && (
         <p className="text-center text-xs text-muted-foreground">
           Already have an account?{' '}
-          <a href={loginHref} className="text-primary hover:underline">
+          <a href={continuedLoginHref} className="text-primary hover:underline">
             Sign in
           </a>
         </p>

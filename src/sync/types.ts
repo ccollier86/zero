@@ -238,10 +238,17 @@ export interface SyncAuthContext {
  * auth plugin or HTTP middleware.
  */
 export interface SyncTokenVerifier {
+  /**
+   * Resolve the token against current account state. Zero auth implements this
+   * so suspended, reset-gated, and superseded auth generations fail closed.
+   */
+  resolveAuthContext?(token: string): Promise<SyncAuthContext | null>;
+
+  /** Legacy standalone verifier fallback. Prefer `resolveAuthContext`. */
   verifyAccessToken(token: string): Promise<{
     sub: string;
-    email: string;
-    role: string;
+    email?: string;
+    role?: string;
   } | null>;
 }
 
@@ -251,8 +258,14 @@ export interface SyncTokenVerifier {
 export interface SyncAuthConfig {
   /** Whether missing tokens should close the WebSocket with an auth failure. */
   required?: boolean;
+  /** Internal migration signal: required mode came from the secure app default. */
+  modeDefaulted?: boolean;
   /** Lazily returns the active token verifier, or null before auth is ready. */
   getTokenVerifier: () => SyncTokenVerifier | null;
+  /** Current-account revalidation cadence for active authenticated sockets. */
+  revalidateIntervalMs?: number;
+  /** Temporary migration escape hatch. Query-string bearer tokens are rejected by default. */
+  allowLegacyQueryToken?: boolean;
 }
 
 /**
@@ -265,10 +278,20 @@ export interface SyncSocketData {
   subscribedTopics: Set<string>;
   /** Last seq sent to this client */
   lastSeq: number;
+  /** Tables selected by the latest completed sync.subscribe handshake. */
+  syncSubscribedTables: Set<string>;
+  /** True while Bun has queued outbound data behind socket backpressure. */
+  syncBackpressured: boolean;
   /** Auth context derived from token (null if no auth) */
   authContext: SyncAuthContext | null;
+  /** Bearer token retained in server memory for current-account revalidation. */
+  authToken?: string;
   /** True after the WebSocket auth bridge has allowed this connection to proceed. */
   authResolved: boolean;
+  /** Comparable effective read-policy snapshot used by live revalidation. */
+  authorizationFingerprint: string | null;
+  /** Opaque stable hash sent to clients to detect authorization-scope changes. */
+  authorizationScope: string | null;
   /** Unique connection identifier for origin tracking */
   connectionId: string;
   /** Query parameters from the WS upgrade request */
@@ -298,6 +321,8 @@ export interface SyncRowFilter {
 export interface SyncResourceTableAccess {
   readableTables: Set<string>;
   rowFilters: Map<string, SyncRowFilter>;
+  /** Stable representation of effective row-filter policy for revalidation. */
+  policyFingerprint?: string;
 }
 
 /** Context passed to resource-aware sync mutation authorization. */
@@ -334,15 +359,33 @@ export interface SyncResourcePolicyAdapter {
 
 // Server → Client
 
+/** Confirms that the server accepted the socket authentication handshake. */
+export interface SyncAuthReadyMessage {
+  type: 'sync.auth.ready';
+  authenticated: boolean;
+}
+
 export interface SyncSnapshotMessage {
   type: 'sync.snapshot';
   tables: Record<string, Record<string, Row>>;
   seq: number;
+  /** ReactiveDB process epoch. A change requires authoritative cache replacement. */
+  epoch?: string;
+  /** Opaque identity + read-policy scope. */
+  scope?: string | null;
+  /** Whether this snapshot replaces every local full and lazy table cache. */
+  reset?: 'preserve-pending' | 'purge';
 }
 
 export interface SyncChangeMessage {
   type: 'sync.change';
   seq: number;
+  /** Last sequence successfully queued to this socket before this change. */
+  prevSeq?: number;
+  /** ReactiveDB process epoch. */
+  epoch?: string;
+  /** Opaque identity + read-policy scope. */
+  scope?: string | null;
   table: string;
   op: ChangeOp;
   rowId: string;
@@ -357,6 +400,13 @@ export interface SyncAckMessage {
   seq: number | null;
   ok: boolean;
   error?: string;
+  /** Canonical mutation result, included so receipt replay cannot leave optimistic drift. */
+  change?: {
+    table: string;
+    op: ChangeOp;
+    rowId: string;
+    row: Row | null;
+  };
 }
 
 export interface SyncCatchupMessage {
@@ -371,9 +421,21 @@ export interface SyncCatchupMessage {
     ts: number;
   }>;
   seq: number;
+  /** Client cursor from which this atomic catchup was built. */
+  prevSeq?: number;
+  /** ReactiveDB process epoch. */
+  epoch?: string;
+  /** Opaque identity + read-policy scope. */
+  scope?: string | null;
 }
 
 // Client → Server
+
+/** First client message used to authenticate without exposing a token in the URL. */
+export interface SyncAuthMessage {
+  type: 'sync.auth';
+  token?: string;
+}
 
 export interface SyncSubscribeMessage {
   type: 'sync.subscribe';
@@ -382,6 +444,10 @@ export interface SyncSubscribeMessage {
   /** Tables to include in the initial snapshot. */
   snapshot?: string[];
   lastSeq: number;
+  /** Last server epoch accepted by the client. Omit only on a fresh client. */
+  epoch?: string;
+  /** Last opaque authorization scope accepted by the client. */
+  scope?: string | null;
 }
 
 export interface SyncMutateMessage {
@@ -391,10 +457,15 @@ export interface SyncMutateMessage {
   op: ChangeOp;
   rowId?: string;
   row?: Row | Partial<Row>;
+  /** Server epoch used for the first transport attempt. */
+  epoch?: string;
+  /** Monotonic transport attempt; attempts after one require a durable receipt. */
+  attempt?: number;
 }
 
 /** Any message that can arrive from the client over the sync WebSocket. */
 export type ClientMessage =
+  | SyncAuthMessage
   | SyncSubscribeMessage
   | SyncMutateMessage
   | StateSubscribeMessage
@@ -408,6 +479,7 @@ export type ClientMessage =
 
 /** Any message that the server can send to a client. */
 export type ServerMessage =
+  | SyncAuthReadyMessage
   | SyncSnapshotMessage
   | SyncChangeMessage
   | SyncAckMessage
@@ -436,8 +508,12 @@ export interface PendingMutation {
   previousState: Row | null;
   /** The state we applied optimistically */
   optimisticState: Row | null;
+  /** Original insert/update fields, retained when rebasing onto server state. */
+  optimisticPatch?: Partial<Row>;
   /** Timestamp when mutation was sent */
   sentAt: number;
+  /** Number of successful WebSocket transport attempts. */
+  attempts: number;
 }
 
 /**
@@ -461,6 +537,18 @@ export interface ClientTableDef {
   [column: string]: string | string[] | undefined;
 }
 
+/** Narrow lifecycle surface used by authentication adapters. */
+export interface SyncClientLifecycleTarget {
+  readonly connected: boolean;
+  connect(): void;
+  reset(): void;
+}
+
+export type SyncAuthLifecycleBinder = (
+  client: SyncClientLifecycleTarget,
+  autoConnect: boolean,
+) => void | (() => void);
+
 /**
  * Configuration for createSyncClient().
  */
@@ -471,8 +559,12 @@ export interface SyncClientConfig {
   tables: Record<string, ClientTableDef>;
   /** Auth token to send on connect */
   token?: string;
-  /** Return the current auth token at connection time. Overrides `token` when provided. */
-  getToken?: () => string | null | undefined;
+  /** Return the current auth token at connection time. May refresh asynchronously. */
+  getToken?: () => string | null | undefined | Promise<string | null | undefined>;
+  /** Force an auth refresh after a 4001 close and return the replacement access token. */
+  refreshAuth?: () => string | null | undefined | Promise<string | null | undefined>;
+  /** Bind auth state changes to socket and local-cache lifecycle. */
+  bindAuthLifecycle?: SyncAuthLifecycleBinder;
   /** Connect WebSocket immediately. Default: true */
   autoConnect?: boolean;
   /** Callback on unrecoverable error */

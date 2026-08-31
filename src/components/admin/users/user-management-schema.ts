@@ -7,6 +7,7 @@
  */
 
 import { defineSchema, field } from '../../../schema';
+import type { AuthAdminConfig } from '../../../frontend/client/auth-client';
 import type { UserRoleOption } from './user-management-types';
 
 /** Build the admin user schema from the role options available to the app. */
@@ -27,9 +28,9 @@ export function createUserManagementSchema(roleOptions: readonly UserRoleOption[
       ],
       { label: 'Status', required: true, defaultValue: 'active' },
     ),
-    passwordChangeRequired: field.boolean({
-      label: 'Require password change',
-      description: 'Blocks normal token use until the user completes password setup or reset.',
+    mfaRequired: field.boolean({
+      label: 'Require MFA',
+      description: 'Requires this user to enroll or pass two-factor authentication before receiving a session.',
       defaultValue: false,
     }),
   });
@@ -45,6 +46,19 @@ export const userManagementEditableFields = [
   'firstName',
   'lastName',
   'role',
-  'status',
-  'passwordChangeRequired',
 ];
+
+/** Resolve fields that are safe to expose for the selected user and auth policy. */
+export function getUserManagementEditableFields(
+  config: AuthAdminConfig | null,
+  options: { isSelf?: boolean; canUpdate?: boolean } = {},
+): string[] {
+  if (options.canUpdate === false) return [];
+
+  const fields = userManagementEditableFields.filter((fieldName) => {
+    if (fieldName === 'role') return Boolean(config?.capabilities.promoteAdmins) && !options.isSelf;
+    return true;
+  });
+  if (config?.capabilities.mfa && !options.isSelf) fields.push('mfaRequired');
+  return fields;
+}

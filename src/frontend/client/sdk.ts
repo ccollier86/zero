@@ -8,17 +8,29 @@ import { createEphemeralStore, routeEphemeralMessage } from '../../sync/client/e
 import { AuthClient, createAuthDisabledError } from './auth-client';
 import type {
   AuthActionTokenInfo,
-  AuthAdminConfig,
-  AuthAdminCreateUserParams,
-  AuthAdminUpdateUserParams,
-  AuthAdminUserPropertyConfig,
-  AuthAdminUserListParams,
-  AuthAdminUserListResult,
+  AuthCompletionResult,
+  AuthMfaMethod,
+  AuthMfaMethodType,
+  AuthMfaSetupStartResult,
+  AuthMfaSetupVerifyResult,
+  AuthPasswordUpdatedResult,
   AuthPublicConfig,
+  AuthSessionResult,
   AuthUserPropertyConfig,
   AuthUser,
   RegisterParams,
 } from './auth-client';
+import type {
+  AuthAdminConfig,
+  AuthAdminCreateUserParams,
+  AuthAdminMfaResetResult,
+  AuthAdminSdkSurface,
+  AuthAdminUpdateUserParams,
+  AuthAdminUserMfaStatus,
+  AuthAdminUserPropertyConfig,
+  AuthAdminUserListParams,
+  AuthAdminUserListResult,
+} from './auth-admin-types';
 import { createApi } from './api';
 import type { Api } from './api';
 import { NOTIFICATION_TABLES } from '../../notifications/types';
@@ -56,11 +68,21 @@ export type {
   AuthActionTokenInfo,
   AuthAdminConfig,
   AuthAdminCreateUserParams,
+  AuthAdminMfaResetResult,
+  AuthAdminSdkSurface,
   AuthAdminUpdateUserParams,
+  AuthAdminUserMfaStatus,
   AuthAdminUserPropertyConfig,
   AuthAdminUserListParams,
   AuthAdminUserListResult,
+  AuthCompletionResult,
+  AuthMfaMethod,
+  AuthMfaMethodType,
+  AuthMfaSetupStartResult,
+  AuthMfaSetupVerifyResult,
+  AuthPasswordUpdatedResult,
   AuthPublicConfig,
+  AuthSessionResult,
   AuthUserPropertyConfig,
   AuthUser,
   RegisterParams,
@@ -144,7 +166,7 @@ export interface ClientConfig {
 
 // ─── Client Interface ──────────────────────────────────────────────────────
 
-export interface Client {
+export interface Client extends AuthAdminSdkSurface {
   /** Server URL this client connects to. */
   readonly url: string;
 
@@ -156,26 +178,54 @@ export interface Client {
   /** Whether the user is authenticated. */
   readonly isAuthenticated: boolean;
 
-  /** Log in. Returns the authenticated user. */
-  login(username: string, password: string): Promise<AuthUser>;
+  /** Log in. Returns a session or an MFA continuation payload. */
+  login(username: string, password: string): Promise<AuthCompletionResult>;
 
-  /** Register a new account. Returns the authenticated user. */
-  register(params: RegisterParams): Promise<AuthUser>;
+  /** Register a new account. Returns a session or account/MFA continuation payload. */
+  register(params: RegisterParams): Promise<AuthCompletionResult>;
 
   /** Load public auth config for registration/bootstrap UI decisions. */
   getAuthConfig(): Promise<AuthPublicConfig>;
 
   /** Request a password reset email. Always generic on success. */
-  forgotPassword(email: string): Promise<void>;
+  forgotPassword(email: string, nativeContinuation?: string): Promise<void>;
+
+  /** Request another email verification link. Always generic on success. */
+  resendVerificationEmail(email: string, nativeContinuation?: string): Promise<void>;
+
+  /** Verify an email address from an emailed verification token. */
+  verifyEmail(token: string): Promise<AuthCompletionResult>;
 
   /** Inspect a reset/setup token without consuming it. */
   inspectActionToken(token: string): Promise<AuthActionTokenInfo>;
 
   /** Complete a password reset from an emailed reset token. */
-  resetPassword(token: string, newPassword: string): Promise<AuthUser>;
+  resetPassword(token: string, newPassword: string): Promise<AuthCompletionResult>;
 
   /** Complete first-password setup from an emailed setup token. */
-  setupPassword(token: string, newPassword: string): Promise<AuthUser>;
+  setupPassword(token: string, newPassword: string): Promise<AuthCompletionResult>;
+
+  /** Load current-user MFA methods. */
+  listMfaMethods(): Promise<{ methods: AuthMfaMethod[]; required: boolean }>;
+
+  /** Start MFA setup from a session or auth transition token. */
+  startMfaSetup(params: {
+    setupToken?: string;
+    method: AuthMfaMethodType;
+    label?: string;
+  }): Promise<AuthMfaSetupStartResult>;
+
+  /** Verify MFA setup. Auth-flow setup returns a full session. */
+  verifyMfaSetup(params: {
+    verificationToken: string;
+    code: string;
+  }): Promise<AuthMfaSetupVerifyResult>;
+
+  /** Verify an MFA login challenge and receive a full session. */
+  verifyMfaChallenge(params: {
+    challengeToken: string;
+    code: string;
+  }): Promise<AuthSessionResult>;
 
   /** Log out and clear tokens. */
   logout(): Promise<void>;
@@ -200,42 +250,6 @@ export interface Client {
 
   /** Delete a user property by key. */
   deleteProperty(key: string): Promise<void>;
-
-  /** Load admin-only auth/user-management config. Requires an admin user. */
-  getAuthAdminConfig(): Promise<AuthAdminConfig>;
-
-  /** List users through the admin auth API. Requires an admin user. */
-  listAuthAdminUsers(params?: AuthAdminUserListParams): Promise<AuthAdminUserListResult>;
-
-  /** Load one user through the admin auth API. Requires an admin user. */
-  getAuthAdminUser(userId: string): Promise<AuthUser>;
-
-  /** Create a user through the admin auth API. Requires an admin user. */
-  createAuthAdminUser(params: AuthAdminCreateUserParams): Promise<{ user: AuthUser; setupEmailSent: boolean }>;
-
-  /** Update a user through the admin auth API. Requires an admin user. */
-  updateAuthAdminUser(userId: string, params: AuthAdminUpdateUserParams): Promise<AuthUser>;
-
-  /** Delete a user through the admin auth API. Requires an admin user. */
-  deleteAuthAdminUser(userId: string): Promise<void>;
-
-  /** Send an account setup email for an admin-created user. */
-  sendAuthAdminSetupEmail(userId: string): Promise<boolean>;
-
-  /** Send a password reset email for a user. */
-  sendAuthAdminPasswordReset(userId: string): Promise<void>;
-
-  /** Directly replace a user's password when manual admin reset is enabled. */
-  resetAuthAdminPassword(userId: string, password: string): Promise<void>;
-
-  /** Suspend a user and revoke their sessions. */
-  suspendAuthAdminUser(userId: string): Promise<AuthUser>;
-
-  /** Reactivate a suspended user. */
-  activateAuthAdminUser(userId: string): Promise<AuthUser>;
-
-  /** Revoke all active refresh tokens for a user. */
-  revokeAuthAdminUserSessions(userId: string): Promise<void>;
 
   // ─── HTTP (authenticated JSON fetch) ─────────────────────────────
 
@@ -605,10 +619,28 @@ export function createClient(config: ClientConfig): Client {
     login: async (username: string, password: string) => requireAuthClient().login(username, password),
     register: async (params: RegisterParams) => requireAuthClient().register(params),
     getAuthConfig: async () => requireAuthClient().getConfig(),
-    forgotPassword: async (email: string) => requireAuthClient().forgotPassword(email),
+    forgotPassword: async (email: string, nativeContinuation?: string) =>
+      requireAuthClient().forgotPassword(email, nativeContinuation),
+    resendVerificationEmail: async (email: string, nativeContinuation?: string) =>
+      requireAuthClient().resendVerificationEmail(email, nativeContinuation),
+    verifyEmail: async (token: string) => requireAuthClient().verifyEmail(token),
     inspectActionToken: async (token: string) => requireAuthClient().inspectActionToken(token),
     resetPassword: async (token: string, newPassword: string) => requireAuthClient().resetPassword(token, newPassword),
     setupPassword: async (token: string, newPassword: string) => requireAuthClient().setupPassword(token, newPassword),
+    listMfaMethods: async () => requireAuthClient().listMfaMethods(),
+    startMfaSetup: async (params: {
+      setupToken?: string;
+      method: AuthMfaMethodType;
+      label?: string;
+    }) => requireAuthClient().startMfaSetup(params),
+    verifyMfaSetup: async (params: {
+      verificationToken: string;
+      code: string;
+    }) => requireAuthClient().verifyMfaSetup(params),
+    verifyMfaChallenge: async (params: {
+      challengeToken: string;
+      code: string;
+    }) => requireAuthClient().verifyMfaChallenge(params),
     logout: async () => requireAuthClient().logout(),
     changePassword: async (currentPassword: string, newPassword: string) => requireAuthClient().changePassword(currentPassword, newPassword),
     refresh: async () => { await requireAuthClient().refresh(); },
@@ -621,13 +653,22 @@ export function createClient(config: ClientConfig): Client {
     getAuthAdminUser: async (userId: string) => requireAuthClient().getAdminUser(userId),
     createAuthAdminUser: async (params: AuthAdminCreateUserParams) => requireAuthClient().createAdminUser(params),
     updateAuthAdminUser: async (userId: string, params: AuthAdminUpdateUserParams) => requireAuthClient().updateAdminUser(userId, params),
+    setAuthAdminUserProperty: async (userId: string, key: string, value: unknown) => requireAuthClient().setAdminUserProperty(userId, key, value),
+    deleteAuthAdminUserProperty: async (userId: string, key: string) => requireAuthClient().deleteAdminUserProperty(userId, key),
     deleteAuthAdminUser: async (userId: string) => requireAuthClient().deleteAdminUser(userId),
     sendAuthAdminSetupEmail: async (userId: string) => requireAuthClient().sendAdminSetupEmail(userId),
     sendAuthAdminPasswordReset: async (userId: string) => requireAuthClient().sendAdminPasswordReset(userId),
+    clearAuthAdminPasswordChangeRequirement: async (userId: string) => requireAuthClient().clearAdminPasswordChangeRequirement(userId),
     resetAuthAdminPassword: async (userId: string, password: string) => requireAuthClient().resetAdminPassword(userId, password),
     suspendAuthAdminUser: async (userId: string) => requireAuthClient().suspendAdminUser(userId),
     activateAuthAdminUser: async (userId: string) => requireAuthClient().activateAdminUser(userId),
     revokeAuthAdminUserSessions: async (userId: string) => requireAuthClient().revokeAdminUserSessions(userId),
+    getAuthAdminUserMfa: async (userId: string) => requireAuthClient().getAdminUserMfa(userId),
+    requireAuthAdminUserMfa: async (userId: string) => requireAuthClient().requireAdminUserMfa(userId),
+    clearAuthAdminUserMfaRequirement: async (userId: string) => requireAuthClient().clearAdminUserMfaRequirement(userId),
+    resetAuthAdminUserMfa: async (userId: string) => requireAuthClient().resetAdminUserMfa(userId),
+    sendAuthAdminVerificationEmail: async (userId: string) => requireAuthClient().sendAdminVerificationEmail(userId),
+    verifyAuthAdminUserEmail: async (userId: string) => requireAuthClient().verifyAdminUserEmail(userId),
 
     // ─── HTTP ──────────────────────────────────────────────────────
     fetch: clientFetch,

@@ -43,6 +43,75 @@ describe('Workflow aliases', () => {
     service.stop(instanceId);
     expect(service.get(instanceId)?.status).toBe('cancelled');
   });
+
+  test('keeps scheduled retries running and completes after a successful retry', async () => {
+    const registry = new WorkflowRegistry();
+    let attempts = 0;
+    registry.registerHandler('retry-once', async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('temporary failure');
+      return { ok: true };
+    });
+    registry.create({
+      name: 'retry-flow',
+      steps: [{ name: 'Retry once', handler: 'retry-once', retries: 2 }],
+    });
+    const service = new WorkflowService(db, registry);
+
+    const instanceId = await service.run('retry-flow');
+    expect(service.get(instanceId)?.status).toBe('running');
+    const step = service.getSteps(instanceId)[0]!;
+    expect(step.status).toBe('failed');
+    expect(step.retry_at).toBeString();
+    db.update('workflow_steps', step.step_id, {
+      retry_at: new Date(0).toISOString(),
+    });
+
+    expect(await service.pollRetries()).toBe(1);
+    expect(service.get(instanceId)?.status).toBe('completed');
+    expect(service.getSteps(instanceId)[0]?.status).toBe('completed');
+  });
+
+  test('marks a workflow failed as soon as its attempts are exhausted', async () => {
+    const registry = new WorkflowRegistry();
+    registry.registerHandler('always-fail', async () => {
+      throw new Error('permanent failure');
+    });
+    registry.create({
+      name: 'failed-flow',
+      steps: [{ name: 'Fail', handler: 'always-fail', retries: 1 }],
+    });
+    const service = new WorkflowService(db, registry);
+
+    const instanceId = await service.run('failed-flow');
+
+    expect(service.get(instanceId)).toMatchObject({
+      status: 'failed',
+      error: 'permanent failure',
+    });
+    expect(service.getSteps(instanceId)[0]).toMatchObject({
+      status: 'failed',
+      retry_at: null,
+    });
+  });
+
+  test('never completes a recovered workflow with a terminal failed step', async () => {
+    const registry = new WorkflowRegistry();
+    registry.registerHandler('always-fail', async () => {
+      throw new Error('terminal failure');
+    });
+    registry.create({
+      name: 'recovered-failure-flow',
+      steps: [{ name: 'Fail', handler: 'always-fail', retries: 1 }],
+    });
+    const service = new WorkflowService(db, registry);
+    const instanceId = await service.run('recovered-failure-flow');
+    db.update('workflow_instances', instanceId, { status: 'running' });
+
+    await service.recoverInFlight();
+
+    expect(service.get(instanceId)?.status).toBe('failed');
+  });
 });
 
 function defineWorkflowTables(db: ReactiveDB): void {

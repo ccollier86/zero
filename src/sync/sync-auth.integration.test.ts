@@ -27,8 +27,12 @@ function createVerifier(): SyncTokenVerifier {
   };
 }
 
-function createApp(authRequired = false) {
-  const verifier = createVerifier();
+function createApp(
+  authRequired = false,
+  verifier: SyncTokenVerifier = createVerifier(),
+  revalidateIntervalMs?: number,
+  allowLegacyQueryToken = true,
+) {
 
   return new Elysia()
     .use(
@@ -44,6 +48,8 @@ function createApp(authRequired = false) {
         auth: {
           required: authRequired,
           getTokenVerifier: () => verifier,
+          revalidateIntervalMs,
+          ...(allowLegacyQueryToken ? { allowLegacyQueryToken: true } : {}),
         },
       })
     )
@@ -179,6 +185,29 @@ describe('sync WebSocket auth integration', () => {
     conn.close();
   });
 
+  test('authenticates from the first message without a query-string token', async () => {
+    app = createApp(true);
+    const conn = await connectWS(getUrl(app));
+
+    conn.ws.send(JSON.stringify({ type: 'sync.auth', token: 'user-token' }));
+    const ready = await conn.waitForMessage((msg) => msg.type === 'sync.auth.ready');
+    expect(ready).toEqual({ type: 'sync.auth.ready', authenticated: true });
+
+    conn.ws.send(JSON.stringify({ type: 'state.subscribe' }));
+    const snapshot = await conn.waitForMessage((msg) => msg.type === 'state.snapshot');
+    expect(snapshot).toEqual({ type: 'state.snapshot', entries: {} });
+
+    conn.close();
+  });
+
+  test('rejects query-string bearer tokens unless compatibility is explicit', async () => {
+    app = createApp(true, createVerifier(), undefined, false);
+    const conn = await connectWS(getUrl(app, 'user-token'));
+    const close = await conn.waitForClose();
+    expect(close.code).toBe(4001);
+    expect(close.reason).toBe('Query token authentication disabled');
+  });
+
   test('valid admin token enables state sync for the admin user', async () => {
     app = createApp();
     const conn = await connectWS(getUrl(app, 'admin-token'));
@@ -196,6 +225,12 @@ describe('sync WebSocket auth integration', () => {
   test('missing token is rejected when sync auth is required', async () => {
     app = createApp(true);
     const conn = await connectWS(getUrl(app));
+
+    conn.ws.send(JSON.stringify({
+      type: 'sync.subscribe',
+      tables: ['todos'],
+      lastSeq: 0,
+    }));
 
     const close = await conn.waitForClose();
 
@@ -236,5 +271,28 @@ describe('sync WebSocket auth integration', () => {
     });
 
     conn.close();
+  });
+
+  test('live account revalidation closes an already-active revoked session', async () => {
+    let active = true;
+    const verifier: SyncTokenVerifier = {
+      async resolveAuthContext(token) {
+        if (!active || token !== 'live-token') return null;
+        return { userId: 'user-1', email: 'user@test.local', role: 'user' };
+      },
+      async verifyAccessToken() {
+        return { sub: 'user-1', email: 'user@test.local', role: 'user' };
+      },
+    };
+    app = createApp(true, verifier, 10);
+    const conn = await connectWS(getUrl(app));
+
+    conn.ws.send(JSON.stringify({ type: 'sync.auth', token: 'live-token' }));
+    await conn.waitForMessage((msg) => msg.type === 'sync.auth.ready');
+    active = false;
+
+    const close = await conn.waitForClose();
+    expect(close.code).toBe(4001);
+    expect(close.reason).toBe('Invalid auth token');
   });
 });

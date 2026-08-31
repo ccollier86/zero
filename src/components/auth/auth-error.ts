@@ -24,7 +24,7 @@ export function getAuthErrorCode(error: unknown): string | null {
 export function getAuthDisplayMessage(error: unknown, fallback: string): string {
   const code = getAuthErrorCode(error);
   if (code === 'PASSWORD_CHANGE_REQUIRED') {
-    return 'This account requires a password reset before signing in.';
+    return 'This account requires a password reset. Use the emailed reset link or request a new one.';
   }
   if (code === 'ACCOUNT_SUSPENDED') {
     return 'This account is suspended. Contact an administrator.';

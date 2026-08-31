@@ -7,6 +7,7 @@
  */
 
 import type { Row } from '../../sync/types';
+import type { StorageAccessCapabilities } from '../../storage/types';
 
 /** Storage drive row shape consumed by master-detail UI components. */
 export interface StorageDriveRow extends Row {
@@ -17,6 +18,7 @@ export interface StorageDriveRow extends Row {
   allowed_mime_types: string;
   public: number | string;
   owner_id: string | null;
+  access?: StorageAccessCapabilities;
 }
 
 /** Top-level storage management view. */

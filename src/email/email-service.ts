@@ -9,6 +9,7 @@
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import { EmailError } from './email-error';
+import { safeEmailFailureCode } from './email-failure-policy';
 import type { EmailConfig, EmailMessage, EmailProvider, EmailSendResult } from './types';
 
 /** Runtime service that applies defaults and delegates to a provider. */
@@ -37,7 +38,6 @@ export class EmailService {
       metadata: {
         provider: this.provider.name,
         toCount: normalizeRecipients(resolved.to).length,
-        subject: resolved.subject,
       },
     });
 
@@ -53,13 +53,26 @@ export class EmailService {
       });
       return result;
     } catch (error) {
+      const deliveryError = normalizeProviderError(error);
       emitPlatformCode(OBS_CODES.EMAIL_SEND_FAILED, {
-        error,
-        metadata: { provider: this.provider.name },
+        metadata: {
+          provider: this.provider.name,
+          code: safeEmailFailureCode(deliveryError),
+          status: deliveryError.status,
+        },
       });
-      throw error;
+      throw deliveryError;
     }
   }
+}
+
+function normalizeProviderError(error: unknown): EmailError {
+  if (error instanceof EmailError) return error;
+  return new EmailError(
+    'Email provider request failed',
+    'EMAIL_SEND_FAILED',
+    502
+  );
 }
 
 function validateMessage(message: EmailMessage): void {

@@ -2,7 +2,12 @@ import { Elysia } from 'elysia';
 import { createSyncPlugin } from '../../sync/sync.plugin';
 import { combineSyncPolicies, createDefaultSyncPolicy } from '../../sync/sync-policy';
 import { createAuthPlugin, getAuthStore, getTokenService } from '../../auth/auth.plugin';
+import { stopAuthRuntime } from '../../auth/auth-runtime';
 import { createAuthMiddleware } from '../../auth/auth.middleware';
+import {
+  rejectedPageSessionCookieHeader,
+  resolvePageSessionAuth,
+} from '../../auth/page-session';
 import { getSyncDB } from '../../sync/sync.plugin';
 import { createSchedulerPlugin, getScheduler } from '../../scheduler';
 import { createNotificationPlugin } from '../../notifications/notification.plugin';
@@ -21,6 +26,7 @@ import { buildPlatformStyles } from './style-bundle';
 import { configureEmail } from '../../email';
 import { createAIPlugin } from '../../ai';
 import { createKvPlugin } from '../../kv';
+import { createPdfPlugin } from '../../pdf';
 import type { AppConfig } from './types';
 import { resolveConfig } from './types';
 import { applyTableSyncResolution, resolveTableSyncModes } from './sync-mode-resolver';
@@ -36,6 +42,8 @@ import {
   ResourceSyncPolicyService,
   loadResourceDefinitions,
 } from '../../resources';
+import { installAppStopBarrier } from './app-stop-lifecycle';
+import { installAppSignalLifecycle } from './app-signal-lifecycle';
 
 // ─── App Factory ───────────────────────────────────────────────────────────
 
@@ -160,7 +168,10 @@ export async function createApp(userConfig: AppConfig) {
         dbPath: sqlite.snapshotPath ?? sqlite.path ?? ':memory:',
         migrations,
         applyPragmas: false,
-        createBackups: sqlite.mode === 'file',
+        // Both file and hot modes are durable migration targets. Hot mode is a
+        // live in-memory handle, so Migrator snapshots that handle even before
+        // its configured snapshot file exists.
+        createBackups: sqlite.mode !== 'ephemeral',
       });
       try {
         migrator.run();
@@ -196,6 +207,8 @@ export async function createApp(userConfig: AppConfig) {
         snapshotTables: config.snapshotTables,
         auth: config.auth !== false
           ? {
+              required: config.syncAuth === 'required',
+              modeDefaulted: config.syncAuthDefaulted,
               // Auth routes are mounted after sync, so the verifier is resolved lazily
               // when a WebSocket opens rather than during plugin composition.
               getTokenVerifier: getTokenService,
@@ -204,11 +217,7 @@ export async function createApp(userConfig: AppConfig) {
       })
     );
 
-    app.onStop(() => {
-      if (ownsSqlite) sqlite.close();
-    });
-
-    return await mountPlatformApp({
+    const mounted = await mountPlatformApp({
       app,
       config,
       syncPolicy,
@@ -218,6 +227,15 @@ export async function createApp(userConfig: AppConfig) {
       clientEntry,
       cssPath,
     });
+    // The platform-owned SQL service is the final lifecycle resource released.
+    // Injected services remain caller-owned.
+    mounted.onStop(() => {
+      if (ownsSqlite) sqlite.close();
+    });
+    const stopped = installAppStopBarrier(mounted, async () => {
+      if (config.auth !== false) await stopAuthRuntime();
+    });
+    return installAppSignalLifecycle(stopped);
   } catch (error) {
     if (ownsSqlite) sqlite.close();
     throw error;
@@ -276,9 +294,19 @@ async function mountPlatformApp({
         accessTokenTTL: config.auth.accessTokenTTL,
         refreshTokenTTL: config.auth.refreshTokenTTL,
         registration: config.auth.registration,
+        account: config.auth.account,
+        mfa: config.auth.mfa,
         accountEmails: config.auth.accountEmails,
+        branding: config.auth.branding,
+        emails: config.auth.emails,
         userProperties: config.auth.userProperties,
         strictUserProperties: config.auth.strictUserProperties,
+        nativeApps: config.auth.nativeApps,
+        nativeIssuer: resourceAuthConfig.nativeApps.issuer
+          ?? nativeIssuerFromPublicUrl(config.app.publicUrl),
+        nativeAudience: config.app.publicUrl?.replace(/\/+$/, ''),
+        loginPath: config.loginPath,
+        registrationPath: config.registrationPath,
       })
     );
 
@@ -305,6 +333,11 @@ async function mountPlatformApp({
     app.use(createVectorPlugin({
       config: config.vector,
     }));
+  }
+
+  // 2.75. PDF — lazy browser-grade renderer for server code and workflows
+  if (config.pdf !== false) {
+    app.use(createPdfPlugin({ config: config.pdf }));
   }
 
   // 2.8. KV/cache — memory-first app cache with journal/checkpoint recovery
@@ -400,23 +433,6 @@ async function mountPlatformApp({
     app.use(serverRoutePlugin as any);
   }
 
-  // ─── Process-level persistence safety net ───────────────
-  // Catches SIGINT/SIGTERM and ensures app.stop() runs (triggers hot snapshots
-  // or file-mode WAL checkpoints).
-  // Without this, Ctrl+C or container SIGTERM may skip onStop hooks.
-  let shuttingDown = false;
-  const gracefulShutdown = async (signal: string) => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    emitPlatformCode(OBS_CODES.APP_SHUTDOWN_SIGNAL, {
-      metadata: { signal },
-    });
-    await app.stop();
-    process.exit(0);
-  };
-  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-
   // 7. Health check — always available
   app.get('/api/health', () => ({ status: 'ok', uptime: process.uptime() }));
 
@@ -445,6 +461,14 @@ async function mountPlatformApp({
               routeAuth: config.routeAuth,
               publicPaths: config.publicPaths,
               loginPath: config.loginPath,
+              resolvePageAuth: async (request: Request) => {
+                const auth = await resolvePageSessionAuth(
+                  request,
+                  getTokenService()
+                );
+                return auth ? { ...auth } : null;
+              },
+              clearRejectedPageSession: rejectedPageSessionCookieHeader,
             },
           }
         : {}),
@@ -462,6 +486,10 @@ async function mountPlatformApp({
   );
 
   return app;
+}
+
+function nativeIssuerFromPublicUrl(publicUrl: string | undefined): string | undefined {
+  return publicUrl ? `${publicUrl.replace(/\/+$/, '')}/auth` : undefined;
 }
 
 /** Type helper — export the app type for Eden Treaty typed client. */

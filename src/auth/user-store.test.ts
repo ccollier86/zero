@@ -2,6 +2,9 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createReactiveDB, ReactiveDB } from '../sync/reactive-db';
 import { UserStore } from './user-store';
 import { AuthError } from './types';
+import { AuthActionTokenService } from './action-token-service';
+import { PlatformTokenService } from '../tokens/token-service';
+import { PlatformTokenStore } from '../tokens/token-store';
 
 // ─── Test Setup ───────────────────────────────────────────────────────────
 
@@ -20,6 +23,9 @@ function setupAuthTables(db: ReactiveDB): void {
     role: "text not null default 'user'",
     status: "text not null default 'active'",
     password_change_required: 'integer not null default 0',
+    email_verified_at: 'integer',
+    email_verification_required: 'integer not null default 0',
+    mfa_required: 'integer not null default 0',
     created_at: 'integer not null',
     updated_at: 'integer',
   });
@@ -111,9 +117,25 @@ describe('UserStore — User CRUD', () => {
     expect(user.firstName).toBe('Alice');
     expect(user.lastName).toBe('Smith');
     expect(user.role).toBe('user');
+    expect(user.emailVerifiedAt).toBeNull();
+    expect(user.emailVerificationRequired).toBe(false);
+    expect(user.mfaRequired).toBe(false);
     expect(user.createdAt).toBeGreaterThan(0);
     expect(user.updatedAt).toBeNull();
     expect(user.properties).toEqual({});
+  });
+
+  test('createUser canonicalizes email without changing the username', async () => {
+    const user = await store.createUser({
+      username: 'Case.Sensitive.User',
+      email: '  Mixed.Case@Example.COM  ',
+      password: 'password123',
+    });
+
+    expect(user.username).toBe('Case.Sensitive.User');
+    expect(user.email).toBe('mixed.case@example.com');
+    expect(store.getUserByEmail('  MIXED.CASE@EXAMPLE.COM ')?.userId).toBe(user.userId);
+    expect(store.getUserByUsername('case.sensitive.user')).toBeNull();
   });
 
   test('createUser with default role', async () => {
@@ -137,6 +159,50 @@ describe('UserStore — User CRUD', () => {
     expect(user.role).toBe('admin');
   });
 
+  test('concurrent registrations elect exactly one bootstrap administrator', async () => {
+    const created = await Promise.all(Array.from({ length: 6 }, (_, index) =>
+      store.createRegistrationUser({
+        username: `racer-${index}`,
+        email: `racer-${index}@example.com`,
+        password: 'password123',
+      }, (isBootstrap) => ({
+        isBootstrap,
+        role: isBootstrap ? 'admin' : 'user',
+        requireEmailVerification: false,
+        mfaRequired: isBootstrap,
+      }))
+    ));
+
+    expect(created.filter(({ user }) => user.role === 'admin')).toHaveLength(1);
+    expect(created.filter(({ policy }) => policy.isBootstrap)).toHaveLength(1);
+    expect(store.countUsersByRole('admin')).toBe(1);
+    expect(store.countUsersByRole('user')).toBe(5);
+  });
+
+  test('atomic registration admission closes after the bootstrap winner', async () => {
+    const attempts = await Promise.allSettled(Array.from({ length: 6 }, (_, index) =>
+      store.createRegistrationUser({
+        username: `closed-racer-${index}`,
+        email: `closed-racer-${index}@example.com`,
+        password: 'password123',
+      }, (isBootstrap) => {
+        if (!isBootstrap) {
+          throw new AuthError('Registration disabled', 'REGISTRATION_DISABLED', 403);
+        }
+        return {
+          role: 'admin' as const,
+          requireEmailVerification: false,
+          mfaRequired: false,
+        };
+      })
+    ));
+
+    expect(attempts.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+    expect(attempts.filter(({ status }) => status === 'rejected')).toHaveLength(5);
+    expect(store.countUsers()).toBe(1);
+    expect(store.countUsersByRole('admin')).toBe(1);
+  });
+
   test('createUser stores lifecycle status and password-change flag', async () => {
     const user = await store.createUser({
       username: 'setup',
@@ -149,6 +215,24 @@ describe('UserStore — User CRUD', () => {
     expect(user.status).toBe('active');
     expect(user.passwordChangeRequired).toBe(true);
     expect(store.getUserById(user.userId)!.passwordChangeRequired).toBe(true);
+  });
+
+  test('markEmailVerified stores verification timestamp and clears required flag', async () => {
+    const user = await store.createUser({
+      username: 'verify',
+      email: 'verify@example.com',
+      password: 'password123',
+      emailVerificationRequired: true,
+    });
+
+    expect(user.emailVerificationRequired).toBe(true);
+    expect(user.emailVerifiedAt).toBeNull();
+
+    const verified = store.markEmailVerified(user.userId, 12345);
+
+    expect(verified?.emailVerificationRequired).toBe(false);
+    expect(verified?.emailVerifiedAt).toBe(12345);
+    expect(store.getUserById(user.userId)?.emailVerifiedAt).toBe(12345);
   });
 
   test('createUser stores initial properties atomically', async () => {
@@ -225,6 +309,21 @@ describe('UserStore — User CRUD', () => {
       expect((err as AuthError).code).toBe('DUPLICATE_EMAIL');
       expect((err as AuthError).status).toBe(409);
     }
+  });
+
+  test('createUser rejects canonical variants of an existing email', async () => {
+    await store.createUser({
+      username: 'canonical-owner',
+      email: 'canonical@example.com',
+      password: 'password123',
+    });
+
+    await expect(store.createUser({
+      username: 'canonical-conflict',
+      email: '  CANONICAL@EXAMPLE.COM ',
+      password: 'password123',
+    })).rejects.toMatchObject({ code: 'DUPLICATE_EMAIL', status: 409 });
+    expect(store.countUsers()).toBe(1);
   });
 
   test('getUserById returns user', async () => {
@@ -355,6 +454,53 @@ describe('UserStore — User CRUD', () => {
     expect(updated!.lastName).toBe('Johnson');
     expect(updated!.role).toBe('admin');
     expect(updated!.updatedAt).toBeGreaterThan(0);
+  });
+
+  test('updateUser canonicalizes email and rejects canonical collisions', async () => {
+    const alice = await store.createUser({
+      username: 'canonical-update-alice',
+      email: 'alice-update@example.com',
+      password: 'pass12345',
+    });
+    const bob = await store.createUser({
+      username: 'canonical-update-bob',
+      email: 'bob-update@example.com',
+      password: 'pass12345',
+    });
+
+    expect(store.updateUser(alice.userId, {
+      email: '  ALICE.NEW@Example.COM ',
+    })?.email).toBe('alice.new@example.com');
+    expect(() => store.updateUser(bob.userId, {
+      email: ' ALICE.NEW@EXAMPLE.COM ',
+    })).toThrow(expect.objectContaining({ code: 'DUPLICATE_EMAIL' }));
+    expect(store.getUserById(bob.userId)?.email).toBe('bob-update@example.com');
+  });
+
+  test('legacy canonical email collisions fail closed without rewriting rows', async () => {
+    const first = await store.createUser({
+      username: 'legacy-email-one',
+      email: 'legacy-one@example.com',
+      password: 'pass12345',
+    });
+    const second = await store.createUser({
+      username: 'legacy-email-two',
+      email: 'legacy-two@example.com',
+      password: 'pass12345',
+    });
+    const writeLegacyEmail = db.prepare('UPDATE users SET email = ? WHERE user_id = ?');
+    writeLegacyEmail.run('Legacy.Collision@Example.com', first.userId);
+    writeLegacyEmail.run(' legacy.collision@example.com ', second.userId);
+
+    expect(store.getUserByEmail('legacy.collision@example.com')).toBeNull();
+    await expect(store.createUser({
+      username: 'legacy-email-three',
+      email: 'LEGACY.COLLISION@EXAMPLE.COM',
+      password: 'pass12345',
+    })).rejects.toMatchObject({ code: 'DUPLICATE_EMAIL' });
+
+    expect(store.getUserById(first.userId)?.email).toBe('Legacy.Collision@Example.com');
+    expect(store.getUserById(second.userId)?.email).toBe(' legacy.collision@example.com ');
   });
 
   test('updateUser returns null for missing user', () => {
@@ -494,6 +640,110 @@ describe('UserStore — Password', () => {
     expect(store.getRefreshTokenByHash('reset_hash')!.revokedAt).not.toBeNull();
   });
 
+  test('password action storage failure does not consume the recovery token', async () => {
+    const user = await store.createUser({
+      username: 'atomic-reset',
+      email: 'atomic-reset@example.com',
+      password: 'oldpassword1',
+    });
+    const platformTokens = new PlatformTokenService(new PlatformTokenStore(db), {
+      actionTokenCooldown: false,
+    });
+    const actionTokens = new AuthActionTokenService(store, '1h', '5m', platformTokens);
+    const created = actionTokens.create({
+      userId: user.userId,
+      type: 'password_reset',
+    });
+    db.exec(`
+      CREATE TRIGGER fail_password_action_update
+      BEFORE UPDATE ON _credentials
+      BEGIN
+        SELECT RAISE(ABORT, 'credential write failed');
+      END
+    `);
+
+    let failure: unknown;
+    try {
+      await store.completePasswordAction(user.userId, 'newpassword1', () => {
+        actionTokens.consume(created.rawToken, ['password_reset']);
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(actionTokens.inspect(created.rawToken, ['password_reset']).record.tokenId)
+      .toBe(created.record.tokenId);
+    expect(await store.verifyPassword(user.userId, 'oldpassword1')).toBe(true);
+    expect(await store.verifyPassword(user.userId, 'newpassword1')).toBe(false);
+  });
+
+  test('verification storage failure does not consume the email link', async () => {
+    const user = await store.createUser({
+      username: 'atomic-verification',
+      email: 'atomic-verification@example.com',
+      password: 'password123',
+      emailVerifiedAt: null,
+      emailVerificationRequired: true,
+    });
+    const platformTokens = new PlatformTokenService(new PlatformTokenStore(db), {
+      actionTokenCooldown: false,
+    });
+    const actionTokens = new AuthActionTokenService(store, '1h', '5m', platformTokens);
+    const created = actionTokens.create({
+      userId: user.userId,
+      type: 'email_verification',
+    });
+    db.exec(`
+      CREATE TRIGGER fail_email_verification_update
+      BEFORE UPDATE ON users
+      BEGIN
+        SELECT RAISE(ABORT, 'verification write failed');
+      END
+    `);
+
+    expect(() => store.completeEmailVerification(user.userId, () => {
+      actionTokens.consume(created.rawToken, ['email_verification']);
+    })).toThrow('verification write failed');
+    expect(actionTokens.inspect(created.rawToken, ['email_verification']).record.tokenId)
+      .toBe(created.record.tokenId);
+    expect(store.getUserById(user.userId)?.emailVerifiedAt).toBeNull();
+    expect(store.getUserById(user.userId)?.emailVerificationRequired).toBe(true);
+  });
+
+  test('verification invalidates sibling links and existing sessions', async () => {
+    const user = await store.createUser({
+      username: 'verification-siblings',
+      email: 'verification-siblings@example.com',
+      password: 'password123',
+      emailVerifiedAt: null,
+      emailVerificationRequired: true,
+    });
+    const platformTokens = new PlatformTokenService(new PlatformTokenStore(db), {
+      actionTokenCooldown: false,
+    });
+    const actionTokens = new AuthActionTokenService(store, '1h', '0s', platformTokens);
+    const first = actionTokens.create({
+      userId: user.userId, type: 'email_verification', skipCooldown: true,
+    });
+    const sibling = actionTokens.create({
+      userId: user.userId, type: 'email_verification', skipCooldown: true,
+    });
+    store.storeRefreshToken('pre-verification', user.userId, 'pre-verification-hash',
+      Date.now() + 60_000);
+
+    const verified = store.completeEmailVerification(user.userId, () => {
+      actionTokens.consume(first.rawToken, ['email_verification']);
+    });
+
+    expect(verified?.emailVerificationRequired).toBe(false);
+    expect(verified?.emailVerifiedAt).not.toBeNull();
+    expect(store.getAuthGeneration(user.userId)).toBe(1);
+    expect(store.getRefreshTokenByHash('pre-verification-hash')?.revokedAt).not.toBeNull();
+    expect(() => actionTokens.inspect(sibling.rawToken, ['email_verification']))
+      .toThrow('Action token is invalid');
+  });
+
   test('resetPassword returns false for missing user', async () => {
     expect(await store.resetPassword('u_missing', 'newpassword1')).toBe(false);
   });
@@ -509,6 +759,32 @@ describe('UserStore — Password', () => {
     expect(store.requirePasswordChange(user.userId)).toBe(true);
     expect(store.getUserById(user.userId)!.passwordChangeRequired).toBe(true);
     expect(store.getRefreshTokenByHash('force_hash')!.revokedAt).not.toBeNull();
+  });
+
+  test('requirePasswordChange rolls back the gate when generation storage fails', async () => {
+    const user = await store.createUser({
+      username: 'atomic-gate',
+      email: 'atomic-gate@example.com',
+      password: 'password123',
+    });
+    store.storeRefreshToken(
+      'tok_atomic_gate',
+      user.userId,
+      'atomic_gate_hash',
+      Date.now() + 86_400_000
+    );
+    db.exec(`
+      CREATE TRIGGER fail_auth_generation_bump
+      BEFORE INSERT ON _auth_user_generations
+      BEGIN
+        SELECT RAISE(ABORT, 'generation write failed');
+      END
+    `);
+
+    expect(() => store.requirePasswordChange(user.userId)).toThrow('generation write failed');
+    expect(store.getUserById(user.userId)!.passwordChangeRequired).toBe(false);
+    expect(store.getRefreshTokenByHash('atomic_gate_hash')!.revokedAt).toBeNull();
+    expect(store.getAuthGeneration(user.userId)).toBe(0);
   });
 });
 

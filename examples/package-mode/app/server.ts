@@ -1,7 +1,7 @@
 /**
  * server.ts
  *
- * App-owned server entry for the package-mode fixture. This file should stay
+ * App-owned server entry for a package-mode Zero app. This file should stay
  * small: import config, create the Zero app, and listen.
  */
 
@@ -11,5 +11,3 @@ import config from '../zero.config';
 const app = await createApp(config);
 
 app.listen(config.port);
-
-console.log(`Zero fixture listening on http://localhost:${config.port}`);

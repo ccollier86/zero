@@ -42,6 +42,17 @@ class MockWebSocket {
 
   send(data: string): void {
     this.sent.push(data);
+    try {
+      const message = JSON.parse(data) as { type?: string; token?: string };
+      if (message.type === 'sync.auth') {
+        this.onmessage?.(new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'sync.auth.ready',
+            authenticated: Boolean(message.token),
+          }),
+        }));
+      }
+    } catch {}
   }
 
   close(code?: number, reason?: string): void {
@@ -117,7 +128,11 @@ describe('createClient auth configuration', () => {
     await flushMicrotasks();
 
     expect(MockWebSocket.instances).toHaveLength(2);
-    expect(MockWebSocket.latest().url).toBe('ws://localhost:3000/sync?token=access-1');
+    expect(MockWebSocket.latest().url).toBe('ws://localhost:3000/sync');
+    expect(JSON.parse(MockWebSocket.latest().sent[0])).toEqual({
+      type: 'sync.auth',
+      token: 'access-1',
+    });
 
     const todos = client.collection('todos');
     todos.load([{ id: 'todo-1', title: 'Sensitive' }]);
@@ -149,7 +164,11 @@ describe('createClient auth configuration', () => {
     await flushMicrotasks();
 
     expect(MockWebSocket.instances).toHaveLength(1);
-    expect(MockWebSocket.latest().url).toBe('ws://localhost:3000/sync?token=access-1');
+    expect(MockWebSocket.latest().url).toBe('ws://localhost:3000/sync');
+    expect(JSON.parse(MockWebSocket.latest().sent[0])).toEqual({
+      type: 'sync.auth',
+      token: 'access-1',
+    });
   });
 });
 
@@ -167,6 +186,9 @@ function mockAuthFetch(): void {
           role: 'user',
           status: 'active',
           passwordChangeRequired: false,
+          emailVerifiedAt: 1,
+          emailVerificationRequired: false,
+          mfaRequired: false,
           properties: {},
           createdAt: 1,
           updatedAt: null,

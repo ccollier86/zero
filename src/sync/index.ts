@@ -24,7 +24,13 @@ export type { IdentityKey, IdentityValue } from './identity';
 
 // ─── Server: Sync Plugin ──────────────────────────────────────────────────
 export { createSyncPlugin, getSyncDB, getEphemeralManager } from './sync.plugin';
-export type { SyncPluginConfig, SyncSocketData } from './types';
+export type {
+  SyncAuthConfig,
+  SyncAuthContext,
+  SyncPluginConfig,
+  SyncSocketData,
+  SyncTokenVerifier,
+} from './types';
 export {
   allowAllSyncPolicy,
   combineSyncPolicies,
@@ -60,6 +66,8 @@ export type {
   SyncChangeMessage,
   SyncAckMessage,
   SyncCatchupMessage,
+  SyncAuthMessage,
+  SyncAuthReadyMessage,
   SyncSubscribeMessage,
   SyncMutateMessage,
   ClientMessage,
@@ -67,6 +75,8 @@ export type {
   PendingMutation,
   ClientTableDef,
   SyncClientConfig,
+  SyncAuthLifecycleBinder,
+  SyncClientLifecycleTarget,
 } from './types';
 
 // ─── Server: Ephemeral KV ──────────────────────────────────────────────────

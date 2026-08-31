@@ -28,12 +28,22 @@ import {
   isAuthConfigUnavailable,
   isPasswordResetUnavailable,
 } from './auth-config-ui-policy';
+import {
+  authFeedbackAnimate,
+  authFeedbackExit,
+  authFeedbackInitial,
+  authPanelAnimate,
+  authPanelExit,
+  authPanelInitial,
+  authPresenceTransition,
+} from './auth-motion';
+import { useNativeAuthContinuation, useNativeAuthRoute } from './use-native-auth-route';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 /** Props that control password-reset request behavior and navigation links. */
 interface ForgotPasswordFormProps {
-  onSubmit?: (email: string) => Promise<void>;
+  onSubmit?: (email: string, nativeContinuation?: string) => Promise<void>;
   onBack?: () => void;
   loginHref?: string;
   respectEmailPolicy?: boolean;
@@ -43,11 +53,13 @@ interface ForgotPasswordFormProps {
 
 // ─── Success state ───────────────────────────────────────────────────────────
 
-function SuccessState({ email }: { email: string }) {
+function ForgotPasswordSuccessState() {
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
+      initial={authPanelInitial}
+      animate={authPanelAnimate}
+      exit={authPanelExit}
+      transition={authPresenceTransition}
       className="flex flex-col items-center gap-3 py-2"
     >
       <div className="flex items-center justify-center rounded-full bg-green-500/10 p-3">
@@ -55,12 +67,9 @@ function SuccessState({ email }: { email: string }) {
           <CircleCheck size={32} className="text-green-500" />
         </AnimateIcon>
       </div>
-      <div className="text-center space-y-1">
-        <p className="text-sm font-medium">Check your inbox</p>
-        <p className="text-xs text-muted-foreground">
-          We sent a reset link to <span className="font-medium text-foreground">{email}</span>
-        </p>
-      </div>
+      <p className="max-w-sm text-center text-xs text-muted-foreground" aria-live="polite">
+        If an account exists for that address, a reset link will arrive shortly.
+      </p>
     </motion.div>
   );
 }
@@ -85,14 +94,16 @@ function ForgotPasswordForm({
   const configPending = isAuthConfigPending(respectEmailPolicy, authConfig);
   const configUnavailable = isAuthConfigUnavailable(respectEmailPolicy, authConfig);
   const resetUnavailable = isPasswordResetUnavailable(respectEmailPolicy, authConfig);
+  const nativeContinuation = useNativeAuthContinuation();
+  const continuedLoginHref = useNativeAuthRoute(loginHref);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
     try {
-      if (onSubmit) await onSubmit(email);
-      else await forgotPassword(email);
+      if (onSubmit) await onSubmit(email, nativeContinuation ?? undefined);
+      else await forgotPassword(email, nativeContinuation ?? undefined);
       setSent(true);
     } catch (err) {
       reportAuthUiError('forgotPassword', err);
@@ -107,29 +118,32 @@ function ForgotPasswordForm({
   }
 
   if (configUnavailable) {
-    return <>{unavailable ?? <ResetConfigUnavailable onBack={onBack} loginHref={loginHref} />}</>;
+    return <>{unavailable ?? <ResetConfigUnavailable onBack={onBack} loginHref={continuedLoginHref} />}</>;
   }
 
   if (resetUnavailable) {
-    return <>{unavailable ?? <ResetUnavailable onBack={onBack} loginHref={loginHref} />}</>;
+    return <>{unavailable ?? <ResetUnavailable onBack={onBack} loginHref={continuedLoginHref} />}</>;
   }
 
   return (
-    <div className={cn('space-y-3', className)}>
+    <div className={cn('space-y-4', className)}>
       <AuthHeader
-        title={sent ? 'Email sent' : 'Reset password'}
+        title={sent ? 'Request received' : 'Reset password'}
         description={sent ? undefined : 'Enter your email to receive a reset link'}
       />
 
-      <AnimatePresence mode="wait">
+      <AnimatePresence initial={false} mode="wait">
         {sent ? (
-          <SuccessState key="success" email={email} />
+          <ForgotPasswordSuccessState key="success" />
         ) : (
           <motion.form
             key="form"
             onSubmit={handleSubmit}
-            className="space-y-3"
-            exit={{ opacity: 0, height: 0 }}
+            className="space-y-4"
+            initial={authPanelInitial}
+            animate={authPanelAnimate}
+            exit={authPanelExit}
+            transition={authPresenceTransition}
           >
             <div className="space-y-1.5">
               <Label htmlFor="reset-email" className="text-sm font-medium">Email</Label>
@@ -141,17 +155,17 @@ function ForgotPasswordForm({
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className={cn('h-8 text-sm', error && 'border-destructive/50 focus-visible:ring-destructive/30')}
+                className={cn('h-10 text-sm', error && 'ring-[1px] ring-destructive/30')}
               />
             </div>
 
             <AnimatePresence>
               {error && (
                 <motion.div
-                  initial={{ opacity: 0, height: 0, y: -4 }}
-                  animate={{ opacity: 1, height: 'auto', y: 0, x: [0, -6, 6, -4, 4, 0] }}
-                  exit={{ opacity: 0, height: 0, y: -4 }}
-                  transition={{ duration: 0.4, ease: 'easeOut' }}
+                  initial={authFeedbackInitial}
+                  animate={authFeedbackAnimate}
+                  exit={authFeedbackExit}
+                  transition={authPresenceTransition}
                   className="overflow-hidden"
                 >
                   <div
@@ -169,16 +183,14 @@ function ForgotPasswordForm({
               )}
             </AnimatePresence>
 
-            <Button type="submit" size="sm" className="w-full h-8" disabled={loading || configPending}>
+            <Button type="submit" className="h-10 w-full" disabled={loading || configPending}>
               {loading ? (
                 <AnimateIcon animate loop>
                   <Loader size={16} />
                 </AnimateIcon>
               ) : (
                 <>
-                  <AnimateIcon animateOnHover>
-                    <Send size={14} className="mr-1" />
-                  </AnimateIcon>
+                  <Send size={14} className="mr-1" />
                   Send reset link
                 </>
               )}
@@ -193,7 +205,7 @@ function ForgotPasswordForm({
             Back to login
           </button>
         ) : (
-          <a href={loginHref} className="text-primary hover:underline">
+          <a href={continuedLoginHref} className="text-primary hover:underline">
             Back to login
           </a>
         )}
@@ -263,4 +275,8 @@ function ResetUnavailable({
   );
 }
 
-export { ForgotPasswordForm, type ForgotPasswordFormProps };
+export {
+  ForgotPasswordForm,
+  ForgotPasswordSuccessState,
+  type ForgotPasswordFormProps,
+};

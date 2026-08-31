@@ -29,9 +29,9 @@ import {
 } from './storage-format';
 import { openStorageNameDialog } from './storage-name-dialog';
 import { reportStorageActionError } from './storage-observability';
+import { StorageDriveDetail } from './storage-drive-detail';
 import { StorageDriveDetailHeader } from './storage-drive-detail-header';
 import {
-  storageDriveEditableFields,
   storageDriveListColumns,
   storageDriveSchema,
 } from './storage-drive-schema';
@@ -150,7 +150,7 @@ export function StorageDriveList({ onBrowse, className }: StorageDriveListProps)
         label: 'Browse Files',
         variant: 'default',
         onClick: () => { if (drive) onBrowse(drive.id); },
-        disabled: busy || !drive,
+        disabled: busy || !drive || drive.access?.canRead === false,
       },
       {
         icon: isStoragePublic(drive?.public) ? (
@@ -165,7 +165,7 @@ export function StorageDriveList({ onBrowse, className }: StorageDriveListProps)
         label: isStoragePublic(drive?.public) ? 'Make Private' : 'Make Public',
         variant: 'default',
         onClick: () => { if (drive) handleToggleVisibility(drive); },
-        disabled: busy || !drive,
+        disabled: busy || !drive || drive.access?.canAdmin !== true,
       },
       {
         icon: (
@@ -176,7 +176,7 @@ export function StorageDriveList({ onBrowse, className }: StorageDriveListProps)
         label: 'Delete',
         variant: 'destructive',
         onClick: () => { if (drive) handleDelete(drive); },
-        disabled: busy || !drive,
+        disabled: busy || !drive || drive.access?.canAdmin !== true,
       },
     ],
     [busy, handleDelete, handleToggleVisibility, onBrowse],
@@ -196,10 +196,17 @@ export function StorageDriveList({ onBrowse, className }: StorageDriveListProps)
       <MasterDetailPage<StorageDriveRow>
         schema={storageDriveSchema}
         listColumns={storageDriveListColumns}
-        editableFields={storageDriveEditableFields}
         primaryKey="id"
         data={data}
         detailHeader={({ item }) => <StorageDriveDetailHeader drive={item} />}
+        renderDetail={(item) => (
+          <StorageDriveDetail
+            drive={item}
+            busy={busy}
+            onSave={handleUpdate}
+            onRefresh={refresh}
+          />
+        )}
         navigationActions={navigationActions}
         emptyStateText={loading ? 'Loading drives...' : 'No drives yet. Create one to get started.'}
         primaryAction={{
@@ -216,7 +223,7 @@ export function StorageDriveList({ onBrowse, className }: StorageDriveListProps)
   );
 }
 
-function toStorageDriveRow(record: DriveRecord): StorageDriveRow {
+function toStorageDriveRow(record: DriveRecord & { access?: StorageDriveRow['access'] }): StorageDriveRow {
   return {
     id: record.drive_id,
     name: record.name,
@@ -225,6 +232,7 @@ function toStorageDriveRow(record: DriveRecord): StorageDriveRow {
     allowed_mime_types: record.allowed_mime_types,
     public: record.public,
     owner_id: record.owner_id,
+    access: record.access,
   };
 }
 

@@ -18,6 +18,7 @@ import {
 - [Schema Builder](#schema-builder)
 - [Client SDK](#client-sdk)
 - [Authentication](#authentication)
+  - [Installed app authentication](#installed-app-authentication)
 - [Real-Time Data (Collections)](#real-time-data-collections)
 - [CrudPage](#crudpage)
 - [Server State Sync](#server-state-sync)
@@ -445,6 +446,203 @@ All mutations are **optimistic** — they apply locally first, then sync to serv
 
 ## Authentication
 
+### Installed app authentication
+
+First choose a supported surface in the
+[App Authentication SDK Guide](auth/app-auth-sdk-guide.md). The implemented
+TypeScript core is exported from `@zero/framework/native`. The independently
+versioned Rust/Tauri packages are a Phase 0 design scaffold, while
+`@zero/chrome-auth` is a private MV3 preview; neither is a released package.
+
+#### `createZeroNativeAuthBroker(options)`
+
+Create the preferred process-wide TypeScript credential owner. The public
+`clientId` has no secret. Zero owns discovery, Authorization Code + PKCE,
+state/nonce/issuer checks, ES256 ID-token verification, refresh rotation, safe
+state, and same-origin authenticated fetch. The host owns the system browser,
+callback capture, and OS vault.
+
+```ts
+import {
+  createNativeSyncAuth,
+  createZeroNativeAuthBroker,
+  type NativeCallbackAdapter,
+  type NativeSecureVault,
+  type NativeSystemBrowser,
+} from '@zero/framework/native';
+
+declare const browser: NativeSystemBrowser;
+declare const callback: NativeCallbackAdapter;
+declare const secureStorage: NativeSecureVault;
+
+const auth = createZeroNativeAuthBroker({
+  serverUrl: 'https://app.example.com',
+  clientId: 'example-desktop',
+  browser,
+  callback,
+  secureStorage,
+  scopes: ['profile', 'email'],
+});
+
+await auth.initialize();
+await auth.signIn({ loginHint: 'person@example.com' });
+const user = auth.getUser();
+const response = await auth.fetch('/api/private');
+```
+
+The broker registry is keyed by `storageNamespace`. Repeating the same setup in
+one JavaScript process returns the existing owner. The default namespace is
+derived from issuer and client, while an explicit namespace remains fixed;
+changing issuer, client, redirect, scopes, or timeouts for an already-owned
+namespace throws
+`NATIVE_BROKER_CONFIG_CONFLICT` rather than racing the vault.
+
+`createZeroNativeAuth(options)` creates a direct owner without process-wide
+deduplication. Reserve it for a trusted host that already guarantees exactly
+one instance. `createNativeAuthClient(options)` is the lower-level issuer-based
+constructor; ordinary Zero apps should prefer the `serverUrl` facade.
+
+#### `ZeroNativeAuthOptions`
+
+| Option | Type/default | Purpose |
+|---|---|---|
+| `serverUrl` | required string | Exact HTTPS Zero app origin or its `/auth` issuer; loopback HTTP is development-only |
+| `clientId` | required string | Registered 1–128 character public client identifier |
+| `browser` | `NativeSystemBrowser` | Opens the validated authorization URL in the system browser |
+| `callback` | `NativeCallbackAdapter` | Arms and returns one loopback, claimed-HTTPS, or private-scheme callback session before the browser opens |
+| `secureStorage` | `NativeSecureVault` | Async OS keychain/keystore storage for versioned session and pending records |
+| `redirectUri` | optional string | Fixed registered redirect supplied to the callback adapter, normally used on mobile |
+| `scopes` | `['profile', 'email']` | Requested identity claims; `openid` is always added |
+| `storageNamespace` | derived from issuer/client | Vault prefix; changing it creates a different credential slot |
+| `authorizationTimeoutMs` | `900000` | Full system-browser transaction deadline |
+| `networkTimeoutMs` | `15000` | Discovery/token/revocation operation deadline |
+| `clockSkewSeconds` | `30` | ID-token validation skew, from 0 through 300 seconds |
+| `fetch` | global `fetch` | Injectable standards-compatible transport |
+| `crypto` | global WebCrypto adapter | Injectable PKCE entropy/hash adapter; global WebCrypto is still required for JOSE verification |
+| `now` | `Date.now` | Testable time source |
+
+The runtime requires global `fetch`, `URL`, `TextEncoder`, and WebCrypto with
+`getRandomValues` and `subtle`. React Native and Expo compatibility is not
+implied; validate discovery and ES256/JWKS verification on each runtime.
+
+#### `NativeAuthClient`
+
+| Member | Result and behavior |
+|---|---|
+| `state` | Current `NativeAuthState` |
+| `initialize()` | Discovers the provider, loads the vault, and rotates a stored session before reporting it authenticated |
+| `signIn(options?)` | Runs one system-browser sign-in transaction |
+| `signUp(options?)` | Runs the same transaction with Zero registration requested |
+| `completeAuthorization(url, signal?)` | Completes a durable cold-launch callback |
+| `refresh()` | Forces serialized refresh rotation when a stored session exists |
+| `getUser()` | Returns validated identity claims or `null` |
+| `getAccessToken()` | Returns a usable short-lived token or `null`; trusted integrations only |
+| `fetch(input, init?)` | Same-origin Bearer fetch, proactive refresh, and one 401 refresh/retry; ambient cookies and automatic redirects are disabled |
+| `signOut()` | Clears local pending/session state and attempts family revocation; a storage/revocation failure is reported even though memory state is signed out |
+| `subscribe(listener)` | Observes safe state and returns an unsubscribe function |
+
+States are `uninitialized`, `anonymous`, `authorizing`, `authenticated`, and
+`error`. Only `authenticated` is a usable session. `identity` is the validated
+OIDC projection (`sub` plus allowed profile/email claims), not a substitute for
+fresh server authorization. Failures are `NativeAuthError` values with safe
+`code`, `message`, and optional `status` fields.
+
+#### Platform adapter contracts
+
+```ts
+interface NativeSecureVault {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+
+interface NativeSystemBrowser {
+  open(url: string, options?: { signal?: AbortSignal }): Promise<void>;
+  close?(): Promise<void>;
+}
+
+interface NativeCallbackAdapter {
+  prepare(options: {
+    redirectUri?: string;
+    signal?: AbortSignal;
+  }): Promise<NativeCallbackSession>;
+}
+
+interface NativeCallbackSession {
+  readonly redirectUri: string;
+  waitForCallback(signal?: AbortSignal): Promise<string>;
+  dispose(): Promise<void>;
+}
+```
+
+`prepare()` must finish arming capture before it resolves. Use the system
+browser, never an embedded credential-collecting webview. Store session and
+pending data in Keychain, Credential Manager/DPAPI, Keystore-backed encrypted
+storage, or Secret Service—not renderer storage, ordinary preferences, or a
+plain database/file.
+
+The [desktop and mobile adapter recipes](../examples/native-auth/README.md)
+provide dependency-free host interfaces. The desktop TypeScript recipe assumes
+a trusted JavaScript owner such as Electron main or a deliberately secured
+sidecar. Tauri's Rust process cannot directly host it; use the Rust/Tauri package
+only after its Phase 0 scaffold becomes an implemented release.
+
+#### Broker IPC
+
+Keep one broker beside the vault, then expose only
+`NativeAuthBrokerTransport.request()` and `subscribeState()` through trusted
+IPC. Renderers create `createNativeAuthBrokerClient({ transport, serverUrl })`.
+The proxy applies monotonically increasing broker revisions so an old response
+cannot restore signed-out state. It can obtain short-lived access tokens for
+its own authenticated fetch and Sync, but it never receives the refresh token
+or vault interface. Call `dispose()` when the renderer/window closes.
+
+Do not log serialized broker requests. Do not add vault, arbitrary URL-fetch,
+or raw refresh commands to the fixed transport. Its
+`completeAuthorization` command still passes through the SDK's exact callback,
+state, and issuer validation; source cold-launch callbacks from the trusted host
+when the platform permits rather than treating a renderer URL as trusted.
+
+#### Sync integration
+
+```ts
+import { createNativeSyncAuth } from '@zero/framework/native';
+import { createSyncClient } from '@zero/framework/sync/client';
+
+const syncAuth = createNativeSyncAuth(auth);
+const sync = createSyncClient({
+  url: 'wss://app.example.com/sync',
+  tables,
+  ...syncAuth,
+});
+```
+
+Spread all of `syncAuth` into `createSyncClient()` or `SyncProvider`. Its
+`getToken` reads current access, `refreshAuth` rotates after a 4001 auth close,
+and `bindAuthLifecycle` prevents unauthenticated cold-start connections, purges
+local rows/mutations on sign-out or subject change, and reconnects only after a
+valid identity appears.
+
+#### Chrome and Rust/Tauri status
+
+The separate private `@zero/chrome-auth` preview centralizes the native broker
+in one MV3 service worker, uses `chrome.identity.launchWebAuthFlow()`, and gives
+privileged extension pages a fixed revision-ordered message protocol with no
+token or arbitrary-fetch command. Chrome extension storage is not worker-only,
+so every privileged extension page and its CSP are inside the credential
+boundary. Session mode targets Chrome 116+; opt-in local persistence targets
+Chrome 140+. It is not a released package and still requires a versioned
+framework peer, real-Chrome end-to-end testing, and security review.
+
+The standalone Rust `zero-native-auth` and `tauri-plugin-zero-auth` crates are
+Phase 0 `0.0.0` scaffolds. They currently validate config and serialize draft
+secret-free state only. They do not perform authentication, store credentials,
+open callbacks, expose Tauri commands, or make authenticated requests.
+
+See [Desktop, Mobile, and Chrome Extension Authentication](auth/native-app-auth.md)
+for registration, provider endpoints, redirect rules, continuation flows,
+revocation, and deployment checks.
+
 ### React hooks
 
 ```tsx
@@ -698,24 +896,29 @@ import { MasterDetailView } from '@zero/framework/react';
 ```
 
 For full-sync tables, `collection` subscribes through the reactive DB and
-auto-wires generated detail-form updates back to the collection. For lazy
-tables or external sources, pass `data` and `onUpdate`.
+auto-wires generated detail-form updates back to the collection. For large
+tables, use the same lazy `source` contract as `DataTableView`.
 
 ```tsx
-const clients = useLazyCollection<Client>('clients', { status: 'active' });
-
 <MasterDetailView
   schema={clientTable.schema}
-  data={clients.data}
+  source={{
+    type: 'lazy',
+    table: 'clients',
+    filters: { status: 'active' },
+    options: { limit: 100, order: 'created_at', dir: 'desc' },
+  }}
   listColumns={['first_name', 'last_name', 'status']}
   selectedId={selectedClientId}
   onSelectedIdChange={(id) => setSelectedClientId(id)}
-  onUpdate={(id, changes) => clients.update(id, changes)}
   renderDetail={(client, ctx) => (
     <ClientProfile client={client} onSave={ctx.update} />
   )}
 />
 ```
+
+For external sources, pass `source={{ type: 'data', data, actions, isLoading,
+error, refresh }}` or use the legacy `data` plus `onUpdate` props.
 
 ### Lazy tables
 
@@ -1471,12 +1674,24 @@ Use the storage HTTP routes for all writes so auth and permission checks run.
 
 ```tsx
 const { drives } = useStorageDrives();
-const { items, refresh } = useStorageFolder(driveId, '/reports');
+const { items, refresh } = useStorageFolder(driveId, '/reports', {
+  type: 'file',
+  sortBy: 'updated_at',
+  sortDir: 'desc',
+});
+const { capabilities } = useDriveCapabilities(driveId);
+const permissions = useStoragePermissions(capabilities?.canAdmin ? driveId : null);
 const { upload, progress } = useUpload();
 const actions = useStorageActions();
 
 await actions.createDrive('Reports', { public: false });
 await upload(driveId, file, { path: '/reports/q2.pdf', overwrite: true });
+await actions.grantPermission(driveId, {
+  grantType: 'property',
+  grantKey: 'department',
+  grantValue: 'accounting',
+  permission: 'read',
+});
 ```
 
 Storage hooks use the SDK client for authenticated transport. JSON routes call
@@ -1484,6 +1699,11 @@ Storage hooks use the SDK client for authenticated transport. JSON routes call
 rest of the frontend SDK. Uploads still use `XMLHttpRequest` for progress
 events, but they read the SDK client's in-memory access token and retry once
 after `client.refresh()` if the server returns 401.
+
+Storage drive responses include an `access` object for the current caller:
+`effectiveAccess`, `canRead`, `canWrite`, `canAdmin`, `isOwner`,
+`isPlatformAdmin`, and `isPublic`. Use that for UI state only; the backend still
+enforces every action.
 
 ### Server Service API
 
@@ -1503,6 +1723,7 @@ storage.permissions.grant(drive.drive_id, {
   grantValue: 'manager',
   permission: 'read',
 });
+const grants = storage.permissions.list(drive.drive_id);
 ```
 
 For public intake, resume-token, avatar, or guest document flows, backend code
@@ -1566,9 +1787,15 @@ function FilesPanel() {
 }
 ```
 
-`StorageManagement` composes smaller drive-list, file-browser, drive-header,
-and file-detail components. It uses the storage hooks above, so it must be
-rendered inside `AppProvider` or `ClientProvider`.
+`StorageManagement` composes smaller drive-list, settings, permission,
+file-browser, drive-header, dropzone, and file-detail components. It uses the
+storage hooks above, so it must be rendered inside `AppProvider` or
+`ClientProvider`.
+
+The management organism shows effective access, disables write/admin controls
+when the backend says the user lacks capability, manages role/user/property
+permission grants, filters/sorts folder contents, uploads through
+`StorageDropzone`, and creates presigned download links for private files.
 
 ### REST API
 
@@ -1579,8 +1806,9 @@ All routes are prefixed with `/storage`.
 | `GET` | `/drives` | optional | List current user's drives, or public drives when anonymous |
 | `POST` | `/drives` | user | Create a drive |
 | `GET` | `/drives/:driveId` | optional | Get public drive info, or private drive info for an authorized user |
-| `PATCH` | `/drives/:driveId` | owner/admin | Update drive settings |
-| `DELETE` | `/drives/:driveId` | owner/admin | Delete a drive |
+| `GET` | `/drives/:driveId/capabilities` | read | Current caller's effective storage access |
+| `PATCH` | `/drives/:driveId` | admin | Update drive settings |
+| `DELETE` | `/drives/:driveId` | admin | Delete a drive |
 | `GET` | `/drives/:driveId/usage` | read | Drive usage stats |
 | `POST` | `/drives/:driveId/upload` | write | Multipart file upload |
 | `GET` | `/drives/:driveId/files/*` | read/public | Download file, with Range and ETag support |
@@ -1589,7 +1817,8 @@ All routes are prefixed with `/storage`.
 | `POST` | `/drives/:driveId/move` | write | Move or rename file/folder |
 | `POST` | `/drives/:driveId/copy` | write | Copy a file |
 | `DELETE` | `/drives/:driveId/files/*` | write | Delete file/folder |
-| `PATCH` | `/drives/:driveId/visibility` | owner/admin | Change drive or object visibility |
+| `PATCH` | `/drives/:driveId/visibility` | admin | Change drive or object visibility |
+| `GET` | `/drives/:driveId/permissions` | admin | List drive/object permissions |
 | `POST` | `/drives/:driveId/permissions` | admin | Grant drive/object permission |
 | `DELETE` | `/permissions/:permissionId` | admin | Revoke permission |
 | `POST` | `/drives/:driveId/presign` | read/write | Create a presigned URL |
@@ -1610,11 +1839,15 @@ import { Elysia } from 'elysia';
 import {
   createAuthPlugin,
   createStoragePlugin,
+  installAuthStopBarrier,
 } from '@zero/framework/server';
 
-new Elysia()
+const app = installAuthStopBarrier(new Elysia()
   .use(createAuthPlugin({ db }))
-  .use(createStoragePlugin({ db, localDir: '.storage' }));
+  .use(createStoragePlugin({ db, localDir: '.storage' })));
+
+app.listen(3000);
+// Later: await app.stop(); db.dispose();
 ```
 
 ---
@@ -1767,8 +2000,9 @@ targets, see [Component Inventory](frontend/component-inventory.md).
 | `Label` | Form label (Radix) |
 | `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator` | Full dropdown select |
 | `Calendar` | Standalone calendar display (react-day-picker). Supports single, multi, and range modes. |
-| `DatePicker` | Date input + animated Popover + Calendar. Props: `value?: Date`, `onChange?`, `placeholder?`, `disabled?`, `transition?` |
+| `DatePicker` | Typed date input + animated Popover + Calendar. `M/D/YYYY` and `M-D-YYYY` (one- or two-digit month/day, four-digit year) normalize to the long display and select the same calendar date. Props include `value?`, `onChange?`, `placeholder?`, `disabled?`, `transition?`, and `calendarProps?` for bounded month/year navigation and disabled dates. |
 | `DateRangePicker` | Range variant with two months. Props: `value?: DateRange`, `onChange?`. Auto-closes on complete range. |
+| `TimePicker` | Token-aware hour/minute/period control. Emits canonical `HH:mm`; supports `minuteStep?`, `disabled?`, `name?`, and accessible labels. |
 | `Combobox` | Searchable select with cmdk. Props: `options: ComboboxOption[]`, `multiple?`, `searchable?`, `placeholder?`. Supports icons, groups, descriptions, multi-select with animated tag chips. |
 | `TagInput` | Chip-based tag input with keyboard support. Props: `value?: string[]`, `onChange?`, `maxTags?`, `allowDuplicates?`, `delimiter?`, `suggestions?`, `onSearch?`. Animated add/remove (spring 300/25). |
 | `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut` | cmdk-based command palette. `CommandDialog` uses animated Dialog (Pattern B: 3D flip). |
@@ -1777,7 +2011,7 @@ targets, see [Component Inventory](frontend/component-inventory.md).
 
 | Component | Description |
 |-----------|-------------|
-| `Badge`, `badgeVariants` | Status tags: default, secondary, destructive, outline |
+| `Badge`, `badgeVariants` | Status tags: default, secondary, destructive, warning, outline |
 | `Avatar`, `AvatarImage`, `AvatarFallback` | User avatar with image/initials fallback |
 | `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption` | Semantic HTML table |
 | `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis` | Pagination controls |
@@ -2117,17 +2351,28 @@ app.listen(3000);
 `@zero/framework/server` is only needed here in `app/server.ts`. All other app code imports from `@zero/framework/react`.
 
 The server provides:
-- `/sync` — WebSocket endpoint for real-time data sync, WebSocket token auth, sync policy, and registered resource read/mutation policy
+- `/sync` — WebSocket endpoint for real-time data sync, first-message Bearer auth, sync policy, and registered resource read/mutation policy
 - `/api/auth/*` — JWT authentication endpoints
 - `/api/_zero/observability/events` — protected recent event read + frontend event ingest
 - `zero.tokens` — server-side generic action/resume token service for secure links and public continuation flows
 - `zero.kv`, `zero.counter`, `zero.limiter` — server-side KV/cache, counters, and rate limiting
+- `zero.pdf` — optional browser-grade HTML/CSS-to-PDF rendering and direct storage composition
 - `/notifications/*` — Notification CRUD + receipt tracking (via `createNotificationPlugin`)
 - `/storage/*` — Authenticated drive and file storage routes (via `createStoragePlugin`)
 - `/scheduler/*` — Admin job management (via `createSchedulerPlugin`)
 - File-based routing from `pages/` directory
 - Static file serving from `public/`
 - SSR with streaming (React 19 `renderToReadableStream`)
+
+#### PDF Rendering
+
+Enable `pdf: true` in `zero.config.ts`, then run `bun run pdf:install` once per
+machine or deployment image. Backend handlers use `zero.pdf.render()` for
+bytes or `zero.pdf.renderToStorage()` for a private stored object. The default
+Chromium renderer supports modern layout and print CSS, disables JavaScript,
+denies remote and local resources, and enforces queue, timeout, input, and
+output limits. Zero mounts no public PDF endpoint. See
+[PDF Rendering](./pdf.md).
 
 #### Sync Defaults
 
@@ -2366,9 +2611,11 @@ app.listen(3000);
 | `useUploadQueue` | `() => UseUploadQueueReturn` | Sequential multi-file upload queue |
 | `useUploadDropzone` | `(options) => UseUploadDropzoneReturn` | `react-dropzone` bindings wired to Zero storage uploads |
 | `useStorageFile` | `(driveId, path) => UseStorageFileReturn` | One file/folder metadata, URL, delete, visibility, refresh |
-| `useStorageFolder` | `(driveId, path?) => UseStorageFolderReturn` | Folder listing |
+| `useStorageFolder` | `(driveId, path?, options?) => UseStorageFolderReturn` | Folder listing with type, cursor, limit, and sort options |
 | `useStorageBrowser` | `(driveId, initialPath?) => UseStorageBrowserReturn` | Folder navigation, selection, uploads, and common actions |
 | `useStorageDrives` | `() => UseStorageDrivesReturn` | Accessible drive list |
+| `useDriveCapabilities` | `(driveId, path?) => UseDriveCapabilitiesReturn` | Backend-resolved current-user storage access |
+| `useStoragePermissions` | `(driveId, objectPath?) => UseStoragePermissionsReturn` | Admin permission grant listing |
 | `useDriveUsage` | `(driveId) => UseDriveUsageReturn` | Drive usage stats |
 | `useDriveQuota` | `(driveId) => UseDriveQuotaReturn` | Drive usage plus derived quota flags |
 | `usePresignedUrl` | `() => UsePresignedUrlReturn` | Create presigned URLs |
@@ -2450,18 +2697,33 @@ Everything available from `@zero/framework/react`:
 `createClient`, `getClient`, `AuthClient`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
 
 ### React Components
-`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `KanbanBoard`, `KanbanTaskCard`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
+`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `KanbanBoard`, `KanbanTaskCard`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
 
 ### React Hooks
-`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
+`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
 
 ### Constants
 `STORAGE_TABLES`, `zeroAnimatedIconNames`, `zeroAnimatedIcons`
 
 ### Types
-`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `RegisterParams`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `StorageUploadGrant`, `StorageUploadGrantResource`, `DriveRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
+`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `RegisterParams`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `StorageUploadGrantResource`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
 
-Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `ResolvedConfig`, `AuthPluginConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `StorageDriveApi`, `StorageObjectApi`, `StoragePermissionApi`, `StorageUploadGrantApi`, `StorageServiceOptions`, `CreateUploadGrantTokenOptions`, `VerifiedUploadGrant`, `PlatformTokenService`, `PlatformActionTokenRecord`, `PlatformResumeTokenRecord`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `createAuthPlugin`, `createAuthMiddleware`, `getTokenService`, `createPlatformTokenPlugin`, `getPlatformTokenService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `createUploadGrantToken`, `verifyUploadGrantToken`, `emitPlatformCode`, `createObservabilityPlugin`
+Native-only (from `@zero/framework/native`): `createZeroNativeAuth`,
+`createZeroNativeAuthBroker`, `createNativeAuthClient`,
+`createNativeAuthBroker`, `createNativeAuthBrokerClient`,
+`createNativeSyncAuth`, `NativeAuthError`, `NativeAuthClient`,
+`NativeAuthClientOptions`, `NativeAuthState`, `NativeAuthStatus`,
+`NativeAuthErrorInfo`, `NativeAuthStateListener`, `NativeSignInOptions`,
+`NativeSignUpOptions`, `NativeIdentityScope`, `NativeAuthBroker`,
+`NativeAuthBrokerClient`, `NativeAuthBrokerClientOptions`,
+`NativeAuthBrokerRequest`, `NativeAuthBrokerResponse`,
+`NativeAuthBrokerTransport`, `NativeAuthBrokerSnapshot`,
+`NativeAuthBrokerStateListener`, `ZeroNativeAuth`, `ZeroNativeAuthOptions`,
+`NativeSecureVault`, `NativeSystemBrowser`, `NativeCallbackAdapter`,
+`NativeCallbackSession`, `NativeCryptoAdapter`, `NativeFetch`,
+`NativeSyncAuthConfig`, `NativeIdTokenClaims`, and `NativeOidcMetadata`.
+
+Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `ResolvedConfig`, `AuthPluginConfig`, `NativeAuthConfig`, `NativeAuthorizationRequestPolicyConfig`, `NativeAuthorizationSourceResolver`, `NativeRefreshRotationPolicyConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `StorageDriveApi`, `StorageObjectApi`, `StoragePermissionApi`, `StorageUploadGrantApi`, `StorageServiceOptions`, `CreateUploadGrantTokenOptions`, `VerifiedUploadGrant`, `PdfConfig`, `PdfRenderInput`, `PdfRenderResult`, `PdfService`, `PdfStorageTarget`, `PlatformTokenService`, `PlatformActionTokenRecord`, `PlatformResumeTokenRecord`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `defineNativeAuthConfig`, `resolveNativeAuthConfig`, `createAuthPlugin`, `installAuthStopBarrier`, `createAuthMiddleware`, `getTokenService`, `createPlatformTokenPlugin`, `getPlatformTokenService`, `createPdfPlugin`, `getPdfService`, `requirePdfService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `createUploadGrantToken`, `verifyUploadGrantToken`, `emitPlatformCode`, `createObservabilityPlugin`
 
 Sync-only (from `@platform/sync`): `createDefaultSyncPolicy`, `combineSyncPolicies`, `allowAllSyncPolicy`, `getReadableSyncTables`, `evaluateSyncReadPolicy`, `evaluateSyncMutationPolicy`, `SyncPolicy`, `SyncReadPolicyContext`, `SyncMutationPolicyContext`
 

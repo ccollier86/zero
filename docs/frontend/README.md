@@ -118,7 +118,7 @@ Drop a file in `app/`, it's a route. Subscribe to a table, it updates live. Regi
 | Rendering | React 19 | `renderToReadableStream`, Suspense, server components |
 | State | @xstate/store | Client reactive store, sync engine integration |
 | RPC | Eden Treaty | Typed REST client generated from Elysia types |
-| Auth | Auth plugin | Argon2id, ES256 JWTs, stateless verification |
+| Auth | Auth plugin | Argon2id, ES256 JWTs, live user/session resolution |
 | Sync | Sync plugin | WebSocket real-time, onChange → publish |
 
 ## What This Is

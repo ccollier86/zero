@@ -39,6 +39,7 @@ ambiguous, group by resource first.
 | `zero.ai` | `status()`, `getStatus()` | `status()` |
 | `zero.vector` | `list()`, `search()`, `get()`, `status()`, `getStatus()` | `listIndexes()`, `query()`, `fetch()`, `stats()` |
 | `zero.vector.scope(...)` | `search()`, `get()`, `status()` | `query()`, `fetch()`, `stats()` |
+| `zero.pdf` | `render()`, `renderToStorage()`, `status()`, `close()` | No aliases needed. |
 | `Migrator` | `run()`, `rollback()`, `list()` | `status()` |
 | `zero.email` | `send()` | No alias needed. |
 | `zero.observability` | `emitCode()`, `emitEvent()`, `info()`, `warn()`, `error()` | Existing sink/runtime helpers remain. |
@@ -107,7 +108,8 @@ Future generated docs and scaffolds should use:
 2. `zero.auth.store?.create/get/list/update/delete` when directly managing
    users from backend code.
 3. `zero.vector.search/get/status` for vector reads.
-4. `zero.scheduler.create/run/list` for jobs.
-5. `zero.workflows.run/get/list/stop` for workflow instances.
-6. `zero.storage.drives`, `zero.storage.objects`, `zero.storage.permissions`,
+4. `zero.pdf.render/renderToStorage/status` for generated documents.
+5. `zero.scheduler.create/run/list` for jobs.
+6. `zero.workflows.run/get/list/stop` for workflow instances.
+7. `zero.storage.drives`, `zero.storage.objects`, `zero.storage.permissions`,
    and `zero.storage.uploads` for backend storage tasks.

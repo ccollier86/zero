@@ -6,13 +6,14 @@
  */
 
 import { EmailError } from './email-error';
+import {
+  EMAIL_PROVIDER_REQUEST_REJECTED,
+  isDeterministicEmailProviderRejection,
+} from './email-failure-policy';
 import type { EmailMessage, EmailProvider, EmailSendResult, ResendEmailProviderConfig } from './types';
 
 interface ResendSendResponse {
   id?: string;
-  name?: string;
-  message?: string;
-  statusCode?: number;
 }
 
 /** Production email provider using Resend's send-email API. */
@@ -43,7 +44,11 @@ export class ResendEmailProvider implements EmailProvider {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
         'Content-Type': 'application/json',
+        ...(message.idempotencyKey
+          ? { 'Idempotency-Key': message.idempotencyKey }
+          : {}),
       },
+      signal: message.signal,
       body: JSON.stringify({
         from: message.from,
         to: accepted,
@@ -55,15 +60,16 @@ export class ResendEmailProvider implements EmailProvider {
       }),
     });
 
-    const body = await response.json().catch(() => null) as ResendSendResponse | null;
-
     if (!response.ok) {
       throw new EmailError(
-        body?.message ?? 'Resend email send failed',
-        'EMAIL_SEND_FAILED',
+        'Email provider request failed',
+        isDeterministicEmailProviderRejection(response.status)
+          ? EMAIL_PROVIDER_REQUEST_REJECTED
+          : 'EMAIL_SEND_FAILED',
         response.status
       );
     }
+    const body = await response.json().catch(() => null) as ResendSendResponse | null;
 
     return {
       id: body?.id,

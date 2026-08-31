@@ -274,7 +274,8 @@ Server → Client:
 - **Table creation**: `users` and `user_properties` via `defineTable()` (reactive). `_credentials`, `_refresh_tokens`, `_auth_config`, `_audit_log` via `db.exec()` (internal).
 - **Refresh token lookup**: `SELECT * WHERE token_hash = ?` returns all (including revoked). Check `revoked_at`/`expires_at` in code. Enables replay detection — reused revoked token → revoke ALL user tokens.
 - **Inactivity**: `AuditConfig.onInactive?: (userId: string) => void` callback. Auth plugin wires it to revoke tokens + publish `auth.session-expired`. Clean DI — audit doesn't know about tokens.
-- **Logout**: `POST /auth/logout` takes `{ refreshToken }` in body + Bearer in header. Both required.
+- **Logout**: `POST /auth/logout` accepts an optional `{ refreshToken }` body and always clears/revokes the HttpOnly page session. Bearer auth is not required so logout can still clear the server-readable cookie after browser token state is lost.
+- **SSR page session**: Successful auth completion also sets a refresh-bound HttpOnly `SameSite=Lax` cookie. The file router accepts it only for matched `GET`/`HEAD` pages; APIs, mutations, extensions, and sync remain Bearer-only.
 - **`auth.session-expired`**: Published to `auth:{userId}` topic: `{ type, reason: 'inactive' | 'revoked' | 'token-expired' }`. Client clears auth state, fires `onSessionExpired`.
 
 ### Files to Build
@@ -375,7 +376,7 @@ _audit_log (id PK, user_id, event_type, data, ts)
 | POST | /auth/register | No | `{ username, email, password, firstName?, lastName? }` | `{ accessToken, refreshToken, user }` |
 | POST | /auth/login | No | `{ username, password }` | `{ accessToken, refreshToken, user }` |
 | POST | /auth/refresh | No | `{ refreshToken }` | `{ accessToken, refreshToken }` |
-| POST | /auth/logout | Bearer | `{ refreshToken }` | `{ ok: true }` |
+| POST | /auth/logout | No | `{ refreshToken? }` | `{ ok: true }` |
 | POST | /auth/change-password | Bearer | `{ currentPassword, newPassword }` | `{ ok: true }` |
 | GET | /auth/me | Bearer | — | `{ user, properties }` |
 | GET | /auth/jwks | No | — | `{ keys: JWK[] }` |

@@ -9,6 +9,8 @@ import { resolveVectorConfig } from '../../vector/vector-config';
 import type { ResolvedVectorConfig, VectorConfig } from '../../vector/vector-types';
 import type { ResourceCrudRoutesConfig, ResourceDefinition } from '../../resources';
 import type { KvServiceConfig } from '../../kv';
+import { resolvePdfConfig } from '../../pdf/pdf-config';
+import type { PdfConfig, ResolvedPdfConfig } from '../../pdf/pdf-types';
 import {
   resolveRouteAuthMode,
   type RouteAuthMode,
@@ -95,6 +97,15 @@ export interface SitemapConfig {
   exclude?: readonly string[];
 }
 
+/** App-owned hints for platform doctor checks that cannot be inferred statically. */
+export interface AppDoctorConfig {
+  /**
+   * Non-unique indexes managed by migrations or startup compatibility code.
+   * Keys are table names; values are indexed column names.
+   */
+  indexedFields?: Record<string, readonly string[]>;
+}
+
 /** Normalized sitemap config consumed by the router plugin. */
 export interface ResolvedSitemapConfig {
   path: string;
@@ -120,6 +131,9 @@ export interface ResolvedSyncDefaults {
   persist: boolean;
   tables: Map<string, ResolvedTableSyncDefault>;
 }
+
+/** WebSocket sync authentication policy for full-stack platform apps. */
+export type SyncAuthMode = 'required' | 'public';
 
 /**
  * Configuration for createApp() — the single entry point for
@@ -192,8 +206,26 @@ export interface AppConfig {
    */
   kv?: boolean | KvServiceConfig;
 
+  /**
+   * Browser-grade HTML-to-PDF rendering.
+   *
+   * `true` enables secure Chromium defaults. Object config controls print
+   * defaults, resource policy, limits, and custom renderer adapters. The
+   * browser starts lazily on the first render. Default: false.
+   */
+  pdf?: boolean | PdfConfig;
+
   /** Enable per-user server-persisted state. Default: false */
   stateSync?: boolean;
+
+  /**
+   * WebSocket sync authentication policy.
+   *
+   * Auth-enabled apps default to `required` and fail closed. Use `public`
+   * explicitly only when anonymous sync access is deliberate. Authless apps
+   * always use public sync.
+   */
+  syncAuth?: SyncAuthMode;
 
   /**
    * Optional sync authorization policy for app-owned tables.
@@ -300,7 +332,8 @@ export interface AppConfig {
   /**
    * Paths that don't require authentication (exact + prefix match).
    * Only used by the global protected-by-default auth guard.
-   * Default: ['/login', '/register', '/forgot-password']
+   * The default includes the resolved login/registration paths plus account
+   * lifecycle pages. An explicitly supplied list remains authoritative.
    */
   publicPaths?: string[];
 
@@ -328,6 +361,12 @@ export interface AppConfig {
    * Default: '/login'
    */
   loginPath?: string;
+
+  /** Registration route used by native-app browser authorization. Default: '/register'. */
+  registrationPath?: string;
+
+  /** App-owned hints for platform doctor checks. */
+  doctor?: AppDoctorConfig;
 }
 
 /**
@@ -353,7 +392,11 @@ export interface ResolvedConfig {
   ai: false | ResolvedAIConfig;
   vector: false | ResolvedVectorConfig;
   kv: false | KvServiceConfig;
+  pdf: false | ResolvedPdfConfig;
   stateSync: boolean;
+  syncAuth: SyncAuthMode;
+  /** Whether an auth-enabled app inherited the secure required-sync default. */
+  syncAuthDefaulted: boolean;
   syncPolicy?: SyncPolicy;
   resources: readonly ResourceDefinition[];
   resourceRoutes: false | ResourceCrudRoutesConfig;
@@ -373,6 +416,8 @@ export interface ResolvedConfig {
   routeAuth: RouteAuthMode;
   sitemap: false | ResolvedSitemapConfig;
   loginPath: string;
+  registrationPath: string;
+  doctor: AppDoctorConfig;
   /** Table names with lazy sync mode — auto-registered for /api/data queries. */
   lazyTables: Set<string>;
   /** Table names that may be included in websocket snapshot payloads. */
@@ -404,12 +449,25 @@ export function resolveConfig(
   const ai = resolveAIConfig(config.ai, env);
   const vector = resolveVectorConfig(config.vector, env);
   const kv = resolveKvConfig(config.kv);
+  const pdf = resolvePdfConfig(config.pdf, env);
   const stateSync = config.stateSync ?? false;
+  const syncAuth = config.syncAuth ?? (auth === false ? 'public' : 'required');
+  const syncAuthDefaulted = auth !== false && config.syncAuth === undefined;
   const routeAuth = resolveRouteAuthMode(config.routeAuth, auth !== false);
   const sitemap = resolveSitemapConfig(config.sitemap);
+  const loginPath = config.loginPath ?? '/login';
+  const registrationPath = config.registrationPath ?? '/register';
+  const publicPaths = config.publicPaths ?? defaultPublicPaths(
+    loginPath,
+    registrationPath,
+    auth
+  );
 
   if (stateSync && auth === false) {
     throw new Error('[app] stateSync requires auth: true because server state is keyed by authenticated user.');
+  }
+  if (auth === false && syncAuth === 'required') {
+    throw new Error('[app] syncAuth: \'required\' requires auth: true.');
   }
 
   const syncDefaults = normalizeSyncDefaults(config.syncDefaults);
@@ -457,7 +515,10 @@ export function resolveConfig(
     ai,
     vector,
     kv,
+    pdf,
     stateSync,
+    syncAuth,
+    syncAuthDefaulted,
     syncPolicy: config.syncPolicy,
     resources: config.resources ?? [],
     resourceRoutes: config.resourceRoutes === false
@@ -478,16 +539,68 @@ export function resolveConfig(
     port: config.port ?? 3000,
     migrate: config.migrate ?? true,
     observability: config.observability,
-    publicPaths: config.publicPaths ?? ['/login', '/register', '/forgot-password'],
+    publicPaths,
     routeAuth,
     sitemap,
-    loginPath: config.loginPath ?? '/login',
+    loginPath,
+    registrationPath,
+    doctor: config.doctor ?? {},
     lazyTables,
     snapshotTables,
     declaredSyncModes,
     resolvedSyncModes: {},
     tableColumns,
   };
+}
+
+function defaultPublicPaths(
+  loginPath: string,
+  registrationPath: string,
+  auth: false | AuthBehaviorConfig
+): string[] {
+  const account = auth === false ? undefined : auth.account;
+  const accountEmails = auth === false ? undefined : auth.accountEmails;
+
+  return [...new Set([
+    authRoutePathname(loginPath, '/login', 'loginPath'),
+    authRoutePathname(registrationPath, '/register', 'registrationPath'),
+    '/forgot-password',
+    authRoutePathname(
+      accountEmails?.resetPath,
+      '/reset-password',
+      'accountEmails.resetPath'
+    ),
+    authRoutePathname(
+      accountEmails?.setupPath,
+      '/setup-password',
+      'accountEmails.setupPath'
+    ),
+    authRoutePathname(
+      account?.emailVerificationPath,
+      '/verify-email',
+      'account.emailVerificationPath'
+    ),
+  ])];
+}
+
+function authRoutePathname(
+  value: string | undefined,
+  fallback: string,
+  label: string
+): string {
+  const configured = value?.trim() || fallback;
+  const suffix = configured.search(/[?#]/);
+  const path = suffix === -1 ? configured : configured.slice(0, suffix);
+  const localPath = path.startsWith('/') ? path : `/${path}`;
+  if (
+    !path
+    || localPath.startsWith('//')
+    || /^[a-z][a-z\d+.-]*:/i.test(path)
+    || /[\\\u0000-\u001f\u007f]/.test(path)
+  ) {
+    throw new Error(`[app] ${label} must be a safe local path.`);
+  }
+  return new URL(localPath, 'https://zero.local').pathname;
 }
 
 /** Normalize sitemap config while keeping the feature opt-in. */

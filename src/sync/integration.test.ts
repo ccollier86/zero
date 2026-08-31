@@ -535,6 +535,8 @@ describe('sync engine integration', () => {
     );
     expect(snapshot.type).toBe('sync.snapshot');
     const lastSeq = snapshot.type === 'sync.snapshot' ? snapshot.seq : 0;
+    const epoch = snapshot.type === 'sync.snapshot' ? snapshot.epoch : undefined;
+    const scope = snapshot.type === 'sync.snapshot' ? snapshot.scope : undefined;
 
     db!.insert('logs', { id: 'l1', message: 'Lazy table catchup' });
     db!.insert('todos', { id: 'after', title: 'Full table catchup', done: 0 });
@@ -547,6 +549,8 @@ describe('sync engine integration', () => {
         tables: ['todos', 'logs'],
         snapshot: ['todos'],
         lastSeq,
+        epoch,
+        scope,
       })
     );
 

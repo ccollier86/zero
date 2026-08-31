@@ -2,7 +2,8 @@
 
 Zero is a Bun/Elysia full-stack app platform. The goal is fast data-driven app
 development without wiring separate backend services for auth, storage, sync,
-workflows, notifications, state, platform tokens, or email account flows.
+workflows, notifications, state, platform tokens, PDF rendering, or email
+account flows.
 
 Before platform work, read:
 
@@ -10,6 +11,11 @@ Before platform work, read:
 2. [Observability](./observability.md)
 3. [Component Inventory](./frontend/component-inventory.md)
 4. [Releasing Zero](./releasing.md)
+
+For a fresh repo orientation, read the root [README](../README.md). For
+agent-assisted app development, give the agent [llms.txt](../llms.txt) before
+it starts planning so it reaches for Zero surfaces before rebuilding existing
+pieces.
 
 New reusable platform logs, warnings, caught errors, and lifecycle events should
 go through the observability boundary. When touching code that bypasses it,
@@ -26,19 +32,27 @@ and data organisms, start with the
 For styling decisions, read [Frontend Design Tokens](./frontend/design-tokens.md):
 Zero now has a quiet core app lane for dashboards and a richer public/frontend
 lane for docs, marketing, blogs, landing pages, and public flows.
-The repository also includes `examples/package-mode` as a small generated-app
-fixture that imports Zero through `@zero/framework/*`.
+The repository also includes `examples/package-mode` as the blank generated-app
+starter that imports Zero through `@zero/framework/*`.
+Packaged `examples/native-auth` factories show the minimal trusted host bridge
+for desktop loopback and mobile browser-authentication sessions using the
+implemented `@zero/framework/native` TypeScript core. They do not make the
+separate Rust/Tauri Phase 0 scaffold or private Chrome preview released SDKs.
+Choose an installed-app surface with the
+[App Authentication SDK Guide](./auth/app-auth-sdk-guide.md), then use the
+[complete provider guide](./auth/native-app-auth.md) for redirects, lifecycle,
+security, and deployment.
 The in-repo LaunchBoard app is the larger frontend reference: it keeps root
 providers in `app/layout.tsx`, mounts its shell at `/` through
 `app/(launchboard)/layout.tsx`, and uses AppShell, ReactiveDB collections,
-KanbanBoard, and the platform modal manager together. See
-[LaunchBoard](./frontend/launchboard.md) before building dashboard/work-queue
-style apps.
+KanbanBoard, auth bootstrap routes, owner-scoped resources, and the platform
+modal manager together. See [LaunchBoard](./frontend/launchboard.md) before
+building dashboard/work-queue style apps.
 
 Core backend primitives include ReactiveDB, generated resources, WebSocket
-sync, auth, email, storage, workflows, notifications, AI, vector storage, and
-[platform tokens](./tokens.md) for one-time actions plus resumable public
-flows.
+sync, auth, email, storage, workflows, notifications, AI, vector storage,
+[PDF rendering](./pdf.md), and [platform tokens](./tokens.md) for one-time
+actions plus resumable public flows.
 
 Create a new app with:
 
@@ -55,6 +69,68 @@ Inside this repository, the same scaffolder is available as:
 bun run create-zero -- my-app
 ```
 
+For local framework development before publishing Zero, generate the app from
+a publish-style archive of this checkout:
+
+```sh
+bun run install:local-tools
+zero-new ../my-zero-app
+cd ../my-zero-app
+bun run dev
+```
+
+Without the local convenience wrapper:
+
+```sh
+bun run create-zero -- ../my-zero-app --local --install
+cd ../my-zero-app
+bun run dev
+```
+
+## Update Zero Without Regenerating The App
+
+For an app created from this checkout, stop its app/dev server, install the
+local tools once, and run the checkout-bound updater from the app:
+
+```sh
+cd /path/to/zero-platform
+bun run install:local-tools
+cd /path/to/my-zero-app
+zero-update
+```
+
+`zero-update [project-dir]` defaults to the current directory and packs the
+checkout that installed the wrapper. Preview it with `zero-update --dry-run`.
+For published-package projects, use `bun run zero update --project .`; add
+`--latest` only when you intentionally want the newest published release. If
+the installed framework predates this command, bootstrap it with
+`bunx --package @zero/framework@latest zero update --project .`. The equivalent
+explicit local command is:
+
+```sh
+zero update --project /path/to/my-zero-app --local /path/to/zero-platform
+```
+
+The project must already have exactly one `bun.lock` or `bun.lockb`, even for a
+dry-run. Commit that lockfile for checkout-local apps. The updater directly
+manages only Zero dependency artifacts and package-manager install state. A
+local update regenerates the ignored `.zero/framework/zero-framework.tgz`
+cache from the chosen checkout. In a clean clone, the `.zero/` directories and
+archive may be completely absent; a mutating update creates them before
+installation, while `--dry-run` reports the pending work without creating
+anything. Existing symlinks or wrong-type entries at those managed paths are
+rejected. The updater leaves app-owned files, environment configuration,
+databases, and storage alone in its default mode, and runs no app-defined
+scripts. `--check` executes the project's existing typecheck and Doctor
+scripts; review them first because their side effects are outside updater
+rollback. Zero itself never selects a migration command. Run
+`bun run migrate:plan` separately and intentionally against the correct
+database or a safe copy before applying any database change.
+
+Do not run `create-zero --force` or `zero-new --force` against an existing app
+to update it. Those commands scaffold projects and may replace a non-empty
+target; they are never an update path.
+
 Put app config in `zero.config.ts` so the server, platform doctor, and future
 tools read the same source:
 
@@ -70,10 +146,17 @@ const hasAI = Boolean(
   Bun.env.GEMINI_API_KEY ||
   Bun.env.GOOGLE_API_KEY ||
   Bun.env.GROQ_API_KEY ||
+  Bun.env.XAI_API_KEY ||
+  Bun.env.COHERE_API_KEY ||
   Bun.env.META_LLAMA_API_KEY ||
-  Bun.env.LLAMA_API_KEY
+  Bun.env.LLAMA_API_KEY ||
+  Bun.env.DEEPSEEK_API_KEY ||
+  Bun.env.PERPLEXITY_API_KEY ||
+  Bun.env.VOYAGE_API_KEY ||
+  Bun.env.DEEPGRAM_API_KEY
 );
 const hasVector = Bun.env.ZERO_VECTOR_ENABLED === 'true';
+const hasPdf = Bun.env.ZERO_PDF_ENABLED === 'true';
 
 const config = defineZeroConfig({
   app: {
@@ -99,16 +182,9 @@ const config = defineZeroConfig({
         resend: { apiKey: Bun.env.RESEND_API_KEY },
       }
     : false,
-  auth: {
-    registration: { mode: 'admin-only' },
-    accountEmails: {
-      adminCreatedUser: hasEmail,
-      passwordReset: hasEmail,
-      manualPasswordReset: Bun.env.AUTH_MANUAL_PASSWORD_RESET !== 'false',
-      actionTokenTTL: Bun.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
-      requestCooldown: Bun.env.AUTH_ACCOUNT_EMAIL_COOLDOWN ?? '5m',
-    },
-  },
+  // Generated apps start public. Change to `true` or an auth object when the
+  // app needs accounts, email verification, MFA, or admin user management.
+  auth: false,
   routeAuth: 'explicit',
   sitemap: {
     enabled: true,
@@ -123,12 +199,24 @@ const config = defineZeroConfig({
         defaultDimensions: Number(Bun.env.ZERO_VECTOR_DEFAULT_DIMENSIONS ?? 1536),
       }
     : false,
-  stateSync: true,
+  pdf: hasPdf
+    ? {
+        browser: {
+          executablePath: Bun.env.ZERO_PDF_EXECUTABLE_PATH,
+        },
+      }
+    : false,
+  kv: {
+    baseDir: Bun.env.ZERO_KV_BASE_DIR ?? './data/kv',
+    durability: Bun.env.ZERO_KV_DURABILITY === 'always' ? 'always' : 'everysec',
+  },
+  stateSync: false,
   appDir: './app',
   serverPluginsDir: './server/plugins',
   serverMiddlewareDir: './server/middleware',
   serverEndpointsDir: './server/endpoints',
   serverRoutesDir: './server/routes',
+  serverResourcesDir: './server/resources',
   generatedDir: './.zero/generated',
   outDir: './.build',
   port: PORT,
@@ -157,6 +245,11 @@ Zero builds and links the platform stylesheet automatically when `createApp()`
 starts. The root layout owns `ThemeProvider` and `AppProvider`: theme controls
 the light/dark/system token contract, while `AppProvider` wires the SDK,
 ReactiveDB sync, auth behavior, and client route safety net.
+Generated starters keep the root layout and default page server-rendered so
+the first public route ships HTML content by default. Add a top-level
+`"use client"` directive to the dashboard layout or individual page once it
+uses browser hooks, AppShell interactivity, ReactiveDB collections, forms, or
+other client-side behavior.
 
 ```tsx
 import type { ReactNode } from 'react';
@@ -187,8 +280,9 @@ Those files connect the app route manifest to Zero's hydration runtime and are
 safe to delete; `createApp()` regenerates them before bundling the browser
 entry. Keep `.zero/` ignored in app repositories. Generated apps include a
 `tsconfig.json` with `@app/*`, `@/*`, `@/components/*`, `@/hooks/*`, and
-`@/lib/*` aliases so app-owned routes, components, hooks, and helpers stay
-portable and easy to customize.
+`@/lib/*` aliases. App-owned paths resolve first; installed-framework fallbacks
+support Zero's current TypeScript source distribution. Application code should
+still import framework features only through public `@zero/framework/*` paths.
 
 ## Choose Your App Shape
 
@@ -246,7 +340,7 @@ defineZeroConfig({
   tables,
   auth: true,
   routeAuth: 'protected-by-default',
-  publicPaths: ['/login', '/forgot-password'],
+  publicPaths: ['/login', '/forgot-password', '/verify-email'],
 });
 ```
 
@@ -299,7 +393,7 @@ protected resources, list-policy behavior for `/api/data` and sync, and
 owner-field index guidance.
 
 App-owned backend handlers receive a lazy `zero` service context. Use canonical
-names in new code: `zero.db`, `zero.auth`, `zero.ai`, `zero.vector`,
+names in new code: `zero.db`, `zero.auth`, `zero.ai`, `zero.vector`, `zero.pdf`,
 `zero.email`, `zero.storage`, `zero.notifications`, `zero.scheduler`,
 `zero.workflows`, `zero.resources`, and `zero.observability`. Older aliases
 still work: `zero.syncDB`, `zero.vectors`, `zero.workflowRegistry`, and
@@ -358,14 +452,32 @@ Run the platform doctor against an exported config module:
 bun run doctor -- --config ./zero.config.ts
 bun run doctor -- --config ./zero.config.ts --strict
 bun run doctor -- --config ./zero.config.ts --json
+zero-doctor --config ./zero.config.ts
 ```
 
 `doctor` checks app config, table primary keys and natural identities, auth
 email readiness, login/public route safety, storage/auth mismatch, migration
 startup policy, sync policy/index guidance, observability endpoint readiness,
-AI provider/alias readiness, vector index/storage safety, and resource policy
-shape for generated CRUD, `/api/data`, and WebSocket sync. Warnings do not fail
-by default; use `--strict` in CI.
+AI provider/alias readiness, vector index/storage safety, PDF browser/resource
+policy safety, and resource policy shape for generated CRUD, `/api/data`, and
+WebSocket sync. Warnings do not fail by default; use `--strict` in CI.
+
+Doctor also scans app-owned source code by default. It reports file and line
+locations when app code bypasses Zero's intended surfaces, including raw
+frontend controls where Zero primitives fit, custom modal/toast/sidebar
+systems, missing root wiring for `AppProvider`, `ThemeProvider`, or `Toaster`,
+direct `lucide-react` or framework-internal imports, direct backend provider
+usage such as SQLite/AI/vector/email/JWT libraries, `console` logging in
+backend app code, and files above the responsibility threshold. The default
+large-file threshold is 400 lines:
+
+```txt
+bun run doctor -- --config ./zero.config.ts --max-file-lines 400
+bun run doctor -- --config ./zero.config.ts --no-usage-audit
+```
+
+Generated apps can run `bun run doctor`. Local checkout users can run
+`zero-doctor --config ./zero.config.ts` from any app directory.
 
 Use `migrate:doctor` and `migrate:plan` for database drift:
 
@@ -433,14 +545,22 @@ Common variables:
 | `DB_SNAPSHOT_PATH` | Snapshot recovery path used by `hot` mode. |
 | `APP_NAME` | Display name used by system email. |
 | `APP_PUBLIC_URL` | Public origin for setup/reset links. |
+| `APP_LOGO_URL` | Optional logo URL for auth pages and branded auth email. |
 | `APP_SUPPORT_EMAIL` | Optional support/reply identity. |
+| `AUTH_EMAIL_BRAND_COLOR` | Optional accent color for branded auth email. |
 | `EMAIL_FROM` | Default sender. |
 | `EMAIL_REPLY_TO` | Optional reply-to. |
 | `RESEND_API_KEY` | Enables the default Resend provider. |
+| `AUTH_REQUIRE_EMAIL_VERIFICATION` | Require email verification before public-registered users receive tokens. |
+| `AUTH_EMAIL_VERIFICATION_PATH` | Public page path used in email verification links. Defaults to `/verify-email`. |
+| `AUTH_MFA_ENABLED` | Enables first-party MFA setup and login challenges. |
+| `AUTH_MFA_POLICY` | MFA policy: `optional`, `required`, or `admin-required`. |
+| `AUTH_MFA_METHODS` | Comma list such as `email,totp`. |
+| `AUTH_TOTP_ENCRYPTION_KEY` | Encryption key for self-hosted authenticator/TOTP secrets at rest. |
 | `ACCESS_TOKEN_TTL` | Access token lifetime. |
 | `REFRESH_TOKEN_TTL` | Refresh token lifetime. |
-| `AUTH_ACTION_TOKEN_TTL` | Setup/reset token lifetime. |
-| `AUTH_ACCOUNT_EMAIL_COOLDOWN` | Cooldown for active setup/reset emails per user/type. |
+| `AUTH_ACTION_TOKEN_TTL` | Setup/reset/verification token lifetime. |
+| `AUTH_ACCOUNT_EMAIL_COOLDOWN` | Cooldown for active setup/reset/verification emails per user/type. |
 | `AUTH_MANUAL_PASSWORD_RESET` | `false` disables direct admin password replacement. |
 | `AUTH_SIGNING_KEY` | Optional externally managed ES256 private JWK. |
 | `ZERO_KV_BASE_DIR` | Optional app convention for KV journal/checkpoint files. Defaults to `./data/kv`. |
@@ -460,6 +580,8 @@ Common variables:
 | `ZERO_VECTOR_ENABLED` | App convention for enabling `vector` config. |
 | `ZERO_VECTOR_DATA_DIR` | Default zvec collection directory. |
 | `ZERO_VECTOR_DEFAULT_DIMENSIONS` | Default vector dimensions for `vector: true`. |
+| `ZERO_PDF_ENABLED` | Generated-app convention for enabling browser-grade PDF rendering. |
+| `ZERO_PDF_EXECUTABLE_PATH` | Optional system-managed Chromium executable; omit for Zero's managed browser. |
 
 ## Tables And Primary Keys
 
@@ -501,7 +623,7 @@ Zero includes these backend capabilities out of the box:
 
 | System | What it provides |
 | --- | --- |
-| Auth | Users, admin bootstrap, token rotation, registration policy, configured user properties, account status, setup/reset flows. |
+| Auth | Users, admin bootstrap, token rotation, registration policy, configured user properties, account status, setup/reset flows, and installed-app OIDC/PKCE. |
 | Email | Provider boundary with Resend default and custom provider support. |
 | ReactiveDB | SQLite table definition, change tracking, ring-buffer replay, natural identity. |
 | Sync | WebSocket snapshots, live updates, lazy/auto sync, sync policy hooks. |
@@ -515,6 +637,7 @@ Zero includes these backend capabilities out of the box:
 | Observability | Structured event codes, default console/memory sink, protected event endpoint, frontend ingest. |
 | AI | Internal server-side AI service with env-detected providers, custom Meta Llama adapter, aliases, conversations, tools, embeddings, images, transcription, speech, and protected status. |
 | Vector Store | Local zvec-backed vector persistence/search with scoped filters and AI embedding bridge helpers. |
+| PDF | Secure browser-grade HTML/CSS-to-PDF rendering with bounded concurrency, strict resource policy, storage composition, and a replaceable renderer adapter. |
 
 ## Frontend Hook Library
 
@@ -529,7 +652,7 @@ Platform-specific hooks include:
 | Auth/session | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty` |
 | Live data | `useCollection`, `useLazyCollection`, `useDataPage`, `useRecord`, `useRecordByIdentity`, `useDataSelection` |
 | Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
-| Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageBrowser`, `useDriveQuota` |
+| Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveQuota` |
 | Rooms/presence | `usePresence`, `usePresenceList`, `useTypingIndicator`, `useEphemeral`, `useEphemeralTopic` |
 | Workflows/notifications | `useWorkflowRun`, `useWorkflow`, `useWorkflowList`, `useNotifications`, `useUnreadCount` |
 | State and health | `useServerState`, `usePreference`, `useFormDraft`, `useConnectionHealth`, `useMutation` |
@@ -662,6 +785,38 @@ await bridge.embedAndUpsert('knowledge', {
 Zero mounts no vector routes by default. The vector service owns storage and
 search only; AI still owns embedding generation. See [Vector Store](./vector.md).
 
+## PDF Rendering
+
+Enable browser-grade PDF generation with `pdf: true`, then install the pinned
+Chromium revision once per development machine or production image:
+
+```sh
+bun run pdf:install
+bun run pdf:status
+```
+
+App-owned backend endpoints, services, workflows, and jobs use `zero.pdf`:
+
+```ts
+if (!zero.pdf) throw new Error('PDF rendering is disabled.');
+
+const result = await zero.pdf.render({
+  html: '<main><h1>Patient intake</h1></main>',
+  css: '@page { size: Letter; margin: 0.5in; }',
+  document: { title: 'Patient intake' },
+});
+
+return new Response(result.bytes, {
+  headers: { 'content-type': 'application/pdf' },
+});
+```
+
+Use `renderToStorage()` to write a generated document through Zero storage in
+the same operation. No public PDF route is mounted by default. Remote resources,
+local files, private-network hosts, JavaScript, service workers, and downloads
+are denied by secure defaults. See [PDF Rendering](./pdf.md) for print options,
+resource allowlists, limits, storage, workflows, adapters, and deployment.
+
 ## Reusable Data UI
 
 Zero includes reusable frontend organisms for fast data-driven screens:
@@ -670,11 +825,59 @@ Zero includes reusable frontend organisms for fast data-driven screens:
 | --- | --- | --- |
 | `DataTableView` | Schema-aware tables with full-sync, lazy `/api/data`, or caller-owned sources. | [docs/frontend/data-table.md](./frontend/data-table.md) |
 | `KanbanBoard` | Drag-and-drop status boards, pipelines, queues, and workflow lanes backed by caller-owned or live data. | [docs/frontend/kanban.md](./frontend/kanban.md) |
-| `MasterDetailView` | A table/list plus detail panel, generated edit form, custom detail body, and record navigation. | [docs/frontend/master-detail.md](./frontend/master-detail.md) |
+| `MasterDetailView` | A table/list plus detail panel, generated edit form, custom detail body, record navigation, and DataTable-style lazy sources. | [docs/frontend/master-detail.md](./frontend/master-detail.md) |
 | `DetailPanel` / `ListDetailLayout` / `RecordNavigationBar` | Custom detail screens that need the polished shell without the full organism. | [docs/frontend/master-detail.md](./frontend/master-detail.md#low-level-detail-primitives) |
 
 These components use schema primary keys by default. Do not assume `row.id`
 unless the table schema actually uses `id` as its primary key.
+
+## Add A Desktop, Mobile, Tauri, Or Chrome Client
+
+Installed apps authenticate against the same Zero instance and user table as
+the web app. Register a public client under `auth.nativeApps`, give each shipped
+app its own client ID and exact redirects, then keep route/resource permission
+on the server:
+
+```ts
+auth: {
+  nativeApps: {
+    clients: [{
+      clientId: 'acme-desktop',
+      name: 'Acme Desktop',
+      redirectUris: [
+        'http://127.0.0.1/oauth/callback',
+        'http://[::1]/oauth/callback',
+      ],
+    }],
+  },
+}
+```
+
+Then run `bun run doctor -- --config ./zero.config.ts --strict` and wire the
+system browser, callback receiver, and secure storage appropriate for the
+target. There is no native client secret or API key. Registration, email
+verification, password recovery, and MFA happen on the normal Zero pages in
+the system browser. Native Bearer tokens resolve to the same current role,
+trusted user properties, endpoint policy, resources, and Sync policy as web
+tokens.
+
+Choose carefully:
+
+- `@zero/framework/native` is the usable TypeScript core in the current source.
+  Pin a framework release that includes it and use the packaged desktop/mobile
+  recipes.
+- Rust `zero-native-auth` and `tauri-plugin-zero-auth` are Phase 0 design
+  scaffolds only. They do not yet authenticate or provide Tauri commands; do
+  not put the TypeScript credential owner in a Svelte webview as a substitute.
+- `@zero/chrome-auth` is a separate private Manifest V3 preview, not a registry
+  release. It still needs a released native peer range, real-Chrome end-to-end
+  testing, and security review.
+
+Read the [SDK selection and onboarding guide](./auth/app-auth-sdk-guide.md)
+before choosing a host architecture, then follow
+[Desktop, Mobile, and Chrome Extension Authentication](./auth/native-app-auth.md)
+for the full OIDC endpoint, redirect, storage, continuation, Sync, revocation,
+and deployment contract.
 
 ## Auth Defaults
 
@@ -703,8 +906,17 @@ export function UsersSettingsPanel() {
 
 The component self-wires to the admin auth SDK, loads `/auth/admin/config`,
 uses backend pagination plus `search`, `role`, and `status` filters, adapts
-configured `auth.userProperties`, and hides email-only actions when the email
-runtime is not ready.
+configured `auth.userProperties` into typed controls, and hides email-only
+actions when the email runtime is not ready. When `strictUserProperties` is
+false, it also lets admins add, edit, and remove unconfigured key/value
+metadata on a user. When strict mode is true, only configured properties are
+editable.
+
+Use `auth.userProperties` for metadata that app code should understand, such
+as department, group, plan, flags, or policy claims. Defaults apply during
+registration and admin user creation. Mark only trusted admin/system-owned
+keys with `useInPolicies: true`; self-editable keys are rejected for policy
+use.
 
 Email-driven setup/reset flows validate email readiness before changing account
 state. Forgot-password responses avoid user enumeration and cooldown repeats do
@@ -715,8 +927,11 @@ Reusable auth UI blocks are exported from `@zero/framework/react`:
 ```tsx
 import {
   ChangePasswordForm,
+  EmailVerificationForm,
   ForgotPasswordForm,
   LoginForm,
+  MFAEnrollmentForm,
+  MFAManagementPanel,
   PasswordActionForm,
   RegisterForm,
   UserPropertiesForm,
@@ -725,8 +940,17 @@ import {
 
 `LoginForm`, `RegisterForm`, and `ForgotPasswordForm` read `/auth/config` and
 wait for policy before exposing registration/reset actions.
-`PasswordActionForm` handles reset/setup tokens from email links and blocks
-invalid or mode-mismatched tokens before submit.
+`RegisterForm` switches to a check-your-email state when email verification is
+required, and `EmailVerificationForm` handles verification links or manual
+token paste.
+`PasswordActionForm` handles reset/setup tokens from email links, can render a
+token-paste fallback when no query token is present, and blocks invalid or
+mode-mismatched tokens before submit.
+When MFA is enabled, login, registration, email verification, and password
+action forms route into shared MFA continuation UI before a session is stored.
+Optional MFA can be requested during signup; required/admin-required MFA is
+enforced by backend policy. Use `MFAManagementPanel` in account settings when
+users should enroll later.
 `UserPropertiesForm` renders only user-editable `auth.userProperties`.
 
 For storage dashboards, embed the reusable organism:
@@ -741,7 +965,9 @@ export function FilesSettingsPanel() {
 
 It manages drives, file browsing, uploads, folders, rename, visibility, and
 delete confirmation through the platform storage hooks and authenticated SDK
-transport.
+transport. It also shows effective access, manages role/user/property storage
+grants, filters and sorts folder contents, and uses presigned download links so
+private files can be opened without exposing bearer tokens to plain anchors.
 
 For focused upload surfaces, use `StorageDropzone` or `useUploadDropzone`:
 
@@ -773,6 +999,12 @@ Return the token to the browser and upload with
 `PUT /storage/upload-grants/:token`. The uploaded object remains private by
 default and the grant cannot overwrite an existing object unless
 `overwrite: true` is set.
+
+For custom storage UI, prefer the platform hooks before writing raw fetches:
+`useStorageDrives()` returns accessible drives with current-user access,
+`useDriveCapabilities(driveId, path?)` returns `canRead`, `canWrite`, and
+`canAdmin`, and `useStoragePermissions()` lists explicit grants for admin
+surfaces.
 
 ## Configuration Files
 

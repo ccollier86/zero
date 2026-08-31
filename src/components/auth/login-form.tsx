@@ -19,7 +19,12 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/animate-ui/components/radix/checkbox';
 import { PasswordInput } from '@/components/auth/password-input';
 import { AuthHeader } from '@/components/auth/auth-header';
+import { MFAContinuation } from '@/components/auth/mfa-continuation';
 import { SocialLoginGroup, type SocialProvider } from '@/components/auth/social-login-group';
+import type {
+  AuthMfaChallengeRequiredResult,
+  AuthMfaSetupRequiredResult,
+} from '../../frontend/client/auth-client';
 import { AnimateIcon } from '@/components/animate-ui/icons/icon';
 import { CircleX } from '@/components/animate-ui/icons/circle-x';
 import { Loader } from '@/components/animate-ui/icons/loader';
@@ -32,6 +37,14 @@ import {
   canShowForgotPasswordLink,
   canShowRegistrationLink,
 } from './auth-config-ui-policy';
+import {
+  authFeedbackAnimate,
+  authFeedbackExit,
+  authFeedbackInitial,
+  authPresenceTransition,
+} from './auth-motion';
+import { isMfaContinuationResult } from './auth-continuation';
+import { useNativeAuthRoute, useNativeLoginHint } from './use-native-auth-route';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -46,6 +59,9 @@ interface LoginFormProps {
   respectRegistrationPolicy?: boolean;
   showRememberMe?: boolean;
   registerHref?: string;
+  identifierLabel?: string;
+  identifierPlaceholder?: string;
+  identifierAutoComplete?: React.HTMLInputAutoCompleteAttribute;
   socialProviders?: SocialProvider[];
   className?: string;
 }
@@ -63,6 +79,9 @@ function LoginForm({
   respectRegistrationPolicy = true,
   showRememberMe = false,
   registerHref = '#register',
+  identifierLabel = 'Username or email',
+  identifierPlaceholder = 'you@example.com',
+  identifierAutoComplete = 'username',
   socialProviders,
   className,
 }: LoginFormProps) {
@@ -71,6 +90,10 @@ function LoginForm({
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [localError, setLocalError] = React.useState<string | null>(null);
+  const loginHint = useNativeLoginHint();
+  const [mfaContinuation, setMfaContinuation] = React.useState<
+    AuthMfaSetupRequiredResult | AuthMfaChallengeRequiredResult | null
+  >(null);
 
   const displayError = localError ?? error;
   const canShowRegisterLink = canShowRegistrationLink(
@@ -83,12 +106,22 @@ function LoginForm({
     respectRegistrationPolicy,
     authConfig,
   );
+  const continuedRegisterHref = useNativeAuthRoute(registerHref);
+  const continuedForgotPasswordHref = useNativeAuthRoute(forgotPasswordHref);
+
+  React.useEffect(() => {
+    if (loginHint) setEmail((current) => current || loginHint);
+  }, [loginHint]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLocalError(null);
     try {
-      await login(email, password);
+      const result = await login(email, password);
+      if (isMfaContinuationResult(result)) {
+        setMfaContinuation(result);
+        return;
+      }
       onSuccess?.();
     } catch (err) {
       const code = getAuthErrorCode(err);
@@ -99,22 +132,33 @@ function LoginForm({
     }
   }
 
+  if (mfaContinuation) {
+    return (
+      <MFAContinuation
+        result={mfaContinuation}
+        onSuccess={onSuccess}
+        onBack={() => setMfaContinuation(null)}
+        className={className}
+      />
+    );
+  }
+
   return (
-    <form onSubmit={handleSubmit} className={cn('space-y-3', className)}>
+    <form onSubmit={handleSubmit} className={cn('space-y-4', className)}>
       <AuthHeader title="Sign in" description="Enter your credentials to continue" />
 
-      <div className="space-y-3">
+      <div className="space-y-4">
         <div className="space-y-1.5">
-          <Label htmlFor="login-email" className="text-sm font-medium">Username or email</Label>
+          <Label htmlFor="login-email" className="text-sm font-medium">{identifierLabel}</Label>
           <Input
             id="login-email"
             type="text"
-            placeholder="you@example.com"
-            autoComplete="username"
+            placeholder={identifierPlaceholder}
+            autoComplete={identifierAutoComplete}
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className={cn('h-8 text-sm', displayError && 'border-destructive/50 focus-visible:ring-destructive/30')}
+            className={cn('h-10 text-sm', displayError && 'ring-[1px] ring-destructive/30')}
           />
         </div>
 
@@ -123,7 +167,7 @@ function LoginForm({
             <Label htmlFor="login-password" className="text-sm font-medium">Password</Label>
             {canShowForgotPassword && (
               <a
-                href={forgotPasswordHref}
+                href={continuedForgotPasswordHref}
                 className="text-xs text-primary hover:underline"
               >
                 Forgot password?
@@ -137,7 +181,7 @@ function LoginForm({
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className={cn('h-8 text-sm', displayError && 'border-destructive/50 focus-visible:ring-destructive/30')}
+            className={cn('h-10 text-sm', displayError && 'ring-[1px] ring-destructive/30')}
           />
         </div>
 
@@ -154,10 +198,10 @@ function LoginForm({
       <AnimatePresence>
         {displayError && (
           <motion.div
-            initial={{ opacity: 0, height: 0, y: -4 }}
-            animate={{ opacity: 1, height: 'auto', y: 0, x: [0, -6, 6, -4, 4, 0] }}
-            exit={{ opacity: 0, height: 0, y: -4 }}
-            transition={{ duration: 0.4, ease: 'easeOut' }}
+            initial={authFeedbackInitial}
+            animate={authFeedbackAnimate}
+            exit={authFeedbackExit}
+            transition={authPresenceTransition}
             className="overflow-hidden"
           >
             <div
@@ -175,7 +219,7 @@ function LoginForm({
         )}
       </AnimatePresence>
 
-      <Button type="submit" size="sm" className="w-full h-8" disabled={isLoading}>
+      <Button type="submit" className="h-10 w-full" disabled={isLoading}>
         {isLoading ? (
           <AnimateIcon animate loop>
             <Loader size={16} />
@@ -192,7 +236,7 @@ function LoginForm({
       {canShowRegisterLink && (
         <p className="text-center text-xs text-muted-foreground">
           Don&apos;t have an account?{' '}
-          <a href={registerHref} className="text-primary hover:underline">
+          <a href={continuedRegisterHref} className="text-primary hover:underline">
             Sign up
           </a>
         </p>

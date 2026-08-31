@@ -44,6 +44,7 @@ interface ReactiveDBRuntime {
  *  4. Emits to change listeners
  */
 export class ReactiveDB {
+  private readonly epoch = crypto.randomUUID();
   private db: Database;
   private sqlite: PlatformSQLiteService | null;
   private ownsSQLiteService: boolean;
@@ -531,6 +532,11 @@ export class ReactiveDB {
    */
   get currentSeq(): number {
     return this.seq;
+  }
+
+  /** Process-unique cursor epoch used to reject pre-restart client sequences. */
+  get syncEpoch(): string {
+    return this.epoch;
   }
 
   /** Return the platform SQLite service backing this ReactiveDB, if present. */

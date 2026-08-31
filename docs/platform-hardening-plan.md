@@ -40,15 +40,14 @@ Zero is a single-process Bun/Elysia full-stack platform.
 
 ## 3. Critical Issues
 
-### 3.1 WebSocket Auth Is Incomplete
+### 3.1 WebSocket Auth Is Incomplete — resolved
 
-`/sync?token=...` accepts a token but does not verify it or set `ws.data.authContext`.
-
-Impact:
-
-1. State sync cannot work correctly through the normal app path because state handlers require `ws.data.authContext?.userId`.
-2. Presence and ephemeral state fall back to anonymous connection IDs instead of authenticated users.
-3. Sync has no authenticated identity for table policy decisions.
+The current client opens a clean `/sync` URL, sends the bearer in a first
+`sync.auth` message, and waits for `sync.auth.ready` before subscribing. The
+server resolves a live auth context, derives table and row policy, and
+periodically revalidates both. Auth-enabled `createApp()` instances default to
+required sync auth. The old URL-token bridge is available only through an
+explicit, temporary compatibility flag and is disabled by default.
 
 ### 3.2 Sync Table Access Is Too Broad
 
@@ -295,7 +294,7 @@ Status: implemented.
 
 Work:
 
-1. Done: added a sync auth bridge and WebSocket token verification in the sync `open` lifecycle.
+1. Done: added a sync auth bridge and first-message `sync.auth` token verification before application messages.
 2. Done: `createApp()` wires the existing auth token service into sync through a lazy verifier.
 3. Done: valid tokens populate `ws.data.authContext`.
 4. Done: invalid provided tokens close with code `4001`.

@@ -24,6 +24,8 @@ export interface SyncStoreContext {
 export interface SyncMeta {
   connected: boolean;
   lastSeq: number;
+  epoch: string | null;
+  scope: string | null;
   pending: PendingMutation[];
 }
 
@@ -31,15 +33,29 @@ export interface SyncMeta {
 
 type SyncStoreEvents = {
   // Server messages
-  'sync.snapshot': { tables: Record<string, Record<string, Row>>; seq: number };
+  'sync.snapshot': {
+    tables: Record<string, Record<string, Row>>;
+    seq: number;
+    epoch?: string;
+    scope?: string | null;
+    reset?: 'preserve-pending' | 'purge';
+  };
   'sync.change': {
     seq: number;
     table: string;
     op: ChangeOp;
     rowId: string;
     row: Row | null;
+    epoch?: string;
+    scope?: string | null;
   };
-  'sync.ack': { ref: string; ok: boolean; error?: string; seq?: number | null };
+  'sync.ack': {
+    ref: string;
+    ok: boolean;
+    error?: string;
+    seq?: number | null;
+    change?: { table: string; op: ChangeOp; rowId: string; row: Row | null };
+  };
   'sync.catchup': {
     changes: Array<{
       seq: number;
@@ -49,6 +65,8 @@ type SyncStoreEvents = {
       row: Row | null;
     }>;
     seq: number;
+    epoch?: string;
+    scope?: string | null;
   };
 
   // Bulk load rows into a table (for lazy tables loaded via REST)
@@ -58,6 +76,7 @@ type SyncStoreEvents = {
   'sync.connected': Record<string, never>;
   'sync.disconnected': Record<string, never>;
   'sync.reset': Record<string, never>;
+  'sync.mutation-sent': { ref: string; sentAt: number; attempt: number };
 
   // Optimistic mutations — generic (table name passed as field)
   'optimistic.insert': { table: string; rowId: string; row: Row; ref: string };
@@ -69,6 +88,55 @@ type SyncStoreEvents = {
   };
   'optimistic.delete': { table: string; rowId: string; ref: string };
 };
+
+function createEmptyTables(
+  context: SyncStoreContext,
+  definitions: Record<string, ClientTableDef>,
+): SyncStoreContext {
+  const next: SyncStoreContext = { _sync: context._sync };
+  for (const table of Object.keys(definitions)) next[table] = {};
+  return next;
+}
+
+function reapplyPending(
+  context: SyncStoreContext,
+  pending: readonly PendingMutation[],
+  matches: (mutation: PendingMutation) => boolean = () => true,
+  showOptimistic: (mutation: PendingMutation) => boolean = (
+    mutation,
+  ) => mutation.attempts === 0,
+): PendingMutation[] {
+  return pending.map((mutation) => {
+    if (!matches(mutation)) return mutation;
+    const rows = { ...(context[mutation.table] as Record<string, Row> ?? {}) };
+    const previousState = rows[mutation.rowId] ?? null;
+    const optimisticState = mutation.op === 'DELETE'
+      ? null
+      : {
+          ...(previousState ?? {}),
+          ...(mutation.optimisticPatch ?? mutation.optimisticState ?? {}),
+        } as Row;
+    if (showOptimistic(mutation)) {
+      if (optimisticState) rows[mutation.rowId] = optimisticState;
+      else delete rows[mutation.rowId];
+    }
+    context[mutation.table] = rows;
+    return { ...mutation, previousState, optimisticState };
+  });
+}
+
+function restoreAttemptedPending(
+  context: SyncStoreContext,
+  pending: readonly PendingMutation[],
+): void {
+  for (const mutation of pending) {
+    if (mutation.attempts === 0) continue;
+    const rows = { ...(context[mutation.table] as Record<string, Row> ?? {}) };
+    if (mutation.previousState) rows[mutation.rowId] = mutation.previousState;
+    else delete rows[mutation.rowId];
+    context[mutation.table] = rows;
+  }
+}
 
 // ─── Store Factory ──────────────────────────────────────────────────────────
 
@@ -88,6 +156,8 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
       _sync: {
         connected: false,
         lastSeq: 0,
+        epoch: null,
+        scope: null,
         pending: [],
       },
     };
@@ -105,17 +175,26 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
     on: {
       // ─── Server: Full snapshot ──────────────────────────────
       'sync.snapshot': (ctx, event: SyncStoreEvents['sync.snapshot']) => {
-        const newCtx = { ...ctx };
+        const newCtx = event.reset ? createEmptyTables(ctx, tableDefs) : { ...ctx };
         const snapshotTables = new Set(Object.keys(event.tables));
         // Replace table contents from snapshot
         for (const [table, rows] of Object.entries(event.tables)) {
           newCtx[table] = rows;
         }
-        // Only clear pending mutations for tables included in the snapshot
+        let pending = event.reset === 'purge'
+          ? []
+          : event.reset === 'preserve-pending'
+            ? ctx._sync.pending
+            : ctx._sync.pending.filter(p => !snapshotTables.has(p.table));
+        if (event.reset === 'preserve-pending') {
+          pending = reapplyPending(newCtx, pending);
+        }
         newCtx._sync = {
           ...ctx._sync,
           lastSeq: event.seq,
-          pending: ctx._sync.pending.filter(p => !snapshotTables.has(p.table)),
+          epoch: event.epoch ?? ctx._sync.epoch,
+          scope: event.scope === undefined ? ctx._sync.scope : event.scope,
+          pending,
         };
         return newCtx;
       },
@@ -138,21 +217,44 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
             break;
         }
 
-        return {
+        const next = {
           ...ctx,
           [table]: tableData,
-          _sync: { ...ctx._sync, lastSeq: seq },
+          _sync: {
+            ...ctx._sync,
+            lastSeq: seq,
+            epoch: event.epoch ?? ctx._sync.epoch,
+            scope: event.scope === undefined ? ctx._sync.scope : event.scope,
+          },
         };
+        next._sync.pending = reapplyPending(
+          next,
+          ctx._sync.pending,
+          (mutation) => mutation.table === table && mutation.rowId === rowId,
+          () => false,
+        );
+        return next;
       },
 
       // ─── Server: Ack (confirm or rollback) ─────────────────
       'sync.ack': (ctx, event: SyncStoreEvents['sync.ack']) => {
         const { ref, ok } = event;
+        const mutation = ctx._sync.pending.find((pending) => pending.ref === ref);
+        if (!mutation) return ctx;
 
         if (ok) {
-          // Confirmed — remove from pending
+          const change = event.change;
+          const matches = change
+            && change.table === mutation.table
+            && change.rowId === mutation.rowId;
+          const tableData = { ...(ctx[mutation.table] as Record<string, Row>) };
+          if (matches && change) {
+            if (change.op === 'DELETE' || !change.row) delete tableData[change.rowId];
+            else tableData[change.rowId] = change.row;
+          }
           return {
             ...ctx,
+            ...(matches ? { [mutation.table]: tableData } : {}),
             _sync: {
               ...ctx._sync,
               pending: ctx._sync.pending.filter((p) => p.ref !== ref),
@@ -161,9 +263,6 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
         }
 
         // Rejected — rollback to previous state
-        const mutation = ctx._sync.pending.find((p) => p.ref === ref);
-        if (!mutation) return ctx;
-
         const tableData = { ...(ctx[mutation.table] as Record<string, Row>) };
         if (mutation.previousState) {
           tableData[mutation.rowId] = mutation.previousState;
@@ -182,10 +281,14 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
       },
 
       // ─── Server: Catchup (array of missed changes) ────────
-      // Applies each change AND prunes matching pending mutations
+      // Applies authoritative changes; only a receipt/ack settles pending work.
       'sync.catchup': (ctx, event: SyncStoreEvents['sync.catchup']) => {
         let newCtx = { ...ctx };
         let pending = [...ctx._sync.pending];
+        const changedRows = new Set(
+          event.changes.map((change) => `${change.table}:${change.rowId}`),
+        );
+        restoreAttemptedPending(newCtx, pending);
 
         for (const change of event.changes) {
           const tableData = { ...(newCtx[change.table] as Record<string, Row>) };
@@ -202,16 +305,25 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
 
           newCtx = { ...newCtx, [change.table]: tableData };
 
-          // If a pending mutation matches table + rowId, it was
-          // confirmed by the server — remove from pending
-          pending = pending.filter(
-            (p) => !(p.table === change.table && p.rowId === change.rowId)
-          );
         }
+
+        pending = reapplyPending(
+          newCtx,
+          pending,
+          () => true,
+          (mutation) => mutation.attempts === 0
+            || !changedRows.has(`${mutation.table}:${mutation.rowId}`),
+        );
 
         return {
           ...newCtx,
-          _sync: { ...newCtx._sync, lastSeq: event.seq, pending },
+          _sync: {
+            ...newCtx._sync,
+            lastSeq: event.seq,
+            epoch: event.epoch ?? newCtx._sync.epoch,
+            scope: event.scope === undefined ? newCtx._sync.scope : event.scope,
+            pending,
+          },
         };
       },
 
@@ -247,6 +359,19 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
 
       'sync.reset': () => createInitialContext(),
 
+      'sync.mutation-sent': (
+        ctx,
+        event: SyncStoreEvents['sync.mutation-sent'],
+      ) => ({
+        ...ctx,
+        _sync: {
+          ...ctx._sync,
+          pending: ctx._sync.pending.map((mutation) => mutation.ref === event.ref
+            ? { ...mutation, sentAt: event.sentAt, attempts: event.attempt }
+            : mutation),
+        },
+      }),
+
       // ─── Optimistic: Insert ────────────────────────────────
       'optimistic.insert': (ctx, event: SyncStoreEvents['optimistic.insert']) => {
         const { table, rowId, row, ref } = event;
@@ -268,7 +393,9 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
                 rowId,
                 previousState,
                 optimisticState: row,
+                optimisticPatch: row,
                 sentAt: Date.now(),
+                attempts: 0,
               },
             ],
           },
@@ -303,7 +430,9 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
                 rowId,
                 previousState,
                 optimisticState: merged,
+                optimisticPatch: partial,
                 sentAt: Date.now(),
+                attempts: 0,
               },
             ],
           },
@@ -332,6 +461,7 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
                 previousState,
                 optimisticState: null,
                 sentAt: Date.now(),
+                attempts: 0,
               },
             ],
           },
@@ -399,7 +529,10 @@ export function routeServerMessage(
 ): void {
   switch (msg.type) {
     case 'sync.snapshot':
-      store.send({ type: 'sync.snapshot', tables: msg.tables, seq: msg.seq });
+      store.send({
+        type: 'sync.snapshot', tables: msg.tables, seq: msg.seq,
+        epoch: msg.epoch, scope: msg.scope, reset: msg.reset,
+      });
       break;
 
     case 'sync.change':
@@ -410,6 +543,8 @@ export function routeServerMessage(
         op: msg.op,
         rowId: msg.rowId,
         row: msg.row,
+        epoch: msg.epoch,
+        scope: msg.scope,
       });
       break;
 
@@ -420,6 +555,7 @@ export function routeServerMessage(
         ok: msg.ok,
         error: msg.error,
         seq: msg.seq,
+        change: msg.change,
       });
       break;
 
@@ -428,6 +564,8 @@ export function routeServerMessage(
         type: 'sync.catchup',
         changes: msg.changes,
         seq: msg.seq,
+        epoch: msg.epoch,
+        scope: msg.scope,
       });
       break;
   }

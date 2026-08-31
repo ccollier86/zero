@@ -5,8 +5,9 @@
  * backup behavior only; migrator decides when backups are required.
  */
 
-import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import type { Database } from 'bun:sqlite';
+import { chmodSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
 export interface MigrationBackup {
@@ -14,23 +15,28 @@ export interface MigrationBackup {
   hash: string;
 }
 
-/** Create a timestamped copy of a file-backed SQLite database. */
+/** Snapshot the live SQLite handle into a timestamped backup file. */
 export function createMigrationBackup(
+  database: Database,
   dbPath: string,
   backupDir: string,
   migrationVersion: string,
 ): MigrationBackup | null {
   if (dbPath === ':memory:' || dbPath === 'memory') return null;
-  if (!existsSync(dbPath)) return null;
 
   mkdirSync(backupDir, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const path = join(
     backupDir,
-    `${basename(dbPath)}.${migrationVersion}.${timestamp}.bak`,
+    `${basename(dbPath)}.${migrationVersion}.${timestamp}.${randomUUID()}.bak`,
   );
 
-  copyFileSync(dbPath, path);
+  // This snapshots the connected database, including committed WAL pages and
+  // hot-mode in-memory state whose configured snapshot file may not exist yet.
+  database.run('VACUUM INTO ?', [path]);
+  // Backups contain the full durable platform database. Do not let a permissive
+  // process umask make a newly created snapshot readable by other local users.
+  chmodSync(path, 0o600);
   return {
     path,
     hash: createHash('sha256').update(readFileSync(path)).digest('hex'),

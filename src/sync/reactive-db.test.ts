@@ -762,6 +762,7 @@ describe('file mode', () => {
     // First instance: write some data
     const db1 = createReactiveDB({ mode: path });
     db1.defineTable('items', { id: 'text primary key', name: 'text' });
+    const firstEpoch = db1.syncEpoch;
     db1.insert('items', { id: '1', name: 'Widget' });
     expect(db1.getChangesAfter(0)).toHaveLength(1);
     db1.dispose();
@@ -769,6 +770,7 @@ describe('file mode', () => {
     // Second instance: data persists, but _changes is truncated
     const db2 = createReactiveDB({ mode: path });
     db2.defineTable('items', { id: 'text primary key', name: 'text' });
+    expect(db2.syncEpoch).not.toBe(firstEpoch);
 
     // Data still there
     expect(db2.queryOne('items', '1')).toEqual({ id: '1', name: 'Widget' });

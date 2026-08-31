@@ -4,7 +4,12 @@ import { EmailError } from './email-error';
 import { EmailService } from './email-service';
 import { MemoryEmailProvider } from './memory-email-provider';
 import { ResendEmailProvider } from './resend-email-provider';
-import { configureEmail, getEmailRuntime, getEmailService } from './runtime';
+import {
+  configureEmail,
+  getEmailRuntime,
+  getEmailService,
+  isEmailDeliveryReady,
+} from './runtime';
 import type { EmailProvider } from './types';
 
 const originalFetch = globalThis.fetch;
@@ -46,6 +51,26 @@ describe('EmailService', () => {
       })
     ).rejects.toThrow(EmailError);
   });
+
+  test('normalizes custom provider failures without exposing provider details', async () => {
+    const service = new EmailService({
+      name: 'unsafe-provider',
+      async send() {
+        throw new Error('Recipient user@example.com was rejected');
+      },
+    }, { from: 'Zero <noreply@example.com>' });
+
+    const error = await service.send({
+      to: 'user@example.com',
+      subject: 'Reset',
+      text: 'Reset body',
+    }).catch((value) => value);
+
+    expect(error).toBeInstanceOf(EmailError);
+    expect(error.code).toBe('EMAIL_SEND_FAILED');
+    expect(error.message).toBe('Email provider request failed');
+    expect(error.message).not.toContain('user@example.com');
+  });
 });
 
 describe('configureEmail', () => {
@@ -62,6 +87,42 @@ describe('configureEmail', () => {
 
     expect(runtime.enabled).toBe(true);
     expect(runtime.provider.name).toBe('resend');
+  });
+
+  test('uses environment sender defaults and reports real delivery readiness', () => {
+    const previous = {
+      from: Bun.env.EMAIL_FROM,
+      replyTo: Bun.env.EMAIL_REPLY_TO,
+      apiKey: Bun.env.RESEND_API_KEY,
+    };
+    Bun.env.EMAIL_FROM = 'Zero Env <noreply@env.test>';
+    Bun.env.EMAIL_REPLY_TO = 'support@env.test';
+    Bun.env.RESEND_API_KEY = 'test_resend_key';
+
+    try {
+      const runtime = configureEmail(true);
+      expect(runtime.config).toMatchObject({
+        from: 'Zero Env <noreply@env.test>',
+        replyTo: 'support@env.test',
+      });
+      expect(isEmailDeliveryReady(runtime)).toBe(true);
+    } finally {
+      restoreEnv('EMAIL_FROM', previous.from);
+      restoreEnv('EMAIL_REPLY_TO', previous.replyTo);
+      restoreEnv('RESEND_API_KEY', previous.apiKey);
+    }
+  });
+
+  test('does not advertise a provider without the required sender', () => {
+    const previous = Bun.env.EMAIL_FROM;
+    Bun.env.EMAIL_FROM = '';
+    try {
+      const runtime = configureEmail({ provider: 'memory' });
+      expect(runtime.enabled).toBe(true);
+      expect(isEmailDeliveryReady(runtime)).toBe(false);
+    } finally {
+      restoreEnv('EMAIL_FROM', previous);
+    }
   });
 
   test('accepts custom provider objects', async () => {
@@ -91,7 +152,42 @@ describe('configureEmail', () => {
   });
 });
 
+function restoreEnv(key: 'EMAIL_FROM' | 'EMAIL_REPLY_TO' | 'RESEND_API_KEY', value: string | undefined) {
+  if (value === undefined) delete Bun.env[key];
+  else Bun.env[key] = value;
+}
+
 describe('ResendEmailProvider', () => {
+  test('uses stable safe errors for permanent and retryable provider responses', async () => {
+    const provider = new ResendEmailProvider({
+      apiKey: 'test_key', baseUrl: 'https://resend.test',
+    });
+    for (const [status, code] of [
+      [422, 'EMAIL_PROVIDER_REQUEST_REJECTED'],
+      [429, 'EMAIL_SEND_FAILED'],
+      [503, 'EMAIL_SEND_FAILED'],
+    ] as const) {
+      globalThis.fetch = (async () => Response.json(
+        { message: 'secret provider response' }, { status }
+      )) as unknown as typeof fetch;
+      let error: unknown;
+      try {
+        await provider.send({
+          from: 'Zero <noreply@example.com>', to: 'user@example.com',
+          subject: 'Reset', text: 'Reset body',
+        });
+      } catch (value) {
+        error = value;
+      }
+      expect(error).toBeInstanceOf(EmailError);
+      if (!(error instanceof EmailError)) throw new Error('Expected EmailError');
+      expect(error.code).toBe(code);
+      expect(error.status).toBe(status);
+      expect(error.message).toBe('Email provider request failed');
+      expect(error.message).not.toContain('secret provider response');
+    }
+  });
+
   test('maps EmailMessage to Resend send-email API', async () => {
     let request: Request | null = null;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -112,6 +208,7 @@ describe('ResendEmailProvider', () => {
       text: 'Hello',
       html: '<p>Hello</p>',
       tags: { system: 'auth' },
+      idempotencyKey: 'auth-job:1',
     });
 
     expect(result).toEqual({
@@ -121,6 +218,7 @@ describe('ResendEmailProvider', () => {
     });
     expect(request!.url).toBe('https://resend.test/emails');
     expect(request!.headers.get('authorization')).toBe('Bearer test_key');
+    expect(request!.headers.get('idempotency-key')).toBe('auth-job:1');
     const body = await request!.json();
     expect(body).toMatchObject({
       from: 'Zero <noreply@example.com>',

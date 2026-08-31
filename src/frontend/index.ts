@@ -57,10 +57,24 @@ export { AuthClient, AuthClientError } from './client/auth-client';
 export type {
   AuthAdminConfig,
   AuthAdminCreateUserParams,
+  AuthAdminMfaRequirement,
+  AuthAdminMfaResetResult,
+  AuthAdminSdkSurface,
   AuthAdminUpdateUserParams,
+  AuthAdminUserMfaStatus,
   AuthAdminUserListParams,
   AuthAdminUserListResult,
+  AuthCompletionResult,
+  AuthMfaChallenge,
+  AuthMfaChallengeRequiredResult,
+  AuthMfaMethod,
+  AuthMfaMethodType,
+  AuthMfaSetupRequiredResult,
+  AuthMfaSetupStartResult,
+  AuthMfaSetupVerifyResult,
+  AuthPasswordUpdatedResult,
   AuthPublicConfig,
+  AuthSessionResult,
   AuthUserPropertyConfig,
   AuthUser,
   RegisterParams,
@@ -216,6 +230,10 @@ export type {
 export { Toaster } from '../components/ui/sonner';
 export type { ToasterProps } from '../components/ui/sonner';
 export { toast } from 'sonner';
+
+// ─── QR Code ───────────────────────────────────────────────────────────
+export { QRCode } from '../components/qr-code';
+export type { QRCodeProps } from '../components/qr-code';
 
 // ─── Client Router (for advanced use) ───────────────────────────────────
 export {
@@ -512,9 +530,11 @@ export {
 export { Calendar } from '../components/ui/calendar';
 export type { CalendarProps } from '../components/ui/calendar';
 export { DatePicker } from '../components/ui/date-picker';
-export type { DatePickerProps } from '../components/ui/date-picker';
+export type { DatePickerCalendarProps, DatePickerProps } from '../components/ui/date-picker';
 export { DateRangePicker } from '../components/ui/date-range-picker';
 export type { DateRangePickerProps } from '../components/ui/date-range-picker';
+export { TimePicker } from '../components/ui/time-picker';
+export type { TimePickerProps } from '../components/ui/time-picker';
 
 // ─── Command ────────────────────────────────────────────────────────────
 export {
@@ -559,15 +579,16 @@ export type {
 // ─── Auth Blocks ────────────────────────────────────────────────────────
 export {
   LoginForm, RegisterForm, ForgotPasswordForm, OTPVerification,
-  PasswordActionForm, ChangePasswordForm, UserPropertiesForm,
+  PasswordActionForm, EmailVerificationForm, ChangePasswordForm, UserPropertiesForm,
   PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup,
   AuthLayout, AuthHeader,
   AdminGate, Gate, HasFlag, HasProperty, PropertyGate, SignedIn, SignedOut,
-  useGate, usePropertyGate,
+  useGate, useNativeAuthContinuation, useNativeAuthRoute, useNativeLoginHint,
+  usePropertyGate,
 } from '../components/auth';
 export type {
   LoginFormProps, RegisterFormProps, ForgotPasswordFormProps,
-  PasswordActionFormProps, ChangePasswordFormProps, UserPropertiesFormProps,
+  PasswordActionFormProps, EmailVerificationFormProps, ChangePasswordFormProps, UserPropertiesFormProps,
   OTPVerificationProps, SocialProvider,
   AuthVisibilityGateProps, GateProps, HasFlagProps, PropertyGateProps, PropertyGateValue,
 } from '../components/auth';
@@ -687,7 +708,9 @@ export {
   useUpload,
   useStorageFolder,
   useStorageDrives,
+  useDriveCapabilities,
   useDriveUsage,
+  useStoragePermissions,
   usePresignedUrl,
   useStorageActions,
 } from '../storage/storage-hooks';
@@ -697,7 +720,9 @@ export type {
   UploadFileOptions,
   UseStorageFolderReturn,
   UseStorageDrivesReturn,
+  UseDriveCapabilitiesReturn,
   UseDriveUsageReturn,
+  UseStoragePermissionsReturn,
   UsePresignedUrlReturn,
   StorageActions,
 } from '../storage/storage-hooks';
@@ -730,10 +755,18 @@ export { STORAGE_TABLES } from '../storage/types';
 export type {
   FileInfo,
   DriveRecord,
+  DriveRecordWithAccess,
   DriveUsage,
   ObjectType,
   CreateDriveParams,
+  CreateUploadGrantParams,
+  GrantPermissionParams,
   UploadOptions,
+  StorageAccessCapabilities,
+  StorageUploadGrant,
+  PermissionRecord,
+  ListOptions,
+  ListPermissionsOptions,
   ListResult,
   GrantType,
   PermissionLevel,
@@ -754,6 +787,9 @@ export type {
 export {
   StorageManagement,
   StorageDriveList,
+  StorageDriveDetail,
+  StorageDrivePermissionsPanel,
+  StorageDriveSettingsPanel,
   StorageDropzone,
   StorageFileBrowser,
   StorageDriveDetailHeader,
@@ -764,6 +800,9 @@ export type {
   StorageManagementView,
   StorageDriveRow,
   StorageDriveListProps,
+  StorageDriveDetailProps,
+  StorageDrivePermissionsPanelProps,
+  StorageDriveSettingsPanelProps,
   StorageDropzoneProps,
   StorageFileBrowserProps,
   StorageDriveDetailHeaderProps,

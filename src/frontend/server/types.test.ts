@@ -39,6 +39,8 @@ describe('resolveConfig', () => {
 
     expect(config.auth).toEqual({});
     expect(config.stateSync).toBe(true);
+    expect(config.syncAuth).toBe('required');
+    expect(config.syncAuthDefaulted).toBe(true);
     expect(config.generatedDir).toBe('./.zero/generated');
     expect(config.serverPluginsDir).toBe('./server/plugins');
     expect(config.serverMiddlewareDir).toBe('./server/middleware');
@@ -61,6 +63,44 @@ describe('resolveConfig', () => {
     expect(config.routeAuth).toBe('explicit');
   });
 
+  test('defaults custom auth routes to public without changing explicit public paths', () => {
+    const defaults = resolveConfig({
+      db: { mode: 'memory' }, tables,
+      auth: {
+        account: { emailVerificationPath: 'confirm-email?source=registration' },
+        accountEmails: {
+          resetPath: '/recover-account?source=email',
+          setupPath: 'activate-account#setup',
+        },
+      },
+      loginPath: '/signin?mode=auth', registrationPath: '/join#register',
+    });
+    expect(defaults.publicPaths).toContain('/signin');
+    expect(defaults.publicPaths).toContain('/join');
+    expect(defaults.publicPaths).toContain('/confirm-email');
+    expect(defaults.publicPaths).toContain('/recover-account');
+    expect(defaults.publicPaths).toContain('/activate-account');
+    expect(defaults.publicPaths).not.toContain('/signin?mode=auth');
+    expect(defaults.publicPaths).not.toContain('/login');
+    expect(defaults.publicPaths).not.toContain('/register');
+    expect(defaults.publicPaths).not.toContain('/verify-email');
+    expect(defaults.publicPaths).not.toContain('/reset-password');
+    expect(defaults.publicPaths).not.toContain('/setup-password');
+
+    const explicit = resolveConfig({
+      db: { mode: 'memory' }, tables, auth: true,
+      loginPath: '/signin', registrationPath: '/join', publicPaths: ['/health'],
+    });
+    expect(explicit.publicPaths).toEqual(['/health']);
+  });
+
+  test('rejects unsafe default auth page paths', () => {
+    expect(() => resolveConfig({
+      db: { mode: 'memory' }, tables,
+      auth: { account: { emailVerificationPath: '//attacker.example/verify' } },
+    })).toThrow('account.emailVerificationPath must be a safe local path');
+  });
+
   test('defaults authless apps to explicit route auth', () => {
     const config = resolveConfig({
       db: { mode: 'memory' },
@@ -70,6 +110,29 @@ describe('resolveConfig', () => {
 
     expect(config.auth).toBe(false);
     expect(config.routeAuth).toBe('explicit');
+    expect(config.syncAuth).toBe('public');
+    expect(config.syncAuthDefaulted).toBe(false);
+  });
+
+  test('preserves deliberate public sync for an auth-enabled app', () => {
+    const config = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: true,
+      syncAuth: 'public',
+    });
+
+    expect(config.syncAuth).toBe('public');
+    expect(config.syncAuthDefaulted).toBe(false);
+  });
+
+  test('rejects required sync auth when app auth is disabled', () => {
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: false,
+      syncAuth: 'required',
+    })).toThrow("[app] syncAuth: 'required' requires auth: true");
   });
 
   test('keeps sitemap disabled by default', () => {
@@ -79,6 +142,22 @@ describe('resolveConfig', () => {
     });
 
     expect(config.sitemap).toBe(false);
+  });
+
+  test('keeps PDF disabled by default and resolves secure PDF config when enabled', () => {
+    const disabled = resolveConfig({ db: { mode: 'memory' }, tables }, {});
+    expect(disabled.pdf).toBe(false);
+
+    const enabled = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      pdf: true,
+    }, {});
+    expect(enabled.pdf).not.toBe(false);
+    if (enabled.pdf !== false) {
+      expect(enabled.pdf.resources.remote).toBe('deny');
+      expect(enabled.pdf.browser.javaScriptEnabled).toBe(false);
+    }
   });
 
   test('normalizes enabled sitemap config', () => {
@@ -129,10 +208,41 @@ describe('resolveConfig', () => {
       tables,
       auth: {
         registration: { mode: 'admin-only' },
+        account: {
+          requireEmailVerification: true,
+          emailVerificationPath: '/verify-email',
+        },
+        mfa: {
+          enabled: true,
+          policy: 'required',
+          methods: ['totp'],
+          totp: {
+            issuer: 'Zero CRM',
+            encryptionKey: 'secret',
+          },
+        },
         accountEmails: {
           adminCreatedUser: true,
           passwordReset: true,
           actionTokenTTL: '2h',
+        },
+        nativeApps: {
+          clients: [{
+            clientId: 'com.example.desktop',
+            name: 'Example Desktop',
+            redirectUris: ['com.example.desktop:/oauth/callback'],
+          }],
+        },
+        branding: {
+          appName: 'Zero CRM Auth',
+          brandColor: '#155eef',
+        },
+        emails: {
+          passwordReset: (ctx) => ({
+            subject: ctx.defaultSubject,
+            text: ctx.defaultText,
+            html: ctx.defaultHtml,
+          }),
         },
         userProperties: {
           department: {
@@ -148,8 +258,17 @@ describe('resolveConfig', () => {
     expect(config.auth).not.toBe(false);
     if (config.auth !== false) {
       expect(config.auth.registration?.mode).toBe('admin-only');
+      expect(config.auth.account?.requireEmailVerification).toBe(true);
+      expect(config.auth.account?.emailVerificationPath).toBe('/verify-email');
+      expect(config.auth.mfa?.enabled).toBe(true);
+      expect(config.auth.mfa?.policy).toBe('required');
+      expect(config.auth.mfa?.methods).toEqual(['totp']);
+      expect(config.auth.mfa?.totp?.issuer).toBe('Zero CRM');
       expect(config.auth.accountEmails?.adminCreatedUser).toBe(true);
       expect(config.auth.accountEmails?.actionTokenTTL).toBe('2h');
+      expect(config.auth.nativeApps?.clients?.[0]?.clientId).toBe('com.example.desktop');
+      expect(config.auth.branding?.appName).toBe('Zero CRM Auth');
+      expect(typeof config.auth.emails?.passwordReset).toBe('function');
       expect(config.auth.userProperties?.department.values).toEqual([
         'accounting',
         'operations',

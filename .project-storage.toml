@@ -1,0 +1,37 @@
+[project]
+name = "zero-platform"
+
+[paths]
+dev_drive = "/Volumes/code-bank"
+build = "/Volumes/code-bank/build/zero-platform"
+releases = "/Volumes/code-bank/releases/zero-platform"
+artifacts = "/Volumes/code-bank/artifacts/zero-platform"
+scratch = "/Volumes/code-bank/tmp/scratch/zero-platform"
+logs = "/Volumes/code-bank/logs/zero-platform"
+cache_root = "/Volumes/code-bank/caches"
+build_root = "/Volumes/code-bank/build"
+release_root = "/Volumes/code-bank/releases"
+rust_target = "/Volumes/code-bank/build/zero-platform/rust-target"
+
+[budgets]
+rust_target = "100G"
+node_modules = "10G"
+python_venv = "5G"
+gradle_project = "15G"
+artifacts_dev = "20G"
+artifacts_release = "50G"
+logs = "2G"
+scratch = "5G"
+
+[retention]
+dev_artifacts_days = 14
+nightly_artifacts_days = 21
+logs_days = 7
+diagnostics_days = 14
+scratch_days = 3
+release_keep_latest = 5
+
+[cleanup]
+soft_profile = "standard"
+deep_profile = "code-only"
+archive_before_deep_clean = true

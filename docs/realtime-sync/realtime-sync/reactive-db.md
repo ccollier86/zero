@@ -225,9 +225,14 @@ private nextSeq(): number {
 }
 ```
 
-Not persisted to SQLite. On process restart, resets to 0. All connected clients reconnect and get a fresh snapshot with `seq=1` — no ambiguity.
+Not persisted to SQLite. On process restart, it resets to 0 and the process gets
+a new random sync epoch. Clients compare the pair, so an old cursor can never
+be mistaken for the new process even when both counters have the same value.
 
-**Why not persist it?** Simplicity. The seq is only meaningful for the current process lifetime. On restart, all clients must reconnect anyway (WebSocket drops), so they all get a fresh snapshot. Persisting the seq would add complexity for zero benefit at this scale.
+**Why not persist it?** The seq is only meaningful within its random epoch. On
+restart, WebSockets reconnect and receive an authoritative replacement
+snapshot. Durable mutation receipts separately resolve applied-but-unacked
+writes without relying on the reset counter.
 
 ### Change Listeners
 

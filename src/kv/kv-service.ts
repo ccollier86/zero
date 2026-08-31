@@ -70,6 +70,7 @@ export class KvService {
   private readonly checkpointIntervalMs: number;
   private readonly corruptRecordPolicy: KvRecoveryCorruptRecordPolicy;
   private readonly defaultTtlMs: number | null | undefined;
+  private readonly memoryOnly: boolean;
   private fsyncTimer: ReturnType<typeof setInterval> | null = null;
   private checkpointTimer: ReturnType<typeof setInterval> | null = null;
   private checkpointPromise: Promise<void> | null = null;
@@ -78,6 +79,7 @@ export class KvService {
   /** Create a KV/cache service with memory, journal, and checkpoint stores. */
   constructor(config: KvServiceConfig = {}) {
     this.clock = config.clock ?? systemKvClock;
+    this.memoryOnly = config.durability === 'memory';
     this.defaultTtlMs = config.memory?.defaultTtlMs;
     this.fsyncMs = normalizeInterval(config.fsyncMs ?? 1000, 'fsyncMs');
     this.checkpointIntervalMs = normalizeInterval(config.checkpointIntervalMs ?? 30_000, 'checkpointIntervalMs');
@@ -99,14 +101,16 @@ export class KvService {
   /** Recover the memory engine and start background flush/checkpoint loops. */
   async start(): Promise<void> {
     if (this.started) return;
-    await recoverKvMemoryEngine({
-      engine: this.engine,
-      checkpoint: this.checkpointStore,
-      journal: this.journal,
-      corruptRecordPolicy: this.corruptRecordPolicy,
-    });
+    if (!this.memoryOnly) {
+      await recoverKvMemoryEngine({
+        engine: this.engine,
+        checkpoint: this.checkpointStore,
+        journal: this.journal,
+        corruptRecordPolicy: this.corruptRecordPolicy,
+      });
+    }
     this.started = true;
-    this.startTimers();
+    if (!this.memoryOnly) this.startTimers();
   }
 
   /** Flush the journal and write a final checkpoint. */
@@ -275,6 +279,7 @@ export class KvService {
 
   /** Write a checkpoint covering all currently live entries. */
   async checkpoint(): Promise<void> {
+    if (this.memoryOnly) return;
     if (this.checkpointPromise) {
       await this.checkpointPromise;
       return;
@@ -344,7 +349,7 @@ export class KvService {
   }
 
   private shouldPersistOnStop(): boolean {
-    return this.journal.currentSequence() > 0 || this.engine.stats().entries > 0;
+    return !this.memoryOnly && (this.journal.currentSequence() > 0 || this.engine.stats().entries > 0);
   }
 }
 

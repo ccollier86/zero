@@ -93,6 +93,7 @@ interface NumberOptions {
 interface BooleanOptions {
   label?: string;
   description?: string;
+  required?: boolean;
   defaultValue?: boolean;
   tableVisible?: boolean;
   sortable?: boolean;
@@ -268,12 +269,13 @@ function number(opts: NumberOptions = {}): FieldDef<any, number> {
 }
 
 function boolean(opts: BooleanOptions = {}): FieldDef<any, number> {
+  const required = opts.required ?? false;
   const defaultVal = opts.defaultValue ?? false;
-  const schema = v.optional(v.boolean(), defaultVal);
+  const schema = required ? v.boolean() : v.optional(v.boolean(), defaultVal);
   return {
     _schema: schema as any,
-    _meta: baseMeta('boolean', { ...opts, required: false, defaultValue: defaultVal }),
-    _sqlType: `integer default ${defaultVal ? 1 : 0}`,
+    _meta: baseMeta('boolean', { ...opts, required, defaultValue: defaultVal }),
+    _sqlType: `integer${required ? ' not null' : ''} default ${defaultVal ? 1 : 0}`,
     _clientType: 'integer',
   };
 }

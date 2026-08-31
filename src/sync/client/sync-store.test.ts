@@ -35,6 +35,8 @@ describe('createSyncStore', () => {
     expect(ctx._sync).toEqual({
       connected: false,
       lastSeq: 0,
+      epoch: null,
+      scope: null,
       pending: [],
     });
   });
@@ -49,6 +51,86 @@ describe('createSyncStore', () => {
 // ─── sync.snapshot reducer ─────────────────────────────────────────────────
 
 describe('sync.snapshot', () => {
+  test('replacement purges stale full and lazy rows while preserving optimistic work', () => {
+    const { store } = createSyncStore(makeTables());
+    store.send({
+      type: 'sync.snapshot',
+      tables: {
+        todos: { old: { id: 'old', title: 'Stale', done: 0 } },
+        users: { stale: { id: 'stale', name: 'No longer visible' } },
+      },
+      seq: 8,
+      epoch: 'old-epoch',
+      scope: 'same-scope',
+    });
+    store.send({
+      type: 'optimistic.insert', table: 'todos', rowId: 'draft',
+      row: { id: 'draft', title: 'Offline draft', done: 0 }, ref: 'draft-ref',
+    });
+
+    store.send({
+      type: 'sync.snapshot',
+      tables: { todos: { fresh: { id: 'fresh', title: 'Fresh', done: 0 } } },
+      seq: 0,
+      epoch: 'new-epoch',
+      scope: 'same-scope',
+      reset: 'preserve-pending',
+    });
+
+    expect(getCtx(store).todos).toEqual({
+      fresh: { id: 'fresh', title: 'Fresh', done: 0 },
+      draft: { id: 'draft', title: 'Offline draft', done: 0 },
+    });
+    expect(getCtx(store).users).toEqual({});
+    expect(getCtx(store)._sync.pending.map((item) => item.ref)).toEqual(['draft-ref']);
+    expect(getCtx(store)._sync.epoch).toBe('new-epoch');
+  });
+
+  test('authorization replacement purges every cached row and pending mutation', () => {
+    const { store } = createSyncStore(makeTables());
+    store.send({
+      type: 'optimistic.insert', table: 'users', rowId: 'private',
+      row: { id: 'private', name: 'Private' }, ref: 'private-ref',
+    });
+    store.send({
+      type: 'sync.snapshot', tables: { todos: {} }, seq: 1,
+      epoch: 'epoch', scope: 'new-scope', reset: 'purge',
+    });
+
+    expect(getCtx(store).todos).toEqual({});
+    expect(getCtx(store).users).toEqual({});
+    expect(getCtx(store)._sync.pending).toEqual([]);
+  });
+
+  test('rebases an attempted mutation so failure cannot restore stale state', () => {
+    const { store } = createSyncStore(makeTables());
+    store.send({
+      type: 'sync.snapshot', tables: {
+        todos: { '1': { id: '1', title: 'Before', done: 0 } },
+      }, seq: 2, epoch: 'old', scope: 'same',
+    });
+    store.send({
+      type: 'optimistic.update', table: 'todos', rowId: '1',
+      partial: { title: 'Requested' }, ref: 'uncertain',
+    });
+    store.send({
+      type: 'sync.mutation-sent', ref: 'uncertain', sentAt: 10, attempt: 1,
+    });
+    store.send({
+      type: 'sync.snapshot', tables: {
+        todos: { '1': { id: '1', title: 'Server canonical', done: 1 } },
+      }, seq: 0, epoch: 'new', scope: 'same', reset: 'preserve-pending',
+    });
+
+    expect((getCtx(store).todos as Record<string, Row>)['1'].title).toBe(
+      'Server canonical',
+    );
+    store.send({ type: 'sync.ack', ref: 'uncertain', ok: false });
+    expect((getCtx(store).todos as Record<string, Row>)['1']).toEqual({
+      id: '1', title: 'Server canonical', done: 1,
+    });
+  });
+
   test('replaces table contents and updates lastSeq', () => {
     const { store } = createSyncStore(makeTables());
 
@@ -301,6 +383,26 @@ describe('sync.ack', () => {
     expect((getCtx(store).todos as Record<string, Row>)['1']).toBeDefined();
   });
 
+  test('ok=true installs the authoritative receipt result', () => {
+    const { store } = createSyncStore(makeTables());
+    store.send({
+      type: 'optimistic.insert', table: 'todos', rowId: '1',
+      row: { id: '1', title: 'Requested', done: 0 }, ref: 'ref-1',
+    });
+    store.send({
+      type: 'sync.ack', ref: 'ref-1', ok: true, seq: 1,
+      change: {
+        table: 'todos', op: 'UPDATE', rowId: '1',
+        row: { id: '1', title: 'Normalized', done: 1 },
+      },
+    });
+
+    expect((getCtx(store).todos as Record<string, Row>)['1']).toEqual({
+      id: '1', title: 'Normalized', done: 1,
+    });
+    expect(getCtx(store)._sync.pending).toEqual([]);
+  });
+
   test('ok=false rolls back to previous state', () => {
     const { store } = createSyncStore(makeTables());
 
@@ -404,7 +506,7 @@ describe('sync.catchup', () => {
     expect(ctx._sync.lastSeq).toBe(3);
   });
 
-  test('confirms pending mutations that match table + rowId', () => {
+  test('does not mistake an unrelated same-row catchup for confirmation', () => {
     const { store } = createSyncStore(makeTables());
 
     // Add optimistic insert
@@ -426,6 +528,8 @@ describe('sync.catchup', () => {
     });
 
     expect(getCtx(store)._sync.pending).toHaveLength(2);
+    store.send({ type: 'sync.mutation-sent', ref: 'ref-1', sentAt: 1, attempt: 1 });
+    store.send({ type: 'sync.mutation-sent', ref: 'ref-2', sentAt: 1, attempt: 1 });
 
     // Catchup contains the row we inserted
     store.send({
@@ -442,9 +546,10 @@ describe('sync.catchup', () => {
       seq: 5,
     });
 
-    // ref-1 should be cleared, ref-2 should remain
-    expect(getCtx(store)._sync.pending).toHaveLength(1);
-    expect(getCtx(store)._sync.pending[0].ref).toBe('ref-2');
+    // Row identity is not a mutation receipt: both remain unresolved.
+    expect(getCtx(store)._sync.pending.map((item) => item.ref)).toEqual([
+      'ref-1', 'ref-2',
+    ]);
 
     // Server's canonical version applied
     expect((getCtx(store).todos as Record<string, Row>)['1'].title).toBe(
@@ -1068,6 +1173,8 @@ describe('sync.reset', () => {
     expect(ctx._sync).toEqual({
       connected: false,
       lastSeq: 0,
+      epoch: null,
+      scope: null,
       pending: [],
     });
   });

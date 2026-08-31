@@ -76,14 +76,15 @@ These are the lowest-level app-facing controls in `src/components/ui`.
 
 | Component | File | Role |
 | --- | --- | --- |
-| `Button`, `buttonVariants` | `ui/button.tsx` | Shared action primitive with variants and automatic animated icon triggers. |
-| `Input` | `ui/input.tsx` | Tokenized single-line input. |
+| `Button`, `buttonVariants` | `ui/button.tsx` | Shared action primitive with variants and whole-button animated icon triggers. Avoid wrapping button icons in nested `AnimateIcon`; the button owns the trigger. |
+| `Input` | `ui/input.tsx` | Tokenized single-line input with pointer-local border highlight and subtle focused border state. |
 | `Textarea` | `ui/textarea.tsx` | Tokenized multi-line input. |
 | `Label` | `ui/label.tsx` | Accessible label primitive. |
 | `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator` | `ui/select.tsx` | Tokenized dropdown select. Use this instead of native `<select>` in platform UI. |
-| `Checkbox` | `animate-ui/components/radix/checkbox.tsx` | Animated checkbox from Animate UI/Radix. Currently not wrapped in `ui/`. |
+| `Checkbox` | `ui/checkbox.tsx` | Animated checkbox from Animate UI/Radix, available at `@zero/framework/components/ui/checkbox`. |
 | `Switch` | `animate-ui/components/radix/switch.tsx` | Animated binary toggle from Animate UI/Radix. Currently not wrapped in `ui/`. |
-| `RadioGroup`, `RadioGroupItem` | `animate-ui/components/radix/radio-group.tsx` | Animated radio group from Animate UI/Radix. Currently not wrapped in `ui/`. |
+| `RadioGroup`, `RadioGroupItem` | `ui/radio-group.tsx` | Animated radio group from Animate UI/Radix, available at `@zero/framework/components/ui/radio-group`. |
+| `Progress` | `ui/progress.tsx` | Animated progress indicator available at `@zero/framework/components/ui/progress`. |
 | `Toggle`, `ToggleGroup` | `animate-ui/components/radix/toggle*.tsx` | Animated pressed-state controls from Animate UI/Radix. |
 | `Badge`, `badgeVariants` | `ui/badge.tsx` | Small status/tag primitive. |
 | `Avatar`, `AvatarImage`, `AvatarFallback` | `ui/avatar.tsx` | User/avatar primitive. |
@@ -101,6 +102,7 @@ These are the lowest-level app-facing controls in `src/components/ui`.
 | `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis` | `ui/pagination.tsx` | Page navigation primitives. |
 | `DropdownMenu` and subparts | `components/dropdown-menu` | Public animated dropdown menu wrapper. Prefer this over raw Radix menu. |
 | `Collapsible`, `CollapsibleTrigger`, `CollapsibleContent` | `components/collapsible` | Public animated collapsible wrapper. |
+| `Tooltip`, `TooltipTrigger`, `TooltipContent` | `components/tooltip` | Public Zero/Radix tooltip for accessible control descriptions, including icon-only actions. |
 | `ResizableNavbar` | `components/navbar` | Public-page navbar that detaches/shrinks on scroll and uses magnetic hover highlighting between links. |
 | `Hero`, `HeroBackground`, `HeroImageBackground`, `WavyBackground` | `components/hero` | Public-page hero section with tokenized background presets, custom background slot, actions, wavy canvas background, and rich title support. |
 | `TextGenerateEffect`, `TypewriterEffect`, `FlipWords` | `components/text-effects` | Public text effects for Hero titles, landing copy, docs headers, and content pages. |
@@ -146,7 +148,8 @@ intake behavior through the planned blueprint/draft/attachment layer.
 | `FieldRenderer` | `forms/field-renderer.tsx` | Renders schema fields into appropriate controls. |
 | `AutoForm` | `forms/auto-form.tsx` | Schema-driven form generator. |
 | `Wizard` | `forms/wizard.tsx` | Multi-step form composition. |
-| `PasswordInput`, `PasswordStrength`, `OtpInput`, `OtpVerification` | `auth/*` | Auth-focused input controls. |
+| `PasswordInput`, `PasswordStrength`, `OTPInput`, `OTPVerification` | `auth/*` | Auth-focused input controls. |
+| `QRCode` | `qr-code/qr-code.tsx` | Token-aware QR primitive for authenticator setup and other app-owned QR flows. |
 | `ValidationRules`, `ValidationMeter` | `ui/validation-*.tsx` | Password/validation display primitives. |
 
 ## Composed Inputs
@@ -154,8 +157,9 @@ intake behavior through the planned blueprint/draft/attachment layer.
 | Component | File | Role |
 | --- | --- | --- |
 | `Calendar` | `ui/calendar.tsx` | Calendar primitive backed by react-day-picker. |
-| `DatePicker` | `ui/date-picker.tsx` | Input + popover + calendar. |
+| `DatePicker` | `ui/date-picker.tsx` | Typed U.S. numeric date input + popover + calendar. Valid `M/D/YYYY` and `M-D-YYYY` input normalizes to the long display; `calendarProps` owns bounded month/year navigation and disabled dates. |
 | `DateRangePicker` | `ui/date-range-picker.tsx` | Range picker composition. |
+| `TimePicker` | `ui/time-picker.tsx` | Accessible hour/minute/period input that emits canonical `HH:mm`. |
 | `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut` | `ui/command.tsx` | cmdk command palette primitives. |
 | `Combobox` | `ui/combobox.tsx` | Searchable select, including grouped/multi options. |
 | `TagInput` | `ui/tag-input.tsx` | Chip-based tag entry. |
@@ -195,19 +199,21 @@ intake behavior through the planned blueprint/draft/attachment layer.
 | `DataTableColumnHeader` | `data-table/data-table-column-header.tsx` | Sortable/filterable header. |
 | `EditableCell`, `AnimatedCell` | `data-table/*cell.tsx` | Inline editing and value transition cells. |
 | `KanbanBoard`, `KanbanTaskCard` | `kanban/kanban-board.tsx` | Drag-and-drop board organism for status/work queues. |
-| `MasterDetailView`, `MasterDetailPage` | `master-detail/master-detail-page.tsx` | List/table + detail organism. |
+| `MasterDetailView`, `MasterDetailPage` | `master-detail/master-detail-page.tsx` | List/table + detail organism with DataTable-compatible `source` support. |
 | `CrudPage` | `crud-page/crud-page.tsx` | Schema CRUD page/organism using DataTable and generated forms. |
 
 ## Platform Domain Organisms
 
 | Component | File | Role |
 | --- | --- | --- |
-| `LoginForm`, `RegisterForm`, `ForgotPasswordForm`, `ChangePasswordForm`, `PasswordActionForm` | `auth/*form.tsx` | Auth flow blocks. |
+| `LoginForm`, `RegisterForm`, `ForgotPasswordForm`, `EmailVerificationForm`, `ChangePasswordForm`, `PasswordActionForm` | `auth/*form.tsx` | Auth flow blocks. Login/register/email/password action forms route MFA continuation responses automatically. |
+| `MFAContinuation`, `MFAEnrollmentForm`, `MFAChallengeForm`, `MFAManagementPanel` | `auth/mfa-*.tsx` | First-party email OTP/authenticator setup, challenge verification, and current-user MFA settings surfaces. |
+| `AuthLayout`, `AuthHeader`, `PasswordInput`, `PasswordStrength`, `OTPInput`, `OTPVerification` | `auth/*` | Auth page shell, headers, password affordances, and OTP entry primitives. `AuthLayout` owns the full brand/card entrance animation; individual forms should only animate validation, loading, and success state changes. |
 | `AuthGate`, `RoleGate`, property gates | `auth/gate.tsx` | UI visibility gates for auth and user metadata. |
 | `UserPropertiesForm` | `auth/user-properties-form.tsx` | User metadata editor. |
-| `UserManagement` | `admin/users/user-management.tsx` | Admin user management organism. |
-| `StorageManagement` | `storage/storage-management.tsx` | Full storage management organism. |
-| `StorageDriveList`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel` | `storage/*` | Storage subcomponents for custom storage UIs. |
+| `UserManagement` | `admin/users/user-management.tsx` | Drop-in admin user management organism with exception-only auth readiness/security notices, capability-gated and serialized lifecycle actions, search, pagination, and compact property editing. Focused sibling components/hooks own readiness, security, action policy, and transport state. |
+| `StorageManagement` | `storage/storage-management.tsx` | Full storage management organism with drive settings, permissions, file browsing, dropzone uploads, filtered/sorted folders, and presigned download links. |
+| `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel` | `storage/*` | Storage subcomponents for custom storage UIs. Use these before writing bespoke storage admin screens. |
 
 ## Animate UI Source Groups
 
@@ -229,12 +235,12 @@ all equal in platform status.
 | Area | Current overlap | Recommendation |
 | --- | --- | --- |
 | Button | `ui/button.tsx` and Animate UI button variants both exist. | Keep `ui/Button` as default app action. Expose effect buttons only as named specialty components. |
-| Tooltip | `animate-ui/components/animate/tooltip.tsx` and `animate-ui/components/radix/tooltip.tsx` both exist. | Pick Radix tooltip for UI controls; reserve animated tooltip for decorative/demo contexts. Add a public `components/tooltip` wrapper if it becomes common. |
+| Tooltip | `animate-ui/components/animate/tooltip.tsx` and the public `components/tooltip` Radix wrapper both exist. | Use `@zero/framework/components/tooltip` for UI controls; reserve the animated tooltip for decorative/demo contexts. |
 | Tabs | Animate UI has animated tabs and animated Radix tabs. | Define one app-default `Tabs` path before telling agents to use tabs broadly. |
 | Notification list | `ui/notification-list.tsx` and Animate UI community `notification-list.tsx`. | Keep Zero notification components as platform default because they know platform notification shape. Treat community version as source/reference only. |
 | Sidebar | Raw Animate UI sidebar and Zero `AppShell` both expose sidebar pieces. | Default to `AppShell`; use raw sidebar only for custom shells. |
 | Dialog/modal | Animate UI dialog exists, while app flows should use the platform modal manager. | Agents should use modal manager for app modals; direct dialog is for building reusable components or special cases. |
-| Select/radio/checkbox/switch | Select has `ui/` wrapper, but radio/checkbox/switch are only Animate UI/Radix paths. | Add Zero `ui/checkbox`, `ui/switch`, and `ui/radio-group` wrappers if they are used often. |
+| Select/switch | Select has a `ui/` wrapper, while switch remains on an Animate UI/Radix path. | Add a Zero `ui/switch` wrapper when package-mode app use requires it. |
 | App-specific organisms | Auth, admin, storage, data table, and kanban share `src/components`. | Keep until package structure stabilizes, but docs should label these as domain/data organisms, not base UI. |
 
 ## Proposed Organization Direction

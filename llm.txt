@@ -1,0 +1,3 @@
+# Zero Agent Guide
+
+The canonical agent-facing guide is [llms.txt](./llms.txt).

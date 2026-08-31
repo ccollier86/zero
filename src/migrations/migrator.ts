@@ -364,7 +364,9 @@ export class Migrator {
     const needsBackup = migration.backupRequired || isDestructive(safety);
     if (!needsBackup || !this.createBackups || !isFileBacked(this.dbPath)) return;
 
-    const backup = createMigrationBackup(this.dbPath, this.backupDir, migration.version);
+    const backup = createMigrationBackup(
+      this.db, this.dbPath, this.backupDir, migration.version,
+    );
     if (backup) {
       this.artifacts.record({
         migrationVersion: migration.version,

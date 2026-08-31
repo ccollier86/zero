@@ -195,7 +195,7 @@ Platform hooks require `AppProvider` or `ClientProvider` in the browser. They ar
 | Notifications | `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext` |
 | Rooms/presence | `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator` |
 | Ephemeral KV | `useEphemeral`, `useEphemeralTopic` |
-| Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions` |
+| Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions` |
 | Workflows | `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun` |
 | Components | `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers` |
 
@@ -405,6 +405,24 @@ Use the ready component when you want the default Zero UI:
 />
 ```
 
+`useDriveCapabilities(driveId, path?)` loads the backend-resolved current-user
+storage access for a drive or object path:
+
+```tsx
+const access = useDriveCapabilities(driveId);
+
+return (
+  <button disabled={!access.capabilities?.canWrite}>
+    Upload
+  </button>
+);
+```
+
+Use `useStoragePermissions(driveId, objectPath?)` in admin surfaces to list
+explicit role, user, and auth-property grants. Mutate those grants with
+`useStorageActions().grantPermission()` and
+`useStorageActions().revokePermission()`.
+
 `useStorageFile(driveId, path)` loads one file/folder metadata record and
 returns `url`, `remove()`, `setVisibility()`, and `refresh()`:
 
@@ -427,6 +445,10 @@ await browser.uploadFiles(files);
 
 `useDriveQuota(driveId)` derives `percentUsed`, `nearLimit`, `overLimit`, and
 `unlimited` from drive usage.
+
+`useStorageFolder(driveId, path?, options?)` accepts `type`, `limit`, `cursor`,
+`sortBy`, and `sortDir`. The backend clamps oversized limits and keeps totals
+consistent with folder/file filters.
 
 ### Presence And Typing
 

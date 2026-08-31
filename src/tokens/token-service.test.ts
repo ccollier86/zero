@@ -157,4 +157,15 @@ describe('PlatformTokenService resume tokens', () => {
       .get(created.record.tokenId) as { revoked_at: number | null };
     expect(row.revoked_at).toBeNumber();
   });
+
+  test('revokes a resume token by its safe persisted token id', () => {
+    const created = service.createResumeToken({
+      flow: 'clinic-intake',
+      resource: { type: 'intake-draft', id: 'draft_4' },
+    });
+
+    expect(service.revokeResumeTokenById(created.record.tokenId)).toBe(true);
+    expect(service.revokeResumeTokenById(created.record.tokenId)).toBe(false);
+    expect(() => service.verifyResumeToken(created.rawToken)).toThrow('revoked');
+  });
 });

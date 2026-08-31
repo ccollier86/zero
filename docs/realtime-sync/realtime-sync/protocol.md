@@ -27,7 +27,10 @@ Full table state sent on initial connection (after subscribe) or when the client
       "alice": { "id": "alice", "name": "Alice", "role": "admin" }
     }
   },
-  "seq": 42
+  "seq": 42,
+  "epoch": "7d7e...",
+  "scope": "1a9c...",
+  "reset": "preserve-pending"
 }
 ```
 
@@ -35,14 +38,18 @@ Full table state sent on initial connection (after subscribe) or when the client
 |-------|------|-------------|
 | `tables` | `Record<string, Record<PK, Row>>` | Full contents of each subscribed table, keyed by primary key |
 | `seq` | `number` | Current sequence number — client stores this as `lastSeq` |
+| `epoch` | `string` | Process-unique sequence epoch — a change makes old sequence numbers incomparable |
+| `scope` | `string \| null` | Opaque hash of the authenticated identity and effective read policy |
+| `reset` | `'preserve-pending' \| 'purge'` | Authoritative replacement of every full and lazy table cache |
 
-The client replaces local state for the included tables. Pending mutations and
-same-row queue tracking are cleared only for tables present in the snapshot
-payload because the snapshot is authoritative for those tables. Lazy tables are
-usually omitted from snapshots, so their pending optimistic mutations remain
-active until an ack, catchup, timeout, or later snapshot explicitly includes
-that table. See [SyncStore — Snapshot Behavior](./sync-store.md#snapshot-behavior)
-for details.
+Current servers mark snapshots as cache replacements. The client first clears
+every table cache, including lazy tables omitted from `tables`, then installs
+the supplied full-table rows. `preserve-pending` retains unresolved in-memory
+work, but an already-attempted mutation does not cover the replacement's
+authoritative row with stale optimistic state. Never-sent offline work may
+remain optimistic until its first send. `purge` also removes pending work and
+is used when the authorization scope changed. This prevents deleted or newly
+forbidden lazy rows from surviving a restart or replay overflow.
 
 #### `sync.change`
 
@@ -52,6 +59,9 @@ Single row mutation. Sent to all subscribed clients after every successful write
 {
   "type": "sync.change",
   "seq": 43,
+  "prevSeq": 42,
+  "epoch": "7d7e...",
+  "scope": "1a9c...",
   "table": "todos",
   "op": "INSERT",
   "rowId": "5",
@@ -64,6 +74,9 @@ Single row mutation. Sent to all subscribed clients after every successful write
 | Field | Type | Description |
 |-------|------|-------------|
 | `seq` | `number` | Global sequence number for this change |
+| `prevSeq` | `number` | Previous change/catchup cursor successfully queued to this socket |
+| `epoch` | `string` | Sequence epoch for this server runtime |
+| `scope` | `string \| null` | Opaque authorization scope for this socket |
 | `table` | `string` | Table name |
 | `op` | `'INSERT' \| 'UPDATE' \| 'DELETE'` | Operation type |
 | `rowId` | `string` | Primary key of the affected row |
@@ -86,7 +99,13 @@ Acknowledgment of a client mutation request. Sent only to the requesting client.
   "type": "sync.ack",
   "ref": "abc-123",
   "seq": 43,
-  "ok": true
+  "ok": true,
+  "change": {
+    "table": "todos",
+    "op": "UPDATE",
+    "rowId": "5",
+    "row": { "id": "5", "title": "New todo", "done": 0 }
+  }
 }
 ```
 
@@ -103,11 +122,14 @@ Acknowledgment of a client mutation request. Sent only to the requesting client.
 | Field | Type | Description |
 |-------|------|-------------|
 | `ref` | `string` | Client-generated reference ID (echoed back from the mutation request) |
-| `seq` | `number \| null` | Sequence number of the resulting change (null if rejected) |
+| `seq` | `number \| null` | Server sequence at canonical resolution time (null if rejected) |
 | `ok` | `boolean` | Whether the mutation succeeded |
 | `error` | `string?` | Human-readable error message (only present when `ok: false`) |
+| `change` | `{ table, op, rowId, row }?` | Current authorization-projected canonical result; current servers include it for successful SDK mutations |
 
-On `ok: true`, the client removes the mutation from its pending queue — the optimistic state is confirmed.
+On `ok: true`, the client installs the canonical `change` when present and
+removes the mutation from its pending queue. This also reconciles defaults,
+normalization, later writes, and durable receipt replay.
 
 On `ok: false`, the client rolls back the optimistic change by restoring the previous state from the pending queue.
 
@@ -123,7 +145,10 @@ Array of missed changes sent on reconnect. Structurally identical to an array of
     { "seq": 44, "table": "todos", "op": "UPDATE", "rowId": "1", "row": { "id": "1", "title": "Buy milk", "done": 1 }, "origin": "conn_def", "ts": 1709500001000 },
     { "seq": 45, "table": "todos", "op": "DELETE", "rowId": "3", "row": null, "origin": "conn_abc", "ts": 1709500002000 }
   ],
-  "seq": 45
+  "seq": 45,
+  "prevSeq": 42,
+  "epoch": "7d7e...",
+  "scope": "1a9c..."
 }
 ```
 
@@ -131,6 +156,9 @@ Array of missed changes sent on reconnect. Structurally identical to an array of
 |-------|------|-------------|
 | `changes` | `Change[]` | Ordered array of changes since the client's `lastSeq` |
 | `seq` | `number` | Latest sequence number after applying all changes |
+| `prevSeq` | `number` | Exact client cursor used to build this atomic replay |
+| `epoch` | `string` | Sequence epoch for the replay |
+| `scope` | `string \| null` | Opaque authorization scope for the replay |
 
 The client applies each change in order, updating `lastSeq` to the final `seq` value.
 
@@ -145,7 +173,9 @@ Declares which tables the client wants to receive changes for. Sent on initial c
   "type": "sync.subscribe",
   "tables": ["todos", "users"],
   "snapshot": ["todos"],
-  "lastSeq": 0
+  "lastSeq": 42,
+  "epoch": "7d7e...",
+  "scope": "1a9c..."
 }
 ```
 
@@ -154,13 +184,21 @@ Declares which tables the client wants to receive changes for. Sent on initial c
 | `tables` | `string[]` | Table names to subscribe to for live changes |
 | `snapshot` | `string[]` | Table names to include in the snapshot response. Lazy tables should be omitted. |
 | `lastSeq` | `number` | Last sequence number the client received (0 for fresh connect) |
+| `epoch` | `string?` | Last accepted server epoch; omitted only before the first baseline |
+| `scope` | `string \| null?` | Last accepted opaque authorization scope |
 
-The server intersects `tables` and `snapshot` with the socket's readable table set. Readable tables are derived from `SyncPolicy.canReadTable` during WebSocket open and stored as `ws.data.allowedTables`.
+The server intersects `tables` and `snapshot` with the socket's readable table
+set. Readable tables are derived from the live account and
+`SyncPolicy.canReadTable` during the `sync.auth` handshake, stored as
+`ws.data.allowedTables`, and recomputed during socket revalidation.
 
 **Server response logic:**
-- If `lastSeq === 0` → send `sync.snapshot` with full table contents
-- If `lastSeq > 0` and gap is within ring buffer depth → send `sync.catchup`
-- If `lastSeq > 0` but gap exceeds ring buffer → send `sync.snapshot` (full resync)
+- Missing/mismatched `epoch`, a cursor ahead of the server, or an insufficient
+  ring buffer → `sync.snapshot { reset: 'preserve-pending' }`.
+- A changed or incomparable non-fresh `scope` →
+  `sync.snapshot { reset: 'purge' }`.
+- Matching epoch/scope with a replayable cursor → `sync.catchup`, including an
+  empty catchup when already current.
 
 #### `sync.mutate`
 
@@ -172,7 +210,9 @@ Request to mutate data. The server validates policy and applies or rejects.
   "ref": "abc-123",
   "table": "todos",
   "op": "INSERT",
-  "row": { "id": "5", "title": "New todo", "done": 0 }
+  "row": { "id": "5", "title": "New todo", "done": 0 },
+  "epoch": "7d7e...",
+  "attempt": 1
 }
 ```
 
@@ -204,8 +244,30 @@ Request to mutate data. The server validates policy and applies or rejects.
 | `op` | `'INSERT' \| 'UPDATE' \| 'DELETE'` | Operation type |
 | `rowId` | `string?` | Primary key (required for UPDATE/DELETE, optional for INSERT if included in `row`) |
 | `row` | `Row \| Partial<Row>?` | Full row for INSERT, partial for UPDATE, omitted for DELETE |
+| `epoch` | `string?` | Server epoch used for the first transport attempt |
+| `attempt` | `number?` | Monotonic transport attempt; the Zero client starts at 1 |
 
 Mutation authorization is separate from subscription authorization. `sync.mutate` is checked through `SyncPolicy.canMutateTable` and the optional operation callbacks `canInsert`, `canUpdate`, and `canDelete`. A table can be readable over sync but writable only through a domain service or HTTP route.
+
+Successful mutations write their data change and a principal-scoped receipt in
+the same SQLite transaction. A reconnect reuses the original `ref`, request,
+and first-attempt `epoch` while incrementing `attempt`. The server returns the
+receipt without executing the operation again. If a later attempt has no
+matching receipt—or a ref is reused for different work—the server rejects it.
+It never guesses that retrying a non-idempotent operation is safe.
+
+Receipts retain only `table`, `op`, and `rowId`; application row bodies are
+reloaded under current read authorization and are never kept in the ledger.
+Pruning protects receipts younger than one hour, then applies a 2,500-entry
+per-principal cap before a 25,000-entry global cap, with a seven-day maximum
+age. A burst can temporarily exceed the count caps during that protected
+uncertainty window. Eviction can turn a very late retry into a visible
+outcome-unavailable rejection, but it cannot turn that retry into a second
+write. Start a genuinely new user action with a new ref.
+
+The official client uses this retry contract. Legacy/raw clients that omit
+`attempt` retain the compatibility behavior and are responsible for their own
+idempotency discipline.
 
 ## Sequencing
 
@@ -223,7 +285,12 @@ seq=5  INSERT users {id:'alice', name:'Alice'}
 
 The counter spans **all tables** — it's a global ordering of all changes. This makes reconnect simple: the client says "I have everything up to seq=3" and the server replays seq 4, 5, ... regardless of which tables they affect.
 
-**Implementation:** A simple integer variable in ReactiveDB, incremented atomically in each write method. Not stored in SQLite (volatile) — starts at 0 on process start, first write gets `seq=1`. On restart, the `_changes` ring buffer is truncated (stale entries from the previous process) and all reconnecting clients get a fresh snapshot.
+**Implementation:** The integer and a cryptographically random `epoch` live in
+each ReactiveDB runtime. The counter starts at 0 and `_changes` is truncated for
+durable databases on restart. Because clients send both values, a sequence from
+an earlier process can never be mistaken for a current cursor—even when the old
+and new counters happen to be equal. An epoch change produces an authoritative
+replacement snapshot.
 
 ### Client Tracking
 
@@ -231,13 +298,18 @@ Each client tracks `lastSeq` — the highest sequence number it has processed:
 
 ```
 Client connects          → lastSeq = 0
-Receives sync.snapshot   → lastSeq = 42
-Receives sync.change     → lastSeq = 43
-Receives sync.change     → lastSeq = 44
+Receives sync.snapshot   → epoch = E1, scope = S1, lastSeq = 42
+Receives sync.change     → verify prevSeq = 42, lastSeq = 43
+Receives sync.change     → verify prevSeq = 43, lastSeq = 44
 Disconnects...
-Reconnects               → sends sync.subscribe { lastSeq: 44 }
-Receives sync.catchup    → lastSeq = 48 (4 changes replayed)
+Reconnects               → sends sync.subscribe { epoch:E1, scope:S1, lastSeq:44 }
+Receives sync.catchup    → verify prevSeq = 44, lastSeq = 48
 ```
+
+`seq` is global, but `prevSeq` is projected per connection. Changes to tables
+that a socket did not subscribe to do not advance that socket's predecessor.
+This avoids false gap detection while still proving continuity for every
+change that should have reached that client.
 
 ### Ring Buffer (`_changes` table)
 
@@ -264,43 +336,65 @@ This runs as part of the write transaction, so it's atomic with the change inser
 
 **When the buffer is insufficient:**
 
-If a reconnecting client's `lastSeq` is older than the oldest entry in `_changes`, the server can't replay incrementally. It sends a `sync.snapshot` instead — a full resync. This is the fallback for clients that were disconnected for a long time.
+If a reconnecting client's `lastSeq` is older than the oldest entry in
+`_changes`, the server cannot replay incrementally. It sends a replacement
+snapshot. The replacement invalidates omitted lazy caches as well as included
+full tables, then preserves same-scope in-memory work. Already-attempted work
+is rebased onto the snapshot without hiding its authoritative rows.
 
 For 2–4 users making modest mutations, a depth of 1000 covers several hours of disconnection.
 
 ## Connection Lifecycle
 
-Uses Bun's native WebSocket with per-socket data and topic-based pub/sub. See [architecture.md](./architecture.md) for why.
+Uses Bun's native WebSocket with per-socket data and status-checked direct
+delivery for table sync. State and ephemeral extension channels retain topics.
 
 ### Initial Connect
 
 ```
 Client                          Server (Elysia .ws())
   │                               │
-  │── WS upgrade ──────────────→ │  query: ?token=... (auth only)
-  │←── connection established ────│  open: verify token, derive readable tables from SyncPolicy
+  │── WS upgrade ──────────────→ │  clean URL; no bearer in query string
+  │←── connection established ────│
+  │── sync.auth { token } ──────→ │  verify token and current user
+  │                               │  derive readable tables and row filters
+  │←── sync.auth.ready ───────────│
   │                               │
   │── sync.subscribe ───────────→ │  Intersect tables/snapshot with ws.data.allowedTables
-  │   { tables, snapshot,        │  For each readable requested table:
-  │     lastSeq: 0 }             │
-  │                               │    ws.subscribe('sync:{table}')
-  │                               │  lastSeq=0 → build snapshot
+  │   { tables, snapshot,        │  Compare epoch + opaque authorization scope
+  │     lastSeq: 0 }             │  Build authoritative initial baseline
   │                               │
   │←── sync.snapshot ─────────────│  ws.send() — direct to this socket only
-  │   { tables: {...}, seq: 42 }  │
+  │   { tables, seq:42, epoch,    │
+  │     scope, reset }            │
   │                               │
   │  (client sets lastSeq = 42)   │
   │                               │
-  │←── sync.change ───────────────│  Via topic subscription (server.publish)
-  │←── sync.change ───────────────│
+  │←── sync.change ───────────────│  Direct status-checked per-socket delivery
+  │←── sync.change ───────────────│  Each carries prevSeq + epoch + scope
   │                               │
 ```
 
-Table subscription is always message-based — the client sends `sync.subscribe { tables, snapshot, lastSeq }` as a JSON message after the connection is established. The only query string parameter allowed on the WS upgrade URL is `token` for authentication. Tables are **never** specified via query string parameters.
+Authentication and table subscription are message-based. The current client
+opens a clean WebSocket URL, sends `sync.auth { token }`, waits for
+`sync.auth.ready`, and only then sends
+`sync.subscribe { tables, snapshot, lastSeq, epoch, scope }`. Bearer tokens and table names
+are **never** placed in the URL by the current client.
 
-When the sync plugin is configured with an auth bridge, a provided token is verified in the WebSocket `open` lifecycle before any sync, state, or ephemeral messages are handled. Invalid provided tokens close the socket with code `4001`. Missing tokens are allowed for standalone/public sync unless the app config marks sync auth as required.
+When the sync plugin is configured with an auth bridge, it verifies the first
+auth message before any sync, state, or ephemeral message is handled. Invalid
+or missing credentials close a required socket with code `4001`. Standalone
+sync can be deliberately public; auth-enabled `createApp()` deployments default
+to required and must explicitly choose `syncAuth: 'public'` to allow anonymous
+sync. A temporary server-only legacy query-token compatibility option is
+disabled by default.
 
-The same `open` lifecycle derives the socket's readable table set from `SyncPolicy.canReadTable`. Direct client writes are checked later per `sync.mutate` message through mutation policy, so read access does not automatically imply write access.
+The auth handshake derives the socket's readable table set and resource row
+filters. The server recomputes that authorization during socket revalidation;
+if a role, property, table grant, or row filter changes, it closes the socket
+and removes subscriptions so stale read access cannot continue. Direct client
+writes are still checked per `sync.mutate` through mutation policy, so read
+access does not automatically imply write access.
 
 ### Reconnect
 
@@ -315,19 +409,22 @@ Client                          Server
   │── WS upgrade ──────────────→ │  New socket, new ws.data
   │←── connection established ────│
   │                               │
-  │── sync.subscribe ───────────→ │  lastSeq=44 → check ring buffer
-  │   { tables, lastSeq: 44 }    │  ws.subscribe('sync:{table}') for each
+  │── sync.subscribe ───────────→ │  Verify epoch/scope, then check ring buffer
+  │   { tables, lastSeq:44,      │
+  │     epoch:E1, scope:S1 }     │
   │                               │
   │                               │  Ring buffer has seq 40-48?
   │                               │  → send catchup (45, 46, 47, 48)
   │                               │
   │←── sync.catchup ─────────────│  ws.send() — direct to this socket
-  │   { changes: [...], seq: 48 } │
+  │   { changes, prevSeq:44,      │
+  │     seq:48, epoch:E1,         │
+  │     scope:S1 }                │
   │                               │
   │  (client applies changes,     │
   │   sets lastSeq = 48)          │
   │                               │
-  │←── sync.change ───────────────│  Live changes resume via topic
+  │←── sync.change ───────────────│  Live status-checked delivery resumes
   │                               │
 ```
 
@@ -336,8 +433,10 @@ Client                          Server
 When `getChangesAfter(seq)` returns `null` — meaning the client's `lastSeq` has
 been pruned from the ring buffer — the server cannot replay incrementally. It
 sends `sync.snapshot` instead of `sync.catchup` for the requested snapshot
-tables. The client treats the included tables as authoritative: it replaces
-their local state and clears pending mutation state for those tables only.
+tables. The client clears all full and lazy caches. It then installs included
+full-table rows and preserves unresolved mutations when the opaque
+authorization scope is unchanged. Already-attempted mutations remain metadata,
+not an overlay over the replacement's authoritative state.
 
 ```
 Client                          Server
@@ -346,12 +445,14 @@ Client                          Server
   │   { tables, lastSeq: 5 }     │  getChangesAfter(5) → null (pruned)
   │                               │  → send full sync.snapshot
   │                               │
-  │←── sync.snapshot ─────────────│  Full resync via ws.send()
-  │   { tables: {...}, seq: 300 } │
+  │←── sync.snapshot ─────────────│  Full replacement via status-checked ws.send()
+  │   { tables, seq:300, epoch,   │
+  │     scope, reset:             │
+  │     'preserve-pending' }      │
   │                               │
-  │  (client replaces included    │
-  │   table state and clears      │
-  │   matching pending entries,   │
+  │  (client clears every cache,  │
+  │   installs snapshot tables,   │
+  │   rebases pending work,       │
   │   sets lastSeq = 300)         │
   │                               │
 ```
@@ -375,9 +476,19 @@ On successful reconnect, reset the attempt counter to 0.
 
 Connection is expected. This is a web app — an active WebSocket connection is the baseline assumption.
 
-When disconnected, the standalone sync client can show an offline indicator via `useSyncStatus()` (see [SyncStore — Connection Status](./sync-store.md#connection-status)). Full Zero apps usually use `useStatus()` from `@zero/framework/react`. There is no IndexedDB persistence and no offline mutation queue. Optimistic mutations sitting in the @xstate/store pending queue are lost if the tab or page is closed while disconnected.
+When disconnected, the standalone sync client can show an offline indicator via
+`useSyncStatus()` (see [SyncStore — Connection Status](./sync-store.md#connection-status)).
+Full Zero apps usually use `useStatus()` from `@zero/framework/react`. Pending
+mutations and outbound messages are queued in memory. After reconnect they wait
+for the epoch/scope baseline. Same-scope replacements preserve the work but
+show authoritative snapshot state for mutations that were already attempted;
+never-sent offline work can remain optimistic. Changed-scope replacements purge
+the queue before anything is sent. There is no IndexedDB persistence, so
+closing the page still discards offline work.
 
-When the connection resumes, the client sends `sync.subscribe` with its `lastSeq`. The server responds with `sync.catchup` (if the seq is still in the ring buffer) or a fresh `sync.snapshot` (if the seq was pruned). Either way, the client converges to the server's current state.
+When the connection resumes, the client sends `sync.subscribe` with its
+`epoch`, `scope`, and `lastSeq`. It does not flush newly queued offline
+mutations until a valid catchup or replacement baseline has been applied.
 
 ## Optimistic Update Protocol
 
@@ -393,8 +504,8 @@ Client A                        Server                        Client B
   │    { ref:'abc', ... }         │                              │
   │                               │ db.insert() → seq=43         │
   │                               │ onChange() fires              │
-  │                               │ server.publish('sync:todos') │
-  │                               │  (to ALL subscribers)        │
+  │                               │ project for each socket      │
+  │                               │ status-check ws.send()       │
   │                               │                              │
   │ ←── sync.change ──────────── │ ──── sync.change ──────────→ │
   │  { seq:43, origin:'connA',    │  { seq:43, op:INSERT, row }  │
@@ -404,8 +515,10 @@ Client A                        Server                        Client B
   │     canonical row state       │                              │
   │                               │                              │
   │ ←── sync.ack ─────────────── │                              │
-  │  { ref:'abc', seq:43, ok:true}│                              │
-  │  └─ Remove from pending queue │                              │
+  │  { ref:'abc', seq:43, ok:true,│                              │
+  │    change:{...canonical} }    │                              │
+  │  └─ Install canonical result  │                              │
+  │     and remove pending ref    │                              │
 ```
 
 ### Rejection Path
@@ -440,34 +553,47 @@ interface PendingMutation {
   rowId: string;
   previousState: Row | null;      // For rollback — row before optimistic apply
   optimisticState: Row | null;    // What we applied optimistically
+  optimisticPatch?: Partial<Row>; // Intent retained for safe rebasing
   sentAt: number;                 // For timeout detection
+  attempts: number;               // Successful transport sends
 }
 ```
 
 **Queue behavior:**
 - On mutation: push to queue (capturing `previousState` from current store), apply optimistic change, send WS message
 - On `sync.change` (with matching `table + rowId`): apply server's canonical row state (replaces optimistic version). This handles cases where the server modified the row (added timestamps, defaults, etc.).
-- On `sync.ack { ok: true }`: remove from queue by `ref`. No state change needed — the `sync.change` already reconciled the data.
+- On `sync.ack { ok: true }`: install its canonical result and remove by `ref`.
 - On `sync.ack { ok: false }`: remove from queue by `ref`, restore `previousState` to store.
-- On `sync.snapshot` (reconnect or full resync): clear pending entries and same-row queue tracking for tables included in the snapshot. The snapshot is the truth for those tables. Pending mutations for omitted lazy tables stay active.
+- On a `preserve-pending` replacement: clear every full and lazy cache, install
+  the snapshot, and rebase attempted pending work without covering the server
+  row. On `purge`, clear pending work and every cached row because the
+  authorization scope changed.
+- A catchup row never confirms a mutation merely because `table + rowId`
+  matches. Only the matching ack/receipt settles the mutation.
 - On timeout (configurable, default 10s): treat as rejection, roll back.
 - **Same-row ordering:** Mutations to the same row are serialized — the client does not send a second mutation for a row until the first is acked. This prevents dependent `previousState` chains from breaking on rollback.
 
 ## Message Ordering Guarantees
 
 **Server guarantees:**
-- `sync.change` messages arrive in `seq` order (TCP + single publisher)
-- On mutation: ReactiveDB writes → `onChange` fires → handler does two things: (1) `server.publish('sync:{table}', change)` to ALL subscribers (includes `origin` field), then (2) `ws.send(ack)` to the originating client
+- `sync.change` messages arrive in socket order and carry the exact projected
+  predecessor cursor the client must already hold.
+- On mutation: ReactiveDB writes → `onChange` fires → the server projects and
+  directly sends the change to each readable subscribed socket → it sends the
+  ack to the origin.
 - `sync.snapshot` and `sync.catchup` are always the first data messages after `sync.subscribe`
 
 **Client behavior for the originating client:**
 - Receives `sync.change` with `origin === myConnectionId` → applies server's canonical row state (replacing optimistic version, which may differ if server added timestamps, defaults, etc.)
 - Then receives `sync.ack` → removes mutation from pending queue
-- Order between `sync.change` and `sync.ack` does not matter because they serve different purposes: the change reconciles data, the ack clears pending. Both always arrive (TCP guarantees delivery), and each is idempotent in its role
+- Order between `sync.change` and `sync.ack` does not matter because they serve
+  different purposes. A failed direct send closes the socket so reconnect
+  replay supplies the canonical change.
 
 **Client assumptions:**
 - WebSocket delivers messages in order (TCP guarantees this)
-- If a `seq` gap is detected in live changes: send a new `sync.subscribe` with current `lastSeq` to request catchup
+- If `prevSeq`, `epoch`, or `scope` does not match, reject the message without
+  mutating the store and reconnect from the last accepted cursor.
 
 ## Error Handling
 
@@ -477,18 +603,26 @@ interface PendingMutation {
 | Unknown table in `sync.mutate` | `sync.ack { ok: false, error: 'Unknown table: xyz' }` |
 | Policy-denied `sync.mutate` | `sync.ack { ok: false, error: '<policy reason>' }` |
 | Unknown table in `sync.subscribe` | Server subscribes to known tables, ignores unknown ones |
-| WS connection drops | Bun auto-unsubscribes socket from all topics. Client auto-reconnects with exponential backoff + jitter, sends `sync.subscribe { lastSeq }`. |
-| Server restart | All clients reconnect. `seq` starts at 0. `_changes` truncated. All clients get fresh `sync.snapshot`. |
+| WS connection drops | Client auto-reconnects with exponential backoff + jitter and sends `sync.subscribe { epoch, scope, lastSeq }`. |
+| Server restart | The new epoch makes every old cursor incomparable; clients receive an authoritative replacement snapshot. |
+| Authorization scope changes while disconnected | Server sends `reset: 'purge'`; cached rows and queued mutations are removed before outbound work resumes. |
+| Bun `send()` returns `0` | Server closes with `1013`; client reconnects from its last accepted cursor. |
+| Retried mutation has no durable receipt | Server rejects it as outcome-unavailable; client keeps authoritative baseline state and does not duplicate the operation. |
 
 ## Delivery Model
 
-Changes are broadcast via Bun's native `server.publish(topic, msg)`. This is **at-most-once delivery** — if a socket's send buffer is full (backpressure), the message may be dropped (`send()` returns `0`).
+Table changes use direct per-socket `send()` calls so Zero can observe Bun's
+delivery status. `-1` means the message is queued under backpressure; the socket
+is marked until `drain`. `0` means the message was dropped, so Zero immediately
+closes the socket with `1013`. Bun is also configured to close a connection at
+the one-megabyte backpressure limit.
 
-This is fine because the seq counter + ring buffer provides a catch-up mechanism. If a client misses changes (due to backpressure, brief disconnect, or anything else), the next `sync.subscribe` replays the gap. The client detects missed changes by tracking `lastSeq` — if an incoming `sync.change` has `seq > lastSeq + 1`, there's a gap.
-
-**At-most-once publish + catch-up on reconnect = effectively at-least-once delivery.** No message is permanently lost as long as it's within the ring buffer depth.
-
-For 2–4 users on a local network, backpressure drops are essentially impossible. The ring buffer is a safety net, not a normal code path.
+Every live change includes `prevSeq`, the last cursor successfully queued to
+that socket. Because this predecessor is per socket, unrelated or filtered-out
+global changes do not create false gaps. A mismatch is rejected client-side and
+causes reconnect/catchup. TCP ordering, explicit send-status handling, the
+projected cursor, and epoch-aware replay together prevent a dropped UPDATE or
+DELETE from becoming permanent local state.
 
 ## Message Size Considerations
 

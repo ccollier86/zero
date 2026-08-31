@@ -572,7 +572,13 @@ function getUserState(userId: string): Map<string, JsonValue> {
 
 State sync integrates into the existing sync WebSocket handler — not a separate endpoint.
 
-The sync WebSocket resolves `?token=...` through the auth token verifier when auth is configured. A valid token populates `ws.data.authContext`, and state sync uses `authContext.userId` as the per-user keyspace. Without a valid auth context, `state.subscribe` is ignored and mutating state messages return an unauthorized ack.
+The sync client sends its bearer token in the first `sync.auth` WebSocket
+message and waits for `sync.auth.ready` before subscribing. A valid token
+populates `ws.data.authContext`, and state sync uses `authContext.userId` as the
+per-user keyspace. Without a valid auth context, `state.subscribe` is ignored
+and mutating state messages return an unauthorized ack. Auth-enabled
+`createApp()` deployments default sync to required, and revalidation closes a
+socket when its current account or property-derived permissions change.
 
 `createApp()` rejects `stateSync: true` unless auth is enabled. Use `auth: true` or an auth config object whenever server-persisted state is enabled.
 

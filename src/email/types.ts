@@ -33,6 +33,10 @@ export interface EmailMessage {
   tags?: Record<string, string>;
   /** Internal platform metadata. Never sent to external providers by default. */
   metadata?: Record<string, unknown>;
+  /** Stable provider request key used to make one delivery attempt idempotent. */
+  idempotencyKey?: string;
+  /** Abort delivery when the calling lifecycle no longer owns the attempt. */
+  signal?: AbortSignal;
 }
 
 /** Provider send result normalized across email vendors. */

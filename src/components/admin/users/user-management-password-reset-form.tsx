@@ -55,7 +55,7 @@ export function UserManagementPasswordResetForm({
   );
 
   return (
-    <form className="space-y-4" onSubmit={handleSubmit}>
+    <form className="space-y-4" onSubmit={handleSubmit} aria-busy={submitting}>
       <p className="text-sm text-muted-foreground">
         Set a new password for {username}.
       </p>
@@ -82,7 +82,7 @@ export function UserManagementPasswordResetForm({
           required
         />
       </div>
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
       <div className="flex justify-end">
         <Button type="submit" disabled={submitting}>
           Set password

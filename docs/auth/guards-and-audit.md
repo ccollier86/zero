@@ -99,7 +99,11 @@ For one-off protection without a group:
 
 ### WebSocket Guard
 
-The sync engine's WS endpoint verifies the access token during the WebSocket `open` lifecycle. HTTP middleware does not automatically populate WebSocket context, so sync receives a lazy token verifier from auth and stores the verified identity on `ws.data.authContext`.
+The sync engine's WS endpoint verifies the access token from the first
+`sync.auth` message before it accepts subscriptions or other application
+messages. HTTP middleware does not automatically populate WebSocket context,
+so sync receives a lazy token verifier from auth and stores the verified
+identity on `ws.data.authContext`.
 
 ```ts
 createSyncPlugin({
@@ -956,7 +960,7 @@ const app = new Elysia()
   // 1. Auth — users, credentials, login/register/refresh/logout
   .use(createAuthPlugin({ db }))
 
-  // 2. Auth middleware — stateless JWT → authContext on every request
+  // 2. Auth middleware — JWT verification + live authContext on every request
   .use(createAuthMiddleware(getTokenService))
 
   // 3. Audit — automatic activity tracking (sits on top of authContext)
@@ -992,7 +996,7 @@ const app = new Elysia()
 
 ```
   createAuthPlugin        → defines tables, provides /auth/* routes, login/logout call tracker
-  createAuthMiddleware     → derives authContext (stateless JWT check)
+  createAuthMiddleware     → derives authContext (JWT + live user/session checks)
   createAuditMiddleware    → derives activityTracker, hooks onBefore/onAfter, wires into ReactiveDB
   createSyncPlugin         → defines app tables, WS handler
   guard(requireAuth)       → beforeHandle on user routes
@@ -1008,7 +1012,7 @@ src/auth/
 ├── user-store.ts           # SQLite operations: users, _credentials, user_properties, _refresh_tokens
 ├── token-service.ts        # JWT signing/verification (jose), keypair mgmt, refresh rotation
 ├── auth.plugin.ts          # Elysia plugin — lifecycle, derive, routes
-├── auth.middleware.ts       # Elysia middleware — stateless JWT verify, derives authContext
+├── auth.middleware.ts       # Elysia middleware — live JWT/user/session resolution
 ├── guards.ts               # requireAuth, requireAdmin — pure functions
 ├── activity-tracker.ts     # ActivityTracker class — in-memory audit sessions
 ├── audit.middleware.ts      # Elysia middleware — wires tracker into request lifecycle + ReactiveDB

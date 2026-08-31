@@ -11,7 +11,12 @@ export { ConsoleEmailProvider } from './console-email-provider';
 export { MemoryEmailProvider, type CapturedEmail } from './memory-email-provider';
 export { NoopEmailProvider } from './noop-email-provider';
 export { ResendEmailProvider } from './resend-email-provider';
-export { configureEmail, getEmailRuntime, getEmailService } from './runtime';
+export {
+  configureEmail,
+  getEmailRuntime,
+  getEmailService,
+  isEmailDeliveryReady,
+} from './runtime';
 export type {
   AppIdentityConfig,
   BuiltInEmailProvider,

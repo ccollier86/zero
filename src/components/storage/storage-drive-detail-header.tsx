@@ -33,6 +33,9 @@ export function StorageDriveDetailHeader({
   const fileCount = usage?.fileCount ?? 0;
   const folderCount = usage?.folderCount ?? 0;
   const pct = maxBytes > 0 ? Math.min((usedBytes / maxBytes) * 100, 100) : 0;
+  const accessLabel = drive.access?.effectiveAccess
+    ? `${drive.access.effectiveAccess} access`
+    : 'No access';
 
   return (
     <div className={cn('flex flex-col gap-3', className)}>
@@ -56,6 +59,12 @@ export function StorageDriveDetailHeader({
             <Badge variant={isPublic ? 'default' : 'secondary'}>
               {isPublic ? 'Public' : 'Private'}
             </Badge>
+            {drive.access && (
+              <Badge variant={drive.access.canAdmin ? 'default' : 'outline'}>
+                {accessLabel}
+              </Badge>
+            )}
+            {drive.access?.isOwner && <Badge variant="outline">Owner</Badge>}
             <span className="truncate">
               {drive.allowed_mime_types === '*' ? 'All file types' : drive.allowed_mime_types}
             </span>

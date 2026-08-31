@@ -11,6 +11,7 @@ import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import { configurePlatformTokens, resetPlatformTokens, type PlatformTokenService } from '../tokens';
 import { UserStore } from './user-store';
 import { AuthActionTokenService } from './action-token-service';
+import { discardUndeliveredActionToken } from './auth-action-token-delivery';
 import { AuthError } from './types';
 
 let db: ReactiveDB;
@@ -69,6 +70,121 @@ describe('AuthActionTokenService', () => {
     expect(() => service.consume(created.rawToken, ['account_setup'])).toThrow(AuthError);
   });
 
+  test('email identity change invalidates platform and legacy action tokens', async () => {
+    const user = await store.createUser({
+      username: 'identity',
+      email: 'identity@example.com',
+      password: 'password123',
+    });
+    const platform = service.create({ userId: user.userId, type: 'email_verification' });
+    const legacyService = new AuthActionTokenService(store, '1h', '5m', null);
+    const legacy = legacyService.create({ userId: user.userId, type: 'account_setup' });
+
+    store.updateUser(user.userId, { email: 'changed@example.com' });
+
+    for (const inspect of [
+      () => service.inspect(platform.rawToken),
+      () => legacyService.inspect(legacy.rawToken),
+    ]) {
+      try {
+        inspect();
+        throw new Error('Expected stale token rejection');
+      } catch (error) {
+        expect(error).toBeInstanceOf(AuthError);
+        expect((error as AuthError).code).toBe('ACTION_TOKEN_INVALID');
+      }
+    }
+  });
+
+  test('admin transition links require the exact generation and never resurrect after clear', async () => {
+    const user = await store.createUser({
+      username: 'generation-link',
+      email: 'generation-link@example.com',
+      password: 'password123',
+    });
+    const tokenA = service.create({
+      userId: user.userId,
+      type: 'account_setup',
+      afterSecurityTransition: true,
+      skipCooldown: true,
+    });
+
+    expect(() => service.inspect(tokenA.rawToken)).toThrow(AuthError);
+    expect(store.requirePasswordChange(user.userId)).toBe(true);
+    expect(service.inspect(tokenA.rawToken).user.userId).toBe(user.userId);
+
+    const generationBeforeClear = store.getAuthGeneration(user.userId);
+    expect(store.clearPasswordChangeRequired(user.userId)).toBe(true);
+    expect(store.getAuthGeneration(user.userId)).toBe(generationBeforeClear + 1);
+    expect(() => service.inspect(tokenA.rawToken)).toThrow(AuthError);
+
+    const tokenB = service.create({
+      userId: user.userId,
+      type: 'admin_password_reset',
+      afterSecurityTransition: true,
+      skipCooldown: true,
+    });
+    expect(() => service.inspect(tokenB.rawToken)).toThrow(AuthError);
+    expect(store.requirePasswordChange(user.userId)).toBe(true);
+    expect(service.inspect(tokenB.rawToken).user.userId).toBe(user.userId);
+    expect(() => service.inspect(tokenA.rawToken)).toThrow(AuthError);
+  });
+
+  test('only the latest successfully activated admin password link remains valid', async () => {
+    const user = await store.createUser({
+      username: 'latest-link',
+      email: 'latest-link@example.com',
+      password: 'password123',
+    });
+    const tokenA = service.create({
+      userId: user.userId,
+      type: 'account_setup',
+      afterSecurityTransition: true,
+      skipCooldown: true,
+    });
+    expect(store.requirePasswordChange(user.userId)).toBe(true);
+    expect(service.inspect(tokenA.rawToken).record.tokenId).toBe(tokenA.record.tokenId);
+
+    const rejectedToken = service.create({
+      userId: user.userId,
+      type: 'admin_password_reset',
+      afterSecurityTransition: true,
+      skipCooldown: true,
+    });
+    expect(service.revokeUndelivered(rejectedToken.rawToken)).toBe(true);
+    expect(service.inspect(tokenA.rawToken).record.tokenId).toBe(tokenA.record.tokenId);
+
+    const tokenB = service.create({
+      userId: user.userId,
+      type: 'admin_password_reset',
+      afterSecurityTransition: true,
+      skipCooldown: true,
+    });
+    expect(store.requirePasswordChange(user.userId)).toBe(true);
+    expect(service.inspect(tokenB.rawToken).record.tokenId).toBe(tokenB.record.tokenId);
+    expect(() => service.inspect(tokenA.rawToken)).toThrow(AuthError);
+    expect(() => service.inspect(rejectedToken.rawToken)).toThrow(AuthError);
+  });
+
+  test('rejects pre-upgrade action tokens without an email identity binding', async () => {
+    const user = await store.createUser({
+      username: 'unbound',
+      email: 'unbound@example.com',
+      password: 'password123',
+    });
+    const created = service.create({ userId: user.userId, type: 'email_verification' });
+    db.prepare('UPDATE _zero_action_tokens SET metadata = ? WHERE token_id = ?')
+      .run('{}', created.record.tokenId);
+
+    try {
+      service.inspect(created.rawToken);
+      throw new Error('Expected unbound token rejection');
+    } catch (error) {
+      expect(error).toBeInstanceOf(AuthError);
+      expect((error as AuthError).code).toBe('ACTION_TOKEN_INVALID');
+    }
+  });
+
   test('rejects expired tokens', async () => {
     const expiredService = new AuthActionTokenService(store, '1s');
     const user = await store.createUser({
@@ -99,6 +215,28 @@ describe('AuthActionTokenService', () => {
     expect(second.record.tokenId).not.toBe(first.record.tokenId);
   });
 
+  test('discarding undelivered platform and legacy tokens makes both inactive', async () => {
+    const user = await store.createUser({
+      username: 'undelivered',
+      email: 'undelivered@example.com',
+      password: 'password123',
+    });
+    const legacyService = new AuthActionTokenService(store, '1h', '5m', null);
+    const platform = service.create({ userId: user.userId, type: 'password_reset' });
+    const legacy = legacyService.create({ userId: user.userId, type: 'password_reset' });
+
+    expect(discardUndeliveredActionToken(service, platform.rawToken)).toBe(true);
+    expect(discardUndeliveredActionToken(legacyService, legacy.rawToken)).toBe(true);
+    expect(() => service.inspect(platform.rawToken)).toThrow(AuthError);
+    expect(() => legacyService.inspect(legacy.rawToken)).toThrow(AuthError);
+
+    expect(() => service.create({ userId: user.userId, type: 'password_reset' }))
+      .not.toThrow();
+    expect(() => legacyService.create({ userId: user.userId, type: 'password_reset' }))
+      .not.toThrow();
+    expect(discardUndeliveredActionToken(service, 'missing-token')).toBe(false);
+  });
+
   test('cleanupExpired deletes stale action tokens', async () => {
     const user = await store.createUser({
       username: 'cleanup',
@@ -126,6 +264,9 @@ function setupAuthTables(db: ReactiveDB): void {
     role: "text not null default 'user'",
     status: "text not null default 'active'",
     password_change_required: 'integer not null default 0',
+    email_verified_at: 'integer',
+    email_verification_required: 'integer not null default 0',
+    mfa_required: 'integer not null default 0',
     created_at: 'integer not null',
     updated_at: 'integer',
   });

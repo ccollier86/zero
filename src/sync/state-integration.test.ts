@@ -112,8 +112,8 @@ async function connectWS(
  * behavior, and test the WS layer for message routing.
  */
 
-afterEach(() => {
-  app?.stop();
+afterEach(async () => {
+  if (app) await app.stop(true);
   app = null;
 });
 
@@ -141,8 +141,12 @@ function createMockWs(userId: string | null = 'test-user') {
     connectionId: 'conn_1',
     subscribedTopics: new Set(),
     lastSeq: 0,
+    syncSubscribedTables: new Set(),
+    syncBackpressured: false,
     authContext: userId ? { userId, email: 'test@test.com', role: 'user' } : null,
     authResolved: true,
+    authorizationFingerprint: null,
+    authorizationScope: null,
     allowedTables: new Set(),
     resourceRowFilters: new Map(),
     rowFilteredSubscribedTables: new Set(),

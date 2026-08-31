@@ -8,6 +8,9 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
+import { resolveAuthBehaviorConfig } from '../auth/auth-config';
+import { defineAuthTables } from '../auth/auth-schema';
+import { UserStore } from '../auth/user-store';
 import { createSyncPlugin, getSyncDB } from './sync.plugin';
 import { createDefaultSyncPolicy } from './sync-policy';
 import type { ServerMessage, SyncTokenVerifier } from './types';
@@ -15,6 +18,7 @@ import {
   adminOnly,
   anyOf,
   defineResource,
+  metadataPolicy,
   ownerPolicy,
   ResourceRegistry,
   ResourceSyncPolicyService,
@@ -88,6 +92,7 @@ function createAuthFilteredApp() {
         },
         auth: {
           getTokenVerifier: () => verifier,
+          allowLegacyQueryToken: true,
         },
         policy: {
           canReadTable({ table, authContext }) {
@@ -139,6 +144,7 @@ function createResourceSyncApp() {
         tables,
         auth: {
           getTokenVerifier: () => verifier,
+          allowLegacyQueryToken: true,
         },
         resourcePolicy: new ResourceSyncPolicyService({
           registry,
@@ -147,6 +153,58 @@ function createResourceSyncApp() {
       })
     )
     .listen(0);
+}
+
+function createLocationPolicyApp() {
+  const verifier: SyncTokenVerifier = {
+    async resolveAuthContext(token) {
+      if (!['location-one', 'location-two'].includes(token)) return null;
+      const suffix = token === 'location-one' ? 'one' : 'two';
+      return { userId: `location-${suffix}`, email: `${suffix}@example.test`, role: 'user' };
+    },
+    async verifyAccessToken() {
+      return null;
+    },
+  };
+  const tables = {
+    location_docs: { id: 'text primary key', title: 'text not null' },
+  };
+  const authConfig = resolveAuthBehaviorConfig({
+    userProperties: {
+      locations: {
+        type: 'enum', values: ['clinic-a', 'clinic-b'],
+        editableBy: 'admin', useInPolicies: true,
+      },
+    },
+  });
+  const registry = new ResourceRegistry();
+  registry.register(defineResource({
+    table: 'location_docs', actions: ['list'],
+    policy: { list: metadataPolicy({ locations: 'clinic-a' }) },
+  }), { tables, authConfig });
+  let store: UserStore | null = null;
+  const pendingApp = new Elysia().use(createSyncPlugin({
+    db: { mode: 'memory', ringBufferDepth: 100 }, tables,
+    auth: {
+      required: true, getTokenVerifier: () => verifier,
+      revalidateIntervalMs: 10, allowLegacyQueryToken: true,
+    },
+    resourcePolicy: new ResourceSyncPolicyService({
+      registry, authConfig, getUserStore: () => store,
+    }),
+  }));
+  const db = getSyncDB()!;
+  defineAuthTables(db);
+  store = new UserStore(db);
+  for (const suffix of ['one', 'two']) {
+    db.prepare(`INSERT INTO users
+      (user_id, username, email, role, status, password_change_required,
+       email_verification_required, mfa_required, created_at)
+      VALUES (?, ?, ?, 'user', 'active', 0, 0, 0, ?)`)
+      .run(`location-${suffix}`, `location-${suffix}`, `${suffix}@example.test`, Date.now());
+    store.setProperty(`location-${suffix}`, 'locations', 'clinic-a');
+  }
+  return { app: pendingApp.listen(0), store };
 }
 
 function getUrl(app: TestApp, token?: string): string {
@@ -353,6 +411,8 @@ describe('sync policy WebSocket integration', () => {
         tables: ['public_docs', 'admin_docs'],
         snapshot: ['public_docs', 'admin_docs'],
         lastSeq: initialSnapshot.seq,
+        epoch: initialSnapshot.epoch,
+        scope: initialSnapshot.scope,
       })
     );
 
@@ -374,15 +434,14 @@ describe('sync policy WebSocket integration', () => {
       })
     );
 
-    const adminCatchup = await admin.waitForMessage(
-      (msg) => msg.type === 'sync.catchup'
+    const adminSnapshot = await admin.waitForMessage(
+      (msg) => msg.type === 'sync.snapshot'
     );
-    expect(adminCatchup.type).toBe('sync.catchup');
-    if (adminCatchup.type === 'sync.catchup') {
-      expect(adminCatchup.changes.map((change) => change.rowId)).toEqual([
-        'p1',
-        'a1',
-      ]);
+    expect(adminSnapshot.type).toBe('sync.snapshot');
+    if (adminSnapshot.type === 'sync.snapshot') {
+      expect(adminSnapshot.reset).toBe('purge');
+      expect(Object.keys(adminSnapshot.tables.public_docs)).toEqual(['p0', 'p1']);
+      expect(Object.keys(adminSnapshot.tables.admin_docs)).toEqual(['a0', 'a1']);
     }
 
     secondUser.close();
@@ -534,6 +593,8 @@ describe('sync policy WebSocket integration', () => {
         tables: ['tickets'],
         snapshot: ['tickets'],
         lastSeq: snapshot.seq,
+        epoch: snapshot.epoch,
+        scope: snapshot.scope,
       })
     );
 
@@ -550,6 +611,41 @@ describe('sync policy WebSocket integration', () => {
       ]);
     }
 
+    second.close();
+  });
+
+  test('closes only the connection whose location property loses read access', async () => {
+    const local = createLocationPolicyApp();
+    app = local.app;
+    const db = getSyncDB()!;
+    db.insert('location_docs', { id: 'before-revoke', title: 'Visible initially' });
+
+    const first = await connectWS(getUrl(local.app, 'location-one'));
+    const second = await connectWS(getUrl(local.app, 'location-two'));
+    for (const connection of [first, second]) {
+      connection.ws.send(JSON.stringify({
+        type: 'sync.subscribe', tables: ['location_docs'],
+        snapshot: ['location_docs'], lastSeq: 0,
+      }));
+      const snapshot = await connection.waitForMessage((message) => message.type === 'sync.snapshot');
+      expect(snapshot.type === 'sync.snapshot' && snapshot.tables.location_docs)
+        .toHaveProperty('before-revoke');
+    }
+
+    const firstClosed = waitForSocketClose(first.ws);
+    local.store.deleteProperty('location-one', 'locations');
+    const close = await firstClosed;
+    expect(close.code).toBe(4001);
+    expect(close.reason).toBe('Sync access changed');
+
+    db.insert('location_docs', { id: 'after-revoke', title: 'Still visible to location two' });
+    const live = await second.waitForMessage(
+      (message) => message.type === 'sync.change' && message.rowId === 'after-revoke'
+    );
+    expect(live.type).toBe('sync.change');
+    expect(first.messages.some(
+      (message) => message.type === 'sync.change' && message.rowId === 'after-revoke'
+    )).toBe(false);
     second.close();
   });
 
@@ -637,3 +733,13 @@ describe('sync policy WebSocket integration', () => {
     admin.close();
   });
 });
+
+function waitForSocketClose(ws: WebSocket, timeout = 2_000): Promise<CloseEvent> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Timeout waiting for close')), timeout);
+    ws.addEventListener('close', (event) => {
+      clearTimeout(timer);
+      resolve(event);
+    }, { once: true });
+  });
+}

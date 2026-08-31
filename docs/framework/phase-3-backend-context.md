@@ -42,6 +42,7 @@ export default defineEndpoint({
 | `zero.auth` | Auth service context | Always present; contained services are `null` when auth is disabled/not started. |
 | `zero.ai` | `AIService \| null` | `null` when AI is disabled or not started. |
 | `zero.vector` | `VectorService \| null` | `null` when vector storage is disabled or not started. |
+| `zero.pdf` | `PdfService \| null` | `null` when PDF rendering is disabled or not started. |
 | `zero.email` | `EmailService` | Always present; uses a noop provider when email is disabled. |
 | `zero.emailRuntime` | `EmailRuntime` | Always present for provider/status inspection. |
 | `zero.storage` | `StorageService \| null` | `null` when auth/storage is disabled or not started. |

@@ -145,6 +145,13 @@ export class PlatformTokenService {
     return this.store.revokeActionToken(record.tokenId);
   }
 
+  /** Remove an action token whose secret was never delivered. */
+  discardUndeliveredActionToken(rawToken: string): boolean {
+    const record = this.store.getActionTokenByHash(hashToken(rawToken));
+    if (!record) return false;
+    return this.store.deleteActionToken(record.tokenId);
+  }
+
   /** Delete expired and already-consumed action tokens. */
   cleanupExpiredActionTokens(): number {
     return this.store.deleteExpiredActionTokens();
@@ -282,6 +289,23 @@ export class PlatformTokenService {
           resourceType: stored.resource.type,
           resourceId: stored.resource.id,
         },
+      });
+    }
+    return revoked;
+  }
+
+  /**
+   * Revoke a resume token through its safe persisted token id.
+   *
+   * Use this when an application stores `record.tokenId` but correctly does
+   * not retain the raw token.
+   */
+  revokeResumeTokenById(tokenId: string): boolean {
+    const normalizedTokenId = normalizeRequiredValue(tokenId, 'resume token id');
+    const revoked = this.store.revokeResumeToken(normalizedTokenId);
+    if (revoked) {
+      emitPlatformCode(OBS_CODES.TOKENS_RESUME_REVOKED, {
+        metadata: { tokenId: normalizedTokenId },
       });
     }
     return revoked;

@@ -23,6 +23,7 @@ import { getVectorStore } from '../../vector';
 import { getResourceRegistry } from '../../resources';
 import { getPlatformTokenService } from '../../tokens';
 import { getPlatformSQLiteService } from '../../persistence';
+import { getPdfService } from '../../pdf';
 import { createLazyServerRouteServices, getServerRouteServices } from './server-services';
 
 describe('server service context', () => {
@@ -49,6 +50,7 @@ describe('server service context', () => {
     expect(zero.ai).toBe(getAI());
     expect(zero.vector).toBe(getVectorStore());
     expect(zero.vectors).toBe(zero.vector);
+    expect(zero.pdf).toBe(getPdfService());
     expect(zero.resources).toBe(getResourceRegistry());
     expect(zero.email).toBe(getEmailService());
     expect(zero.emailRuntime).toBe(getEmailRuntime());

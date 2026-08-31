@@ -9,7 +9,7 @@
  */
 
 import * as React from 'react';
-import { File, Pencil } from 'lucide-react';
+import { Copy, File, Pencil } from 'lucide-react';
 import { AnimateIcon } from '../animate-ui/icons/icon';
 import { Download } from '../animate-ui/icons/download';
 import { Eye } from '../animate-ui/icons/eye';
@@ -22,8 +22,11 @@ import { formatStorageBytes } from './storage-format';
 
 export interface StorageFileDetailPanelProps {
   file: FileInfo;
-  downloadUrl: string;
   busy?: boolean;
+  canWrite?: boolean;
+  canAdmin?: boolean;
+  onDownload: (file: FileInfo) => void;
+  onCopyLink: (file: FileInfo) => void;
   onRename: (file: FileInfo) => void;
   onToggleVisibility: (file: FileInfo) => void;
   onDelete: (file: FileInfo) => void;
@@ -32,8 +35,11 @@ export interface StorageFileDetailPanelProps {
 /** Render selected file/folder metadata and available file actions. */
 export function StorageFileDetailPanel({
   file,
-  downloadUrl,
   busy = false,
+  canWrite = true,
+  canAdmin = true,
+  onDownload,
+  onCopyLink,
   onRename,
   onToggleVisibility,
   onDelete,
@@ -64,20 +70,24 @@ export function StorageFileDetailPanel({
 
       <div className="flex flex-col gap-1.5 pt-2">
         {file.type === 'file' && (
-          <Button variant="outline" size="sm" asChild>
-            <a href={downloadUrl} target="_blank" rel="noopener noreferrer">
-              <AnimateIcon animateOnHover>
-                <Download size={12} className="mr-1" />
-              </AnimateIcon>
-              Download
-            </a>
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => onDownload(file)}>
+            <AnimateIcon animateOnHover>
+              <Download size={12} className="mr-1" />
+            </AnimateIcon>
+            Download
           </Button>
         )}
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => onRename(file)}>
+        {file.type === 'file' && (
+          <Button variant="outline" size="sm" disabled={busy} onClick={() => onCopyLink(file)}>
+            <Copy className="mr-1 size-3" />
+            Copy temp link
+          </Button>
+        )}
+        <Button variant="outline" size="sm" disabled={busy || !canWrite} onClick={() => onRename(file)}>
           <Pencil className="mr-1 size-3" />
           Rename
         </Button>
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => onToggleVisibility(file)}>
+        <Button variant="outline" size="sm" disabled={busy || !canAdmin} onClick={() => onToggleVisibility(file)}>
           {file.isPublic ? (
             <AnimateIcon animate>
               <EyeOff size={12} className="mr-1" />
@@ -89,7 +99,7 @@ export function StorageFileDetailPanel({
           )}
           {file.isPublic ? 'Make Private' : 'Make Public'}
         </Button>
-        <Button variant="destructive" size="sm" disabled={busy} onClick={() => onDelete(file)}>
+        <Button variant="destructive" size="sm" disabled={busy || !canWrite} onClick={() => onDelete(file)}>
           <AnimateIcon animateOnHover>
             <Trash size={12} className="mr-1" />
           </AnimateIcon>

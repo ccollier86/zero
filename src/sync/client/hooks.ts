@@ -9,7 +9,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import type { ReactNode } from 'react';
-import type { Row, ClientTableDef } from '../types';
+import type { Row, ClientTableDef, SyncClientConfig } from '../types';
 import type { SyncClient } from './sync-client';
 import { createSyncClient } from './sync-client';
 import type { SyncStoreContext } from './sync-store';
@@ -35,6 +35,12 @@ export interface SyncProviderProps {
   tables?: Record<string, ClientTableDef>;
   /** Auth token */
   token?: string;
+  /** Async access-token provider, such as NativeAuthClient.getAccessToken. */
+  getToken?: SyncClientConfig['getToken'];
+  /** Force refreshed authentication after a 4001 close. */
+  refreshAuth?: SyncClientConfig['refreshAuth'];
+  /** Bind auth transitions to socket and cache lifecycle. */
+  bindAuthLifecycle?: SyncClientConfig['bindAuthLifecycle'];
   /** Pre-existing SyncClient (from SDK client._syncClient). Skips internal creation. */
   client?: SyncClient;
   /** Pre-existing StateClient (from SDK client.state). */
@@ -63,6 +69,9 @@ export function SyncProvider({
   url,
   tables,
   token,
+  getToken,
+  refreshAuth,
+  bindAuthLifecycle,
   client: existingClient,
   stateClient: existingStateClient,
   ephemeralClient: existingEphemeralClient,
@@ -87,6 +96,9 @@ export function SyncProvider({
         url,
         tables,
         token,
+        getToken,
+        refreshAuth,
+        bindAuthLifecycle,
         onError,
         onReconnect,
         ackTimeout,

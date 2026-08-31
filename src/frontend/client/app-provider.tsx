@@ -192,7 +192,7 @@ export function AppProvider({
   const platformConfig = getBrowserPlatformConfig();
   const authEnabled = auth ?? platformConfig.auth ?? false;
   const stateSyncEnabled = stateSync ?? platformConfig.stateSync ?? false;
-  const resolvedPublicPaths = publicPaths ?? platformConfig.publicPaths ?? ['/login', '/register', '/forgot-password'];
+  const resolvedPublicPaths = publicPaths ?? platformConfig.publicPaths ?? ['/login', '/register', '/forgot-password', '/reset-password', '/setup-password', '/verify-email'];
   const resolvedRouteAuth = routeAuth ?? platformConfig.routeAuth ?? 'protected-by-default';
   const resolvedLoginPath = loginPath ?? platformConfig.loginPath ?? '/login';
   assertAppProviderConfig(authEnabled, stateSyncEnabled, auth, stateSync, platformConfig);

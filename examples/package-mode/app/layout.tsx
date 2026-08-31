@@ -1,14 +1,14 @@
-'use client';
-
 /**
  * layout.tsx
  *
- * Root UI shell for the package-mode fixture. This file owns app layout only;
+ * Root UI shell for a package-mode Zero app. This file owns app layout only;
  * platform data, auth, and routing behavior stay in Zero providers.
  */
 
 import type { ReactNode } from 'react';
-import { AppProvider, ThemeProvider, Toaster } from '@zero/framework/react';
+import { ThemeProvider } from '@zero/framework/components/ui/theme-provider';
+import { Toaster } from '@zero/framework/components/ui/sonner';
+import { AppProvider } from '@zero/framework/react/app-provider';
 import { tables } from '../db/schema';
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -1,8 +1,9 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { calculateJwkThumbprint } from 'jose';
 import { createReactiveDB, ReactiveDB } from '../sync/reactive-db';
 import { UserStore } from './user-store';
 import { TokenService } from './token-service';
-import type { UserRecord } from './types';
+import { AUTH_DEFAULTS, AuthError, type UserRecord } from './types';
 
 // ─── Test Setup ───────────────────────────────────────────────────────────
 
@@ -22,6 +23,9 @@ function setupAuthTables(db: ReactiveDB): void {
     role: "text not null default 'user'",
     status: "text not null default 'active'",
     password_change_required: 'integer not null default 0',
+    email_verified_at: 'integer',
+    email_verification_required: 'integer not null default 0',
+    mfa_required: 'integer not null default 0',
     created_at: 'integer not null',
     updated_at: 'integer',
   });
@@ -120,6 +124,49 @@ describe('TokenService — Keypair', () => {
 
     expect(jwks1.keys[0].x).toBe(jwks2.keys[0].x);
     expect(jwks1.keys[0].y).toBe(jwks2.keys[0].y);
+    expect(jwks1.keys[0].kid).toBe(jwks2.keys[0].kid);
+    expect(jwks2.keys[0].kid).toBe(
+      store.getConfig('signing_key_id') ?? undefined
+    );
+  });
+
+  test('env JWK without kid derives one stable across replicas', async () => {
+    const privateJwk = JSON.parse(store.getConfig('signing_key_private')!);
+    delete privateJwk.kid;
+    const expectedKid = await calculateJwkThumbprint(privateJwk, 'sha256');
+    const envKey = AUTH_DEFAULTS.signingKeyEnvKey;
+    const previous = process.env[envKey];
+    const replicaDb = createReactiveDB({ mode: 'memory' });
+    setupAuthTables(replicaDb);
+
+    try {
+      process.env[envKey] = JSON.stringify(privateJwk);
+      const first = await TokenService.create({ db });
+      const second = await TokenService.create({ db: replicaDb });
+
+      expect(first.getJWKS().keys[0].kid).toBe(expectedKid);
+      expect(second.getJWKS().keys[0].kid).toBe(expectedKid);
+    } finally {
+      if (previous === undefined) delete process.env[envKey];
+      else process.env[envKey] = previous;
+      replicaDb.dispose();
+    }
+  });
+
+  test('env JWK preserves an explicit kid', async () => {
+    const privateJwk = JSON.parse(store.getConfig('signing_key_private')!);
+    privateJwk.kid = 'managed-signing-key-v7';
+    const envKey = AUTH_DEFAULTS.signingKeyEnvKey;
+    const previous = process.env[envKey];
+
+    try {
+      process.env[envKey] = Buffer.from(JSON.stringify(privateJwk)).toString('base64');
+      const service = await TokenService.create({ db });
+      expect(service.getJWKS().keys[0].kid).toBe('managed-signing-key-v7');
+    } finally {
+      if (previous === undefined) delete process.env[envKey];
+      else process.env[envKey] = previous;
+    }
   });
 
   test('JWKS does not include private key components', () => {
@@ -237,6 +284,44 @@ describe('TokenService — Token Pair', () => {
     expect(record!.revokedAt).toBeNull();
   });
 
+  test('revocation during signing cannot leave an issued browser session', async () => {
+    const signAccessToken = tokenService.signAccessToken.bind(tokenService);
+    let releaseSigner: (() => void) | undefined;
+    let signingFinished: (() => void) | undefined;
+    let candidateAccessToken: string | undefined;
+    const signed = new Promise<void>((resolve) => { signingFinished = resolve; });
+    const resume = new Promise<void>((resolve) => { releaseSigner = resolve; });
+    tokenService.signAccessToken = async (subject, generation) => {
+      candidateAccessToken = await signAccessToken(subject, generation);
+      signingFinished!();
+      await resume;
+      return candidateAccessToken;
+    };
+
+    try {
+      const issuance = tokenService.issueTokenPair(user);
+      await signed;
+      store.revokeAllUserTokens(user.userId);
+      releaseSigner!();
+
+      await expect(issuance).rejects.toMatchObject({
+        name: 'AuthError',
+        code: 'AUTH_STATE_CHANGED',
+        status: 409,
+      } satisfies Partial<AuthError>);
+    } finally {
+      releaseSigner?.();
+      tokenService.signAccessToken = signAccessToken;
+    }
+
+    expect(candidateAccessToken).toBeDefined();
+    await expect(tokenService.resolveAuthContext(candidateAccessToken!)).resolves.toBeNull();
+    const sessions = db.prepare(
+      'SELECT COUNT(*) AS count FROM _refresh_tokens WHERE user_id = ?'
+    ).get(user.userId) as { count: number };
+    expect(sessions.count).toBe(0);
+  });
+
   test('issueTokenPair throws if UserStore not wired', async () => {
     const unwired = await TokenService.create({ db });
     // Don't call setUserStore
@@ -315,6 +400,62 @@ describe('TokenService — Refresh Rotation', () => {
     const pair2Record = store.getRefreshTokenByHash(pair2Hash);
     expect(pair2Record).not.toBeNull();
     expect(pair2Record!.revokedAt).not.toBeNull();
+  });
+
+  test('concurrent replay leaves no usable replacement or current-generation token', async () => {
+    const original = await tokenService.issueTokenPair(user);
+    const signAccessToken = tokenService.signAccessToken.bind(tokenService);
+    let releaseFirst: (() => void) | undefined;
+    let firstSigned: (() => void) | undefined;
+    const firstSignerPaused = new Promise<void>((resolve) => { firstSigned = resolve; });
+    const resumeFirstSigner = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let calls = 0;
+    tokenService.signAccessToken = async (subject, generation) => {
+      const token = await signAccessToken(subject, generation);
+      calls += 1;
+      if (calls === 1) {
+        firstSigned!();
+        await resumeFirstSigner;
+      }
+      return token;
+    };
+
+    let first: Awaited<ReturnType<TokenService['rotateRefreshToken']>> = null;
+    let second: Awaited<ReturnType<TokenService['rotateRefreshToken']>> = null;
+    try {
+      const firstRotation = tokenService.rotateRefreshToken(original.refreshToken);
+      await firstSignerPaused;
+      second = await tokenService.rotateRefreshToken(original.refreshToken);
+      releaseFirst!();
+      first = await firstRotation;
+    } finally {
+      releaseFirst?.();
+      tokenService.signAccessToken = signAccessToken;
+    }
+
+    const issued = [first, second].filter((pair) => pair !== null);
+    expect(issued).toHaveLength(1);
+    const survivor = issued[0]!;
+    const survivorHasher = new Bun.CryptoHasher('sha256');
+    survivorHasher.update(survivor.refreshToken);
+    const survivorRecord = store.getRefreshTokenByHash(
+      survivorHasher.digest('hex')
+    );
+    expect(survivorRecord?.revokedAt).not.toBeNull();
+    await expect(tokenService.resolveAuthContext(survivor.accessToken)).resolves.toBeNull();
+    await expect(tokenService.issuePageSessionToken(survivor.refreshToken)).resolves.toBeNull();
+    await expect(tokenService.rotateRefreshToken(survivor.refreshToken)).resolves.toBeNull();
+  });
+
+  test('replay while password-gated does not invalidate the recovery generation', async () => {
+    const pair = await tokenService.issueTokenPair(user);
+    expect(store.requirePasswordChange(user.userId)).toBe(true);
+    const recoveryGeneration = store.getAuthGeneration(user.userId);
+
+    const replayResult = await tokenService.rotateRefreshToken(pair.refreshToken);
+
+    expect(replayResult).toBeNull();
+    expect(store.getAuthGeneration(user.userId)).toBe(recoveryGeneration);
   });
 
   test('rotateRefreshToken returns null for expired token', async () => {

@@ -21,6 +21,12 @@ import { CircleCheck } from '@/components/animate-ui/icons/circle-check';
 import { CircleX } from '@/components/animate-ui/icons/circle-x';
 import { Loader } from '@/components/animate-ui/icons/loader';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
+import {
+  authFeedbackAnimate,
+  authFeedbackExit,
+  authFeedbackInitial,
+  authPresenceTransition,
+} from './auth-motion';
 
 export interface ChangePasswordFormProps {
   onSuccess?: () => void;
@@ -132,9 +138,10 @@ function FormFeedback({ error, success }: { error: string | null; success: strin
   return (
     <AnimatePresence>
       <motion.div
-        initial={{ opacity: 0, height: 0, y: -4 }}
-        animate={{ opacity: 1, height: 'auto', y: 0 }}
-        exit={{ opacity: 0, height: 0, y: -4 }}
+        initial={authFeedbackInitial}
+        animate={authFeedbackAnimate}
+        exit={authFeedbackExit}
+        transition={authPresenceTransition}
         className="overflow-hidden"
       >
         <div

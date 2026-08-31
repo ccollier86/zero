@@ -7,7 +7,73 @@ standardized backend/frontend framework surfaces.
 Use this folder for docs that explain how Zero behaves as an installed
 framework. Keep feature-specific implementation docs in their existing folders
 when the topic is mostly about one subsystem such as auth, sync, storage, AI,
-vector, workflows, observability, or migrations.
+vector, PDF, workflows, observability, or migrations.
+
+## Local Create Workflow
+
+Until Zero is published, create package-mode apps from the local checkout:
+
+```sh
+bun run install:local-tools
+zero-new ../my-zero-app
+cd ../my-zero-app
+bun run dev
+```
+
+Without the local convenience wrapper:
+
+```sh
+bun run create-zero -- ../my-zero-app --local --install
+cd ../my-zero-app
+bun run dev
+```
+
+The generated app depends on a publish-style `@zero/framework` archive cached
+under its ignored `.zero/framework/` directory and keeps app code in `app/`,
+`server/`, `db/schema.ts`, and `zero.config.ts`. The installed package resolves
+through `node_modules/@zero/framework`; checkout-only source and secrets are
+not linked into the app.
+
+## Safe Update Workflow
+
+Stop the app/dev server, then refresh an existing local package-mode app from
+the same checkout with:
+
+```sh
+bun run install:local-tools
+cd ../my-zero-app
+zero-update
+```
+
+The wrapper defaults to the current app directory and is permanently bound to
+the checkout that installed it. `zero-update /path/to/app` is equivalent to
+`zero update --project /path/to/app --local /path/to/zero-platform`. Use
+`--dry-run` to inspect the plan without writing anything.
+
+Published-package apps use `bun run zero update --project .`; `--latest` is an
+explicit opt-in to the newest release. If the installed framework predates the
+command, bootstrap it with
+`bunx --package @zero/framework@latest zero update --project .`. Exactly one
+one Bun lockfile must already exist, including for dry-runs; local archive
+updates require the text `bun.lock` so its integrity can be refreshed safely.
+Commit the lockfile for checkout-local apps. Updates are narrowly scoped to the framework
+dependency, the cached local archive when applicable, and package-manager
+install state. App-owned source, config, environment files, databases, and
+storage are not scaffolded or rewritten in the default mode. A local update
+regenerates the ignored `.zero/framework/zero-framework.tgz` archive from the
+selected checkout. A clean clone may be missing the archive and both managed
+directories: the mutating updater creates them, while `--dry-run` leaves the
+project untouched and reports that bootstrap as pending. Existing symlinks or
+wrong-type managed entries are rejected. The default update runs no app-defined
+scripts. `--check` executes the project's existing typecheck and Doctor
+scripts; review them first because their side effects are outside updater
+rollback. Zero itself never selects a migration command. Run
+`bun run migrate:plan` separately and intentionally against the correct
+database or a safe copy before applying database changes.
+
+`create-zero --force` and `zero-new --force` are destructive scaffolding tools,
+not update commands. Never point either one at an existing project to update
+Zero.
 
 ## Documents
 
@@ -41,6 +107,12 @@ vector, workflows, observability, or migrations.
 - [Platform KV/cache](../kv.md): Zero-owned memory-first KV/cache service,
   journal/checkpoint recovery, app-facing `zero.kv`, counters, limiters, and
   `createApp()` defaults.
+- [PDF Rendering](../pdf.md): browser installation, secure Chromium rendering,
+  print options, resource policy, storage composition, observability, and
+  custom renderer contracts.
+- [Desktop, Mobile, and Chrome Extension Auth](../auth/native-app-auth.md): registered
+  public clients, OIDC/PKCE, system-browser callbacks, secure storage, and
+  packaged host-bridge recipes.
 - [Resource Policy Core](./resource-policy.md): implemented server-side policy
   helpers, trusted metadata validation, owner constraints, composition, and
   evaluator contract used by resource integrations.

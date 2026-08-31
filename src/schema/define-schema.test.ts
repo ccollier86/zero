@@ -9,6 +9,17 @@ import { describe, expect, test } from 'bun:test';
 import { defineSchema, defineTable, field, schema } from './index';
 
 describe('natural identity schema metadata', () => {
+  test('required booleans remain required in validation and SQL metadata', () => {
+    const flags = defineTable('flags', {
+      enabled: field.boolean({ required: true, defaultValue: false }),
+    });
+
+    expect(flags.schema.fields.get('enabled')?.required).toBe(true);
+    expect(flags.serverTable.enabled).toBe('integer not null default 0');
+    expect(flags.schema.validate({}).success).toBe(false);
+    expect(flags.schema.validate({ enabled: false }).success).toBe(true);
+  });
+
   test('defineTable emits server and client identity metadata', () => {
     const memberships = defineTable('memberships', {
       team_id: field.text({ required: true }),

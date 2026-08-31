@@ -151,8 +151,8 @@ path.
 
 For a complete reference app, read [LaunchBoard](./launchboard.md). It wires
 `defineTable()`, `createApp()`, `AppProvider`, `useCollection()`, `AppShell`,
-`KanbanBoard`, and the platform modal manager into one ReactiveDB-backed
-example.
+`KanbanBoard`, auth bootstrap routes, owner-scoped resources, and the platform
+modal manager into one ReactiveDB-backed example.
 
 ## Custom Cards
 

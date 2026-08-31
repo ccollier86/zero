@@ -14,6 +14,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useIsInView } from '@/hooks/use-is-in-view';
 import { Slot, type WithAsChild } from '@/components/animate-ui/primitives/animate/slot';
+import { scheduleAnimationLoopTurn } from './animation-loop';
 
 const staticAnimations = {
   path: {
@@ -323,35 +324,27 @@ function AnimateIcon({
       }
 
       if (loop) {
-        if (loopDelay > 0) {
-          await new Promise<void>((resolve) => {
-            loopDelayRef.current = setTimeout(() => {
-              loopDelayRef.current = null;
-              resolve();
-            }, loopDelay);
+        await new Promise<void>((resolve) => {
+          loopDelayRef.current = scheduleAnimationLoopTurn(loopDelay, () => {
+            loopDelayRef.current = null;
+            resolve();
           });
+        });
 
-          if (cancelledRef.current || gen !== runGenRef.current) {
+        if (cancelledRef.current || gen !== runGenRef.current) {
+          await startAnim('initial');
+          return;
+        }
+        if (!activeRef.current) {
+          if (status !== 'initial' && !persistOnAnimateEnd)
             await startAnim('initial');
-            return;
-          }
-          if (!activeRef.current) {
-            if (status !== 'initial' && !persistOnAnimateEnd)
-              await startAnim('initial');
-            return;
-          }
-        } else {
-          if (!activeRef.current) {
-            if (status !== 'initial' && !persistOnAnimateEnd)
-              await startAnim('initial');
-            return;
-          }
+          return;
         }
         if (cancelledRef.current || gen !== runGenRef.current) {
           await startAnim('initial');
           return;
         }
-        await run();
+        void run();
       }
     }
 

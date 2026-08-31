@@ -19,6 +19,10 @@ import {
 } from '../tokens';
 import type { CreatedPlatformActionToken, PlatformActionTokenRecord } from '../tokens';
 import { createOpaqueToken, hashToken, parseTokenTTL } from '../tokens/token-utils';
+import {
+  assertActionTokenIdentity,
+  bindActionTokenIdentity,
+} from './auth-action-token-identity';
 
 /** Result returned when a raw action token is created. */
 export interface CreatedAuthActionToken {
@@ -63,7 +67,17 @@ export class AuthActionTokenService {
     createdBy?: string | null;
     metadata?: Record<string, unknown>;
     skipCooldown?: boolean;
+    afterSecurityTransition?: boolean;
   }): CreatedAuthActionToken {
+    const user = this.store.getUserById(params.userId);
+    if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
+    const metadata = bindActionTokenIdentity(
+      user,
+      this.store.getAuthGeneration(user.userId),
+      params.afterSecurityTransition === true,
+      params.metadata
+    );
+
     if (this.platformTokens) {
       let created: CreatedPlatformActionToken;
       try {
@@ -73,7 +87,7 @@ export class AuthActionTokenService {
           ttl: this.ttl,
           cooldown: params.skipCooldown ? false : this.requestCooldown,
           createdBy: params.createdBy,
-          metadata: params.metadata,
+          metadata,
         });
       } catch (err) {
         if (err instanceof PlatformTokenError) throw toAuthActionTokenError(err);
@@ -107,7 +121,7 @@ export class AuthActionTokenService {
       expiresAt: now + this.ttlMs,
       createdAt: now,
       createdBy: params.createdBy,
-      metadata: params.metadata,
+      metadata,
     });
 
     emitPlatformCode(OBS_CODES.AUTH_ACTION_TOKEN_CREATED, {
@@ -150,6 +164,7 @@ export class AuthActionTokenService {
     const record = this.requireValidLegacyRecord(rawToken, allowedTypes);
     const user = this.store.getUserById(record.userId);
     if (!user) throw new AuthError('Action token is invalid', 'ACTION_TOKEN_INVALID', 400);
+    assertActionTokenIdentity(user, this.store.getAuthGeneration(user.userId), record.metadata);
     return { record, user };
   }
 
@@ -186,6 +201,13 @@ export class AuthActionTokenService {
     return inspection;
   }
 
+  /** Delete an undelivered token without requiring its future-state binding. */
+  revokeUndelivered(rawToken: string): boolean {
+    if (this.platformTokens?.discardUndeliveredActionToken(rawToken)) return true;
+    const legacy = this.store.getActionTokenByHash(hashToken(rawToken));
+    return legacy ? this.store.deleteActionToken(legacy.tokenId) : false;
+  }
+
   private inspectLegacy(
     rawToken: string,
     allowedTypes?: AuthActionTokenType[]
@@ -193,6 +215,7 @@ export class AuthActionTokenService {
     const record = this.requireValidLegacyRecord(rawToken, allowedTypes);
     const user = this.store.getUserById(record.userId);
     if (!user) throw new AuthError('Action token is invalid', 'ACTION_TOKEN_INVALID', 400);
+    assertActionTokenIdentity(user, this.store.getAuthGeneration(user.userId), record.metadata);
     return { record, user };
   }
 
@@ -259,6 +282,11 @@ export class AuthActionTokenService {
     const authRecord = this.toAuthActionTokenRecord(record, rawToken);
     const user = this.store.getUserById(authRecord.userId);
     if (!user) throw new AuthError('Action token is invalid', 'ACTION_TOKEN_INVALID', 400);
+    assertActionTokenIdentity(
+      user,
+      this.store.getAuthGeneration(user.userId),
+      authRecord.metadata
+    );
     return { record: authRecord, user };
   }
 

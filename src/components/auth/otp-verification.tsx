@@ -10,11 +10,19 @@ import { OTPInput } from '@/components/auth/otp-input';
 import { AnimateIcon } from '@/components/animate-ui/icons/icon';
 import { CircleX } from '@/components/animate-ui/icons/circle-x';
 import { Loader } from '@/components/animate-ui/icons/loader';
+import {
+  authFeedbackAnimate,
+  authFeedbackExit,
+  authFeedbackInitial,
+  authPresenceTransition,
+} from './auth-motion';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface OTPVerificationProps {
   destination: string;
+  title?: string;
+  description?: string;
   length?: number;
   onVerify: (code: string) => Promise<void>;
   onResend?: () => Promise<void>;
@@ -27,6 +35,8 @@ interface OTPVerificationProps {
 
 function OTPVerification({
   destination,
+  title = 'Verification',
+  description,
   length = 6,
   onVerify,
   onResend,
@@ -79,8 +89,8 @@ function OTPVerification({
   return (
     <div className={cn('space-y-4', className)}>
       <AuthHeader
-        title="Verification"
-        description={`Enter the code sent to ${destination}`}
+        title={title}
+        description={description ?? `Enter the code sent to ${destination}`}
       />
 
       <div className="flex flex-col items-center gap-3">
@@ -104,10 +114,10 @@ function OTPVerification({
         <AnimatePresence>
           {error && (
             <motion.div
-              initial={{ opacity: 0, height: 0, y: -4 }}
-              animate={{ opacity: 1, height: 'auto', y: 0, x: [0, -6, 6, -4, 4, 0] }}
-              exit={{ opacity: 0, height: 0, y: -4 }}
-              transition={{ duration: 0.4, ease: 'easeOut' }}
+              initial={authFeedbackInitial}
+              animate={authFeedbackAnimate}
+              exit={authFeedbackExit}
+              transition={authPresenceTransition}
               className="w-full overflow-hidden"
             >
               <div

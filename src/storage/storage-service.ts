@@ -19,6 +19,7 @@ import type {
   UploadOptions,
   ListOptions,
   ListResult,
+  ListPermissionsOptions,
   DriveUsage,
   GrantPermissionParams,
   PermissionRecord,
@@ -110,6 +111,8 @@ export interface StorageObjectApi {
 export interface StoragePermissionApi {
   /** Grant drive or object access to a role, user, or user property. */
   grant(driveId: string, params: GrantPermissionParams): PermissionRecord;
+  /** List drive-level or object-relevant permissions. */
+  list(driveId: string, options?: ListPermissionsOptions): PermissionRecord[];
   /** Read one permission by id. */
   get(permissionId: string): PermissionRecord | null;
   /** Revoke a permission by id. */
@@ -256,6 +259,7 @@ export class StorageService {
   /** Canonical grouped API for storage grants and access checks. */
   readonly permissions: StoragePermissionApi = {
     grant: (driveId, params) => this.grantPermission(driveId, params),
+    list: (driveId, options) => this.listPermissions(driveId, options),
     get: (permissionId) => this.getPermission(permissionId),
     revoke: (permissionId) => this.revokePermission(permissionId),
     checkAccess: (driveId, path, userId, userRole, userProperties, requiredLevel) =>
@@ -344,6 +348,9 @@ export class StorageService {
       ),
       getPermissionById: this.db.prepare(
         'SELECT * FROM _storage_permissions WHERE permission_id = ?'
+      ),
+      deletePermissionsByObject: this.db.prepare(
+        'DELETE FROM _storage_permissions WHERE object_id = ?'
       ),
       deletePermissionsByDrive: this.db.prepare(
         'DELETE FROM _storage_permissions WHERE drive_id = ?'
@@ -661,13 +668,12 @@ export class StorageService {
       parentId = parent.object_id;
     }
 
-    const { count: total } = this.stmts.countFolder.get(driveId, parentId) as CountRow;
-    const limit = options?.limit ?? 100;
-    const offset = options?.cursor ? parseInt(options.cursor, 10) : 0;
+    const total = this.countFolderRows(driveId, parentId, options?.type);
+    const limit = Math.min(Math.max(options?.limit ?? 100, 1), 500);
+    const parsedCursor = options?.cursor ? parseInt(options.cursor, 10) : 0;
+    const offset = Number.isFinite(parsedCursor) ? Math.max(0, parsedCursor) : 0;
 
-    const rows = this.stmts.listFolderPaged.all(
-      driveId, parentId, limit, offset
-    ) as ObjectRecord[];
+    const rows = this.listFolderRows(driveId, parentId, limit, offset, options);
 
     const nextOffset = offset + rows.length;
     const cursor = nextOffset < total ? String(nextOffset) : null;
@@ -766,14 +772,17 @@ export class StorageService {
           if (child.checksum) this.decrementBlobRef(child.checksum);
         }
         for (const child of allChildren) {
+          this.stmts.deletePermissionsByObject.run(child.object_id);
           this.db.delete('storage_objects', child.object_id);
         }
+        this.stmts.deletePermissionsByObject.run(obj.object_id);
         this.db.delete('storage_objects', obj.object_id);
       });
     } else {
       // Wrap file deletion in transaction for atomicity
       this.db.transaction(() => {
         if (obj.checksum) this.decrementBlobRef(obj.checksum);
+        this.stmts.deletePermissionsByObject.run(obj.object_id);
         this.db.delete('storage_objects', obj.object_id);
       });
     }
@@ -850,6 +859,10 @@ export class StorageService {
     const drive = this.getDrive(driveId);
     if (!drive) throw new StorageError(404, `Drive not found: ${driveId}`);
 
+    if (params.grantType === 'property' && !params.grantKey?.trim()) {
+      throw new StorageError(400, 'Property permissions require grantKey');
+    }
+
     let objectId: string | null = null;
     if (params.objectPath) {
       const obj = this.stmts.getObjectByPath.get(
@@ -864,7 +877,10 @@ export class StorageService {
 
     this.stmts.insertPermission.run(
       permId, driveId, objectId, params.grantType,
-      params.grantKey ?? null, params.grantValue, params.permission, now
+      params.grantType === 'property' ? params.grantKey!.trim() : null,
+      params.grantValue,
+      params.permission,
+      now
     );
 
     return {
@@ -872,11 +888,35 @@ export class StorageService {
       drive_id: driveId,
       object_id: objectId,
       grant_type: params.grantType,
-      grant_key: params.grantKey ?? null,
+      grant_key: params.grantType === 'property' ? params.grantKey!.trim() : null,
       grant_value: params.grantValue,
       permission: params.permission,
       created_at: now,
     };
+  }
+
+  /**
+   * List permissions for a drive or the permissions considered for one object.
+   */
+  listPermissions(driveId: string, options: ListPermissionsOptions = {}): PermissionRecord[] {
+    const drive = this.getDrive(driveId);
+    if (!drive) throw new StorageError(404, `Drive not found: ${driveId}`);
+
+    if (!options.objectPath) {
+      return this.stmts.getPermissions.all(driveId) as PermissionRecord[];
+    }
+
+    const obj = this.stmts.getObjectByPath.get(
+      driveId,
+      normalizePath(options.objectPath),
+    ) as ObjectRecord | null;
+
+    if (!obj) throw new StorageError(404, `Object not found: ${options.objectPath}`);
+
+    return this.stmts.getObjectPermissions.all(
+      driveId,
+      obj.object_id,
+    ) as PermissionRecord[];
   }
 
   /** Get a permission by ID (for authorization checks before revoke). */
@@ -916,17 +956,17 @@ export class StorageService {
     // Public drive → read access
     if (drive.public && requiredLevel === 'read') return true;
 
-    // Must be authenticated for non-public access
-    if (!userId) return false;
-
-    // Drive owner → full access
-    if (drive.owner_id === userId) return true;
-
     // Check object-level public flag
     if (path && requiredLevel === 'read') {
       const obj = this.stmts.getObjectByPath.get(driveId, normalizePath(path)) as ObjectRecord | null;
       if (obj?.public) return true;
     }
+
+    // Must be authenticated for non-public access
+    if (!userId) return false;
+
+    // Drive owner → full access
+    if (drive.owner_id === userId) return true;
 
     // Check permission grants
     let permissions: PermissionRecord[];
@@ -975,6 +1015,52 @@ export class StorageService {
   }
 
   // ─── Internal Helpers ───────────────────────────────────────────────────
+
+  private listFolderRows(
+    driveId: string,
+    parentId: string | null,
+    limit: number,
+    offset: number,
+    options?: ListOptions,
+  ): ObjectRecord[] {
+    const sortBy = toStorageSortColumn(options?.sortBy);
+    const sortDir = options?.sortDir === 'desc' ? 'DESC' : 'ASC';
+    if (options?.type && options.type !== 'all') {
+      return this.db.prepare(
+        `SELECT * FROM storage_objects
+         WHERE drive_id = ? AND parent_id IS ? AND type = ?
+         ORDER BY type DESC, ${sortBy} ${sortDir}
+         LIMIT ? OFFSET ?`,
+      ).all(driveId, parentId, options.type, limit, offset) as ObjectRecord[];
+    }
+
+    return this.db.prepare(
+      `SELECT * FROM storage_objects
+       WHERE drive_id = ? AND parent_id IS ?
+       ORDER BY type DESC, ${sortBy} ${sortDir}
+       LIMIT ? OFFSET ?`,
+    ).all(driveId, parentId, limit, offset) as ObjectRecord[];
+  }
+
+  private countFolderRows(
+    driveId: string,
+    parentId: string | null,
+    type: ListOptions['type'] | undefined,
+  ): number {
+    if (type && type !== 'all') {
+      const row = this.db.prepare(
+        `SELECT COUNT(*) as count FROM storage_objects
+         WHERE drive_id = ? AND parent_id IS ? AND type = ?`,
+      ).get(driveId, parentId, type) as CountRow;
+      return row.count;
+    }
+
+    const row = this.db.prepare(
+      `SELECT COUNT(*) as count FROM storage_objects
+       WHERE drive_id = ? AND parent_id IS ?`,
+    ).get(driveId, parentId) as CountRow;
+    return row.count;
+  }
 
   private ensureParentFolders(
     driveId: string,
@@ -1067,6 +1153,20 @@ function matchesMimeType(mime: string, allowed: string[]): boolean {
     }
   }
   return false;
+}
+
+function toStorageSortColumn(sortBy: ListOptions['sortBy'] | undefined): string {
+  switch (sortBy) {
+    case 'size':
+      return 'size_bytes';
+    case 'created_at':
+      return 'created_at';
+    case 'updated_at':
+      return 'updated_at';
+    case 'name':
+    default:
+      return 'name';
+  }
 }
 
 function toFileInfo(record: ObjectRecord): FileInfo {

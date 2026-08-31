@@ -186,8 +186,15 @@ function AppShellWorkspaceSwitcher({
   const isMobile = useIsMobile();
   const activeWorkspace = workspaces.items.find((item) => item.id === workspaces.activeId)
     ?? workspaces.items[0];
+  const displayWorkspace = activeWorkspace ?? {
+    id: '__zero-empty-workspace',
+    name: workspaces.label ?? brand?.name ?? 'Workspace',
+    subtitle: 'No items yet',
+    icon: brand?.icon,
+    logo: brand?.logo,
+  };
 
-  if (!activeWorkspace) return <AppShellBrandButton brand={brand} />;
+  if (!activeWorkspace && !workspaces.onCreate) return <AppShellBrandButton brand={brand} />;
 
   return (
     <DropdownMenu>
@@ -198,14 +205,14 @@ function AppShellWorkspaceSwitcher({
             className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
           >
             <AppShellLogo
-              icon={activeWorkspace.icon ?? brand?.icon}
-              logo={activeWorkspace.logo ?? brand?.logo}
-              fallback={activeWorkspace.name}
+              icon={displayWorkspace.icon ?? brand?.icon}
+              logo={displayWorkspace.logo ?? brand?.logo}
+              fallback={displayWorkspace.name}
             />
             <div className="grid flex-1 text-left text-sm leading-tight">
-              <span className="truncate font-semibold">{activeWorkspace.name}</span>
-              {activeWorkspace.subtitle ? (
-                <span className="truncate text-xs">{activeWorkspace.subtitle}</span>
+              <span className="truncate font-semibold">{displayWorkspace.name}</span>
+              {displayWorkspace.subtitle ? (
+                <span className="truncate text-xs">{displayWorkspace.subtitle}</span>
               ) : null}
             </div>
             <ChevronDown className="ml-auto size-4" />
@@ -221,24 +228,30 @@ function AppShellWorkspaceSwitcher({
         <DropdownMenuLabel className="text-xs text-muted-foreground">
           {workspaces.label ?? 'Workspaces'}
         </DropdownMenuLabel>
-        {workspaces.items.map((workspace, index) => (
-          <AnimatedIconTrigger key={workspace.id}>
-            <DropdownMenuItem
-              onClick={() => workspaces.onSelect?.(workspace)}
-              className="gap-2 p-2"
-            >
-              <AppShellLogo
-                icon={workspace.icon}
-                logo={workspace.logo}
-                fallback={workspace.name}
-                className="size-6 rounded-sm border bg-background text-foreground"
-                iconClassName="size-4"
-              />
-              <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-              <DropdownMenuShortcut>{workspace.shortcut ?? `⌘${index + 1}`}</DropdownMenuShortcut>
-            </DropdownMenuItem>
-          </AnimatedIconTrigger>
-        ))}
+        {workspaces.items.length ? (
+          workspaces.items.map((workspace, index) => (
+            <AnimatedIconTrigger key={workspace.id}>
+              <DropdownMenuItem
+                onClick={() => workspaces.onSelect?.(workspace)}
+                className="gap-2 p-2"
+              >
+                <AppShellLogo
+                  icon={workspace.icon}
+                  logo={workspace.logo}
+                  fallback={workspace.name}
+                  className="size-6 rounded-sm border bg-background text-foreground"
+                  iconClassName="size-4"
+                />
+                <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
+                <DropdownMenuShortcut>{workspace.shortcut ?? `⌘${index + 1}`}</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            </AnimatedIconTrigger>
+          ))
+        ) : (
+          <DropdownMenuItem disabled className="gap-2 p-2 text-muted-foreground">
+            No items yet
+          </DropdownMenuItem>
+        )}
         {workspaces.activeActions?.length ? (
           <>
             <DropdownMenuSeparator />

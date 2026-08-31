@@ -4,9 +4,8 @@
  * Eden Treaty typed API client. Provides auto-authenticated access
  * to all server routes with the unwrap() helper for clean error handling.
  *
- * Auth headers are injected lazily (evaluated on every request) to
- * support token refresh. Uses authClient.fetchWithAuth for automatic
- * 401 → refresh → retry.
+ * Auth headers are owned by authClient.fetchWithAuth so every request has a
+ * single bearer value and 401 → refresh → retry can replace it safely.
  *
  * Route types are inferred from the server's App type when possible.
  * For dynamically composed plugin routes (rooms, workflows, etc.),
@@ -41,20 +40,11 @@ export type Api = ReturnType<typeof treaty<App>> & Record<string, any>;
 /**
  * Create an Eden Treaty client wired to the AuthClient when auth is enabled.
  *
- * - Headers evaluated lazily on every request (supports token refresh)
- * - Custom fetcher wraps authClient.fetchWithAuth for 401 auto-retry when available
+ * - Custom fetcher owns bearer injection and 401 auto-retry when auth is available
  * - Falls back to plain fetch for auth-disabled apps
  */
 export function createApi(serverUrl: string, authClient: AuthClient | null): Api {
   return treaty<App>(serverUrl, {
-    headers: () => {
-      const h: Record<string, string> = {};
-      const token = authClient?.accessToken;
-      if (token) {
-        h.Authorization = `Bearer ${token}`;
-      }
-      return h;
-    },
     fetcher: ((input: any, init?: any) => {
       const url = typeof input === 'string'
         ? input

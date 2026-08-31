@@ -13,14 +13,22 @@ import { useMemo, useCallback } from 'react';
 import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { Row } from '../../sync/types';
 import { DataTable } from '@/components/data-table';
+import type { LazyCollectionOptions } from '../../frontend/client/data-hooks';
+import type {
+  DataTableFilters,
+  DataTableSource,
+  DataTableSourceState,
+} from '../data-table/data-table-source';
 import { getSchemaPrimaryKey, requireRowPrimaryKey } from '../data-table/row-identity';
 import { AutoForm } from '../../components/forms';
+import { Button } from '@/components/ui/button';
 import { ListDetailLayout } from '@/components/ui/list-detail-layout';
 import { DetailPanel } from '@/components/ui/detail-panel';
 import {
   RecordNavigationBar,
   type NavigationAction,
 } from '@/components/ui/record-navigation-bar';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import {
   useMasterDetailState,
@@ -43,6 +51,10 @@ export interface MasterDetailRenderContext<T extends Row = Row> {
   selectNext: () => void;
   update: (changes: Partial<T>) => void | Promise<void>;
   liveActions: MasterDetailLiveActions<T> | null;
+  sourceType: DataTableSourceState<T>['sourceType'];
+  isLoading: boolean;
+  error: Error | string | null;
+  refresh: () => void;
 }
 
 export interface MasterDetailPageProps<T extends Row = Row> {
@@ -57,14 +69,22 @@ export interface MasterDetailPageProps<T extends Row = Row> {
   editableFields?: string[];
 
   // ── Data source ─────────────────────────────────────────────────
+  /** Explicit data source config shared with DataTableView. */
+  source?: DataTableSource<T>;
   /** Static data array. */
   data?: T[];
   /**
-   * Collection name for live reactive data (overrides `data`).
+   * Collection name for live reactive data (overrides `data` when `source` is omitted).
    * When provided, detail-form updates write to the collection unless `onUpdate`
    * is supplied.
    */
   collection?: string;
+  /** Fetch the collection through `/api/data` before rendering rows. */
+  lazy?: boolean;
+  /** Lazy `/api/data` equality filters. Only used with `lazy` or lazy source. */
+  filters?: DataTableFilters;
+  /** Lazy `/api/data` ordering, limit, and offset options. */
+  lazyOptions?: LazyCollectionOptions;
 
   // ── Selection ───────────────────────────────────────────────────
   /** Controlled selected row ID. Pass `null` to force no selection. */
@@ -125,6 +145,10 @@ export interface MasterDetailPageProps<T extends Row = Row> {
   renderDetail?: (item: T, context: MasterDetailRenderContext<T>) => React.ReactNode;
   /** Content rendered below the detail body for the selected item. */
   detailContent?: (item: T, context: MasterDetailRenderContext<T>) => React.ReactNode;
+  /** First-load table loading state for lazy or caller-owned loading sources. */
+  loadingState?: React.ReactNode;
+  /** First-load table error state for lazy or caller-owned error sources. */
+  errorState?: (error: Error | string, retry: () => void) => React.ReactNode;
 
   // ── Layout ──────────────────────────────────────────────────────
   /** Width ratio for list panel. Default: '3fr'. */
@@ -141,8 +165,12 @@ function MasterDetailPage<T extends Row = Row>({
   listColumns,
   primaryKey: primaryKeyOverride,
   editableFields,
+  source,
   data: dataProp,
   collection,
+  lazy,
+  filters,
+  lazyOptions,
   selectedId: selectedIdProp,
   defaultSelectedId,
   autoSelectFirst,
@@ -163,6 +191,8 @@ function MasterDetailPage<T extends Row = Row>({
   detailFooter,
   renderDetail,
   detailContent,
+  loadingState,
+  errorState,
   listWidth,
   detailWidth,
   className,
@@ -171,6 +201,10 @@ function MasterDetailPage<T extends Row = Row>({
   const state = useMasterDetailState<T>({
     data: dataProp,
     collection,
+    source,
+    lazy,
+    filters,
+    lazyOptions,
     primaryKey,
     selectedId: selectedIdProp,
     defaultSelectedId,
@@ -191,6 +225,10 @@ function MasterDetailPage<T extends Row = Row>({
     selectPrevious,
     selectNext,
     liveActions,
+    sourceType,
+    isLoading,
+    error,
+    refresh,
   } = state;
   const editableFieldSet = useMemo(
     () => editableFields ? new Set(editableFields) : null,
@@ -232,12 +270,19 @@ function MasterDetailPage<T extends Row = Row>({
         return submitDetailChanges(selectedItem, changes);
       },
       liveActions,
+      sourceType,
+      isLoading,
+      error,
+      refresh,
     }),
     [
       canSelectNext,
       canSelectPrevious,
+      error,
+      isLoading,
       liveActions,
       primaryKey,
+      refresh,
       selectId,
       selectNext,
       selectPrevious,
@@ -245,6 +290,7 @@ function MasterDetailPage<T extends Row = Row>({
       selectedId,
       selectedIndex,
       selectedItem,
+      sourceType,
       submitDetailChanges,
       totalCount,
     ],
@@ -264,6 +310,48 @@ function MasterDetailPage<T extends Row = Row>({
     [detailFooter, renderContext, selectedItem],
   );
 
+  const listContent = useMemo(() => {
+    if (isLoading && data.length === 0) {
+      return loadingState ?? <MasterDetailLoadingState />;
+    }
+
+    if (error && data.length === 0) {
+      return errorState
+        ? errorState(error, refresh)
+        : <MasterDetailErrorState error={error} onRetry={refresh} />;
+    }
+
+    return (
+      <DataTable<T>
+        schema={schema}
+        data={data}
+        columns={listColumns}
+        primaryKey={primaryKey}
+        searchable={searchable}
+        sortable={sortable}
+        paginated={paginated}
+        onRowClick={selectRow}
+        highlightedRowId={selectedId ?? undefined}
+        className="h-full"
+      />
+    );
+  }, [
+    data,
+    error,
+    errorState,
+    isLoading,
+    listColumns,
+    loadingState,
+    paginated,
+    primaryKey,
+    refresh,
+    schema,
+    searchable,
+    selectRow,
+    selectedId,
+    sortable,
+  ]);
+
   // ─── Render ───────────────────────────────────────────────────────
 
   return (
@@ -273,20 +361,7 @@ function MasterDetailPage<T extends Row = Row>({
         selectedKey={selectedId ?? undefined}
         listWidth={listWidth}
         detailWidth={detailWidth}
-        list={
-          <DataTable<T>
-            schema={schema}
-            data={data}
-            columns={listColumns}
-            primaryKey={primaryKey}
-            searchable={searchable}
-            sortable={sortable}
-            paginated={paginated}
-            onRowClick={selectRow}
-            highlightedRowId={selectedId ?? undefined}
-            className="h-full"
-          />
-        }
+        list={listContent}
         detail={
           <DetailPanel
             isEmpty={selectedItem == null}
@@ -308,7 +383,7 @@ function MasterDetailPage<T extends Row = Row>({
                   renderDetail(selectedItem, renderContext)
                 ) : (
                   <AutoForm
-                    key={selectedId}
+                    key={`${selectedId}:${String(selectedItem.updatedAt ?? '')}`}
                     schema={schema}
                     mode="edit"
                     defaultValues={selectedItem as Record<string, unknown>}
@@ -349,3 +424,33 @@ function MasterDetailPage<T extends Row = Row>({
 
 export { MasterDetailPage };
 export const MasterDetailView = MasterDetailPage;
+
+function MasterDetailLoadingState() {
+  return (
+    <div className="space-y-3 p-3">
+      <Skeleton className="h-9 w-[min(18rem,100%)]" />
+      <Skeleton className="h-44 w-full" />
+      <Skeleton className="h-9 w-full" />
+    </div>
+  );
+}
+
+function MasterDetailErrorState({
+  error,
+  onRetry,
+}: {
+  error: Error | string;
+  onRetry: () => void;
+}) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return (
+    <div className="m-3 rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm">
+      <p className="font-medium text-destructive">Unable to load records</p>
+      <p className="mt-1 text-muted-foreground">{message}</p>
+      <Button type="button" size="sm" variant="outline" className="mt-3" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}

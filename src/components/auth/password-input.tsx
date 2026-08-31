@@ -25,15 +25,26 @@ function PasswordInput({
   ...props
 }: PasswordInputProps) {
   const [visible, setVisible] = React.useState(false);
+  const [focused, setFocused] = React.useState(false);
+  const { onBlur, onFocus, ...inputProps } = props;
   const value = typeof props.value === 'string' ? props.value : '';
+  const shouldShowStrength = showStrength && (focused || value.length > 0);
 
   return (
     <div className="space-y-1.5">
       <div className="relative">
         <Input
+          {...inputProps}
           type={visible ? 'text' : 'password'}
           className={cn('pr-9', className)}
-          {...props}
+          onFocus={(event) => {
+            setFocused(true);
+            onFocus?.(event);
+          }}
+          onBlur={(event) => {
+            setFocused(false);
+            onBlur?.(event);
+          }}
         />
         <button
           type="button"
@@ -47,7 +58,7 @@ function PasswordInput({
           </AnimateIcon>
         </button>
       </div>
-      {showStrength && value.length > 0 && (
+      {shouldShowStrength && (
         <PasswordStrength password={value} className={strengthClassName} />
       )}
     </div>

@@ -18,10 +18,20 @@ import type {
   AuthActionTokenInfo,
   AuthAdminConfig,
   AuthAdminCreateUserParams,
+  AuthAdminMfaRequirement,
+  AuthAdminMfaResetResult,
   AuthAdminUpdateUserParams,
+  AuthAdminUserMfaStatus,
   AuthAdminUserPropertyConfig,
   AuthAdminUserListParams,
   AuthAdminUserListResult,
+  AuthCompletionResult,
+  AuthMfaMethod,
+  AuthMfaMethodType,
+  AuthMfaSetupStartResult,
+  AuthMfaSetupVerifyResult,
+  AuthPasswordUpdatedResult,
+  AuthSessionResult,
   AuthPublicConfig,
   AuthUserPropertyConfig,
   AuthUser,
@@ -34,10 +44,20 @@ export type {
   AuthActionTokenInfo,
   AuthAdminConfig,
   AuthAdminCreateUserParams,
+  AuthAdminMfaRequirement,
+  AuthAdminMfaResetResult,
   AuthAdminUpdateUserParams,
+  AuthAdminUserMfaStatus,
   AuthAdminUserPropertyConfig,
   AuthAdminUserListParams,
   AuthAdminUserListResult,
+  AuthCompletionResult,
+  AuthMfaMethod,
+  AuthMfaMethodType,
+  AuthMfaSetupStartResult,
+  AuthMfaSetupVerifyResult,
+  AuthPasswordUpdatedResult,
+  AuthSessionResult,
   AuthPublicConfig,
   AuthUserPropertyConfig,
   AuthUser,
@@ -52,13 +72,29 @@ export interface AuthState {
 }
 
 export interface AuthActions {
-  login: (username: string, password: string) => Promise<void>;
-  register: (params: RegisterParams) => Promise<void>;
+  login: (username: string, password: string) => Promise<AuthCompletionResult | null>;
+  register: (params: RegisterParams) => Promise<AuthCompletionResult | null>;
   getConfig: () => Promise<AuthPublicConfig | null>;
-  forgotPassword: (email: string) => Promise<void>;
+  forgotPassword: (email: string, nativeContinuation?: string) => Promise<void>;
+  resendVerificationEmail: (email: string, nativeContinuation?: string) => Promise<void>;
+  verifyEmail: (token: string) => Promise<AuthCompletionResult | null>;
   inspectActionToken: (token: string) => Promise<AuthActionTokenInfo | null>;
-  resetPassword: (token: string, newPassword: string) => Promise<void>;
-  setupPassword: (token: string, newPassword: string) => Promise<void>;
+  resetPassword: (token: string, newPassword: string) => Promise<AuthCompletionResult | null>;
+  setupPassword: (token: string, newPassword: string) => Promise<AuthCompletionResult | null>;
+  listMfaMethods: () => Promise<{ methods: AuthMfaMethod[]; required: boolean } | null>;
+  startMfaSetup: (params: {
+    setupToken?: string;
+    method: AuthMfaMethodType;
+    label?: string;
+  }) => Promise<AuthMfaSetupStartResult | null>;
+  verifyMfaSetup: (params: {
+    verificationToken: string;
+    code: string;
+  }) => Promise<AuthMfaSetupVerifyResult | null>;
+  verifyMfaChallenge: (params: {
+    challengeToken: string;
+    code: string;
+  }) => Promise<AuthSessionResult | null>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
@@ -88,9 +124,15 @@ const SSR_AUTH_DEFAULTS: AuthState & AuthActions = {
   register: SSR_AUTH_NOOP as any,
   getConfig: async () => null,
   forgotPassword: SSR_AUTH_NOOP as any,
+  resendVerificationEmail: SSR_AUTH_NOOP as any,
+  verifyEmail: async () => null,
   inspectActionToken: async () => null,
-  resetPassword: SSR_AUTH_NOOP as any,
-  setupPassword: SSR_AUTH_NOOP as any,
+  resetPassword: async () => null,
+  setupPassword: async () => null,
+  listMfaMethods: async () => null,
+  startMfaSetup: async () => null,
+  verifyMfaSetup: async () => null,
+  verifyMfaChallenge: async () => null,
   logout: SSR_AUTH_NOOP as any,
   refresh: SSR_AUTH_NOOP as any,
   changePassword: SSR_AUTH_NOOP as any,
@@ -124,16 +166,18 @@ export function useAuth(): AuthState & AuthActions {
 
   const login = useCallback(
     async (username: string, password: string) => {
-      if (authClient) await authClient.login(username, password);
+      if (authClient) return authClient.login(username, password);
       else if (authDisabled) throw createAuthDisabledError();
+      return null;
     },
     [authClient, authDisabled],
   );
 
   const register = useCallback(
     async (params: RegisterParams) => {
-      if (authClient) await authClient.register(params);
+      if (authClient) return authClient.register(params);
       else if (authDisabled) throw createAuthDisabledError();
+      return null;
     },
     [authClient, authDisabled],
   );
@@ -156,9 +200,26 @@ export function useAuth(): AuthState & AuthActions {
   );
 
   const forgotPassword = useCallback(
-    async (email: string) => {
-      if (authClient) await authClient.forgotPassword(email);
+    async (email: string, nativeContinuation?: string) => {
+      if (authClient) await authClient.forgotPassword(email, nativeContinuation);
       else if (authDisabled) throw createAuthDisabledError();
+    },
+    [authClient, authDisabled],
+  );
+
+  const resendVerificationEmail = useCallback(
+    async (email: string, nativeContinuation?: string) => {
+      if (authClient) await authClient.resendVerificationEmail(email, nativeContinuation);
+      else if (authDisabled) throw createAuthDisabledError();
+    },
+    [authClient, authDisabled],
+  );
+
+  const verifyEmail = useCallback(
+    async (token: string) => {
+      if (authClient) return authClient.verifyEmail(token);
+      if (authDisabled) throw createAuthDisabledError();
+      return null;
     },
     [authClient, authDisabled],
   );
@@ -174,16 +235,64 @@ export function useAuth(): AuthState & AuthActions {
 
   const resetPassword = useCallback(
     async (token: string, newPassword: string) => {
-      if (authClient) await authClient.resetPassword(token, newPassword);
+      if (authClient) return authClient.resetPassword(token, newPassword);
       else if (authDisabled) throw createAuthDisabledError();
+      return null;
     },
     [authClient, authDisabled],
   );
 
   const setupPassword = useCallback(
     async (token: string, newPassword: string) => {
-      if (authClient) await authClient.setupPassword(token, newPassword);
+      if (authClient) return authClient.setupPassword(token, newPassword);
       else if (authDisabled) throw createAuthDisabledError();
+      return null;
+    },
+    [authClient, authDisabled],
+  );
+
+  const listMfaMethods = useCallback(
+    async () => {
+      if (authClient) return authClient.listMfaMethods();
+      if (authDisabled) throw createAuthDisabledError();
+      return null;
+    },
+    [authClient, authDisabled],
+  );
+
+  const startMfaSetup = useCallback(
+    async (params: {
+      setupToken?: string;
+      method: AuthMfaMethodType;
+      label?: string;
+    }) => {
+      if (authClient) return authClient.startMfaSetup(params);
+      if (authDisabled) throw createAuthDisabledError();
+      return null;
+    },
+    [authClient, authDisabled],
+  );
+
+  const verifyMfaSetup = useCallback(
+    async (params: {
+      verificationToken: string;
+      code: string;
+    }) => {
+      if (authClient) return authClient.verifyMfaSetup(params);
+      if (authDisabled) throw createAuthDisabledError();
+      return null;
+    },
+    [authClient, authDisabled],
+  );
+
+  const verifyMfaChallenge = useCallback(
+    async (params: {
+      challengeToken: string;
+      code: string;
+    }) => {
+      if (authClient) return authClient.verifyMfaChallenge(params);
+      if (authDisabled) throw createAuthDisabledError();
+      return null;
     },
     [authClient, authDisabled],
   );
@@ -251,9 +360,15 @@ export function useAuth(): AuthState & AuthActions {
     register,
     getConfig,
     forgotPassword,
+    resendVerificationEmail,
+    verifyEmail,
     inspectActionToken,
     resetPassword,
     setupPassword,
+    listMfaMethods,
+    startMfaSetup,
+    verifyMfaSetup,
+    verifyMfaChallenge,
     logout,
     refresh,
     changePassword,

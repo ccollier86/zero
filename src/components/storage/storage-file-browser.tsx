@@ -9,23 +9,31 @@
  */
 
 import * as React from 'react';
-import { ChevronRight, File, Folder } from 'lucide-react';
+import { ChevronRight, File, Folder, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { AnimateIcon } from '../animate-ui/icons/icon';
 import { ArrowLeft } from '../animate-ui/icons/arrow-left';
 import { Plus } from '../animate-ui/icons/plus';
-import { Upload } from '../animate-ui/icons/upload';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../ui/select';
 import { cn } from '../../lib/utils';
 import { modals } from '../../modals';
 import {
+  useDriveCapabilities,
   useDriveUsage,
+  usePresignedUrl,
   useStorageActions,
   useStorageFolder,
-  useUpload,
 } from '../../storage/storage-hooks';
-import type { FileInfo } from '../../storage/types';
+import type { FileInfo, ListOptions } from '../../storage/types';
 import {
   formatStorageBytes,
   joinStoragePath,
@@ -33,6 +41,7 @@ import {
 } from './storage-format';
 import { openStorageNameDialog } from './storage-name-dialog';
 import { reportStorageActionError } from './storage-observability';
+import { StorageDropzone } from './storage-dropzone';
 import { StorageFileDetailPanel } from './storage-file-detail-panel';
 
 export interface StorageFileBrowserProps {
@@ -54,18 +63,39 @@ export function StorageFileBrowser({
 }: StorageFileBrowserProps) {
   const [currentPath, setCurrentPath] = React.useState<string | undefined>(undefined);
   const [selectedFile, setSelectedFile] = React.useState<FileInfo | null>(null);
+  const [search, setSearch] = React.useState('');
+  const [typeFilter, setTypeFilter] = React.useState<ListOptions['type']>('all');
+  const [sortBy, setSortBy] = React.useState<ListOptions['sortBy']>('name');
+  const [sortDir, setSortDir] = React.useState<ListOptions['sortDir']>('asc');
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
-  const { items, loading, error, refresh } = useStorageFolder(driveId, currentPath);
+  const { items, loading, error, refresh } = useStorageFolder(driveId, currentPath, {
+    type: typeFilter,
+    sortBy,
+    sortDir,
+  });
   const { usage } = useDriveUsage(driveId);
+  const rootAccess = useDriveCapabilities(driveId);
+  const selectedAccess = useDriveCapabilities(selectedFile ? driveId : null, selectedFile?.path);
   const actions = useStorageActions();
-  const { upload, uploading, progress, error: uploadError } = useUpload();
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const presigned = usePresignedUrl();
 
   const breadcrumbs = React.useMemo(
     () => createBreadcrumbs(currentPath),
     [currentPath],
   );
+  const visibleItems = React.useMemo(() => {
+    const normalized = search.trim().toLowerCase();
+    if (!normalized) return items;
+    return items.filter((item) =>
+      item.name.toLowerCase().includes(normalized)
+      || item.path.toLowerCase().includes(normalized)
+      || item.mimeType?.toLowerCase().includes(normalized),
+    );
+  }, [items, search]);
+  const canWrite = rootAccess.capabilities?.canWrite === true;
+  const canAdmin = rootAccess.capabilities?.canAdmin === true;
+  const fileCapabilities = selectedAccess.capabilities ?? rootAccess.capabilities;
 
   const runAction = React.useCallback(
     async (
@@ -98,21 +128,6 @@ export function StorageFileBrowser({
     setSelectedFile(null);
   }, []);
 
-  const handleUpload = React.useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      const path = joinStoragePath(currentPath, file.name);
-      void runAction('uploadFile', async () => {
-        await upload(driveId, file, { path, overwrite: true });
-        refresh();
-        toast.success('File uploaded');
-      }, { driveId, path });
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    },
-    [currentPath, driveId, refresh, runAction, upload],
-  );
-
   const handleNewFolder = React.useCallback(() => {
     void runAction('createFolder', async () => {
       const name = await openStorageNameDialog({
@@ -128,6 +143,14 @@ export function StorageFileBrowser({
       toast.success('Folder created');
     }, { driveId, currentPath });
   }, [actions, currentPath, driveId, refresh, runAction]);
+
+  const handleUploaded = React.useCallback(
+    (files: FileInfo[]) => {
+      refresh();
+      toast.success(files.length === 1 ? 'File uploaded' : `${files.length} files uploaded`);
+    },
+    [refresh],
+  );
 
   const handleRename = React.useCallback(
     (file: FileInfo) => {
@@ -183,7 +206,31 @@ export function StorageFileBrowser({
     [actions, driveId, refresh, runAction],
   );
 
-  const visibleError = actionError ?? error ?? uploadError;
+  const handleDownload = React.useCallback(
+    (file: FileInfo) => {
+      void runAction('downloadFile', async () => {
+        const url = await presigned.getUrl(driveId, file.path, 'download');
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }, { driveId, path: file.path });
+    },
+    [driveId, presigned, runAction],
+  );
+
+  const handleCopyLink = React.useCallback(
+    (file: FileInfo) => {
+      void runAction('copyPresignedLink', async () => {
+        const url = await presigned.getUrl(driveId, file.path, 'download');
+        if (!navigator.clipboard) {
+          throw new Error('Clipboard API is not available');
+        }
+        await navigator.clipboard.writeText(url);
+        toast.success('Temporary link copied');
+      }, { driveId, path: file.path });
+    },
+    [driveId, presigned, runAction],
+  );
+
+  const visibleError = actionError ?? error ?? rootAccess.error ?? selectedAccess.error;
 
   return (
     <div className={cn('flex h-full min-h-[32rem] flex-col', className)}>
@@ -225,30 +272,75 @@ export function StorageFileBrowser({
           </span>
         )}
 
-        <Button variant="outline" size="sm" disabled={busy} onClick={handleNewFolder}>
+        <Button variant="outline" size="sm" disabled={busy || !canWrite} onClick={handleNewFolder}>
           <AnimateIcon animateOnHover>
             <Plus size={16} className="mr-1" />
           </AnimateIcon>
           Folder
         </Button>
+      </div>
 
-        <Button
-          variant="default"
-          size="sm"
-          disabled={uploading || busy}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <AnimateIcon animateOnHover>
-            <Upload size={16} className="mr-1" />
-          </AnimateIcon>
-          {uploading ? `${progress}%` : 'Upload'}
-        </Button>
-        <input ref={fileInputRef} type="file" className="hidden" onChange={handleUpload} />
+      <div className="grid gap-2 border-b px-4 py-3 lg:grid-cols-[1fr_9rem_10rem_8rem]">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search files"
+            className="pl-9"
+          />
+        </div>
+        <Select value={typeFilter} onValueChange={(value) => setTypeFilter(value as ListOptions['type'])}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All items</SelectItem>
+            <SelectItem value="folder">Folders</SelectItem>
+            <SelectItem value="file">Files</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={sortBy} onValueChange={(value) => setSortBy(value as ListOptions['sortBy'])}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="name">Name</SelectItem>
+            <SelectItem value="updated_at">Updated</SelectItem>
+            <SelectItem value="created_at">Created</SelectItem>
+            <SelectItem value="size">Size</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={sortDir} onValueChange={(value) => setSortDir(value as ListOptions['sortDir'])}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="asc">Ascending</SelectItem>
+            <SelectItem value="desc">Descending</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {visibleError && (
         <div className="mx-4 mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           {visibleError}
+        </div>
+      )}
+
+      {canWrite && (
+        <div className="border-b px-4 py-3">
+          <StorageDropzone
+            driveId={driveId}
+            path={currentPath}
+            overwrite
+            title="Drop files into this folder"
+            description="Uploads use the current path and keep folder state refreshed."
+            chooseLabel="Choose files"
+            className="min-h-32 py-5"
+            onUploaded={handleUploaded}
+            onUploadError={(err) => toast.error(err.message)}
+          />
         </div>
       )}
 
@@ -258,14 +350,14 @@ export function StorageFileBrowser({
             <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
               Loading...
             </div>
-          ) : items.length === 0 ? (
+          ) : visibleItems.length === 0 ? (
             <div className="flex flex-col items-center justify-center p-8 text-sm text-muted-foreground">
               <Folder className="mb-2 size-8 opacity-50" />
-              Empty folder
+              {search ? 'No matching storage objects' : 'Empty folder'}
             </div>
           ) : (
             <div className="divide-y">
-              {items.map((item) => (
+              {visibleItems.map((item) => (
                 <div
                   key={item.id}
                   className={cn(
@@ -315,8 +407,11 @@ export function StorageFileBrowser({
           {selectedFile ? (
             <StorageFileDetailPanel
               file={selectedFile}
-              downloadUrl={actions.getFileUrl(driveId, selectedFile.path)}
               busy={busy}
+              canWrite={fileCapabilities?.canWrite === true}
+              canAdmin={fileCapabilities?.canAdmin === true || canAdmin}
+              onDownload={handleDownload}
+              onCopyLink={handleCopyLink}
               onRename={handleRename}
               onDelete={handleDelete}
               onToggleVisibility={handleToggleVisibility}

@@ -1,58 +1,52 @@
 /**
  * package-mode-fixture.test.ts
  *
- * Verifies the generated-app fixture consumes Zero through public package
- * exports. This test owns package-mode fixture checks only; route-loader unit
+ * Verifies the generated-app starter consumes Zero through public package
+ * exports. This test owns package-mode starter checks only; route-loader unit
  * behavior stays in server-route-loader.test.ts.
  */
 
-import { rm } from 'node:fs/promises';
+import { rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
-import { Elysia } from 'elysia';
 
-import { createSyncPlugin } from '../../sync';
-import { serverTables } from '../../../examples/package-mode/db/schema';
-import { loadServerRoutePlugins } from './server-route-loader';
-
-describe('package-mode fixture', () => {
+describe('package-mode starter', () => {
   test('builds the app server through public @zero/framework exports', async () => {
     const outdir = join(process.cwd(), '.zero', 'package-mode-fixture-test-build');
 
     try {
-      const result = await Bun.build({
-        entrypoints: ['examples/package-mode/app/server.ts'],
+      await spawnChecked([
+        'bun',
+        'build',
+        'examples/package-mode/app/server.ts',
+        '--target',
+        'bun',
+        '--outdir',
         outdir,
-        target: 'bun',
-      });
+      ]);
 
-      expect(result.success).toBe(true);
-      expect(result.outputs.some((output) => output.path.endsWith('server.js'))).toBe(true);
+      await expect(stat(join(outdir, 'server.js')).then((value) => value.isFile())).resolves.toBe(true);
     } finally {
       await rm(outdir, { recursive: true, force: true });
     }
   });
-
-  test('loads fixture Elysia route modules from server/routes', async () => {
-    const plugins = await loadServerRoutePlugins({
-      routesDir: 'examples/package-mode/server/routes',
-    });
-
-    let app = new Elysia()
-      .use(createSyncPlugin({
-        db: { mode: 'memory' },
-        tables: serverTables,
-      }));
-
-    for (const plugin of plugins) app = app.use(plugin as any);
-
-    const body = await app
-      .handle(new Request('http://localhost/api/customers/health'))
-      .then((response) => response.json());
-
-    expect(body).toEqual({
-      ok: true,
-      feature: 'package-mode-routes',
-    });
-  });
 });
+
+async function spawnChecked(cmd: string[]): Promise<void> {
+  const proc = Bun.spawn(cmd, {
+    cwd: process.cwd(),
+    stdout: 'pipe',
+    stderr: 'pipe',
+    env: Bun.env,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  if (exitCode !== 0) {
+    throw new Error(`Command failed (${cmd.join(' ')}):\n${stdout}\n${stderr}`);
+  }
+}

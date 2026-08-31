@@ -14,6 +14,10 @@ import type { Migration } from './types';
 import { migration as m001 } from './definitions/001_initial_schema';
 import { migration as m002 } from './definitions/002_auth_account_lifecycle';
 import { migration as m003 } from './definitions/003_platform_tokens';
+import { migration as m004 } from './definitions/004_auth_email_verification_mfa';
+import { migration as m005 } from './definitions/005_native_app_auth';
+import { migration as m006 } from './definitions/006_native_auth_hardening';
+import { migration as m007 } from './definitions/007_auth_email_outbox';
 
 export { Migrator, type MigratorConfig, type MigrationStatus } from './migrator';
 export type {
@@ -47,4 +51,8 @@ export const migrations: Migration[] = [
   m001,
   m002,
   m003,
+  m004,
+  m005,
+  m006,
+  m007,
 ];

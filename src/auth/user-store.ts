@@ -16,6 +16,8 @@ import type {
   UserStatus,
 } from './types';
 import { AuthError } from './types';
+import { AuthGenerationStore } from './auth-generation-store';
+import { canonicalizeEmail, isValidEmail } from './auth-email-identity';
 
 // ─── SQL Row Types ─────────────────────────────────────────────────────────
 
@@ -28,6 +30,9 @@ interface UserRow {
   role: string;
   status: UserStatus;
   password_change_required: number;
+  email_verified_at: number | null;
+  email_verification_required: number;
+  mfa_required: number;
   created_at: number;
   updated_at: number | null;
 }
@@ -73,6 +78,44 @@ interface CountRow {
   count: number;
 }
 
+export interface CreateUserInput {
+  username: string;
+  email: string;
+  password: string;
+  firstName?: string;
+  lastName?: string;
+  role?: string;
+  status?: UserStatus;
+  passwordChangeRequired?: boolean;
+  emailVerifiedAt?: number | null;
+  emailVerificationRequired?: boolean;
+  mfaRequired?: boolean;
+  properties?: Record<string, string>;
+}
+
+export interface AtomicRegistrationPolicy {
+  role: 'admin' | 'user';
+  requireEmailVerification: boolean;
+  mfaRequired: boolean;
+}
+
+export interface RefreshTokenReplacement {
+  tokenId: string;
+  tokenHash: string;
+  expiresAt: number;
+  createdAt: number;
+}
+
+export type RefreshTokenRotationResult = 'rotated' | 'replayed' | 'invalid';
+
+interface PreparedUserCreate {
+  params: CreateUserInput;
+  email: string;
+  userId: string;
+  now: number;
+  passwordHash: string;
+}
+
 /** Filter and pagination options for admin user listing. */
 export interface UserListOptions {
   limit?: number;
@@ -102,10 +145,11 @@ export class UserStore {
     // Users (public — reads via prepared stmt, writes via ReactiveDB)
     getUserById: Statement;
     getUserByUsername: Statement;
-    getUserByEmail: Statement;
+    getUsersByCanonicalEmail: Statement;
     listUsers: Statement;
     countUsers: Statement;
     countUsersByRole: Statement;
+    countActiveAdmins: Statement;
 
     // Credentials (internal — direct SQL, no broadcast)
     insertCredential: Statement;
@@ -120,7 +164,10 @@ export class UserStore {
 
     // Refresh tokens (internal — direct SQL)
     insertRefreshToken: Statement;
+    insertRefreshTokenIfCurrent: Statement;
+    getRefreshTokenById: Statement;
     getRefreshTokenByHash: Statement;
+    consumeRefreshToken: Statement;
     revokeRefreshToken: Statement;
     revokeAllUserTokens: Statement;
     deleteExpiredTokens: Statement;
@@ -129,23 +176,40 @@ export class UserStore {
     insertActionToken: Statement;
     getActionTokenByHash: Statement;
     consumeActionToken: Statement;
+    deleteActionToken: Statement;
     countRecentActionTokens: Statement;
     deleteExpiredActionTokens: Statement;
 
     // Auth config (internal — direct SQL)
     getConfig: Statement;
     setConfig: Statement;
+    acquireRegistrationWriteLock: Statement;
   };
+  private readonly authGenerations: AuthGenerationStore;
 
   constructor(private db: ReactiveDB) {
+    this.authGenerations = new AuthGenerationStore(db);
+
     this.stmts = {
       // Users
       getUserById: db.prepare('SELECT * FROM users WHERE user_id = ?'),
       getUserByUsername: db.prepare('SELECT * FROM users WHERE username = ?'),
-      getUserByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
+      getUsersByCanonicalEmail: db.prepare(
+        `SELECT * FROM users
+         WHERE lower(trim(email)) = ?
+         ORDER BY created_at ASC, user_id ASC
+         LIMIT 2`
+      ),
       listUsers: db.prepare('SELECT * FROM users ORDER BY created_at DESC'),
       countUsers: db.prepare('SELECT COUNT(*) as count FROM users'),
       countUsersByRole: db.prepare('SELECT COUNT(*) as count FROM users WHERE role = ?'),
+      countActiveAdmins: db.prepare(
+        `SELECT COUNT(*) as count FROM users
+         WHERE role = 'admin'
+           AND status = 'active'
+           AND password_change_required = 0
+           AND (email_verification_required = 0 OR email_verified_at IS NOT NULL)`
+      ),
 
       // Credentials
       insertCredential: db.prepare(
@@ -176,8 +240,37 @@ export class UserStore {
       insertRefreshToken: db.prepare(
         'INSERT INTO _refresh_tokens (token_id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)'
       ),
+      insertRefreshTokenIfCurrent: db.prepare(
+        `INSERT INTO _refresh_tokens
+           (token_id, user_id, token_hash, expires_at, created_at)
+         SELECT ?, users.user_id, ?, ?, ? FROM users
+         WHERE users.user_id = ?
+           AND users.email = ?
+           AND users.role = ?
+           AND users.status = 'active'
+           AND users.password_change_required = 0
+           AND (users.email_verification_required = 0
+             OR users.email_verified_at IS NOT NULL)
+           AND COALESCE((SELECT generation FROM _auth_user_generations
+             WHERE user_id = users.user_id), 0) = ?`
+      ),
+      getRefreshTokenById: db.prepare(
+        'SELECT * FROM _refresh_tokens WHERE token_id = ?'
+      ),
       getRefreshTokenByHash: db.prepare(
         'SELECT * FROM _refresh_tokens WHERE token_hash = ?'
+      ),
+      consumeRefreshToken: db.prepare(
+        `UPDATE _refresh_tokens SET revoked_at = ?
+         WHERE token_id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > ?
+           AND COALESCE((SELECT generation FROM _auth_user_generations
+             WHERE user_id = _refresh_tokens.user_id), 0) = ?
+           AND EXISTS (SELECT 1 FROM users
+             WHERE users.user_id = _refresh_tokens.user_id
+               AND users.status = 'active'
+               AND users.password_change_required = 0
+               AND (users.email_verification_required = 0
+                 OR users.email_verified_at IS NOT NULL))`
       ),
       revokeRefreshToken: db.prepare(
         'UPDATE _refresh_tokens SET revoked_at = ? WHERE token_id = ?'
@@ -199,6 +292,9 @@ export class UserStore {
       consumeActionToken: db.prepare(
         'UPDATE _auth_action_tokens SET consumed_at = ? WHERE token_id = ? AND consumed_at IS NULL'
       ),
+      deleteActionToken: db.prepare(
+        'DELETE FROM _auth_action_tokens WHERE token_id = ?'
+      ),
       countRecentActionTokens: db.prepare(
         `SELECT COUNT(*) as count
          FROM _auth_action_tokens
@@ -216,6 +312,11 @@ export class UserStore {
       getConfig: db.prepare('SELECT value FROM _auth_config WHERE key = ?'),
       setConfig: db.prepare(
         'INSERT OR REPLACE INTO _auth_config (key, value) VALUES (?, ?)'
+      ),
+      acquireRegistrationWriteLock: db.prepare(
+        `INSERT INTO _auth_config (key, value)
+         VALUES ('auth.registration.write_lock', '1')
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
       ),
     };
   }
@@ -237,60 +338,88 @@ export class UserStore {
    * Writes user row via ReactiveDB (broadcast) + credential via direct SQL (no broadcast).
    * Atomic — if credential insert fails, user row is rolled back.
    */
-  async createUser(params: {
-    username: string;
-    email: string;
-    password: string;
-    firstName?: string;
-    lastName?: string;
-    role?: string;
-    status?: UserStatus;
-    passwordChangeRequired?: boolean;
-    properties?: Record<string, string>;
-  }): Promise<UserRecord> {
-    // Check uniqueness upfront — ReactiveDB uses INSERT OR REPLACE which
-    // silently resolves UNIQUE conflicts by deleting the conflicting row.
-    // We need explicit checks to return proper errors.
-    if (this.getUserByUsername(params.username)) {
+  async createUser(params: CreateUserInput): Promise<UserRecord> {
+    const prepared = await this.prepareUserCreate(params);
+    return this.db.transaction(() => this.insertPreparedUser(prepared));
+  }
+
+  /**
+   * Create a self-registered user after resolving bootstrap policy atomically.
+   * The lock write is the first statement in the transaction, so every
+   * registration observes users committed by the preceding registration.
+   */
+  async createRegistrationUser<TPolicy extends AtomicRegistrationPolicy>(
+    params: Omit<CreateUserInput,
+      'role' | 'emailVerifiedAt' | 'emailVerificationRequired' | 'mfaRequired'>,
+    resolvePolicy: (isBootstrap: boolean) => TPolicy,
+    afterInsert?: (user: UserRecord) => void
+  ): Promise<{ user: UserRecord; policy: TPolicy }> {
+    const prepared = await this.prepareUserCreate(params);
+    return this.db.transaction(() => {
+      this.stmts.acquireRegistrationWriteLock.run();
+      const policy = resolvePolicy(this.countUsers() === 0);
+      const user = this.insertPreparedUser({
+        ...prepared,
+        params: {
+          ...params,
+          role: policy.role,
+          emailVerifiedAt: policy.requireEmailVerification ? null : Date.now(),
+          emailVerificationRequired: policy.requireEmailVerification,
+          mfaRequired: policy.mfaRequired,
+        },
+      });
+      afterInsert?.(user);
+      return { user, policy };
+    });
+  }
+
+  private async prepareUserCreate(params: CreateUserInput): Promise<PreparedUserCreate> {
+    const email = this.requireCanonicalEmail(params.email);
+    this.assertNewUserIdentityAvailable(params.username, email);
+    return {
+      params,
+      email,
+      userId: `u_${crypto.randomUUID()}`,
+      now: Date.now(),
+      passwordHash: await Bun.password.hash(params.password),
+    };
+  }
+
+  private insertPreparedUser(prepared: PreparedUserCreate): UserRecord {
+    const { params, email, userId, now, passwordHash } = prepared;
+    // Password hashing yields. Recheck inside the write transaction so a
+    // concurrent identity cannot be replaced by ReactiveDB's upsert primitive.
+    this.assertNewUserIdentityAvailable(params.username, email);
+    this.db.insert('users', {
+      user_id: userId,
+      username: params.username,
+      email,
+      first_name: params.firstName ?? null,
+      last_name: params.lastName ?? null,
+      role: params.role ?? 'user',
+      status: params.status ?? 'active',
+      password_change_required: params.passwordChangeRequired ? 1 : 0,
+      email_verified_at: params.emailVerifiedAt ?? null,
+      email_verification_required: params.emailVerificationRequired ? 1 : 0,
+      mfa_required: params.mfaRequired ? 1 : 0,
+      created_at: now,
+      updated_at: null,
+    });
+    this.stmts.insertCredential.run(userId, passwordHash);
+    for (const [key, value] of Object.entries(params.properties ?? {})) {
+      this.stmts.insertProperty.run(userId, key, value);
+    }
+    return this.toUserRecord(
+      this.stmts.getUserById.get(userId) as UserRow,
+      this.loadProperties(userId)
+    );
+  }
+
+  private assertNewUserIdentityAvailable(username: string, email: string): void {
+    if (this.getUserByUsername(username)) {
       throw new AuthError('Username taken', 'DUPLICATE_USERNAME', 409);
     }
-    if (this.getUserByEmail(params.email)) {
-      throw new AuthError('Email taken', 'DUPLICATE_EMAIL', 409);
-    }
-
-    const userId = `u_${crypto.randomUUID()}`;
-    const now = Date.now();
-
-    // Hash password (async — Argon2id via Bun.password)
-    const passwordHash = await Bun.password.hash(params.password);
-
-    return this.db.transaction(() => {
-      // Public table — emits change event, broadcast to subscribers
-      this.db.insert('users', {
-        user_id: userId,
-        username: params.username,
-        email: params.email,
-        first_name: params.firstName ?? null,
-        last_name: params.lastName ?? null,
-        role: params.role ?? 'user',
-        status: params.status ?? 'active',
-        password_change_required: params.passwordChangeRequired ? 1 : 0,
-        created_at: now,
-        updated_at: null,
-      });
-
-      // Internal table — direct SQL, no broadcast
-      this.stmts.insertCredential.run(userId, passwordHash);
-
-      for (const [key, value] of Object.entries(params.properties ?? {})) {
-        this.stmts.insertProperty.run(userId, key, value);
-      }
-
-      return this.toUserRecord(
-        this.stmts.getUserById.get(userId) as UserRow,
-        this.loadProperties(userId)
-      );
-    });
+    this.assertEmailAvailable(email);
   }
 
   /**
@@ -320,9 +449,11 @@ export class UserStore {
    * Get user by email. Returns null if not found.
    */
   getUserByEmail(email: string): UserRecord | null {
-    const row = this.stmts.getUserByEmail.get(email) as UserRow | null;
-    if (!row) return null;
-    return this.toUserRecord(row, this.loadProperties(row.user_id));
+    const rows = this.getCanonicalEmailRows(email);
+    // Legacy databases can contain case/whitespace variants because the old
+    // UNIQUE constraint used binary comparison. Never pick an arbitrary user.
+    if (rows.length !== 1) return null;
+    return this.toUserRecord(rows[0], this.loadProperties(rows[0].user_id));
   }
 
   /**
@@ -382,6 +513,12 @@ export class UserStore {
     return row.count;
   }
 
+  /** Count administrators that can currently complete a normal sign-in. */
+  countActiveAdmins(): number {
+    const row = this.stmts.countActiveAdmins.get() as CountRow;
+    return row.count;
+  }
+
   /**
    * Update user fields. Uses ReactiveDB for broadcast.
    * Returns updated UserRecord or null if user not found.
@@ -396,18 +533,34 @@ export class UserStore {
       role: string;
       status: UserStatus;
       passwordChangeRequired: boolean;
+      emailVerifiedAt: number | null;
+      emailVerificationRequired: boolean;
+      mfaRequired: boolean;
     }>
   ): UserRecord | null {
+    const email = partial.email === undefined
+      ? undefined
+      : this.requireCanonicalEmail(partial.email);
+
     // Map camelCase to snake_case
     const mapped: Record<string, unknown> = { updated_at: Date.now() };
     if (partial.username !== undefined) mapped.username = partial.username;
-    if (partial.email !== undefined) mapped.email = partial.email;
+    if (email !== undefined) mapped.email = email;
     if (partial.firstName !== undefined) mapped.first_name = partial.firstName;
     if (partial.lastName !== undefined) mapped.last_name = partial.lastName;
     if (partial.role !== undefined) mapped.role = partial.role;
     if (partial.status !== undefined) mapped.status = partial.status;
     if (partial.passwordChangeRequired !== undefined) {
       mapped.password_change_required = partial.passwordChangeRequired ? 1 : 0;
+    }
+    if (partial.emailVerifiedAt !== undefined) {
+      mapped.email_verified_at = partial.emailVerifiedAt;
+    }
+    if (partial.emailVerificationRequired !== undefined) {
+      mapped.email_verification_required = partial.emailVerificationRequired ? 1 : 0;
+    }
+    if (partial.mfaRequired !== undefined) {
+      mapped.mfa_required = partial.mfaRequired ? 1 : 0;
     }
 
     // Check uniqueness upfront for fields being changed
@@ -417,16 +570,31 @@ export class UserStore {
         throw new AuthError('Username taken', 'DUPLICATE_USERNAME', 409);
       }
     }
-    if (partial.email !== undefined) {
-      const existing = this.getUserByEmail(partial.email);
-      if (existing && existing.userId !== userId) {
-        throw new AuthError('Email taken', 'DUPLICATE_EMAIL', 409);
-      }
-    }
+    if (email !== undefined) this.assertEmailAvailable(email, userId);
 
     const change = this.db.update('users', userId, mapped);
     if (!change) return null;
     return this.getUserById(userId);
+  }
+
+  private getCanonicalEmailRows(email: string): UserRow[] {
+    const canonical = canonicalizeEmail(email);
+    if (!canonical) return [];
+    return this.stmts.getUsersByCanonicalEmail.all(canonical) as UserRow[];
+  }
+
+  private assertEmailAvailable(email: string, exceptUserId?: string): void {
+    const conflict = this.getCanonicalEmailRows(email)
+      .some((row) => row.user_id !== exceptUserId);
+    if (conflict) throw new AuthError('Email taken', 'DUPLICATE_EMAIL', 409);
+  }
+
+  private requireCanonicalEmail(email: string): string {
+    const canonical = canonicalizeEmail(email);
+    if (!isValidEmail(canonical)) {
+      throw new AuthError('Invalid email address', 'INVALID_EMAIL', 400);
+    }
+    return canonical;
   }
 
   /** Canonical alias for updateUser(). */
@@ -512,20 +680,84 @@ export class UserStore {
   }
 
   /**
-   * Mark an account as requiring a password change and revoke refresh tokens.
+   * Commit a one-time password action and credential replacement atomically.
+   *
+   * Password hashing completes before the transaction begins. The supplied
+   * token consumer then shares the same SQLite transaction as the credential,
+   * eligibility, and session-generation writes, so a storage failure cannot
+   * burn an otherwise reusable recovery link.
    */
-  requirePasswordChange(userId: string): boolean {
-    const updated = this.updateUser(userId, { passwordChangeRequired: true });
-    if (!updated) return false;
-    this.revokeAllUserTokens(userId);
-    return true;
+  async completePasswordAction(
+    userId: string,
+    newPassword: string,
+    consumeActionToken: () => void
+  ): Promise<boolean> {
+    const newHash = await Bun.password.hash(newPassword);
+
+    return this.db.transaction(() => {
+      if (!this.getUserById(userId)) return false;
+      consumeActionToken();
+      this.stmts.updateCredential.run(newHash, userId);
+      this.updateUser(userId, { passwordChangeRequired: false });
+      this.revokeAllUserTokens(userId);
+      return true;
+    });
   }
 
   /**
-   * Clear the forced password-change flag without changing credentials.
+   * Mark an account as requiring a password change and revoke refresh tokens.
+   */
+  requirePasswordChange(userId: string): boolean {
+    return this.db.transaction(() => {
+      const updated = this.updateUser(userId, { passwordChangeRequired: true });
+      if (!updated) return false;
+      this.revokeAllUserTokens(userId);
+      return true;
+    });
+  }
+
+  /**
+   * Clear the forced password-change flag and invalidate every prior token.
    */
   clearPasswordChangeRequired(userId: string): boolean {
-    return this.updateUser(userId, { passwordChangeRequired: false }) !== null;
+    return this.db.transaction(() => {
+      const updated = this.updateUser(userId, { passwordChangeRequired: false });
+      if (!updated) return false;
+      this.revokeAllUserTokens(userId);
+      return true;
+    });
+  }
+
+  /**
+   * Mark a user's email verified and clear the verification gate.
+   */
+  markEmailVerified(userId: string, verifiedAt = Date.now()): UserRecord | null {
+    return this.updateUser(userId, {
+      emailVerifiedAt: verifiedAt,
+      emailVerificationRequired: false,
+    });
+  }
+
+  /** Atomically verify an address and consume the one-time verification link. */
+  completeEmailVerification(
+    userId: string,
+    consumeActionToken: () => void,
+    verifiedAt = Date.now()
+  ): UserRecord | null {
+    return this.db.transaction(() => {
+      const current = this.getUserById(userId);
+      if (!current) return null;
+      if (!current.emailVerificationRequired || current.emailVerifiedAt !== null) {
+        throw new AuthError('Action token is invalid', 'ACTION_TOKEN_INVALID', 400);
+      }
+      consumeActionToken();
+      const user = this.markEmailVerified(userId, verifiedAt);
+      if (!user) return null;
+      // Verification links complete authentication, so invalidate every
+      // sibling link and pre-verification session before issuing a new one.
+      this.revokeAllUserTokens(userId);
+      return user;
+    });
   }
 
   // ─── Properties KV ───────────────────────────────────────────────────
@@ -575,9 +807,50 @@ export class UserStore {
 
   // ─── Refresh Tokens ──────────────────────────────────────────────────
 
-  /**
-   * Store a hashed refresh token. Internal table — no broadcast.
-   */
+  /** Atomically consume a live refresh token and persist its replacement. */
+  rotateRefreshTokenAtomically(
+    current: RefreshTokenRecord,
+    replacement: RefreshTokenReplacement,
+    expectedAuthGeneration: number,
+    now = Date.now()
+  ): RefreshTokenRotationResult {
+    return this.db.transaction(() => {
+      const consumed = this.stmts.consumeRefreshToken.run(
+        now,
+        current.tokenId,
+        current.userId,
+        now,
+        expectedAuthGeneration
+      );
+      if (consumed.changes === 1) {
+        this.stmts.insertRefreshToken.run(
+          replacement.tokenId,
+          current.userId,
+          replacement.tokenHash,
+          replacement.expiresAt,
+          replacement.createdAt
+        );
+        return 'rotated';
+      }
+
+      const latest = this.getRefreshTokenById(current.tokenId);
+      if (latest?.userId === current.userId && latest.revokedAt !== null) {
+        this.invalidateRefreshReplay(current.userId, now);
+        return 'replayed';
+      }
+      if (latest?.userId === current.userId) {
+        this.stmts.revokeRefreshToken.run(now, current.tokenId);
+      }
+      return 'invalid';
+    });
+  }
+
+  /** Apply family invalidation when a presented refresh token was already used. */
+  invalidateRefreshTokenReplay(userId: string, now = Date.now()): void {
+    this.db.transaction(() => this.invalidateRefreshReplay(userId, now));
+  }
+
+  /** Store a hashed refresh token. Internal table — no broadcast. */
   storeRefreshToken(
     tokenId: string,
     userId: string,
@@ -593,6 +866,38 @@ export class UserStore {
     );
   }
 
+  /** Insert a refresh session only while its signed user state is still current. */
+  storeRefreshTokenIfCurrent(
+    tokenId: string,
+    user: Pick<UserRecord, 'userId' | 'email' | 'role'>,
+    tokenHash: string,
+    expiresAt: number,
+    createdAt: number,
+    expectedAuthGeneration: number
+  ): boolean {
+    const result = this.stmts.insertRefreshTokenIfCurrent.run(
+      tokenId,
+      tokenHash,
+      expiresAt,
+      createdAt,
+      user.userId,
+      user.email,
+      user.role,
+      expectedAuthGeneration
+    );
+    return result.changes === 1;
+  }
+
+  /**
+   * Look up a refresh token by its server-generated session id.
+   * Returns revoked and expired records so the caller can fail closed using
+   * the same lifecycle rules as refresh-token rotation.
+   */
+  getRefreshTokenById(tokenId: string): RefreshTokenRecord | null {
+    const row = this.stmts.getRefreshTokenById.get(tokenId) as RefreshTokenRow | null;
+    return row ? toRefreshTokenRecord(row) : null;
+  }
+
   /**
    * Look up a refresh token by its hash.
    * Returns the record EVEN IF REVOKED — caller handles revocation logic.
@@ -602,16 +907,7 @@ export class UserStore {
     const row = this.stmts.getRefreshTokenByHash.get(
       tokenHash
     ) as RefreshTokenRow | null;
-    if (!row) return null;
-
-    return {
-      tokenId: row.token_id,
-      userId: row.user_id,
-      tokenHash: row.token_hash,
-      expiresAt: row.expires_at,
-      createdAt: row.created_at,
-      revokedAt: row.revoked_at,
-    };
+    return row ? toRefreshTokenRecord(row) : null;
   }
 
   /**
@@ -625,7 +921,22 @@ export class UserStore {
    * Revoke ALL non-revoked refresh tokens for a user (family rotation / password change).
    */
   revokeAllUserTokens(userId: string): void {
-    this.stmts.revokeAllUserTokens.run(Date.now(), userId);
+    this.db.transaction(() => {
+      this.stmts.revokeAllUserTokens.run(Date.now(), userId);
+      this.authGenerations.bump(userId);
+    });
+  }
+
+  private invalidateRefreshReplay(userId: string, now: number): void {
+    const user = this.getUserById(userId);
+    if (!user || user.passwordChangeRequired) return;
+    this.stmts.revokeAllUserTokens.run(now, userId);
+    this.authGenerations.bump(userId);
+  }
+
+  /** Return the security generation embedded in newly issued auth tokens. */
+  getAuthGeneration(userId: string): number {
+    return this.authGenerations.get(userId);
   }
 
   /**
@@ -691,6 +1002,12 @@ export class UserStore {
    */
   consumeActionToken(tokenId: string): boolean {
     const result = this.stmts.consumeActionToken.run(Date.now(), tokenId);
+    return result.changes > 0;
+  }
+
+  /** Delete an action token that failed before delivery completed. */
+  deleteActionToken(tokenId: string): boolean {
+    const result = this.stmts.deleteActionToken.run(tokenId);
     return result.changes > 0;
   }
 
@@ -764,6 +1081,9 @@ export class UserStore {
       role: row.role,
       status: row.status ?? 'active',
       passwordChangeRequired: Boolean(row.password_change_required),
+      emailVerifiedAt: row.email_verified_at,
+      emailVerificationRequired: Boolean(row.email_verification_required),
+      mfaRequired: Boolean(row.mfa_required),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       properties,
@@ -783,6 +1103,17 @@ export class UserStore {
       metadata: parseMetadata(row.metadata),
     };
   }
+}
+
+function toRefreshTokenRecord(row: RefreshTokenRow): RefreshTokenRecord {
+  return {
+    tokenId: row.token_id,
+    userId: row.user_id,
+    tokenHash: row.token_hash,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    revokedAt: row.revoked_at,
+  };
 }
 
 function parseMetadata(value: string | null): Record<string, unknown> {

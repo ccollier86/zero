@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+echo "Project: $ROOT"
+echo
+echo "Top-level size:"
+du -xhd 1 "$ROOT" 2>/dev/null | sort -h | tail -30
+echo
+echo "Generated/dependency/build candidates:"
+project-diet scan "$ROOT" --profile standard

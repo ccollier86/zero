@@ -40,6 +40,8 @@ interface SyncStoreContext {
   _sync: {
     connected: boolean;
     lastSeq: number;
+    epoch: string | null;
+    scope: string | null;
     pending: PendingMutation[];
   };
 }
@@ -55,10 +57,10 @@ The store handles two categories of events:
 
 | Event | Payload | Effect |
 |-------|---------|--------|
-| `sync.snapshot` | `{ tables, seq }` | Replace included table contents, clear pending entries for those tables, update `lastSeq` |
-| `sync.change` | `{ seq, table, op, rowId, row, origin }` | Apply server's canonical row state, update `lastSeq`. `origin` is not checked — every change updates the row unconditionally. |
-| `sync.ack` | `{ ref, ok, error?, seq? }` | Resolve pending mutation (confirm or rollback) |
-| `sync.catchup` | `{ changes, seq }` | Apply array of changes in order, update `lastSeq` |
+| `sync.snapshot` | `{ tables, seq, epoch, scope, reset }` | Replace every cache, install full-table rows, preserve or purge pending work as directed |
+| `sync.change` | `{ seq, prevSeq, epoch, scope, table, op, rowId, row }` | Apply only after stream continuity validation, then update `lastSeq` |
+| `sync.ack` | `{ ref, ok, error?, seq?, change? }` | Resolve by ref and install canonical result or roll back |
+| `sync.catchup` | `{ changes, prevSeq, seq, epoch, scope }` | Validate and atomically apply ordered replay changes |
 
 **Local events** (from mutation actions, applied optimistically):
 
@@ -82,17 +84,21 @@ All reducers are **pure functions** — they take context and event, return new 
 ```ts
 // Conceptual — the actual implementation generates these from table definitions
 const reducers = {
-  // Snapshot is authoritative for tables included in the payload.
-  // Lazy tables are normally omitted, so their pending mutations stay active.
-  'sync.snapshot': (ctx, { tables, seq }) => {
-    const snapshotTables = new Set(Object.keys(tables));
+  // Current snapshots replace all full and lazy caches. Same-scope restart
+  // recovery rebases attempted work; changed scope purges it.
+  'sync.snapshot': (ctx, { tables, seq, epoch, scope, reset }) => {
+    const pending = reset === 'purge' ? [] : ctx._sync.pending;
+    const emptyTables = createEmptyTableRecords();
     return {
-      ...ctx,
-      ...tables,            // Replace included table contents
+      ...emptyTables,
+      ...tables,
+      ...reapplyNeverSentRows(pending),
       _sync: {
         ...ctx._sync,
         lastSeq: seq,
-        pending: ctx._sync.pending.filter(p => !snapshotTables.has(p.table)),
+        epoch,
+        scope,
+        pending,
       },
     };
   },
@@ -121,11 +127,12 @@ const reducers = {
     };
   },
 
-  'sync.ack': (ctx, { ref, ok, error }) => {
+  'sync.ack': (ctx, { ref, ok, error, change }) => {
     if (ok) {
-      // Remove from pending — optimistic state is confirmed
+      // Install `change` when present, then remove exactly this ref.
       return {
         ...ctx,
+        ...(change ? applyCanonicalChange(ctx, change) : {}),
         _sync: {
           ...ctx._sync,
           pending: ctx._sync.pending.filter(p => p.ref !== ref),
@@ -166,8 +173,7 @@ const reducers = {
           break;
       }
       newCtx = { ...newCtx, [change.table]: tableData };
-      // If a pending mutation matches this table + rowId, it was confirmed by the server — remove it
-      pending = pending.filter(p => !(p.table === change.table && p.rowId === change.rowId));
+      // A same-row change is not proof that this client's ref committed.
     }
     return {
       ...newCtx,
@@ -536,7 +542,9 @@ insert(table: string, row: Row): void {
 }
 ```
 
-The optimistic apply happens synchronously — the store updates, React re-renders, user sees the change instantly. The WS send is fire-and-forget; the `sync.ack` response handles confirmation or rollback.
+The optimistic apply happens synchronously. A successful transport send records
+its attempt and epoch; the matching `sync.ack` handles canonical reconciliation
+or rollback. The queue retains the serialized request until that ack arrives.
 
 **Same-row serialization:** If a mutation is already pending for a given `(table, rowId)`, the client queues the new mutation locally and does not send it until the first one is acked. This prevents broken rollback chains where mutation B's `previousState` depends on mutation A having been applied.
 
@@ -549,11 +557,16 @@ When the WebSocket disconnects:
 3. On reconnect:
    a. Open new WS connection
    b. `store.send({ type: 'sync.connected' })`
-   c. Send `sync.subscribe` with `lastSeq` from store context
-   d. Server responds with `sync.catchup` or `sync.snapshot`
-   e. If `sync.snapshot` → included table state is replaced and matching pending entries are cleared
-   f. If `sync.catchup` → changes applied, pending mutations that overlap with catchup data are confirmed
-   g. Store updates — UI is current
+   c. Send `sync.subscribe` with `epoch`, `scope`, and `lastSeq`
+   d. Keep new outbound mutations buffered until the baseline response
+   e. Matching epoch/scope → validate and apply `sync.catchup`
+   f. Changed epoch/replay overflow → replace all caches and rebase pending work
+   g. Changed auth scope → replace all caches and purge pending/outbound work
+   h. Only then flush same-scope in-memory offline mutations
+
+An uncertain sent mutation is replayed with the same ref and incremented
+attempt. The server may resolve it only from the durable receipt committed with
+the original write. An unknown outcome fails closed instead of executing twice.
 
 ### Pending Mutation Timeout
 

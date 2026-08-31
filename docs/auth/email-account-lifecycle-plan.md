@@ -37,13 +37,26 @@ Implemented foundation:
 12. SDK contracts for forgot/reset/setup flows.
 13. `.env.example` and create-project env scaffolding for app identity,
     Resend, and auth token TTLs.
+14. Production admin user-management UI, forgot/reset/setup components, and
+    Platform Doctor checks for email-dependent auth config.
+15. Canonical email identity across persistence, admin writes, login, and
+    recovery, with enumeration-safe recovery responses and privacy-safe outcome
+    events.
+16. Delivery-only admin password gates, explicit stranded-gate recovery, and
+    failed-delivery cleanup for action tokens, accounts, and email-MFA
+    challenges.
+17. Atomic, sessionless password reset/setup completion that requires a fresh
+    login after the credential is committed.
+18. Durable auth-email outbox for public recovery and verification-resend
+    requests, with background eligibility lookup, just-in-time action tokens,
+    provider idempotency keys, bounded retries, dead letters, and hot/file
+    restart recovery.
 
-Not implemented yet:
+Deferred:
 
-1. Real admin user-management UI wiring.
-2. Forgot/reset/setup React components and route screens.
-3. Platform doctor checks for email-dependent auth config.
-4. Password-changed notification emails.
+1. Password-changed notification emails.
+2. General app-owned email sending and runtime template management beyond the
+   typed auth templates.
 
 ## Goals
 
@@ -148,7 +161,6 @@ createApp({
     accountEmails: {
       adminCreatedUser: true,
       passwordReset: true,
-      passwordChangedNotice: true,
       manualPasswordReset: false,
       actionTokenTTL: '1h',
       requestCooldown: '5m',
@@ -178,10 +190,15 @@ Configuration rules:
 2. Apps may pass a custom provider object.
 3. Tests and local development should be able to use a memory or console
    provider without a network call.
-4. Production startup should warn or fail clearly when email-dependent auth
+4. `accountEmails.passwordChangedNotice` remains reserved and resolves to
+   `false` until password mutations have a committed-change notification sender.
+5. `EMAIL_FROM`, `EMAIL_REPLY_TO`, and `RESEND_API_KEY` are runtime fallbacks
+   when their explicit config values are omitted. Resend readiness requires a
+   sender and API key; action-link email additionally requires `app.publicUrl`.
+6. Production startup should warn or fail clearly when email-dependent auth
    features are enabled but no deliverable provider/from address exists. The
    platform doctor now performs these checks.
-5. Email config should be exposed to admin UI only as safe capability flags,
+7. Email config should be exposed to admin UI only as safe capability flags,
    never API keys or provider secrets.
 
 ## Security Policy
@@ -199,35 +216,98 @@ The setup link lets the user set their password and then sign in. If the
 platform keeps a temporary password path for legacy/manual workflows, it should
 be opt-in and marked less secure.
 
-Recommended default:
+Implemented delivery-only setup flow:
 
 1. Admin creates user.
-2. User row is created with `password_change_required = 1`.
-3. Platform creates an `account_setup` action token.
-4. Platform sends setup email with a direct link.
-5. User sets password through the setup screen.
-6. Platform clears `password_change_required` and issues normal tokens.
+2. Zero validates real email readiness before creating the account.
+3. User row is created without a password gate and Zero creates an
+   `account_setup` action token for the next security generation.
+4. The platform requires the provider boundary to accept the setup email's
+   intended recipient.
+5. Only successful delivery acceptance sets `password_change_required = 1`
+   and revokes existing sessions. Failed delivery removes the token and the new
+   account so the identity can be retried cleanly.
+6. The user sets a password through the setup screen.
+7. Zero atomically consumes the exact-cycle token, saves the password, clears
+   the gate, revokes sessions, and returns a sessionless success response.
+8. The user signs in with the new password; normal MFA policy runs during that
+   fresh login.
 
 For admin password reset:
 
 1. Admin triggers reset.
-2. Existing refresh tokens are revoked.
-3. `password_change_required = 1`.
-4. Platform sends a reset email with a one-time token.
-5. User sets new password through the reset screen.
+2. Zero validates readiness, creates an exact-cycle one-time token, and sends
+   the reset email before gating the account.
+3. Only delivery acceptance sets `password_change_required = 1` and revokes
+   sessions; failure deletes the token and leaves the existing account usable.
+4. The user sets a new password through the reset screen, receives no session
+   from that commit, and signs in again.
+5. If an older deployment or operational mistake already stranded another
+   account, an administrator can use the confirmed clear-requirement recovery
+   action without changing the user's password.
 
 For authenticated password change:
 
 1. User submits current password and new password.
 2. Platform changes the password and revokes refresh tokens.
-3. Platform sends a password-changed notification email when configured.
+3. Password-changed notification email remains deferred; the public config does
+   not advertise it as ready.
 
 For forgot password:
 
 1. User submits email on login/forgot-password screen.
-2. Platform always returns a generic success response.
-3. If a user exists and email is enabled, platform sends a one-time reset link.
-4. Token consumption sets the new password and revokes existing refresh tokens.
+2. Zero trims/lowercases the email, durably enqueues the same class of local
+   work for every valid address, and returns the same generic success response
+   without waiting for account lookup or the email provider.
+3. A background worker privately resolves eligibility, creates an action token
+   only immediately before delivery, and removes that token after a failed
+   attempt.
+4. Transient failures use bounded exponential backoff. Provider rejection and
+   exhausted retries become scrubbed dead letters; completed rows also discard
+   the address and native continuation.
+5. Unknown, suspended, cooldown-limited, provider-failed, and delivered
+   outcomes are distinguished only through privacy-safe events that omit the
+   submitted address, continuation, provider error text, and raw token.
+6. Per-address request windows plus active and total queue caps bound abuse and
+   storage. Expired leases recover after process failure, and both file and hot
+   SQLite modes preserve pending work across a graceful restart.
+7. Graceful shutdown aborts provider work, removes the undelivered action token,
+   releases the job without consuming an attempt, and joins the worker before
+   ReactiveDB or the owned SQLite service is disposed.
+
+Public verification resend uses the same outbox. Registration, admin lifecycle,
+and MFA delivery remain synchronous because those flows must know whether
+delivery succeeded before committing an account gate or returning a challenge.
+
+Delivery is intentionally at least once across an ambiguous provider/network
+failure. Zero never persists a raw action token merely to make retries easier.
+Instead it removes the uncertain attempt's token and retries with a fresh token
+and a per-attempt provider idempotency key. A provider that accepted the first
+request before its response was lost may therefore deliver two messages; the
+older link is invalid and only the newest link works. This favors recoverability
+without weakening hash-only token storage.
+
+If the process exits before it can classify or clean the attempt, lease recovery
+also creates and sends a fresh token. Outbox delivery bypasses the action-token
+cooldown because the durable per-address request window is already its admission
+control; otherwise a crash-left hash could silently suppress the retry. In that
+narrow crash window both links can remain valid until a password transition or
+email verification completes. Both transitions bump the account security
+generation and invalidate every sibling link and pre-transition session.
+
+The queue's per-address window and global active/total caps bound local work and
+storage. The zero-configuration defaults admit 5,000 active jobs, retain at
+most 50,000 total rows, and dead-letter after 10 delivery attempts. Capacity is
+privately suppressed behind the same generic response. These instance caps
+cannot fairly identify an attacker rotating arbitrary email
+addresses. Production ingress should additionally rate-limit
+`/auth/forgot-password` and `/auth/resend-verification` by a trusted client
+source. Do that at the shared edge for multi-replica deployments. Zero must not
+blindly trust a public `X-Forwarded-For` header because an attacker can forge it.
+5. A delivery failure deletes the token so an immediate retry is not blocked by
+   the cooldown.
+6. Token consumption atomically sets the new password, clears any gate, revokes
+   existing sessions, and requires a fresh login.
 
 ## Database Additions
 
@@ -255,12 +335,15 @@ Token types:
 | `account_setup` | New admin-created user sets first password. |
 | `password_reset` | User-initiated forgot-password flow. |
 | `admin_password_reset` | Admin-triggered reset/forced change. |
-| `email_verification` | Optional later email verification flow. |
+| `email_verification` | Registration and resend-verification flow. |
 
 Tokens must be opaque random values. Store only hashes. Expire tokens and mark
-them consumed when used. The action-token service also enforces
+them consumed when used, and require the account's exact auth generation so an
+older link cannot revive during a later recovery cycle. The action-token
+service also enforces
 `auth.accountEmails.requestCooldown` for active tokens of the same user and
-type, and opportunistically cleans expired/consumed records.
+type, opportunistically cleans expired/consumed records, and physically removes
+an undelivered token so its cooldown does not block retry.
 
 ## Auth Route Additions
 
@@ -278,6 +361,7 @@ Admin routes:
 ```txt
 POST /auth/admin/users/:userId/send-setup-email
 POST /auth/admin/users/:userId/send-password-reset
+POST /auth/admin/users/:userId/clear-password-change-requirement
 POST /auth/admin/users/:userId/suspend
 POST /auth/admin/users/:userId/activate
 ```
@@ -295,12 +379,14 @@ Login must account for user status and forced password changes:
 | State | Login behavior |
 | --- | --- |
 | `active` and no forced change | Normal token pair. |
-| `active` with `password_change_required` | Return a structured `PASSWORD_CHANGE_REQUIRED` response or short-lived change token; do not grant normal app access. |
+| `active` with `password_change_required` | Return `PASSWORD_CHANGE_REQUIRED`; do not grant normal app access. The user must use a delivered setup/reset link or request a new reset email. |
 | `suspended` | Reject with `ACCOUNT_SUSPENDED`; revoke refresh tokens when suspended. |
 | deleted | User no longer exists; credentials and tokens cascade. |
 
-The exact forced-change flow should favor emailed action links, but a temporary
-password login path can be supported if configured.
+The forced-change state is intentionally email-link-only. Login never issues a
+token that could bypass proof of mailbox access. Administrators cannot newly
+enable the state through a generic user PATCH; they use setup/reset delivery,
+or explicitly clear an already-stranded gate for another user.
 
 ## Email Templates
 
@@ -372,9 +458,10 @@ settings views. The organism should support:
 7. Delete users with confirmation and last-admin protection.
 8. Send setup email.
 9. Send password reset email.
-10. Revoke sessions.
-11. Show whether email is configured/enabled.
-12. Fall back cleanly when email is disabled.
+10. Confirm and clear an already-stranded password-change requirement.
+11. Revoke sessions.
+12. Show real email readiness rather than the configured switch alone.
+13. Fall back cleanly when email is disabled or incomplete.
 
 The UI should not show unavailable actions. For example, if email is disabled,
 show manual password/reset controls or a clear disabled state instead of a
@@ -391,8 +478,9 @@ Login and account pages should support:
 3. Forgot-password form wired to `/auth/forgot-password`.
 4. Reset-password form for emailed reset/setup tokens that blocks invalid or
    mode-mismatched tokens before submit.
-5. Forced password-change screen when login indicates it is required.
-6. Password-changed success state.
+5. A `PASSWORD_CHANGE_REQUIRED` login state that directs the user to the
+   delivered link or forgot-password flow instead of a tokenless setup screen.
+6. Password-changed success state that returns the user to login.
 7. Clear generic reset messaging that does not reveal account existence.
 
 ## Observability
@@ -408,9 +496,12 @@ Add stable codes for:
 7. Auth action token rejected/expired.
 8. Account suspended/reactivated.
 9. Password reset requested.
-10. Password reset completed.
+10. Password reset delivered, suppressed, or failed delivery.
+11. Password reset completed.
+12. Administrator password gate set or explicitly recovered.
 
-Do not log raw tokens, reset URLs, passwords, or provider secrets.
+Do not log raw tokens, reset URLs, passwords, submitted recovery addresses, or
+provider secrets.
 
 ## Implementation Phases
 
@@ -450,9 +541,10 @@ Status: implemented.
 
 1. Add suspend/reactivate routes.
 2. Add send setup/reset email routes.
-3. Decide whether existing direct admin `reset-password` remains, is renamed,
-   or becomes explicitly manual-only.
+3. Keep direct admin `reset-password` as an explicitly configurable manual
+   recovery path and add the confirmed gate-clear recovery route.
 4. Revoke refresh tokens on reset/suspend.
+5. Gate only after delivery acceptance and remove undelivered tokens/accounts.
 
 ### Phase 5: Frontend SDK And UI
 

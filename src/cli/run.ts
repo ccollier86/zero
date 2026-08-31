@@ -29,6 +29,16 @@ switch (command) {
   case 'migrate':
     process.exitCode = await runBunScript('../migrations/run.ts', commandArgs);
     break;
+  case 'pdf': {
+    const { runPdfCli } = await import('../pdf/run');
+    process.exitCode = await runPdfCli(commandArgs);
+    break;
+  }
+  case 'update': {
+    const { runZeroUpdateCli } = await import('../update/run');
+    process.exitCode = await runZeroUpdateCli(commandArgs);
+    break;
+  }
   case '--help':
   case '-h':
   case undefined:
@@ -61,4 +71,6 @@ function printUsage(): void {
   console.log('  create   Create a new Zero app');
   console.log('  doctor   Run platform doctor');
   console.log('  migrate  Run migrations');
+  console.log('  pdf      Install or inspect the PDF Chromium runtime');
+  console.log('  update   Safely update Zero in an existing app');
 }

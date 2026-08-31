@@ -7,7 +7,19 @@
  */
 
 import { useState, useCallback, useEffect, useRef, type MutableRefObject } from 'react';
-import type { FileInfo, ListResult, DriveUsage, DriveRecord } from './types';
+import type {
+  CreateUploadGrantParams,
+  DriveRecord,
+  DriveRecordWithAccess,
+  DriveUsage,
+  FileInfo,
+  GrantPermissionParams,
+  ListOptions,
+  ListResult,
+  PermissionRecord,
+  StorageAccessCapabilities,
+  StorageUploadGrant,
+} from './types';
 import { useClient } from '../frontend/client/client-context';
 import type { Client, FetchInit } from '../frontend/client/sdk';
 
@@ -236,10 +248,13 @@ export function useUpload(): UseUploadReturn {
 export interface UseStorageFolderReturn {
   items: FileInfo[];
   total: number;
+  cursor: string | null;
   loading: boolean;
   error: string | null;
   refresh: () => void;
 }
+
+export interface UseStorageFolderOptions extends ListOptions {}
 
 /**
  * Load one folder listing from the storage API.
@@ -247,26 +262,52 @@ export interface UseStorageFolderReturn {
  * Requests go through `client.fetch()` so Authorization headers and refresh
  * retry behavior match the rest of the SDK.
  */
-export function useStorageFolder(driveId: string | null, path?: string): UseStorageFolderReturn {
+export function useStorageFolder(
+  driveId: string | null,
+  path?: string,
+  options: UseStorageFolderOptions = {},
+): UseStorageFolderReturn {
   const client = useClient();
   const [items, setItems] = useState<FileInfo[]>([]);
   const [total, setTotal] = useState(0);
+  const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const {
+    cursor: requestedCursor,
+    limit,
+    sortBy,
+    sortDir,
+    type,
+  } = options;
 
   useEffect(() => {
-    if (!driveId || !client) return;
+    if (!driveId || !client) {
+      setItems([]);
+      setTotal(0);
+      setCursor(null);
+      setLoading(false);
+      return;
+    }
 
     const controller = new AbortController();
     setLoading(true);
     setError(null);
 
-    const query = path ? `?path=${encodeURIComponent(path)}` : '';
-    apiFetch<ListResult>(client, `/drives/${driveId}/list${query}`, { signal: controller.signal })
+    const query = new URLSearchParams();
+    if (path) query.set('path', path);
+    if (requestedCursor) query.set('cursor', requestedCursor);
+    if (limit) query.set('limit', String(limit));
+    if (sortBy) query.set('sortBy', sortBy);
+    if (sortDir) query.set('sortDir', sortDir);
+    if (type) query.set('type', type);
+    const queryString = query.toString() ? `?${query.toString()}` : '';
+    apiFetch<ListResult>(client, `/drives/${driveId}/list${queryString}`, { signal: controller.signal })
       .then((result) => {
         setItems(result.items);
         setTotal(result.total);
+        setCursor(result.cursor);
       })
       .catch((err) => {
         if (err.name !== 'AbortError') setError(err.message);
@@ -276,17 +317,17 @@ export function useStorageFolder(driveId: string | null, path?: string): UseStor
       });
 
     return () => controller.abort();
-  }, [client, driveId, path, refreshKey]);
+  }, [client, driveId, limit, path, refreshKey, requestedCursor, sortBy, sortDir, type]);
 
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
-  return { items, total, loading, error, refresh };
+  return { items, total, cursor, loading, error, refresh };
 }
 
 // ─── useStorageDrives ────────────────────────────────────────────────────
 
 export interface UseStorageDrivesReturn {
-  drives: DriveRecord[];
+  drives: DriveRecordWithAccess[];
   loading: boolean;
   error: string | null;
   refresh: () => void;
@@ -300,7 +341,7 @@ export interface UseStorageDrivesReturn {
  */
 export function useStorageDrives(): UseStorageDrivesReturn {
   const client = useClient();
-  const [drives, setDrives] = useState<DriveRecord[]>([]);
+  const [drives, setDrives] = useState<DriveRecordWithAccess[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -311,11 +352,12 @@ export function useStorageDrives(): UseStorageDrivesReturn {
     setError(null);
 
     if (!client) {
+      setDrives([]);
       setLoading(false);
       return () => controller.abort();
     }
 
-    apiFetch<DriveRecord[]>(client, '/drives', { signal: controller.signal })
+    apiFetch<DriveRecordWithAccess[]>(client, '/drives', { signal: controller.signal })
       .then(setDrives)
       .catch((err) => {
         if (err.name !== 'AbortError') setError(err.message);
@@ -330,6 +372,122 @@ export function useStorageDrives(): UseStorageDrivesReturn {
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   return { drives, loading, error, refresh };
+}
+
+// ─── useDriveCapabilities ────────────────────────────────────────────────
+
+export interface UseDriveCapabilitiesReturn {
+  capabilities: StorageAccessCapabilities | null;
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+/** Load current-user storage capabilities for a drive or object path. */
+export function useDriveCapabilities(
+  driveId: string | null,
+  path?: string,
+): UseDriveCapabilitiesReturn {
+  const client = useClient();
+  const [capabilities, setCapabilities] = useState<StorageAccessCapabilities | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (!driveId || !client) {
+      setCapabilities(null);
+      setLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const query = new URLSearchParams();
+    if (path) query.set('path', path);
+    const queryString = query.toString() ? `?${query.toString()}` : '';
+
+    setLoading(true);
+    setError(null);
+    apiFetch<StorageAccessCapabilities>(
+      client,
+      `/drives/${driveId}/capabilities${queryString}`,
+      { signal: controller.signal },
+    )
+      .then(setCapabilities)
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          setCapabilities(null);
+          setError(err.message);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [client, driveId, path, refreshKey]);
+
+  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  return { capabilities, loading, error, refresh };
+}
+
+// ─── useStoragePermissions ───────────────────────────────────────────────
+
+export interface UseStoragePermissionsReturn {
+  permissions: PermissionRecord[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+/** Load drive-level or object-relevant storage permissions. */
+export function useStoragePermissions(
+  driveId: string | null,
+  objectPath?: string,
+): UseStoragePermissionsReturn {
+  const client = useClient();
+  const [permissions, setPermissions] = useState<PermissionRecord[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (!driveId || !client) {
+      setPermissions([]);
+      setLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const query = new URLSearchParams();
+    if (objectPath) query.set('objectPath', objectPath);
+    const queryString = query.toString() ? `?${query.toString()}` : '';
+
+    setLoading(true);
+    setError(null);
+    apiFetch<{ permissions: PermissionRecord[] }>(
+      client,
+      `/drives/${driveId}/permissions${queryString}`,
+      { signal: controller.signal },
+    )
+      .then((result) => setPermissions(result.permissions))
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          setPermissions([]);
+          setError(err.message);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [client, driveId, objectPath, refreshKey]);
+
+  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  return { permissions, loading, error, refresh };
 }
 
 // ─── useDriveUsage ───────────────────────────────────────────────────────
@@ -352,7 +510,12 @@ export function useDriveUsage(driveId: string | null): UseDriveUsageReturn {
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    if (!driveId || !client) return;
+    if (!driveId || !client) {
+      setUsage(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
 
     const controller = new AbortController();
     setLoading(true);
@@ -361,7 +524,10 @@ export function useDriveUsage(driveId: string | null): UseDriveUsageReturn {
     apiFetch<DriveUsage>(client, `/drives/${driveId}/usage`, { signal: controller.signal })
       .then(setUsage)
       .catch((err) => {
-        if (err.name !== 'AbortError') setError(err.message);
+        if (err.name !== 'AbortError') {
+          setUsage(null);
+          setError(err.message);
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -406,6 +572,9 @@ export interface StorageActions {
   createDrive: (name: string, options?: { maxSize?: number; maxFileSize?: number; allowedMimeTypes?: string[]; public?: boolean }) => Promise<DriveRecord>;
   updateDrive: (driveId: string, updates: { name?: string; maxSize?: number; maxFileSize?: number; allowedMimeTypes?: string[] }) => Promise<DriveRecord>;
   deleteDrive: (driveId: string) => Promise<void>;
+  grantPermission: (driveId: string, params: GrantPermissionParams) => Promise<PermissionRecord>;
+  revokePermission: (permissionId: string) => Promise<void>;
+  createUploadGrant: (driveId: string, params: CreateUploadGrantParams) => Promise<StorageUploadGrant>;
   createFolder: (driveId: string, path: string, isPublic?: boolean) => Promise<FileInfo>;
   deleteFile: (driveId: string, path: string) => Promise<void>;
   moveFile: (driveId: string, from: string, to: string) => Promise<FileInfo>;
@@ -437,6 +606,24 @@ export function useStorageActions(): StorageActions {
 
     deleteDrive: useCallback(async (driveId) => {
       await apiFetch(client, `/drives/${driveId}`, { method: 'DELETE' });
+    }, [client]),
+
+    grantPermission: useCallback(async (driveId, params) => {
+      return apiFetch<PermissionRecord>(client, `/drives/${driveId}/permissions`, {
+        method: 'POST',
+        body: params,
+      });
+    }, [client]),
+
+    revokePermission: useCallback(async (permissionId) => {
+      await apiFetch(client, `/permissions/${permissionId}`, { method: 'DELETE' });
+    }, [client]),
+
+    createUploadGrant: useCallback(async (driveId, params) => {
+      return apiFetch<StorageUploadGrant>(client, `/drives/${driveId}/upload-grants`, {
+        method: 'POST',
+        body: params,
+      });
     }, [client]),
 
     createFolder: useCallback(async (driveId, path, isPublic) => {

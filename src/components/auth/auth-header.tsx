@@ -16,10 +16,10 @@ interface AuthHeaderProps {
 
 function AuthHeader({ title, description, className }: AuthHeaderProps) {
   return (
-    <div className={cn('space-y-1 pb-3', className)}>
-      <h2 className="text-lg font-semibold leading-none tracking-tight">{title}</h2>
+    <div className={cn('space-y-1.5 pb-2', className)}>
+      <h2 className="text-xl font-semibold leading-tight tracking-tight">{title}</h2>
       {description && (
-        <p className="text-sm text-muted-foreground">{description}</p>
+        <p className="text-sm leading-relaxed text-muted-foreground">{description}</p>
       )}
     </div>
   );

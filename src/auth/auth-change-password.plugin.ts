@@ -1,0 +1,50 @@
+/** Authenticated password-change route. */
+
+import { Elysia, t } from 'elysia';
+import { extractAuthContext } from './auth-context';
+import {
+  requireSessionServices,
+  type AuthSessionPluginConfig,
+} from './auth-session-dependencies';
+import { authNewPasswordSchema, authPasswordSchema } from './auth-request-schema';
+import { syncPageSessionCookie } from './page-session';
+import { AuthError } from './types';
+
+export function createAuthChangePasswordPlugin(config: AuthSessionPluginConfig) {
+  return new Elysia({ name: 'auth-change-password' }).post(
+    '/change-password',
+    async ({ body, request, set }) => {
+      const { store, tokenService } = requireSessionServices(config);
+      const auth = await extractAuthContext(request, tokenService);
+      if (!auth) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
+
+      const changed = await store.updatePassword(
+        auth.userId, body.currentPassword, body.newPassword
+      );
+      if (!changed) {
+        throw new AuthError(
+          'Current password is incorrect', 'INVALID_PASSWORD', 400
+        );
+      }
+      const user = store.getUserById(auth.userId);
+      if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
+      if (user.status === 'suspended') {
+        throw new AuthError('Account is suspended', 'ACCOUNT_SUSPENDED', 403);
+      }
+
+      const tokens = await tokenService.issueTokenPair(user);
+      const response = {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+      };
+      await syncPageSessionCookie(set, request, tokenService, response);
+      return response;
+    },
+    {
+      body: t.Object({
+        currentPassword: authPasswordSchema,
+        newPassword: authNewPasswordSchema,
+      }),
+    }
+  );
+}

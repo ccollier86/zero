@@ -7,6 +7,7 @@
  */
 
 import { Elysia } from 'elysia';
+import { readAuthBearerToken } from './auth-bearer-token';
 import type { TokenService } from './token-service';
 import { AuthError, type AuthContext } from './types';
 import type { AccessTokenPayload } from './types';
@@ -40,11 +41,8 @@ export function createAuthMiddleware(
         let authContext: AuthContext | null = null;
 
         if (tokenService) {
-          const header = request.headers.get('authorization');
-          if (header?.startsWith('Bearer ')) {
-            const token = header.slice(7);
-            authContext = await resolveContext(tokenService, token);
-          }
+          const token = readAuthBearerToken(request);
+          if (token) authContext = await resolveContext(tokenService, token);
         }
 
         return {
@@ -72,6 +70,6 @@ async function resolveContext(
   }
 
   const payload = await tokenService.verifyAccessToken(token) as AccessTokenPayload | null;
-  if (!payload) return null;
+  if (!payload || typeof payload.email !== 'string' || typeof payload.role !== 'string') return null;
   return { userId: payload.sub, email: payload.email, role: payload.role };
 }

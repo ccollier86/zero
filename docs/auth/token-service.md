@@ -4,14 +4,18 @@ JWT signing, verification, keypair management, refresh token rotation. One exter
 
 ## Overview
 
-Two token types, two verification strategies:
+Four credential types with distinct verification and transport boundaries:
 
 | Token | Format | Lifetime | Storage | Verification |
 |-------|--------|----------|---------|-------------|
-| **Access** | JWT (ES256) | Short (default 15m) | Client only | Stateless — public key check, no DB lookup |
-| **Refresh** | Opaque UUID | Long (default 7d) | SHA-256 hash in `_refresh_tokens` | Stateful — DB lookup, check expiry + revocation |
+| **Access** | JWT (ES256, issuer `auth`) | Short (default 15m) | Browser memory | Stateless signature plus live-user checks for HTTP context |
+| **Auth transition** | JWT (ES256, issuer `auth-transition`) | Short | Browser memory | Signature, purpose, and current-user checks in account/MFA flows |
+| **Refresh** | Opaque UUID | Long (default 7d) | Raw value in browser `localStorage`; SHA-256 hash in `_refresh_tokens` | Stateful DB lookup, expiry, revocation, and rotation |
+| **Page session** | JWT (ES256, issuer `auth-page-session`) | No later than backing refresh row | Host-only HttpOnly cookie | Signature plus live refresh row and current user; safe SSR pages only |
 
-Access tokens carry claims. Refresh tokens carry nothing — they're random strings whose hashes map to database rows.
+Access and transition JWTs are explicit credentials. Refresh tokens are random
+strings whose hashes map to database rows. Page JWTs contain only `sub` and the
+backing refresh-session ID (`sid`); they never expose the raw refresh token.
 
 ## ECDSA P-256 Keypair
 
@@ -95,7 +99,12 @@ class TokenService {
 
 **Key persistence:** The private key is stored as a JWK in the `_auth_config` table. On restart, the same key is loaded — existing access tokens remain valid. If the database is wiped (`:memory:` mode restart), a new key is generated and all tokens are implicitly invalidated.
 
-**Env var override:** `AUTH_SIGNING_KEY` takes precedence over the database. Useful for deployments where the key is managed externally (secrets manager, K8s secret). Accepts PEM (`-----BEGIN...`) or base64-encoded JWK.
+**Env var override:** `AUTH_SIGNING_KEY` takes precedence over the database. It
+is useful when a secrets manager or orchestrator supplies the same ES256
+private JWK to every replica. Zero accepts raw JWK JSON or a base64-encoded JWK;
+PEM input is rejected. When the JWK omits `kid`, Zero derives the stable RFC
+7638 SHA-256 public-key thumbprint, so restarts and replicas publish the same
+JWKS identifier. An explicit `kid` is preserved.
 
 **Separate from TLS:** The signing key is for JWTs. TLS keys are for transport encryption. Different purposes, independent rotation, different storage (`_auth_config` vs. file system).
 
@@ -125,8 +134,10 @@ async signAccessToken(user: { userId: string; email: string; role: string }): Pr
 | Claim | Source | Purpose |
 |-------|--------|---------|
 | `sub` | `userId` | Subject — identifies the user |
-| `email` | User record | Convenience — avoids DB lookup for common field |
-| `role` | User record | Authorization — middleware exposes it in `authContext` |
+| `email` | Browser user record | Browser-token identity hint; live user data remains authoritative |
+| `role` | Browser user record | Browser-token hint; live user role remains authoritative |
+| `authGeneration` | User security state | Rejects tokens minted before a security transition |
+| `sid` | Native refresh family | Binds native access to a live, revocable session family |
 | `iat` | Auto (jose) | Issued-at timestamp |
 | `exp` | TTL config | Expiration — stateless enforcement |
 | `iss` | `'auth'` | Issuer — identifies the auth system |
@@ -157,9 +168,21 @@ async verifyAccessToken(token: string): Promise<AccessTokenPayload | null> {
 }
 ```
 
-**Stateless:** No database lookup. The public key verifies the signature, `jose` checks `exp` and `iss`. If the token is valid, the claims are trusted. If it's expired or tampered, `null` is returned.
+`verifyAccessToken()` is deliberately cryptographic-only: the public key
+verifies the signature and `jose` checks claims such as `exp` and `iss`.
+Request middleware uses `resolveAuthContext()` instead. That method loads the
+current user, checks account eligibility and `authGeneration`, and requires an
+active configured-client refresh family for native tokens. Native access JWTs
+therefore omit email and role; those values are hydrated from the live user.
 
-**Error handling:** Verification never throws to callers. All failure modes (`JWTExpired`, `JWTClaimValidationFailed`, `JWSSignatureVerificationFailed`) are caught and returned as `null`. The auth middleware maps `null` to `authContext: null` — routes decide what to do.
+Code that verifies a JWT offline through JWKS can validate its signature and
+expiry, but cannot observe Zero's live user/session revocation state. Protected
+Zero routes and Sync use live resolution rather than offline verification.
+
+**Error handling:** Verification never throws to callers. All failure modes
+(`JWTExpired`, `JWTClaimValidationFailed`, `JWSSignatureVerificationFailed`)
+are caught and returned as `null`. Live-resolution failures likewise produce
+no authenticated context, and protected routes reject the request.
 
 ### Token Anatomy
 
@@ -170,6 +193,31 @@ eyJhbGciOiJFUzI1NiIsImtpZCI6IjU1MGUxNGYyLTRjZjQtNDYzZi05ZTY1LTJmMjIzNGE3YjRlNCJ9
 ```
 
 Three parts: header (alg + kid) . payload (claims) . signature. Total ~300 bytes — small enough for `Authorization` header on every request.
+
+## Page Session
+
+When an auth flow produces a complete access/refresh pair, Zero signs a
+dedicated page JWT and sends it only as the HttpOnly
+`__zero_page_session` cookie. Its expiration matches the backing refresh row.
+
+```ts
+new SignJWT({ sid: refreshRecord.tokenId })
+  .setSubject(user.userId)
+  .setIssuer('auth-page-session')
+  .setExpirationTime(Math.floor(refreshRecord.expiresAt / 1000));
+```
+
+Resolution verifies the signature and issuer, loads `_refresh_tokens` by
+`sid`, checks user ownership, expiry, and revocation, then loads the current
+user and reapplies account eligibility. Current role and email come from the
+database, not stale cookie claims.
+
+This JWT is intentionally rejected by access-token verification. The file
+router accepts it only for actual `GET`/`HEAD` pages when no Authorization
+header is present. APIs, mutations, server plugins, and WebSocket sync remain
+Bearer-only. Rotation and session revocation invalidate the page JWT through
+its backing refresh row; authenticated HTML is private/no-store and excluded
+from ISR.
 
 ## Refresh Token
 
@@ -197,8 +245,9 @@ Login / Register
        ├── Store: SHA-256(token) → _refresh_tokens table
        │          (never store the raw token in the DB)
        │
-       └── Return: raw token → client
-                   (client stores in httpOnly cookie or secure storage)
+       └── Return: raw token → browser SDK
+                   (SDK stores it in localStorage for client restoration;
+                    the HttpOnly cookie contains a separate page JWT)
 ```
 
 ### Hash Storage
@@ -214,7 +263,7 @@ private hashToken(token: string): string {
 
 The raw refresh token only exists:
 1. In the HTTP response body (sent to client once)
-2. In the client's storage (httpOnly cookie or secure local storage)
+2. In the browser SDK's `localStorage`
 3. In the incoming HTTP request body (when the client uses it)
 
 The database stores only `SHA-256(token)`. If the database is breached, the attacker has hashes — not usable tokens.

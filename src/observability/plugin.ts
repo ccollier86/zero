@@ -22,6 +22,7 @@ import type {
   PlatformEventLevel,
   PlatformEventSource,
 } from './types';
+import { getSafeRequestPath } from './safe-request-path';
 
 const DEFAULT_BASE_PATH = '/api/_zero/observability';
 const DEFAULT_FRONTEND_MAX_PAYLOAD_BYTES = 32_768;
@@ -56,7 +57,7 @@ export function createObservabilityPlugin(options: ObservabilityPluginConfig = {
         error,
         metadata: {
           method: request.method,
-          path: new URL(request.url).pathname,
+          path: getSafeRequestPath(request),
           status: set.status,
         },
       });
@@ -77,7 +78,7 @@ export function createObservabilityPlugin(options: ObservabilityPluginConfig = {
           set.status = 403;
           warnPlatform(OBS_CODES.OBSERVABILITY_ACCESS_DENIED, {
             metadata: {
-              path: new URL(request.url).pathname,
+              path: getSafeRequestPath(request),
               mode: typeof readMode === 'string' ? readMode : 'custom',
             },
           });
@@ -186,7 +187,7 @@ function attachTrace<T extends Elysia<any, any, any, any, any, any, any>>(
 
   return app.trace(function zeroObservabilityTrace({ context, onHandle, onBeforeHandle, onAfterHandle, onError }) {
     const request = context.request;
-    const path = new URL(request.url).pathname;
+    const path = getSafeRequestPath(request);
     const method = request.method;
     const requestStart = Date.now();
 

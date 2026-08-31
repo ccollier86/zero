@@ -5,7 +5,7 @@
  * namespaces, and limiter helpers. Elysia plugin wiring is covered separately.
  */
 
-import { mkdir, rm } from 'node:fs/promises';
+import { access, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, test } from 'bun:test';
 
@@ -114,5 +114,47 @@ describe('KvService', () => {
     expect(first).toBe('value');
     expect(second).toBe('value');
     expect(calls).toBe(1);
+  });
+
+  test('isolates memory durability from disk state and other instances', async () => {
+    const dir = join(testRoot, 'memory-isolation');
+    const durable = new KvService({ baseDir: dir, durability: 'always' });
+    await durable.start();
+    await durable.set('disk-only', 'persisted');
+    await durable.stop();
+
+    const first = new KvService({ baseDir: dir, durability: 'memory' });
+    await first.start();
+    expect(first.get('disk-only')).toBeUndefined();
+    await first.set('memory-only', 'private');
+    await first.stop();
+    await first.start();
+    expect(first.get<string>('memory-only')).toBe('private');
+    await first.stop();
+
+    const second = new KvService({ baseDir: dir, durability: 'memory' });
+    await second.start();
+    expect(second.get('disk-only')).toBeUndefined();
+    expect(second.get('memory-only')).toBeUndefined();
+    await second.stop();
+  });
+
+  test('memory durability never creates persistence files', async () => {
+    const dir = join(testRoot, 'memory-no-files');
+    const service = new KvService({
+      baseDir: dir,
+      durability: 'memory',
+      checkpointIntervalMs: 1,
+      fsyncMs: 1,
+    });
+
+    await service.start();
+    await service.set('only-in-memory', true);
+    await Bun.sleep(10);
+    await service.flush();
+    await service.checkpoint();
+    await service.stop();
+
+    await expect(access(dir)).rejects.toThrow();
   });
 });

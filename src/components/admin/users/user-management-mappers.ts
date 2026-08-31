@@ -34,6 +34,9 @@ export function mapAuthUserToManagementUser(user: AuthUser): UserManagementUser 
     role: user.role,
     status: user.status,
     passwordChangeRequired: user.passwordChangeRequired,
+    emailVerifiedAt: user.emailVerifiedAt,
+    emailVerificationRequired: user.emailVerificationRequired,
+    mfaRequired: user.mfaRequired,
     properties: { ...user.properties },
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -67,7 +70,7 @@ export function toAdminUserUpdateParams(
     lastName: changes.lastName,
     role: changes.role,
     status: changes.status,
-    passwordChangeRequired: changes.passwordChangeRequired,
+    mfaRequired: changes.mfaRequired,
   };
 }
 
@@ -83,6 +86,7 @@ export function toAdminUserCreateParams(
     lastName: params.lastName?.trim() || undefined,
     role: params.role || 'user',
     passwordChangeRequired: params.passwordChangeRequired,
+    mfaRequired: params.mfaRequired,
     sendSetupEmail: params.sendSetupEmail,
     properties: params.properties,
   };

@@ -18,6 +18,7 @@ export type { App } from './server/app-factory';
 export { defineZeroConfig, resolveConfig } from './server/types';
 export type {
   AppConfig,
+  AppDoctorConfig,
   AppTableInput,
   AutoLazyAction,
   ResolvedConfig,
@@ -27,9 +28,33 @@ export type {
   SitemapChangeFrequency,
   SitemapConfig,
   SitemapEntry,
+  SyncAuthMode,
   SyncDefaultsConfig,
   TableSyncDefaultConfig,
 } from './server/types';
+export {
+  PdfError,
+  PdfService,
+  PlaywrightPdfRenderer,
+  createPdfPlugin,
+  getPdfService,
+  requirePdfService,
+  resolvePdfConfig,
+} from '../pdf';
+export type {
+  PdfBrowserConfig,
+  PdfConfig,
+  PdfLimitsConfig,
+  PdfPrintOptions,
+  PdfRenderInput,
+  PdfRenderer,
+  PdfRenderResult,
+  PdfResourcePolicyConfig,
+  PdfServiceStatus,
+  PdfStorageTarget,
+  PdfStoredResult,
+  ResolvedPdfConfig,
+} from '../pdf';
 export type {
   EffectiveRouteAuthRequirement,
   RouteAuthMode,
@@ -307,33 +332,99 @@ export type {
   PlatformDoctorReport,
   PlatformDoctorSeverity,
 } from '../doctor/platform-doctor';
+export {
+  runUsageAudit,
+} from '../doctor/usage-audit';
+export type {
+  UsageAuditAllowEntry,
+  UsageAuditOptions,
+  UsageAuditRuleSeverity,
+} from '../doctor/usage-audit';
 
 // ─── Route Config ───────────────────────────────────────────────────────
 export type { RouteConfig, LoaderContext, PageMeta } from './router/types';
 
 // ─── Auth ───────────────────────────────────────────────────────────────
-export { createAuthPlugin, getAuthStore, getTokenService } from '../auth/auth.plugin';
+export {
+  createAuthPlugin,
+  getAuthStore,
+  getMfaChallengeService,
+  getMfaMethodStore,
+  getMfaService,
+  getTokenService,
+} from '../auth/auth.plugin';
 export { createAuthMiddleware } from '../auth/auth.middleware';
+export { installAuthStopBarrier } from '../auth/auth-stop-lifecycle';
 export { AccountEmailService } from '../auth/account-email-service';
 export { AuthActionTokenService } from '../auth/action-token-service';
+export { MfaChallengeStore } from '../auth/mfa-challenge-store';
+export { MfaChallengeService } from '../auth/mfa-challenge-service';
+export { MfaMethodStore } from '../auth/mfa-method-store';
+export { MfaService } from '../auth/mfa-service';
+export type {
+  AdminMfaConfig,
+  MfaReadiness,
+  MfaReadinessInput,
+  PublicMfaConfig,
+} from '../auth/mfa-service';
 export {
   defineAuthConfig,
   isPolicyTrustedUserProperty,
   resolveAuthBehaviorConfig,
 } from '../auth/auth-config';
+export {
+  defineNativeAuthConfig,
+  resolveNativeAuthConfig,
+} from '../auth/native';
+export type {
+  NativeAuthClientConfig,
+  NativeAuthConfig,
+  NativeAuthorizationRequestPolicyConfig,
+  NativeAuthorizationSourceContext,
+  NativeAuthorizationSourceResolver,
+  NativeRefreshRotationPolicyConfig,
+  ResolvedNativeAuthConfig,
+} from '../auth/native';
+export {
+  defineAuthEmailTemplates,
+  resolveAuthEmailBranding,
+} from '../auth/auth-email-templates';
 export { UserPropertyService } from '../auth/user-property-service';
 export { AuthError, AUTH_DEFAULTS } from '../auth/types';
 export type {
+  AuthEmailBrandingConfig,
+  AuthEmailTemplate,
+  AuthEmailTemplateContext,
+  AuthEmailTemplateKey,
+  AuthEmailTemplateResult,
+  AuthEmailTemplates,
+  ResolvedAuthEmailBranding,
+} from '../auth/auth-email-templates';
+export type {
+  AuthAccountConfig,
   AuthAccountEmailConfig,
   AuthActionTokenRecord,
   AuthActionTokenType,
   AuthBehaviorConfig,
   AuthContext,
+  AuthMfaChallengeRecord,
+  AuthMfaConfig,
+  AuthMfaMethodRecord,
+  AuthMfaMethodStatus,
+  AuthMfaMethodType,
+  AuthMfaPolicy,
+  AuthMfaQrRobustness,
+  AuthMfaTotpConfig,
   AuthPluginConfig,
   AuthRegistrationConfig,
   AuthRegistrationMode,
+  AuthTransitionPurpose,
+  AuthTransitionTokenPayload,
+  ResolvedAuthAccountConfig,
   ResolvedAuthAccountEmailConfig,
   ResolvedAuthBehaviorConfig,
+  ResolvedAuthMfaConfig,
+  ResolvedAuthMfaTotpConfig,
   ResolvedUserPropertyFieldConfig,
   UserStatus,
   UserPropertyEditableBy,

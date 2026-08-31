@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+if [ ! -d "$ROOT/target" ]; then
+  echo "No local target directory found at $ROOT/target"
+  echo "If this project uses CARGO_TARGET_DIR, run rust-target-care directly on that path."
+  exit 0
+fi
+
+rust-target-care report "$ROOT/target" --older-than "${OLDER_THAN_DAYS:-2}" --keep-hashes "${KEEP_HASHES:-3}" "$@"

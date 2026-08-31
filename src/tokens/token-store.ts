@@ -113,6 +113,7 @@ export class PlatformTokenStore {
     getActionTokenByHash: Statement;
     consumeActionToken: Statement;
     revokeActionToken: Statement;
+    deleteActionToken: Statement;
     countRecentActionTokens: Statement;
     deleteExpiredActionTokens: Statement;
     insertResumeToken: Statement;
@@ -140,6 +141,9 @@ export class PlatformTokenStore {
       ),
       revokeActionToken: db.prepare(
         'UPDATE _zero_action_tokens SET consumed_at = ? WHERE token_id = ? AND consumed_at IS NULL'
+      ),
+      deleteActionToken: db.prepare(
+        'DELETE FROM _zero_action_tokens WHERE token_id = ?'
       ),
       countRecentActionTokens: db.prepare(
         `SELECT COUNT(*) as count
@@ -231,6 +235,12 @@ export class PlatformTokenStore {
   /** Revoke an action token by id using the consumed marker. */
   revokeActionToken(tokenId: string, now = Date.now()): boolean {
     const result = this.stmts.revokeActionToken.run(now, tokenId);
+    return result.changes > 0;
+  }
+
+  /** Delete an action token that was never delivered to its intended recipient. */
+  deleteActionToken(tokenId: string): boolean {
+    const result = this.stmts.deleteActionToken.run(tokenId);
     return result.changes > 0;
   }
 
