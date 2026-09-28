@@ -10,6 +10,7 @@ import type { PreparedNativeSession } from './native-auth-records';
 import { rotateNativeRefresh } from './native-refresh-flow';
 import type { NativeServiceContext } from './native-service-context';
 import { NativeSessionStore } from './native-session-store';
+import { NativeTenantAuthorityService } from './native-tenant-authority';
 
 function setup(options: ConstructorParameters<typeof NativeSessionStore>[1]) {
   const db = createReactiveDB({ mode: 'memory' });
@@ -127,6 +128,33 @@ describe('NativeSessionStore refresh-family bounds', () => {
       db.dispose();
     }
   });
+
+  test('rolls native family mutations back when an atomic audit callback fails', () => {
+    const now = 30_000;
+    const { db, store } = setup({ now: () => now });
+    try {
+      expect(store.consumeCodeAndInsert(
+        () => true,
+        prepared('audit-current', 'audit-family', now),
+      )).toBe(true);
+      expect(() => store.revokeFamily('audit-family', () => {
+        throw new Error('audit unavailable');
+      })).toThrow('audit unavailable');
+      expect(store.get('audit-current')).not.toBeNull();
+
+      const current = store.get('audit-current')!;
+      expect(() => store.switchFamily(
+        current,
+        prepared('audit-replacement', 'audit-next-family', now + 1),
+        () => true,
+        () => { throw new Error('audit unavailable'); },
+      )).toThrow('audit unavailable');
+      expect(store.get('audit-current')?.revokedAt).toBeNull();
+      expect(store.get('audit-replacement')).toBeNull();
+    } finally {
+      db.dispose();
+    }
+  });
 });
 
 function activeUser(): UserRecord {
@@ -160,5 +188,6 @@ function flowContext(
       signNativeIdToken: async () => 'id-token',
       getAccessTokenTTLSeconds: () => 300,
     } as unknown as TokenService,
+    authority: new NativeTenantAuthorityService('single', null),
   };
 }

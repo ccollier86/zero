@@ -2,11 +2,18 @@
  * server-services.ts
  *
  * Owns the app-facing `zero` backend service context for package-mode server
- * code. This file resolves existing platform singleton boundaries into a
- * stable API surface; it does not mount Elysia plugins or register routes.
+ * code. Managed apps bind this surface to a concrete ZeroAppRuntime; the
+ * no-argument path remains only for standalone compatibility.
  */
 
-import { getAuthStore, getTokenService } from '../../auth/auth.plugin';
+import {
+  getAuthorizationKernel,
+  getAuthorizationRoleService,
+  getAuthStore,
+  getTokenService,
+} from '../../auth/auth.plugin';
+import type { AuthorizationKernel } from '../../auth/authorization-kernel';
+import type { AuthorizationRoleService } from '../../auth/authorization-role-service';
 import type { TokenService } from '../../auth/token-service';
 import type { UserStore } from '../../auth/user-store';
 import type { EmailService } from '../../email';
@@ -14,9 +21,13 @@ import { getEmailRuntime, getEmailService } from '../../email';
 import type { EmailRuntime } from '../../email/types';
 import type { NotificationService } from '../../notifications/notification-service';
 import { getNotificationService } from '../../notifications';
+import type { RoomService } from '../../rooms/room-service';
+import { getRoomService } from '../../rooms';
 import {
   emitPlatformCode,
+  emitPlatformCodeTo,
   emitPlatformEvent,
+  emitPlatformEventTo,
   errorPlatform,
   getObservabilityRuntime,
   getPlatformEventStore,
@@ -49,9 +60,40 @@ import type { PlatformSQLiteService } from '../../persistence';
 import { getPlatformSQLiteService } from '../../persistence';
 import type { PdfService } from '../../pdf';
 import { getPdfService } from '../../pdf';
+import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
+import {
+  ZERO_AI_SERVICE,
+  ZERO_AUTH_STORE,
+  ZERO_AUTHORIZATION_KERNEL,
+  ZERO_AUTHORIZATION_ROLE_SERVICE,
+  ZERO_AUTH_TOKEN_SERVICE,
+  ZERO_EMAIL_RUNTIME,
+  ZERO_KV_SERVICE,
+  ZERO_NOTIFICATION_SERVICE,
+  ZERO_OBSERVABILITY_RUNTIME,
+  ZERO_PDF_SERVICE,
+  ZERO_PLATFORM_TOKEN_SERVICE,
+  ZERO_RESOURCE_REGISTRY,
+  ZERO_ROOM_SERVICE,
+  ZERO_SCHEDULER_SERVICE,
+  ZERO_SQLITE_SERVICE,
+  ZERO_STORAGE_SERVICE,
+  ZERO_SYNC_DB,
+  ZERO_VECTOR_SERVICE,
+  ZERO_WORKFLOW_REGISTRY,
+  ZERO_WORKFLOW_SERVICE,
+} from '../../runtime/service-keys';
 
 /** Auth services exposed under `zero.auth` in app-owned backend code. */
 export interface ServerAuthServices {
+  /** Immutable app-local authorization compiler/evaluator. */
+  readonly authorization: AuthorizationKernel | null;
+  /** Explicit alias for `authorization`. */
+  readonly authorizationKernel: AuthorizationKernel | null;
+  /** Headless advanced role-assignment service, or null outside advanced mode. */
+  readonly roles: AuthorizationRoleService | null;
+  /** Explicit alias for `roles`. */
+  readonly roleService: AuthorizationRoleService | null;
   /** Current auth user store, or null when auth is disabled or not started. */
   readonly store: UserStore | null;
   /** Explicit alias for `store` when user-oriented naming is clearer. */
@@ -66,6 +108,10 @@ export interface ServerAuthServices {
   readonly getUserStore: typeof getAuthStore;
   /** Compatibility getter retained from the Phase 1 backend context. */
   readonly getTokenService: typeof getTokenService;
+  /** Resolve the app-local authorization kernel lazily. */
+  readonly getAuthorizationKernel: typeof getAuthorizationKernel;
+  /** Resolve the app-local advanced role service lazily. */
+  readonly getRoleService: typeof getAuthorizationRoleService;
 }
 
 /** Observability helpers exposed under `zero.observability`. */
@@ -130,6 +176,8 @@ export interface ServerRouteServices {
   readonly storage: StorageService | null;
   /** Notification service, when auth/notifications are enabled. */
   readonly notifications: NotificationService | null;
+  /** Room service, when auth/rooms are enabled. */
+  readonly rooms: RoomService | null;
   /** Scheduler service, when mounted. */
   readonly scheduler: SchedulerService | null;
   /** Workflow service, when auth/workflows are enabled. */
@@ -143,14 +191,14 @@ export interface ServerRouteServices {
 }
 
 /**
- * Return the current process-wide platform service context for backend code.
+ * Return a platform service context for backend code.
  *
  * Optional services resolve to null when disabled or not started. `db` and
  * `syncDB` intentionally throw if ReactiveDB is unavailable because app-owned
  * server routes must be mounted after the sync plugin.
  */
-export function getServerRouteServices(): ServerRouteServices {
-  return createServerRouteServices();
+export function getServerRouteServices(runtime?: ZeroAppRuntime): ServerRouteServices {
+  return createServerRouteServices(runtime);
 }
 
 /**
@@ -160,121 +208,189 @@ export function getServerRouteServices(): ServerRouteServices {
  * values, so app-owned setup can safely hold onto `zero` before every optional
  * platform plugin has completed startup.
  */
-export function createLazyServerRouteServices(): ServerRouteServices {
-  return createServerRouteServices();
+export function createLazyServerRouteServices(runtime?: ZeroAppRuntime): ServerRouteServices {
+  return createServerRouteServices(runtime);
 }
 
-function createServerRouteServices(): ServerRouteServices {
+function createServerRouteServices(runtime?: ZeroAppRuntime): ServerRouteServices {
   return {
     get db() {
-      return requireSyncDB();
+      return requireSyncDB(runtime);
     },
     get syncDB() {
-      return requireSyncDB();
+      return requireSyncDB(runtime);
     },
     get sql() {
-      return getPlatformSQLiteService();
+      return runtime
+        ? runtime.get(ZERO_SQLITE_SERVICE)
+        : getPlatformSQLiteService();
     },
     get sqlite() {
-      return getPlatformSQLiteService();
+      return runtime
+        ? runtime.get(ZERO_SQLITE_SERVICE)
+        : getPlatformSQLiteService();
     },
-    auth: createServerAuthServices(),
+    auth: createServerAuthServices(runtime),
     get tokens() {
-      return getPlatformTokenService();
+      return runtime
+        ? runtime.get(ZERO_PLATFORM_TOKEN_SERVICE)
+        : getPlatformTokenService();
     },
     get kv() {
-      return getKvService();
+      return runtime ? runtime.get(ZERO_KV_SERVICE) : getKvService();
     },
     get counter() {
-      return getKvService()?.counters ?? null;
+      return (runtime ? runtime.get(ZERO_KV_SERVICE) : getKvService())?.counters ?? null;
     },
     get limiter() {
-      return getKvService()?.limiter ?? null;
+      return (runtime ? runtime.get(ZERO_KV_SERVICE) : getKvService())?.limiter ?? null;
     },
     get ai() {
-      return getAI();
+      return runtime ? runtime.get(ZERO_AI_SERVICE) : getAI();
     },
     get vector() {
-      return getVectorStore();
+      return runtime ? runtime.get(ZERO_VECTOR_SERVICE) : getVectorStore();
     },
     get vectors() {
-      return getVectorStore();
+      return runtime ? runtime.get(ZERO_VECTOR_SERVICE) : getVectorStore();
     },
     get pdf() {
-      return getPdfService();
+      return runtime ? runtime.get(ZERO_PDF_SERVICE) : getPdfService();
     },
     get email() {
-      return getEmailService();
+      if (!runtime) return getEmailService();
+      return runtime.require(ZERO_EMAIL_RUNTIME).service as EmailService;
     },
     get emailRuntime() {
-      return getEmailRuntime();
+      return runtime ? runtime.require(ZERO_EMAIL_RUNTIME) : getEmailRuntime();
     },
     get storage() {
-      return getStorageService();
+      return runtime ? runtime.get(ZERO_STORAGE_SERVICE) : getStorageService();
     },
     get notifications() {
-      return getNotificationService();
+      return runtime
+        ? runtime.get(ZERO_NOTIFICATION_SERVICE)
+        : getNotificationService();
+    },
+    get rooms() {
+      return runtime ? runtime.get(ZERO_ROOM_SERVICE) : getRoomService();
     },
     get scheduler() {
-      return getScheduler();
+      return runtime ? runtime.get(ZERO_SCHEDULER_SERVICE) : getScheduler();
     },
     get workflows() {
-      return getWorkflowService();
+      return runtime ? runtime.get(ZERO_WORKFLOW_SERVICE) : getWorkflowService();
     },
     get workflowRegistry() {
-      return getWorkflowRegistry();
+      return runtime
+        ? runtime.get(ZERO_WORKFLOW_REGISTRY)
+        : getWorkflowRegistry();
     },
     get resources() {
-      return getResourceRegistry();
+      return runtime
+        ? runtime.require(ZERO_RESOURCE_REGISTRY)
+        : getResourceRegistry();
     },
-    observability: createServerObservabilityServices(),
+    observability: createServerObservabilityServices(runtime),
   };
 }
 
-function createServerAuthServices(): ServerAuthServices {
+function createServerAuthServices(runtime?: ZeroAppRuntime): ServerAuthServices {
+  const resolveStore = (): UserStore | null => runtime
+    ? runtime.get(ZERO_AUTH_STORE)
+    : getAuthStore();
+  const resolveTokens = (): TokenService | null => runtime
+    ? runtime.get(ZERO_AUTH_TOKEN_SERVICE)
+    : getTokenService();
+  const resolveAuthorization = (): AuthorizationKernel | null => runtime
+    ? runtime.get(ZERO_AUTHORIZATION_KERNEL)
+    : getAuthorizationKernel();
+  const resolveRoles = (): AuthorizationRoleService | null => runtime
+    ? runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE)
+    : getAuthorizationRoleService();
+
   return {
+    get authorization() {
+      return resolveAuthorization();
+    },
+    get authorizationKernel() {
+      return resolveAuthorization();
+    },
+    get roles() {
+      return resolveRoles();
+    },
+    get roleService() {
+      return resolveRoles();
+    },
     get store() {
-      return getAuthStore();
+      return resolveStore();
     },
     get userStore() {
-      return getAuthStore();
+      return resolveStore();
     },
     get tokens() {
-      return getTokenService();
+      return resolveTokens();
     },
     get tokenService() {
-      return getTokenService();
+      return resolveTokens();
     },
-    getStore: getAuthStore,
-    getUserStore: getAuthStore,
-    getTokenService,
+    getStore: resolveStore,
+    getUserStore: resolveStore,
+    getTokenService: resolveTokens,
+    getAuthorizationKernel: resolveAuthorization,
+    getRoleService: resolveRoles,
   };
 }
 
-function createServerObservabilityServices(): ServerObservabilityServices {
+function createServerObservabilityServices(runtime?: ZeroAppRuntime): ServerObservabilityServices {
+  const resolveRuntime = (): PlatformObservabilityRuntime => runtime
+    ? runtime.require(ZERO_OBSERVABILITY_RUNTIME)
+    : getObservabilityRuntime();
+  const resolveSink = (): PlatformSink => resolveRuntime().sink;
+  const resolveStore = (): PlatformEventStore | null => resolveRuntime().store;
+
   return {
     get runtime() {
-      return getObservabilityRuntime();
+      return resolveRuntime();
     },
     get sink() {
-      return getPlatformSink();
+      return resolveSink();
     },
     get store() {
-      return getPlatformEventStore();
+      return resolveStore();
     },
-    getRuntime: getObservabilityRuntime,
-    getSink: getPlatformSink,
-    getStore: getPlatformEventStore,
-    emitCode: emitPlatformCode,
-    emitEvent: emitPlatformEvent,
-    error: errorPlatform,
-    info: logPlatformInfo,
-    warn: warnPlatform,
+    getRuntime: resolveRuntime,
+    getSink: resolveSink,
+    getStore: resolveStore,
+    emitCode: runtime
+      ? (definition, options) => emitPlatformCodeTo(resolveRuntime(), definition, options)
+      : emitPlatformCode,
+    emitEvent: runtime
+      ? (input) => emitPlatformEventTo(resolveRuntime(), input)
+      : emitPlatformEvent,
+    error: runtime
+      ? (definition, options = {}) => emitPlatformCodeTo(resolveRuntime(), definition, {
+          ...options,
+          level: 'error',
+        })
+      : errorPlatform,
+    info: runtime
+      ? (definition, options = {}) => emitPlatformCodeTo(resolveRuntime(), definition, {
+          ...options,
+          level: 'info',
+        })
+      : logPlatformInfo,
+    warn: runtime
+      ? (definition, options = {}) => emitPlatformCodeTo(resolveRuntime(), definition, {
+          ...options,
+          level: 'warn',
+        })
+      : warnPlatform,
   };
 }
 
-function requireSyncDB(): ReactiveDB {
-  const syncDB = getSyncDB();
+function requireSyncDB(runtime?: ZeroAppRuntime): ReactiveDB {
+  const syncDB = runtime ? runtime.get(ZERO_SYNC_DB) : getSyncDB();
   if (!syncDB) {
     throw new Error('[server-services] ReactiveDB is unavailable. Mount app routes through createApp() after the sync plugin.');
   }

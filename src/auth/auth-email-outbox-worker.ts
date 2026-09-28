@@ -2,6 +2,7 @@ import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import type { AuthEmailOutboxStore } from './auth-email-outbox-store';
 import type { AuthEmailOutboxOptions } from './auth-email-outbox-types';
+import { AuthError } from './types';
 
 export class AuthEmailOutboxWorker {
   private stopped = true;
@@ -9,7 +10,7 @@ export class AuthEmailOutboxWorker {
   private running: Promise<number> | null = null;
   private nextCleanupAt = 0;
   constructor(private readonly store: Pick<AuthEmailOutboxStore,
-    'claim' | 'recoverExpired' | 'cleanup'>,
+    'assertCurrentProfile' | 'claim' | 'recoverExpired' | 'cleanup'>,
     private readonly processor: {
       process(job: NonNullable<ReturnType<AuthEmailOutboxStore['claim']>>): Promise<void>;
       abortAll?(): void;
@@ -18,6 +19,12 @@ export class AuthEmailOutboxWorker {
     private readonly clock: () => number) {}
 
   start(automatic = true): void {
+    try {
+      this.store.assertCurrentProfile();
+    } catch (error) {
+      this.quiesceOnProfileChange(error);
+      throw error;
+    }
     if (!this.stopped) return;
     this.stopped = false;
     const now = this.clock();
@@ -32,14 +39,30 @@ export class AuthEmailOutboxWorker {
 
   wake(): void {
     if (this.stopped) return;
+    try {
+      this.store.assertCurrentProfile();
+    } catch (error) {
+      this.quiesceOnProfileChange(error);
+      throw error;
+    }
     this.schedule(0);
   }
 
   async processDue(): Promise<number> {
-    if (this.running) return this.running;
-    const run = this.drain();
-    this.running = run;
-    try { return await run; } finally { if (this.running === run) this.running = null; }
+    try {
+      this.store.assertCurrentProfile();
+      if (this.running) return this.running;
+      const run = this.drain();
+      this.running = run;
+      try {
+        return await run;
+      } finally {
+        if (this.running === run) this.running = null;
+      }
+    } catch (error) {
+      this.quiesceOnProfileChange(error);
+      throw error;
+    }
   }
 
   async stop(): Promise<void> {
@@ -57,6 +80,7 @@ export class AuthEmailOutboxWorker {
   }
 
   private async drain(): Promise<number> {
+    this.store.assertCurrentProfile();
     let processed = 0;
     const now = this.clock();
     if (now >= this.nextCleanupAt) {
@@ -64,10 +88,12 @@ export class AuthEmailOutboxWorker {
       this.nextCleanupAt = now + cleanupCadence(this.options.terminalRetentionMs);
     }
     while (!this.stopped) {
+      this.store.assertCurrentProfile();
       const jobs = Array.from({ length: this.options.concurrency }, () =>
         this.store.claim(this.clock(), this.options.leaseMs)).filter(Boolean);
       if (jobs.length === 0) break;
       await Promise.all(jobs.map((job) => this.processor.process(job!)));
+      this.store.assertCurrentProfile();
       processed += jobs.length;
     }
     return processed;
@@ -86,6 +112,14 @@ export class AuthEmailOutboxWorker {
       });
     }, delay);
     this.timer.unref?.();
+  }
+
+  private quiesceOnProfileChange(error: unknown): void {
+    if (!(error instanceof AuthError) || error.code !== 'AUTH_PROFILE_CHANGED') return;
+    this.stopped = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.processor.abortAll?.();
   }
 }
 

@@ -10,6 +10,7 @@ interface SyncHandshakeInput {
     getSnapshot: () => { context: unknown };
   };
   tables: Record<string, ClientTableDef>;
+  stateSync: boolean;
 }
 
 export function finishSyncSocketHandshake(input: SyncHandshakeInput): void {
@@ -24,4 +25,7 @@ export function finishSyncSocketHandshake(input: SyncHandshakeInput): void {
     ...(context._sync.epoch ? { epoch: context._sync.epoch } : {}),
     ...(context._sync.scope !== null ? { scope: context._sync.scope } : {}),
   }));
+  if (input.stateSync) {
+    input.socket.send(JSON.stringify({ type: 'state.subscribe' }));
+  }
 }

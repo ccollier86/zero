@@ -8,11 +8,13 @@ import {
   type AuthSessionPluginConfig,
 } from './auth-session-dependencies';
 import { toAuthUserResponse } from './auth-user-response';
+import { applyAuthPrivateNoStore } from './auth-response-cache';
 import { AuthError } from './types';
 
 export function createAuthCurrentUserPlugin(config: AuthSessionPluginConfig) {
   return new Elysia({ name: 'auth-current-user' })
-    .get('/me', async ({ request }) => {
+    .get('/me', async ({ request, set }) => {
+      applyAuthPrivateNoStore(set);
       const { store, tokenService, propertyService } = requireSessionServices(config);
       const auth = await extractAuthContext(request, tokenService);
       if (!auth) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);

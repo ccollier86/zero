@@ -3,7 +3,7 @@
 @xstate/store integration that makes server data feel local. Define your tables once, get a fully typed reactive store with optimistic mutations, reconnect, and React hooks.
 
 > **Advanced engine docs:** This page describes the standalone sync client and
-> lower-level React hooks exported from `@platform/sync/client`. App code that
+> lower-level React hooks exported from `@zero/framework/sync/client`. App code that
 > uses the full Zero frontend should prefer `@zero/framework/react` hooks:
 > `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, and `useStatus`.
 
@@ -11,18 +11,20 @@
 
 SyncStore is the client-side counterpart to [ReactiveDB](./reactive-db.md). Where ReactiveDB wraps SQLite with change events, SyncStore wraps @xstate/store with server synchronization. Together they form the two halves of the sync engine.
 
-**Pattern source:** `packages/sdk/src/store/store.ts` — the SDK store uses `createStore()` with typed events and `createSlice()` for change-detected subscriptions. SyncStore follows the same pattern, auto-generating the store shape from table definitions.
+**Implementation:** `src/sync/client/sync-store.ts` uses `createStore()` with
+typed events and exposes change-detected table slices. Table definitions drive
+the generated store shape.
 
 ## `createSyncStore()`
 
 The entry point. Pass table definitions, get a fully wired store.
 
 ```ts
-import { createSyncStore } from '@platform/sync/client';
+import { createSyncStore } from '@zero/framework/sync/client';
 
 const { store, tables } = createSyncStore({
   todos: { _pk: 'id', id: 'string', title: 'string', done: 'number' },
-  users: { _pk: 'id', id: 'string', name: 'string', role: 'string' },
+  contacts: { _pk: 'id', id: 'string', name: 'string', email: 'string' },
 });
 ```
 
@@ -34,7 +36,7 @@ const { store, tables } = createSyncStore({
 interface SyncStoreContext {
   // One record per table — keyed by primary key
   todos: Record<string, { id: string; title: string; done: number }>;
-  users: Record<string, { id: string; name: string; role: string }>;
+  contacts: Record<string, { id: string; name: string; email: string }>;
 
   // Sync metadata
   _sync: {
@@ -66,9 +68,9 @@ The store handles two categories of events:
 
 | Event | Payload | Effect |
 |-------|---------|--------|
-| `{table}.optimistic-insert` | `{ row, ref }` | Add row to table record |
-| `{table}.optimistic-update` | `{ rowId, partial, ref }` | Merge partial into existing row |
-| `{table}.optimistic-delete` | `{ rowId, ref }` | Remove row from table record |
+| `optimistic.insert` | `{ table, rowId, row, ref }` | Add row to table record |
+| `optimistic.update` | `{ table, rowId, partial, ref }` | Merge partial into existing row |
+| `optimistic.delete` | `{ table, rowId, ref }` | Remove row from table record |
 
 **Connection events:**
 
@@ -79,7 +81,8 @@ The store handles two categories of events:
 
 ### Reducers
 
-All reducers are **pure functions** — they take context and event, return new context. Same pattern as `packages/sdk/src/store/store.ts`.
+All reducers are **pure functions** — they take context and event and return a
+new context. The current reducers live in `src/sync/client/sync-store.ts`.
 
 ```ts
 // Conceptual — the actual implementation generates these from table definitions
@@ -181,32 +184,36 @@ const reducers = {
     };
   },
 
-  // Per-table optimistic mutations (generated for each table)
-  'todos.optimistic-insert': (ctx, { row, ref }) => ({
+  // Generic optimistic mutations carry their table and row identity.
+  'optimistic.insert': (ctx, { table, rowId, row, ref }) => ({
     ...ctx,
-    todos: { ...ctx.todos, [row.id]: row },
+    [table]: { ...ctx[table], [rowId]: row },
     _sync: {
       ...ctx._sync,
       pending: [...ctx._sync.pending, {
-        ref, table: 'todos', op: 'INSERT',
-        rowId: row.id,
-        previousState: ctx.todos[row.id] ?? null,  // Capture existing row for correct rollback
+        ref, table, op: 'INSERT', rowId,
+        previousState: ctx[table][rowId] ?? null,
         optimisticState: row,
+        optimisticPatch: row,
         sentAt: Date.now(),
+        attempts: 0,
       }],
     },
   }),
 
-  // ... similar for optimistic-update, optimistic-delete per table
+  // ... similar generic optimistic.update and optimistic.delete reducers
 };
 ```
 
 ## Table Slices
 
-`createTableSlice()` extracts a single table from the store as a `Slice<Record<string, Row>>`. Same pattern as `createSlice()` in `packages/sdk/src/store/store.ts` — only notifies subscribers when the selected value actually changes (referential equality).
+`createTableSlice()` extracts a single table from the store as a
+`Slice<Record<string, Row>>`. The implementation in
+`src/sync/client/sync-store.ts` only notifies subscribers when the selected
+value actually changes (referential equality).
 
 ```ts
-import { createTableSlice } from '@platform/sync/client';
+import { createTableSlice } from '@zero/framework/sync/client';
 
 const todosSlice = createTableSlice(store, 'todos');
 
@@ -441,16 +448,16 @@ The connection manager. Handles WebSocket lifecycle, message routing, optimistic
 ### Creation
 
 ```ts
-import { createSyncClient } from '@platform/sync/client';
+import { createSyncClient } from '@zero/framework/sync/client';
 
 const client = createSyncClient({
   url: 'ws://localhost:3000/sync',
   tables: {
     todos: { _pk: 'id', id: 'string', title: 'string', done: 'number' },
-    users: { _pk: 'id', id: 'string', name: 'string', role: 'string' },
+    contacts: { _pk: 'id', id: 'string', name: 'string', email: 'string' },
   },
-  onError?: (error: string) => void,
-  onReconnect?: () => void,
+  onError: (error) => reportSyncError(error),
+  onReconnect: () => refreshConnectionBanner(),
 });
 ```
 
@@ -473,7 +480,8 @@ interface SyncClient {
 
 ### Message Routing
 
-Same pattern as `packages/sdk/src/transport/ws-bridge.ts` — a `routeMessage()` function that switches on `msg.type` and dispatches to `store.send()`:
+The current router in `src/sync/client/sync-socket-message-router.ts` switches
+on `msg.type` and dispatches to `store.send()`:
 
 ```ts
 function routeMessage(store: SyncStore, msg: ServerMessage): void {
@@ -523,22 +531,24 @@ ws.onmessage = (event) => {
 When the user calls `client.insert('todos', row)`:
 
 ```ts
-insert(table: string, row: Row): void {
-  const ref = crypto.randomUUID();
-  const pk = this.tableDefs[table]._pk;  // Known from table definition
-  const rowId = String(row[pk]);
+class SyncClient {
+  insert(table: string, row: Row): void {
+    const ref = crypto.randomUUID();
+    const pk = this.tableDefs[table]._pk;  // Known from table definition
+    const rowId = String(row[pk]);
 
-  // 1. Apply optimistically
-  this.store.send({
-    type: `${table}.optimistic-insert`,
-    row, ref,
-  });
+    // 1. Apply optimistically
+    this.store.send({
+      type: 'optimistic.insert',
+      table, rowId, row, ref,
+    });
 
-  // 2. Send to server
-  this.ws.send(JSON.stringify({
-    type: 'sync.mutate',
-    ref, table, op: 'INSERT', row,
-  }));
+    // 2. Send to server
+    this.ws.send(JSON.stringify({
+      type: 'sync.mutate',
+      ref, table, op: 'INSERT', row,
+    }));
+  }
 }
 ```
 
@@ -557,12 +567,14 @@ When the WebSocket disconnects:
 3. On reconnect:
    a. Open new WS connection
    b. `store.send({ type: 'sync.connected' })`
-   c. Send `sync.subscribe` with `epoch`, `scope`, and `lastSeq`
-   d. Keep new outbound mutations buffered until the baseline response
-   e. Matching epoch/scope → validate and apply `sync.catchup`
-   f. Changed epoch/replay overflow → replace all caches and rebase pending work
-   g. Changed auth scope → replace all caches and purge pending/outbound work
-   h. Only then flush same-scope in-memory offline mutations
+   c. Send `sync.auth { token }`
+   d. Wait for `sync.auth.ready`; a required socket cannot subscribe first
+   e. Send `sync.subscribe` with `epoch`, `scope`, and `lastSeq`
+   f. Keep new outbound mutations buffered until the baseline response
+   g. Matching epoch/scope → validate and apply `sync.catchup`
+   h. Changed epoch/replay overflow → replace all caches and rebase pending work
+   i. Changed auth scope → replace all caches and purge pending/outbound work
+   j. Only then flush same-scope in-memory offline mutations
 
 An uncertain sent mutation is replayed with the same ref and incremented
 attempt. The server may resolve it only from the durable receipt committed with
@@ -595,7 +607,11 @@ React context provider that creates a `SyncClient` on mount, exposes it via cont
 
 ```tsx
 import { createContext, useContext, useEffect, useRef } from 'react';
-import { createSyncClient, type ClientTableDef, type SyncClient } from '@platform/sync/client';
+import {
+  createSyncClient,
+  type SyncClient,
+} from '@zero/framework/sync/client';
+import type { ClientTableDef } from '@zero/framework/sync';
 
 const SyncContext = createContext<SyncClient | null>(null);
 
@@ -647,7 +663,7 @@ function useSyncClient(): SyncClient {
 ### Usage
 
 ```tsx
-import { SyncProvider } from '@platform/sync/client';
+import { SyncProvider } from '@zero/framework/sync/client';
 
 function App() {
   return (

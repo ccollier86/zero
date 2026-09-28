@@ -6,9 +6,17 @@
  * policies, query resources, or mount routes.
  */
 
+import {
+  createAuthorizationSubjectSnapshot,
+  type AuthorizationRoleAssignmentResolver,
+} from '../auth/authorization-access';
+import type { AuthorizationKernel } from '../auth/authorization-kernel';
 import type { AuthContext } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
-import type { ResourcePolicyUser } from './resource-policy-types';
+import type {
+  ResourcePolicyAuthorizationContext,
+  ResourcePolicyUser,
+} from './resource-policy-types';
 
 /**
  * Resolve the resource policy user for a request.
@@ -43,4 +51,31 @@ export function createResourcePolicyUser(
     role: user.role,
     properties: user.properties,
   };
+}
+
+/**
+ * Project the same live RBAC subject used by route guards into resource policy.
+ *
+ * A missing kernel is kept distinct from an anonymous subject: managed policy
+ * helpers can return a service-unavailable denial for broken composition while
+ * an anonymous request receives the ordinary authentication denial.
+ */
+export function createResourcePolicyAuthorization(
+  authContext: AuthContext | null | undefined,
+  user: ResourcePolicyUser | null,
+  kernel: AuthorizationKernel | null | undefined,
+  roleAssignments?: AuthorizationRoleAssignmentResolver | null,
+): ResourcePolicyAuthorizationContext | null {
+  if (!kernel) return null;
+  return Object.freeze({
+    kernel,
+    subject: authContext && user
+      ? createAuthorizationSubjectSnapshot(
+          kernel,
+          authContext,
+          user.properties,
+          roleAssignments,
+        )
+      : null,
+  });
 }

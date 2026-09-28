@@ -15,7 +15,7 @@ import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from '@/components/collapsible';
+} from '#zero/components/collapsible';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,7 +25,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
-} from '@/components/dropdown-menu';
+} from '#zero/components/dropdown-menu';
 import {
   Sidebar,
   SidebarContent,
@@ -41,8 +41,8 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarRail,
-} from '@/components/sidebar';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+} from '#zero/components/sidebar';
+import { Avatar, AvatarFallback, AvatarImage } from '#zero/components/ui/avatar';
 import {
   AnimateIcon,
   Bell,
@@ -52,9 +52,9 @@ import {
   Plus,
   Settings,
   User,
-} from '@/components/animate-ui/icons';
-import { useIsMobile } from '@/hooks/use-mobile';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/icons';
+import { useIsMobile } from '#zero/hooks/use-mobile';
+import { cn } from '#zero/lib/utils';
 import type {
   AppShellBrand,
   AppShellMenuItem,
@@ -184,24 +184,56 @@ function AppShellWorkspaceSwitcher({
   workspaces: AppShellWorkspaceConfig;
 }) {
   const isMobile = useIsMobile();
-  const activeWorkspace = workspaces.items.find((item) => item.id === workspaces.activeId)
-    ?? workspaces.items[0];
+  const triggerRef = React.useRef<HTMLButtonElement | null>(null);
+  const statusId = `${React.useId()}-status`;
+  const activeWorkspace = resolveAppShellActiveWorkspace(workspaces);
+  const pendingStatus = workspaces.pending
+    ? appShellWorkspaceStatusMessage(workspaces)
+    : undefined;
   const displayWorkspace = activeWorkspace ?? {
     id: '__zero-empty-workspace',
     name: workspaces.label ?? brand?.name ?? 'Workspace',
-    subtitle: 'No items yet',
+    subtitle: pendingStatus ?? 'No active workspace',
     icon: brand?.icon,
     logo: brand?.logo,
   };
 
-  if (!activeWorkspace && !workspaces.onCreate) return <AppShellBrandButton brand={brand} />;
+  React.useEffect(() => {
+    if (!workspaces.focusRevision || typeof window === 'undefined') return;
+    window.requestAnimationFrame(() => {
+      if (triggerRef.current?.isConnected) triggerRef.current.focus();
+    });
+  }, [workspaces.focusRevision]);
+
+  if (!activeWorkspace
+    && !workspaces.onCreate
+    && !workspaces.requireActiveSelection
+    && !workspaces.pending
+    && !workspaces.error) return <AppShellBrandButton brand={brand} />;
+
+  function preventPendingInteraction(event: React.SyntheticEvent) {
+    if (!workspaces.pending) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <AnimatedIconTrigger>
           <SidebarMenuButton
+            ref={triggerRef}
             size="lg"
+            aria-busy={workspaces.pending || undefined}
+            aria-disabled={workspaces.pending || undefined}
+            aria-describedby={workspaces.error ? statusId : undefined}
+            onClick={preventPendingInteraction}
+            onPointerDown={preventPendingInteraction}
+            onKeyDown={(event) => {
+              if (workspaces.pending
+                && (event.key === 'Enter' || event.key === ' '
+                  || event.key === 'ArrowDown')) preventPendingInteraction(event);
+            }}
             className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
           >
             <AppShellLogo
@@ -211,14 +243,26 @@ function AppShellWorkspaceSwitcher({
             />
             <div className="grid flex-1 text-left text-sm leading-tight">
               <span className="truncate font-semibold">{displayWorkspace.name}</span>
-              {displayWorkspace.subtitle ? (
-                <span className="truncate text-xs">{displayWorkspace.subtitle}</span>
+              {workspaces.pending || displayWorkspace.subtitle ? (
+                <span className="truncate text-xs">
+                  {workspaces.pending
+                    ? pendingStatus
+                    : displayWorkspace.subtitle}
+                </span>
               ) : null}
             </div>
             <ChevronDown className="ml-auto size-4" />
           </SidebarMenuButton>
         </AnimatedIconTrigger>
       </DropdownMenuTrigger>
+      {workspaces.error ? (
+        <span id={statusId} role="alert" className="sr-only">
+          {workspaces.error}
+        </span>
+      ) : null}
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {appShellWorkspaceStatusMessage(workspaces)}
+      </span>
       <DropdownMenuContent
         className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
         align="start"
@@ -228,11 +272,35 @@ function AppShellWorkspaceSwitcher({
         <DropdownMenuLabel className="text-xs text-muted-foreground">
           {workspaces.label ?? 'Workspaces'}
         </DropdownMenuLabel>
+        {workspaces.error ? (
+          <>
+            <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs text-destructive">
+              {workspaces.error}
+            </DropdownMenuLabel>
+            {workspaces.onRetry ? (
+              <DropdownMenuItem
+                className="gap-2 p-2"
+                disabled={appShellWorkspaceActionDisabled(workspaces)}
+                onSelect={() => {
+                  if (!appShellWorkspaceActionDisabled(workspaces)) workspaces.onRetry?.();
+                }}
+              >
+                {workspaces.retryLabel ?? 'Retry workspace list'}
+              </DropdownMenuItem>
+            ) : null}
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
         {workspaces.items.length ? (
           workspaces.items.map((workspace, index) => (
             <AnimatedIconTrigger key={workspace.id}>
               <DropdownMenuItem
-                onClick={() => workspaces.onSelect?.(workspace)}
+                disabled={appShellWorkspaceActionDisabled(workspaces)}
+                onSelect={() => {
+                  if (!appShellWorkspaceActionDisabled(workspaces)) {
+                    workspaces.onSelect?.(workspace);
+                  }
+                }}
                 className="gap-2 p-2"
               >
                 <AppShellLogo
@@ -255,14 +323,23 @@ function AppShellWorkspaceSwitcher({
         {workspaces.activeActions?.length ? (
           <>
             <DropdownMenuSeparator />
-            <AppShellMenuItems items={workspaces.activeActions} />
+            <AppShellMenuItems
+              items={workspaces.activeActions}
+              disabled={appShellWorkspaceActionDisabled(workspaces)}
+            />
           </>
         ) : null}
         {workspaces.onCreate ? (
           <>
             <DropdownMenuSeparator />
             <AnimatedIconTrigger>
-              <DropdownMenuItem className="gap-2 p-2" onClick={workspaces.onCreate}>
+              <DropdownMenuItem
+                className="gap-2 p-2"
+                disabled={appShellWorkspaceActionDisabled(workspaces)}
+                onSelect={() => {
+                  if (!appShellWorkspaceActionDisabled(workspaces)) workspaces.onCreate?.();
+                }}
+              >
                 <div className="flex size-6 items-center justify-center rounded-md border bg-background">
                   <Plus className="size-4" />
                 </div>
@@ -276,6 +353,35 @@ function AppShellWorkspaceSwitcher({
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+/** @internal Preserve legacy fallback unless a data source requires authority. */
+export function resolveAppShellActiveWorkspace(
+  workspaces: AppShellWorkspaceConfig,
+): AppShellWorkspace | undefined {
+  const matched = workspaces.items.find((item) => item.id === workspaces.activeId);
+  if (matched || workspaces.requireActiveSelection) return matched;
+  return workspaces.items[0];
+}
+
+/** @internal A pending scope replacement freezes every workspace mutation. */
+export function appShellWorkspaceActionDisabled(
+  workspaces: Pick<AppShellWorkspaceConfig, 'pending'>,
+  actionDisabled = false,
+): boolean {
+  return Boolean(workspaces.pending || actionDisabled);
+}
+
+/** @internal Accessible status copy shared by visual and live pending state. */
+export function appShellWorkspaceStatusMessage(
+  workspaces: Pick<
+    AppShellWorkspaceConfig,
+    'announcement' | 'pending' | 'pendingLabel'
+  >,
+): string | undefined {
+  return workspaces.pending
+    ? workspaces.pendingLabel ?? 'Updating workspaces…'
+    : workspaces.announcement;
 }
 
 function AppShellNavGroups({
@@ -499,7 +605,13 @@ function AppShellUserMenu({
   );
 }
 
-function AppShellMenuItems({ items }: { items: AppShellMenuItem[] }) {
+function AppShellMenuItems({
+  items,
+  disabled = false,
+}: {
+  items: AppShellMenuItem[];
+  disabled?: boolean;
+}) {
   return (
     <>
       {items.map((item, index) => {
@@ -527,8 +639,9 @@ function AppShellMenuItems({ items }: { items: AppShellMenuItem[] }) {
           <AnimatedIconTrigger key={item.id ?? item.href ?? item.label}>
             <DropdownMenuItem
               variant={item.destructive ? 'destructive' : 'default'}
-              disabled={item.disabled}
+              disabled={disabled || item.disabled}
               onClick={() => {
+                if (disabled || item.disabled) return;
                 item.onSelect?.();
                 if (item.href) window.location.href = item.href;
               }}

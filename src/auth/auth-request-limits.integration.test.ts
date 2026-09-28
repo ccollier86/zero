@@ -13,6 +13,7 @@ beforeAll(() => {
   db = createReactiveDB({ mode: 'memory' });
   app = new Elysia().use(createAuthPlugin({
     db,
+    bootstrap: 'public',
     accountEmails: { passwordReset: false },
   }));
   app.listen(0);

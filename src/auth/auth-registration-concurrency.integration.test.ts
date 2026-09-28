@@ -25,6 +25,7 @@ async function start(mode: AuthRegistrationMode) {
   const db = createReactiveDB({ mode: 'memory' });
   const app = new Elysia().use(createAuthPlugin({
     db,
+    bootstrap: 'public',
     registration: { mode },
   }));
   app.listen(0);
@@ -46,7 +47,7 @@ async function register(baseUrl: string, index: number): Promise<RegistrationRes
 }
 
 describe('concurrent first-user registration', () => {
-  test('public mode creates one admin and makes every other winner a user', async () => {
+  test('explicit public bootstrap creates one admin and makes every other winner a user', async () => {
     const baseUrl = await start('public');
     const results = await Promise.all(
       Array.from({ length: 8 }, (_, index) => register(baseUrl, index))
@@ -59,7 +60,7 @@ describe('concurrent first-user registration', () => {
     expect(getAuthStore()!.countUsersByRole('user')).toBe(7);
   });
 
-  test('admin-only mode admits only the atomic bootstrap winner', async () => {
+  test('admin-only registration with explicit public bootstrap admits one winner', async () => {
     const baseUrl = await start('admin-only');
     const results = await Promise.all(
       Array.from({ length: 8 }, (_, index) => register(baseUrl, index))

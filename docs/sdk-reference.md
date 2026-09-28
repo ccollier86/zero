@@ -35,13 +35,19 @@ import {
 - [Animated Icons](#animated-icons)
 - [Server (createApp)](#server)
 - [Hooks Reference](#hooks-reference)
-- [Full Export List](#full-export-list)
+- [Selected Export Reference](#selected-export-reference)
 
 ---
 
 ## Quick Start
 
-> **Import aliases:** Use `@zero/framework/react` for app code (schema, hooks, components), and `@zero/framework/icons` for Zero's default animated icon pack. Use `@zero/framework/server` only in `app/server.ts` (for `resolveConfig`, `createApp`). Use `@app/*` for your app code. Never use relative `../../../` paths. See [Path Aliases](frontend/README.md#path-aliases) for the full list.
+> **Import aliases:** Use `@zero/framework/react` for browser-safe schema,
+> hooks, and components, and `@zero/framework/icons` for Zero's default
+> animated icon pack. Use `@zero/framework/server` only in server-owned files
+> such as `app/server.ts`, `server/plugins`, `server/middleware`,
+> `server/endpoints`, and `server/routes`. Use `@app/*` for your app code. See
+> [Package Imports And App Aliases](frontend/README.md#package-imports-and-app-aliases)
+> for the full list.
 
 ### 1. Define your schema
 
@@ -62,32 +68,37 @@ export const tables = { todos: todoTable };
 ### 2. Create the server
 
 ```ts
-import { resolveConfig } from '@zero/framework/server/types';
+// app/server.ts
+import { createApp, resolveConfig } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
 // defineTable() output is auto-detected — no .serverTable extraction needed
 const config = resolveConfig({
-  db: { mode: 'myapp.db' },
+  db: { mode: './data/myapp.db' },
   tables,
-  auth: true,
+  auth: false,
 });
+
+const app = await createApp(config);
+app.listen(config.port);
 ```
 
 ### 3. Wire up the client
 
 ```tsx
+'use client';
+
 // app/layout.tsx
 import { AppProvider } from '@zero/framework/react';
 import { tables } from './lib/schemas';
+import type { ReactNode } from 'react';
 
 // defineTable() output is auto-detected — no .clientTable extraction needed
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <AppProvider
       url={typeof window !== 'undefined' ? window.location.origin : ''}
       tables={tables}
-      auth
-      stateSync
     >
       {children}
     </AppProvider>
@@ -98,7 +109,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 ### 4. Build features
 
 ```tsx
-import { useCollection, AutoForm, DataTableView, CrudPage } from '@zero/framework/react';
+'use client';
+
+import {
+  AutoForm,
+  CrudPage,
+  DataTableView,
+  useCollection,
+} from '@zero/framework/react';
+import { todoTable } from './lib/schemas/todo';
 
 function TodoApp() {
   const { data, insert, update, remove } = useCollection('todos');
@@ -142,18 +161,19 @@ Browser                          Server
 └─────────────────────┘         └─────────────────────┘
 ```
 
-- **Single WebSocket** — all data, auth, state, and notifications flow through one connection
+- **Single live channel** — policy-authorized app data, state, and scoped notifications share one Bearer-authenticated WebSocket; login/session APIs remain HTTP
 - **Optimistic mutations** — writes apply locally first, sync to server in background
 - **@xstate/store** — tear-free reactive state via `useSyncExternalStore`
 - **Schema-driven** — define once, get forms + tables + DB + validation
-- **Real-time notifications** — server writes broadcast instantly to all clients via sync layer
+- **Scoped real-time notifications** — target policy is enforced before Sync delivers a notification or receipt row
 - **Centralized scheduler** — any plugin can register cron jobs, admin API for visibility/control
 
 ---
 
 ## Schema Builder
 
-Define your data model once. The schema produces valibot validation, SQL column definitions, and UI metadata.
+Define your data model once. The schema produces Valibot validation, SQL column
+definitions, UI metadata, and a server-only logical mutation validator.
 
 ### `field` builders
 
@@ -164,7 +184,7 @@ Define your data model once. The schema produces valibot validation, SQL column 
 | `field.url(opts?)` | `text` | URL-validated string |
 | `field.password(opts?)` | `text` | Password with min 8 chars, hidden from tables |
 | `field.number(opts?)` | `real`/`integer` | Number. Options: `min`, `max`, `integer` |
-| `field.boolean(opts?)` | `integer` | Boolean stored as 0/1 |
+| `field.boolean(opts?)` | `integer` | Logical `boolean` in app code, stored as 0/1 |
 | `field.select(options, opts?)` | `text` | Single-select from `{label, value}[]` |
 | `field.multiSelect(options, opts?)` | `text` | Multi-select, stored as JSON |
 | `field.enum(values, opts?)` | `text` | Like select but from string literal array |
@@ -178,9 +198,9 @@ Define your data model once. The schema produces valibot validation, SQL column 
 | `field.dateRange(opts?)` | `text` | Date range, stored as JSON `["start","end"]` ISO strings |
 
 Structured field values use schema codecs. Forms and editable table cells work
-with UI-native values (`boolean`, arrays, objects), while collection writes
-store ReactiveDB-safe values (`0/1` booleans and JSON text for structured
-`text` fields).
+with UI-native values (`boolean`, arrays, objects) and encode structured `text`
+fields for ReactiveDB. Schema-generated collections also encode logical boolean
+writes to `0/1` and decode stored `0/1` values back to `boolean` on reads.
 
 ### Common field options
 
@@ -219,6 +239,10 @@ Returns a `SchemaDescriptor` with:
 - `toTableSchema()` — SQL column definitions for ReactiveDB
 - `toClientTableDef()` — client table config for `createClient()`
 
+`toTableSchema()` carries its logical validator as symbol metadata. SQL column
+enumeration and JSON serialization ignore that metadata, so it is available to
+the server Sync plugin without becoming a database column or client config.
+
 ### `defineTable(name, fields, opts?)`
 
 Convenience wrapper:
@@ -239,6 +263,29 @@ const attendanceTable = defineTable('attendance', {
 // Forms:  todoTable.schema  →  SchemaDescriptor
 ```
 
+The returned `TableDefinition` also exposes `mutationValidator` for lower-level
+server composition. With normal `createApp({ tables })` usage, Zero preserves
+and installs it automatically.
+
+For WebSocket INSERT and UPDATE mutations on schema-generated tables, the
+server:
+
+1. runs Sync/resource authorization and applies any trusted policy stamp;
+2. rejects incoming fields outside the schema (except its configured primary
+   key);
+3. decodes SQLite wire values into the logical field types;
+4. validates a complete logical row with the schema; and
+5. encodes the validated result before entering the write transaction.
+
+Partial UPDATEs are merged with the current stored row for full validation, but
+only submitted/stamped fields are written. A client cannot change the primary
+key through UPDATE. Failed validation produces a negative Sync acknowledgement
+and no database change.
+
+Raw `TableSchema` objects keep their existing SQL-constraint behavior and do
+not gain logical validation implicitly. Prefer `defineTable()`, or attach an
+explicit `mutationValidator` when wrapping a hand-authored server table.
+
 `opts.sync` accepts:
 
 - omitted or `'auto'` — server startup resolves the table to full or lazy sync
@@ -251,7 +298,7 @@ const attendanceTable = defineTable('attendance', {
 ### Type inference
 
 ```ts
-import type { InferRow } from '@zero/framework/react';
+import type { InferInsert, InferRow, InsertInput } from '@zero/framework/react';
 
 // Derive row types directly from a table definition — no hand-written interfaces
 type Todo = InferRow<typeof todoTable>;
@@ -267,7 +314,17 @@ const accountTable = defineTable('accounts', {
 
 type Account = InferRow<typeof accountTable>;
 // { account_id: string; name: string }
+
+// The runtime generates account_id, so creation inputs may omit only that key.
+type NewAccount = InferInsert<typeof accountTable>;
+const input: NewAccount = { name: 'Acme' };
+const sameContract: InsertInput<Account> = input;
 ```
+
+`InsertInput<T>` derives the primary key automatically for `InferRow` types.
+For hand-written row types with a custom primary key, pass the key as the
+second generic to `client.collection<T, 'account_id'>()` or
+`useCollection<T, 'account_id'>()`.
 
 ### Natural identity for relationship tables
 
@@ -341,6 +398,9 @@ sync id. For rows that have not been loaded yet, the deterministic id is used.
 Creates the singleton SDK client. Call once at app startup. Normally created by `AppProvider` -- you rarely call this directly.
 
 ```ts
+import { createClient } from '@zero/framework/react';
+import { tables } from '@app/lib/schemas';
+
 const client = createClient({
   url: 'http://localhost:3000',
   tables,                     // Single tables object — auto-extracts what it needs
@@ -359,9 +419,11 @@ const client = createClient({
 // ─── Auth (top-level) ──────────────────────────────────
 client.user              // AuthUser | null
 client.isAuthenticated   // boolean
-client.token             // Current JWT
-await client.login('alice', 'pass')      // → AuthUser
-await client.register({ username, email, password })  // → AuthUser
+client.token             // Current in-memory access JWT (compatibility/diagnostics)
+await client.login('alice', 'password123') // → session or continuation
+await client.register({ username, email, password })  // → AuthRegistrationResult
+// Fresh install only: include bootstrapSecret when /auth/config says the
+// secret-gated bootstrap ceremony is required and available.
 await client.logout()
 await client.refresh()                  // Refresh access token when auth is enabled
 
@@ -375,8 +437,7 @@ await client.fetch('/api/custom', { method: 'POST', body, headers })
 
 // ─── Data ──────────────────────────────────────────────
 client.collection<T>('todos')  // Get typed collection
-client.state               // StateClient (null if stateSync disabled)
-client.ephemeral           // EphemeralClient (shared KV, always available)
+client.resource<T>('todos')    // Generated resource-route client
 
 // ─── Connection ────────────────────────────────────────
 client.url                 // Server URL
@@ -385,6 +446,26 @@ client.connect()           // Open WebSocket when autoConnect was false
 client.onConnectionChange(cb)  // Subscribe to connection state
 client.disconnect()            // Tear everything down
 ```
+
+`client.resource(name)` can reach only registered resources whose server-owned
+exposure is `http` or `all`. `internal` and `sync` resources deliberately look
+unknown to generated HTTP CRUD.
+
+The public `Client` deliberately does not expose the internal sync, state, or
+ephemeral clients. React apps use `useServerState()`, room/presence hooks, and
+the other public hooks instead. `client.api` is the authenticated Eden Treaty
+surface for typed app routes.
+
+Do not copy `client.token` into ordinary application requests. The official
+`client.api`, `client.fetch`, HTTP helpers, generated resource clients, and
+upload hooks own session restoration, refresh/retry, multipart authorization,
+and authorization-scope fencing. Reading and attaching the token manually can
+race restoration or tenant replacement and bypass those guarantees. The token
+property remains public for compatibility and narrowly reviewed integrations.
+Credential-bearing browser requests are restricted to the configured Zero
+server origin. An absolute cross-origin target fails locally with
+`AUTH_REQUEST_ORIGIN_MISMATCH` before the request transport reads or attaches
+an access credential.
 
 `auth` defaults to false on the raw SDK client, matching `createApp()`. In
 full-stack apps, `AppProvider` reads the server-injected platform config when
@@ -446,13 +527,19 @@ All mutations are **optimistic** — they apply locally first, then sync to serv
 
 ## Authentication
 
+Use the [Auth System](auth/README.md) as the canonical documentation map for
+installation bootstrap, the four tenancy/authorization profiles, permission
+declarations, administration, onboarding, browser state, audit, and installed
+app authentication. This reference concentrates on callable SDK surfaces; the
+focused auth manuals define their security and lifecycle contracts.
+
 ### Installed app authentication
 
 First choose a supported surface in the
 [App Authentication SDK Guide](auth/app-auth-sdk-guide.md). The implemented
 TypeScript core is exported from `@zero/framework/native`. The independently
-versioned Rust/Tauri packages are a Phase 0 design scaffold, while
-`@zero/chrome-auth` is a private MV3 preview; neither is a released package.
+versioned Rust/Tauri and Chrome packages are functional private `0.0.0`
+previews; neither is a released package or bundled with generated apps.
 
 #### `createZeroNativeAuthBroker(options)`
 
@@ -535,6 +622,8 @@ implied; validate discovery and ES256/JWKS verification on each runtime.
 | `signUp(options?)` | Runs the same transaction with Zero registration requested |
 | `completeAuthorization(url, signal?)` | Completes a durable cold-launch callback |
 | `refresh()` | Forces serialized refresh rotation when a stored session exists |
+| `listTenants()` | Uses the credential owner's refresh proof to list safe live tenant summaries when discovery advertises the v1 tenant-session capability |
+| `switchTenant(tenantId)` | Atomically replaces the native refresh family with one bound to the selected live membership and returns state containing the new safe `activeTenant` summary |
 | `getUser()` | Returns validated identity claims or `null` |
 | `getAccessToken()` | Returns a usable short-lived token or `null`; trusted integrations only |
 | `fetch(input, init?)` | Same-origin Bearer fetch, proactive refresh, and one 401 refresh/retry; ambient cookies and automatic redirects are disabled |
@@ -542,9 +631,10 @@ implied; validate discovery and ES256/JWKS verification on each runtime.
 | `subscribe(listener)` | Observes safe state and returns an unsubscribe function |
 
 States are `uninitialized`, `anonymous`, `authorizing`, `authenticated`, and
-`error`. Only `authenticated` is a usable session. `identity` is the validated
-OIDC projection (`sub` plus allowed profile/email claims), not a substitute for
-fresh server authorization. Failures are `NativeAuthError` values with safe
+`error`. Only `authenticated` is a usable session. `identity` is the validated,
+explicitly allowlisted OIDC projection (`sub` plus allowed profile/email
+claims); unknown/private JWT claims are discarded before persistence or broker
+IPC, and identity is not a substitute for fresh server authorization. Failures are `NativeAuthError` values with safe
 `code`, `message`, and optional `status` fields.
 
 #### Platform adapter contracts
@@ -584,8 +674,10 @@ plain database/file.
 The [desktop and mobile adapter recipes](../examples/native-auth/README.md)
 provide dependency-free host interfaces. The desktop TypeScript recipe assumes
 a trusted JavaScript owner such as Electron main or a deliberately secured
-sidecar. Tauri's Rust process cannot directly host it; use the Rust/Tauri package
-only after its Phase 0 scaffold becomes an implemented release.
+sidecar. Tauri's Rust process cannot directly host it; use the standalone
+Rust/Tauri preview's Rust-owned engine and deny-by-default plugin boundary,
+together with app-supplied audited OS vault, browser, callback, and
+single-instance adapters.
 
 #### Broker IPC
 
@@ -635,9 +727,12 @@ Chrome 140+. It is not a released package and still requires a versioned
 framework peer, real-Chrome end-to-end testing, and security review.
 
 The standalone Rust `zero-native-auth` and `tauri-plugin-zero-auth` crates are
-Phase 0 `0.0.0` scaffolds. They currently validate config and serialize draft
-secret-free state only. They do not perform authentication, store credentials,
-open callbacks, expose Tauri commands, or make authenticated requests.
+functional private `0.0.0` previews. They implement strict OIDC/PKCE,
+callback and ID-token validation, rotating refresh state through a required
+secure-store adapter, tenant list/switch, bounded same-origin authenticated
+HTTP, revisioned secret-free state, and explicitly permissioned Tauri commands.
+They do not bundle OS keychain, browser, callback/deep-link, or single-instance
+adapters and make no real-platform certification claim yet.
 
 See [Desktop, Mobile, and Chrome Extension Authentication](auth/native-app-auth.md)
 for registration, provider endpoints, redirect rules, continuation flows,
@@ -646,6 +741,10 @@ revocation, and deployment checks.
 ### React hooks
 
 ```tsx
+'use client';
+
+import { useAuth } from '@zero/framework/react';
+
 function LoginPage() {
   const { user, isAuthenticated, isLoading, error, login, logout, register } = useAuth();
 
@@ -658,7 +757,7 @@ function LoginPage() {
     );
   }
 
-  return <button onClick={() => login('admin', 'pass')}>Login</button>;
+  return <button onClick={() => login('admin', 'password123')}>Login</button>;
 }
 ```
 
@@ -670,6 +769,25 @@ function LoginPage() {
 | `useAuthConfig()` | `AuthConfigState` | Public registration/bootstrap config for auth UI |
 | `useCurrentUser()` | `AuthUser \| null` | Just the user object |
 | `useRequireAuth(redirectTo?)` | `AuthUser \| null` | Redirects to `/login` if not authenticated |
+| `useTenantDomainAdministration(options?)` | tenant domain administration state/actions | Active-tenant exact-domain claims and fixed-role request policy |
+| `useDomainOnboarding(options?)` | mailbox-proof/request state/actions | Generic-before-proof request-to-join flow |
+
+### Verified company-domain onboarding
+
+The browser package exports strict request-only DTOs and transports,
+`useTenantDomainAdministration`, `useDomainOnboarding`,
+`TenantDomainManagement`, and `DomainOnboarding`, backed by the matching
+server routes, DNS/mailbox proof services, and retained join requests. The
+public capability appears only when multi-tenant verified-domain onboarding
+and its email/public-URL dependencies are operational; otherwise the components
+fail closed. No browser API accepts tenant, domain, or role authority during
+user admission, and `/start` does not accept an email. Tenant administration
+also exposes owner-default `releaseTenantDomainClaim()` and
+`useTenantDomainAdministration().releaseClaim()`: both require current opaque
+revisions and exact normalized-domain confirmation, preserve history, and
+enforce a seven-day cross-tenant quarantine. Read
+[Verified Company-Domain Onboarding](auth/verified-domain-onboarding.md) for
+the exact contract, state fencing, configuration, and deliberate exclusions.
 
 `AppProvider` also owns the default client-side protected-route behavior when
 auth is enabled. If a restored or refreshed session fails and the current path
@@ -688,9 +806,139 @@ interface AuthUser {
   firstName: string | null;
   lastName: string | null;
   role: string;
+  status: 'active' | 'suspended';
+  passwordChangeRequired: boolean;
+  emailVerifiedAt: number | null;
+  emailVerificationRequired: boolean;
+  mfaRequired: boolean;
   properties: Record<string, string>;
+  createdAt: number;
+  updatedAt: number | null;
 }
 ```
+
+Login, registration, email actions, and password actions return
+`AuthCompletionResult`: a session, an MFA setup/challenge continuation, a
+tenant-selection/onboarding continuation, a password-updated result, or a
+pending email-verification registration. The
+email-verification variant has no access or refresh token:
+
+```ts
+interface AuthEmailVerificationRequiredResult {
+  user: AuthUser & {
+    emailVerifiedAt: null;
+    emailVerificationRequired: true;
+  };
+}
+
+const result = await client.register(params);
+if (isAuthEmailVerificationRequiredResult(result)) {
+  showCheckYourEmail(result.user.email);
+}
+```
+
+Registration has the additive `AuthRegistrationResult` contract:
+
+```ts
+interface RegisterParams {
+  username: string;
+  email: string;
+  password: string;
+  firstName?: string;
+  lastName?: string;
+  mfaEnrollment?: boolean;
+  nativeContinuation?: string;
+  bootstrapSecret?: string;
+  organizationName?: string;
+  organizationSlug?: string;
+}
+
+interface AuthRegistrationTenant {
+  tenantId: string;
+  membershipId: string;
+  slug: string;
+  name: string;
+  role: string | null;
+}
+
+type AuthRegistrationResult = AuthCompletionResult & {
+  tenant?: AuthRegistrationTenant;
+};
+```
+
+When public auth config reports `tenancy.mode: 'multi'`, the initial bootstrap
+requires `organizationName`; `organizationSlug` remains optional. The server
+derives a slug when omitted and atomically creates the user, credential, first
+organization, protected `owner` membership, global/platform `admin` role, and
+durable bootstrap marker. This invariant applies even if the configured later
+creation policy is `platform-admin` or `disabled`.
+
+After bootstrap, `organizationName` is optional. Omitting it registers only the
+identity and, after any email/MFA gate, returns `tenantOnboardingRequired` with
+no application credential. When email verification is pending, registration
+does not issue an onboarding or tenant-creation proof; successful verification
+runs completion and issues a fresh proof when the live policy permits creation.
+That proof is hashed at rest, expiring, app-bound, and single-use. Supplying an
+organization keeps the optional one-step create flow, but it is authorized
+against the resulting identity and never means “join an existing organization.”
+
+The packaged `RegisterForm` uses configured terminology, requires the tenant
+only during bootstrap, and otherwise offers explicit optional creation only to
+an eligible ordinary registrant. `AuthFlowContinuation` renders
+`TenantCreationForm` for an eligible zero-membership result, or useful
+invite/platform-admin guidance when creation is unavailable.
+
+`result.tenant` is returned for the one-step organization-creating registration
+flow. It is a safe summary, not tenant-session authority. The completed browser
+session exposes `activeTenant`; call `listTenants()` and
+`switchTenant(tenantId)` for live refresh-family-backed choices and atomic
+switching. Multi-membership login uses
+`selectTenant(continuation, tenantId)` and issues no app credential before that
+one-time exchange. Zero-membership completion uses:
+
+```ts
+await client.createTenant({
+  name: 'Acme Practice',
+  continuation: result.onboarding.tenantCreation.continuation,
+});
+
+// An already signed-in eligible user omits continuation. The SDK supplies
+// current refresh-family proof and activates the newly created tenant.
+await client.createTenant({ name: 'Second Practice', slug: 'second-practice' });
+```
+
+For both proof forms, tenant, protected owner, proof consumption/rotation,
+tenant-bound parent, and refresh issuance commit atomically. The SDK applies
+the same authorization-scope barrier used for switching: it purges scoped
+Sync/state/ephemeral data, pending work, and Zero-owned hook caches; rejects
+stale response bodies; clears global overlays; and remounts or reloads the app
+subtree before exposing replacement-scope UI. App-owned caches should key or
+purge on `useAuthorizationScopeBoundary().key`.
+Active-tenant member/role administration is available through
+`getTenantAdministrationConfig()`, `listTenantMembers()`,
+`addTenantMember()`, `updateTenantMember()`, `removeTenantMember()`, and
+`transferTenantOwnership()`. The server derives tenant authority from the live
+Bearer scope; these methods never send a tenant ID. See
+[Tenant Member Administration](./auth/tenant-member-administration.md).
+
+For `single/advanced`, application roles use the separate namespaced surface:
+
+```ts
+const config = await client.applicationAdmin.getConfig();
+const users = await client.applicationAdmin.listUsers({ limit: 25 });
+const target = users.users.find((user) => user.identity.userId === userId)!;
+await client.applicationAdmin.replaceUserRoles(
+  userId,
+  ['reader'],
+  target.roleRevision,
+);
+await client.applicationAdmin.transferOwnership(userId);
+```
+
+The same API is available through `useApplicationAccess()` and the packaged
+`ApplicationAccessManagement` component. It never exposes or changes the
+global platform role or account-security state. See
+[Application Access Administration](./auth/application-access-administration.md).
 
 ### Vanilla JS auth
 
@@ -699,23 +947,54 @@ const client = createClient({ ... });
 
 // Top-level (recommended) — most common auth operations
 await client.login('alice', 'password123');
-await client.register({ username: 'bob', email: 'bob@example.com', password: 'secret' });
+await client.register({ username: 'bob', email: 'bob@example.com', password: 'secret123' });
 const authConfig = await client.getAuthConfig();
+console.log(authConfig.tenancy?.mode ?? 'single');
+console.log(authConfig.authorization?.mode ?? 'simple');
 await client.forgotPassword('alice@example.com');
 const action = await client.inspectActionToken('emailed-token');
 await client.resetPassword('emailed-token', 'new-password123');
 await client.setupPassword('emailed-token', 'first-password123');
+await client.createTenant({ name: 'New Workspace' });
 await client.logout();
 console.log(client.user);            // AuthUser | null
 console.log(client.isAuthenticated); // boolean
 
+// Sanitized live UI hint; server routes remain authoritative.
+const authorization = await client.getAuthorization();
+console.log(authorization?.scope?.permissions ?? []);
+await client.refreshAuthorization();
+
 // Additional auth operations
-await client.changePassword('old', 'new');
+await client.changePassword('old-password', 'new-password123');
 await client.setProperty('theme', 'dark');
 await client.setProperty('notificationsEnabled', false);
 const theme = await client.getProperty('theme');
 await client.refresh();
 ```
+
+The capability fields are additive for mixed-version compatibility; absence
+means `single/simple`. All four profiles normalize. Public tenancy config also
+contains safe `terminology` and `creation.mode` values. `multi` enables current
+tenant/membership persistence, bound browser sessions, selection/switching,
+creation/onboarding, and registered-resource isolation. `advanced` enables a
+validated server-only permission/role registry and pure authorization kernel;
+durable application/tenant assignments and their packaged administration
+surfaces are implemented. Upstream enterprise SSO and the proposed dedicated
+multi-tenant Administration Organization/platform-lifecycle UI remain separate
+future work, as do break-glass, tenant-custom roles, populated-app adoption tooling, and
+verified-domain autojoin/aliases/direct transfer. The resource registry now
+has independent server-owned client-exposure and field-access axes. Managed
+file-mode runtimes sharing one SQLite database relay tracked Sync changes and
+auth/session invalidations across active sockets. Multi-mode startup also
+validates actual non-partial tenant-leading indexes, tenant-scoped business
+uniqueness, and composite tenant consistency for foreign keys between
+registered tenant resources.
+
+The live browser authorization projection, imperative subscription APIs, React
+permission hooks, credential-free `useAuthorizationScopeBoundary()` cache key,
+and packaged `PermissionGate`, `TenantGate`, and `PlatformAdminGate` are documented in
+[Browser Authorization Snapshot and Gates](./auth/browser-authorization.md).
 
 Property gates are exported from the frontend barrel for UI-only visibility:
 
@@ -766,7 +1045,10 @@ function TodoList() {
 }
 ```
 
-No need for `useClient()` + `client.collection()` -- `useCollection` is the one-stop hook for reads and writes. Auto-PK means you never need `id: crypto.randomUUID()` in insert calls.
+No need for `useClient()` + `client.collection()` -- `useCollection` is the
+one-stop hook for reads and writes. Its `insert()` and `load()` inputs use
+`InsertInput<T>`, so the generated primary key may be omitted while every other
+required field remains required.
 
 ### `useLazyCollection(name, filter?, opts?)`
 
@@ -960,7 +1242,10 @@ export const attendanceTable = defineTable('attendance', {
 
 ### Loading data on demand
 
-The platform auto-registers `GET /api/data` for lazy tables. Use the `useLazyCollection` hook:
+The platform registers `GET /api/data` for eligible lazy tables. A registered
+resource must permit HTTP (`http` or `all`) for this endpoint. If it also uses
+lazy or auto-lazy Sync hydration, declare `exposure: 'all'`; `sync` alone
+cannot reach `/api/data`. Use the `useLazyCollection` hook:
 
 ```tsx
 const { data, isLoading, refresh } = useLazyCollection(
@@ -1000,12 +1285,85 @@ The endpoint validates table names and columns against the app schema, uses
 parameterized values, caps result size, and enforces the same sync read policy
 used by WebSocket subscriptions. When a lazy table is registered with
 `defineResource()`, `/api/data` also enforces that resource's `list` policy and
-adds safe owner constraints to the SQL query. For large lazy tables, add SQLite
+adds safe owner and mandatory tenant-realm constraints to the SQL query. After
+an asynchronous resource policy, Zero re-resolves bearer and trusted-property
+authority, then repeats the durable authority/property check inside the same
+SQLite transaction as the resource query. For large lazy tables, add SQLite
 indexes in migrations for columns you filter, sort, or constrain by frequently.
+Server-owned policy and tenant constraints compare both SQLite storage class
+and `BINARY` value, so column affinity or `COLLATE NOCASE` cannot broaden an
+owner or tenant match. User-authored `filter=` expressions retain the table's
+normal SQLite comparison behavior, but remain ANDed with those exact security
+constraints.
+
+Registered resources may declare a shared field contract:
+
+```ts
+const attendanceFields = defineResourceFields({
+  read: ['id', 'group_id', 'date', 'status'],
+  create: ['group_id', 'date', 'status'],
+  update: ['date', 'status'],
+  filter: ['id', 'group_id', 'date', 'status'],
+  sort: ['date', 'status'],
+});
+
+defineResource({
+  table: attendanceTable,
+  exposure: 'all',
+  fields: attendanceFields,
+  policy: authenticatedOnly(),
+});
+```
+
+With `fields` present, only `read` leaves CRUD, `/api/data`, or Sync;
+`create`/`update` reject every other raw client field; and filter/sort fields
+must be readable. Server policy and realm fields are evaluated before
+projection. The exposed primary key must be readable, is accepted as create
+protocol identity, and is never updateable. `defineResourceFields()` is
+client-safe, so the complete value can be passed to `CrudPage.resourceFields`.
+For custom `AutoForm`/`useForm` composition, pass the appropriate field list to
+`includeFields`, such as `attendanceFields.create` or
+`attendanceFields.update`. See
+[Resource Policy Core](./framework/resource-policy.md#field-projection-and-client-writes).
+
+Use `authorizationPolicy(requirement)` inside a server-only resource
+declaration to apply the same structured RBAC requirement used by route
+`auth` and `context.access`:
+
+```ts
+defineResource({
+  table: attendanceTable,
+  exposure: 'all',
+  realm: tenantRealm(),
+  policy: {
+    list: authorizationPolicy({
+      tenant: 'required',
+      permission: 'attendance:read',
+    }),
+    create: authorizationPolicy({
+      tenant: 'required',
+      permission: 'attendance:write',
+    }),
+  },
+});
+```
+
+Zero validates the permission keys at startup and resolves live simple or
+advanced roles for generated CRUD, lazy reads, and WebSocket Sync. Assignment
+changes participate in the normal request/transaction or socket authority
+fence. Other resource exposure choices are `internal`, `http`, and `sync`;
+multi mode requires an explicit choice, while omitted exposure retains legacy
+`all` behavior only in single mode. A `sync`-only resource must resolve to full
+Sync rather than lazy loading. Omitted `actions` enables the standard five
+operations, while explicit `actions: []` enables none. Per-action policy maps
+reject unknown keys and actions not present in that declared set.
 
 For registered resources, unconstrained `list` policy uses the normal full-sync
 fast path. Owner-only or otherwise row-constrained resource lists use
 per-connection row filters for snapshots, catchup, and live changes.
+Registered creates use non-replacing inserts. Updates/deletes compare the exact
+row snapshot evaluated by policy, while Zero's durable authority/property check
+shares the SQLite transaction with the conditional write.
 
 ### Load options
 
@@ -1019,11 +1377,20 @@ col.clear();                            // Empty the local store (no server dele
 
 ### How live changes work with lazy tables
 
-Lazy tables still subscribe to WebSocket change events. When another user inserts, updates, or deletes a row:
+Lazy mode omits the initial table snapshot; it does not create a live query
+subscription for the HTTP filters passed to `useLazyCollection()`. Authorized
+WebSocket inserts and updates for the subscribed table are applied to the local
+collection by row id even when that row was not in the last `/api/data`
+response, and deletes remove the local row when present. Resource row policy
+still filters what each connection may receive.
 
-- **INSERT:** The new row appears in the local store (and in any reactive hooks watching this table)
-- **UPDATE:** If the row is already in the local store, it updates. If not, it's ignored.
-- **DELETE:** If the row is in the local store, it's removed. If not, it's ignored.
+Consequently, treat `useLazyCollection()` filters as the initial/paginated
+load, not as a permanent client-side membership boundary. If a screen must
+continue showing only matching rows, derive that view locally with
+`useQuery()` or use `useDataPage()`/`useResourceList()` and refresh the page as
+appropriate. Multiple filtered `useLazyCollection()` calls for the same table
+share one local collection; a filtered load uses replacement semantics for
+that table.
 
 This means: once you `load()` an authorized set of rows, those rows stay live.
 For row-constrained resource tables, sync changes are filtered per connection;
@@ -1034,7 +1401,9 @@ row.
 
 ## Server State Sync
 
-Per-user key-value state, persisted on the server and synced across devices.
+Per-authorized-scope user key-value state, persisted on the server and synced
+across devices. Single mode uses the user identity; multi mode derives an
+isolated tenant + user principal from the live session.
 
 ```tsx
 function Sidebar() {
@@ -1049,7 +1418,7 @@ Like `useState`, but:
 - Survives page refresh
 - Optimistic (instant local update, background sync)
 
-**Requires** `stateSync: true` and `auth: true` in AppProvider/createClient config, plus `auth: true` in the server config. In full-stack apps, omitted `AppProvider` props are filled from the server-injected platform config. Server-persisted state is keyed by authenticated user.
+**Requires** `stateSync: true` and `auth: true` in AppProvider/createClient config, plus `auth: true` in the server config. In full-stack apps, omitted `AppProvider` props are filled from the server-injected platform config. Single mode keys state by authenticated user; multi mode derives an isolated tenant + user principal from the live session.
 
 ```tsx
 const ready = useServerStateReady(); // true once initial state loaded from server
@@ -1369,34 +1738,52 @@ canvas nodes. Keep destructive behavior behind a confirmation modal.
 
 ## Routing
 
-File-based routing with SSR support. Routes are registered from `pages/` directory.
+File-based routing is registered from the configured `app/` directory
+(`appDir`, default `./app`). A page/layout chain containing a literal
+`'use client'` directive is emitted into the browser manifest and mounted with
+`createRoot()`. A chain without a client boundary is streamed on the server and
+ships no route JavaScript; navigating to one of those server-only routes uses a
+normal document request.
 
 ### Hooks
 
 | Hook | Returns | Description |
 |------|---------|-------------|
-| `useParams()` | `Record<string, string>` | URL parameters (e.g., `/todos/:id` → `{ id: '123' }`) |
+| `useParams()` | `Record<string, string>` | URL parameters (e.g., `/todos/[id]` → `{ id: '123' }`) |
 | `usePathname()` | `string` | Current URL pathname |
-| `useRouter()` | `{ push, replace, go, back, forward }` | Navigation methods |
+| `useRouter()` | `{ push, replace, back, prefetch, isNavigating }` | Client-route navigation state/actions |
 
 ### `<Link>`
 
 Client-side navigation link.
 
 ```tsx
+import { Link } from '@zero/framework/react';
+
 <Link href="/todos">All Todos</Link>
-<Link href={`/todos/${todo.id}`}>Edit</Link>
+<Link href={`/todos/${todo.id}`} prefetch="intent">Edit</Link>
 ```
+
+`Link` defaults to `prefetch="none"`. `prefetch="intent"` loads a registered
+client route on pointer hover. The currently accepted `"render"` value does not
+trigger eager or viewport prefetching; call `useRouter().prefetch(path)` when
+you need explicit preload behavior. Unknown and server-only routes fall back to
+a full document navigation when clicked.
 
 ### Advanced router API
 
 ```ts
 import { registerRoute, matchClientRoute, navigateTo, prefetchRoute } from '@zero/framework/react';
 
-registerRoute('/custom', { default: CustomPage, loader: myLoader });
-navigateTo('/custom');
+registerRoute('/custom', () => import('@app/custom/page'));
+const loaded = await navigateTo('/custom');
 prefetchRoute('/custom');
 ```
+
+These low-level functions manage the generated client-route registry and
+module cache. `navigateTo()` loads a match and returns its page, layouts, and
+params; it does not update browser history. Normal application navigation
+should use `Link` or `useRouter()`.
 
 ---
 
@@ -1460,13 +1847,25 @@ Real-time notification system with rich targeting, read receipts, and auto-toast
 
 ### Server Setup
 
-```ts
-import { createSchedulerPlugin } from './scheduler';
-import { createNotificationPlugin } from './notifications';
+`createApp()` mounts auth, Scheduler, and Notifications in dependency order.
+Do not mount them a second time in a normal Zero app. The following is only for
+a low-level standalone Elysia composition that already owns a `ReactiveDB`:
 
-// Mount scheduler first (notifications register a cleanup job)
-app.use(createSchedulerPlugin());
-app.use(createNotificationPlugin({ db }));
+```ts
+import { Elysia } from 'elysia';
+import {
+  createAuthPlugin,
+  createNotificationPlugin,
+  createSchedulerPlugin,
+  installAuthStopBarrier,
+} from '@zero/framework/server';
+
+const app = installAuthStopBarrier(
+  new Elysia()
+    .use(createAuthPlugin({ db }))
+    .use(createSchedulerPlugin())
+    .use(createNotificationPlugin({ db })),
+);
 ```
 
 ### Client Setup
@@ -1494,7 +1893,7 @@ import { AppProvider, NotificationProvider, Toaster } from '@zero/framework/reac
 ### Sending Notifications (Server)
 
 ```ts
-import { getNotificationService } from './notifications';
+import { getNotificationService } from '@zero/framework/server';
 
 const notifier = getNotificationService()!;
 
@@ -1606,13 +2005,18 @@ Wraps children with notification context and optionally fires Sonner toasts for 
 
 ### Platform Tables
 
-The frontend SDK automatically merges notification, room, workflow, and storage
-tables into each client. App code should pass only its app tables to
-`createClient()` or `AppProvider`.
+The frontend SDK automatically merges platform table schemas/types needed by
+notification, room, workflow, and Storage integrations. Schema availability
+does not make rows readable: default `createApp()` policy scopes notification,
+room, and workflow execution rows and keeps Storage metadata private from
+generic Sync. App code should pass only its app tables to `createClient()` or
+`AppProvider`.
 
 ### Receipt System
 
-Receipts track per-user notification state. Client actions call authenticated notification routes; the service writes `notification_receipts` through ReactiveDB, and the receipt changes broadcast back over sync in real time.
+Receipts track per-user notification state. Client actions call authenticated
+notification routes; the service writes `notification_receipts` through
+ReactiveDB, and Sync returns a receipt change only to its owning user.
 
 | State | Meaning | Trigger |
 |-------|---------|---------|
@@ -1635,10 +2039,10 @@ All routes prefixed with `/notifications`. Auth middleware required.
 | `POST` | `/broadcast` | admin | Broadcast to all users |
 | `POST` | `/notify/:userId` | admin | Notify single user |
 | `POST` | `/notify-role/:role` | admin | Notify all users with role |
-| `GET` | `/:id` | user | Get single notification |
-| `POST` | `/:id/seen` | user | Mark seen |
-| `POST` | `/:id/read` | user | Mark read |
-| `POST` | `/:id/dismiss` | user | Dismiss |
+| `GET` | `/:id` | target user | Get an actually targeted notification; inaccessible and missing IDs both return 404 |
+| `POST` | `/:id/seen` | target user | Mark seen |
+| `POST` | `/:id/read` | target user | Mark read |
+| `POST` | `/:id/dismiss` | target user | Dismiss |
 | `POST` | `/read-all` | user | Mark all read |
 | `POST` | `/seen-all` | user | Mark all seen |
 | `GET` | `/:id/receipts` | admin | Receipt audit trail |
@@ -1649,14 +2053,20 @@ All routes prefixed with `/notifications`. Auth middleware required.
 ```
 Server:  notifier.notify('u_abc', { title: 'Report ready' })
   → db.insert('notifications', ...)
-  → ReactiveDB onChange → sync pub/sub → all WS clients
+  → ReactiveDB onChange → platform row policy checks each subscription
+  → only u_abc's eligible connection receives the notification row
   → SyncClient store update → useCollection re-render
-  → useNotifications() filters by target match
+  → useNotifications() renders the already-scoped collection
   → NotificationProvider detects new → toast('Report ready')
   → User clicks → markRead() → POST /notifications/:id/read
-  → NotificationService updates receipt → sync broadcast
-  → Admin: getReceipts(id) shows who read in real-time
+  → NotificationService verifies target again and updates u_abc's receipt
+  → receipt row returns only to u_abc through scoped Sync
+  → Admin: getReceipts(id) reads the protected HTTP audit projection
 ```
+
+Administrator receipt audit is not a generic live receipt subscription. Refetch
+or poll `getReceipts(id)` when that view needs later updates; generic Sync sends
+each receipt row only to its owning user.
 
 ---
 
@@ -1665,10 +2075,20 @@ Server:  notifier.notify('u_abc', { title: 'Report ready' })
 Authenticated file storage with drive metadata in ReactiveDB and blob bytes
 behind a storage adapter. Local filesystem storage is the default adapter.
 
-Storage metadata tables are registered as platform tables, so clients can read
-drive/object metadata through sync, but direct `sync.mutate` writes to
-`storage_drives` and `storage_objects` are blocked by the platform sync policy.
-Use the storage HTTP routes for all writes so auth and permission checks run.
+Storage metadata tables are registered as platform client types, but default
+`createApp()` composition keeps `storage_drives` and `storage_objects` private
+from generic Sync reads and writes. The official Storage hooks use the
+permission-aware HTTP API for metadata and file operations. This avoids both
+cross-user metadata exposure and per-socket scans of a global object table.
+
+Presigned URLs and scoped upload grants use one HMAC capability key. Managed
+`createApp()` configuration accepts `storage.signingSecret` (or
+`ZERO_STORAGE_SIGNING_SECRET`) and `storage.defaultPresignedTTL`. If no secret
+is supplied, Zero generates 32 random bytes once and stores the key in the
+private app config table, so capabilities survive a durable-database restart
+and work across runtimes sharing that database. Set an explicit shared secret
+for ephemeral databases or replicas with separate databases. Changing the
+secret invalidates outstanding capabilities.
 
 ### Hooks
 
@@ -1694,11 +2114,18 @@ await actions.grantPermission(driveId, {
 });
 ```
 
+Property grants are authorization policy, not profile convenience fields. The
+`grantKey` must name an `auth.userProperties` field with
+`useInPolicies: true`, and that field must be editable only by `admin`,
+`system`, or `none`. Unknown and user-editable keys are rejected. Persisted
+legacy grants with an unsafe key no longer grant access.
+
 Storage hooks use the SDK client for authenticated transport. JSON routes call
-`client.fetch()`, so Authorization headers and 401 refresh behavior match the
-rest of the frontend SDK. Uploads still use `XMLHttpRequest` for progress
-events, but they read the SDK client's in-memory access token and retry once
-after `client.refresh()` if the server returns 401.
+`client.fetch()`, so session restoration, bearer injection, 401 refresh, and
+authorization-scope fencing match the rest of the frontend SDK. Uploads still
+use `XMLHttpRequest` for progress events, but each attempt receives its bearer
+from the same auth controller, waits for restoration, retries once after a
+successful refresh, and aborts when the account or tenant boundary changes.
 
 Storage drive responses include an `access` object for the current caller:
 `effectiveAccess`, `canRead`, `canWrite`, `canAdmin`, `isOwner`,
@@ -1726,21 +2153,53 @@ storage.permissions.grant(drive.drive_id, {
 const grants = storage.permissions.list(drive.drive_id);
 ```
 
+`createStoragePlugin()` supplies the policy-trust validator from the live auth
+configuration. Code that constructs `new StorageService(...)` directly and
+uses property grants must inject the equivalent callback:
+
+```ts
+const storage = new StorageService(db, adapter, {
+  isPolicyTrustedProperty: (key) => trustedPolicyKeys.has(key),
+});
+```
+
+Without that callback, direct-service role and user grants continue to work,
+but property grants deliberately fail closed. Audit existing persisted
+property grants before upgrading; unsafe or unrecognized keys are ignored.
+
 For public intake, resume-token, avatar, or guest document flows, backend code
 can issue a scoped upload grant. The grant lets an unauthenticated browser
 upload to one exact path, while the uploaded object stays private unless
 `public: true` is set:
 
 ```ts
+import { t } from 'elysia';
 import { defineEndpoint } from '@zero/framework/server';
 
 export default defineEndpoint({
   method: 'POST',
   path: '/api/intake/:id/upload-grant',
   auth: false,
-  handler: async ({ params, zero }) => {
-    if (!zero.storage) {
-      return Response.json({ error: 'Storage unavailable' }, { status: 503 });
+  params: t.Object({ id: t.String({ minLength: 1, maxLength: 100 }) }),
+  body: t.Object({
+    resumeToken: t.String({ minLength: 32, maxLength: 4096 }),
+  }),
+  handler: async ({ body, params, zero }) => {
+    if (!zero.storage || !zero.tokens) {
+      return Response.json({ error: 'Service unavailable' }, { status: 503 });
+    }
+
+    try {
+      zero.tokens.verifyResumeToken(body.resumeToken, {
+        flow: 'intake',
+        resource: { type: 'intake', id: params.id },
+      });
+    } catch {
+      // Keep public failures generic and never log or return the raw token.
+      return Response.json(
+        { error: 'Invalid or expired continuation' },
+        { status: 403 },
+      );
     }
 
     const grant = await zero.storage.uploads.create('drv_private_intake', {
@@ -1757,6 +2216,12 @@ export default defineEndpoint({
   },
 });
 ```
+
+The path parameter only selects the candidate intake; it is not authority.
+The reusable resume token must match both the expected flow and exact resource
+before the server creates the short-lived, single-path upload capability. Add
+the app's normal public-endpoint rate limit as well. Do not place the resume or
+upload-grant token in logs, metadata, or URLs that analytics/proxies retain.
 
 The browser then uploads with:
 
@@ -1850,6 +2315,10 @@ app.listen(3000);
 // Later: await app.stop(); db.dispose();
 ```
 
+Standalone `createStoragePlugin()` uses the same database-backed generated key
+when `signingSecret` is omitted. Pass `signingSecret` explicitly when separate
+plugin runtimes must share capabilities without sharing their database.
+
 ---
 
 ## Scheduler
@@ -1858,45 +2327,49 @@ Generic centralized scheduler using `croner`. Any plugin can register cron jobs.
 
 ### Server Setup
 
+`createApp()` already mounts Scheduler before dependent platform plugins. Only
+standalone Elysia compositions should mount `createSchedulerPlugin()`
+themselves:
+
 ```ts
 import { createSchedulerPlugin } from '@zero/framework/server';
 
-// Mount early (before plugins that register jobs)
+// Standalone Elysia only: mount after auth and before dependent plugins.
 app.use(createSchedulerPlugin());
-// OR with custom prefix:
+// Or choose a custom admin route prefix:
 app.use(createSchedulerPlugin({ prefix: '/admin/scheduler' }));
 ```
+
+Choose one of those two mounts, not both.
 
 ### Registering Jobs
 
 ```ts
-import { getScheduler } from '@zero/framework/server';
+// server/plugins/report-jobs.ts
+import { defineZeroPlugin } from '@zero/framework/server';
 
-const scheduler = getScheduler()!;
-
-scheduler.create({
-  name: 'cleanup-expired-sessions',
-  pattern: '0 */15 * * * *',   // every 15 minutes (6-field cron with seconds)
-  run: () => sessionStore.deleteExpired(),
-});
-
-scheduler.create({
-  name: 'daily-report',
-  pattern: '0 0 9 * * *',      // 9:00 AM daily
-  run: async () => {
-    await generateReport();
-    notifier.notifyRole('admin', { title: 'Daily report ready' });
+export default defineZeroPlugin({
+  name: 'report-jobs',
+  setup({ app, zero }) {
+    return app.onStart(() => {
+      zero.scheduler?.create({
+        name: 'daily-report',
+        pattern: '0 0 9 * * *', // 9:00 AM daily (six fields, including seconds)
+        timezone: 'America/New_York',
+        run: async () => {
+          await generateReport();
+          zero.notifications?.notifyRole('admin', {
+            title: 'Daily report ready',
+          });
+        },
+      });
+    });
   },
-  timezone: 'America/New_York',
-});
-
-scheduler.create({
-  name: 'manual-only-job',
-  pattern: '0 0 * * * *',
-  run: () => doWork(),
-  paused: true,    // Only runs when triggered via API
 });
 ```
+
+Scheduler services are initialized during application start, so register jobs
+from `onStart` (or after `app.listen()`), not at module-import time.
 
 ### `JobDefinition`
 
@@ -2340,29 +2813,154 @@ import { resolveConfig, createApp } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
 const config = resolveConfig({
+  db: { mode: 'memory' },
   tables,  // defineTable() output — auto-extracts server definitions
   auth: true,
 });
-const app = createApp(config);
+const app = await createApp(config);
 
 app.listen(3000);
 ```
 
-`@zero/framework/server` is only needed here in `app/server.ts`. All other app code imports from `@zero/framework/react`.
+Import `@zero/framework/server` only from server-owned code: the server entry,
+discovered backend extensions under `server/`, and server-only route handlers.
+Browser pages/components import from `@zero/framework/react`.
 
-The server provides:
+The server always provides:
+
 - `/sync` — WebSocket endpoint for real-time data sync, first-message Bearer auth, sync policy, and registered resource read/mutation policy
-- `/api/auth/*` — JWT authentication endpoints
-- `/api/_zero/observability/events` — protected recent event read + frontend event ingest
 - `zero.tokens` — server-side generic action/resume token service for secure links and public continuation flows
-- `zero.kv`, `zero.counter`, `zero.limiter` — server-side KV/cache, counters, and rate limiting
-- `zero.pdf` — optional browser-grade HTML/CSS-to-PDF rendering and direct storage composition
-- `/notifications/*` — Notification CRUD + receipt tracking (via `createNotificationPlugin`)
-- `/storage/*` — Authenticated drive and file storage routes (via `createStoragePlugin`)
 - `/scheduler/*` — Admin job management (via `createSchedulerPlugin`)
-- File-based routing from `pages/` directory
-- Static file serving from `public/`
-- SSR with streaming (React 19 `renderToReadableStream`)
+- File-based routing from the configured `app/` directory
+- streaming SSR for server-only page chains
+
+Configuration adds routes and services conditionally:
+
+- `auth` adds `/auth/*`, Notifications, Rooms, Workflows, Storage, and their authenticated routes. With auth disabled, those auth-dependent plugins are not mounted.
+- `pdf` adds the server-only `zero.pdf` service; Zero does not mount a public PDF route.
+- `ai`, `vector`, and `sitemap` add their respective configured services/routes.
+- Observability enables `/api/_zero/observability/events` by default; `observability: false` or a disabled endpoint removes that HTTP surface.
+- `resourceRoutes: false` disables only generated `/api/resources/*` CRUD
+  routes. Registered `exposure` still controls `/api/data` and Sync.
+- KV is enabled by default and provides `zero.kv`, `zero.counter`, and `zero.limiter`; `kv: false` disables those services.
+
+Client page/layout chains containing `'use client'` mount in the browser with
+`createRoot()`. Server-only chains stream with React 19
+`renderToReadableStream` and ship no route JavaScript.
+
+#### Auth Capability Configuration
+
+`defineAuthConfig()` preserves the authored type while
+`resolveAuthBehaviorConfig()` deterministically normalizes the two independent
+axes. Omitted values mean `tenancy: 'single'` and `authorization: 'simple'`;
+`multi` and `advanced` are also recognized and normalized.
+
+The object form of `authorization` accepts a server-only permission registry
+and static role templates:
+
+```ts
+const auth = defineAuthConfig({
+  tenancy: 'multi',
+  authorization: {
+    mode: 'advanced',
+    permissions: {
+      'records:read': { label: 'Read records' },
+      'records:write': { label: 'Edit records' },
+    },
+    roles: {
+      reviewer: { permissions: ['records:read'] },
+      owner: { allPermissions: true, system: true },
+    },
+  },
+});
+```
+
+Permission keys must be lowercase namespaced keys; role keys are lowercase
+stable identifiers. Unknown fields, invalid keys, duplicate role-permission
+references, undeclared permissions, and `allPermissions` mixed with explicit
+permissions are rejected during normalization. Public `/auth/config` exposes
+only safe capability data: the tenancy and authorization modes plus configured
+tenant terminology and creation mode. It never exposes the permission registry,
+role templates, or other server-only policy internals.
+
+`createAuthorizationKernel(resolvedAuth)` returns the transport-neutral policy
+engine. Its primary methods are `compile(requirement, parent?)`,
+`merge(parent, child)`, `evaluate(requirement, subject)`,
+`authorize(requirement, subject)`, `isValidScopeSnapshot(scope)`, and the exact
+`single/simple` compatibility helper `synthesizeSingleSimpleScope(input)`.
+Structured requirements can express platform role, required tenant, scope role,
+all/any permissions, and policy-trusted user-property matchers. Parent/child
+merges are monotonic.
+
+The kernel remains pure; the request, file-router, resource, data-query, Sync,
+token, and page-session adapters hydrate its live subject and scope. Multi-mode
+tenant/membership persistence, durable tenant-bound sessions,
+selection/switching, optional creation, registered-resource isolation, durable
+advanced assignments, and active-tenant member/role administration are
+present. Exact-email invitations, invitation-bound account creation, retained
+join-request review/re-admission, and their packaged hooks/components are also
+present; see
+[Tenant Invitations and Join Requests](./auth/tenant-invitations-and-join-requests.md).
+Opt-in request-only verified-domain onboarding is backed by exact DNS
+and current-mailbox proof, retained provenance, server routes/configuration,
+and the packaged browser surface.
+
+The [Auth And Data-Plane Capability Matrix](./auth/auth-data-plane-capability-matrix.md)
+maps each official transport and service to its enforcement owner, live scope
+source, focused tests, and deliberate trusted escape hatch. Use the
+[implementation checklist](./auth/multi-tenant-auth-implementation-checklist.md)
+for the unreleased candidate's final delivery and release gates.
+
+#### Protected Multipart Endpoints
+
+Zero-compiled server extensions apply auth before parsing protected multipart
+bodies. A `defineEndpoint()` with `auth: 'user'` or `auth: 'admin'` receives an
+automatic `onRequest` guard; a `defineRouter()` applies the same behavior to
+its inherited nested routes using the complete mounted prefix.
+
+```ts
+import { t } from 'elysia';
+import { defineEndpoint } from '@zero/framework/server';
+
+export default defineEndpoint({
+  method: 'POST',
+  path: '/api/documents/parse',
+  auth: 'user',
+  body: t.Object({ file: t.File() }),
+  handler: async ({ body, user }) => ({
+    uploadedBy: user.userId,
+    bytes: body.file.size,
+  }),
+});
+```
+
+Invalid credentials return stable `401 UNAUTHORIZED`, `403 FORBIDDEN`, or `503
+AUTH_NOT_READY` JSON before Elysia consumes the file. The usual route guard
+still covers non-multipart requests, and `false`/`optional` routes remain
+public. The official `client.api` Eden instance waits for auth restoration,
+injects the Bearer token, and can refresh/retry a replayable `FormData` body.
+Never set its multipart `Content-Type` manually.
+
+Raw Elysia routes must install the early hook before the route and retain the
+normal macro guard:
+
+```ts
+app
+  .onRequest(createProtectedMultipartRequestGuard(getTokenService, {
+    requirement: 'user',
+    method: 'POST',
+    path: '/api/documents/parse',
+  }))
+  .post('/api/documents/parse', handler, {
+    zeroAuth: 'user',
+    body: t.Object({ file: t.File() }),
+  });
+```
+
+The app must already have `createAuthMiddleware()` in scope. Use matching
+`admin` requirements for administrator-only routes. Auth resolution is cached
+by request and app-local token service, so the early hook and ordinary guard do
+not perform competing identity restorations.
 
 #### PDF Rendering
 
@@ -2404,10 +3002,16 @@ the server.
 
 #### Sync Policy
 
-`createApp()` installs platform defaults that protect service-owned tables from direct `sync.mutate` writes. App-owned tables remain writable over sync unless you pass stricter policy.
+`createApp()` composes app policy with deny-wins platform defaults. Private
+framework tables (`users`, workflow definitions, and Storage metadata) are not
+generic Sync reads. Notifications/receipts, rooms/members, and workflow
+execution rows use target, membership, or owner filters across snapshot,
+catch-up, and live delivery. Framework-owned tables also reject direct
+`sync.mutate` writes. App-owned tables keep their declared resource policy and
+remain writable unless you add stricter policy.
 
 ```ts
-import { createDefaultSyncPolicy } from '@platform/sync';
+import { createDefaultSyncPolicy } from '@zero/framework/sync';
 
 const config = resolveConfig({
   db: { mode: ':memory:' },
@@ -2429,6 +3033,59 @@ constraints, such as owner-only data, Zero applies a per-connection row filter
 to snapshots, catchup, and live changes. Direct `sync.mutate` writes against
 registered resources evaluate `create`, `update`, and `delete` policy
 server-side, including owner create stamping.
+
+#### Ephemeral Topic Policy
+
+Auth-enabled `createApp()` instances fail closed for unclassified ephemeral
+topics. Zero provides room-aware `presence:<roomId>` and `typing:<roomId>` plus
+personal `user:<currentUserId>:<name>` topics. Add `ephemeralPolicy` for other
+collaboration names:
+
+```ts
+import type { EphemeralTopicPolicy } from '@zero/framework/server';
+
+const ephemeralPolicy: EphemeralTopicPolicy = {
+  async authorize({ topic, operation, key, authContext }) {
+    const projectId = topic.startsWith('cursor:') ? topic.slice(7) : '';
+    if (!projectId || !authContext) {
+      return {
+        ok: false,
+        code: 'EPHEMERAL_TOPIC_UNCLASSIFIED',
+        reason: 'Cursor topic is not available',
+      };
+    }
+    if (operation !== 'subscribe' && key !== `user:${authContext.userId}`) {
+      return {
+        ok: false,
+        code: 'EPHEMERAL_KEY_NOT_OWNED',
+        reason: 'Cursor key must match the authenticated user',
+      };
+    }
+    return {
+      ok: true,
+      namespace: `project:${projectId}:cursors`,
+      keyOwnership: 'actor',
+    };
+  },
+};
+
+const config = resolveConfig({
+  db: { mode: 'memory' },
+  tables,
+  auth: true,
+  ephemeralPolicy,
+});
+```
+
+The namespace is server-side only and Zero scopes app decisions under an
+internal `app:` prefix. The default `actor` ownership prevents another
+principal from replacing or deleting an existing key; choose `unrestricted`
+only when cross-user replacement is deliberate. The policy is async and runs
+for subscribe, set, delete, and live revalidation. Authless standalone apps
+retain legacy unrestricted topics.
+
+See the [ephemeral wire protocol](./realtime-sync/realtime-sync/protocol.md#ephemeral-collaboration-channel)
+for limits, messages, and stable error codes.
 
 #### Platform Tokens
 
@@ -2520,17 +3177,13 @@ is enabled. See [Observability](observability.md).
 
 #### Plugins
 
-```ts
-import { createApp, createSchedulerPlugin, createNotificationPlugin } from '@zero/framework/server';
-
-const app = createApp(config);
-
-// Mount order: scheduler → notifications (notifications register cleanup job)
-app.use(createSchedulerPlugin());
-app.use(createNotificationPlugin({ db: app.decorator.db }));
-
-app.listen(3000);
-```
+`createApp()` already mounts Scheduler before Notifications, plus Rooms,
+Workflows, and the other enabled platform plugins in their required order. Do
+not mount duplicate platform plugins or reach into Elysia decorators for a
+database handle. App-owned extensions belong in `server/plugins`,
+`server/middleware`, `server/endpoints`, and `server/routes`, or in the matching
+explicit directory options. Use low-level plugin factories only when building
+a standalone Elysia composition without `createApp()`.
 
 ---
 
@@ -2541,13 +3194,17 @@ app.listen(3000);
 | Hook | Signature | Description |
 |------|-----------|-------------|
 | `useCollection` | `<T>(name) => { data, insert, update, remove }` | Primary mutation API -- all rows + CRUD, re-renders on any change |
-| `useLazyCollection` | `(name, filter?) => { data, isLoading, error, refresh }` | Lazy table hook with loading/error/refresh |
+| `useLazyCollection` | `(name, filters?, options?) => { data, isLoading, error, refresh }` | Lazy table hook with loading/error/refresh |
 | `useDataPage` | `(table, options?) => DataPageResult` | `/api/data` pagination, sorting, filters, loading/error, and refresh |
 | `useRow` | `<T>(name, id) => T \| null` | Single row, re-renders when it changes |
 | `useRecord` | `(table, id) => RecordResult` | Single row plus update/delete helpers |
 | `useRecordByIdentity` | `(table, identity) => IdentityRecordResult` | Natural-identity lookup plus upsert/update/delete helpers |
+| `useResourceClient` | `(resource, options?) => ResourceClient \| null` | Generated-resource HTTP client after browser mount |
+| `useResourceList` | `(resource, options?) => ResourceListHookResult` | Request-driven resource list with page/filter/sort state |
+| `useResourceRecord` | `(resource, id: string \| null, options?) => ResourceRecordResult` | Request-driven record plus update/delete helpers |
+| `useResourceActions` | `(resource, options?) => ResourceActionsResult` | Generated-resource create/update/delete lifecycle |
 | `useDataSelection` | `(items, options?) => UseDataSelectionReturn` | Reusable single/multiple selected-row state for data views |
-| `useQuery` | `<T>(name, predicate) => T[]` | Filtered rows, re-renders on matching changes |
+| `useQuery` | `<T>(name, predicate) => T[]` | Local filtered rows; recomputes when the table map changes |
 | `useStatus` | `() => { connected: boolean }` | WebSocket connected? |
 | `useConnectionHealth` | `() => ConnectionHealth` | Auth/sync/pending-mutation health for app banners |
 | `useMutation` | `(action, options?) => UseMutationReturn` | SDK-backed command lifecycle with observability errors |
@@ -2561,12 +3218,32 @@ app.listen(3000);
 | `useCurrentUser` | `() => AuthUser \| null` | Current user shorthand |
 | `useRequireAuth` | `(redirectTo?) => AuthUser \| null` | Guard: redirects if not authed |
 | `useUserProperty` | `(key, options?) => UseUserPropertyResult` | Current-user KV property reader/writer for UI settings and gates |
+| `useAuthorizationScopeBoundary` | `(clientOverride?: Client \| null) => AuthorizationScopeBoundary` | Credential-free opaque key/readiness boundary for app-owned cache isolation; never server authority |
+| `isAuthorizationScopeCallbackCurrent` | `(currentKey: string, ready: boolean, capturedKey: string) => boolean` | Pure late-callback fence for source-installed components and app-owned async adapters |
+| `useAuthorization` | `() => UseAuthorizationResult` | Sanitized live authorization snapshot and refresh lifecycle |
+| `useHasPermission` | `(permission: string) => boolean` | Fail-closed one-permission UI hint |
+| `useHasAllPermissions` | `(permissions: readonly string[]) => boolean` | Fail-closed all-permissions UI hint |
+| `useHasAnyPermission` | `(permissions: readonly string[]) => boolean` | Fail-closed any-permission UI hint |
+| `useApplicationAccess` | `(options?) => UseApplicationAccessResult` | Single/advanced application-role administration with cursor paging and ownership transfer |
+| `useAuthAudit` | `(options: UseAuthAuditOptions) => UseAuthAuditResult` | Authorized tenant/platform control-plane audit pagination and export |
+| `useTenantMembers` | `(options?) => UseTenantMembersResult` | Active-tenant member, role, status, and ownership administration |
+| `useTenantOnboardingAdministration` | `(options?) => UseTenantOnboardingAdministrationResult` | Active-tenant invitations and retained join-request review |
+| `useTenantDomainAdministration` | `(options?) => UseTenantDomainAdministrationResult` | Active-tenant verified-domain claim and policy controls |
+| `useDomainOnboarding` | `(options?) => UseDomainOnboardingResult` | Non-enumerating mailbox-proof/request-to-join flow |
+| `useTenantSwitcher` | `() => UseTenantSwitcherResult` | Refresh-family-backed active-tenant choices and switching |
+| `useTenantAppShellWorkspaces` | `(options?) => AppShellWorkspaceConfig \| undefined` | Official tenant-session projection for AppShell workspaces, including committed selection, pending/error/retry, announcements, and focus restoration |
+
+The onboarding hook's invitation and join-request lifecycle is documented in
+[Tenant Invitations and Join Requests](./auth/tenant-invitations-and-join-requests.md).
+The audit hook's event, authorization, retention, query, and export boundary is
+documented in
+[Durable Authorization and Control-Plane Audit](./auth/control-plane-audit.md).
 
 ### State Hooks
 
 | Hook | Signature | Description |
 |------|-----------|-------------|
-| `useServerState` | `<T>(key, default) => [T, (v: T) => void]` | Server-persisted per-user state |
+| `useServerState` | `<T>(key, default) => [T, (v: T) => void]` | Server-persisted state for the current authorized-scope user |
 | `useServerStateReady` | `() => boolean` | Initial state loaded from server? |
 | `usePreference` | `(key, defaultValue) => UsePreferenceResult` | Named server-state wrapper for user preferences |
 | `useFormDraft` | `(key, initialValue, options?) => UseFormDraftResult` | Object-shaped synced form draft helper |
@@ -2597,11 +3274,27 @@ app.listen(3000);
 | `useRoom` | `(roomId) => UseRoomResult` | Live room plus members |
 | `useRoomMembers` | `(roomId) => RoomMemberRecord[]` | Live room members |
 | `useRooms` | `(userId) => RoomRecord[]` | Rooms for a user |
-| `useRoomActions` | `() => RoomActions` | Create/join/leave/delete room actions |
-| `useRoomData` | `(roomId, tableName) => rows[]` | Live table rows filtered by `room_id` |
+| `useRoomActions` | `() => RoomActions` | Create/confirm-admission/leave/delete room actions |
+| `useRoomData` | `(roomId, tableName) => rows[]` | Client-side live `room_id` filter; app table still requires server read/write policy |
 | `usePresence` | `(roomId, data?) => UsePresenceResult` | Low-level ephemeral presence heartbeat |
 | `usePresenceList` | `(roomId, options?) => UsePresenceListReturn` | Display-ready presence list with stale filtering |
-| `useTypingIndicator` | `(scope, options?) => UseTypingIndicatorReturn` | Ephemeral typing state with TTL and current typing users |
+| `useTypingIndicator` | `(roomId, options?) => UseTypingIndicatorReturn` | Membership-authorized ephemeral typing state with TTL and current typing users |
+| `useEphemeralErrors` | `(listener) => void` | Observe stable topic authorization and validation failures |
+
+`presence:{roomId}` and `typing:{roomId}` are reserved, server-enforced topic
+families. The current user must have a live `RoomService` membership, and
+writes/deletes must use `user:{currentUserId}`. Membership changes revalidate
+and revoke the live subscription. An explicit `options.topic` outside the
+reserved families requires an app `ephemeralPolicy`; it is not automatically
+authorized merely because a hook requested it.
+
+Room lifecycle is server-controlled. Creating a room adds its creator as the
+owner. Reads require membership, and the default `join(roomId)` call only
+returns an already admitted membership; invitation, domain, or approval logic
+must call `RoomService.join()` from trusted server code. Owners cannot leave
+(`409 ROOM_OWNER_CANNOT_LEAVE`) and must delete the room. A global admin may
+delete a room as a control-plane action, but that authority does not grant
+room data-plane read access.
 
 ### Storage Hooks
 
@@ -2623,7 +3316,8 @@ app.listen(3000);
 
 Storage hooks must run inside `AppProvider` or `ClientProvider` so they can use
 the platform SDK client. JSON actions use `client.fetch()`; multipart uploads
-use SDK auth headers with an automatic refresh-and-retry on 401.
+use the same auth controller for restoration, bearer injection, one 401
+refresh/retry, and authorization-scope cancellation.
 
 ### Workflow Hooks
 
@@ -2640,7 +3334,7 @@ use SDK auth headers with an automatic refresh-and-retry on 401.
 |------|-----------|-------------|
 | `useParams` | `() => Record<string, string>` | Route params |
 | `usePathname` | `() => string` | Current pathname |
-| `useRouter` | `() => { push, replace, go, back, forward }` | Navigation |
+| `useRouter` | `() => { push, replace, back, prefetch, isNavigating, ... }` | Client-route navigation and preload state |
 
 ### Form Hook
 
@@ -2689,31 +3383,38 @@ See [Frontend Hooks](frontend/hooks.md) for usage examples and hook boundary rul
 
 ---
 
-## Full Export List
+## Selected Export Reference
 
-Everything available from `@zero/framework/react`:
+Common exports from `@zero/framework/react`. This is a curated reference, not a
+generated or exhaustive inventory; use TypeScript autocomplete and the package
+barrel for the exact installed-version surface.
 
 ### Functions & Classes
-`createClient`, `getClient`, `AuthClient`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
+`createClient`, `getClient`, `AuthClient`, `isAuthEmailVerificationRequiredResult`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
 
 ### React Components
-`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `KanbanBoard`, `KanbanTaskCard`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
+`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `LoginForm`, `RegisterForm`, `ForgotPasswordForm`, `PasswordActionForm`, `ChangePasswordForm`, `EmailVerificationForm`, `UserPropertiesForm`, `AuthFlowContinuation`, `TenantSelectionForm`, `TenantCreationForm`, `TenantSwitcher`, `ApplicationAccessManagement`, `TenantMemberManagement`, `TenantOnboardingManagement`, `TenantDomainManagement`, `DomainOnboarding`, `TenantInvitationForm`, `TenantJoinRequestForm`, `ControlPlaneAuditViewer`, `PermissionGate`, `TenantGate`, `PlatformAdminGate`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `KanbanBoard`, `KanbanTaskCard`, `PlatformUserManagement`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
 
 ### React Hooks
-`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
+`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `isAuthorizationScopeCallbackCurrent`, `useAuthorizationScopeBoundary`, `useAuthorization`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher`, `useTenantAppShellWorkspaces`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
 
 ### Constants
 `STORAGE_TABLES`, `zeroAnimatedIconNames`, `zeroAnimatedIcons`
 
 ### Types
-`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `RegisterParams`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `StorageUploadGrantResource`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
+`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `AuthCompletionResult`, `AuthRegistrationResult`, `AuthRegistrationTenant`, `AuthEmailVerificationRequiredResult`, `RegisterParams`, `LoginFormProps`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `PlatformUserManagementProps`, `UserManagementProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `AuthorizationScopeBoundary`, `UseAuthorizationResult`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `UseApplicationAccessOptions`, `UseApplicationAccessResult`, `UseAuthAuditOptions`, `UseAuthAuditResult`, `UseTenantMembersOptions`, `UseTenantMembersResult`, `UseTenantOnboardingAdministrationOptions`, `UseTenantOnboardingAdministrationResult`, `UseTenantDomainAdministrationOptions`, `UseTenantDomainAdministrationResult`, `UseDomainOnboardingOptions`, `UseDomainOnboardingResult`, `UseTenantSwitcherResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `InferInsert`, `InsertInput`, `PrimaryKeyOf`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
+
+`StorageUploadGrantResource` is a server/storage contract rather than a React
+barrel export. Import it from `@zero/framework/storage` or
+`@zero/framework/server`.
 
 Native-only (from `@zero/framework/native`): `createZeroNativeAuth`,
 `createZeroNativeAuthBroker`, `createNativeAuthClient`,
 `createNativeAuthBroker`, `createNativeAuthBrokerClient`,
 `createNativeSyncAuth`, `NativeAuthError`, `NativeAuthClient`,
 `NativeAuthClientOptions`, `NativeAuthState`, `NativeAuthStatus`,
-`NativeAuthErrorInfo`, `NativeAuthStateListener`, `NativeSignInOptions`,
+`NativeTenantSummary`, `NativeTenantListResult`, `NativeAuthErrorInfo`,
+`NativeAuthStateListener`, `NativeSignInOptions`,
 `NativeSignUpOptions`, `NativeIdentityScope`, `NativeAuthBroker`,
 `NativeAuthBrokerClient`, `NativeAuthBrokerClientOptions`,
 `NativeAuthBrokerRequest`, `NativeAuthBrokerResponse`,
@@ -2723,9 +3424,9 @@ Native-only (from `@zero/framework/native`): `createZeroNativeAuth`,
 `NativeCallbackSession`, `NativeCryptoAdapter`, `NativeFetch`,
 `NativeSyncAuthConfig`, `NativeIdTokenClaims`, and `NativeOidcMetadata`.
 
-Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `ResolvedConfig`, `AuthPluginConfig`, `NativeAuthConfig`, `NativeAuthorizationRequestPolicyConfig`, `NativeAuthorizationSourceResolver`, `NativeRefreshRotationPolicyConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `StorageDriveApi`, `StorageObjectApi`, `StoragePermissionApi`, `StorageUploadGrantApi`, `StorageServiceOptions`, `CreateUploadGrantTokenOptions`, `VerifiedUploadGrant`, `PdfConfig`, `PdfRenderInput`, `PdfRenderResult`, `PdfService`, `PdfStorageTarget`, `PlatformTokenService`, `PlatformActionTokenRecord`, `PlatformResumeTokenRecord`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `defineNativeAuthConfig`, `resolveNativeAuthConfig`, `createAuthPlugin`, `installAuthStopBarrier`, `createAuthMiddleware`, `getTokenService`, `createPlatformTokenPlugin`, `getPlatformTokenService`, `createPdfPlugin`, `getPdfService`, `requirePdfService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `createUploadGrantToken`, `verifyUploadGrantToken`, `emitPlatformCode`, `createObservabilityPlugin`
+Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `AppStorageConfig`, `ResolvedConfig`, `ResolvedAppStorageConfig`, `AuthPluginConfig`, `AuthTenancyMode`, `AuthTenancyConfig`, `AuthTenancyOptions`, `ResolvedAuthTenancyConfig`, `AuthAuthorizationMode`, `AuthAuthorizationConfig`, `AuthAuthorizationOptions`, `AuthPermissionConfig`, `ResolvedAuthPermissionConfig`, `AuthRoleTemplateConfig`, `ResolvedAuthRoleTemplateConfig`, `ResolvedAuthAuthorizationConfig`, `NormalizedAuthBehaviorConfig`, `ResolvedAuthBehaviorConfig`, `PermissionKey`, `AuthorizationKernel`, `AuthorizationKernelConfig`, `AccessRequirement`, `StructuredAccessRequirement`, `CompiledAccessRequirement`, `AuthorizationSubjectSnapshot`, `AuthorizationScopeSnapshot`, `AuthorizationDecision`, `ProtectedMultipartRequestGuardOptions`, `ZeroElysiaAuthRequirement`, `NativeAuthConfig`, `NativeAuthorizationRequestPolicyConfig`, `NativeAuthorizationSourceResolver`, `NativeRefreshRotationPolicyConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `StorageDriveApi`, `StorageObjectApi`, `StoragePermissionApi`, `StorageUploadGrantApi`, `StorageServiceOptions`, `CreateUploadGrantTokenOptions`, `VerifiedUploadGrant`, `PdfConfig`, `PdfRenderInput`, `PdfRenderResult`, `PdfService`, `PdfStorageTarget`, `PlatformTokenService`, `PlatformActionTokenRecord`, `PlatformResumeTokenRecord`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `defineAuthConfig`, `resolveAuthBehaviorConfig`, `createAuthorizationKernel`, `compileAccessRequirement`, `mergeAccessRequirements`, `validateAuthorizationRegistry`, `defineNativeAuthConfig`, `resolveNativeAuthConfig`, `createAuthPlugin`, `installAuthStopBarrier`, `createAuthMiddleware`, `createProtectedMultipartRequestGuard`, `getTokenService`, `createPlatformTokenPlugin`, `getPlatformTokenService`, `createPdfPlugin`, `getPdfService`, `requirePdfService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `createUploadGrantToken`, `verifyUploadGrantToken`, `emitPlatformCode`, `createObservabilityPlugin`
 
-Sync-only (from `@platform/sync`): `createDefaultSyncPolicy`, `combineSyncPolicies`, `allowAllSyncPolicy`, `getReadableSyncTables`, `evaluateSyncReadPolicy`, `evaluateSyncMutationPolicy`, `SyncPolicy`, `SyncReadPolicyContext`, `SyncMutationPolicyContext`
+Sync-only (from `@zero/framework/sync`): `createDefaultSyncPolicy`, `combineSyncPolicies`, `allowAllSyncPolicy`, `getReadableSyncTables`, `evaluateSyncReadPolicy`, `evaluateSyncMutationPolicy`, `SyncPolicy`, `SyncReadPolicyContext`, `SyncMutationPolicyContext`
 
 ### CVA Variant Functions
 `buttonVariants`, `badgeVariants`

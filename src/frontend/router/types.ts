@@ -1,4 +1,8 @@
 import type { ReactNode } from 'react';
+import type { GenericSchema } from 'valibot';
+import type { RequestAuthorizationAccess } from '../../auth/authorization-access';
+import type { AccessRequirement } from '../../auth/authorization-kernel';
+import type { AuthContext } from '../../auth/types';
 
 // ─── Route Definition ──────────────────────────────────────────────────────
 
@@ -17,12 +21,20 @@ export interface RouteModule {
   loader?: (ctx: LoaderContext) => unknown | Promise<unknown>;
   /** Page metadata */
   meta?: PageMeta | ((params: Record<string, string>) => PageMeta);
+  /** Runtime validation applied before loaders and page rendering. */
+  validate?: RouteValidation;
   /** API route handlers */
   GET?: ApiHandler;
   POST?: ApiHandler;
   PUT?: ApiHandler;
   DELETE?: ApiHandler;
   PATCH?: ApiHandler;
+}
+
+/** Schemas exported by a page module to validate matched route input. */
+export interface RouteValidation {
+  /** Validate dynamic path parameters before the loader or component runs. */
+  params?: GenericSchema;
 }
 
 // ─── Route Tree ────────────────────────────────────────────────────────────
@@ -83,12 +95,10 @@ export interface MatchResult {
 export interface LoaderContext {
   params: Record<string, string>;
   request: Request;
-  /** Authenticated user context (populated by auth middleware). */
-  auth?: {
-    userId: string;
-    role?: string;
-    [key: string]: unknown;
-  };
+  /** Live authenticated identity from Bearer or the page-only session cookie. */
+  auth?: AuthContext;
+  /** Canonical request-local authorization facade used by every server route surface. */
+  access: RequestAuthorizationAccess;
   /** Create a redirect Response. */
   redirect: (url: string, status?: number) => Response;
 }
@@ -120,11 +130,15 @@ export interface PageMeta {
  * ```
  */
 export interface RouteConfig {
-  /** Auth requirement for this route. */
-  auth?: boolean | 'required' | 'admin';
+  /** Shared Zero access requirement. Parent layouts can only be strengthened. */
+  auth?: AccessRequirement;
   /** ISR revalidation interval in seconds. 0 = no cache. */
   revalidate?: number;
-  /** Custom middleware — runs before loader/render. Return a Response to short-circuit. */
+  /**
+   * Custom middleware for this module. Layout middleware runs before page
+   * loader/render only; a route.ts module must declare its own middleware for
+   * API requests. Return a Response to short-circuit.
+   */
   middleware?: (ctx: LoaderContext) => Response | void | Promise<Response | void>;
 }
 

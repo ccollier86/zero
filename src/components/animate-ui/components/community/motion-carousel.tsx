@@ -4,7 +4,7 @@ import * as React from 'react';
 import { motion, type Transition } from 'motion/react';
 import { EmblaOptionsType, EmblaCarouselType } from 'embla-carousel';
 import useEmblaCarousel from 'embla-carousel-react';
-import { Button } from '@/components/animate-ui/components/buttons/button';
+import { Button } from '#zero/components/animate-ui/components/buttons/button';
 import { ChevronRight, ChevronLeft } from 'lucide-react';
 
 type PropType = {

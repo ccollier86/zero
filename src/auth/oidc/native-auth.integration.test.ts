@@ -24,12 +24,13 @@ let webAccessToken: string;
 
 beforeAll(async () => {
   const port = await availablePort();
-  baseUrl = `http://localhost:${port}`;
+  baseUrl = `http://127.0.0.1:${port}`;
   issuer = `${baseUrl}/auth`;
   db = createReactiveDB({ mode: 'memory' });
   app = new Elysia()
     .use(createAuthPlugin({
       db,
+      bootstrap: 'public',
       nativeIssuer: issuer,
       nativeAudience: baseUrl,
       nativeApps: {
@@ -467,10 +468,30 @@ describe('native OpenID Connect provider', () => {
     expect((await nativeSyncContext(second.access_token)).ok).toBe(true);
 
     const revoked = await fetch(`${issuer}/oauth/revoke`, {
-      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'x-correlation-id': 'native-revoke-correlation',
+      },
       body: new URLSearchParams({ token: first.refresh_token, client_id: CLIENT_ID }),
     });
     expect(revoked.status).toBe(200);
+    expect(db.prepare(`SELECT action, outcome, scope_kind, actor_user_id,
+      actor_session_id, actor_session_kind, actor_client_id, correlation_id,
+      target_type, target_id
+      FROM _auth_audit_events
+      WHERE action = 'session.revoked' AND target_id = ?`).get(firstFamily)).toMatchObject({
+      action: 'session.revoked',
+      outcome: 'succeeded',
+      scope_kind: 'application',
+      actor_user_id: user.userId,
+      actor_session_id: firstFamily,
+      actor_session_kind: 'native',
+      actor_client_id: CLIENT_ID,
+      correlation_id: 'native-revoke-correlation',
+      target_type: 'native-session-family',
+      target_id: firstFamily,
+    });
     expect(await nativeContext(first.access_token)).toEqual({ anonymous: true });
     expect((await nativeSyncContext(first.access_token)).ok).toBe(false);
     expect(await nativeContext(second.access_token)).toMatchObject({

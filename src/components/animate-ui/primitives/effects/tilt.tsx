@@ -10,8 +10,8 @@ import {
   type HTMLMotionProps,
 } from 'motion/react';
 
-import { Slot, type WithAsChild } from '@/components/animate-ui/primitives/animate/slot';
-import { getStrictContext } from '@/lib/get-strict-context';
+import { Slot, type WithAsChild } from '#zero/components/animate-ui/primitives/animate/slot';
+import { getStrictContext } from '#zero/lib/get-strict-context';
 
 type TiltContextType = {
   sRX: MotionValue<number>;

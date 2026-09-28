@@ -64,7 +64,15 @@ function isStoredSession(value: unknown): value is NativeStoredSession {
   return strings(value, ['issuer', 'clientId', 'subject', 'refreshToken'])
     && strings(value.identity, ['iss', 'sub'])
     && typeof value.identity.exp === 'number'
-    && typeof value.identity.iat === 'number';
+    && typeof value.identity.iat === 'number'
+    && (value.activeTenant === undefined || value.activeTenant === null
+      || isTenantSummary(value.activeTenant));
+}
+
+function isTenantSummary(value: unknown): boolean {
+  return isRecord(value)
+    && strings(value, ['tenantId', 'slug', 'name'])
+    && (value.role === null || typeof value.role === 'string');
 }
 
 function isPendingAuthorization(value: unknown): value is NativePendingAuthorization {

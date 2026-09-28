@@ -16,6 +16,42 @@ export class AuthClientError extends Error {
   }
 }
 
+/**
+ * Resolve an authenticated browser request against the configured Zero server
+ * and reject any target that could send credentials to another origin.
+ */
+export function resolveAuthRequestUrl(baseUrl: string, requestUrl: string): string {
+  try {
+    const fallback = typeof location !== 'undefined' ? location.href : undefined;
+    const server = fallback ? new URL(baseUrl, fallback) : new URL(baseUrl);
+    if (server.protocol !== 'http:' && server.protocol !== 'https:') {
+      throw new TypeError('Unsupported Zero server protocol');
+    }
+
+    server.hash = '';
+    server.search = '';
+    if (!server.pathname.endsWith('/')) server.pathname += '/';
+
+    const target = new URL(requestUrl, server);
+    if (
+      (target.protocol !== 'http:' && target.protocol !== 'https:')
+      || target.origin !== server.origin
+    ) {
+      throw new TypeError('Authenticated request origin did not match');
+    }
+
+    return target.href;
+  } catch (error) {
+    if (error instanceof AuthClientError) throw error;
+    throw new AuthClientError(
+      'Authenticated requests must target the configured Zero server origin.',
+      0,
+      'AUTH_REQUEST_ORIGIN_MISMATCH',
+      null,
+    );
+  }
+}
+
 export function createAuthDisabledError(): Error {
   return new Error(AUTH_DISABLED_MESSAGE);
 }

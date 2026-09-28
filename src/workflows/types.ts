@@ -14,6 +14,7 @@
 
 import type { TSchema } from 'elysia';
 import type { ClientTableDef } from '../schema/define-schema';
+import type { WorkflowExecutionIdentity } from './workflow-execution-authority';
 
 // ─── Status Enums ────────────────────────────────────
 
@@ -60,7 +61,7 @@ export interface WorkflowDefinition {
 
 // ─── Runtime Context ─────────────────────────────────
 
-export interface StepContext<TInput = unknown> {
+export interface StepContext<TInput = unknown, TServices = unknown> {
   /** Previous step's output (or workflow input for step 0) */
   input: TInput;
   /** Original workflow input */
@@ -73,9 +74,17 @@ export interface StepContext<TInput = unknown> {
   attempt: number;
   /** Event data if step was waiting for an event */
   waitEvent?: { name: string; payload: unknown };
+  /** Immutable actor/system provenance and tenant-safe authorization scope. */
+  execution: WorkflowExecutionIdentity;
+  /** Request-equivalent, scope-closed services when the app installed a provider. */
+  zero: TServices | null;
+  /** Revalidate immediately before an app-owned external/security-sensitive effect. */
+  assertCurrentAuthority(): void;
 }
 
-export type StepHandler = (ctx: StepContext) => Promise<unknown>;
+export type StepHandler<TInput = unknown, TServices = unknown> = (
+  ctx: StepContext<TInput, TServices>,
+) => Promise<unknown>;
 
 // ─── Persisted Records ───────────────────────────────
 
@@ -91,6 +100,8 @@ export interface WorkflowDefinitionRecord {
 
 export interface WorkflowInstanceRecord {
   instance_id: string;
+  /** Null in single-tenant mode; tenant id for multi-tenant instances. */
+  tenant_id: string | null;
   definition_id: string;
   name: string;
   status: WorkflowStatus;
@@ -106,6 +117,8 @@ export interface WorkflowInstanceRecord {
 
 export interface WorkflowStepRecord {
   step_id: string;
+  /** Duplicated from the parent instance for direct Sync filtering. */
+  tenant_id: string | null;
   instance_id: string;
   step_index: number;
   step_name: string;
@@ -125,6 +138,8 @@ export interface WorkflowStepRecord {
 
 export interface WorkflowEventRecord {
   event_id: string;
+  /** Duplicated from the parent instance for direct Sync filtering. */
+  tenant_id: string | null;
   instance_id: string;
   event_name: string;
   payload: string | null;
@@ -152,6 +167,7 @@ export const WORKFLOW_TABLES: Record<string, ClientTableDef> = {
   workflow_instances: {
     _pk: 'instance_id',
     instance_id: 'text',
+    tenant_id: 'text',
     definition_id: 'text',
     name: 'text',
     status: 'text',
@@ -168,6 +184,7 @@ export const WORKFLOW_TABLES: Record<string, ClientTableDef> = {
   workflow_steps: {
     _pk: 'step_id',
     step_id: 'text',
+    tenant_id: 'text',
     instance_id: 'text',
     step_index: 'integer',
     step_name: 'text',
@@ -187,6 +204,7 @@ export const WORKFLOW_TABLES: Record<string, ClientTableDef> = {
   workflow_events: {
     _pk: 'event_id',
     event_id: 'text',
+    tenant_id: 'text',
     instance_id: 'text',
     event_name: 'text',
     payload: 'text',

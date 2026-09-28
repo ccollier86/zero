@@ -8,7 +8,7 @@ Four credential types with distinct verification and transport boundaries:
 
 | Token | Format | Lifetime | Storage | Verification |
 |-------|--------|----------|---------|-------------|
-| **Access** | JWT (ES256, issuer `auth`) | Short (default 15m) | Browser memory | Stateless signature plus live-user checks for HTTP context |
+| **Access** | JWT (ES256, issuer `auth`) | Short (default 15m) | Browser memory | Signature plus live user and durable parent-session authority |
 | **Auth transition** | JWT (ES256, issuer `auth-transition`) | Short | Browser memory | Signature, purpose, and current-user checks in account/MFA flows |
 | **Refresh** | Opaque UUID | Long (default 7d) | Raw value in browser `localStorage`; SHA-256 hash in `_refresh_tokens` | Stateful DB lookup, expiry, revocation, and rotation |
 | **Page session** | JWT (ES256, issuer `auth-page-session`) | No later than backing refresh row | Host-only HttpOnly cookie | Signature plus live refresh row and current user; safe SSR pages only |
@@ -38,7 +38,7 @@ ES256 is the sweet spot: asymmetric (supports JWKS, external verification), comp
 Process start
      │
      ├── Check AUTH_SIGNING_KEY env var
-     │   ├── Set? → Import as PEM or base64 JWK → use as signing key
+     │   ├── Set? → Import raw JSON or base64 JWK → use as signing key
      │   └── Not set? ▼
      │
      ├── Check _auth_config table
@@ -63,9 +63,9 @@ class TokenService {
 
   static async create(config: TokenServiceConfig): Promise<TokenService> {
     // 1. Try env var
-    const envKey = process.env[AUTH.signingKeyEnvKey];
+    const envKey = process.env[AUTH_DEFAULTS.signingKeyEnvKey];
     if (envKey) {
-      return TokenService.fromImportedKey(envKey, config);
+      return TokenService.fromEnvKey(envKey, config);
     }
 
     // 2. Try database (_auth_config is an internal table — use raw SQL, not ReactiveDB methods)
@@ -113,21 +113,22 @@ JWKS identifier. An explicit `kid` is preserved.
 ### Signing
 
 ```ts
-async signAccessToken(user: { userId: string; email: string; role: string }): Promise<string> {
-  const jwt = await new SignJWT({
-    sub: user.userId,
-    email: user.email,
-    role: user.role,
-  })
-    .setProtectedHeader({ alg: 'ES256', kid: this.keyId })
-    .setIssuedAt()
-    .setExpirationTime(this.accessTokenTTL)  // default '15m'
-    .setIssuer('auth')
-    .sign(this.privateKey);
-
-  return jwt;
-}
+// Application auth flows use this entry point. It validates the selected
+// tenant (when enabled), creates the durable parent, and links the first
+// refresh child in one transaction.
+const pair = await tokenService.issueTokenPair(user, {
+  binding: tenancyMode === 'multi'
+    ? { tenantId, membershipId }
+    : undefined,
+});
 ```
+
+`signAccessToken()` is a low-level cryptographic helper used internally by the
+token service; it is not a complete browser-session issuance API. New browser
+access JWTs are signed only after Zero has prepared a durable `web` parent and
+carry that parent's opaque ID and generation. In multi-tenant mode the binding
+must either be supplied by a server-owned auth flow or resolve to exactly one
+active membership. Zero does not accept a client-selected tenant header.
 
 **Claims:**
 
@@ -137,7 +138,9 @@ async signAccessToken(user: { userId: string; email: string; role: string }): Pr
 | `email` | Browser user record | Browser-token identity hint; live user data remains authoritative |
 | `role` | Browser user record | Browser-token hint; live user role remains authoritative |
 | `authGeneration` | User security state | Rejects tokens minted before a security transition |
-| `sid` | Native refresh family | Binds native access to a live, revocable session family |
+| `sessionKind` | `'web'` or `'native'` | Prevents one credential family from being interpreted as another |
+| `sid` | Browser parent or native refresh family | Binds access to live, revocable server state |
+| `sessionGeneration` | Browser parent | Rejects browser access after a parent generation change |
 | `iat` | Auto (jose) | Issued-at timestamp |
 | `exp` | TTL config | Expiration — stateless enforcement |
 | `iss` | `'auth'` | Issuer — identifies the auth system |
@@ -171,9 +174,13 @@ async verifyAccessToken(token: string): Promise<AccessTokenPayload | null> {
 `verifyAccessToken()` is deliberately cryptographic-only: the public key
 verifies the signature and `jose` checks claims such as `exp` and `iss`.
 Request middleware uses `resolveAuthContext()` instead. That method loads the
-current user, checks account eligibility and `authGeneration`, and requires an
-active configured-client refresh family for native tokens. Native access JWTs
-therefore omit email and role; those values are hydrated from the live user.
+current user, checks account eligibility and `authGeneration`, then resolves
+the credential's live session boundary. Browser access must resolve an active,
+unexpired `_auth_sessions` row with the same user, kind, ID, and generation.
+Tenant-scoped parents additionally require the tenant and membership to remain
+active with the exact captured authorization generations. Native access still
+uses its configured-client refresh family. Native JWTs omit email and role;
+those values are hydrated from the live user.
 
 Code that verifies a JWT offline through JWKS can validate its signature and
 expiry, but cannot observe Zero's live user/session revocation state. Protected
@@ -208,9 +215,10 @@ new SignJWT({ sid: refreshRecord.tokenId })
 ```
 
 Resolution verifies the signature and issuer, loads `_refresh_tokens` by
-`sid`, checks user ownership, expiry, and revocation, then loads the current
-user and reapplies account eligibility. Current role and email come from the
-database, not stale cookie claims.
+`sid`, checks user ownership, expiry, and revocation, then follows
+`_refresh_tokens.session_id` to the same durable parent used by browser access.
+The parent, current user, and any tenant/membership authority are revalidated.
+Current role and email come from the database, not stale cookie claims.
 
 This JWT is intentionally rejected by access-token verification. The file
 router accepts it only for actual `GET`/`HEAD` pages when no Authorization
@@ -228,8 +236,8 @@ Refresh tokens are **not JWTs**. They're random UUIDs:
 | | Access Token (JWT) | Refresh Token (opaque) |
 |---|-------------------|----------------------|
 | **Format** | Structured, signed, readable | Random UUID, meaningless |
-| **Verification** | Stateless (public key) | Stateful (DB lookup) |
-| **Revocable** | No (valid until expiry) | Yes (set `revoked_at` in DB) |
+| **Verification** | Signature plus live parent lookup | Stateful DB lookup |
+| **Revocable** | Yes (revoke the durable parent) | Yes (parent or child revocation) |
 | **Rotation** | Not needed (short-lived) | Required (long-lived, must be one-time-use) |
 
 A JWT refresh token would be stateless — but then you can't revoke it. Since refresh tokens are long-lived (7 days), revocation is critical. Making them opaque forces a DB check, which enables revocation and rotation.
@@ -242,8 +250,10 @@ Login / Register
        ▼
   Generate: crypto.randomUUID()
        │
-       ├── Store: SHA-256(token) → _refresh_tokens table
-       │          (never store the raw token in the DB)
+       ├── Create: durable parent → _auth_sessions table
+       │
+       ├── Store: SHA-256(token) + parent session_id → _refresh_tokens
+       │          (never store the raw token in the DB; both writes are atomic)
        │
        └── Return: raw token → browser SDK
                    (SDK stores it in localStorage for client restoration;
@@ -312,44 +322,64 @@ Client                          TokenService                    _refresh_tokens
 
 **One-time use:** Every refresh token is used exactly once. After use, it's revoked. The client receives a new refresh token and must use that for the next refresh. If a revoked token is used again (token replay), all tokens for that user are revoked — indicating possible token theft.
 
+Rotation never creates a new parent: it revalidates the current parent and any
+tenant/membership generations, consumes the old refresh child, inserts its
+replacement with the same `session_id`, and extends the parent's last-seen and
+expiry values in the same transaction. Ordinary rotation therefore preserves
+`sid`; logout, replay, page-session replacement, and account security changes
+revoke the appropriate parent sessions so already-issued access JWTs fail live
+resolution immediately.
+
 ### Replay Detection
 
-```ts
-async rotateRefreshToken(rawToken: string): Promise<TokenPair | null> {
-  const hash = this.hashToken(rawToken);
-  const record = this.userStore.getRefreshTokenByHash(hash);
+**Replay response:** If a revoked refresh token is reused, Zero bumps the
+user's security generation, revokes every refresh token and durable browser
+parent for that user, and returns no replacement. Both the suspected attacker
+and legitimate browser must authenticate again.
 
-  if (!record) return null;  // Unknown token
+## Durable Browser Session Schema and Upgrade
 
-  // Check if already revoked — possible replay attack
-  if (record.revokedAt !== null) {
-    // Revoke ALL tokens for this user (family rotation)
-    this.userStore.revokeAllUserTokens(record.userId);
-    return null;
-  }
+`_auth_sessions` is additive internal state. Each row records the opaque
+`session_id`, user, `web` kind, active/revoked status, generation, application
+or tenant scope, optional tenant and membership IDs plus their captured
+authorization generations, local-auth provenance, timestamps, expiry, and
+revocation metadata. `_refresh_tokens.session_id` is added as a nullable,
+indexed foreign key so an existing database can migrate without rewriting all
+refresh rows. Every refresh token issued after the upgrade has a non-null
+parent link.
 
-  // Check expiry
-  if (record.expiresAt < Date.now()) return null;
+Compatibility is mode-specific and intentionally asymmetric:
 
-  // Revoke the used token
-  this.userStore.revokeRefreshToken(record.tokenId);
+- In `single`, a live legacy refresh row with a null link is adopted lazily and
+  transactionally into its own application-scoped parent. An old page cookie
+  resolves through that refresh row and triggers the same adoption. A
+  pre-upgrade access JWT without `sessionKind`/`sid` may finish only its
+  already-signed access-token lifetime after process startup, provided the
+  live user and `authGeneration` still match; new official issuance is always
+  parent-bound.
+- In `multi`, an unbound refresh/page/access credential fails closed. Zero
+  cannot safely infer tenant authority from a legacy credential. The shared
+  auth-completion service auto-binds exactly one live membership, returns a
+  typed onboarding-required result for none, or creates a five-minute,
+  hash-at-rest, single-use tenant-selection continuation for several. Consuming
+  that continuation revalidates user generation, tenant, and membership and
+  commits continuation consumption, parent session, and refresh child in one
+  transaction.
 
-  // Issue new pair
-  const user = this.userStore.getUserById(record.userId);
-  if (!user) return null;
+Tenant switching is a parent-session replacement, not a claim edit. The
+browser proves the current refresh family, Zero revalidates both current and
+target authority, consumes the old refresh, inserts the replacement parent and
+refresh child, and revokes the old `sid` transactionally. Consequently old
+access, page, and refresh credentials fail live resolution. A concurrent or
+replayed refresh/switch attempt invokes the existing fail-closed replay policy.
 
-  const accessToken = await this.signAccessToken(user);
-  const newRefreshToken = crypto.randomUUID();
-  const newHash = this.hashToken(newRefreshToken);
-  const newExpiresAt = Date.now() + this.refreshTokenTTLMs;
-
-  this.userStore.storeRefreshToken(crypto.randomUUID(), user.userId, newHash, newExpiresAt);
-
-  return { accessToken, refreshToken: newRefreshToken };
-}
-```
-
-**Family rotation:** If a revoked token is reused, the entire token family (all tokens for that user) is revoked. This handles the scenario where an attacker steals a refresh token — one of them (attacker or legitimate user) will present the revoked token first, triggering a full revocation. Both must re-authenticate.
+Native credentials retain their separate rotating-family persistence rather
+than being children of the browser `_auth_sessions` parent. They implement the
+same tenant-authority outcome through the discovery-advertised native tenant
+session v1 contract: tenant list/switch uses the credential owner's raw refresh
+proof, a switch atomically revokes the source family and inserts a replacement
+capturing the selected membership and tenant generations, and every native
+HTTP/Sync access revalidates the live family and captured authority.
 
 ## JWKS Endpoint
 
@@ -390,7 +420,9 @@ getJWKS(): { keys: JWK[] } {
 **Why JWKS:**
 - Standard OIDC-compatible format
 - External services can verify tokens without shared secrets
-- Key rotation: update the key, publish new JWKS, old tokens expire naturally
+- Standard key publication makes rotation interoperable. Zero's current
+  single-key rotation invalidates old access tokens immediately; graceful
+  multi-key overlap is a future enhancement described below.
 - Public endpoint — no auth required, cacheable
 
 **Use case:** An external microservice validates the auth system's JWTs by fetching the JWKS endpoint once, caching the public key, and verifying signatures locally. No network call per request after the initial fetch.

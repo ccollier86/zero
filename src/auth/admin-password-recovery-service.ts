@@ -7,27 +7,35 @@
 
 import { assertAdminMayClearPasswordChangeRequirement } from './admin-user-guards';
 import { AuthError } from './types';
-import type { UserStore } from './user-store';
+import type { AuthSecurityAuditContext, UserStore } from './user-store';
+import type { AssertAuthAdminMutationAuthority } from './auth-admin-mutation-authority';
 
 export class AdminPasswordRecoveryService {
   constructor(private readonly store: UserStore) {}
 
   /** Clear an existing gate and invalidate every credential-bound token. */
-  clearPasswordChangeRequirement(userId: string, actorId: string) {
-    const user = this.store.getUserById(userId);
-    if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
-    assertAdminMayClearPasswordChangeRequirement(actorId, user);
-    if (!user.passwordChangeRequired) {
-      throw new AuthError(
-        'Password change is not required for this user',
-        'PASSWORD_CHANGE_NOT_REQUIRED',
-        409
-      );
-    }
+  clearPasswordChangeRequirement(
+    userId: string,
+    assertCurrentAuthority: AssertAuthAdminMutationAuthority,
+    audit?: AuthSecurityAuditContext,
+  ) {
+    return this.store.transaction(() => {
+      const authority = assertCurrentAuthority();
+      const user = this.store.getUserById(userId);
+      if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
+      assertAdminMayClearPasswordChangeRequirement(authority.userId, user);
+      if (!user.passwordChangeRequired) {
+        throw new AuthError(
+          'Password change is not required for this user',
+          'PASSWORD_CHANGE_NOT_REQUIRED',
+          409
+        );
+      }
 
-    if (!this.store.clearPasswordChangeRequired(userId)) {
-      throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
-    }
-    return this.store.getUserById(userId)!;
+      if (!this.store.clearPasswordChangeRequired(userId, audit)) {
+        throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
+      }
+      return this.store.getUserById(userId)!;
+    });
   }
 }

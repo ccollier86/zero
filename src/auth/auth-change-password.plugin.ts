@@ -9,6 +9,10 @@ import {
 import { authNewPasswordSchema, authPasswordSchema } from './auth-request-schema';
 import { syncPageSessionCookie } from './page-session';
 import { AuthError } from './types';
+import {
+  authAuditActorFromContext,
+  authAuditRequestFromRequest,
+} from './auth-audit-service';
 
 export function createAuthChangePasswordPlugin(config: AuthSessionPluginConfig) {
   return new Elysia({ name: 'auth-change-password' }).post(
@@ -19,7 +23,13 @@ export function createAuthChangePasswordPlugin(config: AuthSessionPluginConfig) 
       if (!auth) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
 
       const changed = await store.updatePassword(
-        auth.userId, body.currentPassword, body.newPassword
+        auth.userId,
+        body.currentPassword,
+        body.newPassword,
+        {
+          actor: authAuditActorFromContext(auth),
+          request: authAuditRequestFromRequest(request),
+        },
       );
       if (!changed) {
         throw new AuthError(
@@ -32,7 +42,11 @@ export function createAuthChangePasswordPlugin(config: AuthSessionPluginConfig) 
         throw new AuthError('Account is suspended', 'ACCOUNT_SUSPENDED', 403);
       }
 
-      const tokens = await tokenService.issueTokenPair(user);
+      const tokens = await tokenService.issueTokenPair(user, {
+        binding: auth.tenantId && auth.membershipId
+          ? { tenantId: auth.tenantId, membershipId: auth.membershipId }
+          : undefined,
+      });
       const response = {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,

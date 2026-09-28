@@ -14,6 +14,7 @@ export type AuthEmailTemplateKey =
   | 'passwordReset'
   | 'passwordChanged'
   | 'emailVerification'
+  | 'domainMailboxProof'
   | 'emailOtp'
   | 'mfaEnabled'
   | 'mfaDisabled'

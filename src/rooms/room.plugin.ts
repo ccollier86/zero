@@ -1,28 +1,50 @@
 import { Elysia, t } from 'elysia';
-import { RoomService } from './room-service';
+import { RoomOwnerCannotLeaveError, RoomService } from './room-service';
 import type { ReactiveDB } from '../sync/reactive-db';
 import { AuthError } from '../auth/types';
-import { createAuthMiddleware } from '../auth/auth.middleware';
+import type { AuthContext } from '../auth/types';
+import type { RoomRecord } from './types';
+import {
+  createAuthMiddleware,
+  type AuthMiddlewareAuthorizationOptions,
+} from '../auth/auth.middleware';
+import {
+  requireRequestServiceDataScope,
+  type ServiceDataScope,
+} from '../auth/service-data-scope';
 import { getTokenService } from '../auth/auth.plugin';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
+import type { TokenService } from '../auth/token-service';
+import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
+import {
+  ZERO_AUTHORIZATION_KERNEL,
+  ZERO_AUTH_TOKEN_SERVICE,
+  ZERO_ROOM_SERVICE,
+} from '../runtime/service-keys';
+import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
+import { ensureNullableTenantColumn } from '../runtime/tenant-schema';
+import { canManageRoomScope } from './room-access';
 
-// ─── Module-Level Singleton ─────────────────────────────────────────────────
+// ─── Legacy Compatibility Getter ────────────────────────────────────────────
 
-let _roomService: RoomService | null = null;
+const roomProviders = new CompatibilityProviderRegistry<RoomService>('Room service');
 
 /**
  * Get the RoomService instance. Returns null if the plugin hasn't started.
  */
 export function getRoomService(): RoomService | null {
-  return _roomService;
+  return roomProviders.get();
 }
 
 // ─── Table Definitions ──────────────────────────────────────────────────────
 
-function defineRoomTables(db: ReactiveDB): void {
+export function defineRoomTables(db: ReactiveDB): void {
+  ensureNullableTenantColumn(db, 'rooms');
+  ensureNullableTenantColumn(db, 'room_members');
   db.defineTable('rooms', {
     room_id: 'text primary key',
+    tenant_id: 'text',
     name: 'text not null',
     type: "text not null default 'default'",
     created_by: 'text not null',
@@ -33,6 +55,7 @@ function defineRoomTables(db: ReactiveDB): void {
 
   db.defineTable('room_members', {
     member_id: 'text primary key',
+    tenant_id: 'text',
     room_id: 'text not null',
     user_id: 'text not null',
     role: "text not null default 'member'",
@@ -49,12 +72,24 @@ function defineRoomTables(db: ReactiveDB): void {
   db.exec(
     'CREATE INDEX IF NOT EXISTS idx_room_members_user ON room_members(user_id)'
   );
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_rooms_tenant ON rooms(tenant_id)'
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_room_members_tenant_user
+     ON room_members(tenant_id, user_id)`
+  );
 }
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
 export interface RoomPluginConfig {
   db: ReactiveDB;
+  runtime?: ZeroAppRuntime;
+  getTokenService?: () => TokenService | null;
+  /** App-local authorization dependencies for tenant-bound service data. */
+  authorization?: AuthMiddlewareAuthorizationOptions;
+  onServiceCreated?: (service: RoomService) => void;
 }
 
 // ─── Plugin ─────────────────────────────────────────────────────────────────
@@ -64,38 +99,71 @@ export interface RoomPluginConfig {
  *
  * Follows the notification plugin pattern:
  * - Tables defined in onStart
- * - Module-level singleton service
+ * - App-local service with a safe legacy getter adapter
  * - Auth middleware for typed auth context
  * - REST routes under /rooms
  *
  * Mount AFTER auth plugin.
  */
 export function createRoomPlugin(config: RoomPluginConfig) {
+  const owner = {};
+  let service: RoomService | null = null;
+  let registration: ReturnType<typeof roomProviders.register> | null = null;
+  config.runtime?.addCleanup(() => registration?.unregister());
+  const getRoomTokenService = config.getTokenService
+    ?? (config.runtime
+      ? () => config.runtime!.get(ZERO_AUTH_TOKEN_SERVICE)
+      : getTokenService);
+  const getAuthorizationKernel = config.authorization?.getAuthorizationKernel
+    ?? (() => config.runtime?.get(ZERO_AUTHORIZATION_KERNEL) ?? null);
+  const authorization: AuthMiddlewareAuthorizationOptions = {
+    ...config.authorization,
+    getAuthorizationKernel,
+  };
+  const requestScope = (access: Parameters<typeof requireRequestServiceDataScope>[0]) =>
+    requireRequestServiceDataScope(access, getAuthorizationKernel);
+
   return new Elysia({ name: 'rooms', prefix: '/rooms' })
 
-    .use(createAuthMiddleware(getTokenService))
+    .use(createAuthMiddleware(getRoomTokenService, authorization))
 
     // ─── Lifecycle ─────────────────────────────────────
     .onStart(() => {
       defineRoomTables(config.db);
-      _roomService = new RoomService(config.db);
+      service = new RoomService(
+        config.db,
+        getAuthorizationKernel()?.tenancy.mode ?? 'single',
+      );
+      registration = roomProviders.register(owner, () => service);
+      config.runtime?.set(ZERO_ROOM_SERVICE, service);
+      config.onServiceCreated?.(service);
       emitPlatformCode(OBS_CODES.ROOMS_STARTED, {
         metadata: { tablesDefined: true },
       });
     })
 
     .onStop(() => {
-      _roomService = null;
+      if (service) config.runtime?.clear(ZERO_ROOM_SERVICE, service);
+      registration?.unregister();
+      registration = null;
+      service = null;
       emitPlatformCode(OBS_CODES.ROOMS_STOPPED);
     })
 
     // ─── Derive: expose service globally ──────────────
     .derive({ as: 'global' }, () => ({
-      roomService: _roomService,
+      roomService: service,
     }))
 
     // ─── Error handler ────────────────────────────────
     .onError(({ error, set }) => {
+      if (error instanceof RoomOwnerCannotLeaveError) {
+        set.status = 409;
+        return {
+          error: error.message,
+          code: 'ROOM_OWNER_CANNOT_LEAVE',
+        };
+      }
       if (error instanceof AuthError) {
         set.status = error.status;
         return { error: error.message, code: error.code };
@@ -103,24 +171,26 @@ export function createRoomPlugin(config: RoomPluginConfig) {
     })
 
     // ─── GET / — List rooms for current user ──────────
-    .get('/', ({ requireAuth }) => {
-      const svc = _roomService!;
-      const auth = requireAuth();
-      return { rooms: svc.getRoomsForUser(auth.userId) };
+    .get('/', ({ access }) => {
+      const svc = service!;
+      const auth = access.requireUser();
+      const scope = requestScope(access);
+      return { rooms: svc.getRoomsForUser(auth.userId, scope) };
     })
 
     // ─── POST / — Create room ─────────────────────────
     .post(
       '/',
-      ({ requireAuth, body }) => {
-        const svc = _roomService!;
-        const auth = requireAuth();
+      ({ access, body }) => {
+        const svc = service!;
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const room = svc.create(auth.userId, {
           name: body.name,
           type: body.type,
           metadata: body.metadata ? JSON.parse(body.metadata) : undefined,
           maxMembers: body.maxMembers,
-        });
+        }, scope);
         return { room };
       },
       {
@@ -136,11 +206,11 @@ export function createRoomPlugin(config: RoomPluginConfig) {
     // ─── GET /:id — Get room details ──────────────────
     .get(
       '/:id',
-      ({ requireAuth, params }) => {
-        const svc = _roomService!;
-        requireAuth();
-        const room = svc.getRoom(params.id);
-        if (!room) throw new AuthError('Room not found', 'NOT_FOUND', 404);
+      ({ access, params }) => {
+        const svc = service!;
+        const auth = access.requireUser();
+        const scope = requestScope(access);
+        const room = requireRoomReadAccess(svc, params.id, auth, scope);
         return { room };
       },
       { params: t.Object({ id: t.String({ minLength: 1 }) }) }
@@ -149,10 +219,12 @@ export function createRoomPlugin(config: RoomPluginConfig) {
     // ─── GET /:id/members — Get room members ─────────
     .get(
       '/:id/members',
-      ({ requireAuth, params }) => {
-        const svc = _roomService!;
-        requireAuth();
-        return { members: svc.getMembers(params.id) };
+      ({ access, params }) => {
+        const svc = service!;
+        const auth = access.requireUser();
+        const scope = requestScope(access);
+        requireRoomReadAccess(svc, params.id, auth, scope);
+        return { members: svc.getMembers(params.id, scope) };
       },
       { params: t.Object({ id: t.String({ minLength: 1 }) }) }
     )
@@ -160,19 +232,16 @@ export function createRoomPlugin(config: RoomPluginConfig) {
     // ─── POST /:id/join — Join room ──────────────────
     .post(
       '/:id/join',
-      ({ requireAuth, params }) => {
-        const svc = _roomService!;
-        const auth = requireAuth();
-        try {
-          const member = svc.join(params.id, auth.userId);
-          return { member };
-        } catch (err) {
-          throw new AuthError(
-            err instanceof Error ? err.message : 'Failed to join room',
-            'BAD_REQUEST',
-            400
-          );
-        }
+      ({ access, params }) => {
+        const svc = service!;
+        const auth = access.requireUser();
+        const scope = requestScope(access);
+        // HTTP self-join is intentionally closed to arbitrary authenticated
+        // users. Apps with an explicit admission policy can add memberships
+        // through the server-side RoomService, after which this endpoint is
+        // idempotent for an already admitted member.
+        requireRoomReadAccess(svc, params.id, auth, scope);
+        return { member: svc.getMember(params.id, auth.userId, scope)! };
       },
       { params: t.Object({ id: t.String({ minLength: 1 }) }) }
     )
@@ -180,10 +249,11 @@ export function createRoomPlugin(config: RoomPluginConfig) {
     // ─── POST /:id/leave — Leave room ────────────────
     .post(
       '/:id/leave',
-      ({ requireAuth, params }) => {
-        const svc = _roomService!;
-        const auth = requireAuth();
-        const left = svc.leave(params.id, auth.userId);
+      ({ access, params }) => {
+        const svc = service!;
+        const auth = access.requireUser();
+        const scope = requestScope(access);
+        const left = svc.leave(params.id, auth.userId, scope);
         if (!left) throw new AuthError('Not a member of this room', 'BAD_REQUEST', 400);
         return { ok: true };
       },
@@ -193,17 +263,46 @@ export function createRoomPlugin(config: RoomPluginConfig) {
     // ─── DELETE /:id — Delete room ───────────────────
     .delete(
       '/:id',
-      ({ requireAuth, params }) => {
-        const svc = _roomService!;
-        const auth = requireAuth();
-        const room = svc.getRoom(params.id);
-        if (!room) throw new AuthError('Room not found', 'NOT_FOUND', 404);
-        if (room.created_by !== auth.userId && auth.role !== 'admin') {
-          throw new AuthError('Only room owner or admin can delete', 'FORBIDDEN', 403);
+      ({ access, params }) => {
+        const svc = service!;
+        const auth = access.requireUser();
+        const scope = requestScope(access);
+        const room = svc.getRoom(params.id, scope);
+        if (
+          !room
+          || (
+            room.created_by !== auth.userId
+            && !canManageRoomScope(access, scope)
+          )
+        ) {
+          throw new AuthError('Room not found', 'NOT_FOUND', 404);
         }
-        svc.delete(params.id);
+        svc.delete(params.id, scope);
         return { ok: true };
       },
       { params: t.Object({ id: t.String({ minLength: 1 }) }) }
     );
+}
+
+/**
+ * Resolve a room only when the caller may observe it.
+ *
+ * Missing and unauthorized rooms intentionally share the same response so a
+ * guessed room id cannot be used as a membership oracle. Room creators are
+ * members by invariant. Global platform administration grants delete authority
+ * only in legacy single mode; multi mode uses the live tenant owner,
+ * all-permissions, or rooms:manage authority.
+ */
+function requireRoomReadAccess(
+  service: RoomService,
+  roomId: string,
+  auth: AuthContext,
+  scope: ServiceDataScope,
+): RoomRecord {
+  const room = service.getRoom(roomId, scope);
+  const authorized = service.isMember(roomId, auth.userId, scope);
+  if (!room || !authorized) {
+    throw new AuthError('Room not found', 'NOT_FOUND', 404);
+  }
+  return room;
 }

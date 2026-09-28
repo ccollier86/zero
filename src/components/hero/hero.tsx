@@ -10,7 +10,7 @@
 
 import * as React from 'react';
 
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 import { HeroActions } from './hero-actions';
 import { HeroBackground } from './hero-background';
 import type { HeroBackgroundOptions, HeroProps } from './hero.types';

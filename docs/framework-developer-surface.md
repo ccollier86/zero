@@ -55,13 +55,16 @@ cd /path/to/my-zero-app
 zero-update
 ```
 
-The local-tools installer binds `zero-update` to the checkout that installed
-it. It accepts an optional project directory and forwards to the general
-updater as `zero update --project <dir> --local <checkout>`. Use `--dry-run` to
-inspect the dependency/archive/install plan. Published-package apps instead use
-`bun run zero update --project .`, with `--latest` reserved for an intentional
-move to the newest release. Exactly one `bun.lock` or `bun.lockb` must already
-exist, including for a dry-run; commit the lockfile for checkout-local apps.
+The local-tools installer binds `zero-update` to the stable package saved from
+committed local `main`. It accepts an optional project directory, never packs
+the live checkout, and fails closed when the saved archive is missing or
+corrupt. Use `--dry-run` to inspect the dependency/archive/install plan. For
+deliberate working-checkout testing, call
+`zero update --project <dir> --local <checkout>` explicitly. Published-package
+apps instead use `bun run zero update --project .`, with `--latest` reserved for
+an intentional move to the newest release. Exactly one `bun.lock` or `bun.lockb`
+must already exist, including for a dry-run; commit the lockfile for
+checkout-local apps.
 
 The updater directly manages Zero dependency artifacts only; in its default
 mode it never scaffolds app source, rewrites `zero.config.ts` or `.env`, changes
@@ -69,14 +72,15 @@ application data, or runs app-defined scripts. `--check` executes the project's
 existing typecheck and Doctor scripts; review them first because their side
 effects are outside updater rollback. Zero itself never selects a migration
 command. Run `bun run migrate:plan` separately and intentionally against the
-correct database or a safe copy before applying a database change. For local
-apps, the updater regenerates the ignored
-`.zero/framework/zero-framework.tgz` archive from the selected checkout. A
-fresh clone can omit that archive and the managed `.zero/` directories: a
-mutating update creates them, while `--dry-run` only reports the pending
-bootstrap. Existing symlinks or wrong-type entries at managed paths are
-rejected. Never use `create-zero --force` or `zero-new --force` as an update
-mechanism because those commands replace scaffold targets.
+correct database or a safe copy before applying a database change. The stable
+wrapper copies its saved package into the ignored
+`.zero/framework/zero-framework.tgz` cache; only the explicit `--local`
+development path regenerates an archive from a selected checkout. A fresh clone
+can omit that archive and the managed `.zero/` directories: a mutating update
+creates them, while `--dry-run` only reports the pending bootstrap. Existing
+symlinks or wrong-type entries at managed paths are rejected. Never use
+`create-zero --force` or `zero-new --force` as an update mechanism because those
+commands replace scaffold targets.
 
 | Import | Use For |
 | --- | --- |
@@ -344,6 +348,8 @@ export default defineRouter({
         name: t.String(),
       }),
       handler: ({ body, user, zero }) => {
+        // Direct DB access is the compatible single-tenant path. In a
+        // multi-tenant app, prefer a registered tenant-realm resource.
         return zero.db.create('customers', {
           customer_id: crypto.randomUUID(),
           name: body.name,
@@ -374,7 +380,14 @@ export default createServerRoute({ name: 'reports', prefix: '/api/reports' })
 Use `zero.db` when you want ReactiveDB change tracking and websocket sync. Use
 `zero.sql`/`zero.sqlite` for backend-only SQL, migrations-style setup, reporting
 queries, and internal platform tables. Both point at the same platform
-persistence foundation when mounted through `createApp()`.
+persistence foundation when mounted through `createApp()`. These direct handles
+remain available at their historical paths in single-tenant mode. In
+multi-tenant request handlers they are intentionally available only under
+`zero.unsafe.db` / `zero.unsafe.sql`, because Zero cannot infer a safe tenant
+predicate for arbitrary SQL. Ordinary multi-tenant CRUD belongs in a
+`defineResource({ exposure: 'all', realm: tenantRealm(), ... })` declaration;
+choose `internal`, `http`, `sync`, or `all` deliberately for the transports the
+resource may use.
 
 ## Backend KV/Cache Access
 
@@ -388,10 +401,16 @@ import { createServerRoute } from '@zero/framework/server';
 
 export default createServerRoute({ name: 'intake.progress', prefix: '/api/intake' })
   .post('/draft/:id', async ({ params, body, zero }) => {
-    const draft = zero.kv?.namespace('intake-drafts');
+    // KV has caller-defined keys and is therefore an explicit raw capability
+    // in multi mode. Prefix it with the validated scope, never request input.
+    const draft = zero.unsafe.kv?.namespace(
+      `tenant:${zero.scope?.tenantId}:intake-drafts`,
+    );
 
     await draft?.set(params.id, body, { ttlMs: 14 * 24 * 60 * 60 * 1000 });
-    await zero.counter?.increment('intake:draft-saves');
+    await zero.unsafe.counter?.increment(
+      `tenant:${zero.scope?.tenantId}:intake:draft-saves`,
+    );
 
     return { saved: true };
   });
@@ -422,6 +441,34 @@ server code:
 | `zero.workflows` | Workflow service, when enabled. |
 | `zero.observability` | Event emitters plus runtime/sink/store inspection. |
 
+### Multi-tenant request boundary
+
+In `auth.tenancy: 'multi'`, route handlers receive a request-bound facade:
+
+- `zero.access` is the live authorization facade and `zero.scope` is the
+  server-validated active tenant scope (or `null` during tenant selection);
+- Storage, notifications, rooms, workflows, and PDF-to-storage automatically
+  bind tenant and actor authority and do not accept a caller-selected tenant;
+- the built-in HTTP routes and request facades share the same authority:
+  platform `admin` remains compatible in `single`, while `multi` requires the
+  active tenant owner/`allPermissions`/matching `notifications:manage`,
+  `rooms:manage`, or `workflows:manage` permission for peer administration;
+- advanced notification and Storage role grants consume all live assignments,
+  never the global platform role or retained membership role as a fallback;
+- observability emitters automatically attach the current user, membership,
+  and tenant correlation, while the raw event store/sink remains privileged;
+- raw DB/SQL, auth stores and token services, KV/counters/limiters, vectors,
+  scheduler controls, workflow registration, and runtime inspection throw
+  `ZERO_UNSAFE_SERVICE_REQUIRED` at their historical paths;
+- those raw capabilities remain deliberately reachable through `zero.unsafe`
+  for migrations, platform administration, and other reviewed privileged
+  operations.
+
+`zero.unsafe` is not an authorization bypass to use casually: it marks code
+whose tenant predicate, actor checks, audit trail, and retry/revalidation rules
+are owned by the application. Single-tenant apps retain the existing direct
+service paths unchanged.
+
 Compatibility aliases remain available: `zero.syncDB`, `zero.vectors`,
 `zero.workflowRegistry`, and `zero.auth.getTokenService()`. New code should
 prefer the canonical names. Optional services return `null` when disabled or
@@ -433,7 +480,7 @@ Prefer Zero's canonical service vocabulary in app-owned backend code:
 | Service | Preferred methods |
 | --- | --- |
 | `zero.db` | `create()`, `get()`, `list()`, `update()`, `delete()` |
-| `zero.auth.store` | `create()`, `get()`, `list()`, `update()`, `delete()` |
+| `zero.auth.store` (single) / `zero.unsafe.auth.store` (multi) | `create()`, `get()`, `list()`, `update()`, `delete()` |
 | `zero.tokens` | `createActionToken()`, `inspectActionToken()`, `consumeActionToken()`, `createResumeToken()`, `verifyResumeToken()`, `rotateResumeToken()`, `revokeResumeToken()`, `revokeResumeTokenById()` |
 | `zero.kv` | `get()`, `set()`, `delete()`, `getOrSet()`, `compareAndSet()`, `namespace()` |
 | `zero.counter` | `increment()`, `decrement()`, `value()`, `reset()` |
@@ -1059,17 +1106,20 @@ import {
   Hero,
   MasterDetailView,
   LoginForm,
-  MFAEnrollmentForm,
-  MFAManagementPanel,
+  PlatformUserManagement,
   QRCode,
   ResizableNavbar,
   TextGenerateEffect,
-  UserManagement,
   useAuth,
   useDataPage,
   useStorageBrowser,
   useIdle,
 } from '@zero/framework/react';
+
+import {
+  MFAEnrollmentForm,
+  MFAManagementPanel,
+} from '@zero/framework/components/auth';
 ```
 
 Narrow imports are also supported:
@@ -1089,7 +1139,11 @@ import { KanbanBoard } from '@zero/framework/components/kanban';
 import { RadialMenu } from '@zero/framework/components/radial-menu';
 import { ResizableNavbar } from '@zero/framework/components/navbar';
 import { TextGenerateEffect } from '@zero/framework/components/text-effects';
-import { LoginForm, MFAEnrollmentForm } from '@zero/framework/components/auth';
+import {
+  LoginForm,
+  MFAEnrollmentForm,
+  MFAManagementPanel,
+} from '@zero/framework/components/auth';
 import { QRCode } from '@zero/framework/components/qr-code';
 import { useDisclosure } from '@zero/framework/hooks';
 import { Button } from '@zero/framework/components/ui/button';

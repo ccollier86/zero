@@ -9,11 +9,11 @@ without making the simple CRUD path harder to use.
 
 | API | File | Current responsibility |
 | --- | --- | --- |
-| `useForm` | `src/hooks/use-form.ts` | Values, touched state, synchronous Valibot validation, collection insert/update, reset, field registration. |
+| `useForm` | `src/hooks/use-form.ts` | Values, touched state, synchronous Valibot validation, optional `includeFields` projection, collection insert/update, reset, field registration. |
 | `FieldRenderer` | `src/components/forms/field-renderer.tsx` | Converts schema field metadata into Zero input/select/date/tag/combobox controls. |
-| `AutoForm` | `src/components/forms/auto-form.tsx` | Renders all schema fields into a create/edit form with optional card wrapper and submit/reset actions. |
+| `AutoForm` | `src/components/forms/auto-form.tsx` | Renders all schema fields—or an `includeFields` allow-list—into a create/edit form with optional card wrapper and submit/reset actions. |
 | `Wizard` | `src/components/forms/wizard.tsx` | Renders manually declared steps with animated progress and per-step validation. |
-| `useFormDraft` | `src/frontend/client/preference-hooks.ts` | Authenticated per-user draft state through state sync. |
+| `useFormDraft` | `src/frontend/client/preference-hooks.ts` | Authenticated per-authorized-scope user draft state through State Sync. |
 | `StorageDropzone` | `src/components/storage/storage-dropzone.tsx` | Ready upload surface backed by Zero storage hooks. |
 | Platform tokens | `src/tokens` | Server-side action/resume tokens for email verification and continuation links. |
 
@@ -34,6 +34,10 @@ without making the simple CRUD path harder to use.
   primitives for public-but-private flows such as intake uploads.
 - Field codecs are centralized, so array/json/date-range values do not require
   every component to reinvent persistence conversion.
+- `includeFields` restricts rendering, validation, and submission together.
+  `CrudPage.resourceFields` maps a shared `defineResourceFields()` contract to
+  create/edit forms and readable table/export columns; the server resource
+  boundary remains authoritative.
 
 ## Current Gaps
 

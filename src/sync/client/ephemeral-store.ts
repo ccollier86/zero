@@ -1,5 +1,6 @@
 import { createStore } from '@xstate/store';
 import type { JsonValue } from '../types';
+import type { EphemeralErrorMessage } from '../ephemeral-policy';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -105,29 +106,44 @@ export type EphemeralStore = ReturnType<typeof createEphemeralStore>;
  * Route a server message to the ephemeral store.
  * Returns true if the message was handled.
  */
-export function routeEphemeralMessage(
+export function routeEphemeralMessage<TMessage extends { type: string }>(
   store: EphemeralStore,
-  msg: { type: string; [key: string]: unknown }
+  msg: TMessage,
 ): boolean {
+  const wire = msg as { type: string; [key: string]: unknown };
   switch (msg.type) {
     case 'ephemeral.snapshot':
       store.send({
         type: 'ephemeral.snapshot' as const,
-        topic: msg.topic as string,
-        entries: msg.entries as Record<string, { value: JsonValue; userId: string }>,
+        topic: wire.topic as string,
+        entries: wire.entries as Record<string, { value: JsonValue; userId: string }>,
       });
       return true;
 
     case 'ephemeral.change':
       store.send({
         type: 'ephemeral.change' as const,
-        topic: msg.topic as string,
-        key: msg.key as string,
-        value: msg.value as JsonValue | null,
-        userId: msg.userId as string,
-        op: msg.op as 'set' | 'delete',
+        topic: wire.topic as string,
+        key: wire.key as string,
+        value: wire.value as JsonValue | null,
+        userId: wire.userId as string,
+        op: wire.op as 'set' | 'delete',
       });
       return true;
+
+    case 'ephemeral.error': {
+      const error = wire as unknown as EphemeralErrorMessage;
+      // A rejected/revoked subscription cannot leave an older authorized
+      // snapshot visible in the browser cache.
+      if (error.topic
+        && (error.revoked || error.operation === 'subscribe')) {
+        store.send({
+          type: 'ephemeral.clear-topic' as const,
+          topic: error.topic,
+        });
+      }
+      return true;
+    }
 
     default:
       return false;

@@ -6,11 +6,18 @@
  * verify tokens, redirect browsers, or render protected UI.
  */
 
+import {
+  compileAccessRequirement,
+  mergeAccessRequirements,
+  type AccessRequirement,
+  type CompiledAccessRequirement,
+} from '../../auth/authorization-kernel';
+
 /** Global route-auth strategy used when app auth is enabled. */
 export type RouteAuthMode = 'protected-by-default' | 'explicit';
 
 /** Auth requirement supported by page and layout route config. */
-export type RouteAuthRequirement = boolean | 'required' | 'admin' | undefined;
+export type RouteAuthRequirement = AccessRequirement | undefined;
 
 /** Normalized auth requirement used by route-aware client guards. */
 export type EffectiveRouteAuthRequirement = false | 'required' | 'admin';
@@ -39,9 +46,8 @@ export function resolveRouteAuthMode(
 export function normalizeRouteAuthRequirement(
   requirement: RouteAuthRequirement,
 ): EffectiveRouteAuthRequirement {
-  if (requirement === 'admin') return 'admin';
-  if (requirement === true || requirement === 'required') return 'required';
-  return false;
+  if (requirement === undefined) return false;
+  return effectiveClientGuard(compileAccessRequirement(requirement));
 }
 
 /**
@@ -53,15 +59,29 @@ export function normalizeRouteAuthRequirement(
 export function mergeRouteAuthRequirements(
   requirements: readonly RouteAuthRequirement[],
 ): EffectiveRouteAuthRequirement {
-  let merged: EffectiveRouteAuthRequirement = false;
-
+  let merged = compileAccessRequirement(false);
   for (const requirement of requirements) {
-    const normalized = normalizeRouteAuthRequirement(requirement);
-    if (normalized === 'admin') return 'admin';
-    if (normalized === 'required') merged = 'required';
+    if (requirement !== undefined) {
+      merged = mergeAccessRequirements(merged, requirement);
+    }
   }
+  return effectiveClientGuard(merged);
+}
 
-  return merged;
+/**
+ * Browser routing only decides whether authentication UI is required. Full
+ * roles, permissions, properties, and tenant scope are always enforced by the
+ * server. Preserve the useful legacy `admin` signal without treating other
+ * structured policy as client-side authority.
+ */
+function effectiveClientGuard(
+  requirement: CompiledAccessRequirement,
+): EffectiveRouteAuthRequirement {
+  if (requirement.user !== 'required') return false;
+  const requiresOnlyAdmin = requirement.platformRoleGroups.some(
+    (group) => group.length === 1 && group[0] === 'admin',
+  );
+  return requiresOnlyAdmin ? 'admin' : 'required';
 }
 
 /**

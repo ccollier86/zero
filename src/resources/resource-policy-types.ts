@@ -6,7 +6,17 @@
  * mount routes, or query persistence.
  */
 
-import type { ResolvedUserPropertyFieldConfig } from '../auth/types';
+import type {
+  AccessRequirement,
+  AuthorizationKernel,
+  AuthorizationSubjectSnapshot,
+  CompiledAccessRequirement,
+} from '../auth/authorization-kernel';
+import type {
+  ResolvedAuthAuthorizationConfig,
+  ResolvedAuthTenancyConfig,
+  ResolvedUserPropertyFieldConfig,
+} from '../auth/types';
 
 /** Sync or async return helper used by custom resource policies. */
 export type ResourceMaybePromise<T> = T | Promise<T>;
@@ -25,6 +35,18 @@ export interface ResourcePolicyUser {
   properties: Record<string, string>;
 }
 
+/**
+ * Live app-local RBAC evaluation state supplied by Zero's managed transports.
+ *
+ * Resource policies never accept this state from request input. The subject is
+ * projected from the same durable browser/native session, tenant membership,
+ * and retained role assignments used by route guards and built-in services.
+ */
+export interface ResourcePolicyAuthorizationContext {
+  readonly kernel: AuthorizationKernel;
+  readonly subject: AuthorizationSubjectSnapshot | null;
+}
+
 /** Minimal resource shape needed by the policy evaluator. */
 export interface ResourcePolicyResource {
   table: string;
@@ -34,6 +56,10 @@ export interface ResourcePolicyResource {
 /** Auth config subset needed to validate metadata policy keys. */
 export interface ResourcePolicyAuthConfig {
   userProperties: Record<string, ResolvedUserPropertyFieldConfig>;
+  /** Present on managed Zero apps; optional only for legacy standalone policy evaluators. */
+  tenancy?: ResolvedAuthTenancyConfig;
+  /** Present on managed Zero apps; optional only for legacy standalone policy evaluators. */
+  authorization?: ResolvedAuthAuthorizationConfig;
 }
 
 /** Context passed to resource policy evaluators. */
@@ -44,6 +70,8 @@ export interface ResourcePolicyContext {
   row?: Record<string, unknown>;
   input?: Record<string, unknown>;
   authConfig: ResourcePolicyAuthConfig;
+  /** Same live authorization kernel/snapshot used by route and service guards. */
+  authorization?: ResourcePolicyAuthorizationContext | null;
 }
 
 /** A field equality constraint that data-query/CRUD layers can translate. */
@@ -73,7 +101,9 @@ export type ResourcePolicyDenyReason =
   | 'policy-invalid'
   | 'policy-empty'
   | 'policy-error'
-  | 'stamp-conflict';
+  | 'stamp-conflict'
+  | 'authorization-unavailable'
+  | 'authorization-denied';
 
 /** Structured resource policy result for route/data/sync integrations. */
 export interface ResourcePolicyDecision {
@@ -105,6 +135,7 @@ export type ResourcePolicyKind =
   | 'public-read-user-write'
   | 'owner'
   | 'metadata'
+  | 'authorization'
   | 'any-of'
   | 'all-of'
   | 'custom';
@@ -118,6 +149,8 @@ export interface ResourcePolicyDiagnostics {
   authenticatedActions?: readonly ResourceAction[];
   children?: readonly ResourcePolicy[];
   customName?: string;
+  /** Canonical route-compatible requirement enforced by authorizationPolicy(). */
+  authorizationRequirement?: CompiledAccessRequirement;
 }
 
 /** Context used to validate resource policies before registration. */
@@ -130,7 +163,9 @@ export type ResourcePolicyValidationCode =
   | 'metadata-property-unknown'
   | 'metadata-property-untrusted'
   | 'owner-field-invalid'
-  | 'composite-policy-empty';
+  | 'composite-policy-empty'
+  | 'authorization-config-unavailable'
+  | 'authorization-requirement-invalid';
 
 /** Structured policy validation issue. */
 export interface ResourcePolicyValidationIssue {
@@ -153,15 +188,15 @@ export interface OwnerPolicyOptions {
 /** Object-form metadata requirement for one trusted user property. */
 export interface ResourceMetadataRequirementOperators {
   equals?: ResourcePolicyScalar;
-  in?: ResourcePolicyScalar[];
-  not?: ResourcePolicyScalar | ResourcePolicyScalar[];
+  in?: readonly ResourcePolicyScalar[];
+  not?: ResourcePolicyScalar | readonly ResourcePolicyScalar[];
   exists?: boolean;
 }
 
 /** Requirement accepted by metadataPolicy for one property key. */
 export type ResourceMetadataRequirement =
   | ResourcePolicyScalar
-  | ResourcePolicyScalar[]
+  | readonly ResourcePolicyScalar[]
   | ResourceMetadataRequirementOperators;
 
 /** Map of trusted user property keys to required values/operators. */
@@ -176,3 +211,6 @@ export interface CustomResourcePolicyOptions {
 export type CustomResourcePolicyCallback = (
   context: ResourcePolicyContext
 ) => ResourceMaybePromise<ResourcePolicyDecisionInput>;
+
+/** Route-compatible declaration accepted by authorizationPolicy(). */
+export type ResourceAuthorizationRequirement = AccessRequirement;

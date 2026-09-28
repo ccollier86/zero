@@ -10,6 +10,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { OBS_CODES } from '../observability/codes';
 import { emitFrontendCode } from '../frontend/client/observability';
 import { useClientMaybe } from '../frontend/client/client-context';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from '../frontend/client/authorization-scope-hooks';
 import type { FileInfo } from './types';
 import { useStorageActions } from './storage-hooks';
 import { encodeStoragePath } from './storage-paths';
@@ -36,35 +40,55 @@ export function useStorageFile(
   path: string | null,
 ): UseStorageFileReturn {
   const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const actions = useStorageActions();
   const [file, setFile] = useState<FileInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
   const requestRef = useRef(0);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const isCurrentScope = useCallback(
+    () => isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    ),
+    [callbackBoundaryKey],
+  );
 
   useEffect(() => {
-    if (!client || !driveId || !path) {
-      setFile(null);
-      setLoading(false);
-      setError(null);
-      return;
-    }
-
     const requestId = ++requestRef.current;
     const controller = new AbortController();
-    setLoading(true);
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setFile(null);
     setError(null);
+    if (!client || !driveId || !path || !authorizationBoundary.ready) {
+      setLoading(false);
+      return () => controller.abort();
+    }
+
+    setLoading(true);
 
     client.fetch<FileInfo>(
       `/storage/drives/${encodeURIComponent(driveId)}/info/${encodeStoragePath(path)}`,
       { signal: controller.signal },
     )
       .then((result) => {
-        if (requestRef.current === requestId) setFile(result);
+        if (requestRef.current === requestId
+          && boundaryReadyRef.current
+          && boundaryKeyRef.current === authorizationBoundary.key) setFile(result);
       })
       .catch((err) => {
-        if (controller.signal.aborted || requestRef.current !== requestId) return;
+        if (controller.signal.aborted
+          || requestRef.current !== requestId
+          || !boundaryReadyRef.current
+          || boundaryKeyRef.current !== authorizationBoundary.key) return;
         const nextError = err instanceof Error ? err : new Error(String(err));
         setError(nextError);
         emitFrontendCode(OBS_CODES.FRONTEND_STORAGE_ACTION_FAILED, {
@@ -73,56 +97,82 @@ export function useStorageFile(
         });
       })
       .finally(() => {
-        if (!controller.signal.aborted && requestRef.current === requestId) {
+        if (!controller.signal.aborted
+          && requestRef.current === requestId
+          && boundaryReadyRef.current
+          && boundaryKeyRef.current === authorizationBoundary.key) {
           setLoading(false);
         }
       });
 
     return () => controller.abort();
-  }, [client, driveId, path, refreshKey]);
+  }, [
+    authorizationBoundary.key,
+    authorizationBoundary.ready,
+    client,
+    driveId,
+    path,
+    refreshKey,
+  ]);
 
   const refresh = useCallback(() => {
+    if (!isCurrentScope()) return;
     setRefreshKey((current) => current + 1);
-  }, []);
+  }, [isCurrentScope]);
 
   const remove = useCallback(async () => {
-    if (!driveId || !path) return;
+    if (!driveId || !path || !isCurrentScope()) return;
+    const requestBoundaryKey = callbackBoundaryKey;
     try {
       await actions.deleteFile(driveId, path);
-      setFile(null);
+      if (boundaryReadyRef.current
+        && boundaryKeyRef.current === requestBoundaryKey) setFile(null);
     } catch (err) {
+      if (!boundaryReadyRef.current
+        || boundaryKeyRef.current !== requestBoundaryKey) throw err;
       emitFrontendCode(OBS_CODES.FRONTEND_STORAGE_ACTION_FAILED, {
         error: err,
         metadata: { action: 'deleteStorageFile', driveId, path },
       });
       throw err;
     }
-  }, [actions, driveId, path]);
+  }, [actions, callbackBoundaryKey, driveId, isCurrentScope, path]);
 
   const setVisibility = useCallback(async (isPublic: boolean) => {
-    if (!driveId || !path) return;
+    if (!driveId || !path || !isCurrentScope()) return;
+    const requestBoundaryKey = callbackBoundaryKey;
     try {
       await actions.setVisibility(driveId, isPublic, path);
-      setFile((current) => current ? { ...current, isPublic } : current);
+      if (boundaryReadyRef.current
+        && boundaryKeyRef.current === requestBoundaryKey) {
+        setFile((current) => current ? { ...current, isPublic } : current);
+      }
     } catch (err) {
+      if (!boundaryReadyRef.current
+        || boundaryKeyRef.current !== requestBoundaryKey) throw err;
       emitFrontendCode(OBS_CODES.FRONTEND_STORAGE_ACTION_FAILED, {
         error: err,
         metadata: { action: 'setStorageFileVisibility', driveId, path, isPublic },
       });
       throw err;
     }
-  }, [actions, driveId, path]);
+  }, [actions, callbackBoundaryKey, driveId, isCurrentScope, path]);
 
   const url = useMemo(
-    () => driveId && path ? actions.getFileUrl(driveId, path) : null,
-    [actions, driveId, path],
+    () => authorizationBoundary.ready && driveId && path
+      ? actions.getFileUrl(driveId, path)
+      : null,
+    [actions, authorizationBoundary.ready, driveId, path],
   );
 
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+
   return {
-    file,
-    url,
-    loading,
-    error,
+    file: visible ? file : null,
+    url: visible ? url : null,
+    loading: visible ? loading : Boolean(client && driveId && path && authorizationBoundary.ready),
+    error: visible ? error : null,
     refresh,
     remove,
     setVisibility,

@@ -9,7 +9,8 @@ import { assertAdminMayResetMfa } from './admin-user-guards';
 import type { MfaChallengeService } from './mfa-challenge-service';
 import type { MfaService } from './mfa-service';
 import { AuthError } from './types';
-import type { UserStore } from './user-store';
+import type { AuthSecurityAuditContext, UserStore } from './user-store';
+import type { AssertAuthAdminMutationAuthority } from './auth-admin-mutation-authority';
 
 export class AdminMfaUserService {
   constructor(
@@ -31,33 +32,89 @@ export class AdminMfaUserService {
   }
 
   /** Set a per-user MFA requirement and durably invalidate existing sessions. */
-  require(userId: string) {
+  require(
+    userId: string,
+    assertCurrentAuthority: AssertAuthAdminMutationAuthority,
+    audit?: AuthSecurityAuditContext,
+  ) {
     this.assertAvailable();
-    const user = this.requireUser(userId);
-    if (!user.mfaRequired) {
-      this.store.updateUser(userId, { mfaRequired: true });
-      this.store.revokeAllUserTokens(userId);
-    }
-    return this.requireUser(userId);
+    return this.store.transaction(() => {
+      const actorId = assertCurrentAuthority().userId;
+      const user = this.requireUser(userId);
+      const changed = !user.mfaRequired;
+      if (changed) {
+        this.store.updateUser(userId, { mfaRequired: true });
+        this.store.revokeAllUserTokens(userId);
+      }
+      this.record('account.mfa-required', userId, actorId, audit, { changed });
+      return this.requireUser(userId);
+    });
   }
 
   /** Clear only the per-user requirement and invalidate existing sessions. */
-  clearRequirement(userId: string) {
-    const user = this.requireUser(userId);
-    if (user.mfaRequired) {
-      this.store.updateUser(userId, { mfaRequired: false });
-      this.store.revokeAllUserTokens(userId);
-    }
-    return this.requireUser(userId);
+  clearRequirement(
+    userId: string,
+    assertCurrentAuthority: AssertAuthAdminMutationAuthority,
+    audit?: AuthSecurityAuditContext,
+  ) {
+    return this.store.transaction(() => {
+      const actorId = assertCurrentAuthority().userId;
+      const user = this.requireUser(userId);
+      const changed = user.mfaRequired;
+      if (changed) {
+        this.store.updateUser(userId, { mfaRequired: false });
+        this.store.revokeAllUserTokens(userId);
+      }
+      this.record(
+        'account.mfa-requirement-cleared',
+        userId,
+        actorId,
+        audit,
+        { changed },
+      );
+      return this.requireUser(userId);
+    });
   }
 
   /** Delete another user's methods/challenges and invalidate their sessions. */
-  reset(userId: string, actorId: string) {
-    const user = this.requireUser(userId);
-    assertAdminMayResetMfa(actorId, user);
-    const result = this.mfa.resetUserMfa(userId);
-    this.store.revokeAllUserTokens(userId);
-    return result;
+  reset(
+    userId: string,
+    assertCurrentAuthority: AssertAuthAdminMutationAuthority,
+    audit?: AuthSecurityAuditContext,
+  ) {
+    return this.store.transaction(() => {
+      const actorId = assertCurrentAuthority().userId;
+      const user = this.requireUser(userId);
+      assertAdminMayResetMfa(actorId, user);
+      const result = this.mfa.resetUserMfa(userId);
+      this.store.revokeAllUserTokens(userId);
+      this.record('account.mfa-reset', userId, actorId, audit, {
+        'deleted-methods': result.deletedMethods,
+        'invalidated-challenges': result.invalidatedChallenges,
+      });
+      return result;
+    });
+  }
+
+  private record(
+    action: string,
+    userId: string,
+    actorId: string,
+    audit: AuthSecurityAuditContext | undefined,
+    metadata: Readonly<Record<string, number | boolean>>,
+  ): void {
+    this.store.appendControlPlaneAudit({
+      action,
+      outcome: 'succeeded',
+      scope: { kind: 'application' },
+      actor: audit?.actor ?? {
+        userId: actorId,
+        provenance: 'authenticated-request',
+      },
+      request: audit?.request,
+      target: { type: 'user', id: userId },
+      metadata,
+    });
   }
 
   private assertAvailable(): void {

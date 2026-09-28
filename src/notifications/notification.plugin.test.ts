@@ -21,7 +21,7 @@ let baseUrl = '';
 
 function createApp(db: ReactiveDB) {
   return new Elysia()
-    .use(createAuthPlugin({ db }))
+    .use(createAuthPlugin({ db, bootstrap: 'public' }))
     .use(createAuthMiddleware(getTokenService))
     .use(createNotificationPlugin({ db }))
     .listen(0);
@@ -62,6 +62,18 @@ async function post(path: string, token?: string): Promise<{
   return { status: res.status, data: data as Record<string, unknown> };
 }
 
+async function get(path: string, token?: string): Promise<{
+  status: number;
+  data: Record<string, unknown>;
+}> {
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${baseUrl}${path}`, { headers });
+  const data = await res.json().catch(() => ({}));
+  return { status: res.status, data: data as Record<string, unknown> };
+}
+
 function createNotification(userId: string, title: string): NotificationRecord {
   return getNotificationService()!.notify(userId, { title });
 }
@@ -78,8 +90,8 @@ beforeAll(async () => {
   await waitForPlugins();
 });
 
-afterAll(() => {
-  app?.stop();
+afterAll(async () => {
+  await app?.stop();
   app = null;
   db.dispose();
 });
@@ -105,6 +117,104 @@ describe('notification receipt routes', () => {
     expect(result.status).toBe(401);
     expect(result.data.code).toBe('UNAUTHORIZED');
     expect(getReceipt(notification.notification_id, user.userId)).toBeNull();
+  });
+
+  test('returns notification detail only to its target', async () => {
+    const { user: target, token: targetToken } = await createUser();
+    const { token: otherToken } = await createUser();
+    const { token: adminToken } = await createUser('admin');
+    const notification = createNotification(target.userId, 'Private detail');
+
+    const allowed = await get(`/notifications/${notification.notification_id}`, targetToken);
+    expect(allowed.status).toBe(200);
+    expect((allowed.data.notification as NotificationRecord).notification_id).toBe(
+      notification.notification_id,
+    );
+
+    const denied = await get(`/notifications/${notification.notification_id}`, otherToken);
+    expect(denied).toEqual({
+      status: 404,
+      data: { error: 'Not found', code: 'NOT_FOUND' },
+    });
+
+    const admin = await get(`/notifications/${notification.notification_id}`, adminToken);
+    expect(admin).toEqual({
+      status: 404,
+      data: { error: 'Not found', code: 'NOT_FOUND' },
+    });
+  });
+
+  test('applies all, user-list, and role targeting to detail reads', async () => {
+    const { user, token } = await createUser('reviewer');
+    const service = getNotificationService()!;
+    const notifications = [
+      service.broadcast({ title: 'Everyone' }),
+      service.notifyUsers([user.userId], { title: 'Selected users' }),
+      service.notifyRole('reviewer', { title: 'Reviewer role' }),
+    ];
+
+    for (const notification of notifications) {
+      const result = await get(`/notifications/${notification.notification_id}`, token);
+      expect(result.status).toBe(200);
+      expect((result.data.notification as NotificationRecord).notification_id).toBe(
+        notification.notification_id,
+      );
+    }
+  });
+
+  test('does not disclose notification existence to anonymous or non-target callers', async () => {
+    const { user: target } = await createUser();
+    const { token: otherToken } = await createUser();
+    const notification = createNotification(target.userId, 'Private existence');
+
+    const anonymous = await get(`/notifications/${notification.notification_id}`);
+    expect(anonymous.status).toBe(401);
+    expect(anonymous.data.code).toBe('UNAUTHORIZED');
+
+    const missing = await get(
+      `/notifications/n_${crypto.randomUUID()}`,
+      otherToken,
+    );
+    expect(missing).toEqual({
+      status: 404,
+      data: { error: 'Not found', code: 'NOT_FOUND' },
+    });
+  });
+
+  test('rejects receipt mutations for a guessed non-target notification ID', async () => {
+    const { user: target } = await createUser();
+    const { user: other, token: otherToken } = await createUser();
+    const notification = createNotification(target.userId, 'Not yours');
+
+    for (const action of ['seen', 'read', 'dismiss']) {
+      const result = await post(
+        `/notifications/${notification.notification_id}/${action}`,
+        otherToken,
+      );
+      expect(result).toEqual({
+        status: 404,
+        data: { error: 'Not found', code: 'NOT_FOUND' },
+      });
+    }
+
+    expect(getReceipt(notification.notification_id, other.userId)).toBeNull();
+  });
+
+  test('does not let administrator privilege create a non-target receipt', async () => {
+    const { user: target } = await createUser();
+    const { user: admin, token: adminToken } = await createUser('admin');
+    const notification = createNotification(target.userId, 'Admin audit only');
+
+    const result = await post(
+      `/notifications/${notification.notification_id}/read`,
+      adminToken,
+    );
+
+    expect(result).toEqual({
+      status: 404,
+      data: { error: 'Not found', code: 'NOT_FOUND' },
+    });
+    expect(getReceipt(notification.notification_id, admin.userId)).toBeNull();
   });
 
   test('marks one notification seen, read, and dismissed through HTTP routes', async () => {

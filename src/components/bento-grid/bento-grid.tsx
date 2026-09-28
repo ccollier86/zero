@@ -8,8 +8,8 @@
 
 import * as React from 'react';
 
-import { ZeroIcon } from '@/components/animate-ui/icons/zero-icon';
-import { cn } from '@/lib/utils';
+import { ZeroIcon } from '#zero/components/animate-ui/icons/zero-icon';
+import { cn } from '#zero/lib/utils';
 
 import type { BentoGridColumns, BentoGridItemProps, BentoGridProps, BentoGridSpan } from './bento-grid.types';
 

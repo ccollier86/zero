@@ -291,8 +291,8 @@ describe('TokenService — Token Pair', () => {
     let candidateAccessToken: string | undefined;
     const signed = new Promise<void>((resolve) => { signingFinished = resolve; });
     const resume = new Promise<void>((resolve) => { releaseSigner = resolve; });
-    tokenService.signAccessToken = async (subject, generation) => {
-      candidateAccessToken = await signAccessToken(subject, generation);
+    tokenService.signAccessToken = async (subject, generation, session) => {
+      candidateAccessToken = await signAccessToken(subject, generation, session);
       signingFinished!();
       await resume;
       return candidateAccessToken;
@@ -410,8 +410,8 @@ describe('TokenService — Refresh Rotation', () => {
     const firstSignerPaused = new Promise<void>((resolve) => { firstSigned = resolve; });
     const resumeFirstSigner = new Promise<void>((resolve) => { releaseFirst = resolve; });
     let calls = 0;
-    tokenService.signAccessToken = async (subject, generation) => {
-      const token = await signAccessToken(subject, generation);
+    tokenService.signAccessToken = async (subject, generation, session) => {
+      const token = await signAccessToken(subject, generation, session);
       calls += 1;
       if (calls === 1) {
         firstSigned!();

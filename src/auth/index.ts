@@ -1,18 +1,248 @@
 // ─── Auth Plugin ──────────────────────────────────────────────────────────
 export {
   createAuthPlugin,
+  getAuthAuditService,
+  getAuthorizationKernel,
+  getAuthorizationRoleService,
+  getAuthSessionService,
   getAuthStore,
   getMfaChallengeService,
   getMfaMethodStore,
   getMfaService,
   getTokenService,
 } from './auth.plugin';
-export { createAuthMiddleware } from './auth.middleware';
+export {
+  createAuthMiddleware,
+  createProtectedMultipartRequestGuard,
+  resolveRequestAuthContext,
+  resolveRequestAuthorizationAccess,
+} from './auth.middleware';
+export type {
+  AuthMiddlewareAuthorizationOptions,
+  ProtectedMultipartPathMatcher,
+  ProtectedMultipartRequestGuardOptions,
+  ZeroElysiaAuthRequirement,
+} from './auth.middleware';
+export { authContextAuthorityFingerprint } from './auth-context-authority';
+export { createAuthAuthorizationSnapshot } from './auth-authorization-snapshot';
+export type {
+  AuthAuthorizationIdentitySnapshot,
+  AuthAuthorizationScopeSnapshot,
+  AuthAuthorizationSnapshot,
+} from './auth-authorization-snapshot';
 export { installAuthStopBarrier } from './auth-stop-lifecycle';
+export { AuthRuntime, createAuthRuntime } from './auth-runtime';
+export type { AuthRuntimeDependencies } from './auth-runtime';
+export {
+  AuthorizationKernel,
+  compileAccessRequirement,
+  createAuthorizationKernel,
+  isCompiledAccessRequirement,
+  mergeAccessRequirements,
+  validateAuthorizationRegistry,
+  validatePermissionKey,
+  validateRoleKey,
+} from './authorization-kernel';
+export {
+  applicationServiceDataScope,
+  requireRequestServiceDataScope,
+  serviceDataScopeFromIdentity,
+  serviceDataScopeKey,
+  serviceDataScopeMatchesTenant,
+  serviceDataTenantId,
+  trustedSystemServiceDataScope,
+} from './service-data-scope';
+export type {
+  ServiceDataScope,
+  ServiceDataScopeIdentity,
+} from './service-data-scope';
+export {
+  createAuthorizationSubjectSnapshot,
+  createRequestAuthorizationAccess,
+} from './authorization-access';
+export type {
+  AuthorizationPropertyStore,
+  AuthorizationRoleAssignmentResolver,
+  CreateRequestAuthorizationAccessOptions,
+  RequestAuthorizationAccess,
+  TenantAuthorizationScope,
+} from './authorization-access';
+export {
+  FRAMEWORK_APPLICATION_AUTHORIZATION_PERMISSIONS,
+  FRAMEWORK_APPLICATION_AUTHORIZATION_ROLES,
+  FRAMEWORK_TENANT_AUTHORIZATION_PERMISSIONS,
+  FRAMEWORK_TENANT_AUTHORIZATION_ROLES,
+} from './authorization-registry';
+export { AuthorizationRoleService } from './authorization-role-service';
+export {
+  AuthorizationRoleAssignmentError,
+} from './authorization-role-types';
+export type {
+  ApplicationOwnershipTransferResult,
+  AssignApplicationRoleInput,
+  AssignTenantRoleInput,
+  AuthorizationAssignmentScopeKind,
+  AuthorizationAssignmentSource,
+  AuthorizationRoleAssignmentErrorCode,
+  AuthorizationRoleAssignmentRecord,
+  AuthorizationRegistrySnapshot,
+  AuthorizationRoleSet,
+  ExpandedAuthorizationRoleSet,
+  RemoveApplicationRoleInput,
+  RemoveTenantRoleInput,
+  RegistrationProvisioningAuthorityInput,
+  ReplaceApplicationRolesInput,
+  RollbackProvisionalApplicationOwnerInput,
+  TransferApplicationOwnershipInput,
+} from './authorization-role-types';
+export type {
+  AccessRequirement,
+  AccessRequirementCompileOptions,
+  AuthorizationDecision,
+  AuthorizationDenialReason,
+  AuthorizationKernelConfig,
+  AuthorizationScopeKind,
+  AuthorizationScopeSnapshot,
+  AuthorizationSubjectSnapshot,
+  CompiledAccessRequirement,
+  LegacyAccessRequirement,
+  SingleSimpleScopeInput,
+  StructuredAccessRequirement,
+  TrustedPropertyRequirement,
+  TrustedPropertyScalar,
+} from './authorization-kernel';
 
 // ─── Services ─────────────────────────────────────────────────────────────
+export {
+  AuthAuditService,
+  authAuditActorFromContext,
+  authAuditRequestFromRequest,
+} from './auth-audit-service';
+export { resolveAuthAuditConfig } from './auth-audit-config';
+export { defineAuthAuditTables } from './auth-audit-schema';
+export type {
+  AppendAuthAuditEventInput,
+  AuthAuditActor,
+  AuthAuditActorProvenance,
+  AuthAuditConfig,
+  AuthAuditEvent,
+  AuthAuditExport,
+  AuthAuditMetadata,
+  AuthAuditMetadataValue,
+  AuthAuditOutcome,
+  AuthAuditPage,
+  AuthAuditQuery,
+  AuthAuditRequestContext,
+  AuthAuditScopeKind,
+  AuthAuditTarget,
+  ResolvedAuthAuditConfig,
+} from './auth-audit-types';
 export { UserStore } from './user-store';
 export { TokenService } from './token-service';
+export { AuthSessionService } from './auth-session-service';
+export { AuthRequestAdmissionService } from './auth-request-admission-service';
+export { resolveAuthRequestAdmissionConfig } from './auth-request-admission-config';
+export type {
+  AuthRequestAdmissionConfig,
+  AuthRequestAdmissionFlow,
+  AuthRequestAdmissionFlowConfig,
+  AuthRequestSourceContext,
+  AuthRequestSourceResolver,
+  ResolvedAuthRequestAdmissionConfig,
+  ResolvedAuthRequestAdmissionFlowConfig,
+} from './auth-request-admission-types';
+export { AuthSessionStore } from './auth-session-store';
+export { defineAuthSessionTables } from './auth-session-schema';
+export { AuthTenantSessionService } from './auth-tenant-session-service';
+export { AuthApplicationAdministrationService } from './auth-application-administration-service';
+export { AuthTenantAdministrationService } from './auth-tenant-administration-service';
+export { AuthTenantOnboardingService } from './auth-tenant-onboarding-service';
+export { VerifiedDomainOnboardingService } from './verified-domain-service';
+export { resolveAuthTenantOnboardingConfig } from './auth-tenant-onboarding-config';
+export { defineAuthTenantOnboardingTables } from './auth-tenant-onboarding-schema';
+export type {
+  AcceptedTenantInvitation,
+} from './auth-tenant-onboarding-service';
+export type {
+  AuthTenantInvitation,
+  AuthTenantInvitationCreated,
+  AuthTenantInvitationInspection,
+  AuthTenantInvitationRecord,
+  AuthTenantInvitationStatus,
+  AuthTenantJoinRequest,
+  AuthTenantJoinRequestApprovalPolicy,
+  AuthTenantJoinRequestApprovalRole,
+  AuthTenantJoinRequestPage,
+  AuthTenantJoinRequestRecord,
+  AuthTenantJoinRequestRoleSelection,
+  AuthTenantJoinRequestStatus,
+  AuthTenantOnboardingConfig,
+  AuthTenantRoleGrantCeiling,
+  AuthVerifiedDomainOnboardingConfig,
+  AuthVerifiedDomainTxtResolver,
+  ResolvedAuthTenantOnboardingConfig,
+} from './auth-tenant-onboarding-types';
+export type {
+  AuthDomainOnboardingCompletion,
+  AuthTenantDomainChallengeResult,
+  AuthTenantDomainClaimProjection,
+  AuthTenantDomainClaimStatus,
+  AuthTenantDomainReleaseResult,
+  DomainAdmissionIdentityBinding,
+  DomainMailboxJobBinding,
+} from './verified-domain-service';
+export type {
+  AuthApplicationAdministrationConfig,
+  AuthApplicationOwnershipTransferResult,
+  AuthApplicationRoleDescriptor,
+  AuthApplicationRoleMutationResult,
+  AuthApplicationUser,
+  AuthApplicationUserIdentity,
+  AuthApplicationUserListInput,
+  AuthApplicationUserPage,
+} from './auth-application-administration-types';
+export type {
+  AuthTenantAdministrationConfig,
+  AuthTenantMember,
+  AuthTenantMemberIdentity,
+  AuthTenantMemberListInput,
+  AuthTenantMemberMutationResult,
+  AuthTenantMemberPage,
+  AuthTenantOwnershipTransferResult,
+  AuthTenantRoleDescriptor,
+  TenantRoleGrantCeiling,
+} from './auth-tenant-administration-types';
+export {
+  AuthSessionContinuationStore,
+} from './auth-session-continuation-store';
+export {
+  defineAuthSessionContinuationTables,
+} from './auth-session-continuation-schema';
+export type {
+  AuthSessionKind,
+  AuthSessionProvenance,
+  AuthSessionRecord,
+  AuthSessionScopeKind,
+  AuthSessionStatus,
+  PreparedWebSessionBinding,
+  WebSessionBinding,
+  WebSessionIssueOptions,
+} from './auth-session-types';
+export type {
+  AuthSessionContinuationPurpose,
+  AuthSessionContinuationRecord,
+  AuthSessionContinuationStoreOptions,
+  CreatedAuthSessionContinuation,
+} from './auth-session-continuation-store';
+export type {
+  AuthTenantListResult,
+  AuthTenantCreateInput,
+  AuthTenantSessionCompletion,
+  AuthTenantSummary,
+  BoundAuthSessionCompletion,
+  TenantOnboardingCompletion,
+  TenantSelectionCompletion,
+} from './auth-tenant-session-types';
 export { AuthActionTokenService } from './action-token-service';
 export { AccountEmailService } from './account-email-service';
 export { MfaMethodStore } from './mfa-method-store';
@@ -35,6 +265,24 @@ export {
   resolveAuthEmailBranding,
 } from './auth-email-templates';
 export { UserPropertyService } from './user-property-service';
+export {
+  TenantStore,
+  TenancyService,
+  TENANT_OWNER_ROLE_KEY,
+  TenancyError,
+  defineTenancyTables,
+} from './tenancy';
+export type {
+  CreateTenantMembershipInput,
+  CreateTenantWithOwnerInput,
+  TenantCreationResult,
+  TenantOwnershipTransferResult,
+  TenantMembershipRecord,
+  TenantMembershipStatus,
+  TenantRecord,
+  TenantStatus,
+  TenancyErrorCode,
+} from './tenancy';
 
 // ─── Types ────────────────────────────────────────────────────────────────
 export type {
@@ -49,6 +297,7 @@ export type {
 
 export type {
   AuthContext,
+  AuthContextAuthorityReference,
   UserRecord,
   TokenPair,
   AccessTokenPayload,
@@ -69,19 +318,42 @@ export type {
   TokenServiceConfig,
   AuthAccountConfig,
   AuthAccountEmailConfig,
+  AuthAuthorizationConfig,
+  AuthAuthorizationMode,
+  AuthAuthorizationOwnerAdoptionConfig,
+  AuthAuthorizationOptions,
+  AuthPermissionConfig,
+  AuthRoleTemplateConfig,
   AuthBehaviorConfig,
+  AuthBootstrapConfig,
+  AuthBootstrapMode,
+  AuthBootstrapOptions,
   AuthMfaTotpConfig,
   AuthRegistrationConfig,
   AuthRegistrationMode,
+  AuthTenancyConfig,
+  AuthTenancyMode,
+  AuthTenancyOptions,
+  AuthTenantCreationConfig,
+  AuthTenantCreationMode,
+  AuthTenantTerminologyConfig,
+  NormalizedAuthBehaviorConfig,
   ResolvedAuthAccountConfig,
   ResolvedAuthAccountEmailConfig,
+  ResolvedAuthAuthorizationConfig,
+  ResolvedAuthPermissionConfig,
+  ResolvedAuthRoleTemplateConfig,
+  ResolvedAuthBootstrapConfig,
   ResolvedAuthMfaConfig,
   ResolvedAuthMfaTotpConfig,
+  ResolvedAuthTenancyConfig,
+  ResolvedAuthRegistrationConfig,
   UserPropertyFieldConfig,
   UserPropertyFieldType,
   UserPropertyEditableBy,
   ResolvedAuthBehaviorConfig,
   ResolvedUserPropertyFieldConfig,
+  PermissionKey,
 } from './types';
 
 export { AuthError, AUTH_DEFAULTS } from './types';

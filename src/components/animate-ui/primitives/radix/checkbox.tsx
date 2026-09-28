@@ -2,10 +2,15 @@
 
 import * as React from 'react';
 import { Checkbox as CheckboxPrimitive } from 'radix-ui';
-import { motion, SVGMotionProps, type HTMLMotionProps } from 'motion/react';
+import {
+  motion,
+  useReducedMotion,
+  SVGMotionProps,
+  type HTMLMotionProps,
+} from 'motion/react';
 
-import { getStrictContext } from '@/lib/get-strict-context';
-import { useControlledState } from '@/hooks/use-controlled-state';
+import { getStrictContext } from '#zero/lib/get-strict-context';
+import { useControlledState } from '#zero/hooks/use-controlled-state';
 
 type CheckboxContextType = {
   isChecked: boolean | 'indeterminate';
@@ -28,6 +33,7 @@ function Checkbox({
   value,
   ...props
 }: CheckboxProps) {
+  const reduceMotion = useReducedMotion() === true;
   const [isChecked, setIsChecked] = useControlledState({
     value: checked,
     defaultValue: defaultChecked,
@@ -48,8 +54,8 @@ function Checkbox({
       >
         <motion.button
           data-slot="checkbox"
-          whileTap={{ scale: 0.95 }}
-          whileHover={{ scale: 1.05 }}
+          whileTap={reduceMotion ? undefined : { scale: 0.95 }}
+          whileHover={reduceMotion ? undefined : { scale: 1.05 }}
           {...props}
         />
       </CheckboxPrimitive.Root>
@@ -61,6 +67,7 @@ type CheckboxIndicatorProps = SVGMotionProps<SVGSVGElement>;
 
 function CheckboxIndicator(props: CheckboxIndicatorProps) {
   const { isChecked } = useCheckbox();
+  const reduceMotion = useReducedMotion() === true;
 
   return (
     <CheckboxPrimitive.Indicator forceMount asChild>
@@ -71,7 +78,7 @@ function CheckboxIndicator(props: CheckboxIndicatorProps) {
         viewBox="0 0 24 24"
         strokeWidth="3.5"
         stroke="currentColor"
-        initial="unchecked"
+        initial={reduceMotion ? false : 'unchecked'}
         animate={isChecked ? 'checked' : 'unchecked'}
         {...props}
       >
@@ -82,11 +89,11 @@ function CheckboxIndicator(props: CheckboxIndicatorProps) {
             x2="19"
             y2="12"
             strokeLinecap="round"
-            initial={{ pathLength: 0, opacity: 0 }}
+            initial={reduceMotion ? false : { pathLength: 0, opacity: 0 }}
             animate={{
               pathLength: 1,
               opacity: 1,
-              transition: { duration: 0.2 },
+              transition: { duration: reduceMotion ? 0 : 0.2 },
             }}
           />
         ) : (
@@ -99,15 +106,15 @@ function CheckboxIndicator(props: CheckboxIndicatorProps) {
                 pathLength: 1,
                 opacity: 1,
                 transition: {
-                  duration: 0.2,
-                  delay: 0.2,
+                  duration: reduceMotion ? 0 : 0.2,
+                  delay: reduceMotion ? 0 : 0.2,
                 },
               },
               unchecked: {
                 pathLength: 0,
                 opacity: 0,
                 transition: {
-                  duration: 0.2,
+                  duration: reduceMotion ? 0 : 0.2,
                 },
               },
             }}

@@ -7,7 +7,7 @@
 
 import type * as React from 'react';
 
-import type { ZeroAnimatedIconName } from '@/components/animate-ui/icons';
+import type { ZeroAnimatedIconName } from '#zero/components/animate-ui/icons';
 
 export type BentoGridColumns = 2 | 3 | 4;
 export type BentoGridSpan = 1 | 2 | 3 | 4;

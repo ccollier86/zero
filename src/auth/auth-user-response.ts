@@ -1,13 +1,14 @@
 /**
  * auth-user-response.ts
  *
- * Maps internal auth user records to the public payload returned by auth
- * routes. This keeps response shaping out of route composition code.
+ * Maps internal auth user records to the sanitized payload returned by
+ * authorized auth routes. This keeps response shaping out of route composition
+ * code; it does not make user rows globally public.
  */
 
 import type { UserRecord } from './types';
 
-/** Return the public user payload used by auth route responses. */
+/** Return the sanitized user payload used by authorized auth route responses. */
 export function toAuthUserResponse(user: UserRecord): UserRecord {
   return {
     userId: user.userId,

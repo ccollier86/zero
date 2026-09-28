@@ -17,6 +17,7 @@ import {
 import type { Row } from '../../sync/types';
 import { OBS_CODES } from '../../observability/codes';
 import { useClientMaybe } from './client-context';
+import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
 import { emitFrontendCode } from './observability';
 import type {
   ResourceClient,
@@ -86,16 +87,65 @@ export interface ResourceActionsResult<T extends Row> {
   remove: (id: string) => Promise<ResourceDeleteResult>;
 }
 
+type ResourceLoadTrigger = 'automatic' | 'manual';
+
+/** @internal Shared gate that keeps manual refresh available when auto-load is disabled. */
+export function shouldRunResourceLoad(
+  autoLoad: boolean | undefined,
+  trigger: ResourceLoadTrigger,
+): boolean {
+  return trigger === 'manual' || autoLoad !== false;
+}
+
 /** Return a generated-resource client for one resource, or null before hydration. */
 export function useResourceClient<T extends Row = Row>(
   resource: string,
   options: ResourceClientOptions = {}
 ): ResourceClient<T> | null {
   const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const prefix = options.prefix;
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
   return useMemo(
-    () => client?.resource<T>(resource, { prefix }) ?? null,
-    [client, resource, prefix],
+    () => {
+      if (!authorizationBoundary.ready || !client) return null;
+      const resourceClient = client.resource<T>(resource, { prefix });
+      const run = async <R,>(operation: () => Promise<R>): Promise<R> => {
+        if (!boundaryReadyRef.current
+          || boundaryKeyRef.current !== callbackBoundaryKey) {
+          throw authorizationScopeUnavailableError();
+        }
+        const result = await operation();
+        if (!boundaryReadyRef.current
+          || boundaryKeyRef.current !== callbackBoundaryKey) {
+          throw staleAuthorizationScopeError();
+        }
+        return result;
+      };
+      return {
+        name: resourceClient.name,
+        list: (listOptions) => run(() => resourceClient.list(listOptions)),
+        get: (id, requestOptions) => run(() => resourceClient.get(id, requestOptions)),
+        create: (input, requestOptions) => run(() => resourceClient.create(input, requestOptions)),
+        update: (id, input, requestOptions) => run(() => (
+          resourceClient.update(id, input, requestOptions)
+        )),
+        delete: (id, requestOptions) => run(() => resourceClient.delete(id, requestOptions)),
+        remove: (id, requestOptions) => run(() => resourceClient.remove(id, requestOptions)),
+      };
+    },
+    [
+      authorizationBoundary.key,
+      authorizationBoundary.ready,
+      callbackBoundaryKey,
+      client,
+      prefix,
+      resource,
+    ],
   );
 }
 
@@ -104,6 +154,8 @@ export function useResourceList<T extends Row = Row>(
   resource: string,
   options: UseResourceListOptions = {}
 ): ResourceListHookResult<T> {
+  const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const resourceClient = useResourceClient<T>(resource, { prefix: options.prefix });
   const [rows, setRows] = useState<T[]>([]);
   const [filters, setFiltersState] = useState<DataPageFilters>(options.filters ?? {});
@@ -113,7 +165,14 @@ export function useResourceList<T extends Row = Row>(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [pageInfo, setPageInfo] = useState<DataPageInfo | null>(null);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
   const requestRef = useRef(0);
+  const requestControllersRef = useRef(new Set<AbortController>());
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
   const filtersKey = stableValueKey(options.filters ?? {});
   const sortKey = stableValueKey(options.sort ?? null);
 
@@ -127,11 +186,18 @@ export function useResourceList<T extends Row = Row>(
     setPageState(normalizePage(options.initialPage ?? 1));
   }, [sortKey, options.initialPage]);
 
-  const refresh = useCallback(() => {
-    if (!resourceClient || options.autoLoad === false) return;
+  const runLoad = useCallback((trigger: ResourceLoadTrigger) => {
+    if (!authorizationBoundary.ready
+      || !resourceClient
+      || !boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey
+      || !shouldRunResourceLoad(options.autoLoad, trigger)) return;
     const requestId = ++requestRef.current;
     const controller = new AbortController();
+    const requestBoundaryKey = callbackBoundaryKey;
+    requestControllersRef.current.add(controller);
 
+    setLoadedBoundaryKey(requestBoundaryKey);
     setLoading(true);
     setError(null);
 
@@ -143,12 +209,18 @@ export function useResourceList<T extends Row = Row>(
       signal: controller.signal,
     })
       .then((response) => {
-        if (requestRef.current !== requestId) return;
+        if (controller.signal.aborted
+          || requestRef.current !== requestId
+          || boundaryKeyRef.current !== requestBoundaryKey
+          || !boundaryReadyRef.current) return;
         setRows(response.rows);
         setPageInfo(response.page);
       })
       .catch((err) => {
-        if (controller.signal.aborted || requestRef.current !== requestId) return;
+        if (controller.signal.aborted
+          || requestRef.current !== requestId
+          || boundaryKeyRef.current !== requestBoundaryKey
+          || !boundaryReadyRef.current) return;
         const nextError = err instanceof Error ? err : new Error(String(err));
         setError(nextError);
         emitFrontendCode(OBS_CODES.FRONTEND_RESOURCE_ACTION_FAILED, {
@@ -157,67 +229,119 @@ export function useResourceList<T extends Row = Row>(
         });
       })
       .finally(() => {
-        if (!controller.signal.aborted && requestRef.current === requestId) {
+        requestControllersRef.current.delete(controller);
+        if (!controller.signal.aborted
+          && requestRef.current === requestId
+          && boundaryKeyRef.current === requestBoundaryKey
+          && boundaryReadyRef.current) {
           setLoading(false);
         }
       });
 
-    return () => controller.abort();
-  }, [resourceClient, options.autoLoad, resource, filters, sort, page, pageSize]);
-
-  useEffect(() => {
-    const abort = refresh();
-    return abort;
-  }, [refresh]);
-
-  const setPage = useCallback((nextPage: number) => {
-    setPageState(normalizePage(nextPage));
-  }, []);
-
-  const nextPage = useCallback(() => {
-    setPageState((current) => current + 1);
-  }, []);
-
-  const previousPage = useCallback(() => {
-    setPageState((current) => normalizePage(current - 1));
-  }, []);
-
-  const setPageSize = useCallback((nextPageSize: number) => {
-    setPageSizeState(normalizePageSize(nextPageSize));
-    setPageState(1);
-  }, []);
-
-  const setSort = useCallback((nextSort: DataPageSort | null) => {
-    setSortState(nextSort);
-    setPageState(1);
-  }, []);
-
-  const setFilter = useCallback((field: string, value: DataPageFilters[string]) => {
-    setFiltersState((current) => ({ ...current, [field]: value }));
-    setPageState(1);
-  }, []);
-
-  const setFilters = useCallback((nextFilters: DataPageFilters) => {
-    setFiltersState(nextFilters);
-    setPageState(1);
-  }, []);
-
-  const clearFilters = useCallback(() => {
-    setFiltersState({});
-    setPageState(1);
-  }, []);
-
-  return {
-    rows,
-    page,
-    pageSize,
+    return () => {
+      requestControllersRef.current.delete(controller);
+      controller.abort();
+    };
+  }, [
+    authorizationBoundary.key,
+    authorizationBoundary.ready,
+    callbackBoundaryKey,
+    resourceClient,
+    options.autoLoad,
+    resource,
     filters,
     sort,
-    loading,
-    error,
-    pageInfo,
-    hasMore: pageInfo?.hasMore ?? false,
-    refresh: () => { refresh(); },
+    page,
+    pageSize,
+  ]);
+
+  const refresh = useCallback(() => {
+    runLoad('manual');
+  }, [runLoad]);
+
+  useEffect(() => {
+    requestRef.current += 1;
+    for (const controller of requestControllersRef.current) controller.abort();
+    requestControllersRef.current.clear();
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setRows([]);
+    setPageInfo(null);
+    setError(null);
+    if (!authorizationBoundary.ready) {
+      setLoading(false);
+      return;
+    }
+    const abort = runLoad('automatic');
+    return abort;
+  }, [authorizationBoundary.key, authorizationBoundary.ready, runLoad]);
+
+  const setPage = useCallback((nextPage: number) => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setPageState(normalizePage(nextPage));
+  }, [callbackBoundaryKey]);
+
+  const nextPage = useCallback(() => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setPageState((current) => current + 1);
+  }, [callbackBoundaryKey]);
+
+  const previousPage = useCallback(() => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setPageState((current) => normalizePage(current - 1));
+  }, [callbackBoundaryKey]);
+
+  const setPageSize = useCallback((nextPageSize: number) => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setPageSizeState(normalizePageSize(nextPageSize));
+    setPageState(1);
+  }, [callbackBoundaryKey]);
+
+  const setSort = useCallback((nextSort: DataPageSort | null) => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setSortState(nextSort);
+    setPageState(1);
+  }, [callbackBoundaryKey]);
+
+  const setFilter = useCallback((field: string, value: DataPageFilters[string]) => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setFiltersState((current) => ({ ...current, [field]: value }));
+    setPageState(1);
+  }, [callbackBoundaryKey]);
+
+  const setFilters = useCallback((nextFilters: DataPageFilters) => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setFiltersState(nextFilters);
+    setPageState(1);
+  }, [callbackBoundaryKey]);
+
+  const clearFilters = useCallback(() => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setFiltersState({});
+    setPageState(1);
+  }, [callbackBoundaryKey]);
+
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+
+  return {
+    rows: visible ? rows : [],
+    page: visible ? page : normalizePage(options.initialPage ?? 1),
+    pageSize,
+    filters: visible ? filters : options.filters ?? {},
+    sort: visible ? sort : options.sort ?? null,
+    loading: authorizationBoundary.ready && (!visible || loading),
+    error: visible ? error : null,
+    pageInfo: visible ? pageInfo : null,
+    hasMore: visible ? pageInfo?.hasMore ?? false : false,
+    refresh,
     setPage,
     nextPage,
     previousPage,
@@ -235,27 +359,50 @@ export function useResourceRecord<T extends Row = Row>(
   id: string | null,
   options: UseResourceRecordOptions = {}
 ): ResourceRecordResult<T> {
+  const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const resourceClient = useResourceClient<T>(resource, { prefix: options.prefix });
   const [row, setRow] = useState<T | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
   const requestRef = useRef(0);
+  const requestControllersRef = useRef(new Set<AbortController>());
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
 
-  const refresh = useCallback(() => {
-    if (!resourceClient || !id || options.autoLoad === false) return;
+  const runLoad = useCallback((trigger: ResourceLoadTrigger) => {
+    if (!authorizationBoundary.ready
+      || !resourceClient
+      || !id
+      || !boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey
+      || !shouldRunResourceLoad(options.autoLoad, trigger)) return;
     const requestId = ++requestRef.current;
     const controller = new AbortController();
+    const requestBoundaryKey = callbackBoundaryKey;
+    requestControllersRef.current.add(controller);
 
+    setLoadedBoundaryKey(requestBoundaryKey);
     setLoading(true);
     setError(null);
 
     resourceClient.get(id, { signal: controller.signal })
       .then((nextRow) => {
-        if (requestRef.current !== requestId) return;
+        if (controller.signal.aborted
+          || requestRef.current !== requestId
+          || boundaryKeyRef.current !== requestBoundaryKey
+          || !boundaryReadyRef.current) return;
         setRow(nextRow);
       })
       .catch((err) => {
-        if (controller.signal.aborted || requestRef.current !== requestId) return;
+        if (controller.signal.aborted
+          || requestRef.current !== requestId
+          || boundaryKeyRef.current !== requestBoundaryKey
+          || !boundaryReadyRef.current) return;
         const nextError = err instanceof Error ? err : new Error(String(err));
         setError(nextError);
         emitFrontendCode(OBS_CODES.FRONTEND_RESOURCE_ACTION_FAILED, {
@@ -264,49 +411,95 @@ export function useResourceRecord<T extends Row = Row>(
         });
       })
       .finally(() => {
-        if (!controller.signal.aborted && requestRef.current === requestId) {
+        requestControllersRef.current.delete(controller);
+        if (!controller.signal.aborted
+          && requestRef.current === requestId
+          && boundaryKeyRef.current === requestBoundaryKey
+          && boundaryReadyRef.current) {
           setLoading(false);
         }
       });
 
-    return () => controller.abort();
-  }, [resourceClient, id, options.autoLoad, resource]);
+    return () => {
+      requestControllersRef.current.delete(controller);
+      controller.abort();
+    };
+  }, [
+    authorizationBoundary.key,
+    authorizationBoundary.ready,
+    callbackBoundaryKey,
+    resourceClient,
+    id,
+    options.autoLoad,
+    resource,
+  ]);
+
+  const refresh = useCallback(() => {
+    runLoad('manual');
+  }, [runLoad]);
 
   useEffect(() => {
-    if (!id) {
-      requestRef.current += 1;
-      setRow(null);
+    requestRef.current += 1;
+    for (const controller of requestControllersRef.current) controller.abort();
+    requestControllersRef.current.clear();
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setRow(null);
+    setError(null);
+    if (!id || !authorizationBoundary.ready) {
       setLoading(false);
       return;
     }
-    const abort = refresh();
+    const abort = runLoad('automatic');
     return abort;
-  }, [id, refresh]);
+  }, [authorizationBoundary.key, authorizationBoundary.ready, id, runLoad]);
 
   const update = useCallback(async (partial: Partial<T>) => {
-    if (!resourceClient || !id) return null;
+    if (!resourceClient
+      || !id
+      || !boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return null;
+    const requestBoundaryKey = callbackBoundaryKey;
+    const controller = new AbortController();
+    requestControllersRef.current.add(controller);
+    const isCurrent = () => !controller.signal.aborted
+      && boundaryReadyRef.current
+      && boundaryKeyRef.current === requestBoundaryKey;
     return runResourceAction(resource, 'update', setLoading, setError, async () => {
-      const updated = await resourceClient.update(id, partial);
+      const updated = await resourceClient.update(id, partial, { signal: controller.signal });
+      if (!isCurrent()) throw staleAuthorizationScopeError();
       setRow(updated);
       return updated;
-    });
-  }, [resourceClient, id, resource]);
+    }, isCurrent).finally(() => requestControllersRef.current.delete(controller));
+  }, [callbackBoundaryKey, resourceClient, id, resource]);
 
   const remove = useCallback(async () => {
-    if (!resourceClient || !id) return null;
+    if (!resourceClient
+      || !id
+      || !boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return null;
+    const requestBoundaryKey = callbackBoundaryKey;
+    const controller = new AbortController();
+    requestControllersRef.current.add(controller);
+    const isCurrent = () => !controller.signal.aborted
+      && boundaryReadyRef.current
+      && boundaryKeyRef.current === requestBoundaryKey;
     return runResourceAction(resource, 'delete', setLoading, setError, async () => {
-      const deleted = await resourceClient.delete(id);
+      const deleted = await resourceClient.delete(id, { signal: controller.signal });
+      if (!isCurrent()) throw staleAuthorizationScopeError();
       setRow(null);
       return deleted;
-    });
-  }, [resourceClient, id, resource]);
+    }, isCurrent).finally(() => requestControllersRef.current.delete(controller));
+  }, [callbackBoundaryKey, resourceClient, id, resource]);
+
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
 
   return {
-    row,
-    exists: row !== null,
-    loading,
-    error,
-    refresh: () => { refresh(); },
+    row: visible ? row : null,
+    exists: visible && row !== null,
+    loading: authorizationBoundary.ready && (!visible || loading),
+    error: visible ? error : null,
+    refresh,
     update,
     remove,
   };
@@ -317,31 +510,95 @@ export function useResourceActions<T extends Row = Row>(
   resource: string,
   options: ResourceClientOptions = {}
 ): ResourceActionsResult<T> {
+  const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const resourceClient = useResourceClient<T>(resource, options);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
+  const requestControllersRef = useRef(new Set<AbortController>());
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
 
-  const resetError = useCallback(() => setError(null), []);
+  useEffect(() => {
+    for (const controller of requestControllersRef.current) controller.abort();
+    requestControllersRef.current.clear();
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setLoading(false);
+    setError(null);
+  }, [authorizationBoundary.key]);
+
+  const resetError = useCallback(() => {
+    if (boundaryReadyRef.current
+      && boundaryKeyRef.current === callbackBoundaryKey) setError(null);
+  }, [callbackBoundaryKey]);
+
+  const runAction = useCallback(async <R,>(
+    action: string,
+    actionFn: (signal: AbortSignal) => Promise<R>,
+  ): Promise<R> => {
+    if (!resourceClient
+      || !boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) {
+      throw authorizationScopeUnavailableError();
+    }
+    const requestBoundaryKey = callbackBoundaryKey;
+    const controller = new AbortController();
+    requestControllersRef.current.add(controller);
+    const isCurrent = () => !controller.signal.aborted
+      && boundaryReadyRef.current
+      && boundaryKeyRef.current === requestBoundaryKey;
+    try {
+      return await runResourceAction(
+        resource,
+        action,
+        setLoading,
+        setError,
+        () => actionFn(controller.signal),
+        isCurrent,
+      );
+    } finally {
+      requestControllersRef.current.delete(controller);
+    }
+  }, [callbackBoundaryKey, resource, resourceClient]);
 
   const create = useCallback(async (input: Partial<T>) => {
-    if (!resourceClient) throw new Error('Zero client is not available yet.');
-    return runResourceAction(resource, 'create', setLoading, setError, () =>
-      resourceClient.create(input));
-  }, [resourceClient, resource]);
+    if (!resourceClient) {
+      if (!client) throw new Error('Zero client is not available yet.');
+      throw authorizationScopeUnavailableError();
+    }
+    return runAction('create', (signal) => resourceClient.create(input, { signal }));
+  }, [client, resourceClient, runAction]);
 
   const update = useCallback(async (id: string, input: Partial<T>) => {
-    if (!resourceClient) throw new Error('Zero client is not available yet.');
-    return runResourceAction(resource, 'update', setLoading, setError, () =>
-      resourceClient.update(id, input));
-  }, [resourceClient, resource]);
+    if (!resourceClient) {
+      if (!client) throw new Error('Zero client is not available yet.');
+      throw authorizationScopeUnavailableError();
+    }
+    return runAction('update', (signal) => resourceClient.update(id, input, { signal }));
+  }, [client, resourceClient, runAction]);
 
   const remove = useCallback(async (id: string) => {
-    if (!resourceClient) throw new Error('Zero client is not available yet.');
-    return runResourceAction(resource, 'delete', setLoading, setError, () =>
-      resourceClient.delete(id));
-  }, [resourceClient, resource]);
+    if (!resourceClient) {
+      if (!client) throw new Error('Zero client is not available yet.');
+      throw authorizationScopeUnavailableError();
+    }
+    return runAction('delete', (signal) => resourceClient.delete(id, { signal }));
+  }, [client, resourceClient, runAction]);
 
-  return { loading, error, resetError, create, update, remove };
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+  return {
+    loading: visible ? loading : false,
+    error: visible ? error : null,
+    resetError,
+    create,
+    update,
+    remove,
+  };
 }
 
 async function runResourceAction<T>(
@@ -349,14 +606,19 @@ async function runResourceAction<T>(
   action: string,
   setLoading: (loading: boolean) => void,
   setError: (error: Error | null) => void,
-  actionFn: () => Promise<T>
+  actionFn: () => Promise<T>,
+  isCurrent: () => boolean = () => true,
 ): Promise<T> {
+  if (!isCurrent()) throw authorizationScopeUnavailableError();
   setLoading(true);
   setError(null);
 
   try {
-    return await actionFn();
+    const result = await actionFn();
+    if (!isCurrent()) throw staleAuthorizationScopeError();
+    return result;
   } catch (err) {
+    if (!isCurrent()) throw staleAuthorizationScopeError();
     const error = err instanceof Error ? err : new Error(String(err));
     setError(error);
     emitFrontendCode(OBS_CODES.FRONTEND_RESOURCE_ACTION_FAILED, {
@@ -365,6 +627,14 @@ async function runResourceAction<T>(
     });
     throw error;
   } finally {
-    setLoading(false);
+    if (isCurrent()) setLoading(false);
   }
+}
+
+function authorizationScopeUnavailableError(): Error {
+  return new Error('Resource actions are unavailable during an authorization scope transition.');
+}
+
+function staleAuthorizationScopeError(): Error {
+  return new Error('The authorization scope changed before the resource request completed.');
 }

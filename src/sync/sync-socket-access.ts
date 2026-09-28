@@ -6,11 +6,13 @@ import type {
   SyncAuthContext,
   SyncResourcePolicyAdapter,
   SyncRowFilter,
+  SyncRowProjector,
 } from './types';
 
 export interface SyncSocketAccess {
   allowedTables: Set<string>;
   rowFilters: Map<string, SyncRowFilter>;
+  rowProjectors: Map<string, SyncRowProjector>;
   fingerprint: string | null;
 }
 
@@ -34,6 +36,7 @@ export async function resolveSyncSocketAccess(
     return {
       allowedTables: tables,
       rowFilters: new Map(),
+      rowProjectors: new Map(),
       fingerprint: tableFingerprint(tables),
     };
   }
@@ -46,16 +49,21 @@ export async function resolveSyncSocketAccess(
   return {
     allowedTables: access.readableTables,
     rowFilters: access.rowFilters,
-    fingerprint: policy === undefined && access.rowFilters.size > 0
+    rowProjectors: access.rowProjectors ?? new Map(),
+    fingerprint: policy === undefined && (
+      access.rowFilters.size > 0
+      || (access.rowProjectors?.size ?? 0) > 0
+    )
       ? null
       : JSON.stringify([
         [...access.readableTables].sort(),
         [...access.rowFilters.keys()].sort(),
+        [...(access.rowProjectors?.keys() ?? [])].sort(),
         policy ?? null,
       ]),
   };
 }
 
 function tableFingerprint(tables: Iterable<string>): string {
-  return JSON.stringify([[...tables].sort(), [], null]);
+  return JSON.stringify([[...tables].sort(), [], [], null]);
 }

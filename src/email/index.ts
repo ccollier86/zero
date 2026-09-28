@@ -13,9 +13,11 @@ export { NoopEmailProvider } from './noop-email-provider';
 export { ResendEmailProvider } from './resend-email-provider';
 export {
   configureEmail,
+  createEmailRuntime,
   getEmailRuntime,
   getEmailService,
   isEmailDeliveryReady,
+  registerEmailRuntime,
 } from './runtime';
 export type {
   AppIdentityConfig,

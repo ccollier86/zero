@@ -12,7 +12,7 @@ import { CheckCircle2, Info, Loader2, TriangleAlert, XCircle } from 'lucide-reac
 import type { ComponentProps } from 'react';
 import { Toaster as Sonner } from 'sonner';
 
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 
 type ToasterProps = ComponentProps<typeof Sonner>;
 

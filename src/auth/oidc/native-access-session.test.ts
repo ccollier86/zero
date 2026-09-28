@@ -12,6 +12,38 @@ const claims = {
 };
 
 describe('native access-session validation', () => {
+  test('fences the cached family validator and session mutations after a profile change', () => {
+    const { db, store } = setup();
+    try {
+      store.consumeCodeAndInsert(() => true, session('a', 'family-a', 20_000));
+      const validator = createNativeAccessSessionValidator(config(true), store);
+      let current = true;
+      store.setRuntimeProfileGuard(() => {
+        if (!current) throw new Error('AUTH_PROFILE_CHANGED');
+      });
+      expect(validator.isActive({
+        sessionId: 'family-a',
+        userId: 'user',
+        clientId: 'desktop',
+        authGeneration: 2,
+      })).toBe(true);
+
+      current = false;
+      expect(() => validator.isActive({
+        sessionId: 'family-a',
+        userId: 'user',
+        clientId: 'desktop',
+        authGeneration: 2,
+      })).toThrow('AUTH_PROFILE_CHANGED');
+      expect(() => store.get('a')).toThrow('AUTH_PROFILE_CHANGED');
+      expect(() => store.revokeFamily('family-a')).toThrow('AUTH_PROFILE_CHANGED');
+      expect(db.prepare(`SELECT revoked_at FROM _auth_native_sessions
+        WHERE family_id = 'family-a'`).get()).toEqual({ revoked_at: null });
+    } finally {
+      db.dispose();
+    }
+  });
+
   test('requires an exact, live, unrevoked refresh-family binding', () => {
     const { db, store } = setup();
     try {

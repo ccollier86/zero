@@ -11,10 +11,10 @@
 import * as React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { ZeroIcon } from '@/components/animate-ui/icons/zero-icon';
-import { TextGenerateEffect } from '@/components/text-effects';
-import { cn } from '@/lib/utils';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { ZeroIcon } from '#zero/components/animate-ui/icons/zero-icon';
+import { TextGenerateEffect } from '#zero/components/text-effects';
+import { cn } from '#zero/lib/utils';
 
 import type { FaqItem, FaqProps } from './faq.types';
 

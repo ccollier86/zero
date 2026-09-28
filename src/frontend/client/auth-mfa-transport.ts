@@ -1,21 +1,26 @@
 /** Transport for current-user MFA enrollment and challenge flows. */
 
 import { createAuthClientError } from './auth-errors';
-import { isAuthSessionResult } from './auth-types';
+import type { AuthAuthenticationAttempt } from './auth-authentication-attempt';
 import type {
   AuthCompletionResult,
   AuthMfaMethod,
   AuthMfaMethodType,
   AuthMfaSetupStartResult,
   AuthMfaSetupVerifyResult,
-  AuthSessionResult,
 } from './auth-types';
 
 export interface AuthMfaTransportOptions {
   baseUrl: string;
   authenticatedFetch: (url: string, init?: RequestInit) => Promise<Response>;
   optionalAuthenticatedFetch: (url: string, init?: RequestInit) => Promise<Response>;
-  completeAuthentication: (result: AuthCompletionResult) => AuthCompletionResult;
+  assertResponseCurrent: (response: Response) => void;
+  beginAuthentication: (markLoading?: boolean) => AuthAuthenticationAttempt;
+  failAuthentication: (message: string, attempt: AuthAuthenticationAttempt) => void;
+  completeAuthentication: (
+    result: AuthCompletionResult,
+    attempt: AuthAuthenticationAttempt,
+  ) => Promise<AuthCompletionResult>;
 }
 
 export class AuthMfaTransport {
@@ -27,10 +32,12 @@ export class AuthMfaTransport {
     );
     if (!response.ok) throw await responseError(response, 'Auth request failed');
     const text = await response.text();
-    return (text ? JSON.parse(text) : undefined) as {
+    const result = (text ? JSON.parse(text) : undefined) as {
       methods: AuthMfaMethod[];
       required: boolean;
     };
+    this.options.assertResponseCurrent(response);
+    return result;
   }
 
   async startMfaSetup(params: {
@@ -43,37 +50,60 @@ export class AuthMfaTransport {
       jsonRequest(params),
     );
     if (!response.ok) throw await responseError(response, 'Failed to start MFA setup');
-    return response.json();
+    const result = await response.json() as AuthMfaSetupStartResult;
+    this.options.assertResponseCurrent(response);
+    return result;
   }
 
   async verifyMfaSetup(params: {
     verificationToken: string;
     code: string;
   }): Promise<AuthMfaSetupVerifyResult> {
-    const response = await fetch(
-      `${this.options.baseUrl}/auth/mfa/setup/verify`,
-      jsonRequest(params),
-    );
-    if (!response.ok) throw await responseError(response, 'Failed to verify MFA setup');
+    const attempt = this.options.beginAuthentication(false);
+    try {
+      const response = await fetch(
+        `${this.options.baseUrl}/auth/mfa/setup/verify`,
+        { ...jsonRequest(params), signal: attempt.signal },
+      );
+      attempt.assertCurrent();
+      if (!response.ok) throw await responseError(response, 'Failed to verify MFA setup');
 
-    const data = await response.json();
-    return isAuthSessionResult(data)
-      ? this.options.completeAuthentication(data) as AuthSessionResult
-      : data;
+      const data = await response.json();
+      attempt.assertCurrent();
+      return data && typeof data === 'object' && 'user' in data
+        ? await this.options.completeAuthentication(
+          data as AuthCompletionResult,
+          attempt,
+        ) as AuthMfaSetupVerifyResult
+        : data;
+    } finally {
+      attempt.dispose();
+    }
   }
 
   async verifyMfaChallenge(params: {
     challengeToken: string;
     code: string;
-  }): Promise<AuthSessionResult> {
-    const response = await fetch(
-      `${this.options.baseUrl}/auth/mfa/challenge/verify`,
-      jsonRequest(params),
-    );
-    if (!response.ok) {
-      throw await responseError(response, 'Failed to verify MFA challenge');
+  }): Promise<AuthCompletionResult> {
+    const attempt = this.options.beginAuthentication();
+    try {
+      const response = await fetch(
+        `${this.options.baseUrl}/auth/mfa/challenge/verify`,
+        { ...jsonRequest(params), signal: attempt.signal },
+      );
+      attempt.assertCurrent();
+      if (!response.ok) {
+        const error = await responseError(response, 'Failed to verify MFA challenge');
+        attempt.assertCurrent();
+        this.options.failAuthentication(error.message, attempt);
+        throw error;
+      }
+      const result = await response.json() as AuthCompletionResult;
+      attempt.assertCurrent();
+      return this.options.completeAuthentication(result, attempt);
+    } finally {
+      attempt.dispose();
     }
-    return this.options.completeAuthentication(await response.json()) as AuthSessionResult;
   }
 }
 

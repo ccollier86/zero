@@ -42,6 +42,23 @@ describe('native ID token validation', () => {
       'OIDC_SUBJECT_MISMATCH',
     );
   });
+
+  test('drops signed private claims from the persisted public identity', async () => {
+    const fixture = await createFixture();
+    const token = await fixture.sign({
+      nonce: 'expected',
+      email: 'person@example.com',
+      refresh_token: 'must-not-enter-native-state',
+      medical_record: { diagnosis: 'must-not-cross-the-broker' },
+    });
+    const claims = await fixture.validator.validate({
+      token, accessToken, expectedNonce: 'expected',
+    });
+
+    expect(claims.email).toBe('person@example.com');
+    expect(Reflect.get(claims, 'refresh_token')).toBeUndefined();
+    expect(Reflect.get(claims, 'medical_record')).toBeUndefined();
+  });
 });
 
 async function createFixture() {

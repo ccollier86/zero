@@ -3,19 +3,19 @@
 import * as React from 'react';
 import { useState, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { Check } from '@/components/animate-ui/icons/check';
-import { ChevronRight } from '@/components/animate-ui/icons/chevron-right';
-import { Loader } from '@/components/animate-ui/icons/loader';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { Check } from '#zero/components/animate-ui/icons/check';
+import { ChevronRight } from '#zero/components/animate-ui/icons/chevron-right';
+import { Loader } from '#zero/components/animate-ui/icons/loader';
 import * as v from 'valibot';
 import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { FieldMeta } from '../../schema/field-types';
 import type { Row } from '../../sync/types';
 import { useForm } from '../../hooks/use-form';
 import { FieldRenderer } from './field-renderer';
-import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/animate-ui/components/radix/progress';
-import { cn } from '@/lib/utils';
+import { Button } from '#zero/components/ui/button';
+import { Progress } from '#zero/components/animate-ui/components/radix/progress';
+import { cn } from '#zero/lib/utils';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

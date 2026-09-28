@@ -1,13 +1,19 @@
 # Admin User Management, Registration, And User Properties Plan
 
-This is the near-term auth work for Zero. It intentionally replaces the broad
-permissions/RBAC/tenant plan for now.
+> Historical scope note: this document records the focused global identity and
+> `PlatformUserManagement` slice. It does not replace the newer application/
+> tenant RBAC system. Current authorization and tenancy contracts live in
+> [Zero Auth Philosophy](./zero-auth-philosophy.md), the
+> [implementation checklist](./multi-tenant-auth-implementation-checklist.md),
+> [Application Access Administration](./application-access-administration.md),
+> and [Tenant Member Administration](./tenant-member-administration.md).
 
 ## Implementation Status
 
 Platform support is implemented:
 
-1. First-user bootstrap always creates an admin.
+1. Secret-gated installation bootstrap creates the first admin by default;
+   legacy public first-request bootstrap is explicit and Doctor-warned.
 2. `registration.mode` controls post-bootstrap public registration.
 3. Admin user-management routes are mounted under `/auth/admin`.
 4. Configured `userProperties` support defaults, enum/string/boolean/number
@@ -25,19 +31,21 @@ Platform support is implemented:
     session revocation occur only after recipient acceptance, with explicit
     recovery for an already-stranded gate.
 
-Deferred:
+Deferred from this global account-management surface:
 
 1. Config-file discovery/scaffolding under a `zero/` or `config/` folder.
 2. MFA recovery-code generation, display, and verification.
 3. Per-device/session inventory and individual-session revocation.
 4. Administrator impersonation and bulk user actions.
-5. Full metadata/RBAC/tenant/query enforcement.
+5. Protected platform-tenant lifecycle controls and tenant-custom roles;
+   current app/tenant RBAC and resource field policy live on separate surfaces.
 6. Avatar storage integration.
 
 ## Goal
 
-Make Zero's current auth system practical for private/internal apps without
-building a full authorization platform yet.
+This slice made Zero's global account system practical for private/internal
+apps. The later authorization work extends it without turning global account
+management into tenant membership management.
 
 The platform should support:
 
@@ -48,15 +56,19 @@ The platform should support:
 5. Configured property fields with defaults and enum options.
 6. Admin UI adaptation based on the configured property fields.
 
-## Non-Goals For This Slice
+## Historical Non-Goals For This Slice
 
-Do not build these in this slice:
+These were intentionally outside this focused account-management slice; some
+now exist through separate platform surfaces:
 
 1. Groups-to-permissions.
-2. Full RBAC.
-3. Tenant-aware user provisioning.
+2. Application/tenant RBAC, now implemented through the separate four-profile
+   authorization system.
+3. Tenant member onboarding and administration, now implemented separately
+   from global identity provisioning.
 4. Row-level security.
-5. Backend query/table enforcement from KV properties.
+5. Backend query/table enforcement, now provided for policy-trusted properties
+   and registered resources rather than arbitrary user-writable KV.
 6. Avatar storage.
 
 User properties can support UI gates and app behavior, but they are not a
@@ -90,10 +102,14 @@ Supported modes:
 
 Bootstrap rule:
 
-1. If there are zero users, `POST /auth/register` is always allowed.
-2. The first registered user always receives role `admin`.
-3. After the first user exists, `registration.mode` controls public
-   registration.
+1. A fresh install defaults to `auth.bootstrap.mode: 'secret'`; without a
+   configured secret, `POST /auth/register` remains closed.
+2. The matching `bootstrapSecret` creates the first admin and writes a durable
+   completion marker in the same serialized transaction.
+3. Explicit `auth.bootstrap: 'public'` preserves the legacy behavior; explicit
+   `auth.bootstrap: 'disabled'` requires trusted provisioning.
+4. After completion, `registration.mode` controls ordinary registration and
+   bootstrap input is rejected.
 
 When public registration is disabled, the public register route should behave
 as unavailable after bootstrap. The frontend register page should also hide
@@ -222,7 +238,10 @@ Enforced safety rules:
 4. Reject destructive self-admin transitions such as self-demotion,
    self-suspension, self-delete, self-password reset, and self-MFA reset.
 5. Resetting a password revokes every existing session and token generation.
-6. Deleting a user cascades credentials, properties, and refresh tokens.
+6. Deleting a history-free identity cascades identity-owned credentials,
+   properties, and refresh tokens. Multi-tenant organization history is never
+   cascaded: the API returns `409 USER_HAS_TENANT_HISTORY` with guidance to
+   suspend the identity instead.
 7. Never gate an account before setup/reset delivery is accepted.
 8. Clearing a stranded gate cannot target the acting administrator and revokes
    every existing session/action-link generation.
@@ -349,6 +368,11 @@ and adapts:
    session revocation, suspend/activate, and delete actions.
 8. Serialize sensitive actions and require confirmation for destructive
    transitions. The backend remains authoritative for every invariant.
+9. In multi-tenant mode, omit hard delete from the packaged live UI because a
+   global identity row does not prove the absence of retained organization
+   history. Show suspend/activate instead. A custom controlled surface may own
+   an explicit lifecycle ceremony, but the API still rejects unsafe deletion
+   with `409 USER_HAS_TENANT_HISTORY`.
 
 This gives developers a simple way to configure app-specific user metadata
 without building a custom user-management screen for every app. Apps that need
@@ -364,9 +388,10 @@ The login/register pages and auth navigation should:
 
 1. Hide public registration once bootstrap is complete when
    `registration.mode` is `admin-only` or `disabled`.
-2. Still allow first-user bootstrap registration when there are zero users.
-3. Make the first-user path clear in the UI so the first account becomes the
-   admin account intentionally.
+2. Show bootstrap registration only when the public config reports an
+   available ceremony, and render the operator setup-key input for secret mode.
+3. Make the setup path clear in the UI so the operator creates the admin
+   account intentionally.
 4. Avoid showing links or forms that will always fail under the active
    registration policy.
 5. Use the same effective config as backend routes so frontend behavior and

@@ -32,6 +32,7 @@ async function startAuthApp() {
   const app = new Elysia()
     .use(createAuthPlugin({
       db,
+      bootstrap: 'public',
       registration: { mode: 'admin-only' },
       accountEmails: { passwordReset: true },
     }))

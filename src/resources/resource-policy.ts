@@ -2,6 +2,7 @@ export {
   adminOnly,
   allOf,
   anyOf,
+  authorizationPolicy,
   authenticatedOnly,
   customPolicy,
   metadataPolicy,
@@ -19,7 +20,10 @@ export {
   requiresAuthenticatedUser,
   type ResourcePolicyStaticDecision,
 } from './resource-policy-inspection';
-export { validateResourcePolicy } from './resource-policy-validation';
+export {
+  validateAuthorizationPolicy,
+  validateResourcePolicy,
+} from './resource-policy-validation';
 
 export type {
   CustomResourcePolicyCallback,
@@ -35,6 +39,7 @@ export type {
   ResourceMaybePromise,
   ResourcePolicy,
   ResourcePolicyAuthConfig,
+  ResourcePolicyAuthorizationContext,
   ResourcePolicyContext,
   ResourcePolicyDecision,
   ResourcePolicyDecisionInput,
@@ -47,4 +52,5 @@ export type {
   ResourcePolicyValidationCode,
   ResourcePolicyValidationContext,
   ResourcePolicyValidationIssue,
+  ResourceAuthorizationRequirement,
 } from './resource-policy-types';

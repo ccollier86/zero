@@ -6,41 +6,71 @@
  */
 
 import { Elysia } from 'elysia';
-import { getEmailRuntime } from '../email';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import { AdminMfaUserService } from './admin-mfa-user-service';
 import {
   requireAdminMfaService,
+  requireAdminMutationServices,
   requireAdminServices,
   type AuthAdminPluginConfig,
 } from './auth-admin-dependencies';
 import { authUserIdParamsSchema } from './auth-request-schema';
 import { AuthError } from './types';
+import {
+  authAuditActorFromContext,
+  authAuditRequestFromRequest,
+} from './auth-audit-service';
+import { applyAuthPrivateNoStore } from './auth-response-cache';
 
 /** Create admin MFA routes mounted below `/auth/admin`. */
 export function createAuthAdminMfaPlugin(config: AuthAdminPluginConfig) {
   const params = { params: authUserIdParamsSchema };
   return new Elysia({ name: 'auth-admin-mfa' })
-    .get('/users/:userId/mfa', async ({ request, params }) => {
+    .get('/users/:userId/mfa', async ({ request, params, set }) => {
+      applyAuthPrivateNoStore(set);
       const { service } = await services(config, request);
       return service.getStatus(params.userId);
     }, params)
     .post('/users/:userId/mfa/require', async ({ request, params }) => {
-      const { service, actorId } = await services(config, request);
-      const user = service.require(params.userId);
+      const {
+        service,
+        actorId,
+        auth,
+        assertCurrentAuthority,
+      } = await mutationServices(config, request);
+      const user = service.require(params.userId, assertCurrentAuthority, {
+        actor: authAuditActorFromContext(auth),
+        request: authAuditRequestFromRequest(request),
+      });
       emit(OBS_CODES.AUTH_ADMIN_MFA_REQUIRED, actorId, params.userId);
       return { user };
     }, params)
     .post('/users/:userId/mfa/clear-requirement', async ({ request, params }) => {
-      const { service, actorId } = await services(config, request);
-      const user = service.clearRequirement(params.userId);
+      const {
+        service,
+        actorId,
+        auth,
+        assertCurrentAuthority,
+      } = await mutationServices(config, request);
+      const user = service.clearRequirement(params.userId, assertCurrentAuthority, {
+        actor: authAuditActorFromContext(auth),
+        request: authAuditRequestFromRequest(request),
+      });
       emit(OBS_CODES.AUTH_ADMIN_MFA_CLEARED, actorId, params.userId);
       return { user };
     }, params)
     .post('/users/:userId/mfa/reset', async ({ request, params }) => {
-      const { service, actorId } = await services(config, request);
-      const result = service.reset(params.userId, actorId);
+      const {
+        service,
+        actorId,
+        auth,
+        assertCurrentAuthority,
+      } = await mutationServices(config, request);
+      const result = service.reset(params.userId, assertCurrentAuthority, {
+        actor: authAuditActorFromContext(auth),
+        request: authAuditRequestFromRequest(request),
+      });
       emitPlatformCode(OBS_CODES.AUTH_ADMIN_MFA_RESET, {
         userId: actorId,
         metadata: { targetUserId: params.userId, ...result },
@@ -55,11 +85,33 @@ async function services(config: AuthAdminPluginConfig, request: Request) {
   if (!readiness) throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
   return {
     actorId: auth.userId,
+    auth,
     service: new AdminMfaUserService(
       store,
       requireAdminMfaService(config),
       readiness,
-      getEmailRuntime().enabled
+      config.getEmailRuntime().enabled
+    ),
+  };
+}
+
+async function mutationServices(config: AuthAdminPluginConfig, request: Request) {
+  const {
+    store,
+    auth,
+    assertCurrentAuthority,
+  } = await requireAdminMutationServices(config, request);
+  const readiness = config.getMfaService?.();
+  if (!readiness) throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
+  return {
+    actorId: auth.userId,
+    auth,
+    assertCurrentAuthority,
+    service: new AdminMfaUserService(
+      store,
+      requireAdminMfaService(config),
+      readiness,
+      config.getEmailRuntime().enabled
     ),
   };
 }

@@ -1,7 +1,14 @@
-import { useSyncExternalStore, useCallback, useContext } from 'react';
+import { useSyncExternalStore, useCallback, useContext, useRef } from 'react';
 import type { JsonValue } from '../types';
 import type { StateClient } from './state-client';
 import { SyncContext } from './hooks';
+import { useClientMaybe } from '../../frontend/client/client-context';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from '../../frontend/client/authorization-scope-hooks';
+
+const NOOP_UNSUBSCRIBE = () => {};
 
 /**
  * Get the StateClient from the SyncContext.
@@ -38,16 +45,35 @@ export function useServerState<T extends JsonValue>(
   defaultValue: T
 ): [T, (value: T) => void] {
   const client = useStateClient();
+  const platformClient = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(platformClient);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
 
   const value = useSyncExternalStore(
-    (cb) => client.subscribe(key, cb),
-    () => client.get(key, defaultValue),
+    useCallback(
+      (cb: () => void) => authorizationBoundary.ready
+        ? client.subscribe(key, cb)
+        : NOOP_UNSUBSCRIBE,
+      [authorizationBoundary.key, authorizationBoundary.ready, client, key],
+    ),
+    () => authorizationBoundary.ready ? client.get(key, defaultValue) : defaultValue,
     () => defaultValue,
   );
 
   const setValue = useCallback(
-    (newValue: T) => client.set(key, newValue),
-    [client, key]
+    (newValue: T) => {
+      if (!isAuthorizationScopeCallbackCurrent(
+        boundaryKeyRef.current,
+        boundaryReadyRef.current,
+        callbackBoundaryKey,
+      )) return;
+      client.set(key, newValue);
+    },
+    [callbackBoundaryKey, client, key]
   );
 
   return [value as T, setValue];
@@ -59,10 +85,17 @@ export function useServerState<T extends JsonValue>(
  */
 export function useServerStateReady(): boolean {
   const client = useStateClient();
+  const platformClient = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(platformClient);
 
   return useSyncExternalStore(
-    (cb) => client.subscribe((event) => cb()),
-    () => client.ready,
+    useCallback(
+      (cb: () => void) => authorizationBoundary.ready
+        ? client.subscribe(() => cb())
+        : NOOP_UNSUBSCRIBE,
+      [authorizationBoundary.key, authorizationBoundary.ready, client],
+    ),
+    () => authorizationBoundary.ready && client.ready,
     () => false,
   );
 }

@@ -77,13 +77,17 @@ try {
   } else if (showStatus) {
     const statuses = migrator.status();
     console.log('');
-    console.log('  Version  │ Status       │ Safety       │ Down │ Checksum │ Description');
-    console.log('  ─────────┼──────────────┼──────────────┼──────┼──────────┼──────────────────────────────────');
+    console.log('  Version  │ Status          │ Safety       │ Down │ Checksum │ Description');
+    console.log('  ─────────┼─────────────────┼──────────────┼──────┼──────────┼──────────────────────────────────');
     for (const s of statuses) {
-      const status = s.applied ? `applied${s.durationMs != null ? ` ${s.durationMs}ms` : ''}` : (s.lastStatus ?? 'pending');
+      const status = s.lastStatus === 'failed'
+        ? `${s.applied ? 'applied' : 'pending'}+failed`
+        : s.applied
+          ? `applied${s.durationMs != null ? ` ${s.durationMs}ms` : ''}`
+          : (s.lastStatus ?? 'pending');
       const checksum = s.checksumMatches === null ? '-' : s.checksumMatches ? 'ok' : 'changed';
       console.log(
-        `  ${s.version.padEnd(8)} │ ${status.padEnd(12)} │ ${s.safety.padEnd(12)} │ ${s.hasDown ? 'yes ' : 'no  '} │ ${checksum.padEnd(8)} │ ${s.description}`
+        `  ${s.version.padEnd(8)} │ ${status.padEnd(15)} │ ${s.safety.padEnd(12)} │ ${s.hasDown ? 'yes ' : 'no  '} │ ${checksum.padEnd(8)} │ ${s.description}`
       );
     }
     console.log('');

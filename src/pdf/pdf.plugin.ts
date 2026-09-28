@@ -12,13 +12,18 @@ import { emitPlatformCode } from '../observability/sink';
 import { PdfError } from './pdf-error';
 import { PdfService, type PdfServiceOptions } from './pdf-service';
 import type { ResolvedPdfConfig } from './pdf-types';
+import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
+import { ZERO_PDF_SERVICE } from '../runtime/service-keys';
+import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 
-let activePdfService: PdfService | null = null;
+const pdfProviders = new CompatibilityProviderRegistry<PdfService>('PDF service');
 
 /** Options accepted by the named PDF Elysia plugin. */
 export interface PdfPluginConfig extends PdfServiceOptions {
   config: ResolvedPdfConfig;
   service?: PdfService;
+  runtime?: ZeroAppRuntime;
+  onServiceCreated?: (service: PdfService) => void;
 }
 
 /**
@@ -29,7 +34,19 @@ export interface PdfPluginConfig extends PdfServiceOptions {
  */
 export function createPdfPlugin(options: PdfPluginConfig) {
   const service = options.service ?? new PdfService(options.config, options);
-  activePdfService = service;
+  const owner = {};
+  const registration = pdfProviders.register(owner, () => service);
+  options.runtime?.set(ZERO_PDF_SERVICE, service);
+  options.onServiceCreated?.(service);
+  const cleanup = async () => {
+    try {
+      await service.close();
+    } finally {
+      options.runtime?.clear(ZERO_PDF_SERVICE, service);
+      registration.unregister();
+    }
+  };
+  options.runtime?.addCleanup(cleanup);
 
   return new Elysia({ name: 'zero-platform-pdf' })
     .decorate('pdf', service)
@@ -43,8 +60,7 @@ export function createPdfPlugin(options: PdfPluginConfig) {
       });
     })
     .onStop(async () => {
-      await service.close();
-      if (activePdfService === service) activePdfService = null;
+      await cleanup();
       emitPlatformCode(OBS_CODES.PDF_STOPPED, {
         metadata: { renderer: service.status().renderer },
       });
@@ -53,7 +69,7 @@ export function createPdfPlugin(options: PdfPluginConfig) {
 
 /** Return the process-wide PDF service, or null when PDF is disabled/not mounted. */
 export function getPdfService(): PdfService | null {
-  return activePdfService;
+  return pdfProviders.get();
 }
 
 /** Return the active PDF service or throw a stable disabled error. */

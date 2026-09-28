@@ -3,8 +3,8 @@
 import * as React from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { motion, type Variants, type Transition } from 'motion/react';
-import { SlidingNumber } from '@/components/animate-ui/primitives/texts/sliding-number';
-import { cn } from '@/lib/utils';
+import { SlidingNumber } from '#zero/components/animate-ui/primitives/texts/sliding-number';
+import { cn } from '#zero/lib/utils';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

@@ -185,7 +185,7 @@ Platform hooks require `AppProvider` or `ClientProvider` in the browser. They ar
 | Area | Hooks |
 |------|-------|
 | Client | `useClient`, `useClientMaybe`, `useIsServer` |
-| Auth | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty` |
+| Auth | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useAuthorization`, `useAuthorizationScopeBoundary`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher`, `useTenantAppShellWorkspaces` |
 | Reactive data | `useCollection`, `useLazyCollection`, `useDataPage`, `useRow`, `useRecord`, `useRecordByIdentity`, `useQuery`, `useStatus` |
 | Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
 | Data UI state | `useDataSelection` |
@@ -204,6 +204,142 @@ aliases. Use `useDataPage` for paged `/api/data` screens, `useRecord` /
 `useRecordByIdentity` for detail records, `useWorkflowRun` for start-and-watch
 workflow UI, `useResourceList` for generated resource CRUD screens, and
 `useNotifications` for notification lists and counts.
+
+### Current authorization hints
+
+`useAuthorization()` observes the sanitized live `GET /auth/authorization`
+projection. `useHasPermission`, `useHasAllPermissions`, and
+`useHasAnyPermission` provide fail-closed UI checks over the same projection.
+They return false before a current identity/scope snapshot exists and after a
+load error or revocation. These hooks never replace backend authorization.
+
+```tsx
+const authz = useAuthorization();
+const canEdit = useHasPermission('patients:write');
+
+if (authz.isLoading) return <ToolbarSkeleton />;
+return canEdit ? <EditPatientButton /> : null;
+```
+
+The cache immediately masks old data on account replacement and tenant switch,
+suppresses late responses, and revalidates while observed. See
+[Browser Authorization Snapshot and Gates](../auth/browser-authorization.md)
+for status semantics, vanilla APIs, packaged gates, and security boundaries.
+
+App-owned caches should subscribe to `useAuthorizationScopeBoundary()`. Key or
+purge their entries with its opaque `key`, reject late callbacks captured under
+an older key, and hide/freeze scope-sensitive UI while `ready` is false.
+`scopeKey`, `stable`, and `phase` describe the committed scope and transition;
+they contain no token and provide no server authority. Zero-owned hooks already
+use this boundary internally. See the linked browser-authorization guide for a
+complete example. The public
+`isAuthorizationScopeCallbackCurrent(currentKey, ready, capturedKey)` predicate
+provides the same pure late-callback check for app-owned async adapters.
+
+### Application access administration
+
+`useApplicationAccess(options?)` is the headless `single/advanced` control
+surface. It loads the caller's safe capabilities, role templates, and a
+cursor-paged user projection, then exposes `loadMore`, `reload`,
+`replaceUserRoles`, and `transferOwnership`. The hook never exposes global
+platform roles, credentials, password/MFA state, or account properties.
+It supplies the target's loaded `roleRevision` on writes, reloads after a
+revision conflict, and masks cached results immediately when the authenticated
+user identity changes.
+
+```tsx
+const access = useApplicationAccess({
+  limit: 25,
+  search,
+  status: 'active',
+});
+
+await access.replaceUserRoles(userId, ['reader']);
+```
+
+Role descriptors include actor-specific `grantable` flags, while
+`capabilities` says whether the caller may read, manage, or transfer ownership.
+These fields drive UI only; the server re-resolves live authority inside each
+mutation transaction. See
+[Application Access Administration](../auth/application-access-administration.md).
+
+### Control-plane audit
+
+`useAuthAudit({ scope: 'tenant' | 'platform', ...filters })` provides
+authorization-fenced pagination, reload, and bounded export for the durable
+security/control-plane audit. It exposes only the scope the server authorizes;
+it is not a general page-view, read, or application-CRUD activity feed. See
+[Control-Plane Audit](../auth/control-plane-audit.md).
+
+### Tenant administration
+
+`useTenantMembers(options?)` loads the active tenant's safe configuration and
+member page, then exposes `loadMore`, `reload`, `addMember`, `updateMember`,
+`removeMember`, and `transferOwnership`. It never accepts a tenant ID; the
+authenticated Bearer scope is the only server tenant source.
+
+```tsx
+const members = useTenantMembers({
+  limit: 25,
+  search,
+  status: 'active',
+});
+
+await members.addMember({ email: 'ada@example.com' });
+await members.updateMember(membershipId, { roles: ['manager'] });
+```
+
+The returned config includes actor-specific capabilities and grantable roles,
+so custom UI can hide unavailable controls. Server authorization remains
+authoritative. `useTenantSwitcher()` exposes live tenant choices and delegates
+switching to the SDK's refresh-family scope barrier; it does not emulate
+switching with a header or access token. See
+[Tenant Member Administration](../auth/tenant-member-administration.md).
+
+`useTenantAppShellWorkspaces()` adapts that same controller to
+`<AppShell workspaces={...}>`. The returned config requires an exact committed
+active tenant, carries pending/error/retry/live-announcement/focus state, and
+defaults to hiding the control after a complete one-membership load. It does
+not create a second token or tenant-selection path.
+
+Tenant administration hooks key cached data by both current account and active
+tenant. Account replacement in the same tenant, tenant switching, pagination,
+and mutation completion are generation-fenced so stale rows or errors cannot
+land in the replacement scope.
+
+`useTenantOnboardingAdministration()` loads the active tenant's invitation and
+retained join-request pages according to the capabilities returned by
+`getTenantAdministrationConfig()`. It exposes issue/revoke/approve/deny
+mutations and never accepts a tenant ID. Each join request includes a
+reviewer-safe approval policy: fixed/default modes leave role selection on the
+server, while selectable mode contains only live grantable role keys and
+labels, its default selection, and its maximum selection count. Consumers must
+still treat the approval mutation as authoritative because an intervening
+session, role, property, or policy change can invalidate that projection. See
+[Tenant Invitations and Join Requests](../auth/tenant-invitations-and-join-requests.md).
+
+`useTenantDomainAdministration()` is the headless active-tenant surface for
+request-only verified-company-domain onboarding. It loads server-derived actor
+capabilities, safe request-role choices, and exact-domain claims. Its mutations
+inject the current claim or policy revision and never accept a tenant ID.
+`releaseClaim(claimId, confirmDomain)` injects both current revisions, requires
+the exact normalized domain confirmation, and removes the active claim only
+after the server commits its retained-history/seven-day-quarantine lifecycle.
+One-time DNS TXT plaintext exists only in the returned `challenge` state and is
+cleared across reloads and identity/scope changes.
+
+`useDomainOnboarding({ identityContinuation? })` drives the generic-before-proof
+user flow. `start()` never accepts an email, `complete(proofToken)` does not log
+the user in, and `admit()` sends only the opaque server continuation plus the
+optional pre-session identity continuation. It never accepts a domain, tenant,
+or role. Both hooks suppress late async results after account replacement,
+tenant switch, unstable session transition, or identity-continuation change.
+
+The matching server route family is installed in multi-tenant mode. Public
+config exposes the capability only when verified-domain onboarding and its
+email/public-URL dependencies are operational; packaged UI otherwise stays
+hidden. See
+[Verified Company-Domain Onboarding](../auth/verified-domain-onboarding.md).
 
 ### Data Screens
 
@@ -423,6 +559,11 @@ explicit role, user, and auth-property grants. Mutate those grants with
 `useStorageActions().grantPermission()` and
 `useStorageActions().revokePermission()`.
 
+Auth-property grants accept only fields explicitly configured with
+`useInPolicies: true` and an `editableBy` value of `admin`, `system`, or
+`none`. A self-editable or unknown property is rejected because users must not
+be able to grant themselves file access.
+
 `useStorageFile(driveId, path)` loads one file/folder metadata record and
 returns `url`, `remove()`, `setVisibility()`, and `refresh()`:
 
@@ -454,7 +595,11 @@ consistent with folder/file filters.
 
 `usePresence(roomId, data?)` is the low-level room presence primitive.
 `usePresenceList(roomId, options?)` filters stale users and returns display
-labels for presence UI:
+labels for presence UI. In an auth-enabled `createApp()`, the reserved
+`presence:<roomId>` family requires a current `RoomService` membership, derives
+the internal application/tenant namespace on the server, and restricts writes
+to the current user's key. Authless standalone Sync retains its explicit
+unrestricted compatibility behavior.
 
 ```tsx
 const presence = usePresenceList(roomId, {
@@ -469,7 +614,10 @@ presence.members.map((member) => member.label);
 short TTL and returns the other users currently typing:
 
 ```tsx
-const typing = useTypingIndicator(`thread:${threadId}`);
+const typing = useTypingIndicator(threadId, {
+  // This non-room topic must be allowed by the app's ephemeralPolicy.
+  topic: `thread:${threadId}`,
+});
 
 <textarea onChange={() => typing.markTyping()} />
 
@@ -477,6 +625,11 @@ const typing = useTypingIndicator(`thread:${threadId}`);
   <span>{typing.typingUsers.map((user) => user.label).join(', ')} typing</span>
 )}
 ```
+
+The default `typing:<scope>` form treats `scope` as a Zero room ID and requires
+live membership. For a non-room thread or document, pass `options.topic` and
+classify that topic through the app's server-side `ephemeralPolicy`; a hook
+argument alone cannot authorize it.
 
 Typing state is never persisted. It requires `AppProvider`/`SyncProvider` and
 the underlying sync connection.

@@ -1,9 +1,10 @@
 // ─── Server: Room Plugin ─────────────────────────────────────────────────
 export { createRoomPlugin, getRoomService } from './room.plugin';
 export type { RoomPluginConfig } from './room.plugin';
+export { ROOM_MANAGE_PERMISSION, canManageRoomScope } from './room-access';
 
 // ─── Server: Room Service ───────────────────────────────────────────────
-export { RoomService } from './room-service';
+export { RoomOwnerCannotLeaveError, RoomService } from './room-service';
 
 // ─── Server: Presence Service ───────────────────────────────────────────
 export { PresenceService } from './presence-service';

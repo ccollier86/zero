@@ -3,7 +3,11 @@
 import type { Statement } from 'bun:sqlite';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import { createOpaqueToken, hashToken } from '../../tokens/token-utils';
-import type { NativeAuthorizationRequestRecord } from './native-auth-records';
+import type {
+  NativeAuthorizationRequestRecord,
+  StoredNativeAuthority,
+} from './native-auth-records';
+import type { NativeAuthoritySnapshot } from './native-tenant-authority';
 import {
   NativeRequestAdmission,
   type NativeRequestStoreOptions,
@@ -18,6 +22,7 @@ export class NativeRequestStore {
   private readonly consumeTerminalStatement: Statement;
   private readonly admission: NativeRequestAdmission;
   private readonly bindings: NativeRequestBindingStore;
+  private assertRuntimeProfileCurrent: () => void = () => {};
 
   constructor(private readonly db: ReactiveDB, options: NativeRequestStoreOptions = {}) {
     this.insert = db.prepare(`INSERT INTO _auth_native_requests
@@ -33,10 +38,25 @@ export class NativeRequestStore {
     this.bindings = new NativeRequestBindingStore(db, () => this.admission.timestamp());
   }
 
+  setRuntimeProfileGuard(guard: () => void): void {
+    this.assertRuntimeProfileCurrent = guard;
+  }
+
+  assertCurrentProfile(): void {
+    this.assertRuntimeProfileCurrent();
+  }
+
   create(input: Omit<NativeAuthorizationRequestRecord,
-    'requestId' | 'boundUserId' | 'sourceHash' | 'createdAt' | 'expiresAt' | 'consumedAt'>
+    | 'requestId'
+    | 'boundUserId'
+    | 'sourceHash'
+    | 'createdAt'
+    | 'expiresAt'
+    | 'consumedAt'
+    | keyof StoredNativeAuthority>
     & { ttlMs: number; sourceKey?: string | null }) {
     return this.db.transaction(() => {
+      this.assertCurrentProfile();
       const createdAt = this.admission.timestamp();
       const sourceHash = input.sourceKey ? hashNativeRequestSource(input.sourceKey) : null;
       this.admission.admit(input.clientId, sourceHash, createdAt);
@@ -53,28 +73,58 @@ export class NativeRequestStore {
   }
 
   get(rawRequestId: string): NativeAuthorizationRequestRecord | null {
+    this.assertCurrentProfile();
     const row = this.getByHash.get(hashToken(rawRequestId));
     return row ? toAuthorizationRequest(row as Record<string, unknown>) : null;
   }
 
   beginRegistration(rawRequestId: string): boolean {
-    return this.bindings.beginRegistration(rawRequestId);
+    return this.db.transaction(() => {
+      this.assertCurrentProfile();
+      return this.bindings.beginRegistration(rawRequestId);
+    });
   }
 
   claimForUser(rawRequestId: string, userId: string): boolean {
-    return this.bindings.claimForUser(rawRequestId, userId);
+    return this.db.transaction(() => {
+      this.assertCurrentProfile();
+      return this.bindings.claimForUser(rawRequestId, userId);
+    });
   }
 
   matchesUser(rawRequestId: string, userId: string): boolean {
+    this.assertCurrentProfile();
     return this.bindings.matchesUser(rawRequestId, userId);
   }
 
+  claimForAuthority(
+    rawRequestId: string,
+    userId: string,
+    authority: NativeAuthoritySnapshot,
+  ): boolean {
+    return this.db.transaction(() => {
+      this.assertCurrentProfile();
+      return this.bindings.claimForAuthority(rawRequestId, userId, authority);
+    });
+  }
+
+  matchesAuthority(
+    rawRequestId: string,
+    userId: string,
+    authority: NativeAuthoritySnapshot,
+  ): boolean {
+    this.assertCurrentProfile();
+    return this.bindings.matchesAuthority(rawRequestId, userId, authority);
+  }
+
   isAvailable(rawRequestId: string): boolean {
+    this.assertCurrentProfile();
     return this.bindings.isAvailable(rawRequestId);
   }
 
   consumeTerminal(rawRequestId: string): NativeAuthorizationRequestRecord | null {
     return this.db.transaction(() => {
+      this.assertCurrentProfile();
       const request = this.get(rawRequestId);
       if (!request) return null;
       const now = this.admission.timestamp();
@@ -85,10 +135,16 @@ export class NativeRequestStore {
   }
 
   releaseForUser(rawRequestId: string, userId: string): boolean {
-    return this.bindings.releaseForUser(rawRequestId, userId);
+    return this.db.transaction(() => {
+      this.assertCurrentProfile();
+      return this.bindings.releaseForUser(rawRequestId, userId);
+    });
   }
 
   cleanupExpired(now = this.admission.timestamp()): number {
-    return this.admission.cleanupExpired(now);
+    return this.db.transaction(() => {
+      this.assertCurrentProfile();
+      return this.admission.cleanupExpired(now);
+    });
   }
 }

@@ -64,7 +64,7 @@ src/
 | `src/sync/types.ts` | All type definitions — schemas, wire protocol, client types |
 | `src/sync/sync.plugin.ts` | Elysia plugin — lifecycle, WS endpoint `/sync`, pub/sub wiring |
 | `src/sync/message-handler.ts` | Routes incoming WS messages to handlers (subscribe, mutate, state, ephemeral) |
-| `src/sync/state-manager.ts` | Per-user KV state (RAM + SQLite write-through) |
+| `src/sync/state-manager.ts` | SQLite-authoritative per-scope user KV; atomic internal log events with no retained per-principal RAM projection |
 | `src/sync/state-handler.ts` | WS handlers for state.subscribe/set/delete/clear |
 | `src/sync/ephemeral-manager.ts` | RAM-only topic-scoped KV with TTL (no SQLite) |
 | `src/sync/ephemeral-handler.ts` | WS handlers for ephemeral.subscribe/set/delete |
@@ -76,7 +76,7 @@ src/
 | `src/sync/client/sync-client.ts` | WebSocket connection, optimistic mutations, reconnect, ack timeout |
 | `src/sync/client/sync-store.ts` | @xstate/store for synced table data + pending mutations |
 | `src/sync/client/hooks.ts` | SyncProvider, useTable, useRow, useQuery, useSyncStatus |
-| `src/sync/client/state-client.ts` | StateClient — per-user KV API |
+| `src/sync/client/state-client.ts` | StateClient — per-authorized-scope user KV API |
 | `src/sync/client/state-store.ts` | @xstate/store for state sync |
 | `src/sync/client/state-hooks.ts` | useServerState, useServerStateReady |
 | `src/sync/client/ephemeral-client.ts` | EphemeralClient — shared topic-scoped KV |
@@ -85,23 +85,66 @@ src/
 | `src/sync/client/index.ts` | Barrel exports |
 
 **Key patterns:**
-- `currentMutationOrigin` — module-level variable set before synchronous db write, read in onChange callback. Safe because bun:sqlite is single-threaded.
+- ReactiveDB allocates replay sequence numbers from the strict singleton
+  `_zero_sync_log_state` row inside the same `BEGIN IMMEDIATE` transaction as
+  the application row, explicit-format `_changes` entry, pruning-watermark
+  advance, and prune. File-backed writers therefore cannot collide, reuse a
+  sequence after an intentional clear, or retain a cursor for a rolled-back
+  mutation. Reserved seq `0` and versioned SQLite triggers fence pre-format
+  writers; the first adoption requires a coordinated stop of all old runtimes.
+- State Sync mutations update `_user_state` and append one logical internal
+  change in that same writer transaction. File-mode runtimes relay those events
+  through the ordered dispatcher, while subscription snapshots read durable
+  state and their represented cursor from one SQLite view.
+- Socket mutation origin is bound once to the next outer ReactiveDB transaction
+  and retained by exact committed sequence until listener delivery. Reentrant
+  application writes therefore cannot inherit a socket origin, while a local
+  row delayed behind an active replica drain keeps the correct connection ID.
+  The exported `currentMutationOrigin` exists only for direct `routeMessage()`
+  compatibility and is not read by managed plugin delivery.
 - Store subscribe returns `Subscription` object — wrap with `sub.unsubscribe()` for `() => void` return.
-- `publishToSelf: true` in WS config — originating client gets its own change via pub/sub, uses `origin` field to reconcile with optimistic state.
+- Originating clients receive their own directly delivered change and use its
+  exact same-runtime `origin` hint alongside the authoritative ack/ref flow.
+- File-mode plugins poll the database-wide `_changes` log and feed external
+  commits into their process-local listeners. One dispatcher delivers local and
+  external rows exactly once in durable sequence order; writer `origin` becomes
+  private local/external listener metadata. A retention/corruption gap closes
+  sockets for an authoritative reconnect snapshot. This supports multiple runtimes sharing
+  one SQLite file, not hot/ephemeral or separate-database replicas.
+- Managed auth separately polls `_auth_authority_revision`, installed by
+  migration `020`, and revalidates long-lived Sync/ephemeral authorization when
+  another runtime changes a session, account, membership, tenant, or role.
 
 ---
 
 ## System 2: Authentication
 
-**What:** JWT-based auth with user store, token rotation, Bearer middleware, and refresh-bound SSR page sessions.
+**What:** One app-local identity, session, tenancy, and authorization runtime.
+It supports the four `single|multi` x `simple|advanced` profiles through the
+same live session and RBAC boundary, with token rotation, Bearer middleware,
+refresh-bound SSR page sessions, native public clients, and packaged browser
+control surfaces.
 
 **Files:**
 | File | Purpose |
 |------|---------|
 | `src/auth/auth.plugin.ts` | Auth composition root — lifecycle, derives, and subplugin mounting |
 | `src/auth/auth-runtime.ts` | Auth service startup/shutdown and runtime getters |
+| `src/runtime/zero-app-runtime.ts` | Per-app service registry and compatibility-provider ownership; prevents process-global cross-talk |
 | `src/auth/auth-schema.ts` | Auth table creation and compatibility upgrades |
 | `src/auth/auth-session.plugin.ts` | Core config/register/login/refresh/logout/me/jwks routes |
+| `src/auth/auth-session-service.ts` | Durable parent-session issue, binding, rotation, revocation, and live scope validation |
+| `src/auth/auth-tenant-session-service.ts` | Multi-mode completion, tenant list/select/switch/create, and identity-only continuations |
+| `src/auth/tenancy/` | Tenant and retained-membership persistence with owner and generation invariants |
+| `src/auth/authorization-kernel.ts` | Pure shared access-requirement compiler, merge, validation, and evaluator |
+| `src/auth/authorization-access.ts` | Live request access facade and authorization subject hydration |
+| `src/auth/authorization-role-service.ts` | Application/tenant assignments, role expansion, protected owners, revisions, and ownership transfer |
+| `src/auth/auth-authorization.plugin.ts` | Sanitized live browser authorization snapshot route |
+| `src/auth/auth-audit-service.ts`, `src/auth/auth-audit.plugin.ts` | Bounded append-only authorization/control-plane audit and authorized query/export/retention routes |
+| `src/auth/auth-application-administration.plugin.ts` | Single/advanced application user and role-assignment administration |
+| `src/auth/auth-tenant-administration.plugin.ts` | Active-tenant member, role, status, and ownership administration |
+| `src/auth/auth-tenant-onboarding.plugin.ts` | Hashed invitations and retained join-request issue/accept/review routes |
+| `src/auth/auth-verified-domain.plugin.ts` | Opt-in exact-domain DNS/mailbox proof, fixed-role request admission, and owner release lifecycle |
 | `src/auth/auth-user-properties.plugin.ts` | Current-user configurable property routes |
 | `src/auth/auth.middleware.ts` | `createAuthMiddleware()` — resolve-based, provides `requireAuth/requireAdmin` |
 | `src/auth/page-session.ts` | HttpOnly page-cookie issue/resolve/revoke helpers; safe SSR pages only |
@@ -126,6 +169,32 @@ src/
 | File | Purpose |
 |------|---------|
 | `src/frontend/client/auth-client.ts` | AuthClient — login/register/logout/refresh, @xstate/store for state |
+| `src/frontend/client/auth-authorization-controller.ts` | Live sanitized authorization cache, revision fencing, and revocation state |
+| `src/frontend/client/authorization-hooks.ts` | Browser-safe authorization and permission hooks |
+| `src/frontend/client/authorization-scope-hooks.ts` | Credential-free opaque account/tenant cache boundary for Zero-owned and app-owned hooks |
+| `src/frontend/client/application-administration-hooks.ts` | Single/advanced application-access administration hook |
+| `src/frontend/client/tenant-administration-hooks.ts` | Tenant switch, member, invitation, and join-request administration hooks |
+| `src/components/auth/authorization-gates.tsx` | Presentation-only permission, tenant, and platform-admin gates; server remains authoritative |
+| `src/components/auth/application-access-management.tsx` | Packaged single/advanced application access control |
+| `src/components/auth/tenant-*.tsx` | Packaged tenant selection, switching, creation, member, invitation, and join-request controls |
+
+**Key auth patterns:**
+
+- `users.role` remains platform authority. Application and tenant assignments
+  are separate scopes and expand through the same authorization kernel.
+- Browser, page, and native credentials resolve live durable authority. Tenant
+  selection replaces the session rather than trusting a tenant header.
+- Normal request handlers receive an authorization-bound `access` facade and
+  scoped `zero.*` services. Raw SQL and explicitly unsafe setup handles remain
+  trusted server-code escape hatches.
+- `AppProvider` and Zero-owned hooks mask or purge cached browser state across
+  account or tenant replacement. App-owned caches use
+  `useAuthorizationScopeBoundary()`; its opaque key is not server authority.
+- Registered resources, `/api/data`, managed Sync, Storage, rooms,
+  notifications, and workflows enforce the active realm and role projection;
+  an unregistered raw table is not made tenant-safe implicitly. Resource
+  `exposure` independently selects `internal`, `http`, `sync`, or `all`, and
+  multi mode requires the choice explicitly.
 
 ### Installed-app authentication map
 
@@ -148,9 +217,11 @@ The `@zero/framework/native` TypeScript entry point is implemented in this
 tree. Independently versioned `zero-native-auth`/`tauri-plugin-zero-auth` and
 `@zero/chrome-auth` development repositories are deliberately not part of the
 framework tree, package, create template, or updater. The Rust/Tauri packages
-are Phase 0 design scaffolds; the Chrome adapter is a private MV3 preview. The
-canonical parent docs remain complete even when those ignored development
-checkouts are absent.
+and Chrome adapter are functional private `0.0.0` previews with real
+credential-owning flows, but remain unreleased pending independent ownership,
+version/license decisions, host/platform adapters, end-to-end certification,
+and security review. The canonical parent docs remain complete even when those
+ignored development checkouts are absent.
 
 **Key native pattern:** the access JWT's audience is the exact Zero app origin,
 the ID token's audience is the public client ID, and both use the same `/auth`
@@ -242,7 +313,15 @@ settings under `./data/kv` unless they explicitly set `kv: false`.
 |------|---------|
 | `src/frontend/client/room-hooks.ts` | useRoom, useRoomMembers, useRooms, useRoomActions, useRoomData, usePresence |
 
-**Key pattern:** Rooms are thin — just membership tracking. Shared state lives in regular ReactiveDB tables with a `room_id` column. `useRoomData` = `useQuery` with a pre-applied filter.
+**Key pattern:** Rooms are thin membership tracking. The platform membership
+policy protects only `rooms` and `room_members`. App-owned shared state may use
+a `room_id` column, but it needs an explicit server-side resource/Sync row and
+mutation policy. `useRoomData` is only `useQuery` with a client-side pre-applied
+filter; it is not an authorization boundary. In auth-enabled `createApp()`,
+the managed `presence:<roomId>` and `typing:<roomId>` families revalidate live
+room membership, own the current user's key, and derive an internal
+application/tenant namespace. Other topic families require an explicit server
+`ephemeralPolicy`; raw caller-selected names are not authority.
 
 ---
 
@@ -358,7 +437,8 @@ startup is lazy and process-wide; each render receives an isolated context.
 
 ## System 5: Workflows
 
-**What:** Durable multi-step workflow engine with retry, timeout, branching.
+**What:** Durable multi-step workflow engine with retry, timeout, branching,
+sealed actor/system provenance, and live authority revalidation at dispatch and commit.
 
 **Files:**
 | File | Purpose |
@@ -367,6 +447,8 @@ startup is lazy and process-wide; each render receives an isolated context.
 | `src/workflows/workflow-registry.ts` | Register workflow definitions |
 | `src/workflows/workflow-executor.ts` | Execute steps, handle branching/conditions |
 | `src/workflows/workflow-service.ts` | CRUD, state machine, retry/timeout polling |
+| `src/workflows/workflow-execution-authority.ts` | Private MAC-protected authority seals and attempt leases |
+| `src/workflows/auth-workflow-execution-authority.ts` | Session/tenant/membership/RBAC revalidation adapter |
 | `src/workflows/workflow.plugin.ts` | Elysia plugin — tables, REST routes |
 | `src/workflows/index.ts` | Barrel exports |
 
@@ -374,6 +456,11 @@ startup is lazy and process-wide; each render receives an isolated context.
 | File | Purpose |
 |------|---------|
 | `src/frontend/client/workflow-hooks.ts` | useWorkflow, useWorkflowList, useWorkflowActions |
+
+Authenticated starts use `runAsActor()` and derive tenant scope only from the
+live Zero session. Privileged plugins/jobs use `runAsSystem()` with an explicit
+principal, reason, and trusted server scope. Retried/recovered handlers keep the
+original seal; no request input may swap their tenant.
 
 ---
 
@@ -384,7 +471,7 @@ startup is lazy and process-wide; each render receives an isolated context.
 **Files:**
 | File | Purpose |
 |------|---------|
-| `src/scheduler/scheduler.ts` | Scheduler class — register named cron jobs |
+| `src/scheduler/scheduler-service.ts` | `SchedulerService` — register and control named cron jobs |
 | `src/scheduler/scheduler.plugin.ts` | Elysia plugin — @elysiajs/cron integration |
 | `src/scheduler/index.ts` | Barrel exports |
 
@@ -479,7 +566,7 @@ Organized into `primitives/` (raw building blocks) and `components/` (pre-styled
 can have a richer visual language without changing dashboard defaults.
 
 **`src/components/auth/` — auth UI blocks:**
-LoginForm, RegisterForm, ForgotPasswordForm, EmailVerificationForm, PasswordActionForm, ChangePasswordForm, UserPropertiesForm, MFAContinuation, MFAEnrollmentForm, MFAChallengeForm, MFAManagementPanel, OTPVerification, PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup, AuthLayout, AuthHeader, Gate, AdminGate, SignedIn, SignedOut, PropertyGate, HasProperty, HasFlag, useGate, usePropertyGate.
+LoginForm, RegisterForm, ForgotPasswordForm, EmailVerificationForm, PasswordActionForm, ChangePasswordForm, UserPropertiesForm, AuthFlowContinuation, TenantSelectionForm, TenantCreationForm, MFAContinuation, MFAEnrollmentForm, MFAChallengeForm, MFAManagementPanel, OTPVerification, PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup, AuthLayout, AuthHeader, Gate, AdminGate, SignedIn, SignedOut, PropertyGate, HasProperty, HasFlag, useGate, usePropertyGate.
 
 **`src/components/qr-code/` — QR primitive:**
 QRCode for token-aware authenticator setup and app-owned QR flows.
@@ -551,7 +638,7 @@ Client -> Server:  sync.subscribe, sync.mutate
 Server -> Client:  sync.snapshot, sync.change, sync.ack, sync.catchup
 ```
 
-**Per-user state (full ack/rollback):**
+**Per-authorized-scope user state (full ack/rollback):**
 ```
 Client -> Server:  state.subscribe, state.set, state.delete, state.clear
 Server -> Client:  state.snapshot, state.change, state.ack

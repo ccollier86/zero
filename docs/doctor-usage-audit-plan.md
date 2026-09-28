@@ -360,7 +360,7 @@ This is the core feedback loop: agents learn when they failed to use Zero.
 - `bun run test:package`
 - `bun run typecheck`
 - `bun run build`
-- `bun test`
+- `bun run test`
 - `git diff --check`
 
 ## First-Slice Rule Set

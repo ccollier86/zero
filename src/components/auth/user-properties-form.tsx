@@ -11,23 +11,23 @@
 import * as React from 'react';
 import type { AuthUserPropertyConfig } from '../../frontend/client/auth-client';
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/animate-ui/components/radix/checkbox';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { cn } from '#zero/lib/utils';
+import { Button } from '#zero/components/ui/button';
+import { Checkbox } from '#zero/components/animate-ui/components/radix/checkbox';
+import { Input } from '#zero/components/ui/input';
+import { Label } from '#zero/components/ui/label';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { AuthHeader } from '@/components/auth/auth-header';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { CircleCheck } from '@/components/animate-ui/icons/circle-check';
-import { CircleX } from '@/components/animate-ui/icons/circle-x';
-import { Loader } from '@/components/animate-ui/icons/loader';
+} from '#zero/components/ui/select';
+import { AuthHeader } from '#zero/components/auth/auth-header';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
+import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
+import { Loader } from '#zero/components/animate-ui/icons/loader';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
 
 export interface UserPropertiesFormProps {
@@ -93,7 +93,7 @@ export function UserPropertiesForm({
   if (fields.length === 0) return <>{emptyState}</>;
 
   return (
-    <form onSubmit={handleSubmit} className={cn('space-y-4', className)}>
+    <form onSubmit={handleSubmit} className={cn('space-y-4', className)} aria-busy={submitting}>
       <AuthHeader title={title} description={description} />
       <div className="grid gap-4 sm:grid-cols-2">
         {fields.map((field) => (
@@ -111,9 +111,12 @@ export function UserPropertiesForm({
       <Feedback error={error} success={success ? 'Settings updated.' : null} />
       <Button type="submit" size="sm" disabled={submitting}>
         {submitting ? (
-          <AnimateIcon animate loop>
-            <Loader size={16} />
-          </AnimateIcon>
+          <>
+            <AnimateIcon animate loop>
+              <Loader size={16} />
+            </AnimateIcon>
+            <span className="sr-only">Saving settings</span>
+          </>
         ) : (
           'Save settings'
         )}
@@ -216,12 +219,14 @@ function Feedback({ error, success }: { error: string | null; success: string | 
         'flex items-start gap-2 rounded-md border px-3 py-2.5',
         destructive
           ? 'border-destructive/30 bg-destructive/5 text-destructive'
-          : 'border-green-500/30 bg-green-500/5 text-green-600',
+          : 'border-success/35 bg-success/10 text-foreground dark:border-success/45 dark:bg-success/15',
       )}
       role={destructive ? 'alert' : 'status'}
     >
       <AnimateIcon animate>
-        {destructive ? <CircleX size={16} /> : <CircleCheck size={16} />}
+        {destructive
+          ? <CircleX size={16} />
+          : <CircleCheck size={16} className="text-success" />}
       </AnimateIcon>
       <p className="text-xs font-medium leading-relaxed">{message}</p>
     </div>

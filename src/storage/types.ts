@@ -4,6 +4,8 @@ import type { ClientTableDef } from '../schema/define-schema';
 
 export interface DriveRecord {
   drive_id: string;
+  /** Null in single-tenant mode; tenant id for multi-tenant drives. */
+  tenant_id: string | null;
   name: string;
   owner_id: string | null;
   max_size_bytes: number;
@@ -24,7 +26,7 @@ export interface StorageAccessCapabilities {
   canAdmin: boolean;
   /** Caller owns the drive. */
   isOwner: boolean;
-  /** Caller is a platform admin. */
+  /** Legacy single-mode platform-admin bypass is active for this request. */
   isPlatformAdmin: boolean;
   /** Drive or object is public for read access. */
   isPublic: boolean;
@@ -53,6 +55,8 @@ export type ObjectType = 'file' | 'folder';
 
 export interface ObjectRecord {
   object_id: string;
+  /** Duplicated from the parent drive for direct row classification. */
+  tenant_id: string | null;
   drive_id: string;
   parent_id: string | null;
   name: string;
@@ -100,6 +104,8 @@ export type PermissionLevel = 'read' | 'write' | 'admin';
 
 export interface PermissionRecord {
   permission_id: string;
+  /** Duplicated from the parent drive for direct authorization checks. */
+  tenant_id: string | null;
   drive_id: string;
   object_id: string | null;
   grant_type: GrantType;
@@ -277,10 +283,25 @@ export interface StoragePluginConfig {
   adapter?: StorageAdapter;
   /** Base directory for local file storage. Default: '.storage'. */
   localDir?: string;
-  /** Secret for signing presigned URLs (auto-generated if not set). */
+  /**
+   * Secret for signing presigned URLs and upload grants. When omitted, a
+   * random 32-byte secret is generated once and retained in the app database.
+   */
   signingSecret?: string;
   /** Default presigned URL expiry in seconds. Default: 3600. */
   defaultPresignedTTL?: number;
+  /** App-local runtime used by managed createApp() composition. */
+  runtime?: import('../runtime/zero-app-runtime').ZeroAppRuntime;
+  /** Explicit auth dependency; defaults to the legacy compatibility getter. */
+  getTokenService?: () => import('../auth/token-service').TokenService | null;
+  /** App-local kernel/property dependencies for request data scoping. */
+  authorization?: import('../auth/auth.middleware').AuthMiddlewareAuthorizationOptions;
+  /** Resolve authorization properties for one user in this app. */
+  getUserProperties?: (userId: string) => Record<string, string>;
+  /** Validate property keys admitted into storage authorization policy. */
+  isPolicyTrustedProperty?: (key: string) => boolean;
+  /** Composition callback for app factories and advanced integrations. */
+  onServiceCreated?: (service: import('./storage-service').StorageService) => void;
 }
 
 // ─── Client Table Definitions ─────────────────────────────────────────────
@@ -301,6 +322,7 @@ export const STORAGE_TABLES: Record<string, ClientTableDef> = {
     _pk: 'drive_id',
     _sync: 'lazy',
     drive_id: 'text',
+    tenant_id: 'text',
     name: 'text',
     owner_id: 'text',
     max_size_bytes: 'integer',
@@ -313,6 +335,7 @@ export const STORAGE_TABLES: Record<string, ClientTableDef> = {
     _pk: 'object_id',
     _sync: 'lazy',
     object_id: 'text',
+    tenant_id: 'text',
     drive_id: 'text',
     parent_id: 'text',
     name: 'text',

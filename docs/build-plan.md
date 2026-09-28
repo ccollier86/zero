@@ -6,6 +6,10 @@ Implementation order, dependency map, and file inventory for the platform.
 
 > **Status (2026-06-28):** Historical implementation plan. All four phases are built and operational, but prototype-era examples in this file may mention lower-level sync names such as `useTable` or `useSyncStatus`. Current app-facing APIs are documented in [Frontend SDK](./frontend/sdk.md) and [SDK Reference](./sdk-reference.md): use `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, and `useStatus` from `@zero/framework/react`.
 
+> The unchecked verification boxes below are preserved as the original build
+> checklist; they are not an open-work or release-readiness tracker. Current
+> acceptance status lives in the linked subsystem docs and automated suites.
+
 Use the current SDK docs for copy-pasteable examples and public export names.
 
 ## Architecture Map
@@ -261,7 +265,7 @@ Server → Client:
 
 **What:** User registration, login, JWT tokens, role guards, activity audit. Elysia plugin sharing ReactiveDB with sync engine.
 
-**Depends on:** Phase 2 (Sync Engine — auth tables are reactive, sync broadcasts user changes)
+**Depends on:** Phase 2 (Sync Engine — auth can share ReactiveDB change tracking while platform policy keeps identity rows private)
 
 **External deps:** `jose` (JWT signing/verification)
 
@@ -271,7 +275,7 @@ Server → Client:
 
 - **TokenServiceConfig**: `{ db: ReactiveDB, accessTokenTTL?: string, refreshTokenTTL?: string }`. Both TTLs are jose duration strings. Uses prepared statements on `_auth_config` table directly (no `getConfig()` method).
 - **AuthContext**: `{ userId: string, email: string, role: 'user' | 'admin' }`. Defined in types.ts.
-- **Table creation**: `users` and `user_properties` via `defineTable()` (reactive). `_credentials`, `_refresh_tokens`, `_auth_config`, `_audit_log` via `db.exec()` (internal).
+- **Table creation**: `users` through `defineTable()` for server-side change tracking; `user_properties` via composite-key SQL; `_credentials`, `_refresh_tokens`, `_auth_config`, and `_audit_log` via internal SQL. Client exposure is a separate policy decision.
 - **Refresh token lookup**: `SELECT * WHERE token_hash = ?` returns all (including revoked). Check `revoked_at`/`expires_at` in code. Enables replay detection — reused revoked token → revoke ALL user tokens.
 - **Inactivity**: `AuditConfig.onInactive?: (userId: string) => void` callback. Auth plugin wires it to revoke tokens + publish `auth.session-expired`. Clean DI — audit doesn't know about tokens.
 - **Logout**: `POST /auth/logout` accepts an optional `{ refreshToken }` body and always clears/revokes the HttpOnly page session. Bearer auth is not required so logout can still clear the server-readable cookie after browser token state is lost.
@@ -356,9 +360,12 @@ src/auth/
 ### SQL Schemas
 
 ```sql
--- Public (reactive, broadcast by sync plugin)
--- Created via db.defineTable()
+-- Private identity row; defineTable() supplies server-side change tracking,
+-- while default createApp policy denies generic Sync reads and writes.
 users (user_id PK, username UNIQUE, email UNIQUE, first_name, last_name, role, created_at, updated_at)
+
+-- Composite-key user metadata; created with direct SQL and exposed only
+-- through authorized auth property APIs.
 user_properties (user_id + key composite PK, value, FK → users)
 
 -- Internal (_ prefix, not broadcast)
@@ -390,7 +397,7 @@ _audit_log (id PK, user_id, event_type, data, ts)
 - [ ] `POST /auth/change-password` verifies current password before updating
 - [ ] Auth middleware derives `authContext` from Bearer header — does NOT throw (sets null)
 - [ ] `requireAuth` guard throws 401 when `authContext` is null
-- [ ] User changes broadcast via sync engine (users + user_properties are reactive tables)
+- [ ] User/session projections are served through auth APIs; generic Sync cannot read `users` or credential/config tables
 - [ ] Password hashes stored in `_credentials` (internal, never broadcast)
 - [ ] JWKS endpoint returns public key in standard format
 - [ ] Inactivity timeout publishes `auth.session-expired` to user's auth topic
@@ -511,7 +518,12 @@ CREATE INDEX IF NOT EXISTS idx_user_state_user ON _user_state(user_id);
 
 - **`useTable` return shape**: Always `UseTableResult<T>` — `{ rows: T[], isLoading, error, insert, update, delete, refetch }`. All examples destructure.
 - **`stateSync` in AppConfig**: `stateSync?: boolean`. When true, state sync handler activates in WS router. Default: false.
-- **`@platform/*` and `@app/*` imports**: tsconfig path aliases, NOT separate packages. `@zero/framework/react → src/frontend` (all app code: schema, hooks, components), `@zero/framework/server → src/frontend/server` (only for `app/server.ts`), `@platform/router → src/frontend/router`, `@platform/sync → src/sync`, `@platform/auth → src/auth`, `@/components/* → src/components/*`, `@app/* → app/*`. Always use aliases instead of relative paths -- see `docs/frontend/README.md` for full list.
+- **Framework/package imports**: public app imports use the
+  `@zero/framework/*` export map. Framework-owned source uses package-private
+  `#zero/components/*`, `#zero/hooks/*`, and `#zero/lib/*` mappings declared by
+  Zero's package manifest; generated apps must not use those names. `@app/*`
+  and `@/*` remain app-owned aliases. See `docs/frontend/README.md` for the
+  complete boundary.
 - **SSR hooks**: WS-dependent hooks (`useTable`, `useServerState`) are not available during SSR. Server loads initial data, renders HTML, client hydrates, hooks take over with live data. `useAuth()` during SSR reads from request context.
 - **DDL passthrough**: `Record<string, string>` table schemas are SQLite column definitions passed directly to `ReactiveDB.defineTable()`. No transformation.
 - **404 handling**: `not-found.tsx` only. `error.tsx` is future (not V1). No `_error.tsx`.

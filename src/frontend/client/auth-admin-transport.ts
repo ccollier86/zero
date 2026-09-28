@@ -28,6 +28,7 @@ export interface AuthAdminTransportOptions {
   baseUrl: string;
   authenticatedFetch: AuthenticatedFetch;
   createResponseError: (response: Response, body: unknown, fallback: string) => Error;
+  assertResponseCurrent: (response: Response) => void;
   createTimeoutError: () => Error;
   /** Test/internal override. Production callers use the 15-second default. */
   requestTimeoutMs?: number;
@@ -223,9 +224,13 @@ export class AuthAdminTransport {
         }
 
         const text = await response.text();
-        return (text ? JSON.parse(text) : undefined) as T;
+        const data = (text ? JSON.parse(text) : undefined) as T;
+        this.options.assertResponseCurrent(response);
+        return { data, response };
       });
-      return await Promise.race([request, absoluteTimeout, callerAbort]);
+      const result = await Promise.race([request, absoluteTimeout, callerAbort]);
+      this.options.assertResponseCurrent(result.response);
+      return result.data;
     } catch (error) {
       if (timedOut) throw timeoutError ?? this.options.createTimeoutError();
       throw error;

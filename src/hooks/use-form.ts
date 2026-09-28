@@ -20,6 +20,10 @@ import type { FieldMeta } from '../schema/field-types';
 import type { Row } from '../sync/types';
 import type { Collection } from '../frontend/client/sdk';
 import { useClientMaybe } from '../frontend/client/hooks';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from '../frontend/client/authorization-scope-hooks';
 import { areFormValuesEqual } from './form-value-utils';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -30,6 +34,8 @@ export interface UseFormOptions<T extends Row = Row> {
   collection?: string | Collection<T>;
   mode?: 'create' | 'edit';
   editId?: string;
+  /** Optional field allow-list for generated forms and submitted payloads. */
+  includeFields?: readonly string[];
   onSubmit?: (data: T) => void | Promise<void>;
   onSuccess?: () => void;
   onError?: (error: string) => void;
@@ -71,6 +77,7 @@ export function useForm<T extends Row = Row>(
   const { schema, defaultValues, mode = 'create', editId, onSubmit, onSuccess, onError } = options;
 
   const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const collection = useMemo((): Collection<T> | null => {
     if (typeof options.collection === 'string') {
       if (!client) {
@@ -87,43 +94,104 @@ export function useForm<T extends Row = Row>(
     return options.collection ?? null;
   }, [client, options.collection]);
 
+  const fieldNames = useMemo(() => {
+    if (options.includeFields === undefined) return schema.fieldNames;
+    const known = new Set(schema.fieldNames);
+    const seen = new Set<string>();
+    const included: string[] = [];
+    for (const field of options.includeFields) {
+      if (!known.has(field)) {
+        throw new Error(`Form field allow-list references unknown schema field '${field}'.`);
+      }
+      if (seen.has(field)) continue;
+      seen.add(field);
+      included.push(field);
+    }
+    return included;
+  }, [options.includeFields, schema.fieldNames]);
+
   const initialValues = useMemo(() => {
     const defaults = schema.decodeRow(schema.getDefaults());
-    return schema.decodeRow({ ...defaults, ...defaultValues }) as Record<string, unknown>;
-  }, [schema, defaultValues]);
+    const decoded = schema.decodeRow({ ...defaults, ...defaultValues });
+    if (options.includeFields === undefined) return decoded;
+    return Object.fromEntries(
+      fieldNames
+        .filter((field) => Object.prototype.hasOwnProperty.call(decoded, field))
+        .map((field) => [field, decoded[field]]),
+    );
+  }, [schema, defaultValues, fieldNames, options.includeFields]);
 
   const [values, setValues] = useState<Record<string, unknown>>(initialValues);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [touched, setTouched] = useState<Set<string>>(new Set());
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
   const initialRef = useRef(initialValues);
   const fieldRefs = useRef<Map<string, HTMLElement | null>>(new Map());
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const isCurrentScope = useCallback(
+    () => isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    ),
+    [callbackBoundaryKey],
+  );
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+  const visibleValues = visible ? values : initialValues;
+
+  useEffect(() => {
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    initialRef.current = initialValues;
+    setValues(initialValues);
+    setErrors({});
+    setTouched(new Set());
+    setIsSubmitting(false);
+  }, [authorizationBoundary.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Edit mode: load existing row from collection ─────────────────
   useEffect(() => {
-    if (mode === 'edit' && editId && collection) {
+    if (authorizationBoundary.ready
+      && mode === 'edit'
+      && editId
+      && collection) {
       const all = collection.getAll();
       const existing = all[editId];
       if (existing) {
-        const loaded = schema.decodeRow({
+        const decoded = schema.decodeRow({
           ...initialValues,
           ...(existing as Record<string, unknown>),
         });
+        const loaded = options.includeFields === undefined
+          ? decoded
+          : pickFormFields(decoded, fieldNames);
         setValues(loaded);
         initialRef.current = loaded;
       }
     }
-  }, [mode, editId, collection]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    authorizationBoundary.key,
+    authorizationBoundary.ready,
+    mode,
+    editId,
+    collection,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Dirty check ────────────────────────────────────────────────────
 
   const isDirty = useMemo(() => {
+    if (!visible) return false;
     const init = initialRef.current;
-    for (const key of schema.fieldNames) {
-      if (!areFormValuesEqual(values[key], init[key])) return true;
+    for (const key of fieldNames) {
+      if (!areFormValuesEqual(visibleValues[key], init[key])) return true;
     }
     return false;
-  }, [values, schema.fieldNames]);
+  }, [fieldNames, visible, visibleValues]);
 
   // ─── Per-field validation ───────────────────────────────────────────
 
@@ -141,6 +209,14 @@ export function useForm<T extends Row = Row>(
   // ─── Full validation ───────────────────────────────────────────────
 
   const collectValidationErrors = useCallback((candidateValues: Record<string, unknown>): Record<string, string> => {
+    if (options.includeFields !== undefined) {
+      const fieldErrors: Record<string, string> = {};
+      for (const field of fieldNames) {
+        const error = validateField(field, candidateValues[field]);
+        if (error) fieldErrors[field] = error;
+      }
+      return fieldErrors;
+    }
     const result = schema.validate(candidateValues);
     if (result.success) {
       return {};
@@ -154,25 +230,26 @@ export function useForm<T extends Row = Row>(
       }
     }
     return newErrors;
-  }, [schema]);
+  }, [fieldNames, options.includeFields, schema, validateField]);
 
   const validateAll = useCallback((): Record<string, string> => {
-    const newErrors = collectValidationErrors(values);
-    setErrors(newErrors);
+    const newErrors = collectValidationErrors(visibleValues);
+    if (isCurrentScope()) setErrors(newErrors);
     return newErrors;
-  }, [collectValidationErrors, values]);
+  }, [collectValidationErrors, isCurrentScope, visibleValues]);
 
   const isValid = useMemo(() => {
-    return Object.keys(collectValidationErrors(values)).length === 0;
-  }, [collectValidationErrors, values]);
+    return visible && Object.keys(collectValidationErrors(visibleValues)).length === 0;
+  }, [collectValidationErrors, visible, visibleValues]);
 
   // ─── Register ───────────────────────────────────────────────────────
 
   const register = useCallback(
     (name: string): FieldRegistration => ({
       name,
-      value: values[name] ?? '',
+      value: visibleValues[name] ?? '',
       onChange: (valueOrEvent: unknown) => {
+        if (!isCurrentScope()) return;
         let newValue: unknown;
         if (
           valueOrEvent &&
@@ -201,8 +278,9 @@ export function useForm<T extends Row = Row>(
         }
       },
       onBlur: () => {
+        if (!isCurrentScope()) return;
         setTouched((prev) => new Set(prev).add(name));
-        const error = validateField(name, values[name]);
+        const error = validateField(name, visibleValues[name]);
         if (error) {
           setErrors((prev) => ({ ...prev, [name]: error }));
         } else {
@@ -213,12 +291,12 @@ export function useForm<T extends Row = Row>(
           });
         }
       },
-      error: errors[name],
+      error: visible ? errors[name] : undefined,
       ref: (el: HTMLElement | null) => {
         fieldRefs.current.set(name, el);
       },
     }),
-    [values, errors, validateField],
+    [errors, isCurrentScope, validateField, visible, visibleValues],
   );
 
   // ─── Submit ─────────────────────────────────────────────────────────
@@ -226,14 +304,20 @@ export function useForm<T extends Row = Row>(
   const handleSubmit = useCallback(
     async (e?: FormEvent) => {
       e?.preventDefault();
-      if (isSubmitting) return;
+      if (!isCurrentScope() || isSubmitting) return;
+      const operationBoundaryKey = callbackBoundaryKey;
+      const operationIsCurrent = () => isAuthorizationScopeCallbackCurrent(
+        boundaryKeyRef.current,
+        boundaryReadyRef.current,
+        operationBoundaryKey,
+      );
 
       // Mark all fields as touched
-      setTouched(new Set(schema.fieldNames));
+      setTouched(new Set(fieldNames));
 
       const validationErrors = validateAll();
       if (Object.keys(validationErrors).length > 0) {
-        for (const name of schema.fieldNames) {
+        for (const name of fieldNames) {
           if (validationErrors[name]) {
             fieldRefs.current.get(name)?.focus();
             break;
@@ -244,7 +328,11 @@ export function useForm<T extends Row = Row>(
 
       setIsSubmitting(true);
       try {
-        const data = schema.encodeRow(values) as T;
+        const data = schema.encodeRow(
+          options.includeFields === undefined
+            ? visibleValues
+            : pickFormFields(visibleValues, fieldNames),
+        ) as T;
 
         if (onSubmit) {
           await onSubmit(data);
@@ -258,36 +346,57 @@ export function useForm<T extends Row = Row>(
           }
         }
 
-        onSuccess?.();
+        if (operationIsCurrent()) onSuccess?.();
       } catch (err) {
+        if (!operationIsCurrent()) return;
         const message = err instanceof Error ? err.message : 'Submit failed';
         onError?.(message);
       } finally {
-        setIsSubmitting(false);
+        if (operationIsCurrent()) setIsSubmitting(false);
       }
     },
-    [isSubmitting, schema, validateAll, values, onSubmit, collection, mode, editId, onSuccess, onError],
+    [
+      callbackBoundaryKey,
+      collection,
+      editId,
+      fieldNames,
+      isCurrentScope,
+      isSubmitting,
+      mode,
+      onError,
+      onSubmit,
+      onSuccess,
+      options.includeFields,
+      schema,
+      validateAll,
+      visibleValues,
+    ],
   );
 
   // ─── Utilities ──────────────────────────────────────────────────────
 
   const reset = useCallback(() => {
+    if (!isCurrentScope()) return;
     setValues(initialRef.current);
     setErrors({});
     setTouched(new Set());
     setIsSubmitting(false);
-  }, []);
+  }, [isCurrentScope]);
 
   const setValue = useCallback((name: string, value: unknown) => {
+    if (!isCurrentScope()) return;
     setValues((prev) => ({ ...prev, [name]: value }));
-  }, []);
+  }, [isCurrentScope]);
 
   const watch = useCallback(
-    (name: string) => values[name],
-    [values],
+    (name: string) => isCurrentScope() ? visibleValues[name] : undefined,
+    [isCurrentScope, visibleValues],
   );
 
-  const getValues = useCallback(() => values as T, [values]);
+  const getValues = useCallback(
+    () => (isCurrentScope() ? visibleValues : initialValues) as T,
+    [initialValues, isCurrentScope, visibleValues],
+  );
 
   const getFieldMeta = useCallback(
     (name: string) => schema.fields.get(name),
@@ -297,8 +406,8 @@ export function useForm<T extends Row = Row>(
   return {
     register,
     handleSubmit,
-    errors,
-    isSubmitting,
+    errors: visible ? errors : {},
+    isSubmitting: visible && isSubmitting,
     isDirty,
     isValid,
     reset,
@@ -306,6 +415,17 @@ export function useForm<T extends Row = Row>(
     watch,
     getValues,
     getFieldMeta,
-    fieldNames: schema.fieldNames,
+    fieldNames,
   };
+}
+
+function pickFormFields(
+  values: Record<string, unknown>,
+  fields: readonly string[],
+): Record<string, unknown> {
+  return Object.fromEntries(
+    fields
+      .filter((field) => Object.prototype.hasOwnProperty.call(values, field))
+      .map((field) => [field, values[field]]),
+  );
 }

@@ -14,6 +14,12 @@ export interface NativeOidcMetadata {
   id_token_signing_alg_values_supported?: string[];
   token_endpoint_auth_methods_supported?: string[];
   authorization_response_iss_parameter_supported?: boolean;
+  zero_tenant_sessions?: {
+    version: 1;
+    list_endpoint: string;
+    switch_endpoint: string;
+    proof: 'refresh_token';
+  };
 }
 
 export interface NativeIdTokenClaims {
@@ -31,7 +37,6 @@ export interface NativeIdTokenClaims {
   name?: string;
   given_name?: string;
   family_name?: string;
-  [key: string]: unknown;
 }
 
 export interface NativeTokenSet {
@@ -40,6 +45,7 @@ export interface NativeTokenSet {
   idToken?: string;
   expiresIn: number;
   scope?: string;
+  activeTenant?: import('./client-types').NativeTenantSummary | null;
 }
 
 export interface NativeStoredSession {
@@ -48,6 +54,7 @@ export interface NativeStoredSession {
   subject: string;
   refreshToken: string;
   identity: NativeIdTokenClaims;
+  activeTenant?: import('./client-types').NativeTenantSummary | null;
 }
 
 export interface NativePendingAuthorization {

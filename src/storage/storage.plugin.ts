@@ -10,6 +10,7 @@ import { Elysia, t } from 'elysia';
 import type { ReactiveDB } from '../sync/reactive-db';
 import { LocalStorageAdapter } from './local-adapter';
 import { StorageService, StorageError, defineStorageTables } from './storage-service';
+import { resolveStorageCapabilitySigningSecret } from './storage-signing-secret';
 import { createPresignedToken, verifyPresignedToken } from './presigned';
 import { verifyUploadGrantToken } from './upload-grant';
 import type {
@@ -21,10 +22,32 @@ import type {
   PermissionLevel,
 } from './types';
 import { AuthError } from '../auth/types';
-import { createAuthMiddleware } from '../auth/auth.middleware';
+import type { RequestAuthorizationAccess } from '../auth/authorization-access';
+import { readAuthBearerToken } from '../auth/auth-bearer-token';
+import { authContextAuthorityFingerprint } from '../auth/auth-context-authority';
+import {
+  createAuthMiddleware,
+  createProtectedMultipartRequestGuard,
+  type AuthMiddlewareAuthorizationOptions,
+} from '../auth/auth.middleware';
+import {
+  requireRequestServiceDataScope,
+  serviceDataScopeMatchesTenant,
+  type ServiceDataScope,
+} from '../auth/service-data-scope';
+import { effectiveServiceDataRoles } from '../auth/service-data-authority';
+import type { AuthContext } from '../auth/types';
 import { getAuthStore, getTokenService } from '../auth/auth.plugin';
+import { getPropertyService } from '../auth/auth-runtime';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
+import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
+import {
+  ZERO_AUTHORIZATION_KERNEL,
+  ZERO_AUTH_STORE,
+  ZERO_AUTH_TOKEN_SERVICE,
+  ZERO_STORAGE_SERVICE,
+} from '../runtime/service-keys';
 
 // ─── MIME types safe to serve inline (no script execution risk) ──────────
 
@@ -44,20 +67,20 @@ function contentDisposition(mimeType: string, fileName: string): string {
   return `${disposition}; filename="${encoded}"`;
 }
 
-// ─── Module-Level Singleton ──────────────────────────────────────────────
+// ─── Legacy Compatibility Getter ───────────────────────────────────────
 
-let _storageService: StorageService | null = null;
-let _signingSecret: string = '';
-let _defaultTTL = 3600;
+const storageProviders = new CompatibilityProviderRegistry<StorageService>(
+  'Storage service',
+);
 
 /**
- * Get the StorageService singleton initialized by the storage plugin.
+ * Get the only unambiguous StorageService compatibility provider.
  *
  * Returns null before plugin startup or after shutdown; consumers should treat
  * null as storage not available in the current app lifecycle.
  */
 export function getStorageService(): StorageService | null {
-  return _storageService;
+  return storageProviders.get();
 }
 
 // ─── Plugin ──────────────────────────────────────────────────────────────
@@ -71,29 +94,164 @@ export function getStorageService(): StorageService | null {
  */
 export function createStoragePlugin(config: StoragePluginConfig) {
   const adapter: StorageAdapter = config.adapter ?? new LocalStorageAdapter(config.localDir);
+  const getStorageTokenService = config.getTokenService
+    ?? (config.runtime
+      ? () => config.runtime!.get(ZERO_AUTH_TOKEN_SERVICE)
+      : getTokenService);
+  const owner = {};
+  let signingSecret: string | null = null;
+  const defaultTTL = config.defaultPresignedTTL ?? 3600;
+  const resolveUserProperties = config.getUserProperties
+    ?? (config.runtime
+      ? (userId: string) => config.runtime!.get(ZERO_AUTH_STORE)?.getProperties(userId) ?? {}
+      : (userId: string) => getAuthStore()?.getProperties(userId) ?? {});
+  const isPolicyTrustedProperty = config.isPolicyTrustedProperty
+    ?? (config.runtime
+      ? (key: string) => (
+        config.runtime!.get(ZERO_AUTHORIZATION_KERNEL)?.isPolicyTrustedProperty(key) === true
+      )
+      : (key: string) => getPropertyService()?.isPolicyTrusted(key) === true);
+  let service: StorageService | null = null;
+  let registration: ReturnType<typeof storageProviders.register> | null = null;
+  config.runtime?.addCleanup(() => registration?.unregister());
+  const getAuthorizationKernel = config.authorization?.getAuthorizationKernel
+    ?? (() => config.runtime?.get(ZERO_AUTHORIZATION_KERNEL) ?? null);
+  const authorization: AuthMiddlewareAuthorizationOptions = {
+    ...config.authorization,
+    getAuthorizationKernel,
+  };
+  const requestScope = (access: Parameters<typeof requireRequestServiceDataScope>[0]) =>
+    requireRequestServiceDataScope(access, getAuthorizationKernel);
+  const uploadCommitGuard = (request: Request, auth: AuthContext) => {
+    const bearer = readAuthBearerToken(request);
+    const captured = authContextAuthorityFingerprint(
+      auth,
+      resolveUserProperties(auth.userId),
+    );
+    return async () => {
+      const tokens = getStorageTokenService();
+      let current: AuthContext | null = null;
+      try {
+        current = bearer && tokens
+          ? await tokens.resolveAuthContext(bearer)
+          : null;
+      } catch {
+        current = null;
+      }
+      const properties = current
+        ? resolveUserProperties(current.userId)
+        : {};
+      if (authContextAuthorityFingerprint(current, properties) !== captured) {
+        throw new AuthError(
+          'Authorization changed during the upload; retry with the current session',
+          'AUTH_STATE_CHANGED',
+          409,
+        );
+      }
+    };
+  };
+
+  const requireStorage = (): StorageService => {
+    if (!service) throw new Error('Storage not initialized');
+    return service;
+  };
+  const requireSigningSecret = (): string => {
+    if (!signingSecret) throw new Error('Storage signing secret not initialized');
+    return signingSecret;
+  };
+  const withDriveAccess = (
+    svc: StorageService,
+    drive: DriveRecord,
+    authContext: StorageAuthContext,
+    scope: ServiceDataScope | null,
+    access: RequestAuthorizationAccess,
+    path?: string,
+  ) => withDriveAccessForProperties(
+    svc, drive, authContext, scope, access, resolveUserProperties, path,
+  );
+  const resolveDriveAccess = (
+    svc: StorageService,
+    drive: DriveRecord,
+    authContext: StorageAuthContext,
+    scope: ServiceDataScope | null,
+    access: RequestAuthorizationAccess,
+    path?: string,
+  ) => resolveDriveAccessForProperties(
+    svc, drive, authContext, scope, access, resolveUserProperties, path,
+  );
+  const requireDriveAccess = (
+    svc: StorageService,
+    driveId: string,
+    auth: AuthContext,
+    scope: ServiceDataScope,
+    access: RequestAuthorizationAccess,
+    level: PermissionLevel,
+    path?: string,
+  ) => requireDriveAccessForProperties(
+    svc, driveId, auth, scope, access, level, resolveUserProperties, path,
+  );
+  const requireDriveAccessFromContext = (
+    svc: StorageService,
+    driveId: string,
+    authContext: StorageAuthContext,
+    scope: ServiceDataScope | null,
+    access: RequestAuthorizationAccess,
+    level: PermissionLevel,
+    path?: string,
+  ) => requireDriveAccessFromContextForProperties(
+    svc, driveId, authContext, scope, access, level, resolveUserProperties, path,
+  );
 
   return new Elysia({ name: 'storage', prefix: '/storage' })
 
-    .use(createAuthMiddleware(getTokenService))
+    .use(createAuthMiddleware(getStorageTokenService, authorization))
+    .onRequest(createProtectedMultipartRequestGuard(getStorageTokenService, {
+      method: 'POST',
+      path: '/storage/drives/:driveId/upload',
+    }, authorization))
 
     // ─── Lifecycle ─────────────────────────────────────
     .onStart(() => {
       defineStorageTables(config.db);
-      _signingSecret = config.signingSecret ?? crypto.randomUUID();
-      _defaultTTL = config.defaultPresignedTTL ?? 3600;
-      _storageService = new StorageService(config.db, adapter, {
-        uploadGrantSecret: _signingSecret,
-        defaultPresignedTTL: _defaultTTL,
+      signingSecret = resolveStorageCapabilitySigningSecret(
+        config.db,
+        config.signingSecret,
+      );
+      const created = new StorageService(config.db, adapter, {
+        uploadGrantSecret: signingSecret,
+        defaultPresignedTTL: defaultTTL,
+        isPolicyTrustedProperty,
+        tenancyMode: getAuthorizationKernel()?.tenancy.mode ?? 'single',
       });
+      service = created;
+      registration = storageProviders.register(owner, () => service);
+      try {
+        config.runtime?.set(ZERO_STORAGE_SERVICE, created);
+        config.onServiceCreated?.(created);
+      } catch (error) {
+        config.runtime?.clear(ZERO_STORAGE_SERVICE, created);
+        registration.unregister();
+        registration = null;
+        service = null;
+        throw error;
+      }
       emitPlatformCode(OBS_CODES.STORAGE_STARTED, {
         metadata: { tablesDefined: true },
       });
     })
 
     .onStop(() => {
-      _storageService = null;
+      if (service) config.runtime?.clear(ZERO_STORAGE_SERVICE, service);
+      registration?.unregister();
+      registration = null;
+      service = null;
+      signingSecret = null;
       emitPlatformCode(OBS_CODES.STORAGE_STOPPED);
     })
+
+    .derive({ as: 'global' }, () => ({
+      storageService: service,
+    }))
 
     // ─── Error Handler ─────────────────────────────────
     .onError(({ error, set }) => {
@@ -113,8 +271,9 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // POST /storage/drives — create a drive
     .post(
       '/drives',
-      ({ body, requireAuth }) => {
-        const auth = requireAuth();
+      ({ body, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
         return svc.createDrive(auth.userId, {
           name: body.name,
@@ -122,7 +281,7 @@ export function createStoragePlugin(config: StoragePluginConfig) {
           maxFileSize: body.maxFileSize,
           allowedMimeTypes: body.allowedMimeTypes,
           public: body.public,
-        });
+        }, scope);
       },
       {
         body: t.Object({
@@ -136,27 +295,37 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     )
 
     // GET /storage/drives — list drives for current user
-    .get('/drives', ({ authContext }) => {
+    .get('/drives', ({ authContext, access }) => {
       const svc = requireStorage();
       let drives: DriveRecord[];
+      let scope: ServiceDataScope | null = null;
       if (authContext?.userId) {
-        const userProps = getUserProperties(authContext.userId);
-        drives = svc.listDrivesForUser(authContext.userId, authContext.role, userProps);
+        scope = requestScope(access);
+        const userProps = resolveUserProperties(authContext.userId);
+        drives = svc.listDrivesForUser(
+          authContext.userId,
+          storageRoles(scope, access),
+          userProps,
+          scope,
+        );
       } else {
-        drives = svc.listDrives().filter((d) => d.public === 1);
+        // Tenant-owned public objects remain directly readable by id, but an
+        // anonymous global listing must not become a tenant-directory leak.
+        drives = svc.listDrives().filter((d) => d.public === 1 && d.tenant_id === null);
       }
-      return drives.map((drive) => withDriveAccess(svc, drive, authContext));
+      return drives.map((drive) => withDriveAccess(svc, drive, authContext, scope, access));
     })
 
     // GET /storage/drives/:driveId — get drive info
     .get(
       '/drives/:driveId',
-      ({ params, authContext }) => {
+      ({ params, authContext, access }) => {
         const svc = requireStorage();
         const drive = svc.getDrive(params.driveId);
         if (!drive) throw new StorageError(404, 'Drive not found');
-        requireDriveAccessFromContext(svc, params.driveId, authContext, 'read');
-        return withDriveAccess(svc, drive, authContext);
+        const scope = authContext ? requestScope(access) : null;
+        requireDriveAccessFromContext(svc, params.driveId, authContext, scope, access, 'read');
+        return withDriveAccess(svc, drive, authContext, scope, access);
       },
       { params: t.Object({ driveId: t.String() }) }
     )
@@ -164,12 +333,21 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // GET /storage/drives/:driveId/capabilities — effective current-user access
     .get(
       '/drives/:driveId/capabilities',
-      ({ params, query, authContext }) => {
+      ({ params, query, authContext, access }) => {
         const svc = requireStorage();
         const drive = svc.getDrive(params.driveId);
         if (!drive) throw new StorageError(404, 'Drive not found');
-        requireDriveAccessFromContext(svc, params.driveId, authContext, 'read', query.path);
-        return resolveDriveAccess(svc, drive, authContext, query.path);
+        const scope = authContext ? requestScope(access) : null;
+        requireDriveAccessFromContext(
+          svc,
+          params.driveId,
+          authContext,
+          scope,
+          access,
+          'read',
+          query.path,
+        );
+        return resolveDriveAccess(svc, drive, authContext, scope, access, query.path);
       },
       {
         params: t.Object({ driveId: t.String() }),
@@ -180,10 +358,11 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // PATCH /storage/drives/:driveId — update drive settings
     .patch(
       '/drives/:driveId',
-      ({ params, body, requireAuth }) => {
-        const auth = requireAuth();
+      ({ params, body, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
-        requireDriveAccess(svc, params.driveId, auth, 'admin');
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'admin');
         return svc.updateDrive(params.driveId, {
           name: body.name,
           max_size_bytes: body.maxSize,
@@ -202,15 +381,17 @@ export function createStoragePlugin(config: StoragePluginConfig) {
       }
     )
 
-    // DELETE /storage/drives/:driveId — delete a drive (owner or admin only)
+    // DELETE /storage/drives/:driveId — owner, explicit admin grant, or
+    // legacy single-mode platform admin only.
     .delete(
       '/drives/:driveId',
-      ({ params, requireAuth }) => {
-        const auth = requireAuth();
+      ({ params, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
-        const drive = svc.getDrive(params.driveId);
+        const drive = svc.getDriveForScope(params.driveId, scope);
         if (!drive) throw new StorageError(404, 'Drive not found');
-        requireDriveAccess(svc, params.driveId, auth, 'admin');
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'admin');
         svc.deleteDrive(params.driveId);
         return { ok: true };
       },
@@ -220,9 +401,10 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // GET /storage/drives/:driveId/usage — get drive usage stats
     .get(
       '/drives/:driveId/usage',
-      ({ params, authContext }) => {
+      ({ params, authContext, access }) => {
         const svc = requireStorage();
-        requireDriveAccessFromContext(svc, params.driveId, authContext, 'read');
+        const scope = authContext ? requestScope(access) : null;
+        requireDriveAccessFromContext(svc, params.driveId, authContext, scope, access, 'read');
         return svc.getDriveUsage(params.driveId);
       },
       { params: t.Object({ driveId: t.String() }) }
@@ -233,12 +415,13 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // POST /storage/drives/:driveId/upload — multipart file upload
     .post(
       '/drives/:driveId/upload',
-      async ({ params, body, requireAuth }) => {
-        const auth = requireAuth();
+      async ({ params, body, access, request }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
         const file = body.file;
         const path = body.path || `/${file.name}`;
-        requireDriveAccess(svc, params.driveId, auth, 'write', path);
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', path);
 
         return await svc.upload(
           params.driveId,
@@ -250,7 +433,9 @@ export function createStoragePlugin(config: StoragePluginConfig) {
             overwrite: body.overwrite === 'true',
             public: body.public === 'true',
             metadata: body.metadata ? JSON.parse(body.metadata) : undefined,
-          }
+          },
+          scope,
+          uploadCommitGuard(request, auth),
         );
       },
       {
@@ -270,12 +455,21 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // GET /storage/drives/:driveId/files/* — stream file download with Range + ETag
     .get(
       '/drives/:driveId/files/*',
-      async ({ params, request, set, authContext }) => {
+      async ({ params, request, set, authContext, access }) => {
         const svc = requireStorage();
         const filePath = '/' + (params as any)['*'];
+        const scope = authContext ? requestScope(access) : null;
 
         // Check access
-        requireDriveAccessFromContext(svc, params.driveId, authContext, 'read', filePath);
+        requireDriveAccessFromContext(
+          svc,
+          params.driveId,
+          authContext,
+          scope,
+          access,
+          'read',
+          filePath,
+        );
 
         const fileInfo = svc.getFileInfo(params.driveId, filePath);
         if (!fileInfo) throw new StorageError(404, 'File not found');
@@ -335,9 +529,18 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // GET /storage/drives/:driveId/list — list folder contents
     .get(
       '/drives/:driveId/list',
-      ({ params, query, authContext }) => {
+      ({ params, query, authContext, access }) => {
         const svc = requireStorage();
-        requireDriveAccessFromContext(svc, params.driveId, authContext, 'read', query.path);
+        const scope = authContext ? requestScope(access) : null;
+        requireDriveAccessFromContext(
+          svc,
+          params.driveId,
+          authContext,
+          scope,
+          access,
+          'read',
+          query.path,
+        );
         return svc.listFolder(params.driveId, query.path || undefined, {
           limit: query.limit ? parseInt(query.limit, 10) : undefined,
           cursor: query.cursor || undefined,
@@ -362,10 +565,11 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // POST /storage/drives/:driveId/folders — create a folder
     .post(
       '/drives/:driveId/folders',
-      ({ params, body, requireAuth }) => {
-        const auth = requireAuth();
+      ({ params, body, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
-        requireDriveAccess(svc, params.driveId, auth, 'write');
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'write');
         return svc.createFolder(params.driveId, body.path, auth.userId, body.public);
       },
       {
@@ -382,10 +586,11 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // POST /storage/drives/:driveId/move — move/rename a file or folder
     .post(
       '/drives/:driveId/move',
-      async ({ params, body, requireAuth }) => {
-        const auth = requireAuth();
+      async ({ params, body, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
-        requireDriveAccess(svc, params.driveId, auth, 'write', body.from);
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', body.from);
         return await svc.moveObject(params.driveId, body.from, body.to);
       },
       {
@@ -400,11 +605,12 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // POST /storage/drives/:driveId/copy — copy a file
     .post(
       '/drives/:driveId/copy',
-      async ({ params, body, requireAuth }) => {
-        const auth = requireAuth();
+      async ({ params, body, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
-        requireDriveAccess(svc, params.driveId, auth, 'read', body.from);
-        requireDriveAccess(svc, params.driveId, auth, 'write', body.to);
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'read', body.from);
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', body.to);
         return await svc.copyObject(params.driveId, body.from, body.to);
       },
       {
@@ -419,11 +625,12 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // DELETE /storage/drives/:driveId/files/* — delete a file or folder
     .delete(
       '/drives/:driveId/files/*',
-      async ({ params, requireAuth }) => {
-        const auth = requireAuth();
+      async ({ params, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
         const filePath = '/' + (params as any)['*'];
-        requireDriveAccess(svc, params.driveId, auth, 'write', filePath);
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', filePath);
         const deleted = await svc.deleteObject(params.driveId, filePath);
         if (!deleted) throw new StorageError(404, 'Not found');
         return { ok: true };
@@ -435,14 +642,15 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // PATCH /storage/drives/:driveId/visibility
     .patch(
       '/drives/:driveId/visibility',
-      ({ params, body, requireAuth }) => {
-        const auth = requireAuth();
+      ({ params, body, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
         if (body.path) {
-          requireDriveAccess(svc, params.driveId, auth, 'admin', body.path);
+          requireDriveAccess(svc, params.driveId, auth, scope, access, 'admin', body.path);
           return svc.setVisibility(params.driveId, body.path, body.public);
         }
-        requireDriveAccess(svc, params.driveId, auth, 'admin');
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'admin');
         return svc.setDriveVisibility(params.driveId, body.public);
       },
       {
@@ -459,10 +667,11 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // GET /storage/drives/:driveId/permissions — list permissions
     .get(
       '/drives/:driveId/permissions',
-      ({ params, query, requireAuth }) => {
-        const auth = requireAuth();
+      ({ params, query, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
-        requireDriveAccess(svc, params.driveId, auth, 'admin');
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'admin');
         return {
           permissions: svc.permissions.list(params.driveId, {
             objectPath: query.objectPath,
@@ -478,10 +687,11 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // POST /storage/drives/:driveId/permissions — grant a permission
     .post(
       '/drives/:driveId/permissions',
-      ({ params, body, requireAuth }) => {
-        const auth = requireAuth();
+      ({ params, body, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
-        requireDriveAccess(svc, params.driveId, auth, 'admin');
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'admin');
         return svc.grantPermission(params.driveId, {
           objectPath: body.objectPath,
           grantType: body.grantType as any,
@@ -505,14 +715,15 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // DELETE /storage/permissions/:permissionId — revoke a permission
     .delete(
       '/permissions/:permissionId',
-      ({ params, requireAuth }) => {
-        const auth = requireAuth();
+      ({ params, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
 
         // Verify the permission exists and the user has admin access on its drive
         const perm = svc.getPermission(params.permissionId);
         if (!perm) throw new StorageError(404, 'Permission not found');
-        requireDriveAccess(svc, perm.drive_id, auth, 'admin');
+        requireDriveAccess(svc, perm.drive_id, auth, scope, access, 'admin');
 
         svc.revokePermission(params.permissionId);
         return { ok: true };
@@ -525,23 +736,24 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // POST /storage/drives/:driveId/presign — create a presigned URL
     .post(
       '/drives/:driveId/presign',
-      async ({ params, body, requireAuth }) => {
-        const auth = requireAuth();
+      async ({ params, body, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
         const requiredLevel: PermissionLevel = body.method === 'upload' ? 'write' : 'read';
-        requireDriveAccess(svc, params.driveId, auth, requiredLevel, body.path);
+        requireDriveAccess(svc, params.driveId, auth, scope, access, requiredLevel, body.path);
 
         const token = await createPresignedToken({
           driveId: params.driveId,
           path: body.path,
           method: body.method ?? 'download',
-          expiresIn: body.expiresIn ?? _defaultTTL,
-          secret: _signingSecret,
+          expiresIn: body.expiresIn ?? defaultTTL,
+          secret: requireSigningSecret(),
           maxSize: body.maxSize,
           contentType: body.contentType,
         });
 
-        return { token, expiresIn: body.expiresIn ?? _defaultTTL };
+        return { token, expiresIn: body.expiresIn ?? defaultTTL };
       },
       {
         params: t.Object({ driveId: t.String() }),
@@ -558,10 +770,11 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // POST /storage/drives/:driveId/upload-grants — create a scoped public upload grant
     .post(
       '/drives/:driveId/upload-grants',
-      async ({ params, body, requireAuth }) => {
-        const auth = requireAuth();
+      async ({ params, body, access }) => {
+        const auth = access.requireUser();
+        const scope = requestScope(access);
         const svc = requireStorage();
-        requireDriveAccess(svc, params.driveId, auth, 'write', body.path);
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', body.path);
 
         return svc.uploads.create(params.driveId, {
           path: body.path,
@@ -601,7 +814,7 @@ export function createStoragePlugin(config: StoragePluginConfig) {
       '/presigned/:token',
       async ({ params, set }) => {
         const svc = requireStorage();
-        const verified = await verifyPresignedToken(params.token, _signingSecret);
+        const verified = await verifyPresignedToken(params.token, requireSigningSecret());
         if (!verified) throw new StorageError(403, 'Invalid or expired presigned URL');
         if (verified.method !== 'GET') throw new StorageError(405, 'Presigned URL is for upload, not download');
 
@@ -623,7 +836,7 @@ export function createStoragePlugin(config: StoragePluginConfig) {
       '/upload-grants/:token',
       async ({ params, request, set }) => {
         const svc = requireStorage();
-        const verified = await verifyUploadGrantToken(params.token, _signingSecret);
+        const verified = await verifyUploadGrantToken(params.token, requireSigningSecret());
         if (!verified) throw new StorageError(403, 'Invalid or expired upload grant');
 
         // Pre-check Content-Length before reading body
@@ -691,7 +904,7 @@ export function createStoragePlugin(config: StoragePluginConfig) {
       '/presigned/:token',
       async ({ params, request, set }) => {
         const svc = requireStorage();
-        const verified = await verifyPresignedToken(params.token, _signingSecret);
+        const verified = await verifyPresignedToken(params.token, requireSigningSecret());
         if (!verified) throw new StorageError(403, 'Invalid or expired presigned URL');
         if (verified.method !== 'PUT') throw new StorageError(405, 'Presigned URL is for download, not upload');
 
@@ -744,10 +957,19 @@ export function createStoragePlugin(config: StoragePluginConfig) {
     // GET /storage/drives/:driveId/info/* — get file/folder info without downloading
     .get(
       '/drives/:driveId/info/*',
-      ({ params, authContext }) => {
+      ({ params, authContext, access }) => {
         const svc = requireStorage();
         const filePath = '/' + (params as any)['*'];
-        requireDriveAccessFromContext(svc, params.driveId, authContext, 'read', filePath);
+        const scope = authContext ? requestScope(access) : null;
+        requireDriveAccessFromContext(
+          svc,
+          params.driveId,
+          authContext,
+          scope,
+          access,
+          'read',
+          filePath,
+        );
         const info = svc.getFileInfo(params.driveId, filePath);
         if (!info) throw new StorageError(404, 'Not found');
         return info;
@@ -757,65 +979,69 @@ export function createStoragePlugin(config: StoragePluginConfig) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
-function requireStorage(): StorageService {
-  if (!_storageService) throw new Error('Storage not initialized');
-  return _storageService;
-}
+type StorageAuthContext = AuthContext | null;
+type StorageUserPropertiesResolver = (userId: string) => Record<string, string>;
 
-function getUserProperties(userId: string): Record<string, string> {
-  const authStore = getAuthStore();
-  return authStore ? authStore.getProperties(userId) : {};
-}
-
-type StorageAuthContext = { userId: string; role: string; email: string } | null;
-
-function withDriveAccess(
+function withDriveAccessForProperties(
   svc: StorageService,
   drive: DriveRecord,
   authContext: StorageAuthContext,
+  scope: ServiceDataScope | null,
+  access: RequestAuthorizationAccess,
+  getUserProperties: StorageUserPropertiesResolver,
   path?: string,
 ): DriveRecordWithAccess {
   return {
     ...drive,
-    access: resolveDriveAccess(svc, drive, authContext, path),
+    access: resolveDriveAccessForProperties(
+      svc, drive, authContext, scope, access, getUserProperties, path,
+    ),
   };
 }
 
-function resolveDriveAccess(
+function resolveDriveAccessForProperties(
   svc: StorageService,
   drive: DriveRecord,
   authContext: StorageAuthContext,
+  scope: ServiceDataScope | null,
+  access: RequestAuthorizationAccess,
+  getUserProperties: StorageUserPropertiesResolver,
   path?: string,
 ): StorageAccessCapabilities {
   const userProperties = authContext?.userId
     ? getUserProperties(authContext.userId)
     : {};
   const userId = authContext?.userId ?? null;
-  const role = authContext?.role ?? null;
+  const roles = authContext && scope
+    ? storageRoles(scope, access)
+    : null;
   const normalizedPath = path ?? null;
   const canRead = svc.checkAccess(
     drive.drive_id,
     normalizedPath,
     userId,
-    role,
+    roles,
     userProperties,
     'read',
+    scope ?? undefined,
   );
   const canWrite = svc.checkAccess(
     drive.drive_id,
     normalizedPath,
     userId,
-    role,
+    roles,
     userProperties,
     'write',
+    scope ?? undefined,
   );
   const canAdmin = svc.checkAccess(
     drive.drive_id,
     normalizedPath,
     userId,
-    role,
+    roles,
     userProperties,
     'admin',
+    scope ?? undefined,
   );
   const objectInfo = path ? svc.getFileInfo(drive.drive_id, path) : null;
   const effectiveAccess: PermissionLevel | null = canAdmin
@@ -832,7 +1058,8 @@ function resolveDriveAccess(
     canWrite,
     canAdmin,
     isOwner: Boolean(userId && drive.owner_id === userId),
-    isPlatformAdmin: role === 'admin',
+    isPlatformAdmin: scope?.scopeKind === 'application'
+      && (roles?.includes('admin') ?? false),
     isPublic: drive.public === 1 || objectInfo?.isPublic === true,
   };
 }
@@ -840,18 +1067,34 @@ function resolveDriveAccess(
 /**
  * Throw StorageError if user lacks access. Use when auth context comes from requireAuth().
  */
-function requireDriveAccess(
+function requireDriveAccessForProperties(
   svc: StorageService,
   driveId: string,
-  auth: { userId: string; role: string; email: string },
+  auth: AuthContext,
+  scope: ServiceDataScope,
+  access: RequestAuthorizationAccess,
   level: PermissionLevel,
+  getUserProperties: StorageUserPropertiesResolver,
   path?: string
 ): void {
   const userProperties = getUserProperties(auth.userId);
+  const drive = svc.getDrive(driveId);
   const hasAccess = svc.checkAccess(
-    driveId, path ?? null, auth.userId, auth.role, userProperties, level
+    driveId,
+    path ?? null,
+    auth.userId,
+    storageRoles(scope, access),
+    userProperties,
+    level,
+    scope,
   );
   if (!hasAccess) {
+    // A private id outside the active tenant and a nonexistent id are the
+    // same result. This prevents a guessed drive/permission id from becoming
+    // a cross-tenant existence oracle while preserving public read access.
+    if (!drive || !serviceDataScopeMatchesTenant(scope, drive.tenant_id)) {
+      throw new StorageError(404, 'Drive not found');
+    }
     throw new StorageError(403, 'Forbidden');
   }
 }
@@ -859,28 +1102,44 @@ function requireDriveAccess(
 /**
  * Throw StorageError if user lacks access. Use when auth context may be null (optional auth).
  */
-function requireDriveAccessFromContext(
+function requireDriveAccessFromContextForProperties(
   svc: StorageService,
   driveId: string,
   authContext: StorageAuthContext,
+  scope: ServiceDataScope | null,
+  access: RequestAuthorizationAccess,
   level: PermissionLevel,
+  getUserProperties: StorageUserPropertiesResolver,
   path?: string
 ): void {
   const userProperties = authContext?.userId
     ? getUserProperties(authContext.userId)
     : {};
+  const drive = svc.getDrive(driveId);
 
   const hasAccess = svc.checkAccess(
     driveId, path ?? null,
     authContext?.userId ?? null,
-    authContext?.role ?? null,
-    userProperties, level
+    authContext && scope ? storageRoles(scope, access) : null,
+    userProperties,
+    level,
+    scope ?? undefined,
   );
 
   if (!hasAccess) {
+    if (scope && (!drive || !serviceDataScopeMatchesTenant(scope, drive.tenant_id))) {
+      throw new StorageError(404, 'Drive not found');
+    }
     if (!authContext?.userId) throw new StorageError(401, 'Unauthorized');
     throw new StorageError(403, 'Forbidden');
   }
+}
+
+function storageRoles(
+  scope: ServiceDataScope,
+  access: RequestAuthorizationAccess,
+): readonly string[] {
+  return effectiveServiceDataRoles(access, scope);
 }
 
 /**

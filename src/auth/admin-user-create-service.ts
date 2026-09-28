@@ -12,7 +12,8 @@ import { assertMfaRequirementAvailable, type AuthAdminPluginConfig } from './aut
 import { createTemporaryPassword, rollbackProvisionedUser } from './admin-user-provisioning';
 import { AuthError } from './types';
 import type { UserPropertyService } from './user-property-service';
-import type { UserStore } from './user-store';
+import type { AuthSecurityAuditContext, UserStore } from './user-store';
+import type { AssertAuthAdminMutationAuthority } from './auth-admin-mutation-authority';
 
 export interface AdminCreateUserInput {
   username: string;
@@ -35,7 +36,12 @@ export class AdminUserCreateService {
   ) {}
 
   /** Create a user and send setup instructions only when delivery is ready. */
-  async create(input: AdminCreateUserInput, actorId: string) {
+  async create(
+    input: AdminCreateUserInput,
+    assertCurrentAuthority: AssertAuthAdminMutationAuthority,
+    audit?: AuthSecurityAuditContext,
+  ) {
+    const actorId = assertCurrentAuthority().userId;
     const authConfig = this.config.getAuthConfig();
     if (authConfig.registration.mode === 'disabled') {
       emitPlatformCode(OBS_CODES.AUTH_REGISTRATION_DISABLED, {
@@ -70,14 +76,29 @@ export class AdminUserCreateService {
       role: input.role ?? 'user',
       passwordChangeRequired: sendSetup ? false : input.passwordChangeRequired,
       properties,
+    }, {
+      actor: audit?.actor ?? {
+        userId: actorId,
+        provenance: 'authenticated-request',
+      },
+      request: audit?.request,
+      setupRequested: sendSetup,
+    }, () => {
+      assertCurrentAuthority();
     });
 
     if (sendSetup) {
       try {
         await new AdminLifecycleEmailService(this.store, tokens!, email!)
-          .sendSetup(user.userId, actorId);
+          .sendSetup(user.userId, assertCurrentAuthority, audit?.request);
       } catch (error) {
-        const cleanupSucceeded = rollbackProvisionedUser(this.store, user.userId);
+        const cleanupSucceeded = rollbackProvisionedUser(
+          this.store,
+          user.userId,
+          audit ?? {
+            actor: { userId: actorId, provenance: 'authenticated-request' },
+          },
+        );
         emitPlatformCode(OBS_CODES.AUTH_ADMIN_USER_SETUP_DELIVERY_FAILED, {
           userId: actorId,
           metadata: {

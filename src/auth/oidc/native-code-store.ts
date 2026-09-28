@@ -4,6 +4,8 @@ import type { Statement } from 'bun:sqlite';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import { createOpaqueToken, hashToken } from '../../tokens/token-utils';
 import type { NativeAuthorizationCodeRecord } from './native-auth-records';
+import type { NativeAuthoritySnapshot } from './native-tenant-authority';
+import { sameNativeAuthority } from './native-tenant-authority';
 import { toAuthorizationCode, toAuthorizationRequest } from './native-row-mappers';
 import {
   NATIVE_STORE_CLEANUP_BATCH_SIZE,
@@ -18,6 +20,7 @@ export class NativeCodeStore {
   private readonly consumeCode: Statement;
   private readonly deleteExpiredCodes: Statement;
   private readonly cleanupBatchSize: number;
+  private assertRuntimeProfileCurrent: () => void = () => {};
 
   constructor(
     private readonly db: ReactiveDB,
@@ -28,12 +31,19 @@ export class NativeCodeStore {
     this.consumeRequest = db.prepare(
       `UPDATE _auth_native_requests SET consumed_at = ?
        WHERE request_id = ? AND bound_user_id = ?
+         AND (scope_kind IS NULL OR (
+           scope_kind = ? AND scope_id = ? AND tenant_id IS ?
+           AND membership_id IS ? AND tenant_authorization_generation IS ?
+           AND membership_authorization_generation IS ?
+         ))
          AND consumed_at IS NULL AND expires_at > ?`
     );
     this.insertCode = db.prepare(`INSERT INTO _auth_native_codes
       (code_id, code_hash, request_id, user_id, client_id, redirect_uri, scope,
-       nonce, code_challenge, auth_generation, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+       nonce, code_challenge, auth_generation, scope_kind, scope_id, tenant_id,
+       membership_id, tenant_authorization_generation,
+       membership_authorization_generation, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     this.getCode = db.prepare('SELECT * FROM _auth_native_codes WHERE code_hash = ?');
     this.consumeCode = db.prepare(
       'UPDATE _auth_native_codes SET consumed_at = ? WHERE code_id = ? AND consumed_at IS NULL AND expires_at > ?'
@@ -43,16 +53,51 @@ export class NativeCodeStore {
        WHERE expires_at <= ? ORDER BY expires_at LIMIT ?)`);
   }
 
-  issue(rawRequestId: string, userId: string, authGeneration: number, ttlMs: number) {
+  setRuntimeProfileGuard(guard: () => void): void {
+    this.assertRuntimeProfileCurrent = guard;
+  }
+
+  assertCurrentProfile(): void {
+    this.assertRuntimeProfileCurrent();
+  }
+
+  issue(
+    rawRequestId: string,
+    userId: string,
+    authGeneration: number,
+    authorityOrTtl: NativeAuthoritySnapshot | number,
+    explicitTtlMs?: number,
+  ) {
+    const legacyApplicationIssue = typeof authorityOrTtl === 'number';
+    const authority = legacyApplicationIssue
+      ? APPLICATION_AUTHORITY
+      : authorityOrTtl;
+    const ttlMs = legacyApplicationIssue
+      ? authorityOrTtl
+      : explicitTtlMs!;
     return this.db.transaction(() => {
+      this.assertCurrentProfile();
       this.cleanupExpired();
       const row = this.getRequest.get(hashToken(rawRequestId)) as Record<string, unknown> | null;
       if (!row) return null;
       const request = toAuthorizationRequest(row);
       if (request.boundUserId !== userId
+        || (request.scopeKind === null ? !legacyApplicationIssue : !sameNativeAuthority(authority, {
+          scopeKind: request.scopeKind,
+          scopeId: request.scopeId!,
+          tenantId: request.tenantId,
+          membershipId: request.membershipId,
+          tenantAuthorizationGeneration: request.tenantAuthorizationGeneration,
+          membershipAuthorizationGeneration: request.membershipAuthorizationGeneration,
+        }))
         || request.consumedAt !== null || request.expiresAt <= Date.now()) return null;
       const now = Date.now();
-      const consumed = this.consumeRequest.run(now, request.requestId, userId, now);
+      const consumed = this.consumeRequest.run(
+        now, request.requestId, userId,
+        authority.scopeKind, authority.scopeId, authority.tenantId,
+        authority.membershipId, authority.tenantAuthorizationGeneration,
+        authority.membershipAuthorizationGeneration, now,
+      );
       if (consumed.changes !== 1) return null;
 
       const rawCode = createOpaqueToken();
@@ -61,23 +106,37 @@ export class NativeCodeStore {
       this.insertCode.run(
         codeId, hashToken(rawCode), request.requestId, userId, request.clientId,
         request.redirectUri, request.scope, request.nonce, request.codeChallenge,
-        authGeneration, createdAt, createdAt + ttlMs
+        authGeneration, authority.scopeKind, authority.scopeId, authority.tenantId,
+        authority.membershipId, authority.tenantAuthorizationGeneration,
+        authority.membershipAuthorizationGeneration, createdAt, createdAt + ttlMs,
       );
       return { rawCode, request };
     });
   }
 
   get(rawCode: string): NativeAuthorizationCodeRecord | null {
+    this.assertCurrentProfile();
     const row = this.getCode.get(hashToken(rawCode));
     return row ? toAuthorizationCode(row as Record<string, unknown>) : null;
   }
 
   consume(codeId: string): boolean {
     const now = Date.now();
-    return this.consumeCode.run(now, codeId, now).changes === 1;
+    return this.db.transaction(() => {
+      this.assertCurrentProfile();
+      return this.consumeCode.run(now, codeId, now).changes === 1;
+    });
   }
 
   cleanupExpired(now = Date.now()): number {
-    return this.deleteExpiredCodes.run(now, this.cleanupBatchSize).changes;
+    return this.db.transaction(() => {
+      this.assertCurrentProfile();
+      return this.deleteExpiredCodes.run(now, this.cleanupBatchSize).changes;
+    });
   }
 }
+
+const APPLICATION_AUTHORITY: NativeAuthoritySnapshot = {
+  scopeKind: 'application', scopeId: 'application', tenantId: null, membershipId: null,
+  tenantAuthorizationGeneration: null, membershipAuthorizationGeneration: null,
+};

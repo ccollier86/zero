@@ -16,17 +16,52 @@ export {
 export type { ClientProviderProps } from './client-context';
 
 export {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from './authorization-scope-hooks';
+export type { AuthorizationScopeBoundary } from './authorization-scope-hooks';
+
+export {
   useAuth,
   useAuthConfig,
   useCurrentUser,
   useRequireAuth,
   useUserProperty,
 } from './auth-hooks';
+export {
+  useTenantMembers,
+  useTenantOnboardingAdministration,
+  useTenantSwitcher,
+} from './tenant-administration-hooks';
+export type {
+  UseTenantMembersOptions,
+  UseTenantMembersResult,
+  UseTenantOnboardingAdministrationOptions,
+  UseTenantOnboardingAdministrationResult,
+  UseTenantSwitcherResult,
+} from './tenant-administration-hooks';
+export {
+  useTenantAppShellWorkspaces,
+} from './tenant-switch-presentation';
+export type {
+  UseTenantAppShellWorkspacesOptions,
+} from './tenant-switch-presentation';
+export {
+  useDomainOnboarding,
+  useTenantDomainAdministration,
+} from './domain-onboarding-hooks';
+export type {
+  UseDomainOnboardingOptions,
+  UseDomainOnboardingResult,
+  UseTenantDomainAdministrationOptions,
+  UseTenantDomainAdministrationResult,
+} from './domain-onboarding-hooks';
 export type {
   AuthActions,
   AuthConfigState,
   AuthState,
   AuthActionTokenInfo,
+  AuthEmailVerificationRequiredResult,
   AuthAdminConfig,
   AuthAdminCreateUserParams,
   AuthAdminMfaRequirement,
@@ -43,6 +78,26 @@ export type {
   UseUserPropertyOptions,
   UseUserPropertyResult,
 } from './auth-hooks';
+
+export {
+  useAuthorization,
+  useHasAllPermissions,
+  useHasAnyPermission,
+  useHasPermission,
+} from './authorization-hooks';
+export type { UseAuthorizationResult } from './authorization-hooks';
+
+export { useApplicationAccess } from './application-administration-hooks';
+export type {
+  UseApplicationAccessOptions,
+  UseApplicationAccessResult,
+} from './application-administration-hooks';
+
+export { useAuthAudit } from './auth-audit-hooks';
+export type {
+  UseAuthAuditOptions,
+  UseAuthAuditResult,
+} from './auth-audit-hooks';
 
 export {
   useCollection,
@@ -166,4 +221,8 @@ export type {
   WorkflowProgress,
 } from './workflow-run-hooks';
 
-export { useEphemeral, useEphemeralTopic } from '../../sync/client/ephemeral-hooks';
+export {
+  useEphemeral,
+  useEphemeralErrors,
+  useEphemeralTopic,
+} from '../../sync/client/ephemeral-hooks';

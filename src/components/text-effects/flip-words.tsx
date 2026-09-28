@@ -10,7 +10,7 @@
 import * as React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 
 export interface FlipWordsProps extends React.ComponentProps<'span'> {
   words: readonly string[];

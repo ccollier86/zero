@@ -1,6 +1,14 @@
 # Platform Roadmap — Build Plan
 
-Everything needed to take the platform from "powerful framework" to "complete application platform with AI-native development."
+> **Status: historical product ideation, not a current API contract or release
+> checklist.** Bare lists and code blocks below preserve the original target
+> sketches; several features later shipped under different names, while others
+> remain ideas. Do not copy an API or infer priority from this file without
+> confirming it in [Start Here](./start-here.md), the
+> [SDK Reference](./sdk-reference.md), and [Releasing Zero](./releasing.md).
+
+This document records the original ideas for taking the platform from a
+powerful framework toward a broader AI-native application platform.
 
 ---
 
@@ -136,7 +144,14 @@ Complex, feature-rich components that save days of work.
 
 Simple, in-process file storage. Local disk by default, S3-compatible as optional backend.
 
-**Developer API**
+**Historical target API sketch (not current exports)**
+
+Current server and browser Storage APIs are documented in the
+[SDK Reference](./sdk-reference.md#storage) and
+[Storage Protocol](./storage-protocol.md). Names such as `getStorage()`,
+`client.upload()`, and `client.storageUrl()` below were proposal names, not
+current public exports.
+
 ```ts
 import { createStoragePlugin, getStorage } from '@zero/framework/server';
 
@@ -166,7 +181,7 @@ await file.delete('avatars/user-123.jpg');
 const files = await file.list('avatars/', { limit: 50 });
 ```
 
-**Client SDK**
+**Historical client SDK sketch**
 ```ts
 const client = useClient();
 
@@ -349,6 +364,10 @@ app.use(createDrainPlugin({
 - Data: mutation counts per table per minute
 
 **Custom Events**
+
+> Historical target sketch: `track()` is not a current React export. Use the
+> emitters and sinks documented in [Observability](./observability.md).
+
 ```ts
 import { track } from '@zero/framework/react';
 
@@ -463,7 +482,12 @@ When Claude creates a new file, automatically:
 - Import check (no external UI libs when platform has it)
 - Bundle size check (flag if file > 500 lines)
 
-**Dev Commands**
+**Historical target commands (not current CLI commands)**
+
+Use the CLI commands documented in the root [README](../README.md) and
+[Start Here](./start-here.md). The `platform ...` names below were proposed
+shapes only.
+
 ```bash
 platform init              # scaffold new project with CLAUDE.md + memory files
 platform add page <name>   # interactive page scaffolding
@@ -631,7 +655,11 @@ app/
 
 ---
 
-## Implementation Priority
+## Original Implementation Priority (Historical)
+
+This ordering records the roadmap's original planning snapshot. It is not the
+current backlog or release sequence; several “Now” and “Next” items below have
+already shipped in different forms.
 
 **Now (foundation)**
 1. Eden Treaty — typed routes (in progress)

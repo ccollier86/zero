@@ -2,9 +2,9 @@
 
 import * as React from 'react';
 
-import { cn } from '@/lib/utils';
-import { ValidationMeter } from '@/components/ui/validation-meter';
-import { ValidationRules, type ValidationRule } from '@/components/ui/validation-rules';
+import { cn } from '#zero/lib/utils';
+import { ValidationMeter } from '#zero/components/ui/validation-meter';
+import { ValidationRules, type ValidationRule } from '#zero/components/ui/validation-rules';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

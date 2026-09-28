@@ -9,7 +9,7 @@
 
 import type * as React from 'react';
 
-import { ZeroIcon } from '@/components/animate-ui/icons/zero-icon';
+import { ZeroIcon } from '#zero/components/animate-ui/icons/zero-icon';
 import type { AppShellIcon } from './app-shell.types';
 
 export interface RenderAppShellIconOptions {

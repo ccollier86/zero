@@ -17,6 +17,8 @@ import { KvMemoryEngine } from './kv-memory-engine';
 import { applyKvMutation, type KvMutation } from './kv-mutation';
 import { KvNamespace } from './kv-namespace';
 import { recoverKvMemoryEngine, type KvRecoveryCorruptRecordPolicy } from './kv-recovery';
+import { OBS_CODES } from '../observability/codes';
+import { emitPlatformCode } from '../observability/sink';
 import type {
   KvClock,
   KvCompareAndSetResult,
@@ -74,6 +76,7 @@ export class KvService {
   private fsyncTimer: ReturnType<typeof setInterval> | null = null;
   private checkpointTimer: ReturnType<typeof setInterval> | null = null;
   private checkpointPromise: Promise<void> | null = null;
+  private startPromise: Promise<void> | null = null;
   private started = false;
 
   /** Create a KV/cache service with memory, journal, and checkpoint stores. */
@@ -101,27 +104,38 @@ export class KvService {
   /** Recover the memory engine and start background flush/checkpoint loops. */
   async start(): Promise<void> {
     if (this.started) return;
-    if (!this.memoryOnly) {
-      await recoverKvMemoryEngine({
-        engine: this.engine,
-        checkpoint: this.checkpointStore,
-        journal: this.journal,
-        corruptRecordPolicy: this.corruptRecordPolicy,
-      });
+    if (this.startPromise) return this.startPromise;
+    const starting = this.startInternal();
+    this.startPromise = starting;
+    try {
+      await starting;
+    } finally {
+      if (this.startPromise === starting) this.startPromise = null;
     }
-    this.started = true;
-    if (!this.memoryOnly) this.startTimers();
   }
 
   /** Flush the journal and write a final checkpoint. */
   async stop(): Promise<void> {
+    if (this.startPromise) {
+      try {
+        await this.startPromise;
+      } catch {
+        // Failed recovery owns no timers and leaves started false.
+      }
+    }
     if (!this.started) return;
     this.stopTimers();
-    if (this.shouldPersistOnStop()) {
-      await this.flush();
-      await this.checkpoint();
+    try {
+      if (this.shouldPersistOnStop()) {
+        await this.flush();
+        await this.checkpoint();
+      }
+    } finally {
+      // A failed final persistence attempt must still leave this instance in
+      // a terminal state. The failure is propagated to the caller, while a
+      // later stop remains idempotent and cannot race filesystem teardown.
+      this.started = false;
     }
-    this.started = false;
   }
 
   /** Return a value when the key exists and has not expired. */
@@ -314,6 +328,19 @@ export class KvService {
     return record;
   }
 
+  private async startInternal(): Promise<void> {
+    if (!this.memoryOnly) {
+      await recoverKvMemoryEngine({
+        engine: this.engine,
+        checkpoint: this.checkpointStore,
+        journal: this.journal,
+        corruptRecordPolicy: this.corruptRecordPolicy,
+      });
+    }
+    this.started = true;
+    if (!this.memoryOnly) this.startTimers();
+  }
+
   private resolveExpiresAt(ttlMs: number | null | undefined, fallback: number | null): number | null | undefined {
     if (ttlMs === undefined) {
       if (typeof this.defaultTtlMs === 'number') return this.clock.now() + this.defaultTtlMs;
@@ -334,11 +361,13 @@ export class KvService {
   private startTimers(): void {
     this.stopTimers();
     this.fsyncTimer = setInterval(() => {
-      void this.flush();
+      this.runBackgroundPersistence('flush', () => this.flush());
     }, this.fsyncMs);
     this.checkpointTimer = setInterval(() => {
-      void this.checkpoint();
+      this.runBackgroundPersistence('checkpoint', () => this.checkpoint());
     }, this.checkpointIntervalMs);
+    this.fsyncTimer.unref?.();
+    this.checkpointTimer.unref?.();
   }
 
   private stopTimers(): void {
@@ -350,6 +379,18 @@ export class KvService {
 
   private shouldPersistOnStop(): boolean {
     return !this.memoryOnly && (this.journal.currentSequence() > 0 || this.engine.stats().entries > 0);
+  }
+
+  private runBackgroundPersistence(
+    operation: 'flush' | 'checkpoint',
+    persist: () => Promise<void>,
+  ): void {
+    void persist().catch((error) => {
+      emitPlatformCode(OBS_CODES.KV_BACKGROUND_PERSIST_FAILED, {
+        error,
+        metadata: { operation },
+      });
+    });
   }
 }
 

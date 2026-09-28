@@ -12,16 +12,16 @@ import * as React from 'react';
 
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
 import type { AuthMfaMethod } from '../../frontend/client/auth-client';
-import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { AuthHeader } from '@/components/auth/auth-header';
-import { MFAEnrollmentForm } from '@/components/auth/mfa-enrollment-form';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { CircleCheck } from '@/components/animate-ui/icons/circle-check';
-import { CircleX } from '@/components/animate-ui/icons/circle-x';
-import { Loader } from '@/components/animate-ui/icons/loader';
+import { cn } from '#zero/lib/utils';
+import { Badge } from '#zero/components/ui/badge';
+import { Button } from '#zero/components/ui/button';
+import { Card, CardContent } from '#zero/components/ui/card';
+import { AuthHeader } from '#zero/components/auth/auth-header';
+import { MFAEnrollmentForm } from '#zero/components/auth/mfa-enrollment-form';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
+import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
+import { Loader } from '#zero/components/animate-ui/icons/loader';
 
 export interface MFAManagementPanelProps {
   className?: string;
@@ -84,14 +84,14 @@ export function MFAManagementPanel({ className }: MFAManagementPanelProps) {
         />
 
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+          <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground" role="status" aria-live="polite">
             <AnimateIcon animate loop>
               <Loader size={16} />
             </AnimateIcon>
             Loading MFA settings
           </div>
         ) : error ? (
-          <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-xs text-destructive">
+          <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-xs text-destructive" role="alert">
             <AnimateIcon animate>
               <CircleX size={16} />
             </AnimateIcon>
@@ -106,7 +106,7 @@ export function MFAManagementPanel({ className }: MFAManagementPanelProps) {
               >
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <AnimateIcon animate>
-                    <CircleCheck size={16} className="text-green-600" />
+                    <CircleCheck size={16} className="text-success" />
                   </AnimateIcon>
                   {method.type === 'totp' ? 'Authenticator app' : 'Email code'}
                 </div>

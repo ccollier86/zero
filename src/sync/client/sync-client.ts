@@ -31,6 +31,7 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     token,
     getToken,
     refreshAuth,
+    stateSync = false,
     autoConnect = true,
     onError,
     onAuthFailure,
@@ -40,6 +41,7 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
   } = config;
   const { store, tables: tableDefs } = createSyncStore(tables);
   let disposed = false;
+  let authorizationScopeTransition = false;
   let isFirstConnect = true;
   let baselineReady = false;
   let unbindAuthLifecycle: (() => void) | undefined;
@@ -96,14 +98,23 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     queue: mutations,
     stopped: () => disposed,
   });
+  const baselineWaiters = new Set<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
 
-  function finishSocketHandshake(socket: WebSocket): void {
+  function finishSocketHandshake(
+    socket: WebSocket,
+    authenticated: boolean,
+  ): void {
     if (!connection.authenticate(socket)) return;
     reconnectScheduler.succeeded();
     finishSyncSocketHandshake({
       socket,
       store,
       tables: tableDefs,
+      stateSync: stateSync && authenticated,
     });
   }
 
@@ -121,6 +132,11 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
       if (!connection.send(message)) sendBuffer.push(message);
     }
     ackMonitor.start();
+    for (const waiter of baselineWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve();
+    }
+    baselineWaiters.clear();
     if (!isFirstConnect) onReconnect?.();
     isFirstConnect = false;
   }
@@ -190,6 +206,42 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     reconnectScheduler.reset();
   }
 
+  function beginAuthorizationScopeTransition(): void {
+    if (disposed) return;
+    authorizationScopeTransition = true;
+    reset();
+  }
+
+  function completeAuthorizationScopeTransition(shouldConnect: boolean): void {
+    if (disposed) return;
+    authorizationScopeTransition = false;
+    if (shouldConnect) connect();
+  }
+
+  function waitForAuthorizationBaseline(timeoutMs = 10_000): Promise<void> {
+    if (baselineReady) return Promise.resolve();
+    if (disposed) return Promise.reject(new Error('Sync client is disconnected'));
+    return new Promise<void>((resolve, reject) => {
+      const waiter = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          baselineWaiters.delete(waiter);
+          reject(new Error('Timed out waiting for the replacement authorization scope'));
+        }, timeoutMs),
+      };
+      baselineWaiters.add(waiter);
+    });
+  }
+
+  function assertScopeWritesAvailable(): void {
+    if (authorizationScopeTransition) {
+      throw new Error(
+        '[sync] Writes are unavailable during an authorization scope transition.',
+      );
+    }
+  }
+
   function purgeLocalState(): void {
     sendBuffer.length = 0;
     mutations.clear();
@@ -205,6 +257,11 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     closeSocket('Client disconnect');
     sendBuffer.length = 0;
     mutations.clear();
+    for (const waiter of baselineWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error('Sync client disconnected before authorization completed'));
+    }
+    baselineWaiters.clear();
   }
 
   const client: SyncClient = {
@@ -213,15 +270,28 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     get connected() {
       return (store.getSnapshot().context as SyncStoreContext)._sync.connected;
     },
-    insert: actions.insert,
-    update: actions.update,
-    delete: actions.delete,
+    insert(table, row): void {
+      assertScopeWritesAvailable();
+      actions.insert(table, row);
+    },
+    update(table, id, partial): void {
+      assertScopeWritesAvailable();
+      actions.update(table, id, partial);
+    },
+    delete(table, id): void {
+      assertScopeWritesAvailable();
+      actions.delete(table, id);
+    },
     sendRaw(message: object): void {
+      assertScopeWritesAvailable();
       sendMessage(JSON.stringify(message));
     },
     connect,
     reconnect,
     reset,
+    beginAuthorizationScopeTransition,
+    completeAuthorizationScopeTransition,
+    waitForAuthorizationBaseline,
     onMessage(handler) {
       messageHandlers.add(handler);
       return () => { messageHandlers.delete(handler); };

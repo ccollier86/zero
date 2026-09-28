@@ -27,6 +27,33 @@ export function defineNativeAuthConfig<T extends NativeAuthConfig>(config: T): T
 export function resolveNativeAuthConfig(
   config: NativeAuthConfig = {}
 ): ResolvedNativeAuthConfig {
+  assertRecord(config, 'config');
+  assertOnlyKeys(config, [
+    'enabled',
+    'issuer',
+    'requestTTL',
+    'codeTTL',
+    'refreshTokenTTL',
+    'requestAdmission',
+    'refreshRotation',
+    'clients',
+  ], 'config');
+  if (config.enabled !== undefined && typeof config.enabled !== 'boolean') {
+    fail('enabled must be a boolean.');
+  }
+  for (const [field, value] of [
+    ['issuer', config.issuer],
+    ['requestTTL', config.requestTTL],
+    ['codeTTL', config.codeTTL],
+    ['refreshTokenTTL', config.refreshTokenTTL],
+  ] as const) {
+    if (value !== undefined && typeof value !== 'string') {
+      fail(`${field} must be a string.`);
+    }
+  }
+  if (config.clients !== undefined && !Array.isArray(config.clients)) {
+    fail('clients must be an array.');
+  }
   const clients = (config.clients ?? []).map(resolveClient);
   const ids = clients.map((client) => client.clientId);
   if (new Set(ids).size !== ids.length) fail('clientId values must be unique.');
@@ -43,6 +70,19 @@ export function resolveNativeAuthConfig(
 }
 
 function resolveClient(client: NativeAuthClientConfig): ResolvedNativeAuthClientConfig {
+  assertRecord(client, 'client');
+  assertOnlyKeys(client, ['clientId', 'name', 'redirectUris', 'scopes'], 'client');
+  if (typeof client.clientId !== 'string') fail('clientId must be a string.');
+  if (typeof client.name !== 'string') fail('name must be a string.');
+  if (!Array.isArray(client.redirectUris)
+    || client.redirectUris.some((value) => typeof value !== 'string')) {
+    fail('redirectUris must be an array of strings.');
+  }
+  if (client.scopes !== undefined
+    && (!Array.isArray(client.scopes)
+      || client.scopes.some((value) => typeof value !== 'string'))) {
+    fail('scopes must be an array of strings.');
+  }
   if (!CLIENT_ID.test(client.clientId)) fail('clientId is malformed.');
   if (!client.name.trim() || client.name !== client.name.trim()) fail('name is malformed.');
   const redirectUris = unique(client.redirectUris, 'redirectUris');
@@ -67,4 +107,23 @@ function validateTTL(value: string, label: keyof typeof NATIVE_TTL_MAX): string 
 
 function fail(message: string): never {
   throw new Error(`[native-auth] ${message}`);
+}
+
+function assertRecord<T>(
+  value: T,
+  label: string,
+): asserts value is T & Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
+    fail(`${label} must be an object.`);
+  }
+}
+
+function assertOnlyKeys(
+  value: object,
+  allowed: readonly string[],
+  label: string,
+): void {
+  const unknown = Object.keys(value).find((key) => !allowed.includes(key));
+  if (unknown) fail(`${label} contains unsupported field "${unknown}".`);
 }

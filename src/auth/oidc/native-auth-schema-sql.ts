@@ -8,8 +8,28 @@ export function createNativeAuthTableStatements(): readonly string[] {
   return [AUTH_REQUESTS_SQL, AUTH_CODES_SQL, NATIVE_SESSIONS_SQL];
 }
 
+/** Frozen v006 table shapes used by the historical hardening migration. */
+export function createNativeAuthHardeningTables(): readonly string[] {
+  return [
+    HARDENED_AUTH_REQUESTS_SQL,
+    HARDENED_AUTH_CODES_SQL,
+    HARDENED_NATIVE_SESSIONS_SQL,
+    ...createNativeAuthHardeningIndexStatements(),
+  ];
+}
+
+/** The two v006 tables rebuilt by the historical FK repair. */
+export function createNativeAuthHardeningRepairTables(): readonly string[] {
+  return [HARDENED_AUTH_REQUESTS_SQL, HARDENED_AUTH_CODES_SQL];
+}
+
 export function createNativeAuthIndexStatements(): readonly string[] {
   return INDEX_SQL;
+}
+
+/** Frozen index set used by migration 006, before tenant authority was added. */
+export function createNativeAuthHardeningIndexStatements(): readonly string[] {
+  return INDEX_SQL.filter((statement) => !statement.includes('idx_auth_native_session_tenant'));
 }
 
 const AUTH_REQUESTS_SQL = `CREATE TABLE IF NOT EXISTS _auth_native_requests (
@@ -18,6 +38,9 @@ const AUTH_REQUESTS_SQL = `CREATE TABLE IF NOT EXISTS _auth_native_requests (
   state TEXT NOT NULL, nonce TEXT NOT NULL, code_challenge TEXT NOT NULL,
   prompt TEXT, bound_user_id TEXT, source_hash TEXT, created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL, consumed_at INTEGER,
+  scope_kind TEXT, scope_id TEXT, tenant_id TEXT, membership_id TEXT,
+  tenant_authorization_generation INTEGER,
+  membership_authorization_generation INTEGER,
   FOREIGN KEY (bound_user_id) REFERENCES users(user_id) ON DELETE CASCADE
 )`;
 
@@ -27,11 +50,45 @@ const AUTH_CODES_SQL = `CREATE TABLE IF NOT EXISTS _auth_native_codes (
   scope TEXT NOT NULL, nonce TEXT NOT NULL, code_challenge TEXT NOT NULL,
   auth_generation INTEGER NOT NULL, created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL, consumed_at INTEGER,
+  scope_kind TEXT, scope_id TEXT, tenant_id TEXT, membership_id TEXT,
+  tenant_authorization_generation INTEGER,
+  membership_authorization_generation INTEGER,
   FOREIGN KEY (request_id) REFERENCES _auth_native_requests(request_id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 )`;
 
 const NATIVE_SESSIONS_SQL = `CREATE TABLE IF NOT EXISTS _auth_native_sessions (
+  token_id TEXT PRIMARY KEY, family_id TEXT NOT NULL, user_id TEXT NOT NULL,
+  client_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, scope TEXT NOT NULL,
+  auth_generation INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL, consumed_at INTEGER, revoked_at INTEGER,
+  replaced_by TEXT, rotation_count INTEGER NOT NULL DEFAULT 0,
+  scope_kind TEXT, scope_id TEXT, tenant_id TEXT, membership_id TEXT,
+  tenant_authorization_generation INTEGER,
+  membership_authorization_generation INTEGER,
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+)`;
+
+const HARDENED_AUTH_REQUESTS_SQL = `CREATE TABLE IF NOT EXISTS _auth_native_requests (
+  request_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL UNIQUE,
+  client_id TEXT NOT NULL, redirect_uri TEXT NOT NULL, scope TEXT NOT NULL,
+  state TEXT NOT NULL, nonce TEXT NOT NULL, code_challenge TEXT NOT NULL,
+  prompt TEXT, bound_user_id TEXT, source_hash TEXT, created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL, consumed_at INTEGER,
+  FOREIGN KEY (bound_user_id) REFERENCES users(user_id) ON DELETE CASCADE
+)`;
+
+const HARDENED_AUTH_CODES_SQL = `CREATE TABLE IF NOT EXISTS _auth_native_codes (
+  code_id TEXT PRIMARY KEY, code_hash TEXT NOT NULL UNIQUE, request_id TEXT NOT NULL,
+  user_id TEXT NOT NULL, client_id TEXT NOT NULL, redirect_uri TEXT NOT NULL,
+  scope TEXT NOT NULL, nonce TEXT NOT NULL, code_challenge TEXT NOT NULL,
+  auth_generation INTEGER NOT NULL, created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL, consumed_at INTEGER,
+  FOREIGN KEY (request_id) REFERENCES _auth_native_requests(request_id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+)`;
+
+const HARDENED_NATIVE_SESSIONS_SQL = `CREATE TABLE IF NOT EXISTS _auth_native_sessions (
   token_id TEXT PRIMARY KEY, family_id TEXT NOT NULL, user_id TEXT NOT NULL,
   client_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, scope TEXT NOT NULL,
   auth_generation INTEGER NOT NULL, expires_at INTEGER NOT NULL,
@@ -58,6 +115,7 @@ const INDEX_SQL = [
   'CREATE INDEX IF NOT EXISTS idx_auth_native_session_hash ON _auth_native_sessions(token_hash)',
   'CREATE INDEX IF NOT EXISTS idx_auth_native_session_family ON _auth_native_sessions(family_id)',
   'CREATE INDEX IF NOT EXISTS idx_auth_native_session_user ON _auth_native_sessions(user_id)',
+  'CREATE INDEX IF NOT EXISTS idx_auth_native_session_tenant ON _auth_native_sessions(tenant_id, user_id) WHERE tenant_id IS NOT NULL',
   'CREATE INDEX IF NOT EXISTS idx_auth_native_session_expiry ON _auth_native_sessions(expires_at)',
   'CREATE INDEX IF NOT EXISTS idx_auth_native_session_active ON _auth_native_sessions(client_id, expires_at) WHERE consumed_at IS NULL AND revoked_at IS NULL',
 ] as const;

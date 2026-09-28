@@ -33,6 +33,7 @@ export interface UserManagementListControlsProps {
   filters: UserManagementFilters;
   page: AuthAdminUserPage | null;
   roleOptions: readonly UserRoleOption[];
+  roleFieldLabel?: string;
   isLoading?: boolean;
   onSearchChange: (search: string) => void;
   onRoleChange: (role: string) => void;
@@ -48,6 +49,7 @@ export function UserManagementListControls({
   filters,
   page,
   roleOptions,
+  roleFieldLabel = 'Role',
   isLoading = false,
   onSearchChange,
   onRoleChange,
@@ -93,11 +95,14 @@ export function UserManagementListControls({
             value={filters.role || 'all'}
             onValueChange={(value) => onRoleChange(value === 'all' ? '' : value)}
           >
-            <SelectTrigger className="h-8 w-full text-sm sm:w-[10rem]" aria-label="Filter by role">
-              <SelectValue placeholder="Role" />
+            <SelectTrigger
+              className="h-8 w-full text-sm sm:w-[11rem]"
+              aria-label={`Filter by ${roleFieldLabel.toLowerCase()}`}
+            >
+              <SelectValue placeholder={roleFieldLabel} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All roles</SelectItem>
+              <SelectItem value="all">All {roleFieldLabel.toLowerCase()}s</SelectItem>
               {roleOptions.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {option.label}

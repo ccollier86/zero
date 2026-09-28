@@ -23,5 +23,11 @@ export function buildNativeDiscovery(issuer: string) {
     prompt_values_supported: ['none', 'create'],
     code_challenge_methods_supported: ['S256'],
     authorization_response_iss_parameter_supported: true,
+    zero_tenant_sessions: {
+      version: 1,
+      list_endpoint: `${issuer}/oauth/tenants`,
+      switch_endpoint: `${issuer}/oauth/tenants/switch`,
+      proof: 'refresh_token',
+    },
   };
 }

@@ -31,6 +31,12 @@ export async function authorizeNativePost(
     if (pending.boundUserId !== auth.userId) {
       fail('access_denied', 'This authorization belongs to a different account.');
     }
+    if (!service.validateContinuationForAuth(
+      `/auth/oauth/authorize?request_id=${encodeURIComponent(rawRequestId)}`,
+      auth,
+    )) {
+      fail('access_denied', 'The active organization changed during authorization.');
+    }
 
     if (decision === 'deny') {
       const denied = service.deny(rawRequestId);
@@ -40,7 +46,7 @@ export async function authorizeNativePost(
       }));
     }
     if (decision !== 'approve') fail('invalid_request', 'Invalid authorization decision.');
-    const issued = service.approve(rawRequestId, auth.userId);
+    const issued = service.approve(rawRequestId, auth);
     if (!issued) fail('access_denied', 'This account cannot authorize the application.');
     return nativeRedirect(appendAuthorizationResult(issued.request.redirectUri, {
       code: issued.rawCode, state: issued.request.state, iss: config.issuer,

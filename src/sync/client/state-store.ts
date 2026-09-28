@@ -9,6 +9,38 @@ export interface StateStoreContext {
   pending: PendingStateOp[];
 }
 
+/**
+ * State keys are user-controlled, so entry maps must not inherit names such as
+ * `constructor`, `toString`, or `__proto__` from Object.prototype.
+ */
+function copyEntries(
+  source?: Readonly<Record<string, JsonValue>>,
+): Record<string, JsonValue> {
+  const entries = Object.create(null) as Record<string, JsonValue>;
+  if (!source) return entries;
+
+  for (const key of Object.keys(source)) {
+    entries[key] = source[key];
+  }
+  return entries;
+}
+
+function readEntry(
+  entries: Readonly<Record<string, JsonValue>>,
+  key: string,
+): JsonValue | undefined {
+  return Object.hasOwn(entries, key) ? entries[key] : undefined;
+}
+
+function removeEntry(
+  source: Readonly<Record<string, JsonValue>>,
+  key: string,
+): Record<string, JsonValue> {
+  const entries = copyEntries(source);
+  delete entries[key];
+  return entries;
+}
+
 // ─── Store Events ───────────────────────────────────────────────────────────
 
 type StateStoreEvents = {
@@ -39,7 +71,7 @@ type StateStoreEvents = {
 export function createStateStore() {
   return createStore({
     context: {
-      entries: {} as Record<string, JsonValue>,
+      entries: copyEntries(),
       ready: false as boolean,
       pending: [] as PendingStateOp[],
     },
@@ -52,7 +84,7 @@ export function createStateStore() {
         event: StateStoreEvents['state.snapshot']
       ) => ({
         ...ctx,
-        entries: { ...event.entries },
+        entries: copyEntries(event.entries),
         ready: true,
         pending: [] as PendingStateOp[],
       }),
@@ -64,18 +96,19 @@ export function createStateStore() {
         switch (event.op) {
           case 'set': {
             if (event.key === null) return ctx;
+            const entries = copyEntries(ctx.entries);
+            entries[event.key] = event.value!;
             return {
               ...ctx,
-              entries: { ...ctx.entries, [event.key]: event.value! },
+              entries,
             };
           }
           case 'delete': {
             if (event.key === null) return ctx;
-            const { [event.key]: _, ...rest } = ctx.entries;
-            return { ...ctx, entries: rest };
+            return { ...ctx, entries: removeEntry(ctx.entries, event.key) };
           }
           case 'clear':
-            return { ...ctx, entries: {} as Record<string, JsonValue> };
+            return { ...ctx, entries: copyEntries() };
           default:
             return ctx;
         }
@@ -86,36 +119,39 @@ export function createStateStore() {
       'state.optimistic-set': (
         ctx,
         event: StateStoreEvents['state.optimistic-set']
-      ) => ({
-        ...ctx,
-        entries: { ...ctx.entries, [event.key]: event.value },
-        pending: [
-          ...ctx.pending,
-          {
-            ref: event.ref,
-            op: 'set' as const,
-            key: event.key,
-            previousValue: ctx.entries[event.key],
-            previousEntries: null,
-          },
-        ],
-      }),
+      ) => {
+        const entries = copyEntries(ctx.entries);
+        entries[event.key] = event.value;
+        return {
+          ...ctx,
+          entries,
+          pending: [
+            ...ctx.pending,
+            {
+              ref: event.ref,
+              op: 'set' as const,
+              key: event.key,
+              previousValue: readEntry(ctx.entries, event.key),
+              previousEntries: null,
+            },
+          ],
+        };
+      },
 
       'state.optimistic-delete': (
         ctx,
         event: StateStoreEvents['state.optimistic-delete']
       ) => {
-        const { [event.key]: _, ...rest } = ctx.entries;
         return {
           ...ctx,
-          entries: rest,
+          entries: removeEntry(ctx.entries, event.key),
           pending: [
             ...ctx.pending,
             {
               ref: event.ref,
               op: 'delete' as const,
               key: event.key,
-              previousValue: ctx.entries[event.key],
+              previousValue: readEntry(ctx.entries, event.key),
               previousEntries: null,
             },
           ],
@@ -127,7 +163,7 @@ export function createStateStore() {
         event: StateStoreEvents['state.optimistic-clear']
       ) => ({
         ...ctx,
-        entries: {} as Record<string, JsonValue>,
+        entries: copyEntries(),
         pending: [
           ...ctx.pending,
           {
@@ -135,7 +171,7 @@ export function createStateStore() {
             op: 'clear' as const,
             key: null,
             previousValue: undefined,
-            previousEntries: { ...ctx.entries },
+            previousEntries: copyEntries(ctx.entries),
           },
         ],
       }),
@@ -165,22 +201,23 @@ export function createStateStore() {
         switch (op.op) {
           case 'set':
             if (op.previousValue !== undefined) {
-              entries = { ...entries, [op.key!]: op.previousValue };
+              entries = copyEntries(entries);
+              entries[op.key!] = op.previousValue;
             } else {
-              const { [op.key!]: _, ...rest } = entries;
-              entries = rest;
+              entries = removeEntry(entries, op.key!);
             }
             break;
 
           case 'delete':
             if (op.previousValue !== undefined) {
-              entries = { ...entries, [op.key!]: op.previousValue };
+              entries = copyEntries(entries);
+              entries[op.key!] = op.previousValue;
             }
             break;
 
           case 'clear':
             if (op.previousEntries) {
-              entries = { ...op.previousEntries };
+              entries = copyEntries(op.previousEntries);
             }
             break;
         }
@@ -189,7 +226,7 @@ export function createStateStore() {
       },
 
       'state.reset': () => ({
-        entries: {} as Record<string, JsonValue>,
+        entries: copyEntries(),
         ready: false as boolean,
         pending: [] as PendingStateOp[],
       }),

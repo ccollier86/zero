@@ -30,4 +30,19 @@ describe('admin user action errors', () => {
 
     configureFrontendObservability({ console: false, http: false });
   });
+
+  test('preserves retained-history suspension guidance from the admin API', () => {
+    const error = new AuthClientError(
+      'This identity has retained organization history and cannot be deleted; suspend it instead',
+      409,
+      'USER_HAS_TENANT_HISTORY',
+      {},
+    );
+
+    const reported = reportAdminUserError('delete', error, {
+      targetUserId: 'history-user',
+    });
+    expect(reported).toBe(error);
+    expect(reported.message).toContain('suspend');
+  });
 });

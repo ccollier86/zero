@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 
 type HexagonBackgroundProps = React.ComponentProps<'div'> & {
   hexagonProps?: React.ComponentProps<'div'>;

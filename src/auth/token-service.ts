@@ -10,6 +10,7 @@ import type {
   RefreshTokenRecord,
   UserRecord,
   AuthContext,
+  AuthContextAuthorityReference,
 } from './types';
 import { AUTH_DEFAULTS, AuthError } from './types';
 import {
@@ -23,11 +24,28 @@ import {
   verifyNativeAccessToken,
 } from './oidc/native-jwt';
 import type { NativeAccessSessionValidator } from './oidc/native-access-session';
+import { AuthSessionService } from './auth-session-service';
+import { AuthSessionStore } from './auth-session-store';
+import type {
+  AuthSessionRecord,
+  WebSessionIssueOptions,
+} from './auth-session-types';
+import type { AuthAuditRequestContext } from './auth-audit-types';
+import { canUserReceiveAuthTokens as canUserReceiveTokens } from './auth-user-eligibility';
+import { readAuthAuthorityRevision } from './auth-authority-revision';
 
 /** Page credential bound to one persisted refresh-session record. */
 export interface IssuedPageSession {
   token: string;
   expiresAt: number;
+}
+
+/** Server-only proof resolved from a live browser refresh/session family. */
+export interface WebRefreshProof {
+  user: UserRecord;
+  record: RefreshTokenRecord;
+  session: AuthSessionRecord;
+  tenantRole: string | null;
 }
 
 // ─── TTL Parsing ───────────────────────────────────────────────────────────
@@ -71,11 +89,22 @@ function parseTTLtoMs(ttl: string): number {
  * opaque values stored as SHA-256 hashes in the database.
  */
 export class TokenService {
+  private readonly db: TokenServiceConfig['db'];
   private readonly accessTokenTTL: string;
   private readonly refreshTokenTTLMs: number;
   private readonly nativeIssuer?: string;
   private readonly nativeAudience?: string;
+  private readonly authSessionService: AuthSessionService;
+  /**
+   * Tokens issued before this process enabled the parent-session boundary may
+   * finish their existing access-token lifetime in single-tenant mode. The
+   * JWT's own expiry is still enforced by jose, and tokens minted after this
+   * cutoff cannot enter the compatibility path.
+   */
+  private readonly legacyWebAccessIssuedAtCutoffSeconds: number;
   private nativeSessionValidator: NativeAccessSessionValidator | null = null;
+  private authorizationRevisionResolver: ((context: AuthContext) => string | null) | null = null;
+  private runtimeProfileGuard: (() => void) | null = null;
 
   private constructor(
     private readonly privateKey: CryptoKey,
@@ -83,13 +112,9 @@ export class TokenService {
     private readonly publicKeyJWK: JWK,
     private readonly keyId: string,
     private userStore: UserStore | null,
-    config: {
-      accessTokenTTL?: string;
-      refreshTokenTTL?: string;
-      nativeIssuer?: string;
-      nativeAudience?: string;
-    }
+    config: TokenServiceConfig,
   ) {
+    this.db = config.db;
     this.accessTokenTTL =
       config.accessTokenTTL ??
       process.env[AUTH_DEFAULTS.accessTokenTTLEnvKey] ??
@@ -103,6 +128,9 @@ export class TokenService {
     this.refreshTokenTTLMs = parseTTLtoMs(refreshTTL);
     this.nativeIssuer = config.nativeIssuer;
     this.nativeAudience = config.nativeAudience;
+    this.legacyWebAccessIssuedAtCutoffSeconds = Math.floor(Date.now() / 1_000);
+    this.authSessionService = config.authSessionService
+      ?? new AuthSessionService(new AuthSessionStore(config.db), 'single', null);
   }
 
   /**
@@ -111,6 +139,7 @@ export class TokenService {
    */
   setUserStore(store: UserStore): void {
     this.userStore = store;
+    store.setAuthSessionRevoker(this.authSessionService);
   }
 
   /** Attach the live native refresh-family boundary after auth startup. */
@@ -118,9 +147,32 @@ export class TokenService {
     this.nativeSessionValidator = validator;
   }
 
+  /** Attach the app-local live advanced-assignment revision resolver. */
+  setAuthorizationRevisionResolver(
+    resolver: (context: AuthContext) => string | null,
+  ): void {
+    this.authorizationRevisionResolver = resolver;
+  }
+
+  /** Fence token authority after another runtime commits a profile change. */
+  setRuntimeProfileGuard(guard: () => void): void {
+    this.runtimeProfileGuard = guard;
+  }
+
+  /** Recheck the exact committed profile for cached request-level facades. */
+  assertCurrentProfile(): void {
+    this.assertRuntimeProfileCurrent();
+  }
+
   /** Lifetime advertised by OAuth token responses. */
   getAccessTokenTTLSeconds(): number {
     return Math.floor(parseTTLtoMs(this.accessTokenTTL) / 1_000);
+  }
+
+  /** Shared revision used by managed Sync to detect cross-replica invalidation. */
+  getAuthorityRevision(): number | null {
+    this.assertRuntimeProfileCurrent();
+    return readAuthAuthorityRevision(this.db);
   }
 
   // ─── Factory ─────────────────────────────────────────────────────────
@@ -265,45 +317,57 @@ export class TokenService {
     userId: string;
     email: string;
     role: string;
-  }, expectedAuthGeneration?: number): Promise<string> {
+  }, expectedAuthGeneration?: number, session?: AuthSessionRecord): Promise<string> {
+    this.assertRuntimeProfileCurrent();
     const authGeneration = expectedAuthGeneration
       ?? currentAuthGeneration(this.userStore, user.userId);
-    return new SignJWT({
+    const token = await new SignJWT({
       sub: user.userId,
       email: user.email,
       role: user.role,
       authGeneration,
+      sessionKind: session ? 'web' : undefined,
+      sid: session?.sessionId,
+      sessionGeneration: session?.generation,
     })
       .setProtectedHeader({ alg: 'ES256', kid: this.keyId })
       .setIssuedAt()
       .setExpirationTime(this.accessTokenTTL)
       .setIssuer('auth')
       .sign(this.privateKey);
+    this.assertRuntimeProfileCurrent();
+    return token;
   }
 
-  /**
-   * Verify an access token. Returns claims or null if invalid/expired.
-   * Stateless — no database lookup. Public key check only.
-   */
+  /** Verify token crypto while fencing use through this installed runtime. */
   async verifyAccessToken(token: string): Promise<AccessTokenPayload | null> {
+    this.assertRuntimeProfileCurrent();
     try {
       const { payload } = await jwtVerify(token, this.publicKey, {
         algorithms: ['ES256'],
         issuer: 'auth',
       });
-
+      this.assertRuntimeProfileCurrent();
       return {
         sub: payload.sub!,
         email: payload.email as string,
         role: payload.role as string,
         authGeneration: readAuthGeneration(payload.authGeneration),
+        sessionKind: payload.sessionKind === 'web' ? 'web' : undefined,
+        sessionId: typeof payload.sid === 'string' ? payload.sid : undefined,
+        sessionGeneration: readOptionalGeneration(payload.sessionGeneration),
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof AuthError && error.code === 'AUTH_PROFILE_CHANGED') {
+        throw error;
+      }
       if (!this.nativeIssuer || !this.nativeAudience) return null;
-      return verifyNativeAccessToken({
+      const payload = await verifyNativeAccessToken({
         token, publicKey: this.publicKey,
         issuer: this.nativeIssuer, audience: this.nativeAudience,
       });
+      this.assertRuntimeProfileCurrent();
+      return payload;
     }
   }
 
@@ -315,15 +379,18 @@ export class TokenService {
     authGeneration: number,
     sessionId: string,
   ): Promise<string> {
+    this.assertRuntimeProfileCurrent();
     if (!this.nativeIssuer || !this.nativeAudience) {
       throw new Error('TokenService: native token issuer is not configured');
     }
-    return signOidcAccessToken({
+    const token = await signOidcAccessToken({
       privateKey: this.privateKey, keyId: this.keyId, issuer: this.nativeIssuer,
       audience: this.nativeAudience, clientId, scope, user,
       authGeneration, sessionId,
       ttl: this.accessTokenTTL,
     });
+    this.assertRuntimeProfileCurrent();
+    return token;
   }
 
   /** Sign an OpenID Connect ID token for the native client itself. */
@@ -333,11 +400,14 @@ export class TokenService {
     nonce: string | undefined,
     scope: string
   ): Promise<string> {
+    this.assertRuntimeProfileCurrent();
     if (!this.nativeIssuer) throw new Error('TokenService: native token issuer is not configured');
-    return signOidcIdToken({
+    const token = await signOidcIdToken({
       privateKey: this.privateKey, keyId: this.keyId, issuer: this.nativeIssuer,
       clientId, nonce, scope, user,
     });
+    this.assertRuntimeProfileCurrent();
+    return token;
   }
 
   /**
@@ -362,8 +432,9 @@ export class TokenService {
       flow?: AuthTransitionTokenPayload['flow'];
     }
   ): Promise<string> {
+    this.assertRuntimeProfileCurrent();
     const authGeneration = currentAuthGeneration(this.userStore, user.userId);
-    return new SignJWT({
+    const token = await new SignJWT({
       sub: user.userId,
       email: user.email,
       role: user.role,
@@ -379,6 +450,8 @@ export class TokenService {
       .setExpirationTime(params.ttl)
       .setIssuer('auth-transition')
       .sign(this.privateKey);
+    this.assertRuntimeProfileCurrent();
+    return token;
   }
 
   /**
@@ -388,12 +461,16 @@ export class TokenService {
     token: string,
     allowedPurpose: AuthTransitionPurpose | AuthTransitionPurpose[]
   ): Promise<AuthTransitionTokenPayload | null> {
+    this.assertRuntimeProfileCurrent();
     const allowed = Array.isArray(allowedPurpose) ? allowedPurpose : [allowedPurpose];
     try {
       const { payload } = await jwtVerify(token, this.publicKey, {
         algorithms: ['ES256'],
         issuer: 'auth-transition',
       });
+      // Do not let verification begun by an old runtime become authority
+      // after another process commits a profile generation change.
+      this.assertRuntimeProfileCurrent();
       const purpose = payload.purpose as AuthTransitionPurpose | undefined;
       if (!purpose || !allowed.includes(purpose)) return null;
 
@@ -420,7 +497,10 @@ export class TokenService {
           ? payload.flow
           : undefined,
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof AuthError && error.code === 'AUTH_PROFILE_CHANGED') {
+        throw error;
+      }
       return null;
     }
   }
@@ -432,29 +512,190 @@ export class TokenService {
    * UserStore is wired so suspended and forced-reset accounts fail closed.
    */
   async resolveAuthContext(token: string): Promise<AuthContext | null> {
+    this.assertRuntimeProfileCurrent();
     const payload = await this.verifyAccessToken(token);
+    this.assertRuntimeProfileCurrent();
     if (!payload) return null;
 
-    if (!this.userStore) {
-      return toAuthContext(payload);
-    }
+    if (!this.userStore) return null;
 
     const user = this.userStore.getUserById(payload.sub);
     if (!user || !canUserReceiveTokens(user)) return null;
     if (!isCurrentAuthGeneration(this.userStore, user.userId, payload.authGeneration)) return null;
     if (payload.sessionKind === 'native') {
       if (!payload.sessionId || !payload.clientId || !this.nativeSessionValidator) return null;
-      if (!this.nativeSessionValidator.isActive({
+      const authority = this.nativeSessionValidator.resolveAuthority({
         sessionId: payload.sessionId, userId: user.userId,
         clientId: payload.clientId, authGeneration: payload.authGeneration,
-      })) return null;
+      });
+      if (!authority) return null;
+      return this.withAuthorizationRevision({
+        userId: user.userId,
+        email: user.email,
+        role: user.role,
+        clientId: payload.clientId,
+        sessionKind: 'native',
+        scope: payload.scope,
+        sessionId: payload.sessionId,
+        sessionScopeKind: authority.snapshot.scopeKind,
+        sessionScopeId: authority.snapshot.scopeId,
+        ...(authority.snapshot.scopeKind === 'tenant' ? {
+          tenantId: authority.snapshot.tenantId!,
+          membershipId: authority.snapshot.membershipId!,
+          tenantRole: authority.tenantRole,
+          tenantAuthorizationGeneration:
+            authority.snapshot.tenantAuthorizationGeneration!,
+          membershipAuthorizationGeneration:
+            authority.snapshot.membershipAuthorizationGeneration!,
+        } : {}),
+      });
+    } else if (payload.sessionKind === 'web') {
+      if (!payload.sessionId || payload.sessionGeneration === undefined) return null;
+      const authority = this.authSessionService.resolveWebSessionAuthority({
+        sessionId: payload.sessionId,
+        userId: user.userId,
+        generation: payload.sessionGeneration,
+      });
+      if (!authority) return null;
+      return this.withAuthorizationRevision(this.toWebAuthContext(
+        user,
+        authority.session,
+        authority.tenantRole,
+      ));
+    } else {
+      // Upgrade compatibility only: an already-issued single-tenant browser
+      // JWT has no kind/sid. It may finish its original short TTL while still
+      // passing live user and auth-generation checks. Multi-tenant mode cannot
+      // infer an authority scope, so the same token always fails closed there.
+      if (!this.authSessionService.allowsLegacyUnboundWebAccess()
+        || !await this.isPreBoundaryLegacyWebAccess(token)) {
+        return null;
+      }
+      this.assertRuntimeProfileCurrent();
+      return this.withAuthorizationRevision({
+        userId: user.userId,
+        email: user.email,
+        role: user.role,
+      });
     }
 
-    return {
-      userId: user.userId, email: user.email, role: user.role,
-      clientId: payload.clientId, sessionKind: payload.sessionKind,
-      scope: payload.scope, sessionId: payload.sessionId,
-    };
+    return null;
+  }
+
+  /**
+   * Capture a non-credential reference to the exact live request authority.
+   * Background systems persist this reference instead of persisting a bearer
+   * token, then call `resolveAuthContextAuthority()` at each commit boundary.
+   */
+  captureAuthContextAuthority(
+    context: AuthContext,
+  ): AuthContextAuthorityReference | null {
+    this.assertRuntimeProfileCurrent();
+    if (!this.userStore
+      || !context.sessionKind
+      || !context.sessionId
+      || !context.sessionScopeKind
+      || !context.sessionScopeId) return null;
+
+    const reference: AuthContextAuthorityReference = Object.freeze({
+      version: 1,
+      userId: context.userId,
+      platformRole: context.role,
+      authGeneration: this.userStore.getAuthGeneration(context.userId),
+      sessionKind: context.sessionKind,
+      sessionId: context.sessionId,
+      sessionGeneration: context.sessionGeneration ?? null,
+      clientId: context.clientId ?? null,
+      identityScopes: Object.freeze([...(context.scope ?? [])].sort(compareText)),
+      sessionScopeKind: context.sessionScopeKind,
+      sessionScopeId: context.sessionScopeId,
+      tenantId: context.tenantId ?? null,
+      membershipId: context.membershipId ?? null,
+      tenantRole: context.tenantRole ?? null,
+      tenantAuthorizationGeneration: context.tenantAuthorizationGeneration ?? null,
+      membershipAuthorizationGeneration:
+        context.membershipAuthorizationGeneration ?? null,
+      authorizationAssignmentRevision:
+        context.authorizationAssignmentRevision ?? null,
+    });
+    const current = this.resolveAuthContextAuthority(reference);
+    return current && authContextMatchesAuthorityReference(current, reference)
+      ? reference
+      : null;
+  }
+
+  /**
+   * Re-resolve a captured request authority without retaining a bearer token.
+   * Session revocation/expiry, account security changes, tenant suspension,
+   * membership changes, and advanced-role revisions all fail closed.
+   */
+  resolveAuthContextAuthority(
+    reference: AuthContextAuthorityReference,
+  ): AuthContext | null {
+    this.assertRuntimeProfileCurrent();
+    if (!this.userStore || reference.version !== 1) return null;
+    const user = this.userStore.getUserById(reference.userId);
+    if (!user || !canUserReceiveTokens(user)) return null;
+    if (!isCurrentAuthGeneration(
+      this.userStore,
+      reference.userId,
+      reference.authGeneration,
+    )) return null;
+
+    let current: AuthContext | null = null;
+    if (reference.sessionKind === 'web') {
+      if (reference.sessionGeneration === null || reference.clientId !== null) return null;
+      const authority = this.authSessionService.resolveWebSessionAuthority({
+        sessionId: reference.sessionId,
+        userId: reference.userId,
+        generation: reference.sessionGeneration,
+      });
+      if (!authority) return null;
+      current = this.withAuthorizationRevision(this.toWebAuthContext(
+        user,
+        authority.session,
+        authority.tenantRole,
+      ));
+    } else {
+      if (!reference.clientId
+        || reference.sessionGeneration !== null
+        || !this.nativeSessionValidator) return null;
+      const authority = this.nativeSessionValidator.resolveAuthority({
+        sessionId: reference.sessionId,
+        userId: reference.userId,
+        clientId: reference.clientId,
+        authGeneration: reference.authGeneration,
+      });
+      if (!authority) return null;
+      current = this.withAuthorizationRevision({
+        userId: user.userId,
+        email: user.email,
+        role: user.role,
+        clientId: reference.clientId,
+        sessionKind: 'native',
+        scope: Object.freeze(authority.session.scope
+          .split(/\s+/u)
+          .filter(Boolean)
+          .sort(compareText)),
+        sessionId: reference.sessionId,
+        sessionScopeKind: authority.snapshot.scopeKind,
+        sessionScopeId: authority.snapshot.scopeId,
+        ...(authority.snapshot.scopeKind === 'tenant' ? {
+          tenantId: authority.snapshot.tenantId!,
+          membershipId: authority.snapshot.membershipId!,
+          tenantRole: authority.tenantRole,
+          tenantAuthorizationGeneration:
+            authority.snapshot.tenantAuthorizationGeneration!,
+          membershipAuthorizationGeneration:
+            authority.snapshot.membershipAuthorizationGeneration!,
+        } : {}),
+      });
+    }
+
+    this.assertRuntimeProfileCurrent();
+    return current && authContextMatchesAuthorityReference(current, reference)
+      ? current
+      : null;
   }
 
   // ─── Token Pair Issuance ─────────────────────────────────────────────
@@ -467,6 +708,7 @@ export class TokenService {
   async issuePageSessionToken(
     rawRefreshToken: string
   ): Promise<IssuedPageSession | null> {
+    this.assertRuntimeProfileCurrent();
     if (!this.userStore || !rawRefreshToken) return null;
 
     const record = this.userStore.getRefreshTokenByHash(
@@ -478,16 +720,20 @@ export class TokenService {
 
     const user = this.userStore.getUserById(record.userId);
     if (!user || !canUserReceiveTokens(user)) return null;
+    const parent = this.resolveOrAdoptRefreshParent(record);
+    if (!parent) return null;
+    const { session } = parent;
 
     const token = await new SignJWT({ sid: record.tokenId })
       .setProtectedHeader({ alg: 'ES256', kid: this.keyId })
       .setSubject(user.userId)
       .setIssuedAt()
-      .setExpirationTime(Math.floor(record.expiresAt / 1_000))
+      .setExpirationTime(Math.floor(Math.min(record.expiresAt, session.expiresAt) / 1_000))
       .setIssuer('auth-page-session')
       .sign(this.privateKey);
+    this.assertRuntimeProfileCurrent();
 
-    return { token, expiresAt: record.expiresAt };
+    return { token, expiresAt: Math.min(record.expiresAt, session.expiresAt) };
   }
 
   /**
@@ -497,20 +743,39 @@ export class TokenService {
    * immediately without granting cookie access to APIs.
    */
   async resolvePageSessionToken(token: string): Promise<AuthContext | null> {
+    this.assertRuntimeProfileCurrent();
     const record = await this.resolvePageSessionRecord(token);
+    this.assertRuntimeProfileCurrent();
     if (!record || !this.userStore) return null;
 
     const user = this.userStore.getUserById(record.userId);
     if (!user || !canUserReceiveTokens(user)) return null;
-
-    return { userId: user.userId, email: user.email, role: user.role };
+    const parent = this.resolveOrAdoptRefreshParent(record);
+    return parent ? this.withAuthorizationRevision(this.toWebAuthContext(
+      user,
+      parent.session,
+      parent.tenantRole,
+    )) : null;
   }
 
   /** Revoke the refresh session referenced by an existing page cookie. */
-  async revokePageSessionToken(token: string): Promise<boolean> {
+  async revokePageSessionToken(
+    token: string,
+    auditRequest?: AuthAuditRequestContext,
+  ): Promise<boolean> {
+    this.assertRuntimeProfileCurrent();
     const record = await this.resolvePageSessionRecord(token);
+    this.assertRuntimeProfileCurrent();
     if (!record || !this.userStore) return false;
 
+    if (record.sessionId) {
+      this.authSessionService.revoke(
+        record.sessionId,
+        'page-session-replaced',
+        Date.now(),
+        { provenance: 'authenticated-request', request: auditRequest },
+      );
+    }
     this.userStore.revokeRefreshToken(record.tokenId);
     return true;
   }
@@ -519,34 +784,73 @@ export class TokenService {
    * Issue a full token pair (access + refresh) for a user.
    * Stores the refresh token hash in the database.
    */
-  async issueTokenPair(user: UserRecord): Promise<TokenPair> {
-    if (!this.userStore) {
-      throw new Error('TokenService: UserStore not wired');
-    }
-    assertUserCanReceiveTokens(user);
-
-    const authGeneration = this.userStore.getAuthGeneration(user.userId);
-    const accessToken = await this.signAccessToken(user, authGeneration);
-    const refreshToken = crypto.randomUUID();
-    const refreshHash = this.hashToken(refreshToken);
-    const createdAt = Date.now();
-    const expiresAt = createdAt + this.refreshTokenTTLMs;
-    const tokenId = crypto.randomUUID();
-    const stored = this.userStore.storeRefreshTokenIfCurrent(
-      tokenId,
-      user,
-      refreshHash,
-      expiresAt,
-      createdAt,
-      authGeneration
-    );
-    if (!stored) {
+  async issueTokenPair(
+    user: UserRecord,
+    options: WebSessionIssueOptions = {},
+  ): Promise<TokenPair> {
+    const tokens = await this.issueTokenPairInternal(user, options);
+    this.assertRuntimeProfileCurrent();
+    if (!tokens) {
       throw new AuthError(
         'Authentication state changed; sign in again',
         'AUTH_STATE_CHANGED',
         409
       );
     }
+    return tokens;
+  }
+
+  /**
+   * Issue a pair only if a one-time admission proof is consumed in the same
+   * transaction as the new parent and refresh row.
+   */
+  async issueTokenPairAfterAdmission(
+    user: UserRecord,
+    options: WebSessionIssueOptions,
+    admit: () => boolean,
+  ): Promise<TokenPair | null> {
+    const tokens = await this.issueTokenPairInternal(user, options, admit);
+    this.assertRuntimeProfileCurrent();
+    return tokens;
+  }
+
+  private async issueTokenPairInternal(
+    user: UserRecord,
+    options: WebSessionIssueOptions,
+    admit?: () => boolean,
+  ): Promise<TokenPair | null> {
+    this.assertRuntimeProfileCurrent();
+    if (!this.userStore) {
+      throw new Error('TokenService: UserStore not wired');
+    }
+    assertUserCanReceiveTokens(user);
+
+    const authGeneration = this.userStore.getAuthGeneration(user.userId);
+    const createdAt = Date.now();
+    const expiresAt = createdAt + this.refreshTokenTTLMs;
+    const session = this.authSessionService.prepareWebSession({
+      userId: user.userId,
+      expiresAt,
+      binding: options.binding,
+    });
+    const accessToken = await this.signAccessToken(user, authGeneration, session);
+    const refreshToken = crypto.randomUUID();
+    const refreshHash = this.hashToken(refreshToken);
+    const tokenId = crypto.randomUUID();
+    const stored = this.authSessionService.persistPreparedWebSession(
+      session,
+      () => this.userStore!.storeRefreshTokenIfCurrent(
+        tokenId,
+        user,
+        refreshHash,
+        expiresAt,
+        createdAt,
+        authGeneration,
+        session.sessionId,
+      ),
+      admit,
+    );
+    if (!stored) return null;
 
     return { accessToken, refreshToken };
   }
@@ -564,6 +868,7 @@ export class TokenService {
    * One-time use: each refresh token is used exactly once.
    */
   async rotateRefreshToken(rawToken: string): Promise<TokenPair | null> {
+    this.assertRuntimeProfileCurrent();
     if (!this.userStore) {
       throw new Error('TokenService: UserStore not wired');
     }
@@ -571,7 +876,7 @@ export class TokenService {
     const hash = this.hashToken(rawToken);
     const record = this.userStore.getRefreshTokenByHash(hash);
 
-    if (!record) return null; // Unknown token
+    if (!record) return null;
 
     // Replay detection — if already revoked, revoke ALL tokens for this user.
     // A forced-password gate already revoked the complete family and prevents
@@ -592,30 +897,146 @@ export class TokenService {
     if (!user) return null; // User deleted between token issuance and refresh
     assertUserCanReceiveTokens(user);
     const authGeneration = this.userStore.getAuthGeneration(user.userId);
-    const accessToken = await this.signAccessToken(user, authGeneration);
+    const parent = this.resolveOrAdoptRefreshParent(record);
+    if (!parent) return null;
+    const currentRecord = parent.record;
+    const { session } = parent;
+    const accessToken = await this.signAccessToken(user, authGeneration, session);
     const refreshToken = crypto.randomUUID();
     const createdAt = Date.now();
-    const result = this.userStore.rotateRefreshTokenAtomically(record, {
-      tokenId: crypto.randomUUID(),
-      tokenHash: this.hashToken(refreshToken),
-      expiresAt: createdAt + this.refreshTokenTTLMs,
-      createdAt,
-    }, authGeneration, createdAt);
-    if (result !== 'rotated') return null;
+    const expiresAt = createdAt + this.refreshTokenTTLMs;
+    const rotated = this.authSessionService.withActiveWebSession(
+      {
+        sessionId: session.sessionId,
+        userId: user.userId,
+        generation: session.generation,
+      },
+      expiresAt,
+      () => this.userStore!.rotateRefreshTokenAtomically(currentRecord, {
+        tokenId: crypto.randomUUID(),
+        tokenHash: this.hashToken(refreshToken),
+        expiresAt,
+        createdAt,
+      }, authGeneration, createdAt),
+    );
+    if (!rotated || rotated.value !== 'rotated') return null;
     return { accessToken, refreshToken };
+  }
+
+  /** Resolve a raw refresh credential into its live durable web authority. */
+  resolveWebRefreshProof(rawToken: string): WebRefreshProof | null {
+    this.assertRuntimeProfileCurrent();
+    if (!this.userStore || !rawToken) return null;
+    const record = this.userStore.getRefreshTokenByHash(this.hashToken(rawToken));
+    if (!record) return null;
+    // A consumed refresh credential is a replay even when the caller reaches
+    // a proof-gated tenant endpoint before the rotation method. Invalidate the
+    // winning family consistently instead of making event-loop scheduling
+    // decide whether the replay response has security side effects.
+    if (record.revokedAt !== null) {
+      this.userStore.invalidateRefreshTokenReplay(record.userId);
+      return null;
+    }
+    if (record.expiresAt <= Date.now()) return null;
+    const user = this.userStore.getUserById(record.userId);
+    if (!user || !canUserReceiveTokens(user)) return null;
+    const parent = this.resolveOrAdoptRefreshParent(record);
+    return parent ? { user, ...parent } : null;
+  }
+
+  /**
+   * Replace a live browser parent with a new tenant-bound parent while
+   * consuming its current refresh child exactly once.
+   */
+  async replaceWebSession(
+    rawToken: string,
+    binding: NonNullable<WebSessionIssueOptions['binding']>,
+    admit: () => boolean = () => true,
+    onReplaced?: (input: {
+      user: UserRecord;
+      previous: AuthSessionRecord;
+      replacement: AuthSessionRecord;
+    }) => void,
+  ): Promise<{ user: UserRecord; tokens: TokenPair } | null> {
+    this.assertRuntimeProfileCurrent();
+    if (!this.userStore) {
+      throw new Error('TokenService: UserStore not wired');
+    }
+    const hash = this.hashToken(rawToken);
+    const initial = this.userStore.getRefreshTokenByHash(hash);
+    if (!initial) return null;
+    if (initial.revokedAt !== null) {
+      this.userStore.invalidateRefreshTokenReplay(initial.userId);
+      return null;
+    }
+    if (initial.expiresAt <= Date.now()) return null;
+
+    const proof = this.resolveWebRefreshProof(rawToken);
+    if (!proof) return null;
+    const { user, record: current, session: previous } = proof;
+    const authGeneration = this.userStore.getAuthGeneration(user.userId);
+    const createdAt = Date.now();
+    const expiresAt = createdAt + this.refreshTokenTTLMs;
+    const replacement = this.authSessionService.prepareWebSession({
+      userId: user.userId,
+      binding,
+      expiresAt,
+      authenticatedAt: previous.authenticatedAt,
+    });
+    const accessToken = await this.signAccessToken(
+      user,
+      authGeneration,
+      replacement,
+    );
+    const refreshToken = crypto.randomUUID();
+    const rotated = this.userStore.replaceRefreshSessionAtomically(
+      current,
+      {
+        tokenId: crypto.randomUUID(),
+        tokenHash: this.hashToken(refreshToken),
+        expiresAt,
+        createdAt,
+      },
+      replacement.sessionId,
+      authGeneration,
+      () => {
+        if (!admit() || !this.authSessionService.replacePreparedWebSession(
+          previous,
+          replacement,
+        )) return false;
+        onReplaced?.({ user, previous, replacement });
+        return true;
+      },
+      createdAt,
+    );
+    return rotated === 'rotated'
+      ? { user, tokens: { accessToken, refreshToken } }
+      : null;
   }
 
   /**
    * Revoke a refresh token by raw token string (for logout).
    * Returns true if the token was found and revoked.
    */
-  revokeRefreshTokenByRaw(rawToken: string): boolean {
+  revokeRefreshTokenByRaw(
+    rawToken: string,
+    auditRequest?: AuthAuditRequestContext,
+  ): boolean {
+    this.assertRuntimeProfileCurrent();
     if (!this.userStore) return false;
 
     const hash = this.hashToken(rawToken);
     const record = this.userStore.getRefreshTokenByHash(hash);
     if (!record) return false;
 
+    if (record.sessionId) {
+      this.authSessionService.revoke(
+        record.sessionId,
+        'logout',
+        Date.now(),
+        { provenance: 'authenticated-request', request: auditRequest },
+      );
+    }
     this.userStore.revokeRefreshToken(record.tokenId);
     return true;
   }
@@ -667,21 +1088,99 @@ export class TokenService {
     }
   }
 
+  private toWebAuthContext(
+    user: UserRecord,
+    session: AuthSessionRecord,
+    tenantRole: string | null,
+  ): AuthContext {
+    return {
+      userId: user.userId,
+      email: user.email,
+      role: user.role,
+      sessionKind: 'web',
+      sessionId: session.sessionId,
+      sessionGeneration: session.generation,
+      sessionScopeKind: session.scopeKind,
+      sessionScopeId: session.scopeId,
+      ...(session.scopeKind === 'tenant' ? {
+        tenantId: session.tenantId!,
+        membershipId: session.membershipId!,
+        tenantRole,
+        tenantAuthorizationGeneration: session.tenantAuthorizationGeneration!,
+        membershipAuthorizationGeneration:
+          session.membershipAuthorizationGeneration!,
+      } : {}),
+    };
+  }
+
+  private withAuthorizationRevision(context: AuthContext): AuthContext {
+    const revision = this.authorizationRevisionResolver?.(context) ?? null;
+    this.assertRuntimeProfileCurrent();
+    return revision ? { ...context, authorizationAssignmentRevision: revision } : context;
+  }
+
+  private resolveOrAdoptRefreshParent(record: RefreshTokenRecord): {
+    record: RefreshTokenRecord;
+    session: AuthSessionRecord;
+    tenantRole: string | null;
+  } | null {
+    if (!this.userStore) return null;
+    let current = record;
+    if (!current.sessionId) {
+      const adopted = this.authSessionService.adoptLegacySingleRefresh({
+        tokenId: current.tokenId,
+        userId: current.userId,
+        createdAt: current.createdAt,
+        expiresAt: current.expiresAt,
+      });
+      if (adopted) {
+        current = { ...current, sessionId: adopted.sessionId };
+      } else {
+        // A concurrent request may have completed the same one-row adoption.
+        current = this.userStore.getRefreshTokenById(current.tokenId) ?? current;
+      }
+    }
+    if (!current.sessionId) return null;
+    const authority = this.authSessionService.resolveWebSessionAuthority({
+      sessionId: current.sessionId,
+      userId: current.userId,
+    });
+    return authority ? { record: current, ...authority } : null;
+  }
+
+  /**
+   * Re-read the verified auth JWT's issuance time for the narrow migration
+   * exception. This intentionally verifies the signature and issuer again;
+   * no unverified decoded claim can opt a token into compatibility.
+   */
+  private async isPreBoundaryLegacyWebAccess(token: string): Promise<boolean> {
+    try {
+      const { payload } = await jwtVerify(token, this.publicKey, {
+        algorithms: ['ES256'],
+        issuer: 'auth',
+      });
+      return typeof payload.iat === 'number'
+        && Number.isSafeInteger(payload.iat)
+        && payload.iat <= this.legacyWebAccessIssuedAtCutoffSeconds;
+    } catch {
+      return false;
+    }
+  }
+
   /** SHA-256 hash a token string. Returns hex-encoded hash. */
   private hashToken(token: string): string {
     const hasher = new Bun.CryptoHasher('sha256');
     hasher.update(token);
     return hasher.digest('hex');
   }
+
+  private assertRuntimeProfileCurrent(): void {
+    this.runtimeProfileGuard?.();
+  }
 }
 
 function isMfaMethodType(value: unknown): value is AuthTransitionTokenPayload['methodType'] {
   return value === 'email' || value === 'totp';
-}
-
-function canUserReceiveTokens(user: UserRecord): boolean {
-  if (user.status === 'suspended' || user.passwordChangeRequired) return false;
-  return !user.emailVerificationRequired || Boolean(user.emailVerifiedAt);
 }
 
 function assertUserCanReceiveTokens(user: UserRecord): void {
@@ -696,17 +1195,37 @@ function assertUserCanReceiveTokens(user: UserRecord): void {
   }
 }
 
-function toAuthContext(payload: AccessTokenPayload): AuthContext | null {
-  if (typeof payload.email !== 'string' || typeof payload.role !== 'string') {
-    return null;
-  }
-  return {
-    userId: payload.sub,
-    email: payload.email,
-    role: payload.role,
-    clientId: payload.clientId,
-    sessionKind: payload.sessionKind,
-    scope: payload.scope,
-    sessionId: payload.sessionId,
-  };
+function readOptionalGeneration(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function authContextMatchesAuthorityReference(
+  context: AuthContext,
+  reference: AuthContextAuthorityReference,
+): boolean {
+  const scopes = [...(context.scope ?? [])].sort(compareText);
+  return context.userId === reference.userId
+    && context.role === reference.platformRole
+    && context.sessionKind === reference.sessionKind
+    && context.sessionId === reference.sessionId
+    && (context.sessionGeneration ?? null) === reference.sessionGeneration
+    && (context.clientId ?? null) === reference.clientId
+    && JSON.stringify(scopes) === JSON.stringify(reference.identityScopes)
+    && context.sessionScopeKind === reference.sessionScopeKind
+    && context.sessionScopeId === reference.sessionScopeId
+    && (context.tenantId ?? null) === reference.tenantId
+    && (context.membershipId ?? null) === reference.membershipId
+    && (context.tenantRole ?? null) === reference.tenantRole
+    && (context.tenantAuthorizationGeneration ?? null)
+      === reference.tenantAuthorizationGeneration
+    && (context.membershipAuthorizationGeneration ?? null)
+      === reference.membershipAuthorizationGeneration
+    && (context.authorizationAssignmentRevision ?? null)
+      === reference.authorizationAssignmentRevision;
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }

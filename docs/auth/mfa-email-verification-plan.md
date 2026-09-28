@@ -19,6 +19,14 @@ tags:
 
 # Auth Email Verification and MFA Plan
 
+> Historical/partially implemented plan. Email verification, email OTP,
+> authenticator/TOTP, enrollment/challenge UI, and the account gates described
+> as complete below are implemented. Recovery codes and the other explicitly
+> reserved items are not. File paths such as `zero/auth.ts` are app-owned
+> organization conventions: `createApp()` does not discover them. Import and
+> compose them through `zero.config.ts`; see
+> [Platform Configuration](../platform-configuration.md).
+
 This plan upgrades Zero auth from password-only account lifecycle flows into a
 complete first-party account system with optional email verification, email OTP
 MFA, authenticator-app TOTP MFA, branded auth emails, and polished auth screens.
@@ -190,7 +198,8 @@ Generated config templates should be comment-heavy and safe by default. A
 developer should be able to enable verification or MFA by changing two or three
 obvious values, not by hunting through route code.
 
-Planned config/env keys:
+Implemented config/env keys (see
+[Platform Configuration](../platform-configuration.md) for the current shape):
 
 | Key | Purpose |
 | --- | --- |
@@ -371,18 +380,17 @@ Add single-responsibility auth services:
 
 ## HTTP Routes
 
-Public/account routes:
+Current implemented public/account routes relevant to this historical plan:
 
 ```txt
 POST /auth/register
 POST /auth/login
-POST /auth/verify-email/request
-GET  /auth/verify-email/:token
+POST /auth/resend-verification
+GET  /auth/action-token/:token
 POST /auth/verify-email
 POST /auth/forgot-password
 POST /auth/reset-password
-POST /auth/reset-password/otp/request
-POST /auth/reset-password/otp/verify
+POST /auth/setup-password
 ```
 
 MFA routes implemented now:

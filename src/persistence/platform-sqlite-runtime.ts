@@ -7,21 +7,26 @@
  */
 
 import type { PlatformSQLiteService } from './storage-types';
+import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
 
-let currentSQLiteService: PlatformSQLiteService | null = null;
+const sqliteProviders = new CompatibilityProviderRegistry<PlatformSQLiteService>(
+  'Platform SQLite service',
+);
+const registrations = new Map<PlatformSQLiteService, ReturnType<typeof sqliteProviders.register>>();
 
 /** Return the active platform SQLite service, when one has been registered. */
 export function getPlatformSQLiteService(): PlatformSQLiteService | null {
-  return currentSQLiteService;
+  return sqliteProviders.get();
 }
 
 /** Return the active platform SQLite service or throw a clear setup error. */
 export function requirePlatformSQLiteService(): PlatformSQLiteService {
-  if (!currentSQLiteService) {
+  const service = getPlatformSQLiteService();
+  if (!service) {
     throw new Error('[persistence] Platform SQLite service is unavailable. Mount createApp() or createSyncPlugin() before using zero.sql.');
   }
 
-  return currentSQLiteService;
+  return service;
 }
 
 /**
@@ -30,10 +35,13 @@ export function requirePlatformSQLiteService(): PlatformSQLiteService {
  * Lifecycle ownership stays with the caller that created the service.
  */
 export function setPlatformSQLiteService(service: PlatformSQLiteService | null): void {
-  currentSQLiteService = service;
+  if (!service || registrations.has(service)) return;
+  registrations.set(service, sqliteProviders.register(service, () => service));
 }
 
 /** Clear the active service only if it still matches the expected instance. */
 export function clearPlatformSQLiteService(service: PlatformSQLiteService | null): void {
-  if (!service || currentSQLiteService === service) currentSQLiteService = null;
+  if (!service) return;
+  registrations.get(service)?.unregister();
+  registrations.delete(service);
 }

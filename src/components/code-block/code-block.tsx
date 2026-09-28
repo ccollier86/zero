@@ -10,10 +10,10 @@
 
 import * as React from 'react';
 
-import { ZeroIcon } from '@/components/animate-ui/icons/zero-icon';
-import { Button } from '@/components/ui/button';
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
-import { cn } from '@/lib/utils';
+import { ZeroIcon } from '#zero/components/animate-ui/icons/zero-icon';
+import { Button } from '#zero/components/ui/button';
+import { useCopyToClipboard } from '#zero/hooks/use-copy-to-clipboard';
+import { cn } from '#zero/lib/utils';
 
 import { OBS_CODES } from '../../observability/codes';
 import { emitFrontendCode } from '../../frontend/client/observability';

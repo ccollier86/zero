@@ -268,7 +268,7 @@ function number(opts: NumberOptions = {}): FieldDef<any, number> {
   };
 }
 
-function boolean(opts: BooleanOptions = {}): FieldDef<any, number> {
+function boolean(opts: BooleanOptions = {}): FieldDef<any, boolean> {
   const required = opts.required ?? false;
   const defaultVal = opts.defaultValue ?? false;
   const schema = required ? v.boolean() : v.optional(v.boolean(), defaultVal);

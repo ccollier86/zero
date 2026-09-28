@@ -9,8 +9,8 @@ import {
   type CursorContainerProps as CursorContainerPropsPrimitive,
   type CursorProps as CursorPropsPrimitive,
   type CursorFollowProps as CursorFollowPropsPrimitive,
-} from '@/components/animate-ui/primitives/animate/cursor';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/primitives/animate/cursor';
+import { cn } from '#zero/lib/utils';
 
 type CursorProviderProps = Omit<CursorProviderPropsPrimitive, 'children'> &
   CursorContainerPropsPrimitive;

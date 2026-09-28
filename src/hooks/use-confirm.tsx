@@ -18,9 +18,9 @@ import {
   AlertDialogDescription,
   AlertDialogAction,
   AlertDialogCancel,
-} from '@/components/animate-ui/components/radix/alert-dialog';
-import { buttonVariants } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/components/radix/alert-dialog';
+import { buttonVariants } from '#zero/components/ui/button';
+import { cn } from '#zero/lib/utils';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

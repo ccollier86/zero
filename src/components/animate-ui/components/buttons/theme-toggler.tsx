@@ -18,9 +18,9 @@ import {
   type ThemeTogglerProps as ThemeTogglerPrimitiveProps,
   type ThemeSelection,
   type Resolved,
-} from '@/components/animate-ui/primitives/effects/theme-toggler';
-import { buttonVariants } from '@/components/animate-ui/components/buttons/icon';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/primitives/effects/theme-toggler';
+import { buttonVariants } from '#zero/components/animate-ui/components/buttons/icon';
+import { cn } from '#zero/lib/utils';
 
 const getIcon = (
   effective: ThemeSelection,

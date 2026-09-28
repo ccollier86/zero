@@ -8,12 +8,17 @@ import {
 import { completeEmailVerification } from './auth-email-verification-service';
 import { authTokenSchema } from './auth-request-schema';
 import { syncPageSessionCookie } from './page-session';
+import { authAuditRequestFromRequest } from './auth-audit-service';
 
 export function createAuthEmailVerificationPlugin(config: AuthAccountPluginConfig) {
   return new Elysia({ name: 'auth-email-verification' }).post(
     '/verify-email',
     async ({ body, request, set }) => {
-      const response = await completeEmailVerification(config, body.token);
+      const response = await completeEmailVerification(
+        config,
+        body.token,
+        authAuditRequestFromRequest(request),
+      );
       await syncPageSessionCookie(
         set, request, requireAccountTokenService(config), response,
         { clearWhenMissing: true }

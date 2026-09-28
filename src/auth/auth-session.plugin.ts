@@ -8,6 +8,7 @@ import { createAuthRegistrationPlugin } from './auth-registration.plugin';
 import { createAuthSessionConfigPlugin } from './auth-session-config.plugin';
 import type { AuthSessionPluginConfig } from './auth-session-dependencies';
 import { createAuthSessionTokenPlugin } from './auth-session-token.plugin';
+import { createAuthTenantSessionPlugin } from './auth-tenant-session.plugin';
 
 export type { AuthSessionPluginConfig } from './auth-session-dependencies';
 
@@ -16,6 +17,7 @@ export function createAuthSessionPlugin(config: AuthSessionPluginConfig) {
     .use(createAuthSessionConfigPlugin(config))
     .use(createAuthRegistrationPlugin(config))
     .use(createAuthLoginPlugin(config))
+    .use(createAuthTenantSessionPlugin(config))
     .use(createAuthSessionTokenPlugin(config))
     .use(createAuthChangePasswordPlugin(config))
     .use(createAuthCurrentUserPlugin(config));

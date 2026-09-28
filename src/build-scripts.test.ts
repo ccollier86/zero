@@ -11,6 +11,7 @@ import { describe, expect, test } from 'bun:test';
 interface PackageJson {
   scripts?: Record<string, string>;
   bin?: Record<string, string>;
+  imports?: Record<string, string>;
 }
 
 const packageJson = await Bun.file('package.json').json() as PackageJson;
@@ -54,5 +55,29 @@ describe('package build scripts', () => {
     expect(packageJson.bin?.['create-zero']).toBe('./src/create-zero/run.ts');
     expect(await Bun.file(packageJson.bin!.zero).exists()).toBe(true);
     expect(await Bun.file(packageJson.bin!['create-zero']).exists()).toBe(true);
+  });
+
+  test('package-private source imports have exact publishable mappings', async () => {
+    const specifiers = new Set<string>();
+    for (const pattern of ['src/**/*.ts', 'src/**/*.tsx']) {
+      for await (const pathname of new Bun.Glob(pattern).scan('.')) {
+        const source = await Bun.file(pathname).text();
+        const imported = [
+          ...source.matchAll(/\b(?:import|export)\s+(?:type\s+)?(?:[^'"]*?\s+from\s*)?['"]([^'"]+)['"]/g),
+          ...source.matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g),
+        ].map((match) => match[1]!);
+        expect(imported.filter((specifier) => specifier.startsWith('@/'))).toEqual([]);
+        for (const specifier of imported) {
+          if (specifier.startsWith('#zero/')) specifiers.add(specifier);
+        }
+      }
+    }
+
+    expect(Object.keys(packageJson.imports ?? {}).sort()).toEqual([...specifiers].sort());
+    for (const specifier of specifiers) {
+      const target = packageJson.imports?.[specifier];
+      expect(target).toMatch(/^\.\/src\/.+\.tsx?$/);
+      expect(await Bun.file(target!).exists()).toBe(true);
+    }
   });
 });

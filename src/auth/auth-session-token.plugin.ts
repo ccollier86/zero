@@ -11,6 +11,7 @@ import {
 } from './auth-session-dependencies';
 import { authTokenSchema } from './auth-request-schema';
 import { AuthError } from './types';
+import { authAuditRequestFromRequest } from './auth-audit-service';
 
 export function createAuthSessionTokenPlugin(config: AuthSessionPluginConfig) {
   return new Elysia({ name: 'auth-session-token' })
@@ -28,6 +29,7 @@ export function createAuthSessionTokenPlugin(config: AuthSessionPluginConfig) {
         const response = {
           accessToken: result.accessToken,
           refreshToken: result.refreshToken,
+          ...resolveRefreshedTenant(config, result.refreshToken),
         };
         await syncPageSessionCookie(set, request, tokens, response);
         return response;
@@ -38,7 +40,12 @@ export function createAuthSessionTokenPlugin(config: AuthSessionPluginConfig) {
       '/logout',
       async ({ body, request, set }) => {
         const tokens = requireSessionTokenService(config);
-        if (body.refreshToken) tokens.revokeRefreshTokenByRaw(body.refreshToken);
+        if (body.refreshToken) {
+          tokens.revokeRefreshTokenByRaw(
+            body.refreshToken,
+            authAuditRequestFromRequest(request),
+          );
+        }
         await revokeAndClearPageSessionCookie(set, request, tokens);
         return { ok: true };
       },
@@ -48,4 +55,27 @@ export function createAuthSessionTokenPlugin(config: AuthSessionPluginConfig) {
         }),
       }
     );
+}
+
+function resolveRefreshedTenant(
+  config: AuthSessionPluginConfig,
+  refreshToken: string,
+) {
+  if (config.getAuthConfig().tenancy?.mode !== 'multi') return {};
+  const tenantSessions = config.getAuthTenantSessionService();
+  if (!tenantSessions) {
+    throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
+  }
+  const current = tenantSessions.resolveTenantList(refreshToken);
+  const activeTenant = current.tenants.find(
+    (tenant) => tenant.tenantId === current.activeTenantId,
+  );
+  if (!activeTenant) {
+    throw new AuthError(
+      'Current tenant session is no longer available',
+      'TENANT_SELECTION_INVALID',
+      403,
+    );
+  }
+  return { activeTenant };
 }

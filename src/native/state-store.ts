@@ -5,7 +5,7 @@ import type { NativeAuthError } from './errors';
 import type { NativeIdTokenClaims, NativeTokenSet } from './oidc-types';
 
 export class NativeAuthStateStore {
-  private snapshot: NativeAuthState = freezeState('uninitialized', null, null);
+  private snapshot: NativeAuthState = freezeState('uninitialized', null, null, null);
   private accessToken: string | null = null;
   private accessExpiresAt = 0;
   private readonly listeners = new Set<NativeAuthStateListener>();
@@ -23,23 +23,25 @@ export class NativeAuthStateStore {
 
   setAuthorizing(): void {
     this.clearAccessToken();
-    this.publish(freezeState('authorizing', this.snapshot.identity, null));
+    this.publish(freezeState('authorizing', this.snapshot.identity, this.snapshot.activeTenant ?? null, null));
   }
 
   setAuthenticated(tokens: NativeTokenSet, identity: NativeIdTokenClaims): void {
     this.accessToken = tokens.accessToken;
     this.accessExpiresAt = this.now() + tokens.expiresIn * 1000;
-    this.publish(freezeState('authenticated', cloneIdentity(identity), null));
+    this.publish(freezeState(
+      'authenticated', cloneIdentity(identity), tokens.activeTenant ?? null, null,
+    ));
   }
 
   setAnonymous(): void {
     this.clearAccessToken();
-    this.publish(freezeState('anonymous', null, null));
+    this.publish(freezeState('anonymous', null, null, null));
   }
 
   setError(error: NativeAuthError): void {
     this.clearAccessToken();
-    this.publish(freezeState('error', null, {
+    this.publish(freezeState('error', null, null, {
       code: error.code,
       message: error.message,
       status: error.status,
@@ -76,9 +78,15 @@ export class NativeAuthStateStore {
 function freezeState(
   status: NativeAuthState['status'],
   identity: NativeIdTokenClaims | null,
+  activeTenant: import('./client-types').NativeTenantSummary | null,
   error: NativeAuthState['error'],
 ): NativeAuthState {
-  return Object.freeze({ status, identity, error: error ? Object.freeze(error) : null });
+  return Object.freeze({
+    status,
+    identity,
+    activeTenant: activeTenant ? Object.freeze({ ...activeTenant }) : null,
+    error: error ? Object.freeze(error) : null,
+  });
 }
 
 function cloneIdentity(identity: NativeIdTokenClaims): NativeIdTokenClaims {

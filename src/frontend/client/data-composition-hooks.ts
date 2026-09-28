@@ -15,6 +15,7 @@ import {
   useState,
 } from 'react';
 import type { IdentityKey } from '../../sync/identity';
+import type { InsertInput } from '../../schema/infer';
 import type { Row } from '../../sync/types';
 import { OBS_CODES } from '../../observability/codes';
 import { emitFrontendCode } from './observability';
@@ -32,6 +33,7 @@ import {
   type DataPageSort,
 } from './query-params';
 import { useClientMaybe } from './client-context';
+import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
 import { useCollection, useRow } from './data-hooks';
 
 export { buildDataPageQuery } from './query-params';
@@ -91,6 +93,7 @@ export function useDataPage<T extends Row = Row>(
   options: DataPageOptions = {},
 ): DataPageResult<T> {
   const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const collection = useCollection<T>(table);
   const [filters, setFiltersState] = useState<DataPageFilters>(options.filters ?? {});
   const [sort, setSortState] = useState<DataPageSort | null>(options.sort ?? null);
@@ -99,7 +102,14 @@ export function useDataPage<T extends Row = Row>(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [pageInfo, setPageInfo] = useState<DataPageInfo | null>(null);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
   const requestRef = useRef(0);
+  const requestControllersRef = useRef(new Set<AbortController>());
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
   const filtersKey = stableValueKey(options.filters ?? {});
   const sortKey = stableValueKey(options.sort ?? null);
   const localFiltersKey = stableValueKey(filters);
@@ -119,16 +129,26 @@ export function useDataPage<T extends Row = Row>(
   }, [sortKey, options.initialPage]);
 
   const refresh = useCallback(() => {
-    if (!client || options.autoLoad === false) return;
+    if (!client
+      || !authorizationBoundary.ready
+      || options.autoLoad === false
+      || !boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
     const requestId = ++requestRef.current;
     const controller = new AbortController();
+    const requestBoundaryKey = callbackBoundaryKey;
+    requestControllersRef.current.add(controller);
 
+    setLoadedBoundaryKey(requestBoundaryKey);
     setLoading(true);
     setError(null);
 
     client.fetch<DataPageResponse<T>>(query, { signal: controller.signal })
       .then((response) => {
-        if (requestRef.current !== requestId) return;
+        if (controller.signal.aborted
+          || requestRef.current !== requestId
+          || boundaryKeyRef.current !== requestBoundaryKey
+          || !boundaryReadyRef.current) return;
         collection.load(response.rows, { replace: options.replaceCollection ?? true });
         setPageInfo(response.page ?? {
           limit: pageSize,
@@ -139,7 +159,10 @@ export function useDataPage<T extends Row = Row>(
         });
       })
       .catch((err) => {
-        if (controller.signal.aborted || requestRef.current !== requestId) return;
+        if (controller.signal.aborted
+          || requestRef.current !== requestId
+          || boundaryKeyRef.current !== requestBoundaryKey
+          || !boundaryReadyRef.current) return;
         const nextError = err instanceof Error ? err : new Error(String(err));
         setError(nextError);
         emitFrontendCode(OBS_CODES.FRONTEND_DATA_PAGE_FAILED, {
@@ -148,66 +171,114 @@ export function useDataPage<T extends Row = Row>(
         });
       })
       .finally(() => {
-        if (!controller.signal.aborted && requestRef.current === requestId) {
+        requestControllersRef.current.delete(controller);
+        if (!controller.signal.aborted
+          && requestRef.current === requestId
+          && boundaryKeyRef.current === requestBoundaryKey
+          && boundaryReadyRef.current) {
           setLoading(false);
         }
       });
 
-    return () => controller.abort();
-  }, [client, collection.load, options.autoLoad, options.replaceCollection, page, pageSize, query, table]);
-
-  useEffect(() => {
-    const abort = refresh();
-    return abort;
-  }, [refresh]);
-
-  const setPage = useCallback((nextPage: number) => {
-    setPageState(normalizePage(nextPage));
-  }, []);
-
-  const nextPage = useCallback(() => {
-    setPageState((current) => current + 1);
-  }, []);
-
-  const previousPage = useCallback(() => {
-    setPageState((current) => normalizePage(current - 1));
-  }, []);
-
-  const setPageSize = useCallback((nextPageSize: number) => {
-    setPageSizeState(normalizePageSize(nextPageSize));
-    setPageState(1);
-  }, []);
-
-  const setSort = useCallback((nextSort: DataPageSort | null) => {
-    setSortState(nextSort);
-    setPageState(1);
-  }, []);
-
-  const setFilter = useCallback((field: string, value: DataFilterValue) => {
-    setFiltersState((current) => ({ ...current, [field]: value }));
-    setPageState(1);
-  }, []);
-
-  const setFilters = useCallback((nextFilters: DataPageFilters) => {
-    setFiltersState(nextFilters);
-    setPageState(1);
-  }, []);
-
-  const clearFilters = useCallback(() => {
-    setFiltersState({});
-    setPageState(1);
-  }, []);
-
-  return {
-    rows: collection.data,
+    return () => {
+      requestControllersRef.current.delete(controller);
+      controller.abort();
+    };
+  }, [
+    authorizationBoundary.key,
+    authorizationBoundary.ready,
+    callbackBoundaryKey,
+    client,
+    collection.load,
+    options.autoLoad,
+    options.replaceCollection,
     page,
     pageSize,
-    filters,
-    sort,
-    loading,
-    error,
-    pageInfo,
-    hasMore: pageInfo?.hasMore ?? false,
+    query,
+    table,
+  ]);
+
+  useEffect(() => {
+    requestRef.current += 1;
+    for (const controller of requestControllersRef.current) controller.abort();
+    requestControllersRef.current.clear();
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setPageInfo(null);
+    setError(null);
+    if (!authorizationBoundary.ready) {
+      setLoading(false);
+      return;
+    }
+    const abort = refresh();
+    return abort;
+  }, [authorizationBoundary.key, authorizationBoundary.ready, refresh]);
+
+  const setPage = useCallback((nextPage: number) => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setPageState(normalizePage(nextPage));
+  }, [callbackBoundaryKey]);
+
+  const nextPage = useCallback(() => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setPageState((current) => current + 1);
+  }, [callbackBoundaryKey]);
+
+  const previousPage = useCallback(() => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setPageState((current) => normalizePage(current - 1));
+  }, [callbackBoundaryKey]);
+
+  const setPageSize = useCallback((nextPageSize: number) => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setPageSizeState(normalizePageSize(nextPageSize));
+    setPageState(1);
+  }, [callbackBoundaryKey]);
+
+  const setSort = useCallback((nextSort: DataPageSort | null) => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setSortState(nextSort);
+    setPageState(1);
+  }, [callbackBoundaryKey]);
+
+  const setFilter = useCallback((field: string, value: DataFilterValue) => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setFiltersState((current) => ({ ...current, [field]: value }));
+    setPageState(1);
+  }, [callbackBoundaryKey]);
+
+  const setFilters = useCallback((nextFilters: DataPageFilters) => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setFiltersState(nextFilters);
+    setPageState(1);
+  }, [callbackBoundaryKey]);
+
+  const clearFilters = useCallback(() => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    setFiltersState({});
+    setPageState(1);
+  }, [callbackBoundaryKey]);
+
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+
+  return {
+    rows: visible ? collection.data : [],
+    page: visible ? page : normalizePage(options.initialPage ?? 1),
+    pageSize,
+    filters: visible ? filters : options.filters ?? {},
+    sort: visible ? sort : options.sort ?? null,
+    loading: authorizationBoundary.ready && (!visible || loading),
+    error: visible ? error : null,
+    pageInfo: visible ? pageInfo : null,
+    hasMore: visible ? pageInfo?.hasMore ?? false : false,
     refresh: () => { refresh(); },
     setPage,
     nextPage,
@@ -257,7 +328,7 @@ export interface IdentityRecordResult<T extends Row> {
   row: T | null;
   id: string | null;
   exists: boolean;
-  upsert: (row: T) => void;
+  upsert: (row: InsertInput<T>) => void;
   update: (partial: Partial<T>) => void;
   remove: () => void;
 }
@@ -273,28 +344,42 @@ export function useRecordByIdentity<T extends Row = Row>(
   identity: IdentityKey | null,
 ): IdentityRecordResult<T> {
   const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const collection = useMemo(() => client?.collection<T>(table) ?? null, [client, table]);
   const data = useCollection<T>(table);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const canUseScope = useCallback(
+    () => boundaryReadyRef.current && boundaryKeyRef.current === callbackBoundaryKey,
+    [callbackBoundaryKey],
+  );
   const identityKey = useMemo(
-    () => identity && collection ? collection.identityKey(identity) : null,
-    [collection, identity],
+    () => authorizationBoundary.ready && identity && collection
+      ? collection.identityKey(identity)
+      : null,
+    [authorizationBoundary.ready, collection, identity],
   );
   const row = useMemo(
-    () => identity && collection ? collection.getByIdentity(identity) : null,
-    [collection, data.byId, identity],
+    () => authorizationBoundary.ready && identity && collection
+      ? collection.getByIdentity(identity)
+      : null,
+    [authorizationBoundary.ready, collection, data.byId, identity],
   );
 
-  const upsert = useCallback((nextRow: T) => {
-    collection?.upsertByIdentity(nextRow);
-  }, [collection]);
+  const upsert = useCallback((nextRow: InsertInput<T>) => {
+    if (canUseScope()) collection?.upsertByIdentity(nextRow);
+  }, [canUseScope, collection]);
 
   const update = useCallback((partial: Partial<T>) => {
-    if (identity) collection?.updateByIdentity(identity, partial);
-  }, [collection, identity]);
+    if (canUseScope() && identity) collection?.updateByIdentity(identity, partial);
+  }, [canUseScope, collection, identity]);
 
   const remove = useCallback(() => {
-    if (identity) collection?.deleteByIdentity(identity);
-  }, [collection, identity]);
+    if (canUseScope() && identity) collection?.deleteByIdentity(identity);
+  }, [canUseScope, collection, identity]);
 
   return {
     row,

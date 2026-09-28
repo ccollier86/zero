@@ -8,6 +8,7 @@
  */
 
 import type {
+  AuthCompletionResult,
   AuthMfaChallengeRequiredResult,
   AuthMfaSetupRequiredResult,
 } from '../../frontend/client/auth-client';
@@ -17,6 +18,7 @@ import { MFAEnrollmentForm } from './mfa-enrollment-form';
 export interface MFAContinuationProps {
   result: AuthMfaSetupRequiredResult | AuthMfaChallengeRequiredResult;
   onSuccess?: () => void;
+  onComplete?: (result: AuthCompletionResult) => void;
   onBack?: () => void;
   className?: string;
 }
@@ -24,6 +26,7 @@ export interface MFAContinuationProps {
 export function MFAContinuation({
   result,
   onSuccess,
+  onComplete,
   onBack,
   className,
 }: MFAContinuationProps) {
@@ -34,6 +37,7 @@ export function MFAContinuation({
         methods={result.mfa.methods}
         allowUserChoice={result.mfa.allowUserChoice}
         onSuccess={onSuccess}
+        onComplete={onComplete}
         onBack={onBack}
         className={className}
       />
@@ -46,6 +50,7 @@ export function MFAContinuation({
       method={result.mfaChallenge.method}
       challenge={result.mfaChallenge.challenge}
       onSuccess={onSuccess}
+      onComplete={onComplete}
       onBack={onBack}
       className={className}
     />

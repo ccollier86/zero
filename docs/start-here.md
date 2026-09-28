@@ -29,6 +29,12 @@ For the package-mode framework surface and remaining package-mode work, see
 For frontend composition, reusable UI, Animate UI wrappers, app shells, forms,
 and data organisms, start with the
 [Component Inventory](./frontend/component-inventory.md).
+For web/server authentication, installation bootstrap, single- or multi-tenant
+operation, simple or advanced authorization, tenant/application administration,
+and packaged access controls, use the [Auth System](./auth/README.md) as the
+canonical subsystem index. It routes to the focused configuration, RBAC,
+onboarding, audit, browser, and installed-app guides without duplicating their
+contracts here.
 For styling decisions, read [Frontend Design Tokens](./frontend/design-tokens.md):
 Zero now has a quiet core app lane for dashboards and a richer public/frontend
 lane for docs, marketing, blogs, landing pages, and public flows.
@@ -37,7 +43,7 @@ starter that imports Zero through `@zero/framework/*`.
 Packaged `examples/native-auth` factories show the minimal trusted host bridge
 for desktop loopback and mobile browser-authentication sessions using the
 implemented `@zero/framework/native` TypeScript core. They do not make the
-separate Rust/Tauri Phase 0 scaffold or private Chrome preview released SDKs.
+separate functional Rust/Tauri and Chrome private previews into released SDKs.
 Choose an installed-app surface with the
 [App Authentication SDK Guide](./auth/app-auth-sdk-guide.md), then use the
 [complete provider guide](./auth/native-app-auth.md) for redirects, lifecycle,
@@ -89,8 +95,8 @@ bun run dev
 
 ## Update Zero Without Regenerating The App
 
-For an app created from this checkout, stop its app/dev server, install the
-local tools once, and run the checkout-bound updater from the app:
+For an app created through the local stable channel, stop its app/dev server,
+install the local tools once, and run the saved-package updater from the app:
 
 ```sh
 cd /path/to/zero-platform
@@ -99,13 +105,17 @@ cd /path/to/my-zero-app
 zero-update
 ```
 
-`zero-update [project-dir]` defaults to the current directory and packs the
-checkout that installed the wrapper. Preview it with `zero-update --dry-run`.
-For published-package projects, use `bun run zero update --project .`; add
-`--latest` only when you intentionally want the newest published release. If
-the installed framework predates this command, bootstrap it with
-`bunx --package @zero/framework@latest zero update --project .`. The equivalent
-explicit local command is:
+`zero-update [project-dir]` defaults to the current directory and installs the
+package saved from committed local `main`. It never packs the live checkout or
+falls back to uncommitted source. Preview it with `zero-update --dry-run`; a
+missing or corrupt saved package fails closed. For published-package projects,
+use `bun run zero update --project .`; add `--latest` only when you intentionally
+want the newest published release. If the installed framework predates this
+command, bootstrap it with
+`bunx --package @zero/framework@latest zero update --project .`.
+
+For deliberate testing of an unreleased working checkout, bypass the stable
+wrapper explicitly:
 
 ```sh
 zero update --project /path/to/my-zero-app --local /path/to/zero-platform
@@ -113,17 +123,18 @@ zero update --project /path/to/my-zero-app --local /path/to/zero-platform
 
 The project must already have exactly one `bun.lock` or `bun.lockb`, even for a
 dry-run. Commit that lockfile for checkout-local apps. The updater directly
-manages only Zero dependency artifacts and package-manager install state. A
-local update regenerates the ignored `.zero/framework/zero-framework.tgz`
-cache from the chosen checkout. In a clean clone, the `.zero/` directories and
-archive may be completely absent; a mutating update creates them before
-installation, while `--dry-run` reports the pending work without creating
-anything. Existing symlinks or wrong-type entries at those managed paths are
-rejected. The updater leaves app-owned files, environment configuration,
-databases, and storage alone in its default mode, and runs no app-defined
-scripts. `--check` executes the project's existing typecheck and Doctor
-scripts; review them first because their side effects are outside updater
-rollback. Zero itself never selects a migration command. Run
+manages only Zero dependency artifacts and package-manager install state. The
+stable wrapper copies its saved archive into the ignored
+`.zero/framework/zero-framework.tgz` cache; the explicit `--local` development
+path packs only the checkout the caller named. In a clean clone, the `.zero/`
+directories and archive may be completely absent; a mutating update creates
+them before installation, while `--dry-run` reports the pending work without
+creating anything. Existing symlinks or wrong-type entries at those managed
+paths are rejected. The updater leaves app-owned files, environment
+configuration, databases, and storage alone in its default mode, and runs no
+app-defined scripts. `--check` executes the project's existing typecheck and
+Doctor scripts; review them first because their side effects are outside
+updater rollback. Zero itself never selects a migration command. Run
 `bun run migrate:plan` separately and intentionally against the correct
 database or a safe copy before applying any database change.
 
@@ -375,7 +386,7 @@ flag on self-editable user preferences.
 
 For server-side resource authorization, use the policy core exported from
 `@zero/framework/server`: `defineResource()`, `ownerPolicy()`,
-`metadataPolicy()`, `adminOnly()`, `anyOf()`, `allOf()`,
+`metadataPolicy()`, `authorizationPolicy()`, `adminOnly()`, `anyOf()`, `allOf()`,
 `validateResourcePolicy()`, and `evaluateResourcePolicy()`. Resource
 definitions can live in `server/resources` or `createApp({ resources })`.
 Generated CRUD routes are enabled by default at `/api/resources/:resource` and
@@ -387,17 +398,63 @@ lazy tables, including owner constraints and trusted metadata checks. WebSocket
 sync enforces registered resource policy too: unconstrained `list` policies can
 use the normal fast sync path, row-constrained `list` policies use
 per-connection row-filtered sync, and direct sync mutations evaluate resource
-create/update/delete policy server-side. Platform doctor validates registered
+create/update/delete policy server-side. Tenant resource realms add mandatory
+SQL/read and Sync row boundaries outside those discretionary policies.
+`authorizationPolicy({ tenant: 'required', permission: 'records:read' })`
+reuses the exact route RBAC requirement and live application/tenant assignment
+for CRUD, `/api/data`, and Sync; no custom role adapter is required.
+An optional `fields: defineResourceFields({ read, create, update, filter,
+sort })` declaration applies one frozen column allow-list to all three
+transports. Hidden columns remain available to server policy but never enter
+managed responses, Sync caches, filters, sorts, or client writes. Pass that
+same names-only object as `<CrudPage resourceFields={...}>` to keep generated
+table columns and forms aligned with the server boundary.
+Platform doctor validates registered
 resource shape, missing owner columns, trusted metadata keys, auth-disabled
 protected resources, list-policy behavior for `/api/data` and sync, and
 owner-field index guidance.
 
-App-owned backend handlers receive a lazy `zero` service context. Use canonical
-names in new code: `zero.db`, `zero.auth`, `zero.ai`, `zero.vector`, `zero.pdf`,
-`zero.email`, `zero.storage`, `zero.notifications`, `zero.scheduler`,
-`zero.workflows`, `zero.resources`, and `zero.observability`. Older aliases
-still work: `zero.syncDB`, `zero.vectors`, `zero.workflowRegistry`, and
-`zero.auth.getTokenService()`.
+Keep resource files next to the schema they protect, but keep enforceable
+policy server-only. Shared `defineTable()`/`schema()` metadata and a table's
+`sync` mode do not grant access. Pass the typed definition directly with
+`defineResource({ table: tableDefinition, exposure: 'all', realm: tenantRealm(), policy })`.
+Exposure is `internal`, `http`, `sync`, or `all`;
+multi-tenant apps must declare it, while single mode preserves omitted-as-`all`
+compatibility. A `sync`-only resource must use full Sync, and lazy/auto-lazy
+Sync hydration requires `all` because it also uses `/api/data`; an HTTP-only
+resource may use `/api/data` without joining Sync. Multi-tenant apps must
+explicitly classify every app-managed table as tenant or global; omitted realms
+remain compatible in single-tenant mode. Omitted `actions` enables the standard
+list/get/create/update/delete set; explicit `actions: []` enables none, and a
+per-action policy map cannot contain keys outside the declared action set. See
+[Resource Policy Core](./framework/resource-policy.md).
+
+For tenant resources, the discriminator must be a separate `NOT NULL` column.
+Zero checks both the declaration and the actual SQLite table at startup, stamps
+it from the live tenant session, rejects it in updates, and keeps it in the
+final SQL predicate. If an existing database is still nullable, add a migration
+before enabling multi-tenancy; Zero fails startup instead of guessing a repair.
+Managed tenant and resource-policy equality also requires the same SQLite
+storage class and `BINARY` value equality at read/write boundaries. Existing
+`COLLATE NOCASE` declarations remain usable, but they cannot make a case-only
+tenant or owner-id variant authorize. Caller `filter=` values keep normal
+SQLite query semantics and are ANDed with these stricter server predicates.
+All registered creates are non-replacing. Registered updates/deletes compare
+the policy-evaluated row snapshot in the final SQL write, and managed Zero auth
+rechecks durable session and trusted-property authority inside that same SQLite
+transaction. `/api/data` uses the equivalent transaction-bound authority check
+for its final resource query.
+
+App-owned backend handlers receive a lazy `zero` service context. In
+single-tenant mode, canonical service names and their older aliases retain the
+existing behavior. In multi-tenant mode, `zero.access` and `zero.scope` carry
+the live server-owned authority; Storage, notifications, rooms, workflows,
+PDF-to-storage, and observability emission are request-scoped. Raw DB/SQL,
+auth stores/tokens, KV, vector, scheduler, and control-plane handles require an
+explicit `zero.unsafe.*` access so arbitrary backend code cannot silently claim
+tenant isolation. Prefer tenant-realm resources for normal app data and reserve
+`zero.unsafe` for reviewed privileged operations with an explicit tenant
+predicate.
 
 Inside those services, prefer the small standard method vocabulary:
 `create()`, `get()`, `list()`, `update()`, `delete()`, `run()`, `stop()`, and
@@ -563,6 +620,7 @@ Common variables:
 | `AUTH_ACCOUNT_EMAIL_COOLDOWN` | Cooldown for active setup/reset/verification emails per user/type. |
 | `AUTH_MANUAL_PASSWORD_RESET` | `false` disables direct admin password replacement. |
 | `AUTH_SIGNING_KEY` | Optional externally managed ES256 private JWK. |
+| `ZERO_STORAGE_SIGNING_SECRET` | Optional shared HMAC key for storage presigned URLs/upload grants. Use at least 32 random bytes for ephemeral databases or replicas with separate databases. |
 | `ZERO_KV_BASE_DIR` | Optional app convention for KV journal/checkpoint files. Defaults to `./data/kv`. |
 | `ZERO_KV_DURABILITY` | Optional app convention for KV durability: `everysec` or `always`. |
 | `OPENAI_API_KEY` | Enables OpenAI in the AI layer. |
@@ -623,13 +681,13 @@ Zero includes these backend capabilities out of the box:
 
 | System | What it provides |
 | --- | --- |
-| Auth | Users, admin bootstrap, token rotation, registration policy, configured user properties, account status, setup/reset flows, and installed-app OIDC/PKCE. |
+| Auth | Users, installation bootstrap, all four tenancy/authorization profiles, durable scoped sessions, declarative RBAC, tenant/application administration, invitations/join requests, configured user properties, account gates, and installed-app OIDC/PKCE. |
 | Email | Provider boundary with Resend default and custom provider support. |
 | ReactiveDB | SQLite table definition, change tracking, ring-buffer replay, natural identity. |
 | Sync | WebSocket snapshots, live updates, lazy/auto sync, sync policy hooks. |
 | Data API | `/api/data` reads for lazy tables with pagination, sorting, filtering, limits, and auth/policy integration. |
 | Storage | Built-in file storage with platform auth boundaries and a reusable management organism. |
-| State Sync | Per-user server-persisted reactive key/value state. |
+| State Sync | Server-persisted reactive key/value state isolated per authorized-scope user. |
 | Notifications | Server-created notifications and receipt tracking. |
 | Rooms/Presence | Presence and room coordination primitives. |
 | Workflows | Built-in workflow/scheduler infrastructure. |
@@ -638,6 +696,27 @@ Zero includes these backend capabilities out of the box:
 | AI | Internal server-side AI service with env-detected providers, custom Meta Llama adapter, aliases, conversations, tools, embeddings, images, transcription, speech, and protected status. |
 | Vector Store | Local zvec-backed vector persistence/search with scoped filters and AI embedding bridge helpers. |
 | PDF | Secure browser-grade HTML/CSS-to-PDF rendering with bounded concurrency, strict resource policy, storage composition, and a replaceable renderer adapter. |
+
+Current development boundary: this unreleased tree implements `single/simple`,
+`single/advanced`, `multi/simple`, and `multi/advanced`, including scoped
+resources, Sync, managed services, tenant onboarding/control surfaces, and
+browser authorization state, including opt-in verified-company-domain request
+onboarding and the bounded durable authorization/control-plane audit. The
+optional protected Administration Organization/platform-tenant lifecycle,
+break-glass support, tenant-custom roles, populated-app adoption tooling, domain
+autojoin/aliases/direct transfer, and upstream enterprise SSO remain future
+capabilities. Registered resources now declare explicit server-owned client
+exposure and optional field allow-lists. Managed file-mode runtimes sharing one
+SQLite database relay tracked changes and auth/session invalidations without
+sticky socket ownership; hot/ephemeral or separate-database replicas require an
+external coordination layer. Multi-mode startup inspects actual SQLite metadata and requires a
+non-partial tenant-leading index, tenant-scoped business uniqueness, and the
+tenant pair inside foreign keys between registered tenant resources.
+Default `createApp()` installs
+framework-table and managed ephemeral-topic policy, while direct `createSyncPlugin()`
+composition needs explicit auth/policy. See [Releasing Zero](./releasing.md)
+and the [auth implementation checklist](./auth/multi-tenant-auth-implementation-checklist.md)
+for the complete supported-versus-preview boundary.
 
 ## Frontend Hook Library
 
@@ -649,7 +728,7 @@ Platform-specific hooks include:
 
 | Area | Hooks |
 | --- | --- |
-| Auth/session | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty` |
+| Auth/session and access | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useAuthorization`, `useAuthorizationScopeBoundary`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `useAuthAudit`, `useTenantSwitcher`, `useTenantAppShellWorkspaces`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding` |
 | Live data | `useCollection`, `useLazyCollection`, `useDataPage`, `useRecord`, `useRecordByIdentity`, `useDataSelection` |
 | Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
 | Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveQuota` |
@@ -866,12 +945,15 @@ Choose carefully:
 - `@zero/framework/native` is the usable TypeScript core in the current source.
   Pin a framework release that includes it and use the packaged desktop/mobile
   recipes.
-- Rust `zero-native-auth` and `tauri-plugin-zero-auth` are Phase 0 design
-  scaffolds only. They do not yet authenticate or provide Tauri commands; do
-  not put the TypeScript credential owner in a Svelte webview as a substitute.
-- `@zero/chrome-auth` is a separate private Manifest V3 preview, not a registry
-  release. It still needs a released native peer range, real-Chrome end-to-end
-  testing, and security review.
+- Rust `zero-native-auth` and `tauri-plugin-zero-auth` are functional private
+  `0.0.0` previews with a Rust-owned OIDC/PKCE/session core, tenant operations,
+  authenticated HTTP, vault abstraction, and deny-by-default Tauri commands.
+  Keep credentials out of the Svelte webview. The repositories still need
+  release ownership, versions, licenses, host adapters, and platform security
+  certification before registry publication.
+- `@zero/chrome-auth` is a functional private Manifest V3 preview, not a
+  registry release. It still needs a released framework peer range,
+  real-Chrome end-to-end testing, and independent security review.
 
 Read the [SDK selection and onboarding guide](./auth/app-auth-sdk-guide.md)
 before choosing a host architecture, then follow
@@ -881,7 +963,14 @@ and deployment contract.
 
 ## Auth Defaults
 
-The first registered user is always the bootstrap admin. After that:
+Fresh authenticated apps default to secret-gated first-administrator setup.
+Configure `auth.bootstrap.secret` from a deployment secret of at
+least 32 characters; the packaged register form asks for it once. Zero records
+completion durably so deleting users cannot reopen setup. The legacy
+first-request-wins behavior requires the explicit and Doctor-warned
+`bootstrap: 'public'` selection.
+
+After bootstrap, `auth.registration.mode` controls account creation:
 
 | Mode | Behavior |
 | --- | --- |
@@ -897,15 +986,18 @@ activate, revoke sessions, direct reset, setup email, and password reset email.
 For frontend admin dashboards, use the reusable organism instead of a page:
 
 ```tsx
-import { UserManagement } from '@zero/framework/react';
+import { PlatformUserManagement } from '@zero/framework/react';
 
 export function UsersSettingsPanel() {
-  return <UserManagement className="h-[720px]" />;
+  return <PlatformUserManagement className="h-[720px]" />;
 }
 ```
 
-The component self-wires to the admin auth SDK, loads `/auth/admin/config`,
-uses backend pagination plus `search`, `role`, and `status` filters, adapts
+`PlatformUserManagement` is the explicit global-identity administration name;
+`UserManagement` remains an exact compatibility alias. It does not manage
+tenant membership or tenant roles. The component self-wires to the admin auth
+SDK, loads `/auth/admin/config`, uses backend pagination plus `search`, `role`,
+and `status` filters, adapts
 configured `auth.userProperties` into typed controls, and hides email-only
 actions when the email runtime is not ready. When `strictUserProperties` is
 false, it also lets admins add, edit, and remove unconfigured key/value
@@ -922,7 +1014,8 @@ Email-driven setup/reset flows validate email readiness before changing account
 state. Forgot-password responses avoid user enumeration and cooldown repeats do
 not send additional emails.
 
-Reusable auth UI blocks are exported from `@zero/framework/react`:
+Reusable auth UI blocks are exported from
+`@zero/framework/components/auth`:
 
 ```tsx
 import {
@@ -935,7 +1028,7 @@ import {
   PasswordActionForm,
   RegisterForm,
   UserPropertiesForm,
-} from '@zero/framework/react';
+} from '@zero/framework/components/auth';
 ```
 
 `LoginForm`, `RegisterForm`, and `ForgotPasswordForm` read `/auth/config` and
@@ -1000,6 +1093,12 @@ Return the token to the browser and upload with
 default and the grant cannot overwrite an existing object unless
 `overwrite: true` is set.
 
+Zero persists a random 32-byte storage capability key in a durable app
+database when neither `storage.signingSecret` nor
+`ZERO_STORAGE_SIGNING_SECRET` is set. Configure the secret explicitly for an
+ephemeral production database or replicas that do not share a database;
+rotating it invalidates outstanding presigned URLs and upload grants.
+
 For custom storage UI, prefer the platform hooks before writing raw fetches:
 `useStorageDrives()` returns accessible drives with current-user access,
 `useDriveCapabilities(driveId, path?)` returns `canRead`, `canWrite`, and
@@ -1008,9 +1107,12 @@ surfaces.
 
 ## Configuration Files
 
-The long-term shape is a `zero/` or `config/zero/` folder with typed config
-modules. Inline `createApp()` config is supported today and should stay small.
-See [Platform Configuration Protocol](./platform-configuration.md).
+The current runtime accepts one explicitly composed `AppConfig`. Keep the
+entry object in `zero.config.ts`; it may import ordinary app-owned typed modules
+such as `config/auth.ts`, but `createApp()` does not discover them. Inline
+`createApp()` config is also supported. See
+[Platform Configuration](./platform-configuration.md) for the current contract
+and the separately labeled future discovery proposal.
 
 ## Development Loop
 
@@ -1020,4 +1122,4 @@ See [Platform Configuration Protocol](./platform-configuration.md).
 4. Run `bun run doctor -- --config ./zero.config.ts` for app config.
 5. Run `bun run migrate:doctor -- --schema ./app/lib/schemas.ts`.
 6. Use `--strict` in CI.
-7. Run `bun run typecheck` and `bun test` before shipping platform changes.
+7. Run `bun run typecheck` and `bun run test` before shipping platform changes.

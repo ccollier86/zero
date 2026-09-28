@@ -14,13 +14,13 @@ import {
   HighlightItem,
   type HighlightProps,
   type HighlightItemProps,
-} from '@/components/animate-ui/primitives/effects/highlight';
-import { getStrictContext } from '@/lib/get-strict-context';
-import { useControlledState } from '@/hooks/use-controlled-state';
+} from '#zero/components/animate-ui/primitives/effects/highlight';
+import { getStrictContext } from '#zero/lib/get-strict-context';
+import { useControlledState } from '#zero/hooks/use-controlled-state';
 import {
   AutoHeight,
   type AutoHeightProps,
-} from '@/components/animate-ui/primitives/effects/auto-height';
+} from '#zero/components/animate-ui/primitives/effects/auto-height';
 
 type TabsContextType = {
   value: string | undefined;

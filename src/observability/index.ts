@@ -13,7 +13,9 @@ export { MemoryEventStore } from './memory-event-store';
 export {
   configureObservability,
   emitPlatformCode,
+  emitPlatformCodeTo,
   emitPlatformEvent,
+  emitPlatformEventTo,
   errorPlatform,
   getObservabilityRuntime,
   getPlatformEventStore,

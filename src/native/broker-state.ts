@@ -14,7 +14,10 @@ export function cloneNativeAuthState(state: NativeAuthState): NativeAuthState {
       })
     : null;
   const error = state.error ? Object.freeze({ ...state.error }) : null;
-  return Object.freeze({ status: state.status, identity, error });
+  const activeTenant = state.activeTenant
+    ? Object.freeze({ ...state.activeTenant })
+    : null;
+  return Object.freeze({ status: state.status, identity, activeTenant, error });
 }
 
 export function sameNativeAuthState(left: NativeAuthState, right: NativeAuthState): boolean {

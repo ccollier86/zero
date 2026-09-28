@@ -5,8 +5,12 @@
  * response. It does not authenticate requests or register routes.
  */
 
-import { getEmailRuntime, isEmailDeliveryReady } from '../email';
+import { isEmailDeliveryReady, type EmailRuntime } from '../email';
 import { resolveAuthEmailBranding } from './auth-email-templates';
+import {
+  buildBootstrapCapability,
+  buildRegistrationCapability,
+} from './auth-bootstrap';
 import type { MfaService } from './mfa-service';
 import type { ResolvedAuthBehaviorConfig } from './types';
 import type { UserStore } from './user-store';
@@ -15,20 +19,81 @@ import type { UserStore } from './user-store';
 export function buildAdminConfigResponse(
   store: UserStore,
   config: ResolvedAuthBehaviorConfig,
-  mfaService: MfaService | null
+  mfaService: MfaService | null,
+  emailRuntime: EmailRuntime,
 ) {
   const userCount = store.countUsers();
-  const emailRuntime = getEmailRuntime();
+  const bootstrapRequired = store.isBootstrapRequired();
+  const bootstrap = buildBootstrapCapability(config, bootstrapRequired);
+  const registration = buildRegistrationCapability(config, bootstrapRequired);
   const branding = resolveAuthEmailBranding(emailRuntime.app, config.branding);
   const emailDeliveryReady = isEmailDeliveryReady(emailRuntime);
   const accountEmailReady = emailDeliveryReady && Boolean(branding.publicUrl);
   const mfa = mfaService?.buildAdminConfig({ emailOtpReady: emailDeliveryReady });
+  const authorizationMode = config.authorization?.mode ?? 'simple';
+  const authorization = authorizationMode === 'simple'
+    && (config.tenancy?.mode ?? 'single') === 'single'
+    ? { mode: authorizationMode }
+    : {
+        mode: authorizationMode,
+        permissions: config.authorization?.permissions ?? {},
+        roles: Object.fromEntries(
+          Object.entries(config.authorization?.roles ?? {}).map(([key, role]) => [
+            key,
+            { ...role, assignable: !role.system },
+          ]),
+        ),
+      };
+  const tenancy = {
+    mode: config.tenancy?.mode ?? 'single' as const,
+    terminology: config.tenancy?.terminology ?? {
+      singular: 'organization',
+      plural: 'organizations',
+    },
+    creation: {
+      mode: config.tenancy?.creation.mode ?? 'disabled' as const,
+    },
+    ...((config.tenancy?.mode ?? 'single') === 'multi'
+      ? {
+          onboarding: {
+            invitations: {
+              enabled: config.tenancy?.onboarding?.invitations.enabled ?? true,
+              accountCreation:
+                config.tenancy?.onboarding?.invitations.accountCreation ?? true,
+              delivery: {
+                default: config.tenancy?.onboarding?.invitations.delivery.default
+                  ?? 'manual' as const,
+                manual: config.tenancy?.onboarding?.invitations.delivery.allowManual
+                  ?? true,
+                email: Boolean(
+                  config.tenancy?.onboarding?.invitations.delivery.email.enabled
+                  && accountEmailReady,
+                ),
+              },
+            },
+            joinRequests: {
+              enabled: config.tenancy?.onboarding?.joinRequests.enabled ?? true,
+            },
+            ...(config.tenancy?.onboarding?.verifiedDomains.enabled
+              && accountEmailReady
+              ? {
+                  verifiedDomains: {
+                    enabled: true,
+                    admission: 'request-to-join' as const,
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
+  };
 
   return {
+    tenancy,
+    authorization,
+    bootstrap,
     registration: {
-      ...config.registration,
-      bootstrapRequired: userCount === 0,
-      publicRegistrationEnabled: userCount === 0 || config.registration.mode === 'public',
+      ...registration,
       userCount,
     },
     email: {

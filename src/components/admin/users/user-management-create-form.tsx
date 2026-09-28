@@ -53,6 +53,8 @@ export function UserManagementCreateForm({
   onSubmit,
 }: UserManagementCreateFormProps) {
   const setupEmailReady = Boolean(config?.capabilities.setupEmail);
+  const multiTenant = config?.tenancy?.mode === 'multi';
+  const tenantSingular = config?.tenancy?.terminology?.singular ?? 'organization';
   const defaultSendSetupEmail = Boolean(
     setupEmailReady && config?.accountEmails.adminCreatedUser,
   );
@@ -154,7 +156,9 @@ export function UserManagementCreateForm({
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="zero-admin-create-role">Role</Label>
+          <Label htmlFor="zero-admin-create-role">
+            {multiTenant ? 'Platform role' : 'Role'}
+          </Label>
           <Select value={state.role} onValueChange={(value) => update('role', value)}>
             <SelectTrigger id="zero-admin-create-role">
               <SelectValue />
@@ -167,6 +171,11 @@ export function UserManagementCreateForm({
               ))}
             </SelectContent>
           </Select>
+          {multiTenant && (
+            <p className="text-xs text-muted-foreground">
+              Platform roles govern installation-wide administration. {capitalize(tenantSingular)} access is managed separately.
+            </p>
+          )}
         </div>
         {!state.sendSetupEmail && (
           <div className="space-y-2">
@@ -225,4 +234,8 @@ export function UserManagementCreateForm({
       </div>
     </form>
   );
+}
+
+function capitalize(value: string): string {
+  return value.length === 0 ? value : value[0]!.toUpperCase() + value.slice(1);
 }

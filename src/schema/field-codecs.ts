@@ -35,10 +35,20 @@ function encodeJson(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
 
+/** Decode the integer/text representations SQLite may return for a boolean. */
+export function decodeBooleanValue(value: unknown): boolean {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+/** Encode an application boolean into the integer representation SQLite uses. */
+export function encodeBooleanValue(value: unknown): 0 | 1 {
+  return decodeBooleanValue(value) ? 1 : 0;
+}
+
 export function decodeFieldValue(meta: FieldMeta, value: unknown): unknown {
   switch (meta.type) {
     case 'boolean':
-      return value === true || value === 1 || value === '1' || value === 'true';
+      return decodeBooleanValue(value);
 
     case 'multiSelect':
     case 'tags':
@@ -61,7 +71,7 @@ export function decodeFieldValue(meta: FieldMeta, value: unknown): unknown {
 export function encodeFieldValue(meta: FieldMeta, value: unknown): unknown {
   switch (meta.type) {
     case 'boolean':
-      return value === true || value === 1 || value === '1' || value === 'true' ? 1 : 0;
+      return encodeBooleanValue(value);
 
     case 'multiSelect':
     case 'tags':

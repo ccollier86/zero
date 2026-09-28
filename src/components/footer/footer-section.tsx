@@ -9,9 +9,9 @@
 
 import * as React from 'react';
 
-import { AnimateIcon } from '@/components/animate-ui/icons';
-import { HeroActions } from '@/components/hero';
-import { cn } from '@/lib/utils';
+import { AnimateIcon } from '#zero/components/animate-ui/icons';
+import { HeroActions } from '#zero/components/hero';
+import { cn } from '#zero/lib/utils';
 
 import type { FooterSectionBrand, FooterSectionLink, FooterSectionProps } from './footer-section.types';
 

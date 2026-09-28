@@ -6,9 +6,14 @@
  * and authenticated HTTP transport remain in storage routes and SDK-backed hooks.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { OBS_CODES } from '../observability/codes';
 import { emitFrontendCode } from '../frontend/client/observability';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from '../frontend/client/authorization-scope-hooks';
+import { useClientMaybe } from '../frontend/client/client-context';
 import type { DriveUsage, FileInfo } from './types';
 import {
   useDriveUsage,
@@ -83,22 +88,50 @@ export function useStorageBrowser(
   driveId: string | null,
   initialPath = '',
 ): UseStorageBrowserReturn {
+  const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const [path, setPathState] = useState(cleanPath(initialPath));
   const [selected, setSelected] = useState<FileInfo | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const isCurrentScope = useCallback(
+    () => isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    ),
+    [callbackBoundaryKey],
+  );
   const folder = useStorageFolder(driveId, path);
   const actions = useStorageActions();
   const uploadQueue = useUploadQueue();
 
+  useEffect(() => {
+    setPathState(cleanPath(initialPath));
+    setSelected(null);
+    setActionError(null);
+    setLoadedBoundaryKey(authorizationBoundary.key);
+  }, [authorizationBoundary.key, initialPath]);
+
   const runStorageAction = useCallback(
     async <T,>(name: string, action: () => Promise<T>): Promise<T | null> => {
-      if (!driveId) return null;
+      if (!driveId || !isCurrentScope()) return null;
+      const requestBoundaryKey = callbackBoundaryKey;
       setActionError(null);
       try {
         const result = await action();
+        if (!boundaryReadyRef.current
+          || boundaryKeyRef.current !== requestBoundaryKey) return null;
         folder.refresh();
         return result;
       } catch (err) {
+        if (!boundaryReadyRef.current
+          || boundaryKeyRef.current !== requestBoundaryKey) throw err;
         const message = err instanceof Error ? err.message : 'Storage action failed';
         setActionError(message);
         emitFrontendCode(OBS_CODES.FRONTEND_STORAGE_ACTION_FAILED, {
@@ -108,26 +141,33 @@ export function useStorageBrowser(
         throw err;
       }
     },
-    [driveId, folder.refresh, path],
+    [callbackBoundaryKey, driveId, folder.refresh, isCurrentScope, path],
   );
 
   const openFolder = useCallback((folderOrPath: FileInfo | string) => {
+    if (!isCurrentScope()) return;
     const nextPath = typeof folderOrPath === 'string'
       ? folderOrPath
       : folderOrPath.path;
     setPathState(cleanPath(nextPath));
     setSelected(null);
-  }, []);
+  }, [isCurrentScope]);
 
   const setPath = useCallback((nextPath: string) => {
+    if (!isCurrentScope()) return;
     setPathState(cleanPath(nextPath));
     setSelected(null);
-  }, []);
+  }, [isCurrentScope]);
 
   const goUp = useCallback(() => {
+    if (!isCurrentScope()) return;
     setPathState((current) => parentPath(current));
     setSelected(null);
-  }, []);
+  }, [isCurrentScope]);
+
+  const select = useCallback((item: FileInfo | null) => {
+    if (isCurrentScope()) setSelected(item);
+  }, [isCurrentScope]);
 
   const uploadFiles = useCallback(
     async (files: File[] | FileList, options: UploadQueueFilesOptions = {}) => {
@@ -157,19 +197,25 @@ export function useStorageBrowser(
 
   const deleteSelected = useCallback(async () => {
     if (!selected) return;
+    if (!isCurrentScope()) return;
+    const requestBoundaryKey = callbackBoundaryKey;
     await runStorageAction('deleteSelected', () => actions.deleteFile(selected.driveId, selected.path));
-    setSelected(null);
-  }, [actions, runStorageAction, selected]);
+    if (boundaryReadyRef.current
+      && boundaryKeyRef.current === requestBoundaryKey) setSelected(null);
+  }, [actions, callbackBoundaryKey, isCurrentScope, runStorageAction, selected]);
 
   const moveSelected = useCallback(
     async (to: string) => {
       if (!selected) return null;
+      if (!isCurrentScope()) return null;
+      const requestBoundaryKey = callbackBoundaryKey;
       const result = await runStorageAction('moveSelected', () =>
         actions.moveFile(selected.driveId, selected.path, to));
-      setSelected(result);
+      if (boundaryReadyRef.current
+        && boundaryKeyRef.current === requestBoundaryKey) setSelected(result);
       return result;
     },
-    [actions, runStorageAction, selected],
+    [actions, callbackBoundaryKey, isCurrentScope, runStorageAction, selected],
   );
 
   const copySelected = useCallback(
@@ -182,25 +228,28 @@ export function useStorageBrowser(
   );
 
   const refresh = useCallback(() => {
-    folder.refresh();
-  }, [folder.refresh]);
+    if (isCurrentScope()) folder.refresh();
+  }, [folder.refresh, isCurrentScope]);
+
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
 
   return useMemo(
     () => ({
       driveId,
-      path,
-      isRoot: path.length === 0,
+      path: visible ? path : cleanPath(initialPath),
+      isRoot: visible ? path.length === 0 : cleanPath(initialPath).length === 0,
       items: folder.items,
-      selected,
+      selected: visible ? selected : null,
       total: folder.total,
       loading: folder.loading,
       error: folder.error,
-      actionError,
+      actionError: visible ? actionError : null,
       uploadQueue,
       openFolder,
       goUp,
       setPath,
-      select: setSelected,
+      select,
       uploadFiles,
       createFolder,
       deleteSelected,
@@ -219,14 +268,17 @@ export function useStorageBrowser(
       folder.loading,
       folder.total,
       goUp,
+      initialPath,
       moveSelected,
       openFolder,
       path,
       refresh,
       selected,
+      select,
       setPath,
       uploadFiles,
       uploadQueue,
+      visible,
     ],
   );
 }

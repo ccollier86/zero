@@ -26,10 +26,18 @@ export type {
   FieldMeta,
   FieldDef,
   InferRow,
+  InferInsert,
+  InsertInput,
+  PrimaryKeyOf,
   Register,
   TableNames,
   TableRow as RegisteredTableRow,
 } from '../schema';
+export { defineResourceFields } from '../resources/resource-field-access';
+export type {
+  ResourceFieldAccess,
+  ResourceFieldAccessInput,
+} from '../resources/resource-field-access';
 
 // ─── SDK Core (vanilla JS — no React required) ──────────────────────────
 export { createClient, getClient, FetchError } from './client/sdk';
@@ -53,8 +61,53 @@ export { unwrap } from './client/api';
 export type { Api } from './client/api';
 
 // ─── Auth Client (vanilla JS) ────────────────────────────────────────────
-export { AuthClient, AuthClientError } from './client/auth-client';
+export {
+  AuthClient,
+  AuthClientError,
+  AuthSessionSynchronizationError,
+  hasAnyAuthorizationPermission,
+  hasAuthorizationPermission,
+  hasEveryAuthorizationPermission,
+  isAuthEmailVerificationRequiredResult,
+  isAuthTenantOnboardingRequiredResult,
+  isAuthTenantSelectionRequiredResult,
+} from './client/auth-client';
+
 export type {
+  AuthAuditActorProvenance,
+  AuthAuditEvent,
+  AuthAuditExport,
+  AuthAuditMetadata,
+  AuthAuditMetadataValue,
+  AuthAuditOutcome,
+  AuthAuditPage,
+  AuthAuditPruneResult,
+  AuthAuditQuery,
+  AuthAuditReadScope,
+  AuthAuditScopeKind,
+  AuthAuditSdkSurface,
+} from './client/auth-audit-types';
+export type {
+  AuthAuthorizationIdentitySnapshot,
+  AuthAuthorizationScopeSnapshot,
+  AuthAuthorizationSnapshot,
+  AuthAuthorizationState,
+  AuthAuthorizationStatus,
+  AuthDomainOnboardingAdmissionResult,
+  AuthDomainOnboardingCompletion,
+  AuthDomainOnboardingPendingRequest,
+  AuthDomainOnboardingStatus,
+  AuthDomainOnboardingTenantSummary,
+  AuthApplicationAdministrationConfig,
+  AuthApplicationAdminSdkSurface,
+  AuthApplicationOwnershipTransferResult,
+  AuthApplicationRoleDescriptor,
+  AuthApplicationRoleMutationResult,
+  AuthApplicationUser,
+  AuthApplicationUserIdentity,
+  AuthApplicationUserListParams,
+  AuthApplicationUserPage,
+  AuthApplicationUserStatus,
   AuthAdminConfig,
   AuthAdminCreateUserParams,
   AuthAdminMfaRequirement,
@@ -65,6 +118,7 @@ export type {
   AuthAdminUserListParams,
   AuthAdminUserListResult,
   AuthCompletionResult,
+  AuthEmailVerificationRequiredResult,
   AuthMfaChallenge,
   AuthMfaChallengeRequiredResult,
   AuthMfaMethod,
@@ -74,7 +128,56 @@ export type {
   AuthMfaSetupVerifyResult,
   AuthPasswordUpdatedResult,
   AuthPublicConfig,
+  AuthRegistrationResult,
+  AuthRegistrationTenant,
   AuthSessionResult,
+  AuthSessionTransitionOperation,
+  AuthSessionTransitionState,
+  AuthTenantListResult,
+  AuthTenantCreateParams,
+  AuthTenantDomainAdministration,
+  AuthTenantDomainChallengeResult,
+  AuthTenantDomainClaim,
+  AuthTenantDomainClaimResult,
+  AuthTenantDomainClaimStatus,
+  AuthTenantDomainDnsChallenge,
+  AuthTenantDomainPolicy,
+  AuthTenantDomainPolicyUpdate,
+  AuthTenantDomainReleaseInput,
+  AuthTenantDomainReleaseResult,
+  AuthTenantDomainRequestRole,
+  AuthTenantOnboardingRequiredResult,
+  AuthTenantSelectionRequiredResult,
+  AuthTenantSummary,
+  AuthTenantAddMemberParams,
+  AuthTenantAdministrationConfig,
+  AuthTenantMember,
+  AuthTenantMemberIdentity,
+  AuthTenantMemberListParams,
+  AuthTenantMemberMutationResult,
+  AuthTenantMemberPage,
+  AuthTenantMembershipStatus,
+  AuthTenantOwnershipTransferResult,
+  AuthTenantRoleDescriptor,
+  AuthTenantUpdateMemberParams,
+  AuthTenantAcceptInvitationParams,
+  AuthTenantInvitation,
+  AuthTenantInvitationAcceptanceResult,
+  AuthTenantInvitationInspection,
+  AuthTenantInvitationListParams,
+  AuthTenantInvitationPage,
+  AuthTenantInvitationStatus,
+  AuthTenantIssueInvitationParams,
+  AuthTenantIssueInvitationResult,
+  AuthTenantDenyJoinRequestParams,
+  AuthTenantJoinRequest,
+  AuthTenantJoinRequestApprovalPolicy,
+  AuthTenantJoinRequestApprovalRole,
+  AuthTenantJoinRequestListParams,
+  AuthTenantJoinRequestPage,
+  AuthTenantJoinRequestRoleSelection,
+  AuthTenantJoinRequestStatus,
+  AuthTenantReviewJoinRequestParams,
   AuthUserPropertyConfig,
   AuthUser,
   RegisterParams,
@@ -111,6 +214,8 @@ export {
   useClient,
   useClientMaybe,
   useIsServer,
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
   useCollection,
   useLazyCollection,
   useDataPage,
@@ -130,10 +235,22 @@ export {
   useMutation,
   // Auth
   useAuth,
+  useAuthorization,
   useAuthConfig,
   useCurrentUser,
   useRequireAuth,
   useUserProperty,
+  useApplicationAccess,
+  useAuthAudit,
+  useHasAllPermissions,
+  useHasAnyPermission,
+  useHasPermission,
+  useTenantMembers,
+  useTenantDomainAdministration,
+  useDomainOnboarding,
+  useTenantOnboardingAdministration,
+  useTenantAppShellWorkspaces,
+  useTenantSwitcher,
   // State (re-exported from sync/client)
   useFormDraft,
   usePreference,
@@ -148,9 +265,25 @@ export {
 export type {
   AuthState,
   AuthActions,
+  AuthorizationScopeBoundary,
+  UseAuthorizationResult,
   AuthConfigState,
   UseUserPropertyOptions,
   UseUserPropertyResult,
+  UseApplicationAccessOptions,
+  UseApplicationAccessResult,
+  UseAuthAuditOptions,
+  UseAuthAuditResult,
+  UseTenantMembersOptions,
+  UseTenantMembersResult,
+  UseTenantDomainAdministrationOptions,
+  UseTenantDomainAdministrationResult,
+  UseDomainOnboardingOptions,
+  UseDomainOnboardingResult,
+  UseTenantOnboardingAdministrationOptions,
+  UseTenantOnboardingAdministrationResult,
+  UseTenantAppShellWorkspacesOptions,
+  UseTenantSwitcherResult,
   ConnectionHealth,
   LazyCollectionResult,
   LazyCollectionOptions,
@@ -580,17 +713,30 @@ export type {
 export {
   LoginForm, RegisterForm, ForgotPasswordForm, OTPVerification,
   PasswordActionForm, EmailVerificationForm, ChangePasswordForm, UserPropertiesForm,
+  AuthFlowContinuation, TenantCreationForm, TenantSelectionForm,
+  ApplicationAccessManagement, TenantSwitcher, TenantMemberManagement, TenantOnboardingManagement,
+  TenantDomainManagement, DomainOnboarding, ControlPlaneAuditViewer,
+  TenantInvitationForm, TenantJoinRequestForm,
   PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup,
   AuthLayout, AuthHeader,
-  AdminGate, Gate, HasFlag, HasProperty, PropertyGate, SignedIn, SignedOut,
+  AdminGate, Gate, HasFlag, HasProperty, PermissionGate, PlatformAdminGate,
+  PropertyGate, SignedIn, SignedOut, TenantGate,
   useGate, useNativeAuthContinuation, useNativeAuthRoute, useNativeLoginHint,
   usePropertyGate,
 } from '../components/auth';
 export type {
   LoginFormProps, RegisterFormProps, ForgotPasswordFormProps,
   PasswordActionFormProps, EmailVerificationFormProps, ChangePasswordFormProps, UserPropertiesFormProps,
+  AuthFlowContinuationProps, AuthFlowContinuationResult, TenantCreationFormProps,
+  TenantSelectionFormProps,
+  ApplicationAccessManagementProps,
+  TenantSwitcherProps, TenantMemberManagementProps, TenantOnboardingManagementProps,
+  TenantDomainManagementProps, DomainOnboardingProps,
+  ControlPlaneAuditViewerProps,
+  TenantInvitationFormProps, TenantJoinRequestFormProps,
   OTPVerificationProps, SocialProvider,
-  AuthVisibilityGateProps, GateProps, HasFlagProps, PropertyGateProps, PropertyGateValue,
+  AuthVisibilityGateProps, GateProps, HasFlagProps, PermissionGateProps,
+  PlatformAdminGateProps, PropertyGateProps, PropertyGateValue, TenantGateProps,
 } from '../components/auth';
 
 // ─── Validation Primitives ──────────────────────────────────────────────
@@ -645,11 +791,19 @@ export type {
 } from '../rooms/types';
 
 // ─── Ephemeral KV: Hooks ───────────────────────────────────────────────
-export { useEphemeral, useEphemeralTopic } from './client/hooks';
+export {
+  useEphemeral,
+  useEphemeralErrors,
+  useEphemeralTopic,
+} from './client/hooks';
 
 // ─── Ephemeral KV: Client ──────────────────────────────────────────────
 export { EphemeralClient } from '../sync/client/ephemeral-client';
-export type { EphemeralChangeEvent } from '../sync/client/ephemeral-client';
+export type {
+  EphemeralChangeEvent,
+  EphemeralErrorListener,
+} from '../sync/client/ephemeral-client';
+export type { EphemeralErrorMessage } from '../sync/ephemeral-policy';
 export type { EphemeralEntryClient } from '../sync/client/ephemeral-store';
 
 // ─── Notifications: Provider ─────────────────────────────────────────────
@@ -773,8 +927,13 @@ export type {
 } from '../storage/types';
 
 // ─── Admin Components ───────────────────────────────────────────────────
-export { UserManagement, useAdminUsers } from '../components/admin/users';
+export {
+  PlatformUserManagement,
+  UserManagement,
+  useAdminUsers,
+} from '../components/admin/users';
 export type {
+  PlatformUserManagementProps,
   UseAdminUsersOptions,
   UseAdminUsersResult,
   UserManagementCreateResult,

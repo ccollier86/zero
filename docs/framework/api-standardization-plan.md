@@ -1,5 +1,11 @@
 # Framework API Standardization Plan
 
+> Historical multi-phase planning record. Individual implementation-status
+> lines below describe the snapshot when each slice was written; they are not
+> the current release boundary. Use [Start Here](../start-here.md),
+> [Framework Developer Surface](../framework-developer-surface.md), and
+> [Resource Policy Core](./resource-policy.md) for current APIs.
+
 This plan locks in the next major Zero direction: make package-mode Zero feel
 like one coherent app framework while keeping Bun, Elysia, React, and SQLite as
 the engine underneath.
@@ -330,7 +336,10 @@ Implementation details live in
 
 ## Phase 5: Resource And Policy API
 
-Status: in progress; policy core, resource registry, generated CRUD routes, `/api/data` policy, and WebSocket sync policy implemented
+Status: historical snapshot. The current resource core, generated CRUD,
+`/api/data`, WebSocket policy, frontend hooks, and Doctor checks are
+implemented; use [Resource Policy Core](./resource-policy.md) for the live
+contract.
 
 Add a high-level resource abstraction for common data-driven apps:
 
@@ -338,14 +347,15 @@ Add a high-level resource abstraction for common data-driven apps:
 defineResource({
   table: 'customers',
   primaryKey: 'customer_id',
+  exposure: 'all',
   policy: ownerPolicy({ userField: 'owner_id', create: 'stamp' }),
   actions: ['list', 'get', 'create', 'update', 'delete'],
 });
 ```
 
-Resource definitions can produce generated CRUD routes, protect `/api/data`
-lazy reads, and enforce WebSocket sync read/mutation policy today. They will
-later feed frontend and diagnostics integrations.
+Resource definitions produce generated CRUD routes, protect `/api/data` lazy
+reads, and enforce WebSocket sync read/mutation policy. Frontend resource hooks
+and Doctor diagnostics have also landed since this plan was written.
 
 Implemented server integrations:
 
@@ -353,7 +363,7 @@ Implemented server integrations:
 2. `/api/data` query policy.
 3. WebSocket sync read/mutation policy.
 
-Remaining integrations:
+Remaining integrations at the time of this historical snapshot:
 
 1. Frontend hooks.
 2. Default DataTable/MasterDetail wiring.
@@ -389,8 +399,9 @@ composition, `evaluateResourcePolicy()`, generated CRUD routes mounted at
 `/api/data` lazy reads and WebSocket sync. Sync allows unconstrained resource
 list policies through the normal fast path, applies row filters for
 row-constrained resource lists, and enforces resource create/update/delete
-policy for direct `sync.mutate` writes. Doctor integration is still a planned
-follow-up slice.
+policy for direct `sync.mutate` writes. Doctor integration subsequently landed;
+current diagnostics are documented in
+[Resource Policy Core](./resource-policy.md).
 
 Acceptance criteria:
 

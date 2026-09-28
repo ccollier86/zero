@@ -12,7 +12,7 @@ import * as React from 'react';
 import { useMemo, useCallback } from 'react';
 import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { Row } from '../../sync/types';
-import { DataTable } from '@/components/data-table';
+import { DataTable } from '#zero/components/data-table';
 import type { LazyCollectionOptions } from '../../frontend/client/data-hooks';
 import type {
   DataTableFilters,
@@ -21,15 +21,15 @@ import type {
 } from '../data-table/data-table-source';
 import { getSchemaPrimaryKey, requireRowPrimaryKey } from '../data-table/row-identity';
 import { AutoForm } from '../../components/forms';
-import { Button } from '@/components/ui/button';
-import { ListDetailLayout } from '@/components/ui/list-detail-layout';
-import { DetailPanel } from '@/components/ui/detail-panel';
+import { Button } from '#zero/components/ui/button';
+import { ListDetailLayout } from '#zero/components/ui/list-detail-layout';
+import { DetailPanel } from '#zero/components/ui/detail-panel';
 import {
   RecordNavigationBar,
   type NavigationAction,
-} from '@/components/ui/record-navigation-bar';
-import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
+} from '#zero/components/ui/record-navigation-bar';
+import { Skeleton } from '#zero/components/ui/skeleton';
+import { cn } from '#zero/lib/utils';
 import {
   useMasterDetailState,
   type MasterDetailLiveActions,
@@ -389,6 +389,7 @@ function MasterDetailPage<T extends Row = Row>({
                     defaultValues={selectedItem as Record<string, unknown>}
                     columns={formColumns}
                     fields={formFieldOverrides}
+                    includeFields={editableFields}
                     onSubmit={(values) => {
                       const changes = editableFieldSet
                         ? Object.fromEntries(

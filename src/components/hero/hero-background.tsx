@@ -10,11 +10,11 @@
 
 import * as React from 'react';
 
-import { BubbleBackground } from '@/components/animate-ui/components/backgrounds/bubble';
-import { GradientBackground } from '@/components/animate-ui/components/backgrounds/gradient';
-import { HexagonBackground } from '@/components/animate-ui/components/backgrounds/hexagon';
-import { StarsBackground } from '@/components/animate-ui/components/backgrounds/stars';
-import { cn } from '@/lib/utils';
+import { BubbleBackground } from '#zero/components/animate-ui/components/backgrounds/bubble';
+import { GradientBackground } from '#zero/components/animate-ui/components/backgrounds/gradient';
+import { HexagonBackground } from '#zero/components/animate-ui/components/backgrounds/hexagon';
+import { StarsBackground } from '#zero/components/animate-ui/components/backgrounds/stars';
+import { cn } from '#zero/lib/utils';
 import { WavyBackground } from './wavy-background';
 import type {
   HeroBackgroundOptions,

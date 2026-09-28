@@ -32,6 +32,15 @@ export function getAuthDisplayMessage(error: unknown, fallback: string): string 
   if (code === 'REGISTRATION_DISABLED') {
     return 'Public registration is closed for this app.';
   }
+  if (code === 'BOOTSTRAP_AUTHORIZATION_FAILED') {
+    return 'The operator setup key is invalid.';
+  }
+  if (code === 'BOOTSTRAP_UNAVAILABLE') {
+    return 'First-administrator setup has not been enabled by the deployment operator.';
+  }
+  if (code === 'BOOTSTRAP_NOT_REQUIRED') {
+    return 'First-administrator setup is already complete.';
+  }
   if (code === 'PASSWORD_RESET_DISABLED') {
     return 'Password reset email is not enabled for this app.';
   }

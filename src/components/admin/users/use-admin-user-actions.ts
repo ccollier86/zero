@@ -9,6 +9,10 @@
 
 import * as React from 'react';
 import type { Client } from '../../../frontend/client/sdk';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from '../../../frontend/client/authorization-scope-hooks';
 import type { UseAdminUsersResult, UserManagementUser } from './user-management-types';
 import { mapAuthUserToManagementUser } from './user-management-mappers';
 import { reportAdminUserError } from './admin-user-error';
@@ -25,25 +29,54 @@ export function useAdminUserActions(
   client: Client | null,
   data: AdminUserDataState,
 ): AdminUserActions & { error: string | null } {
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const [error, setError] = React.useState<string | null>(null);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = React.useState(authorizationBoundary.key);
+  const boundaryKeyRef = React.useRef(authorizationBoundary.key);
+  const boundaryReadyRef = React.useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const isCurrentScope = React.useCallback(
+    () => isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    ),
+    [callbackBoundaryKey],
+  );
+
+  React.useEffect(() => {
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setError(null);
+  }, [authorizationBoundary.key]);
+
   const run = React.useCallback(async <T,>(
     action: string,
     task: () => Promise<T>,
     targetUserId?: string,
   ): Promise<T> => {
+    if (!isCurrentScope()) throw staleAdminAction();
+    const operationBoundaryKey = callbackBoundaryKey;
+    setLoadedBoundaryKey(operationBoundaryKey);
     setError(null);
     try {
-      return await task();
+      const result = await task();
+      if (!boundaryReadyRef.current
+        || boundaryKeyRef.current !== operationBoundaryKey) throw staleAdminAction();
+      return result;
     } catch (value) {
+      if (!boundaryReadyRef.current
+        || boundaryKeyRef.current !== operationBoundaryKey) throw staleAdminAction();
       const failure = reportAdminUserError(action, value, { targetUserId });
       setError(failure.message);
       throw failure;
     }
-  }, []);
+  }, [callbackBoundaryKey, isCurrentScope]);
   const requireClient = React.useCallback(() => {
-    if (!client) throw new Error('Client is not available');
+    if (!client || !isCurrentScope()) throw staleAdminAction();
     return client;
-  }, [client]);
+  }, [client, isCurrentScope]);
   const refreshUser = React.useCallback(async (userId: string) => {
     const user = mapAuthUserToManagementUser(await requireClient().getAuthAdminUser(userId));
     data.replaceUser(user);
@@ -92,7 +125,10 @@ export function useAdminUserActions(
     }, targetUserId), [data.replaceUser, run]);
 
   return {
-    error,
+    error: authorizationBoundary.ready
+      && loadedBoundaryKey === authorizationBoundary.key
+      ? error
+      : null,
     createUser,
     updateUser,
     deleteUserProperty,
@@ -126,6 +162,10 @@ export function useAdminUserActions(
     ),
     verifyEmail: (id) => replace('verifyEmail', id, () => requireClient().verifyAuthAdminUserEmail(id)),
   };
+}
+
+function staleAdminAction(): Error {
+  return new Error('The authorization scope changed before the admin user action completed.');
 }
 
 function incrementPage(page: NonNullable<UseAdminUsersResult['page']>, offset: number, size: number) {

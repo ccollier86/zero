@@ -33,7 +33,19 @@ export interface ResourceListQueryInput {
 /** Options used to build a safe resource list SQL plan. */
 export interface ResourceListQueryPlanOptions {
   table: string;
+  /** Complete server columns available to trusted policy constraints. */
   columns: readonly string[];
+  /** Columns returned by SQL. Omit for the legacy `SELECT *` behavior. */
+  selectColumns?: readonly string[];
+  /** Columns client-authored filters may reference. Defaults to `columns`. */
+  filterColumns?: readonly string[];
+  /** Columns client-authored sorts may reference. Defaults to `columns`. */
+  sortColumns?: readonly string[];
+  /**
+   * Server-owned realm/policy constraints. Unlike caller-authored `query`
+   * filters, equality here is storage-class and BINARY exact so a declared
+   * SQLite affinity or collation cannot broaden an authorization predicate.
+   */
   constraints?: readonly ResourceDataConstraint[];
   query?: ResourceListQueryInput;
   defaultLimit?: number;
@@ -85,7 +97,31 @@ export function buildResourceListQueryPlan(
   options: ResourceListQueryPlanOptions
 ): ResourceListQueryPlan | ResourceQueryError {
   const allowedColumnSet = new Set(options.columns);
-  const filters = buildFilterClauses(options.query?.filter, options.table, allowedColumnSet);
+  const select = buildSelectClause(
+    options.selectColumns,
+    options.table,
+    allowedColumnSet,
+  );
+  if ('error' in select) return select;
+  const filterColumns = buildClientColumnSet(
+    options.filterColumns,
+    options.table,
+    allowedColumnSet,
+    'filter',
+  );
+  if ('error' in filterColumns) return filterColumns;
+  const sortColumns = buildClientColumnSet(
+    options.sortColumns,
+    options.table,
+    allowedColumnSet,
+    'sort',
+  );
+  if ('error' in sortColumns) return sortColumns;
+  const filters = buildFilterClauses(
+    options.query?.filter,
+    options.table,
+    filterColumns.columns,
+  );
   if ('error' in filters) return filters;
 
   const policyFilters = buildConstraintClauses(
@@ -99,7 +135,7 @@ export function buildResourceListQueryPlan(
     options.query?.order,
     options.query?.dir,
     options.table,
-    allowedColumnSet
+    sortColumns.columns
   );
   if ('error' in order) return order;
 
@@ -118,11 +154,45 @@ export function buildResourceListQueryPlan(
   const params = clauses.flatMap((clause) => clause.params);
 
   return {
-    sql: `SELECT * FROM ${quoteResourceIdentifier(options.table)}${whereClause}${order.orderClause} LIMIT ? OFFSET ?`,
+    sql: `SELECT ${select.selectClause} FROM ${quoteResourceIdentifier(options.table)}${whereClause}${order.orderClause} LIMIT ? OFFSET ?`,
     params,
     limit: page.limit,
     offset: page.offset,
   };
+}
+
+function buildClientColumnSet(
+  columns: readonly string[] | undefined,
+  table: string,
+  allowedColumnSet: Set<string>,
+  capability: 'filter' | 'sort',
+): { columns: Set<string> } | ResourceQueryError {
+  if (columns === undefined) return { columns: allowedColumnSet };
+  for (const field of columns) {
+    if (SAFE_IDENTIFIER.test(field) && allowedColumnSet.has(field)) continue;
+    return {
+      status: 500,
+      error: `Resource ${capability} field '${field}' is not a column on table '${table}'`,
+    };
+  }
+  return { columns: new Set(columns) };
+}
+
+function buildSelectClause(
+  columns: readonly string[] | undefined,
+  table: string,
+  allowedColumnSet: Set<string>,
+): { selectClause: string } | ResourceQueryError {
+  if (columns === undefined) return { selectClause: '*' };
+  if (columns.length === 0) return { selectClause: '1 AS "__zero_empty"' };
+
+  const selected: string[] = [];
+  for (const field of columns) {
+    const column = validatePolicyColumn(field, table, allowedColumnSet);
+    if ('error' in column) return column;
+    selected.push(column.identifier);
+  }
+  return { selectClause: selected.join(', ') };
 }
 
 /** Quote a previously validated SQLite identifier. */
@@ -249,11 +319,7 @@ function buildConstraintClause(
   if (constraint.type === 'field') {
     const column = validatePolicyColumn(constraint.field, table, allowedColumnSet);
     if ('error' in column) return column;
-
-    return {
-      sql: `${column.identifier} = ?`,
-      params: [toQueryParam(constraint.value)],
-    };
+    return buildExactConstraintValueClause(column.identifier, constraint.value);
   }
 
   if (constraint.constraints.length === 0) {
@@ -271,6 +337,34 @@ function buildConstraintClause(
   return {
     sql: `(${childClauses.map((clause) => clause.sql).join(joiner)})`,
     params: childClauses.flatMap((clause) => clause.params),
+  };
+}
+
+/**
+ * Compile a server-owned equality constraint without allowing SQLite column
+ * affinity or a declared collation (for example `COLLATE NOCASE`) to widen
+ * the match. The duplicated binding first proves the storage class and then
+ * compares the value with BINARY semantics.
+ *
+ * Sync's in-memory constraint matcher intentionally treats booleans as their
+ * canonical SQLite/JSON representations. Preserve that contract with an OR
+ * of exact alternatives instead of falling back to coercive SQL equality.
+ */
+function buildExactConstraintValueClause(
+  column: string,
+  value: ResourcePolicyScalar,
+): FilterClause {
+  const values: QueryParam[] = typeof value === 'boolean'
+    ? [value ? 1 : 0, value ? '1' : '0', String(value)]
+    : [toQueryParam(value)];
+  const alternatives = values.map(() =>
+    `(typeof(${column}) = typeof(?) AND ${column} COLLATE BINARY IS ?)`);
+
+  return {
+    sql: alternatives.length === 1
+      ? alternatives[0]!
+      : `(${alternatives.join(' OR ')})`,
+    params: values.flatMap((candidate) => [candidate, candidate]),
   };
 }
 

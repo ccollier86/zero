@@ -2,6 +2,7 @@
 
 import { NativeAuthorizationError } from '../native';
 import type { UserStore } from '../user-store';
+import { canUserReceiveAuthTokens } from '../auth-user-eligibility';
 import type { NativeServiceContext } from './native-service-context';
 import { NativeTokenError } from './native-token-error';
 
@@ -25,6 +26,5 @@ export function invalidGrant(): never {
 }
 
 export function canReceiveTokens(user: ReturnType<UserStore['getUserById']>): boolean {
-  return Boolean(user && user.status === 'active' && !user.passwordChangeRequired
-    && (!user.emailVerificationRequired || user.emailVerifiedAt));
+  return canUserReceiveAuthTokens(user);
 }

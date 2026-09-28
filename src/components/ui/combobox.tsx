@@ -4,14 +4,14 @@ import * as React from 'react';
 import { CheckIcon, ChevronsUpDownIcon, XIcon } from 'lucide-react';
 import { AnimatePresence, motion, type Transition } from 'motion/react';
 
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { cn } from '#zero/lib/utils';
+import { Button } from '#zero/components/ui/button';
+import { Badge } from '#zero/components/ui/badge';
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from '@/components/animate-ui/components/radix/popover';
+} from '#zero/components/animate-ui/components/radix/popover';
 import {
   Command,
   CommandEmpty,
@@ -19,7 +19,7 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
-} from '@/components/ui/command';
+} from '#zero/components/ui/command';
 
 // ─── Types ───────────────────────────────────────────────────────────────
 

@@ -6,9 +6,11 @@
  * provide the SDK/client action being executed.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { OBS_CODES } from '../../observability/codes';
 import { useStableCallback } from '../../hooks/use-stable-callback';
+import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
+import { useClientMaybe } from './client-context';
 import { emitFrontendCode } from './observability';
 
 export interface UseMutationOptions<Result> {
@@ -37,9 +39,20 @@ export function useMutation<Args extends unknown[], Result>(
   action: (...args: Args) => Promise<Result> | Result,
   options: UseMutationOptions<Result> = {},
 ): UseMutationReturn<Args, Result> {
+  const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [result, setResult] = useState<Result | null>(null);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  const lifecycleRevisionRef = useRef(0);
+  const nextOperationRef = useRef(0);
+  const activeOperationsRef = useRef(new Set<number>());
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
   const actionRef = useStableCallback(action);
   const onSuccess = useStableCallback((value: Result) => options.onSuccess?.(value));
   const onError = useStableCallback((err: unknown) => options.onError?.(err));
@@ -47,38 +60,102 @@ export function useMutation<Args extends unknown[], Result>(
   const emitErrors = options.emitErrors ?? true;
   const metadata = options.metadata;
 
-  const reset = useCallback(() => {
+  useEffect(() => {
+    lifecycleRevisionRef.current += 1;
+    activeOperationsRef.current.clear();
+    setLoadedBoundaryKey(authorizationBoundary.key);
     setPending(false);
     setError(null);
     setResult(null);
-  }, []);
+  }, [authorizationBoundary.key]);
 
-  const run = useStableCallback(async (...args: Args) => {
+  const reset = useCallback(() => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
+    lifecycleRevisionRef.current += 1;
+    activeOperationsRef.current.clear();
+    setPending(false);
+    setError(null);
+    setResult(null);
+  }, [callbackBoundaryKey]);
+
+  // `run` deliberately changes identity with the authorization boundary. A
+  // stable/latest-callback wrapper here would let a handler retained from
+  // scope A dispatch the newest scope-B action after an account or tenant
+  // switch. The captured boundary key makes old handlers fail closed.
+  const run = useCallback(async (...args: Args) => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) {
+      throw new Error('Mutations are unavailable during an authorization scope transition.');
+    }
+
+    const operationBoundaryKey = callbackBoundaryKey;
     if (resetOnRun) {
+      lifecycleRevisionRef.current += 1;
+      activeOperationsRef.current.clear();
       setError(null);
       setResult(null);
     }
 
+    const lifecycleRevision = lifecycleRevisionRef.current;
+    const operationId = ++nextOperationRef.current;
+    activeOperationsRef.current.add(operationId);
+    setLoadedBoundaryKey(operationBoundaryKey);
     setPending(true);
+
+    const scopeIsCurrent = () => boundaryReadyRef.current
+      && boundaryKeyRef.current === operationBoundaryKey;
+    const stateIsCurrent = () => scopeIsCurrent()
+      && lifecycleRevisionRef.current === lifecycleRevision;
+
     try {
       const value = await actionRef(...args);
-      setResult(value);
-      onSuccess(value);
+      if (!scopeIsCurrent()) {
+        throw new Error('The authorization scope changed before the mutation completed.');
+      }
+      if (stateIsCurrent()) {
+        setResult(value);
+        onSuccess(value);
+      }
       return value;
     } catch (err) {
-      setError(err);
-      onError(err);
-      if (emitErrors) {
-        emitFrontendCode(OBS_CODES.FRONTEND_MUTATION_FAILED, {
-          error: err,
-          metadata,
-        });
+      if (!scopeIsCurrent()) {
+        throw new Error('The authorization scope changed before the mutation completed.');
+      }
+      if (stateIsCurrent()) {
+        setError(err);
+        onError(err);
+        if (emitErrors) {
+          emitFrontendCode(OBS_CODES.FRONTEND_MUTATION_FAILED, {
+            error: err,
+            metadata,
+          });
+        }
       }
       throw err;
     } finally {
-      setPending(false);
+      activeOperationsRef.current.delete(operationId);
+      if (stateIsCurrent()) {
+        setPending(activeOperationsRef.current.size > 0);
+      }
     }
-  });
+  }, [
+    actionRef,
+    callbackBoundaryKey,
+    emitErrors,
+    metadata,
+    onError,
+    onSuccess,
+    resetOnRun,
+  ]);
 
-  return { pending, error, result, run, reset };
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+  return {
+    pending: visible ? pending : false,
+    error: visible ? error : null,
+    result: visible ? result : null,
+    run,
+    reset,
+  };
 }

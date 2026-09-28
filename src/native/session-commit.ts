@@ -65,6 +65,7 @@ function storedSession(
   return {
     issuer: context.issuer, clientId: context.clientId, subject: identity.sub,
     refreshToken: tokens.refreshToken, identity,
+    activeTenant: tokens.activeTenant ?? null,
   };
 }
 

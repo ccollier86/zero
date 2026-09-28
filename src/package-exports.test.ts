@@ -54,10 +54,34 @@ async function buildSmokeEntry(fileName: string, source: string, target: 'bun' |
 const serverSmokeSource = `
 import { AIService } from '@zero/framework/ai';
 import {
+  AuthApplicationAdministrationService,
+  AuthAuditService,
+  AuthTenantAdministrationService,
+  AuthorizationKernel,
+  compileAccessRequirement,
+  createAuthAuthorizationSnapshot,
   createAuthPlugin,
+  createAuthorizationKernel,
+  getAuthAuditService,
   installAuthStopBarrier,
   isPolicyTrustedUserProperty,
   type NativeAuthorizationSourceResolver as AuthNativeSourceResolver,
+} from '@zero/framework/auth';
+import type {
+  AccessRequirement,
+  AuthApplicationAdministrationConfig,
+  AuthAuditEvent,
+  AuthAuditQuery,
+  AuthAuthorizationConfig,
+  AuthAuthorizationSnapshot,
+  AuthAuthorizationMode,
+  NormalizedAuthBehaviorConfig,
+  PermissionKey,
+  AuthTenancyConfig,
+  AuthTenancyMode,
+  ResolvedAuthAuthorizationConfig,
+  ResolvedAuthTenancyConfig,
+  AuthTenantAdministrationConfig,
 } from '@zero/framework/auth';
 import { runPlatformDoctor, runUsageAudit } from '@zero/framework/doctor';
 import { EmailService } from '@zero/framework/email';
@@ -73,17 +97,23 @@ import { OBS_CODES } from '@zero/framework/observability';
 import { OBS_CODES as PURE_OBS_CODES } from '@zero/framework/observability/codes';
 import { createPlatformSQLiteService } from '@zero/framework/persistence';
 import { PdfService, getPdfService as getPdfServiceSubpath } from '@zero/framework/pdf';
-import { createResourceCrudPlugin as createSubpathResourceCrudPlugin, defineResource as defineSubpathResource, ownerPolicy as resourcesOwnerPolicy } from '@zero/framework/resources';
-import { createRoomPlugin } from '@zero/framework/rooms';
+import { createResourceCrudPlugin as createSubpathResourceCrudPlugin, defineResource as defineSubpathResource, defineResourceFields as defineSubpathResourceFields, ownerPolicy as resourcesOwnerPolicy, tenantRealm as resourcesTenantRealm } from '@zero/framework/resources';
+import {
+  RoomOwnerCannotLeaveError,
+  createRoomPlugin,
+} from '@zero/framework/rooms';
 import { createSchedulerPlugin } from '@zero/framework/scheduler';
 import { defineTable, encodeFieldValue, field } from '@zero/framework/schema';
 import {
   adminOnly,
   createApp,
+  createAuthorizationKernel as createServerAuthorizationKernel,
   createResourceCrudPlugin,
   createUploadGrantToken,
+  defineAuthConfig,
   defineNativeAuthConfig,
   defineResource,
+  defineResourceFields as defineServerResourceFields,
   getAI,
   getEmailService,
   getKvService,
@@ -99,27 +129,124 @@ import {
   KvService,
   metadataPolicy,
   ownerPolicy,
+  tenantRealm,
   verifyUploadGrantToken,
 } from '@zero/framework/server';
-import type { NativeAuthorizationSourceResolver } from '@zero/framework/server';
+import type {
+  AuthAuthorizationOwnerAdoptionConfig,
+  AuthTenantCreationConfig,
+  AuthTenantCreationMode,
+  AuthTenantTerminologyConfig,
+  NativeAuthorizationSourceResolver,
+  ZeroPolicyUserPropertyRegistry,
+} from '@zero/framework/server';
 import {
   createStoragePlugin,
   createUploadGrantToken as createSubpathUploadGrantToken,
   verifyUploadGrantToken as verifySubpathUploadGrantToken,
 } from '@zero/framework/storage';
-import { createSyncPlugin } from '@zero/framework/sync';
+import { createSyncPlugin, type SyncPluginConfig } from '@zero/framework/sync';
 import { PlatformTokenService } from '@zero/framework/tokens';
 import { createVectorPlugin } from '@zero/framework/vector';
 import { WorkflowService } from '@zero/framework/workflows';
 
 const nativeSourceResolver: NativeAuthorizationSourceResolver = () => 'trusted-edge';
+const policyPropertyRegistry: ZeroPolicyUserPropertyRegistry = {
+  isPolicyTrusted: () => true,
+};
 const authNativeSourceResolver: AuthNativeSourceResolver = () => 'trusted-edge';
+const authTenancy: AuthTenancyConfig = { mode: 'single' };
+const authTenancyMode: AuthTenancyMode = 'single';
+const authAuthorization: AuthAuthorizationConfig = { mode: 'simple' };
+const authAuthorizationMode: AuthAuthorizationMode = 'simple';
+const authTenantCreationMode: AuthTenantCreationMode = 'authenticated';
+const authTenantCreation: AuthTenantCreationConfig = { mode: authTenantCreationMode };
+const authTenantTerminology: AuthTenantTerminologyConfig = {
+  singular: 'workspace',
+  plural: 'workspaces',
+};
+const authOwnerAdoption: AuthAuthorizationOwnerAdoptionConfig = {
+  email: 'owner@example.com',
+};
+const definedAuthConfig = defineAuthConfig({
+  tenancy: {
+    mode: 'multi',
+    terminology: authTenantTerminology,
+    creation: authTenantCreation,
+  },
+  authorization: {
+    mode: 'advanced',
+    ownerAdoption: authOwnerAdoption,
+  },
+});
+const resolvedAuthTenancy: ResolvedAuthTenancyConfig = { mode: authTenancyMode };
+const resolvedAuthAuthorization: ResolvedAuthAuthorizationConfig = {
+  mode: authAuthorizationMode,
+  permissions: {},
+  roles: {},
+};
+const normalizedAuth = {} as NormalizedAuthBehaviorConfig;
+const accessRequirement: AccessRequirement = { permission: 'patients:read' };
+const permissionKey: PermissionKey = 'patients:read';
+const applicationAdministrationConfig = {} as AuthApplicationAdministrationConfig;
+const tenantAdministrationConfig = {} as AuthTenantAdministrationConfig;
+const authAuditEvent = {} as AuthAuditEvent;
+const authAuditQuery = {} as AuthAuditQuery;
+const authorizationSnapshot = {} as AuthAuthorizationSnapshot;
+const compiledAccessRequirement = compileAccessRequirement(accessRequirement);
+const serverResourceFields = defineServerResourceFields({
+  read: ['id', 'tenant_id', 'title'],
+  create: ['title'],
+  update: ['title'],
+});
+const subpathResourceFields = defineSubpathResourceFields({
+  read: ['id', 'tenant_id', 'title'],
+  create: ['title'],
+  update: ['title'],
+});
+const syncPluginConfig: SyncPluginConfig = {
+  db: { mode: ':memory:' },
+  tables: {},
+  replicaChangePolling: { intervalMs: 250 },
+};
+const tenantDocuments = defineTable('tenant_documents', {
+  tenant_id: field.text({ required: true }),
+  title: field.text({ required: true }),
+});
+const tenantDocumentResource = defineResource({
+  table: tenantDocuments,
+  realm: tenantRealm(),
+  policy: adminOnly(),
+});
+const tenantDocumentSubpathResource = defineSubpathResource({
+  table: tenantDocuments,
+  realm: resourcesTenantRealm(),
+  policy: resourcesOwnerPolicy({ userField: 'tenant_id', create: 'require' }),
+});
 
 export const serverSymbols = {
   AIService,
+  AuthApplicationAdministrationService,
+  AuthAuditService,
+  AuthTenantAdministrationService,
+  AuthorizationKernel,
+  accessRequirement,
   authNativeSourceResolver,
+  authTenancy,
+  authTenancyMode,
+  authAuthorization,
+  authAuthorizationMode,
+  authOwnerAdoption,
+  authTenantCreation,
+  authTenantCreationMode,
+  authTenantTerminology,
   createApp,
+  createAuthAuthorizationSnapshot,
   createAuthPlugin,
+  createAuthorizationKernel,
+  getAuthAuditService,
+  createServerAuthorizationKernel,
+  compiledAccessRequirement,
   installAuthStopBarrier,
   installServerAuthStopBarrier,
   isPolicyTrustedUserProperty,
@@ -138,9 +265,17 @@ export const serverSymbols = {
   createUploadGrantToken,
   createVectorPlugin,
   defineNativeAuthConfig,
+  definedAuthConfig,
   defineResource,
+  serverResourceFields,
   defineSubpathResource,
+  subpathResourceFields,
   defineTable,
+  tenantDocuments,
+  tenantDocumentResource,
+  tenantDocumentSubpathResource,
+  tenantRealm,
+  resourcesTenantRealm,
   EmailService,
   field,
   encodeFieldValue,
@@ -157,6 +292,14 @@ export const serverSymbols = {
   getWorkflowService,
   metadataPolicy,
   nativeSourceResolver,
+  normalizedAuth,
+  policyPropertyRegistry,
+  permissionKey,
+  applicationAdministrationConfig,
+  tenantAdministrationConfig,
+  authAuditEvent,
+  authAuditQuery,
+  authorizationSnapshot,
   KvMemoryEngine,
   KvMemoryEngineSubpath,
   KvService,
@@ -168,8 +311,12 @@ export const serverSymbols = {
   PlatformTokenService,
   PURE_OBS_CODES,
   resourcesOwnerPolicy,
+  resolvedAuthAuthorization,
+  resolvedAuthTenancy,
+  RoomOwnerCannotLeaveError,
   runPlatformDoctor,
   runUsageAudit,
+  syncPluginConfig,
   verifySubpathUploadGrantToken,
   verifyUploadGrantToken,
   WorkflowService,
@@ -177,7 +324,25 @@ export const serverSymbols = {
 `;
 
 const clientSmokeSource = `
-import { LoginForm, MFAEnrollmentForm } from '@zero/framework/components/auth';
+import {
+  ApplicationAccessManagement as ApplicationAccessManagementSubpath,
+  AuthFlowContinuation as AuthFlowContinuationSubpath,
+  ControlPlaneAuditViewer as ControlPlaneAuditViewerSubpath,
+  DomainOnboarding as DomainOnboardingSubpath,
+  LoginForm,
+  MFAEnrollmentForm,
+  PermissionGate as PermissionGateSubpath,
+  PlatformAdminGate as PlatformAdminGateSubpath,
+  TenantCreationForm as TenantCreationFormSubpath,
+  TenantInvitationForm,
+  TenantGate as TenantGateSubpath,
+  TenantJoinRequestForm,
+  TenantMemberManagement as TenantMemberManagementSubpath,
+  TenantOnboardingManagement,
+  TenantSelectionForm as TenantSelectionFormSubpath,
+  TenantSwitcher as TenantSwitcherSubpath,
+  TenantDomainManagement as TenantDomainManagementSubpath,
+} from '@zero/framework/components/auth';
 import { AppShell as AppShellSubpath } from '@zero/framework/components/app-shell';
 import { AnimatedList as AnimatedListSubpath } from '@zero/framework/components/animated-list';
 import { BentoGrid as BentoGridSubpath } from '@zero/framework/components/bento-grid';
@@ -213,8 +378,25 @@ import { useDisclosure } from '@zero/framework/hooks';
 import { Check } from '@zero/framework/icons';
 import { ModalManager } from '@zero/framework/modals';
 import { AppProvider } from '@zero/framework/react/app-provider';
-import { useCollection as useCollectionSubpath, useResourceList as useResourceListSubpath } from '@zero/framework/react/hooks';
 import {
+  useApplicationAccess as useApplicationAccessSubpath,
+  useAuthAudit as useAuthAuditSubpath,
+  useAuthorizationScopeBoundary as useAuthorizationScopeBoundarySubpath,
+  useAuthorization as useAuthorizationSubpath,
+  useCollection as useCollectionSubpath,
+  useHasPermission as useHasPermissionSubpath,
+  useResourceList as useResourceListSubpath,
+  useDomainOnboarding as useDomainOnboardingSubpath,
+  useTenantDomainAdministration as useTenantDomainAdministrationSubpath,
+  useTenantMembers as useTenantMembersSubpath,
+  useTenantAppShellWorkspaces as useTenantAppShellWorkspacesSubpath,
+  useTenantSwitcher as useTenantSwitcherSubpath,
+} from '@zero/framework/react/hooks';
+import {
+  ApplicationAccessManagement,
+  AuthFlowContinuation,
+  ControlPlaneAuditViewer,
+  DomainOnboarding,
   Button,
   AppShell,
   AnimatedList,
@@ -225,6 +407,7 @@ import {
   CtaSection,
   Collapsible,
   DataTable,
+  defineResourceFields,
   DropdownMenu,
   ExpandableCards,
   Faq,
@@ -233,7 +416,11 @@ import {
   FooterSection,
   groupKanbanItemIds,
   Hero,
+  hasAuthorizationPermission,
   KanbanBoard,
+  PlatformUserManagement,
+  PermissionGate,
+  PlatformAdminGate,
   QRCode,
   RadialMenu,
   ResizableNavbar,
@@ -245,18 +432,85 @@ import {
   TooltipSubpath,
   TypewriterEffect,
   useCollection,
+  useApplicationAccess,
+  useAuthAudit,
+  useDomainOnboarding,
+  useAuthorization,
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+  useHasPermission,
   useNativeAuthContinuation,
   useResourceList,
+  useTenantDomainAdministration,
+  useTenantMembers,
+  useTenantAppShellWorkspaces,
+  useTenantSwitcher,
+  TenantCreationForm,
+  TenantGate,
+  TenantDomainManagement,
+  TenantMemberManagement,
+  TenantSelectionForm,
+  TenantSwitcher,
   WavyBackground,
 } from '@zero/framework/react';
 import { createSyncClient } from '@zero/framework/sync/client';
 import { createIdentityId } from '@zero/framework/sync/identity';
 	import type { Row } from '@zero/framework/sync/types';
 	import type { ComponentProps } from 'react';
-	import type { ToasterProps } from '@zero/framework/react';
+import type { ToasterProps } from '@zero/framework/react';
+import type {
+  ApplicationAccessManagementProps,
+  AuthApplicationAdminSdkSurface,
+  AuthAuditEvent,
+  AuthAuditSdkSurface,
+  ControlPlaneAuditViewerProps,
+  AuthAuthorizationState,
+  AuthorizationScopeBoundary,
+  AuthDomainOnboardingCompletion,
+  AuthTenantDomainAdministration,
+  AuthTenantDomainReleaseInput,
+  AuthTenantDomainReleaseResult,
+	  AppShellWorkspaceConfig,
+	  Client,
+	  LoginFormProps,
+	  PlatformUserManagementProps,
+	  TenantCreationFormProps,
+  TenantMemberManagementProps,
+  TenantSelectionFormProps,
+  TenantSwitcherProps,
+  UseTenantAppShellWorkspacesOptions,
+} from '@zero/framework/react';
 
 	const row: Row = {};
 	const toasterProps: ToasterProps = {};
+	const applicationAccessProps: ApplicationAccessManagementProps = {};
+	const applicationAdmin = {} as AuthApplicationAdminSdkSurface;
+	const auditEvent = {} as AuthAuditEvent;
+	const auditSdk = {} as AuthAuditSdkSurface;
+	const auditViewerProps: ControlPlaneAuditViewerProps = { scope: 'tenant' };
+	const authorizationState = {} as AuthAuthorizationState;
+	const authorizationScopeBoundary = {} as AuthorizationScopeBoundary;
+	const domainAdministration = {} as AuthTenantDomainAdministration;
+	const domainCompletion = {} as AuthDomainOnboardingCompletion;
+		const domainReleaseInput = {} as AuthTenantDomainReleaseInput;
+		const domainReleaseResult = {} as AuthTenantDomainReleaseResult;
+		const clientResourceFields = defineResourceFields({
+		  read: ['id', 'title'],
+		  create: ['title'],
+		  update: ['title'],
+		});
+		const releaseTenantDomainClaim = {} as Client['releaseTenantDomainClaim'];
+		const listTenants = {} as Client['listTenants'];
+		const createTenant = {} as Client['createTenant'];
+		const switchTenant = {} as Client['switchTenant'];
+		const legacyLoginFormProps: LoginFormProps = { showRememberMe: true };
+		const platformUserManagementProps = {} as PlatformUserManagementProps;
+		const tenantCreationFormProps = {} as TenantCreationFormProps;
+	const tenantMemberManagementProps = {} as TenantMemberManagementProps;
+	const tenantSelectionFormProps = {} as TenantSelectionFormProps;
+	const tenantSwitcherProps = {} as TenantSwitcherProps;
+	const tenantAppShellOptions = {} as UseTenantAppShellWorkspacesOptions;
+	const tenantAppShellWorkspaces = {} as AppShellWorkspaceConfig;
 	type MasterDetailProps = ComponentProps<typeof MasterDetailView>;
 	const masterDetailLazySource: MasterDetailProps['source'] = {
 	  type: 'lazy',
@@ -264,7 +518,15 @@ import { createIdentityId } from '@zero/framework/sync/identity';
 	  options: { limit: 25, order: 'created_at', dir: 'desc' },
 	};
 
-	export const clientSymbols = {
+export const clientSymbols = {
+  ApplicationAccessManagement,
+  ApplicationAccessManagementSubpath,
+  AuthFlowContinuation,
+  AuthFlowContinuationSubpath,
+  ControlPlaneAuditViewer,
+  ControlPlaneAuditViewerSubpath,
+  DomainOnboarding,
+  DomainOnboardingSubpath,
   Button,
   AnimatedList,
   AnimatedListCard,
@@ -283,8 +545,9 @@ import { createIdentityId } from '@zero/framework/sync/identity';
   Collapsible,
   CollapsibleSubpath,
   createIdentityId,
-  createSyncClient,
-  DataTable,
+	  createSyncClient,
+	  clientResourceFields,
+	  DataTable,
   DataTableView,
   DropdownMenu,
   DropdownMenuSubpath,
@@ -299,12 +562,41 @@ import { createIdentityId } from '@zero/framework/sync/identity';
   groupKanbanItemIds,
   Hero,
   HeroSubpath,
+  hasAuthorizationPermission,
   KanbanBoard,
   KanbanBoardSubpath,
+	  PlatformUserManagement,
+	  legacyLoginFormProps,
+	  platformUserManagementProps,
+  PermissionGate,
+  PermissionGateSubpath,
+  PlatformAdminGate,
+  PlatformAdminGateSubpath,
   LoginForm,
 	  MasterDetailView,
 	  masterDetailLazySource,
-	  MFAEnrollmentForm,
+  MFAEnrollmentForm,
+  TenantCreationForm,
+  TenantCreationFormSubpath,
+  TenantInvitationForm,
+  TenantGate,
+  TenantGateSubpath,
+  TenantJoinRequestForm,
+  TenantMemberManagement,
+  TenantMemberManagementSubpath,
+  TenantOnboardingManagement,
+  TenantSelectionForm,
+  TenantSelectionFormSubpath,
+  TenantSwitcher,
+  TenantSwitcherSubpath,
+  TenantDomainManagement,
+  TenantDomainManagementSubpath,
+  domainReleaseInput,
+  domainReleaseResult,
+  releaseTenantDomainClaim,
+  listTenants,
+  createTenant,
+  switchTenant,
   ModalManager,
   QRCode,
   QRCodeSubpath,
@@ -328,16 +620,52 @@ import { createIdentityId } from '@zero/framework/sync/identity';
   UiRadioGroup,
   UiRadioGroupItem,
   useCollection,
+  useApplicationAccess,
+  useApplicationAccessSubpath,
+  useAuthAudit,
+  useAuthAuditSubpath,
+  useDomainOnboarding,
+  useDomainOnboardingSubpath,
+  useAuthorization,
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+  useAuthorizationScopeBoundarySubpath,
+  useAuthorizationSubpath,
   useCollectionSubpath,
   useNativeAuthContinuation,
+  useHasPermission,
+  useHasPermissionSubpath,
   useResourceList,
   useResourceListSubpath,
+  useTenantDomainAdministration,
+  useTenantDomainAdministrationSubpath,
+  useTenantMembers,
+  useTenantMembersSubpath,
+  useTenantAppShellWorkspaces,
+  useTenantAppShellWorkspacesSubpath,
+  useTenantSwitcher,
+  useTenantSwitcherSubpath,
   useDisclosure,
   FlipWords,
   WavyBackground,
   projectKanbanMove,
   row,
   toasterProps,
+  applicationAccessProps,
+  applicationAdmin,
+  auditEvent,
+  auditSdk,
+  auditViewerProps,
+  authorizationState,
+  authorizationScopeBoundary,
+  domainAdministration,
+  domainCompletion,
+  tenantCreationFormProps,
+  tenantMemberManagementProps,
+  tenantSelectionFormProps,
+  tenantSwitcherProps,
+  tenantAppShellOptions,
+  tenantAppShellWorkspaces,
 };
 `;
 
@@ -349,6 +677,8 @@ import {
   createZeroNativeAuth,
   type NativeIdentityScope,
   type NativeSyncAuthConfig,
+  type NativeTenantListResult,
+  type NativeTenantSummary,
   type ZeroNativeAuth,
   type ZeroNativeAuthOptions,
 } from '@zero/framework/native';
@@ -369,5 +699,12 @@ export function configureBroker(options: ZeroNativeAuthOptions) {
 
 export function configureNativeSync(auth: ZeroNativeAuth): NativeSyncAuthConfig {
   return createNativeSyncAuth(auth);
+}
+
+export function assertNativeTenantContract(auth: ZeroNativeAuth) {
+  const list: Promise<NativeTenantListResult> = auth.listTenants();
+  const switched = auth.switchTenant('tenant-id');
+  const summary = {} as NativeTenantSummary;
+  return { list, switched, summary };
 }
 `;

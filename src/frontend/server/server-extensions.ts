@@ -8,6 +8,25 @@
 
 import type { AnyElysia, MaybePromise } from 'elysia';
 
+import {
+  createProtectedMultipartRequestGuard,
+  type AuthMiddlewareAuthorizationOptions,
+} from '../../auth/auth.middleware';
+import {
+  getAuthorizationKernel,
+  getAuthStore,
+  getTokenService,
+} from '../../auth/auth.plugin';
+import type { RequestAuthorizationAccess } from '../../auth/authorization-access';
+import {
+  compileAccessRequirement,
+  isCompiledAccessRequirement,
+  mergeAccessRequirements,
+  type AccessRequirement,
+  type AuthorizationKernel,
+  type CompiledAccessRequirement,
+  type StructuredAccessRequirement,
+} from '../../auth/authorization-kernel';
 import { AuthError, type AuthContext } from '../../auth/types';
 import {
   createServerRoute,
@@ -17,12 +36,11 @@ import {
   getServerRouteServices,
   type ServerRouteServices,
 } from './server-services';
+import type { ServerRequestServices } from './server-request-services';
 import {
   evaluateMiddlewareApplicability,
-  inheritMatcherAuth,
   normalizeHttpMethod,
   normalizeMiddlewareMatcher,
-  type ZeroAuthRequirement,
   type ZeroHttpMethod,
   type ZeroHttpMethodInput,
   type ZeroMiddlewareMatcher,
@@ -30,22 +48,46 @@ import {
 } from './server-matcher';
 import {
   enforceServerPolicy,
+  type ZeroPolicyEvaluationOptions,
 } from './server-policy';
+import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
+import {
+  ZERO_AUTHORIZATION_KERNEL,
+  ZERO_AUTHORIZATION_ROLE_SERVICE,
+  ZERO_AUTH_STORE,
+  ZERO_AUTH_TOKEN_SERVICE,
+} from '../../runtime/service-keys';
 
 export const ZERO_SERVER_EXTENSION_KIND = Symbol.for('zero.server.extension.kind');
 
 const EXTENSION_KINDS = new Set(['endpoint', 'router', 'middleware', 'plugin']);
 
 export type ZeroServerExtensionKind = 'endpoint' | 'router' | 'middleware' | 'plugin';
+export type ZeroExtensionAuthRequirement = AccessRequirement;
 export type ZeroLifecycleHook = ((context: ZeroLifecycleContext) => MaybePromise<unknown>) | Array<(context: ZeroLifecycleContext) => MaybePromise<unknown>>;
 export type ZeroRouteMatcher = ZeroPathMatcher;
 export type InferValidationSchema<TSchema> = TSchema extends { static: infer TStatic }
   ? TStatic
   : unknown;
-export type ZeroLifecycleUser<TAuth extends ZeroAuthRequirement | undefined = undefined> =
+export type ZeroLifecycleUser<TAuth extends AccessRequirement | undefined = undefined> =
   TAuth extends 'user' | 'admin'
     ? AuthContext
-    : AuthContext | null;
+    : TAuth extends true | 'required'
+      ? AuthContext
+      : TAuth extends StructuredAccessRequirement
+        ? TAuth extends { user: 'required' }
+          ? AuthContext
+          : TAuth extends
+              | { platformRole: unknown }
+              | { tenant: 'required' }
+              | { scopeRole: unknown }
+              | { permission: unknown }
+              | { allPermissions: unknown }
+              | { anyPermissions: unknown }
+              | { properties: unknown }
+            ? AuthContext
+            : AuthContext | null
+        : AuthContext | null;
 
 /** Elysia plugin shapes accepted from app-owned server modules. */
 export type ServerRoutePlugin = AnyElysia | ((app: AnyElysia) => MaybePromise<AnyElysia>);
@@ -60,6 +102,8 @@ export interface ZeroLifecycleContext<
 > extends Record<string, unknown> {
   auth: TUser;
   authContext: AuthContext | null;
+  /** Request-local application/tenant authorization facade. */
+  access: RequestAuthorizationAccess;
   body: TBody;
   headers: THeaders;
   params: TParams;
@@ -68,7 +112,7 @@ export interface ZeroLifecycleContext<
   requireAuth: () => AuthContext;
   request: Request;
   user: TUser;
-  zero: ServerRouteServices;
+  zero: ServerRequestServices;
 }
 
 /** Options shared by Zero-native HTTP endpoints. */
@@ -77,7 +121,7 @@ export interface ZeroEndpointOptions<
   TQuerySchema = unknown,
   TParamsSchema = unknown,
   THeadersSchema = unknown,
-  TAuth extends ZeroAuthRequirement | undefined = undefined,
+  TAuth extends AccessRequirement | undefined = undefined,
   TResponse = unknown
 > {
   /** Optional stable name used in traces, errors, and generated plugin names. */
@@ -117,7 +161,7 @@ export interface ZeroEndpointDefinition<
   TQuerySchema = unknown,
   TParamsSchema = unknown,
   THeadersSchema = unknown,
-  TAuth extends ZeroAuthRequirement | undefined = undefined,
+  TAuth extends AccessRequirement | undefined = undefined,
   TResponse = unknown
 > extends ZeroEndpointOptions<TBodySchema, TQuerySchema, TParamsSchema, THeadersSchema, TAuth, TResponse> {
   readonly kind: 'endpoint';
@@ -131,7 +175,7 @@ export interface ZeroRouterOptions {
   /** Optional URL prefix for every child extension. */
   prefix?: string;
   /** Auth policy inherited by child endpoints and raw route plugins. */
-  auth?: ZeroAuthRequirement;
+  auth?: AccessRequirement;
   /** Child endpoints, middleware, nested routers, plugins, or raw Elysia plugins. */
   endpoints?: ZeroRouterChild[];
   /** Alias for endpoints when route-oriented naming reads better. */
@@ -146,10 +190,10 @@ export interface ZeroRouterDefinition extends ZeroRouterOptions {
 
 /** Options accepted by defineMiddleware(). */
 export type ZeroMiddlewareUser<
-  TAuth extends ZeroAuthRequirement | undefined = undefined,
+  TAuth extends AccessRequirement | undefined = undefined,
   TMatcher extends ZeroMiddlewareMatcher | undefined = undefined
 > =
-  TAuth extends 'user' | 'admin'
+  ZeroLifecycleUser<TAuth> extends AuthContext
     ? AuthContext
     : TMatcher extends { auth: 'user' | 'admin' }
       ? AuthContext
@@ -160,7 +204,7 @@ export type ZeroMiddlewareUser<
           : AuthContext | null;
 
 export interface ZeroMiddlewareOptions<
-  TAuth extends ZeroAuthRequirement | undefined = undefined,
+  TAuth extends AccessRequirement | undefined = undefined,
   TMatcher extends ZeroMiddlewareMatcher | undefined = undefined
 > {
   /** Stable middleware name used by traces and diagnostics. */
@@ -177,7 +221,7 @@ export interface ZeroMiddlewareOptions<
 
 /** A validated Zero-native middleware definition. */
 export interface ZeroMiddlewareDefinition<
-  TAuth extends ZeroAuthRequirement | undefined = undefined,
+  TAuth extends AccessRequirement | undefined = undefined,
   TMatcher extends ZeroMiddlewareMatcher | undefined = undefined
 > extends ZeroMiddlewareOptions<TAuth, TMatcher> {
   readonly kind: 'middleware';
@@ -223,12 +267,13 @@ export function defineEndpoint<
   const TQuerySchema = unknown,
   const TParamsSchema = unknown,
   const THeadersSchema = unknown,
-  const TAuth extends ZeroAuthRequirement | undefined = undefined,
+  const TAuth extends AccessRequirement | undefined = undefined,
   TResponse = unknown
 >(
   options: ZeroEndpointOptions<TBodySchema, TQuerySchema, TParamsSchema, THeadersSchema, TAuth, TResponse>
 ): ZeroEndpointDefinition<TBodySchema, TQuerySchema, TParamsSchema, THeadersSchema, TAuth, TResponse> {
   assertAbsolutePath(options.path, 'endpoint path');
+  if (options.auth !== undefined) compileAccessRequirement(options.auth);
 
   return markExtension('endpoint', {
     ...options,
@@ -240,6 +285,7 @@ export function defineEndpoint<
 export function defineRouter(options: ZeroRouterOptions): ZeroRouterDefinition {
   assertExtensionName(options.name, 'router');
   if (options.prefix !== undefined) assertRouterPrefix(options.prefix);
+  if (options.auth !== undefined) compileAccessRequirement(options.auth);
 
   return markExtension('router', {
     ...options,
@@ -248,16 +294,20 @@ export function defineRouter(options: ZeroRouterOptions): ZeroRouterDefinition {
 
 /** Create a validated Zero-native middleware definition. */
 export function defineMiddleware<
-  const TAuth extends ZeroAuthRequirement | undefined = undefined,
+  const TAuth extends AccessRequirement | undefined = undefined,
   const TMatcher extends ZeroMiddlewareMatcher | undefined = undefined
 >(
   options: ZeroMiddlewareOptions<TAuth, TMatcher>
 ): ZeroMiddlewareDefinition<TAuth, TMatcher> {
   assertExtensionName(options.name, 'middleware');
+  if (options.auth !== undefined) compileAccessRequirement(options.auth);
 
   return markExtension('middleware', {
     ...options,
-    normalizedMatcher: normalizeMiddlewareMatcher(options),
+    normalizedMatcher: normalizeMiddlewareMatcher({
+      matcher: options.matcher,
+      path: options.path,
+    }),
   });
 }
 
@@ -292,12 +342,17 @@ export function isServerRoutePlugin(value: unknown): value is ServerRoutePlugin 
 export function createServerExtensionBundle(options: {
   extensions: ZeroServerExtensionMountable[];
   name?: string;
+  runtime?: ZeroAppRuntime;
 }): ServerRoutePlugin {
   const extensions = [...options.extensions];
   const name = options.name ?? 'zero.app.server-extensions';
 
   return async function mountZeroServerExtensions(parent: AnyElysia): Promise<AnyElysia> {
-    const app = await createServerExtensionApp({ extensions, name });
+    const app = await createServerExtensionApp({
+      extensions,
+      name,
+      runtime: options.runtime,
+    });
     return (parent as AnyElysia & { use(plugin: ServerRoutePlugin): AnyElysia }).use(app);
   };
 }
@@ -306,12 +361,25 @@ export function createServerExtensionBundle(options: {
 export async function createServerExtensionApp(options: {
   extensions: ZeroServerExtensionMountable[];
   name?: string;
+  runtime?: ZeroAppRuntime;
 }): Promise<AnyElysia> {
-  let app = createServerRoute({ name: options.name ?? 'zero.app.server-extensions' }) as AnyElysia;
+  const kernel = resolveAuthorizationKernel(options.runtime);
+  const rootAccess = createRootAccessPlan('optional', kernel);
+  let app = createServerRoute(
+    { name: options.name ?? 'zero.app.server-extensions' },
+    options.runtime,
+  ) as AnyElysia;
   app = applyAuthErrorHandler(app);
 
   for (const extension of options.extensions) {
-    app = await applyServerExtension(app, extension);
+    app = await applyServerExtensionWithPlan(
+      app,
+      extension,
+      rootAccess,
+      kernel,
+      options.runtime,
+      '',
+    );
   }
 
   return app;
@@ -321,7 +389,33 @@ export async function createServerExtensionApp(options: {
 export async function applyServerExtension(
   app: AnyElysia,
   extension: ZeroServerExtensionMountable,
-  inheritedAuth: ZeroAuthRequirement = 'optional'
+  inheritedAuth: AccessRequirement | CompiledAccessRequirement = 'optional',
+  runtime?: ZeroAppRuntime,
+  routePrefix = '',
+): Promise<AnyElysia> {
+  const kernel = resolveAuthorizationKernel(runtime);
+  return applyServerExtensionWithPlan(
+    app,
+    extension,
+    createRootAccessPlan(inheritedAuth, kernel),
+    kernel,
+    runtime,
+    routePrefix,
+  );
+}
+
+interface ResolvedAccessPlan {
+  readonly requirement: CompiledAccessRequirement;
+  readonly forceAnonymous: boolean;
+}
+
+async function applyServerExtensionWithPlan(
+  app: AnyElysia,
+  extension: ZeroServerExtensionMountable,
+  inheritedAccess: ResolvedAccessPlan,
+  kernel: AuthorizationKernel | null,
+  runtime?: ZeroAppRuntime,
+  routePrefix = '',
 ): Promise<AnyElysia> {
   if (isServerRoutePlugin(extension) && !isZeroServerExtension(extension)) {
     return usePlugin(app, extension);
@@ -333,31 +427,45 @@ export async function applyServerExtension(
 
   switch (extension.kind) {
     case 'endpoint':
-      return applyEndpoint(app, extension, inheritedAuth);
+      return applyEndpoint(app, extension, inheritedAccess, kernel, runtime, routePrefix);
     case 'router':
-      return applyRouter(app, extension, inheritedAuth);
+      return applyRouter(app, extension, inheritedAccess, kernel, runtime, routePrefix);
     case 'middleware':
-      return applyMiddleware(app, extension, inheritedAuth);
+      return applyMiddleware(app, extension, inheritedAccess, kernel, runtime);
     case 'plugin':
-      return applyPlugin(app, extension);
+      return applyPlugin(app, extension, runtime);
   }
 }
 
 function applyEndpoint(
   app: AnyElysia,
   endpoint: ZeroEndpointDefinition,
-  inheritedAuth: ZeroAuthRequirement
+  inheritedAccess: ResolvedAccessPlan,
+  kernel: AuthorizationKernel | null,
+  runtime?: ZeroAppRuntime,
+  routePrefix = '',
 ): AnyElysia {
-  const auth = resolveAuthRequirement(endpoint.auth, inheritedAuth);
-  const routeOptions = buildRouteOptions(endpoint, auth);
+  const access = mergeAccessPlan(inheritedAccess, endpoint.auth, kernel);
+  const routeOptions = buildRouteOptions(endpoint, access);
+  const multipartGuard = createEarlyMultipartGuard(
+    access,
+    runtime,
+    joinRoutePaths(routePrefix, endpoint.path),
+    endpoint.method,
+  );
+  const guardedApp = multipartGuard
+    ? (app as AnyElysia & {
+        onRequest(handler: ReturnType<typeof createProtectedMultipartRequestGuard>): AnyElysia;
+      }).onRequest(multipartGuard)
+    : app;
 
-  return (app as AnyElysia & {
+  return (guardedApp as AnyElysia & {
     route(method: string, path: string, handler: (context: unknown) => MaybePromise<unknown>, hook?: unknown): AnyElysia;
   }).route(
     endpoint.method,
     endpoint.path,
     async function zeroEndpointHandler(context: unknown) {
-      const handlerContext = createLifecycleContext(context, auth);
+      const handlerContext = createLifecycleContext(context, access, runtime);
       return endpoint.handler(handlerContext);
     },
     routeOptions
@@ -367,19 +475,33 @@ function applyEndpoint(
 async function applyRouter(
   app: AnyElysia,
   router: ZeroRouterDefinition,
-  inheritedAuth: ZeroAuthRequirement
+  inheritedAccess: ResolvedAccessPlan,
+  kernel: AuthorizationKernel | null,
+  runtime?: ZeroAppRuntime,
+  routePrefix = '',
 ): Promise<AnyElysia> {
-  const auth = resolveAuthRequirement(router.auth, inheritedAuth);
-  let routerApp = createServerRoute({
-    name: `zero.router.${router.name}`,
-    prefix: router.prefix,
-  }) as AnyElysia;
+  const access = mergeAccessPlan(inheritedAccess, router.auth, kernel);
+  const fullPrefix = joinRoutePaths(routePrefix, router.prefix ?? '');
+  let routerApp = createServerRoute(
+    {
+      name: `zero.router.${router.name}`,
+      prefix: router.prefix,
+    },
+    runtime,
+  ) as AnyElysia;
 
-  routerApp = applyAuthGuard(routerApp, auth);
+  routerApp = applyAuthGuard(routerApp, access, runtime, fullPrefix);
 
   const children = [...(router.endpoints ?? []), ...(router.routes ?? [])];
   for (const child of children) {
-    routerApp = await applyServerExtension(routerApp, child, auth);
+    routerApp = await applyServerExtensionWithPlan(
+      routerApp,
+      child,
+      access,
+      kernel,
+      runtime,
+      fullPrefix,
+    );
   }
 
   return usePlugin(app, routerApp);
@@ -388,41 +510,71 @@ async function applyRouter(
 function applyMiddleware(
   app: AnyElysia,
   middleware: ZeroMiddlewareDefinition,
-  inheritedAuth: ZeroAuthRequirement
+  inheritedAccess: ResolvedAccessPlan,
+  kernel: AuthorizationKernel | null,
+  runtime?: ZeroAppRuntime,
 ): AnyElysia {
-  const matcher = inheritMatcherAuth(middleware.normalizedMatcher, inheritedAuth);
+  const matcher = middleware.normalizedMatcher;
+  const accessPlan = mergeAccessPlan(inheritedAccess, middleware.auth, kernel);
 
   return (app as AnyElysia & {
     onBeforeHandle(handler: (context: unknown) => MaybePromise<unknown>): AnyElysia;
   }).onBeforeHandle(async function zeroMiddlewareHandler(context: unknown) {
-    const matchContext = createLifecycleContext(context, 'optional');
+    const current = asContext(context);
+    const matchContext = createLifecycleContextWithUser(context, current.authContext, runtime);
     const applicability = await evaluateMiddlewareApplicability(matcher, matchContext);
     if (!applicability.applies) return undefined;
 
-    const user = enforceServerPolicy(matcher, matchContext);
-    const handlerContext = createLifecycleContextWithUser(context, user);
+    current.access.authorize(accessPlan.requirement);
+    const matcherUser = enforceServerPolicy(
+      matcher,
+      matchContext,
+      createServerPolicyOptions(runtime, kernel),
+    );
+    const user = accessPlan.forceAnonymous
+      ? null
+      : accessPlan.requirement.user === 'required'
+        ? current.access.requireUser()
+        : matcherUser;
+    const handlerContext = createLifecycleContextWithUser(context, user, runtime);
 
     return middleware.run(handlerContext);
   });
 }
 
-async function applyPlugin(app: AnyElysia, plugin: ZeroPluginDefinition): Promise<AnyElysia> {
-  const child = createServerRoute({ name: `zero.plugin.${plugin.name}` });
+async function applyPlugin(
+  app: AnyElysia,
+  plugin: ZeroPluginDefinition,
+  runtime?: ZeroAppRuntime,
+): Promise<AnyElysia> {
+  const child = createServerRoute({ name: `zero.plugin.${plugin.name}` }, runtime);
   const result = await plugin.setup({
     app: child,
-    zero: createLazyServerRouteServices(),
+    zero: createLazyServerRouteServices(runtime),
   });
 
   return usePlugin(app, result ?? child);
 }
 
-function applyAuthGuard(app: AnyElysia, auth: ZeroAuthRequirement): AnyElysia {
-  const guard = createAuthGuard(auth);
+function applyAuthGuard(
+  app: AnyElysia,
+  access: ResolvedAccessPlan,
+  runtime?: ZeroAppRuntime,
+  routePrefix = '',
+): AnyElysia {
+  const guard = createAuthGuard(access);
   if (!guard) return app;
 
+  const multipartGuard = createEarlyMultipartGuard(
+    access,
+    runtime,
+    (request) => matchesRoutePrefix(request, routePrefix),
+  );
+
   return (app as AnyElysia & {
+    onRequest(handler: ReturnType<typeof createProtectedMultipartRequestGuard>): AnyElysia;
     onBeforeHandle(handler: (context: unknown) => MaybePromise<unknown>): AnyElysia;
-  }).onBeforeHandle(guard);
+  }).onRequest(multipartGuard!).onBeforeHandle(guard);
 }
 
 function applyAuthErrorHandler(app: AnyElysia): AnyElysia {
@@ -441,7 +593,10 @@ function applyAuthErrorHandler(app: AnyElysia): AnyElysia {
   });
 }
 
-function buildRouteOptions(endpoint: ZeroEndpointDefinition, auth: ZeroAuthRequirement): Record<string, unknown> {
+function buildRouteOptions(
+  endpoint: ZeroEndpointDefinition,
+  access: ResolvedAccessPlan,
+): Record<string, unknown> {
   return compactObject({
     body: endpoint.body,
     query: endpoint.query,
@@ -452,39 +607,62 @@ function buildRouteOptions(endpoint: ZeroEndpointDefinition, auth: ZeroAuthRequi
     detail: endpoint.detail,
     parse: endpoint.parse,
     transform: endpoint.transform,
-    beforeHandle: prependHook(createAuthGuard(auth), endpoint.beforeHandle),
+    beforeHandle: prependHook(createAuthGuard(access), endpoint.beforeHandle),
     afterHandle: endpoint.afterHandle,
     mapResponse: endpoint.mapResponse,
     error: endpoint.error,
   });
 }
 
-function createAuthGuard(auth: ZeroAuthRequirement): ((context: unknown) => void) | undefined {
-  if (auth === 'user') {
-    return function requireZeroUserAuth(context: unknown): void {
-      asContext(context).requireAuth();
-    };
-  }
-
-  if (auth === 'admin') {
-    return function requireZeroAdminAuth(context: unknown): void {
-      asContext(context).requireAdmin();
-    };
-  }
-
-  return undefined;
+function createEarlyMultipartGuard(
+  access: ResolvedAccessPlan,
+  runtime?: ZeroAppRuntime,
+  path?: string | ((request: Request) => boolean),
+  method?: string,
+) {
+  if (access.requirement.user !== 'required') return undefined;
+  const getAppTokenService = runtime
+    ? () => runtime.get(ZERO_AUTH_TOKEN_SERVICE)
+    : getTokenService;
+  return createProtectedMultipartRequestGuard(getAppTokenService, {
+    requirement: access.requirement,
+    path,
+    method,
+  }, createAuthorizationDependencies(runtime));
 }
 
-function createLifecycleContext(context: unknown, auth: ZeroAuthRequirement): ZeroLifecycleContext {
-  const current = asContext(context);
-  const user = resolveRequestUser(current, auth);
-
-  return createLifecycleContextWithUser(context, user);
+function createAuthGuard(
+  access: ResolvedAccessPlan,
+): ((context: unknown) => void) | undefined {
+  if (access.requirement.user !== 'required') return undefined;
+  return function requireZeroAccess(context: unknown): void {
+    asContext(context).access.authorize(access.requirement);
+  };
 }
 
-function createLifecycleContextWithUser(context: unknown, user: AuthContext | null): ZeroLifecycleContext {
+function createLifecycleContext(
+  context: unknown,
+  access: ResolvedAccessPlan,
+  runtime?: ZeroAppRuntime,
+): ZeroLifecycleContext {
   const current = asContext(context);
-  const zero = current.zero ?? getServerRouteServices();
+  current.access.authorize(access.requirement);
+  const user = access.forceAnonymous
+    ? null
+    : access.requirement.user === 'required'
+      ? current.access.requireUser()
+      : current.authContext ?? null;
+
+  return createLifecycleContextWithUser(context, user, runtime);
+}
+
+function createLifecycleContextWithUser(
+  context: unknown,
+  user: AuthContext | null,
+  runtime?: ZeroAppRuntime,
+): ZeroLifecycleContext {
+  const current = asContext(context);
+  const zero = current.zero ?? getServerRouteServices(runtime);
 
   return {
     ...current,
@@ -492,13 +670,6 @@ function createLifecycleContextWithUser(context: unknown, user: AuthContext | nu
     user,
     zero,
   } as ZeroLifecycleContext;
-}
-
-function resolveRequestUser(context: ZeroLifecycleContext, auth: ZeroAuthRequirement): AuthContext | null {
-  if (auth === 'admin') return context.requireAdmin();
-  if (auth === 'user') return context.requireAuth();
-  if (auth === false) return null;
-  return context.authContext ?? null;
 }
 
 function prependHook(
@@ -514,6 +685,20 @@ function normalizeHooks(hooks: ZeroLifecycleHook): Array<(context: ZeroLifecycle
   return Array.isArray(hooks) ? hooks : [hooks];
 }
 
+function joinRoutePaths(prefix: string, path: string): string {
+  const left = prefix === '/' ? '' : prefix.replace(/\/+$/, '');
+  const right = path === '/' ? '' : path.replace(/^\/+/, '');
+  const joined = `${left}/${right}`.replace(/\/+/g, '/');
+  return joined || '/';
+}
+
+function matchesRoutePrefix(request: Request, prefix: string): boolean {
+  const normalized = joinRoutePaths('', prefix);
+  const pathname = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
+  if (normalized === '/') return true;
+  return pathname === normalized || pathname.startsWith(`${normalized}/`);
+}
+
 function usePlugin(app: AnyElysia, plugin: ServerRoutePlugin): AnyElysia {
   return (app as AnyElysia & { use(plugin: ServerRoutePlugin): AnyElysia }).use(plugin);
 }
@@ -522,11 +707,82 @@ function asContext(context: unknown): ZeroLifecycleContext {
   return context as ZeroLifecycleContext;
 }
 
-function resolveAuthRequirement(
-  auth: ZeroAuthRequirement | undefined,
-  inheritedAuth: ZeroAuthRequirement
-): ZeroAuthRequirement {
-  return auth === undefined ? inheritedAuth : auth;
+function createRootAccessPlan(
+  requirement: AccessRequirement | CompiledAccessRequirement,
+  kernel: AuthorizationKernel | null,
+): ResolvedAccessPlan {
+  const compiled = isCompiledAccessRequirement(requirement)
+    ? validateCompiledForKernel(requirement, kernel)
+    : kernel?.compile(requirement) ?? compileAccessRequirement(requirement);
+  return {
+    requirement: compiled,
+    forceAnonymous: compiled.user === 'optional' && requirement === false,
+  };
+}
+
+function mergeAccessPlan(
+  parent: ResolvedAccessPlan,
+  child: AccessRequirement | undefined,
+  kernel: AuthorizationKernel | null,
+): ResolvedAccessPlan {
+  if (child === undefined) return parent;
+  const requirement = kernel
+    ? kernel.merge(parent.requirement, child)
+    : mergeAccessRequirements(parent.requirement, child);
+  return {
+    requirement,
+    // A public child cannot discard a required parent. For an otherwise
+    // optional branch, explicit false retains its legacy anonymous context.
+    forceAnonymous: requirement.user === 'optional' && child === false,
+  };
+}
+
+function validateCompiledForKernel(
+  requirement: CompiledAccessRequirement,
+  kernel: AuthorizationKernel | null,
+): CompiledAccessRequirement {
+  // Merging with an empty declaration preserves the requirement while running
+  // serialized-shape validation. A configured kernel additionally applies its
+  // role, permission, tenant, and property registry checks.
+  return kernel
+    ? kernel.merge(requirement, false)
+    : mergeAccessRequirements(requirement, false);
+}
+
+function resolveAuthorizationKernel(runtime?: ZeroAppRuntime): AuthorizationKernel | null {
+  return runtime
+    ? runtime.get(ZERO_AUTHORIZATION_KERNEL)
+    : getAuthorizationKernel();
+}
+
+function createAuthorizationDependencies(
+  runtime?: ZeroAppRuntime,
+): AuthMiddlewareAuthorizationOptions {
+  return {
+    getAuthorizationKernel: runtime
+      ? () => runtime.get(ZERO_AUTHORIZATION_KERNEL)
+      : getAuthorizationKernel,
+    getPropertyStore: runtime
+      ? () => runtime.get(ZERO_AUTH_STORE)
+      : getAuthStore,
+    getRoleAssignments: runtime
+      ? () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE)
+      : undefined,
+  };
+}
+
+function createServerPolicyOptions(
+  runtime: ZeroAppRuntime | undefined,
+  kernel: AuthorizationKernel | null,
+): ZeroPolicyEvaluationOptions {
+  return {
+    getPropertyStore: runtime
+      ? () => runtime.get(ZERO_AUTH_STORE)
+      : getAuthStore,
+    getPropertyRegistry: () => kernel
+      ? { isPolicyTrusted: (key) => kernel.isPolicyTrustedProperty(key) }
+      : null,
+  };
 }
 
 function assertExtensionName(name: string, type: string): void {

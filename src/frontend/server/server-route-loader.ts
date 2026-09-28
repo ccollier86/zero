@@ -20,6 +20,7 @@ import {
   type ServerRoutePlugin,
   type ZeroServerExtensionMountable,
 } from './server-extensions';
+import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 
 const ROUTE_MODULE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 const EXPORT_KEYS = [
@@ -50,6 +51,8 @@ export interface ServerRouteLoaderOptions {
   routesDir?: string;
   /** Ordered extension directories. When provided, routesDir is ignored. */
   extensionDirs?: ServerRouteExtensionDirectory[];
+  /** App-local runtime supplied by managed createApp() composition. */
+  runtime?: ZeroAppRuntime;
 }
 
 /** Error thrown when an app-owned route module has an invalid export. */
@@ -111,7 +114,7 @@ export async function loadServerRoutePlugins(
 
   return extensions.length === 0
     ? []
-    : [await createServerExtensionApp({ extensions })];
+    : [await createServerExtensionApp({ extensions, runtime: options.runtime })];
 }
 
 /**

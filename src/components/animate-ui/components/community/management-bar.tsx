@@ -9,7 +9,7 @@ import {
   Command,
   IdCard,
 } from 'lucide-react';
-import { SlidingNumber } from '@/components/animate-ui/primitives/texts/sliding-number';
+import { SlidingNumber } from '#zero/components/animate-ui/primitives/texts/sliding-number';
 import { motion, type Variants, type Transition } from 'motion/react';
 
 const TOTAL_PAGES = 10;

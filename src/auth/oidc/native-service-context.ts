@@ -3,9 +3,11 @@
 import type { ResolvedNativeAuthConfig } from '../native';
 import type { TokenService } from '../token-service';
 import type { UserStore } from '../user-store';
+import type { AuthAuditService } from '../auth-audit-service';
 import type { NativeCodeStore } from './native-code-store';
 import type { NativeRequestStore } from './native-request-store';
 import type { NativeSessionStore } from './native-session-store';
+import type { NativeTenantAuthorityService } from './native-tenant-authority';
 
 export interface NativeAuthorizationServiceConfig {
   native: ResolvedNativeAuthConfig;
@@ -21,6 +23,8 @@ export interface NativeServiceContext {
   requests: NativeRequestStore;
   codes: NativeCodeStore;
   sessions: NativeSessionStore;
+  authority: NativeTenantAuthorityService;
+  audit?: AuthAuditService;
   users: UserStore;
   tokens: TokenService;
 }

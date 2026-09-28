@@ -2,12 +2,12 @@
 
 import * as React from 'react';
 
-import { cn } from '@/lib/utils';
-import { Input } from '@/components/ui/input';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { Eye } from '@/components/animate-ui/icons/eye';
-import { EyeOff } from '@/components/animate-ui/icons/eye-off';
-import { PasswordStrength } from '@/components/auth/password-strength';
+import { cn } from '#zero/lib/utils';
+import { Input } from '#zero/components/ui/input';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { Eye } from '#zero/components/animate-ui/icons/eye';
+import { EyeOff } from '#zero/components/animate-ui/icons/eye-off';
+import { PasswordStrength } from '#zero/components/auth/password-strength';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

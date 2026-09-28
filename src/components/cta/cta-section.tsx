@@ -7,8 +7,8 @@
 
 import * as React from 'react';
 
-import { HeroActions } from '@/components/hero';
-import { cn } from '@/lib/utils';
+import { HeroActions } from '#zero/components/hero';
+import { cn } from '#zero/lib/utils';
 
 import type { CtaSectionProps } from './cta-section.types';
 

@@ -8,6 +8,7 @@
 
 import { afterEach, describe, expect, it } from 'bun:test';
 import { AuthClient } from './auth-client';
+import { getBrowserAuthStorageKeys } from './auth-browser-coordination';
 import { createApi } from './api';
 
 const originalFetch = globalThis.fetch;
@@ -132,7 +133,11 @@ describe('authenticated Eden multipart transport', () => {
     expect(result.status).toBe(200);
     expect(uploads).toHaveLength(1);
     expect(uploads[0]!.authorization).toBe('Bearer access-restored');
-    expect(storage.getItem(REFRESH_TOKEN_KEY)).toBe('refresh-rotated');
+    const stored = JSON.parse(
+      storage.getItem(getBrowserAuthStorageKeys('http://zero.test').credential)!,
+    );
+    expect(stored.refreshToken).toBe('refresh-rotated');
+    expect(storage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
     await expectPdfFile(uploads[0]!.body.get('file'));
   });
 });

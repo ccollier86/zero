@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { DialogFlipDirection } from '@/components/animate-ui/primitives/radix/dialog';
+import type { DialogFlipDirection } from '#zero/components/animate-ui/primitives/radix/dialog';
 
 // ─── Size Presets ────────────────────────────────────────────────────────────
 

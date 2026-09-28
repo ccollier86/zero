@@ -17,11 +17,13 @@ import type { UserManagementUser } from './user-management-types';
 
 export interface UserDetailHeaderProps {
   user: UserManagementUser;
+  /** Human-readable global-role label; the stored role value is unchanged. */
+  roleLabel?: string;
   className?: string;
 }
 
 /** Render the selected user's compact identity, role, and lifecycle state. */
-export function UserDetailHeader({ user, className }: UserDetailHeaderProps) {
+export function UserDetailHeader({ user, roleLabel, className }: UserDetailHeaderProps) {
   const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username;
   const identity = user.username.toLowerCase() === user.email.toLowerCase()
     ? user.email
@@ -49,7 +51,7 @@ export function UserDetailHeader({ user, className }: UserDetailHeaderProps) {
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h2 className="min-w-0 truncate text-base font-semibold">{fullName}</h2>
           <Badge className="h-5 px-1.5 text-[11px]" variant={user.role === 'admin' ? 'default' : 'outline'}>
-            {user.role}
+            {roleLabel ?? user.role}
           </Badge>
           <Badge className="h-5 px-1.5 text-[11px]" variant={user.status === 'active' ? 'secondary' : 'outline'}>
             {user.status}

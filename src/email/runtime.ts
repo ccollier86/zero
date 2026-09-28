@@ -1,8 +1,8 @@
 /**
  * runtime.ts
  *
- * Owns Zero's process-wide email runtime. createApp configures this boundary;
- * auth/account lifecycle services read from it without knowing provider setup.
+ * Builds app-local email runtimes and retains a guarded compatibility boundary
+ * for older integrations that use no-argument getters.
  */
 
 import { OBS_CODES } from '../observability/codes';
@@ -19,11 +19,17 @@ import type {
   EmailProvider,
   EmailRuntime,
 } from './types';
+import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
 
-let runtime: EmailRuntime = createEmailRuntime(undefined, {});
+const emailRuntimeProviders = new CompatibilityProviderRegistry<EmailRuntime>(
+  'Email runtime',
+);
+const manualOwner = {};
+const disabledRuntime = createEmailRuntime(undefined, {});
+let manualRegistration: ReturnType<typeof emailRuntimeProviders.register> | null = null;
 
 /**
- * Configure the active process-wide email runtime.
+ * Configure the manual compatibility email runtime.
  *
  * Passing `false` disables delivery. Passing `true` uses Resend defaults.
  * Passing a custom provider object keeps Zero's auth email code provider-agnostic.
@@ -32,7 +38,9 @@ export function configureEmail(
   config: EmailConfig | boolean | false | undefined,
   app: AppIdentityConfig = {}
 ): EmailRuntime {
-  runtime = createEmailRuntime(config, app);
+  const runtime = createEmailRuntime(config, app);
+  manualRegistration?.unregister();
+  manualRegistration = emailRuntimeProviders.register(manualOwner, () => runtime);
   emitPlatformCode(OBS_CODES.EMAIL_CONFIGURED, {
     metadata: {
       enabled: runtime.enabled,
@@ -44,14 +52,14 @@ export function configureEmail(
   return runtime;
 }
 
-/** Return the active email runtime. */
+/** Return the only unambiguous compatibility email runtime. */
 export function getEmailRuntime(): EmailRuntime {
-  return runtime;
+  return emailRuntimeProviders.get() ?? disabledRuntime;
 }
 
-/** Return the active email service. */
+/** Return the only unambiguous compatibility email service. */
 export function getEmailService(): EmailService {
-  return runtime.service as EmailService;
+  return getEmailRuntime().service as EmailService;
 }
 
 /**
@@ -60,7 +68,7 @@ export function getEmailService(): EmailService {
  * public URL.
  */
 export function isEmailDeliveryReady(
-  candidate: EmailRuntime = runtime
+  candidate: EmailRuntime = getEmailRuntime()
 ): boolean {
   if (!candidate.enabled || !candidate.config) {
     return false;
@@ -80,7 +88,7 @@ export function isEmailDeliveryReady(
   return provider !== 'noop';
 }
 
-function createEmailRuntime(
+export function createEmailRuntime(
   input: EmailConfig | boolean | false | undefined,
   app: AppIdentityConfig
 ): EmailRuntime {
@@ -110,6 +118,13 @@ function createEmailRuntime(
     provider,
     service: new EmailService(provider, config),
   };
+}
+
+/** Register one app-local email runtime for legacy no-argument compatibility. */
+export function registerEmailRuntime(owner: object, runtime: EmailRuntime): {
+  unregister(): void;
+} {
+  return emailRuntimeProviders.register(owner, () => runtime);
 }
 
 function firstNonEmpty(value: string | undefined): string | undefined {

@@ -6,7 +6,7 @@ import { motion, type Transition } from 'motion/react';
 import {
   useIsInView,
   type UseIsInViewOptions,
-} from '@/hooks/use-is-in-view';
+} from '#zero/hooks/use-is-in-view';
 
 const formatCharacter = (char: string) => (char === ' ' ? '\u00A0' : char);
 

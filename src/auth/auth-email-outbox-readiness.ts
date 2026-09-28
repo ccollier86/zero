@@ -6,7 +6,9 @@ export function shouldStartAuthEmailOutbox(
   email: AccountEmailService
 ): boolean {
   if (!config.accountEmails.passwordReset
-    && !config.account.requireEmailVerification) return false;
+    && !config.account.requireEmailVerification
+    && !config.tenancy?.onboarding?.invitations.delivery.email.enabled
+    && !config.tenancy?.onboarding?.verifiedDomains.enabled) return false;
   try {
     email.assertReady();
     return true;

@@ -11,7 +11,7 @@ import * as React from 'react';
 import { create } from 'qrcode';
 import type { QRCodeErrorCorrectionLevel } from 'qrcode';
 
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 
 export interface QRCodeProps {
   value: string;

@@ -19,6 +19,10 @@ interface SyncSocketAuthRuntimeOptions {
   policy: SyncPolicy;
   resourcePolicy?: SyncResourcePolicyAdapter;
   activeSockets: Set<ServerWebSocket<SyncSocketData>>;
+  /** Multi-tenant managed Sync cannot admit a bearer without a durable fence. */
+  requireDurableAuthority?: boolean;
+  /** Revalidate managed ephemeral subscriptions after an authority revision. */
+  onAuthorityInvalidated?: () => void | Promise<void>;
 }
 
 /** Create the per-plugin lifecycle owner for socket authentication. */
@@ -72,7 +76,10 @@ export function createSyncSocketAuthRuntime(
     authorize: authorizer.authorize,
     clearSocket,
     dispose,
+    invalidateAll: revalidation.invalidateAll,
     revalidate: revalidation.revalidate,
+    start: revalidation.startAuthorityPolling,
+    validateCurrentAuthority: revalidation.validateCurrentAuthority,
     waitForRequiredHandshake,
   };
 }

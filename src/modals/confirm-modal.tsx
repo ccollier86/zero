@@ -2,7 +2,7 @@
 
 import { useCallback } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button } from '#zero/components/ui/button';
 import { HoldButton } from './hold-button';
 import type { ModalInstance } from './modal.types';
 

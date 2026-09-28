@@ -7,10 +7,13 @@
  */
 
 import { isPolicyTrustedUserProperty } from '../auth/auth-config';
+import { AuthorizationKernel } from '../auth/authorization-kernel';
+import type { CompiledAccessRequirement } from '../auth/authorization-kernel';
 import type {
+  ResourcePolicyAuthConfig,
+  ResourceAuthorizationRequirement,
   ResourceMetadataRequirements,
   ResourcePolicy,
-  ResourcePolicyAuthConfig,
   ResourcePolicyValidationContext,
   ResourcePolicyValidationIssue,
 } from './resource-policy-types';
@@ -59,6 +62,40 @@ export function validateMetadataPolicy(
   }
 
   return issues;
+}
+
+/** Validate a resource RBAC declaration against the app's exact auth ceiling. */
+export function validateAuthorizationPolicy(
+  requirement: ResourceAuthorizationRequirement | CompiledAccessRequirement,
+  authConfig: ResourcePolicyAuthConfig,
+): ResourcePolicyValidationIssue[] {
+  if (!authConfig.tenancy || !authConfig.authorization) {
+    return [{
+      code: 'authorization-config-unavailable',
+      message: 'authorizationPolicy requires Zero tenancy and authorization configuration.',
+      path: 'authorization',
+      severity: 'error',
+    }];
+  }
+
+  try {
+    const kernel = new AuthorizationKernel({
+      tenancy: authConfig.tenancy,
+      authorization: authConfig.authorization,
+      userProperties: authConfig.userProperties,
+    });
+    kernel.evaluate(requirement, null);
+    return [];
+  } catch (error) {
+    return [{
+      code: 'authorization-requirement-invalid',
+      message: error instanceof Error
+        ? error.message
+        : 'authorizationPolicy contains an invalid access requirement.',
+      path: 'authorization',
+      severity: 'error',
+    }];
+  }
 }
 
 /** Validate and path-prefix child policy issues for composite policy helpers. */

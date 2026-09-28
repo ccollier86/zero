@@ -23,8 +23,8 @@ Full table state sent on initial connection (after subscribe) or when the client
       "1": { "id": "1", "title": "Buy milk", "done": 0 },
       "3": { "id": "3", "title": "Walk dog", "done": 1 }
     },
-    "users": {
-      "alice": { "id": "alice", "name": "Alice", "role": "admin" }
+    "contacts": {
+      "alice": { "id": "alice", "name": "Alice", "kind": "customer" }
     }
   },
   "seq": 42,
@@ -39,7 +39,7 @@ Full table state sent on initial connection (after subscribe) or when the client
 | `tables` | `Record<string, Record<PK, Row>>` | Full contents of each subscribed table, keyed by primary key |
 | `seq` | `number` | Current sequence number — client stores this as `lastSeq` |
 | `epoch` | `string` | Process-unique sequence epoch — a change makes old sequence numbers incomparable |
-| `scope` | `string \| null` | Opaque hash of the authenticated identity and effective read policy |
+| `scope` | `string \| null` | Opaque hash of authenticated identity, durable session/tenant generations, and effective read policy |
 | `reset` | `'preserve-pending' \| 'purge'` | Authoritative replacement of every full and lazy table cache |
 
 Current servers mark snapshots as cache replacements. The client first clears
@@ -53,7 +53,13 @@ forbidden lazy rows from surviving a restart or replay overflow.
 
 #### `sync.change`
 
-Single row mutation. Sent to all subscribed clients after every successful write.
+Single row mutation. Sent after a successful write only to subscribed
+connections whose current table/resource/row policy permits that change. At
+the last boundary before send, authenticated sockets re-resolve their captured
+durable session authority. A revoked or changed user/session/tenant/membership
+or advanced-role revision closes and reset-clears the socket instead of
+delivering under cached authority. Multi-tenant authenticated servers reject
+connections whose verifier cannot provide that durable authority contract.
 
 ```json
 {
@@ -81,10 +87,17 @@ Single row mutation. Sent to all subscribed clients after every successful write
 | `op` | `'INSERT' \| 'UPDATE' \| 'DELETE'` | Operation type |
 | `rowId` | `string` | Primary key of the affected row |
 | `row` | `Row \| null` | Full row data (null for DELETE) |
-| `origin` | `string` | Connection ID of the client that caused this mutation |
+| `origin` | `string` | Exact process-local transaction origin when available; empty for replay, external, and application-owned writes |
 | `ts` | `number` | Server timestamp (Date.now()) |
 
-The `origin` field identifies which client connection triggered the mutation. The originating client uses `sync.change` to apply the server's canonical row state (replacing its optimistic version, which may differ if the server added timestamps, defaults, etc.). The `sync.ack` then clears the mutation from the pending queue. Non-originating clients ignore this field — they just apply the row state normally.
+For a live mutation handled and delivered by the same Zero runtime, `origin`
+contains the mutating connection ID. Zero binds it to the exact outer database
+transaction and committed sequence, so reentrant application writes cannot
+inherit it and a local row delayed by ordered replica draining cannot lose it.
+The connection ID is deliberately not stored in the durable change log:
+catch-up rows, file-replica rows, and application-owned changes use `""`.
+Every client applies the canonical row regardless of this hint. Only the
+matching `sync.ack.ref` correlates and settles an optimistic mutation.
 
 For `UPDATE`, `row` contains the **full row** (not a partial). This simplifies client-side reducers — always replace the entire row.
 
@@ -141,9 +154,9 @@ Array of missed changes sent on reconnect. Structurally identical to an array of
 {
   "type": "sync.catchup",
   "changes": [
-    { "seq": 43, "table": "todos", "op": "INSERT", "rowId": "5", "row": { "id": "5", "title": "New", "done": 0 }, "origin": "conn_abc", "ts": 1709500000000 },
-    { "seq": 44, "table": "todos", "op": "UPDATE", "rowId": "1", "row": { "id": "1", "title": "Buy milk", "done": 1 }, "origin": "conn_def", "ts": 1709500001000 },
-    { "seq": 45, "table": "todos", "op": "DELETE", "rowId": "3", "row": null, "origin": "conn_abc", "ts": 1709500002000 }
+    { "seq": 43, "table": "todos", "op": "INSERT", "rowId": "5", "row": { "id": "5", "title": "New", "done": 0 }, "origin": "", "ts": 1709500000000 },
+    { "seq": 44, "table": "todos", "op": "UPDATE", "rowId": "1", "row": { "id": "1", "title": "Buy milk", "done": 1 }, "origin": "", "ts": 1709500001000 },
+    { "seq": 45, "table": "todos", "op": "DELETE", "rowId": "3", "row": null, "origin": "", "ts": 1709500002000 }
   ],
   "seq": 45,
   "prevSeq": 42,
@@ -249,7 +262,19 @@ Request to mutate data. The server validates policy and applies or rejects.
 
 Mutation authorization is separate from subscription authorization. `sync.mutate` is checked through `SyncPolicy.canMutateTable` and the optional operation callbacks `canInsert`, `canUpdate`, and `canDelete`. A table can be readable over sync but writable only through a domain service or HTTP route.
 
-Successful mutations write their data change and a principal-scoped receipt in
+For a registered tenant resource, realm enforcement is an additional mandatory
+boundary outside those callbacks. The socket must carry a live session-bound
+tenant context. Snapshots, catch-up, and live changes are filtered by the
+trusted tenant discriminator. Inserts are server-stamped and reject a
+conflicting discriminator; updates cannot include it. Authorized update/delete
+predicates are carried into the actual SQL mutation, so a custom policy branch
+or a row that changes tenant while async policy work is running cannot widen
+the write. In multi mode, app-managed Sync tables without an explicit resource
+realm and explicit exposure permitting Sync are neither subscribable nor
+mutable.
+
+Successful mutations write their data change and a principal-and-authorization-
+scope receipt in
 the same SQLite transaction. A reconnect reuses the original `ref`, request,
 and first-attempt `epoch` while incrementing `attempt`. The server returns the
 receipt without executing the operation again. If a later attempt has no
@@ -269,6 +294,116 @@ The official client uses this retry contract. Legacy/raw clients that omit
 `attempt` retain the compatibility behavior and are responsible for their own
 idempotency discipline.
 
+## Ephemeral Collaboration Channel
+
+Ephemeral state is RAM-only, topic-scoped JSON used for presence, typing,
+cursors, and similar short-lived collaboration. It is not part of the
+sequenced table stream and is not replayed after a restart. Every accepted
+client topic is mapped by server policy to an internal namespace; client input
+is never used directly as the delivery namespace.
+
+Client operations are:
+
+```json
+{ "type": "ephemeral.subscribe", "topic": "presence:room_123" }
+{ "type": "ephemeral.unsubscribe", "topic": "presence:room_123" }
+{ "type": "ephemeral.set", "topic": "presence:room_123", "key": "user:user_7", "value": { "online": true }, "ttl": 30000 }
+{ "type": "ephemeral.delete", "topic": "presence:room_123", "key": "user:user_7" }
+```
+
+An accepted subscription receives a complete topic snapshot, followed by
+changes. The `topic` in each response is the original client-facing topic, not
+the internal namespace:
+
+```json
+{
+  "type": "ephemeral.snapshot",
+  "topic": "presence:room_123",
+  "entries": {
+    "user:user_7": { "value": { "online": true }, "userId": "user_7" }
+  }
+}
+```
+
+```json
+{
+  "type": "ephemeral.change",
+  "topic": "presence:room_123",
+  "key": "user:user_7",
+  "value": { "online": true },
+  "userId": "user_7",
+  "op": "set"
+}
+```
+
+### Authorization and ownership
+
+`EphemeralTopicPolicy.authorize()` is async and runs for `subscribe`, `set`,
+and `delete`. An allow decision supplies a server-owned `namespace` and either
+`actor` ownership (the default) or explicit `unrestricted` ownership. Actor
+ownership prevents one authenticated principal from overwriting or deleting a
+key first written by another. The server rechecks live subscriptions
+periodically and before delivery; room-membership changes trigger an immediate
+recheck.
+
+Auth-enabled `createApp()` reserves these topic families:
+
+| Client topic | Rule | Internal namespace |
+|---|---|---|
+| `presence:<roomId>` | Current user must be a live room member; write/delete key must equal `user:<currentUserId>` | `room:<roomId>:presence` |
+| `typing:<roomId>` | Same membership and key rule | `room:<roomId>:typing` |
+| `user:<currentUserId>:<name>` | Must name the authenticated user | User-scoped namespace |
+
+Other names are denied with `EPHEMERAL_TOPIC_UNCLASSIFIED` unless the app sets
+`ephemeralPolicy`. App policy namespaces are automatically placed below an
+`app:` internal prefix, so they cannot collide with reserved room or personal
+state. Authless standalone plugins retain unrestricted legacy topics;
+authenticated standalone plugins fail closed unless a policy is supplied.
+
+### Bounds
+
+| Input | Limit |
+|---|---:|
+| Client topic | 256 characters, no surrounding whitespace or control characters |
+| Key | 256 characters, no control characters |
+| JSON value | 65,536 UTF-8 bytes after serialization |
+| TTL | Integer from 1 through 300,000 ms; default 30,000 ms |
+| Live topics per socket | 64 |
+| Policy namespace | 512 characters |
+| Live entries per actor | 256 entries and 8 MiB |
+| Live entries per internal namespace | 1,024 entries and 16 MiB |
+| Live entries per app process | 4,096 entries and 64 MiB |
+
+Aggregate limits apply even when a client writes without first subscribing.
+Expired and deleted values release their capacity. A write that would exceed
+one of these bounds fails without changing state.
+
+### Stable errors
+
+Denied and malformed operations receive an explicit error rather than a
+silent ignore:
+
+```json
+{
+  "type": "ephemeral.error",
+  "operation": "subscribe",
+  "code": "EPHEMERAL_FORBIDDEN",
+  "message": "Room topic is not available",
+  "topic": "presence:room_123",
+  "revoked": true
+}
+```
+
+`revoked: true` means a formerly valid subscription was removed. The server
+also sends an empty snapshot for that topic; the official client purges its
+cached entries. Stable codes are `EPHEMERAL_UNAUTHENTICATED`,
+`EPHEMERAL_FORBIDDEN`, `EPHEMERAL_TOPIC_UNCLASSIFIED`,
+`EPHEMERAL_POLICY_UNAVAILABLE`, `EPHEMERAL_POLICY_INVALID`,
+`EPHEMERAL_INVALID_TOPIC`, `EPHEMERAL_INVALID_KEY`,
+`EPHEMERAL_INVALID_TTL`, `EPHEMERAL_VALUE_TOO_LARGE`,
+`EPHEMERAL_TOO_MANY_TOPICS`, `EPHEMERAL_CAPACITY_EXCEEDED`, and
+`EPHEMERAL_KEY_NOT_OWNED`.
+
 ## Sequencing
 
 ### Global Sequence Counter
@@ -285,12 +420,31 @@ seq=5  INSERT users {id:'alice', name:'Alice'}
 
 The counter spans **all tables** — it's a global ordering of all changes. This makes reconnect simple: the client says "I have everything up to seq=3" and the server replays seq 4, 5, ... regardless of which tables they affect.
 
-**Implementation:** The integer and a cryptographically random `epoch` live in
-each ReactiveDB runtime. The counter starts at 0 and `_changes` is truncated for
-durable databases on restart. Because clients send both values, a sequence from
-an earlier process can never be mistaken for a current cursor—even when the old
-and new counters happen to be equal. An epoch change produces an authoritative
-replacement snapshot.
+**Implementation:** The integer is allocated by the strict singleton
+`_zero_sync_log_state` row and is database-wide for file-backed handles. The
+application mutation, sequence increment, explicit-format `_changes` insert,
+pruning-watermark advance, and physical prune commit in one transaction.
+Sequences are never reused, including after an intentional history clear.
+Retained pre-fence rows have a null format marker and decode only as legacy-v0;
+new rows carry integer format `1`.
+
+The cryptographically random `epoch` remains local to each ReactiveDB runtime.
+An epoch change produces an authoritative replacement snapshot, so the current
+WebSocket protocol does not use retained history to continue transparently
+across a process restart. For file-mode plugins, each runtime polls the shared
+durable `_changes` log. While polling is active, one dispatcher emits both local
+and external rows exactly once in database sequence order; a synchronous local
+drain first processes any lower remote sequence. If retention advances beyond
+a runtime's cursor, or a retained row cannot be decoded, Zero closes its sockets
+with `1012`; reconnect then receives an authoritative snapshot rather than a
+discontinuous stream. This is a
+shared-file multi-runtime boundary, not replication between separate SQLite
+databases. `hot` and `ephemeral` databases remain process-local.
+
+Snapshot rows and catch-up changes are paired with one cursor captured from the
+same SQLite read transaction. The server uses that exact cursor for both the
+wire payload and its per-socket state, so a concurrent commit is either
+represented in the baseline or remains available as a later ordered change.
 
 ### Client Tracking
 
@@ -302,7 +456,8 @@ Receives sync.snapshot   → epoch = E1, scope = S1, lastSeq = 42
 Receives sync.change     → verify prevSeq = 42, lastSeq = 43
 Receives sync.change     → verify prevSeq = 43, lastSeq = 44
 Disconnects...
-Reconnects               → sends sync.subscribe { epoch:E1, scope:S1, lastSeq:44 }
+Reconnects               → sync.auth → sync.auth.ready → sync.subscribe
+                           { epoch:E1, scope:S1, lastSeq:44 }
 Receives sync.catchup    → verify prevSeq = 44, lastSeq = 48
 ```
 
@@ -322,32 +477,79 @@ CREATE TABLE _changes (
   op      TEXT NOT NULL,
   row_id  TEXT NOT NULL,
   data    TEXT,          -- JSON-serialized row (null for DELETE)
-  ts      INTEGER NOT NULL
+  previous_data TEXT,    -- prior row for filtered DELETE/transition handling
+  ts      INTEGER NOT NULL,
+  origin  TEXT,          -- private writer-runtime identity
+  format_version         -- no affinity/default; new writes use integer 1
 );
 ```
+
+Sequence `0` is a permanent immutable sentinel and is excluded from replay,
+oldest-row checks, retention counts, pruning, and intentional clears. The
+strict `_zero_sync_log_state` singleton stores the current sequence and
+`prune_through`. Database triggers reject unversioned/future writes, row
+replacement/update, deletion above the watermark, state regression, and
+attempts to remove the sentinel.
 
 **Ring buffer depth:** Configurable, default 1000 entries. When a new change would exceed the depth, the oldest entry is deleted:
 
 ```sql
-DELETE FROM _changes WHERE seq <= (SELECT MAX(seq) - 1000 FROM _changes);
+UPDATE _zero_sync_log_state
+SET prune_through = MAX(prune_through, seq - 1000);
+DELETE FROM _changes
+WHERE seq > 0
+  AND seq <= (SELECT prune_through FROM _zero_sync_log_state);
 ```
 
 This runs as part of the write transaction, so it's atomic with the change insertion.
 
 **When the buffer is insufficient:**
 
-If a reconnecting client's `lastSeq` is older than the oldest entry in
-`_changes`, the server cannot replay incrementally. It sends a replacement
+If a reconnecting client's `lastSeq` is below `prune_through`, above the
+current sequence, or cannot be matched to a complete contiguous retained
+suffix, the server cannot replay incrementally. It sends a replacement
 snapshot. The replacement invalidates omitted lazy caches as well as included
 full tables, then preserves same-scope in-memory work. Already-attempted work
 is rebased onto the snapshot without hiding its authoritative rows.
 
-For 2–4 users making modest mutations, a depth of 1000 covers several hours of disconnection.
+Depth `1000` is the default; choose it from the application's mutation rate and
+expected offline window. It must be a positive safe integer.
+
+### Change-log format compatibility
+
+The first fence adoption is not a rolling upgrade. Stop all pre-fence runtimes,
+workers, CLI/watch processes, and tests using the file and verify they are
+gone. Then use SQLite's online backup API, or checkpoint WAL, close the SQLite
+handle, copy the file, and verify the backup opens and passes
+`PRAGMA integrity_check`. A plain main-file copy while writers are active is
+not a consistent backup. Start one fence-aware process to install/validate the
+log boundary, then start the others. Never roll a fenced database back to a
+pre-fence binary. The sentinel blocks the released default startup clear, but
+an already-running released writer—or one explicitly configured not to clear
+history—cannot be made atomic after the fact.
+
+Fence-aware readers accept retained legacy-v0 rows (`format_version IS NULL`)
+and v1 rows. An unknown/non-integer version, invalid operation, corrupt JSON,
+or sequence discontinuity emits no partial batch: the runtime treats it as an
+authoritative gap, closes Sync sockets with `1012`, and requires a fresh
+snapshot/reconnect. The gap is classified as `retention`, `continuity`, or
+`format`. Authorization policy state derived from incremental change
+observation is synchronously invalidated before reconnect is allowed; failure
+to reset it makes the runtime permanently fail closed. A malformed durable
+state/schema or other non-retryable log-read failure closes current and future
+sockets until repair and process restart. Direct SQL mutation of the log or
+its state is unsupported.
 
 ## Connection Lifecycle
 
 Uses Bun's native WebSocket with per-socket data and status-checked direct
-delivery for table sync. State and ephemeral extension channels retain topics.
+delivery. Table sync carries sequencing metadata; ephemeral delivery is direct
+so recipient authorization can be revalidated. State Sync uses the same
+ordered `onChange` dispatcher for local and file-replica events, excludes the
+mutation-origin socket, and sends directly only to sockets whose exact state
+principal and current authority are revalidated. State snapshots capture
+`_user_state` rows and their internal cursor from one SQLite view, suppressing
+later replay of already represented events.
 
 ### Initial Connect
 
@@ -409,6 +611,9 @@ Client                          Server
   │── WS upgrade ──────────────→ │  New socket, new ws.data
   │←── connection established ────│
   │                               │
+  │── sync.auth { token } ──────→ │  Reverify token and current authority
+  │←── sync.auth.ready ───────────│  Derive readable tables and row filters
+  │                               │
   │── sync.subscribe ───────────→ │  Verify epoch/scope, then check ring buffer
   │   { tables, lastSeq:44,      │
   │     epoch:E1, scope:S1 }     │
@@ -430,13 +635,15 @@ Client                          Server
 
 ### Reconnect — Gap Too Large (Pruned Seq)
 
-When `getChangesAfter(seq)` returns `null` — meaning the client's `lastSeq` has
-been pruned from the ring buffer — the server cannot replay incrementally. It
-sends `sync.snapshot` instead of `sync.catchup` for the requested snapshot
-tables. The client clears all full and lazy caches. It then installs included
-full-table rows and preserves unresolved mutations when the opaque
-authorization scope is unchanged. Already-attempted mutations remain metadata,
-not an overlay over the replacement's authoritative state.
+After the replacement socket has completed the same `sync.auth` /
+`sync.auth.ready` handshake shown above, `getChangesAfter(seq)` can return
+`null`. That means the client's `lastSeq` has been pruned from the ring buffer,
+so the server cannot replay incrementally. It sends `sync.snapshot` instead of
+`sync.catchup` for the requested snapshot tables. The client clears all full
+and lazy caches. It then installs included full-table rows and preserves
+unresolved mutations when the opaque authorization scope is unchanged.
+Already-attempted mutations remain metadata, not an overlay over the
+replacement's authoritative state.
 
 ```
 Client                          Server
@@ -486,9 +693,10 @@ never-sent offline work can remain optimistic. Changed-scope replacements purge
 the queue before anything is sent. There is no IndexedDB persistence, so
 closing the page still discards offline work.
 
-When the connection resumes, the client sends `sync.subscribe` with its
-`epoch`, `scope`, and `lastSeq`. It does not flush newly queued offline
-mutations until a valid catchup or replacement baseline has been applied.
+When the connection resumes, the client first sends `sync.auth`, waits for
+`sync.auth.ready`, and only then sends `sync.subscribe` with its `epoch`,
+`scope`, and `lastSeq`. It does not flush newly queued offline mutations until
+a valid catchup or replacement baseline has been applied.
 
 ## Optimistic Update Protocol
 
@@ -510,9 +718,8 @@ Client A                        Server                        Client B
   │ ←── sync.change ──────────── │ ──── sync.change ──────────→ │
   │  { seq:43, origin:'connA',    │  { seq:43, op:INSERT, row }  │
   │    op:INSERT, row }           │  └─ store.send() → re-render │
-  │  └─ origin===myId → replace   │                              │
-  │     optimistic with server's  │                              │
-  │     canonical row state       │                              │
+  │  └─ apply canonical row;      │                              │
+  │     origin is only a hint     │                              │
   │                               │                              │
   │ ←── sync.ack ─────────────── │                              │
   │  { ref:'abc', seq:43, ok:true,│                              │
@@ -583,12 +790,14 @@ interface PendingMutation {
   ack to the origin.
 - `sync.snapshot` and `sync.catchup` are always the first data messages after `sync.subscribe`
 
-**Client behavior for the originating client:**
-- Receives `sync.change` with `origin === myConnectionId` → applies server's canonical row state (replacing optimistic version, which may differ if server added timestamps, defaults, etc.)
-- Then receives `sync.ack` → removes mutation from pending queue
+**Client behavior after its mutation:**
+- Applies every accepted `sync.change` as the server's canonical row state,
+  whether `origin` is its connection ID or the empty string.
+- Removes the optimistic mutation only when the matching `sync.ack.ref`
+  arrives.
 - Order between `sync.change` and `sync.ack` does not matter because they serve
   different purposes. A failed direct send closes the socket so reconnect
-  replay supplies the canonical change.
+  replay supplies the canonical change with an empty origin hint.
 
 **Client assumptions:**
 - WebSocket delivers messages in order (TCP guarantees this)
@@ -603,7 +812,7 @@ interface PendingMutation {
 | Unknown table in `sync.mutate` | `sync.ack { ok: false, error: 'Unknown table: xyz' }` |
 | Policy-denied `sync.mutate` | `sync.ack { ok: false, error: '<policy reason>' }` |
 | Unknown table in `sync.subscribe` | Server subscribes to known tables, ignores unknown ones |
-| WS connection drops | Client auto-reconnects with exponential backoff + jitter and sends `sync.subscribe { epoch, scope, lastSeq }`. |
+| WS connection drops | Client auto-reconnects with exponential backoff + jitter, sends `sync.auth`, waits for `sync.auth.ready`, then sends `sync.subscribe { epoch, scope, lastSeq }`. |
 | Server restart | The new epoch makes every old cursor incomparable; clients receive an authoritative replacement snapshot. |
 | Authorization scope changes while disconnected | Server sends `reset: 'purge'`; cached rows and queued mutations are removed before outbound work resumes. |
 | Bun `send()` returns `0` | Server closes with `1013`; client reconnects from its last accepted cursor. |
@@ -614,8 +823,9 @@ interface PendingMutation {
 Table changes use direct per-socket `send()` calls so Zero can observe Bun's
 delivery status. `-1` means the message is queued under backpressure; the socket
 is marked until `drain`. `0` means the message was dropped, so Zero immediately
-closes the socket with `1013`. Bun is also configured to close a connection at
-the one-megabyte backpressure limit.
+closes the socket with `1013`. Incoming client frames remain capped at 1 MiB;
+the outgoing queue ceiling is 16 MiB so a bounded State snapshot (under
+12 MiB) fits without relaxing inbound request limits.
 
 Every live change includes `prevSeq`, the last cursor successfully queued to
 that socket. Because this predecessor is per socket, unrelated or filtered-out

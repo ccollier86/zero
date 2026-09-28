@@ -6,7 +6,13 @@
  * consistent; it does not evaluate auth policy or send WebSocket messages.
  */
 
-import type { Change, ChangeOp, Row, SyncRowFilter } from './types';
+import type {
+  Change,
+  ChangeOp,
+  Row,
+  SyncRowFilter,
+  SyncRowProjector,
+} from './types';
 
 /** Wire-compatible change payload after row-filter projection. */
 export interface ProjectedSyncChange {
@@ -19,9 +25,15 @@ export interface ProjectedSyncChange {
 }
 
 /** Return only rows visible through an optional row filter. */
-export function filterSyncRows(rows: readonly Row[], filter?: SyncRowFilter): Row[] {
-  if (!filter) return [...rows];
-  return rows.filter((row) => filter.matches(row));
+export function filterSyncRows(
+  rows: readonly Row[],
+  filter?: SyncRowFilter,
+  projector?: SyncRowProjector,
+): Row[] {
+  const filtered = filter ? rows.filter((row) => filter.matches(row)) : rows;
+  return projector
+    ? filtered.map((row) => projector.project(row))
+    : [...filtered];
 }
 
 /**
@@ -33,7 +45,8 @@ export function filterSyncRows(rows: readonly Row[], filter?: SyncRowFilter): Ro
  */
 export function projectSyncChange(
   change: Change,
-  filter?: SyncRowFilter
+  filter?: SyncRowFilter,
+  projector?: SyncRowProjector,
 ): ProjectedSyncChange | null {
   if (!filter) {
     return {
@@ -41,7 +54,7 @@ export function projectSyncChange(
       table: change.table,
       op: change.op,
       rowId: change.rowId,
-      row: change.row,
+      row: change.row && projector ? projector.project(change.row) : change.row,
       ts: change.ts,
     };
   }
@@ -51,11 +64,21 @@ export function projectSyncChange(
 
   if (change.op === 'INSERT') {
     if (!currentMatches) return null;
-    return toProjectedChange(change, 'INSERT', change.row);
+    return toProjectedChange(
+      change,
+      'INSERT',
+      change.row && projector ? projector.project(change.row) : change.row,
+    );
   }
 
   if (change.op === 'UPDATE') {
-    if (currentMatches) return toProjectedChange(change, 'UPDATE', change.row);
+    if (currentMatches) {
+      return toProjectedChange(
+        change,
+        'UPDATE',
+        change.row && projector ? projector.project(change.row) : change.row,
+      );
+    }
     if (previousMatches) return toProjectedChange(change, 'DELETE', null);
     return null;
   }

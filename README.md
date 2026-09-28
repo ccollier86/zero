@@ -6,10 +6,38 @@ components, routing, auth, storage, sync, workflows, notifications, AI, vector
 storage, browser-grade PDF rendering, migrations, observability, and app-ready
 hooks so new apps do not start by rebuilding the same foundation.
 
+Current development boundary: this unreleased tree implements all four auth
+profiles—`single/simple`, `single/advanced`, `multi/simple`, and
+`multi/advanced`—through one app-local authorization system. Multi-tenant
+sessions, registered resources, Sync, scoped built-in services, tenant
+administration, invitations/join requests, browser authorization state, and
+packaged controls are present, including opt-in verified-company-domain
+request onboarding and the bounded authorization/control-plane audit.
+Protected Administration Organization/platform-tenant lifecycle UI, upstream
+enterprise SSO, break-glass, tenant-custom roles, populated-app adoption
+tooling, and domain
+autojoin/aliases/direct transfer remain explicitly deferred. Registered
+resources now declare explicit server-owned client exposure and optional
+field-level read/write/filter/sort allow-lists. File-mode runtimes sharing one
+SQLite database relay durable changes and authorization invalidations across
+their active sockets; hot/ephemeral or separate-database replicas still need an
+external coordination layer. Multi-mode
+startup verifies their actual SQLite primary key and tenant discriminator,
+requires a non-partial tenant-leading index, rejects tenant-owned business
+uniqueness that omits the tenant, and requires tenant-to-tenant foreign keys to
+carry the tenant pair in the same composite constraint.
+Default `createApp()` installs the
+framework-table and managed-topic policies, while direct `createSyncPlugin()`
+composition still requires explicit auth and policy. Treat these additions as
+unreleased until the release checklist and package verification pass. See
+[Releasing Zero](./docs/releasing.md) and the
+[auth implementation checklist](./docs/auth/multi-tenant-auth-implementation-checklist.md)
+for the supported-versus-preview boundary.
+
 ## Create A Local App
 
-From this framework checkout, generate a package-mode app from a local
-publish-style archive:
+Install the local tools once, then generate a package-mode app from the saved
+committed-`main` package:
 
 ```sh
 bun run install:local-tools
@@ -18,7 +46,19 @@ cd ../my-zero-app
 bun run dev
 ```
 
-The same workflow without the local convenience wrapper is:
+`zero-new` installs `@zero/framework` from a saved `.tgz` package. Both the
+framework and starter template come from that package, never the active
+checkout. Each app records the source commit and checksum in `zero-release.json`.
+
+`zero-release --status` shows the active package. `zero-release` refreshes it
+from local `main` using Git's committed tree, even while a feature branch or
+uncommitted changes are present. The installer adds repository-local
+`post-commit` and `post-merge` hooks that refresh it only on `main`. Existing
+custom hooks are preserved; if installation reports one, refresh explicitly.
+Failed publication retains the previous package. Commands refuse a missing or
+corrupt saved archive instead of falling back to the checkout.
+
+For intentional framework development against the working checkout, use:
 
 ```sh
 bun run create-zero -- ../my-zero-app --local --install
@@ -28,9 +68,10 @@ bun run dev
 
 Without `--install`, run `bun install` yourself before `bun run dev`.
 
-Local creation packs the current checkout into the generated app's ignored
-`.zero/framework/` cache. This matches published-package dependency behavior,
-avoids duplicate frontend runtimes, and excludes checkout-only files.
+The explicit `create-zero --local` development path packs the working tree,
+including eligible uncommitted files. The installed `zero-new` command instead
+copies the saved release into the app's ignored `.zero/framework/` cache. Both
+use normal package dependency installation and avoid duplicate frontend runtimes.
 
 ## Update An Existing App
 
@@ -38,9 +79,9 @@ Stop the app/dev server, then update a checkout-local app without regenerating
 it:
 
 ```sh
-bun run install:local-tools       # rerun after moving this Zero checkout
+bun run install:local-tools       # install saved-package tools and main hooks
 cd ../my-zero-app
-zero-update                       # packs and installs this checkout
+zero-update                       # installs the saved committed-main package
 zero-update --dry-run             # inspect the plan only
 ```
 
@@ -58,9 +99,11 @@ Commit that lockfile for checkout-local apps so a fresh clone can be restored
 without first resolving its ignored local archive.
 
 The updater owns only the `@zero/framework` dependency, its local archive when
-present, and package-manager install state. For local updates, the ignored
-`.zero/framework/zero-framework.tgz` cache is regenerated from the selected
-checkout. After a clean clone, `.zero/`, `.zero/framework/`, and the archive may
+present, and package-manager install state. For `zero-update`, the ignored
+`.zero/framework/zero-framework.tgz` cache is copied from the saved stable
+package; the development checkout is never packed. An explicit
+`zero update --local /path/to/checkout` remains available for framework testing.
+After a clean clone, `.zero/`, `.zero/framework/`, and the archive may
 all be absent; a mutating local update safely creates that managed cache before
 installing Zero. `--dry-run` reports the pending bootstrap without creating
 anything. Existing symlinks or non-directory/non-file entries at those managed
@@ -79,7 +122,7 @@ scaffolding commands and may replace a non-empty target project.
 For a published package later, the same shape becomes:
 
 ```sh
-bunx create-zero my-zero-app
+bunx -p @zero/framework create-zero my-zero-app
 cd my-zero-app
 bun install
 bun run dev
@@ -115,9 +158,11 @@ Installed desktop/mobile clients can use the implemented TypeScript
 server-side route/resource/Sync policy through system-browser OIDC + PKCE. A
 client ID is public; installed apps never ship a Zero API secret or signing
 key. Choose the integration before building a host bridge: the separate
-Rust/Tauri repository is a Phase 0 scaffold/design only, while the separate
-`@zero/chrome-auth` repository is a private Manifest V3 preview, not a released
-package. Start with the
+Rust/Tauri repository is a functional private `0.0.0` preview with a
+Rust-owned OIDC/PKCE engine and deny-by-default Tauri boundary, while the
+separate `@zero/chrome-auth` repository is a functional private Manifest V3
+preview. Neither is a released registry package or bundled into generated
+apps. Start with the
 [App Authentication SDK Guide](./docs/auth/app-auth-sdk-guide.md).
 
 ## Docs Map
@@ -127,6 +172,9 @@ package. Start with the
   route loading, middleware, resources, and create-app behavior.
 - [Framework Developer Surface](./docs/framework-developer-surface.md):
   canonical imports and app-owned extension examples.
+- [Auth System](./docs/auth/README.md): canonical auth index for installation
+  bootstrap, all four tenancy/authorization profiles, declarative permissions,
+  administration, onboarding, browser state, audit, and installed-app auth.
 - [App Authentication SDK Guide](./docs/auth/app-auth-sdk-guide.md): choose the
   web, TypeScript native, Rust/Tauri, or Chrome surface and follow the installed
   app onboarding/release checklist.
@@ -134,6 +182,10 @@ package. Start with the
   public-client registration, provider endpoints, system-browser account flows,
   secure storage, Sync, revocation, packaged desktop/mobile host bridges, and
   the Chrome MV3 security profile.
+- [Zero Auth Philosophy](./docs/auth/zero-auth-philosophy.md): stable direction
+  for additive single/multi-tenancy and simple/advanced authorization. The
+  linked implementation checklist distinguishes current behavior from planned
+  capabilities.
 - [PDF Rendering](./docs/pdf.md): secure Chromium HTML/CSS rendering, storage
   composition, runtime setup, limits, and adapter contracts.
 - [Component Inventory](./docs/frontend/component-inventory.md): reusable UI,
@@ -147,12 +199,13 @@ package. Start with the
 ## Useful Commands
 
 ```sh
-bun run dev                 # run the in-repo reference app
+bun run dev                 # watch the Zero CLI entry point
 bun run create-zero -- app  # scaffold a generated app
 bun run typecheck
-bun test
+bun run test
 bun run test:package
 bun run build
+bun audit                    # fail the release review on known dependency advisories
 bun run doctor -- --config ./zero.config.ts
 bun run pdf:install
 bun run pdf:status
@@ -170,6 +223,7 @@ backend app code, or grows source files past the responsibility threshold.
 
 Zero is currently Bun-first and exports TypeScript source through the package
 export map. That is intentional for local package-mode development. Before npm
-publication, use the stabilization checklist in
-[docs/stabilization-plan.md](./docs/stabilization-plan.md) to verify package
-metadata, publish files, bin behavior, and generated-app smoke tests.
+publication, follow the current supported-boundary and verification checklist in
+[Releasing Zero](./docs/releasing.md). The older
+[stabilization plan](./docs/stabilization-plan.md) is retained as historical
+context, not as the release gate.

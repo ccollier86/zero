@@ -7,6 +7,7 @@
  */
 
 import { AuthError, type ResolvedAuthBehaviorConfig } from './types';
+import { isPolicyTrustedUserProperty } from './auth-config';
 
 /** Actor attempting to mutate a user property through platform routes. */
 export type UserPropertyActor = 'user' | 'admin' | 'system';
@@ -26,6 +27,15 @@ export interface UserPropertyStore {
  */
 export class UserPropertyService {
   constructor(private readonly config: ResolvedAuthBehaviorConfig) {}
+
+  /**
+   * Return whether a configured property is safe to consume as authorization
+   * policy input. Unknown and user-editable properties are never trusted.
+   */
+  isPolicyTrusted(key: string): boolean {
+    const field = this.config.userProperties[key];
+    return field ? isPolicyTrustedUserProperty(field) : false;
+  }
 
   /**
    * Return configured default properties as serialized string values.

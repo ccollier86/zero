@@ -40,6 +40,12 @@ export { useServerState, useServerStateReady } from './state-hooks';
 export { createEphemeralStore, routeEphemeralMessage } from './ephemeral-store';
 export type { EphemeralStore, EphemeralStoreContext, EphemeralEntryClient } from './ephemeral-store';
 export { EphemeralClient } from './ephemeral-client';
+export type { EphemeralChangeEvent, EphemeralErrorListener } from './ephemeral-client';
+export type { EphemeralErrorMessage } from '../ephemeral-policy';
 
 // ─── React Hooks (Ephemeral) ────────────────────────────────────────────
-export { useEphemeral, useEphemeralTopic } from './ephemeral-hooks';
+export {
+  useEphemeral,
+  useEphemeralErrors,
+  useEphemeralTopic,
+} from './ephemeral-hooks';

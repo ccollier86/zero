@@ -19,7 +19,21 @@ export type NativeAuthStatus =
 export interface NativeAuthState {
   status: NativeAuthStatus;
   identity: NativeIdTokenClaims | null;
+  /** Sanitized server projection; credentials and internal generations are never exposed. */
+  activeTenant?: NativeTenantSummary | null;
   error: NativeAuthErrorInfo | null;
+}
+
+export interface NativeTenantSummary {
+  tenantId: string;
+  slug: string;
+  name: string;
+  role: string | null;
+}
+
+export interface NativeTenantListResult {
+  activeTenantId: string | null;
+  tenants: NativeTenantSummary[];
 }
 
 export interface NativeAuthErrorInfo {
@@ -68,6 +82,8 @@ export interface NativeAuthClient {
   signUp(options?: NativeSignUpOptions): Promise<NativeAuthState>;
   completeAuthorization(callbackUrl: string, signal?: AbortSignal): Promise<NativeAuthState>;
   refresh(): Promise<NativeAuthState>;
+  listTenants(): Promise<NativeTenantListResult>;
+  switchTenant(tenantId: string): Promise<NativeAuthState>;
   getUser(): NativeIdTokenClaims | null;
   getAccessToken(): Promise<string | null>;
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;

@@ -10,13 +10,19 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import { resolveAuthBehaviorConfig } from '../auth/auth-config';
+import { getBootstrapConfig } from '../auth/auth-bootstrap';
 import { hasAICapability } from '../ai/ai-provider-catalog';
 import { parseAIModelReference } from '../ai/ai-model-aliases';
 import type { AICapability, ResolvedAIConfig, ResolvedAIProviderConfig } from '../ai/ai-types';
-import type { AuthBehaviorConfig } from '../auth/types';
+import type {
+  AuthBehaviorConfig,
+  ResolvedAuthBehaviorConfig,
+} from '../auth/types';
 import type { EmailConfig } from '../email/types';
 import type { TableSchema } from '../sync/types';
 import type { ResourceAction, ResourceDefinition } from '../resources';
+import { resolveSQLiteStorageConfig } from '../persistence';
+import { isStrongStorageCapabilitySigningSecret } from '../storage/storage-signing-secret';
 import {
   allowsPublicAction,
   getPolicyOwnerFields,
@@ -25,6 +31,7 @@ import {
   requiresAuthenticatedUser,
   validateResourceDefinitions,
 } from '../resources';
+import { tableColumnDeclaresPrimaryKey } from '../resources/resource-schema';
 import { resolveConfig, type AppConfig, type AppTableInput, type ResolvedConfig } from '../frontend/server/types';
 import { runUsageAudit, type UsageAuditOptions } from './usage-audit';
 import { checkNativeAuthConfig } from './native-auth-checks';
@@ -103,22 +110,35 @@ export function runPlatformDoctor(
   try {
     resolved = resolveConfig(config, env);
   } catch (error) {
+    const message = error instanceof Error
+      ? error.message
+      : 'createApp config could not be resolved.';
+    const authFailure = message.startsWith('[auth]')
+      || message.startsWith('[native-auth]');
     addFinding(findings, {
       severity: 'error',
-      code: 'config.invalid',
-      path: 'createApp',
-      message: error instanceof Error ? error.message : 'createApp config could not be resolved.',
-      hint: 'Fix the createApp config error first; follow-up doctor checks may be skipped until config resolves.',
+      code: authFailure ? 'auth.config.invalid' : 'config.invalid',
+      path: authFailure ? 'auth' : 'createApp',
+      message,
+      hint: authFailure
+        ? 'Fix the auth configuration before starting the application.'
+        : 'Fix the createApp config error first; follow-up doctor checks may be skipped until config resolves.',
+      ...(authFailure ? { docs: './docs/auth/README.md' } : {}),
     });
   }
 
   checkTableSchemas(config.tables, findings);
 
   if (resolved) {
-    checkAuthAndEmail(resolved, findings, env);
+    const doctorAuthConfig = resolveDoctorAuthConfig(
+      resolved.auth === false ? {} : resolved.auth as AuthBehaviorConfig,
+      findings,
+    );
+    checkAuthAndEmail(resolved, findings, env, doctorAuthConfig);
+    checkStorage(resolved, findings, env);
     checkMigrations(resolved, findings);
     checkSyncPolicy(resolved, findings);
-    checkResources(resolved, findings);
+    checkResources(resolved, findings, doctorAuthConfig);
     checkAuthPublicPaths(resolved, findings);
     checkObservability(resolved, findings, env);
     checkAI(resolved, findings, env);
@@ -237,14 +257,51 @@ function checkPreResolutionConfig(
     });
   }
 
-  if (config.storageDir !== undefined && (config.auth === false || config.auth === undefined)) {
+  if (
+    (config.storageDir !== undefined || config.storage !== undefined)
+    && (config.auth === false || config.auth === undefined)
+  ) {
     addFinding(findings, {
       severity: 'warning',
       code: 'storage.auth_required',
-      path: 'storageDir',
-      message: 'storageDir is configured, but platform storage only mounts when auth is enabled.',
-      hint: 'Enable auth for built-in file storage, or remove storageDir if the app is not using platform storage.',
+      path: config.storage !== undefined ? 'storage' : 'storageDir',
+      message: 'File storage is configured, but platform storage only mounts when auth is enabled.',
+      hint: 'Enable auth for built-in file storage, or remove the storage configuration if the app is not using platform storage.',
       docs: './docs/start-here.md#built-in-systems',
+    });
+  }
+}
+
+/** Validate production key durability and operator-provided HMAC strength. */
+function checkStorage(
+  resolved: ResolvedConfig,
+  findings: PlatformDoctorFinding[],
+  env: Record<string, string | undefined>,
+): void {
+  if (resolved.auth === false || !isProduction(env)) return;
+
+  const signingSecret = resolved.storage.signingSecret;
+  if (signingSecret && !isStrongStorageCapabilitySigningSecret(signingSecret)) {
+    addFinding(findings, {
+      severity: 'error',
+      code: 'storage.signing_secret.weak',
+      path: 'storage.signingSecret',
+      message: 'The configured storage capability signing secret is shorter than 32 UTF-8 bytes.',
+      hint: 'Inject at least 32 cryptographically random bytes through storage.signingSecret or ZERO_STORAGE_SIGNING_SECRET.',
+      docs: './docs/platform-configuration.md#file-storage-capability-signing',
+    });
+  }
+
+  const databaseMode = resolved.db.sqlite?.mode
+    ?? resolveSQLiteStorageConfig(resolved.db).mode;
+  if (!signingSecret && databaseMode === 'ephemeral') {
+    addFinding(findings, {
+      severity: 'error',
+      code: 'storage.signing_secret.ephemeral_database',
+      path: 'storage.signingSecret',
+      message: 'Production storage cannot retain its generated capability signing key in an ephemeral database.',
+      hint: 'Configure storage.signingSecret or ZERO_STORAGE_SIGNING_SECRET with at least 32 random bytes, or use a durable shared database.',
+      docs: './docs/platform-configuration.md#file-storage-capability-signing',
     });
   }
 }
@@ -281,11 +338,32 @@ function checkTableSchemas(
 function checkAuthAndEmail(
   resolved: ResolvedConfig,
   findings: PlatformDoctorFinding[],
-  env: Record<string, string | undefined>
+  env: Record<string, string | undefined>,
+  authConfig: ResolvedAuthBehaviorConfig | null,
 ): void {
-  if (resolved.auth === false) return;
+  if (resolved.auth === false || !authConfig) return;
 
-  const authConfig = resolveDoctorAuthConfig(resolved.auth as AuthBehaviorConfig);
+  const bootstrap = getBootstrapConfig(authConfig);
+  if (bootstrap.mode === 'secret' && !bootstrap.secret) {
+    findings.push({
+      severity: 'warning',
+      code: 'auth.bootstrap.secret_missing',
+      path: 'auth.bootstrap.secret',
+      message: 'First-administrator bootstrap is secret-gated, but no bootstrap secret is configured.',
+      hint: 'Inject a random secret of at least 32 characters from deployment secrets, or deliberately select bootstrap mode "public" or "disabled".',
+      docs: './docs/auth/README.md#first-administrator-bootstrap',
+    });
+  } else if (bootstrap.mode === 'public') {
+    findings.push({
+      severity: 'warning',
+      code: 'auth.bootstrap.public',
+      path: 'auth.bootstrap',
+      message: 'The first unauthenticated registration may claim the global administrator account.',
+      hint: 'Use secret-gated bootstrap for any app reachable by untrusted clients.',
+      docs: './docs/auth/README.md#first-administrator-bootstrap',
+    });
+  }
+
   if (!isDuration(authConfig.accountEmails.actionTokenTTL)) {
     findings.push({
       severity: 'error',
@@ -303,35 +381,78 @@ function checkAuthAndEmail(
     });
   }
 
+  const emailDeliveryReady = isDoctorEmailDeliveryReady(resolved.email, env);
+  const authPublicUrl = firstNonEmpty(
+    authConfig.branding.publicUrl,
+    resolved.app.publicUrl,
+  );
+
+  if (authConfig.account.requireEmailVerification) {
+    if (!emailDeliveryReady) {
+      findings.push({
+        severity: 'error',
+        code: 'auth.email_verification.delivery_unavailable',
+        path: 'auth.account.requireEmailVerification',
+        message: 'Required email verification cannot deliver verification messages with the configured email provider.',
+        hint: 'Configure a non-noop email provider, sender address, and provider credentials, or disable requireEmailVerification.',
+        docs: './docs/auth/README.md#email-readiness-and-failure-semantics',
+      });
+    }
+    if (!authPublicUrl) {
+      findings.push({
+        severity: 'error',
+        code: 'auth.email_verification.public_url_missing',
+        path: 'app.publicUrl',
+        message: 'Required email verification needs app.publicUrl or auth.branding.publicUrl to build verification links.',
+        hint: 'Configure the public application origin used by verification links.',
+        docs: './docs/auth/README.md#email-readiness-and-failure-semantics',
+      });
+    }
+  }
+
+  checkRequiredMfaReadiness(
+    authConfig,
+    emailDeliveryReady,
+    findings,
+  );
+
+  const verifiedDomainsEnabled = Boolean(
+    authConfig.tenancy?.mode === 'multi'
+    && authConfig.tenancy.onboarding?.verifiedDomains.enabled,
+  );
   const emailFeaturesEnabled = authConfig.accountEmails.adminCreatedUser ||
     authConfig.accountEmails.passwordReset ||
-    authConfig.accountEmails.passwordChangedNotice;
+    authConfig.accountEmails.passwordChangedNotice ||
+    verifiedDomainsEnabled;
 
   if (emailFeaturesEnabled && resolved.email === false) {
     findings.push({
-      severity: 'warning',
+      severity: verifiedDomainsEnabled ? 'error' : 'warning',
       code: 'auth.email.disabled',
       path: 'auth.accountEmails',
-      message: 'Auth account email flows are enabled, but createApp email is disabled. Disable those flows or configure email.',
+      message: verifiedDomainsEnabled
+        ? 'Verified-domain onboarding requires createApp email delivery.'
+        : 'Auth account email flows are enabled, but createApp email is disabled. Disable those flows or configure email.',
     });
-    return;
   }
 
   if (resolved.email === false) return;
 
   const emailConfig = resolved.email as EmailConfig;
-  if (emailFeaturesEnabled && !resolved.app.publicUrl) {
+  if (emailFeaturesEnabled && !authPublicUrl) {
     findings.push({
-      severity: 'warning',
+      severity: verifiedDomainsEnabled ? 'error' : 'warning',
       code: 'auth.email.public_url_missing',
       path: 'app.publicUrl',
-      message: 'Account emails need app.publicUrl so setup/reset links can be generated.',
+      message: verifiedDomainsEnabled
+        ? 'Verified-domain onboarding requires app.publicUrl for mailbox-proof links.'
+        : 'Account emails need app.publicUrl so setup/reset links can be generated.',
     });
   }
 
   if (emailFeaturesEnabled && !emailConfig.from && !env.EMAIL_FROM) {
     findings.push({
-      severity: 'warning',
+      severity: verifiedDomainsEnabled ? 'error' : 'warning',
       code: 'email.from_missing',
       path: 'email.from',
       message: 'Email delivery needs a default from address. Set email.from or EMAIL_FROM.',
@@ -340,10 +461,50 @@ function checkAuthAndEmail(
 
   if (usesResend(emailConfig) && !emailConfig.resend?.apiKey && !env.RESEND_API_KEY) {
     findings.push({
-      severity: 'warning',
+      severity: verifiedDomainsEnabled ? 'error' : 'warning',
       code: 'email.resend_api_key_missing',
       path: 'email.resend.apiKey',
       message: 'Resend is selected but no API key was found. Set email.resend.apiKey or RESEND_API_KEY.',
+    });
+  }
+}
+
+function checkRequiredMfaReadiness(
+  authConfig: ResolvedAuthBehaviorConfig,
+  emailDeliveryReady: boolean,
+  findings: PlatformDoctorFinding[],
+): void {
+  const mfa = authConfig.mfa;
+  if (!mfa.enabled || mfa.policy === 'optional') return;
+
+  const emailConfigured = mfa.methods.includes('email');
+  const totpConfigured = mfa.methods.includes('totp');
+  const emailReady = emailConfigured && emailDeliveryReady;
+  const totpReady = totpConfigured && Boolean(mfa.totp.encryptionKey);
+
+  if (emailConfigured && !emailReady) {
+    findings.push({
+      severity: totpReady ? 'warning' : 'error',
+      code: 'auth.mfa.email_delivery_unavailable',
+      path: 'auth.mfa.methods',
+      message: 'Required MFA includes email OTP, but the configured email provider is not ready for delivery.',
+      hint: totpReady
+        ? 'Configure email delivery or remove the unavailable email method; TOTP remains usable.'
+        : 'Configure a non-noop email provider, sender address, and provider credentials before requiring MFA.',
+      docs: './docs/auth/README.md#mfa',
+    });
+  }
+
+  if (totpConfigured && !totpReady) {
+    findings.push({
+      severity: emailReady ? 'warning' : 'error',
+      code: 'auth.mfa.totp_encryption_key_missing',
+      path: 'auth.mfa.totp.encryptionKey',
+      message: 'Required MFA includes TOTP, but auth.mfa.totp.encryptionKey is not configured.',
+      hint: emailReady
+        ? 'Configure the TOTP encryption key or remove the unavailable TOTP method; email OTP remains usable.'
+        : 'Configure an operator-managed TOTP encryption key before requiring MFA.',
+      docs: './docs/auth/README.md#mfa',
     });
   }
 }
@@ -392,6 +553,12 @@ function checkSyncPolicy(
   }
 
   for (const [tableName, mode] of resolved.declaredSyncModes) {
+    const resource = resolved.resources.find((candidate) => candidate.table === tableName);
+    const hasHttpDataExposure = !resource
+      || resource.exposure === undefined
+      || resource.exposure === 'http'
+      || resource.exposure === 'all';
+    if (!hasHttpDataExposure) continue;
     if (mode === 'lazy') {
       findings.push({
         severity: 'warning',
@@ -413,17 +580,16 @@ function checkSyncPolicy(
 /** Validate registered resources and explain data/sync policy behavior. */
 function checkResources(
   resolved: ResolvedConfig,
-  findings: PlatformDoctorFinding[]
+  findings: PlatformDoctorFinding[],
+  authConfig: ResolvedAuthBehaviorConfig | null,
 ): void {
-  if (resolved.resources.length === 0) return;
-
-  const authConfig = resolveDoctorAuthConfig(
-    resolved.auth === false ? {} : resolved.auth as AuthBehaviorConfig
-  );
+  if (!authConfig) return;
 
   for (const issue of validateResourceDefinitions(resolved.resources, {
     tables: resolved.tables,
     authConfig,
+    tenancyMode: authConfig.tenancy?.mode ?? 'single',
+    managedTables: Object.keys(resolved.tables),
   })) {
     addFinding(findings, {
       severity: 'error',
@@ -438,15 +604,101 @@ function checkResources(
   }
 
   for (const resource of resolved.resources) {
+    checkResourceRealmIndex(resource, resolved, findings);
+    checkResourceExposureLoading(resource, resolved, findings);
     checkResourceListPolicy(resource, resolved, findings);
     checkResourceAuthShape(resource, resolved, findings);
     checkResourcePublicWrites(resource, findings);
   }
 }
 
-function resolveDoctorAuthConfig(config: AuthBehaviorConfig) {
-  const { nativeApps: _nativeApps, ...behavior } = config;
-  return resolveAuthBehaviorConfig(behavior);
+/** Reject a Sync-only declaration that can require denied HTTP hydration. */
+function checkResourceExposureLoading(
+  resource: ResourceDefinition,
+  resolved: ResolvedConfig,
+  findings: PlatformDoctorFinding[],
+): void {
+  if (resource.exposure !== 'sync') return;
+  const mode = resolved.declaredSyncModes.get(resource.table)
+    ?? resolved.syncDefaults.defaultMode;
+  const tableDefault = resolved.syncDefaults.tables.get(resource.table);
+  const autoCanResolveLazy = (tableDefault?.action ?? resolved.syncDefaults.action) === 'lazy';
+  if (mode !== 'lazy' && !(mode === 'auto' && autoCanResolveLazy)) return;
+
+  addFinding(findings, {
+    severity: 'error',
+    code: 'resource.exposure.sync_lazy_requires_http',
+    path: `resources.${resource.name}.exposure`,
+    message: `Sync-only resource "${resource.name}" can resolve to lazy loading, but lazy Sync hydration requires /api/data and exposure: "sync" denies HTTP.`,
+    hint: 'Use exposure: "all" or configure this table for guaranteed full Sync.',
+    docs: './docs/framework/resource-policy.md#client-exposure',
+  });
+}
+
+/** Recommend the compound-query foundation every tenant resource will use. */
+function checkResourceRealmIndex(
+  resource: ResourceDefinition,
+  resolved: ResolvedConfig,
+  findings: PlatformDoctorFinding[],
+): void {
+  if (resource.realm?.kind !== 'tenant') return;
+  if (isLikelyTenantLeadingIndex(
+    resolved,
+    resource.table,
+    resource.realm.field,
+  )) return;
+
+  addFinding(findings, {
+    severity: 'warning',
+    code: 'resource.tenant_field.index_guidance',
+    path: `resources.${resource.name}.realm.${resource.realm.field}`,
+    message: `Tenant resource "${resource.name}" filters every managed read and mutation by "${resource.realm.field}".`,
+    hint: `Add a migration index beginning with ${resource.realm.field}; include common sort/filter fields after it for hot list queries.`,
+    docs: './docs/framework/resource-policy.md',
+  });
+}
+
+function resolveDoctorAuthConfig(
+  config: AuthBehaviorConfig & {
+    accessTokenTTL?: string;
+    refreshTokenTTL?: string;
+  },
+  findings: PlatformDoctorFinding[],
+): ResolvedAuthBehaviorConfig | null {
+  const {
+    nativeApps: _nativeApps,
+    accessTokenTTL: _accessTokenTTL,
+    refreshTokenTTL: _refreshTokenTTL,
+    ...behavior
+  } = config;
+  try {
+    const resolved = resolveAuthBehaviorConfig(behavior);
+    if (resolved.tenancy.mode === 'single'
+      && resolved.authorization.mode === 'advanced'
+      && !resolved.authorization.ownerAdoption) {
+      addFinding(findings, {
+        severity: 'info',
+        code: 'auth.authorization.owner_adoption.runtime_guard',
+        path: 'auth.authorization.ownerAdoption',
+        message: 'Fresh single/advanced installs atomically make the first bootstrap user the application owner. Existing installs are checked for an active owner during startup.',
+        hint: 'If startup reports an ownerless upgrade, configure one exact existing userId or email in auth.authorization.ownerAdoption, start once, and then keep or remove that idempotent selector.',
+        docs: './docs/auth/README.md',
+      });
+    }
+    return resolved;
+  } catch (error) {
+    addFinding(findings, {
+      severity: 'error',
+      code: 'auth.config.invalid',
+      path: 'auth',
+      message: error instanceof Error
+        ? error.message
+        : 'Auth configuration could not be resolved.',
+      hint: 'Fix the auth configuration before starting the application.',
+      docs: './docs/auth/README.md',
+    });
+    return null;
+  }
 }
 
 /** Emit warnings for resource reads that affect `/api/data` and sync. */
@@ -455,6 +707,7 @@ function checkResourceListPolicy(
   resolved: ResolvedConfig,
   findings: PlatformDoctorFinding[]
 ): void {
+  if (resource.exposure === 'internal') return;
   const listPolicy = resource.policy.list;
   const path = `resources.${resource.name}.policy.list`;
   if (!listPolicy) {
@@ -462,7 +715,7 @@ function checkResourceListPolicy(
       severity: 'warning',
       code: 'resource.list_policy.missing',
       path,
-      message: `Resource "${resource.name}" is registered for table "${resource.table}" without a list policy. /api/data and WebSocket sync reads for that table fail closed.`,
+      message: `Resource "${resource.name}" is client-exposed for table "${resource.table}" without a list policy. Its managed list/data/Sync reads fail closed.`,
       hint: 'Add a list policy when the table should be readable through platform data/sync APIs, or keep it omitted intentionally for write-only/custom access.',
       docs: './docs/framework/resource-policy.md#generic-data-and-sync-policy',
     });
@@ -494,7 +747,7 @@ function checkResourceListPolicy(
     }
   }
 
-  if (ownerFields.length > 0) {
+  if (ownerFields.length > 0 && resource.exposure !== 'http') {
     addFinding(findings, {
       severity: 'info',
       code: 'resource.sync.row_filtered',
@@ -864,7 +1117,7 @@ function isWrappedTableInput(
 
 function findPrimaryKeyColumns(schema: TableSchema): string[] {
   return Object.entries(schema)
-    .filter(([, value]) => typeof value === 'string' && /\bprimary\s+key\b/i.test(value))
+    .filter(([column]) => tableColumnDeclaresPrimaryKey(schema, column))
     .map(([column]) => column);
 }
 
@@ -1014,6 +1267,26 @@ function resourceValidationHint(code: string): string | undefined {
       return 'Every action listed on a resource needs an explicit policy.';
     case 'resource-owner-field-missing':
       return 'Add the owner column to the table schema or update ownerPolicy({ userField }).';
+    case 'resource-field-unknown':
+      return 'Every fields.read/create/update/filter/sort entry must name a real table column.';
+    case 'resource-field-primary-key-unreadable':
+      return 'Include the resource primary key in fields.read so managed HTTP and Sync caches keep stable row identity.';
+    case 'resource-field-primary-key-mutable':
+      return 'Remove the primary key from fields.update; managed updates cannot move a row to a new identity.';
+    case 'resource-field-realm-client-writable':
+      return 'Remove the tenant discriminator from fields.create/update; Zero derives and stamps it from the live session.';
+    case 'resource-exposure-missing':
+    case 'resource-exposure-invalid':
+      return 'Classify managed client access with exposure: "internal", "http", "sync", or "all"; multi-tenant mode requires an explicit choice.';
+    case 'resource-realm-missing':
+    case 'resource-realm-invalid':
+    case 'resource-managed-table-unclassified':
+      return 'Classify every managed app table with realm: "global" or tenantRealm({ field: "tenant_id" }); multi-tenant mode never assumes shared data.';
+    case 'resource-tenant-field-missing':
+    case 'resource-tenant-field-nullable':
+    case 'resource-tenant-field-primary-key':
+    case 'resource-tenant-field-invalid':
+      return 'Use a dedicated, non-nullable tenant discriminator column (normally tenant_id), separate from the row primary key.';
     case 'metadata-property-unknown':
     case 'metadata-property-untrusted':
       return 'Configure auth.userProperties for every metadataPolicy key and set useInPolicies: true only on admin/system/none-editable fields.';
@@ -1031,6 +1304,25 @@ function isLikelyIndexedResourceField(
   if (!schema) return false;
   if (inferTablePrimaryKey(schema) === field) return true;
   if (schema._identity?.includes(field)) return true;
+  if (resolved.doctor.indexedFields?.[tableName]?.includes(field)) return true;
+
+  const definition = schema[field];
+  return typeof definition === 'string' && /\b(primary\s+key|unique)\b/i.test(definition);
+}
+
+/**
+ * Tenant predicates lead every managed query. An identity index only satisfies
+ * that access pattern when the discriminator is its first column.
+ */
+function isLikelyTenantLeadingIndex(
+  resolved: ResolvedConfig,
+  tableName: string,
+  field: string,
+): boolean {
+  const schema = resolved.tables[tableName];
+  if (!schema) return false;
+  if (inferTablePrimaryKey(schema) === field) return true;
+  if (schema._identity?.[0] === field) return true;
   if (resolved.doctor.indexedFields?.[tableName]?.includes(field)) return true;
 
   const definition = schema[field];
@@ -1057,6 +1349,29 @@ function isProduction(env: Record<string, string | undefined>): boolean {
 function usesResend(config: EmailConfig): boolean {
   const provider = config.provider ?? 'resend';
   return provider === 'resend';
+}
+
+/** Mirror the runtime's provider/sender readiness without starting delivery. */
+function isDoctorEmailDeliveryReady(
+  email: false | EmailConfig,
+  env: Record<string, string | undefined>,
+): boolean {
+  if (email === false) return false;
+  if (!firstNonEmpty(email.from, env.EMAIL_FROM)) return false;
+
+  const provider = email.provider ?? 'resend';
+  if (typeof provider === 'object') return true;
+  if (provider === 'resend') {
+    return Boolean(firstNonEmpty(email.resend?.apiKey, env.RESEND_API_KEY));
+  }
+  return provider === 'console' || provider === 'memory';
+}
+
+function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return undefined;
 }
 
 function isDuration(value: string): boolean {

@@ -1,117 +1,34 @@
-# Platform Configuration Protocol
+# Platform Configuration
 
-Zero should keep `createApp()` small. Complex systems should move into focused,
-typed config files that `createApp()` can discover or explicitly load.
+Zero currently has one runtime configuration contract: the `AppConfig` object
+passed to `createApp()`. `defineZeroConfig()` and `defineAuthConfig()` are
+runtime-neutral type helpers; both return the object they receive unchanged.
+`resolveConfig()` applies defaults and validates cross-feature constraints when
+the app starts.
 
-The first target for this protocol is auth metadata, access policies, tenancy,
-and avatars. After that shape is proven, the same protocol can be applied to
-storage, sync defaults, observability, AI, PDF rendering, migrations, and
-future systems.
+> **Current status:** `createApp()` does not discover config modules. There is
+> no supported `configDir`, `auth.config`, `access.config`, or config-file
+> precedence API. The app must import and compose every config value before it
+> calls `createApp()`.
 
-## Goals
+## Supported Current Pattern
 
-1. Keep `createApp()` readable.
-2. Give developers fill-in-the-blank config templates.
-3. Keep config files type-safe and autocomplete-friendly.
-4. Let admin UI read the normalized effective config.
-5. Avoid hidden magic: config discovery should be documented and overrideable.
-6. Keep config modules pure: no server startup, no database writes, no network
-   calls.
-
-## Recommended App Shape
-
-Use a dedicated config folder so platform behavior is easy to find. For a new
-blank Zero app, this folder should be one of the first places a developer
-opens.
-
-Preferred shape:
-
-```txt
-app/
-  server.ts
-zero/
-  auth.ts
-  auth-emails/
-    index.ts
-    account-setup.ts
-    password-reset.ts
-    email-verification.ts
-    email-otp.ts
-  access.ts
-  storage.ts
-  sync.ts
-  observability.ts
-  ai.ts
-  vector.ts
-  pdf.ts
-```
-
-`server.ts` stays small:
+Keep the complete app contract in `zero.config.ts`. If auth behavior becomes
+large, put it in an ordinary TypeScript module and import its
+`defineAuthConfig()` result into `zero.config.ts`. The filename is an app
+convention, not a Zero discovery hook.
 
 ```ts
-import { createApp, defineZeroConfig } from '@zero/framework/server';
-import { tables } from './lib/schemas';
-
-const config = defineZeroConfig({
-  db: { mode: './data/app.db' },
-  tables,
-  auth: true,
-});
-
-const app = await createApp(config);
-app.listen(config.port ?? 3000);
-```
-
-`createApp()` should load known config files from `configDir` when present.
-Inline config remains supported for tests and tiny apps, but it should not be
-the recommended path for larger apps.
-
-Alternative shape for apps that prefer all config under `config/`:
-
-```txt
-config/
-  zero/
-    auth.ts
-    access.ts
-    storage.ts
-    sync.ts
-    observability.ts
-```
-
-Both are acceptable, but generated starter apps should use `zero/` by default
-because it is short, obvious, and platform-specific.
-
-## File Naming
-
-V1 focused config files:
-
-| File | System |
-| --- | --- |
-| `zero/auth.ts` | registration, email verification, MFA, auth branding, user metadata, tenancy, avatar config |
-| `zero/auth-emails/` | optional auth/account email template overrides, one template per file with `index.ts` as the registry |
-| `zero/access.ts` | table/route/storage/action policy helpers |
-
-Future files:
-
-| File | System |
-| --- | --- |
-| `zero/storage.ts` | drives, file limits, MIME policy, public/private defaults |
-| `zero/sync.ts` | sync defaults, lazy/full policy, snapshot limits |
-| `zero/observability.ts` | sinks, endpoint access, trace thresholds |
-| `zero/ai.ts` | provider aliases, explicit providers, status endpoint |
-| `zero/vector.ts` | vector indexes, dimensions, metadata filter fields |
-| `zero/pdf.ts` | print defaults, browser path, resource policy, render limits |
-| `zero/sitemap.ts` | future sitemap/SEO defaults and route metadata overrides |
-| `zero/migrations.ts` | migration safety defaults, doctor strictness, paths |
-
-## Module Contract
-
-Each config file should export a default value produced by a typed helper:
-
-```ts
+// config/auth.ts
 import { defineAuthConfig } from '@zero/framework/server';
 
 export default defineAuthConfig({
+  tenancy: 'single',
+  authorization: 'simple',
+  bootstrap: {
+    mode: 'secret',
+    secret: Bun.env.AUTH_BOOTSTRAP_SECRET || undefined,
+  },
   registration: {
     mode: 'admin-only',
   },
@@ -126,45 +43,71 @@ export default defineAuthConfig({
 });
 ```
 
-Config helper rules:
-
-1. Return the config object unchanged at runtime.
-2. Provide TypeScript inference and validation hints.
-3. Avoid importing Elysia context, database handles, or app runtime state.
-4. Allow comments and blank sections in generated templates.
-
-## Loading Rules
-
-Recommended precedence:
-
-1. Platform defaults.
-2. Discovered config files from `configDir`.
-3. Explicit config file paths from `createApp()`.
-4. Inline `createApp()` overrides.
-
-Inline overrides should win because they are closest to the composition root
-and useful in tests.
-
-Example explicit paths:
-
 ```ts
-createApp({
-  db,
+// zero.config.ts
+import { defineZeroConfig } from '@zero/framework/server';
+import { tables } from './db/schema';
+import auth from './config/auth';
+
+export default defineZeroConfig({
+  db: { mode: 'file', path: './data/app.db' },
   tables,
-  auth: {
-    config: './zero/auth.ts',
-  },
-  access: {
-    config: './zero/access.ts',
-  },
+  auth,
+  port: 3000,
 });
 ```
 
+The server entry imports that object explicitly:
+
+```ts
+// app/server.ts
+import { createApp } from '@zero/framework/server';
+import config from '../zero.config';
+
+const app = await createApp(config);
+app.listen(config.port ?? 3000);
+```
+
+Inline composition is also supported and uses the same contract:
+
+```ts
+import {
+  createApp,
+  defineAuthConfig,
+  defineZeroConfig,
+} from '@zero/framework/server';
+import { tables } from './db/schema';
+
+const app = await createApp(defineZeroConfig({
+  db: { mode: 'file', path: './data/app.db' },
+  tables,
+  auth: defineAuthConfig({
+    bootstrap: {
+      mode: 'secret',
+      secret: Bun.env.AUTH_BOOTSTRAP_SECRET || undefined,
+    },
+    registration: {
+      mode: 'public',
+    },
+  }),
+}));
+```
+
+`defineAuthConfig()` covers auth behavior. Top-level auth token lifetimes still
+belong on the `auth` value accepted by `AppConfig`; add them while composing the
+app config if needed. Access policy is not a top-level `access` config object:
+use `resources`, `syncPolicy`, and the supported `server/resources` and route
+extension surfaces.
+
+The Doctor CLI is separate from runtime startup. When `--config` is omitted it
+can locate `zero.config.ts`, `zero.config.js`, `config/zero.config.ts`, or
+`config/zero.config.js`. That convenience does not make `createApp()` discover
+or load the file.
+
 ## Effective Config
 
-Every config file should compile into a normalized internal config.
-
-Current auth behavior config can be passed inline today:
+`resolveConfig()` normalizes the complete `AppConfig` after it has been
+explicitly composed. Current auth behavior can also be passed inline:
 
 ```ts
 createApp({
@@ -186,7 +129,15 @@ createApp({
       }
     : false,
   auth: {
-    registration: { mode: 'admin-only' },
+    tenancy: 'single',
+    authorization: 'simple',
+    bootstrap: {
+      mode: 'secret',
+      secret: Bun.env.AUTH_BOOTSTRAP_SECRET || undefined,
+    },
+    registration: {
+      mode: 'admin-only',
+    },
     account: {
       requireEmailVerification: Bun.env.AUTH_REQUIRE_EMAIL_VERIFICATION === 'true',
       emailVerificationPath: Bun.env.AUTH_EMAIL_VERIFICATION_PATH ?? '/verify-email',
@@ -229,6 +180,337 @@ createApp({
     : false,
 });
 ```
+
+### File-storage capability signing
+
+`createApp()` mounts authenticated file storage whenever auth is enabled.
+`storageDir` continues to select the local blob directory; the optional
+`storage` object controls signed bearer capabilities:
+
+```ts
+createApp({
+  db: { mode: 'file', path: './data/app.db' },
+  tables,
+  auth: true,
+  storageDir: './data/files',
+  storage: {
+    // Explicit config wins over ZERO_STORAGE_SIGNING_SECRET.
+    signingSecret: Bun.env.ZERO_STORAGE_SIGNING_SECRET,
+    defaultPresignedTTL: 900,
+  },
+});
+```
+
+The effective key order is explicit `storage.signingSecret`, then
+`ZERO_STORAGE_SIGNING_SECRET`, then a random 32-byte key generated once and
+stored in the app database's private config table. The database-backed default
+survives restarts and lets runtimes that share that database verify each
+other's presigned URLs and upload grants. It is cryptographically random; Zero
+does not use a hard-coded production default.
+
+Configure an external secret when the database is ephemeral or when replicas
+do not share one database. Production Doctor treats an ephemeral database with
+no external storage key as an error and reports operator-provided keys shorter
+than 32 UTF-8 bytes. Rotating the key immediately invalidates every outstanding
+presigned URL and upload grant, so deploy rotations with the maximum configured
+capability lifetime in mind. Storage secrets remain server-only and are never
+included in browser platform config.
+
+The capability axes and all four combinations normalize deterministically;
+omitting them still resolves to `single/simple`.
+
+| Tenancy | Authorization | Implemented foundation | Deployment status |
+| --- | --- | --- | --- |
+| `single` | `simple` | Existing global user/admin runtime plus compatibility kernel scope | Supported current runtime |
+| `single` | `advanced` | Validated registry, durable additive application assignments, protected owner, live HTTP/Sync expansion, `/auth/application`, typed SDK/hook, and packaged access UI | Implemented in this unreleased tree; final cross-cutting release verification remains |
+| `multi` | `simple` | Tenant/membership persistence, bound browser/native sessions, selection/switching, tenant creation, registered-resource and managed-service isolation, invitations/join requests, opt-in verified-domain requests, durable control-plane audit, and packaged tenant controls | Implemented in this unreleased tree; adoption tooling and final release gates remain |
+| `multi` | `advanced` | Multi/simple foundation plus durable additive membership assignments, protected owners, live permission expansion, optimistic role revisions, permission-aware tenant UI, and authorized tenant audit review | Implemented in this unreleased tree; the same remaining multi release gates apply |
+
+No mode selection implies a protected Administration Organization/platform-
+tenant lifecycle UI, upstream enterprise SSO, break-glass, tenant-custom roles,
+populated-app adoption tooling, or verified-domain
+autojoin/aliases/direct transfer. Registered
+resources now declare explicit server-owned client exposure and optional field
+allow-lists. Managed file-mode runtimes sharing one SQLite database automatically
+relay tracked changes and auth/session invalidations; other replica topologies
+need an external coordination layer. Multi-mode startup
+also inspects the actual SQLite schema: tenant resources need a non-partial
+tenant-leading index, business-unique indexes must include the tenant field,
+and foreign keys between registered tenant resources must carry the tenant pair
+in the same composite constraint. See the
+[auth implementation checklist](./auth/multi-tenant-auth-implementation-checklist.md).
+
+The authorization object can declare the server-only permission ceiling and
+static role templates:
+
+```ts
+const auth = defineAuthConfig({
+  tenancy: {
+    mode: 'multi',
+    terminology: { singular: 'practice', plural: 'practices' },
+    creation: {
+      // Who may create another tenant after installation bootstrap.
+      mode: 'authenticated', // 'platform-admin' | 'disabled'
+    },
+  },
+  authorization: {
+    mode: 'advanced',
+    permissions: {
+      'patients:read': {
+        label: 'View patients',
+        description: 'Read patient summaries in the active organization.',
+      },
+      'patients:write': { label: 'Edit patients' },
+      'staff:manage': { label: 'Manage staff' },
+    },
+    roles: {
+      clinician: {
+        label: 'Clinician',
+        permissions: ['patients:read', 'patients:write'],
+      },
+    },
+  },
+});
+```
+
+### Authorization/control-plane audit retention
+
+Auth always creates its private append-only control-plane trail. The optional
+`audit` object configures bounded retention work; it does not disable audit
+writes:
+
+```ts
+auth: {
+  audit: {
+    retentionDays: 365,   // integer 1..3650
+    pruneBatchSize: 1000, // integer 1..10000 per SQLite transaction
+    pruneInterval: '6h',  // duration from 1m through 7d
+  },
+}
+```
+
+Defaults are the values shown. Unknown keys and out-of-range values fail
+normalization and Doctor reports the configuration error. The worker drains at
+most ten bounded batches per event-loop pass, yields, and schedules another
+pass while an expired backlog remains. Platform administrators can also invoke
+the explicit, audited prune route. See
+[Durable Authorization and Control-Plane Audit](./auth/control-plane-audit.md)
+for event bounds, atomicity, routes, SDK/UI, and exclusions. This trail is not
+general user-activity logging and does not make compliance/WORM claims.
+
+Permission keys are canonical lowercase namespaces such as `patients:read`;
+role keys are stable lowercase identifiers such as `clinician`. Resolution
+sorts and freezes the registry, rejects unknown fields and duplicate or
+undeclared permission references, and bounds registry and display-metadata
+sizes. A role uses either `permissions` or `allPermissions`, never both. Zero
+merges a deterministic framework registry into the app registry. Framework
+permission keys cannot be redefined, and the protected `owner` template cannot
+be widened, narrowed, or assigned through the generic role service. Built-in
+`access-manager` (single) and `member`/`manager` (multi) templates provide a
+sensible starting point without making the global `users.role = 'admin'` an
+application or tenant owner.
+
+The framework-owned registry is fixed by profile:
+
+| Profile | Framework permission keys |
+| --- | --- |
+| `single/simple` | None; this is the compatibility profile with the existing global `user`/`admin` role behavior. |
+| `single/advanced` | `application.roles:read`, `application.roles:manage` |
+| `multi/simple` or `multi/advanced` | `tenant:read`, `tenant:manage`, `tenant.members:read`, `tenant.members:manage`, `tenant.roles:read`, `tenant.roles:manage`, `tenant.invitations:read`, `tenant.invitations:manage`, `tenant.domains:read`, `tenant.domains:verify`, `tenant.domains:release`, `tenant.onboarding:manage`, `tenant.join-requests:review`, `tenant.audit:read`, `workflows:manage`, `notifications:manage`, `rooms:manage` |
+
+The framework roles are equally deterministic. `single/advanced` adds
+`access-manager` with both `application.roles:*` permissions and a protected
+`owner` with `allPermissions`. Both multi-tenant profiles add `member`,
+`manager`, and the protected `owner`. `member` can read the active tenant,
+members, and role metadata. `manager` adds member administration, invitation
+read/manage, domain read/verify, onboarding management, and join-request
+review. It deliberately does not receive tenant settings management, role
+management, domain release, security-audit read, or the three built-in service
+management permissions. `owner` receives the complete resolved registry.
+
+Apps may reference framework permission keys in their own role templates but
+cannot redefine their labels or semantics. App permissions extend the
+registry; they do not replace it. The dedicated ownership lifecycle is the
+only way to move the protected `owner` role.
+
+Advanced assignments are retained as source-aware history rows. Multiple
+static roles add their permissions; `allPermissions` expands to the complete
+resolved registry. Assignment writes atomically advance the application or
+membership authorization generation. HTTP resolves assignments for every
+request, and Sync fingerprints include the assignment revision, so a grant or
+revocation is visible without trusting a role supplied by the request.
+
+When an existing `single/simple` database first enables `single/advanced`, Zero
+does not guess among global administrators. Configure one exact existing
+identity for the one-time, idempotent adoption:
+
+```ts
+authorization: {
+  mode: 'advanced',
+  ownerAdoption: { email: 'owner@example.com' }, // or { userId: 'u_...' }
+}
+```
+
+A fresh installation needs no selector: the first bootstrap user and protected
+application-owner assignment commit together. An existing ownerless install
+fails startup with an actionable error until adoption succeeds. The selector
+may be retained or removed afterward.
+
+### Installed auth profile and mode upgrades
+
+Zero persists the exact tenancy/authorization pair and a monotonic generation
+in the private `_auth_installed_profile` singleton. Startup compares that
+durable profile with configuration before it recovers registrations, repairs
+owners, issues tokens, starts workers, or publishes auth services. An exact
+profile restart leaves the installed marker and generation unchanged. A
+committed change advances the shared auth-authority revision, and cached HTTP,
+token, session, Sync, identity, tenancy, and role
+boundaries reject a stale runtime with `AUTH_PROFILE_CHANGED` until it is
+restarted. Use a coordinated rollout even though the fence fails closed.
+
+The supported populated-database changes are intentionally narrow:
+
+- `single/simple` to `single/advanced` does not reinterpret global
+  `users.role` as an application assignment. When users already exist,
+  configure the exact `ownerAdoption` selector shown above. Only that owner is
+  adopted; other users begin with no application role.
+- `multi/simple` to `multi/advanced` transactionally projects each retained
+  non-removed membership's `role_key` into a source-aware advanced assignment.
+  Active and suspended memberships are preserved; removed memberships are not
+  re-granted. Every retained key must still be declared in the resolved role
+  registry, including `owner`, `manager`, `member`, and app roles. An unknown,
+  null, or retired key stops startup before any marker, assignment, generation,
+  session, audit, or revision change commits.
+- `advanced` to `simple` is rejected once authority data exists. A membership
+  placeholder cannot safely replace additive assignment history.
+- `single` to `multi` and `multi` to `single` are rejected once identity or
+  tenant data exists. Those changes require a future explicit data/session
+  adoption workflow; configuration never guesses ownership.
+- A truly pristine database may correct either axis before bootstrap. The
+  profile generation still advances so a concurrently starting process with
+  an older configuration cannot publish stale services.
+
+The multi/simple projection advances each retained membership authorization
+generation and atomically rebinds its live browser and native session parents,
+so an unchanged effective role does not force a sign-in. Suspended memberships
+remain unusable. Incomplete native authorization requests/codes are discarded
+because they cannot be safely rebased. A pending registration-provisioning row,
+whether its lease is live or expired, blocks any actual profile change: restart
+the installed profile so it can finalize or recover the registration, then
+retry.
+
+Historical databases created before the profile marker need one extra
+ambiguity guard. The recommended, least-surprising rollout is to deploy this
+Zero version once with the existing `multi/simple` configuration. That normal
+restart records the migration `023` marker without changing authority. Then
+change the configuration to `multi/advanced` in a second coordinated rollout.
+
+An unmarked database with tenant/membership rows and no advanced-assignment
+history can therefore start normally as explicitly configured `multi/simple`.
+A one-step first start as `multi/advanced` is ambiguous with a damaged advanced
+database and fails closed. If a two-step rollout is impossible, and only after
+confirming that the database really came from multi/simple, use this one-time
+assertion:
+
+```ts
+authorization: {
+  mode: 'advanced',
+  legacySimpleRoleAdoption: true,
+}
+```
+
+`legacySimpleRoleAdoption` is accepted only with `tenancy.mode: 'multi'` and
+`authorization.mode: 'advanced'`. It cannot authorize a tenancy-axis change or
+override existing assignment history. It is idempotent and harmless after the
+advanced marker commits, but should be removed after a successful deployment
+so the exceptional legacy intent does not remain in ordinary configuration.
+The completed transition writes one system-provenance
+`application.auth-profile-adopted` audit event in the same transaction; Zero
+does not invent a human actor for framework adoption.
+
+Only `authorization.mode` is exposed by public auth config. Labels,
+descriptions, role templates, and the permission registry remain server-only.
+Authenticated `/auth/admin/config` includes the resolved registry and an
+`assignable` flag for mode-aware administration surfaces; assignment records
+and source history are not anonymously enumerable.
+`AuthorizationKernel` compiles, monotonically merges, and evaluates this
+vocabulary against a live trusted scope snapshot. Managed Elysia routes,
+file-router pages and `route.ts` handlers, resource CRUD, data queries, and
+Sync use the same request authorization facade; raw `zero.db`/`zero.sql`
+remains compatible at its historical path in single mode. Multi-tenant request
+handlers must opt into that trusted boundary through `zero.unsafe.db` /
+`zero.unsafe.sql`; ordinary app data should use a classified resource so the
+tenant predicate cannot be forgotten.
+
+In `multi` mode, installation bootstrap always requires a tenant name and
+atomically persists the user, credential, first tenant, protected owner
+membership, global/platform-admin role, and bootstrap completion marker. That
+bootstrap invariant is independent of the later `tenancy.creation.mode`.
+
+After bootstrap, identity registration and tenant creation are separate. An
+ordinary `/auth/register` may omit `organizationName`; Zero then returns an
+expiring, hashed-at-rest, app-bound, single-use onboarding continuation and no
+application credential. The browser may exchange it at
+`POST /auth/tenants/create` when the live creation policy permits. Supplying an
+organization during registration remains an optional one-step path under that
+same policy. It never joins an existing tenant or accepts an owner/actor from
+the browser.
+
+`/auth/tenants/create` also accepts proof from the current browser refresh
+family so an already signed-in eligible user can create and activate another
+tenant. Tenant, protected owner, continuation/refresh consumption, replacement
+parent session, and refresh credential commit together. A failure rolls the
+entire unit back, preserving the proof and prior session for a safe retry.
+For the optional one-step registration path, a response lost after the
+identity/tenant transaction is recoverable by normal login; the sole live
+membership auto-binds, so repeating registration is neither required nor
+recommended.
+
+Verified-company-domain request onboarding is an explicit multi-mode option:
+
+```ts
+tenancy: {
+  mode: 'multi',
+  onboarding: {
+    joinRequests: { enabled: true },
+    verifiedDomains: {
+      enabled: true,
+      allowedRequestRoles: ['member'],
+      defaultRequestRole: 'member',
+      maxClaimsPerTenant: 20,
+      // challengeTTL: '24h', dnsTimeout: '5s', reverifyInterval: '7d',
+      // gracePeriod: '3d', mailboxLandingPath: '/domain-onboarding',
+    },
+  },
+}
+```
+
+Allowed request roles must be declared, bounded, and non-system. Enabling the
+feature requires operational email delivery plus `app.publicUrl`; Doctor fails
+the half-enabled configuration and public auth config withholds the capability.
+It proves exact DNS control and current mailbox possession before retaining a
+fixed-role join request; it does not auto-join or create an identity when
+registration is disabled. Protected owners can retire a claim without deleting
+history; Zero invalidates outstanding admission and quarantines cross-tenant
+reuse for seven days. See
+[Verified Company-Domain Onboarding](./auth/verified-domain-onboarding.md) for
+all bounds, routes, lifecycle rules, and deliberate exclusions.
+
+Browser sessions are durably tenant-bound; users with multiple memberships
+must explicitly select one, and managed tenant resources stamp and filter their
+server-owned tenant discriminator. Doctor accepts `tenancy: 'multi'` and both
+authorization modes, and validates those resource boundaries. For
+`single/advanced`, its static report documents the runtime owner-adoption
+guard; startup performs the authoritative database-backed active-owner check.
+
+`auth.bootstrap` is an installation-level control, separate from
+`auth.registration.mode`. It defaults to secret-gated setup; an omitted secret
+keeps a fresh database closed and produces
+`auth.bootstrap.secret_missing` in Doctor. Use a random deployment secret of
+at least 32 characters, or deliberately select `bootstrap: 'public'` (legacy,
+Doctor-warned) or `bootstrap: 'disabled'` (trusted provisioning only). Once
+setup succeeds, change the config to `disabled` and remove the secret. The
+durable database marker prevents setup from reopening.
 
 ### Native installed-app authentication
 
@@ -397,10 +679,11 @@ as web auth. After deployment, verify the discovery document at
 MFA/recovery, callback, rotation, revocation, protected HTTP, and Sync on real
 targets.
 
-Richer auth behavior should keep the same protocol and can move into
-`zero/auth.ts` instead of growing inline `createApp()` config:
+Richer auth behavior can live in an app-owned module such as
+`config/auth.ts`, as long as `zero.config.ts` imports that value explicitly:
 
 ```ts
+// config/auth.ts
 import {
   defineAuthConfig,
   defineAuthEmailTemplates,
@@ -414,8 +697,10 @@ export default defineAuthConfig({
   },
   mfa: {
     enabled: Bun.env.AUTH_MFA_ENABLED === 'true',
-    policy: Bun.env.AUTH_MFA_POLICY ?? 'optional',
-    methods: parseList(Bun.env.AUTH_MFA_METHODS, ['email', 'totp']),
+    // Parse/validate environment overrides before passing them to this typed
+    // config. These literals are the supported values used by this example.
+    policy: 'optional',
+    methods: ['email', 'totp'],
     allowUserChoice: true,
     allowMultipleMethods: false,
     recoveryCodes: false, // reserved for a later recovery-code flow
@@ -435,13 +720,14 @@ export default defineAuthConfig({
 });
 ```
 
-`zero/auth-emails/` is optional. Current account setup and password reset
-emails render branded defaults using `app.name`, `app.publicUrl`, logo URL,
-support email, and brand color. When app overrides are present, each template
-should live in its own file and `index.ts` should only compose the registry:
+An app-owned `config/auth-emails/` folder is optional; Zero does not discover
+it. Current account setup and password reset emails render branded defaults
+using `app.name`, `app.publicUrl`, logo URL, support email, and brand color.
+When app overrides are present, each template can live in its own file and
+`index.ts` can compose the registry imported by `config/auth.ts`:
 
 ```ts
-// zero/auth-emails/index.ts
+// config/auth-emails/index.ts
 import { defineAuthEmailTemplates } from '@zero/framework/server';
 
 import { passwordResetEmail } from './password-reset';
@@ -452,7 +738,7 @@ export const authEmailTemplates = defineAuthEmailTemplates({
 ```
 
 ```ts
-// zero/auth-emails/password-reset.ts
+// config/auth-emails/password-reset.ts
 import type { AuthEmailTemplate } from '@zero/framework/server';
 
 export const passwordResetEmail: AuthEmailTemplate = (ctx) => ({
@@ -462,11 +748,11 @@ export const passwordResetEmail: AuthEmailTemplate = (ctx) => ({
 });
 ```
 
-Active template keys today are `accountSetup`, `passwordReset`, and
-`emailVerification` and `emailOtp`. Reserved typed keys for upcoming
-account-notice slices include `passwordChanged`, `mfaEnabled`, `mfaDisabled`,
-and `recoveryCodesRegenerated`. MFA setup and login challenge routes are active
-when `AUTH_MFA_ENABLED=true`.
+Active template keys today are `accountSetup`, `passwordReset`,
+`emailVerification`, `domainMailboxProof`, and `emailOtp`. Reserved typed keys
+for upcoming account-notice slices include `passwordChanged`, `mfaEnabled`,
+`mfaDisabled`, and `recoveryCodesRegenerated`. MFA setup and login challenge
+routes are active when `AUTH_MFA_ENABLED=true`.
 
 Recovery-code storage is reserved for a later MFA slice. Leave
 `auth.mfa.recoveryCodes` false until the recovery-code generation and
@@ -484,6 +770,7 @@ Relevant environment variables are shown in `.env.example`:
 | `EMAIL_FROM` | Default sender for platform email. |
 | `EMAIL_REPLY_TO` | Optional reply-to address. |
 | `RESEND_API_KEY` | Enables the default Resend email provider. |
+| `AUTH_BOOTSTRAP_SECRET` | App convention for the random operator setup key passed explicitly to `auth.bootstrap.secret`; Zero does not read it implicitly. |
 | `AUTH_REQUIRE_EMAIL_VERIFICATION` | Require email verification before public-registered users receive tokens. |
 | `AUTH_EMAIL_VERIFICATION_PATH` | Public page path used in email verification links. Defaults to `/verify-email`. |
 | `AUTH_MFA_ENABLED` | Enables first-party MFA setup and login challenges. |
@@ -496,6 +783,7 @@ Relevant environment variables are shown in `.env.example`:
 | `ACCESS_TOKEN_TTL` | Access token lifetime. |
 | `REFRESH_TOKEN_TTL` | Refresh token lifetime. |
 | `AUTH_SIGNING_KEY` | Optional externally managed ES256 private JWK as raw JSON or base64; PEM is not supported. Missing `kid` is derived deterministically from the public key. |
+| `ZERO_STORAGE_SIGNING_SECRET` | Optional HMAC key for storage presigned URLs and upload grants; use at least 32 random bytes. Durable shared databases can use Zero's persisted generated key. |
 | `OPENAI_API_KEY` | Enables OpenAI when `ai: true`. |
 | `ANTHROPIC_API_KEY` | Enables Anthropic when `ai: true`. |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables Google Generative AI when `ai: true`. |
@@ -525,27 +813,15 @@ They are mounted by `createApp()` and use per-call TTL/cooldown options. Auth
 setup/reset email flows still read `AUTH_ACTION_TOKEN_TTL` and
 `AUTH_ACCOUNT_EMAIL_COOLDOWN` for their action-token defaults.
 
-Config-file discovery/scaffolding remains planned. Inline config uses the same
-contract that future `zero/auth.ts` or `config/auth.ts` files should export.
+The current auth admin UI reads the admin-protected normalized response from
+`GET /auth/admin/config`; it does not load the source module. The Doctor CLI
+loads the composed `AppConfig` export from `zero.config.ts` (or its supported
+root/config variants) and evaluates it as application config.
 
-Admin UI and platform doctor should read the effective normalized config, not
-raw user-authored files.
-
-Recommended endpoint shape:
-
-```txt
-GET /api/_zero/config
-```
-
-or system-specific endpoints:
-
-```txt
-GET /auth/admin/config
-GET /api/_zero/observability/config
-```
-
-Admin-only responses should omit secrets and include enough structure for UI
-components to adapt.
+There is currently no general `GET /api/_zero/config` endpoint and no
+`GET /api/_zero/observability/config` endpoint. A future general effective
+config API should be admin-only, omit secrets, and expose normalized data
+rather than raw user-authored files.
 
 ## Sitemap
 
@@ -597,24 +873,30 @@ Behavior:
 falls back to the request origin, which is useful in local development but less
 predictable behind production proxies.
 
-## Templates
+## Future Proposal: Focused Config Discovery and Scaffolding
 
-Zero should scaffold blank config files with comments:
+This section is design direction, not a current CLI or runtime contract. Zero
+does not currently discover focused config modules, accept `configDir`, or
+provide an `init-config` command.
+
+A future scaffolder could create ordinary typed modules with comments:
 
 ```txt
 bun run zero init-config auth
 bun run zero init-config access
 ```
 
-By default, scaffolding writes:
+A proposed default layout is:
 
 ```txt
 zero/auth.ts
 zero/access.ts
 ```
 
-Templates should be normal TypeScript files. They should teach by showing
-commented examples and safe defaults, not by requiring a separate wizard.
+If implemented, templates should be normal TypeScript files. They should teach
+by showing commented examples and safe defaults, not by requiring a separate
+wizard. Discovery would also need a documented precedence contract before the
+runtime could accept focused files independently of `zero.config.ts`.
 
 ## Platform Doctor
 
@@ -632,8 +914,8 @@ default. `--strict` makes warnings fail for CI.
 Current checks cover:
 
 1. Invalid `createApp()` config such as `stateSync` without auth.
-2. Explicit `storageDir` without auth, because platform storage only mounts
-   when auth is enabled.
+2. Explicit storage config without auth, weak operator-provided capability
+   keys, and missing external key material for production ephemeral databases.
 3. Missing or multiple primary-key declarations in ReactiveDB tables.
 4. Invalid natural identity fields.
 5. Invalid auth action-token TTL/cooldown duration strings.
@@ -654,9 +936,10 @@ Current checks cover:
     indexes, unusually high dimensions, embedding alias readiness, and
     unindexed scope metadata fields.
 15. Resource registration and policy shape: missing tables, primary-key
-    mismatches, missing owner columns, untrusted metadata keys, auth-disabled
-    protected resources, missing list policies, custom list policy scope, public
-    or uninspectable write policies, and owner-field index guidance.
+    mismatches, unknown or unsafe field allow-lists, missing owner columns,
+    untrusted metadata keys, auth-disabled protected resources, missing list
+    policies, custom list policy scope, public or uninspectable write policies,
+    and owner-field index guidance.
 16. App source usage audit: raw controls instead of Zero UI primitives, custom
     modal/toast/sidebar systems, missing app root providers, direct
     package/internal imports, direct backend provider usage, backend `console`
@@ -696,7 +979,8 @@ extension directories, `components/`, `hooks/`, and `lib/`. Doctor skips
 `node_modules`, `.zero`, `.build`, `dist`, generated files, tests, and vendored
 source by default.
 
-Future config-file doctor checks should validate:
+Future config-file Doctor checks (after focused-file support exists) should
+validate:
 
 1. Missing referenced config files.
 2. Unsupported keys or field types.
@@ -712,9 +996,11 @@ Future config-file doctor checks should validate:
 11. MFA required with no enabled method.
 12. Auth branding values that point at missing local assets in generated apps.
 
-## Rollout Plan
+## Future Proposal Rollout
 
-1. Implement the protocol for `zero.auth.ts` and `zero.access.ts`.
+None of these steps are part of the current public configuration API:
+
+1. Implement a focused-module protocol for `zero/auth.ts` and `zero/access.ts`.
 2. Add templates and docs for those files.
 3. Add effective config endpoint for admin UI.
 4. Build adaptive admin UI against the effective config.

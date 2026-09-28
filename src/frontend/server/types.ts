@@ -1,7 +1,18 @@
-import type { ClientTableDef, DeclaredSyncMode, ReactiveDBConfig, SyncMode, TableSchema } from '../../sync/types';
+import {
+  SYNC_TABLE_MUTATION_VALIDATOR,
+  type ClientTableDef,
+  type DeclaredSyncMode,
+  type ReactiveDBConfig,
+  type SyncMode,
+  type SyncTableMutationValidator,
+  type TableSchema,
+} from '../../sync/types';
 import type { SyncPolicy } from '../../sync/sync-policy';
+import type { EphemeralTopicPolicy } from '../../sync/ephemeral-policy';
 import type { ObservabilityConfig } from '../../observability/types';
+import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
 import type { AuthBehaviorConfig } from '../../auth/types';
+import { parseTokenTTL } from '../../tokens/token-utils';
 import type { AppIdentityConfig, EmailConfig } from '../../email/types';
 import { resolveAIConfig } from '../../ai/ai-env';
 import type { AIConfig, ResolvedAIConfig } from '../../ai/ai-types';
@@ -22,6 +33,8 @@ import {
 export type AppTableInput = TableSchema | {
   serverTable: TableSchema;
   clientTable?: ClientTableDef;
+  /** Optional logical websocket-mutation validator for a raw server table. */
+  mutationValidator?: SyncTableMutationValidator;
 };
 
 /** Action taken when an auto-mode table crosses the row limit. */
@@ -104,6 +117,24 @@ export interface AppDoctorConfig {
    * Keys are table names; values are indexed column names.
    */
   indexedFields?: Record<string, readonly string[]>;
+}
+
+/** Built-in authenticated file-storage settings used by createApp(). */
+export interface AppStorageConfig {
+  /**
+   * HMAC secret for presigned URLs and upload grants. Explicit config wins
+   * over ZERO_STORAGE_SIGNING_SECRET. When both are omitted, Zero persists a
+   * random key in the durable app database during storage startup.
+   */
+  signingSecret?: string;
+  /** Default capability expiry in seconds. Default: 3600. */
+  defaultPresignedTTL?: number;
+}
+
+/** Normalized server-only storage settings. */
+export interface ResolvedAppStorageConfig {
+  signingSecret?: string;
+  defaultPresignedTTL: number;
 }
 
 /** Normalized sitemap config consumed by the router plugin. */
@@ -236,6 +267,15 @@ export interface AppConfig {
   syncPolicy?: SyncPolicy;
 
   /**
+   * Authorization policy for app-owned ephemeral collaboration topics.
+   *
+   * Auth-enabled apps already reserve `presence:<roomId>`, `typing:<roomId>`,
+   * and `user:<currentUserId>:<name>`. This policy classifies any additional
+   * topic names and must return a server-derived internal namespace.
+   */
+  ephemeralPolicy?: EphemeralTopicPolicy;
+
+  /**
    * App-owned resource definitions.
    *
    * Resource definitions are validated at startup and later reused by generated
@@ -262,6 +302,9 @@ export interface AppConfig {
 
   /** Base directory for file storage. Default: '.storage'. */
   storageDir?: string;
+
+  /** Signing and expiry policy for built-in authenticated file storage. */
+  storage?: AppStorageConfig;
 
   /** File-based router app directory. Default: './app' */
   appDir?: string;
@@ -387,6 +430,8 @@ export interface ResolvedConfig {
   app: AppIdentityConfig;
   db: ReactiveDBConfig;
   tables: Record<string, TableSchema>;
+  /** Server-only logical validators used by websocket mutation handling. */
+  mutationValidators: Record<string, SyncTableMutationValidator>;
   auth: false | (AuthBehaviorConfig & { accessTokenTTL?: string; refreshTokenTTL?: string });
   email: false | EmailConfig;
   ai: false | ResolvedAIConfig;
@@ -398,9 +443,11 @@ export interface ResolvedConfig {
   /** Whether an auth-enabled app inherited the secure required-sync default. */
   syncAuthDefaulted: boolean;
   syncPolicy?: SyncPolicy;
+  ephemeralPolicy?: EphemeralTopicPolicy;
   resources: readonly ResourceDefinition[];
   resourceRoutes: false | ResourceCrudRoutesConfig;
   storageDir: string;
+  storage: ResolvedAppStorageConfig;
   appDir: string;
   outDir: string;
   generatedDir: string;
@@ -441,6 +488,7 @@ export function resolveConfig(
     : config.auth === false || config.auth === undefined
       ? false
       : config.auth;
+  if (auth !== false) validateAppAuthConfig(auth);
   const email = config.email === true
     ? {}
     : config.email === false || config.email === undefined
@@ -450,6 +498,7 @@ export function resolveConfig(
   const vector = resolveVectorConfig(config.vector, env);
   const kv = resolveKvConfig(config.kv);
   const pdf = resolvePdfConfig(config.pdf, env);
+  const storage = resolveAppStorageConfig(config.storage, env);
   const stateSync = config.stateSync ?? false;
   const syncAuth = config.syncAuth ?? (auth === false ? 'public' : 'required');
   const syncAuthDefaulted = auth !== false && config.syncAuth === undefined;
@@ -474,8 +523,17 @@ export function resolveConfig(
 
   // Normalize tables: accept defineTable() output alongside raw TableSchema.
   const normalized: Record<string, TableSchema> = {};
+  const mutationValidators: Record<string, SyncTableMutationValidator> = {};
   for (const [name, def] of Object.entries(config.tables)) {
-    normalized[name] = 'serverTable' in def ? (def as any).serverTable : def;
+    const wrapped = 'serverTable' in def
+      ? def as Exclude<AppTableInput, TableSchema>
+      : undefined;
+    const serverTable = wrapped?.serverTable ?? def as TableSchema;
+    normalized[name] = serverTable;
+
+    const validator = wrapped?.mutationValidator
+      ?? serverTable[SYNC_TABLE_MUTATION_VALIDATOR];
+    if (validator) mutationValidators[name] = validator;
   }
 
   // Preserve declared modes so startup can resolve omitted/auto modes with DB row counts.
@@ -510,6 +568,7 @@ export function resolveConfig(
     app: config.app ?? {},
     db: config.db,
     tables: normalized,
+    mutationValidators,
     auth,
     email,
     ai,
@@ -520,6 +579,7 @@ export function resolveConfig(
     syncAuth,
     syncAuthDefaulted,
     syncPolicy: config.syncPolicy,
+    ephemeralPolicy: config.ephemeralPolicy,
     resources: config.resources ?? [],
     resourceRoutes: config.resourceRoutes === false
       ? false
@@ -528,6 +588,7 @@ export function resolveConfig(
         : config.resourceRoutes,
     syncDefaults,
     storageDir: config.storageDir ?? '.storage',
+    storage,
     appDir: config.appDir ?? './app',
     outDir: config.outDir ?? './.build',
     generatedDir: config.generatedDir ?? './.zero/generated',
@@ -551,6 +612,65 @@ export function resolveConfig(
     resolvedSyncModes: {},
     tableColumns,
   };
+}
+
+/** Validate behavior and app-only token fields before config reaches startup. */
+function validateAppAuthConfig(
+  config: AuthBehaviorConfig & {
+    accessTokenTTL?: string;
+    refreshTokenTTL?: string;
+  },
+): void {
+  if (
+    config === null
+    || typeof config !== 'object'
+    || Array.isArray(config)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(config))
+  ) {
+    throw new Error('[auth] Auth config must be an object.');
+  }
+  const {
+    accessTokenTTL,
+    refreshTokenTTL,
+    ...behavior
+  } = config;
+  resolveAuthBehaviorConfig(behavior);
+  validateAuthTokenTTL(accessTokenTTL, 'accessTokenTTL');
+  validateAuthTokenTTL(refreshTokenTTL, 'refreshTokenTTL');
+}
+
+function validateAuthTokenTTL(value: unknown, field: string): void {
+  if (value === undefined) return;
+  if (typeof value !== 'string') {
+    throw new Error(`[auth] ${field} must be a duration string.`);
+  }
+  parseTokenTTL(value, field);
+}
+
+/** Normalize built-in file-storage settings without exposing them client-side. */
+function resolveAppStorageConfig(
+  config: AppStorageConfig | undefined,
+  env: Record<string, string | undefined> = Bun.env,
+): ResolvedAppStorageConfig {
+  if (config !== undefined && (!config || typeof config !== 'object' || Array.isArray(config))) {
+    throw new Error('[app] storage must be an object when configured.');
+  }
+
+  const configuredSecret = config?.signingSecret;
+  if (configuredSecret !== undefined && (
+    typeof configuredSecret !== 'string' || configuredSecret.trim().length === 0
+  )) {
+    throw new Error('[app] storage.signingSecret must be a non-empty string.');
+  }
+  const envSecret = env.ZERO_STORAGE_SIGNING_SECRET;
+  const signingSecret = configuredSecret
+    ?? (typeof envSecret === 'string' && envSecret.trim().length > 0 ? envSecret : undefined);
+  const defaultPresignedTTL = config?.defaultPresignedTTL ?? 3600;
+  if (!Number.isInteger(defaultPresignedTTL) || defaultPresignedTTL < 1) {
+    throw new Error('[app] storage.defaultPresignedTTL must be a positive integer.');
+  }
+
+  return { signingSecret, defaultPresignedTTL };
 }
 
 function defaultPublicPaths(

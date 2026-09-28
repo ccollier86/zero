@@ -19,6 +19,42 @@ function setup(options: NativeRequestStoreOptions) {
 }
 
 describe('NativeRequestStore admission', () => {
+  test('fences cached request and code stores after a profile change', () => {
+    const now = Date.now();
+    const { db, store } = setup({ now: () => now });
+    try {
+      db.prepare(`INSERT INTO users
+        (user_id, username, email, role, status, password_change_required,
+         email_verification_required, mfa_required, created_at)
+        VALUES ('u_one', 'u_one', 'u_one@example.test', 'user', 'active', 0, 0, 0, ?)`)
+        .run(now);
+      const created = store.create({ ...input, prompt: null });
+      expect(store.claimForUser(created.rawRequestId, 'u_one')).toBe(true);
+      const codes = new NativeCodeStore(db);
+      let current = true;
+      const guard = () => {
+        if (!current) throw new Error('AUTH_PROFILE_CHANGED');
+      };
+      store.setRuntimeProfileGuard(guard);
+      codes.setRuntimeProfileGuard(guard);
+      expect(store.get(created.rawRequestId)?.boundUserId).toBe('u_one');
+
+      current = false;
+      expect(() => store.get(created.rawRequestId)).toThrow('AUTH_PROFILE_CHANGED');
+      expect(() => store.releaseForUser(created.rawRequestId, 'u_one'))
+        .toThrow('AUTH_PROFILE_CHANGED');
+      expect(() => codes.issue(created.rawRequestId, 'u_one', 0, 100))
+        .toThrow('AUTH_PROFILE_CHANGED');
+      expect(db.prepare(`SELECT consumed_at, bound_user_id
+        FROM _auth_native_requests WHERE request_id = ?`).get(created.requestId))
+        .toEqual({ consumed_at: null, bound_user_id: 'u_one' });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM _auth_native_codes').get())
+        .toEqual({ count: 0 });
+    } finally {
+      db.dispose();
+    }
+  });
+
   test('persists per-client and global outstanding caps across store restarts', () => {
     let now = 1_000_000;
     const options: NativeRequestStoreOptions = {

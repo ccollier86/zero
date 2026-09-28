@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { useTheme } from 'next-themes';
 
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 import {
   Tabs,
   TabsContent,
@@ -13,8 +13,8 @@ import {
   TabsHighlight,
   TabsHighlightItem,
   type TabsProps,
-} from '@/components/animate-ui/primitives/animate/tabs';
-import { CopyButton } from '@/components/animate-ui/components/buttons/copy';
+} from '#zero/components/animate-ui/primitives/animate/tabs';
+import { CopyButton } from '#zero/components/animate-ui/components/buttons/copy';
 
 type CodeTabsProps = {
   codes: Record<string, string>;

@@ -50,7 +50,9 @@ export const migration: Migration = {
 ```
 
 Register new migrations in `src/migrations/index.ts` by appending them to the
-`migrations` array. Never reorder or remove old migrations.
+`migrations` array. Versions must be non-empty, unique, and strictly increasing
+under the same string ordering used by `--to`; zero-pad numeric versions. Never
+reorder or remove old migrations.
 
 ## Safety Classes
 
@@ -114,6 +116,59 @@ bun run migrate:plan -- --schema ./app/lib/schemas.ts --write --name "add member
 Programmatic migration runners can call `migrator.run()`,
 `migrator.rollback()`, and `migrator.list()`. The older `migrator.status()`
 name remains supported and returns the same status rows as `list()`.
+
+For replicas that open the same SQLite file, the migrator waits up to 30 seconds
+for another migration writer by default. Programmatic callers can tune that
+connection-local wait without changing the migration contract:
+
+```ts
+const migrator = new Migrator({
+  dbPath: './data/platform.db',
+  migrations,
+  busyTimeoutMs: 45_000,
+});
+```
+
+`busyTimeoutMs` must be a non-negative finite number. A lock timeout means the
+migration never started; it is returned to the caller as an operational error
+and is not written as a failed migration attempt.
+
+## Concurrent Replica Contract
+
+Multiple current-version processes may call `run()` against the same SQLite
+file during startup. Zero serializes each migration with an
+`BEGIN IMMEDIATE` transaction and re-reads its durable state after acquiring the
+writer lock. A stale contender skips a migration that another process already
+applied, so the migration body, event-ledger row, schema-history snapshot, and
+legacy compatibility row commit together once. Required backups are retained
+and recorded only for the winning or genuinely attempted operation; a backup
+staged by a contender that subsequently skips is removed.
+
+Forward and rollback operations also recheck migration ordering while holding
+that lock. A forward migration cannot run if an earlier registered migration is
+no longer applied, and rollback cannot move beneath a later or unknown applied
+version. If operators start opposing `run()` and `rollback()` operations at the
+same time, one may finish and the other fails with a retryable ordering error;
+the database is never left with a later migration applied above a rolled-back
+dependency.
+
+All processes allowed to migrate a file must use the same complete, append-only
+migration registry. Current migrators refuse forward or rollback work when the
+durable ledger contains a version missing from their registry, preventing a
+stale current-version binary from silently operating below a newer schema. Do
+not overlap a rollout with binaries whose migrator predates this concurrency
+protocol: stop the old replicas, run the migration with the new release, and
+then start the new replicas. The SQLite writer lock coordinates one shared
+database file only; it is not a cross-database or cross-host deployment lock.
+
+Migration `023` adds the private `_auth_installed_profile` singleton and its
+auth-authority-revision triggers. The table records the exact installed tenancy
+and authorization modes plus a monotonic generation; it is not application
+schema and must not be edited manually. Auth startup uses one `BEGIN IMMEDIATE`
+transaction for supported mode adoption, readiness validation, the system
+audit event, and the marker compare-and-swap. An exact restart does not update
+the row. See [Platform Configuration](./platform-configuration.md#installed-auth-profile-and-mode-upgrades)
+for supported transitions and the one-time legacy multi/simple assertion.
 
 ## Schema Module Shape
 
@@ -190,6 +245,18 @@ Zero creates these internal tables:
 The ledger is append-only. Rollback records a `down` event with
 `status = 'rolled_back'`; it does not erase the original `up` event.
 
+Failed attempts are audit events, not durable schema state. A failed rollback
+therefore leaves the last successful `up` state applied, while a successful
+rollback is pending for the next forward run. Doctor reports the most recent
+failure without misclassifying that durable state. Successfully recorded
+migration code remains immutable even after rollback: restore its original
+checksum and add a new version instead of editing it before reapplying.
+
+`_migrations` remains synchronized for older tooling: successful forward events
+upsert its version row, successful rollbacks remove that row, and startup imports
+any legacy-only versions missing from a partially populated event ledger. The
+event ledger remains authoritative for versions it already knows.
+
 Schema history stores a stable JSON snapshot and a SHA-256 hash. This lets
 doctor detect drift and lets rollback verify the resulting schema shape in
 future tooling.
@@ -207,6 +274,10 @@ There are three rollback layers:
 Important: `down()` can restore schema shape, but it cannot magically restore
 dropped data unless the migration author wrote that logic or a backup is
 restored.
+
+Keep `up()` and `down()` database-local. SQLite can roll back their schema/data
+writes, but it cannot undo external API calls or arbitrary filesystem side
+effects performed by migration code.
 
 ## Natural Identity And Indexes
 

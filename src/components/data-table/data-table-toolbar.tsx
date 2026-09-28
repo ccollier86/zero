@@ -11,12 +11,12 @@
 import * as React from 'react';
 import type { Column, Table } from '@tanstack/react-table';
 import { X, Columns3 } from 'lucide-react';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { Search } from '@/components/animate-ui/icons/search';
-import { Download } from '@/components/animate-ui/icons/download';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { Search } from '#zero/components/animate-ui/icons/search';
+import { Download } from '#zero/components/animate-ui/icons/download';
+import { Input } from '#zero/components/ui/input';
+import { Button } from '#zero/components/ui/button';
+import { Badge } from '#zero/components/ui/badge';
 import type { FieldMeta } from '../../schema/field-types';
 import {
   DropdownMenu,
@@ -25,15 +25,15 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-} from '@/components/animate-ui/components/radix/dropdown-menu';
+} from '#zero/components/animate-ui/components/radix/dropdown-menu';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { cn } from '@/lib/utils';
+} from '#zero/components/ui/select';
+import { cn } from '#zero/lib/utils';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

@@ -9,6 +9,7 @@ import { describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 import { configureEmail, MemoryEmailProvider, type EmailProvider } from '../email';
 import { createReactiveDB } from '../sync/reactive-db';
+import { AdminUserUpdateService } from './admin-user-update-service';
 import { getActionTokenService, getAuthStore } from './auth-runtime';
 import { createAuthPlugin, getTokenService } from './auth.plugin';
 import { createAuthMiddleware } from './auth.middleware';
@@ -39,7 +40,7 @@ async function requestJson(
 async function startAuthApp(config: Omit<Parameters<typeof createAuthPlugin>[0], 'db'> = {}) {
   const db = createReactiveDB({ mode: 'memory' });
   const app = new Elysia()
-    .use(createAuthPlugin({ db, ...config }))
+    .use(createAuthPlugin({ db, bootstrap: 'public', ...config }))
     .use(createAuthMiddleware(getTokenService))
     .get('/api/whoami', (context: any) => context.authContext
       ? { userId: context.authContext.userId, role: context.authContext.role }
@@ -56,6 +57,129 @@ async function startAuthApp(config: Omit<Parameters<typeof createAuthPlugin>[0],
 }
 
 describe('Auth Plugin — Admin Security Hardening', () => {
+  test('trusted policy-property changes immediately invalidate existing sessions', async () => {
+    const local = await startAuthApp({
+      registration: { mode: 'admin-only' },
+      userProperties: {
+        department: {
+          type: 'enum',
+          values: ['operations', 'clinical'],
+          default: 'operations',
+          editableBy: 'admin',
+          useInPolicies: true,
+        },
+        displayDensity: {
+          type: 'enum',
+          values: ['comfortable', 'compact'],
+          default: 'comfortable',
+          editableBy: 'admin',
+        },
+      },
+    });
+
+    try {
+      const admin = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'policy-owner',
+        email: 'policy-owner@test.com',
+        password: 'password123',
+      });
+      const target = await requestJson(local.url, 'POST', '/auth/admin/users', {
+        username: 'policy-worker',
+        email: 'policy-worker@test.com',
+        password: 'password123',
+      }, admin.data.accessToken);
+      const targetId = target.data.user.userId;
+      const login = async () => requestJson(local.url, 'POST', '/auth/login', {
+        username: 'policy-worker',
+        password: 'password123',
+      });
+
+      const first = await login();
+      const untrusted = await requestJson(
+        local.url,
+        'PUT',
+        `/auth/admin/users/${targetId}/properties/displayDensity`,
+        { value: 'compact' },
+        admin.data.accessToken,
+      );
+      expect(untrusted.status).toBe(200);
+      expect((await requestJson(
+        local.url,
+        'GET',
+        '/api/whoami',
+        undefined,
+        first.data.accessToken,
+      )).status).toBe(200);
+
+      const trusted = await requestJson(
+        local.url,
+        'PUT',
+        `/auth/admin/users/${targetId}/properties/department`,
+        { value: 'clinical' },
+        admin.data.accessToken,
+      );
+      expect(trusted.status).toBe(200);
+      expect((await requestJson(
+        local.url,
+        'GET',
+        '/api/whoami',
+        undefined,
+        first.data.accessToken,
+      )).status).toBe(401);
+
+      // An idempotent write does not churn otherwise-current sessions.
+      const second = await login();
+      await requestJson(
+        local.url,
+        'PUT',
+        `/auth/admin/users/${targetId}/properties/department`,
+        { value: 'clinical' },
+        admin.data.accessToken,
+      );
+      expect((await requestJson(
+        local.url,
+        'GET',
+        '/api/whoami',
+        undefined,
+        second.data.accessToken,
+      )).status).toBe(200);
+
+      // The generic admin user patch follows the exact same authority rule.
+      await requestJson(
+        local.url,
+        'PATCH',
+        `/auth/admin/users/${targetId}`,
+        { properties: { department: 'operations' } },
+        admin.data.accessToken,
+      );
+      expect((await requestJson(
+        local.url,
+        'GET',
+        '/api/whoami',
+        undefined,
+        second.data.accessToken,
+      )).status).toBe(401);
+
+      const third = await login();
+      await requestJson(
+        local.url,
+        'DELETE',
+        `/auth/admin/users/${targetId}/properties/department`,
+        undefined,
+        admin.data.accessToken,
+      );
+      expect((await requestJson(
+        local.url,
+        'GET',
+        '/api/whoami',
+        undefined,
+        third.data.accessToken,
+      )).status).toBe(401);
+    } finally {
+      await local.stop();
+    }
+  });
+
   test('guards self transitions, validates properties first, and rejects unavailable MFA', async () => {
     const local = await startAuthApp({
       registration: { mode: 'admin-only' },
@@ -129,6 +253,49 @@ describe('Auth Plugin — Admin Security Hardening', () => {
       const config = await requestJson(local.url, 'GET', '/auth/admin/config', undefined, admin.data.accessToken);
       expect(config.data.capabilities.adminMarkEmailVerified).toBe(false);
     } finally {
+      await local.stop();
+    }
+  });
+
+  test('rejects admin mutations when the exact actor session is revoked before commit', async () => {
+    const local = await startAuthApp({ registration: { mode: 'admin-only' } });
+    const originalUpdate = AdminUserUpdateService.prototype.update;
+    let intercepted = false;
+
+    try {
+      const admin = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'commit-admin-owner',
+        email: 'commit-admin-owner@test.com',
+        password: 'password123',
+      });
+      const target = await requestJson(local.url, 'POST', '/auth/admin/users', {
+        username: 'commit-admin-worker',
+        email: 'commit-admin-worker@test.com',
+        password: 'password123',
+        firstName: 'Original',
+      }, admin.data.accessToken);
+
+      AdminUserUpdateService.prototype.update = function (...args) {
+        intercepted = true;
+        getAuthStore()!.revokeAllUserTokens(admin.data.user.userId);
+        return originalUpdate.apply(this, args);
+      };
+
+      const result = await requestJson(
+        local.url,
+        'PATCH',
+        `/auth/admin/users/${target.data.user.userId}`,
+        { firstName: 'Unauthorized change' },
+        admin.data.accessToken,
+      );
+
+      expect(intercepted).toBe(true);
+      expect(result.status).toBe(409);
+      expect(result.data.code).toBe('AUTHORIZATION_CHANGED');
+      expect(getAuthStore()!.getUserById(target.data.user.userId)?.firstName)
+        .toBe('Original');
+    } finally {
+      AdminUserUpdateService.prototype.update = originalUpdate;
       await local.stop();
     }
   });

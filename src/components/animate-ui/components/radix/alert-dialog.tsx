@@ -22,9 +22,9 @@ import {
   type AlertDialogOverlayProps as AlertDialogOverlayPrimitiveProps,
   type AlertDialogActionProps as AlertDialogActionPrimitiveProps,
   type AlertDialogCancelProps as AlertDialogCancelPrimitiveProps,
-} from '@/components/animate-ui/primitives/radix/alert-dialog';
-import { buttonVariants } from '@/components/animate-ui/components/buttons/button';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/primitives/radix/alert-dialog';
+import { buttonVariants } from '#zero/components/animate-ui/components/buttons/button';
+import { cn } from '#zero/lib/utils';
 
 type AlertDialogProps = AlertDialogPrimitiveProps;
 

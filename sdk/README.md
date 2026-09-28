@@ -10,7 +10,7 @@ ignored directories.
 
 | Local path | Intended packages | Owner and current release state |
 |---|---|---|
-| `sdk/zero-native-auth/` | Rust `zero-native-auth`, Tauri v2 `tauri-plugin-zero-auth`, and a future guest binding | Independent Phase 0 `0.0.0` design/scaffold repository; not publishable, not a working auth engine, no source license chosen yet |
+| `sdk/zero-native-auth/` | Rust `zero-native-auth`, Tauri v2 `tauri-plugin-zero-auth`, and a future guest binding | Independent functional `0.0.0` preview: working OIDC/PKCE engine, rotating sessions, tenant sessions, authenticated HTTP, and deny-by-default Tauri commands; unpublished and awaiting platform adapters/certification, ownership, and a license |
 | `sdk/zero-chrome-auth/` | `@zero/chrome-auth` | Independent private `0.0.0` Chrome MV3 preview; functional source, but not releasable until its framework peer is versioned and real-Chrome/security gates pass |
 | Zero repository root | `@zero/framework`, including the implemented TypeScript `@zero/framework/native` entry point | Parent framework history, package, create/update tools, server provider, and canonical docs |
 
@@ -29,7 +29,7 @@ apps. Normal tooling behaves as follows:
 | Operation | Child SDK behavior |
 |---|---|
 | `git status`, commit, or push at the Zero root | Does not include either child |
-| `bun test`, framework typecheck, or package build | Does not discover child tests/dependencies as parent work |
+| `bun run test`, framework typecheck, or package build | Does not discover child tests/dependencies as parent work |
 | `bun run test:package` / framework packing | Excludes both child repositories |
 | Default `create-zero` / `zero-new`, including `--local` | Does not copy either child into a new app |
 | `zero update` / `zero-update` | Does not add, update, or remove either child in an application |
@@ -106,7 +106,7 @@ inside the relevant child repository.
 Run checks from the repository that owns them:
 
 ```sh
-# Rust/Tauri Phase 0 scaffold
+# Rust/Tauri functional private preview
 cd sdk/zero-native-auth
 cargo fmt --all -- --check
 cargo test --locked --workspace --all-targets
@@ -120,8 +120,9 @@ bun run check
 ```
 
 Passing these checks does not change preview status. The Rust/Tauri repository
-still needs its OIDC engine, platform vault/browser/callback adapters, Tauri ACL
-surface, platform tests, dependency/security resolution, license, and release
+implements its platform-neutral auth engine and Tauri ACL surface, but still
+needs audited OS vault/browser/callback adapters, real-platform lifecycle and
+packaging tests, dependency/security review, license, ownership, and a release
 version. The Chrome repository still needs a released compatible
 `@zero/framework/native` peer range, real-browser lifecycle tests, security
 review, package ownership, and an intentional publication decision.

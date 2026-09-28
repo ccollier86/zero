@@ -13,24 +13,39 @@ import { emitPlatformCode } from '../observability/sink';
 import type { PlatformTokenServiceConfig } from './token-types';
 import { PlatformTokenService } from './token-service';
 import { PlatformTokenStore, definePlatformTokenTables } from './token-store';
+import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
+import {
+  ZERO_PLATFORM_TOKEN_SERVICE,
+  ZERO_PLATFORM_TOKEN_STORE,
+} from '../runtime/service-keys';
+import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 
-let tokenStore: PlatformTokenStore | null = null;
-let tokenService: PlatformTokenService | null = null;
+const tokenServiceProviders = new CompatibilityProviderRegistry<PlatformTokenService>(
+  'Platform token service',
+);
+const tokenStoreProviders = new CompatibilityProviderRegistry<PlatformTokenStore>(
+  'Platform token store',
+);
+const manualOwner = {};
+let manualServiceRegistration: ReturnType<typeof tokenServiceProviders.register> | null = null;
+let manualStoreRegistration: ReturnType<typeof tokenStoreProviders.register> | null = null;
 
 /** Platform token plugin options. */
 export interface PlatformTokenPluginConfig extends PlatformTokenServiceConfig {
   /** Shared ReactiveDB instance supplied by createApp after sync starts. */
   db: ReactiveDB;
+  runtime?: ZeroAppRuntime;
+  onServiceCreated?: (service: PlatformTokenService) => void;
 }
 
 /** Return the current platform token service, or null before startup. */
 export function getPlatformTokenService(): PlatformTokenService | null {
-  return tokenService;
+  return tokenServiceProviders.get();
 }
 
 /** Return the current platform token store, or null before startup. */
 export function getPlatformTokenStore(): PlatformTokenStore | null {
-  return tokenStore;
+  return tokenStoreProviders.get();
 }
 
 /**
@@ -39,30 +54,57 @@ export function getPlatformTokenStore(): PlatformTokenStore | null {
  * Useful for tests and advanced apps that need the service outside createApp.
  */
 export function configurePlatformTokens(config: PlatformTokenPluginConfig): PlatformTokenService {
+  resetPlatformTokens();
   definePlatformTokenTables(config.db);
-  tokenStore = new PlatformTokenStore(config.db);
-  tokenService = new PlatformTokenService(tokenStore, config);
-  return tokenService;
+  const store = new PlatformTokenStore(config.db);
+  const service = new PlatformTokenService(store, config);
+  manualStoreRegistration = tokenStoreProviders.register(manualOwner, () => store);
+  manualServiceRegistration = tokenServiceProviders.register(manualOwner, () => service);
+  return service;
 }
 
 /** Reset the process-local platform token singleton. */
 export function resetPlatformTokens(): void {
-  tokenStore = null;
-  tokenService = null;
+  manualServiceRegistration?.unregister();
+  manualStoreRegistration?.unregister();
+  manualServiceRegistration = null;
+  manualStoreRegistration = null;
 }
 
 /** Create the Elysia plugin that exposes `platformTokens` to route context. */
 export function createPlatformTokenPlugin(config: PlatformTokenPluginConfig) {
+  const owner = {};
+  let store: PlatformTokenStore | null = null;
+  let service: PlatformTokenService | null = null;
+  let storeRegistration: ReturnType<typeof tokenStoreProviders.register> | null = null;
+  let serviceRegistration: ReturnType<typeof tokenServiceProviders.register> | null = null;
+  config.runtime?.addCleanup(() => storeRegistration?.unregister());
+  config.runtime?.addCleanup(() => serviceRegistration?.unregister());
+
   return new Elysia({ name: 'platform.tokens' })
     .onStart(() => {
-      configurePlatformTokens(config);
+      definePlatformTokenTables(config.db);
+      store = new PlatformTokenStore(config.db);
+      service = new PlatformTokenService(store, config);
+      storeRegistration = tokenStoreProviders.register(owner, () => store);
+      serviceRegistration = tokenServiceProviders.register(owner, () => service);
+      config.runtime?.set(ZERO_PLATFORM_TOKEN_STORE, store);
+      config.runtime?.set(ZERO_PLATFORM_TOKEN_SERVICE, service);
+      config.onServiceCreated?.(service);
       emitPlatformCode(OBS_CODES.TOKENS_STARTED);
     })
     .onStop(() => {
-      resetPlatformTokens();
+      if (service) config.runtime?.clear(ZERO_PLATFORM_TOKEN_SERVICE, service);
+      if (store) config.runtime?.clear(ZERO_PLATFORM_TOKEN_STORE, store);
+      serviceRegistration?.unregister();
+      storeRegistration?.unregister();
+      serviceRegistration = null;
+      storeRegistration = null;
+      service = null;
+      store = null;
       emitPlatformCode(OBS_CODES.TOKENS_STOPPED);
     })
     .derive({ as: 'global' }, () => ({
-      platformTokens: tokenService,
+      platformTokens: service,
     }));
 }

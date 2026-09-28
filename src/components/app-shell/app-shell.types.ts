@@ -8,11 +8,11 @@
  */
 
 import type * as React from 'react';
-import type { ThemeTogglerButtonProps } from '@/components/animate-ui/components/buttons/theme-toggler';
+import type { ThemeTogglerButtonProps } from '#zero/components/animate-ui/components/buttons/theme-toggler';
 import type {
   ZeroAnimatedIconComponent,
   ZeroAnimatedIconName,
-} from '@/components/animate-ui/icons/registry';
+} from '#zero/components/animate-ui/icons/registry';
 
 export type AppShellPreset =
   | 'dashboard'
@@ -58,6 +58,18 @@ export interface AppShellWorkspaceConfig {
   activeActions?: AppShellMenuItem[];
   onCreate?(): void;
   onSelect?(workspace: AppShellWorkspace): void;
+  /** Require activeId to match an item instead of displaying the first item. */
+  requireActiveSelection?: boolean;
+  /** Keep the committed selection visible and freeze all workspace actions. */
+  pending?: boolean;
+  pendingLabel?: string;
+  error?: string | null;
+  retryLabel?: string;
+  onRetry?(): void;
+  /** Polite completion copy owned by the workspace data source. */
+  announcement?: string;
+  /** Increment to request focus restoration on the workspace trigger. */
+  focusRevision?: number;
 }
 
 export type AppShellMenuItem =

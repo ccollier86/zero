@@ -16,13 +16,22 @@ export function deliverSyncChange(
   change: Change,
   epoch: string,
   origin: string,
+  validateCurrentAuthority: (
+    socket: ServerWebSocket<SyncSocketData>,
+  ) => boolean = () => true,
 ): void {
   for (const socket of sockets) {
+    // A newly subscribed socket may already hold a snapshot/catch-up cursor
+    // ahead of this runtime's durable dispatcher. Those retained rows are
+    // represented by its baseline and must never be sent backwards.
+    if (change.seq <= socket.data.lastSeq) continue;
     if (!socket.data.syncSubscribedTables.has(change.table)) continue;
     if (!socket.data.allowedTables.has(change.table)) continue;
+    if (!validateCurrentAuthority(socket)) continue;
     const projected = projectSyncChange(
       change,
       socket.data.resourceRowFilters.get(change.table),
+      socket.data.resourceRowProjectors?.get(change.table),
     );
     if (!projected) continue;
 

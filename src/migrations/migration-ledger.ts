@@ -38,10 +38,46 @@ export class MigrationLedger {
     return latest;
   }
 
+  /** Return the latest event for one migration version. */
+  latestForVersion(version: string): MigrationLedgerRecord | null {
+    return (this.db.prepare(`
+      SELECT * FROM _zero_migrations
+      WHERE version = ?
+      ORDER BY id DESC
+      LIMIT 1
+    `).get(version) as MigrationLedgerRecord | null) ?? null;
+  }
+
+  /**
+   * Return the durable migration state, ignoring failed attempts. A failed
+   * rollback does not make an applied migration pending, and a failed retry
+   * does not erase the last successful up/down event.
+   */
+  stateByVersion(): Map<string, MigrationLedgerRecord> {
+    const rows = this.db.prepare(`
+      SELECT * FROM _zero_migrations
+      WHERE status IN ('applied', 'rolled_back')
+      ORDER BY id ASC
+    `).all() as MigrationLedgerRecord[];
+    const state = new Map<string, MigrationLedgerRecord>();
+    for (const row of rows) state.set(row.version, row);
+    return state;
+  }
+
+  /** Return the durable state for one migration version. */
+  stateForVersion(version: string): MigrationLedgerRecord | null {
+    return (this.db.prepare(`
+      SELECT * FROM _zero_migrations
+      WHERE version = ? AND status IN ('applied', 'rolled_back')
+      ORDER BY id DESC
+      LIMIT 1
+    `).get(version) as MigrationLedgerRecord | null) ?? null;
+  }
+
   /** Return versions whose latest event is applied. */
   appliedVersions(): Set<string> {
     const applied = new Set<string>();
-    for (const [version, record] of this.latestByVersion()) {
+    for (const [version, record] of this.stateByVersion()) {
       if (record.status === 'applied' && record.direction === 'up') {
         applied.add(version);
       }
@@ -66,6 +102,8 @@ export class MigrationLedger {
   /** Record a successful down migration. */
   recordRolledBack(params: RecordMigrationEventParams): void {
     this.record({ ...params, direction: 'down', status: 'rolled_back', error: null });
+    this.db.prepare('DELETE FROM _migrations WHERE version = ?')
+      .run(params.migration.version);
   }
 
   /** Record a failed migration attempt. */
@@ -109,28 +147,62 @@ export class MigrationLedger {
   }
 
   private importLegacyRecords(): void {
-    const hasZeroRows = (this.db
-      .prepare('SELECT COUNT(*) AS count FROM _zero_migrations')
-      .get() as { count: number }).count > 0;
-    if (hasZeroRows) return;
+    const importLegacy = this.db.transaction(() => {
+      // Reconcile each legacy-only version while holding SQLite's writer lock.
+      // The per-version check handles partially imported databases and prevents
+      // two concurrently constructed migrators from duplicating imported rows.
+      const legacy = this.db
+        .prepare('SELECT * FROM _migrations ORDER BY version')
+        .all() as LegacyMigrationRecord[];
 
-    const legacy = this.db
-      .prepare('SELECT * FROM _migrations ORDER BY version')
-      .all() as LegacyMigrationRecord[];
+      for (const record of legacy) {
+        const alreadyImported = this.db.prepare(`
+          SELECT 1 FROM _zero_migrations WHERE version = ? LIMIT 1
+        `).get(record.version);
+        if (alreadyImported) continue;
 
-    for (const record of legacy) {
-      this.db.prepare(`
-        INSERT INTO _zero_migrations
-          (version, description, checksum, safety, direction, batch, status, applied_at, duration_ms, error, schema_hash)
-        VALUES (?, ?, ?, 'safe', 'up', 0, 'applied', ?, ?, NULL, NULL)
-      `).run(
-        record.version,
-        record.description,
-        record.checksum,
-        record.applied_at,
-        record.duration_ms,
-      );
-    }
+        this.db.prepare(`
+          INSERT INTO _zero_migrations
+            (version, description, checksum, safety, direction, batch, status, applied_at, duration_ms, error, schema_hash)
+          VALUES (?, ?, ?, 'safe', 'up', 0, 'applied', ?, ?, NULL, NULL)
+        `).run(
+          record.version,
+          record.description,
+          record.checksum,
+          record.applied_at,
+          record.duration_ms,
+        );
+      }
+
+      // The event ledger is authoritative once it knows a version. Repair the
+      // compatibility table as well as importing from it: older Zero releases
+      // did not remove `_migrations` rows after a successful rollback.
+      for (const [version, state] of this.stateByVersion()) {
+        if (state.status === 'applied' && state.direction === 'up') {
+          this.db.prepare(`
+            INSERT INTO _migrations
+              (version, description, applied_at, checksum, duration_ms)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(version) DO UPDATE SET
+              description = excluded.description,
+              checksum = excluded.checksum,
+              duration_ms = excluded.duration_ms
+            WHERE _migrations.description IS NOT excluded.description
+               OR _migrations.checksum IS NOT excluded.checksum
+               OR _migrations.duration_ms IS NOT excluded.duration_ms
+          `).run(
+            version,
+            state.description,
+            state.applied_at,
+            state.checksum,
+            state.duration_ms,
+          );
+        } else {
+          this.db.prepare('DELETE FROM _migrations WHERE version = ?').run(version);
+        }
+      }
+    });
+    importLegacy.immediate();
   }
 
   private record(params: PersistMigrationEventParams): void {

@@ -81,7 +81,13 @@ export class DefaultPlatformSQLiteService implements PlatformSQLiteService {
   close(): void {
     if (this.closed) return;
     this.stop();
-    if (this.mode === 'hot') this.snapshot?.snapshotSync();
+    if (this.mode === 'hot'
+      && this.snapshot?.isEnabled
+      && !this.snapshot.snapshotSync()) {
+      throw new Error(
+        `[persistence] Refusing to close hot SQLite after the final snapshot failed: ${this.snapshotPath}`,
+      );
+    }
     if (this.mode === 'file') this.checkpoint?.checkpoint('TRUNCATE');
     this.statements.clear();
     this.raw.close();
@@ -101,7 +107,7 @@ export class DefaultPlatformSQLiteService implements PlatformSQLiteService {
       mode: this.mode,
       path: this.path,
       snapshotPath: this.snapshotPath,
-      snapshotEnabled: Boolean(this.snapshot),
+      snapshotEnabled: this.snapshot?.isEnabled ?? false,
       statementCacheSize: this.statements.stats().maxSize,
       bufferPoolEnabled: Boolean(this.buffers),
     };

@@ -16,6 +16,7 @@ import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import { assertAuthPropertyValueBound } from './auth-request-property-bounds';
 import { authPropertyKeySchema } from './auth-request-schema';
+import { applyAuthPrivateNoStore } from './auth-response-cache';
 
 export interface AuthUserPropertiesPluginConfig {
   getUserStore: () => UserStore | null;
@@ -56,7 +57,8 @@ export function createAuthUserPropertiesPlugin(config: AuthUserPropertiesPluginC
         beforeHandle: ({ body }) => assertAuthPropertyValueBound(body.value),
       }
     )
-    .get('/me/properties', async ({ request }) => {
+    .get('/me/properties', async ({ request, set }) => {
+      applyAuthPrivateNoStore(set);
       const { store, tokenService } = requirePropertyServices(config);
       const authContext = await extractAuthContext(request, tokenService);
       if (!authContext) {
@@ -67,7 +69,8 @@ export function createAuthUserPropertiesPlugin(config: AuthUserPropertiesPluginC
     })
     .get(
       '/me/properties/:key',
-      async ({ params, request }) => {
+      async ({ params, request, set }) => {
+        applyAuthPrivateNoStore(set);
         const { store, tokenService } = requirePropertyServices(config);
         const authContext = await extractAuthContext(request, tokenService);
         if (!authContext) {

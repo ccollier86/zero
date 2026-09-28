@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, it } from 'bun:test';
 
 import { BufferPool } from './buffer-pool';
@@ -54,6 +55,134 @@ describe('platform SQLite persistence', () => {
     service.close();
   });
 
+  it('keeps the final hot-mode write when close overlaps an async snapshot', async () => {
+    const dir = await createTestDir();
+    const dbPath = path.join(dir, 'app.db');
+    const snapshotPath = path.join(dir, 'app.snapshot.db');
+
+    let service = createPlatformSQLiteService({
+      mode: 'hot',
+      path: dbPath,
+      snapshotPath,
+      snapshotIntervalMs: 60_000,
+    });
+    createItems(service);
+    insertItem(service, 'before-async-snapshot');
+
+    const olderSnapshot = service.snapshot!.snapshot();
+    insertItem(service, 'before-graceful-close');
+    service.close();
+
+    // The in-flight image must recognize that the synchronous shutdown image
+    // superseded it instead of replacing the newer snapshot after close.
+    await expect(olderSnapshot).resolves.toBe(false);
+
+    service = createPlatformSQLiteService({
+      mode: 'hot',
+      path: dbPath,
+      snapshotPath,
+      snapshotIntervalMs: 60_000,
+    });
+    expect(service.raw.query('SELECT name FROM items ORDER BY name').all()).toEqual([
+      { name: 'before-async-snapshot' },
+      { name: 'before-graceful-close' },
+    ]);
+    service.close();
+  });
+
+  it('keeps hot SQLite open when its final durability snapshot fails', async () => {
+    const dir = await createTestDir();
+    const service = createPlatformSQLiteService({
+      mode: 'hot',
+      path: path.join(dir, 'app.db'),
+      snapshotPath: path.join(dir, 'app.snapshot.db'),
+    });
+    createItems(service);
+    insertItem(service, 'retryable-close');
+    const snapshot = service.snapshot!;
+    const originalSnapshotSync = snapshot.snapshotSync.bind(snapshot);
+    snapshot.snapshotSync = () => false;
+
+    try {
+      expect(() => service.close()).toThrow('final snapshot failed');
+      expect(readFirstItemName(service)).toBe('retryable-close');
+    } finally {
+      snapshot.snapshotSync = originalSnapshotSync;
+      service.close();
+    }
+  });
+
+  it('serializes concurrent hot-mode source opens without journal-mode races', async () => {
+    const dir = await createTestDir();
+    const dbPath = path.join(dir, 'shared-hot-source.db');
+    const seed = createPlatformSQLiteService({ mode: 'file', path: dbPath });
+    createItems(seed);
+    insertItem(seed, 'shared-source');
+    seed.close();
+
+    const connectionModuleUrl = new URL('./sqlite-connection.ts', import.meta.url).href;
+    const configModuleUrl = new URL('./storage-config.ts', import.meta.url).href;
+    const openerSource = `
+      import { openSQLiteDatabase } from ${JSON.stringify(connectionModuleUrl)};
+      import { resolveSQLiteStorageConfig } from ${JSON.stringify(configModuleUrl)};
+
+      const [, dbPath, startAtValue] = Bun.argv;
+      await Bun.sleep(Math.max(0, Number(startAtValue) - Date.now()));
+      const db = openSQLiteDatabase(resolveSQLiteStorageConfig({
+        mode: 'hot',
+        path: dbPath,
+        snapshotPath: dbPath,
+        snapshotEnabled: false,
+        busyTimeout: 2_000,
+      }));
+      const row = db.query('SELECT name FROM items LIMIT 1').get();
+      if (row?.name !== 'shared-source') throw new Error('Hot source row was not restored.');
+      db.close();
+    `;
+    const startAt = String(Date.now() + 200);
+    const openers = Array.from({ length: 3 }, () => Bun.spawn([
+      process.execPath,
+      '-e',
+      openerSource,
+      dbPath,
+      startAt,
+    ], {
+      cwd: process.cwd(),
+      env: Bun.env,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    }));
+
+    try {
+      const results = await Promise.all(openers.map(async (opener) => {
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(opener.stdout).text(),
+          new Response(opener.stderr).text(),
+          opener.exited,
+        ]);
+        return { stdout, stderr, exitCode };
+      }));
+      for (const result of results) {
+        expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(0);
+      }
+
+      const observer = new Database(dbPath, { create: false, readwrite: true });
+      try {
+        expect(observer.query('PRAGMA journal_mode').get()).toEqual({ journal_mode: 'wal' });
+        expect(observer.query('SELECT name FROM items LIMIT 1').get()).toEqual({
+          name: 'shared-source',
+        });
+      } finally {
+        observer.close();
+      }
+    } finally {
+      for (const opener of openers) {
+        if (opener.exitCode === null) opener.kill();
+      }
+      await Promise.all(openers.map((opener) => opener.exited));
+    }
+  }, 15_000);
+
   it('persists file-mode rows through SQLite WAL/file recovery', async () => {
     const dir = await createTestDir();
     const dbPath = path.join(dir, 'app.db');
@@ -74,6 +203,67 @@ describe('platform SQLite persistence', () => {
     expect(countItems(service)).toBe(1);
     expect(readFirstItemName(service)).toBe('file-row');
     service.close();
+  });
+
+  it('installs the busy timeout before lock-taking file initialization', async () => {
+    const dir = await createTestDir();
+    const dbPath = path.join(dir, 'locked-startup.db');
+    const readyPath = path.join(dir, 'lock-ready');
+    const openAttemptPath = path.join(dir, 'open-attempted');
+    const holderSource = `
+      import { Database } from 'bun:sqlite';
+      import { existsSync, writeFileSync } from 'node:fs';
+
+      const [, dbPath, readyPath, openAttemptPath] = Bun.argv;
+      const db = new Database(dbPath, { create: true, readwrite: true });
+      db.run('PRAGMA journal_mode = WAL');
+      db.run('CREATE TABLE lock_holder (id INTEGER PRIMARY KEY)');
+      db.run('BEGIN EXCLUSIVE');
+      writeFileSync(readyPath, 'ready');
+      while (!existsSync(openAttemptPath)) await Bun.sleep(5);
+      await Bun.sleep(200);
+      db.run('COMMIT');
+      db.close();
+    `;
+    const holder = Bun.spawn([
+      process.execPath,
+      '-e',
+      holderSource,
+      dbPath,
+      readyPath,
+      openAttemptPath,
+    ], {
+      cwd: process.cwd(),
+      env: Bun.env,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const holderStdout = new Response(holder.stdout).text();
+    const holderStderr = new Response(holder.stderr).text();
+    let service: DefaultPlatformSQLiteService | null = null;
+
+    try {
+      await waitForFile(readyPath);
+      await Bun.write(openAttemptPath, 'open');
+
+      service = createPlatformSQLiteService({
+        mode: 'file',
+        path: dbPath,
+        busyTimeout: 2_000,
+      });
+
+      expect(service.raw.query('PRAGMA busy_timeout').get()).toEqual({ timeout: 2_000 });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        holderStdout,
+        holderStderr,
+        holder.exited,
+      ]);
+      expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
+    } finally {
+      service?.close();
+      if (holder.exitCode === null) holder.kill();
+      await holder.exited;
+    }
   });
 
   it('keeps ephemeral rows process-local and non-durable', async () => {
@@ -162,6 +352,16 @@ describe('platform SQLite persistence', () => {
 async function createTestDir(): Promise<string> {
   testDir = await mkdtemp(path.join(tmpdir(), 'zero-platform-sqlite-'));
   return testDir;
+}
+
+async function waitForFile(filePath: string, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(filePath)) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for child process file: ${filePath}`);
+    }
+    await Bun.sleep(5);
+  }
 }
 
 function createItems(service: DefaultPlatformSQLiteService): void {

@@ -114,12 +114,13 @@ export class PdfService {
   /** Render a PDF and write it through Zero's storage service in one operation. */
   async renderToStorage(
     input: PdfRenderInput,
-    target: PdfStorageTarget
+    target: PdfStorageTarget,
+    storage: PdfStorageWriter = this.storage,
   ): Promise<PdfStoredResult> {
     validateStorageTarget(target);
     const rendered = await this.render(input);
     try {
-      const file = await this.storage.write({
+      const file = await storage.write({
         ...target,
         bytes: rendered.bytes,
         renderer: rendered.renderer,

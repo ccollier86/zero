@@ -26,12 +26,23 @@ export const config = defineZeroConfig({
   tables,
   resources: launchBoardResources,
   auth: {
+    bootstrap: {
+      mode: 'secret',
+      secret: readEnv('AUTH_BOOTSTRAP_SECRET'),
+    },
     registration: {
       mode: 'public',
     },
     account: {
       requireEmailVerification: Bun.env.AUTH_REQUIRE_EMAIL_VERIFICATION === 'true',
       emailVerificationPath: Bun.env.AUTH_EMAIL_VERIFICATION_PATH ?? '/verify-email',
+    },
+    accountEmails: {
+      adminCreatedUser: hasEmailProvider,
+      passwordReset: hasEmailProvider,
+      manualPasswordReset: Bun.env.AUTH_MANUAL_PASSWORD_RESET !== 'false',
+      actionTokenTTL: Bun.env.AUTH_ACTION_TOKEN_TTL ?? '1h',
+      requestCooldown: Bun.env.AUTH_ACCOUNT_EMAIL_COOLDOWN ?? '5m',
     },
     mfa: {
       enabled: Bun.env.AUTH_MFA_ENABLED !== 'false',
@@ -111,4 +122,11 @@ function resolveDatabaseMode(value: string | undefined): SQLiteStorageMode {
   if (!value) return 'hot';
   if (value === 'hot' || value === 'file' || value === 'ephemeral') return value;
   throw new Error(`[launchboard] DB_MODE must be "hot", "file", or "ephemeral"; received "${value}".`);
+}
+
+function readEnv(name: string): string | undefined {
+  const value = Bun.env[name];
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }

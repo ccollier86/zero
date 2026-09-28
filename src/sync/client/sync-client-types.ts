@@ -23,6 +23,12 @@ export interface SyncClient {
   reconnect(): void;
   /** Close the socket and purge all locally synced table data. */
   reset(): void;
+  /** @internal Freeze writes and purge data before an authorization-scope change. */
+  beginAuthorizationScopeTransition(): void;
+  /** @internal Resume writes and optionally connect with the replacement scope. */
+  completeAuthorizationScopeTransition(connect: boolean): void;
+  /** @internal Resolve after the replacement socket receives its first baseline. */
+  waitForAuthorizationBaseline(timeoutMs?: number): Promise<void>;
   /** Observe extension-protocol messages; returns an unsubscribe function. */
   onMessage(
     handler: (message: { type: string; [key: string]: unknown }) => void,

@@ -5,9 +5,9 @@ import { createAuthClientError } from './auth-errors';
 export interface AuthPropertyTransportOptions {
   baseUrl: string;
   authenticatedFetch: (url: string, init?: RequestInit) => Promise<Response>;
-  patchProperties: (properties: Record<string, string>) => void;
-  replaceProperties: (properties: Record<string, string>) => void;
-  removeProperty: (key: string) => void;
+  patchProperties: (response: Response, properties: Record<string, string>) => void;
+  replaceProperties: (response: Response, properties: Record<string, string>) => void;
+  removeProperty: (response: Response, key: string) => void;
 }
 
 export class AuthPropertyTransport {
@@ -20,7 +20,7 @@ export class AuthPropertyTransport {
       body: JSON.stringify({ value }),
     });
     if (!response.ok) throw await responseError(response, 'Failed to set property');
-    this.options.patchProperties({ [key]: serializeAuthPropertyValue(value) });
+    this.options.patchProperties(response, { [key]: serializeAuthPropertyValue(value) });
   }
 
   async getProperty(key: string): Promise<string | null> {
@@ -29,7 +29,7 @@ export class AuthPropertyTransport {
     if (!response.ok) throw await responseError(response, 'Failed to get property');
 
     const data = await response.json();
-    this.options.patchProperties({ [key]: data.value });
+    this.options.patchProperties(response, { [key]: data.value });
     return data.value;
   }
 
@@ -40,7 +40,7 @@ export class AuthPropertyTransport {
     if (!response.ok) throw await responseError(response, 'Failed to get properties');
 
     const data = await response.json();
-    this.options.replaceProperties(data.properties);
+    this.options.replaceProperties(response, data.properties);
     return data.properties;
   }
 
@@ -49,7 +49,7 @@ export class AuthPropertyTransport {
       method: 'DELETE',
     });
     if (!response.ok) throw await responseError(response, 'Failed to delete property');
-    this.options.removeProperty(key);
+    this.options.removeProperty(response, key);
   }
 
   private propertyUrl(key: string): string {

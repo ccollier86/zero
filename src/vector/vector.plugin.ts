@@ -12,14 +12,19 @@ import { VectorRegistry, type VectorIndexStoreFactory } from './vector-registry'
 import { VectorService } from './vector-service';
 import { emitVectorConfigured } from './vector-observability';
 import type { ResolvedVectorConfig } from './vector-types';
+import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
+import { ZERO_VECTOR_SERVICE } from '../runtime/service-keys';
+import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 
-let activeVectorService: VectorService | null = null;
+const vectorProviders = new CompatibilityProviderRegistry<VectorService>('Vector service');
 
 /** Options for mounting the Zero vector Elysia plugin. */
 export interface VectorPluginConfig {
   config: ResolvedVectorConfig;
   service?: VectorService;
   storeFactory?: VectorIndexStoreFactory;
+  runtime?: ZeroAppRuntime;
+  onServiceCreated?: (service: VectorService) => void;
 }
 
 /**
@@ -37,7 +42,19 @@ export function createVectorPlugin(options: VectorPluginConfig) {
         storeFactory: options.storeFactory,
       });
   const service = options.service ?? new VectorService(registry!);
-  activeVectorService = service;
+  const owner = {};
+  const registration = vectorProviders.register(owner, () => service);
+  options.runtime?.set(ZERO_VECTOR_SERVICE, service);
+  options.onServiceCreated?.(service);
+  const cleanup = async () => {
+    try {
+      await service.dispose();
+    } finally {
+      options.runtime?.clear(ZERO_VECTOR_SERVICE, service);
+      registration.unregister();
+    }
+  };
+  options.runtime?.addCleanup(cleanup);
 
   return new Elysia({ name: 'zero-platform-vector' })
     .decorate('vectors', service)
@@ -47,8 +64,7 @@ export function createVectorPlugin(options: VectorPluginConfig) {
       });
     })
     .onStop(async () => {
-      await service.dispose();
-      if (activeVectorService === service) activeVectorService = null;
+      await cleanup();
     });
 }
 
@@ -59,5 +75,5 @@ export function createVectorPlugin(options: VectorPluginConfig) {
  * for jobs, workflows, and API handlers, not a browser API.
  */
 export function getVectorStore(): VectorService | null {
-  return activeVectorService;
+  return vectorProviders.get();
 }

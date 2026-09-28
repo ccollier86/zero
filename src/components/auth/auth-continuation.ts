@@ -10,6 +10,8 @@ import type {
   AuthMfaChallengeRequiredResult,
   AuthMfaSetupRequiredResult,
   AuthSessionResult,
+  AuthTenantOnboardingRequiredResult,
+  AuthTenantSelectionRequiredResult,
 } from '../../frontend/client/auth-client';
 
 /** Return true when an auth response contains a complete app session. */
@@ -45,4 +47,40 @@ export function isMfaContinuationResult(
   value: AuthCompletionResult | null | undefined,
 ): value is AuthMfaSetupRequiredResult | AuthMfaChallengeRequiredResult {
   return isMfaSetupRequiredResult(value) || isMfaChallengeRequiredResult(value);
+}
+
+/** Return true when auth must bind one of several live organizations. */
+export function isTenantSelectionRequiredResult(
+  value: unknown,
+): value is AuthTenantSelectionRequiredResult {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<AuthTenantSelectionRequiredResult>;
+  return candidate.tenantSelectionRequired === true
+    && typeof candidate.tenantSelection?.continuation === 'string'
+    && Array.isArray(candidate.tenantSelection?.tenants);
+}
+
+/** Return true when identity succeeded but no active tenant can be bound. */
+export function isTenantOnboardingRequiredResult(
+  value: unknown,
+): value is AuthTenantOnboardingRequiredResult {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<AuthTenantOnboardingRequiredResult>;
+  return candidate.tenantOnboardingRequired === true
+    && candidate.onboarding?.reason === 'no_active_tenant_membership';
+}
+
+export type AuthFlowContinuationResult =
+  | AuthMfaSetupRequiredResult
+  | AuthMfaChallengeRequiredResult
+  | AuthTenantSelectionRequiredResult
+  | AuthTenantOnboardingRequiredResult;
+
+/** Any supported incomplete browser-auth result handled by Zero's coordinator. */
+export function isAuthFlowContinuationResult(
+  value: AuthCompletionResult | null | undefined,
+): value is AuthFlowContinuationResult {
+  return isMfaContinuationResult(value)
+    || isTenantSelectionRequiredResult(value)
+    || isTenantOnboardingRequiredResult(value);
 }

@@ -55,10 +55,14 @@ export function UserManagement({
     [selectedId, users],
   );
   const roleOptions = React.useMemo(
-    () => normalizeRoleOptions(users, roleOptionsProp),
-    [roleOptionsProp, users],
+    () => normalizeRoleOptions(users, roleOptionsProp, config?.tenancy?.mode ?? 'single'),
+    [config?.tenancy?.mode, roleOptionsProp, users],
   );
-  const schema = React.useMemo(() => createUserManagementSchema(roleOptions), [roleOptions]);
+  const roleFieldLabel = config?.tenancy?.mode === 'multi' ? 'Platform role' : 'Role';
+  const schema = React.useMemo(
+    () => createUserManagementSchema(roleOptions, roleFieldLabel),
+    [roleFieldLabel, roleOptions],
+  );
   const canUpdate = !controlled || Boolean(onUpdate);
   const editableFields = React.useMemo(() => getUserManagementEditableFields(config, {
     canUpdate,
@@ -109,11 +113,13 @@ export function UserManagement({
         config={config}
         live={live}
         roleOptions={roleOptions}
+        roleFieldLabel={roleFieldLabel}
       />
       <UserManagementDetail
         schema={schema}
         users={users}
         config={config}
+        roleOptions={roleOptions}
         editableFields={editableFields}
         controlled={controlled}
         canUpdate={canUpdate}

@@ -3,8 +3,8 @@
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
-import { cn } from '@/lib/utils';
-import { Fade } from '@/components/animate-ui/primitives/effects/fade';
+import { cn } from '#zero/lib/utils';
+import { Fade } from '#zero/components/animate-ui/primitives/effects/fade';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

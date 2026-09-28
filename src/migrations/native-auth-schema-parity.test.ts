@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
-import { createNativeAuthTables } from '../auth/oidc/native-auth-schema-sql';
+import { createNativeAuthHardeningTables } from '../auth/oidc/native-auth-schema-sql';
 import { migrations } from './index';
 import { Migrator } from './migrator';
 
@@ -12,7 +12,7 @@ test('migrations through 006 and runtime native-auth schemas have exact parity',
   const migrated = prepare('006');
   const runtime = prepare('004');
   try {
-    for (const statement of createNativeAuthTables()) runtime.db.run(statement);
+    for (const statement of createNativeAuthHardeningTables()) runtime.db.run(statement);
     expect(shape(migrated.db)).toEqual(shape(runtime.db));
     expect(columns(migrated.db)).toEqual({
       _auth_native_requests: [

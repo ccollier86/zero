@@ -1,7 +1,9 @@
 import { describe, test, expect, afterEach } from 'bun:test';
+import { Buffer } from 'node:buffer';
 import { Elysia } from 'elysia';
 import { createSyncPlugin } from './sync.plugin';
 import type { ServerMessage } from './types';
+import { STATE_LIMITS, SYNC_OUTGOING_BACKPRESSURE_LIMIT } from './types';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -131,11 +133,12 @@ import {
   handleStateDelete,
   handleStateClear,
 } from './state-handler';
-import type { SyncSocketData, StateAckMessage, StateSnapshotMessage, StateChangeMessage } from './types';
+import type { SyncSocketData, StateAckMessage, StateSnapshotMessage } from './types';
 
 function createMockWs(userId: string | null = 'test-user') {
   const sent: string[] = [];
   const subscribed: string[] = [];
+  const closed: Array<{ code?: number; reason?: string }> = [];
 
   const data: SyncSocketData = {
     connectionId: 'conn_1',
@@ -162,10 +165,10 @@ function createMockWs(userId: string | null = 'test-user') {
       subscribed.push(topic);
       data.subscribedTopics.add(topic);
     },
-    close: () => {},
+    close: (code?: number, reason?: string) => closed.push({ code, reason }),
   };
 
-  return { ws: ws as any, sent, subscribed, data };
+  return { ws: ws as any, sent, subscribed, closed, data };
 }
 
 function createMockServer() {
@@ -204,7 +207,7 @@ describe('state handler — subscribe', () => {
     expect(snapshot.entries).toEqual({ theme: 'dark', lang: 'en' });
   });
 
-  test('subscribes to state:{userId} topic', () => {
+  test('binds the socket to the exact state principal without a Bun topic', () => {
     db = createReactiveDB({ mode: 'memory' });
     mgr = new StateManager(db);
 
@@ -213,8 +216,9 @@ describe('state handler — subscribe', () => {
 
     handleStateSubscribe(ws, mgr, server);
 
-    expect(subscribed).toContain('state:test-user');
+    expect(subscribed).toEqual([]);
     expect(ws.data.stateSubscribed).toBe(true);
+    expect(ws.data.statePrincipal).toBe('test-user');
   });
 
   test('sends empty snapshot for user with no state', () => {
@@ -242,7 +246,7 @@ describe('state handler — subscribe', () => {
     expect(sent).toHaveLength(0);
   });
 
-  test('idempotent — subscribing twice does not duplicate topic', () => {
+  test('idempotent — subscribing twice refreshes the snapshot without a topic', () => {
     db = createReactiveDB({ mode: 'memory' });
     mgr = new StateManager(db);
 
@@ -252,8 +256,66 @@ describe('state handler — subscribe', () => {
     handleStateSubscribe(ws, mgr, server);
     handleStateSubscribe(ws, mgr, server);
 
-    // subscribe() called only once (second time topic is already in set)
-    expect(subscribed).toHaveLength(1);
+    expect(subscribed).toEqual([]);
+    expect(ws.data.stateSubscribed).toBe(true);
+  });
+
+  test('queues a near-limit snapshot within the bounded outgoing ceiling', () => {
+    db = createReactiveDB({ mode: 'memory' });
+    mgr = new StateManager(db);
+    const value = 'x'.repeat(60_000);
+    for (let index = 0; index < 174; index++) {
+      expect(mgr.set('test-user', `key-${index}`, value)).toEqual({ ok: true });
+    }
+
+    const { ws, sent } = createMockWs('test-user');
+    const { server } = createMockServer();
+    handleStateSubscribe(ws, mgr, server);
+
+    expect(sent).toHaveLength(1);
+    const wireBytes = Buffer.byteLength(sent[0]!, 'utf8');
+    expect(wireBytes).toBeGreaterThan(10_000_000);
+    expect(wireBytes).toBeLessThan(SYNC_OUTGOING_BACKPRESSURE_LIMIT);
+    expect(ws.data.stateSubscribed).toBe(true);
+  });
+
+  test('16 MiB outgoing ceiling bounds maximum key escaping at the 10 MiB contract', () => {
+    const entries = Object.create(null) as Record<string, string>;
+    const value = 'x'.repeat(10_227);
+    let storedBytes = 0;
+
+    for (let index = 0; index < STATE_LIMITS.maxKeys; index += 1) {
+      // A one-byte NUL becomes the longest six-byte JSON key escape. Preserve
+      // four printable characters for uniqueness while using the max length.
+      const key = `${'\0'.repeat(252)}${String(index).padStart(4, '0')}`;
+      entries[key] = value;
+      storedBytes += Buffer.byteLength(key, 'utf8')
+        + Buffer.byteLength(JSON.stringify(value), 'utf8');
+    }
+
+    expect(storedBytes).toBeLessThanOrEqual(STATE_LIMITS.maxTotalSize);
+    expect(STATE_LIMITS.maxTotalSize - storedBytes).toBeLessThan(1_000);
+    const wireBytes = Buffer.byteLength(JSON.stringify({
+      type: 'state.snapshot',
+      entries,
+    }), 'utf8');
+    expect(wireBytes).toBeGreaterThan(STATE_LIMITS.maxTotalSize);
+    expect(wireBytes).toBeLessThan(SYNC_OUTGOING_BACKPRESSURE_LIMIT);
+  });
+
+  test('clears the subscription binding when the snapshot cannot be queued', () => {
+    db = createReactiveDB({ mode: 'memory' });
+    mgr = new StateManager(db);
+    const { ws, closed } = createMockWs('test-user');
+    const { server } = createMockServer();
+    ws.send = () => 0;
+
+    handleStateSubscribe(ws, mgr, server);
+
+    expect(closed).toEqual([{ code: 1013, reason: 'Sync delivery interrupted' }]);
+    expect(ws.data.stateSubscribed).toBe(false);
+    expect(ws.data.statePrincipal).toBeNull();
+    expect(ws.data.stateLastSeq).toBe(0);
   });
 });
 
@@ -286,14 +348,8 @@ describe('state handler — set', () => {
     expect(ack.ref).toBe('ref-1');
     expect(ack.ok).toBe(true);
 
-    // Check publish
-    expect(published).toHaveLength(1);
-    expect(published[0].topic).toBe('state:test-user');
-    const change = JSON.parse(published[0].data) as StateChangeMessage;
-    expect(change.type).toBe('state.change');
-    expect(change.op).toBe('set');
-    expect(change.key).toBe('theme');
-    expect(change.value).toBe('dark');
+    // State delivery is owned by ReactiveDB's ordered onChange path.
+    expect(published).toEqual([]);
 
     // Check persisted
     expect(mgr.getUserState('test-user').get('theme')).toBe('dark');
@@ -350,7 +406,7 @@ describe('state handler — delete', () => {
     db?.dispose();
   });
 
-  test('deletes key, acks, and publishes', () => {
+  test('deletes key and acks without blind topic publication', () => {
     db = createReactiveDB({ mode: 'memory' });
     mgr = new StateManager(db);
     mgr.set('test-user', 'theme', 'dark');
@@ -369,10 +425,7 @@ describe('state handler — delete', () => {
     const ack = JSON.parse(sent[0]) as StateAckMessage;
     expect(ack.ok).toBe(true);
 
-    // Published
-    const change = JSON.parse(published[0].data) as StateChangeMessage;
-    expect(change.op).toBe('delete');
-    expect(change.key).toBe('theme');
+    expect(published).toEqual([]);
 
     // State updated
     expect(mgr.getUserState('test-user').has('theme')).toBe(false);
@@ -406,7 +459,7 @@ describe('state handler — clear', () => {
     db?.dispose();
   });
 
-  test('clears all state, acks, and publishes', () => {
+  test('clears all state and acks without blind topic publication', () => {
     db = createReactiveDB({ mode: 'memory' });
     mgr = new StateManager(db);
     mgr.set('test-user', 'a', 1);
@@ -426,10 +479,7 @@ describe('state handler — clear', () => {
     const ack = JSON.parse(sent[0]) as StateAckMessage;
     expect(ack.ok).toBe(true);
 
-    // Published
-    const change = JSON.parse(published[0].data) as StateChangeMessage;
-    expect(change.op).toBe('clear');
-    expect(change.key).toBeNull();
+    expect(published).toEqual([]);
 
     // State cleared
     expect(mgr.getUserState('test-user').size).toBe(0);
@@ -538,6 +588,107 @@ describe('routeMessage — state message routing', () => {
 
     const ack = JSON.parse(sent[0]) as StateAckMessage;
     expect(ack.ok).toBe(true);
+  });
+
+  test('rejects malformed state messages with stable acks and no durable writes', async () => {
+    db = createReactiveDB({ mode: 'memory' });
+    mgr = new StateManager(db);
+    const { ws, sent } = createMockWs('test-user');
+    const { server } = createMockServer();
+    const baseline = db.currentSeq;
+
+    const malformed = [
+      { type: 'state.set', ref: 'missing-key', value: 'v' },
+      { type: 'state.set', ref: 'missing-value', key: 'k' },
+      { type: 'state.set', ref: 'invalid-number', key: 'k', value: Number.NaN },
+      { type: 'state.delete', ref: 'null-key', key: null },
+      { type: 'state.clear', ref: '' },
+      { type: 'state.clear', ref: 'r'.repeat(129) },
+    ];
+
+    for (const message of malformed) {
+      await routeMessage(ws, message, db, server, mgr);
+    }
+
+    expect(sent.map((value) => JSON.parse(value))).toEqual([
+      { type: 'state.ack', ref: 'missing-key', ok: false, error: 'INVALID_REQUEST' },
+      { type: 'state.ack', ref: 'missing-value', ok: false, error: 'INVALID_REQUEST' },
+      { type: 'state.ack', ref: 'invalid-number', ok: false, error: 'INVALID_REQUEST' },
+      { type: 'state.ack', ref: 'null-key', ok: false, error: 'INVALID_REQUEST' },
+      { type: 'state.ack', ref: '', ok: false, error: 'INVALID_REQUEST' },
+      { type: 'state.ack', ref: '', ok: false, error: 'INVALID_REQUEST' },
+    ]);
+    expect(db.currentSeq).toBe(baseline);
+  });
+
+  test('applies the shared key limit to set and delete without logging rejects', async () => {
+    db = createReactiveDB({ mode: 'memory' });
+    mgr = new StateManager(db);
+    const { ws, sent } = createMockWs('test-user');
+    const { server } = createMockServer();
+    const key = 'k'.repeat(257);
+
+    await routeMessage(
+      ws,
+      { type: 'state.set', ref: 'set-long', key, value: true },
+      db,
+      server,
+      mgr,
+    );
+    await routeMessage(
+      ws,
+      { type: 'state.delete', ref: 'delete-long', key },
+      db,
+      server,
+      mgr,
+    );
+
+    expect(sent.map((value) => JSON.parse(value))).toEqual([
+      { type: 'state.ack', ref: 'set-long', ok: false, error: 'KEY_TOO_LONG' },
+      { type: 'state.ack', ref: 'delete-long', ok: false, error: 'KEY_TOO_LONG' },
+    ]);
+    expect(db.currentSeq).toBe(0);
+  });
+
+  test('passes the synchronous authority fence to snapshots and mutations', async () => {
+    db = createReactiveDB({ mode: 'memory' });
+    mgr = new StateManager(db);
+    const { ws, sent } = createMockWs('test-user');
+    const { server } = createMockServer();
+    const mutationOrigin = { current: null as string | null };
+    const routeWithDeniedAuthority = (message: Record<string, unknown>) => routeMessage(
+      ws,
+      message,
+      db,
+      server,
+      mgr,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mutationOrigin,
+      undefined,
+      undefined,
+      'single',
+      undefined,
+      () => false,
+    );
+
+    await routeWithDeniedAuthority({ type: 'state.subscribe' });
+    await routeWithDeniedAuthority({
+      type: 'state.set', ref: 'set', key: 'k', value: 'v',
+    });
+    await routeWithDeniedAuthority({ type: 'state.delete', ref: 'delete', key: 'k' });
+    await routeWithDeniedAuthority({ type: 'state.clear', ref: 'clear' });
+
+    expect(sent.map((value) => JSON.parse(value))).toEqual([
+      { type: 'state.ack', ref: 'set', ok: false, error: 'UNAUTHORIZED' },
+      { type: 'state.ack', ref: 'delete', ok: false, error: 'UNAUTHORIZED' },
+      { type: 'state.ack', ref: 'clear', ok: false, error: 'UNAUTHORIZED' },
+    ]);
+    expect(db.currentSeq).toBe(0);
+    expect(mutationOrigin.current).toBeNull();
   });
 
   test('state messages are ignored when stateManager is null', () => {
@@ -661,9 +812,72 @@ describe('state handler — full flows', () => {
     expect(mgr.getUserState('user-1').get('theme')).toBe('dark');
     expect(mgr.getUserState('user-2').get('theme')).toBe('light');
 
-    // Published to different topics
-    expect(published[0].topic).toBe('state:user-1');
-    expect(published[1].topic).toBe('state:user-2');
+    expect(published).toEqual([]);
+  });
+
+  test('isolates the same user state across two tenant-bound sessions', () => {
+    db = createReactiveDB({ mode: 'memory' });
+    mgr = new StateManager(db);
+
+    const alpha = createMockWs('shared-user');
+    const beta = createMockWs('shared-user');
+    alpha.ws.data.authContext = tenantSyncContext('shared-user', 'ten_alpha', 'mem_alpha');
+    beta.ws.data.authContext = tenantSyncContext('shared-user', 'ten_beta', 'mem_beta');
+    const { server, published } = createMockServer();
+
+    handleStateSet(
+      alpha.ws,
+      { type: 'state.set', ref: 'alpha', key: 'workspace', value: 'alpha-only' },
+      mgr,
+      server,
+    );
+    handleStateSet(
+      beta.ws,
+      { type: 'state.set', ref: 'beta', key: 'workspace', value: 'beta-only' },
+      mgr,
+      server,
+    );
+    handleStateSubscribe(alpha.ws, mgr, server);
+    handleStateSubscribe(beta.ws, mgr, server);
+
+    const alphaSnapshot = JSON.parse(alpha.sent.at(-1)!) as StateSnapshotMessage;
+    const betaSnapshot = JSON.parse(beta.sent.at(-1)!) as StateSnapshotMessage;
+    expect(alphaSnapshot.entries).toEqual({ workspace: 'alpha-only' });
+    expect(betaSnapshot.entries).toEqual({ workspace: 'beta-only' });
+    expect(published).toEqual([]);
+  });
+
+  test('rejects an identity-only application session in multi mode', () => {
+    db = createReactiveDB({ mode: 'memory' });
+    mgr = new StateManager(db);
+
+    const socket = createMockWs('shared-user');
+    socket.ws.data.authContext = {
+      userId: 'shared-user',
+      email: 'shared-user@example.test',
+      role: 'user',
+      sessionScopeKind: 'application',
+      sessionScopeId: 'application',
+    };
+    const { server, published } = createMockServer();
+
+    handleStateSet(
+      socket.ws,
+      { type: 'state.set', ref: 'application', key: 'workspace', value: 'unsafe' },
+      mgr,
+      server,
+      'multi',
+    );
+    handleStateSubscribe(socket.ws, mgr, server, 'multi');
+
+    expect(JSON.parse(socket.sent[0]) as StateAckMessage).toMatchObject({
+      ref: 'application',
+      ok: false,
+      error: 'UNAUTHORIZED',
+    });
+    expect(socket.sent).toHaveLength(1);
+    expect(published).toEqual([]);
+    expect(mgr.getUserStateEntries('shared-user')).toEqual({});
   });
 
   test('clear then set rebuilds state', () => {
@@ -686,6 +900,21 @@ describe('state handler — full flows', () => {
     expect(mgr.getUserStateEntries('user-1')).toEqual({ c: 3 });
   });
 });
+
+function tenantSyncContext(userId: string, tenantId: string, membershipId: string) {
+  return {
+    userId,
+    email: `${userId}@example.test`,
+    role: 'user',
+    sessionScopeKind: 'tenant' as const,
+    sessionScopeId: tenantId,
+    tenantId,
+    membershipId,
+    tenantRole: 'member',
+    tenantAuthorizationGeneration: 0,
+    membershipAuthorizationGeneration: 0,
+  };
+}
 
 // ─── WS-level integration (plugin wiring) ────────────────────────────────
 

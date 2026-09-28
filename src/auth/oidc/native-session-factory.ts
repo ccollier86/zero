@@ -2,6 +2,7 @@
 
 import { createOpaqueToken, hashToken } from '../../tokens/token-utils';
 import type { PreparedNativeSession } from './native-auth-records';
+import type { NativeAuthoritySnapshot } from './native-tenant-authority';
 
 export function prepareNativeSession(input: {
   userId: string;
@@ -12,6 +13,7 @@ export function prepareNativeSession(input: {
   expiresAt?: number;
   familyId?: string;
   rotationCount?: number;
+  authority?: NativeAuthoritySnapshot;
 }): { rawRefreshToken: string; session: PreparedNativeSession } {
   const rawRefreshToken = createOpaqueToken();
   const now = Date.now();
@@ -26,6 +28,14 @@ export function prepareNativeSession(input: {
       tokenHash: hashToken(rawRefreshToken),
       scope: input.scope,
       authGeneration: input.authGeneration,
+      scopeKind: (input.authority ?? APPLICATION_AUTHORITY).scopeKind,
+      scopeId: (input.authority ?? APPLICATION_AUTHORITY).scopeId,
+      tenantId: (input.authority ?? APPLICATION_AUTHORITY).tenantId,
+      membershipId: (input.authority ?? APPLICATION_AUTHORITY).membershipId,
+      tenantAuthorizationGeneration:
+        (input.authority ?? APPLICATION_AUTHORITY).tenantAuthorizationGeneration,
+      membershipAuthorizationGeneration:
+        (input.authority ?? APPLICATION_AUTHORITY).membershipAuthorizationGeneration,
       expiresAt: input.expiresAt ?? now + input.ttlMs,
       createdAt: now,
       rotationCount: input.rotationCount ?? 0,
@@ -35,3 +45,12 @@ export function prepareNativeSession(input: {
     },
   };
 }
+
+const APPLICATION_AUTHORITY: NativeAuthoritySnapshot = {
+  scopeKind: 'application',
+  scopeId: 'application',
+  tenantId: null,
+  membershipId: null,
+  tenantAuthorizationGeneration: null,
+  membershipAuthorizationGeneration: null,
+};

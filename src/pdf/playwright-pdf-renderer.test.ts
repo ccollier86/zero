@@ -10,6 +10,9 @@ import { expect, test } from 'bun:test';
 import { resolvePdfConfig } from './pdf-config';
 import { PdfService } from './pdf-service';
 
+// A real browser launch is normally a few seconds, but this integration test
+// runs alongside the rest of the suite and can be CPU-starved on CI hosts.
+// Keep a bounded timeout without making the full suite flaky under contention.
 test('Chromium renders print CSS and CSS page sizing', async () => {
   const config = resolvePdfConfig({ resources: { allowDataUrls: false } }, {});
   if (config === false) throw new Error('Expected PDF config.');
@@ -43,4 +46,4 @@ test('Chromium renders print CSS and CSS page sizing', async () => {
   } finally {
     await service.close();
   }
-}, 30_000);
+}, 60_000);

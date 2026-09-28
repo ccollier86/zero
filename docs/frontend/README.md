@@ -9,7 +9,7 @@ A self-hosted fullstack runtime — file-based routing on Bun, React 19 streamin
 ```tsx
 // ─── app/page.tsx — this file IS the route ────────────
 
-import { useCollection } from '@zero/framework/react';
+import { useCollection } from '@zero/framework/react/hooks';
 
 export default function Home() {
   const { data, insert } = useCollection('todos');
@@ -29,16 +29,18 @@ export default function Home() {
 ```tsx
 // ─── app/layout.tsx — wraps every page ─────────────────
 
-import { AppProvider, ThemeProvider, Toaster } from '@zero/framework/react';
-import { tables } from './lib/schemas';
+import type { ReactNode } from 'react';
+import { AppProvider } from '@zero/framework/react/app-provider';
+import { ThemeProvider } from '@zero/framework/components/ui/theme-provider';
+import { Toaster } from '@zero/framework/components/ui/sonner';
+import { tables } from '../db/schema';
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <ThemeProvider defaultTheme="system" storageKey="zero-theme">
       <AppProvider
         url={typeof window !== 'undefined' ? window.location.origin : ''}
         tables={tables}
-        auth
       >
         {children}
         <Toaster />
@@ -57,44 +59,43 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 > carries runtime settings like `auth`, `stateSync`, and resolved
 > `tableSyncModes`.
 
-> **Theme:** `createApp()` builds and links Zero's platform stylesheet from
-> `src/frontend/styles/globals.css`. The default token contract includes light,
-> dark, and system modes through `ThemeProvider`. Mount Zero's `Toaster` once
-> under that provider so feedback toasts inherit the same popover, semantic
-> color, radius, and shadow tokens as the rest of the UI.
+> **Theme:** `createApp()` builds and links Zero's packaged platform stylesheet.
+> The default token contract includes light, dark, and system modes through
+> `ThemeProvider`. Mount Zero's `Toaster` once under that provider so feedback
+> toasts inherit the same popover, semantic color, radius, and shadow tokens as
+> the rest of the UI.
 
 ```ts
 // ─── app/server.ts — one file, everything ──────────────
 
-import { resolveConfig, createApp } from '@zero/framework/server';
-import { tables } from './lib/schemas';
+import { createApp } from '@zero/framework/server';
+import config from '../zero.config';
 
-const config = resolveConfig({
-  db: { mode: 'memory' },
-  tables,  // defineTable() output — auto-extracts server definitions
-  auth: true,
-  appDir: './app',
-});
+const app = await createApp(config);
+
+app.listen(config.port);
 
 // Result:
 //   File-based routes from app/ directory
 //   POST /auth/register, /auth/login, /auth/refresh, /auth/logout
 //   GET  /api/data (auto-registered for lazy tables)
 //   GET  /sitemap.xml (when enabled from public static routes)
-//   WS   /sync (reactive — all table changes broadcast)
+//   WS   /sync (reactive — policy-authorized app-table changes)
 //   SSR  with React 19 streaming
 ```
 
 ```bash
 # ─── Build and ship ──────────────────────────────────────
 
-bun build --compile server.ts --outfile myapp
+bun build --compile app/server.ts --outfile myapp
 
 # One binary. Database, auth, sync, SSR, routing — all embedded.
 # ./myapp starts the full server. No node_modules, no runtime.
 ```
 
-Drop a file in `app/`, it's a route. Subscribe to a table, it updates live. Register a user, every client sees them. Build — one binary, deploy anywhere.
+Drop a file in `app/`, it's a route. Subscribe to a policy-authorized app table,
+and it updates live. Register a user, and the returned private auth session is
+ready for that client. Build — one binary, deploy anywhere.
 
 ## Core Properties
 
@@ -104,8 +105,8 @@ Drop a file in `app/`, it's a route. Subscribe to a table, it updates live. Regi
 | **React 19 streaming SSR** | `renderToReadableStream` on Bun — progressive HTML, Suspense boundaries stream as they resolve |
 | **Reactive data** | Sync engine tables are live — `useCollection('todos')` returns `{ data, insert, update, remove }` and re-renders when any client mutates |
 | **Typed RPC** | Eden Treaty generates typed client from Elysia server — full autocomplete, zero codegen step |
-| **Built-in auth** | Register/login/refresh/logout, persistent browser sessions, protected-route redirects, and reactive user data via shared ReactiveDB |
-| **Persistent state** | Per-user KV state survives refresh, device switch, server restart — `useServerState('theme', 'dark')` |
+| **Built-in auth** | Register/login/refresh/logout, persistent browser sessions, protected-route redirects, live server verification, and private current-user/admin projections |
+| **Persistent state** | Per-authorized-scope user KV state survives refresh, device switch, and server restart — `useServerState('theme', 'dark')` |
 | **Single binary** | `bun build --compile` packages server + client bundle + SQLite + all runtime into one executable |
 
 ## Stack
@@ -118,7 +119,7 @@ Drop a file in `app/`, it's a route. Subscribe to a table, it updates live. Regi
 | Rendering | React 19 | `renderToReadableStream`, Suspense, server components |
 | State | @xstate/store | Client reactive store, sync engine integration |
 | RPC | Eden Treaty | Typed REST client generated from Elysia types |
-| Auth | Auth plugin | Argon2id, ES256 JWTs, live user/session resolution |
+| Auth | App-local auth runtime | Argon2id, ES256 JWTs, durable browser/native sessions, all four tenancy/authorization profiles, and live scope resolution |
 | Sync | Sync plugin | WebSocket real-time, onChange → publish |
 
 ## What This Is
@@ -127,7 +128,8 @@ A **fullstack runtime** that composes the sync engine, auth system, and a file-b
 
 **Designed for:**
 - Applications that need auth + real-time + SSR without stitching frameworks together
-- Small teams shipping fast — one binary, one process, one database
+- Small teams shipping fast—one binary and in-process services per runtime, with
+  optional same-file local replicas for durable Sync and auth invalidation
 - Prototypes that should feel production-grade from day one
 - Any app where "define a table, it's live" is the right abstraction
 
@@ -137,7 +139,10 @@ A **fullstack runtime** that composes the sync engine, auth system, and a file-b
 - **Not only a component library.** Zero includes tokenized UI primitives,
   Animate UI wrappers, and app-ready organisms, but this frontend runtime is
   also the routing, rendering, auth, sync, and data layer.
-- **Not serverless.** Single process, single binary. Designed for a VM, container, or bare metal — not Lambda.
+- **Not serverless.** Each deployment unit is a Bun process/binary designed for
+  a VM, container, or bare metal—not Lambda. File mode can coordinate multiple
+  local runtimes through one SQLite file; separate files/hosts require an
+  external coordination contract.
 - **Not a build tool.** Bun is the build tool. This configures it, doesn't replace it.
 
 ## How It Composes
@@ -164,7 +169,15 @@ A **fullstack runtime** that composes the sync engine, auth system, and a file-b
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Auth, sync, and router all share one ReactiveDB. The router renders pages with React 19 streaming. The sync engine makes table data live. Auth makes user data reactive. Observability captures platform logs, warnings, errors, and frontend reports through one configurable sink boundary. One `createApp()` call wires it all.
+Auth, sync, and router share one ReactiveDB. The router renders pages with
+React 19 streaming. The sync engine makes policy-authorized app data live.
+Auth supplies private session/current-user/admin projections with live server
+authority, tenant/application administration, onboarding, audit, and browser
+visibility/cache-boundary hooks. App-owned caches use
+`useAuthorizationScopeBoundary()`; its credential-free key is not authority.
+Observability captures platform logs, warnings, errors, and
+frontend reports through one configurable sink boundary. One `createApp()`
+call wires it all.
 
 ## Design Documents
 
@@ -197,8 +210,8 @@ The frontend SDK composes these — it doesn't reinvent them:
 |-----------|------|----------------------------------|
 | Design tokens | [Design Tokens](./design-tokens.md) | Core app lane for operational UI plus public/frontend lane for docs, marketing, landing, and public flow components |
 | Sync engine | [docs/realtime-sync/](../realtime-sync/realtime-sync/README.md) | `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, `useStatus`, `SyncClient`, `SyncProvider`, optimistic mutations, reconnect |
-| Auth system | [docs/auth/](../auth/README.md) | Register, login, refresh, logout routes, reactive `users` table, JWT middleware, guards |
-| State sync | [docs/state-sync.md](../state-sync.md) | `useServerState`, per-user persistent KV, device sync, form drafts, UI preferences |
+| Auth system | [docs/auth/](../auth/README.md) | Account lifecycle, all four auth profiles, application/tenant administration and onboarding, browser authorization/cache boundary, packaged controls, JWT middleware, and server guards |
+| State sync | [docs/state-sync.md](../state-sync.md) | `useServerState`, scoped-user persistent KV, same-scope device sync, form drafts, UI preferences |
 | App shell | [AppShell](./app-shell.md) and [Sidebar](./sidebar.md) | `AppShell`, optional breadcrumbs/header content, workspace switcher, nested nav, three-dot item actions, footer user menu, and raw sidebar primitives |
 | Public navigation | [Resizable Navbar](./navbar.md) | `ResizableNavbar` for docs, marketing, landing, and other public route trees |
 | Public heroes | [Hero](./hero.md) | `Hero`, `HeroBackground`, and `HeroImageBackground` for public route opening sections |
@@ -209,9 +222,38 @@ The frontend SDK composes these — it doesn't reinvent them:
 | Rooms and ephemeral sync | [Hooks](./hooks.md#presence-and-typing) | `usePresence`, `usePresenceList`, `useTypingIndicator`, `useEphemeral`, and `useEphemeralTopic` |
 | Observability | [docs/observability.md](../observability.md) | Backend/frontend event sink, default inspection endpoint, configurable adapters |
 
-## Path Aliases
+## Package Imports And App Aliases
 
-References to `@platform/*` and `@app/*` throughout these docs are **tsconfig path aliases**, not separate npm packages. They resolve to directories within the monorepo:
+Generated and other package-mode applications consume Zero through the public
+`@zero/framework/*` export map. Do not point an application's TypeScript
+`paths` at this repository's `src/` tree or reach through
+`node_modules/@zero/framework/src`; either bypasses the package contract and
+can create duplicate frontend runtimes.
+
+Use focused package subpaths:
+
+```ts
+import { defineTable, field } from '@zero/framework/schema';
+import { useCollection } from '@zero/framework/react/hooks';
+import { AppProvider } from '@zero/framework/react/app-provider';
+import { Check } from '@zero/framework/icons';
+import { Button } from '@zero/framework/components/ui/button';
+import { createApp, defineZeroConfig } from '@zero/framework/server';
+```
+
+Generated apps also receive `@app/*`, `@/*`, `@/components/*`, `@/hooks/*`,
+and `@/lib/*` aliases for app-owned source. Those aliases do not replace Zero
+package imports. Prefer an ordinary relative import when it is clearest—for
+example, `import { tables } from '../db/schema'` in `app/layout.tsx`. Let
+`create-zero` own the exact generated `tsconfig.json`; do not add mappings from
+`@zero/framework/*` to a framework checkout.
+
+### Repository-maintainer imports
+
+The following map describes this Zero source checkout only. Package-private
+`#zero/*` imports are resolved by Zero's own `package.json#imports` map, so raw
+published TypeScript remains typecheckable without leaking repository path
+aliases into a consumer. They are not public imports for generated apps.
 
 ```
 @zero/framework/react → src/frontend           (SDK, hooks, providers, schema, defineTable, field)
@@ -220,56 +262,23 @@ References to `@platform/*` and `@app/*` throughout these docs are **tsconfig pa
 @platform/router   → src/frontend/router    (file-based router types)
 @platform/sync     → src/sync              (sync engine, types)
 @platform/auth     → src/auth              (auth plugin, guards, types)
-@/components/*     → src/components/*       (UI component library)
-@/lib/*            → src/lib/*             (shared utilities)
-@/hooks/*          → src/hooks/*           (shared React hooks)
+#zero/components/* → src/components/*       (package-private UI implementation)
+#zero/lib/*        → src/lib/*              (package-private shared utilities)
+#zero/hooks/*      → src/hooks/*            (package-private shared hooks)
 @app/*             → app/*                 (your app code)
 ```
 
-**Always use these aliases instead of relative paths.** They eliminate fragile `../../../` chains, make imports readable, and survive file moves without breaking.
-
-**Import rule:** Schema files, pages, and app code import platform APIs from
-`@zero/framework/react`, and default animated icons from
-`@zero/framework/icons`. The only file that imports from `@zero/framework/server`
-is `app/server.ts` (for `resolveConfig` and `createApp`).
+Public docs and copy-paste examples must use `@zero/framework/*`; the source
+layout above exists only to explain maintainer imports. After adding a new
+`#zero/*` source dependency, run `bun run private-imports:sync`; the package
+tests reject a missing or stale exact mapping.
 
 ```ts
-// Do this
-import { useCollection, defineTable, field } from '@zero/framework/react';
-import { Check } from '@zero/framework/icons';
-import { tables } from '@app/lib/schemas';
-import { Button } from '@/components/ui/button';
-
-// Not this
+// Do not use these in a package-mode application.
+import { createSyncPlugin } from '@platform/sync';
+import { Button as PrivateButton } from '#zero/components/ui/button';
 import { useCollection } from '../../../src/frontend/client/hooks';
-import { Check } from '../../../src/components/animate-ui/icons/check';
-import { defineTable } from '@zero/framework/server';    // wrong — use @zero/framework/react
-import { Button } from '../../../src/components/ui/button';
-```
-
-Configure in `tsconfig.json`:
-
-```json
-{
-  "compilerOptions": {
-    "paths": {
-      "@zero/framework/react": ["./src/frontend"],
-      "@zero/framework/react/*": ["./src/frontend/*"],
-      "@zero/framework/server": ["./src/frontend/server"],
-      "@zero/framework/server/*": ["./src/frontend/server/*"],
-      "@platform/router": ["./src/frontend/router"],
-      "@platform/router/*": ["./src/frontend/router/*"],
-      "@platform/sync": ["./src/sync"],
-      "@platform/sync/*": ["./src/sync/*"],
-      "@platform/auth": ["./src/auth"],
-      "@platform/auth/*": ["./src/auth/*"],
-      "@/components/*": ["./src/components/*"],
-      "@/lib/*": ["./src/lib/*"],
-      "@/hooks/*": ["./src/hooks/*"],
-      "@app/*": ["./app/*"]
-    }
-  }
-}
+import { Button as SourceButton } from '../node_modules/@zero/framework/src/components/ui/button';
 ```
 
 ## File Organization

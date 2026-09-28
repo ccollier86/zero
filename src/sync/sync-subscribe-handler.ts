@@ -42,7 +42,8 @@ export function handleSyncSubscribe(
     return;
   }
 
-  const changes = db.getChangesAfter(message.lastSeq);
+  const replay = db.readAtCurrentSequence(() => db.getChangesAfter(message.lastSeq));
+  const changes = replay.value;
   if (changes === null
     || (changes.length > 0 && changes[0].seq > message.lastSeq + 1)) {
     sendSyncSnapshot(socket, selection.snapshot, db, 'preserve-pending');
@@ -54,18 +55,19 @@ export function handleSyncSubscribe(
     .map((change) => projectSyncChange(
       change,
       socket.data.resourceRowFilters.get(change.table),
+      socket.data.resourceRowProjectors?.get(change.table),
     ))
     .filter((change): change is NonNullable<typeof change> => Boolean(change))
     .map((change) => ({ ...change, origin: '' }));
   const response: SyncCatchupMessage = {
     type: 'sync.catchup',
     changes: projected,
-    seq: db.currentSeq,
+    seq: replay.seq,
     prevSeq: message.lastSeq,
     epoch: db.syncEpoch,
     scope: socket.data.authorizationScope,
   };
-  if (sendSyncWire(socket, response)) socket.data.lastSeq = db.currentSeq;
+  if (sendSyncWire(socket, response)) socket.data.lastSeq = replay.seq;
 }
 
 function validSubscribe(message: SyncSubscribeMessage): boolean {

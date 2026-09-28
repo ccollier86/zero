@@ -13,10 +13,15 @@ import {
   type IdentityKey,
   withIdentityPrimaryKey,
 } from '../../sync/identity';
+import { decodeBooleanValue, encodeBooleanValue } from '../../schema/field-codecs';
+import type { InsertInput, PrimaryKeyOf } from '../../schema/infer';
 import type { SyncClient } from '../../sync/client/sync-client';
 import type { ClientTableDef, Row } from '../../sync/types';
 
-export interface Collection<T extends Row = Row> {
+export interface Collection<
+  T extends Row = Row,
+  TPrimaryKey extends keyof T & string = PrimaryKeyOf<T>,
+> {
   /** Table name. */
   readonly name: string;
 
@@ -33,7 +38,7 @@ export interface Collection<T extends Row = Row> {
   count(): number;
 
   /** Optimistic insert; applied locally and synced to the server. */
-  insert(row: T): void;
+  insert(row: InsertInput<T, TPrimaryKey>): void;
 
   /** Return the deterministic sync id for a natural identity key. */
   identityKey(key: IdentityKey): string;
@@ -42,7 +47,7 @@ export interface Collection<T extends Row = Row> {
   getByIdentity(key: IdentityKey): T | null;
 
   /** Optimistic insert/update by natural identity. */
-  upsertByIdentity(row: T): void;
+  upsertByIdentity(row: InsertInput<T, TPrimaryKey>): void;
 
   /** Optimistic update by natural identity. */
   updateByIdentity(key: IdentityKey, partial: Partial<T>): void;
@@ -68,7 +73,7 @@ export interface Collection<T extends Row = Row> {
    * Lazy tables use this after REST fetches so hooks such as `useQuery` can
    * observe demand-loaded data without requiring full-table websocket snapshots.
    */
-  load(rows: T[], options?: { replace?: boolean }): void;
+  load(rows: InsertInput<T, TPrimaryKey>[], options?: { replace?: boolean }): void;
 
   /** Clear all rows from this table in the local store without deleting server rows. */
   clear(): void;
@@ -77,17 +82,64 @@ export interface Collection<T extends Row = Row> {
 /**
  * Create a table collection bound to one SyncClient and table definition.
  */
-export function createCollection<T extends Row>(
+export function createCollection<
+  T extends Row,
+  TPrimaryKey extends keyof T & string = PrimaryKeyOf<T>,
+>(
   name: string,
   syncClient: SyncClient,
   tableDef: ClientTableDef,
-): Collection<T> {
+): Collection<T, TPrimaryKey> {
   const store = syncClient.store;
   const primaryKey = tableDef._pk;
+  const booleanFields = tableDef._booleanFields ?? [];
+  const decodedRows = new WeakMap<Row, T>();
+  let previousStoredTable: Record<string, Row> | null = null;
+  let previousDecodedTable: Record<string, T> | null = null;
+
+  function getStoredTableData(): Record<string, Row> {
+    const ctx = store.getSnapshot().context as Record<string, unknown>;
+    return (ctx[name] as Record<string, Row>) ?? {};
+  }
+
+  function decodeStoredRow(row: Row): T {
+    if (booleanFields.length === 0) return row as T;
+
+    const cached = decodedRows.get(row);
+    if (cached) return cached;
+
+    const next: Row = { ...row };
+    for (const field of booleanFields) {
+      if (field in next) next[field] = decodeBooleanValue(next[field]);
+    }
+
+    const decoded = next as T;
+    decodedRows.set(row, decoded);
+    return decoded;
+  }
 
   function getTableData(): Record<string, T> {
-    const ctx = store.getSnapshot().context as Record<string, unknown>;
-    return (ctx[name] as Record<string, T>) ?? {};
+    const stored = getStoredTableData();
+    if (booleanFields.length === 0) return stored as Record<string, T>;
+    if (stored === previousStoredTable && previousDecodedTable) return previousDecodedTable;
+
+    const decoded: Record<string, T> = {};
+    for (const [id, row] of Object.entries(stored)) {
+      decoded[id] = decodeStoredRow(row);
+    }
+    previousStoredTable = stored;
+    previousDecodedTable = decoded;
+    return decoded;
+  }
+
+  function encodeLogicalRow(row: Row): Row {
+    if (booleanFields.length === 0) return row;
+
+    const next: Row = { ...row };
+    for (const field of booleanFields) {
+      if (field in next) next[field] = encodeBooleanValue(next[field]);
+    }
+    return next;
   }
 
   function getIdentityFields(): readonly string[] {
@@ -101,12 +153,12 @@ export function createCollection<T extends Row>(
     return createIdentityId(name, getIdentityFields(), key);
   }
 
-  function withCollectionPrimaryKey(row: T): T {
-    return ensureRowSyncPrimaryKey(name, tableDef, row);
+  function withCollectionPrimaryKey(row: InsertInput<T, TPrimaryKey>): T {
+    return ensureRowSyncPrimaryKey(name, tableDef, row as Row) as T;
   }
 
-  function withNaturalIdentityPrimaryKey(row: T): T {
-    return withIdentityPrimaryKey(name, primaryKey, getIdentityFields(), row);
+  function withNaturalIdentityPrimaryKey(row: InsertInput<T, TPrimaryKey>): T {
+    return withIdentityPrimaryKey(name, primaryKey, getIdentityFields(), row as Row) as T;
   }
 
   function assertIdentityPatchMatchesKey(key: IdentityKey, partial: Partial<T>): void {
@@ -135,7 +187,7 @@ export function createCollection<T extends Row>(
     return null;
   }
 
-  function toIdentityUpdate(row: T): Partial<T> {
+  function toIdentityUpdate(row: InsertInput<T, TPrimaryKey>): Partial<T> {
     const partial = { ...row } as Record<string, unknown>;
     delete partial[primaryKey];
     return partial as Partial<T>;
@@ -160,8 +212,8 @@ export function createCollection<T extends Row>(
       return Object.keys(getTableData()).length;
     },
 
-    insert(row: T): void {
-      syncClient.insert(name, withCollectionPrimaryKey(row));
+    insert(row: InsertInput<T, TPrimaryKey>): void {
+      syncClient.insert(name, encodeLogicalRow(withCollectionPrimaryKey(row)));
     },
 
     identityKey,
@@ -170,19 +222,23 @@ export function createCollection<T extends Row>(
       return findIdentityEntry(key)?.[1] ?? null;
     },
 
-    upsertByIdentity(row: T): void {
-      const existing = findIdentityEntry(row);
+    upsertByIdentity(row: InsertInput<T, TPrimaryKey>): void {
+      const existing = findIdentityEntry(row as Row);
       if (existing) {
-        syncClient.update(name, existing[0], toIdentityUpdate(row));
+        syncClient.update(name, existing[0], encodeLogicalRow(toIdentityUpdate(row) as Row));
         return;
       }
 
-      syncClient.insert(name, withNaturalIdentityPrimaryKey(row));
+      syncClient.insert(name, encodeLogicalRow(withNaturalIdentityPrimaryKey(row)));
     },
 
     updateByIdentity(key: IdentityKey, partial: Partial<T>): void {
       assertIdentityPatchMatchesKey(key, partial);
-      syncClient.update(name, findIdentityEntry(key)?.[0] ?? identityKey(key), partial);
+      syncClient.update(
+        name,
+        findIdentityEntry(key)?.[0] ?? identityKey(key),
+        encodeLogicalRow(partial as Row),
+      );
     },
 
     deleteByIdentity(key: IdentityKey): void {
@@ -190,7 +246,7 @@ export function createCollection<T extends Row>(
     },
 
     update(id: string, partial: Partial<T>): void {
-      syncClient.update(name, id, partial);
+      syncClient.update(name, id, encodeLogicalRow(partial as Row));
     },
 
     remove(id: string): void {
@@ -221,11 +277,11 @@ export function createCollection<T extends Row>(
       return () => sub.unsubscribe();
     },
 
-    load(rows: T[], options?: { replace?: boolean }): void {
+    load(rows: InsertInput<T, TPrimaryKey>[], options?: { replace?: boolean }): void {
       const keyed: Record<string, Row> = {};
       for (const row of rows) {
         const nextRow = withCollectionPrimaryKey(row);
-        keyed[String(nextRow[primaryKey])] = nextRow;
+        keyed[String(nextRow[primaryKey])] = encodeLogicalRow(nextRow);
       }
       store.send({
         type: 'sync.load' as const,

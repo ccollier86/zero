@@ -87,18 +87,14 @@ describe('scaffoldZeroApp', () => {
       };
       expect(tsconfig.compilerOptions.preserveSymlinks).toBe(true);
       expect(tsconfig.compilerOptions.paths['@app/*']).toEqual(['./app/*']);
-      expect(tsconfig.compilerOptions.paths['@/components/*']).toEqual([
-        './components/*',
-        './node_modules/@zero/framework/src/components/*',
-      ]);
-      expect(tsconfig.compilerOptions.paths['@/hooks/*']).toEqual([
-        './hooks/*',
-        './node_modules/@zero/framework/src/hooks/*',
-      ]);
-      expect(tsconfig.compilerOptions.paths['@/lib/*']).toEqual([
-        './lib/*',
-        './node_modules/@zero/framework/src/lib/*',
-      ]);
+      expect(tsconfig.compilerOptions.paths['@/components/*'])
+        .toEqual(['./components/*']);
+      expect(tsconfig.compilerOptions.paths['@/hooks/*'])
+        .toEqual(['./hooks/*']);
+      expect(tsconfig.compilerOptions.paths['@/lib/*'])
+        .toEqual(['./lib/*']);
+      expect(JSON.stringify(tsconfig.compilerOptions.paths))
+        .not.toContain('node_modules/@zero/framework/src');
       expect(tsconfig.compilerOptions.paths.react).toEqual(['./node_modules/@types/react']);
 
       const gitignore = await readFile(join(targetDir, '.gitignore'), 'utf8');
@@ -109,6 +105,9 @@ describe('scaffoldZeroApp', () => {
       expect(readme).toContain('cp .env.example .env');
       expect(readme).toContain('node_modules/@zero/framework/docs/start-here.md');
       expect(readme).toContain('server/middleware/');
+      expect(readme).toContain('package saved from committed local `main`');
+      expect(readme).toContain('zero update --project . --local');
+      expect(readme).toContain("it never\npacks the checkout's live working tree");
 
       await linkFrameworkPackage(targetDir);
 

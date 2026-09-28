@@ -13,6 +13,13 @@ function getCtx(store: StateStore): StateStoreContext {
   return store.getSnapshot().context as StateStoreContext;
 }
 
+function getEntry(
+  entries: Readonly<Record<string, JsonValue>>,
+  key: string,
+): JsonValue | undefined {
+  return entries[key];
+}
+
 // ─── createStateStore ──────────────────────────────────────────────────────
 
 describe('createStateStore', () => {
@@ -722,5 +729,110 @@ describe('state.reset', () => {
       ready: false,
       pending: [],
     });
+  });
+});
+
+describe('prototype-safe state keys', () => {
+  const dangerousEntries = () => JSON.parse(
+    '{"__proto__":"proto-value","constructor":"constructor-value","toString":"string-value"}',
+  ) as Record<string, JsonValue>;
+
+  test('snapshots preserve arbitrary own keys without inheriting Object properties', () => {
+    const store = createStateStore();
+
+    expect(Object.getPrototypeOf(getCtx(store).entries)).toBeNull();
+    for (const key of ['__proto__', 'constructor', 'toString']) {
+      expect(Object.hasOwn(getCtx(store).entries, key)).toBe(false);
+      expect(getCtx(store).entries[key]).toBeUndefined();
+    }
+
+    store.send({
+      type: 'state.snapshot' as const,
+      entries: dangerousEntries(),
+    } as any);
+
+    const entries = getCtx(store).entries;
+    expect(Object.getPrototypeOf(entries)).toBeNull();
+    expect(Object.keys(entries)).toEqual(['__proto__', 'constructor', 'toString']);
+    expect(entries.__proto__).toBe('proto-value');
+    expect(getEntry(entries, 'constructor')).toBe('constructor-value');
+    expect(getEntry(entries, 'toString')).toBe('string-value');
+  });
+
+  test('optimistic set, delete, clear, and rejected rollback keep special keys safe', () => {
+    const store = createStateStore();
+    store.send({
+      type: 'state.snapshot' as const,
+      entries: dangerousEntries(),
+    } as any);
+
+    store.send({
+      type: 'state.optimistic-set' as const,
+      ref: 'set-ref',
+      key: '__proto__',
+      value: 'optimistic',
+    } as any);
+    expect(getCtx(store).entries.__proto__).toBe('optimistic');
+    store.send({ type: 'state.ack', ref: 'set-ref', ok: false } as any);
+    expect(getCtx(store).entries.__proto__).toBe('proto-value');
+    expect(Object.getPrototypeOf(getCtx(store).entries)).toBeNull();
+
+    store.send({
+      type: 'state.optimistic-delete' as const,
+      ref: 'delete-ref',
+      key: 'constructor',
+    } as any);
+    expect(Object.hasOwn(getCtx(store).entries, 'constructor')).toBe(false);
+    store.send({ type: 'state.ack', ref: 'delete-ref', ok: false } as any);
+    expect(getEntry(getCtx(store).entries, 'constructor')).toBe('constructor-value');
+    expect(Object.getPrototypeOf(getCtx(store).entries)).toBeNull();
+
+    store.send({
+      type: 'state.optimistic-clear' as const,
+      ref: 'clear-ref',
+    } as any);
+    expect(Object.keys(getCtx(store).entries)).toEqual([]);
+    expect(Object.getPrototypeOf(getCtx(store).entries)).toBeNull();
+    store.send({ type: 'state.ack', ref: 'clear-ref', ok: false } as any);
+
+    const restored = getCtx(store).entries;
+    expect(Object.getPrototypeOf(restored)).toBeNull();
+    expect(restored.__proto__).toBe('proto-value');
+    expect(getEntry(restored, 'constructor')).toBe('constructor-value');
+    expect(getEntry(restored, 'toString')).toBe('string-value');
+  });
+
+  test('remote set, delete, and clear do not reintroduce an object prototype', () => {
+    const store = createStateStore();
+
+    for (const key of ['__proto__', 'constructor', 'toString']) {
+      store.send({
+        type: 'state.change' as const,
+        op: 'set',
+        key,
+        value: `value:${key}`,
+      } as any);
+      expect(getCtx(store).entries[key]).toBe(`value:${key}`);
+      expect(Object.getPrototypeOf(getCtx(store).entries)).toBeNull();
+    }
+
+    store.send({
+      type: 'state.change' as const,
+      op: 'delete',
+      key: '__proto__',
+      value: undefined,
+    } as any);
+    expect(Object.hasOwn(getCtx(store).entries, '__proto__')).toBe(false);
+    expect(getCtx(store).entries.__proto__).toBeUndefined();
+
+    store.send({
+      type: 'state.change' as const,
+      op: 'clear',
+      key: null,
+      value: undefined,
+    } as any);
+    expect(Object.getPrototypeOf(getCtx(store).entries)).toBeNull();
+    expect(getEntry(getCtx(store).entries, 'constructor')).toBeUndefined();
+    expect(getEntry(getCtx(store).entries, 'toString')).toBeUndefined();
   });
 });

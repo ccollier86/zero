@@ -19,9 +19,16 @@ export class AuthEmailOutboxProcessor {
     this.active.add(controller);
     const timeout = setTimeout(() => controller.abort('timeout'), this.options.deliveryTimeoutMs);
     const heartbeat = setInterval(() => {
-      const now = this.clock();
-      if (!this.store.extendLease(job, now + this.options.leaseMs, now)) {
-        controller.abort('lease_lost');
+      try {
+        const now = this.clock();
+        if (!this.store.extendLease(job, now + this.options.leaseMs, now)) {
+          controller.abort('lease_lost');
+        }
+      } catch (error) {
+        // A profile transition is terminal for this cached worker. Abort the
+        // provider operation; the guarded completion/failure boundary below
+        // propagates the structured error so the poller can quiesce.
+        controller.abort(error);
       }
     }, Math.max(100, Math.floor(this.options.leaseMs / 3)));
     timeout.unref?.(); heartbeat.unref?.();

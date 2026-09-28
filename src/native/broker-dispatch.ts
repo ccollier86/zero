@@ -19,6 +19,10 @@ export async function dispatchNativeAuthBrokerCommand(
       await client.completeAuthorization(command.callbackUrl, signal);
     }
     if (command.operation === 'refresh') await client.refresh();
+    const tenantList = command.operation === 'listTenants'
+      ? await client.listTenants()
+      : undefined;
+    if (command.operation === 'switchTenant') await client.switchTenant(command.tenantId);
     if (command.operation === 'signOut') await client.signOut();
     const accessToken = command.operation === 'getAccessToken'
       ? await stableAccessToken(client, channel) : undefined;
@@ -26,6 +30,7 @@ export async function dispatchNativeAuthBrokerCommand(
       ok: true,
       snapshot: channel.snapshot(),
       ...(accessToken !== undefined ? { accessToken } : {}),
+      ...(tenantList !== undefined ? { tenantList } : {}),
     };
   } catch (error) {
     const safe = toNativeAuthError(error, 'NATIVE_BROKER_OPERATION_FAILED');

@@ -22,20 +22,21 @@ export type ReceiptLookup =
 export class SyncMutationReceiptStore {
   private writes = 0;
   constructor(private readonly db: ReactiveDB) {
-    db.exec(`CREATE TABLE IF NOT EXISTS _sync_mutation_receipts (
+    db.exec(`CREATE TABLE IF NOT EXISTS main._sync_mutation_receipts (
       principal TEXT NOT NULL, ref TEXT NOT NULL, request_hash TEXT NOT NULL,
       ack_json TEXT NOT NULL, created_at INTEGER NOT NULL,
       PRIMARY KEY (principal, ref)
     )`);
-    db.exec(`CREATE INDEX IF NOT EXISTS _sync_receipts_created_at
+    db.exec(`CREATE INDEX IF NOT EXISTS main._sync_receipts_created_at
       ON _sync_mutation_receipts(created_at)`);
-    db.exec(`CREATE INDEX IF NOT EXISTS _sync_receipts_principal_created
+    db.exec(`CREATE INDEX IF NOT EXISTS main._sync_receipts_principal_created
       ON _sync_mutation_receipts(principal, created_at)`);
   }
 
   find(principal: string, ref: string, requestHash: string): ReceiptLookup {
     const row = this.db.prepare(
-      'SELECT request_hash, ack_json FROM _sync_mutation_receipts WHERE principal = ? AND ref = ?',
+      'SELECT request_hash, ack_json FROM main._sync_mutation_receipts ' +
+      'WHERE principal = ? AND ref = ?',
     ).get(principal, ref) as { request_hash: string; ack_json: string } | null;
     if (!row) return { status: 'miss' };
     if (row.request_hash !== requestHash) return { status: 'conflict' };
@@ -48,7 +49,7 @@ export class SyncMutationReceiptStore {
   }
 
   save(principal: string, ref: string, requestHash: string, ack: SyncAckMessage): void {
-    this.db.prepare(`INSERT INTO _sync_mutation_receipts
+    this.db.prepare(`INSERT INTO main._sync_mutation_receipts
       (principal, ref, request_hash, ack_json, created_at) VALUES (?, ?, ?, ?, ?)`)
       .run(principal, ref, requestHash, encodeMutationReceipt(ack), Date.now());
     pruneMutationReceipts(this.db, principal, ++this.writes % 100 === 0);

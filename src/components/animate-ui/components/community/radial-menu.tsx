@@ -3,8 +3,8 @@
 import * as React from 'react';
 import { motion, AnimatePresence, type Transition } from 'motion/react';
 import { ContextMenu } from '@base-ui-components/react/context-menu';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { cn } from '@/lib/utils';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { cn } from '#zero/lib/utils';
 
 type RadialMenuIcon = React.ComponentType<{
   className?: string;

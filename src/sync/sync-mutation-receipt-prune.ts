@@ -12,17 +12,17 @@ export function pruneMutationReceipts(
   pruneGlobal: boolean,
 ): void {
   const protectedAfter = Date.now() - MIN_UNCERTAINTY_MS;
-  db.prepare(`DELETE FROM _sync_mutation_receipts
+  db.prepare(`DELETE FROM main._sync_mutation_receipts
     WHERE principal = ? AND created_at < ? AND rowid IN (
-      SELECT rowid FROM _sync_mutation_receipts WHERE principal = ?
+      SELECT rowid FROM main._sync_mutation_receipts WHERE principal = ?
       ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ${MAX_PER_PRINCIPAL}
     )`).run(principal, protectedAfter, principal);
   if (!pruneGlobal) return;
-  db.prepare('DELETE FROM _sync_mutation_receipts WHERE created_at < ?')
+  db.prepare('DELETE FROM main._sync_mutation_receipts WHERE created_at < ?')
     .run(Date.now() - RETENTION_MS);
-  db.prepare(`DELETE FROM _sync_mutation_receipts
+  db.prepare(`DELETE FROM main._sync_mutation_receipts
     WHERE created_at < ? AND rowid IN (
-      SELECT rowid FROM _sync_mutation_receipts
+      SELECT rowid FROM main._sync_mutation_receipts
       ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ${MAX_RECEIPTS}
     )`).run(protectedAfter);
 }

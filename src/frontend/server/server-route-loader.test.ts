@@ -193,6 +193,7 @@ describe('server route loader', () => {
         .get('/api/outside', () => ({ outside: true }));
 
       for (const plugin of plugins) app = app.use(plugin as any);
+      app.listen(0);
 
       const ping = await app.handle(new Request('http://localhost/api/zero/ping'));
       const group = await app.handle(new Request('http://localhost/api/zero/group/health'));
@@ -204,6 +205,7 @@ describe('server route loader', () => {
       await expect(pluginStatus.json()).resolves.toEqual({ plugin: true });
       expect(ping.headers.get('x-zero-extension')).toBe('yes');
       expect(outside.headers.get('x-zero-extension')).toBeNull();
+      await app.stop();
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

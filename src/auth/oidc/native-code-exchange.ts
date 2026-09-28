@@ -7,6 +7,7 @@ import type { NativeCodeExchangeInput, NativeTokenResult } from './native-auth-s
 import type { NativeServiceContext } from './native-service-context';
 import { prepareNativeSession } from './native-session-factory';
 import { canReceiveTokens, invalidGrant, tokenClient } from './native-service-policy';
+import { sameNativeAuthority } from './native-tenant-authority';
 
 export async function exchangeNativeCode(
   context: NativeServiceContext,
@@ -21,9 +22,12 @@ export async function exchangeNativeCode(
   const user = context.users.getUserById(code.userId);
   if (!user || !canReceiveTokens(user)) invalidGrant();
   if (context.users.getAuthGeneration(user.userId) !== code.authGeneration) invalidGrant();
+  const authority = context.authority.resolve(user.userId, code);
+  if (!authority) invalidGrant();
   const prepared = prepareNativeSession({
     userId: user.userId, clientId: code.clientId, scope: code.scope,
     authGeneration: code.authGeneration, ttlMs: context.config.refreshTtlMs,
+    authority: authority.snapshot,
   });
   const [accessToken, idToken] = await Promise.all([
     context.tokens.signNativeAccessToken(
@@ -32,15 +36,31 @@ export async function exchangeNativeCode(
     context.tokens.signNativeIdToken(user, code.clientId, code.nonce, code.scope),
   ]);
   if (context.users.getAuthGeneration(user.userId) !== code.authGeneration) invalidGrant();
+  const stillCurrent = context.authority.resolve(user.userId, code);
+  if (!stillCurrent
+    || !sameNativeAuthority(authority.snapshot, stillCurrent.snapshot)) invalidGrant();
   const committed = context.sessions.consumeCodeAndInsert(
-    () => context.codes.consume(code.codeId), prepared.session
+    () => context.codes.consume(code.codeId),
+    prepared.session,
+    () => {
+      const live = context.authority.resolve(user.userId, code);
+      return context.users.getAuthGeneration(user.userId) === code.authGeneration
+        && Boolean(live && sameNativeAuthority(authority.snapshot, live.snapshot));
+    },
   );
   if (!committed) invalidGrant();
   emitPlatformCode(OBS_CODES.AUTH_NATIVE_CODE_EXCHANGED, {
     userId: user.userId,
     metadata: { clientId: code.clientId, familyId: prepared.session.familyId },
   });
-  return tokenResult(context, accessToken, prepared.rawRefreshToken, code.scope, idToken);
+  return tokenResult(
+    context,
+    accessToken,
+    prepared.rawRefreshToken,
+    code.scope,
+    idToken,
+    authority.activeTenant ?? undefined,
+  );
 }
 
 export function tokenResult(
@@ -48,11 +68,13 @@ export function tokenResult(
   accessToken: string,
   refreshToken: string,
   scope: string,
-  idToken?: string
+  idToken?: string,
+  activeTenant?: import('./native-tenant-authority').NativeActiveTenant,
 ): NativeTokenResult {
   return {
     access_token: accessToken, token_type: 'Bearer',
     expires_in: context.tokens.getAccessTokenTTLSeconds(),
     refresh_token: refreshToken, id_token: idToken, scope,
+    ...(activeTenant ? { active_tenant: activeTenant } : {}),
   };
 }

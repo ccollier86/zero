@@ -10,6 +10,8 @@ import { createIdentityId } from '../../sync/identity';
 import { createSyncStore } from '../../sync/client/sync-store';
 import type { SyncClient } from '../../sync/client/sync-client';
 import type { ClientTableDef, Row } from '../../sync/types';
+import { defineTable, field } from '../../schema';
+import type { InferRow, InsertInput } from '../../schema';
 import { createCollection } from './collection';
 
 const membershipTable: ClientTableDef = {
@@ -29,8 +31,11 @@ interface SyncCall {
   partial?: Partial<Row>;
 }
 
-function createFakeSyncClient() {
-  const { store, tables } = createSyncStore({ memberships: membershipTable });
+function createFakeSyncClient(
+  tableName = 'memberships',
+  tableDef: ClientTableDef = membershipTable,
+) {
+  const { store, tables } = createSyncStore({ [tableName]: tableDef });
   const calls: SyncCall[] = [];
 
   const client: SyncClient = {
@@ -44,7 +49,7 @@ function createFakeSyncClient() {
       store.send({
         type: 'optimistic.insert' as const,
         table,
-        rowId: String(row[membershipTable._pk]),
+        rowId: String(row[tableDef._pk]),
         row,
         ref: `ref-${calls.length}`,
       });
@@ -74,6 +79,13 @@ function createFakeSyncClient() {
     reset(): void {
       store.send({ type: 'sync.reset' });
     },
+    beginAuthorizationScopeTransition(): void {
+      store.send({ type: 'sync.reset' });
+    },
+    completeAuthorizationScopeTransition(): void {},
+    waitForAuthorizationBaseline(): Promise<void> {
+      return Promise.resolve();
+    },
     onMessage(): () => void {
       return () => {};
     },
@@ -82,6 +94,86 @@ function createFakeSyncClient() {
 
   return { client, calls };
 }
+
+describe('createCollection schema contracts', () => {
+  test('generates an omitted custom primary key and keeps booleans logical at the API boundary', () => {
+    const toggles = defineTable('toggles', {
+      label: field.text({ required: true }),
+      enabled: field.boolean({ required: true }),
+    }, { pk: 'toggle_id' });
+    type Toggle = InferRow<typeof toggles>;
+
+    const { client, calls } = createFakeSyncClient('toggles', toggles.clientTable);
+    const collection = createCollection<Toggle>('toggles', client, toggles.clientTable);
+    const input: InsertInput<Toggle> = { label: 'Notifications', enabled: true };
+
+    collection.insert(input);
+
+    const inserted = calls[0]?.row;
+    const id = String(inserted?.toggle_id);
+    expect(id.length).toBeGreaterThan(0);
+    expect(inserted).toMatchObject({
+      label: 'Notifications',
+      enabled: 1,
+    });
+    expect(collection.getOne(id)).toMatchObject({
+      toggle_id: id,
+      label: 'Notifications',
+      enabled: true,
+    });
+
+    collection.update(id, { enabled: false });
+    expect(calls[1]?.partial).toEqual({ enabled: 0 });
+    expect(collection.getOne(id)?.enabled).toBe(false);
+  });
+
+  test('decodes SQLite boolean values loaded through a lazy collection', () => {
+    const flags = defineTable('flags', {
+      enabled: field.boolean({ required: true }),
+    });
+    type Flag = InferRow<typeof flags>;
+    const { client } = createFakeSyncClient('flags', flags.clientTable);
+    const collection = createCollection<Flag>('flags', client, flags.clientTable);
+
+    collection.load([
+      { id: 'flag-1', enabled: 1 } as unknown as InsertInput<Flag>,
+      { id: 'flag-2', enabled: 0 } as unknown as InsertInput<Flag>,
+    ]);
+
+    expect(collection.getOne('flag-1')?.enabled).toBe(true);
+    expect(collection.getOne('flag-2')?.enabled).toBe(false);
+  });
+
+  test('derives natural-identity keys from logical booleans before storage encoding', () => {
+    const preferences = defineTable('preferences', {
+      scope: field.text({ required: true }),
+      enabled: field.boolean({ required: true }),
+    }, {
+      pk: 'preference_id',
+      identity: ['scope', 'enabled'],
+    });
+    type Preference = InferRow<typeof preferences>;
+    const { client, calls } = createFakeSyncClient('preferences', preferences.clientTable);
+    const collection = createCollection<Preference>(
+      'preferences',
+      client,
+      preferences.clientTable,
+    );
+    const expectedId = createIdentityId('preferences', ['scope', 'enabled'], {
+      scope: 'notifications',
+      enabled: true,
+    });
+
+    collection.insert({ scope: 'notifications', enabled: true });
+
+    expect(calls[0]?.row).toMatchObject({
+      preference_id: expectedId,
+      scope: 'notifications',
+      enabled: 1,
+    });
+    expect(collection.getByIdentity({ scope: 'notifications', enabled: true })?.enabled).toBe(true);
+  });
+});
 
 describe('createCollection natural identity behavior', () => {
   test('insert generates the deterministic natural-identity primary key', () => {

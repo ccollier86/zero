@@ -79,6 +79,15 @@ class NativeAuthClientImpl implements NativeAuthClient {
     return this.state;
   }
 
+  async listTenants() {
+    return (await this.loader.initializedRuntime()).sessions.listTenants();
+  }
+
+  async switchTenant(tenantId: string): Promise<NativeAuthState> {
+    await (await this.loader.initializedRuntime()).sessions.switchTenant(tenantId);
+    return this.state;
+  }
+
   getUser() {
     return this.state.identity;
   }

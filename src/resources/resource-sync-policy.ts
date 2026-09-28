@@ -7,6 +7,10 @@
  */
 
 import type { UserStore } from '../auth/user-store';
+import type { AuthTenancyMode } from '../auth/types';
+import { authContextAuthorityFingerprint } from '../auth/auth-context-authority';
+import type { AuthorizationKernel } from '../auth/authorization-kernel';
+import type { AuthorizationRoleAssignmentResolver } from '../auth/authorization-access';
 import type {
   ChangeOp,
   Row,
@@ -17,8 +21,16 @@ import type {
   SyncResourceTableAccess,
   SyncResourceTableAccessContext,
   SyncRowFilter,
+  SyncRowProjector,
 } from '../sync/types';
-import { createResourcePolicyUser } from './resource-auth';
+import {
+  projectResourceRow,
+  validateResourceClientWriteFields,
+} from './resource-field-access';
+import {
+  createResourcePolicyAuthorization,
+  createResourcePolicyUser,
+} from './resource-auth';
 import { evaluateResourcePolicy } from './resource-policy-evaluator';
 import type {
   ResourceAction,
@@ -28,12 +40,27 @@ import type {
   ResourcePolicyScalar,
 } from './resource-policy-types';
 import type { RegisteredResourceDefinition, ResourceRegistry } from './resource-registry';
+import {
+  rejectResourceRealmUpdate,
+  resolveResourceRealm,
+  resourceRealmConstraint,
+  resourceRowMatchesRealm,
+  stampResourceCreateRealm,
+} from './resource-realm';
 
 /** Configuration required to evaluate resource policy inside sync. */
 export interface ResourceSyncPolicyServiceOptions {
   registry: ResourceRegistry;
   authConfig: ResourcePolicyAuthConfig;
   getUserStore?: () => UserStore | null;
+  /** App-local authorization kernel used by authorizationPolicy(). */
+  getAuthorizationKernel?: () => AuthorizationKernel | null;
+  /** Live advanced role assignments used by authorizationPolicy(). */
+  getRoleAssignments?: () => AuthorizationRoleAssignmentResolver | null;
+  /** Resolved tenancy capability. Multi mode fails closed for managed app tables. */
+  tenancyMode?: AuthTenancyMode;
+  /** App-owned table names; framework-owned tables are composed by their adapter. */
+  managedTables?: ReadonlySet<string>;
 }
 
 type ResourceSyncReadDecision =
@@ -41,6 +68,12 @@ type ResourceSyncReadDecision =
   | { ok: false; reason: string; code?: string };
 
 type ResourceSyncDenyDecision = { ok: false; reason: string; code?: string };
+
+interface ResourceSyncPolicyAuthority {
+  readonly user: ReturnType<typeof createResourcePolicyUser>;
+  readonly authorization: ReturnType<typeof createResourcePolicyAuthorization>;
+  readonly fingerprint: string;
+}
 
 /**
  * Resource-policy adapter used by the sync WebSocket layer.
@@ -51,12 +84,25 @@ type ResourceSyncDenyDecision = { ok: false; reason: string; code?: string };
 export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
   constructor(private readonly options: ResourceSyncPolicyServiceOptions) {}
 
+  /** Prove the immutable realm used by multi-tenant Sync startup. */
+  classifyManagedTableRealm(table: string): 'global' | 'tenant' | null {
+    return this.options.registry.getByTable(table)?.realm?.kind ?? null;
+  }
+
+  /** Prove the immutable client-exposure classification used by Sync startup. */
+  classifyManagedTableExposure(
+    table: string,
+  ): 'internal' | 'http' | 'sync' | 'all' | null {
+    return this.options.registry.getByTable(table)?.exposure.kind ?? null;
+  }
+
   /** Resolve readable tables and row filters for already sync-policy-readable tables. */
   async resolveTableAccess(
     context: SyncResourceTableAccessContext
   ): Promise<SyncResourceTableAccess> {
     const readable = new Set<string>();
     const rowFilters = new Map<string, SyncRowFilter>();
+    const rowProjectors = new Map<string, SyncRowProjector>();
     const fingerprints: Array<[string, string]> = [];
 
     for (const table of context.tableNames) {
@@ -64,6 +110,12 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
       if (!decision.ok) continue;
       readable.add(table);
       if (decision.filter) rowFilters.set(table, decision.filter);
+      const fields = this.options.registry.getByTable(table)?.fields;
+      if (fields) {
+        rowProjectors.set(table, {
+          project: (row) => projectResourceRow(row, fields),
+        });
+      }
       fingerprints.push([table, decision.fingerprint]);
     }
 
@@ -71,6 +123,7 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     return {
       readableTables: readable,
       rowFilters,
+      rowProjectors,
       policyFingerprint: JSON.stringify(fingerprints),
     };
   }
@@ -80,7 +133,33 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     context: SyncResourceMutationContext
   ): Promise<SyncResourceMutationDecision> {
     const resource = this.options.registry.getByTable(context.table);
-    if (!resource) return { ok: true };
+    if (!resource) {
+      if (this.isUnclassifiedManagedTable(context.table)) {
+        return {
+          ok: false,
+          reason: `Managed table '${context.table}' has no data realm`,
+          code: 'resource-realm-unclassified',
+        };
+      }
+      return { ok: true };
+    }
+
+    if (!resource.exposure.sync) {
+      return {
+        ok: false,
+        reason: `Resource '${resource.name}' is not exposed over Sync`,
+        code: 'resource-sync-not-exposed',
+      };
+    }
+
+    const mutationAuthority = this.captureMutationAuthority(
+      context.authContext,
+    );
+
+    const realm = resolveResourceRealm(resource, context.authContext);
+    if (!realm.ok) {
+      return { ok: false, reason: realm.message, code: realm.code };
+    }
 
     const action = syncOpToResourceAction(context.op);
     if (!this.supportsAction(resource, action)) {
@@ -97,14 +176,47 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
         return { ok: false, reason: 'INSERT requires a row', code: 'resource-input-invalid' };
       }
 
-      const decision = await this.evaluatePolicy(resource, action, context.authContext, {
+      const fieldWrite = validateResourceClientWriteFields(
         input,
-      });
+        resource.fields,
+        'create',
+        resource.table,
+        [resource.primaryKey],
+      );
+      if (fieldWrite) {
+        return { ok: false, reason: fieldWrite.error, code: fieldWrite.code };
+      }
+
+      const realmInput = stampResourceCreateRealm(input, realm.scope);
+      if (!realmInput.ok) {
+        return { ok: false, reason: realmInput.message, code: realmInput.code };
+      }
+
+      const decision = await this.evaluatePolicy(
+        resource,
+        action,
+        context.authContext,
+        { input: realmInput.input },
+        mutationAuthority,
+      );
       if (!decision.allowed) return policyDenied(decision);
+
+      const finalInput = stampResourceCreateRealm(
+        mergeStampedInput(realmInput.input, decision.stampedInput),
+        realm.scope,
+      );
+      if (!finalInput.ok) {
+        return { ok: false, reason: finalInput.message, code: finalInput.code };
+      }
 
       return {
         ok: true,
-        row: mergeStampedInput(input, decision.stampedInput),
+        row: finalInput.input,
+        createOnly: true,
+        authorityFingerprint: mutationAuthority.fingerprint,
+        scope: realm.scope
+          ? { field: realm.scope.field, value: realm.scope.tenantId }
+          : undefined,
       };
     }
 
@@ -117,7 +229,7 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     }
 
     const row = context.loadRow(context.table, context.rowId);
-    if (!row) {
+    if (!row || !resourceRowMatchesRealm(row, realm.scope)) {
       return {
         ok: false,
         reason: `Row not found: ${context.rowId}`,
@@ -129,21 +241,64 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     if (action === 'update' && !input) {
       return { ok: false, reason: 'UPDATE requires row (partial)', code: 'resource-input-invalid' };
     }
+    if (input) {
+      const fieldWrite = validateResourceClientWriteFields(
+        input,
+        resource.fields,
+        'update',
+        resource.table,
+      );
+      if (fieldWrite) {
+        return { ok: false, reason: fieldWrite.error, code: fieldWrite.code };
+      }
+      const realmUpdate = rejectResourceRealmUpdate(input, realm.scope);
+      if (!realmUpdate.ok) {
+        return { ok: false, reason: realmUpdate.message, code: realmUpdate.code };
+      }
+    }
 
-    const decision = await this.evaluatePolicy(resource, action, context.authContext, {
-      row,
-      input: input ?? undefined,
-    });
+    const decision = await this.evaluatePolicy(
+      resource,
+      action,
+      context.authContext,
+      { row, input: input ?? undefined },
+      mutationAuthority,
+    );
     if (!decision.allowed) return policyDenied(decision);
 
     if (action === 'update' && input) {
+      const nextInput = mergeStampedInput(input, decision.stampedInput);
+      const realmUpdate = rejectResourceRealmUpdate(nextInput, realm.scope);
+      if (!realmUpdate.ok) {
+        return { ok: false, reason: realmUpdate.message, code: realmUpdate.code };
+      }
       return {
         ok: true,
-        row: mergeStampedInput(input, decision.stampedInput),
+        row: nextInput,
+        expectedRow: row,
+        authorityFingerprint: mutationAuthority.fingerprint,
+        scope: realm.scope
+          ? { field: realm.scope.field, value: realm.scope.tenantId }
+          : undefined,
       };
     }
 
-    return { ok: true };
+    return {
+      ok: true,
+      expectedRow: row,
+      authorityFingerprint: mutationAuthority.fingerprint,
+      scope: realm.scope
+        ? { field: realm.scope.field, value: realm.scope.tenantId }
+        : undefined,
+    };
+  }
+
+  /** Re-read identity and trusted properties at the synchronous commit edge. */
+  validateMutationAuthorityAtCommit(
+    authContext: SyncAuthContext | null,
+    expectedFingerprint: string,
+  ): boolean {
+    return this.mutationAuthorityFingerprint(authContext) === expectedFingerprint;
   }
 
   private async evaluateSyncRead(
@@ -151,7 +306,29 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     authContext: SyncAuthContext | null
   ): Promise<ResourceSyncReadDecision> {
     const resource = this.options.registry.getByTable(table);
-    if (!resource) return { ok: true, fingerprint: 'unmanaged' };
+    if (!resource) {
+      if (this.isUnclassifiedManagedTable(table)) {
+        return {
+          ok: false,
+          reason: `Managed table '${table}' has no data realm`,
+          code: 'resource-realm-unclassified',
+        };
+      }
+      return { ok: true, fingerprint: 'unmanaged' };
+    }
+
+    if (!resource.exposure.sync) {
+      return {
+        ok: false,
+        reason: `Resource '${resource.name}' is not exposed over Sync`,
+        code: 'resource-sync-not-exposed',
+      };
+    }
+
+    const realm = resolveResourceRealm(resource, authContext);
+    if (!realm.ok) {
+      return { ok: false, reason: realm.message, code: realm.code };
+    }
 
     if (!this.supportsAction(resource, 'list')) {
       return {
@@ -161,18 +338,52 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
       };
     }
 
-    const decision = await this.evaluatePolicy(resource, 'list', authContext);
+    const policyAuthority = this.captureMutationAuthority(authContext);
+    const decision = await this.evaluatePolicy(
+      resource,
+      'list',
+      authContext,
+      {},
+      policyAuthority,
+    );
     if (!decision.allowed) return policyDenied(decision);
 
-    if (decision.constraints && decision.constraints.length > 0) {
+    const constraints = [
+      ...resourceRealmConstraint(realm.scope),
+      ...(decision.constraints ?? []),
+    ];
+    const realmFingerprint = realm.scope?.fingerprint ?? resource.realm?.kind ?? 'legacy';
+    const fieldFingerprint = resource.fields
+      ? [
+          resource.fields.read,
+          resource.fields.create,
+          resource.fields.update,
+          resource.fields.filter,
+          resource.fields.sort,
+        ]
+      : 'legacy-all-fields';
+    if (constraints.length > 0) {
       return {
         ok: true,
-        filter: createConstraintRowFilter(decision.constraints),
-        fingerprint: JSON.stringify(decision.constraints),
+        filter: createConstraintRowFilter(constraints),
+        fingerprint: JSON.stringify([
+          realmFingerprint,
+          constraints,
+          fieldFingerprint,
+          policyAuthority.fingerprint,
+        ]),
       };
     }
 
-    return { ok: true, fingerprint: 'unfiltered' };
+    return {
+      ok: true,
+      fingerprint: JSON.stringify([
+        realmFingerprint,
+        'unfiltered',
+        fieldFingerprint,
+        policyAuthority.fingerprint,
+      ]),
+    };
   }
 
   private evaluatePolicy(
@@ -182,11 +393,13 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     options: {
       row?: Row;
       input?: Record<string, unknown>;
-    } = {}
+    } = {},
+    policyAuthority = this.captureMutationAuthority(authContext),
   ): Promise<ResourcePolicyDecision> {
     return evaluateResourcePolicy(resource.policy[action]!, {
       action,
-      user: createResourcePolicyUser(authContext, this.options.getUserStore?.() ?? null),
+      user: policyAuthority.user,
+      authorization: policyAuthority.authorization,
       resource,
       row: options.row,
       input: options.input,
@@ -194,11 +407,53 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     });
   }
 
+  private mutationAuthorityFingerprint(
+    authContext: SyncAuthContext | null,
+  ): string {
+    return this.captureMutationAuthority(authContext).fingerprint;
+  }
+
+  private captureMutationAuthority(
+    authContext: SyncAuthContext | null,
+  ): ResourceSyncPolicyAuthority {
+    const user = createResourcePolicyUser(
+      authContext,
+      this.options.getUserStore?.() ?? null,
+    );
+    const authorization = createResourcePolicyAuthorization(
+      authContext,
+      user,
+      this.options.getAuthorizationKernel?.() ?? null,
+      this.options.getRoleAssignments?.() ?? null,
+    );
+    return {
+      user,
+      authorization,
+      fingerprint: JSON.stringify([
+        authContextAuthorityFingerprint(authContext, user?.properties ?? {}),
+        user ? [user.userId, user.email ?? null, user.role] : null,
+        authorization?.subject?.authorization ? [
+          authorization.subject.authorization.scopeKind,
+          authorization.subject.authorization.scopeId,
+          authorization.subject.authorization.roles,
+          authorization.subject.authorization.permissions,
+          authorization.subject.authorization.allPermissions ?? false,
+          authorization.subject.authorization.revision,
+        ] : null,
+      ]),
+    };
+  }
+
   private supportsAction(
     resource: RegisteredResourceDefinition,
     action: ResourceAction
   ): boolean {
     return resource.actions.includes(action) && Boolean(resource.policy[action]);
+  }
+
+  private isUnclassifiedManagedTable(table: string): boolean {
+    return this.options.tenancyMode === 'multi'
+      && (this.options.managedTables?.has(table) ?? true);
   }
 }
 

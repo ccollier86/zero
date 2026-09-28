@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { AnimateIcon, X } from '@/components/animate-ui/icons';
+import { AnimateIcon, X } from '#zero/components/animate-ui/icons';
 import {
   Sheet as SheetPrimitive,
   SheetTrigger as SheetTriggerPrimitive,
@@ -21,8 +21,8 @@ import {
   type SheetFooterProps as SheetFooterPrimitiveProps,
   type SheetTitleProps as SheetTitlePrimitiveProps,
   type SheetDescriptionProps as SheetDescriptionPrimitiveProps,
-} from '@/components/animate-ui/primitives/radix/sheet';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/primitives/radix/sheet';
+import { cn } from '#zero/lib/utils';
 
 type SheetProps = SheetPrimitiveProps;
 

@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import type { ServerWebSocket } from 'bun';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createReactiveDB } from './reactive-db';
 import { deliverSyncChange } from './sync-change-delivery';
 import { handleSyncSubscribe } from './sync-subscribe-handler';
@@ -63,10 +66,98 @@ describe('Sync recovery protocol', () => {
     db.dispose();
   });
 
+  test('snapshot never advances its cursor past rows from the same SQLite view', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'zero-sync-snapshot-cursor-'));
+    const path = join(directory, 'app.sqlite');
+    const writer = createReactiveDB({ mode: path, busyTimeout: 10_000 });
+    const reader = createReactiveDB({ mode: path, busyTimeout: 10_000 });
+    const schema = { id: 'text primary key', title: 'text' };
+    writer.defineTable('todos', schema);
+    reader.defineTable('todos', schema);
+    writer.insert('todos', { id: 'item', title: 'Before' });
+    const ws = socket();
+    const query = reader.query.bind(reader);
+    let interleaved = false;
+    reader.query = ((table: string) => {
+      const rows = query(table);
+      if (!interleaved) {
+        interleaved = true;
+        writer.update('todos', 'item', { title: 'After' });
+      }
+      return rows;
+    }) as typeof reader.query;
+
+    try {
+      handleSyncSubscribe(ws.value, {
+        type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'],
+        lastSeq: 0, epoch: 'force-snapshot', scope: 'scope-a',
+      }, reader);
+
+      const message = ws.messages[0];
+      expect(message.type).toBe('sync.snapshot');
+      if (message.type === 'sync.snapshot') {
+        expect(message.tables.todos.item?.title).toBe('Before');
+        expect(message.seq).toBe(1);
+      }
+      expect(ws.data.lastSeq).toBe(1);
+      expect(reader.currentSeq).toBe(2);
+    } finally {
+      reader.dispose();
+      writer.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('catch-up never advances past changes read from the same SQLite view', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'zero-sync-catchup-cursor-'));
+    const path = join(directory, 'app.sqlite');
+    const writer = createReactiveDB({ mode: path, busyTimeout: 10_000 });
+    const reader = createReactiveDB({ mode: path, busyTimeout: 10_000 });
+    const schema = { id: 'text primary key', title: 'text' };
+    writer.defineTable('todos', schema);
+    reader.defineTable('todos', schema);
+    writer.insert('todos', { id: 'first', title: 'First' });
+    const ws = socket();
+    const getChangesAfter = reader.getChangesAfter.bind(reader);
+    let interleaved = false;
+    reader.getChangesAfter = ((seq: number) => {
+      const changes = getChangesAfter(seq);
+      if (!interleaved) {
+        interleaved = true;
+        writer.insert('todos', { id: 'second', title: 'Second' });
+      }
+      return changes;
+    }) as typeof reader.getChangesAfter;
+
+    try {
+      handleSyncSubscribe(ws.value, {
+        type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'],
+        lastSeq: 0, epoch: reader.syncEpoch, scope: 'scope-a',
+      }, reader);
+
+      const message = ws.messages[0];
+      expect(message.type).toBe('sync.catchup');
+      if (message.type === 'sync.catchup') {
+        expect(message.changes.map((change) => change.rowId)).toEqual(['first']);
+        expect(message.seq).toBe(1);
+      }
+      expect(ws.data.lastSeq).toBe(1);
+      expect(reader.currentSeq).toBe(2);
+    } finally {
+      reader.dispose();
+      writer.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test('live predecessor cursor ignores unrelated tables without hiding loss', () => {
     const ws = socket();
     ws.data.syncSubscribedTables.add('todos');
     ws.data.lastSeq = 4;
+    deliverSyncChange([ws.value], {
+      seq: 4, table: 'todos', op: 'UPDATE', rowId: 'already-snapshotted',
+      row: { id: 'already-snapshotted' }, ts: 0,
+    }, 'epoch', '');
     deliverSyncChange([ws.value], {
       seq: 5, table: 'logs', op: 'INSERT', rowId: 'l1', row: { id: 'l1' }, ts: 1,
     }, 'epoch', '');
@@ -79,5 +170,26 @@ describe('Sync recovery protocol', () => {
     expect(message.type === 'sync.change' && message.prevSeq).toBe(4);
     expect(message.type === 'sync.change' && message.seq).toBe(8);
     expect(ws.data.lastSeq).toBe(8);
+  });
+
+  test('checks durable authority immediately before an outgoing live change', () => {
+    const ws = socket();
+    ws.data.syncSubscribedTables.add('todos');
+    let checked = 0;
+    deliverSyncChange([ws.value], {
+      seq: 1,
+      table: 'todos',
+      op: 'INSERT',
+      rowId: 'blocked',
+      row: { id: 'blocked' },
+      ts: 1,
+    }, 'epoch', '', () => {
+      checked += 1;
+      return false;
+    });
+
+    expect(checked).toBe(1);
+    expect(ws.messages).toEqual([]);
+    expect(ws.data.lastSeq).toBe(0);
   });
 });

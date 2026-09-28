@@ -9,7 +9,7 @@ import {
   type HTMLMotionProps,
   type Transition,
 } from 'motion/react';
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 
 type PinListItem = {
   id: number;

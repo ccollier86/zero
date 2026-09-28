@@ -31,6 +31,59 @@ describe('resolveSyncAuthContext', () => {
     expect(result).toEqual({ ok: true, authContext: null });
   });
 
+  test('fails a cached optional anonymous bridge after its auth profile changes', async () => {
+    let current = true;
+    const verifier: SyncTokenVerifier = {
+      assertCurrentProfile() {
+        if (!current) throw new Error('AUTH_PROFILE_CHANGED');
+      },
+      async verifyAccessToken() {
+        return null;
+      },
+    };
+    const auth = { getTokenVerifier: () => verifier };
+
+    expect(await resolveSyncAuthContext(undefined, auth)).toEqual({
+      ok: true,
+      authContext: null,
+    });
+
+    current = false;
+    expect(await resolveSyncAuthContext(undefined, auth)).toEqual({
+      ok: false,
+      closeCode: 1011,
+      reason: 'Auth resolution failed',
+    });
+  });
+
+  test('rechecks the profile after asynchronous token resolution', async () => {
+    let current = true;
+    const verifier: SyncTokenVerifier = {
+      assertCurrentProfile() {
+        if (!current) throw new Error('AUTH_PROFILE_CHANGED');
+      },
+      async resolveAuthContext() {
+        current = false;
+        return {
+          userId: 'user-1',
+          email: 'user@test.local',
+          role: 'user',
+        };
+      },
+      async verifyAccessToken() {
+        return null;
+      },
+    };
+
+    expect(await resolveSyncAuthContext('user-token', {
+      getTokenVerifier: () => verifier,
+    })).toEqual({
+      ok: false,
+      closeCode: 1011,
+      reason: 'Auth resolution failed',
+    });
+  });
+
   test('rejects missing token when auth is required', async () => {
     const result = await resolveSyncAuthContext(undefined, {
       required: true,

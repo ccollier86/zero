@@ -6,7 +6,15 @@
  * platform SDK client instead of reading tokens from browser storage.
  */
 
-import { useState, useCallback, useEffect, useRef, type MutableRefObject } from 'react';
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from 'react';
 import type {
   CreateUploadGrantParams,
   DriveRecord,
@@ -21,7 +29,12 @@ import type {
   StorageUploadGrant,
 } from './types';
 import { useClient } from '../frontend/client/client-context';
-import type { Client, FetchInit } from '../frontend/client/sdk';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+  type AuthorizationScopeBoundary,
+} from '../frontend/client/authorization-scope-hooks';
+import type { Client, FetchInit, InternalClient } from '../frontend/client/sdk';
 
 // ─── Internal: SDK-backed transport ───────────────────────────────────────
 
@@ -47,6 +60,59 @@ function requireStorageClient(client: Client | null): Client {
   return client;
 }
 
+function useStorageRefresh(
+  boundary: AuthorizationScopeBoundary,
+  setRefreshKey: Dispatch<SetStateAction<number>>,
+): () => void {
+  const boundaryKeyRef = useRef(boundary.key);
+  const boundaryReadyRef = useRef(boundary.ready);
+  boundaryKeyRef.current = boundary.key;
+  boundaryReadyRef.current = boundary.ready;
+  const callbackBoundaryKey = boundary.key;
+
+  return useCallback(() => {
+    if (!isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    )) return;
+    setRefreshKey((key) => key + 1);
+  }, [callbackBoundaryKey, setRefreshKey]);
+}
+
+function useStorageOperationGuard(boundary: AuthorizationScopeBoundary): {
+  assertCurrent: () => void;
+  run: <T>(operation: () => Promise<T>) => Promise<T>;
+} {
+  const boundaryKeyRef = useRef(boundary.key);
+  const boundaryReadyRef = useRef(boundary.ready);
+  boundaryKeyRef.current = boundary.key;
+  boundaryReadyRef.current = boundary.ready;
+  const callbackBoundaryKey = boundary.key;
+
+  const assertCurrent = useCallback(() => {
+    if (!isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    )) throw storageScopeUnavailableError();
+  }, [callbackBoundaryKey]);
+
+  const run = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
+    assertCurrent();
+    try {
+      const result = await operation();
+      assertCurrent();
+      return result;
+    } catch (error) {
+      assertCurrent();
+      throw error;
+    }
+  }, [assertCurrent]);
+
+  return { assertCurrent, run };
+}
+
 async function apiFetch<T>(
   client: Client | null,
   path: string,
@@ -55,9 +121,12 @@ async function apiFetch<T>(
   return requireStorageClient(client).fetch<T>(apiUrl(path), init);
 }
 
-function parseUploadError(xhr: XMLHttpRequest, fallback: string): string {
+function parseUploadError(
+  response: Pick<XMLHttpRequest, 'responseText'>,
+  fallback: string,
+): string {
   try {
-    return JSON.parse(xhr.responseText)?.error || fallback;
+    return JSON.parse(response.responseText)?.error || fallback;
   } catch {
     return fallback;
   }
@@ -79,19 +148,58 @@ function createUploadAbortError(): Error {
   return error;
 }
 
-function sendUploadRequest(
+interface UploadAttemptResult {
+  status: number;
+  responseText: string;
+}
+
+function sendUploadAttempt(
   client: Client,
   driveId: string,
   formData: FormData,
   options: UploadFileOptions,
   abortRef: MutableRefObject<XMLHttpRequest | null>,
-  retryOnUnauthorized: boolean,
-): Promise<FileInfo> {
+  accessToken: string | null,
+  assertAuthorizationScopeCurrent: () => void,
+  authorizationScopeSignal: AbortSignal,
+): Promise<UploadAttemptResult> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    let settled = false;
     abortRef.current = xhr;
 
+    const clearCurrentRequest = () => {
+      if (abortRef.current === xhr) abortRef.current = null;
+      authorizationScopeSignal.removeEventListener('abort', abortForScope);
+    };
+    const rejectOnce = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearCurrentRequest();
+      reject(error);
+    };
+    const rejectIfScopeChanged = (): boolean => {
+      try {
+        assertAuthorizationScopeCurrent();
+        return false;
+      } catch (error) {
+        rejectOnce(error);
+        xhr.abort();
+        return true;
+      }
+    };
+    const abortForScope = () => {
+      const reason = authorizationScopeSignal.reason instanceof Error
+        ? authorizationScopeSignal.reason
+        : createUploadAbortError();
+      rejectOnce(reason);
+      xhr.abort();
+    };
+
+    authorizationScopeSignal.addEventListener('abort', abortForScope, { once: true });
+
     xhr.upload.onprogress = (e) => {
+      if (rejectIfScopeChanged()) return;
       if (e.lengthComputable) {
         const pct = Math.round((e.loaded / e.total) * 100);
         options.onProgress?.(pct);
@@ -99,48 +207,67 @@ function sendUploadRequest(
     };
 
     xhr.onload = () => {
-      abortRef.current = null;
-
-      if (xhr.status === 401 && retryOnUnauthorized) {
-        client.refresh()
-          .then(() => sendUploadRequest(
-            client,
-            driveId,
-            formData,
-            options,
-            abortRef,
-            false,
-          ))
-          .then(resolve, reject);
-        return;
-      }
-
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          resolve(JSON.parse(xhr.responseText) as FileInfo);
-        } catch {
-          reject(new Error('Invalid response'));
-        }
-        return;
-      }
-
-      reject(new Error(parseUploadError(xhr, 'Upload failed')));
+      if (rejectIfScopeChanged() || settled) return;
+      settled = true;
+      clearCurrentRequest();
+      resolve({ status: xhr.status, responseText: xhr.responseText });
     };
 
     xhr.onerror = () => {
-      abortRef.current = null;
-      reject(new Error('Network error'));
+      rejectOnce(new Error('Network error'));
     };
 
     xhr.onabort = () => {
-      abortRef.current = null;
-      reject(createUploadAbortError());
+      rejectOnce(createUploadAbortError());
     };
 
     xhr.open('POST', storageUrl(client, `/drives/${driveId}/upload`));
-    if (client.token) xhr.setRequestHeader('Authorization', `Bearer ${client.token}`);
+    if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+    if (authorizationScopeSignal.aborted) {
+      abortForScope();
+      return;
+    }
+    if (rejectIfScopeChanged()) return;
     xhr.send(formData);
   });
+}
+
+/** @internal Behavioral transport seam used by storage regression tests. */
+export async function sendUploadRequest(
+  client: Client,
+  driveId: string,
+  formData: FormData,
+  options: UploadFileOptions,
+  abortRef: MutableRefObject<XMLHttpRequest | null>,
+): Promise<FileInfo> {
+  const auth = (client as InternalClient).auth;
+  const executeAttempt = (
+    accessToken: string | null,
+    assertCurrent: () => void,
+    authorizationScopeSignal = new AbortController().signal,
+  ) => sendUploadAttempt(
+    client,
+    driveId,
+    formData,
+    options,
+    abortRef,
+    accessToken,
+    assertCurrent,
+    authorizationScopeSignal,
+  );
+  const response = auth
+    ? await auth.requestWithAuthTransport(executeAttempt)
+    : await executeAttempt(null, () => {});
+
+  if (response.status >= 200 && response.status < 300) {
+    try {
+      return JSON.parse(response.responseText) as FileInfo;
+    } catch {
+      throw new Error('Invalid response');
+    }
+  }
+
+  throw new Error(parseUploadError(response, 'Upload failed'));
 }
 
 // ─── useUpload ───────────────────────────────────────────────────────────
@@ -168,11 +295,13 @@ export interface UploadFileOptions {
 /**
  * Upload files to a storage drive with XHR progress reporting.
  *
- * Uses the SDK client's in-memory access token and retries once after
- * `client.refresh()` if the upload receives 401.
+ * Uses the SDK's authenticated transport lifecycle so stored-session
+ * restoration, one 401 refresh/retry, and authorization-scope fencing match
+ * `client.fetch()` without exposing credential handling to the hook.
  */
 export function useUpload(): UseUploadReturn {
   const client = useClient();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const [state, setState] = useState<UploadState>({
     uploading: false,
     progress: 0,
@@ -181,6 +310,20 @@ export function useUpload(): UseUploadReturn {
   });
   const abortRef = useRef<XMLHttpRequest | null>(null);
   const mountedRef = useRef(true);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const isCurrentScope = useCallback(
+    () => isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    ),
+    [callbackBoundaryKey],
+  );
 
   // Abort in-flight XHR on unmount
   useEffect(() => {
@@ -194,8 +337,23 @@ export function useUpload(): UseUploadReturn {
     };
   }, []);
 
+  // A transition masks prior results immediately and aborts the current XHR.
+  // The transport epoch remains the authoritative race fence if XHR completes
+  // before React has run this cleanup effect.
+  useEffect(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setState({ uploading: false, progress: 0, error: null, result: null });
+  }, [authorizationBoundary.key]);
+
   const upload = useCallback(
     async (driveId: string, file: File, options: UploadFileOptions = {}): Promise<FileInfo> => {
+      if (!isCurrentScope()) throw storageScopeUnavailableError();
+      const requestBoundaryKey = callbackBoundaryKey;
+      setLoadedBoundaryKey(requestBoundaryKey);
       setState({ uploading: true, progress: 0, error: null, result: null });
 
       try {
@@ -207,40 +365,58 @@ export function useUpload(): UseUploadReturn {
           {
             ...options,
             onProgress: (progress) => {
-              if (mountedRef.current) setState((s) => ({ ...s, progress }));
-              options.onProgress?.(progress);
+              if (mountedRef.current && boundaryKeyRef.current === requestBoundaryKey) {
+                setState((s) => ({ ...s, progress }));
+                options.onProgress?.(progress);
+              }
             },
           },
           abortRef,
-          true,
         );
-        if (mountedRef.current) setState({ uploading: false, progress: 100, error: null, result });
+        if (!mountedRef.current
+          || !boundaryReadyRef.current
+          || boundaryKeyRef.current !== requestBoundaryKey) {
+          throw new Error('The authorization scope changed before the upload completed.');
+        }
+        setState({ uploading: false, progress: 100, error: null, result });
         return result;
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') {
-          if (mountedRef.current) {
+          if (mountedRef.current && boundaryKeyRef.current === requestBoundaryKey) {
             setState({ uploading: false, progress: 0, error: null, result: null });
           }
           throw err;
         }
 
         const message = err instanceof Error ? err.message : 'Upload failed';
-        if (mountedRef.current) setState((s) => ({ ...s, uploading: false, error: message }));
+        if (mountedRef.current && boundaryKeyRef.current === requestBoundaryKey) {
+          setState((s) => ({ ...s, uploading: false, error: message }));
+        }
         throw err;
       }
     },
-    [client]
+    [callbackBoundaryKey, client, isCurrentScope]
   );
 
   const reset = useCallback(() => {
+    if (!isCurrentScope()) return;
     if (abortRef.current) {
       abortRef.current.abort();
       abortRef.current = null;
     }
     setState({ uploading: false, progress: 0, error: null, result: null });
-  }, []);
+  }, [isCurrentScope]);
 
-  return { ...state, upload, reset };
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+  return {
+    uploading: visible ? state.uploading : false,
+    progress: visible ? state.progress : 0,
+    error: visible ? state.error : null,
+    result: visible ? state.result : null,
+    upload,
+    reset,
+  };
 }
 
 // ─── useStorageFolder ────────────────────────────────────────────────────
@@ -268,12 +444,14 @@ export function useStorageFolder(
   options: UseStorageFolderOptions = {},
 ): UseStorageFolderReturn {
   const client = useClient();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const [items, setItems] = useState<FileInfo[]>([]);
   const [total, setTotal] = useState(0);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
   const {
     cursor: requestedCursor,
     limit,
@@ -283,17 +461,22 @@ export function useStorageFolder(
   } = options;
 
   useEffect(() => {
-    if (!driveId || !client) {
-      setItems([]);
-      setTotal(0);
-      setCursor(null);
+    const controller = new AbortController();
+    let active = true;
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setItems([]);
+    setTotal(0);
+    setCursor(null);
+    setError(null);
+    if (!driveId || !client || !authorizationBoundary.ready) {
       setLoading(false);
-      return;
+      return () => {
+        active = false;
+        controller.abort();
+      };
     }
 
-    const controller = new AbortController();
     setLoading(true);
-    setError(null);
 
     const query = new URLSearchParams();
     if (path) query.set('path', path);
@@ -305,23 +488,48 @@ export function useStorageFolder(
     const queryString = query.toString() ? `?${query.toString()}` : '';
     apiFetch<ListResult>(client, `/drives/${driveId}/list${queryString}`, { signal: controller.signal })
       .then((result) => {
+        if (!active) return;
         setItems(result.items);
         setTotal(result.total);
         setCursor(result.cursor);
       })
       .catch((err) => {
-        if (err.name !== 'AbortError') setError(err.message);
+        if (active && err.name !== 'AbortError') setError(err.message);
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (active && !controller.signal.aborted) setLoading(false);
       });
 
-    return () => controller.abort();
-  }, [client, driveId, limit, path, refreshKey, requestedCursor, sortBy, sortDir, type]);
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [
+    authorizationBoundary.key,
+    authorizationBoundary.ready,
+    client,
+    driveId,
+    limit,
+    path,
+    refreshKey,
+    requestedCursor,
+    sortBy,
+    sortDir,
+    type,
+  ]);
 
-  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  const refresh = useStorageRefresh(authorizationBoundary, setRefreshKey);
 
-  return { items, total, cursor, loading, error, refresh };
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+  return {
+    items: visible ? items : [],
+    total: visible ? total : 0,
+    cursor: visible ? cursor : null,
+    loading: visible ? loading : Boolean(driveId && authorizationBoundary.ready),
+    error: visible ? error : null,
+    refresh,
+  };
 }
 
 // ─── useStorageDrives ────────────────────────────────────────────────────
@@ -341,37 +549,56 @@ export interface UseStorageDrivesReturn {
  */
 export function useStorageDrives(): UseStorageDrivesReturn {
   const client = useClient();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const [drives, setDrives] = useState<DriveRecordWithAccess[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
+    let active = true;
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setDrives([]);
     setError(null);
 
-    if (!client) {
-      setDrives([]);
+    if (!client || !authorizationBoundary.ready) {
       setLoading(false);
-      return () => controller.abort();
+      return () => {
+        active = false;
+        controller.abort();
+      };
     }
 
+    setLoading(true);
     apiFetch<DriveRecordWithAccess[]>(client, '/drives', { signal: controller.signal })
-      .then(setDrives)
+      .then((result) => {
+        if (active) setDrives(result);
+      })
       .catch((err) => {
-        if (err.name !== 'AbortError') setError(err.message);
+        if (active && err.name !== 'AbortError') setError(err.message);
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (active && !controller.signal.aborted) setLoading(false);
       });
 
-    return () => controller.abort();
-  }, [client, refreshKey]);
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [authorizationBoundary.key, authorizationBoundary.ready, client, refreshKey]);
 
-  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  const refresh = useStorageRefresh(authorizationBoundary, setRefreshKey);
 
-  return { drives, loading, error, refresh };
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+  return {
+    drives: visible ? drives : [],
+    loading: visible ? loading : authorizationBoundary.ready,
+    error: visible ? error : null,
+    refresh,
+  };
 }
 
 // ─── useDriveCapabilities ────────────────────────────────────────────────
@@ -389,47 +616,73 @@ export function useDriveCapabilities(
   path?: string,
 ): UseDriveCapabilitiesReturn {
   const client = useClient();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const [capabilities, setCapabilities] = useState<StorageAccessCapabilities | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
 
   useEffect(() => {
-    if (!driveId || !client) {
-      setCapabilities(null);
+    const controller = new AbortController();
+    let active = true;
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setCapabilities(null);
+    setError(null);
+    if (!driveId || !client || !authorizationBoundary.ready) {
       setLoading(false);
-      return;
+      return () => {
+        active = false;
+        controller.abort();
+      };
     }
 
-    const controller = new AbortController();
     const query = new URLSearchParams();
     if (path) query.set('path', path);
     const queryString = query.toString() ? `?${query.toString()}` : '';
 
     setLoading(true);
-    setError(null);
     apiFetch<StorageAccessCapabilities>(
       client,
       `/drives/${driveId}/capabilities${queryString}`,
       { signal: controller.signal },
     )
-      .then(setCapabilities)
+      .then((result) => {
+        if (active) setCapabilities(result);
+      })
       .catch((err) => {
-        if (err.name !== 'AbortError') {
+        if (active && err.name !== 'AbortError') {
           setCapabilities(null);
           setError(err.message);
         }
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (active && !controller.signal.aborted) setLoading(false);
       });
 
-    return () => controller.abort();
-  }, [client, driveId, path, refreshKey]);
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [
+    authorizationBoundary.key,
+    authorizationBoundary.ready,
+    client,
+    driveId,
+    path,
+    refreshKey,
+  ]);
 
-  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  const refresh = useStorageRefresh(authorizationBoundary, setRefreshKey);
 
-  return { capabilities, loading, error, refresh };
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+  return {
+    capabilities: visible ? capabilities : null,
+    loading: visible ? loading : Boolean(driveId && authorizationBoundary.ready),
+    error: visible ? error : null,
+    refresh,
+  };
 }
 
 // ─── useStoragePermissions ───────────────────────────────────────────────
@@ -447,47 +700,73 @@ export function useStoragePermissions(
   objectPath?: string,
 ): UseStoragePermissionsReturn {
   const client = useClient();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const [permissions, setPermissions] = useState<PermissionRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
 
   useEffect(() => {
-    if (!driveId || !client) {
-      setPermissions([]);
+    const controller = new AbortController();
+    let active = true;
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setPermissions([]);
+    setError(null);
+    if (!driveId || !client || !authorizationBoundary.ready) {
       setLoading(false);
-      return;
+      return () => {
+        active = false;
+        controller.abort();
+      };
     }
 
-    const controller = new AbortController();
     const query = new URLSearchParams();
     if (objectPath) query.set('objectPath', objectPath);
     const queryString = query.toString() ? `?${query.toString()}` : '';
 
     setLoading(true);
-    setError(null);
     apiFetch<{ permissions: PermissionRecord[] }>(
       client,
       `/drives/${driveId}/permissions${queryString}`,
       { signal: controller.signal },
     )
-      .then((result) => setPermissions(result.permissions))
+      .then((result) => {
+        if (active) setPermissions(result.permissions);
+      })
       .catch((err) => {
-        if (err.name !== 'AbortError') {
+        if (active && err.name !== 'AbortError') {
           setPermissions([]);
           setError(err.message);
         }
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (active && !controller.signal.aborted) setLoading(false);
       });
 
-    return () => controller.abort();
-  }, [client, driveId, objectPath, refreshKey]);
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [
+    authorizationBoundary.key,
+    authorizationBoundary.ready,
+    client,
+    driveId,
+    objectPath,
+    refreshKey,
+  ]);
 
-  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  const refresh = useStorageRefresh(authorizationBoundary, setRefreshKey);
 
-  return { permissions, loading, error, refresh };
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+  return {
+    permissions: visible ? permissions : [],
+    loading: visible ? loading : Boolean(driveId && authorizationBoundary.ready),
+    error: visible ? error : null,
+    refresh,
+  };
 }
 
 // ─── useDriveUsage ───────────────────────────────────────────────────────
@@ -504,41 +783,65 @@ export interface UseDriveUsageReturn {
  */
 export function useDriveUsage(driveId: string | null): UseDriveUsageReturn {
   const client = useClient();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const [usage, setUsage] = useState<DriveUsage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
 
   useEffect(() => {
-    if (!driveId || !client) {
-      setUsage(null);
-      setError(null);
+    const controller = new AbortController();
+    let active = true;
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setUsage(null);
+    setError(null);
+    if (!driveId || !client || !authorizationBoundary.ready) {
       setLoading(false);
-      return;
+      return () => {
+        active = false;
+        controller.abort();
+      };
     }
 
-    const controller = new AbortController();
     setLoading(true);
-    setError(null);
 
     apiFetch<DriveUsage>(client, `/drives/${driveId}/usage`, { signal: controller.signal })
-      .then(setUsage)
+      .then((result) => {
+        if (active) setUsage(result);
+      })
       .catch((err) => {
-        if (err.name !== 'AbortError') {
+        if (active && err.name !== 'AbortError') {
           setUsage(null);
           setError(err.message);
         }
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (active && !controller.signal.aborted) setLoading(false);
       });
 
-    return () => controller.abort();
-  }, [client, driveId, refreshKey]);
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [
+    authorizationBoundary.key,
+    authorizationBoundary.ready,
+    client,
+    driveId,
+    refreshKey,
+  ]);
 
-  const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+  const refresh = useStorageRefresh(authorizationBoundary, setRefreshKey);
 
-  return { usage, loading, error, refresh };
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+  return {
+    usage: visible ? usage : null,
+    loading: visible ? loading : Boolean(driveId && authorizationBoundary.ready),
+    error: visible ? error : null,
+    refresh,
+  };
 }
 
 // ─── usePresignedUrl ─────────────────────────────────────────────────────
@@ -552,15 +855,21 @@ export interface UsePresignedUrlReturn {
  */
 export function usePresignedUrl(): UsePresignedUrlReturn {
   const client = useClient();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
+  const scope = useStorageOperationGuard(authorizationBoundary);
   const getUrl = useCallback(
     async (driveId: string, path: string, method: 'upload' | 'download' = 'download') => {
-      const result = await apiFetch<{ token: string }>(client, `/drives/${driveId}/presign`, {
-        method: 'POST',
-        body: { path, method },
-      });
+      const result = await scope.run(() => apiFetch<{ token: string }>(
+        client,
+        `/drives/${driveId}/presign`,
+        {
+          method: 'POST',
+          body: { path, method },
+        },
+      ));
       return storageUrl(client, `/presigned/${result.token}`);
     },
-    [client]
+    [client, scope]
   );
 
   return { getUrl };
@@ -588,80 +897,91 @@ export interface StorageActions {
  */
 export function useStorageActions(): StorageActions {
   const client = useClient();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
+  const scope = useStorageOperationGuard(authorizationBoundary);
 
   return {
     createDrive: useCallback(async (name, options) => {
-      return apiFetch<DriveRecord>(client, '/drives', {
+      return scope.run(() => apiFetch<DriveRecord>(client, '/drives', {
         method: 'POST',
         body: { name, ...options },
-      });
-    }, [client]),
+      }));
+    }, [client, scope]),
 
     updateDrive: useCallback(async (driveId, updates) => {
-      return apiFetch<DriveRecord>(client, `/drives/${driveId}`, {
+      return scope.run(() => apiFetch<DriveRecord>(client, `/drives/${driveId}`, {
         method: 'PATCH',
         body: updates,
-      });
-    }, [client]),
+      }));
+    }, [client, scope]),
 
     deleteDrive: useCallback(async (driveId) => {
-      await apiFetch(client, `/drives/${driveId}`, { method: 'DELETE' });
-    }, [client]),
+      await scope.run(() => apiFetch(client, `/drives/${driveId}`, { method: 'DELETE' }));
+    }, [client, scope]),
 
     grantPermission: useCallback(async (driveId, params) => {
-      return apiFetch<PermissionRecord>(client, `/drives/${driveId}/permissions`, {
+      return scope.run(() => apiFetch<PermissionRecord>(client, `/drives/${driveId}/permissions`, {
         method: 'POST',
         body: params,
-      });
-    }, [client]),
+      }));
+    }, [client, scope]),
 
     revokePermission: useCallback(async (permissionId) => {
-      await apiFetch(client, `/permissions/${permissionId}`, { method: 'DELETE' });
-    }, [client]),
+      await scope.run(() => apiFetch(client, `/permissions/${permissionId}`, { method: 'DELETE' }));
+    }, [client, scope]),
 
     createUploadGrant: useCallback(async (driveId, params) => {
-      return apiFetch<StorageUploadGrant>(client, `/drives/${driveId}/upload-grants`, {
+      return scope.run(() => apiFetch<StorageUploadGrant>(client, `/drives/${driveId}/upload-grants`, {
         method: 'POST',
         body: params,
-      });
-    }, [client]),
+      }));
+    }, [client, scope]),
 
     createFolder: useCallback(async (driveId, path, isPublic) => {
-      return apiFetch<FileInfo>(client, `/drives/${driveId}/folders`, {
+      return scope.run(() => apiFetch<FileInfo>(client, `/drives/${driveId}/folders`, {
         method: 'POST',
         body: { path, public: isPublic },
-      });
-    }, [client]),
+      }));
+    }, [client, scope]),
 
     deleteFile: useCallback(async (driveId, path) => {
       const encoded = encodePath(path);
-      await apiFetch(client, `/drives/${driveId}/files/${encoded}`, { method: 'DELETE' });
-    }, [client]),
+      await scope.run(() => apiFetch(
+        client,
+        `/drives/${driveId}/files/${encoded}`,
+        { method: 'DELETE' },
+      ));
+    }, [client, scope]),
 
     moveFile: useCallback(async (driveId, from, to) => {
-      return apiFetch<FileInfo>(client, `/drives/${driveId}/move`, {
+      return scope.run(() => apiFetch<FileInfo>(client, `/drives/${driveId}/move`, {
         method: 'POST',
         body: { from, to },
-      });
-    }, [client]),
+      }));
+    }, [client, scope]),
 
     copyFile: useCallback(async (driveId, from, to) => {
-      return apiFetch<FileInfo>(client, `/drives/${driveId}/copy`, {
+      return scope.run(() => apiFetch<FileInfo>(client, `/drives/${driveId}/copy`, {
         method: 'POST',
         body: { from, to },
-      });
-    }, [client]),
+      }));
+    }, [client, scope]),
 
     setVisibility: useCallback(async (driveId, isPublic, path) => {
-      await apiFetch(client, `/drives/${driveId}/visibility`, {
+      await scope.run(() => apiFetch(client, `/drives/${driveId}/visibility`, {
         method: 'PATCH',
         body: { public: isPublic, path },
-      });
-    }, [client]),
+      }));
+    }, [client, scope]),
 
     getFileUrl: useCallback((driveId: string, path: string) => {
+      scope.assertCurrent();
       const encoded = encodePath(path);
       return storageUrl(client, `/drives/${driveId}/files/${encoded}`);
-    }, [client]),
+    }, [client, scope]),
   };
+}
+
+function storageScopeUnavailableError(): Error {
+  return new Error('Storage operations are unavailable during an authorization scope transition.');
 }

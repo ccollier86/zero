@@ -19,9 +19,11 @@ export { defineZeroConfig, resolveConfig } from './server/types';
 export type {
   AppConfig,
   AppDoctorConfig,
+  AppStorageConfig,
   AppTableInput,
   AutoLazyAction,
   ResolvedConfig,
+  ResolvedAppStorageConfig,
   ResolvedSitemapConfig,
   ResolvedSyncDefaults,
   ResolvedTableSyncDefault,
@@ -69,8 +71,12 @@ export {
 } from './router/auth-policy';
 export {
   createServerRoute,
+  UnsafeServerServiceAccessError,
 } from './server/server-route';
-export type { ServerRouteOptions } from './server/server-route';
+export type {
+  ServerRequestServices,
+  ServerRouteOptions,
+} from './server/server-route';
 export {
   createLazyServerRouteServices,
   getServerRouteServices,
@@ -80,6 +86,13 @@ export type {
   ServerObservabilityServices,
   ServerRouteServices,
 } from './server/server-services';
+export { createWorkflowExecutionServiceProvider } from './server/workflow-execution-services';
+export type {
+  CreateWorkflowExecutionServiceProviderOptions,
+  WorkflowExecutionAuthServices,
+  WorkflowExecutionObservabilityServices,
+  WorkflowExecutionServerServices,
+} from './server/workflow-execution-services';
 export {
   ZERO_SERVER_EXTENSION_KIND,
   applyServerExtension,
@@ -98,6 +111,7 @@ export type {
   InferValidationSchema,
   ZeroEndpointDefinition,
   ZeroEndpointOptions,
+  ZeroExtensionAuthRequirement,
   ZeroLifecycleContext,
   ZeroLifecycleHook,
   ZeroLifecycleUser,
@@ -142,6 +156,7 @@ export type {
   ZeroPolicyDenyReason,
   ZeroPolicyEvaluation,
   ZeroPolicyEvaluationOptions,
+  ZeroPolicyUserPropertyRegistry,
   ZeroPolicyUserPropertyStore,
 } from './server/server-policy';
 export {
@@ -154,6 +169,7 @@ export type { ServerRouteLoaderOptions, ServerRoutePlugin } from './server/serve
 // ─── Resources: Server ─────────────────────────────────────────────────
 export {
   RESOURCE_ACTIONS,
+  RESOURCE_EXPOSURES,
   ResourceLoaderError,
   ResourceRegistry,
   ResourceRegistryError,
@@ -162,6 +178,7 @@ export {
   allowsPublicAction,
   allOf,
   anyOf,
+  authorizationPolicy,
   authenticatedOnly,
   collectResourceFiles,
   configureResourceRegistry,
@@ -169,6 +186,8 @@ export {
   createResourcePolicyUser,
   customPolicy,
   defineResource,
+  defineResourceFields,
+  globalRealm,
   evaluateResourcePolicy,
   getPolicyMetadataKeys,
   getPolicyOwnerFields,
@@ -190,8 +209,10 @@ export {
   sanitizeResourceCreateInput,
   sanitizeResourceUpdateInput,
   tableHasColumn,
+  tenantRealm,
   validateResourceDefinitions,
   validateResourcePolicy,
+  validateAuthorizationPolicy,
 } from '../resources';
 export type {
   ConfigureResourceRegistryOptions,
@@ -200,6 +221,7 @@ export type {
   OwnerPolicyCreateMode,
   OwnerPolicyOptions,
   RegisteredResourceDefinition,
+  RegisteredResourceExposure,
   ResourceAction,
   ResourceCrudFailure,
   ResourceCrudPluginConfig,
@@ -211,7 +233,16 @@ export type {
   ResourceDataConstraint,
   ResourceDefinition,
   ResourceDefinitionOptions,
+  ResourceExposure,
+  ResourceRealm,
+  ResourceRealmInput,
+  ResourceTableInput,
+  GlobalResourceRealm,
+  TenantResourceRealm,
   ResourceFieldConstraint,
+  ResourceFieldAccess,
+  ResourceFieldAccessInput,
+  ResourceFieldWriteError,
   ResourceInputError,
   ResourceInputValue,
   ResourceListQueryInput,
@@ -224,6 +255,7 @@ export type {
   ResourceMaybePromise,
   ResourcePolicy,
   ResourcePolicyAuthConfig,
+  ResourcePolicyAuthorizationContext,
   ResourcePolicyContext,
   ResourcePolicyDecision,
   ResourcePolicyDecisionInput,
@@ -242,6 +274,7 @@ export type {
   ResourcePolicyValidationCode,
   ResourcePolicyValidationContext,
   ResourcePolicyValidationIssue,
+  ResourceAuthorizationRequirement,
 } from '../resources';
 
 // ─── Sync / ReactiveDB: Server ─────────────────────────────────────────
@@ -263,6 +296,13 @@ export type {
   ChangeOp,
   DeclaredSyncMode,
   DefaultSyncPolicyConfig,
+  EphemeralErrorCode,
+  EphemeralErrorMessage,
+  EphemeralKeyOwnership,
+  EphemeralTopicDecision,
+  EphemeralTopicOperation,
+  EphemeralTopicPolicy,
+  EphemeralTopicPolicyContext,
   ReactiveDBConfig,
   Row,
   SyncMutationPolicyContext,
@@ -347,14 +387,64 @@ export type { RouteConfig, LoaderContext, PageMeta } from './router/types';
 // ─── Auth ───────────────────────────────────────────────────────────────
 export {
   createAuthPlugin,
+  getAuthorizationKernel,
   getAuthStore,
   getMfaChallengeService,
   getMfaMethodStore,
   getMfaService,
   getTokenService,
 } from '../auth/auth.plugin';
-export { createAuthMiddleware } from '../auth/auth.middleware';
+export {
+  createAuthMiddleware,
+  createProtectedMultipartRequestGuard,
+  resolveRequestAuthContext,
+  resolveRequestAuthorizationAccess,
+} from '../auth/auth.middleware';
+export type {
+  AuthMiddlewareAuthorizationOptions,
+  ProtectedMultipartPathMatcher,
+  ProtectedMultipartRequestGuardOptions,
+  ZeroElysiaAuthRequirement,
+} from '../auth/auth.middleware';
 export { installAuthStopBarrier } from '../auth/auth-stop-lifecycle';
+export { AuthRuntime, createAuthRuntime } from '../auth/auth-runtime';
+export type { AuthRuntimeDependencies } from '../auth/auth-runtime';
+export {
+  AuthorizationKernel,
+  compileAccessRequirement,
+  createAuthorizationKernel,
+  isCompiledAccessRequirement,
+  mergeAccessRequirements,
+  validateAuthorizationRegistry,
+  validatePermissionKey,
+  validateRoleKey,
+} from '../auth/authorization-kernel';
+export {
+  createAuthorizationSubjectSnapshot,
+  createRequestAuthorizationAccess,
+} from '../auth/authorization-access';
+export type {
+  AuthorizationPropertyStore,
+  CreateRequestAuthorizationAccessOptions,
+  RequestAuthorizationAccess,
+  TenantAuthorizationScope,
+} from '../auth/authorization-access';
+export type {
+  AccessRequirement,
+  AccessRequirementCompileOptions,
+  AuthorizationDecision,
+  AuthorizationDenialReason,
+  AuthorizationKernelConfig,
+  AuthorizationScopeKind,
+  AuthorizationScopeSnapshot,
+  AuthorizationSubjectSnapshot,
+  CompiledAccessRequirement,
+  LegacyAccessRequirement,
+  SingleSimpleScopeInput,
+  StructuredAccessRequirement,
+  TrustedPropertyRequirement,
+  TrustedPropertyScalar,
+} from '../auth/authorization-kernel';
 export { AccountEmailService } from '../auth/account-email-service';
 export { AuthActionTokenService } from '../auth/action-token-service';
 export { MfaChallengeStore } from '../auth/mfa-challenge-store';
@@ -405,7 +495,16 @@ export type {
   AuthAccountEmailConfig,
   AuthActionTokenRecord,
   AuthActionTokenType,
+  AuthAuthorizationConfig,
+  AuthAuthorizationMode,
+  AuthAuthorizationOwnerAdoptionConfig,
+  AuthAuthorizationOptions,
+  AuthPermissionConfig,
+  AuthRoleTemplateConfig,
   AuthBehaviorConfig,
+  AuthBootstrapConfig,
+  AuthBootstrapMode,
+  AuthBootstrapOptions,
   AuthContext,
   AuthMfaChallengeRecord,
   AuthMfaConfig,
@@ -418,14 +517,28 @@ export type {
   AuthPluginConfig,
   AuthRegistrationConfig,
   AuthRegistrationMode,
+  AuthTenancyConfig,
+  AuthTenancyMode,
+  AuthTenancyOptions,
+  AuthTenantCreationConfig,
+  AuthTenantCreationMode,
+  AuthTenantTerminologyConfig,
   AuthTransitionPurpose,
   AuthTransitionTokenPayload,
+  NormalizedAuthBehaviorConfig,
   ResolvedAuthAccountConfig,
   ResolvedAuthAccountEmailConfig,
+  ResolvedAuthAuthorizationConfig,
+  ResolvedAuthPermissionConfig,
+  ResolvedAuthRoleTemplateConfig,
   ResolvedAuthBehaviorConfig,
+  ResolvedAuthBootstrapConfig,
   ResolvedAuthMfaConfig,
   ResolvedAuthMfaTotpConfig,
+  ResolvedAuthRegistrationConfig,
+  ResolvedAuthTenancyConfig,
   ResolvedUserPropertyFieldConfig,
+  PermissionKey,
   UserStatus,
   UserPropertyEditableBy,
   UserPropertyFieldConfig,
@@ -481,7 +594,11 @@ export type {
 } from '../schema';
 
 // ─── Rooms: Server ──────────────────────────────────────────────────────
-export { createRoomPlugin, getRoomService } from '../rooms';
+export {
+  RoomOwnerCannotLeaveError,
+  createRoomPlugin,
+  getRoomService,
+} from '../rooms';
 export { PresenceService } from '../rooms';
 export type { PresenceStatus, PresenceData } from '../rooms';
 export { ROOM_TABLES } from '../rooms/types';
@@ -500,6 +617,11 @@ export { createWorkflowPlugin, getWorkflowService, getWorkflowRegistry } from '.
 export { WORKFLOW_TABLES } from '../workflows';
 export type {
   WorkflowPluginConfig,
+  WorkflowExecutionIdentity,
+  WorkflowExecutionServiceProvider,
+  WorkflowResolvedExecutionAuthority,
+  WorkflowServiceOptions,
+  WorkflowSystemExecutionOptions,
 } from '../workflows';
 
 // ─── Storage: Server ────────────────────────────────────────────────────

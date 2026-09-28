@@ -9,6 +9,10 @@
 import { OBS_CODES } from '../observability/codes';
 import { warnPlatform } from '../observability/sink';
 import {
+  compileAccessRequirement,
+  type AccessRequirement,
+} from '../auth/authorization-kernel';
+import {
   allowResourcePolicyDecision,
   combineAnyOfConstraints,
   combineAnyOfStampedInput,
@@ -32,6 +36,7 @@ import type {
 } from './resource-policy-types';
 import {
   validateCompositePolicy,
+  validateAuthorizationPolicy,
   validateMetadataPolicy,
   validateResourcePolicy,
 } from './resource-policy-validation';
@@ -93,6 +98,7 @@ export function publicReadUserWrite(): ResourcePolicy {
  */
 export function ownerPolicy(options: OwnerPolicyOptions): ResourcePolicy {
   const createMode = options.create ?? 'stamp';
+  const userField = options.userField;
 
   return createResourcePolicy(
     'owner',
@@ -101,7 +107,7 @@ export function ownerPolicy(options: OwnerPolicyOptions): ResourcePolicy {
 
       if (action === 'list') {
         return allowResourcePolicyDecision({
-          constraints: [fieldEqualsConstraint(options.userField, user.userId)],
+          constraints: [fieldEqualsConstraint(userField, user.userId)],
         });
       }
 
@@ -118,12 +124,12 @@ export function ownerPolicy(options: OwnerPolicyOptions): ResourcePolicy {
           return allowResourcePolicyDecision({
             stampedInput: {
               ...(input ?? {}),
-              [options.userField]: user.userId,
+              [userField]: user.userId,
             },
           });
         }
 
-        if (input?.[options.userField] === user.userId) {
+        if (input?.[userField] === user.userId) {
           return allowResourcePolicyDecision();
         }
 
@@ -131,7 +137,7 @@ export function ownerPolicy(options: OwnerPolicyOptions): ResourcePolicy {
           'owner-input-mismatch',
           403,
           'Owner field does not match user',
-          { field: options.userField }
+          { field: userField }
         );
       }
 
@@ -140,23 +146,23 @@ export function ownerPolicy(options: OwnerPolicyOptions): ResourcePolicy {
           'owner-row-required',
           403,
           'Loaded row is required for owner policy',
-          { field: options.userField }
+          { field: userField }
         );
       }
 
-      if (row[options.userField] !== user.userId) {
+      if (row[userField] !== user.userId) {
         return denyResourcePolicyDecision(
           'owner-mismatch',
           403,
           'User does not own this resource',
-          { field: options.userField }
+          { field: userField }
         );
       }
 
       return allowResourcePolicyDecision();
     },
     () => {
-      if (options.userField.trim().length > 0) return [];
+      if (userField.trim().length > 0) return [];
       return [{
         code: 'owner-field-invalid',
         message: 'ownerPolicy requires a non-empty userField.',
@@ -165,7 +171,7 @@ export function ownerPolicy(options: OwnerPolicyOptions): ResourcePolicy {
       }];
     },
     {
-      ownerField: options.userField,
+      ownerField: userField,
       ownerCreateMode: createMode,
       authenticatedActions: ['list', 'get', 'create', 'update', 'delete'],
     }
@@ -180,6 +186,7 @@ export function ownerPolicy(options: OwnerPolicyOptions): ResourcePolicy {
  * by this validator if an invalid resolved config reaches policy evaluation.
  */
 export function metadataPolicy(requirements: ResourceMetadataRequirements): ResourcePolicy {
+  const frozenRequirements = freezeMetadataRequirements(requirements);
   const policy = createResourcePolicy(
     'metadata',
     ({ user, authConfig }) => {
@@ -195,19 +202,62 @@ export function metadataPolicy(requirements: ResourceMetadataRequirements): Reso
         );
       }
 
-      const denied = findDeniedMetadata(user.properties, requirements);
+      const denied = findDeniedMetadata(user.properties, frozenRequirements);
       if (denied) return denyResourcePolicyDecision('metadata-property', 403, 'Forbidden', denied);
 
       return allowResourcePolicyDecision();
     },
-    ({ authConfig }) => validateMetadataPolicy(requirements, authConfig),
+    ({ authConfig }) => validateMetadataPolicy(frozenRequirements, authConfig),
     {
-      metadataKeys: Object.keys(requirements),
+      metadataKeys: Object.keys(frozenRequirements),
       authenticatedActions: ['list', 'get', 'create', 'update', 'delete'],
     }
   );
 
   return policy;
+}
+
+/**
+ * Apply Zero's route-compatible authorization vocabulary to a managed resource.
+ *
+ * The live subject comes from the same server-owned session, tenant membership,
+ * and advanced role assignments used by `context.access`. This keeps resource
+ * CRUD, lazy reads, and Sync on one RBAC contract without app-authored glue.
+ */
+export function authorizationPolicy(requirement: AccessRequirement): ResourcePolicy {
+  const compiled = compileAccessRequirement(requirement);
+  const authenticated = compiled.user === 'required';
+
+  return createResourcePolicy(
+    'authorization',
+    ({ authorization }) => {
+      if (!authorization) {
+        return denyResourcePolicyDecision(
+          'authorization-unavailable',
+          503,
+          'Authorization services are unavailable',
+        );
+      }
+
+      const decision = authorization.kernel.evaluate(compiled, authorization.subject);
+      if (decision.allowed) return allowResourcePolicyDecision();
+      return denyResourcePolicyDecision(
+        decision.reason === 'authentication-required'
+          ? 'unauthorized'
+          : 'authorization-denied',
+        decision.error.status,
+        decision.error.status === 401 ? 'Unauthorized' : 'Forbidden',
+        { reason: decision.reason },
+      );
+    },
+    ({ authConfig }) => validateAuthorizationPolicy(compiled, authConfig),
+    {
+      authorizationRequirement: compiled,
+      ...(authenticated
+        ? { authenticatedActions: ['list', 'get', 'create', 'update', 'delete'] }
+        : { publicActions: ['list', 'get', 'create', 'update', 'delete'] }),
+    },
+  );
 }
 
 /**
@@ -339,7 +389,46 @@ function createResourcePolicy(
   validate?: ResourcePolicy['validate'],
   diagnostics?: ResourcePolicyDiagnostics
 ): ResourcePolicy {
-  return { kind, evaluate, validate, diagnostics };
+  const frozenDiagnostics = diagnostics ? Object.freeze({
+    ...diagnostics,
+    ...(diagnostics.children ? {
+      children: Object.freeze([...diagnostics.children]),
+    } : {}),
+    ...(diagnostics.metadataKeys ? {
+      metadataKeys: Object.freeze([...diagnostics.metadataKeys]),
+    } : {}),
+    ...(diagnostics.publicActions ? {
+      publicActions: Object.freeze([...diagnostics.publicActions]),
+    } : {}),
+    ...(diagnostics.authenticatedActions ? {
+      authenticatedActions: Object.freeze([...diagnostics.authenticatedActions]),
+    } : {}),
+  }) : undefined;
+  return Object.freeze({ kind, evaluate, validate, diagnostics: frozenDiagnostics });
+}
+
+function freezeMetadataRequirements(
+  requirements: ResourceMetadataRequirements,
+): ResourceMetadataRequirements {
+  const copy: ResourceMetadataRequirements = {};
+  for (const [key, requirement] of Object.entries(requirements)) {
+    if (isPolicyScalarArray(requirement)) {
+      copy[key] = Object.freeze([...requirement]);
+      continue;
+    }
+    if (isPolicyScalar(requirement)) {
+      copy[key] = requirement;
+      continue;
+    }
+    copy[key] = Object.freeze({
+      ...requirement,
+      ...(requirement.in ? { in: Object.freeze([...requirement.in]) } : {}),
+      ...(isPolicyScalarArray(requirement.not)
+        ? { not: Object.freeze([...requirement.not]) }
+        : {}),
+    });
+  }
+  return Object.freeze(copy);
 }
 
 function findDeniedMetadata(
@@ -364,7 +453,7 @@ function matchesMetadataRequirement(
   value: string | null,
   requirement: ResourceMetadataRequirement
 ): boolean {
-  if (Array.isArray(requirement)) {
+  if (isPolicyScalarArray(requirement)) {
     return value !== null && requirement.map(serializePolicyScalar).includes(value);
   }
 
@@ -387,7 +476,7 @@ function matchesMetadataRequirement(
   }
 
   if (requirement.not !== undefined) {
-    const deniedValues = Array.isArray(requirement.not)
+    const deniedValues = isPolicyScalarArray(requirement.not)
       ? requirement.not.map(serializePolicyScalar)
       : [serializePolicyScalar(requirement.not)];
     if (value !== null && deniedValues.includes(value)) return false;
@@ -398,6 +487,10 @@ function matchesMetadataRequirement(
 
 function isPolicyScalar(value: unknown): value is ResourcePolicyScalar {
   return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+}
+
+function isPolicyScalarArray(value: unknown): value is readonly ResourcePolicyScalar[] {
+  return Array.isArray(value);
 }
 
 function serializePolicyScalar(value: ResourcePolicyScalar): string {

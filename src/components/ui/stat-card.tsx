@@ -2,9 +2,9 @@
 
 import * as React from 'react';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import { SlidingNumber } from '@/components/animate-ui/primitives/texts/sliding-number';
-import { Card, CardContent } from '@/components/ui/card';
-import { cn } from '@/lib/utils';
+import { SlidingNumber } from '#zero/components/animate-ui/primitives/texts/sliding-number';
+import { Card, CardContent } from '#zero/components/ui/card';
+import { cn } from '#zero/lib/utils';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

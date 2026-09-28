@@ -29,6 +29,7 @@ function createService(strictUserProperties = false): UserPropertyService {
           values: ['free', 'pro'],
           default: 'free',
           editableBy: 'admin',
+          useInPolicies: true,
         },
         notificationsEnabled: {
           type: 'boolean',
@@ -43,6 +44,7 @@ function createService(strictUserProperties = false): UserPropertyService {
         internalFlag: {
           type: 'string',
           editableBy: 'none',
+          useInPolicies: true,
         },
       },
     })
@@ -66,6 +68,16 @@ describe('UserPropertyService', () => {
     expect(service.validateWrite('plan', 'pro', 'admin')).toBe('pro');
     expect(service.validateWrite('notificationsEnabled', false, 'user')).toBe('false');
     expect(service.validateWrite('quota', '25', 'admin')).toBe('25');
+  });
+
+  test('trusts only configured policy fields that users cannot edit', () => {
+    const service = createService();
+
+    expect(service.isPolicyTrusted('plan')).toBe(true);
+    expect(service.isPolicyTrusted('internalFlag')).toBe(true);
+    expect(service.isPolicyTrusted('notificationsEnabled')).toBe(false);
+    expect(service.isPolicyTrusted('quota')).toBe(false);
+    expect(service.isPolicyTrusted('unknown')).toBe(false);
   });
 
   test('rejects invalid enum values', () => {

@@ -15,11 +15,17 @@ import type {
   CreateNotificationParams,
   NotificationTarget,
 } from './types';
+import {
+  applicationServiceDataScope,
+  serviceDataTenantId,
+  type ServiceDataScope,
+} from '../auth/service-data-scope';
 
 // ─── SQL Row Types ───────────────────────────────────────────────────────────
 
 interface NotificationRow {
   notification_id: string;
+  tenant_id: string | null;
   type: string;
   priority: string;
   title: string;
@@ -35,6 +41,7 @@ interface NotificationRow {
 
 interface ReceiptRow {
   receipt_id: string;
+  tenant_id: string | null;
   notification_id: string;
   user_id: string;
   seen_at: number | null;
@@ -42,9 +49,8 @@ interface ReceiptRow {
   dismissed_at: number | null;
 }
 
-interface CountRow {
-  count: number;
-}
+/** One legacy role or the complete additive role set projected by RBAC. */
+export type NotificationAudienceRoles = string | readonly string[];
 
 // ─── NotificationService ─────────────────────────────────────────────────────
 
@@ -61,81 +67,31 @@ export class NotificationService {
   private stmts: {
     getById: Statement;
     getAll: Statement;
-    getByTargetAll: Statement;
-    getByTargetUser: Statement;
-    getByTargetRole: Statement;
     getReceiptsByNotification: Statement;
     getReceiptsByUser: Statement;
     getReceipt: Statement;
-    getUnreadCountAll: Statement;
-    getUnreadCountUser: Statement;
-    getUnreadCountRole: Statement;
-    getUnreadIdsForUser: Statement;
-    deleteExpired: Statement;
   };
 
-  constructor(private db: ReactiveDB) {
+  constructor(
+    private db: ReactiveDB,
+    private readonly tenancyMode: 'single' | 'multi' = 'single',
+  ) {
     this.stmts = {
       getById: db.prepare(
-        'SELECT * FROM notifications WHERE notification_id = ?'
+        'SELECT * FROM notifications WHERE notification_id = ? AND tenant_id IS ?'
       ),
       getAll: db.prepare(
-        'SELECT * FROM notifications ORDER BY created_at DESC'
-      ),
-      getByTargetAll: db.prepare(
-        `SELECT * FROM notifications WHERE target_type = 'all' ORDER BY created_at DESC`
-      ),
-      getByTargetUser: db.prepare(
-        `SELECT * FROM notifications WHERE target_type = 'user' AND target_value = ? ORDER BY created_at DESC`
-      ),
-      getByTargetRole: db.prepare(
-        `SELECT * FROM notifications WHERE target_type = 'role' AND target_value = ? ORDER BY created_at DESC`
+        'SELECT * FROM notifications WHERE tenant_id IS ? ORDER BY created_at DESC'
       ),
       getReceiptsByNotification: db.prepare(
-        'SELECT * FROM notification_receipts WHERE notification_id = ?'
+        'SELECT * FROM notification_receipts WHERE notification_id = ? AND tenant_id IS ?'
       ),
       getReceiptsByUser: db.prepare(
-        'SELECT * FROM notification_receipts WHERE user_id = ?'
+        'SELECT * FROM notification_receipts WHERE user_id = ? AND tenant_id IS ?'
       ),
       getReceipt: db.prepare(
-        'SELECT * FROM notification_receipts WHERE notification_id = ? AND user_id = ?'
-      ),
-      getUnreadCountAll: db.prepare(
-        `SELECT COUNT(*) as count FROM notifications n
-         WHERE target_type = 'all'
-         AND NOT EXISTS (
-           SELECT 1 FROM notification_receipts r
-           WHERE r.notification_id = n.notification_id AND r.user_id = ?
-           AND (r.read_at IS NOT NULL OR r.dismissed_at IS NOT NULL)
-         )`
-      ),
-      getUnreadCountUser: db.prepare(
-        `SELECT COUNT(*) as count FROM notifications n
-         WHERE target_type = 'user' AND target_value = ?
-         AND NOT EXISTS (
-           SELECT 1 FROM notification_receipts r
-           WHERE r.notification_id = n.notification_id AND r.user_id = ?
-           AND (r.read_at IS NOT NULL OR r.dismissed_at IS NOT NULL)
-         )`
-      ),
-      getUnreadCountRole: db.prepare(
-        `SELECT COUNT(*) as count FROM notifications n
-         WHERE target_type = 'role' AND target_value = ?
-         AND NOT EXISTS (
-           SELECT 1 FROM notification_receipts r
-           WHERE r.notification_id = n.notification_id AND r.user_id = ?
-           AND (r.read_at IS NOT NULL OR r.dismissed_at IS NOT NULL)
-         )`
-      ),
-      getUnreadIdsForUser: db.prepare(
-        `SELECT n.notification_id FROM notifications n
-         WHERE NOT EXISTS (
-           SELECT 1 FROM notification_receipts r
-           WHERE r.notification_id = n.notification_id AND r.user_id = ? AND r.read_at IS NOT NULL
-         )`
-      ),
-      deleteExpired: db.prepare(
-        'DELETE FROM notifications WHERE expires_at IS NOT NULL AND expires_at < ?'
+        `SELECT * FROM notification_receipts
+         WHERE notification_id = ? AND user_id = ? AND tenant_id IS ?`
       ),
     };
   }
@@ -147,56 +103,108 @@ export class NotificationService {
    *
    * Use notify()/notifyUsers()/notifyRole() when targeting should be explicit.
    */
-  create(params: CreateNotificationParams, senderId?: string): NotificationRecord {
-    return this.broadcast(params, senderId);
+  create(
+    params: CreateNotificationParams,
+    senderId?: string,
+    scope?: ServiceDataScope,
+  ): NotificationRecord {
+    return this.broadcast(params, senderId, scope);
   }
 
   /** Broadcast to all users. */
-  broadcast(params: CreateNotificationParams, senderId?: string): NotificationRecord {
-    return this.createNotification('all', null, params, senderId);
+  broadcast(
+    params: CreateNotificationParams,
+    senderId?: string,
+    scope?: ServiceDataScope,
+  ): NotificationRecord {
+    return this.createNotification('all', null, params, senderId, scope);
   }
 
   /** Notify a single user. */
-  notify(userId: string, params: CreateNotificationParams, senderId?: string): NotificationRecord {
-    return this.createNotification('user', userId, params, senderId);
+  notify(
+    userId: string,
+    params: CreateNotificationParams,
+    senderId?: string,
+    scope?: ServiceDataScope,
+  ): NotificationRecord {
+    return this.createNotification('user', userId, params, senderId, scope);
   }
 
   /** Notify multiple specific users. */
-  notifyUsers(userIds: string[], params: CreateNotificationParams, senderId?: string): NotificationRecord {
-    return this.createNotification('users', JSON.stringify(userIds), params, senderId);
+  notifyUsers(
+    userIds: string[],
+    params: CreateNotificationParams,
+    senderId?: string,
+    scope?: ServiceDataScope,
+  ): NotificationRecord {
+    return this.createNotification('users', JSON.stringify(userIds), params, senderId, scope);
   }
 
   /** Notify all users with a specific role. */
-  notifyRole(role: string, params: CreateNotificationParams, senderId?: string): NotificationRecord {
-    return this.createNotification('role', role, params, senderId);
+  notifyRole(
+    role: string,
+    params: CreateNotificationParams,
+    senderId?: string,
+    scope?: ServiceDataScope,
+  ): NotificationRecord {
+    return this.createNotification('role', role, params, senderId, scope);
   }
 
   // ─── Reads ──────────────────────────────────────────────────────────────
 
   /** Get a single notification by ID. */
-  getById(notificationId: string): NotificationRecord | null {
-    const row = this.stmts.getById.get(notificationId) as NotificationRow | null;
+  getById(notificationId: string, scope?: ServiceDataScope): NotificationRecord | null {
+    const boundary = this.requireScope(scope);
+    const row = this.stmts.getById.get(
+      notificationId,
+      serviceDataTenantId(boundary),
+    ) as NotificationRow | null;
     return row as NotificationRecord | null;
   }
 
+  /**
+   * Get a notification only when it is targeted to the supplied user.
+   *
+   * HTTP receipt routes use this lookup before writing user-owned receipt
+   * state. Keeping the target check beside the notification query prevents a
+   * guessed notification ID from becoming a receipt-write capability.
+   */
+  getByIdForUser(
+    notificationId: string,
+    userId: string,
+    userRole: NotificationAudienceRoles,
+    scope?: ServiceDataScope,
+  ): NotificationRecord | null {
+    const boundary = this.requireScope(scope);
+    const row = this.stmts.getById.get(
+      notificationId,
+      serviceDataTenantId(boundary),
+    ) as NotificationRow | null;
+    if (!row || !isForUser(row, userId, normalizeAudienceRoles(userRole))) return null;
+    return row as NotificationRecord;
+  }
+
   /** Canonical get alias for getById(). */
-  get(notificationId: string): NotificationRecord | null {
-    return this.getById(notificationId);
+  get(notificationId: string, scope?: ServiceDataScope): NotificationRecord | null {
+    return this.getById(notificationId, scope);
   }
 
   /**
    * Get all notifications visible to a user (filtered by target match).
    * Joins with receipts to determine seen/read/dismissed state.
    */
-  getForUser(userId: string, userRole: string): Array<NotificationRecord & {
+  getForUser(userId: string, userRole: NotificationAudienceRoles, scope?: ServiceDataScope): Array<NotificationRecord & {
     receipt: NotificationReceiptRecord | null;
   }> {
-    const all = this.stmts.getAll.all() as NotificationRow[];
-    const userReceipts = this.stmts.getReceiptsByUser.all(userId) as ReceiptRow[];
+    const boundary = this.requireScope(scope);
+    const tenantId = serviceDataTenantId(boundary);
+    const all = this.stmts.getAll.all(tenantId) as NotificationRow[];
+    const userReceipts = this.stmts.getReceiptsByUser.all(userId, tenantId) as ReceiptRow[];
     const receiptMap = new Map(userReceipts.map((r) => [r.notification_id, r]));
 
+    const roles = normalizeAudienceRoles(userRole);
     return all
-      .filter((n) => isForUser(n, userId, userRole))
+      .filter((n) => isForUser(n, userId, roles))
       .map((n) => ({
         ...(n as unknown as NotificationRecord),
         receipt: (receiptMap.get(n.notification_id) as NotificationReceiptRecord) ?? null,
@@ -204,52 +212,41 @@ export class NotificationService {
   }
 
   /** Canonical list alias for getForUser(). */
-  list(userId: string, userRole: string): Array<NotificationRecord & {
+  list(userId: string, userRole: NotificationAudienceRoles, scope?: ServiceDataScope): Array<NotificationRecord & {
     receipt: NotificationReceiptRecord | null;
   }> {
-    return this.getForUser(userId, userRole);
+    return this.getForUser(userId, userRole, scope);
   }
 
   /** Get unread count for a user (accounts for target filtering). */
-  getUnreadCount(userId: string, userRole: string): number {
-    let count = 0;
-
-    // All broadcasts
-    const allCount = this.stmts.getUnreadCountAll.get(userId) as CountRow;
-    count += allCount.count;
-
-    // Direct user targets
-    const userCount = this.stmts.getUnreadCountUser.get(userId, userId) as CountRow;
-    count += userCount.count;
-
-    // Role-based targets
-    const roleCount = this.stmts.getUnreadCountRole.get(userRole, userId) as CountRow;
-    count += roleCount.count;
-
-    // Multi-user targets require scanning — handled via getForUser filter
-    const all = this.stmts.getAll.all() as NotificationRow[];
-    const multiUserNotifs = all.filter(
-      (n) => n.target_type === 'users' && isInUserList(n.target_value, userId)
-    );
-    for (const n of multiUserNotifs) {
-      const receipt = this.stmts.getReceipt.get(n.notification_id, userId) as ReceiptRow | null;
-      if (!receipt?.read_at && !receipt?.dismissed_at) count++;
-    }
-
-    return count;
+  getUnreadCount(
+    userId: string,
+    userRole: NotificationAudienceRoles,
+    scope?: ServiceDataScope,
+  ): number {
+    return this.getForUser(userId, userRole, scope)
+      .filter((notification) => !notification.receipt?.read_at
+        && !notification.receipt?.dismissed_at)
+      .length;
   }
 
   /** Get all receipts for a notification (admin: who read what). */
-  getReceipts(notificationId: string): NotificationReceiptRecord[] {
-    return this.stmts.getReceiptsByNotification.all(notificationId) as NotificationReceiptRecord[];
+  getReceipts(notificationId: string, scope?: ServiceDataScope): NotificationReceiptRecord[] {
+    const boundary = this.requireScope(scope);
+    return this.stmts.getReceiptsByNotification.all(
+      notificationId,
+      serviceDataTenantId(boundary),
+    ) as NotificationReceiptRecord[];
   }
 
   // ─── Receipt Writes ─────────────────────────────────────────────────────
 
   /** Mark a notification as seen for a user. */
-  markSeen(notificationId: string, userId: string): void {
+  markSeen(notificationId: string, userId: string, scope?: ServiceDataScope): void {
+    const boundary = this.requireScope(scope);
+    const tenantId = serviceDataTenantId(boundary);
     const receiptId = `r_${notificationId}_${userId}`;
-    const existing = this.stmts.getReceipt.get(notificationId, userId) as ReceiptRow | null;
+    const existing = this.stmts.getReceipt.get(notificationId, userId, tenantId) as ReceiptRow | null;
 
     if (existing) {
       if (!existing.seen_at) {
@@ -258,6 +255,7 @@ export class NotificationService {
     } else {
       this.insertReceipt({
         receipt_id: receiptId,
+        tenant_id: tenantId,
         notification_id: notificationId,
         user_id: userId,
         seen_at: Date.now(),
@@ -268,10 +266,12 @@ export class NotificationService {
   }
 
   /** Mark a notification as read for a user. */
-  markRead(notificationId: string, userId: string): void {
+  markRead(notificationId: string, userId: string, scope?: ServiceDataScope): void {
+    const boundary = this.requireScope(scope);
+    const tenantId = serviceDataTenantId(boundary);
     const receiptId = `r_${notificationId}_${userId}`;
     const now = Date.now();
-    const existing = this.stmts.getReceipt.get(notificationId, userId) as ReceiptRow | null;
+    const existing = this.stmts.getReceipt.get(notificationId, userId, tenantId) as ReceiptRow | null;
 
     if (existing) {
       if (!existing.read_at) {
@@ -283,6 +283,7 @@ export class NotificationService {
     } else {
       this.insertReceipt({
         receipt_id: receiptId,
+        tenant_id: tenantId,
         notification_id: notificationId,
         user_id: userId,
         seen_at: now,
@@ -293,16 +294,19 @@ export class NotificationService {
   }
 
   /** Dismiss a notification for a user. */
-  dismiss(notificationId: string, userId: string): void {
+  dismiss(notificationId: string, userId: string, scope?: ServiceDataScope): void {
+    const boundary = this.requireScope(scope);
+    const tenantId = serviceDataTenantId(boundary);
     const receiptId = `r_${notificationId}_${userId}`;
     const now = Date.now();
-    const existing = this.stmts.getReceipt.get(notificationId, userId) as ReceiptRow | null;
+    const existing = this.stmts.getReceipt.get(notificationId, userId, tenantId) as ReceiptRow | null;
 
     if (existing) {
       this.db.update('notification_receipts', receiptId, { dismissed_at: now });
     } else {
       this.insertReceipt({
         receipt_id: receiptId,
+        tenant_id: tenantId,
         notification_id: notificationId,
         user_id: userId,
         seen_at: now,
@@ -313,8 +317,10 @@ export class NotificationService {
   }
 
   /** Mark all notifications as read for a user. */
-  markAllRead(userId: string, userRole: string): void {
-    const notifications = this.getForUser(userId, userRole);
+  markAllRead(userId: string, userRole: NotificationAudienceRoles, scope?: ServiceDataScope): void {
+    const boundary = this.requireScope(scope);
+    const tenantId = serviceDataTenantId(boundary);
+    const notifications = this.getForUser(userId, userRole, boundary);
     const now = Date.now();
 
     this.db.transaction(() => {
@@ -330,6 +336,7 @@ export class NotificationService {
         } else {
           this.insertReceipt({
             receipt_id: receiptId,
+            tenant_id: tenantId,
             notification_id: n.notification_id,
             user_id: userId,
             seen_at: now,
@@ -342,8 +349,10 @@ export class NotificationService {
   }
 
   /** Mark all visible notifications as seen for a user. */
-  markAllSeen(userId: string, userRole: string): void {
-    const notifications = this.getForUser(userId, userRole);
+  markAllSeen(userId: string, userRole: NotificationAudienceRoles, scope?: ServiceDataScope): void {
+    const boundary = this.requireScope(scope);
+    const tenantId = serviceDataTenantId(boundary);
+    const notifications = this.getForUser(userId, userRole, boundary);
     const now = Date.now();
 
     this.db.transaction(() => {
@@ -356,6 +365,7 @@ export class NotificationService {
         } else {
           this.insertReceipt({
             receipt_id: receiptId,
+            tenant_id: tenantId,
             notification_id: n.notification_id,
             user_id: userId,
             seen_at: now,
@@ -370,8 +380,15 @@ export class NotificationService {
   // ─── Deletes ────────────────────────────────────────────────────────────
 
   /** Delete a notification and its receipts. */
-  deleteNotification(notificationId: string): boolean {
-    const receipts = this.stmts.getReceiptsByNotification.all(notificationId) as ReceiptRow[];
+  deleteNotification(notificationId: string, scope?: ServiceDataScope): boolean {
+    const boundary = this.requireScope(scope);
+    const tenantId = serviceDataTenantId(boundary);
+    const existing = this.stmts.getById.get(notificationId, tenantId) as NotificationRow | null;
+    if (!existing) return false;
+    const receipts = this.stmts.getReceiptsByNotification.all(
+      notificationId,
+      tenantId,
+    ) as ReceiptRow[];
 
     return this.db.transaction(() => {
       for (const r of receipts) {
@@ -383,8 +400,8 @@ export class NotificationService {
   }
 
   /** Canonical delete alias for deleteNotification(). */
-  delete(notificationId: string): boolean {
-    return this.deleteNotification(notificationId);
+  delete(notificationId: string, scope?: ServiceDataScope): boolean {
+    return this.deleteNotification(notificationId, scope);
   }
 
   /** Delete all expired notifications. Returns number deleted. */
@@ -399,7 +416,7 @@ export class NotificationService {
     if (expired.length > 0) {
       this.db.transaction(() => {
         for (const { notification_id } of expired) {
-          if (this.deleteNotification(notification_id)) count++;
+          if (this.deleteExpiredNotification(notification_id)) count++;
         }
       });
     }
@@ -410,6 +427,7 @@ export class NotificationService {
 
   private insertReceipt(row: {
     receipt_id: string;
+    tenant_id: string | null;
     notification_id: string;
     user_id: string;
     seen_at: number | null;
@@ -424,12 +442,15 @@ export class NotificationService {
     targetValue: string | null,
     params: CreateNotificationParams,
     senderId?: string,
+    scope?: ServiceDataScope,
   ): NotificationRecord {
+    const boundary = this.requireScope(scope);
     const notificationId = `n_${crypto.randomUUID()}`;
     const now = Date.now();
 
     const row: NotificationRecord = {
       notification_id: notificationId,
+      tenant_id: serviceDataTenantId(boundary),
       type: params.type ?? 'info',
       priority: params.priority ?? 'normal',
       title: params.title,
@@ -446,12 +467,32 @@ export class NotificationService {
     this.db.insert('notifications', row as unknown as Row);
     return row;
   }
+
+  private deleteExpiredNotification(notificationId: string): boolean {
+    const receipts = this.db.prepare(
+      'SELECT receipt_id FROM notification_receipts WHERE notification_id = ?',
+    ).all(notificationId) as Array<{ receipt_id: string }>;
+    for (const receipt of receipts) this.db.delete('notification_receipts', receipt.receipt_id);
+    return this.db.delete('notifications', notificationId) !== null;
+  }
+
+  private requireScope(scope: ServiceDataScope | undefined): ServiceDataScope {
+    if (scope) return scope;
+    if (this.tenancyMode === 'multi') {
+      throw new Error('A validated tenant data scope is required in multi-tenant mode');
+    }
+    return applicationServiceDataScope();
+  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Check if a notification is targeted at a specific user. */
-function isForUser(n: NotificationRow, userId: string, userRole: string): boolean {
+function isForUser(
+  n: NotificationRow,
+  userId: string,
+  userRoles: readonly string[],
+): boolean {
   switch (n.target_type) {
     case 'all':
       return true;
@@ -460,10 +501,15 @@ function isForUser(n: NotificationRow, userId: string, userRole: string): boolea
     case 'users':
       return isInUserList(n.target_value, userId);
     case 'role':
-      return n.target_value === userRole;
+      return n.target_value !== null && userRoles.includes(n.target_value);
     default:
       return false;
   }
+}
+
+function normalizeAudienceRoles(input: NotificationAudienceRoles): readonly string[] {
+  const roles = typeof input === 'string' ? [input] : input;
+  return [...new Set(roles.filter((role) => role.length > 0))];
 }
 
 /** Check if userId is in a JSON array string. */

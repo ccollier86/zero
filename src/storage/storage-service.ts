@@ -29,6 +29,13 @@ import type {
 } from './types';
 import { detectMimeType } from './mime';
 import { createUploadGrantToken } from './upload-grant';
+import {
+  applicationServiceDataScope,
+  serviceDataScopeMatchesTenant,
+  serviceDataTenantId,
+  type ServiceDataScope,
+} from '../auth/service-data-scope';
+import { ensureNullableTenantColumn } from '../runtime/tenant-schema';
 
 // ─── SQL Row Types ──────────────────────────────────────────────────────────
 
@@ -51,10 +58,13 @@ export type StorageDriveUpdates = Partial<
   Pick<DriveRecord, 'name' | 'max_size_bytes' | 'max_file_size_bytes' | 'allowed_mime_types'>
 >;
 
+/** One legacy role or the complete effective role set projected by RBAC. */
+export type StorageActorRoles = string | readonly string[] | null;
+
 /** Canonical grouped API for storage drive metadata operations. */
 export interface StorageDriveApi {
   /** Create a drive owned by `ownerId`. */
-  create(ownerId: string, params: CreateDriveParams): DriveRecord;
+  create(ownerId: string, params: CreateDriveParams, scope?: ServiceDataScope): DriveRecord;
   /** Read one drive by id. */
   get(driveId: string): DriveRecord | null;
   /** Update mutable drive settings. */
@@ -62,7 +72,12 @@ export interface StorageDriveApi {
   /** List all drives without user filtering. */
   list(): DriveRecord[];
   /** List drives visible to a concrete user/security context. */
-  listForUser(userId: string, userRole: string | null, userProperties?: Record<string, string>): DriveRecord[];
+  listForUser(
+    userId: string,
+    userRole: StorageActorRoles,
+    userProperties?: Record<string, string>,
+    scope?: ServiceDataScope,
+  ): DriveRecord[];
   /** Delete a drive, its object metadata, and tracked blob references. */
   delete(driveId: string): boolean;
   /** Return aggregate usage for one drive. */
@@ -80,7 +95,9 @@ export interface StorageObjectApi {
     data: ReadableStream<Uint8Array> | Uint8Array | Blob,
     fileName: string,
     userId: string | null,
-    options?: UploadOptions
+    options?: UploadOptions,
+    scope?: ServiceDataScope,
+    authorizeCommit?: () => Promise<void>,
   ): Promise<FileInfo>;
   /** Download a full file by drive/path. */
   download(driveId: string, path: string): Promise<{ stream: ReadableStream<Uint8Array>; info: FileInfo } | null>;
@@ -122,9 +139,10 @@ export interface StoragePermissionApi {
     driveId: string,
     path: string | null,
     userId: string | null,
-    userRole: string | null,
+    userRole: StorageActorRoles,
     userProperties: Record<string, string>,
-    requiredLevel: PermissionLevel
+    requiredLevel: PermissionLevel,
+    scope?: ServiceDataScope,
   ): boolean;
 }
 
@@ -142,6 +160,14 @@ export interface StorageServiceOptions {
   uploadGrantSecret?: string;
   /** Default expiry in seconds for upload grants and presigned URLs. */
   defaultPresignedTTL?: number;
+  /**
+   * Return whether a user property is explicitly configured as a trusted
+   * authorization input. Property grants fail closed when this validator is
+   * unavailable or rejects the key.
+   */
+  isPolicyTrustedProperty?: (key: string) => boolean;
+  /** Runtime tenancy profile. Multi mode rejects unscoped drive creation/listing. */
+  tenancyMode?: 'single' | 'multi';
 }
 
 // ─── Table Definitions ──────────────────────────────────────────────────────
@@ -151,9 +177,13 @@ export interface StorageServiceOptions {
  * Called once during plugin onStart — idempotent.
  */
 export function defineStorageTables(db: ReactiveDB): void {
+  ensureNullableTenantColumn(db, 'storage_drives');
+  ensureNullableTenantColumn(db, 'storage_objects');
+  ensureNullableTenantColumn(db, '_storage_permissions');
   // Drives — reactive, broadcast to sync subscribers
   db.defineTable('storage_drives', {
     drive_id: 'text primary key',
+    tenant_id: 'text',
     name: 'text not null',
     owner_id: 'text',
     max_size_bytes: 'integer not null default 0',
@@ -166,6 +196,7 @@ export function defineStorageTables(db: ReactiveDB): void {
   // Objects (files + folders) — reactive
   db.defineTable('storage_objects', {
     object_id: 'text primary key',
+    tenant_id: 'text',
     drive_id: 'text not null',
     parent_id: 'text',
     name: 'text not null',
@@ -195,6 +226,7 @@ export function defineStorageTables(db: ReactiveDB): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS _storage_permissions (
       permission_id TEXT PRIMARY KEY,
+      tenant_id     TEXT,
       drive_id      TEXT NOT NULL,
       object_id     TEXT,
       grant_type    TEXT NOT NULL,
@@ -213,6 +245,17 @@ export function defineStorageTables(db: ReactiveDB): void {
   db.exec(
     'CREATE INDEX IF NOT EXISTS idx_storage_objects_parent ON storage_objects(drive_id, parent_id)'
   );
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_storage_drives_tenant ON storage_drives(tenant_id)'
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_storage_objects_tenant_drive
+     ON storage_objects(tenant_id, drive_id)`
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_storage_permissions_tenant_drive
+     ON _storage_permissions(tenant_id, drive_id)`
+  );
 }
 
 // ─── StorageService ─────────────────────────────────────────────────────────
@@ -228,12 +271,12 @@ export class StorageService {
 
   /** Canonical grouped API for drive metadata. */
   readonly drives: StorageDriveApi = {
-    create: (ownerId, params) => this.createDrive(ownerId, params),
+    create: (ownerId, params, scope) => this.createDrive(ownerId, params, scope),
     get: (driveId) => this.getDrive(driveId),
     update: (driveId, updates) => this.updateDrive(driveId, updates),
     list: () => this.listDrives(),
-    listForUser: (userId, userRole, userProperties = {}) =>
-      this.listDrivesForUser(userId, userRole, userProperties),
+    listForUser: (userId, userRole, userProperties = {}, scope) =>
+      this.listDrivesForUser(userId, userRole, userProperties, scope),
     delete: (driveId) => this.deleteDrive(driveId),
     usage: (driveId) => this.getDriveUsage(driveId),
     setVisibility: (driveId, isPublic) => this.setDriveVisibility(driveId, isPublic),
@@ -262,8 +305,16 @@ export class StorageService {
     list: (driveId, options) => this.listPermissions(driveId, options),
     get: (permissionId) => this.getPermission(permissionId),
     revoke: (permissionId) => this.revokePermission(permissionId),
-    checkAccess: (driveId, path, userId, userRole, userProperties, requiredLevel) =>
-      this.checkAccess(driveId, path, userId, userRole, userProperties, requiredLevel),
+    checkAccess: (driveId, path, userId, userRole, userProperties, requiredLevel, scope) =>
+      this.checkAccess(
+        driveId,
+        path,
+        userId,
+        userRole,
+        userProperties,
+        requiredLevel,
+        scope,
+      ),
   };
 
   /** Canonical grouped API for scoped public-upload grants. */
@@ -341,7 +392,9 @@ export class StorageService {
       ),
       deleteBlob: this.db.prepare('DELETE FROM _storage_blobs WHERE checksum = ?'),
       insertPermission: this.db.prepare(
-        'INSERT INTO _storage_permissions (permission_id, drive_id, object_id, grant_type, grant_key, grant_value, permission, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        `INSERT INTO _storage_permissions
+         (permission_id, tenant_id, drive_id, object_id, grant_type, grant_key, grant_value, permission, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ),
       deletePermission: this.db.prepare(
         'DELETE FROM _storage_permissions WHERE permission_id = ?'
@@ -360,12 +413,18 @@ export class StorageService {
 
   // ─── Drives ─────────────────────────────────────────────────────────────
 
-  createDrive(ownerId: string, params: CreateDriveParams): DriveRecord {
+  createDrive(
+    ownerId: string,
+    params: CreateDriveParams,
+    scope?: ServiceDataScope,
+  ): DriveRecord {
+    const boundary = this.requireCreationScope(scope);
     const driveId = `drv_${crypto.randomUUID()}`;
     const now = Date.now();
 
     const drive: DriveRecord = {
       drive_id: driveId,
+      tenant_id: serviceDataTenantId(boundary),
       name: params.name,
       owner_id: ownerId,
       max_size_bytes: params.maxSize ?? 0,
@@ -381,6 +440,14 @@ export class StorageService {
 
   getDrive(driveId: string): DriveRecord | null {
     return this.stmts.getDrive.get(driveId) as DriveRecord | null;
+  }
+
+  /** Read a drive only inside an already validated request/execution scope. */
+  getDriveForScope(driveId: string, scope: ServiceDataScope): DriveRecord | null {
+    const drive = this.getDrive(driveId);
+    return drive && serviceDataScopeMatchesTenant(scope, drive.tenant_id)
+      ? drive
+      : null;
   }
 
   /**
@@ -424,16 +491,25 @@ export class StorageService {
    */
   listDrivesForUser(
     userId: string,
-    userRole: string | null,
-    userProperties: Record<string, string> = {}
+    userRole: StorageActorRoles,
+    userProperties: Record<string, string> = {},
+    scope?: ServiceDataScope,
   ): DriveRecord[] {
-    const allDrives = this.listDrives();
+    const boundary = this.requireCreationScope(scope);
+    const allDrives = this.listDrives()
+      .filter((drive) => serviceDataScopeMatchesTenant(boundary, drive.tenant_id));
     return allDrives.filter(drive => {
       if (drive.public) return true;
       if (drive.owner_id === userId) return true;
-      if (userRole === 'admin') return true;
+      // `admin` is the historical global-platform bypass only in legacy
+      // single mode. In multi mode role names are tenant assignments and must
+      // receive an explicit storage grant like every other role.
+      if (
+        this.options.tenancyMode === 'single'
+        && normalizeActorRoles(userRole).includes('admin')
+      ) return true;
       return this.checkAccess(
-        drive.drive_id, null, userId, userRole, userProperties, 'read'
+        drive.drive_id, null, userId, userRole, userProperties, 'read', boundary,
       );
     });
   }
@@ -493,9 +569,13 @@ export class StorageService {
     data: ReadableStream<Uint8Array> | Uint8Array | Blob,
     fileName: string,
     userId: string | null,
-    options: UploadOptions = {}
+    options: UploadOptions = {},
+    scope?: ServiceDataScope,
+    authorizeCommit?: () => Promise<void>,
   ): Promise<FileInfo> {
-    const drive = this.getDrive(driveId);
+    let drive = scope
+      ? this.getDriveForScope(driveId, scope)
+      : this.getDrive(driveId);
     if (!drive) throw new StorageError(404, `Drive not found: ${driveId}`);
 
     // Pass max file size to adapter so streaming rejects early
@@ -505,6 +585,25 @@ export class StorageService {
 
     // Write blob — adapter returns checksum, size, and head bytes for MIME detection
     const { checksum, size, headBytes } = await this.adapter.writeBlob(data, maxFileSize);
+
+    // Streaming can outlive the authority that admitted the request. Official
+    // request-scoped callers re-resolve the bearer here, immediately before
+    // any metadata/ref-count mutation. The drive is re-read under the same
+    // tenant boundary so deletion/replacement cannot reuse stale authority.
+    await authorizeCommit?.();
+    if (scope) {
+      const currentDrive = this.getDriveForScope(driveId, scope);
+      if (!currentDrive || currentDrive.created_at !== drive.created_at) {
+        throw new StorageError(409, 'Storage authority changed during upload');
+      }
+      drive = currentDrive;
+    }
+    if (drive.max_file_size_bytes > 0 && size > drive.max_file_size_bytes) {
+      throw new StorageError(
+        413,
+        `File exceeds maximum size (${size} > ${drive.max_file_size_bytes})`,
+      );
+    }
 
     // Detect MIME type from head bytes (no re-read needed)
     const detectedMime = detectMimeType(headBytes, fileName);
@@ -541,7 +640,12 @@ export class StorageService {
     }
 
     // Ensure parent folders exist
-    const parentId = this.ensureParentFolders(driveId, normalizedPath, userId);
+    const parentId = this.ensureParentFolders(
+      driveId,
+      normalizedPath,
+      userId,
+      drive.tenant_id,
+    );
 
     // Handle blob ref counting
     const existingBlob = this.stmts.getBlob.get(checksum) as BlobRecord | null;
@@ -580,6 +684,7 @@ export class StorageService {
 
     const record: ObjectRecord = {
       object_id: objectId,
+      tenant_id: drive.tenant_id,
       drive_id: driveId,
       parent_id: parentId,
       name: objectName,
@@ -695,7 +800,12 @@ export class StorageService {
     const existing = this.stmts.getObjectByPath.get(driveId, to) as ObjectRecord | null;
     if (existing) throw new StorageError(409, `Target already exists: ${to}`);
 
-    const newParentId = this.ensureParentFolders(driveId, to, obj.created_by);
+    const newParentId = this.ensureParentFolders(
+      driveId,
+      to,
+      obj.created_by,
+      obj.tenant_id,
+    );
     const newName = to.split('/').pop()!;
 
     const updated: ObjectRecord = {
@@ -730,11 +840,17 @@ export class StorageService {
       this.stmts.incrementBlobRef.run(obj.checksum);
     }
 
-    const parentId = this.ensureParentFolders(driveId, to, obj.created_by);
+    const parentId = this.ensureParentFolders(
+      driveId,
+      to,
+      obj.created_by,
+      obj.tenant_id,
+    );
     const now = Date.now();
 
     const copy: ObjectRecord = {
       object_id: `obj_${crypto.randomUUID()}`,
+      tenant_id: obj.tenant_id,
       drive_id: driveId,
       parent_id: parentId,
       name: to.split('/').pop()!,
@@ -796,6 +912,8 @@ export class StorageService {
     userId: string | null,
     isPublic = false
   ): FileInfo {
+    const drive = this.getDrive(driveId);
+    if (!drive) throw new StorageError(404, `Drive not found: ${driveId}`);
     const normalizedPath = normalizePath(path);
     const existing = this.stmts.getObjectByPath.get(driveId, normalizedPath) as ObjectRecord | null;
     if (existing) {
@@ -803,12 +921,18 @@ export class StorageService {
       throw new StorageError(409, `A file already exists at: ${normalizedPath}`);
     }
 
-    const parentId = this.ensureParentFolders(driveId, normalizedPath, userId);
+    const parentId = this.ensureParentFolders(
+      driveId,
+      normalizedPath,
+      userId,
+      drive.tenant_id,
+    );
     const now = Date.now();
     const folderName = normalizedPath.split('/').pop()!;
 
     const record: ObjectRecord = {
       object_id: `obj_${crypto.randomUUID()}`,
+      tenant_id: drive.tenant_id,
       drive_id: driveId,
       parent_id: parentId,
       name: folderName,
@@ -859,8 +983,18 @@ export class StorageService {
     const drive = this.getDrive(driveId);
     if (!drive) throw new StorageError(404, `Drive not found: ${driveId}`);
 
-    if (params.grantType === 'property' && !params.grantKey?.trim()) {
+    const propertyKey = params.grantKey?.trim();
+    if (params.grantType === 'property' && !propertyKey) {
       throw new StorageError(400, 'Property permissions require grantKey');
+    }
+    if (
+      params.grantType === 'property'
+      && !this.options.isPolicyTrustedProperty?.(propertyKey!)
+    ) {
+      throw new StorageError(
+        400,
+        'Property permissions require a policy-trusted grantKey'
+      );
     }
 
     let objectId: string | null = null;
@@ -876,8 +1010,8 @@ export class StorageService {
     const now = Date.now();
 
     this.stmts.insertPermission.run(
-      permId, driveId, objectId, params.grantType,
-      params.grantType === 'property' ? params.grantKey!.trim() : null,
+      permId, drive.tenant_id, driveId, objectId, params.grantType,
+      params.grantType === 'property' ? propertyKey! : null,
       params.grantValue,
       params.permission,
       now
@@ -885,10 +1019,11 @@ export class StorageService {
 
     return {
       permission_id: permId,
+      tenant_id: drive.tenant_id,
       drive_id: driveId,
       object_id: objectId,
       grant_type: params.grantType,
-      grant_key: params.grantType === 'property' ? params.grantKey!.trim() : null,
+      grant_key: params.grantType === 'property' ? propertyKey! : null,
       grant_value: params.grantValue,
       permission: params.permission,
       created_at: now,
@@ -933,7 +1068,7 @@ export class StorageService {
    * Check if a user has the required permission level on a drive/object.
    *
    * Access is granted if ANY of these are true:
-   * 1. User is a platform admin (full access to everything)
+   * 1. In legacy single mode, user is a platform admin
    * 2. Drive is public (for read access)
    * 3. Object is public (for read access)
    * 4. User is the drive owner
@@ -943,15 +1078,49 @@ export class StorageService {
     driveId: string,
     path: string | null,
     userId: string | null,
-    userRole: string | null,
+    userRole: StorageActorRoles,
     userProperties: Record<string, string>,
-    requiredLevel: PermissionLevel
+    requiredLevel: PermissionLevel,
+    scope?: ServiceDataScope,
   ): boolean {
     const drive = this.getDrive(driveId);
     if (!drive) return false;
 
-    // Platform admin → full access
-    if (userRole === 'admin') return true;
+    // In multi mode an authenticated identity without a validated active
+    // tenant must not acquire owner/role/property authority through this
+    // lower-level API. Anonymous public/capability reads remain available;
+    // signed upload/download routes validate their bearer capability first.
+    if (
+      this.options.tenancyMode === 'multi'
+      && !scope
+      && (
+        userId !== null
+        || normalizeActorRoles(userRole).length > 0
+        || Object.keys(userProperties).length > 0
+      )
+    ) return false;
+
+    // A user's ownership, platform role, tenant role, or explicit grant never
+    // crosses the active tenant boundary. Deliberately public reads remain
+    // public capability-style access even when the caller has another tenant
+    // active.
+    if (scope && !serviceDataScopeMatchesTenant(scope, drive.tenant_id)) {
+      if (requiredLevel !== 'read') return false;
+      if (drive.public) return true;
+      if (path) {
+        const publicObject = this.stmts.getObjectByPath.get(
+          driveId,
+          normalizePath(path),
+        ) as ObjectRecord | null;
+        return publicObject?.public === 1;
+      }
+      return false;
+    }
+
+    // Historical platform admin → full access in single mode only. A
+    // tenant role named `admin` has no magic data-plane meaning in multi.
+    const userRoles = normalizeActorRoles(userRole);
+    if (this.options.tenancyMode === 'single' && userRoles.includes('admin')) return true;
 
     // Public drive → read access
     if (drive.public && requiredLevel === 'read') return true;
@@ -991,10 +1160,14 @@ export class StorageService {
           if (perm.grant_value === userId) return true;
           break;
         case 'role':
-          if (perm.grant_value === userRole) return true;
+          if (userRoles.includes(perm.grant_value)) return true;
           break;
         case 'property':
-          if (perm.grant_key && userProperties[perm.grant_key] === perm.grant_value) return true;
+          if (
+            perm.grant_key
+            && this.options.isPolicyTrustedProperty?.(perm.grant_key)
+            && userProperties[perm.grant_key] === perm.grant_value
+          ) return true;
           break;
       }
     }
@@ -1065,7 +1238,8 @@ export class StorageService {
   private ensureParentFolders(
     driveId: string,
     filePath: string,
-    userId: string | null
+    userId: string | null,
+    tenantId: string | null,
   ): string | null {
     const parts = filePath.split('/').filter(Boolean);
     if (parts.length <= 1) return null;
@@ -1087,6 +1261,7 @@ export class StorageService {
 
       const folder: ObjectRecord = {
         object_id: folderId,
+        tenant_id: tenantId,
         drive_id: driveId,
         parent_id: parentId,
         name: parts[i],
@@ -1120,6 +1295,21 @@ export class StorageService {
       this.db.update('storage_objects', child.object_id, updated as unknown as Row);
     }
   }
+
+  private requireCreationScope(scope: ServiceDataScope | undefined): ServiceDataScope {
+    if (scope) return scope;
+    if (this.options.tenancyMode === 'multi') {
+      throw new StorageError(403, 'A validated tenant data scope is required');
+    }
+    return applicationServiceDataScope();
+  }
+}
+
+function normalizeActorRoles(input: StorageActorRoles): readonly string[] {
+  if (Array.isArray(input)) {
+    return [...new Set(input.filter((role) => typeof role === 'string' && role.length > 0))];
+  }
+  return typeof input === 'string' && input.length > 0 ? [input] : [];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────

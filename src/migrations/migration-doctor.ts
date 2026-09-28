@@ -39,30 +39,32 @@ export function runMigrationDoctor(params: {
   const findings: DoctorFinding[] = [];
   const schemaIssues: SchemaDiffIssue[] = [];
   const ledger = new MigrationLedger(params.db);
-  const latest = ledger.latestByVersion();
+  const latestEvents = ledger.latestByVersion();
+  const durableStates = ledger.stateByVersion();
 
   for (const migration of params.migrations) {
-    const record = latest.get(migration.version);
+    const event = latestEvents.get(migration.version);
+    const state = durableStates.get(migration.version);
     const checksum = hashMigration(migration);
+    const isApplied = state?.status === 'applied' && state.direction === 'up';
 
-    if (!record) {
+    if (!isApplied) {
       findings.push({
         severity: 'warning',
         code: 'migration.pending',
         message: `Migration ${migration.version} is pending: ${migration.description}`,
       });
-      continue;
     }
 
-    if (record.status === 'failed') {
+    if (event?.status === 'failed') {
       findings.push({
         severity: 'error',
         code: 'migration.failed',
-        message: `Migration ${migration.version} failed previously: ${record.error ?? 'unknown error'}`,
+        message: `Migration ${migration.version} failed previously: ${event.error ?? 'unknown error'}`,
       });
     }
 
-    if (record.status === 'applied' && record.checksum !== checksum) {
+    if (isApplied && state.checksum !== checksum) {
       findings.push({
         severity: 'error',
         code: 'migration.checksum',
@@ -112,6 +114,13 @@ export function statusToFindings(statuses: MigrationStatus[]): DoctorFinding[] {
         severity: 'warning',
         code: 'migration.pending',
         message: `Migration ${status.version} is pending: ${status.description}`,
+      });
+    }
+    if (status.lastStatus === 'failed') {
+      findings.push({
+        severity: 'error',
+        code: 'migration.failed',
+        message: `Migration ${status.version} failed during its most recent attempt.`,
       });
     }
     if (status.checksumMatches === false) {

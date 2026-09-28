@@ -6,7 +6,7 @@
  * does not mount Elysia plugins, scan files, or register routes.
  */
 
-import { getAuthStore } from '../../auth/auth.plugin';
+import { getAuthStore, getPropertyService } from '../../auth/auth-runtime';
 import { AuthError, type AuthContext } from '../../auth/types';
 import { OBS_CODES } from '../../observability/codes';
 import { emitPlatformCode } from '../../observability/sink';
@@ -22,6 +22,11 @@ export interface ZeroPolicyUserPropertyStore {
   getProperties(userId: string): Record<string, string>;
 }
 
+/** Minimal configured-property registry needed to trust policy inputs. */
+export interface ZeroPolicyUserPropertyRegistry {
+  isPolicyTrusted(key: string): boolean;
+}
+
 /** Request auth context needed to evaluate middleware policy. */
 export interface ZeroPolicyContext {
   authContext: AuthContext | null;
@@ -30,6 +35,7 @@ export interface ZeroPolicyContext {
 /** Options for policy evaluation, mainly used by tests. */
 export interface ZeroPolicyEvaluationOptions {
   getPropertyStore?: () => ZeroPolicyUserPropertyStore | null;
+  getPropertyRegistry?: () => ZeroPolicyUserPropertyRegistry | null;
 }
 
 export type ZeroPolicyDenyReason =
@@ -37,6 +43,7 @@ export type ZeroPolicyDenyReason =
   | 'forbidden'
   | 'role'
   | 'property'
+  | 'property-untrusted'
   | 'auth-unavailable';
 
 /** Structured policy result for callers that need to inspect before throwing. */
@@ -87,15 +94,44 @@ export function evaluateServerPolicy(
   }
 
   if (matcher?.properties && Object.keys(matcher.properties).length > 0) {
+    const propertyKeys = Object.keys(matcher.properties);
+    const registry = (options.getPropertyRegistry ?? getPropertyService)();
+    if (!registry) {
+      emitPlatformCode(OBS_CODES.ROUTER_MIDDLEWARE_POLICY_AUTH_UNAVAILABLE, {
+        metadata: {
+          userId: auth.userId,
+          propertyKeys,
+          service: 'property-registry',
+        },
+      });
+      return deny('auth-unavailable', 503, 'Auth policy services are unavailable');
+    }
+
+    const untrustedKeys = propertyKeys.filter((key) => !registry.isPolicyTrusted(key));
+    if (untrustedKeys.length > 0) {
+      emitPlatformCode(OBS_CODES.ROUTER_MIDDLEWARE_POLICY_PROPERTY_UNTRUSTED, {
+        metadata: {
+          propertyKeys: untrustedKeys,
+        },
+      });
+      return deny(
+        'property-untrusted',
+        500,
+        'Auth policy configuration is invalid',
+        { propertyKeys: untrustedKeys }
+      );
+    }
+
     const store = (options.getPropertyStore ?? getAuthStore)();
     if (!store) {
       emitPlatformCode(OBS_CODES.ROUTER_MIDDLEWARE_POLICY_AUTH_UNAVAILABLE, {
         metadata: {
           userId: auth.userId,
-          propertyKeys: Object.keys(matcher.properties),
+          propertyKeys,
+          service: 'property-store',
         },
       });
-      return deny('auth-unavailable', 401, 'Auth not initialized');
+      return deny('auth-unavailable', 503, 'Auth policy services are unavailable');
     }
 
     const properties = store.getProperties(auth.userId);
@@ -121,7 +157,11 @@ export function enforceServerPolicy(
 
   throw new AuthError(
     result.message ?? 'Forbidden',
-    result.status === 401 ? 'UNAUTHORIZED' : 'FORBIDDEN',
+    result.status === 401
+      ? 'UNAUTHORIZED'
+      : result.status && result.status >= 500
+        ? 'AUTH_POLICY_UNAVAILABLE'
+        : 'FORBIDDEN',
     result.status ?? 403
   );
 }

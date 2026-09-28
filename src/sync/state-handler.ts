@@ -7,8 +7,16 @@ import type {
   StateClearMessage,
   StateSnapshotMessage,
   StateAckMessage,
-  StateChangeMessage,
 } from './types';
+import {
+  serviceDataScopeFromIdentity,
+  serviceDataScopeKey,
+} from '../auth/service-data-scope';
+import { sendSyncWire } from './sync-wire-send';
+
+interface StateMutationOriginContext {
+  current: string | null;
+}
 
 /**
  * Handle state.subscribe — load user state and send snapshot.
@@ -17,44 +25,53 @@ import type {
 export function handleStateSubscribe(
   ws: ServerWebSocket<SyncSocketData>,
   stateManager: StateManager,
-  server: { publish: (topic: string, data: string) => void }
+  _server: { publish: (topic: string, data: string) => void },
+  tenancyMode: 'single' | 'multi' = 'single',
+  validateCurrentAuthority: () => boolean = allowCurrentAuthority,
 ): void {
-  const userId = ws.data.authContext?.userId;
-  if (!userId) return; // Unauthenticated — ignore
+  const principal = resolveStatePrincipal(ws.data.authContext, tenancyMode);
+  if (!principal) return; // Unauthenticated or invalid scope — ignore
 
-  // Subscribe to Bun pub/sub topic for this user's state changes
-  const topic = `state:${userId}`;
-  if (!ws.data.subscribedTopics.has(topic)) {
-    ws.subscribe(topic);
-    ws.data.subscribedTopics.add(topic);
-  }
+  // Bind the authoritative rows and the durable state cursor to one SQLite
+  // snapshot. A pending replica event already represented here is ignored when
+  // the ordered dispatcher later reaches it.
+  const state = stateManager.getUserStateSnapshot(principal, validateCurrentAuthority);
+  if (!state) return;
   ws.data.stateSubscribed = true;
-
-  // Send current state as snapshot
-  const entries = stateManager.getUserStateEntries(userId);
+  ws.data.statePrincipal = principal;
+  ws.data.stateLastSeq = state.seq;
   const snapshot: StateSnapshotMessage = {
     type: 'state.snapshot',
-    entries,
+    entries: state.entries,
   };
-  ws.send(JSON.stringify(snapshot));
+  if (!sendSyncWire(ws, snapshot)) {
+    ws.data.stateSubscribed = false;
+    ws.data.statePrincipal = null;
+    ws.data.stateLastSeq = 0;
+  }
 }
 
 /**
- * Handle state.set — persist, ack, and publish to other devices.
+ * Handle state.set — persist and acknowledge the sender.
+ * Ordered onChange delivery notifies every other authorized device.
  */
 export function handleStateSet(
   ws: ServerWebSocket<SyncSocketData>,
   msg: StateSetMessage,
   stateManager: StateManager,
-  server: { publish: (topic: string, data: string) => void }
+  _server: { publish: (topic: string, data: string) => void },
+  tenancyMode: 'single' | 'multi' = 'single',
+  mutationOrigin?: StateMutationOriginContext,
+  validateCurrentAuthority: () => boolean = allowCurrentAuthority,
 ): void {
-  const userId = ws.data.authContext?.userId;
-  if (!userId) {
+  const principal = resolveStatePrincipal(ws.data.authContext, tenancyMode);
+  if (!principal) {
     sendStateAck(ws, msg.ref, false, 'UNAUTHORIZED');
     return;
   }
 
-  const result = stateManager.set(userId, msg.key, msg.value);
+  const result = withStateMutationOrigin(ws, mutationOrigin, () =>
+    stateManager.set(principal, msg.key, msg.value, validateCurrentAuthority));
 
   if (!result.ok) {
     sendStateAck(ws, msg.ref, false, result.error);
@@ -63,71 +80,64 @@ export function handleStateSet(
 
   // Ack the sender
   sendStateAck(ws, msg.ref, true);
-
-  // Publish to all other devices for this user
-  const change: StateChangeMessage = {
-    type: 'state.change',
-    key: msg.key,
-    value: msg.value,
-    op: 'set',
-  };
-  server.publish(`state:${userId}`, JSON.stringify(change));
 }
 
 /**
- * Handle state.delete — remove, ack, and publish.
+ * Handle state.delete — remove and acknowledge the sender.
+ * Ordered onChange delivery notifies every other authorized device.
  */
 export function handleStateDelete(
   ws: ServerWebSocket<SyncSocketData>,
   msg: StateDeleteMessage,
   stateManager: StateManager,
-  server: { publish: (topic: string, data: string) => void }
+  _server: { publish: (topic: string, data: string) => void },
+  tenancyMode: 'single' | 'multi' = 'single',
+  mutationOrigin?: StateMutationOriginContext,
+  validateCurrentAuthority: () => boolean = allowCurrentAuthority,
 ): void {
-  const userId = ws.data.authContext?.userId;
-  if (!userId) {
+  const principal = resolveStatePrincipal(ws.data.authContext, tenancyMode);
+  if (!principal) {
     sendStateAck(ws, msg.ref, false, 'UNAUTHORIZED');
     return;
   }
 
-  stateManager.delete(userId, msg.key);
+  const result = withStateMutationOrigin(ws, mutationOrigin, () =>
+    stateManager.delete(principal, msg.key, validateCurrentAuthority));
+  if (!result.ok) {
+    sendStateAck(ws, msg.ref, false, result.error);
+    return;
+  }
 
   sendStateAck(ws, msg.ref, true);
-
-  const change: StateChangeMessage = {
-    type: 'state.change',
-    key: msg.key,
-    value: undefined,
-    op: 'delete',
-  };
-  server.publish(`state:${userId}`, JSON.stringify(change));
 }
 
 /**
- * Handle state.clear — wipe all user state, ack, and publish.
+ * Handle state.clear — wipe all user state and acknowledge the sender.
+ * Ordered onChange delivery notifies every other authorized device.
  */
 export function handleStateClear(
   ws: ServerWebSocket<SyncSocketData>,
   msg: StateClearMessage,
   stateManager: StateManager,
-  server: { publish: (topic: string, data: string) => void }
+  _server: { publish: (topic: string, data: string) => void },
+  tenancyMode: 'single' | 'multi' = 'single',
+  mutationOrigin?: StateMutationOriginContext,
+  validateCurrentAuthority: () => boolean = allowCurrentAuthority,
 ): void {
-  const userId = ws.data.authContext?.userId;
-  if (!userId) {
+  const principal = resolveStatePrincipal(ws.data.authContext, tenancyMode);
+  if (!principal) {
     sendStateAck(ws, msg.ref, false, 'UNAUTHORIZED');
     return;
   }
 
-  stateManager.clear(userId);
+  const result = withStateMutationOrigin(ws, mutationOrigin, () =>
+    stateManager.clear(principal, validateCurrentAuthority));
+  if (!result.ok) {
+    sendStateAck(ws, msg.ref, false, result.error);
+    return;
+  }
 
   sendStateAck(ws, msg.ref, true);
-
-  const change: StateChangeMessage = {
-    type: 'state.change',
-    key: null,
-    value: undefined,
-    op: 'clear',
-  };
-  server.publish(`state:${userId}`, JSON.stringify(change));
 }
 
 // ─── Internal ─────────────────────────────────────────────────────────────
@@ -140,5 +150,49 @@ function sendStateAck(
 ): void {
   const ack: StateAckMessage = { type: 'state.ack', ref, ok };
   if (error) ack.error = error as StateAckMessage['error'];
-  ws.send(JSON.stringify(ack));
+  sendSyncWire(ws, ack);
+}
+
+/** Stable protocol rejection for malformed State Sync messages. */
+export function sendInvalidStateRequest(
+  ws: ServerWebSocket<SyncSocketData>,
+  ref: string,
+): void {
+  sendStateAck(ws, ref, false, 'INVALID_REQUEST');
+}
+
+function withStateMutationOrigin<T>(
+  ws: ServerWebSocket<SyncSocketData>,
+  mutationOrigin: StateMutationOriginContext | undefined,
+  mutate: () => T,
+): T {
+  if (!mutationOrigin) return mutate();
+  const previous = mutationOrigin.current;
+  mutationOrigin.current = ws.data.connectionId;
+  try {
+    return mutate();
+  } finally {
+    mutationOrigin.current = previous;
+  }
+}
+
+function allowCurrentAuthority(): boolean {
+  return true;
+}
+
+/**
+ * Single-mode state keeps its historical per-user key. Tenant sessions add a
+ * server-owned scope prefix, so the same identity can reuse a state key in two
+ * organizations without reading or overwriting the other tenant's value.
+ */
+export function resolveStatePrincipal(
+  auth: SyncSocketData['authContext'],
+  tenancyMode: 'single' | 'multi',
+): string | null {
+  if (!auth?.userId) return null;
+  const scope = serviceDataScopeFromIdentity(auth, tenancyMode);
+  if (!scope) return null;
+  return scope.scopeKind === 'tenant'
+    ? `${serviceDataScopeKey(scope)}:user:${auth.userId}`
+    : auth.userId;
 }

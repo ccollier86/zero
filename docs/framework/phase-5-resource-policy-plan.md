@@ -1,6 +1,11 @@
 # Phase 5: Resource And Policy API Plan
 
-Status: planned, slices 1-7 implemented
+> Historical implementation plan: slices 1–7 landed, but later resource
+> hardening may supersede examples and status notes below. Use
+> [Resource Policy Core](./resource-policy.md) for the current contract,
+> including explicit client exposure and multi-tenant validation.
+
+Status: historical plan; original slices 1–7 implemented
 
 Phase 5 introduces a high-level resource contract for common data-driven apps.
 The goal is to let app code declare tables, actions, and authorization policy
@@ -23,6 +28,7 @@ import {
 export default defineResource({
   table: 'tickets',
   primaryKey: 'ticket_id',
+  exposure: 'all',
   actions: ['list', 'get', 'create', 'update', 'delete'],
   policy: {
     list: metadataPolicy({ department: ['support', 'management'] }),

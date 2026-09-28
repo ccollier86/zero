@@ -9,6 +9,10 @@
 
 import * as React from 'react';
 import type { Client } from '../../../frontend/client/sdk';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from '../../../frontend/client/authorization-scope-hooks';
 import { mapAuthUserToManagementUser } from './user-management-mappers';
 import {
   DEFAULT_USER_MANAGEMENT_FILTERS,
@@ -46,6 +50,7 @@ export function useAdminUserData(
   client: Client | null,
   options: UseAdminUsersOptions,
 ): AdminUserDataState {
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const enabled = options.enabled ?? true;
   const loadUsers = options.loadUsers ?? true;
   const pageSize = Math.max(1, options.pageSize ?? 100);
@@ -64,33 +69,66 @@ export function useAdminUserData(
     list: string | null;
   });
   const requests = React.useRef({ config: 0, list: 0 });
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = React.useState(authorizationBoundary.key);
+  const boundaryKeyRef = React.useRef(authorizationBoundary.key);
+  const boundaryReadyRef = React.useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const isCurrentScope = React.useCallback(
+    () => isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    ),
+    [callbackBoundaryKey],
+  );
 
   const replaceUser = React.useCallback((user: UserManagementUser) => {
+    if (!isCurrentScope()) return;
     setUsers((current) => current.map((item) => item.id === user.id ? user : item));
-  }, []);
+  }, [isCurrentScope]);
+
+  const setScopedUsers = React.useCallback<AdminUserDataState['setUsers']>((next) => {
+    if (isCurrentScope()) setUsers(next);
+  }, [isCurrentScope]);
+
+  const setScopedPage = React.useCallback<AdminUserDataState['setPage']>((next) => {
+    if (isCurrentScope()) setPage(next);
+  }, [isCurrentScope]);
 
   const loadConfig = React.useCallback(async () => {
-    if (!enabled || !client) return;
+    if (!enabled || !client || !isCurrentScope()) return;
+    const requestBoundaryKey = callbackBoundaryKey;
     const id = ++requests.current.config;
     setLoading((state) => ({ ...state, config: true }));
     setErrors((state) => ({ ...state, config: null }));
     try {
       const next = await client.getAuthAdminConfig();
-      if (id === requests.current.config) setConfig(next);
+      if (!boundaryReadyRef.current
+        || boundaryKeyRef.current !== requestBoundaryKey) throw staleAdminOperation();
+      if (id === requests.current.config) {
+        setConfig(next);
+        setLoadedBoundaryKey(requestBoundaryKey);
+      }
     } catch (value) {
+      if (!boundaryReadyRef.current
+        || boundaryKeyRef.current !== requestBoundaryKey) throw staleAdminOperation();
       if (id !== requests.current.config) return;
       const error = reportAdminUserError('loadConfig', value);
       setErrors((state) => ({ ...state, config: error.message }));
+      setLoadedBoundaryKey(requestBoundaryKey);
       throw error;
     } finally {
       if (id === requests.current.config) {
         setLoading((state) => ({ ...state, config: false }));
       }
     }
-  }, [client, enabled]);
+  }, [callbackBoundaryKey, client, enabled, isCurrentScope]);
 
   const loadPage = React.useCallback(async (offset: number) => {
-    if (!enabled || !loadUsers || !client) return;
+    if (!enabled || !loadUsers || !client || !isCurrentScope()) return;
+    const requestBoundaryKey = callbackBoundaryKey;
     const id = ++requests.current.list;
     setLoading((state) => ({ ...state, list: true }));
     setErrors((state) => ({ ...state, list: null }));
@@ -98,28 +136,52 @@ export function useAdminUserData(
       const result = await client.listAuthAdminUsers(
         buildAdminUserListParams(filters, pageSize, Math.max(0, offset)),
       );
+      if (!boundaryReadyRef.current
+        || boundaryKeyRef.current !== requestBoundaryKey) throw staleAdminOperation();
       if (id !== requests.current.list) return;
       setUsers(result.users.map(mapAuthUserToManagementUser));
       setPage(result.page);
       setPageOffset(result.page.offset);
+      setLoadedBoundaryKey(requestBoundaryKey);
     } catch (value) {
+      if (!boundaryReadyRef.current
+        || boundaryKeyRef.current !== requestBoundaryKey) throw staleAdminOperation();
       if (id !== requests.current.list) return;
       const error = reportAdminUserError('load', value);
       setErrors((state) => ({ ...state, list: error.message }));
+      setLoadedBoundaryKey(requestBoundaryKey);
       throw error;
     } finally {
       if (id === requests.current.list) {
         setLoading((state) => ({ ...state, list: false }));
       }
     }
-  }, [client, enabled, filters, loadUsers, pageSize]);
+  }, [callbackBoundaryKey, client, enabled, filters, isCurrentScope, loadUsers, pageSize]);
 
   const reload = React.useCallback(async () => {
+    if (!isCurrentScope()) return;
     await Promise.all([loadConfig(), loadUsers ? loadPage(pageOffset) : Promise.resolve()]);
-  }, [loadConfig, loadPage, loadUsers, pageOffset]);
+  }, [isCurrentScope, loadConfig, loadPage, loadUsers, pageOffset]);
 
   React.useEffect(() => {
-    if (!enabled) return;
+    requests.current.config += 1;
+    requests.current.list += 1;
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setUsers([]);
+    setConfig(null);
+    setPage(null);
+    setPageOffset(0);
+    setFilters({
+      search: options.initialSearch ?? DEFAULT_USER_MANAGEMENT_FILTERS.search,
+      role: options.initialRole ?? DEFAULT_USER_MANAGEMENT_FILTERS.role,
+      status: options.initialStatus ?? DEFAULT_USER_MANAGEMENT_FILTERS.status,
+    });
+    setLoading({ config: false, list: false });
+    setErrors({ config: null, list: null });
+  }, [authorizationBoundary.key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  React.useEffect(() => {
+    if (!enabled || !authorizationBoundary.ready) return;
     if (!client) {
       setErrors((state) => ({
         ...state,
@@ -128,25 +190,58 @@ export function useAdminUserData(
       return;
     }
     void loadConfig().catch(() => {});
-  }, [client, enabled, loadConfig]);
+  }, [authorizationBoundary.ready, client, enabled, loadConfig]);
 
   React.useEffect(() => {
-    if (enabled && loadUsers && client) void loadPage(0).catch(() => {});
-  }, [client, enabled, loadPage, loadUsers]);
+    if (authorizationBoundary.ready && enabled && loadUsers && client) {
+      void loadPage(0).catch(() => {});
+    }
+  }, [authorizationBoundary.ready, client, enabled, loadPage, loadUsers]);
 
   React.useEffect(() => () => {
     requests.current.config += 1;
     requests.current.list += 1;
   }, []);
 
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+  const visibleFilters = visible ? filters : {
+    search: options.initialSearch ?? DEFAULT_USER_MANAGEMENT_FILTERS.search,
+    role: options.initialRole ?? DEFAULT_USER_MANAGEMENT_FILTERS.role,
+    status: options.initialStatus ?? DEFAULT_USER_MANAGEMENT_FILTERS.status,
+  };
+
   return {
-    users, config, page, filters, pageOffset, pageSize,
-    isLoading: loading.config || loading.list,
-    error: errors.config ?? errors.list,
-    setUsers, setPage, replaceUser,
-    setSearch: (search) => setFilters((state) => state.search === search ? state : { ...state, search }),
-    setRole: (role) => setFilters((state) => state.role === role ? state : { ...state, role }),
-    setStatus: (status) => setFilters((state) => state.status === status ? state : { ...state, status }),
+    users: visible ? users : [],
+    config: visible ? config : null,
+    page: visible ? page : null,
+    filters: visibleFilters,
+    pageOffset: visible ? pageOffset : 0,
+    pageSize,
+    isLoading: authorizationBoundary.ready && (!visible || loading.config || loading.list),
+    error: visible ? errors.config ?? errors.list : null,
+    setUsers: setScopedUsers,
+    setPage: setScopedPage,
+    replaceUser,
+    setSearch: (search) => {
+      if (isCurrentScope()) {
+        setFilters((state) => state.search === search ? state : { ...state, search });
+      }
+    },
+    setRole: (role) => {
+      if (isCurrentScope()) {
+        setFilters((state) => state.role === role ? state : { ...state, role });
+      }
+    },
+    setStatus: (status) => {
+      if (isCurrentScope()) {
+        setFilters((state) => state.status === status ? state : { ...state, status });
+      }
+    },
     loadPage, reload,
   };
+}
+
+function staleAdminOperation(): Error {
+  return new Error('The authorization scope changed before the admin user request completed.');
 }

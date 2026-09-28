@@ -7,7 +7,7 @@ import { NativeAuthError } from './errors';
 
 export class NativeAuthBrokerClientState {
   private snapshotValue = cloneNativeAuthState({
-    status: 'uninitialized', identity: null, error: null,
+    status: 'uninitialized', identity: null, activeTenant: null, error: null,
   });
   private revisionValue = -1;
   private issuerMismatch = false;
@@ -32,6 +32,7 @@ export class NativeAuthBrokerClientState {
     const next = this.issuerMismatch ? cloneNativeAuthState({
       status: 'error',
       identity: null,
+      activeTenant: null,
       error: {
         code: 'NATIVE_BROKER_ISSUER_MISMATCH',
         message: 'The auth broker issuer does not match serverUrl.',

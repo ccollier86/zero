@@ -9,6 +9,7 @@ import {
 } from './auth-account-dependencies';
 import { toAuthUserResponse } from './auth-user-response';
 import { AuthError } from './types';
+import type { AuthAuditRequestContext } from './auth-audit-types';
 
 export async function completePasswordAction(
   config: AuthAccountPluginConfig,
@@ -16,6 +17,7 @@ export async function completePasswordAction(
     rawToken: string;
     newPassword: string;
     allowedTypes: Parameters<AuthActionTokenService['consume']>[1];
+    auditRequest?: AuthAuditRequestContext;
   }
 ) {
   const { store, actionTokens } = requireAccountServices(config);
@@ -38,7 +40,11 @@ export async function completePasswordAction(
         inspection.record.metadata.nativeContinuation,
         inspection.user.userId
       );
-    }
+    },
+    {
+      actor: { userId: inspection.user.userId, provenance: 'account-recovery' },
+      request: params.auditRequest,
+    },
   );
   if (!changed) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
   const user = store.getUserById(inspection.user.userId);

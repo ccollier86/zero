@@ -58,9 +58,13 @@ const stmt = db.prepare(sql);
 const rows = stmt.all(...params, limit, offset) as RowType[];
 ```
 
-### Local vs bun-types declarations
+### Use Bun's declarations directly
 
-The project has a local `src/persistence/bun-sqlite.d.ts` that re-declares `bun:sqlite` module types. This file must stay aligned with `bun-types` — if `bun-types` updates signatures, the local file must match or TypeScript will use the stricter of the two declarations.
+Zero currently relies on `@types/bun` for `bun:sqlite`; it does not maintain a
+second ambient `bun:sqlite` declaration. Avoid adding a local module
+redeclaration to work around a call-site type error, because merged declarations
+can silently drift from the supported Bun API. Fix the generic/parameter type
+at the call site or update the pinned Bun types deliberately.
 
 ## Prepared Statements
 
@@ -127,5 +131,9 @@ WAL mode enables crash recovery:
 ## Table Naming Convention
 
 For systems using ReactiveDB (sync engine):
-- **No prefix**: Tables broadcast via WebSocket to connected clients (e.g., `workflow_instances`, `notifications`)
-- **`_` prefix**: Internal tables, never broadcast (e.g., `_credentials`, `_refresh_tokens`, `_audit_log`)
+
+- **No prefix**: Table is eligible for Sync policy evaluation; this does not
+  make it globally readable. `createApp()` may keep it private or apply a row
+  filter (for example workflows and notifications).
+- **`_` prefix**: Internal table, never client-readable through Sync (for
+  example `_credentials`, `_refresh_tokens`, `_audit_log`).

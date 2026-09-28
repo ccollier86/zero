@@ -10,6 +10,8 @@ export type NotificationTarget = 'all' | 'user' | 'users' | 'role';
 
 export interface NotificationRecord {
   notification_id: string;
+  /** Null in single-tenant mode; tenant id for multi-tenant notifications. */
+  tenant_id: string | null;
   type: NotificationType;
   priority: NotificationPriority;
   title: string;
@@ -25,6 +27,8 @@ export interface NotificationRecord {
 
 export interface NotificationReceiptRecord {
   receipt_id: string;
+  /** Duplicated from the notification for direct Sync row filtering. */
+  tenant_id: string | null;
   notification_id: string;
   user_id: string;
   seen_at: number | null;
@@ -61,6 +65,7 @@ export const NOTIFICATION_TABLES: Record<string, ClientTableDef> = {
   notifications: {
     _pk: 'notification_id',
     notification_id: 'text',
+    tenant_id: 'text',
     type: 'text',
     priority: 'text',
     title: 'text',
@@ -76,6 +81,7 @@ export const NOTIFICATION_TABLES: Record<string, ClientTableDef> = {
   notification_receipts: {
     _pk: 'receipt_id',
     receipt_id: 'text',
+    tenant_id: 'text',
     notification_id: 'text',
     user_id: 'text',
     seen_at: 'integer',

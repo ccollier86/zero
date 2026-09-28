@@ -62,15 +62,22 @@ database at startup and declares those fields in `zero.config.ts` under
 
 ## Auth Behavior
 
-LaunchBoard enables auth in `zero.config.ts` with public registration,
-first-user admin bootstrap, no required email verification, and optional MFA:
+LaunchBoard enables auth in `zero.config.ts` with public registration after a
+secret-gated first-administrator ceremony, no required email verification, and
+optional MFA:
 
 ```ts
 export const config = defineZeroConfig({
   tables,
   resources: launchBoardResources,
   auth: {
-    registration: { mode: 'public' },
+    bootstrap: {
+      mode: 'secret',
+      secret: Bun.env.AUTH_BOOTSTRAP_SECRET || undefined,
+    },
+    registration: {
+      mode: 'public',
+    },
     account: {
       requireEmailVerification: false,
     },
@@ -87,9 +94,10 @@ With Zero's default protected-first route mode, `/` requires a session while
 `/login`, `/register`, `/forgot-password`, `/reset-password`, and
 `/setup-password` stay public. The `/verify-email` route is present for apps
 that turn on email verification, but LaunchBoard does not require verification
-by default. The first account created through `/register` becomes the admin
-through the platform auth bootstrap path. Later public registrations create
-normal users. MFA is offered as an opt-in setup flow unless
+by default. On a fresh database, set a random `AUTH_BOOTSTRAP_SECRET` of at
+least 32 characters and enter it in the register page's operator setup field.
+That transaction creates the first administrator and durably closes bootstrap;
+later public registrations create normal users. MFA is offered as an opt-in setup flow unless
 `AUTH_MFA_POLICY=required` or `admin-required`.
 
 ## Shell Pattern

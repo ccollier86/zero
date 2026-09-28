@@ -25,6 +25,8 @@ import type {
 import { AuthError } from './types';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
+import type { AuthAuditService } from './auth-audit-service';
+import type { AuthAuditActor, AuthAuditRequestContext } from './auth-audit-types';
 
 /** Public MFA method metadata returned by account routes. */
 export interface PublicMfaMethod {
@@ -75,7 +77,8 @@ export class MfaChallengeService {
     private readonly config: ResolvedAuthBehaviorConfig,
     private readonly methodStore: MfaMethodStore,
     private readonly challengeStore: MfaChallengeStore,
-    private readonly accountEmail: AccountEmailService
+    private readonly accountEmail: AccountEmailService,
+    private readonly auditService?: AuthAuditService,
   ) {
     this.challengeTTLMs = parseDurationToMs(config.mfa.challengeTTL);
     this.challengeCooldownMs = parseDurationToMs(config.mfa.challengeCooldown);
@@ -183,6 +186,8 @@ export class MfaChallengeService {
     methodId: string;
     code: string;
     challengeId?: string;
+    auditActor?: AuthAuditActor;
+    auditRequest?: AuthAuditRequestContext;
   }): Promise<PublicMfaMethod> {
     this.assertMfaEnabled();
     const method = this.requireUserMethod(params.user.userId, params.methodId);
@@ -190,17 +195,7 @@ export class MfaChallengeService {
       throw new AuthError('MFA method is not pending verification', 'MFA_METHOD_NOT_PENDING', 400);
     }
 
-    if (method.type === 'email') {
-      if (!params.challengeId) {
-        throw new AuthError('MFA challenge is required', 'MFA_CHALLENGE_REQUIRED', 400);
-      }
-      this.verifyEmailChallenge({
-        userId: params.user.userId,
-        methodId: method.methodId,
-        challengeId: params.challengeId,
-        code: params.code,
-      });
-    } else {
+    if (method.type !== 'email') {
       const encryptionKey = this.requireTotpEncryptionKey();
       if (!method.secretCiphertext) {
         throw new AuthError('MFA method has no secret', 'MFA_METHOD_INVALID', 500);
@@ -211,15 +206,40 @@ export class MfaChallengeService {
       }
     }
 
-    const activated = this.methodStore.activateMethod(method.methodId, {
-      singleActive: !this.config.mfa.allowMultipleMethods,
-      makePrimary: true,
-    });
-    if (!activated) {
-      throw new AuthError('MFA method not found', 'MFA_METHOD_NOT_FOUND', 404);
-    }
+    return this.methodStore.transaction(() => {
+      if (method.type === 'email') {
+        if (!params.challengeId) {
+          throw new AuthError('MFA challenge is required', 'MFA_CHALLENGE_REQUIRED', 400);
+        }
+        this.verifyEmailChallenge({
+          userId: params.user.userId,
+          methodId: method.methodId,
+          challengeId: params.challengeId,
+          code: params.code,
+        });
+      }
 
-    return toPublicMfaMethod(activated);
+      const activated = this.methodStore.activateMethod(method.methodId, {
+        singleActive: !this.config.mfa.allowMultipleMethods,
+        makePrimary: true,
+      });
+      if (!activated) {
+        throw new AuthError('MFA method not found', 'MFA_METHOD_NOT_FOUND', 404);
+      }
+      this.auditService?.append({
+        action: 'account.mfa-enrolled',
+        outcome: 'succeeded',
+        scope: { kind: 'application' },
+        actor: params.auditActor ?? {
+          userId: params.user.userId,
+          provenance: 'authenticated-request',
+        },
+        request: params.auditRequest,
+        target: { type: 'mfa-method', id: activated.methodId },
+        metadata: { type: activated.type },
+      });
+      return toPublicMfaMethod(activated);
+    });
   }
 
   /** Start login MFA challenge for an active method. */

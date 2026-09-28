@@ -4,6 +4,7 @@ import { createElement, useCallback, useMemo } from 'react';
 import type { ComponentType, ReactNode } from 'react';
 import type { Row } from '../../sync/types';
 import type { SchemaDescriptor } from '../../schema/define-schema';
+import type { ResourceFieldAccess } from '../../resources/resource-field-access';
 import type { RowAction } from '../data-table/data-table-row-actions';
 import type { NavigationAction } from '../ui/record-navigation-bar';
 import { useCollection, useLazyCollection } from '../../frontend/client/data-hooks';
@@ -41,6 +42,8 @@ export interface CrudPageProps<T extends Row = Row> {
   columns: string[];
   /** Primary key override. Defaults to `schema.primaryKey`. */
   primaryKey?: string;
+  /** Shared defineResourceFields() contract for safe columns and forms. */
+  resourceFields?: ResourceFieldAccess;
 
   // ── Layout ──────────────────────────────────────────────────
   /**
@@ -223,6 +226,7 @@ function TableLayout<T extends Row = Row>({
   schema,
   columns,
   primaryKey: primaryKeyOverride,
+  resourceFields,
   data,
   insert,
   update,
@@ -262,6 +266,7 @@ function TableLayout<T extends Row = Row>({
         mode: 'create',
         columns: formColumns,
         fields: createFields,
+        includeFields: resourceFields?.create,
         submitLabel: createLabel,
         onSubmit: (formData: any) => {
           const draft = onBeforeCreate ? onBeforeCreate(formData as T) : formData as T;
@@ -276,7 +281,7 @@ function TableLayout<T extends Row = Row>({
         },
       }),
     });
-  }, [table, schema, createLabel, modalSize, formColumns, createFields, insert, onBeforeCreate, onAfterCreate, primaryKey]);
+  }, [table, schema, createLabel, modalSize, formColumns, createFields, resourceFields, insert, onBeforeCreate, onAfterCreate, primaryKey]);
 
   const openEditModal = useCallback((row: T) => {
     const rowId = requireRowPrimaryKey(row, primaryKey);
@@ -289,6 +294,7 @@ function TableLayout<T extends Row = Row>({
         defaultValues: row,
         columns: formColumns,
         fields: editFields,
+        includeFields: resourceFields?.update,
         submitLabel: 'Save',
         onSubmit: (formData: any) => {
           const id = rowId;
@@ -302,7 +308,7 @@ function TableLayout<T extends Row = Row>({
         },
       }),
     });
-  }, [schema, modalSize, formColumns, editFields, update, onBeforeUpdate, primaryKey]);
+  }, [schema, modalSize, formColumns, editFields, resourceFields, update, onBeforeUpdate, primaryKey]);
 
   const handleDelete = useCallback(async (row: T) => {
     const id = requireRowPrimaryKey(row, primaryKey);
@@ -359,7 +365,9 @@ function TableLayout<T extends Row = Row>({
         <DataTable<T>
           schema={schema}
           data={data}
-          columns={columns}
+          columns={resourceFields
+            ? columns.filter((column) => resourceFields.read.includes(column))
+            : columns}
           primaryKey={primaryKey}
           actions={allActions}
           searchable={searchable}
@@ -379,6 +387,7 @@ function MasterDetailLayout<T extends Row = Row>({
   schema,
   columns,
   primaryKey: primaryKeyOverride,
+  resourceFields,
   data,
   insert,
   update,
@@ -423,6 +432,7 @@ function MasterDetailLayout<T extends Row = Row>({
         mode: 'create',
         columns: formColumns,
         fields: createFields,
+        includeFields: resourceFields?.create,
         submitLabel: createLabel,
         onSubmit: (formData: any) => {
           const draft = onBeforeCreate ? onBeforeCreate(formData as T) : formData as T;
@@ -437,7 +447,7 @@ function MasterDetailLayout<T extends Row = Row>({
         },
       }),
     });
-  }, [table, schema, createLabel, modalSize, formColumns, createFields, insert, onBeforeCreate, onAfterCreate, primaryKey]);
+  }, [table, schema, createLabel, modalSize, formColumns, createFields, resourceFields, insert, onBeforeCreate, onAfterCreate, primaryKey]);
 
   const handleUpdate = useCallback((id: string, changes: Partial<T>) => {
     const updateData = stripRowPrimaryKey(changes, primaryKey);
@@ -508,9 +518,14 @@ function MasterDetailLayout<T extends Row = Row>({
       <MasterDetailPage<T>
         schema={schema}
         data={data}
-        listColumns={columns}
+        listColumns={resourceFields
+          ? columns.filter((column) => resourceFields.read.includes(column))
+          : columns}
         primaryKey={primaryKey}
-        editableFields={editableFields}
+        editableFields={resourceFields
+          ? (editableFields ?? resourceFields.update)
+            .filter((field) => resourceFields.update.includes(field))
+          : editableFields}
         detailHeader={detailHeader}
         emptyState={emptyState}
         detailFooter={detailFooter}

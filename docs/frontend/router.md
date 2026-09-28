@@ -441,29 +441,62 @@ API routes export named HTTP method handlers:
 
 ```ts
 // app/api/todos/route.ts
-import type { APIRequest } from '@zero/framework/server';
+import {
+  getSyncDB,
+  type LoaderContext,
+  type RouteConfig,
+} from '@zero/framework/server';
 
-export async function GET(req: APIRequest) {
-  const todos = req.db.query('SELECT * FROM todos').all();
-  return Response.json(todos);
+export const config: RouteConfig = { auth: 'required' };
+
+export async function GET(_context: LoaderContext) {
+  const db = getSyncDB();
+  if (!db) {
+    return Response.json({ error: 'Database unavailable' }, { status: 503 });
+  }
+  return Response.json(db.query('todos'));
 }
 
-export async function POST(req: APIRequest) {
-  const body = await req.json();
-  req.db.insert('todos', body);  // Auto-PK generates UUID if id is missing
-  return Response.json({ ok: true }, { status: 201 });
+export async function POST({ request }: LoaderContext) {
+  const db = getSyncDB();
+  if (!db) {
+    return Response.json({ error: 'Database unavailable' }, { status: 503 });
+  }
+  const body = await request.json() as { title: string };
+  const change = db.insert('todos', {
+    id: crypto.randomUUID(),
+    title: body.title,
+    done: 0,
+  });
+  return Response.json(change.row, { status: 201 });
 }
 
-export async function DELETE(req: APIRequest, { params }: { params: { id: string } }) {
-  req.db.delete('todos', params.id);
+export async function DELETE({ params }: LoaderContext) {
+  const db = getSyncDB();
+  if (!db) {
+    return Response.json({ error: 'Database unavailable' }, { status: 503 });
+  }
+  db.delete('todos', params.id);
   return new Response(null, { status: 204 });
 }
 ```
 
-**`APIRequest`** extends the standard `Request` with context injected by Elysia:
-- `req.db` — ReactiveDB instance (writes are reactive, broadcast to subscribers)
-- `req.authContext` — `{ userId, email, role } | null` (from auth middleware)
-- `req.json()` — parsed request body
+File API handlers receive `LoaderContext`:
+
+- `request` is the standard Fetch `Request`; call `request.json()` when needed;
+- `params` contains matched dynamic segments;
+- `auth` is the Bearer-authenticated route identity when available;
+- `access` is the request-bound authorization facade. Use
+  `requireAuth()`, `requirePlatformAdmin()`, `requireTenant()`, or
+  `requirePermission()` when a handler needs the already-authorized scope;
+- `redirect()` creates a redirect response.
+
+`LoaderContext` does not inject `db`. Use the exported server service getters
+such as `getSyncDB()` only for deliberately trusted server logic. Raw
+`zero.db`/`zero.sql` access is not tenant-filtered automatically. For ordinary
+multi-tenant data access, use a registered tenant-realm resource or a
+`defineEndpoint()`/`defineRouter()` module with injected, request-scoped Zero
+services.
 
 API routes don't render React. They return standard `Response` objects. Same fetch API everywhere.
 
@@ -553,6 +586,43 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 }
 ```
 
+`config.auth` also accepts Zero's structured authorization requirement. The
+same vocabulary is used by typed endpoints, routers, middleware, pages, and
+`route.ts` handlers:
+
+```ts
+// app/documents/layout.tsx or app/api/documents/route.ts
+import type { LoaderContext, RouteConfig } from '@zero/framework/server';
+
+export const config: RouteConfig = {
+  auth: {
+    tenant: 'required',
+    permission: 'documents:read',
+  },
+};
+
+export function GET({ access }: LoaderContext) {
+  const tenant = access.requireTenant();
+  // tenant.tenantId came from the live server-validated session binding.
+  // Do not replace it with a tenant ID supplied by the browser.
+  return Response.json({ tenantId: tenant.tenantId });
+}
+```
+
+Available structured fields include `user`, `platformRole`, `tenant`,
+`scopeRole`, `permission`, `allPermissions`, `anyPermissions`, and trusted
+user-property requirements. Tenant requirements are rejected in single mode.
+Permissions are resolved through the configured authorization registry and
+the live application/tenant scope; they are not trusted from a request header
+or an unvalidated browser claim.
+
+Parent layout requirements merge monotonically from root to leaf. A child may
+strengthen its parent, but `auth: false` cannot make a protected parent public.
+For API routes, missing identity returns JSON `401`, insufficient authority or
+a missing tenant binding returns JSON `403`, and an unavailable authorization
+dependency fails closed. Page requests use the corresponding login redirect,
+`403`, or private error response.
+
 The auth config runs on the server before rendering the layout or page. During
 client navigation, Zero carries the matched route auth config through
 hydration. If the user logs out or refresh fails while on a protected route,
@@ -569,6 +639,15 @@ Authorization header does not fall back to the cookie.
 Because the cookie is intentionally limited to safe methods, page loaders and
 page middleware reached by `GET`/`HEAD` must remain read-only. Put state changes
 in Bearer-authorized API or server-plugin endpoints.
+
+A colocated `route.ts` inherits declarative `config.auth` from every parent
+layout, evaluated root to leaf. API handlers remain Bearer-only: missing
+identity returns JSON `401`, an insufficient global admin role returns `403`,
+and protected responses use `Cache-Control: private, no-store`. Layout custom
+`config.middleware` remains page-oriented and does not run for an API; declare
+API middleware on the `route.ts` module itself. Because a parent layout is an
+authorization boundary, a layout import or policy-evaluation failure returns a
+private `500` instead of silently weakening access.
 
 Authenticated SSR responses bypass ISR and are returned with
 `Cache-Control: private, no-store` plus `Vary: Cookie, Authorization`, preventing

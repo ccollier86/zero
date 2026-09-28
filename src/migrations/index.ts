@@ -18,6 +18,22 @@ import { migration as m004 } from './definitions/004_auth_email_verification_mfa
 import { migration as m005 } from './definitions/005_native_app_auth';
 import { migration as m006 } from './definitions/006_native_auth_hardening';
 import { migration as m007 } from './definitions/007_auth_email_outbox';
+import { migration as m008 } from './definitions/008_builtin_service_tenant_scope';
+import { migration as m009 } from './definitions/009_auth_tenancy_sessions';
+import { migration as m010 } from './definitions/010_native_tenant_authority';
+import { migration as m011 } from './definitions/011_advanced_authorization_roles';
+import { migration as m012 } from './definitions/012_auth_request_admission';
+import { migration as m013 } from './definitions/013_tenant_invitation_onboarding';
+import { migration as m014 } from './definitions/014_workflow_execution_authority';
+import { migration as m015 } from './definitions/015_registration_provisioning';
+import { migration as m016 } from './definitions/016_usable_owner_invariants';
+import { migration as m017 } from './definitions/017_verified_domain_onboarding';
+import { migration as m018 } from './definitions/018_auth_control_plane_audit';
+import { migration as m019 } from './definitions/019_verified_domain_release';
+import { migration as m020 } from './definitions/020_auth_authority_revision';
+import { migration as m021 } from './definitions/021_verified_domain_request_provenance';
+import { migration as m022 } from './definitions/022_auth_request_admission_flows';
+import { migration as m023 } from './definitions/023_auth_installed_profile';
 
 export { Migrator, type MigratorConfig, type MigrationStatus } from './migrator';
 export type {
@@ -55,4 +71,20 @@ export const migrations: Migration[] = [
   m005,
   m006,
   m007,
+  m008,
+  m009,
+  m010,
+  m011,
+  m012,
+  m013,
+  m014,
+  m015,
+  m016,
+  m017,
+  m018,
+  m019,
+  m020,
+  m021,
+  m022,
+  m023,
 ];

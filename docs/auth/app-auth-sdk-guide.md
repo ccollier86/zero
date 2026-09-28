@@ -17,8 +17,8 @@ This page is the shorter selection and onboarding path.
 | Zero web app | Browser auth through `AppProvider` and the normal auth hooks | Browser auth client plus Zero's HttpOnly page session | Implemented |
 | Electron or another trusted JavaScript desktop host | `@zero/framework/native` and the packaged desktop recipe | One trusted main-process `NativeAuthBroker`; OS vault for refresh state | Implemented in the current Zero source; ship only with a framework release that contains this entry point |
 | JavaScript mobile shell | `@zero/framework/native` and the packaged mobile recipe | Native host bridge plus Keychain/Keystore-backed storage | Implemented core; every target runtime still needs real-device WebCrypto, browser-session, deep-link, and vault verification |
-| Tauri with a Rust-owned backend and Svelte UI | Future `zero-native-auth` plus `tauri-plugin-zero-auth` | One Rust process owner; the webview receives secret-free state and narrow actions | Standalone Phase 0 `0.0.0` design scaffold only; it does not authenticate yet |
-| Chrome Manifest V3 extension | Future `@zero/chrome-auth` package | One MV3 service worker; Chrome extension storage | Functional standalone private `0.0.0` preview, not released or production-approved |
+| Tauri with a Rust-owned backend and Svelte UI | Standalone `zero-native-auth` plus `tauri-plugin-zero-auth` preview | One Rust process owner; the webview receives secret-free state and narrow actions | Functional private `0.0.0` preview; host-supplied OS vault/browser/callback adapters and real-platform certification are still required |
+| Chrome Manifest V3 extension | Standalone `@zero/chrome-auth` preview | One MV3 service worker; restricted Chrome extension storage | Functional private `0.0.0` preview; not released or production-approved |
 | Firefox, Safari, or another browser extension | No Zero adapter yet | Platform-specific background owner | Not implemented |
 | Swift, Kotlin, .NET, or another native language | Implement the documented Zero OIDC public-client profile, or wait for a supported SDK | One platform credential owner and OS vault | No first-party package yet |
 
@@ -29,18 +29,20 @@ public clients and cannot keep one confidential.
 
 ### Tauri boundary today
 
-The Rust/Tauri repository currently validates configuration and drafts a
-secret-free state contract. It does **not** yet implement discovery, PKCE,
-token exchange, refresh rotation, OS vaults, callbacks, authenticated HTTP, or
-Tauri commands. A Rust-first Tauri app therefore does not yet have a releasable
-first-party Zero SDK.
+The Rust/Tauri repository implements strict Zero discovery, Authorization Code
+with PKCE, callback/state/nonce/issuer and ES256 ID-token validation, refresh
+rotation and recovery, tenant list/switch, bounded same-origin authenticated
+HTTP, secret-free revisioned state, and a deny-by-default Tauri v2 command
+surface. Tokens, PKCE material, raw callbacks, and arbitrary authenticated
+requests remain on the Rust side.
 
-Do not move `@zero/framework/native` into the Svelte webview merely to bridge
-that gap. A Tauri prototype may place the TypeScript broker in a separately
-threat-modeled trusted JavaScript sidecar and expose narrow IPC, but that is an
-application-owned architecture rather than the finished Rust SDK. Production
-Rust/Tauri integration should wait for the Rust engine and plugin to pass their
-published phase gates.
+The preview deliberately supplies adapter traits rather than claiming every
+operating system is supported. A host must provide and audit its system-browser,
+callback/deep-link, OS secure-store, and single-instance integration, then pass
+a real packaged-platform lifecycle matrix. Do not move
+`@zero/framework/native` into the Svelte webview; use one Rust controller and
+grant only the exact generated Tauri command permissions required by a trusted
+local window.
 
 ### Chrome boundary today
 
@@ -222,10 +224,13 @@ Before shipping, test on every target:
 
 ### Rust/Tauri preview
 
-- Treat the current crates as design and configuration contracts only.
-- Do not depend on the draft wire version `0` as a compatibility promise.
-- Wait for implemented OIDC, callbacks, vaults, authenticated HTTP, ACLs,
-  platform tests, dependency audit resolution, versioning, and a chosen license.
+- Pin the exact preview revision; the crates remain private `0.0.0` packages.
+- Supply audited OS secure-store, browser, callback/deep-link, and
+  single-instance adapters; none are bundled by the platform-neutral core.
+- Keep callback completion and arbitrary authenticated application requests in
+  trusted Rust, outside the webview command surface.
+- Complete real packaged-platform, dependency/security, ownership, license,
+  compatibility-range, and release review before publication.
 
 ### Chrome preview
 

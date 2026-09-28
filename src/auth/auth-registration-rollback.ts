@@ -1,26 +1,28 @@
-/** Best-effort rollback for registrations that cannot finish provisioning. */
+/** Strict whole-graph rollback for registrations that cannot finish provisioning. */
 
 import type { NativeAuthorizationService } from './oidc/native-authorization-service';
-import type { UserStore } from './user-store';
+import type {
+  RegistrationProvisioningReceipt,
+  UserStore,
+} from './user-store';
 
 export function rollbackRegistration(params: {
   store: UserStore;
-  userId: string;
+  provisioning: RegistrationProvisioningReceipt;
   nativeAuthorization: NativeAuthorizationService | null;
   nativeContinuation: string | null;
 }): { cleanupSucceeded: boolean; continuationReleased: boolean } {
+  // UserStore releases every provisional native binding and removes the
+  // complete domain graph inside one SQLite transaction. A cleanup failure is
+  // deliberately allowed to throw: returning the original provider error
+  // while silently retaining half-installed authority would be unsafe.
+  const cleanupSucceeded = params.store.rollbackRegistrationProvisioning(
+    params.provisioning,
+  );
   const continuationReleased = params.nativeContinuation
-    ? Boolean(params.nativeAuthorization?.releaseContinuationForUser(
+    ? Boolean(params.nativeAuthorization?.validateAvailableContinuation(
         params.nativeContinuation,
-        params.userId
       ))
     : true;
-  let cleanupSucceeded = false;
-  try {
-    cleanupSucceeded = params.store.deleteUser(params.userId)
-      || params.store.getUserById(params.userId) === null;
-  } catch {
-    cleanupSucceeded = false;
-  }
   return { cleanupSucceeded, continuationReleased };
 }

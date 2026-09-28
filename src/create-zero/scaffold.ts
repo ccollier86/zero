@@ -171,12 +171,9 @@ async function writeGeneratedTsConfig(targetDir: string): Promise<void> {
       paths: {
         '@/*': ['./*'],
         '@app/*': ['./app/*'],
-        '@/components/*': [
-          './components/*',
-          './node_modules/@zero/framework/src/components/*',
-        ],
-        '@/hooks/*': ['./hooks/*', './node_modules/@zero/framework/src/hooks/*'],
-        '@/lib/*': ['./lib/*', './node_modules/@zero/framework/src/lib/*'],
+        '@/components/*': ['./components/*'],
+        '@/hooks/*': ['./hooks/*'],
+        '@/lib/*': ['./lib/*'],
         react: ['./node_modules/@types/react'],
         'react/jsx-runtime': ['./node_modules/@types/react/jsx-runtime'],
         'react/jsx-dev-runtime': ['./node_modules/@types/react/jsx-dev-runtime'],
@@ -252,6 +249,12 @@ The dev server starts from \`app/server.ts\`. Runtime settings live in
 \`zero.config.ts\`. Zero itself stays in \`node_modules/@zero/framework\`; do
 not copy framework source into this project.
 
+Auth is off by default. To enable it safely, generate an operator-only setup
+secret (for example, \`openssl rand -base64 32\`), set
+\`AUTH_BOOTSTRAP_SECRET\` and \`ZERO_AUTH_ENABLED=true\` in \`.env\`, then enter
+that key on the first-administrator registration screen. The key is used only
+for the one-time bootstrap ceremony and is never returned by config APIs.
+
 ## Commands
 
 \`\`\`sh
@@ -287,10 +290,12 @@ Add \`--latest\` only when intentionally moving to the newest published
 release. If the installed framework predates this command, bootstrap it with
 \`bunx --package @zero/framework@latest zero update --project .\`. If this app
 uses a framework archive from a local Zero checkout, run that checkout's
-\`zero-update\` wrapper instead; it packs the checkout and defaults the project
-to the current directory. The ignored
-\`.zero/framework/zero-framework.tgz\` archive is regenerated on each local
-update.
+\`zero-update\` wrapper instead. It defaults the project to the current
+directory and installs the package saved from committed local \`main\`; it never
+packs the checkout's live working tree. The ignored
+\`.zero/framework/zero-framework.tgz\` cache is copied from that saved package.
+For deliberate working-checkout testing, use
+\`zero update --project . --local /path/to/zero-platform\` explicitly.
 
 The project must already have exactly one \`bun.lock\` or \`bun.lockb\`, even for
 a dry-run. The updater directly manages only Zero dependency artifacts and

@@ -10,9 +10,9 @@ import {
   type MotionValue,
 } from 'motion/react';
 
-import { useMotionValueState } from '@/hooks/use-motion-value-state';
-import { getStrictContext } from '@/lib/get-strict-context';
-import { Slot, type WithAsChild } from '@/components/animate-ui/primitives/animate/slot';
+import { useMotionValueState } from '#zero/hooks/use-motion-value-state';
+import { getStrictContext } from '#zero/lib/get-strict-context';
+import { Slot, type WithAsChild } from '#zero/components/animate-ui/primitives/animate/slot';
 
 type SpringPathConfig = {
   coilCount?: number;

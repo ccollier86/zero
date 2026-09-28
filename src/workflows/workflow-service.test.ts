@@ -8,6 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
+import { trustedSystemServiceDataScope } from '../auth/service-data-scope';
 import { WorkflowRegistry } from './workflow-registry';
 import { WorkflowService } from './workflow-service';
 
@@ -112,6 +113,52 @@ describe('Workflow aliases', () => {
 
     expect(service.get(instanceId)?.status).toBe('failed');
   });
+
+  test('requires explicit audited provenance for tenant-scoped system execution', async () => {
+    const registry = new WorkflowRegistry();
+    let execution: Record<string, unknown> | null = null;
+    registry.registerHandler('system-proof', async (context) => {
+      execution = context.execution;
+      return { tenantId: context.execution.tenantId };
+    });
+    registry.create({
+      name: 'system-flow',
+      steps: [{ name: 'System proof', handler: 'system-proof' }],
+    });
+    const service = new WorkflowService(db, registry, 'multi');
+    const scope = trustedSystemServiceDataScope({
+      scopeKind: 'tenant',
+      tenantId: 'ten_system',
+    });
+
+    const instanceId = await service.runAsSystem('system-flow', {}, {
+      principal: 'billing-plugin',
+      reason: 'Test tenant billing rollup',
+      scope,
+    });
+
+    expect(execution).toMatchObject({
+      kind: 'system',
+      principal: 'billing-plugin',
+      reason: 'Test tenant billing rollup',
+      tenantId: 'ten_system',
+      legacyCompatibility: false,
+    });
+    expect(service.getInstance(instanceId, scope)).toMatchObject({
+      tenant_id: 'ten_system',
+      status: 'completed',
+      started_by: null,
+    });
+    const stored = db.prepare(`SELECT authority_kind, tenant_id, actor_user_id,
+      authority_json FROM _workflow_execution_authorities WHERE instance_id = ?`)
+      .get(instanceId) as Record<string, unknown>;
+    expect(stored).toMatchObject({
+      authority_kind: 'system',
+      tenant_id: 'ten_system',
+      actor_user_id: null,
+    });
+    expect(String(stored.authority_json)).not.toContain('Bearer');
+  });
 });
 
 function defineWorkflowTables(db: ReactiveDB): void {
@@ -127,6 +174,7 @@ function defineWorkflowTables(db: ReactiveDB): void {
 
   db.defineTable('workflow_instances', {
     instance_id: 'text primary key',
+    tenant_id: 'text',
     definition_id: 'text not null',
     name: 'text not null',
     status: "text not null default 'pending'",
@@ -143,6 +191,7 @@ function defineWorkflowTables(db: ReactiveDB): void {
 
   db.defineTable('workflow_steps', {
     step_id: 'text primary key',
+    tenant_id: 'text',
     instance_id: 'text not null',
     step_index: 'integer not null',
     step_name: 'text not null',
@@ -162,6 +211,7 @@ function defineWorkflowTables(db: ReactiveDB): void {
 
   db.defineTable('workflow_events', {
     event_id: 'text primary key',
+    tenant_id: 'text',
     instance_id: 'text not null',
     event_name: 'text not null',
     payload: 'text',

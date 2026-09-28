@@ -81,7 +81,21 @@ async function readBytes(data: ReadableStream<Uint8Array> | Uint8Array | Blob): 
 
 function createApp(db: ReactiveDB) {
   return new Elysia()
-    .use(createAuthPlugin({ db }))
+    .use(createAuthPlugin({
+      db,
+      bootstrap: 'public',
+      userProperties: {
+        department: {
+          type: 'string',
+          editableBy: 'admin',
+          useInPolicies: true,
+        },
+        selfReportedDepartment: {
+          type: 'string',
+          editableBy: 'user',
+        },
+      },
+    }))
     .use(createStoragePlugin({ db, adapter: createTestAdapter() }))
     .listen(0);
 }
@@ -149,8 +163,8 @@ beforeAll(async () => {
   await waitForPlugins();
 });
 
-afterAll(() => {
-  app?.stop();
+afterAll(async () => {
+  await app?.stop(true);
   app = null;
   db.dispose();
 });
@@ -387,6 +401,23 @@ describe('storage route auth', () => {
     expect(propertyGrant.status).toBe(200);
     expect(propertyGrant.data.grant_key).toBe('department');
 
+    const untrustedPropertyGrant = await requestJson<{ error: string }>(
+      `/storage/drives/${created.data.drive_id}/permissions`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          grantType: 'property',
+          grantKey: 'selfReportedDepartment',
+          grantValue: 'qa',
+          permission: 'read',
+        }),
+      },
+      owner.token
+    );
+    expect(untrustedPropertyGrant.status).toBe(400);
+    expect(untrustedPropertyGrant.data.error).toContain('policy-trusted');
+
     const permissions = await requestJson<{ permissions: PermissionRecord[] }>(
       `/storage/drives/${created.data.drive_id}/permissions`,
       {},
@@ -426,6 +457,43 @@ describe('storage route auth', () => {
       editor.token
     );
     expect(forbiddenPermissions.status).toBe(403);
+  });
+
+  test('ignores legacy property grants whose keys are not policy-trusted', async () => {
+    const owner = await createUser();
+    const member = await createUser();
+    const service = getStorageService()!;
+    const drive = service.drives.create(owner.user.userId, { name: 'Legacy property grant' });
+
+    getAuthStore()!.setProperty(
+      member.user.userId,
+      'selfReportedDepartment',
+      'qa'
+    );
+    db.prepare(`
+      INSERT INTO _storage_permissions (
+        permission_id, drive_id, object_id, grant_type,
+        grant_key, grant_value, permission, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      `perm_${crypto.randomUUID()}`,
+      drive.drive_id,
+      null,
+      'property',
+      'selfReportedDepartment',
+      'qa',
+      'read',
+      Date.now()
+    );
+
+    expect(service.permissions.checkAccess(
+      drive.drive_id,
+      null,
+      member.user.userId,
+      member.user.role,
+      { selfReportedDepartment: 'qa' },
+      'read'
+    )).toBe(false);
   });
 
   test('honors object-scoped grants on object routes and cleans grants on delete', async () => {

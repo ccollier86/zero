@@ -17,6 +17,10 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { useClientMaybe } from '../../frontend/client/client-context';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from '../../frontend/client/authorization-scope-hooks';
 import type { LazyCollectionOptions } from '../../frontend/client/data-hooks';
 import type { Row } from '../../sync/types';
 
@@ -127,6 +131,20 @@ function useOptionalCollection<T extends Row>(
   table: string | null,
 ): OptionalCollectionState<T> {
   const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const isCurrentScope = useCallback(
+    () => isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    ),
+    [callbackBoundaryKey],
+  );
 
   if (table && !client && typeof window !== 'undefined') {
     throw new Error(
@@ -140,32 +158,46 @@ function useOptionalCollection<T extends Row>(
   );
 
   const subscribe = useCallback(
-    (callback: () => void) => collection ? collection.subscribe(callback) : NOOP_UNSUBSCRIBE,
-    [collection],
+    (callback: () => void) => authorizationBoundary.ready && collection
+      ? collection.subscribe(callback)
+      : NOOP_UNSUBSCRIBE,
+    [authorizationBoundary.key, authorizationBoundary.ready, collection],
   );
 
   const byId = useSyncExternalStore(
     subscribe,
-    () => collection ? collection.getAll() : EMPTY_RECORD as Record<string, T>,
+    () => authorizationBoundary.ready && collection
+      ? collection.getAll()
+      : EMPTY_RECORD as Record<string, T>,
     () => EMPTY_RECORD as Record<string, T>,
   );
 
   const rows = useMemo(
-    () => collection ? Object.values(byId) : null,
-    [byId, collection],
+    () => authorizationBoundary.ready && collection ? Object.values(byId) : null,
+    [authorizationBoundary.ready, byId, collection],
   );
 
-  const insert = useCallback((row: T) => collection?.insert(row), [collection]);
+  const insert = useCallback((row: T) => {
+    if (isCurrentScope()) collection?.insert(row);
+  }, [collection, isCurrentScope]);
   const update = useCallback(
-    (id: string, partial: Partial<T>) => collection?.update(id, partial),
-    [collection],
+    (id: string, partial: Partial<T>) => {
+      if (isCurrentScope()) collection?.update(id, partial);
+    },
+    [collection, isCurrentScope],
   );
-  const remove = useCallback((id: string) => collection?.remove(id), [collection]);
+  const remove = useCallback((id: string) => {
+    if (isCurrentScope()) collection?.remove(id);
+  }, [collection, isCurrentScope]);
   const load = useCallback(
-    (nextRows: T[], options?: { replace?: boolean }) => collection?.load(nextRows, options),
-    [collection],
+    (nextRows: T[], options?: { replace?: boolean }) => {
+      if (isCurrentScope()) collection?.load(nextRows, options);
+    },
+    [collection, isCurrentScope],
   );
-  const clear = useCallback(() => collection?.clear(), [collection]);
+  const clear = useCallback(() => {
+    if (isCurrentScope()) collection?.clear();
+  }, [collection, isCurrentScope]);
 
   const actions = useMemo<DataTableSourceActions<T> | null>(
     () => collection ? { insert, update, remove, load, clear } : null,
@@ -186,6 +218,7 @@ export function useDataTableSource<T extends Row = Row>(
   options: UseDataTableSourceOptions<T>,
 ): DataTableSourceState<T> {
   const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const resolved = resolveDataTableSource(options);
   const sourceType = resolved.type;
   const table = sourceType === 'collection' || sourceType === 'lazy'
@@ -194,8 +227,23 @@ export function useDataTableSource<T extends Row = Row>(
   const collection = useOptionalCollection<T>(table);
   const [isLazyLoading, setIsLazyLoading] = useState(false);
   const [lazyError, setLazyError] = useState<Error | null>(null);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
   const loadedRef = useRef('');
   const requestIdRef = useRef(0);
+  const requestControllerRef = useRef<AbortController | null>(null);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const isCurrentScope = useCallback(
+    () => isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    ),
+    [callbackBoundaryKey],
+  );
 
   const lazyFilters = sourceType === 'lazy' ? resolved.filters : undefined;
   const lazyOptions = sourceType === 'lazy' ? resolved.options : undefined;
@@ -207,71 +255,138 @@ export function useDataTableSource<T extends Row = Row>(
     : '';
 
   const doLazyFetch = useCallback(() => {
-    if (!client || sourceType !== 'lazy' || !table || !collection.actions) return;
+    if (!client
+      || !authorizationBoundary.ready
+      || !isCurrentScope()
+      || sourceType !== 'lazy'
+      || !table
+      || !collection.actions) return;
 
+    requestControllerRef.current?.abort();
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
     const requestId = ++requestIdRef.current;
+    const requestBoundaryKey = callbackBoundaryKey;
+    setLoadedBoundaryKey(requestBoundaryKey);
     setIsLazyLoading(true);
     setLazyError(null);
 
-    client.get<{ rows: T[] }>(`/api/data?${lazyQuery}`)
+    client.fetch<{ rows: T[] }>(`/api/data?${lazyQuery}`, { signal: controller.signal })
       .then((payload) => {
-        if (requestIdRef.current !== requestId) return;
+        if (controller.signal.aborted
+          || requestIdRef.current !== requestId
+          || !boundaryReadyRef.current
+          || boundaryKeyRef.current !== requestBoundaryKey) return;
         collection.actions?.load(payload.rows, { replace: replaceOnLoad });
       })
       .catch((error) => {
-        if (requestIdRef.current !== requestId) return;
+        if (controller.signal.aborted
+          || requestIdRef.current !== requestId
+          || !boundaryReadyRef.current
+          || boundaryKeyRef.current !== requestBoundaryKey) return;
         setLazyError(error instanceof Error ? error : new Error(String(error)));
       })
       .finally(() => {
-        if (requestIdRef.current !== requestId) return;
+        if (requestControllerRef.current === controller) requestControllerRef.current = null;
+        if (controller.signal.aborted
+          || requestIdRef.current !== requestId
+          || !boundaryReadyRef.current
+          || boundaryKeyRef.current !== requestBoundaryKey) return;
         setIsLazyLoading(false);
       });
-  }, [client, collection.actions, lazyQuery, replaceOnLoad, sourceType, table]);
+  }, [
+    authorizationBoundary.key,
+    authorizationBoundary.ready,
+    callbackBoundaryKey,
+    client,
+    collection.actions,
+    isCurrentScope,
+    lazyQuery,
+    replaceOnLoad,
+    sourceType,
+    table,
+  ]);
 
   useEffect(() => {
-    if (sourceType !== 'lazy' || !client) return;
+    requestIdRef.current += 1;
+    requestControllerRef.current?.abort();
+    requestControllerRef.current = null;
+    loadedRef.current = '';
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setLazyError(null);
+    setIsLazyLoading(false);
+    if (!authorizationBoundary.ready || sourceType !== 'lazy' || !client) return;
     if (loadedRef.current === lazyQuery) return;
     loadedRef.current = lazyQuery;
     doLazyFetch();
-  }, [client, doLazyFetch, lazyQuery, sourceType]);
+    return () => {
+      requestControllerRef.current?.abort();
+      requestControllerRef.current = null;
+    };
+  }, [
+    authorizationBoundary.key,
+    authorizationBoundary.ready,
+    client,
+    doLazyFetch,
+    lazyQuery,
+    sourceType,
+  ]);
 
   const refresh = useCallback(() => {
+    if (!isCurrentScope()) return;
     if (sourceType === 'lazy') {
       loadedRef.current = '';
       doLazyFetch();
     } else if (sourceType === 'data') {
       resolved.refresh?.();
     }
-  }, [doLazyFetch, resolved, sourceType]);
+  }, [doLazyFetch, isCurrentScope, resolved, sourceType]);
+
+  const dataActions = useMemo<DataTableSourceActions<T> | null>(() => {
+    if (sourceType !== 'data' || !resolved.actions) return null;
+    const actions = resolved.actions;
+    return {
+      insert: (row) => {
+        if (isCurrentScope()) actions.insert?.(row);
+      },
+      update: (id, partial) => {
+        if (isCurrentScope()) actions.update?.(id, partial);
+      },
+      remove: (id) => {
+        if (isCurrentScope()) actions.remove?.(id);
+      },
+      load: (rows, loadOptions) => {
+        if (isCurrentScope()) actions.load?.(rows, loadOptions);
+      },
+      clear: () => {
+        if (isCurrentScope()) actions.clear?.();
+      },
+    };
+  }, [isCurrentScope, resolved, sourceType]);
+
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
 
   if (sourceType === 'data') {
-    const actions = resolved.actions
-      ? {
-          insert: resolved.actions.insert ?? (() => {}),
-          update: resolved.actions.update ?? (() => {}),
-          remove: resolved.actions.remove ?? (() => {}),
-          load: resolved.actions.load ?? (() => {}),
-          clear: resolved.actions.clear ?? (() => {}),
-        }
-      : null;
-
     return {
-      data: resolved.data,
+      data: visible ? resolved.data : EMPTY_ARRAY as T[],
       sourceType,
       table: null,
-      isLoading: !!resolved.isLoading,
-      error: resolved.error ?? null,
+      isLoading: visible ? !!resolved.isLoading : authorizationBoundary.ready,
+      error: visible ? resolved.error ?? null : null,
       refresh,
-      actions,
+      actions: dataActions,
     };
   }
 
   return {
-    data: collection.data ?? (EMPTY_ARRAY as T[]),
+    data: visible ? collection.data ?? (EMPTY_ARRAY as T[]) : EMPTY_ARRAY as T[],
     sourceType,
     table,
-    isLoading: sourceType === 'lazy' ? isLazyLoading : false,
-    error: sourceType === 'lazy' ? lazyError : null,
+    isLoading: sourceType === 'lazy'
+      ? authorizationBoundary.ready && (!visible || isLazyLoading)
+      : false,
+    error: sourceType === 'lazy' && visible ? lazyError : null,
     refresh,
     actions: collection.actions,
   };

@@ -14,11 +14,14 @@ export class WorkflowRegistry {
   private handlers = new Map<string, StepHandler>();
   private definitions = new Map<string, WorkflowDefinition>();
 
-  registerHandler(name: string, handler: StepHandler): void {
+  registerHandler<TInput = unknown, TServices = unknown>(
+    name: string,
+    handler: StepHandler<TInput, TServices>,
+  ): void {
     if (this.handlers.has(name)) {
       throw new Error(`Handler "${name}" already registered`);
     }
-    this.handlers.set(name, handler);
+    this.handlers.set(name, handler as StepHandler);
   }
 
   getHandler(name: string): StepHandler | undefined {

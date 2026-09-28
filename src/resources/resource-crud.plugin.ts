@@ -7,10 +7,14 @@
  */
 
 import { Elysia, t } from 'elysia';
+import { readAuthBearerToken } from '../auth/auth-bearer-token';
 import { createAuthMiddleware } from '../auth/auth.middleware';
 import type { TokenService } from '../auth/token-service';
+import type { AuthContext, AuthTenancyMode } from '../auth/types';
+import type { AuthorizationKernel } from '../auth/authorization-kernel';
+import type { AuthorizationRoleAssignmentResolver } from '../auth/authorization-access';
 import type { UserStore } from '../auth/user-store';
-import type { TableSchema } from '../sync';
+import type { ReactiveDB, TableSchema } from '../sync';
 import { getSyncDB } from '../sync';
 import { ResourceCrudService, type ResourceCrudResult } from './resource-crud-service';
 import type { ResourcePolicyAuthConfig } from './resource-policy-types';
@@ -31,8 +35,16 @@ export interface ResourceCrudPluginConfig extends ResourceCrudRoutesConfig {
   registry: ResourceRegistry;
   tables: Record<string, TableSchema>;
   authConfig: ResourcePolicyAuthConfig;
+  /** Multi mode requires a durable session authority at the SQL boundary. */
+  tenancyMode?: AuthTenancyMode;
   getTokenService?: () => TokenService | null;
   getUserStore?: () => UserStore | null;
+  /** App-local kernel used by authorizationPolicy(). */
+  getAuthorizationKernel?: () => AuthorizationKernel | null;
+  /** Live advanced role assignments used by authorizationPolicy(). */
+  getRoleAssignments?: () => AuthorizationRoleAssignmentResolver | null;
+  /** App-local database provider. Legacy standalone callers may omit it. */
+  getDB?: () => ReactiveDB | null;
 }
 
 const resourceParamsSchema = t.Object({
@@ -71,71 +83,161 @@ export function createResourceCrudPlugin(config: ResourceCrudPluginConfig) {
 
   return new Elysia({ name: 'resource-crud' })
     .use(createAuthMiddleware(getTokenService))
-    .get(`${prefix}/:resource`, async ({ params, query, set, authContext }) => {
+    .get(`${prefix}/:resource`, async ({ params, query, set, authContext, request }) => {
       const service = createService(config, getUserStore);
       if (!service) return respond(set, serviceUnavailable());
 
       return respond(
         set,
-        await service.list(params.resource, query, { authContext })
+        await service.list(
+          params.resource,
+          query,
+          resourceRequestContext(
+            request,
+            authContext,
+            getTokenService,
+            config.tenancyMode === 'multi',
+          ),
+        )
       );
     }, {
       params: resourceParamsSchema,
       query: listQuerySchema,
     })
-    .get(`${prefix}/:resource/:id`, async ({ params, set, authContext }) => {
+    .get(`${prefix}/:resource/:id`, async ({ params, set, authContext, request }) => {
       const service = createService(config, getUserStore);
       if (!service) return respond(set, serviceUnavailable());
 
       return respond(
         set,
-        await service.get(params.resource, params.id, { authContext })
+        await service.get(
+          params.resource,
+          params.id,
+          resourceRequestContext(
+            request,
+            authContext,
+            getTokenService,
+            config.tenancyMode === 'multi',
+          ),
+        )
       );
     }, {
       params: resourceIdParamsSchema,
     })
-    .post(`${prefix}/:resource`, async ({ params, body, set, authContext }) => {
+    .post(`${prefix}/:resource`, async ({ params, body, set, authContext, request }) => {
       const service = createService(config, getUserStore);
       if (!service) return respond(set, serviceUnavailable());
 
       return respond(
         set,
-        await service.create(params.resource, body, { authContext })
+        await service.create(
+          params.resource,
+          body,
+          resourceRequestContext(
+            request,
+            authContext,
+            getTokenService,
+            config.tenancyMode === 'multi',
+          ),
+        )
       );
     }, {
       params: resourceParamsSchema,
       body: bodySchema,
     })
-    .patch(`${prefix}/:resource/:id`, async ({ params, body, set, authContext }) => {
+    .patch(`${prefix}/:resource/:id`, async ({
+      params, body, set, authContext, request,
+    }) => {
       const service = createService(config, getUserStore);
       if (!service) return respond(set, serviceUnavailable());
 
       return respond(
         set,
-        await service.update(params.resource, params.id, body, { authContext })
+        await service.update(
+          params.resource,
+          params.id,
+          body,
+          resourceRequestContext(
+            request,
+            authContext,
+            getTokenService,
+            config.tenancyMode === 'multi',
+          ),
+        )
       );
     }, {
       params: resourceIdParamsSchema,
       body: bodySchema,
     })
-    .delete(`${prefix}/:resource/:id`, async ({ params, set, authContext }) => {
+    .delete(`${prefix}/:resource/:id`, async ({ params, set, authContext, request }) => {
       const service = createService(config, getUserStore);
       if (!service) return respond(set, serviceUnavailable());
 
       return respond(
         set,
-        await service.delete(params.resource, params.id, { authContext })
+        await service.delete(
+          params.resource,
+          params.id,
+          resourceRequestContext(
+            request,
+            authContext,
+            getTokenService,
+            config.tenancyMode === 'multi',
+          ),
+        )
       );
     }, {
       params: resourceIdParamsSchema,
     });
 }
 
+function resourceRequestContext(
+  request: Request,
+  authContext: AuthContext | null,
+  getTokenService: () => TokenService | null,
+  requireDurableAuthority: boolean,
+) {
+  const token = readAuthBearerToken(request);
+  const tokenService = getTokenService();
+  // Bound web/native sessions have a synchronous, secret-free authority
+  // reference. Resolve it inside the resource database transaction so a
+  // revocation cannot land between the last asynchronous check and commit.
+  const supportsCommitAuthority = Boolean(
+    authContext?.sessionKind
+    && tokenService
+    && typeof tokenService.captureAuthContextAuthority === 'function'
+    && typeof tokenService.resolveAuthContextAuthority === 'function',
+  );
+  const authorityReference = supportsCommitAuthority
+    ? tokenService!.captureAuthContextAuthority(authContext!)
+    : null;
+  // A custom/standalone verifier may hydrate an AuthContext without exposing
+  // Zero's synchronous authority-reference contract. That remains compatible
+  // in single mode, but multi mode must not turn it into a fail-open window
+  // between the final async policy check and the SQLite read/write boundary.
+  const mustResolveAtCommit = Boolean(authContext) && requireDurableAuthority;
+  return {
+    authContext,
+    revalidateAuthContext: async () => {
+      const service = getTokenService();
+      return token && service ? service.resolveAuthContext(token) : null;
+    },
+    ...(supportsCommitAuthority || mustResolveAtCommit ? {
+      resolveAuthContextAtCommit: () => authorityReference
+        ? tokenService!.resolveAuthContextAuthority(authorityReference)
+        : null,
+    } : {}),
+  };
+}
+
 function createService(
   config: ResourceCrudPluginConfig,
   getUserStore: () => UserStore | null
 ): ResourceCrudService | null {
-  const db = getSyncDB();
+  // An explicit app-local provider owns this dependency even while it is
+  // unavailable. Never fall through to another live app's compatibility
+  // provider in that case.
+  const db = config.getDB ? config.getDB() : getSyncDB();
   if (!db) return null;
 
   return new ResourceCrudService({
@@ -144,6 +246,8 @@ function createService(
     tables: config.tables,
     authConfig: config.authConfig,
     userStore: getUserStore(),
+    authorizationKernel: config.getAuthorizationKernel?.() ?? null,
+    roleAssignments: config.getRoleAssignments?.() ?? null,
     defaultLimit: config.defaultLimit,
     maxLimit: config.maxLimit,
   });

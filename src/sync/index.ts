@@ -1,5 +1,7 @@
 // ─── Server: ReactiveDB ────────────────────────────────────────────────────
 export { ReactiveDB, createReactiveDB } from './reactive-db';
+export type { ReactiveDBRowScope } from './reactive-db';
+export { SYNC_TABLE_MUTATION_VALIDATOR } from './types';
 export type {
   ReactiveDBConfig,
   TableSchema,
@@ -8,7 +10,12 @@ export type {
   DeclaredSyncMode,
   Change,
   ChangeOp,
+  ChangeDeliveryMetadata,
   ChangeListener,
+  SyncMutationValidationIssue,
+  SyncResourceMutationScope,
+  SyncRowValidationResult,
+  SyncTableMutationValidator,
 } from './types';
 
 // ─── Natural Identity ─────────────────────────────────────────────────────
@@ -82,6 +89,32 @@ export type {
 // ─── Server: Ephemeral KV ──────────────────────────────────────────────────
 export { EphemeralStateManager } from './ephemeral-manager';
 export type { EphemeralEntry } from './ephemeral-manager';
+export { EphemeralChannel } from './ephemeral-channel';
+export type { EphemeralChannelOptions } from './ephemeral-channel';
+export {
+  allowLegacyEphemeralTopicPolicy,
+  denyEphemeralTopicPolicy,
+} from './ephemeral-policy';
+export type {
+  EphemeralErrorCode,
+  EphemeralErrorMessage,
+  EphemeralKeyOwnership,
+  EphemeralTopicAllowedDecision,
+  EphemeralTopicDecision,
+  EphemeralTopicDeniedDecision,
+  EphemeralTopicOperation,
+  EphemeralTopicPolicy,
+  EphemeralTopicPolicyContext,
+  EphemeralWireOperation,
+} from './ephemeral-policy';
+export {
+  createManagedEphemeralTopicPolicy,
+} from './ephemeral-managed-policy';
+export type {
+  EphemeralRoomMembershipService,
+  ManagedEphemeralTopicPolicyOptions,
+} from './ephemeral-managed-policy';
+export { EPHEMERAL_LIMITS } from './ephemeral-validation';
 export {
   handleEphemeralSubscribe,
   handleEphemeralUnsubscribe,

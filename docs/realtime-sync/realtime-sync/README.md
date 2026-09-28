@@ -9,7 +9,13 @@
 > [Frontend SDK](../../frontend/sdk.md). Use the hooks here only when mounting
 > the sync engine directly without the full Zero frontend SDK.
 
-A Convex-like real-time sync engine — self-hosted, single Bun process, SQLite in RAM, @xstate/store on the client. Define a table, it's instantly live. Mutate data anywhere, every connected client reflects it immediately. No polling, no manual invalidation, no WebSocket plumbing. Just data that's always current.
+A Convex-like real-time sync engine—self-hosted Bun runtimes, SQLite in RAM or a
+WAL file, and @xstate/store on the client. Each runtime is one in-process
+deployment unit; file-mode runtimes can share one local SQLite database and
+relay its durable row and State Sync log. Define a standalone public table and
+its subscribers see authorized changes without manual invalidation or WebSocket
+plumbing. Production apps can add Bearer auth plus table/resource/row policy;
+`createApp()` installs platform protections automatically.
 
 ## The Full Loop
 
@@ -17,7 +23,7 @@ A Convex-like real-time sync engine — self-hosted, single Bun process, SQLite 
 // ─── Server: one plugin, everything is live ──────────
 
 import { Elysia } from 'elysia';
-import { createSyncPlugin } from './sync';
+import { createSyncPlugin } from '@zero/framework/sync';
 
 new Elysia()
   .use(createSyncPlugin({
@@ -30,12 +36,19 @@ new Elysia()
 
 // That's it. WebSocket live at ws://localhost:3000/sync
 // syncDB available in all route handlers via derive()
+// This minimal example is intentionally public/allow-all. Add auth + policy
+// before using private data, or compose through createApp().
 ```
 
 ```tsx
 // ─── Client: connect and use ──────────────────────────
 
-import { createSyncClient, useTable, useRow, useQuery } from '@platform/sync/client';
+import {
+  createSyncClient,
+  useQuery,
+  useRow,
+  useTable,
+} from '@zero/framework/sync/client';
 
 const client = createSyncClient({
   url: 'ws://localhost:3000/sync',
@@ -81,18 +94,22 @@ function TodoItem({ id }: { id: string }) {
 }
 ```
 
-Insert a todo on one client. Every other connected client sees it instantly. Check it off — reflected everywhere. No `refetch()`, no `invalidateQueries()`, no `useEffect` subscriptions. The data is always current.
+In this deliberately public example, insert a todo on one client and every
+subscribed client sees it. With policy enabled, only eligible subscribers see
+the row. No `refetch()`, `invalidateQueries()`, or manual `useEffect`
+subscription is required.
 
 ## Core Properties
 
 | Property | What it means |
 |----------|--------------|
 | **RAM-speed** | SQLite in `:memory:` mode — writes are sub-microsecond, reads are pointer lookups |
-| **Real-time** | Every mutation broadcasts to all connected clients over WebSocket within milliseconds |
+| **Real-time** | Eligible mutations reach authorized subscribed clients over WebSocket within milliseconds |
 | **Type-safe** | Table schemas flow through to TypeScript types — client code is fully typed |
 | **Optimistic** | Client mutations apply locally first, confirm/rollback on server response |
 | **Zero-boilerplate** | `defineTable()` on the standalone sync plugin, low-level `useTable()` on the client — no API routes, no fetch calls |
 | **Reconnect-safe** | Sequence-tracked changes replay on reconnect — no stale state, no manual refresh |
+| **Policy-scoped collaboration** | Ephemeral presence, typing, and custom topics resolve through server-owned namespaces with live authorization |
 
 ## Stack
 
@@ -106,7 +123,11 @@ Insert a todo on one client. Every other connected client sees it instantly. Che
 
 ## What This Is
 
-A **real-time sync layer for small teams** (2–4 concurrent users). Think of it as a live, reactive database that every client shares. When anyone writes, everyone sees the change instantly. It's what you'd get if SQLite and a WebSocket pub/sub had a baby, and that baby understood React.
+A **real-time sync layer for small teams** (2–4 concurrent users). It turns
+ReactiveDB changes into per-connection projections: public standalone apps can
+share a whole table, while authenticated apps can narrow tables and rows. It's
+what you would get if SQLite and WebSocket delivery understood React and an
+authorization policy.
 
 **Designed for:**
 - Internal tools where 2–4 people collaborate on shared data
@@ -117,7 +138,10 @@ A **real-time sync layer for small teams** (2–4 concurrent users). Think of it
 
 - **Not a database.** It's a sync layer on top of SQLite. Don't store 10 million rows.
 - **Not for large scale.** It's optimized for datasets that fit comfortably in RAM (think thousands of rows, not millions).
-- **Not multi-region.** Single process, single machine. If you need geo-distribution, use Convex/Supabase/Firebase.
+- **Not multi-region.** Multiple runtimes may share one local file-mode SQLite
+  database, but separate databases, cross-host messaging, and RAM-only topics
+  need external coordination. If you need geo-distribution, use a distributed
+  system such as Convex, Supabase, or Firebase.
 - **Not a general-purpose backend.** It syncs tables. Business logic lives in your mutation handlers, but this isn't a framework for building APIs.
 
 ## Convex Comparison
@@ -125,8 +149,8 @@ A **real-time sync layer for small teams** (2–4 concurrent users). Think of it
 | | Convex | This |
 |---|--------|------|
 | **Reactivity model** | Server-side reactive queries re-evaluate on mutation, push new results | Table-level reactivity — mutations broadcast row changes, client-side selectors for derived views |
-| **Hosting** | Managed cloud | Self-hosted, single Bun process |
-| **Database** | Custom (persistent, distributed) | bun:sqlite (RAM or file, single-node) |
+| **Hosting** | Managed cloud | Self-hosted Bun runtime; same-file local replicas supported |
+| **Database** | Custom (persistent, distributed) | bun:sqlite (RAM or file; one shared-file boundary) |
 | **Scale** | Millions of users | 2–4 concurrent users |
 | **Type safety** | Schema → TypeScript codegen | Schema → TypeScript generics (no codegen step) |
 | **Optimistic updates** | Built-in | Built-in |
@@ -149,10 +173,10 @@ The key insight: for small datasets that fit in RAM, table-level change broadcas
 The sync engine does not own app authorization rules. It owns the transport mechanism: table subscriptions, snapshots, catchup, mutations, and broadcasts. Apps provide policy through `SyncPolicy`.
 
 ```ts
-import { createDefaultSyncPolicy } from '@platform/sync';
+import { createDefaultSyncPolicy } from '@zero/framework/sync';
 
 createSyncPlugin({
-  db,
+  db: { mode: 'app.db' },
   tables,
   policy: createDefaultSyncPolicy({
     readProtectedTables: ['admin_notes'],
@@ -171,21 +195,84 @@ readable table set, which is derived from the live account and
 `SyncPolicy.canReadTable` and recomputed during revalidation. The client never
 receives tables it cannot read.
 
+Before each committed live change is sent, authenticated sockets also pass a
+synchronous durable-authority fence. Zero re-resolves the captured secret-free
+session authority and closes/reset-clears a stale socket before delivery if
+the user, session, tenant, membership, generation, or advanced-role revision
+changed. Multi-tenant Sync requires a verifier implementing both
+`captureAuthContextAuthority()` and `resolveAuthContextAuthority()` and fails
+closed when that contract is unavailable. Periodic revalidation still
+recomputes the complete table/row policy for policy changes that are not
+represented solely by identity generations.
+
+Managed auth also publishes a monotonic `_auth_authority_revision` through
+SQLite triggers. File-mode runtimes sharing that database poll the revision and
+promptly revalidate their local sockets when another runtime changes an
+account, session, tenant, membership, or role. This complements the final-send
+authority fence; it never places bearer credentials in a process bus.
+
 `sync.mutate` is checked separately with `SyncPolicy.canMutateTable` and the optional `canInsert`, `canUpdate`, and `canDelete` callbacks. This matters because many platform and app tables should be readable in realtime but writable only through a domain service or HTTP route.
 
-When using `createApp()`, Zero composes app policy with platform defaults. The built-in defaults make service-owned platform tables read-only over direct sync mutation while preserving standalone allow-all behavior for app tables unless you configure stricter rules.
+When using `createApp()`, Zero composes app policy with deny-wins platform
+defaults. Private framework tables (`users`, workflow definitions, and Storage
+metadata) are not generic Sync reads. Notifications/receipts, rooms/members,
+and workflow execution rows use target, membership, or owner filters across
+snapshot, catch-up, and live delivery. Framework-owned tables are also
+protected from direct Sync mutation. Registered app resources participate only
+when their server-owned exposure is `sync` or `all`; realm and policy still
+apply after that transport gate. Direct `createSyncPlugin()` composition
+preserves standalone allow-all behavior unless it is given auth/policy.
 
-## Proven Patterns from This Codebase
+File-mode plugins also tail the shared durable, explicitly versioned `_changes`
+log. Its strict state singleton owns the monotonic sequence and pruning
+watermark; a seq-0 sentinel and immutable-log triggers fence older writers.
+The first fenced upgrade is therefore a coordinated stop-all operation. A
+commit made by another runtime is delivered through the same row
+filter/projector and socket path as a local commit. One dispatcher orders local
+and external rows by their durable sequence, so a local `N+1` cannot overtake
+an unobserved remote `N`. Retention/continuity/format gaps synchronously reset
+incremental authorization-policy caches, then close sockets so reconnect
+performs an authoritative snapshot. An unsafe policy reset or invalid durable
+log state latches the runtime closed until repair and restart. Snapshot and catch-up payloads
+bind their rows and cursor to one SQLite read view. Hot,
+ephemeral, separate-database, and ephemeral-topic replication remain outside
+this shared-file mechanism.
 
-This design doesn't invent new patterns — it composes proven ones already working in production:
+## Ephemeral Collaboration Topics
 
-| Pattern | Existing implementation | Reuse in sync engine |
-|---------|----------------------|---------------------|
-| Elysia plugin lifecycle | `src/server/plugins/persistence.plugin.ts` — `onStart`/`onStop`, `derive({ as: 'global' })`, lazy getter export | `createSyncPlugin()` — same lifecycle, derive, getter pattern |
-| Factory function plugin | `createIngestionQueuePlugin(getMemoryService)` — accepts dependencies via lazy getters | `createSyncPlugin(config)` — accepts DB config and table schemas |
-| WS handler in plugin | `src/server/ws/audio-handler.ts` — `new Elysia({ name }).ws()`, TypeBox validation, per-socket data | Sync plugin `.ws('/sync', { ... })` with typed `SyncSocketData` |
-| Prepared-statements-in-constructor | `src/persistence/sqlite-hot-store.ts` — all statements prepared in constructor, reused per call | ReactiveDB prepares all CRUD statements per table at define time |
-| WAL PRAGMAs | `src/persistence/sqlite-hot-store.ts` — WAL, NORMAL sync, 64MB cache, 256MB mmap | Same PRAGMA stack for durable mode |
-| @xstate/store + createSlice | `packages/sdk/src/store/store.ts` — `createStore()` with typed events, `createSlice()` for change-detected subscriptions | SyncStore auto-generates store from table definitions, same slice pattern |
-| Bun WebSocket delivery | Direct `ws.send()` exposes per-recipient backpressure/drop status | `onChange` projects by socket, attaches `prevSeq`, and checks every send result |
-| WS message routing | `packages/sdk/src/transport/ws-bridge.ts` — `routeMessage()` switch-on-type → `store.send()` dispatch | SyncClient routes `sync.*` messages the same way |
+Ephemeral topics share the Sync WebSocket but are RAM-only and TTL-bound. They
+are intended for presence, typing, cursors, and other collaboration state that
+must disappear automatically instead of becoming durable application data.
+
+Auth-enabled `createApp()` instances install a fail-closed topic policy:
+
+- `presence:<roomId>` and `typing:<roomId>` require current `RoomService`
+  membership. Writes and deletes use the server-verified
+  `user:<currentUserId>` key.
+- `user:<currentUserId>:<name>` is a personal authenticated topic.
+- Every other shared topic is rejected unless `ephemeralPolicy` explicitly
+  classifies it and returns a server-side namespace.
+
+Policies run for subscribe, set, delete, periodic revalidation, and delivery.
+A revoked room membership therefore removes the live subscription before
+further changes cross the socket. Authless standalone `createSyncPlugin()`
+keeps the original unrestricted topic behavior for compatibility; adding auth
+without a policy fails closed.
+
+See [Wire Protocol](./protocol.md#ephemeral-collaboration-channel) for message
+shapes, limits, ownership rules, and stable error codes.
+
+## Current Implementation Map
+
+The current sync implementation is split by responsibility:
+
+| Responsibility | Current implementation |
+|----------------|------------------------|
+| Elysia plugin lifecycle and `/sync` WebSocket | `src/sync/sync.plugin.ts` |
+| SQLite runtime, connection setup, and statement cache | `src/persistence/platform-sqlite.ts`, `src/persistence/sqlite-connection.ts`, `src/persistence/statement-cache.ts` |
+| Reactive tables, prepared CRUD statements, transactions, and change events | `src/sync/reactive-db.ts` |
+| Server message dispatch | `src/sync/message-handler.ts` |
+| Subscription selection and snapshots | `src/sync/sync-subscribe-handler.ts`, `src/sync/sync-snapshot-response.ts` |
+| Per-socket row-policy projection and live delivery | `src/sync/row-filter.ts`, `src/sync/sync-change-delivery.ts` |
+| Client WebSocket routing and reconnect | `src/sync/client/sync-socket-message-router.ts`, `src/sync/client/sync-reconnect-scheduler.ts` |
+| @xstate/store state and React bindings | `src/sync/client/sync-store.ts`, `src/sync/client/hooks.ts` |

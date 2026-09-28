@@ -7,6 +7,7 @@
 
 import { AuthError, type UserRecord } from './types';
 import type { UserStore } from './user-store';
+import { canUserReceiveAuthTokens } from './auth-user-eligibility';
 
 export type AdminUserEligibilityTransition = Partial<Pick<
   UserRecord,
@@ -80,10 +81,7 @@ export function assertAdminMayResetMfa(actorUserId: string, user: UserRecord): v
 
 /** Whether a user currently preserves the application's recoverable admin path. */
 export function isActiveAdmin(user: UserRecord): boolean {
-  return user.role === 'admin'
-    && user.status === 'active'
-    && !user.passwordChangeRequired
-    && (!user.emailVerificationRequired || user.emailVerifiedAt !== null);
+  return user.role === 'admin' && canUserReceiveAuthTokens(user);
 }
 
 function assertNotSelf(actorUserId: string, user: UserRecord, action: string): void {

@@ -1,8 +1,7 @@
 /**
  * sync-wire-send.ts
  *
- * Owns direct Sync protocol delivery and Bun send-status handling. State and
- * ephemeral transports keep their independent pub/sub semantics.
+ * Owns direct Sync protocol delivery and Bun send-status handling.
  */
 
 import type { ServerWebSocket } from 'bun';

@@ -22,7 +22,7 @@ test('forgot-password returns generically without awaiting provider delivery', a
     name: 'Zero', publicUrl: 'https://app.test',
   });
   const db = createReactiveDB({ mode: 'memory' });
-  const app = new Elysia().use(createAuthPlugin({ db }));
+  const app = new Elysia().use(createAuthPlugin({ db, bootstrap: 'public' }));
   app.listen(0);
   const url = `http://localhost:${app.server!.port}`;
 

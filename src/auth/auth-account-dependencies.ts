@@ -9,6 +9,7 @@ import type { RegistrationIntentStore } from './registration-intent-store';
 import type { TokenService } from './token-service';
 import { AuthError, type ResolvedAuthBehaviorConfig } from './types';
 import type { UserStore } from './user-store';
+import type { AuthTenantSessionService } from './auth-tenant-session-service';
 
 export interface AuthAccountPluginConfig {
   getUserStore: () => UserStore | null;
@@ -20,6 +21,7 @@ export interface AuthAccountPluginConfig {
   getNativeAuthorizationService: () => NativeAuthorizationService | null;
   getRegistrationIntentStore: () => RegistrationIntentStore | null;
   getAuthConfig: () => ResolvedAuthBehaviorConfig;
+  getAuthTenantSessionService: () => AuthTenantSessionService | null;
 }
 
 export function requireAuthEmailOutbox(config: AuthAccountPluginConfig): AuthEmailOutbox {
@@ -35,6 +37,7 @@ export interface AuthAccountServices {
   accountEmail: AccountEmailService;
   mfaChallengeService: MfaChallengeService | null;
   registrationIntents: RegistrationIntentStore;
+  tenantSessions: AuthTenantSessionService;
 }
 
 export function requireAccountServices(
@@ -45,13 +48,16 @@ export function requireAccountServices(
   const actionTokens = config.getActionTokenService();
   const accountEmail = config.getAccountEmailService();
   const registrationIntents = config.getRegistrationIntentStore();
-  if (!store || !tokenService || !actionTokens || !accountEmail || !registrationIntents) {
+  const tenantSessions = config.getAuthTenantSessionService();
+  if (!store || !tokenService || !actionTokens || !accountEmail
+    || !registrationIntents || !tenantSessions) {
     throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
   }
   return {
     store, tokenService, actionTokens, accountEmail,
     mfaChallengeService: config.getMfaChallengeService?.() ?? null,
     registrationIntents,
+    tenantSessions,
   };
 }
 

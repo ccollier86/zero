@@ -6,7 +6,12 @@
  * remain inside `useUpload`.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from '../frontend/client/authorization-scope-hooks';
+import { useClientMaybe } from '../frontend/client/client-context';
 import type { FileInfo } from './types';
 import { useUpload, type UploadFileOptions } from './storage-hooks';
 
@@ -64,6 +69,17 @@ function updateQueueItem(
   return items.map((item) => item.id === id ? { ...item, ...partial } : item);
 }
 
+/** @internal Final result gate shared by queue execution and regression tests. */
+export function assertUploadQueueScopeCurrent(
+  currentKey: string,
+  ready: boolean,
+  requestBoundaryKey: string,
+): void {
+  if (!isAuthorizationScopeCallbackCurrent(currentKey, ready, requestBoundaryKey)) {
+    throw staleUploadScopeError();
+  }
+}
+
 /**
  * Upload multiple files sequentially while exposing per-file progress.
  *
@@ -71,28 +87,66 @@ function updateQueueItem(
  * cancelled.
  */
 export function useUploadQueue(): UseUploadQueueReturn {
+  const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const uploader = useUpload();
   const [items, setItems] = useState<UploadQueueItem[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
   const cancelledRef = useRef(false);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const isCurrentScope = useCallback(
+    () => isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    ),
+    [callbackBoundaryKey],
+  );
+
+  useEffect(() => {
+    cancelledRef.current = true;
+    uploader.reset();
+    setItems([]);
+    setUploading(false);
+    setLoadedBoundaryKey(authorizationBoundary.key);
+  }, [authorizationBoundary.key, uploader.reset]);
 
   const uploadFiles = useCallback(
     async (driveId: string, files: File[] | FileList, options: UploadQueueFilesOptions = {}) => {
+      if (!isCurrentScope()) {
+        throw new Error('Uploads are unavailable during an authorization scope transition.');
+      }
+      const requestBoundaryKey = callbackBoundaryKey;
+      const commit = (update: (current: UploadQueueItem[]) => UploadQueueItem[]) => {
+        if (boundaryReadyRef.current
+          && boundaryKeyRef.current === requestBoundaryKey) setItems(update);
+      };
       const { resolvePath, ...uploadOptions } = options;
       const queue = Array.from(files).map(createQueueItem);
       const results: FileInfo[] = [];
       cancelledRef.current = false;
+      setLoadedBoundaryKey(requestBoundaryKey);
       setItems(queue);
       setUploading(queue.length > 0);
 
       try {
         for (const item of queue) {
+          assertUploadQueueScopeCurrent(
+            boundaryKeyRef.current,
+            boundaryReadyRef.current,
+            requestBoundaryKey,
+          );
           if (cancelledRef.current) {
-            setItems((current) => updateQueueItem(current, item.id, { status: 'cancelled' }));
+            commit((current) => updateQueueItem(current, item.id, { status: 'cancelled' }));
             continue;
           }
 
-          setItems((current) => updateQueueItem(current, item.id, {
+          commit((current) => updateQueueItem(current, item.id, {
             status: 'uploading',
             progress: 0,
             error: null,
@@ -103,19 +157,26 @@ export function useUploadQueue(): UseUploadQueueReturn {
               ...uploadOptions,
               path: resolvePath?.(item.file) ?? uploadOptions.path,
               onProgress: (progress) => {
-                setItems((current) => updateQueueItem(current, item.id, { progress }));
+                if (!boundaryReadyRef.current
+                  || boundaryKeyRef.current !== requestBoundaryKey) return;
+                commit((current) => updateQueueItem(current, item.id, { progress }));
                 uploadOptions.onProgress?.(progress);
               },
             });
             results.push(result);
-            setItems((current) => updateQueueItem(current, item.id, {
+            commit((current) => updateQueueItem(current, item.id, {
               status: 'complete',
               progress: 100,
               result,
             }));
           } catch (err) {
+            assertUploadQueueScopeCurrent(
+              boundaryKeyRef.current,
+              boundaryReadyRef.current,
+              requestBoundaryKey,
+            );
             const cancelled = err instanceof Error && err.name === 'AbortError';
-            setItems((current) => updateQueueItem(current, item.id, {
+            commit((current) => updateQueueItem(current, item.id, {
               status: cancelled ? 'cancelled' : 'error',
               error: cancelled ? null : err instanceof Error ? err.message : 'Upload failed',
             }));
@@ -124,15 +185,22 @@ export function useUploadQueue(): UseUploadQueueReturn {
           }
         }
       } finally {
-        setUploading(false);
+        if (boundaryReadyRef.current
+          && boundaryKeyRef.current === requestBoundaryKey) setUploading(false);
       }
 
+      assertUploadQueueScopeCurrent(
+        boundaryKeyRef.current,
+        boundaryReadyRef.current,
+        requestBoundaryKey,
+      );
       return results;
     },
-    [uploader.upload],
+    [callbackBoundaryKey, isCurrentScope, uploader.upload],
   );
 
   const cancel = useCallback(() => {
+    if (!isCurrentScope()) return;
     cancelledRef.current = true;
     uploader.reset();
     setUploading(false);
@@ -141,12 +209,13 @@ export function useUploadQueue(): UseUploadQueueReturn {
         ? { ...item, status: 'cancelled', progress: item.status === 'uploading' ? item.progress : 0 }
         : item,
     ));
-  }, [uploader]);
+  }, [isCurrentScope, uploader]);
 
   const clear = useCallback(() => {
+    if (!isCurrentScope()) return;
     if (uploading) cancel();
     setItems([]);
-  }, [cancel, uploading]);
+  }, [cancel, isCurrentScope, uploading]);
 
   const completed = useMemo(() => items.filter((item) => item.status === 'complete'), [items]);
   const failed = useMemo(() => items.filter((item) => item.status === 'error'), [items]);
@@ -156,14 +225,22 @@ export function useUploadQueue(): UseUploadQueueReturn {
     return Math.round(total / items.length);
   }, [items]);
 
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+  const visibleItems = visible ? items : [];
+
   return {
-    items,
-    uploading,
-    progress,
-    completed,
-    failed,
+    items: visibleItems,
+    uploading: visible ? uploading : false,
+    progress: visible ? progress : 0,
+    completed: visible ? completed : [],
+    failed: visible ? failed : [],
     uploadFiles,
     cancel,
     clear,
   };
+}
+
+function staleUploadScopeError(): Error {
+  return new Error('The authorization scope changed before the upload queue completed.');
 }

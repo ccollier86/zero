@@ -10,8 +10,10 @@ import type { AuthEmailOutboxJob, AuthEmailOutboxKind } from './auth-email-outbo
 export function emitAuthEmailQueued(kind: AuthEmailOutboxKind, result: AuthEmailEnqueueResult) {
   const requested = kind === 'password_reset'
     ? OBS_CODES.AUTH_PASSWORD_RESET_REQUESTED
-    : OBS_CODES.AUTH_EMAIL_VERIFICATION_REQUESTED;
-  emitPlatformCode(requested, { metadata: { source: 'outbox' } });
+    : kind === 'email_verification'
+      ? OBS_CODES.AUTH_EMAIL_VERIFICATION_REQUESTED
+      : null;
+  if (requested) emitPlatformCode(requested, { metadata: { source: 'outbox' } });
   emitPlatformCode(OBS_CODES.AUTH_EMAIL_OUTBOX_ENQUEUED, {
     metadata: { kind, result },
   });
@@ -26,12 +28,19 @@ export function emitAuthEmailQueued(kind: AuthEmailOutboxKind, result: AuthEmail
 }
 
 export function emitAuthEmailDelivered(job: AuthEmailOutboxJob, userId?: string) {
+  if (job.kind === 'tenant_invitation') return;
   const event = job.kind === 'password_reset'
     ? OBS_CODES.AUTH_PASSWORD_RESET_SENT
-    : OBS_CODES.AUTH_EMAIL_VERIFICATION_SENT;
+    : job.kind === 'domain_mailbox_proof'
+      ? OBS_CODES.AUTH_DOMAIN_MAILBOX_SENT
+      : OBS_CODES.AUTH_EMAIL_VERIFICATION_SENT;
   emitPlatformCode(event, {
     userId,
-    metadata: { source: job.kind === 'password_reset' ? 'forgot-password' : 'resend' },
+    metadata: {
+      source: job.kind === 'password_reset'
+        ? 'forgot-password'
+        : job.kind === 'domain_mailbox_proof' ? 'domain-onboarding' : 'resend',
+    },
   });
 }
 
@@ -50,10 +59,14 @@ export function emitAuthEmailSuppressed(
 export function emitAuthEmailFailed(job: AuthEmailOutboxJob, input: {
   code: string; cleanupSucceeded: boolean; retry: boolean; userId?: string;
 }) {
-  const deliveryEvent = job.kind === 'password_reset'
+  const deliveryEvent = job.kind === 'tenant_invitation'
+    ? null
+    : job.kind === 'password_reset'
     ? OBS_CODES.AUTH_PASSWORD_RESET_DELIVERY_FAILED
-    : OBS_CODES.AUTH_EMAIL_VERIFICATION_DELIVERY_FAILED;
-  emitPlatformCode(deliveryEvent, {
+    : job.kind === 'domain_mailbox_proof'
+      ? OBS_CODES.AUTH_DOMAIN_MAILBOX_DELIVERY_FAILED
+      : OBS_CODES.AUTH_EMAIL_VERIFICATION_DELIVERY_FAILED;
+  if (deliveryEvent) emitPlatformCode(deliveryEvent, {
     userId: input.userId,
     metadata: {
       source: job.kind === 'password_reset' ? 'forgot-password' : 'resend',

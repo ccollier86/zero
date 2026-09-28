@@ -46,9 +46,12 @@ export async function authorizeNativeGet(
 
     const auth = await resolvePageSessionAuth(request, config.getTokenService());
     if (!auth) return nativeRedirect(authContinuationPath(config.loginPath, resume, loginHint));
-    const claimed = pending.prompt === 'create-resume'
-      ? service.validateContinuationForUser(resume, auth.userId)
-      : service.claimContinuationForUser(resume, auth.userId);
+    // Registration/recovery continuations may already be identity-bound while
+    // still lacking an authority snapshot. The same atomic claim operation
+    // fills that snapshot only for the bound user and never overwrites it.
+    const claimed = pending.prompt === 'create-resume' && !pending.boundUserId
+      ? null
+      : service.claimContinuationForAuth(resume, auth);
     if (!claimed) {
       fail('access_denied', 'This authorization belongs to a different account.');
     }

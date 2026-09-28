@@ -5,6 +5,9 @@ import type { RegistrationIntentStore } from './registration-intent-store';
 import type { NativeAuthorizationService } from './oidc/native-authorization-service';
 import type { ResolvedAuthBehaviorConfig } from './types';
 import type { UserStore } from './user-store';
+import type { AuthTenantInvitationEnvelope } from './auth-tenant-invitation-envelope';
+import type { AuthTenantOnboardingService } from './auth-tenant-onboarding-service';
+import type { VerifiedDomainOnboardingService } from './verified-domain-service';
 
 export interface AuthEmailOutboxDeliveryDeps {
   store: UserStore;
@@ -13,6 +16,9 @@ export interface AuthEmailOutboxDeliveryDeps {
   registrationIntents: RegistrationIntentStore;
   config: ResolvedAuthBehaviorConfig;
   getNative: () => NativeAuthorizationService | null;
+  invitationEnvelope?: AuthTenantInvitationEnvelope | null;
+  getTenantOnboarding?: () => AuthTenantOnboardingService | null;
+  getVerifiedDomainOnboarding?: () => VerifiedDomainOnboardingService | null;
 }
 
 export interface AuthEmailDeliveryOutcome {

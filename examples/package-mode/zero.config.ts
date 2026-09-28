@@ -12,6 +12,7 @@ import { tables } from './db/schema';
 const PORT = Number(Bun.env.PORT ?? 3000);
 const APP_NAME = readEnv('APP_NAME') ?? 'Zero App';
 const hasEmail = Boolean(Bun.env.RESEND_API_KEY);
+const authEnabled = Bun.env.ZERO_AUTH_ENABLED === 'true';
 const hasAI = Boolean(
   Bun.env.OPENAI_API_KEY
     || Bun.env.ANTHROPIC_API_KEY
@@ -40,10 +41,33 @@ export const config = defineZeroConfig({
   db: resolveDatabaseConfig(),
   tables,
 
-  // Keep the generated starter public. Change this to `true` or an auth
-  // object when your app needs accounts, email verification, MFA, or admin
-  // user management.
-  auth: false,
+  // The generated starter stays public until ZERO_AUTH_ENABLED=true. Once
+  // enabled, an operator-held secret is required for the one-time first-admin
+  // ceremony; ordinary registration follows `mode` after that.
+  auth: authEnabled
+    ? {
+        bootstrap: {
+          mode: 'secret',
+          secret: readEnv('AUTH_BOOTSTRAP_SECRET'),
+        },
+        registration: {
+          mode: 'public',
+        },
+        account: {
+          requireEmailVerification:
+            Bun.env.AUTH_REQUIRE_EMAIL_VERIFICATION === 'true',
+          emailVerificationPath:
+            readEnv('AUTH_EMAIL_VERIFICATION_PATH') ?? '/verify-email',
+        },
+        accountEmails: {
+          adminCreatedUser: hasEmail,
+          passwordReset: hasEmail,
+          manualPasswordReset: Bun.env.AUTH_MANUAL_PASSWORD_RESET !== 'false',
+          actionTokenTTL: readEnv('AUTH_ACTION_TOKEN_TTL') ?? '1h',
+          requestCooldown: readEnv('AUTH_ACCOUNT_EMAIL_COOLDOWN') ?? '5m',
+        },
+      }
+    : false,
   routeAuth: 'explicit',
   sitemap: {
     enabled: true,

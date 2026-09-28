@@ -1,29 +1,40 @@
 # User Store
 
-SQLite operations for auth data. Prepared statements pattern from `src/persistence/sqlite-hot-store.ts` — all statements prepared once on construction, reused per call.
+SQLite operations for auth data. Statements are prepared once during store
+construction and reused per call, matching the current ReactiveDB/persistence
+statement-reuse pattern.
 
-## SQLite Schema
+## Core SQLite Schema
 
-### Public/Core Tables
+These excerpts cover the identity, credential, refresh, and configuration
+tables closest to `UserStore` and `TokenService`. Focused auth services define
+additional private session, MFA, tenancy, onboarding, authorization, and audit
+tables in their corresponding schema modules.
+
+### Auth/Core Tables
 
 ```sql
--- Core user record — safe to broadcast (no sensitive fields)
+-- Core identity record — private from generic createApp Sync
 CREATE TABLE IF NOT EXISTS users (
   user_id    TEXT PRIMARY KEY,
   username   TEXT UNIQUE NOT NULL,
   email      TEXT UNIQUE NOT NULL,
+  email_generation INTEGER NOT NULL DEFAULT 1,
   first_name TEXT,
   last_name  TEXT,
   role       TEXT NOT NULL DEFAULT 'user',
   status     TEXT NOT NULL DEFAULT 'active',
   password_change_required INTEGER NOT NULL DEFAULT 0,
+  email_verified_at INTEGER,
+  email_verification_required INTEGER NOT NULL DEFAULT 0,
+  mfa_required INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
--- Extensible public/user metadata projection per user
+-- Extensible user-owned/admin-managed metadata projection per user
 CREATE TABLE IF NOT EXISTS user_properties (
   user_id  TEXT NOT NULL,
   key      TEXT NOT NULL,
@@ -33,10 +44,10 @@ CREATE TABLE IF NOT EXISTS user_properties (
 );
 ```
 
-### Internal Tables (`_` prefix — never broadcast, never subscribable)
+### Internal Tables (`_` prefix — never client-readable or subscribable)
 
 ```sql
--- Password hashes — isolated from the public users table
+-- Password hashes — isolated from user projections
 CREATE TABLE IF NOT EXISTS _credentials (
   user_id       TEXT PRIMARY KEY,
   password_hash TEXT NOT NULL,
@@ -47,14 +58,17 @@ CREATE TABLE IF NOT EXISTS _credentials (
 CREATE TABLE IF NOT EXISTS _refresh_tokens (
   token_id    TEXT PRIMARY KEY,
   user_id     TEXT NOT NULL,
+  session_id  TEXT,
   token_hash  TEXT NOT NULL,
   expires_at  INTEGER NOT NULL,
   created_at  INTEGER NOT NULL,
   revoked_at  INTEGER,
-  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+  FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+  FOREIGN KEY (session_id) REFERENCES _auth_sessions(session_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON _refresh_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON _refresh_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_session ON _refresh_tokens(session_id);
 
 -- Legacy one-time setup/reset tokens — retained for old outstanding links.
 -- New auth reset/setup links use _zero_action_tokens via PlatformTokenService.
@@ -71,15 +85,20 @@ CREATE TABLE IF NOT EXISTS _auth_config (
 
 **Why `user_id TEXT` not `INTEGER`:** Consistent with the rest of the codebase — session IDs, document IDs, and all primary keys in the sync engine use text UUIDs. Generated via `crypto.randomUUID()`.
 
-**Why separate `_credentials`:** The `users` table is broadcast to subscribed clients via the sync engine. Keeping `password_hash` in a separate internal (`_` prefix) table means the public `users` table is structurally safe — no field stripping needed, no risk of accidental exposure.
+**Why separate `_credentials`:** Credentials need a structural server-only
+boundary in addition to transport policy. Keeping `password_hash` in an
+internal (`_` prefix) table means no user projection or future policy mistake
+can include it. Default `createApp()` policy also withholds the `users` table
+itself from generic Sync because email, profile, status, and role data are not
+globally public.
 
 **Why `user_properties` KV:** Avoids schema migrations when adding safe user
 metadata such as notification preferences, theme, timezone, and display
-preferences. This table is the public/user-writable projection of user
-metadata, not the source of truth for permissions, tenancy, or other
-authorization decisions. Because it uses a composite primary key, current
-writes use prepared statements directly and do not emit ReactiveDB change
-events.
+preferences. Arbitrary or user-editable rows are not trusted for authorization;
+only keys present in the live property registry, marked `useInPolicies`, and
+not user-editable may feed policy decisions. Because the table uses a composite
+primary key, current writes use prepared statements directly and do not emit
+ReactiveDB change events.
 
 **Why `_refresh_tokens` stores hashes:** Same principle as passwords — if the database is compromised, raw tokens are not exposed. `SHA-256(token)` is stored; the raw token exists only on the client side.
 
@@ -96,7 +115,7 @@ All statements prepared in the constructor, stored in a map, reused per call:
 ```ts
 class UserStore {
   private stmts: {
-    // Users (public table — go through ReactiveDB for reactivity)
+    // Users (private auth table — ReactiveDB provides change tracking)
     getUserById: Statement;
     getUserByUsername: Statement;
     getUserByEmail: Statement;
@@ -107,7 +126,7 @@ class UserStore {
     getCredential: Statement;
     updateCredential: Statement;
 
-    // Properties (public metadata projection — direct SQL because composite PK)
+    // Properties (user metadata projection — direct SQL because composite PK)
     setProperty: Statement;
     getProperty: Statement;
     getProperties: Statement;
@@ -143,13 +162,16 @@ class UserStore {
 ```
 
 **Why two paths:**
-- Public `users` table writes go through `db.insert()` / `db.update()` /
-  `db.delete()` so ReactiveDB emits change events and the sync engine can
-  broadcast them.
+- Private `users` table writes go through `db.insert()` / `db.update()` /
+  `db.delete()` so ReactiveDB provides consistent change tracking. Default
+  platform policy denies generic client delivery of those events.
 - `user_properties` writes use prepared statements because the table has a
-  composite primary key. They are not a trusted authorization source and do not
-  currently emit ReactiveDB broadcasts.
-- Internal tables (`_credentials`, `_refresh_tokens`, `_auth_config`) — writes use prepared statements directly (`stmt.run(...)`) since these tables should never broadcast.
+  composite primary key. Arbitrary or user-editable keys are not trusted; only
+  live-registry keys marked `useInPolicies` and not user-editable may feed
+  policy. These writes do not currently emit ReactiveDB change events.
+- Internal tables (`_credentials`, `_refresh_tokens`, `_auth_config`) — writes
+  use prepared statements directly (`stmt.run(...)`) and have no client Sync
+  surface.
 
 ## Operations
 
@@ -176,6 +198,9 @@ async createUser(params: {
   role?: string;
   status?: 'active' | 'suspended';
   passwordChangeRequired?: boolean;
+  emailVerifiedAt?: number | null;
+  emailVerificationRequired?: boolean;
+  mfaRequired?: boolean;
   properties?: Record<string, string>;
 }): Promise<UserRecord>
 ```
@@ -184,13 +209,22 @@ async createUser(params: {
 1. Generate `userId` via `crypto.randomUUID()` (prefixed: `u_${uuid}`)
 2. Hash password: `await Bun.password.hash(params.password)` (Argon2id, automatic)
 3. Wrap in `db.transaction()`:
-   - `db.insert('users', { user_id, username, email, first_name, last_name, role, created_at })` — emits change, broadcast
+   - `db.insert('users', { user_id, username, email, first_name, last_name, role, created_at })` — emits a server-side change; client delivery remains policy-controlled
    - lifecycle fields default to `status = 'active'` and `password_change_required = 0` unless provided
    - `this.stmts.insertCredential.run(user_id, passwordHash)` — internal, no broadcast
    - configured initial properties are inserted into `user_properties` when provided
 4. Return `UserRecord` (no password_hash)
 
-**Transaction ensures atomicity** — if credential insert fails, the user row is rolled back. Since this runs inside `db.transaction()`, the `users` change event is deferred until commit (see [ReactiveDB transactions](../realtime-sync/reactive-db.md#transactions)).
+**Transaction ensures atomicity** — if credential insert fails, the user row is rolled back. Since this runs inside `db.transaction()`, the `users` change event is deferred until commit (see [ReactiveDB transactions](../realtime-sync/realtime-sync/reactive-db.md#transactions)).
+
+`createUser()` remains a compatible trusted provisioning primitive after an
+installation has completed, and remains the single-mode bootstrap primitive.
+It deliberately cannot elect the first user in `multi` mode: while multi-mode
+bootstrap is open it fails with
+`409 MULTI_TENANT_BOOTSTRAP_ORGANIZATION_REQUIRED`. Use the registration/domain
+path that creates the first organization and owner membership in the same
+transaction. This prevents programmatic callers from closing bootstrap with a
+tenantless administrator.
 
 ### getUserById / getUserByUsername / getUserByEmail
 
@@ -226,6 +260,59 @@ countUsersByRole(role: string): number
 `listUsers()` returns newest users first with joined properties. Count helpers
 are used by first-user bootstrap and last-admin safety checks.
 
+### Registration provisioning receipts
+
+`createRegistrationUser(..., { provisional: true })` serializes bootstrap
+election and commits the new identity with an exact
+`_auth_registration_provisioning` receipt. An optional newly created tenant is
+bound to that receipt in the same transaction. In single/advanced mode the
+bootstrap application-owner assignment records the receipt ID as its source;
+in multi/advanced mode the receipt binds the exact tenant and owner identity.
+
+When registration requires email verification, `_auth_registration_intents`
+is written inside that same identity/owner transaction. It is the narrow bridge
+that keeps the newly provisioned owner recoverable after successful delivery
+and receipt finalization but before the user consumes the verification link.
+For multi mode the intent records the exact tenant ID, so one registration can
+never authorize a second organization. Verification makes the account
+token-eligible and removes the intent atomically. The provisioning receipt is
+not reused for this longer-lived state: it remains an exact, leased
+compensation capability and disappears after delivery/session provisioning.
+
+Each receipt also has a bounded five-minute owner lease. The creating process
+holds the opaque lease capability; SQLite stores only its SHA-256 digest and
+expiry. The registration orchestrator atomically renews that exact lease before
+crossing the potentially slow email/session/token boundary. An expired owner
+cannot revive its lease or finalize stale work.
+
+The registration orchestrator calls
+`finalizeRegistrationProvisioning(receipt)` only after session/token or
+verification-email provisioning succeeds. Finalization removes the receipt and
+closes bootstrap atomically. On failure,
+`rollbackRegistrationProvisioning(receipt)` removes the receipt-bound tenant,
+memberships, role assignments, native-request bindings, platform/legacy action
+tokens, sessions, refresh tokens, intents, and user in one transaction. It does
+not expose a general last-owner bypass. Runtime startup calls
+`recoverPendingRegistrationProvisioning()` before bootstrap reconciliation,
+but may recover only an expired or legacy-unowned receipt. A second process
+cannot delete another process's live provisional graph. Finalize and ordinary
+rollback require the exact lease; recovery rechecks expiry under the SQLite
+writer lock. This leaves an interrupted install retryable without reopening a
+completed installation or silently accepting partial success.
+
+Protected application and tenant ownership uses the same predicate as token
+issuance: `status = active`, no password-change requirement, and either no
+email-verification requirement or a positive verification timestamp.
+`updateUser()` also clears `email_verified_at` whenever the canonical email
+changes. Its current-address read, canonical uniqueness checks, verification
+clear, and row update share one SQLite writer transaction, so another process
+cannot move a verification timestamp between addresses in the comparison/write
+gap. Domain services and SQLite lifecycle triggers reject any transition
+that would leave an installed application or active tenant without another
+token-eligible owner. The only gated-owner exceptions are the exact pending
+registration receipt during atomic creation/rollback and the scoped
+registration intent during delivered-email verification.
+
 ### updateUser
 
 ```ts
@@ -237,10 +324,17 @@ updateUser(userId: string, partial: Partial<{
   role: string;
   status: 'active' | 'suspended';
   passwordChangeRequired: boolean;
+  emailVerifiedAt: number | null;
+  emailVerificationRequired: boolean;
+  mfaRequired: boolean;
 }>): UserRecord | null
 ```
 
-Uses `db.update('users', userId, { ...mapped, updated_at: Date.now() })`. The ReactiveDB `update()` method reads the current row, merges the partial, writes the full row, and emits a change event. The sync engine broadcasts the updated row to all subscribers.
+Uses `db.update('users', userId, { ...mapped, updated_at: Date.now() })`. The
+ReactiveDB `update()` method reads the current row, merges the partial, writes
+the full row, and emits a change event. Default platform Sync policy consumes
+the event for sequencing/invalidation but does not deliver the private user row
+through generic Sync.
 
 ### deleteUser
 
@@ -249,9 +343,20 @@ deleteUser(userId: string): boolean
 ```
 
 Uses `db.delete('users', userId)`. SQLite `ON DELETE CASCADE` removes
-`_credentials`, `user_properties`, `_refresh_tokens`, and
-`_auth_action_tokens` rows automatically. The `db.delete()` call emits a
-change event for the `users` table — subscribers see the user disappear.
+identity-owned private state such as `_credentials`, `user_properties`,
+`_refresh_tokens`, and `_auth_action_tokens`. The `db.delete()` call emits a
+change event for the `users` table. Generic Sync subscribers do not receive the
+private row or its deletion under default `createApp()` policy.
+
+In multi-tenant mode, organization records are durable history rather than
+identity-owned scratch state. Tenant creation attribution, memberships,
+invitations, and join requests therefore use restrictive user references. A
+hard delete that reaches any of that history fails with HTTP 409 and stable
+code `USER_HAS_TENANT_HISTORY`; suspend the identity instead. The foreign-key
+decision happens in the same SQLite immediate transaction as the delete, so a
+second runtime cannot attach history between a stale preflight and commit.
+Registration compensation uses its separate exact provisioning receipt and is
+not an ordinary administrator deletion.
 
 ### verifyPassword
 
@@ -423,18 +528,18 @@ These are OWASP-recommended defaults. Argon2id is resistant to both side-channel
 - Memory-hard — resistant to GPU/ASIC attacks unlike bcrypt
 - Async — hashing doesn't block the Bun event loop
 
-## Reactivity
+## Change Tracking And Client Exposure
 
 ### What broadcasts
 
-| Table | Broadcasts | Why |
-|-------|-----------|-----|
-| `users` | Yes | Profile data (name, email, role) is safe and useful for real-time UIs |
-| `user_properties` | No, not currently | Composite-key public/user metadata projection written through prepared statements |
-| `_credentials` | No | Password hashes are sensitive — `_` prefix prevents broadcast |
-| `_refresh_tokens` | No | Token hashes are sensitive — `_` prefix prevents broadcast |
-| `_auth_config` | No | Signing keys are sensitive — `_` prefix prevents broadcast |
-| audit tables | Planned optional feature | User activity audit is deferred and separate from default observability |
+| Table | Generic `createApp()` Sync | Supported client path |
+|-------|----------------------------|-----------------------|
+| `users` | Denied across snapshot, catch-up, and live delivery | Login/register/refresh, `/auth/me`, and protected admin auth APIs |
+| `user_properties` | Not a ReactiveDB table stream | Current-user and admin property APIs |
+| `_credentials` | Internal; never client-readable | None |
+| `_refresh_tokens` | Internal; never client-readable | Opaque refresh-token protocol only |
+| `_auth_config` | Internal; never client-readable | Sanitized public/admin config APIs |
+| `_auth_audit_events` and audit support state | Internal; never generic Sync data | Authorized tenant/platform audit APIs, strict browser client/hook, and packaged viewer |
 
 ### Example: role change
 
@@ -445,13 +550,18 @@ authStore.updateUser(userId, { role: 'admin' });
 
 What happens:
 
-1. `UserStore.updateUser()` calls `db.update('users', userId, { role: 'admin', updated_at: Date.now() })`
-2. ReactiveDB writes the row, increments `seq`, emits change event
-3. Sync plugin's `onChange` listener: `server.publish('sync:users', changeJSON)`
-4. Every client subscribed to `sync:users` receives the change
-5. Client-side `useRow('users', userId)` re-renders with the new role
+1. The protected admin route validates the transition.
+2. `UserStore.updateUser()` writes the row through ReactiveDB and emits a
+   server-side change event.
+3. Security-relevant changes revoke the user's refresh sessions and invalidate
+   the old authorization boundary.
+4. Bearer/page-session/Sync verification re-reads live user state and rejects
+   stale or ineligible sessions.
+5. Admin and current-user UI obtain user projections from the auth APIs; no
+   generic `users` subscription is required or allowed by default.
 
-No manual notification. No event emission. No WebSocket message crafting. The existing sync path handles it.
+This separates enforcement from UI freshness: an unauthorized stale client
+view cannot preserve server authority.
 
 ## Key Types
 
@@ -465,6 +575,9 @@ interface UserRecord {
   role: string;
   status: 'active' | 'suspended';
   passwordChangeRequired: boolean;
+  emailVerifiedAt: number | null;
+  emailVerificationRequired: boolean;
+  mfaRequired: boolean;
   createdAt: number;
   updatedAt: number | null;
   properties: Record<string, string>;
@@ -473,6 +586,7 @@ interface UserRecord {
 interface RefreshTokenRecord {
   tokenId: string;
   userId: string;
+  sessionId: string | null;
   tokenHash: string;
   expiresAt: number;
   createdAt: number;

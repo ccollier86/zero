@@ -1,6 +1,7 @@
 /** Shared runtime contract for the focused session route plugins. */
 
 import type { AccountEmailService } from './account-email-service';
+import type { EmailRuntime } from '../email/types';
 import type { AuthActionTokenService } from './action-token-service';
 import type { MfaChallengeService } from './mfa-challenge-service';
 import type { MfaService } from './mfa-service';
@@ -10,6 +11,9 @@ import type { TokenService } from './token-service';
 import { AuthError, type ResolvedAuthBehaviorConfig } from './types';
 import type { UserPropertyService } from './user-property-service';
 import type { UserStore } from './user-store';
+import type { TenancyService } from './tenancy/tenancy-service';
+import type { AuthTenantSessionService } from './auth-tenant-session-service';
+import type { AuthRequestAdmissionService } from './auth-request-admission-service';
 
 export interface AuthSessionPluginConfig {
   getUserStore: () => UserStore | null;
@@ -21,6 +25,10 @@ export interface AuthSessionPluginConfig {
   getMfaChallengeService: () => MfaChallengeService | null;
   getNativeAuthorizationService: () => NativeAuthorizationService | null;
   getRegistrationIntentStore: () => RegistrationIntentStore | null;
+  getTenancyService?: () => TenancyService | null;
+  getAuthTenantSessionService: () => AuthTenantSessionService | null;
+  getRequestAdmissionService?: () => AuthRequestAdmissionService | null;
+  getEmailRuntime: () => EmailRuntime;
   getAuthConfig: () => ResolvedAuthBehaviorConfig;
 }
 
@@ -32,6 +40,8 @@ export interface AuthSessionServices {
   accountEmail: AccountEmailService;
   mfaChallengeService: MfaChallengeService | null;
   registrationIntents: RegistrationIntentStore;
+  tenancyService: TenancyService | null;
+  tenantSessions: AuthTenantSessionService;
 }
 
 export function requireSessionServices(
@@ -43,13 +53,16 @@ export function requireSessionServices(
   const actionTokens = config.getActionTokenService();
   const accountEmail = config.getAccountEmailService();
   const registrationIntents = config.getRegistrationIntentStore();
+  const tenantSessions = config.getAuthTenantSessionService();
   if (!store || !tokenService || !propertyService || !actionTokens
-    || !accountEmail || !registrationIntents) {
+    || !accountEmail || !registrationIntents || !tenantSessions) {
     throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
   }
   return {
     store, tokenService, propertyService, actionTokens, accountEmail,
     mfaChallengeService: config.getMfaChallengeService(), registrationIntents,
+    tenancyService: config.getTenancyService?.() ?? null,
+    tenantSessions,
   };
 }
 

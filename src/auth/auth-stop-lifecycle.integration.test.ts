@@ -33,7 +33,7 @@ test('standalone auth stop joins delivery before its caller disposes the databas
   });
   const db = createReactiveDB({ mode: 'memory' });
   const app = installAuthStopBarrier(installAuthStopBarrier(
-    new Elysia().use(createAuthPlugin({ db }))
+    new Elysia().use(createAuthPlugin({ db, bootstrap: 'public' }))
   ));
   let disposed = false;
   try {

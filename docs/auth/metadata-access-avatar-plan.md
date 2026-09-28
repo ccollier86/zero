@@ -1,7 +1,12 @@
 # Auth Metadata, Access Control, And Avatars Plan
 
-This is the planning target for richer Zero auth. Do not implement from this
-document until the shape has been reviewed.
+> Historical planning record. The governed user-property system and the newer
+> four-profile authorization/tenancy architecture supersede the access and
+> tenant sketches in this document. Use
+> [Zero Auth Philosophy](./zero-auth-philosophy.md), the
+> [implementation checklist](./multi-tenant-auth-implementation-checklist.md),
+> and [Platform Configuration](../platform-configuration.md) for current
+> contracts. The remaining avatar ideas are not an implemented auth boundary.
 
 ## Goal
 
@@ -20,7 +25,7 @@ This plan should use the platform-wide config-file protocol in
 system to prove that protocol before storage, sync, observability, migrations,
 and other `createApp()` systems adopt it.
 
-## Current State
+## State When This Plan Was Written
 
 Current auth already has:
 
@@ -398,7 +403,8 @@ createApp({
 });
 ```
 
-Multi-tenant membership:
+Historical proposal (superseded by the current tenancy/authorization contracts;
+`mode: 'multi'` no longer fails startup merely because it was selected):
 
 ```ts
 auth: {
@@ -576,8 +582,8 @@ Recommended direction:
    through backend services, not from arbitrary public user writes.
 5. Project public metadata into user records or safe user-facing responses when
    `public: true`.
-6. Keep private permissions out of public user broadcasts unless explicitly
-   configured.
+6. Keep private permissions out of user-facing projections; do not expose auth
+   user rows through generic Sync.
 7. Block generic `/auth/me/properties/:key` writes to reserved system keys.
 
 The exact table shape can be decided during implementation. Options:

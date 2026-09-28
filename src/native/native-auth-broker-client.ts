@@ -58,6 +58,20 @@ class BrokerClient implements NativeAuthBrokerClient {
   subscribe(listener: NativeAuthStateListener) { return this.brokerState.subscribe(listener); }
   initialize() { return this.stateCommand({ operation: 'initialize' }); }
   refresh() { return this.stateCommand({ operation: 'refresh' }); }
+  async listTenants() {
+    const response = await this.invoke(
+      { operation: 'listTenants' }, undefined, this.requestTimeoutMs,
+    );
+    if (!response.tenantList) {
+      throw new NativeAuthError(
+        'Broker omitted the tenant list response.', 'NATIVE_BROKER_RESPONSE_INVALID',
+      );
+    }
+    return response.tenantList;
+  }
+  switchTenant(tenantId: string) {
+    return this.stateCommand({ operation: 'switchTenant', tenantId });
+  }
   async signOut() { await this.invoke({ operation: 'signOut' }, undefined, this.requestTimeoutMs); }
   fetch(input: RequestInfo | URL, init?: RequestInit) { return this.authenticatedFetch(input, init); }
   signIn(options?: NativeSignInOptions) { return this.authorize('signIn', options); }

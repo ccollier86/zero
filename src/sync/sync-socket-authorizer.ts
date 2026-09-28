@@ -17,6 +17,7 @@ interface SocketAuthorizerOptions {
   db: ReactiveDB;
   policy: SyncPolicy;
   resourcePolicy?: SyncResourcePolicyAdapter;
+  requireDurableAuthority?: boolean;
   onAuthorized: (
     socket: ServerWebSocket<SyncSocketData>,
     token?: string,
@@ -57,10 +58,29 @@ export function createSyncSocketAuthorizer(options: SocketAuthorizerOptions) {
     const data = socket.data;
     data.authContext = auth.authContext;
     data.authToken = token;
+    data.authAuthorityReference = null;
+    if (token && data.authContext && options.auth) {
+      const verifier = options.auth.getTokenVerifier();
+      try {
+        verifier?.assertCurrentProfile?.();
+        const reference = verifier?.captureAuthContextAuthority?.(data.authContext) ?? null;
+        const canRevalidate = Boolean(verifier?.resolveAuthContextAuthority);
+        if (reference && canRevalidate) data.authAuthorityReference = reference;
+      } catch {
+        socket.close(1011, 'Sync authority capture failed');
+        return false;
+      }
+      if (options.requireDurableAuthority && !data.authAuthorityReference) {
+        socket.close(1011, 'Durable Sync authority unavailable');
+        return false;
+      }
+    }
     try {
       const access = await resolveSyncSocketAccess(options, data.authContext);
+      options.auth?.getTokenVerifier()?.assertCurrentProfile?.();
       data.allowedTables = access.allowedTables;
       data.resourceRowFilters = access.rowFilters;
+      data.resourceRowProjectors = access.rowProjectors;
       data.authorizationFingerprint = access.fingerprint;
       data.authorizationScope = createSyncAuthorizationScope(
         data.authContext,

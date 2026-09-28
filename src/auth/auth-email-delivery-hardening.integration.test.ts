@@ -14,6 +14,7 @@ import {
   type EmailSendResult,
 } from '../email';
 import { createReactiveDB } from '../sync/reactive-db';
+import { createPlatformTokenPlugin } from '../tokens';
 import { getActionTokenService } from './auth-runtime';
 import { createAuthPlugin, getAuthEmailOutbox, getTokenService } from './auth.plugin';
 import { createAuthMiddleware } from './auth.middleware';
@@ -123,6 +124,81 @@ describe('Auth email delivery hardening', () => {
     }
   });
 
+  test('failed multi-tenant verification removes the whole provisional organization graph', async () => {
+    const provider = configureFlakyEmail();
+    const local = await startAuthApp({
+      tenancy: {
+        mode: 'multi',
+        creation: { mode: 'authenticated' },
+      },
+      authorization: { mode: 'advanced' },
+      registration: { mode: 'public' },
+      account: { requireEmailVerification: true },
+    }, { platformTokens: true });
+
+    try {
+      const bootstrap = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'multi-email-owner',
+        email: 'multi-email-owner@test.com',
+        password: 'password123',
+        organizationName: 'Installed organization',
+      });
+      expect(bootstrap.status).toBe(200);
+      expect(bootstrap.data.user.role).toBe('admin');
+      expect(countRows(local.db, `
+        SELECT COUNT(*) AS count FROM _auth_config
+        WHERE key = 'auth.bootstrap.completed' AND value = '1'
+      `)).toBe(1);
+
+      provider.failuresRemaining = 1;
+      const failed = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'multi-email-worker',
+        email: 'multi-email-worker@test.com',
+        password: 'password123',
+        organizationName: 'Transient organization',
+      });
+      expect(failed.status).toBe(502);
+      expect(countRows(local.db, `
+        SELECT COUNT(*) AS count FROM users
+        WHERE email = 'multi-email-worker@test.com'
+      `)).toBe(0);
+      expect(countRows(local.db, `
+        SELECT COUNT(*) AS count FROM _auth_tenants
+        WHERE slug = 'transient-organization'
+      `)).toBe(0);
+      expect(countTableRows(local.db, '_auth_registration_provisioning')).toBe(0);
+      expect(countTableRows(local.db, '_auth_registration_intents')).toBe(0);
+      expect(countTableRows(local.db, '_auth_action_tokens')).toBe(0);
+      expect(countTableRows(local.db, '_zero_action_tokens')).toBe(0);
+      expect(countTableRows(local.db, '_auth_tenants')).toBe(1);
+      expect(countTableRows(local.db, '_auth_tenant_memberships')).toBe(1);
+      expect(countTableRows(local.db, '_auth_tenant_membership_roles')).toBe(1);
+      expect(provider.messages).toHaveLength(0);
+
+      const retried = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'multi-email-worker',
+        email: 'multi-email-worker@test.com',
+        password: 'password123',
+        organizationName: 'Transient organization',
+      });
+      expect(retried.status).toBe(200);
+      expect(retried.data.user.emailVerificationRequired).toBe(true);
+      expect(retried.data.tenant).toMatchObject({
+        name: 'Transient organization',
+        slug: 'transient-organization',
+        role: 'owner',
+      });
+      expect(countTableRows(local.db, '_auth_registration_provisioning')).toBe(0);
+      expect(countTableRows(local.db, '_auth_tenants')).toBe(2);
+      expect(countTableRows(local.db, '_auth_tenant_memberships')).toBe(2);
+      expect(countTableRows(local.db, '_auth_tenant_membership_roles')).toBe(2);
+      expect(countTableRows(local.db, '_zero_action_tokens')).toBe(1);
+      expect(provider.messages).toHaveLength(1);
+    } finally {
+      await local.stop();
+    }
+  });
+
   test('admin setup delivery failure removes the newly created account and permits a clean retry', async () => {
     const provider = configureFlakyEmail();
     const local = await startAuthApp({
@@ -151,6 +227,14 @@ describe('Auth email delivery hardening', () => {
         local.db,
         "SELECT COUNT(*) AS count FROM users WHERE email = 'setup-rollback-worker@test.com'"
       )).toBe(0);
+      expect(countAuditEvents(local.db, 'identity.provisioned-by-admin', 'succeeded'))
+        .toBe(1);
+      expect(countAuditEvents(local.db, 'account.security-delivery-prepared', 'succeeded'))
+        .toBe(1);
+      expect(countAuditEvents(local.db, 'account.security-delivery-failed', 'failed'))
+        .toBe(1);
+      expect(countAuditEvents(local.db, 'identity.provisioning-rolled-back', 'succeeded'))
+        .toBe(1);
 
       const retried = await requestJson(
         local.url,
@@ -168,6 +252,12 @@ describe('Auth email delivery hardening', () => {
       expect(retried.data.setupEmailSent).toBe(true);
       expect(retried.data.user.passwordChangeRequired).toBe(true);
       expect(provider.messages).toHaveLength(1);
+      expect(countAuditEvents(local.db, 'identity.provisioned-by-admin', 'succeeded'))
+        .toBe(2);
+      expect(countAuditEvents(local.db, 'account.security-delivery-succeeded', 'succeeded'))
+        .toBe(1);
+      expect(countAuditEvents(local.db, 'account.password-change-required', 'succeeded'))
+        .toBe(1);
     } finally {
       await local.stop();
     }
@@ -387,10 +477,15 @@ function configureFlakyEmail(publicUrl = true): FlakyEmailProvider {
   return provider;
 }
 
-async function startAuthApp(config: Omit<AuthPluginConfig, 'db'>) {
+async function startAuthApp(
+  config: Omit<AuthPluginConfig, 'db'>,
+  options: { platformTokens?: boolean } = {},
+) {
   const db = createReactiveDB({ mode: 'memory' });
-  const app = new Elysia()
-    .use(createAuthPlugin({ db, ...config }))
+  const app = new Elysia();
+  if (options.platformTokens) app.use(createPlatformTokenPlugin({ db }));
+  app
+    .use(createAuthPlugin({ db, bootstrap: 'public', ...config }))
     .use(createAuthMiddleware(getTokenService));
   app.listen(0);
   return {
@@ -460,4 +555,28 @@ function countRows(
 ): number {
   const row = db.prepare(sql).get() as { count: number };
   return row.count;
+}
+
+function countAuditEvents(
+  db: ReturnType<typeof createReactiveDB>,
+  action: string,
+  outcome: 'succeeded' | 'denied' | 'failed',
+): number {
+  return (db.prepare(`
+    SELECT COUNT(*) AS count FROM _auth_audit_events
+    WHERE action = ? AND outcome = ?
+  `).get(action, outcome) as { count: number }).count;
+}
+
+function countTableRows(
+  db: ReturnType<typeof createReactiveDB>,
+  table: '_auth_registration_provisioning'
+    | '_auth_registration_intents'
+    | '_auth_action_tokens'
+    | '_zero_action_tokens'
+    | '_auth_tenants'
+    | '_auth_tenant_memberships'
+    | '_auth_tenant_membership_roles',
+): number {
+  return countRows(db, `SELECT COUNT(*) AS count FROM ${table}`);
 }

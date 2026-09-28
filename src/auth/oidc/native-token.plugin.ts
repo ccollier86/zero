@@ -12,6 +12,7 @@ import {
 import { oauthEmpty, oauthJson } from './native-http';
 import type { NativeAuthHttpConfig } from './native-plugin-types';
 import { NativeTokenError, nativeTokenErrorResponse } from './native-token-error';
+import { authAuditRequestFromRequest } from '../auth-audit-service';
 
 export function createNativeTokenPlugin(config: NativeAuthHttpConfig) {
   return new Elysia({ name: 'auth-native-token' })
@@ -55,7 +56,8 @@ async function revokeRequest(config: NativeAuthHttpConfig, request: Request): Pr
     rejectClientSecret(form);
     requireService(config).revoke(
       requiredFormField(form, 'token'),
-      requiredFormField(form, 'client_id')
+      requiredFormField(form, 'client_id'),
+      authAuditRequestFromRequest(request),
     );
   } catch (error) {
     return nativeTokenErrorResponse(asTokenError(error));

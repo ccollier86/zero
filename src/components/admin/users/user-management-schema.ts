@@ -11,7 +11,10 @@ import type { AuthAdminConfig } from '../../../frontend/client/auth-client';
 import type { UserRoleOption } from './user-management-types';
 
 /** Build the admin user schema from the role options available to the app. */
-export function createUserManagementSchema(roleOptions: readonly UserRoleOption[]) {
+export function createUserManagementSchema(
+  roleOptions: readonly UserRoleOption[],
+  roleFieldLabel = 'Role',
+) {
   return defineSchema({
     username: field.text({ label: 'Username', required: true, placeholder: 'jdoe' }),
     email: field.email({ label: 'Email', required: true }),
@@ -19,7 +22,7 @@ export function createUserManagementSchema(roleOptions: readonly UserRoleOption[
     lastName: field.text({ label: 'Last name', placeholder: 'Doe' }),
     role: field.select(
       roleOptions.map((option) => ({ value: option.value, label: option.label })),
-      { label: 'Role', required: true, defaultValue: 'user' },
+      { label: roleFieldLabel, required: true, defaultValue: 'user' },
     ),
     status: field.select(
       [

@@ -11,9 +11,9 @@ import {
   type HTMLMotionProps,
 } from 'motion/react';
 
-import { cn } from '@/lib/utils';
-import { useIsInView } from '@/hooks/use-is-in-view';
-import { Slot, type WithAsChild } from '@/components/animate-ui/primitives/animate/slot';
+import { cn } from '#zero/lib/utils';
+import { useIsInView } from '#zero/hooks/use-is-in-view';
+import { Slot, type WithAsChild } from '#zero/components/animate-ui/primitives/animate/slot';
 import { scheduleAnimationLoopTurn } from './animation-loop';
 
 const staticAnimations = {

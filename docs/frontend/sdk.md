@@ -1,16 +1,27 @@
 # SDK
 
-The developer-facing API for database, auth, real-time, and persistent state. Two layers: a **core client** (vanilla JS, no framework dependency) and **React hooks** (thin wrappers for components). Install one package, get typed CRUD, auth, live subscriptions, optimistic mutations, and per-user server-persisted state.
+The developer-facing API for database, auth, real-time, and persistent state.
+It has an **imperative core client** that is usable outside React components and
+**React hooks** that bind the same client to component state. Install one
+package to get typed CRUD, auth, live subscriptions, optimistic mutations, and
+per-authorized-scope user state persisted on the server.
 
 ```ts
+import { createClient } from '@zero/framework/react';
+import { tables } from '@app/lib/schemas';
+
 // Core client — works anywhere
-const client = createClient({ url: 'http://localhost:3000', tables });
+const client = createClient({
+  url: 'http://localhost:3000',
+  tables,
+  auth: true,
+});
 
 // Auth — top-level. May return a session or an MFA continuation.
 const authResult = await client.login('alice', 'password123');
 
 // Auth admin — typed user-management helpers
-const { users } = await client.listAuthAdminUsers();
+const { users, page } = await client.listAuthAdminUsers();
 
 // HTTP — authenticated JSON requests in one line
 const { user } = await client.post('/api/users', { name: 'Alice' });
@@ -19,10 +30,36 @@ await client.delete('/api/users/1');
 
 // Collections — real-time sync with optimistic mutations
 const todos = client.collection('todos');
-todos.insert({ title: 'Buy milk', done: 0 });  // Auto-generates UUID PK
+todos.insert({ title: 'Buy milk', done: true });  // Auto-generates UUID PK
+```
 
-// React hooks — one hook for reads + writes
-const { data, insert, update, remove } = useCollection<Todo>('todos');
+In a client component, `useCollection()` exposes the same live table through
+React:
+
+```tsx
+'use client';
+
+import { useCollection, type InferRow } from '@zero/framework/react';
+import { todoTable } from '@app/lib/schemas';
+
+type Todo = InferRow<typeof todoTable>;
+
+export function TodoList() {
+  const { data, insert, update, remove } = useCollection<Todo>('todos');
+  return (
+    <>
+      <button onClick={() => insert({ title: 'New todo', done: false })}>Add</button>
+      {data.map((todo) => (
+        <div key={todo.id}>
+          <button onClick={() => update(todo.id, { done: !todo.done })}>
+            {todo.title}: {todo.done ? 'done' : 'open'}
+          </button>
+          <button onClick={() => remove(todo.id)}>Delete</button>
+        </div>
+      ))}
+    </>
+  );
+}
 ```
 
 ---
@@ -57,7 +94,10 @@ interface ClientConfig {
   /** Enable auth. Default: false, matching createApp(). */
   auth?: boolean;
 
-  /** Enable per-user state sync. Requires auth: true. Default: false. */
+  /** Revalidate observed authorization hints. Default: 30000; 0 disables polling. */
+  authorizationRevalidationIntervalMs?: number;
+
+  /** Enable scoped-user state sync. Requires auth: true. Default: false. */
   stateSync?: boolean;
 
   /** Connect WebSocket immediately on creation. Default: true */
@@ -65,6 +105,9 @@ interface ClientConfig {
 
   /** Max reconnect attempts before giving up. Default: Infinity */
   maxReconnectAttempts?: number;
+
+  /** Generated resource route prefix. Default: '/api/resources'. */
+  resourcePrefix?: string;
 
   /** Called on unrecoverable connection error. */
   onError?: (error: string) => void;
@@ -91,19 +134,26 @@ interface Client {
 
   // ─── Auth (top-level shortcuts) ──────────────────────────────
   readonly user: AuthUser | null;
+  readonly authorization: AuthAuthorizationSnapshot | null;
+  readonly authorizationState: AuthAuthorizationState;
   readonly isAuthenticated: boolean;
   readonly token: string | null;
+  getAuthorization(): Promise<AuthAuthorizationSnapshot | null>;
+  refreshAuthorization(): Promise<AuthAuthorizationSnapshot | null>;
+  subscribeAuthorization(callback: () => void): () => void;
   login(username: string, password: string): Promise<AuthCompletionResult>;
-  register(params: RegisterParams): Promise<AuthCompletionResult>;
+  register(params: RegisterParams): Promise<AuthRegistrationResult>;
   getAuthConfig(): Promise<AuthPublicConfig>;
-  forgotPassword(email: string): Promise<void>;
+  forgotPassword(email: string, nativeContinuation?: string): Promise<void>;
+  resendVerificationEmail(email: string, nativeContinuation?: string): Promise<void>;
+  verifyEmail(token: string): Promise<AuthCompletionResult>;
   inspectActionToken(token: string): Promise<AuthActionTokenInfo>;
   resetPassword(token: string, newPassword: string): Promise<AuthCompletionResult>;
   setupPassword(token: string, newPassword: string): Promise<AuthCompletionResult>;
   listMfaMethods(): Promise<{ methods: AuthMfaMethod[]; required: boolean }>;
   startMfaSetup(params: { setupToken?: string; method: AuthMfaMethodType; label?: string }): Promise<AuthMfaSetupStartResult>;
   verifyMfaSetup(params: { verificationToken: string; code: string }): Promise<AuthMfaSetupVerifyResult>;
-  verifyMfaChallenge(params: { challengeToken: string; code: string }): Promise<AuthSessionResult>;
+  verifyMfaChallenge(params: { challengeToken: string; code: string }): Promise<AuthCompletionResult>;
   logout(): Promise<void>;
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
   refresh(): Promise<void>;
@@ -111,6 +161,17 @@ interface Client {
   getProperty(key: string): Promise<string | null>;
   getProperties(): Promise<Record<string, string>>;
   deleteProperty(key: string): Promise<void>;
+
+  // ─── Verified-domain onboarding ───────────────────────
+  getTenantDomainAdministration(signal?: AbortSignal): Promise<AuthTenantDomainAdministration>;
+  createTenantDomainClaim(domain: string): Promise<AuthTenantDomainChallengeResult>;
+  issueTenantDomainChallenge(claimId: string, expectedRevision: string): Promise<AuthTenantDomainChallengeResult>;
+  verifyTenantDomainClaim(claimId: string, expectedRevision: string): Promise<AuthTenantDomainClaimResult>;
+  updateTenantDomainPolicy(claimId: string, update: AuthTenantDomainPolicyUpdate): Promise<AuthTenantDomainClaimResult>;
+  releaseTenantDomainClaim(claimId: string, input: AuthTenantDomainReleaseInput): Promise<AuthTenantDomainReleaseResult>;
+  startDomainOnboarding(identityContinuation?: string): Promise<{ accepted: true }>;
+  completeDomainOnboarding(proofToken: string): Promise<AuthDomainOnboardingCompletion>;
+  admitDomainOnboarding(continuation: string, identityContinuation?: string): Promise<AuthDomainOnboardingAdmissionResult>;
 
   // ─── Auth Admin ─────────────────────────────────────────────
   getAuthAdminConfig(): Promise<AuthAdminConfig>;
@@ -123,10 +184,17 @@ interface Client {
   deleteAuthAdminUser(userId: string): Promise<void>;
   sendAuthAdminSetupEmail(userId: string): Promise<boolean>;
   sendAuthAdminPasswordReset(userId: string): Promise<void>;
+  clearAuthAdminPasswordChangeRequirement(userId: string): Promise<AuthUser>;
   resetAuthAdminPassword(userId: string, password: string): Promise<void>;
   suspendAuthAdminUser(userId: string): Promise<AuthUser>;
   activateAuthAdminUser(userId: string): Promise<AuthUser>;
   revokeAuthAdminUserSessions(userId: string): Promise<void>;
+  getAuthAdminUserMfa(userId: string): Promise<AuthAdminUserMfaStatus>;
+  requireAuthAdminUserMfa(userId: string): Promise<AuthUser>;
+  clearAuthAdminUserMfaRequirement(userId: string): Promise<AuthUser>;
+  resetAuthAdminUserMfa(userId: string): Promise<AuthAdminMfaResetResult>;
+  sendAuthAdminVerificationEmail(userId: string): Promise<void>;
+  verifyAuthAdminUserEmail(userId: string): Promise<AuthUser>;
 
   // ─── HTTP (JSON fetch; auth headers when auth is enabled) ─────
   /** Auto-prepends server URL, auto-JSON, auto-auth, throws FetchError on non-2xx */
@@ -137,11 +205,18 @@ interface Client {
   patch<T = unknown>(path: string, body?: unknown): Promise<T>;
   delete<T = unknown>(path: string): Promise<T>;
 
+  // ─── Typed API (authenticated Eden Treaty) ───────────────
+  readonly api: Api;
+
   // ─── Data ────────────────────────────────────────────────────
-  collection<T extends Row>(name: string): Collection<T>;
-  resource<T extends Row>(name: string): ResourceClient<T>;
-  readonly state: StateClient | null;
-  readonly ephemeral: EphemeralClient;
+  collection<
+    T extends Row = Row,
+    TPrimaryKey extends keyof T & string = PrimaryKeyOf<T>,
+  >(name: string): Collection<T, TPrimaryKey>;
+  resource<T extends Row = Row>(
+    name: string,
+    options?: ResourceClientOptions,
+  ): ResourceClient<T>;
 
   // ─── Connection ──────────────────────────────────────────────
   connect(): void;
@@ -151,6 +226,10 @@ interface Client {
 }
 ```
 
+The public `Client` does not expose Zero's internal sync, state, or ephemeral
+objects. Use the exported state, presence, room, and data hooks for those
+features. The internal objects exist only for framework provider wiring.
+
 ### Auth Registration Config
 
 `client.getAuthConfig()` reads `GET /auth/config` and is safe for public auth
@@ -159,16 +238,54 @@ UI decisions:
 ```ts
 const config = await client.getAuthConfig();
 
-if (config.registration.publicRegistrationEnabled) {
+if (config.registration.registrationEnabled) {
   // show register link/form
 }
+
+if (config.bootstrap?.required && config.bootstrap.secretRequired) {
+  // collect the operator setup key; never persist it in browser storage
+}
+
+console.log(config.tenancy?.mode ?? 'single');
+console.log(config.authorization?.mode ?? 'simple');
+
+if ((config.tenancy?.mode ?? 'single') === 'multi') {
+  console.log(config.tenancy?.terminology?.singular ?? 'organization');
+  console.log(config.tenancy?.creation?.mode ?? 'authenticated');
+}
+
+if (config.tenancy?.onboarding?.verifiedDomains?.enabled) {
+  // Only request-to-join is defined in the first browser contract.
+  console.log(config.tenancy.onboarding.verifiedDomains.admission);
+}
 ```
+
+Both public and admin auth-config responses include the resolved capability
+axes. Older servers/clients may omit these additive fields, so mixed-version
+clients should treat absence as `single/simple`. Public config deliberately
+contains only safe capability data: tenancy mode, configured singular/plural
+terminology, tenant-creation mode, and authorization mode. The permission
+registry, role templates, bootstrap secret, and other policy internals remain
+server-only. Treat a missing terminology value as `organization/organizations`
+and a missing multi-mode creation value as `authenticated` when supporting an
+older server.
+
+`registrationEnabled` covers either an available installation ceremony or
+ordinary public registration. `publicRegistrationEnabled` is narrower and is
+false during secret-gated setup. The public response deliberately omits the
+configured secret and exact user count.
 
 The built-in `LoginForm`, `RegisterForm`, and `ForgotPasswordForm` use the same
 config by default. Policy-aware forms wait for config before exposing
 registration or password-reset actions. After the first admin account exists,
 `registration.mode: 'admin-only'` hides public registration UI while keeping
-login available.
+login available. When `tenancy.mode` is `multi`, `RegisterForm` automatically
+uses the configured tenant terminology. It requires the tenant name during the
+first bootstrap only. Later registrations create an identity independently;
+when public config says the resulting identity may create a tenant, the form
+offers creation as an explicit option instead of silently joining or creating
+one. The server derives the slug; apps using the SDK directly may provide an
+explicit slug.
 
 The auth component set is reusable and route-agnostic:
 
@@ -180,10 +297,11 @@ import {
   MFAEnrollmentForm,
   MFAManagementPanel,
   PasswordActionForm,
-  QRCode,
   RegisterForm,
+  TenantCreationForm,
   UserPropertiesForm,
-} from '@zero/framework/react';
+} from '@zero/framework/components/auth';
+import { QRCode } from '@zero/framework/react';
 
 <LoginForm
   forgotPasswordHref="/forgot-password"
@@ -192,6 +310,7 @@ import {
   registerHref="/register"
 />
 <RegisterForm loginHref="/login" />
+<TenantCreationForm />
 <ForgotPasswordForm loginHref="/login" />
 <PasswordActionForm token={tokenFromUrl} mode="auto" loginHref="/login" />
 <PasswordActionForm mode="reset" loginHref="/login" />
@@ -200,31 +319,54 @@ import {
 <ChangePasswordForm />
 ```
 
+`LoginFormProps.showRememberMe` remains accepted as a deprecated source-
+compatibility prop, but it does not render a checkbox or change session
+persistence. Zero session lifetime and restoration are controlled by the
+server auth policy.
+
 `PasswordActionForm` inspects `/auth/action-token/:token` and calls the reset
 or setup route based on token type. Invalid, expired, unsupported, or
 mode-mismatched tokens keep submit disabled. If `token` is omitted, it renders a
 token-paste step for email clients or routes that cannot preserve the query
 string. Login, registration, email verification, and password action forms route
-MFA setup/challenge responses into shared continuation UI before a session is
-persisted. `UserPropertiesForm` renders only `editableBy: 'user'` property
-fields exposed by `/auth/config`.
+MFA and multi-tenant completion responses through `AuthFlowContinuation`. It
+renders MFA setup/challenge, `TenantSelectionForm`, or the actionable
+`TenantCreationForm` when the response includes an eligible one-time creation
+proof. When creation is not allowed, it explains that an invitation or
+platform administrator is required instead of presenting a dead-end action.
+`TenantCreationForm` can also be rendered for a signed-in user without a
+continuation; the SDK then proves and rotates the current refresh family.
+`UserPropertiesForm` renders only
+`editableBy: 'user'` property fields exposed by `/auth/config`.
 
 ### Admin User Management
 
-Use `UserManagement` for the default drop-in admin panel:
+Use `PlatformUserManagement` for the default global-account admin panel:
 
 ```tsx
-import { UserManagement } from '@zero/framework/react';
+import { PlatformUserManagement } from '@zero/framework/react';
 
 export function UsersSettingsPanel() {
-  return <UserManagement className="h-[720px]" />;
+  return <PlatformUserManagement className="h-[720px]" />;
 }
 ```
+
+`UserManagement` remains an exact compatibility alias. This surface administers
+global identities and must not be used as tenant member management.
 
 The organism self-wires to the admin auth SDK. It supports backend pagination,
 search, role/status filters, create, update, promote, suspend, activate,
 delete, session revoke, direct reset when enabled, setup email, password reset
 email, and configured user-property editing.
+
+In multi-tenant mode the packaged organism deliberately omits hard delete and
+uses suspend/activate as the identity lifecycle. Organization membership,
+invitation, join-request, and creation attribution are retained history; a
+direct `deleteAuthAdminUser()` call for such an identity returns
+`409 USER_HAS_TENANT_HISTORY` and leaves both identity and history unchanged.
+Hard delete remains available for single-tenant apps and for custom lifecycle
+code deleting a multi-tenant identity that has never acquired retained tenant
+history.
 
 Configured `auth.userProperties` become typed controls. Enum fields render as
 selects, booleans as checkboxes, and strings/numbers as tokenized inputs. If
@@ -235,17 +377,52 @@ configured fields are editable and the server rejects unknown keys.
 For custom admin dashboards, use the same top-level SDK methods directly:
 
 ```ts
-const { users, total } = await client.listAuthAdminUsers({
+const { users, page } = await client.listAuthAdminUsers({
   search: 'ops',
   role: 'user',
   status: 'active',
   limit: 50,
 });
 
+console.log(page.total, page.hasMore, page.nextOffset);
+
 await client.setAuthAdminUserProperty(userId, 'department', 'operations');
 await client.deleteAuthAdminUserProperty(userId, 'legacyFlag');
 await client.sendAuthAdminPasswordReset(userId);
 ```
+
+### Application Access Management
+
+In `single/advanced`, keep global account administration separate from
+application roles. Use the namespaced SDK for a custom screen:
+
+```ts
+const config = await client.applicationAdmin.getConfig();
+const page = await client.applicationAdmin.listUsers({
+  search: 'ada',
+  status: 'active',
+  limit: 25,
+});
+
+const first = page.users[0];
+if (first && config.capabilities.canManageRoles) {
+  await client.applicationAdmin.replaceUserRoles(
+    first.identity.userId,
+    ['reader'],
+    first.roleRevision,
+  );
+}
+```
+
+Use `useApplicationAccess()` for headless React state or
+`<ApplicationAccessManagement />` for the packaged control panel. The routes
+do not exist outside `single/advanced`; global `users.role = 'admin'` does not
+grant application authority. Role replacement is grant-ceiling constrained,
+requires the latest target `roleRevision` to prevent lost updates, and
+protected ownership moves only through `transferOwnership()`. The React hook
+tracks loaded revisions for you.
+See [Application Access Administration](../auth/application-access-administration.md)
+for response shapes, errors, and owner lifecycle guarantees.
 
 ### User Property Gates
 
@@ -275,27 +452,36 @@ import { AdminGate, PropertyGate, HasFlag, SignedIn, SignedOut } from '@zero/fra
 These gates only control UI visibility. Protect sensitive data and actions
 with backend route/query authorization as well.
 
-### FetchError
+### Auth and HTTP Errors
 
-Thrown by `client.fetch()` and its shortcuts (`get`, `post`, `patch`, `put`, `delete`) on non-2xx responses:
+Auth and admin-auth methods throw `AuthClientError`, which preserves the
+server's structured auth error code. Generic `client.fetch()` shortcuts throw
+`FetchError` for non-2xx server responses; local authenticated-transport policy
+errors remain `AuthClientError` values.
+
+Authenticated SDK transports are bound to the configured Zero server origin.
+Passing a cross-origin absolute URL to `client.fetch()` fails locally with
+`AUTH_REQUEST_ORIGIN_MISMATCH`; no access or refresh credential is sent.
+
+```ts
+import { AuthClientError } from '@zero/framework/react';
+
+try {
+  await client.updateAuthAdminUser(id, { role: 'admin' });
+} catch (err) {
+  if (err instanceof AuthClientError) {
+    console.log(err.status, err.code, err.body);
+  }
+}
+```
+
+`FetchError` is thrown by `client.fetch()` and its HTTP shortcuts on non-2xx
+responses:
 
 ```ts
 class FetchError extends Error {
   readonly status: number;   // HTTP status code (e.g. 403, 404, 500)
   readonly body: unknown;    // Parsed JSON response body
-}
-```
-
-**Usage:**
-
-```ts
-try {
-  const user = await client.updateAuthAdminUser(id, { role: 'admin' });
-} catch (err) {
-  if (err instanceof FetchError) {
-    if (err.status === 403) toast.error('Not authorized');
-    else toast.error(err.message);
-  }
 }
 ```
 
@@ -342,20 +528,36 @@ A collection is a typed handle to a server table. It provides CRUD operations, q
 interface Todo {
   id: string;
   title: string;
-  done: number;
+  done: boolean;
 }
 
 const todos = client.collection<Todo>('todos');
 ```
 
-The type parameter `<Todo>` flows through to all return types and mutation inputs. No codegen — pure TypeScript inference.
+The type parameter `<Todo>` flows through to all return types and mutation
+inputs. Prefer `InferRow<typeof todoTable>` for schema-defined tables. It also
+carries type-only primary-key metadata, so insert/load inputs may omit exactly
+the key Zero generates at runtime.
 
-**Type safety note:** `client.collection<T>('todos')` — the generic `T` is a **client-side type assertion**. The server validates writes through the ReactiveDB table schema. Add client-side validation in your own form/action code when you want earlier UI feedback before an optimistic mutation is sent.
+Schema-defined boolean fields stay logical at this API boundary: collection
+reads and callbacks expose `boolean`, while writes are encoded to SQLite's
+`0/1` representation inside the collection transport.
+
+**Type safety note:** `client.collection<T>('todos')` — the generic `T` is a
+**client-side type assertion**. For tables built with `defineTable()`/`schema()`,
+the server independently validates the complete logical row before writing.
+Hand-authored raw SQL table definitions enforce their SQLite constraints but
+remain logically permissive unless you attach an explicit mutation validator.
+Add client-side validation when you want feedback before an optimistic mutation
+is sent.
 
 ### Collection Interface
 
 ```ts
-interface Collection<T extends Record<string, unknown>> {
+interface Collection<
+  T extends Record<string, unknown>,
+  TPrimaryKey extends keyof T & string = PrimaryKeyOf<T>,
+> {
   /** Table name */
   readonly name: string;
 
@@ -376,7 +578,7 @@ interface Collection<T extends Record<string, unknown>> {
   // ─── Mutations (optimistic + server sync) ────────────
 
   /** Insert a new row. Applies optimistically, then sends to server. */
-  insert(row: T): void;
+  insert(row: InsertInput<T, TPrimaryKey>): void;
 
   /** Return the deterministic sync id for a natural identity key. */
   identityKey(key: Record<string, unknown>): string;
@@ -385,7 +587,7 @@ interface Collection<T extends Record<string, unknown>> {
   getByIdentity(key: Record<string, unknown>): T | null;
 
   /** Insert or update by natural identity. */
-  upsertByIdentity(row: T): void;
+  upsertByIdentity(row: InsertInput<T, TPrimaryKey>): void;
 
   /** Update by natural identity. */
   updateByIdentity(key: Record<string, unknown>, partial: Partial<T>): void;
@@ -410,12 +612,17 @@ interface Collection<T extends Record<string, unknown>> {
   // ─── Lazy Loading ────────────────────────────────────
 
   /** Bulk-load rows into the local store (for lazy tables). Merges by default. */
-  load(rows: T[], options?: { replace?: boolean }): void;
+  load(rows: InsertInput<T, TPrimaryKey>[], options?: { replace?: boolean }): void;
 
   /** Clear all rows from this table in the local store. No server delete. */
   clear(): void;
 }
 ```
+
+`InsertInput<T>` and `InferInsert<typeof table>` are exported from
+`@zero/framework/react` and `@zero/framework/schema`. They make only the
+generated primary key optional. For a hand-written row type with a custom key,
+name it explicitly: `client.collection<Account, 'account_id'>('accounts')`.
 
 ### Natural Identity Collections
 
@@ -459,15 +666,15 @@ const todos = client.collection<Todo>('todos');
 
 // All rows — Record<string, Todo>
 const all = todos.getAll();
-// { 'abc': { id: 'abc', title: 'Buy milk', done: 0 }, 'def': { ... } }
+// { 'abc': { id: 'abc', title: 'Buy milk', done: false }, 'def': { ... } }
 
 // Single row — Todo | null
 const one = todos.getOne('abc');
-// { id: 'abc', title: 'Buy milk', done: 0 }
+// { id: 'abc', title: 'Buy milk', done: false }
 
 // Filtered — Todo[]
-const incomplete = todos.getMany(row => row.done === 0);
-// [{ id: 'abc', title: 'Buy milk', done: 0 }]
+const incomplete = todos.getMany(row => !row.done);
+// [{ id: 'abc', title: 'Buy milk', done: false }]
 
 // Count — number
 const total = todos.count();
@@ -482,10 +689,10 @@ const total = todos.count();
 const todos = client.collection<Todo>('todos');
 
 // Insert — auto-generates UUID PK, no id needed
-todos.insert({ title: 'Walk the dog', done: 0 });
+todos.insert({ title: 'Walk the dog', done: false });
 
 // Update (partial merge)
-todos.update('abc', { done: 1 });
+todos.update('abc', { done: true });
 
 // Delete
 todos.remove('abc');
@@ -499,14 +706,14 @@ todos.remove('abc');
    ├─► Local store updates immediately (UI re-renders)
    ├─► WebSocket sends sync.mutate { ref, table, op, row }
    │
-   ├─► Server validates and writes to ReactiveDB
+   ├─► Server authorizes/stamps, validates, then writes to ReactiveDB
    │   ├─► Success: sync.ack { ref, ok: true }
    │   │   └─► Client removes from pending queue. Done.
    │   └─► Failure: sync.ack { ref, ok: false, error: '...' }
    │       └─► Client rolls back to pre-mutation state. UI re-renders.
    │
-   └─► Server broadcasts sync.change to all other clients
-       └─► Their stores update, their UIs re-render
+   └─► Server projects sync.change to eligible authorized subscribers
+       └─► Those stores update and their UIs re-render
 ```
 
 **Rollback on failure:** The client captures the previous state before applying the optimistic change. If the server rejects the mutation (validation error, constraint violation), the client restores the previous state. The UI briefly shows the optimistic state, then snaps back.
@@ -597,10 +804,16 @@ operators are `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`, `contains`, and
 
 The endpoint validates table/column names, parameterizes values, caps result
 size, and enforces the same sync read policy used by WebSocket subscriptions.
-When a lazy table is registered with `defineResource()`, `/api/data` also
-enforces that resource's `list` policy and applies safe owner constraints to
-the SQL query. Add SQLite indexes in migrations for columns used heavily in
-`filter`, `order`, or policy constraints.
+When a lazy table is registered with `defineResource()`, it must permit HTTP
+(`http` or `all`) for `/api/data`; if it also participates in lazy Sync, use
+`exposure: 'all'`. The endpoint enforces that resource's `list` policy and
+applies safe owner constraints to the SQL query. Tenant realms are always
+ANDed into those constraints. After an asynchronous resource policy, the
+endpoint re-resolves the bearer and trusted policy properties, then repeats
+the durable authority/property check inside the same SQLite transaction as the
+resource query; changed authority fails closed without reading resource rows.
+Add SQLite indexes in migrations for columns used heavily in `filter`, `order`,
+or policy constraints.
 
 Registered resource policy also affects WebSocket sync. A resource whose
 `list` policy allows all rows uses the normal full-sync fast path. A resource
@@ -608,12 +821,21 @@ whose `list` policy returns row constraints, such as owner-only data, uses a
 per-connection row filter for snapshots, catchup, and live changes. Direct
 optimistic mutations still go through WebSocket, but registered resources
 evaluate `create`, `update`, and `delete` policy on the server before the write
-is accepted.
+is accepted. Registered creates cannot replace an existing primary key.
+Updates/deletes compare the exact row snapshot evaluated by policy, and the
+durable authority/property check runs in the same SQLite transaction as the
+conditional write.
 
 ### Generated Resource Client
 
 `client.resource(name)` wraps generated `/api/resources/:resource` routes with
 the same authenticated fetch path as `client.get()` and `client.post()`:
+
+The registered resource must declare `exposure: 'http'` or `exposure: 'all'`.
+Resources classified as `internal` or `sync` are deliberately unavailable from
+generated HTTP CRUD. Its declared `actions` also bound the operations those
+routes accept: omission enables the standard five operations, while explicit
+`actions: []` enables none and extra per-action policy keys are rejected.
 
 ```ts
 const tickets = client.resource<TicketRow>('tickets');
@@ -639,7 +861,9 @@ an alias for `delete()` and returns `{ deleted, id }`.
 When the server customizes generated routes:
 
 ```ts
-createApp({
+const app = await createApp({
+  db: { mode: './data/app.db' },
+  tables,
   resourceRoutes: { prefix: '/api/clinic/resources' },
 });
 ```
@@ -666,6 +890,59 @@ through generated resource CRUD routes. Use `client.collection()`,
 `useCollection()`, or `useDataPage()` when the screen is primarily reading from
 the live ReactiveDB collection store.
 
+### Generated Resource Hooks
+
+The resource hooks add React loading/error state around the generated CRUD
+HTTP routes. They do not subscribe to WebSocket changes or mutate the local
+collection store.
+
+```tsx
+'use client';
+
+import {
+  useResourceActions,
+  useResourceList,
+} from '@zero/framework/react';
+
+function TicketList() {
+  const tickets = useResourceList<TicketRow>('tickets', {
+    filters: { status: ['new', 'open'] },
+    sort: { field: 'created_at', dir: 'desc' },
+    pageSize: 25,
+  });
+  const actions = useResourceActions<TicketRow>('tickets');
+
+  if (tickets.loading) return <p>Loading…</p>;
+  if (tickets.error) return <p>{tickets.error.message}</p>;
+
+  return (
+    <>
+      <button onClick={() => actions.create({ title: 'New ticket' })}>
+        Create
+      </button>
+      {tickets.rows.map((ticket) => <p key={ticket.ticket_id}>{ticket.title}</p>)}
+    </>
+  );
+}
+```
+
+The public hooks are:
+
+- `useResourceClient<T>(name, { prefix? })` — returns the vanilla client, or
+  `null` before browser hydration.
+- `useResourceList<T>(name, options?)` — paginated rows plus filters, sorting,
+  loading/error state, page controls, and `refresh()`.
+- `useResourceRecord<T>(name, id: string | null, options?)` — one row plus `update()`,
+  `remove()`, and `refresh()`.
+- `useResourceActions<T>(name, { prefix? })` — create/update/remove actions
+  with shared loading/error state.
+
+Set `autoLoad: false` on list/record options to defer the automatic list/get
+request. An explicit `refresh()` still loads the current list or record; changing
+`autoLoad` back to `true` also enables automatic loading. A custom generated-resource
+prefix can be supplied globally with
+`ClientConfig.resourcePrefix` or per hook/client through `prefix`.
+
 **Manual load (advanced):**
 
 ```ts
@@ -675,11 +952,18 @@ col.load(records, { replace: true });   // Replace ALL rows with these
 col.clear();                            // Empty the local store (no server delete)
 ```
 
-**Live changes still work:** Lazy tables subscribe to WebSocket change events.
-Once you `load()` an authorized set of rows, those rows stay live. Resource
-tables with row-constrained `list` policy also receive filtered sync changes;
-when an update moves a row out of scope, the client receives a delete for that
-row so stale data is removed.
+**Live changes are table-scoped, not query-scoped.** Lazy mode omits the initial
+snapshot, while authorized WebSocket inserts and updates for the table are
+still applied to the shared local collection by row id. The filters passed to
+`useLazyCollection()` affect its `/api/data` load; they are not retained as a
+live-query predicate. Deletes remove a matching local row, and resource
+row-policy continues to limit what the connection may receive.
+
+Use `useQuery()` to derive a continuously filtered view from the local table,
+or use `useDataPage()`/`useResourceList()` when the server result page itself
+is the UI source of truth. Multiple filtered lazy hooks share the same local
+table, and a filtered `useLazyCollection()` load replaces that table's current
+local contents.
 
 ---
 
@@ -690,13 +974,13 @@ row so stale data is removed.
 ```ts
 interface AuthClient {
   /** Current authenticated user, or null */
-  readonly user: UserRecord | null;
+  readonly user: AuthUser | null;
 
   /** Whether a user is currently authenticated */
   readonly isAuthenticated: boolean;
 
-  /** Whether the current user has admin role */
-  readonly isAdmin: boolean;
+  readonly isLoading: boolean;
+  readonly error: string | null;
 
   /** Current access token (in memory, never persisted to disk) */
   readonly accessToken: string | null;
@@ -704,10 +988,21 @@ interface AuthClient {
   // ─── Actions ─────────────────────────────────────────
 
   /** Register a new user. Returns a session or auth continuation state. */
-  register(params: RegisterParams): Promise<AuthCompletionResult>;
+  register(params: RegisterParams): Promise<AuthRegistrationResult>;
 
   /** Log in with username and password. Returns a session or MFA challenge. */
   login(username: string, password: string): Promise<AuthCompletionResult>;
+
+  /** Load the public-safe registration/account/MFA configuration. */
+  getConfig(): Promise<AuthPublicConfig>;
+
+  forgotPassword(email: string, nativeContinuation?: string): Promise<void>;
+  resendVerificationEmail(email: string, nativeContinuation?: string): Promise<void>;
+  verifyEmail(token: string): Promise<AuthCompletionResult>;
+  inspectActionToken(token: string): Promise<AuthActionTokenInfo>;
+  resetPassword(token: string, newPassword: string): Promise<AuthCompletionResult>;
+  setupPassword(token: string, newPassword: string): Promise<AuthCompletionResult>;
+  listMfaMethods(): Promise<{ methods: AuthMfaMethod[]; required: boolean }>;
 
   /** Start MFA setup from a session or setup token. */
   startMfaSetup(params: {
@@ -722,11 +1017,11 @@ interface AuthClient {
     code: string;
   }): Promise<AuthMfaSetupVerifyResult>;
 
-  /** Verify an MFA login challenge and receive a full session. */
+  /** Verify an MFA login challenge and receive the next auth completion result. */
   verifyMfaChallenge(params: {
     challengeToken: string;
     code: string;
-  }): Promise<AuthSessionResult>;
+  }): Promise<AuthCompletionResult>;
 
   /** Log out. Revokes refresh token server-side, clears local state. */
   logout(): Promise<void>;
@@ -737,6 +1032,21 @@ interface AuthClient {
   /** Change password. Requires current password. Revokes all sessions. */
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
 
+  setProperty(key: string, value: unknown): Promise<void>;
+  getProperty(key: string): Promise<string | null>;
+  getProperties(): Promise<Record<string, string>>;
+  deleteProperty(key: string): Promise<void>;
+
+  getTenantDomainAdministration(signal?: AbortSignal): Promise<AuthTenantDomainAdministration>;
+  createTenantDomainClaim(domain: string): Promise<AuthTenantDomainChallengeResult>;
+  issueTenantDomainChallenge(claimId: string, expectedRevision: string): Promise<AuthTenantDomainChallengeResult>;
+  verifyTenantDomainClaim(claimId: string, expectedRevision: string): Promise<AuthTenantDomainClaimResult>;
+  updateTenantDomainPolicy(claimId: string, update: AuthTenantDomainPolicyUpdate): Promise<AuthTenantDomainClaimResult>;
+  releaseTenantDomainClaim(claimId: string, input: AuthTenantDomainReleaseInput): Promise<AuthTenantDomainReleaseResult>;
+  startDomainOnboarding(identityContinuation?: string): Promise<{ accepted: true }>;
+  completeDomainOnboarding(proofToken: string): Promise<AuthDomainOnboardingCompletion>;
+  admitDomainOnboarding(continuation: string, identityContinuation?: string): Promise<AuthDomainOnboardingAdmissionResult>;
+
   // ─── Events ──────────────────────────────────────────
 
   /** Listen for auth state changes */
@@ -744,15 +1054,28 @@ interface AuthClient {
 }
 ```
 
+The verified-domain methods are backed by Zero's multi-tenant server route
+family. Public config advertises them only when the feature and its
+email/public-URL dependencies are operational; otherwise packaged components
+fail closed. The administration methods derive tenant scope from Bearer
+authority; onboarding start never accepts an email; admission never accepts a
+tenant, domain, or role. Claim release requires the current claim and policy
+revisions plus an exact normalized-domain confirmation, retires rather than
+deletes history, and places cross-tenant reuse in a seven-day quarantine. See
+[Verified Company-Domain Onboarding](../auth/verified-domain-onboarding.md)
+before implementing a custom screen.
+
 ### Register
 
 ```ts
 const result = await client.register({
   username: 'alice',
   email: 'alice@example.com',
-  password: 's3cret!',
+  password: 'secret123',
   firstName: 'Alice',         // optional
   lastName: 'Johnson',        // optional
+  organizationName: 'Acme Health', // required at multi bootstrap; optional later
+  organizationSlug: 'acme-health', // optional; server derives it when omitted
 });
 
 if ('accessToken' in result) {
@@ -761,6 +1084,10 @@ if ('accessToken' in result) {
 
 if ('mfaSetupRequired' in result) {
   // Continue with client.startMfaSetup({ setupToken: result.mfaSetupToken, ... })
+}
+
+if (result.tenant) {
+  console.log(result.tenant.tenantId, result.tenant.role); // role is 'owner' here
 }
 ```
 
@@ -774,19 +1101,50 @@ interface RegisterParams {
   firstName?: string;
   lastName?: string;
   mfaEnrollment?: boolean;
+  nativeContinuation?: string;
+  bootstrapSecret?: string;
+  organizationName?: string;
+  organizationSlug?: string;
 }
 ```
 
+New passwords must contain 8–1024 characters. Login accepts a non-empty
+username or email identifier and an existing password up to 1024 characters.
+`bootstrapSecret` is only for the one-time installation ceremony. Read
+`GET /auth/config`: when `bootstrap.required`, `bootstrap.available`, and
+`bootstrap.secretRequired` are true, collect the operator setup key and include
+it. The packaged `RegisterForm` does this automatically. Do not persist the key
+in browser storage or send it after bootstrap completes.
+
+When public config reports `tenancy.mode: 'multi'`, `organizationName` is
+required only while bootstrap is open. It is optional afterward and
+`organizationSlug`, when present, is canonicalized with it. Omitting both
+registers only the identity and returns onboarding-required with no app
+credential after all account-verification gates are satisfied. When email
+verification is required, registration returns only the verification state;
+`verifyEmail()` produces the onboarding result and any eligible creation proof.
+Supplying tenant input requests policy-checked creation; it never requests
+membership in an existing tenant.
+
 **What happens:**
 
-1. `POST /auth/register` with credentials
-2. Server hashes password (Argon2id via `Bun.password.hash()`), creates user in `users` table, stores hash in `_credentials`
-3. If email verification or MFA setup is required, the server returns a typed continuation state instead of app tokens
-4. Otherwise the server generates access token (ES256 JWT, 15min TTL) and refresh token (opaque UUID, SHA-256 hashed in `_refresh_tokens`, 7d TTL)
-5. SDK stores access token in memory and refresh token in `localStorage` only when a full session is returned
-6. The server also sets a signed HttpOnly page-session cookie bound to that refresh session
-7. SDK connects/reconnects WebSocket with the new access token — server gates table subscriptions based on Bearer auth
-8. Because `users` is a reactive table, every connected client sees the new user appear
+1. `POST /auth/register` with credentials, optional post-bootstrap tenant input, and—only during secret-gated setup—`bootstrapSecret`
+2. Server rejects invalid setup authority before Argon2 work, then rechecks it inside the serialized registration transaction; successful setup durably closes bootstrap
+3. Server hashes the password (Argon2id via `Bun.password.hash()`), then transactionally writes the user and `_credentials`; explicit authorized creation also writes `_auth_tenants` and the protected active `owner` membership
+4. During first bootstrap, that transaction also assigns global/platform role `admin` and writes the durable completion marker; any tenant failure rolls everything back
+5. If email verification is required, the server returns only the verification state and no tenant-creation proof; after verification, MFA and tenant completion run in order
+6. Otherwise the server generates access token (ES256 JWT, 15min TTL) and refresh token (opaque UUID, SHA-256 hashed in `_refresh_tokens`, 7d TTL)
+7. SDK stores access token in memory and refresh token in `localStorage` only when a full session is returned
+8. The server also sets a signed HttpOnly page-session cookie bound to that refresh session
+9. SDK connects/reconnects WebSocket with the new access token — the server gates requested tables and rows using Bearer auth plus the composed Sync/resource policy
+10. The SDK auth store adopts the returned user projection; default `createApp()` policy does not expose registrations through a generic `users` table stream
+
+The additive `result.tenant` is a public-safe summary of the organization and
+owner membership created by registration. It is not an active-tenant security
+credential. After every password/email/MFA gate, Zero issues a tenant-bound web
+session only for one live membership; multiple memberships return a typed
+selection continuation and zero return onboarding-required. Server-side live
+session resolution remains the authority, not this summary.
 
 **Errors:**
 
@@ -794,12 +1152,20 @@ interface RegisterParams {
 |-------|------|------|
 | `Username taken` | `DUPLICATE_USERNAME` | Username already exists |
 | `Email taken` | `DUPLICATE_EMAIL` | Email already registered |
-| `Validation failed` | `VALIDATION_ERROR` | Missing/invalid fields |
+| `Invalid auth request` | `AUTH_VALIDATION_FAILED` | Missing, malformed, too-short, or oversized fields |
+| `Administrator bootstrap is unavailable` | `BOOTSTRAP_UNAVAILABLE` | Setup is disabled or secret mode has no configured secret |
+| `Administrator bootstrap authorization failed` | `BOOTSTRAP_AUTHORIZATION_FAILED` | The setup key is missing or wrong |
+| `Bootstrap authorization is only accepted for an empty installation` | `BOOTSTRAP_NOT_REQUIRED` | A caller submits setup authority after bootstrap closed |
+| `Registration disabled` | `REGISTRATION_DISABLED` | Ordinary public registration is disabled by app policy |
+| `Organization name is required` | `TENANT_NAME_REQUIRED` | Multi-mode bootstrap or an explicit creation request omitted its tenant name |
+| `Organization creation is disabled` | `TENANT_CREATION_DISABLED` | Static creation policy is `disabled` |
+| `Organization creation requires a platform administrator` | `TENANT_CREATION_FORBIDDEN` | Static creation policy is `platform-admin` and the live identity is not one |
+| `Organization URL is already in use` | `TENANT_SLUG_TAKEN` | The explicit or derived organization slug already exists; the user write is rolled back |
 
 ### Login
 
 ```ts
-const result = await client.login('alice', 's3cret!');
+const result = await client.login('alice', 'secret123');
 
 if ('mfaChallengeRequired' in result) {
   // Show OTP/authenticator prompt, then call client.verifyMfaChallenge(...)
@@ -809,7 +1175,7 @@ if ('mfaChallengeRequired' in result) {
 **What happens:**
 
 1. `POST /auth/login` with username + password
-2. Server looks up user by username, verifies password via `Bun.password.verify()`
+2. Server looks up the user by username or email and verifies the password via `Bun.password.verify()`
 3. On success without MFA: generates a new token pair, returns the user record, and sets the page-session cookie
 4. On success with MFA: returns `mfaChallengeRequired` or `mfaSetupRequired` without app tokens
 5. SDK stores tokens and reconnects WebSocket only after a full session is returned
@@ -819,8 +1185,10 @@ if ('mfaChallengeRequired' in result) {
 
 | Error | Code | When |
 |-------|------|------|
-| `Invalid credentials` | `INVALID_CREDENTIALS` | Wrong username or password |
-| `User not found` | `USER_NOT_FOUND` | Username doesn't exist |
+| `Invalid credentials` | `INVALID_CREDENTIALS` | Username/email is unknown or password is wrong |
+| `Account is suspended` | `ACCOUNT_SUSPENDED` | The account cannot receive a session |
+| `Password change required` | `PASSWORD_CHANGE_REQUIRED` | An administrator requires account recovery before sign-in |
+| `Email verification required` | `EMAIL_VERIFICATION_REQUIRED` | The account must consume its verification link first |
 
 ### MFA Continuation
 
@@ -828,7 +1196,7 @@ MFA setup and challenge responses are not errors. They are typed continuation
 states returned before a full app session exists.
 
 ```ts
-const result = await client.login('alice', 's3cret!');
+const result = await client.login('alice', 'secret123');
 
 if ('mfaSetupRequired' in result) {
   const setup = await client.startMfaSetup({
@@ -884,7 +1252,9 @@ await client.refresh();
 4. Server **rotates** — revokes old refresh token, issues new access + refresh pair
 5. Server replaces the page cookie with a credential bound to the new refresh row
 6. SDK stores the new access token in memory and the new refresh token in `localStorage`
-7. Resolves when refresh completes
+7. The top-level `client.refresh()` resolves after the attempt. If refresh is
+   unavailable or rejected, the SDK clears the local session instead of
+   surfacing the endpoint's token error.
 
 **Automatic refresh:** The SDK intercepts 401 responses from authenticated
 HTTP calls and automatically refreshes before retrying once. The component
@@ -892,13 +1262,11 @@ never sees a recoverable expired-access-token 401.
 
 **Rotation:** Every refresh call produces a new refresh token and revokes the old one. If an old refresh token is reused (replay attack), the server detects the revocation and revokes the entire token family — forcing re-login on all devices.
 
-**Errors:**
-
-| Error | Code | When |
-|-------|------|------|
-| `Token expired` | `TOKEN_EXPIRED` | Refresh token past its TTL |
-| `Token revoked` | `TOKEN_REVOKED` | Refresh token was already used or explicitly revoked |
-| `No refresh token` | `NO_TOKEN` | No refresh token stored locally |
+The lower-level exported `AuthClient.refresh()` returns `Promise<boolean>` so
+custom transport code can distinguish success from failure. The top-level
+`Client` and `useAuth()` deliberately expose `Promise<void>` and reflect failure
+through cleared auth state. They do not throw `TOKEN_EXPIRED`, `TOKEN_REVOKED`,
+or `NO_TOKEN` to callers of `refresh()`.
 
 ### Session Persistence And Expiry
 
@@ -925,7 +1293,9 @@ direct protected route responses.
 For protected-first apps, configure public paths in `createApp()`:
 
 ```ts
-createApp({
+const app = await createApp({
+  db: { mode: './data/app.db' },
+  tables,
   auth: true,
   routeAuth: 'protected-by-default',
   publicPaths: ['/login', '/register', '/forgot-password', '/reset-password', '/setup-password', '/verify-email'],
@@ -936,7 +1306,9 @@ createApp({
 For public-first apps, use route-owned auth boundaries:
 
 ```ts
-createApp({
+const app = await createApp({
+  db: { mode: './data/app.db' },
+  tables,
   auth: true,
   routeAuth: 'explicit',
   loginPath: '/login',
@@ -948,8 +1320,13 @@ Then export `config.auth` from protected layouts or pages.
 Or override them in the root provider:
 
 ```tsx
+'use client';
+
+import { AppProvider } from '@zero/framework/react';
+import { tables } from '@app/lib/schemas';
+
 <AppProvider
-  url={origin}
+  url={window.location.origin}
   tables={tables}
   auth
   publicPaths={['/login', '/forgot-password']}
@@ -962,7 +1339,7 @@ Or override them in the root provider:
 ### User Record
 
 ```ts
-interface UserRecord {
+interface AuthUser {
   userId: string;
   username: string;
   email: string;
@@ -979,22 +1356,76 @@ interface UserRecord {
   properties: Record<string, string>;  // Extensible KV metadata
 }
 
+interface AuthTenantSummary {
+  tenantId: string;
+  slug: string;
+  name: string;
+  role: string | null;
+}
+
 interface AuthSessionResult {
-  user: UserRecord;
+  user: AuthUser;
   accessToken: string;
   refreshToken: string;
+  mfaSetupRequired?: false;
+  mfaChallengeRequired?: false;
+  tenantSelectionRequired?: false;
+  tenantOnboardingRequired?: false;
+  activeTenant?: AuthTenantSummary;
+}
+
+interface AuthPasswordUpdatedResult {
+  user: AuthUser;
+  passwordUpdated: true;
+  signInRequired: true;
+}
+
+interface AuthEmailVerificationRequiredResult {
+  user: AuthUser & {
+    emailVerifiedAt: null;
+    emailVerificationRequired: true;
+  };
+}
+
+interface AuthTenantSelectionRequiredResult {
+  user: AuthUser;
+  tenantSelectionRequired: true;
+  tenantSelection: {
+    continuation: string;
+    expiresAt: number;
+    tenants: AuthTenantSummary[];
+  };
+}
+
+interface AuthTenantOnboardingRequiredResult {
+  user: AuthUser;
+  tenantOnboardingRequired: true;
+  onboarding: {
+    reason: 'no_active_tenant_membership';
+    continuation: string;
+    expiresAt: number;
+    tenantCreation?: {
+      allowed: boolean;
+      continuation?: string;
+      expiresAt?: number;
+    };
+  };
 }
 
 type AuthCompletionResult =
   | AuthSessionResult
+  | AuthPasswordUpdatedResult
+  | AuthEmailVerificationRequiredResult
+  | AuthTenantSelectionRequiredResult
+  | AuthTenantOnboardingRequiredResult
   | {
-      user: UserRecord;
+      user: AuthUser;
       mfaSetupRequired: true;
       mfaSetupToken: string;
       mfa: { methods: Array<'email' | 'totp'>; allowUserChoice: boolean };
     }
   | {
-      user: UserRecord;
+      user: AuthUser;
       mfaChallengeRequired: true;
       mfaChallenge: {
         method: AuthMfaMethod;
@@ -1002,6 +1433,18 @@ type AuthCompletionResult =
         challengeToken: string;
       };
     };
+
+interface AuthRegistrationTenant {
+  tenantId: string;
+  membershipId: string;
+  slug: string;
+  name: string;
+  role: string | null;
+}
+
+type AuthRegistrationResult = AuthCompletionResult & {
+  tenant?: AuthRegistrationTenant;
+};
 ```
 
 `POST /auth/register` normally returns a token pair. When
@@ -1010,15 +1453,117 @@ registration, it returns only `user` with `emailVerificationRequired: true`.
 Call `verifyEmail(token)` after the emailed link/token is consumed to receive
 the next auth completion result. When MFA setup or challenge is required, the
 SDK returns `mfaSetupRequired` or `mfaChallengeRequired` and does not persist a
-session until the corresponding MFA verification call returns an
-`AuthSessionResult`.
+session until the corresponding MFA verification call advances the completion
+flow. In multi mode that result can still require tenant selection or tenant
+onboarding before Zero issues a tenant-bound session.
+
+Registration specifically returns `AuthRegistrationResult`. In multi mode its
+`tenant` field is present only when the request explicitly used the allowed
+one-step creation path; it remains a safe description of the created tenant and
+owner membership even when email verification or MFA is pending. Ordinary
+post-bootstrap registration may omit tenant input. It then returns
+`tenantOnboardingRequired` and no access/refresh token once account-verification
+gates have passed; eligible results include an expiring one-time creation
+continuation. If email verification is pending, registration deliberately
+returns no onboarding/creation proof and `verifyEmail(token)` produces a fresh
+completion result afterward. Login, verification, and later session operations
+continue to use `AuthCompletionResult`.
+
+```ts
+const result = await client.login(email, password);
+if (isAuthTenantSelectionRequiredResult(result)) {
+  await client.selectTenant(
+    result.tenantSelection.continuation,
+    result.tenantSelection.tenants[0].tenantId,
+  );
+}
+
+if (isAuthTenantOnboardingRequiredResult(result)
+  && result.onboarding.tenantCreation?.continuation) {
+  await client.createTenant({
+    name: 'Acme Practice',
+    continuation: result.onboarding.tenantCreation.continuation,
+  });
+}
+
+const { activeTenant, createTenant, listTenants, switchTenant } = useAuth();
+const choices = await listTenants(); // refresh-family proof, not access-only
+const target = choices?.tenants.find((tenant) =>
+  tenant.tenantId !== activeTenant?.tenantId
+);
+if (target) await switchTenant(target.tenantId);
+
+// Signed-in creation uses the current refresh family and activates the result.
+await createTenant({ name: 'Another Practice' });
+```
+
+Selection continuations expire after five minutes; creation continuations
+expire after ten. Both are identity-only, app-bound, stored server-side only as
+hashes, and consumed once. Tenant creation commits its protected owner and new
+bound session in the same transaction as proof consumption or refresh-family
+rotation. Switching rotates the refresh family and replaces/revokes the old
+parent session. The browser SDK
+freezes writes, rejects stale old-scope HTTP response bodies, purges
+Sync/state/ephemeral data, optimistic queues, and Zero-owned hook caches,
+discards global overlays, and hides/remounts or reloads the app subtree for the
+replacement scope. It reconnects with the new credential and waits for the new
+Sync baseline before resolving. App-owned caches should key or purge on
+`useAuthorizationScopeBoundary().key`. Old access, page, and refresh
+credentials no longer authorize requests.
+
+Refresh-family operations—including tenant listing, even though listing does
+not itself rotate the proof—are coordinated across browser tabs. Zero derives a
+credential key, sanitized signal key, channel name, and lock name from the
+normalized Zero server URL, so multiple Zero apps sharing an origin do not
+consume one another's session. Refresh, tenant creation/switching, and logout
+use Web Locks when available; a bounded, expiring `localStorage` lock is the
+fallback. Each operation re-reads the committed credential after acquiring the
+lock, preventing a proof-only list from arriving after a concurrent rotation
+and preventing two tabs from replaying the same rotating refresh token.
+Cross-tab messages contain only an opaque scope id, revision, and transition
+kind—never an access or refresh token.
+
+Every received logout or scope-replacement signal passes through the same
+authorization purge barrier before that tab restores a bearer and reconnects
+Sync. Late 401 responses and stale signals are revision-checked and cannot
+clear a newer session. Zero adopts the former global refresh-token key once
+into the URL-scoped record for upgrade compatibility, then removes the legacy
+copy.
+
+If the server commits a tenant creation/switch but the replacement Sync
+baseline times out, Zero keeps the new credentials. The promise rejects with
+`AuthSessionSynchronizationError` (`committed` and `recoverable` are both
+`true`) and `client.sessionTransition` / `useAuth().sessionTransition` reports
+`recovery-required`. Retry only the local reconciliation barrier—do not repeat
+the server mutation:
+
+```ts
+try {
+  await client.switchTenant(nextTenantId);
+} catch (error) {
+  if (error instanceof AuthSessionSynchronizationError && error.committed) {
+    await client.reconcileAuthSession();
+  } else {
+    throw error;
+  }
+}
+```
+
+Native/mobile clients use the same server-side tenant-session contract through
+the credential-owning TypeScript native SDK. The independent Rust/Tauri and
+Chrome-extension packages also implement list/switch behavior, but remain
+private `0.0.0` previews rather than published, production-approved artifacts.
+See [Native App Authentication](../auth/native-app-auth.md).
+
+Use `isAuthEmailVerificationRequiredResult(result)` to narrow the registration
+continuation without probing token fields manually.
 
 ### Token Storage
 
 | Token | Storage | Why |
 |-------|---------|-----|
-| Access token | In-memory only (JS variable) | Short-lived (15min). Signature verification is stateless; Zero requests also enforce live user/session state. Never touches disk — XSS can read `localStorage` but can't read a JS closure. |
-| Refresh token | `localStorage` | Long-lived (7d), survives page refresh. Server stores only the SHA-256 hash — compromised token can be revoked. |
+| Access token | In-memory only (JS variable) | Short-lived (15min by default). It is not persisted by Zero, but JavaScript executing through XSS can still read application memory or make authenticated requests. |
+| Refresh token | URL-scoped, revisioned record in `localStorage` | Long-lived (7d by default), survives page refresh, and is serialized across tabs. Server stores only the SHA-256 hash. XSS can steal this browser copy, so CSP, output encoding, dependency hygiene, and refresh rotation/revocation remain essential. |
 | Page session | Signed JWT in a host-only HttpOnly `SameSite=Lax` cookie | Lets SSR authenticate direct safe page navigation before JavaScript runs; validation is bound to the live refresh row and current user. |
 
 The credentials intentionally have separate jobs. The page cookie is accepted
@@ -1050,21 +1595,24 @@ Server (ReactiveDB)                           Client (SyncStore)
 ```
 
 1. **Initial sync:** Client connects → sends `sync.subscribe { tables, snapshot, lastSeq }` → server sends `sync.snapshot` for the requested snapshot tables plus current seq number
-2. **Live changes:** Server writes → `onChange` fires → `server.publish('sync:{table}', change)` → all clients receive `sync.change` → local stores update
-3. **Client mutations:** Client calls `insert()`/`update()`/`remove()` → optimistic local apply → `sync.mutate` sent over WS → server validates, writes, acks → broadcast to all other clients
+2. **Live changes:** Server writes → `onChange` fires → policy evaluates each subscribed connection/row → authorized clients receive `sync.change` → local stores update
+3. **Client mutations:** Client calls `insert()`/`update()`/`remove()` → optimistic local apply → `sync.mutate` sent over WS → server authorizes, validates, writes, and acks → eligible subscribed clients receive the change
 4. **Reconnect:** Client tracks `lastSeq`. On reconnect, sends `sync.subscribe { tables, snapshot, lastSeq }`. Server either replays missed changes (`sync.catchup`) or sends fresh snapshot for the requested snapshot tables if the gap is too large.
 
 ### Connection Status
 
 ```ts
-// Current status
-client.status;  // 'connected' | 'disconnected' | 'reconnecting'
+// Current public status
+client.connected; // boolean
 
 // Listen for changes
-const unsub = client.on('connected', () => console.log('Online'));
-const unsub2 = client.on('disconnected', () => console.log('Offline'));
-const unsub3 = client.on('reconnecting', (attempt) => console.log(`Attempt ${attempt}`));
+const unsubscribe = client.onConnectionChange((connected) => {
+  console.log(connected ? 'Online' : 'Offline');
+});
 ```
+
+React UIs can use `useStatus()` for the boolean or `useConnectionHealth()` for
+the richer auth/sync/pending-mutation health model.
 
 ### Reconnect Behavior
 
@@ -1072,8 +1620,8 @@ const unsub3 = client.on('reconnecting', (attempt) => console.log(`Attempt ${att
 |----------|----------------|----------------|
 | Brief disconnect (gap within ring buffer) | `sync.catchup` — array of missed changes | Apply changes in order, resume |
 | Long disconnect (gap exceeds buffer) | `sync.snapshot` — requested snapshot tables | Replace included table state, clear pending entries for those tables |
-| Server restart | `sync.snapshot` (seq resets to 0) | Resync requested snapshot tables, clear matching pending entries |
-| Max attempts exceeded | — | `client.status = 'disconnected'`, stops retrying |
+| Server restart | `sync.snapshot` (runtime epoch changes; retained database seq normally continues) | Resync requested snapshot tables, clear matching pending entries; seq resets only after an explicit destructive server reset |
+| Max attempts exceeded | — | `client.connected` remains `false`, reconnection stops, and configured `onError` is called |
 
 Exponential backoff: 1s → 2s → 4s → 8s → ... → 30s max, with 0-20% random jitter to prevent thundering herd.
 
@@ -1081,7 +1629,7 @@ Exponential backoff: 1s → 2s → 4s → 8s → ... → 30s max, with 0-20% ran
 
 ```ts
 // 1. Developer calls:
-todos.insert({ id: 'new-1', title: 'Walk dog', done: 0 });
+todos.insert({ id: 'new-1', title: 'Walk dog', done: false });
 
 // 2. Immediately (synchronous):
 //    - Store applies the row locally
@@ -1120,90 +1668,154 @@ interface PendingMutation {
 - Same-row mutations serialized — second mutation waits for first ack
 - Timeout at 10s — treated as rejection, rolls back
 - `sync.snapshot` clears pending entries and same-row queue tracking only for tables included in the snapshot. Lazy tables omitted from snapshots keep their pending mutations.
-- Pending count available via `client.pending` (number)
+- Pending-mutation status is available through `useConnectionHealth()`; it is
+  not exposed as a public `client.pending` field.
 
 ---
 
-## State (Per-User Persistent KV)
+## Ephemeral Collaboration
 
-Server-persisted key-value state per user. No schema, no tables. Survives refresh, device switch, server restart. Full spec: [State Sync](../state-sync.md).
+Ephemeral state is in-memory, TTL-bound collaboration data carried on the
+existing Sync WebSocket. Use it for presence, typing, cursors, and drag state;
+use tables or State Sync for anything that must survive a server restart.
 
-### client.state
+React apps use `useEphemeral(topic, key, initialValue)` for one value and
+`useEphemeralTopic(topic)` for a full topic. The raw `EphemeralClient` remains
+provider wiring, but its stable wire failures are exposed through
+`useEphemeralErrors()`:
 
-```ts
-// Set — optimistic, persisted, synced across devices
-client.state.set('theme', 'dark');
-client.state.set('sidebar.open', true);
-client.state.set('intake-form.step2', {
-  insurance: 'Blue Cross',
-  memberId: 'BC-12345',
-  groupNumber: '',
-});
+```tsx
+'use client';
 
-// Get — local read, no server round-trip
-client.state.get('theme');                    // 'dark'
-client.state.get('language', 'en');           // 'en' (default)
+import {
+  useCurrentUser,
+  useEphemeral,
+  useEphemeralErrors,
+} from '@zero/framework/react';
 
-// Delete
-client.state.delete('draft.newPost');
+function CanvasCursor({ canvasId }: { canvasId: string }) {
+  const user = useCurrentUser();
+  const topic = `canvas:${canvasId}`;
+  const key = `cursor:${user!.userId}`;
+  const [cursor, setCursor] = useEphemeral(topic, key, { x: 0, y: 0 });
 
-// Prefix scan
-client.state.getByPrefix('draft.');           // all keys starting with 'draft.'
+  useEphemeralErrors((error) => {
+    if (error.topic === topic) console.error(error.code, error.message);
+  });
 
-// All state
-client.state.getAll();                        // flat Record<string, JsonValue>
-
-// Clear everything
-client.state.clear();
-
-// Subscribe to a key
-const unsub = client.state.subscribe('theme', (value) => {
-  console.log('Theme changed:', value);
-});
-
-// Subscribe to all changes
-const unsub2 = client.state.subscribe((event) => {
-  // event.type: 'set' | 'delete' | 'clear'
-  // event.key, event.value, event.source ('local' | 'remote')
-});
-```
-
-**Interface:**
-
-```ts
-interface StateClient {
-  set(key: string, value: JsonValue): void;
-  get(key: string): JsonValue | undefined;
-  get<T extends JsonValue>(key: string, defaultValue: T): T;
-  delete(key: string): void;
-  getAll(): Record<string, JsonValue>;
-  getByPrefix(prefix: string): Record<string, JsonValue>;
-  clear(): void;
-  subscribe(key: string, callback: (value: JsonValue | undefined) => void): () => void;
-  subscribe(callback: (event: StateChangeEvent) => void): () => void;
-  readonly size: number;
-  readonly ready: boolean;
+  return <button onClick={() => setCursor({ x: cursor.x + 1, y: cursor.y })}>Move</button>;
 }
 ```
 
-**How it works:** RAM-backed Map on the server with SQLite write-through for durability. On connect, client receives a `state.snapshot` with all keys. Mutations are optimistic (local first, server ack/rollback). Multi-device sync via Bun pub/sub topic `state:{userId}` — same WebSocket as the sync engine. See [State Sync](../state-sync.md) for wire protocol, server implementation, and limits.
+Auth-enabled apps reject arbitrary shared topic names. Classify app-owned
+topics in server config and derive their namespace and writable key from the
+verified identity:
+
+```ts
+import type { EphemeralTopicPolicy } from '@zero/framework/server';
+
+const ephemeralPolicy: EphemeralTopicPolicy = {
+  async authorize({ topic, operation, key, authContext }) {
+    const match = /^canvas:([a-z0-9_-]+)$/.exec(topic);
+    if (!match || !authContext) {
+      return {
+        ok: false,
+        code: 'EPHEMERAL_TOPIC_UNCLASSIFIED',
+        reason: 'Canvas topic is not available',
+      };
+    }
+    if (operation !== 'subscribe' && key !== `cursor:${authContext.userId}`) {
+      return {
+        ok: false,
+        code: 'EPHEMERAL_KEY_NOT_OWNED',
+        reason: 'Cursor key must match the authenticated user',
+      };
+    }
+    // Zero scopes this logical namespace below an internal `app:` prefix.
+    return { ok: true, namespace: `canvas:${match[1]}`, keyOwnership: 'actor' };
+  },
+};
+
+const config = {
+  db: { mode: 'memory' },
+  tables,
+  auth: true,
+  ephemeralPolicy,
+};
+```
+
+Zero reserves `presence:<roomId>` and `typing:<roomId>` for current room
+members and requires their write/delete key to be
+`user:<currentUserId>`. `usePresence(roomId)` and
+`useTypingIndicator(roomId)` follow that contract. For a non-room typing scope,
+pass an app-owned topic and classify it with `ephemeralPolicy`.
+
+The server authorizes subscribe/set/delete independently, prevents actor-owned
+key overwrite/delete, rechecks policy before delivery, and removes a live
+subscription when room membership is revoked. Topic/key/value/TTL sizes are
+bounded, and aggregate actor/namespace/app memory limits apply even to writes
+made without a subscription. Rejected operations produce `ephemeral.error`
+with stable codes. See
+the [wire protocol](../realtime-sync/realtime-sync/protocol.md#ephemeral-collaboration-channel)
+for exact messages and limits.
+
+---
+
+## State (Per-Authorized-Scope User KV)
+
+Server-persisted key-value state per authorized-scope user. It requires no app
+schema, app table, or app migration and survives refresh, device switch, and
+server restart. Full spec: [State Sync](../state-sync.md).
+
+### Public state API
+
+The raw `StateClient` is internal provider wiring, not a field on the public
+`Client` type. React applications use `useServerState()`, `usePreference()`,
+`useFormDraft()`, and `useServerStateReady()`:
+
+```tsx
+'use client';
+
+import { useServerState } from '@zero/framework/react';
+
+function ThemeButton() {
+  const [theme, setTheme] = useServerState('theme', 'light');
+  return (
+    <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
+      {theme}
+    </button>
+  );
+}
+```
+
+State mutations are optimistic and durable, and the same user in the same
+authorization scope shares updates across devices over the table-sync
+WebSocket. A tenant switch changes the entire state keyspace. See
+[State Sync](../state-sync.md) for its wire protocol and limits.
 
 ---
 
 ## React Hooks
 
-Thin wrappers around the core client that integrate with React's rendering cycle via `useSyncExternalStore`. Every hook is live — when data changes on the server, the hook triggers a re-render.
+React wrappers around the public SDK. Collection/state hooks subscribe through
+`useSyncExternalStore`; generated-resource hooks are request-driven and expose
+explicit `refresh()` controls.
 
 ### Provider
 
-The root layout is the sole owner of `AppProvider`. `hydrate.tsx` provides only `RouterProvider` + `ErrorBoundary`.
+The root client layout is the sole owner of `AppProvider`. Zero's generated
+browser entry provides `RouterProvider` and `ErrorBoundary`; it does not add a
+second `AppProvider`.
 
 ```tsx
+'use client';
+
 import { AppProvider } from '@zero/framework/react';
 import { tables } from '@app/lib/schemas';
+import type { ReactNode } from 'react';
 
 // app/layout.tsx — root layout
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html>
       <body>
@@ -1234,13 +1846,18 @@ by responsibility:
 
 - `client-context.tsx` owns `ClientProvider`, `useClient`, `useClientMaybe`, and SSR fallback checks.
 - `auth-hooks.ts` owns `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, and `useUserProperty`.
+- `authorization-scope-hooks.ts` exposes the credential-free
+  `useAuthorizationScopeBoundary` cache/readiness key used by Zero-owned hooks
+  and app-owned caches across account or tenant replacement.
 - `data-hooks.ts` owns `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, and `useStatus`.
 - `data-composition-hooks.ts` owns `useDataPage`, `useRecord`, and `useRecordByIdentity`.
 - `resource-client.ts` owns the vanilla generated-resource CRUD client used by `client.resource()`.
 - `resource-hooks.ts` owns `useResourceClient`, `useResourceList`, `useResourceRecord`, and `useResourceActions`.
 - `data-selection-hooks.ts` owns reusable selected-row state for tables and detail views.
 - `mutation-hooks.ts` and `connection-health-hooks.ts` own mutation lifecycle and sync/auth health state.
-- `presence-list-hooks.ts` and `typing-indicator-hooks.ts` own display-ready room presence and ephemeral typing state.
+- `presence-list-hooks.ts` and `typing-indicator-hooks.ts` own display-ready,
+  membership-authorized room presence and typing state; `ephemeral-hooks.ts`
+  owns generic topic access and stable error observation.
 - `preference-hooks.ts` owns `usePreference` and `useFormDraft` over server state sync.
 - `workflow-run-hooks.ts` owns the composed `useWorkflowRun` helper.
 - `src/storage/upload-queue-hooks.ts`, `src/storage/upload-dropzone-hooks.ts`, `src/storage/storage-file-hooks.ts`, and `src/storage/storage-browser-hooks.ts` own storage queue, dropzone, file, and browser composition.
@@ -1266,6 +1883,21 @@ The server remains authoritative. If a configured property is admin-only,
 system-only, or non-editable, user writes are rejected by auth routes. Use this
 hook for UI preferences and visibility convenience, not backend authorization.
 
+### useAuthorizationScopeBoundary
+
+App-owned React Query, SWR, custom-store, and other cached state should key or
+purge on `useAuthorizationScopeBoundary().key`, discard callbacks captured
+under an older key, and hide/freeze scope-sensitive UI while `ready` is false.
+The returned `scopeKey`, `stable`, and `phase` are opaque transition metadata;
+the hook contains no credential and is not proof of authority. Zero-owned
+hooks apply the same boundary internally. See
+[Browser Authorization Snapshot and Gates](../auth/browser-authorization.md).
+
+Source-installed components and app-owned async adapters can use the exported
+`isAuthorizationScopeCallbackCurrent(currentKey, ready, capturedKey)` helper
+before publishing a result. It accepts only opaque boundary state, never a
+credential, and returns false while the boundary is not ready or has changed.
+
 ### useCollection
 
 Subscribe to a full-sync table. Returns array/map reads plus optimistic mutation functions. Re-renders when the local collection changes.
@@ -1280,14 +1912,14 @@ function TodoList() {
         <li key={todo.id}>
           <input
             type="checkbox"
-            checked={!!todo.done}
-            onChange={() => update(todo.id, { done: todo.done ? 0 : 1 })}
+            checked={todo.done}
+            onChange={() => update(todo.id, { done: !todo.done })}
           />
           {todo.title}
           <button onClick={() => remove(todo.id)}>Delete</button>
         </li>
       ))}
-      <button onClick={() => insert({ title: 'New todo', done: 0 })}>
+      <button onClick={() => insert({ title: 'New todo', done: false })}>
         Add
       </button>
     </ul>
@@ -1298,9 +1930,15 @@ function TodoList() {
 **Signature:**
 
 ```ts
-function useCollection<T extends Record<string, unknown>>(name: string): CollectionResult<T>;
+function useCollection<
+  T extends Record<string, unknown>,
+  TPrimaryKey extends keyof T & string = PrimaryKeyOf<T>,
+>(name: string): CollectionResult<T, TPrimaryKey>;
 
-interface CollectionResult<T> {
+interface CollectionResult<
+  T extends Record<string, unknown>,
+  TPrimaryKey extends keyof T & string = PrimaryKeyOf<T>,
+> {
   /** All rows as an array. Live, updates on every change. */
   data: T[];
   /** All rows keyed by primary key. */
@@ -1309,7 +1947,7 @@ interface CollectionResult<T> {
   count: number;
 
   /** Optimistic insert. Auto-generates the primary key when omitted. */
-  insert(row: T): void;
+  insert(row: InsertInput<T, TPrimaryKey>): void;
 
   /** Optimistic partial update by primary key. Merges into existing row. */
   update(id: string, partial: Partial<T>): void;
@@ -1318,7 +1956,7 @@ interface CollectionResult<T> {
   remove(id: string): void;
 
   /** Load rows into the local store. Used by lazy tables. */
-  load(rows: T[], options?: { replace?: boolean }): void;
+  load(rows: InsertInput<T, TPrimaryKey>[], options?: { replace?: boolean }): void;
   /** Clear local rows without deleting server rows. */
   clear(): void;
 }
@@ -1390,11 +2028,11 @@ function TodoItem({ id }: { id: string }) {
     <div>
       <input
         type="checkbox"
-        checked={!!row.done}
-        onChange={() => update({ done: row.done ? 0 : 1 })}
+        checked={row.done}
+        onChange={() => update(id, { done: !row.done })}
       />
       <span>{row.title}</span>
-      <button onClick={() => remove()}>Delete</button>
+      <button onClick={() => remove(id)}>Delete</button>
     </div>
   );
 }
@@ -1410,11 +2048,12 @@ function useRow<T extends Record<string, unknown>>(name: string, id: string): T 
 
 ### useQuery
 
-Filtered view of a table. Returns matching rows. Memoized — only re-renders when the filtered result actually changes.
+Filtered local view of a table. The predicate runs against rows already present
+in the collection; it does not become a server query.
 
 ```tsx
 function IncompleteTodos() {
-  const incomplete = useQuery<Todo>('todos', row => row.done === 0);
+  const incomplete = useQuery<Todo>('todos', row => !row.done);
 
   return (
     <div>
@@ -1436,7 +2075,10 @@ function useQuery<T extends Record<string, unknown>>(
 ): T[];
 ```
 
-**Re-render behavior:** The filter runs on every store change, but the hook only re-renders if the filtered result changes (shallow array comparison — same items in same order = same reference).
+**Re-render behavior:** Any new table-map snapshot causes the hook to render and
+recompute the filtered array, including a change to a row that does not match
+the predicate. Use a stable predicate to avoid an additional recomputation on
+unrelated component renders.
 
 **Important:** The filter function should be stable — wrap in `useCallback` or define outside the component. A new function reference on every render defeats the memoization.
 
@@ -1503,7 +2145,8 @@ function useServerState<T extends JsonValue>(
 **Behavior:**
 - Same API as `useState` — `[value, setter]`
 - `value` reads from the server-synced KV store. Returns `defaultValue` if key doesn't exist.
-- `setter` calls `client.state.set(key, value)` — optimistic, persisted, synced across devices
+- `setter` writes through Zero's internal state transport — optimistic,
+  persisted, and synced across devices
 - Re-renders when value changes (local set OR remote push from another device/tab)
 - Uses `useSyncExternalStore` — tear-free reads
 
@@ -1514,14 +2157,19 @@ Full state sync spec: [State Sync](../state-sync.md).
 Full auth state and actions. Reads from AuthContext, mutations call the auth API.
 
 ```tsx
+'use client';
+
+import { useAuth, useRouter } from '@zero/framework/react';
+import { useEffect, useState, type FormEvent } from 'react';
+
 function LoginPage() {
-  const { login, isAuthenticated, user } = useAuth();
+  const { login, isAuthenticated } = useAuth();
+  const { replace } = useRouter();
   const [error, setError] = useState<string | null>(null);
 
-  if (isAuthenticated) {
-    redirect('/dashboard');
-    return null;
-  }
+  useEffect(() => {
+    if (isAuthenticated) replace('/dashboard');
+  }, [isAuthenticated, replace]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -1530,9 +2178,11 @@ function LoginPage() {
     try {
       await login(form.get('username') as string, form.get('password') as string);
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : 'Login failed');
     }
   };
+
+  if (isAuthenticated) return null;
 
   return (
     <form onSubmit={handleSubmit}>
@@ -1548,11 +2198,14 @@ function LoginPage() {
 **Signature:**
 
 ```ts
-function useAuth(): AuthHookResult;
+function useAuth(): AuthState & AuthActions;
 
-interface AuthHookResult {
+interface AuthState {
   /** Current user record, or null if not authenticated. Reactive — re-renders on change. */
-  user: UserRecord | null;
+  user: AuthUser | null;
+
+  /** Current live organization binding in multi mode, or null. */
+  activeTenant: AuthTenantSummary | null;
 
   /** Whether a user is currently authenticated. */
   isAuthenticated: boolean;
@@ -1561,8 +2214,13 @@ interface AuthHookResult {
   isLoading: boolean;
   error: string | null;
 
-  /** Register a new user. Returns a session, email-verification user state, or MFA continuation. */
-  register(params: RegisterParams): Promise<AuthCompletionResult | null>;
+  /** Observable state for restore, authentication, and tenant-scope replacement. */
+  sessionTransition: AuthSessionTransitionState;
+}
+
+interface AuthActions {
+  /** Register an identity; optional multi-mode tenant input is policy checked. */
+  register(params: RegisterParams): Promise<AuthRegistrationResult | null>;
 
   /** Log in with username/email and password. Returns a session or MFA continuation. */
   login(username: string, password: string): Promise<AuthCompletionResult | null>;
@@ -1571,10 +2229,10 @@ interface AuthHookResult {
   getConfig(): Promise<AuthPublicConfig | null>;
 
   /** Request a password reset email. Does not reveal account existence. */
-  forgotPassword(email: string): Promise<void>;
+  forgotPassword(email: string, nativeContinuation?: string): Promise<void>;
 
   /** Request another verification email. Does not reveal account existence. */
-  resendVerificationEmail(email: string): Promise<void>;
+  resendVerificationEmail(email: string, nativeContinuation?: string): Promise<void>;
 
   /** Verify an email action token. Returns a session or MFA continuation. */
   verifyEmail(token: string): Promise<AuthCompletionResult | null>;
@@ -1590,17 +2248,40 @@ interface AuthHookResult {
   listMfaMethods(): Promise<{ methods: AuthMfaMethod[]; required: boolean } | null>;
   startMfaSetup(params: { setupToken?: string; method: AuthMfaMethodType; label?: string }): Promise<AuthMfaSetupStartResult | null>;
   verifyMfaSetup(params: { verificationToken: string; code: string }): Promise<AuthMfaSetupVerifyResult | null>;
-  verifyMfaChallenge(params: { challengeToken: string; code: string }): Promise<AuthSessionResult | null>;
+  verifyMfaChallenge(params: { challengeToken: string; code: string }): Promise<AuthCompletionResult | null>;
+
+  /** Finish a typed tenant-selection continuation. */
+  selectTenant(continuation: string, tenantId: string): Promise<AuthSessionResult | null>;
+  /** List live memberships using the current refresh family. */
+  listTenants(): Promise<AuthTenantListResult | null>;
+  /** Create and activate an owned tenant from onboarding or current refresh proof. */
+  createTenant(params: AuthTenantCreateParams): Promise<AuthSessionResult | null>;
+  /** Replace the current browser session with a target tenant binding. */
+  switchTenant(tenantId: string): Promise<AuthSessionResult | null>;
 
   /** Log out. Revokes server-side refresh token, clears local state. */
   logout(): Promise<void>;
 
   /** Manually refresh the access token. Usually automatic — call this only if needed. */
   refresh(): Promise<void>;
+
+  /** Retry a recoverable session transition and reconcile authorization-scoped clients. */
+  reconcileSession(): Promise<void>;
+
+  changePassword(currentPassword: string, newPassword: string): Promise<void>;
+  setProperty(key: string, value: unknown): Promise<void>;
+  getProperty(key: string): Promise<string | null>;
+  getProperties(): Promise<Record<string, string>>;
+  deleteProperty(key: string): Promise<void>;
 }
 ```
 
-**Reactive user:** `user` is backed by `useRow('users', userId)` — it reads from the sync engine's reactive `users` table. If an admin changes this user's role, the component re-renders with the new role. No polling, no refetch.
+**Session user:** `user` comes from the auth session controller and is populated
+by login, registration, refresh, and session-restoration responses. It is not
+backed by `useRow('users', ...)`; default `createApp()` policy deliberately
+keeps identity rows out of generic Sync. Security-relevant admin changes are
+enforced by live server verification and session revocation, independent of
+what an already-rendered client happens to display.
 
 **Session expiry:** When the refresh token can no longer restore the session,
 the hook reflects the cleared auth state. `user` becomes `null`,
@@ -1609,17 +2290,22 @@ client routes to the configured login path. You can still add local guards when
 you want a component-specific fallback:
 
 ```tsx
+'use client';
+
 // app/dashboard/layout.tsx
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
-  if (!isAuthenticated) { redirect('/login'); return null; }
+import { useRequireAuth } from '@zero/framework/react';
+import type { ReactNode } from 'react';
+
+export default function DashboardLayout({ children }: { children: ReactNode }) {
+  const user = useRequireAuth('/login');
+  if (!user) return null;
   return <main>{children}</main>;
 }
 ```
 
 ### useCurrentUser
 
-Convenience hook — just the reactive user record.
+Convenience hook — the current session-backed user projection from `useAuth()`.
 
 ```tsx
 function UserBadge() {
@@ -1638,54 +2324,32 @@ function UserBadge() {
 **Signature:**
 
 ```ts
-function useCurrentUser(): UserRecord | null;
+function useCurrentUser(): AuthUser | null;
 ```
 
-Equivalent to `useAuth().user`, but slightly cheaper — only subscribes to the user row, not the full auth state.
+Equivalent to `useAuth().user`. It subscribes to the same auth-session store and
+does not subscribe to the private `users` table.
 
 ### SSR Hook Behavior
 
-Hooks behave differently during server-side rendering (`renderToReadableStream`) vs. after client hydration.
+Zero currently has two route rendering paths rather than a server-rendered
+component tree that later hands the same hook state to the browser:
 
-**During SSR (server):**
-- Public frontend hooks are SSR-safe and return empty/default values while there
-  is no browser SDK client.
-- Server rendering should load data directly from ReactiveDB or route loaders
-  when the first HTML needs data.
-- In the browser, hooks throw a clear provider error if used outside
-  `<AppProvider>` or `<ClientProvider>`.
+- A page/layout chain with no literal `'use client'` directive is streamed with
+  `renderToReadableStream()`. It ships no route JavaScript and is not hydrated.
+  Load its initial data in a route loader or server-owned database code.
+- If the page or one of its layouts contains `'use client'`, the server runs
+  the loader and returns the app shell plus route/platform data. The browser
+  imports the generated route manifest and mounts the tree with `createRoot()`.
+  `AppProvider` then creates the SDK client, restores auth, and connects Sync.
 
-**After hydration (client):**
-- `AppProvider` creates the SDK client, connects the WebSocket, and provides
-  auth/sync/router context.
-- `useCollection` reads the full-sync snapshot and then stays live through
-  change events.
-- `useLazyCollection` fetches its first page through `/api/data`, loads those
-  rows locally, and then keeps loaded rows live through change events.
-- `useServerState` reads from the @xstate/store populated by `state.snapshot`.
-
-**Pattern for synced tables:**
-
-```
-Server SSR:
-  1. Server does db.query('todos') during render
-  2. Passes rows as initial data in the HTML
-
-Client hydration:
-  3. hydrateRoot() attaches React to server HTML
-  4. Sync engine connects, receives sync.snapshot
-  5. useCollection('todos') takes over with live updates
-  6. If data unchanged since SSR → no re-render, no flash
-```
-
-```tsx
-// app/todos/page.tsx
-// Server renders with initial DB query. Client hydrates. useCollection takes over.
-export default function Todos() {
-  const { data } = useCollection<Todo>('todos');
-  return <ul>{data.map(t => <li key={t.id}>{t.title}</li>)}</ul>;
-}
-```
+Frontend hooks return safe empty/default values when invoked during server
+render without a browser client, but that is a safety property, not an SSR data
+handoff. Put hook-driven pages behind a `'use client'` boundary. Once mounted,
+`useCollection()` consumes the Sync snapshot, `useLazyCollection()` performs
+its `/api/data` load, and `useServerState()` consumes the state snapshot. In a
+browser, using these hooks outside `AppProvider`/`ClientProvider` throws the
+provider error.
 
 ### useParams
 
@@ -1700,7 +2364,9 @@ export default function BlogPost() {
 ```
 
 ```ts
-function useParams<T extends Record<string, string | string[]>>(): T;
+function useParams<
+  T extends Record<string, string> = Record<string, string>,
+>(): T;
 ```
 
 ### usePathname
@@ -1716,9 +2382,9 @@ function usePathname(): string;
 Programmatic navigation. See [Router: Client-Side Navigation](./router.md#client-side-navigation) for the full navigation model.
 
 ```ts
-function useRouter(): Router;
+function useRouter(): RouterActions;
 
-interface Router {
+interface RouterActions {
   /** Navigate to a path, add to history stack. */
   push(path: string): void;
 
@@ -1728,23 +2394,33 @@ interface Router {
   /** Go back in history. Equivalent to history.back(). */
   back(): void;
 
-  /** True while loading a route module + running its loader. */
+  /** True while loading the next client page and layout modules. */
   isNavigating: boolean;
 
-  /** Manually trigger preload for a path (fetch JS chunk + call loader). */
+  /** Preload a registered client page module and its layout modules. */
   prefetch(path: string): void;
+
+  /** Framework integration: update params/navigation state. */
+  setParams(params: Record<string, string>): void;
+  setIsNavigating(value: boolean): void;
 }
 ```
 
+`push()` and `replace()` update browser history. Zero then loads a matching
+client route from the generated manifest. If the target is server-only or is
+not in that manifest, the runtime performs a full document navigation.
+
 ### Link
 
-Client-side navigation component. Intercepts clicks, navigates without full page reload, preserves shared layouts. Preloads route modules on hover by default.
+Client-side navigation component. It intercepts unmodified left clicks for
+internal links. Absolute cross-origin HTTP(S) URLs, `mailto:`, `tel:`, modified
+clicks, non-left clicks, and non-`_self` targets retain native anchor behavior.
 
 ```tsx
 import { Link } from '@zero/framework/react';
 
 <Link href="/dashboard/settings">Settings</Link>
-<Link href="/blog/hello-world" prefetch="render">Read more</Link>
+<Link href="/blog/hello-world" prefetch="intent">Read more</Link>
 <Link href="/login" replace>Login</Link>
 ```
 
@@ -1753,7 +2429,7 @@ import { Link } from '@zero/framework/react';
 ```ts
 interface LinkProps {
   href: string;
-  prefetch?: 'intent' | 'render' | 'none';  // default: 'intent'
+  prefetch?: 'intent' | 'render' | 'none';  // default: 'none'
   replace?: boolean;     // Replace history entry instead of push
   className?: string;
   children: React.ReactNode;
@@ -1762,9 +2438,12 @@ interface LinkProps {
 
 | Prefetch mode | Behavior |
 |---------------|----------|
-| `'intent'` (default) | Preload on `mouseenter` / `focus` |
-| `'render'` | Preload when Link enters viewport |
+| `'intent'` | Preload once on `mouseenter` |
+| `'render'` | Accepted for compatibility; currently no automatic preload |
 | `'none'` | Only load on click |
+
+Call `useRouter().prefetch(path)` for explicit eager preload. `Link` does not
+currently prefetch on focus or when it enters the viewport.
 
 ---
 
@@ -1774,30 +2453,25 @@ Valibot schemas for validating mutations, route params, and API inputs. One sche
 
 ### Mutation Validation
 
-Validate before the optimistic apply — bad data never enters the local store.
+Schema-generated tables are validated again on the server. Validate in the UI
+as well when you want bad data to be rejected before the optimistic apply.
 
 ```tsx
-import { useCollection } from '@zero/framework/react';
-import * as v from 'valibot';
-
-const TodoSchema = v.object({
-  id: v.string(),
-  title: v.pipe(v.string(), v.minLength(1), v.maxLength(200)),
-  done: v.number(),
-});
+import { useCollection, type InferInsert, type InferRow } from '@zero/framework/react';
+import { todoTable } from '@app/lib/schemas';
 
 function AddTodo() {
-  const { insert } = useCollection<v.InferOutput<typeof TodoSchema>>('todos');
-  const [issues, setIssues] = useState<v.BaseIssue<unknown>[]>([]);
+  type Todo = InferRow<typeof todoTable>;
+  const { insert } = useCollection<Todo>('todos');
 
   const handleAdd = (title: string) => {
-    const row = { title, done: 0 };  // Auto-PK generates UUID
-    const result = v.safeParse(TodoSchema, row);
+    const row: InferInsert<typeof todoTable> = { title, done: false };
+    const result = todoTable.schema.validate(row);
     if (!result.success) {
-      setIssues(result.issues);
+      console.error(result.issues);
       return;
     }
-    insert(result.output);
+    insert(row); // The collection generates the sync primary key.
   };
 
   return <button onClick={() => handleAdd('New todo')}>Add</button>;
@@ -1805,8 +2479,16 @@ function AddTodo() {
 ```
 
 For reusable forms, keep validation in the form or action component so invalid
-data never enters the optimistic store. The server schema still remains the
-authoritative validation boundary.
+data never enters the optimistic store. The server remains authoritative:
+after Sync/resource policy stamping, it rejects unknown input fields, decodes
+logical field values, and validates the complete INSERT row. For UPDATE it
+merges the partial input with the current stored row and validates the complete
+logical result. Primary-key changes are rejected. Validation failures write no
+row/change and cause the optimistic client state to roll back.
+
+This automatic logical boundary applies to `defineTable()` and `schema()`
+tables. A raw hand-authored SQL table retains its historical SQLite-only
+behavior unless server config supplies an explicit mutation validator.
 
 ### Route Param Validation
 
@@ -1837,20 +2519,45 @@ Validate request bodies in API route handlers.
 ```ts
 // app/api/todos/route.ts
 import * as v from 'valibot';
+import {
+  getSyncDB,
+  type LoaderContext,
+  type RouteConfig,
+} from '@zero/framework/server';
+
+export const config: RouteConfig = { auth: 'required' };
 
 const CreateTodoBody = v.object({
   title: v.pipe(v.string(), v.minLength(1), v.maxLength(200)),
 });
 
-export async function POST(req: APIRequest) {
-  const body = v.parse(CreateTodoBody, await req.json());
-  // body.title is validated — throws ValiError with details if invalid
-  req.db.insert('todos', { title: body.title, done: 0 });  // Auto-PK generates UUID
-  return Response.json({ ok: true }, { status: 201 });
+export async function POST({ request }: LoaderContext) {
+  const parsed = v.safeParse(CreateTodoBody, await request.json());
+  if (!parsed.success) {
+    return Response.json(
+      { error: 'Invalid todo', issues: parsed.issues },
+      { status: 422 },
+    );
+  }
+
+  const db = getSyncDB();
+  if (!db) {
+    return Response.json({ error: 'Database unavailable' }, { status: 503 });
+  }
+
+  const change = db.insert('todos', {
+    id: crypto.randomUUID(),
+    title: parsed.output.title,
+    done: 0,
+  });
+  return Response.json(change.row, { status: 201 });
 }
 ```
 
-Valibot throws `ValiError` with structured `issues` on failure. The framework's error handler catches it and returns a 400 with the issues array.
+File-route handlers own errors they create, so this example uses
+`safeParse()` and returns a bounded `422` response explicitly. For larger APIs,
+prefer `defineEndpoint()` or `defineRouter()` under `server/`, where Zero's
+declared validation schemas run before the handler.
 
 ---
 
@@ -1859,7 +2566,7 @@ Valibot throws `ValiError` with structured `issues` on failure. The framework's 
 For requests outside the sync engine — one-off queries, file uploads, streaming, server actions. Eden Treaty generates a fully typed client from the Elysia server type.
 
 ```ts
-import { useClient } from '@zero/framework/frontend';
+import { useClient } from '@zero/framework/react';
 
 const client = useClient();
 
@@ -1881,18 +2588,60 @@ replayable request bodies such as JSON, text, and `FormData`; a one-shot
 `ReadableStream` request body cannot be replayed and needs an endpoint-specific
 upload protocol instead.
 
+On the server, a protected `defineEndpoint()` or `defineRouter()` multipart
+route installs an early auth guard automatically. A missing/invalid Bearer token
+(or a non-admin token on `auth: 'admin'`) is rejected during `onRequest`, before
+Elysia parses the file body; the normal route guard still protects non-multipart
+requests. Nested routers match their complete mounted prefix, while
+`auth: false`/`optional` multipart routes remain public.
+
+Raw Elysia upload routes must opt into both halves explicitly:
+
+```ts
+import { Elysia, t } from 'elysia';
+import {
+  createAuthMiddleware,
+  createProtectedMultipartRequestGuard,
+  getTokenService,
+} from '@zero/framework/server';
+
+const uploads = new Elysia()
+  .use(createAuthMiddleware(getTokenService))
+  .onRequest(createProtectedMultipartRequestGuard(getTokenService, {
+    requirement: 'user',
+    method: 'POST',
+    path: '/api/documents/parse',
+  }))
+  .post('/api/documents/parse', ({ body, requireAuth }) => ({
+    uploadedBy: requireAuth().userId,
+    bytes: body.file.size,
+  }), {
+    zeroAuth: 'user',
+    body: t.Object({ file: t.File() }),
+  });
+```
+
+Register the `onRequest` hook before the route. Use matching `admin` values for
+an administrator-only upload. The early hook returns Zero's stable `401`, `403`,
+or `503` JSON errors; `zeroAuth` remains the ordinary route guard for every
+request. `createApp()`-compiled endpoints use the app-local token service
+automatically, avoiding cross-app global service ambiguity.
+
 **When to use sync hooks vs. Eden:**
 
 | Scenario | Use |
 |----------|-----|
-| Data that should be live (todos, users, messages) | `useCollection` / `useRow` — synced automatically |
+| Policy-authorized app data that should be live (todos, messages) | `useCollection` / `useRow` — synced automatically |
 | Mutation that should be optimistic + live | `insert()` / `update()` / `remove()` from hooks |
 | One-off action (send email, trigger export) | Eden RPC |
 | File upload | Eden RPC |
 | Streaming response (AI generation, large export) | Eden RPC with streaming |
 | Data that doesn't need real-time (reports, analytics) | Eden RPC |
 
-Both paths end up in ReactiveDB. An Eden RPC that calls `syncDB.insert()` on the server triggers the same broadcast as a sync mutation from the client. The difference is where the write originates — not where it ends up.
+When an Eden RPC writes through ReactiveDB, it enters the same change pipeline
+as a Sync mutation. Snapshot, catch-up, and live delivery still pass through
+the table/resource/row policy, so a server write is not an authorization bypass
+or a promise to broadcast the row to every client.
 
 ---
 
@@ -1900,93 +2649,88 @@ Both paths end up in ReactiveDB. An Eden RPC that calls `syncDB.insert()` on the
 
 ### createApp
 
-Server-side factory. Wires auth, sync, routing, audit, static files into one Elysia instance. `@zero/framework/server` is only needed in `app/server.ts`.
+Server-side factory. Wires the configured auth, sync, routing, platform
+services, and static assets into one Elysia instance. Most app code should use
+`@zero/framework/server` only from server-owned modules.
 
 ```ts
-import { resolveConfig, createApp } from '@zero/framework/server';
-import { tables } from './lib/schemas';
+import { createApp } from '@zero/framework/server';
+import config from '../zero.config';
 
-const config = resolveConfig({
-  db: { mode: 'memory' },
-  tables,  // defineTable() output — auto-extracts server definitions
-  auth: true,
-  audit: { dir: './data/audit' },
-  appDir: './app',
-});
-
-const app = createApp(config);
+const app = await createApp(config);
 
 app.listen(3000);
 export type App = typeof app;
 ```
 
-**AppConfig:**
+**AppConfig:** Import the public type instead of copying a partial local
+interface. `defineZeroConfig()` preserves literal inference and returns the
+same object; `createApp()` performs normalization and cross-feature checks.
 
 ```ts
-interface AppConfig {
-  /** Database — ':memory:' for RAM, file path for durable */
-  db: { mode: 'memory' } | { mode: string };
+// zero.config.ts
+import {
+  defineZeroConfig,
+  type AppConfig,
+} from '@zero/framework/server';
+import { tables } from '@app/lib/schemas';
 
-  /** Table definitions — column name → SQL type string */
-  tables: Record<string, Record<string, string>>;
-
-  /** Auth — true for defaults, or configure TTLs. Omit to disable. */
-  auth?: boolean | {
-    accessTokenTTL?: string;      // Default: '15m'
-    refreshTokenTTL?: string;     // Default: '7d'
-    inactivityTimeout?: string;   // Default: '30m'
-    signingKey?: string;          // PEM or base64 JWK (auto-generates if absent)
-  };
-
-  /** Per-user persistent KV state sync. Requires auth: true because state is
-   *  keyed by authenticated user. Default: false. See docs/state-sync.md. */
-  stateSync?: boolean;
-
-  /** Sync defaults for tables that omit _sync. Default: auto lazy protection. */
-  syncDefaults?: {
-    defaultMode?: 'auto' | 'full' | 'lazy'; // Default: 'auto'
-    autoLazy?: {
-      rowLimit?: number;                   // Default: 1000
-      action?: 'lazy' | 'warn' | 'reject'; // Default: 'lazy'
-      persist?: boolean;                   // Default: true
-    };
-    tables?: Record<string, 'auto' | 'full' | 'lazy' | {
-      mode?: 'auto' | 'full' | 'lazy';
-      rowLimit?: number;
-      action?: 'lazy' | 'warn' | 'reject';
-      persist?: boolean;
-    }>;
-  };
-
-  /** Observability — logs, warnings, errors, frontend reports. Enabled by default. */
-  observability?: false | {
-    maxEvents?: number;           // Default: 1000
-    console?: boolean;            // Default: true
-    endpoint?: false | {
-      enabled?: boolean;          // Default: true
-      basePath?: string;          // Default: '/api/_zero/observability'
-      read?: 'admin' | 'development' | 'admin-or-dev' | 'disabled';
-      frontendIngest?: boolean;   // Default: true
-    };
-    trace?: false | {
-      enabled?: boolean;          // Default: false
-      slowRequestMs?: number;     // Default: 500
-      slowLifecycleMs?: number;   // Default: 100
-    };
-  };
-
-  /** File-based route directory. Default: './app' */
-  appDir?: string;
-
-  /** Client bundle output. Default: './.build' */
-  outDir?: string;
-
-  /** UI library pre-registration. */
-  ui?: { library: string };
+const bootstrapSecret = process.env.AUTH_BOOTSTRAP_SECRET;
+if (!bootstrapSecret) {
+  throw new Error('AUTH_BOOTSTRAP_SECRET is required');
 }
+
+const config = defineZeroConfig({
+  db: { mode: './data/app.db' },
+  tables,
+  auth: {
+    tenancy: { mode: 'single' },
+    authorization: { mode: 'simple' },
+    bootstrap: { mode: 'secret', secret: bootstrapSecret },
+  },
+  stateSync: true,
+  syncDefaults: {
+    defaultMode: 'auto',
+    autoLazy: { rowLimit: 1_000, action: 'lazy', persist: true },
+  },
+  appDir: './app',
+  outDir: './.build',
+}) satisfies AppConfig;
+
+export default config;
 ```
 
-**DDL passthrough:** The `tables` config passes its `Record<string, string>` values directly to `ReactiveDB.defineTable()`. The string values **are** SQLite column definitions — no transformation occurs. ReactiveDB builds `CREATE TABLE` SQL by joining them:
+The complete `AppConfig` also includes email, AI, vector, KV, PDF, resources,
+generated resource routes, storage, route auth, sitemap, migrations,
+observability, Sync policy, and the five app-owned server discovery directory
+options. `stateSync: true` requires auth. Omitted capability values resolve to
+`single/simple`; all four `single|multi` by `simple|advanced` profiles now
+normalize. In this unreleased tree, `multi` installs tenant/membership
+persistence, browser and native tenant sessions, creation/onboarding,
+registered-resource and managed-service isolation, invitations/join requests,
+and packaged tenant controls. `advanced` installs the validated static
+registry, durable application/tenant assignments, live kernel expansion, and
+packaged role administration. Doctor blocks concrete unsafe configuration and
+unclassified boundaries; the release checklist still governs production
+readiness rather than blanket-disabling either profile.
+
+The candidate does not include protected Administration Organization/platform-
+tenant lifecycle UI, upstream enterprise SSO, break-glass, tenant-custom roles,
+populated-app adoption tooling, or verified-domain autojoin/aliases/direct
+transfer. Registered resources now declare explicit server-owned client
+exposure and optional field-level allow-lists across CRUD, `/api/data`, Sync,
+caches, and packaged forms. Managed file-mode runtimes sharing one SQLite
+database relay tracked Sync changes and auth/session invalidations. Multi-mode startup
+also validates actual non-partial tenant-leading indexes, tenant-scoped business
+uniqueness, and composite tenant consistency for foreign keys between
+registered tenant resources.
+
+**DDL passthrough:** For a raw table definition, `tables` passes its string
+values directly to `ReactiveDB.defineTable()`. Those values **are** SQLite
+column definitions. Schema-generated tables additionally carry server-only
+logical-validator symbol metadata; it is ignored when ReactiveDB enumerates SQL
+columns and when config is serialized. ReactiveDB builds `CREATE TABLE` SQL by
+joining the string-valued columns:
 
 ```ts
 // Config:
@@ -2003,12 +2747,12 @@ tables: {
 | Step | Plugin | What it provides |
 |------|--------|-----------------|
 | 1 | ReactiveDB | Shared in-memory or durable SQLite database |
-| 2 | Auth plugin | `POST /auth/register`, `/login`, `/refresh`, `/logout`. `GET /auth/me`, `/jwks`. `users`, `user_properties` tables on the shared DB. |
-| 3 | Auth middleware | `authContext` derived on every request — `{ userId, email, role }` or `null` |
+| 2 | Auth plugin (when enabled) | Routes under `/auth`, including `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/me`, and `/auth/jwks`; auth tables on the shared DB |
+| 3 | Auth middleware (when enabled) | `authContext` plus `requireAuth()`/`requireAdmin()` on downstream server routes |
 | 4 | Observability plugin | Stable event codes, default console + memory store, protected `/api/_zero/observability/events`, frontend ingest |
-| 5 | Scheduler/domain plugins | Scheduler, notifications, rooms, workflows, storage |
+| 5 | Scheduler/domain plugins | Scheduler always; notifications, rooms, workflows, and storage when auth is enabled |
 | 6 | Data query plugin | `/api/data` for lazy synced tables with sync read policy |
-| 7 | Router plugin | File-based routing from `appDir` — SSR with React 19 `renderToReadableStream`, layouts, dynamic segments |
+| 7 | Router plugin | File routing from `appDir`; streaming for server-only chains and browser mounting for `'use client'` chains |
 | 8 | Client bundle | `Bun.build()` on startup |
 
 **Plugin order matters.** `createApp()` composes sync first so the shared
@@ -2021,26 +2765,21 @@ catch-all route.
 ## Data Flow: Page Load → Live
 
 ```
-1. GET /dashboard
-   ├─► Router matches app/dashboard/page.tsx
-   ├─► Server reads from ReactiveDB (todos, current user)
-   ├─► renderToReadableStream — HTML streams to browser
-   ├─► Includes: __ROUTE_DATA__, __AUTH_DATA__, __TABLE_DEFS__
-   └─► User sees content (server-rendered)
+GET /dashboard
+   └─► Router matches the page and layouts
+       ├─► Server-only chain (no 'use client')
+       │   ├─► run loader
+       │   ├─► renderToReadableStream()
+       │   └─► send HTML with no route JS or hydration
+       └─► Client chain (page/layout has 'use client')
+           ├─► run loader
+           ├─► send #root shell + __ROUTE_DATA__ + __PLATFORM_CONFIG__ + bundle
+           ├─► browser imports page/layout modules and calls createRoot()
+           └─► AppProvider restores auth and subscribes to /sync
 
-2. Client bundle loads
-   ├─► hydrateRoot() — React attaches to server HTML
-   ├─► AppProvider mounts:
-   │     ├─► Creates Client, connects WS to /sync
-   │     ├─► WS sends sync.subscribe { lastSeq: 0 }
-   │     ├─► Server responds with sync.snapshot
-   │     ├─► Store populated — hooks see data
-   │     └─► If data unchanged since SSR → no re-render
-   └─► App is interactive
-
-3. Steady state
+Live client state
    ├─► Client A: insert() → optimistic → WS sync.mutate
-   ├─► Server: validates → writes → sync.ack to A → broadcast to all
+   ├─► Server: authorizes → validates → writes → sync.ack to A → deliver to eligible subscribers
    ├─► Client B: store updates → useCollection re-renders
    └─► No polling. No refetch. No invalidation. Live.
 ```
@@ -2049,7 +2788,8 @@ catch-all route.
 
 ## Full Example
 
-Three files. Auth, real-time data, optimistic mutations, SSR, file-based routing.
+Four files. Auth, real-time data, optimistic mutations, and a client-rendered
+file-based route.
 
 **app/lib/schemas/index.ts:**
 
@@ -2073,10 +2813,11 @@ import { tables } from './lib/schemas';
 const config = resolveConfig({
   db: { mode: 'memory' },
   tables,
-  auth: true,
+  // Local demo only. Production should use secret-gated or trusted bootstrap.
+  auth: { bootstrap: 'public' },
 });
 
-const app = createApp(config);
+const app = await createApp(config);
 app.listen(3000);
 export type App = typeof app;
 ```
@@ -2084,10 +2825,13 @@ export type App = typeof app;
 **app/layout.tsx:**
 
 ```tsx
+'use client';
+
 import { AppProvider } from '@zero/framework/react';
 import { tables } from './lib/schemas';
+import type { ReactNode } from 'react';
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html>
       <body>
@@ -2107,7 +2851,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 **app/page.tsx:**
 
 ```tsx
-import { useCollection, useAuth, useCurrentUser, Link, InferRow } from '@zero/framework/react';
+'use client';
+
+import { useCollection, useAuth, useCurrentUser, type InferRow } from '@zero/framework/react';
 import { todoTable } from '@app/lib/schemas';
 
 type Todo = InferRow<typeof todoTable>;
@@ -2160,4 +2906,7 @@ export default function Home() {
 }
 ```
 
-Run `bun app/server.ts`. Open two browser tabs. Register in one, data appears in both. Add a todo, it appears in both. Check it off, both update. Optimistic -- feels instant. Auth, real-time, SSR, routing. Four files (three app, one schema).
+Run `bun app/server.ts`. Open two browser tabs. Register the local demo account,
+then add or check off a todo and watch the live optimistic update. This example
+uses public first-user bootstrap only to stay self-contained; use a
+secret-gated or trusted bootstrap ceremony outside local development.

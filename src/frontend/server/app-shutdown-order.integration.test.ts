@@ -1,14 +1,18 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
-import { getAuthEmailOutbox, getAuthStore } from '../../auth/auth.plugin';
-import { stopAuthRuntime } from '../../auth/auth-runtime';
 import type { EmailProvider } from '../../email';
 import { OBS_CODES, MemoryEventStore } from '../../observability';
-import { createPlatformSQLiteService, getPlatformSQLiteService } from '../../persistence';
-import { getSyncDB } from '../../sync/sync.plugin';
+import { createPlatformSQLiteService } from '../../persistence';
+import type { ReactiveDB } from '../../sync/reactive-db';
 import { createApp } from './app-factory';
 import type { AppConfig } from './types';
+
+interface DatabaseProbe {
+  path: string;
+  read(): ReactiveDB | null;
+}
+
 describe('createApp shutdown ownership', () => {
   test('joins auth delivery before disposing ReactiveDB and owned SQLite', async () => {
     const events = new MemoryEventStore();
@@ -28,27 +32,31 @@ describe('createApp shutdown ownership', () => {
         email: { from: 'Zero <noreply@test.com>', provider },
         observability: { console: false, store: events },
       }));
-      const db = getSyncDB()!;
+      const databaseProbe = installDatabaseProbe(app);
+      app.listen(0);
+      const db = await waitForDatabase(app, databaseProbe);
       const dispose = db.dispose.bind(db);
       db.dispose = () => { disposed = true; dispose(); };
-      const sqlite = getPlatformSQLiteService()!;
+      const sqlite = db.getSQLiteService();
+      if (!sqlite) throw new Error('Owned SQLite service was not attached to Sync');
       const close = sqlite.close.bind(sqlite);
       let closeCalls = 0, disposedAtClose = false;
       sqlite.close = () => { closeCalls += 1; disposedAtClose = disposed; close(); };
-      app.listen(0);
       const response = await fetch(`http://localhost:${app.server!.port}/auth/register`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: 'shutdown', email: 'shutdown@test.com',
           password: 'password123' }),
       });
       expect(response.status).toBe(200);
-      expect(getAuthStore()).not.toBeNull();
-      getAuthEmailOutbox()!.enqueue({ kind: 'password_reset', recipient: 'shutdown@test.com' });
+      const reset = await fetch(`http://localhost:${app.server!.port}/auth/forgot-password`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'shutdown@test.com' }),
+      });
+      expect(reset.status).toBe(200);
       await started;
       await Promise.all([app.stop(), app.stop()]);
       await app.stop();
       app = null;
-      await stopAuthRuntime();
       expect(aborts).toBe(1);
       expect(disposedAtAbort === false).toBeTrue();
       expect(disposed).toBeTrue();
@@ -83,6 +91,33 @@ describe('createApp shutdown ownership', () => {
     }
   }, 60_000);
 });
+
+function installDatabaseProbe(
+  app: Awaited<ReturnType<typeof createApp>>,
+): DatabaseProbe {
+  const path = `/__zero_test/database-${crypto.randomUUID()}`;
+  let db: ReactiveDB | null = null;
+  app.get(path, (context) => {
+    db = (context as unknown as { syncDB?: ReactiveDB }).syncDB ?? null;
+    return { ready: db !== null };
+  });
+  return { path, read: () => db };
+}
+
+async function waitForDatabase(
+  app: Awaited<ReturnType<typeof createApp>>,
+  probe: DatabaseProbe,
+): Promise<ReactiveDB> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const response = await fetch(`http://localhost:${app.server!.port}${probe.path}`);
+    await response.arrayBuffer();
+    const db = probe.read();
+    if (db) return db;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error('App-local Sync database did not start');
+}
+
 async function testRoot(name: string): Promise<string> {
   await mkdir(join(process.cwd(), '.zero'), { recursive: true });
   const root = await mkdtemp(join(process.cwd(), `.zero/${name}-`));
@@ -92,7 +127,7 @@ async function testRoot(name: string): Promise<string> {
 
 function testConfig(root: string, overrides: Partial<AppConfig>): AppConfig {
   return { app: { publicUrl: 'https://app.test' }, db: { mode: 'memory' as const },
-    tables: {}, auth: true, appDir: join(root, 'app'), outDir: join(root, 'out'), migrate: false,
+    tables: {}, auth: { bootstrap: 'public' }, appDir: join(root, 'app'), outDir: join(root, 'out'), migrate: false,
     serverResourcesDir: false, serverPluginsDir: false, serverMiddlewareDir: false,
     serverEndpointsDir: false, serverRoutesDir: false, resourceRoutes: false,
     ai: false, vector: false, pdf: false, kv: false, email: false, ...overrides };

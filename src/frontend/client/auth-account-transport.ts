@@ -1,19 +1,28 @@
 /** Transport for login, registration, public config, and account operations. */
 
 import { createAuthClientError } from './auth-errors';
+import type { AuthAuthenticationAttempt } from './auth-authentication-attempt';
 import type {
   AuthCompletionResult,
   AuthPublicConfig,
+  AuthRegistrationResult,
   RegisterParams,
 } from './auth-types';
 
 export interface AuthAccountTransportOptions {
   baseUrl: string;
   authenticatedFetch: (url: string, init?: RequestInit) => Promise<Response>;
-  beginAuthentication: () => void;
-  failAuthentication: (message: string) => void;
-  completeAuthentication: (result: AuthCompletionResult) => AuthCompletionResult;
-  updateTokens: (accessToken: string, refreshToken: string) => void;
+  beginAuthentication: () => AuthAuthenticationAttempt;
+  failAuthentication: (message: string, attempt: AuthAuthenticationAttempt) => void;
+  completeAuthentication: (
+    result: AuthCompletionResult,
+    attempt: AuthAuthenticationAttempt,
+  ) => Promise<AuthCompletionResult>;
+  updateTokens: (
+    accessToken: string,
+    refreshToken: string,
+    response: Response,
+  ) => Promise<void>;
 }
 
 export class AuthAccountTransport {
@@ -23,7 +32,7 @@ export class AuthAccountTransport {
     return this.authenticate('/auth/login', { username, password }, 'Login failed');
   }
 
-  register(params: RegisterParams): Promise<AuthCompletionResult> {
+  register(params: RegisterParams): Promise<AuthRegistrationResult> {
     return this.authenticate('/auth/register', params, 'Registration failed');
   }
 
@@ -63,22 +72,33 @@ export class AuthAccountTransport {
     }
 
     const data = await response.json();
-    this.options.updateTokens(data.accessToken, data.refreshToken);
+    await this.options.updateTokens(data.accessToken, data.refreshToken, response);
   }
 
-  private async authenticate(
+  private async authenticate<TResult extends AuthCompletionResult = AuthCompletionResult>(
     path: '/auth/login' | '/auth/register',
     body: unknown,
     fallback: string,
-  ): Promise<AuthCompletionResult> {
-    this.options.beginAuthentication();
-    const response = await fetch(`${this.options.baseUrl}${path}`, jsonRequest(body));
-    if (!response.ok) {
-      const error = await responseError(response, fallback);
-      this.options.failAuthentication(error.message);
-      throw error;
+  ): Promise<TResult> {
+    const attempt = this.options.beginAuthentication();
+    try {
+      const response = await fetch(
+        `${this.options.baseUrl}${path}`,
+        { ...jsonRequest(body), signal: attempt.signal },
+      );
+      attempt.assertCurrent();
+      if (!response.ok) {
+        const error = await responseError(response, fallback);
+        attempt.assertCurrent();
+        this.options.failAuthentication(error.message, attempt);
+        throw error;
+      }
+      const result = await response.json() as AuthCompletionResult;
+      attempt.assertCurrent();
+      return this.options.completeAuthentication(result, attempt) as Promise<TResult>;
+    } finally {
+      attempt.dispose();
     }
-    return this.options.completeAuthentication(await response.json());
   }
 
   private async genericEmailRequest(

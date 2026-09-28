@@ -7,11 +7,60 @@ export { ChangePasswordForm, type ChangePasswordFormProps } from './change-passw
 export { UserPropertiesForm, type UserPropertiesFormProps } from './user-properties-form';
 export { OTPVerification, type OTPVerificationProps } from './otp-verification';
 export {
+  isAuthFlowContinuationResult,
   isAuthSessionResult,
   isMfaChallengeRequiredResult,
   isMfaContinuationResult,
   isMfaSetupRequiredResult,
+  isTenantOnboardingRequiredResult,
+  isTenantSelectionRequiredResult,
+  type AuthFlowContinuationResult,
 } from './auth-continuation';
+export {
+  AuthFlowContinuation,
+  type AuthFlowContinuationProps,
+} from './auth-flow-continuation';
+export {
+  TenantSelectionForm,
+  type TenantSelectionFormProps,
+} from './tenant-selection-form';
+export {
+  TenantCreationForm,
+  type TenantCreationFormProps,
+} from './tenant-creation-form';
+export { TenantSwitcher, type TenantSwitcherProps } from './tenant-switcher';
+export {
+  ApplicationAccessManagement,
+  type ApplicationAccessManagementProps,
+} from './application-access-management';
+export {
+  TenantMemberManagement,
+  type TenantMemberManagementProps,
+} from './tenant-member-management';
+export {
+  TenantOnboardingManagement,
+  type TenantOnboardingManagementProps,
+} from './tenant-onboarding-management';
+export {
+  TenantDomainManagement,
+  type TenantDomainManagementProps,
+} from './tenant-domain-management';
+export {
+  ControlPlaneAuditViewer,
+  type ControlPlaneAuditViewerProps,
+} from './control-plane-audit-viewer';
+export {
+  DomainOnboarding,
+  type DomainOnboardingProps,
+} from './domain-onboarding';
+export {
+  TenantInvitationForm,
+  type TenantInvitationFormProps,
+} from './tenant-invitation-form';
+export {
+  TenantJoinRequestForm,
+  type TenantJoinRequestFormProps,
+} from './tenant-join-request-form';
 export { MFAChallengeForm, type MFAChallengeFormProps } from './mfa-challenge-form';
 export { MFAContinuation, type MFAContinuationProps } from './mfa-continuation';
 export { MFAEnrollmentForm, type MFAEnrollmentFormProps } from './mfa-enrollment-form';
@@ -43,6 +92,14 @@ export {
   type PropertyGateProps,
   type PropertyGateValue,
 } from './gate';
+export {
+  PermissionGate,
+  PlatformAdminGate,
+  TenantGate,
+  type PermissionGateProps,
+  type PlatformAdminGateProps,
+  type TenantGateProps,
+} from './authorization-gates';
 export {
   getAuthDisplayMessage,
   getAuthErrorCode,

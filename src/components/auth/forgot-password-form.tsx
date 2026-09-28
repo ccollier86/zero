@@ -11,16 +11,16 @@
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { AuthHeader } from '@/components/auth/auth-header';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { CircleX } from '@/components/animate-ui/icons/circle-x';
-import { CircleCheck } from '@/components/animate-ui/icons/circle-check';
-import { Loader } from '@/components/animate-ui/icons/loader';
-import { Send } from '@/components/animate-ui/icons/send';
+import { cn } from '#zero/lib/utils';
+import { Button } from '#zero/components/ui/button';
+import { Input } from '#zero/components/ui/input';
+import { Label } from '#zero/components/ui/label';
+import { AuthHeader } from '#zero/components/auth/auth-header';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
+import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
+import { Loader } from '#zero/components/animate-ui/icons/loader';
+import { Send } from '#zero/components/animate-ui/icons/send';
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
 import {
@@ -62,9 +62,9 @@ function ForgotPasswordSuccessState() {
       transition={authPresenceTransition}
       className="flex flex-col items-center gap-3 py-2"
     >
-      <div className="flex items-center justify-center rounded-full bg-green-500/10 p-3">
+      <div className="flex items-center justify-center rounded-full bg-success/10 p-3 dark:bg-success/15">
         <AnimateIcon animate>
-          <CircleCheck size={32} className="text-green-500" />
+          <CircleCheck size={32} className="text-success" />
         </AnimateIcon>
       </div>
       <p className="max-w-sm text-center text-xs text-muted-foreground" aria-live="polite">
@@ -91,6 +91,7 @@ function ForgotPasswordForm({
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [sent, setSent] = React.useState(false);
+  const emailId = `${React.useId()}-email`;
   const configPending = isAuthConfigPending(respectEmailPolicy, authConfig);
   const configUnavailable = isAuthConfigUnavailable(respectEmailPolicy, authConfig);
   const resetUnavailable = isPasswordResetUnavailable(respectEmailPolicy, authConfig);
@@ -144,11 +145,12 @@ function ForgotPasswordForm({
             animate={authPanelAnimate}
             exit={authPanelExit}
             transition={authPresenceTransition}
+            aria-busy={loading}
           >
             <div className="space-y-1.5">
-              <Label htmlFor="reset-email" className="text-sm font-medium">Email</Label>
+              <Label htmlFor={emailId} className="text-sm font-medium">Email</Label>
               <Input
-                id="reset-email"
+                id={emailId}
                 type="email"
                 placeholder="you@example.com"
                 autoComplete="email"
@@ -185,9 +187,12 @@ function ForgotPasswordForm({
 
             <Button type="submit" className="h-10 w-full" disabled={loading || configPending}>
               {loading ? (
-                <AnimateIcon animate loop>
-                  <Loader size={16} />
-                </AnimateIcon>
+                <>
+                  <AnimateIcon animate loop>
+                    <Loader size={16} />
+                  </AnimateIcon>
+                  <span className="sr-only">Sending reset link</span>
+                </>
               ) : (
                 <>
                   <Send size={14} className="mr-1" />

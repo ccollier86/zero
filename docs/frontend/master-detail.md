@@ -37,14 +37,15 @@ collection unless `onUpdate` is supplied.
 
 ```tsx
 <MasterDetailView
-  schema={userTable.schema}
-  collection="users"
+  schema={contactTable.schema}
+  collection="contacts"
   listColumns={['name', 'email', 'role']}
 />
 ```
 
 Use this for the common case where records should be live and editable in the
-browser.
+browser. This example is an app-owned `contacts` table, not Zero's private auth
+`users` table. Use the auth admin SDK/UI for account management.
 
 ### Lazy `/api/data` Source
 
@@ -54,10 +55,10 @@ rows.
 
 ```tsx
 <MasterDetailView
-  schema={userTable.schema}
+  schema={contactTable.schema}
   source={{
     type: 'lazy',
-    table: 'users',
+    table: 'contacts',
     filters: { status: 'active' },
     options: {
       order: 'created_at',
@@ -65,8 +66,8 @@ rows.
       limit: 100,
     },
   }}
-  listColumns={['name', 'email', 'role']}
-  editableFields={['name', 'role']}
+  listColumns={['name', 'email', 'status']}
+  editableFields={['name', 'status']}
 />
 ```
 
@@ -146,7 +147,7 @@ By default, the detail panel renders an `AutoForm` in edit mode.
 />
 ```
 
-`editableFields` hides fields from the generated form and filters submitted
+`editableFields` excludes fields from generated rendering and validation and filters submitted
 changes down to only those fields.
 
 If `onUpdate` is omitted and `collection` is present, form submissions call the

@@ -26,6 +26,9 @@ describe('createAIWorkflowHandler', () => {
       instanceId: 'wf_1',
       stepIndex: 2,
       attempt: 0,
+      execution: TEST_EXECUTION,
+      zero: null,
+      assertCurrentAuthority() {},
     } satisfies StepContext<{ customerId: string }>);
 
     expect(output).toBe('summary');
@@ -58,6 +61,9 @@ describe('createAIWorkflowHandler', () => {
       instanceId: 'wf_2',
       stepIndex: 0,
       attempt: 0,
+      execution: TEST_EXECUTION,
+      zero: null,
+      assertCurrentAuthority() {},
     });
 
     expect(output).toMatchObject({
@@ -65,4 +71,17 @@ describe('createAIWorkflowHandler', () => {
       usage: { totalTokens: 10 },
     });
   });
+});
+
+const TEST_EXECUTION = Object.freeze({
+  kind: 'system' as const,
+  principal: 'test',
+  reason: 'AI workflow unit test',
+  scopeKind: 'application' as const,
+  scopeId: 'application',
+  tenantId: null,
+  roles: [] as const,
+  permissions: [] as const,
+  allPermissions: true as const,
+  legacyCompatibility: false,
 });

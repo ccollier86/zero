@@ -1,1023 +1,338 @@
-# Guards & Activity Audit
+# Auth Guards And Audit Boundaries
 
-Route protection by role + planned automatic activity tracking. The guard is a
-one-liner per route group. The audit trail design is wire-once: routes visited,
-data read, data mutated, login/logout, grouped by session.
+Zero has implemented request-scoped authentication and global-role guards. A
+durable authorization/security control-plane trail is also implemented. A
+general user-activity trail, audit-session files, and inactivity-driven session
+expiration remain separate design ideas and are not current framework APIs.
 
-> Status: role guards are platform behavior. The user-activity audit and
-> push-based inactivity timeout sections are deferred design notes. Current
-> browser session recovery is refresh-token based: the SDK restores from the
-> stored refresh token, retries authenticated HTTP calls once after refreshing,
-> reconnects sync with the latest access token, and `AppProvider` redirects
-> protected client routes when auth is lost.
+## Current Runtime Contract
 
-## Role Guard
+`createAuthMiddleware(getTokenService)` resolves Bearer authentication once for
+each HTTP request and adds three values to the Elysia request context:
 
-### The Idea
+- `authContext`: the current live `AuthContext`, or `null` when the request has
+  no acceptable Bearer token;
+- `requireAuth()`: returns the current `AuthContext` or throws a `401`
+  `UNAUTHORIZED` error;
+- `requireAdmin()`: returns the current `AuthContext`, throws `401` when there is
+  no authenticated identity, or throws `403` `FORBIDDEN` when the current
+  global role is not `admin`.
 
-Two roles: `admin` and `user`. Three access levels:
-
-| Level | Who gets in | Used for |
-|-------|------------|----------|
-| `'public'` | Anyone (no auth required) | `/auth/login`, `/auth/register`, `/auth/forgot-password`, `/auth/jwks` |
-| `'user'` | Any authenticated user (`user` or `admin`) | App routes — `/api/todos`, `/api/me`, `/sync` |
-| `'admin'` | Admin only | `/admin/users`, user management |
-
-`admin` is a superset of `user`. There's no role that `user` has but `admin` doesn't.
-
-### Guard Functions
+The two guard functions are request-scoped closures. They are not standalone
+functions to import from `@zero/framework/auth`, and there is no
+`src/auth/guards.ts` module. Destructure and call them inside a route handler:
 
 ```ts
-// src/auth/guards.ts
-
-import type { AuthContext } from './types';
-
-/** Throws 401 if not authenticated */
-export function requireAuth({ authContext }: { authContext: AuthContext | null }) {
-  if (!authContext) {
-    throw new AppError('Unauthorized', 'UNAUTHORIZED', 401);
-  }
-}
-
-/** Throws 401 if not authenticated, 403 if not admin */
-export function requireAdmin({ authContext }: { authContext: AuthContext | null }) {
-  if (!authContext) {
-    throw new AppError('Unauthorized', 'UNAUTHORIZED', 401);
-  }
-  if (authContext.role !== 'admin') {
-    throw new AppError('Forbidden', 'FORBIDDEN', 403);
-  }
-}
+app
+  .get('/api/me', ({ requireAuth }) => {
+    const auth = requireAuth();
+    return {
+      userId: auth.userId,
+      email: auth.email,
+      role: auth.role,
+    };
+  })
+  .get('/api/platform-status', ({ requireAdmin }) => {
+    const admin = requireAdmin();
+    return { ok: true, requestedBy: admin.userId };
+  });
 ```
 
-Two functions. No classes, no configuration, no middleware plugin. They read `authContext` (already derived by the auth middleware) and throw or don't.
-
-### Usage: Route Groups
-
-Elysia's `guard()` applies `beforeHandle` to every route in a group:
+Use `authContext` directly only when authentication is genuinely optional:
 
 ```ts
-const app = new Elysia()
-  .use(createAuthPlugin({ db }))
-  .use(createAuthMiddleware(getTokenService))
-  .use(createAuditMiddleware({ db }))
-  .use(createSyncPlugin({ db, tables: { ... } }))
-
-  // ─── Public routes (no guard) ─────────────────────
-  // Auth plugin already handles /auth/login, /auth/register, /auth/jwks
-  // Nothing extra needed — routes without a guard are public.
-
-  // ─── User routes (any authenticated user) ─────────
-  .guard({ beforeHandle: [requireAuth] }, app => app
-    .get('/api/todos', ({ syncDB }) => syncDB!.query('todos'))
-    .get('/api/me', ({ authContext }) => authContext)
-    .post('/api/todos', ({ syncDB, body }) => {
-      return syncDB!.insert('todos', body);
-    })
-  )
-
-  // ─── Admin routes ─────────────────────────────────
-  .guard({ beforeHandle: [requireAdmin] }, app => app
-    .get('/admin/users', ({ authStore }) => authStore!.listUsers())
-    .delete('/admin/users/:id', ({ authStore, params }) => {
-      return authStore!.deleteUser(params.id);
-    })
-  )
-
-  .listen(3000);
+app.get('/api/greeting', ({ authContext }) => ({
+  greeting: authContext ? `Hello ${authContext.email}` : 'Hello guest',
+}));
 ```
 
-**Public by default, guarded by group.** Routes outside a `guard()` block are public. The auth middleware still runs (it derives `authContext`) but doesn't block — it just sets `authContext: null` for unauthenticated requests. The guard functions are what enforce.
+Missing or invalid credentials deliberately produce `authContext: null`; the
+middleware itself does not reject public routes. A protected handler must call
+the appropriate guard, or use a higher-level Zero declaration that compiles the
+same requirement.
 
-### Usage: Per-Route
+## Recommended App-Owned Routes
 
-For one-off protection without a group:
+Package-mode applications should normally declare authorization on Zero
+endpoints or routers:
 
 ```ts
-.get('/api/sensitive', handler, { beforeHandle: [requireAdmin] })
+import { defineEndpoint } from '@zero/framework/server';
+
+export default defineEndpoint({
+  method: 'GET',
+  path: '/api/account',
+  auth: 'user',
+  handler: ({ user }) => ({
+    userId: user.userId,
+    role: user.role,
+  }),
+});
 ```
 
-### WebSocket Guard
+Use `auth: 'admin'` for a global-platform-admin endpoint. Raw Elysia plugins are
+the advanced escape hatch; when using one, mount the auth plugin and middleware
+and call the request-scoped guard in every protected handler.
 
-The sync engine's WS endpoint verifies the access token from the first
-`sync.auth` message before it accepts subscriptions or other application
-messages. HTTP middleware does not automatically populate WebSocket context,
-so sync receives a lazy token verifier from auth and stores the verified
-identity on `ws.data.authContext`.
+Frontend gates such as `AdminGate`, `SignedIn`, and property gates are display
+conveniences. They do not replace a server guard, resource policy, or Sync
+policy.
+
+## Protected Multipart Routes
+
+Protected multipart requests are rejected during Elysia's `onRequest` phase,
+before the framework parses or buffers the body. This matters for both security
+and resource use: an invalid Bearer token does not need to be discovered only
+after a potentially large upload has been consumed.
+
+`defineEndpoint()` and `defineRouter()` install this early guard automatically
+when their resolved auth requirement is `user` or `admin`. Router auth is
+inherited by nested endpoints, and Zero matches the complete mounted prefix,
+including parameter segments. The normal route authorization guard still runs
+for every content type.
 
 ```ts
-createSyncPlugin({
-  db,
-  tables,
-  auth: {
-    required: true,
-    getTokenVerifier: getTokenService,
-  },
-  policy: {
-    canReadTable({ table, authContext }) {
-      if (authContext?.role === 'admin') return true;
-      return !table.startsWith('admin_');
-    },
+import { t } from 'elysia';
+import { defineEndpoint } from '@zero/framework/server';
+
+export default defineEndpoint({
+  method: 'POST',
+  path: '/api/documents/parse',
+  auth: 'user',
+  body: t.Object({ file: t.File() }),
+  async handler({ body, user }) {
+    return {
+      uploadedBy: user.userId,
+      bytes: body.file.size,
+    };
   },
 });
 ```
 
-Role can determine table visibility through `SyncPolicy.canReadTable`. Direct client writes are checked separately with `canMutateTable`, `canInsert`, `canUpdate`, and `canDelete` (see [Subscription And Mutation Policy](../realtime-sync/realtime-sync/README.md#subscription-and-mutation-policy)).
+No extra upload-auth adapter is needed for that endpoint. The official browser
+client waits for auth restoration, sends the current Bearer token through Eden,
+and retries one replayable `FormData` request after a successful refresh. Do not
+set `Content-Type` manually; the browser must generate the multipart boundary.
 
-## Deferred Inactivity Timeout Design
-
-This section describes the intended audit-driven inactivity feature, not the
-current auth runtime. Today, refresh-token rejection or an unrefreshable 401
-clears auth/session state and `AppProvider` redirects protected routes. The
-future audit system can add server-pushed inactivity expiration on top.
-
-### How It Works
-
-```
-User idle for 30 min
-        │
-        ▼
-┌── Server (periodic scan) ──────────────────────────────────────────┐
-│                                                                     │
-│  ActivityTracker: last event for u_alice was 30min ago              │
-│    │                                                                │
-│    ├── tracker.endSession('u_alice', 'inactive')  → audit file     │
-│    ├── tokenService.revokeAllUserTokens('u_alice') → DB            │
-│    │                                                                │
-│    └── server.publish('auth:u_alice', {            → WS push       │
-│          type: 'auth.session-expired',                              │
-│          reason: 'inactive',                                        │
-│        })                                                           │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-        │
-        ▼ (WS delivers instantly — connection is always live)
-┌── Client SDK ───────────────────────────────────────────────────────┐
-│                                                                     │
-│  routeMessage() receives 'auth.session-expired'                     │
-│    │                                                                │
-│    ├── authClient.expireSession()  → wipe tokens + user state       │
-│    ├── syncClient.reset()          → clear local synced data        │
-│    └── AppProvider guard           → redirect /login                │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-**Heartbeat vs. activity:** The WS connection stays alive via ping/pong (Bun handles this automatically). A user staring at a tab for 30 minutes has a live WebSocket but zero audit events — that's inactive. The inactivity check measures *application activity* (route hits, DB reads/writes, WS mutations), not connection liveness.
-
-### Server Side
-
-The periodic scan runs inside the audit middleware. Every 30 seconds, check each active session's last event timestamp:
+Raw Elysia routes are the explicit escape hatch. Install the early guard before
+the route and use the `zeroAuth` macro for normal route enforcement as well:
 
 ```ts
-// In audit middleware — onStart
-const scanInterval = setInterval(() => {
-  const now = Date.now();
-  for (const [userId, session] of tracker.getActiveSessions()) {
-    const lastEvent = session.events.at(-1);
-    if (!lastEvent || now - lastEvent.ts < config.inactivityTimeoutMs) continue;
+import { Elysia, t } from 'elysia';
+import {
+  createAuthMiddleware,
+  createAuthPlugin,
+  createProtectedMultipartRequestGuard,
+  getTokenService,
+} from '@zero/framework/auth';
 
-    // End the audit session
-    tracker.endSession(userId, 'inactive');
-
-    // Notify via callback — auth plugin handles token revocation + client push
-    config.onInactive?.(userId);
-  }
-}, 30_000);
-
-// In audit middleware — onStop
-clearInterval(scanInterval);
-```
-
-**Personal auth topic:** Each client subscribes to `auth:{userId}` alongside the `sync:*` table topics when the WS connection opens. One extra `ws.subscribe()` call in the sync plugin's `open` handler:
-
-```ts
-// In sync plugin WS open handler
-open(ws) {
-  const authContext = (ws.data as Record<string, unknown>).authContext as AuthContext | null;
-  if (authContext) {
-    ws.subscribe(`auth:${authContext.userId}`);  // personal auth channel
-  }
-  // ... existing table topic subscriptions
-}
-```
-
-Bun auto-unsubscribes on close. No cleanup needed.
-
-### Client Side
-
-The SDK routes the message like any other WS message. One new case in the switch:
-
-```ts
-// Future SDK routeMessage() case
-case 'auth.session-expired':
-  authClient.expireSession();   // wipe tokens and user state
-  syncClient.reset();           // clear synced local data
-  // AppProvider redirects protected routes through the normal auth guard.
-  break;
-```
-
-Apps can still show their own UI around auth loss by watching `useAuth()`:
-
-```tsx
-function AuthLossNotice() {
-  const { isAuthenticated, isLoading } = useAuth();
-  if (isLoading || isAuthenticated) return null;
-  return <p>Please log in again.</p>;
-}
-```
-
-**What the user sees:** They're staring at a page. 30 minutes pass. Suddenly the page redirects to login. Their reactive data, auth-gated routes — all gone from memory. Clean slate. They log in, get a fresh session, the sync engine sends a fresh snapshot, everything rebuilds.
-
-### Why This Is Reliable
-
-The real-time WS connection is **always present** when the app is running. It's not optional infrastructure — it's the sync engine, the backbone. If the user has the app open, the WS is open. If the WS drops, the client reconnects automatically (exponential backoff). The auth signal rides the same connection that powers everything else.
-
-In this deferred design there is no HTTP polling, no `setInterval` on the
-client checking token expiry, and no route-navigation-only auth check. The
-server decides, the server pushes, and the client reacts through the same auth
-clear/reset path used by rejected refresh today.
-
-| Scenario | What happens |
-|----------|-------------|
-| User idle 30min, tab open | Future audit worker pushes `auth.session-expired` → SDK clears state → `AppProvider` redirects |
-| User idle 30min, tab backgrounded | Future behavior is the same when the browser keeps the WS alive |
-| User idle, WS drops and reconnects | Future reconnect can detect ended session and send `auth.session-expired` immediately |
-| Admin force-revokes user | Same push mechanism: `server.publish('auth:{userId}', ...)` → instant redirect |
-| User's refresh token expires naturally | Current behavior: next refresh returns 401, SDK clears auth/local data, `AppProvider` redirects protected routes |
-
-## Activity Audit
-
-### The Idea
-
-Wire it up once. Every route hit, every DB read, every DB write, every login, every logout — captured automatically, grouped by user session, held in memory.
-
-```ts
-// Wire up — one line
-.use(createAuditMiddleware({ db }))
-
-// That's it. Everything below is automatic.
-// Routes:  GET /api/todos → tracked
-// Reads:   syncDB.query('todos') → tracked (table + record IDs)
-// Writes:  syncDB.insert('todos', row) → tracked (table + record ID + op)
-// Login:   POST /auth/login → session started
-// Logout:  POST /auth/logout → session ended
-```
-
-No per-route instrumentation. No `audit.log()` calls in handlers. No decorators. The middleware hooks into Elysia's request lifecycle and ReactiveDB's event system. Route handlers don't know the audit exists.
-
-### How It Works
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Audit Middleware                              │
-│                                                                  │
-│  onBeforeHandle                                                  │
-│  ├── tracker.setCurrentUser(authContext?.userId)                  │
-│  └── record request start time                                   │
-│                                                                  │
-│  During request handling (synchronous)                           │
-│  ├── syncDB.query('todos')     → onQuery fires → tracker logs    │
-│  ├── syncDB.insert('todos', r) → onChange fires → tracker logs   │
-│  └── all DB ops attributed to currentUser (single-threaded)      │
-│                                                                  │
-│  onAfterHandle                                                   │
-│  ├── tracker.trackRoute(method, path, status, duration)          │
-│  └── tracker.setCurrentUser(null)                                │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-**Why this works without AsyncLocalStorage:** bun:sqlite is synchronous. Bun's JS runs on a single thread. When a request handler calls `syncDB.query('todos')`, that query executes synchronously in the same call stack. The `onQuery` listener fires synchronously. `tracker.currentUser` is set before the handler runs and cleared after. There's no interleaving — request A's DB call can't overlap with request B's.
-
-### ReactiveDB Hooks
-
-ReactiveDB already has `onChange` for write tracking. The audit system needs one addition — `onQuery` for read tracking:
-
-```ts
-// Added to ReactiveDB
-onQuery(listener: (event: QueryEvent) => void): () => void;
-
-interface QueryEvent {
-  table: string;
-  type: 'getAll' | 'getOne';
-  rowIds: string[];     // Primary key values of returned rows
-  count: number;        // Number of rows returned
-}
-```
-
-Same pattern as `onChange` — register a listener, get an unsubscribe function. Fires synchronously after every `query()` and `queryOne()` call. Error-isolated (listener throw doesn't propagate to caller).
-
-`onChange` already provides everything needed for write tracking:
-
-```ts
-// Existing ReactiveDB onChange
-interface Change {
-  seq: number;
-  table: string;
-  op: 'INSERT' | 'UPDATE' | 'DELETE';
-  rowId: string;
-  row: Record<string, unknown> | null;
-  ts: number;
-}
-```
-
-The audit system registers both listeners once at startup. Combined with `currentUser`, every DB operation is attributed to the user who triggered it.
-
-### Data Model
-
-```ts
-/** A user's activity from login to logout */
-interface AuditSession {
-  id: string;                    // Session ID (from auth — tied to refresh token)
-  userId: string;
-  startedAt: number;
-  endedAt?: number;
-  endReason?: 'logout' | 'expired' | 'forced' | 'inactive';
-  events: AuditEvent[];
-}
-
-type AuditEvent =
-  | LoginEvent
-  | LogoutEvent
-  | RouteEvent
-  | DataReadEvent
-  | DataWriteEvent;
-
-interface LoginEvent {
-  type: 'login';
-  ts: number;
-  ip?: string;
-  userAgent?: string;
-}
-
-interface LogoutEvent {
-  type: 'logout';
-  ts: number;
-  reason: 'manual' | 'expired' | 'forced' | 'inactive';
-}
-
-interface RouteEvent {
-  type: 'route';
-  ts: number;
-  method: string;                // GET, POST, PUT, DELETE
-  path: string;                  // /api/todos, /admin/users
-  status: number;                // 200, 404, 500
-  ms: number;                    // Response time
-}
-
-interface DataReadEvent {
-  type: 'data.read';
-  ts: number;
-  table: string;                 // 'todos', 'users'
-  recordIds: string[];           // ['uuid-1', 'uuid-2', ...] — PKs of returned rows
-  count: number;                 // Number of records
-}
-
-interface DataWriteEvent {
-  type: 'data.insert' | 'data.update' | 'data.delete';
-  ts: number;
-  table: string;
-  recordId: string;              // PK of the affected row
-}
-```
-
-**`recordIds` on reads is the key field.** When a user loads a list of records, the audit captures exactly which record IDs were returned. At any point you can answer: "what data did this user see at 2:34 PM?" — the audit session has the `data.read` event with the exact table and record IDs.
-
-### ActivityTracker
-
-In-memory for the hot path, drains to disk on session end. Active sessions accumulate events in a `Map`. When a session ends, the writer dumps it to a JSON file and it leaves memory.
-
-```ts
-class ActivityTracker {
-  /** Active sessions — one per logged-in user */
-  private active = new Map<string, AuditSession>();
-
-  /** Recent completed sessions — small ring buffer for debugging only */
-  private recent: AuditSession[] = [];
-  private maxRecent: number;
-
-  /** Write-only file drain */
-  private writer: AuditWriter;
-
-  /** Current request's user — set per-request, single-threaded safety */
-  private currentUserId: string | null = null;
-
-  private unsubChange: (() => void) | null = null;
-  private unsubQuery: (() => void) | null = null;
-
-  constructor(config: { db: ReactiveDB; auditDir?: string; maxRecent?: number }) {
-    this.maxRecent = config.maxRecent ?? 50;
-    this.writer = new AuditWriter(config.auditDir ?? 'data/audit');
-
-    // ─── Wire into ReactiveDB — fires for ALL operations ──
-    this.unsubChange = config.db.onChange((change) => {
-      if (!this.currentUserId) return;
-      if (change.table.startsWith('_')) return;  // Skip internal tables
-
-      this.pushEvent(this.currentUserId, {
-        type: `data.${change.op.toLowerCase()}` as DataWriteEvent['type'],
-        ts: change.ts,
-        table: change.table,
-        recordId: change.rowId,
-      });
-    });
-
-    this.unsubQuery = config.db.onQuery((event) => {
-      if (!this.currentUserId) return;
-      if (event.table.startsWith('_')) return;
-
-      this.pushEvent(this.currentUserId, {
-        type: 'data.read',
-        ts: Date.now(),
-        table: event.table,
-        recordIds: event.rowIds,
-        count: event.count,
-      });
-    });
-  }
-
-  /** Called by middleware — sets context for the current request */
-  setCurrentUser(userId: string | null): void {
-    this.currentUserId = userId;
-  }
-
-  /** Start a new audit session (called on login) */
-  startSession(userId: string, sessionId: string, meta?: { ip?: string; ua?: string }): void {
-    this.active.set(userId, {
-      id: sessionId,
-      userId,
-      startedAt: Date.now(),
-      events: [{
-        type: 'login',
-        ts: Date.now(),
-        ip: meta?.ip,
-        userAgent: meta?.ua,
-      }],
-    });
-  }
-
-  /** End an audit session (called on logout / expiry / force) */
-  endSession(userId: string, reason: LogoutEvent['reason']): void {
-    const session = this.active.get(userId);
-    if (!session) return;
-
-    session.endedAt = Date.now();
-    session.endReason = reason;
-    session.events.push({ type: 'logout', ts: Date.now(), reason });
-
-    // Small recent buffer for debugging (not for querying)
-    this.recent.push(session);
-    if (this.recent.length > this.maxRecent) {
-      this.recent.shift();
-    }
-    this.active.delete(userId);
-
-    // Drain to disk — async, fire-and-forget
-    this.writer.write(session).catch(err => {
-      console.error('[audit] Failed to write session:', err);
-    });
-  }
-
-  /** Track a route visit (called by onAfterHandle) */
-  trackRoute(userId: string, event: Omit<RouteEvent, 'type'>): void {
-    this.pushEvent(userId, { type: 'route', ...event });
-  }
-
-  dispose(): void {
-    this.unsubChange?.();
-    this.unsubQuery?.();
-  }
-
-  private pushEvent(userId: string, event: AuditEvent): void {
-    const session = this.active.get(userId);
-    if (!session) return;  // User not in an active audit session — skip
-    session.events.push(event);
-  }
-}
-```
-
-### Middleware Plugin
-
-```ts
-// src/auth/audit.middleware.ts
-
-export function createAuditMiddleware(config: AuditConfig) {
-  const tracker = new ActivityTracker(config);
-
-  return new Elysia({ name: 'audit' })
-
-    .onStart(() => {
-      console.log('[audit] Activity tracking enabled');
-    })
-
-    .onStop(() => {
-      tracker.dispose();
-      console.log('[audit] Stopped');
-    })
-
-    // Expose tracker for auth plugin (login/logout events) and admin routes
-    .derive({ as: 'global' }, () => ({
-      activityTracker: tracker,
-    }))
-
-    // ─── Automatic request tracking ─────────────────
-    .onBeforeHandle(({ authContext, request }) => {
-      tracker.setCurrentUser(authContext?.userId ?? null);
-      // Stash start time on request for duration calc
-      (request as Record<string, unknown>).__auditStart = performance.now();
-    })
-
-    .onAfterHandle(({ authContext, request, path, set }) => {
-      if (authContext) {
-        const start = (request as Record<string, unknown>).__auditStart as number;
-        tracker.trackRoute(authContext.userId, {
-          ts: Date.now(),
-          method: request.method,
-          path,
-          status: (set.status as number) ?? 200,
-          ms: Math.round(performance.now() - start),
-        });
-      }
-      tracker.setCurrentUser(null);
-    })
-
-    .onError(({ authContext }) => {
-      // Clear user context on error too
-      tracker.setCurrentUser(null);
-    });
-}
-```
-
-**Wire once:**
-
-```ts
 const app = new Elysia()
   .use(createAuthPlugin({ db }))
   .use(createAuthMiddleware(getTokenService))
-  .use(createAuditMiddleware({ db }))              // ← one line
-  .use(createSyncPlugin({ db, tables: { ... } }))
-  .listen(3000);
-```
-
-Everything after this line is tracked automatically. No route code changes. No `audit.log()` calls. Sit and forget.
-
-### Auth Plugin Integration
-
-The auth plugin calls `activityTracker.startSession()` on login and `endSession()` on logout. Since the tracker is derived globally, the auth plugin accesses it from context:
-
-```ts
-// Inside auth.plugin.ts
-
-.post('/login', async ({ activityTracker, body, request }) => {
-  // ... verify credentials, issue tokens ...
-
-  activityTracker?.startSession(user.userId, sessionId, {
-    ip: request.headers.get('x-forwarded-for') ?? undefined,
-    ua: request.headers.get('user-agent') ?? undefined,
+  .onRequest(createProtectedMultipartRequestGuard(getTokenService, {
+    requirement: 'user',
+    method: 'POST',
+    path: '/api/documents/parse',
+  }))
+  .post('/api/documents/parse', ({ body, requireAuth }) => {
+    const user = requireAuth();
+    return { uploadedBy: user.userId, bytes: body.file.size };
+  }, {
+    zeroAuth: 'user',
+    body: t.Object({ file: t.File() }),
   });
-
-  return { accessToken, refreshToken, user };
-})
-
-.post('/logout', ({ activityTracker, authContext, body }) => {
-  // ... revoke refresh token ...
-
-  if (authContext) {
-    activityTracker?.endSession(authContext.userId, 'manual');
-  }
-
-  return { ok: true };
-})
 ```
 
-**Forced logout / inactivity:** If the server detects an expired refresh token (user didn't re-authenticate within the refresh window), it calls `endSession(userId, 'expired')`. If an admin revokes a user's tokens, it calls `endSession(userId, 'forced')`. Inactivity timeout (no requests for N minutes) can be checked via a periodic scan of active sessions — if `lastEventTs` exceeds the threshold, `endSession(userId, 'inactive')`.
+Use `requirement: 'admin'` and `zeroAuth: 'admin'` together for a global-admin
+upload. Non-multipart and non-matching requests pass through the early hook and
+reach ordinary route authorization. Public multipart routes stay public. Early
+failures use the normal stable JSON contract: `401 UNAUTHORIZED`, `403
+FORBIDDEN`, or `503 AUTH_NOT_READY`.
 
-### What Gets Captured (Example)
+Bearer hydration is memoized per `Request` and per app-local `TokenService`, so
+root middleware, a nested router, the early guard, and the normal handler share
+one live resolution without leaking identity between separate Zero apps. The
+`getTokenService` convenience getter is suitable for an unambiguous standalone
+composition; a process hosting multiple app runtimes must pass a getter for the
+specific runtime instead. Zero-compiled `createApp()` routes already do this.
 
-Alice logs in, browses todos, adds one, views users, logs out:
+## Authorization Kernel
+
+The server export includes the pure `AuthorizationKernel` used by Zero's
+common policy vocabulary:
 
 ```ts
-{
-  id: 'sess_abc123',
-  userId: 'u_alice',
-  startedAt: 1709500000000,
-  endedAt:   1709503600000,
-  endReason: 'logout',
-  events: [
-    { type: 'login',       ts: 1709500000000, ip: '192.168.1.10', userAgent: 'Mozilla/5.0...' },
-    { type: 'route',       ts: 1709500001000, method: 'GET',  path: '/api/todos', status: 200, ms: 3 },
-    { type: 'data.read',   ts: 1709500001002, table: 'todos', recordIds: ['t_1', 't_2', 't_3'], count: 3 },
-    { type: 'route',       ts: 1709500060000, method: 'POST', path: '/api/todos', status: 200, ms: 5 },
-    { type: 'data.insert', ts: 1709500060003, table: 'todos', recordId: 't_4' },
-    { type: 'route',       ts: 1709500120000, method: 'GET',  path: '/admin/users', status: 200, ms: 2 },
-    { type: 'data.read',   ts: 1709500120001, table: 'users', recordIds: ['u_alice', 'u_bob'], count: 2 },
-    { type: 'route',       ts: 1709503600000, method: 'POST', path: '/auth/logout', status: 200, ms: 1 },
-    { type: 'logout',      ts: 1709503600000, reason: 'manual' },
-  ]
-}
-```
+import {
+  createAuthorizationKernel,
+  resolveAuthBehaviorConfig,
+} from '@zero/framework/server';
 
-**Answer any question about Alice's session:**
-- What pages did she visit? → Filter `type: 'route'`
-- What data did she see? → Filter `type: 'data.read'` — table `todos`, records `t_1, t_2, t_3`
-- What did she change? → Filter `type: 'data.insert'` — added `t_4` to `todos`
-- When did she leave? → `endedAt`, `endReason: 'logout'`
-
-### WS Activity Tracking
-
-WebSocket mutations through the sync engine are also tracked. The sync plugin's WS `message` handler runs synchronously — same single-threaded guarantee:
-
-```
-WS message arrives
-  │
-  ├── Sync plugin message handler
-  │   ├── tracker.setCurrentUser(ws.data.authContext.userId)
-  │   ├── db.insert('todos', row)  ← onChange fires, tracker logs data.insert
-  │   └── tracker.setCurrentUser(null)
-  │
-  └── The audit event is captured — same as HTTP
-```
-
-The sync plugin just needs two lines at the start and end of its `message` handler:
-
-```ts
-message(ws, message) {
-  const userId = (ws.data as Record<string, unknown>).authContext?.userId;
-  tracker?.setCurrentUser(userId ?? null);
-
-  // ... existing message routing (sync.subscribe, sync.mutate) ...
-
-  tracker?.setCurrentUser(null);
-}
-```
-
-### Storage
-
-Two tiers: in-memory for the hot path (zero overhead per request), JSON files on disk for persistence (one file per session, folders per user).
-
-```
-                   In-Memory                              Disk
-              ┌─────────────────┐                 ┌───────────────────────────┐
-              │  active Map     │   endSession()  │  data/audit/              │
-  events ────►│  (per user)     │ ───────────────►│  ├── u_alice/             │
-              │                 │   write .json    │  │   ├── 2026-03-03/      │
-              │  recent[]       │                  │  │   │   ├── sess_abc.json│
-              │  (ring buffer)  │                  │  │   │   └── sess_def.json│
-              └─────────────────┘                 │  │   └── 2026-03-02/      │
-                query active                       │  │       └── sess_ghi.json│
-                sessions here                      │  ├── u_bob/              │
-                                                   │  │   └── 2026-03-03/     │
-                                                   │  │       └── sess_jkl.json│
-                                                   │  └── _active/            │
-                                                   │      └── (crash recovery) │
-                                                   └───────────────────────────┘
-                                                     query historical sessions
-                                                     by user, date, or both
-```
-
-| Tier | Contents | Writes | Lifetime |
-|------|----------|--------|----------|
-| `active` Map | One `AuditSession` per logged-in user | Every event (synchronous, in-process) | Until logout/expiry |
-| `recent` array | Ring buffer of recently ended sessions (default 100) | On session end | Until evicted (FIFO) |
-| JSON files | One file per completed session | On session end (async write) | Permanent |
-
-**The in-memory tier is the working set.** Route handlers, ReactiveDB listeners, and the middleware all write here synchronously during request handling. Zero I/O on the hot path.
-
-**The JSON files are the audit record.** When a session ends, the complete `AuditSession` object is written as a single JSON file into the user's date folder. The directory structure itself is the index — no database, no parsing needed to find sessions.
-
-### Directory Structure
-
-Folder per user, subfolder per date, file per session:
-
-```
-data/audit/
-├── u_alice/
-│   ├── 2026-03-03/
-│   │   ├── sess_a1b2c3.json        ← morning session
-│   │   └── sess_d4e5f6.json        ← afternoon session (re-login)
-│   ├── 2026-03-02/
-│   │   └── sess_g7h8i9.json
-│   └── 2026-03-01/
-│       └── sess_j0k1l2.json
-├── u_bob/
-│   ├── 2026-03-03/
-│   │   └── sess_m3n4o5.json
-│   └── 2026-03-01/
-│       └── sess_p6q7r8.json
-└── _active/
-    ├── u_alice.json                 ← crash recovery snapshot
-    └── u_bob.json
-```
-
-**The filesystem is the index.** No parsing needed for most queries:
-
-| Question | Answer | How |
-|----------|--------|-----|
-| All of Alice's sessions? | `ls data/audit/u_alice/` | List user folder |
-| Alice's sessions on March 3? | `ls data/audit/u_alice/2026-03-03/` | List date subfolder |
-| All activity on March 3? | `ls data/audit/*/2026-03-03/` | Glob across users |
-| All users who have audit data? | `ls data/audit/` | List root (skip `_active`) |
-| Specific session details? | Read the one `.json` file | Direct file read |
-| How many sessions total? | `find data/audit -name '*.json' | wc -l` | Count files |
-
-No grep. No jq. No parsing. Just `ls` and `cat`.
-
-### File Format
-
-Each session file is a single, self-contained JSON object (not JSONL — one session = one file = one object):
-
-```json
-{
-  "id": "sess_a1b2c3",
-  "userId": "u_alice",
-  "startedAt": 1709500000000,
-  "endedAt": 1709503600000,
-  "endReason": "logout",
-  "events": [
-    { "type": "login", "ts": 1709500000000, "ip": "192.168.1.10", "userAgent": "Mozilla/5.0..." },
-    { "type": "route", "ts": 1709500001000, "method": "GET", "path": "/api/todos", "status": 200, "ms": 3 },
-    { "type": "data.read", "ts": 1709500001002, "table": "todos", "recordIds": ["t_1", "t_2", "t_3"], "count": 3 },
-    { "type": "route", "ts": 1709500060000, "method": "POST", "path": "/api/todos", "status": 200, "ms": 5 },
-    { "type": "data.insert", "ts": 1709500060003, "table": "todos", "recordId": "t_4" },
-    { "type": "route", "ts": 1709503600000, "method": "POST", "path": "/auth/logout", "status": 200, "ms": 1 },
-    { "type": "logout", "ts": 1709503600000, "reason": "manual" }
-  ]
-}
-```
-
-**Why one file per session, not JSONL:**
-- **The folder structure answers the common questions.** "Who?" = user folder. "When?" = date folder. "What?" = open the file. No parsing needed for navigation.
-- **Each session is independently readable.** `cat sess_a1b2c3.json | jq .` — valid JSON, pretty-printable, no line extraction needed.
-- **Trivially archivable.** Zip a user's folder. Zip a date folder. Ship to cold storage. Move old folders to S3.
-- **Deletion is `rm`.** Remove a user's data? `rm -rf data/audit/u_alice/`. Remove a day? `rm -rf data/audit/*/2026-03-01/`. No database surgery.
-
-**Why not a database:**
-- Same reasons as before: zero hot-path overhead, no schema, no indexes, no transactions, no coupling.
-- The folder-per-user structure gives you "indexed" access to user + date without maintaining actual indexes.
-
-### AuditWriter
-
-Write-only. The app drains sessions to disk and never reads them back. Audit files are consumed externally — `cat`, `jq`, `ls`, a separate admin tool, a log aggregator. Keeping the app write-only means there's no API surface to expose or tamper with audit data through the running application.
-
-```ts
-class AuditWriter {
-  private dir: string;
-
-  constructor(dir: string) {
-    this.dir = dir;
-  }
-
-  /** Write a completed session to its user/date/session.json path */
-  async write(session: AuditSession): Promise<void> {
-    const date = new Date(session.endedAt!).toISOString().slice(0, 10);
-    const path = `${this.dir}/${session.userId}/${date}/${session.id}.json`;
-
-    // Bun.write creates parent dirs automatically
-    await Bun.write(path, JSON.stringify(session, null, 2));
-  }
-}
-```
-
-That's it. One class, one method, one `Bun.write()` call. The writer doesn't read, query, list, or delete anything. It creates files and nothing else.
-
-**Why write-only:**
-- **Tamper resistance.** The running application cannot read or modify audit data. A compromised app process can't enumerate sessions, alter records, or selectively delete evidence. The files are only accessible via filesystem tools or a separate trusted process.
-- **Minimal attack surface.** No `/admin/audit` API routes that could leak session data. No query methods that could be abused for enumeration. The app doesn't even know how to parse its own audit files.
-- **Separation of duties.** The app generates audit data. A separate tool/person reviews it. These are different roles with different access. The app shouldn't be in the business of serving its own audit trail.
-- **Simplicity.** ~15 lines of code. Nothing to test except "did the file get created?"
-
-### Crash Recovery
-
-If the process crashes mid-session, active sessions haven't been written to disk yet. The `_active/` folder holds periodic snapshots:
-
-```
-data/audit/
-└── _active/
-    ├── u_alice.json     ← snapshot of Alice's in-progress session
-    └── u_bob.json       ← snapshot of Bob's in-progress session
-```
-
-**Periodic flush (recommended):** Every N minutes, snapshot each active session to `_active/{userId}.json`. On startup, read `_active/` to recover in-flight sessions:
-
-```ts
-// Periodic flush — cron via Elysia or setInterval
-private flushActive(): void {
-  for (const [userId, session] of this.active) {
-    // Overwrite — this is a snapshot of the current state
-    Bun.write(
-      `${this.dir}/_active/${userId}.json`,
-      JSON.stringify(session, null, 2),
-    );
-  }
-}
-
-// On startup — recover crashed sessions
-private async recoverActive(): Promise<void> {
-  const glob = new Bun.Glob('*.json');
-  for await (const file of glob.scan(`${this.dir}/_active`)) {
-    const text = await Bun.file(`${this.dir}/_active/${file}`).text();
-    const session: AuditSession = JSON.parse(text);
-
-    // End as 'forced' — process crashed during this session
-    session.endedAt = Date.now();
-    session.endReason = 'forced';
-    session.events.push({ type: 'logout', ts: Date.now(), reason: 'forced' });
-
-    // Write to the user's permanent audit folder
-    await this.writer.write(session);
-
-    // Clean up snapshot
-    await Bun.write(`${this.dir}/_active/${file}`, '');
-  }
-}
-```
-
-One snapshot file per active user — overwritten each flush cycle. On recovery, each snapshot is finalized as a 'forced' logout and moved to the user's permanent folder.
-
-### Reading Audit Data
-
-The app doesn't read its own audit files. Review happens externally — the filesystem is the query layer.
-
-**CLI / shell — the directory IS the query:**
-
-```bash
-# Who has audit data?
-ls data/audit/
-# → u_alice/  u_bob/  _active/
-
-# All of Alice's session dates
-ls data/audit/u_alice/
-# → 2026-03-01/  2026-03-02/  2026-03-03/
-
-# Alice's sessions on March 3
-ls data/audit/u_alice/2026-03-03/
-# → sess_a1b2c3.json  sess_d4e5f6.json
-
-# Read a specific session (it's just JSON)
-cat data/audit/u_alice/2026-03-03/sess_a1b2c3.json | jq .
-
-# All activity on March 3 across all users
-cat data/audit/*/2026-03-03/*.json | jq .
-
-# What data did Alice read today?
-cat data/audit/u_alice/2026-03-03/*.json \
-  | jq '.events[] | select(.type == "data.read")'
-
-# All forced logouts across all users
-find data/audit -name '*.json' -not -path '*/_active/*' \
-  -exec grep -l '"endReason":"forced"' {} \;
-
-# Total sessions per user
-for u in data/audit/*/; do
-  count=$(find "$u" -name '*.json' | wc -l)
-  echo "$(basename $u): $count sessions"
-done
-```
-
-### Configuration
-
-```ts
-interface AuditConfig {
-  /** Shared ReactiveDB — for onChange/onQuery listeners */
-  db: ReactiveDB;
-
-  /** Root directory for audit files (default: 'data/audit') */
-  auditDir?: string;
-
-  /** Max recent completed sessions kept in memory (default: 100) */
-  maxRecent?: number;
-
-  /** Flush active sessions to _active/ every N ms (default: 60000 — 1 min) */
-  flushIntervalMs?: number;
-
-  /** Inactivity timeout — end session if no events for N ms (default: 1800000 — 30 min) */
-  inactivityTimeoutMs?: number;
-
-  /** Called when a user is detected as inactive — the auth plugin wires this to revoke tokens
-   *  and publish `auth.session-expired`. Decouples audit from token service. */
-  onInactive?: (userId: string) => void;
-}
-```
-
-The `onInactive` callback decouples the audit system from the token service. The audit middleware detects inactivity; the auth plugin decides what to do about it. Wiring happens at the composition root:
-
-```ts
-// In app.ts — the auth plugin wires the callback
-.use(createAuditMiddleware({
-  db,
-  onInactive: (userId) => {
-    // Auth plugin handles token revocation + client notification
-    getTokenService()?.revokeAllUserTokens(userId);
-    server?.publish(`auth:${userId}`, JSON.stringify({
-      type: 'auth.session-expired',
-      reason: 'inactive',
-    }));
+const config = resolveAuthBehaviorConfig({
+  tenancy: 'multi',
+  authorization: {
+    mode: 'advanced',
+    permissions: {
+      'patients:read': { label: 'View patients' },
+      'patients:write': { label: 'Edit patients' },
+    },
+    roles: {
+      clinician: {
+        permissions: ['patients:read', 'patients:write'],
+      },
+      owner: {
+        allPermissions: true,
+        system: true,
+      },
+    },
   },
-}))
+});
+
+const authorization = createAuthorizationKernel(config);
+const requirement = authorization.compile({
+  user: 'required',
+  tenant: 'required',
+  permission: 'patients:read',
+});
+
+// `subject` must come from a trusted server session/scope adapter.
+const decision = authorization.evaluate(requirement, subject);
 ```
 
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `AUDIT_DIR` | `data/audit` | Root directory for audit file tree |
-| `AUDIT_FLUSH_INTERVAL` | `60000` | Active session snapshot interval (ms) |
-| `AUDIT_INACTIVITY_TIMEOUT` | `1800000` | End session after 30min of no activity |
+`compile()` validates declared roles, permissions, and policy-trusted
+properties. `merge(parent, child)` preserves every inherited constraint.
+`evaluate()` returns an allow/deny decision with the compiled requirement,
+validated scope, and stable denial reason; `authorize()` throws Zero's `401` or
+`403` `AuthError` contract instead. `synthesizeSingleSimpleScope()` is a
+compatibility helper for the exact `single/simple` profile.
 
-### Disk Footprint
+The kernel itself deliberately does not load a user, tenant, membership,
+token, or row. App-local adapters supply live server-owned authority. Managed
+Elysia endpoints, `zeroAuth`, `defineEndpoint`, file-router layouts/pages and
+`route.ts` handlers, request `context.access`, built-in service facades,
+registered resource CRUD, `/api/data`, WebSocket Sync, and authenticated
+workflow execution all consume that shared contract. Page-session identity is
+accepted only on the safe page boundary; the router then evaluates the same
+compiled requirement.
 
-Each completed session is one JSON file. Size depends on activity:
+For registered app tables, use `authorizationPolicy(requirement)` in the
+server-only `defineResource()` declaration. It accepts this exact requirement
+shape and projects the current application or tenant assignment through the
+same kernel for each exposed CRUD, lazy-read, and Sync surface. The independent
+resource `exposure` value (`internal`, `http`, `sync`, or `all`) decides which
+of those transports exists; policy cannot broaden it. Advanced roles are
+therefore a live enforcement input, not UI metadata, and apps do not need a
+parallel resource permission adapter.
 
-| Session type | Events | File size | Per day (4 users) |
-|-------------|--------|-----------|-------------------|
-| Quick browse (5 min) | ~20 events | ~3 KB | ~12 KB |
-| Normal workday (8 hrs) | ~500 events | ~60 KB | ~240 KB |
-| Heavy use (8 hrs, lots of mutations) | ~2000 events | ~250 KB | ~1 MB |
+## Low-Level Standalone Auth And Sync Composition
 
-A month of heavy use by 4 users: ~30 MB. A year: ~360 MB. Trivial — and neatly organized by user and date.
-
-**Retention:** No built-in rotation — the files are small enough that years of data fit comfortably. To prune: `find data/audit -type d -name '2025-*' -exec rm -rf {} +` removes all of last year. Or archive: `tar czf audit-2025.tar.gz data/audit/*/2025-*/`.
-
-## Composition
-
-### Full Setup
+Most applications should use `createApp()`, which owns plugin order, database
+lifecycle, auth middleware, Sync authentication, and platform policy. If a
+standalone Elysia composition is necessary, `createSyncPlugin()` owns creation
+of its `ReactiveDB`. Pass a `ReactiveDBConfig`, capture that exact instance with
+the synchronous `onDatabaseCreated` hook, mount Sync first, then mount auth with
+the captured database:
 
 ```ts
 import { Elysia } from 'elysia';
-import { createReactiveDB } from './sync/reactive-db';
-import { createSyncPlugin } from './sync';
 import {
-  createAuthPlugin,
   createAuthMiddleware,
+  createAuthPlugin,
   getTokenService,
-  requireAuth,
-  requireAdmin,
-} from './auth';
-import { createAuditMiddleware } from './auth/audit.middleware';
+  installAuthStopBarrier,
+} from '@zero/framework/auth';
+import {
+  createDefaultSyncPolicy,
+  createSyncPlugin,
+  type ReactiveDB,
+} from '@zero/framework/sync';
 
-const db = createReactiveDB({ mode: 'memory' });
+let db!: ReactiveDB;
 
-const app = new Elysia()
-  // 1. Auth — users, credentials, login/register/refresh/logout
-  .use(createAuthPlugin({ db }))
-
-  // 2. Auth middleware — JWT verification + live authContext on every request
-  .use(createAuthMiddleware(getTokenService))
-
-  // 3. Audit — automatic activity tracking (sits on top of authContext)
-  .use(createAuditMiddleware({ db }))
-
-  // 4. Sync — reactive tables, WS broadcast
-  .use(createSyncPlugin({
-    db,
-    tables: {
-      todos:    { id: 'text primary key', title: 'text not null', done: 'integer default 0' },
-      projects: { id: 'text primary key', name: 'text not null', owner_id: 'text' },
+const syncPlugin = createSyncPlugin({
+  db: { mode: 'memory' },
+  tables: {
+    todos: {
+      id: 'text primary key',
+      title: 'text not null',
+      done: 'integer default 0',
     },
-  }))
+  },
+  onDatabaseCreated(createdDb) {
+    db = createdDb;
+  },
+  auth: {
+    required: true,
+    getTokenVerifier: getTokenService,
+  },
+  policy: createDefaultSyncPolicy({
+    readProtectedTables: ['users'],
+    writeProtectedTables: ['users'],
+  }),
+});
 
-  // ─── Public (no guard) ────────────────────────────
-  // /auth/* routes are already public (handled by auth plugin)
+const app = installAuthStopBarrier(
+  new Elysia()
+    .use(syncPlugin)
+    .use(createAuthPlugin({ db }))
+    .use(createAuthMiddleware(getTokenService))
+    .get('/api/me', ({ requireAuth }) => requireAuth())
+    .get('/api/admin-check', ({ requireAdmin }) => ({
+      adminUserId: requireAdmin().userId,
+    })),
+);
 
-  // ─── User routes ──────────────────────────────────
-  .guard({ beforeHandle: [requireAuth] }, app => app
-    .get('/api/todos', ({ syncDB }) => syncDB!.query('todos'))
-    .post('/api/todos', ({ syncDB, body }) => syncDB!.insert('todos', body))
-  )
-
-  // ─── Admin routes ─────────────────────────────────
-  .guard({ beforeHandle: [requireAdmin] }, app => app
-    .get('/admin/users', ({ authStore }) => authStore!.listUsers())
-  )
-
-  .listen(3000);
+app.listen(3000);
 ```
 
-### Plugin Order
+Do not create a second `ReactiveDB` beside the one owned by the Sync plugin.
+That splits auth rows, application rows, lifecycle, and policy evaluation across
+different databases. Also remember that direct `createSyncPlugin()` composition
+is public/allow-all unless the caller supplies both WebSocket auth and an
+appropriate read/write policy; `createApp()` installs the framework-table
+protections automatically.
 
-```
-  createAuthPlugin        → defines tables, provides /auth/* routes, login/logout call tracker
-  createAuthMiddleware     → derives authContext (JWT + live user/session checks)
-  createAuditMiddleware    → derives activityTracker, hooks onBefore/onAfter, wires into ReactiveDB
-  createSyncPlugin         → defines app tables, WS handler
-  guard(requireAuth)       → beforeHandle on user routes
-  guard(requireAdmin)      → beforeHandle on admin routes
-```
+## Other Authorization Surfaces
 
-Each layer reads from the one before it. Audit reads `authContext`. Guards read `authContext`. Sync reads `db`. Nothing is circular.
+HTTP route guards do not automatically authorize every other transport:
 
-## File Organization (updated)
+- file-routed `route.ts` APIs are Bearer-only and inherit declarative
+  `config.auth` from parent layouts;
+- WebSocket Sync authenticates through `sync.auth`, then applies table,
+  resource, and row policy separately;
+- resources and `/api/data` evaluate their registered resource policies;
+- page-session cookies authenticate only matched safe `GET`/`HEAD` page
+  requests, not APIs, mutations, raw plugins, or Sync;
+- current `role` and `requireAdmin()` checks remain global/platform concepts in
+  every auth profile; they never become tenant membership authority.
 
-```
-src/auth/
-├── user-store.ts           # SQLite operations: users, _credentials, user_properties, _refresh_tokens
-├── token-service.ts        # JWT signing/verification (jose), keypair mgmt, refresh rotation
-├── auth.plugin.ts          # Elysia plugin — lifecycle, derive, routes
-├── auth.middleware.ts       # Elysia middleware — live JWT/user/session resolution
-├── guards.ts               # requireAuth, requireAdmin — pure functions
-├── activity-tracker.ts     # ActivityTracker class — in-memory audit sessions
-├── audit.middleware.ts      # Elysia middleware — wires tracker into request lifecycle + ReactiveDB
-├── types.ts                # AuthContext, UserRecord, TokenPair, AuditSession, AuditEvent, config
-└── index.ts                # Public API: all exports
-```
+For Sync, use a `SyncPolicy` or the resource-policy integration. Do not treat an
+HTTP `requireAuth()` call, a room ID, or a client-side filter as permission to
+subscribe to a table or row.
 
-Eight files. `guards.ts` is ~20 lines. `audit.middleware.ts` is ~60 lines. `activity-tracker.ts` is ~150 lines. Everything else unchanged from the original auth design.
+## Durable Control-Plane Audit
+
+Zero now records a bounded, append-only trail for its own authorization and
+account-security control plane. Successful local mutations write their event
+inside the same SQLite transaction. Platform administrators can query/export
+all scopes; an active-tenant actor with `tenant.audit:read` can query/export
+only its live tenant. Retention is bounded and explicit, and the raw internal
+table is never exposed through Sync.
+
+See [Durable Authorization and Control-Plane Audit](./control-plane-audit.md)
+for the exact event contract, covered mutation inventory, retention config,
+HTTP routes, SDK/hook/viewer, failure semantics, and deliberate exclusions.
+
+This trail must not be confused with general activity tracking. Zero still
+does not export `createAuditMiddleware`, `ActivityTracker`, `activityTracker`,
+an automatic ReactiveDB `onQuery` read-audit hook, an audit-session API, or an
+inactivity worker. Ordinary page/API/data reads and application CRUD are not
+automatically recorded. A connected browser can remain idle without Zero
+creating an audit session or applying an inactivity timeout.
+
+An application-activity or compliance subsystem would still need an explicit
+contract for sensitive-read instrumentation, session identity, multi-process
+coordination, clock/restart behavior, foreground/background clients,
+revocation races, independent custody, legal holds, and external integrity or
+WORM guarantees. Applications needing those properties should forward the
+bounded control-plane events and add app-owned domain/read events to an
+independently controlled sink, then test that integration for their regime.

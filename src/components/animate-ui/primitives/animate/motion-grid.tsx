@@ -3,9 +3,9 @@
 import * as React from 'react';
 import { motion, type HTMLMotionProps } from 'motion/react';
 
-import { cn } from '@/lib/utils';
-import { getStrictContext } from '@/lib/get-strict-context';
-import { Slot, type WithAsChild } from '@/components/animate-ui/primitives/animate/slot';
+import { cn } from '#zero/lib/utils';
+import { getStrictContext } from '#zero/lib/get-strict-context';
+import { Slot, type WithAsChild } from '#zero/components/animate-ui/primitives/animate/slot';
 
 type FrameDot = [number, number];
 type Frame = FrameDot[];

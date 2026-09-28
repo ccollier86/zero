@@ -11,7 +11,8 @@ import { Elysia } from 'elysia';
 import { resolveAuthBehaviorConfig } from '../auth/auth-config';
 import { defineAuthTables } from '../auth/auth-schema';
 import { UserStore } from '../auth/user-store';
-import { createSyncPlugin, getSyncDB } from './sync.plugin';
+import type { ReactiveDB } from './reactive-db';
+import { createSyncPlugin } from './sync.plugin';
 import { createDefaultSyncPolicy } from './sync-policy';
 import type { ServerMessage, SyncTokenVerifier } from './types';
 import {
@@ -30,9 +31,23 @@ interface TestApp {
 }
 
 let app: TestApp | null = null;
+const appDatabases = new WeakMap<object, ReactiveDB>();
+
+function bindDatabase<T extends object>(testApp: T, db: ReactiveDB): T {
+  if (!db) throw new Error('Sync test database was not created');
+  appDatabases.set(testApp, db);
+  return testApp;
+}
+
+function getAppDatabase(testApp: object): ReactiveDB {
+  const db = appDatabases.get(testApp);
+  if (!db) throw new Error('Sync test database is not bound to this app');
+  return db;
+}
 
 function createApp() {
-  return new Elysia()
+  let db!: ReactiveDB;
+  const testApp = new Elysia()
     .use(
       createSyncPlugin({
         db: { mode: 'memory', ringBufferDepth: 100 },
@@ -54,9 +69,14 @@ function createApp() {
           readProtectedTables: ['hidden_docs'],
           writeProtectedTables: ['readonly_docs'],
         }),
+        onDatabaseCreated(created) {
+          db = created;
+        },
       })
     )
     .listen(0);
+
+  return bindDatabase(testApp, db);
 }
 
 function createVerifier(): SyncTokenVerifier {
@@ -75,8 +95,9 @@ function createVerifier(): SyncTokenVerifier {
 
 function createAuthFilteredApp() {
   const verifier = createVerifier();
+  let db!: ReactiveDB;
 
-  return new Elysia()
+  const testApp = new Elysia()
     .use(
       createSyncPlugin({
         db: { mode: 'memory', ringBufferDepth: 100 },
@@ -105,13 +126,19 @@ function createAuthFilteredApp() {
             return true;
           },
         },
+        onDatabaseCreated(created) {
+          db = created;
+        },
       })
     )
     .listen(0);
+
+  return bindDatabase(testApp, db);
 }
 
 function createResourceSyncApp() {
   const verifier = createVerifier();
+  let db!: ReactiveDB;
   const tables = {
     tickets: {
       id: 'text primary key',
@@ -137,7 +164,7 @@ function createResourceSyncApp() {
     }
   );
 
-  return new Elysia()
+  const testApp = new Elysia()
     .use(
       createSyncPlugin({
         db: { mode: 'memory', ringBufferDepth: 100 },
@@ -150,9 +177,14 @@ function createResourceSyncApp() {
           registry,
           authConfig: { userProperties: {} },
         }),
+        onDatabaseCreated(created) {
+          db = created;
+        },
       })
     )
     .listen(0);
+
+  return bindDatabase(testApp, db);
 }
 
 function createLocationPolicyApp() {
@@ -183,6 +215,7 @@ function createLocationPolicyApp() {
     policy: { list: metadataPolicy({ locations: 'clinic-a' }) },
   }), { tables, authConfig });
   let store: UserStore | null = null;
+  let db!: ReactiveDB;
   const pendingApp = new Elysia().use(createSyncPlugin({
     db: { mode: 'memory', ringBufferDepth: 100 }, tables,
     auth: {
@@ -192,8 +225,11 @@ function createLocationPolicyApp() {
     resourcePolicy: new ResourceSyncPolicyService({
       registry, authConfig, getUserStore: () => store,
     }),
+    onDatabaseCreated(created) {
+      db = created;
+    },
   }));
-  const db = getSyncDB()!;
+  if (!db) throw new Error('Sync test database was not created');
   defineAuthTables(db);
   store = new UserStore(db);
   for (const suffix of ['one', 'two']) {
@@ -204,7 +240,8 @@ function createLocationPolicyApp() {
       .run(`location-${suffix}`, `location-${suffix}`, `${suffix}@example.test`, Date.now());
     store.setProperty(`location-${suffix}`, 'locations', 'clinic-a');
   }
-  return { app: pendingApp.listen(0), store };
+  const testApp = bindDatabase(pendingApp.listen(0), db);
+  return { app: testApp, db, store };
 }
 
 function getUrl(app: TestApp, token?: string): string {
@@ -297,11 +334,10 @@ describe('sync policy WebSocket integration', () => {
   test('allows read-protected and write-protected tables to differ', async () => {
     const testApp = createApp();
     app = testApp;
-    const db = getSyncDB();
+    const db = getAppDatabase(testApp);
 
-    expect(db).not.toBeNull();
-    db!.insert('readonly_docs', { id: 'r1', title: 'Readable but service-owned' });
-    db!.insert('hidden_docs', { id: 'h1', title: 'Hidden from sync snapshots' });
+    db.insert('readonly_docs', { id: 'r1', title: 'Readable but service-owned' });
+    db.insert('hidden_docs', { id: 'h1', title: 'Hidden from sync snapshots' });
 
     const conn = await connectWS(getUrl(testApp));
 
@@ -370,11 +406,10 @@ describe('sync policy WebSocket integration', () => {
   test('filters reconnect catchup through auth-aware read policy', async () => {
     const testApp = createAuthFilteredApp();
     app = testApp;
-    const db = getSyncDB();
+    const db = getAppDatabase(testApp);
 
-    expect(db).not.toBeNull();
-    db!.insert('public_docs', { id: 'p0', title: 'Public seed' });
-    db!.insert('admin_docs', { id: 'a0', title: 'Admin seed' });
+    db.insert('public_docs', { id: 'p0', title: 'Public seed' });
+    db.insert('admin_docs', { id: 'a0', title: 'Admin seed' });
 
     const firstUser = await connectWS(getUrl(testApp, 'user-token'));
     firstUser.ws.send(
@@ -400,8 +435,8 @@ describe('sync policy WebSocket integration', () => {
     });
     expect(initialSnapshot.tables.admin_docs).toBeUndefined();
 
-    db!.insert('public_docs', { id: 'p1', title: 'Public replay' });
-    db!.insert('admin_docs', { id: 'a1', title: 'Admin replay' });
+    db.insert('public_docs', { id: 'p1', title: 'Public replay' });
+    db.insert('admin_docs', { id: 'a1', title: 'Admin replay' });
     firstUser.close();
 
     const secondUser = await connectWS(getUrl(testApp, 'user-token'));
@@ -451,15 +486,14 @@ describe('sync policy WebSocket integration', () => {
   test('filters row-constrained resource snapshots and live changes per connection', async () => {
     const testApp = createResourceSyncApp();
     app = testApp;
-    const db = getSyncDB();
+    const db = getAppDatabase(testApp);
 
-    expect(db).not.toBeNull();
-    db!.insert('tickets', {
+    db.insert('tickets', {
       id: 'user-ticket',
       title: 'User Ticket',
       owner_id: 'user-1',
     });
-    db!.insert('tickets', {
+    db.insert('tickets', {
       id: 'other-ticket',
       title: 'Other Ticket',
       owner_id: 'user-2',
@@ -506,7 +540,7 @@ describe('sync policy WebSocket integration', () => {
       ]);
     }
 
-    db!.insert('tickets', {
+    db.insert('tickets', {
       id: 'new-user-ticket',
       title: 'New User Ticket',
       owner_id: 'user-1',
@@ -520,7 +554,7 @@ describe('sync policy WebSocket integration', () => {
       expect(visibleInsert.row?.owner_id).toBe('user-1');
     }
 
-    db!.update('tickets', 'new-user-ticket', { owner_id: 'user-2' });
+    db.update('tickets', 'new-user-ticket', { owner_id: 'user-2' });
     const movedOut = await user.waitForMessage(
       (msg) =>
         msg.type === 'sync.change' &&
@@ -533,7 +567,7 @@ describe('sync policy WebSocket integration', () => {
       expect(movedOut.row).toBeNull();
     }
 
-    db!.update('tickets', 'other-ticket', { owner_id: 'user-1' });
+    db.update('tickets', 'other-ticket', { owner_id: 'user-1' });
     const movedIn = await user.waitForMessage(
       (msg) => msg.type === 'sync.change' && msg.rowId === 'other-ticket'
     );
@@ -550,10 +584,9 @@ describe('sync policy WebSocket integration', () => {
   test('filters row-constrained resource reconnect catchup', async () => {
     const testApp = createResourceSyncApp();
     app = testApp;
-    const db = getSyncDB();
+    const db = getAppDatabase(testApp);
 
-    expect(db).not.toBeNull();
-    db!.insert('tickets', {
+    db.insert('tickets', {
       id: 'user-ticket',
       title: 'User Ticket',
       owner_id: 'user-1',
@@ -574,17 +607,17 @@ describe('sync policy WebSocket integration', () => {
     if (snapshot.type !== 'sync.snapshot') throw new Error('Expected snapshot');
     first.close();
 
-    db!.insert('tickets', {
+    db.insert('tickets', {
       id: 'after-user',
       title: 'After User',
       owner_id: 'user-1',
     });
-    db!.insert('tickets', {
+    db.insert('tickets', {
       id: 'after-other',
       title: 'After Other',
       owner_id: 'user-2',
     });
-    db!.update('tickets', 'user-ticket', { owner_id: 'user-2' });
+    db.update('tickets', 'user-ticket', { owner_id: 'user-2' });
 
     const second = await connectWS(getUrl(testApp, 'user-token'));
     second.ws.send(
@@ -617,7 +650,7 @@ describe('sync policy WebSocket integration', () => {
   test('closes only the connection whose location property loses read access', async () => {
     const local = createLocationPolicyApp();
     app = local.app;
-    const db = getSyncDB()!;
+    const db = local.db;
     db.insert('location_docs', { id: 'before-revoke', title: 'Visible initially' });
 
     const first = await connectWS(getUrl(local.app, 'location-one'));
@@ -652,10 +685,9 @@ describe('sync policy WebSocket integration', () => {
   test('enforces resource policies on direct sync mutations', async () => {
     const testApp = createResourceSyncApp();
     app = testApp;
-    const db = getSyncDB();
+    const db = getAppDatabase(testApp);
 
-    expect(db).not.toBeNull();
-    db!.insert('tickets', {
+    db.insert('tickets', {
       id: 'other-ticket',
       title: 'Other Ticket',
       owner_id: 'user-2',
@@ -683,7 +715,7 @@ describe('sync policy WebSocket integration', () => {
     if (createAck.type === 'sync.ack') {
       expect(createAck.ok).toBe(true);
     }
-    expect(db!.get('tickets', 'created-ticket')?.owner_id).toBe('user-1');
+    expect(db.get('tickets', 'created-ticket')?.owner_id).toBe('user-1');
 
     user.ws.send(
       JSON.stringify({
@@ -706,7 +738,7 @@ describe('sync policy WebSocket integration', () => {
       ok: false,
       error: 'Forbidden',
     });
-    expect(db!.get('tickets', 'other-ticket')?.title).toBe('Other Ticket');
+    expect(db.get('tickets', 'other-ticket')?.title).toBe('Other Ticket');
 
     const admin = await connectWS(getUrl(testApp, 'admin-token'));
     admin.ws.send(
@@ -727,7 +759,7 @@ describe('sync policy WebSocket integration', () => {
     if (adminAck.type === 'sync.ack') {
       expect(adminAck.ok).toBe(true);
     }
-    expect(db!.get('tickets', 'other-ticket')?.title).toBe('Admin Updated');
+    expect(db.get('tickets', 'other-ticket')?.title).toBe('Admin Updated');
 
     user.close();
     admin.close();

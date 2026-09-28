@@ -10,7 +10,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { Elysia, type AnyElysia } from 'elysia';
 
 import { createAuthPlugin, getAuthStore } from '../../auth/auth.plugin';
-import { createSyncPlugin, getSyncDB } from '../../sync';
+import type { ReactiveDB } from '../../sync';
+import { createSyncPlugin } from '../../sync';
 import {
   createServerExtensionApp,
   defineEndpoint,
@@ -116,6 +117,39 @@ describe('server extensions middleware policy', () => {
     await expect(allowed.json()).resolves.toEqual({ area: 'accounting' });
   });
 
+  test('does not authorize middleware from a user-editable property', async () => {
+    const app = await createPolicyApp([
+      defineMiddleware({
+        name: 'unsafe-department-policy',
+        matcher: {
+          path: '/api/accounting',
+          properties: { department: 'accounting' },
+        },
+        run() {},
+      }),
+      defineEndpoint({
+        method: 'GET',
+        path: '/api/accounting',
+        handler: () => ({ area: 'accounting' }),
+      }),
+    ], {
+      departmentEditableBy: 'user',
+      departmentPolicyTrusted: false,
+    });
+
+    const user = await register(app, 'self-editor');
+    getAuthStore()?.setProperty(user.user.userId, 'department', 'accounting');
+
+    const response = await fetch(`${baseUrl(app)}/api/accounting`, {
+      headers: bearer(user.accessToken),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 'AUTH_POLICY_UNAVAILABLE',
+    });
+  });
+
   test('preserves legacy path and auth middleware aliases', async () => {
     let app = await createPolicyApp([
       defineMiddleware({
@@ -172,8 +206,13 @@ describe('server extensions middleware policy', () => {
 });
 
 async function createPolicyApp(
-  extensions: Parameters<typeof createServerExtensionApp>[0]['extensions']
+  extensions: Parameters<typeof createServerExtensionApp>[0]['extensions'],
+  options: {
+    departmentEditableBy?: 'user' | 'admin';
+    departmentPolicyTrusted?: boolean;
+  } = {}
 ): Promise<AnyElysia> {
+  let db!: ReactiveDB;
   let app = new Elysia()
     .use(createSyncPlugin({
       db: { mode: 'memory' },
@@ -183,20 +222,24 @@ async function createPolicyApp(
           name: 'text not null',
         },
       },
+      onDatabaseCreated(created) {
+        db = created;
+      },
     })) as AnyElysia;
 
-  const db = getSyncDB();
   if (!db) throw new Error('Sync DB failed to initialize for test.');
 
   app = app.use(createAuthPlugin({
     db,
+    bootstrap: 'public',
     registration: { mode: 'public' },
     userProperties: {
       department: {
         type: 'enum',
         values: ['operations', 'accounting'],
         default: 'operations',
-        editableBy: 'admin',
+        editableBy: options.departmentEditableBy ?? 'admin',
+        useInPolicies: options.departmentPolicyTrusted ?? true,
       },
     },
   }));

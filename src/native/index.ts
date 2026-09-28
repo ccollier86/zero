@@ -18,6 +18,8 @@ export type {
   NativeAuthStatus,
   NativeSignInOptions,
   NativeSignUpOptions,
+  NativeTenantListResult,
+  NativeTenantSummary,
 } from './client-types';
 export { NativeAuthError } from './errors';
 export type {

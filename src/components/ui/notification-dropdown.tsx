@@ -2,22 +2,22 @@
 
 import * as React from 'react';
 import { CheckCheckIcon } from 'lucide-react';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { Settings } from '@/components/animate-ui/icons/settings';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { Settings } from '#zero/components/animate-ui/icons/settings';
 import type { Transition } from 'motion/react';
 
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
+import { cn } from '#zero/lib/utils';
+import { Button } from '#zero/components/ui/button';
+import { Separator } from '#zero/components/ui/separator';
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from '@/components/animate-ui/components/radix/popover';
+} from '#zero/components/animate-ui/components/radix/popover';
 import {
   NotificationList,
   type NotificationListItem,
-} from '@/components/ui/notification-list';
+} from '#zero/components/ui/notification-list';
 
 // ─── Types ───────────────────────────────────────────────────────────────
 

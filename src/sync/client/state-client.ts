@@ -1,6 +1,26 @@
 import type { StateStore } from './state-store';
 import type { JsonValue, StateChangeEvent } from '../types';
 
+function copyEntries(
+  source: Readonly<Record<string, JsonValue>>,
+  prefix?: string,
+): Record<string, JsonValue> {
+  const result = Object.create(null) as Record<string, JsonValue>;
+  for (const key of Object.keys(source)) {
+    if (prefix === undefined || key.startsWith(prefix)) {
+      result[key] = source[key];
+    }
+  }
+  return result;
+}
+
+function readEntry(
+  entries: Readonly<Record<string, JsonValue>>,
+  key: string,
+): JsonValue | undefined {
+  return Object.hasOwn(entries, key) ? entries[key] : undefined;
+}
+
 /**
  * Client-side state sync API.
  *
@@ -9,6 +29,7 @@ import type { JsonValue, StateChangeEvent } from '../types';
  * Reads are always local (no server round-trip).
  */
 export class StateClient {
+  private authorizationScopeTransition = false;
   private keyListeners = new Map<string, Set<(value: JsonValue | undefined) => void>>();
   private globalListeners = new Set<(event: StateChangeEvent) => void>();
   private unsubStore: () => void;
@@ -32,6 +53,7 @@ export class StateClient {
    * then syncs to server. Value must be JSON-serializable.
    */
   set(key: string, value: JsonValue): void {
+    this.assertScopeWritesAvailable();
     const ref = crypto.randomUUID();
 
     // Optimistic local apply
@@ -54,6 +76,7 @@ export class StateClient {
    * Delete a key. Optimistic — removes locally immediately.
    */
   delete(key: string): void {
+    this.assertScopeWritesAvailable();
     const ref = crypto.randomUUID();
 
     this.store.send({
@@ -72,6 +95,7 @@ export class StateClient {
    * Clear all state for the current user. Optimistic.
    */
   clear(): void {
+    this.assertScopeWritesAvailable();
     const ref = crypto.randomUUID();
 
     // Get all current keys to notify listeners
@@ -100,29 +124,20 @@ export class StateClient {
   get(key: string): JsonValue | undefined;
   get<T extends JsonValue>(key: string, defaultValue: T): T;
   get(key: string, defaultValue?: JsonValue): JsonValue | undefined {
-    const value = this.store.getSnapshot().context.entries[key];
+    const value = readEntry(this.store.getSnapshot().context.entries, key);
     return value !== undefined ? value : defaultValue;
   }
 
-  /**
-   * Get all entries as a plain object. Shallow copy.
-   */
+  /** Get all entries as a shallow, prototype-free dictionary. */
   getAll(): Record<string, JsonValue> {
-    return { ...this.store.getSnapshot().context.entries };
+    return copyEntries(this.store.getSnapshot().context.entries);
   }
 
   /**
    * Get all entries matching a prefix.
    */
   getByPrefix(prefix: string): Record<string, JsonValue> {
-    const entries = this.store.getSnapshot().context.entries;
-    const result: Record<string, JsonValue> = {};
-    for (const key of Object.keys(entries)) {
-      if (key.startsWith(prefix)) {
-        result[key] = entries[key];
-      }
-    }
-    return result;
+    return copyEntries(this.store.getSnapshot().context.entries, prefix);
   }
 
   /** Number of keys in the state. */
@@ -206,7 +221,7 @@ export class StateClient {
   handleSnapshot(): void {
     const entries = this.store.getSnapshot().context.entries;
     for (const [key, listeners] of this.keyListeners) {
-      const value = entries[key];
+      const value = readEntry(entries, key);
       for (const cb of listeners) cb(value);
     }
   }
@@ -219,12 +234,31 @@ export class StateClient {
     this.globalListeners.clear();
   }
 
+  /** @internal Purge user state and freeze writes across a scope replacement. */
+  beginAuthorizationScopeTransition(): void {
+    this.authorizationScopeTransition = true;
+    this.store.send({ type: 'state.reset' } as any);
+  }
+
+  /** @internal Resume state operations after replacement credentials install. */
+  completeAuthorizationScopeTransition(): void {
+    this.authorizationScopeTransition = false;
+  }
+
   // ─── Internal ────────────────────────────────────────────────────────
 
   private notifyKeyListeners(key: string, value: JsonValue | undefined): void {
     const listeners = this.keyListeners.get(key);
     if (!listeners) return;
     for (const cb of listeners) cb(value);
+  }
+
+  private assertScopeWritesAvailable(): void {
+    if (this.authorizationScopeTransition) {
+      throw new Error(
+        '[state] Writes are unavailable during an authorization scope transition.',
+      );
+    }
   }
 
   private notifyGlobalListeners(event: StateChangeEvent): void {

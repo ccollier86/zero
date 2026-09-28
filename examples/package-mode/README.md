@@ -95,8 +95,18 @@ process memory and Zero writes snapshot recovery files under `./data`. Set
 The starter also mounts the platform KV/cache service by default with journal
 and checkpoint files under `ZERO_KV_BASE_DIR` or `./data/kv`.
 The generated starter keeps auth and state sync off by default so the first app
-page is public and quiet. Enable auth, email verification, MFA, or sync in
-`zero.config.ts` when the app needs those systems.
+page is public and quiet. To enable accounts, generate a bootstrap secret and
+start with auth enabled:
+
+```sh
+openssl rand -base64 32
+# Set the result as AUTH_BOOTSTRAP_SECRET, then set ZERO_AUTH_ENABLED=true.
+```
+
+The first-administrator form asks for that operator setup key. Zero consumes
+the bootstrap opportunity once, and later self-registration follows the
+configured registration mode. Keep the secret in deployment secrets rather
+than source; it is never returned by the auth config APIs.
 It also enables `/sitemap.xml` from public static routes. Keep utility pages
 such as login/reset flows in `sitemap.exclude`, and add dynamic pages through
 `sitemap.entries` after your app can enumerate concrete URLs.

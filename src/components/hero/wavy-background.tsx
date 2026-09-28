@@ -10,7 +10,7 @@
 
 import * as React from 'react';
 
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 
 const DEFAULT_WAVE_COLORS = [
   '#38bdf8',

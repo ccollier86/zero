@@ -13,6 +13,7 @@ import {
   enforceServerPolicy,
   evaluateServerPolicy,
   getEffectiveAuthRequirement,
+  type ZeroPolicyUserPropertyRegistry,
   type ZeroPolicyUserPropertyStore,
 } from './server-policy';
 
@@ -118,12 +119,51 @@ describe('server policy', () => {
     const result = evaluateServerPolicy(
       { properties: { department: 'accounting' } },
       { authContext: user },
-      { getPropertyStore: () => null }
+      {
+        getPropertyStore: () => null,
+        getPropertyRegistry: () => propertyRegistry(['department']),
+      }
     );
 
     expect(result).toMatchObject({
       allowed: false,
-      status: 401,
+      status: 503,
+      reason: 'auth-unavailable',
+    });
+  });
+
+  test('fails closed for unknown or user-editable property policy keys', () => {
+    const store = propertyStore({ department: 'accounting' });
+    const result = evaluateServerPolicy(
+      { properties: { department: 'accounting' } },
+      { authContext: user },
+      {
+        getPropertyStore: () => store,
+        getPropertyRegistry: () => propertyRegistry([]),
+      }
+    );
+
+    expect(result).toMatchObject({
+      allowed: false,
+      status: 500,
+      reason: 'property-untrusted',
+      metadata: { propertyKeys: ['department'] },
+    });
+  });
+
+  test('fails closed when the configured property registry is unavailable', () => {
+    const result = evaluateServerPolicy(
+      { properties: { department: 'accounting' } },
+      { authContext: user },
+      {
+        getPropertyStore: () => propertyStore({ department: 'accounting' }),
+        getPropertyRegistry: () => null,
+      }
+    );
+
+    expect(result).toMatchObject({
+      allowed: false,
+      status: 503,
       reason: 'auth-unavailable',
     });
   });
@@ -141,7 +181,10 @@ function policy(
   return evaluateServerPolicy(
     { properties },
     { authContext: user },
-    { getPropertyStore: () => store }
+    {
+      getPropertyStore: () => store,
+      getPropertyRegistry: () => propertyRegistry(Object.keys(properties)),
+    }
   );
 }
 
@@ -149,6 +192,15 @@ function propertyStore(properties: Record<string, string>): ZeroPolicyUserProper
   return {
     getProperties() {
       return properties;
+    },
+  };
+}
+
+function propertyRegistry(trustedKeys: string[]): ZeroPolicyUserPropertyRegistry {
+  const trusted = new Set(trustedKeys);
+  return {
+    isPolicyTrusted(key) {
+      return trusted.has(key);
     },
   };
 }

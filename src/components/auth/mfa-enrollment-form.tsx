@@ -9,33 +9,36 @@
  */
 
 import * as React from 'react';
+import { writeAuthClipboardText } from './auth-clipboard';
 import { motion, AnimatePresence } from 'motion/react';
 
 import type {
+  AuthCompletionResult,
   AuthMfaMethodType,
   AuthMfaSetupStartResult,
 } from '../../frontend/client/auth-client';
 import { useAuth } from '../../frontend/client/auth-hooks';
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent } from '@/components/ui/card';
-import { QRCode } from '@/components/qr-code';
-import { AuthHeader } from '@/components/auth/auth-header';
-import { OTPVerification } from '@/components/auth/otp-verification';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { CircleX } from '@/components/animate-ui/icons/circle-x';
-import { Copy } from '@/components/animate-ui/icons/copy';
-import { Key } from '@/components/animate-ui/icons/key';
-import { Loader } from '@/components/animate-ui/icons/loader';
-import { Send } from '@/components/animate-ui/icons/send';
+import { cn } from '#zero/lib/utils';
+import { Button } from '#zero/components/ui/button';
+import { Input } from '#zero/components/ui/input';
+import { Label } from '#zero/components/ui/label';
+import { Card, CardContent } from '#zero/components/ui/card';
+import { QRCode } from '#zero/components/qr-code';
+import { AuthHeader } from '#zero/components/auth/auth-header';
+import { OTPVerification } from '#zero/components/auth/otp-verification';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
+import { Copy } from '#zero/components/animate-ui/icons/copy';
+import { Key } from '#zero/components/animate-ui/icons/key';
+import { Loader } from '#zero/components/animate-ui/icons/loader';
+import { Send } from '#zero/components/animate-ui/icons/send';
 import {
   authFeedbackAnimate,
   authFeedbackExit,
   authFeedbackInitial,
   authPresenceTransition,
 } from './auth-motion';
+import { nextAuthRovingRadioIndex } from './auth-roving-radio';
 
 export interface MFAEnrollmentFormProps {
   setupToken?: string;
@@ -43,6 +46,7 @@ export interface MFAEnrollmentFormProps {
   allowUserChoice?: boolean;
   preferredMethod?: AuthMfaMethodType;
   onSuccess?: () => void;
+  onComplete?: (result: AuthCompletionResult) => void;
   onBack?: () => void;
   className?: string;
 }
@@ -50,12 +54,27 @@ export interface MFAEnrollmentFormProps {
 const DEFAULT_METHODS: AuthMfaMethodType[] = ['totp', 'email'];
 
 /** Start and verify MFA enrollment for auth or profile settings flows. */
-export function MFAEnrollmentForm({
+export function MFAEnrollmentForm(props: MFAEnrollmentFormProps) {
+  const auth = useAuth();
+  return (
+    <MFAEnrollmentFormScope
+      key={mfaEnrollmentFlowKey(
+        auth.user?.userId,
+        props.setupToken,
+        props.methods,
+      )}
+      {...props}
+    />
+  );
+}
+
+function MFAEnrollmentFormScope({
   setupToken,
   methods = DEFAULT_METHODS,
   allowUserChoice = true,
   preferredMethod,
   onSuccess,
+  onComplete,
   onBack,
   className,
 }: MFAEnrollmentFormProps) {
@@ -71,6 +90,7 @@ export function MFAEnrollmentForm({
   const [setup, setSetup] = React.useState<AuthMfaSetupStartResult | null>(null);
   const [starting, setStarting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const methodRefs = React.useRef(new Map<AuthMfaMethodType, HTMLButtonElement>());
   const shouldChooseMethod = allowUserChoice && availableMethods.length > 1 && !setup;
 
   React.useEffect(() => {
@@ -92,34 +112,75 @@ export function MFAEnrollmentForm({
 
   async function verifySetup(code: string) {
     if (!setup) return;
-    await verifyMfaSetup({ verificationToken: setup.verificationToken, code });
+    const result = await verifyMfaSetup({ verificationToken: setup.verificationToken, code });
+    if (!result) return;
+    if ('user' in result) {
+      onComplete?.(result);
+      if ('accessToken' in result) onSuccess?.();
+      return;
+    }
     onSuccess?.();
   }
 
   async function copySecret() {
     const secret = setup?.totp?.secret;
-    if (!secret || typeof navigator === 'undefined') return;
-    await navigator.clipboard?.writeText(secret);
+    if (!secret) return;
+    setError(null);
+    try {
+      await writeAuthClipboardText(secret);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to copy the setup key');
+    }
+  }
+
+  function handleMethodKeyDown(
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    currentIndex: number,
+  ) {
+    const nextIndex = nextAuthRovingRadioIndex(
+      event.key,
+      currentIndex,
+      availableMethods.length,
+    );
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextMethod = availableMethods[nextIndex];
+    if (!nextMethod) return;
+    setMethod(nextMethod);
+    methodRefs.current.get(nextMethod)?.focus();
   }
 
   if (shouldChooseMethod) {
     return (
-      <div className={cn('space-y-4', className)}>
+      <div className={cn('space-y-4', className)} aria-busy={starting}>
         <AuthHeader
           title="Set up two-factor"
           description="Choose how you want to verify sign-ins for this account."
         />
 
-        <div className="grid gap-3">
-          {availableMethods.map((option) => (
+        <div
+          className="grid gap-3"
+          role="radiogroup"
+          aria-label="Two-factor authentication method"
+        >
+          {availableMethods.map((option, index) => (
             <button
               key={option}
+              ref={(node) => {
+                if (node) methodRefs.current.set(option, node);
+                else methodRefs.current.delete(option);
+              }}
               type="button"
+              role="radio"
+              aria-checked={method === option}
+              tabIndex={method === option ? 0 : -1}
+              disabled={starting}
               className={cn(
-                'rounded-lg border border-border/80 bg-card p-4 text-left transition-colors hover:border-primary/45 hover:bg-accent/60',
+                'rounded-lg border border-border/80 bg-card p-4 text-left transition-colors hover:border-primary/45 hover:bg-accent/60 motion-reduce:transition-none',
                 method === option && 'border-primary/60 bg-primary/5',
               )}
               onClick={() => setMethod(option)}
+              onKeyDown={(event) => handleMethodKeyDown(event, index)}
             >
               <span className="flex items-center gap-2 text-sm font-semibold">
                 {option === 'totp' ? 'Authenticator app' : 'Email code'}
@@ -253,6 +314,19 @@ export function MFAEnrollmentForm({
       />
     </div>
   );
+}
+
+/** @internal Reset boundary for identity, setup proof, and offered methods. */
+export function mfaEnrollmentFlowKey(
+  userId?: string,
+  setupToken?: string,
+  methods: readonly AuthMfaMethodType[] = DEFAULT_METHODS,
+): string {
+  return JSON.stringify([
+    setupToken ? null : userId ?? null,
+    setupToken ?? null,
+    methods,
+  ]);
 }
 
 function AuthFeedback({ message }: { message: string | null }) {

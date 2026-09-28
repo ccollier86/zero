@@ -16,10 +16,10 @@ import {
   useScroll,
 } from 'motion/react';
 
-import { Menu } from '@/components/animate-ui/icons/menu';
-import { X } from '@/components/animate-ui/icons/x';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { Menu } from '#zero/components/animate-ui/icons/menu';
+import { X } from '#zero/components/animate-ui/icons/x';
+import { Button } from '#zero/components/ui/button';
+import { cn } from '#zero/lib/utils';
 import type {
   ResizableNavbarAction,
   ResizableNavbarBrand,

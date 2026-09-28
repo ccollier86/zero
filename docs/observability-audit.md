@@ -1,7 +1,13 @@
 # Observability Audit
 
-Current-state audit for Zero's logging, warnings, errors, and audit paths.
-Use this as the baseline before adding a first-class platform sink layer.
+> **Status:** historical pre-implementation audit. Zero now has the shared
+> observability sink, stable event codes, bounded event store, protected event
+> routes, frontend reporting, and tracing described in
+> [Observability](./observability.md). The findings below preserve the baseline
+> that motivated that work; they are not current runtime claims.
+
+This records the earlier audit of Zero's logging, warnings, errors, and audit
+paths before the first-class platform sink layer landed.
 
 ## Summary
 
@@ -467,6 +473,7 @@ Security-sensitive failures should use stable codes and structured metadata.
 Examples:
 
 - `sync.policy.callback_failed`
+- `sync.policy_state.failed`
 - `sync.listener.failed`
 - `scheduler.job.failed`
 - `app.client_bundle.failed`

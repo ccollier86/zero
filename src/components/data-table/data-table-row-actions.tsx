@@ -1,14 +1,14 @@
 import * as React from 'react';
 import { MoreHorizontal } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button } from '#zero/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-} from '@/components/animate-ui/components/radix/dropdown-menu';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/components/radix/dropdown-menu';
+import { cn } from '#zero/lib/utils';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

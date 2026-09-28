@@ -11,25 +11,21 @@
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/animate-ui/components/radix/checkbox';
-import { PasswordInput } from '@/components/auth/password-input';
-import { AuthHeader } from '@/components/auth/auth-header';
-import { MFAContinuation } from '@/components/auth/mfa-continuation';
-import { SocialLoginGroup, type SocialProvider } from '@/components/auth/social-login-group';
-import type {
-  AuthMfaChallengeRequiredResult,
-  AuthMfaSetupRequiredResult,
-} from '../../frontend/client/auth-client';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { CircleCheck } from '@/components/animate-ui/icons/circle-check';
-import { CircleX } from '@/components/animate-ui/icons/circle-x';
-import { Loader } from '@/components/animate-ui/icons/loader';
-import { Send } from '@/components/animate-ui/icons/send';
+import { Button } from '#zero/components/ui/button';
+import { Input } from '#zero/components/ui/input';
+import { Label } from '#zero/components/ui/label';
+import { Checkbox } from '#zero/components/animate-ui/components/radix/checkbox';
+import { PasswordInput } from '#zero/components/auth/password-input';
+import { AuthHeader } from '#zero/components/auth/auth-header';
+import { AuthFlowContinuation } from '#zero/components/auth/auth-flow-continuation';
+import { SocialLoginGroup, type SocialProvider } from '#zero/components/auth/social-login-group';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
+import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
+import { Loader } from '#zero/components/animate-ui/icons/loader';
+import { Send } from '#zero/components/animate-ui/icons/send';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
 import {
   isAuthConfigPending,
@@ -42,7 +38,10 @@ import {
   authFeedbackInitial,
   authPresenceTransition,
 } from './auth-motion';
-import { isMfaContinuationResult } from './auth-continuation';
+import {
+  type AuthFlowContinuationResult,
+  isAuthFlowContinuationResult,
+} from './auth-continuation';
 import {
   useNativeAuthContinuation,
   useNativeAuthRoute,
@@ -88,6 +87,8 @@ function RegisterForm({
     firstName: '',
     lastName: '',
     password: '',
+    bootstrapSecret: '',
+    organizationName: '',
   });
   const [localError, setLocalError] = React.useState<string | null>(null);
   const loginHint = useNativeLoginHint();
@@ -96,8 +97,9 @@ function RegisterForm({
   const [resendingVerification, setResendingVerification] = React.useState(false);
   const [verificationResent, setVerificationResent] = React.useState(false);
   const [requestMfaEnrollment, setRequestMfaEnrollment] = React.useState(false);
-  const [mfaContinuation, setMfaContinuation] = React.useState<
-    AuthMfaSetupRequiredResult | AuthMfaChallengeRequiredResult | null
+  const [createTenantOnRegistration, setCreateTenantOnRegistration] = React.useState(false);
+  const [authContinuation, setAuthContinuation] = React.useState<
+    AuthFlowContinuationResult | null
   >(null);
 
   const displayError = localError ?? error;
@@ -105,7 +107,28 @@ function RegisterForm({
   const configPending = isAuthConfigPending(respectRegistrationPolicy, authConfig);
   const configUnavailable = isAuthConfigUnavailable(respectRegistrationPolicy, authConfig);
   const registrationClosed = isRegistrationClosed(respectRegistrationPolicy, authConfig);
+  const isMultiTenant = authConfig.config?.tenancy?.mode === 'multi';
+  const tenantTerm = authConfig.config?.tenancy?.terminology?.singular ?? 'organization';
+  const requiresBootstrapTenant = isMultiTenant && authConfig.bootstrapRequired;
+  // Older multi-tenant servers exposed only `{ mode: 'multi' }` and required
+  // organization input on every registration. Preserve that wire contract.
+  const legacyRequiresTenant = Boolean(
+    isMultiTenant
+    && !authConfig.bootstrapRequired
+    && authConfig.config?.tenancy?.creation === undefined
+  );
+  const canOfferTenantCreation = Boolean(
+    isMultiTenant
+    && !authConfig.bootstrapRequired
+    && authConfig.config?.tenancy?.creation?.mode === 'authenticated'
+  );
+  const shouldCreateTenant = requiresBootstrapTenant || legacyRequiresTenant
+    || (canOfferTenantCreation && createTenantOnRegistration);
   const mfaConfig = authConfig.config?.mfa;
+  const bootstrapSecretRequired = Boolean(
+    authConfig.bootstrapRequired
+    && authConfig.config?.bootstrap?.secretRequired
+  );
   const canRequestOptionalMfa =
     Boolean(mfaConfig?.enabled && mfaConfig.ready) &&
     mfaConfig?.policy === 'optional' &&
@@ -138,14 +161,18 @@ function RegisterForm({
         ...(form.lastName ? { lastName: form.lastName } : {}),
         ...(canRequestOptionalMfa && requestMfaEnrollment ? { mfaEnrollment: true } : {}),
         ...(nativeContinuation ? { nativeContinuation } : {}),
+        ...(shouldCreateTenant ? { organizationName: form.organizationName } : {}),
+        ...(bootstrapSecretRequired
+          ? { bootstrapSecret: form.bootstrapSecret }
+          : {}),
       });
-      if (isMfaContinuationResult(result)) {
-        setMfaContinuation(result);
-        return;
-      }
       const user = result?.user;
       if (user?.emailVerificationRequired && !user.emailVerifiedAt) {
         setPendingVerificationEmail(user.email);
+        return;
+      }
+      if (isAuthFlowContinuationResult(result)) {
+        setAuthContinuation(result);
         return;
       }
       onSuccess?.();
@@ -183,12 +210,12 @@ function RegisterForm({
     return <>{unavailable ?? <RegistrationUnavailable loginHref={continuedLoginHref} showLoginLink={showLoginLink} />}</>;
   }
 
-  if (mfaContinuation) {
+  if (authContinuation) {
     return (
-      <MFAContinuation
-        result={mfaContinuation}
+      <AuthFlowContinuation
+        result={authContinuation}
         onSuccess={onSuccess}
-        onBack={() => setMfaContinuation(null)}
+        onBack={() => setAuthContinuation(null)}
         className={className}
       />
     );
@@ -202,9 +229,9 @@ function RegisterForm({
           description={`We sent a verification link to ${pendingVerificationEmail}.`}
         />
 
-        <div className="flex items-start gap-2 rounded-md border border-green-500/30 bg-green-500/5 px-3 py-2.5 text-sm text-green-600">
+        <div className="flex items-start gap-2 rounded-md border border-success/35 bg-success/10 px-3 py-2.5 text-sm text-foreground dark:border-success/45 dark:bg-success/15">
           <AnimateIcon animate>
-            <CircleCheck size={16} className="mt-px flex-shrink-0" />
+            <CircleCheck size={16} className="mt-px flex-shrink-0 text-success" />
           </AnimateIcon>
           Verify your email before signing in.
         </div>
@@ -266,15 +293,66 @@ function RegisterForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className={cn('space-y-4', className)}>
+    <form
+      onSubmit={handleSubmit}
+      className={cn('space-y-4', className)}
+      aria-busy={isLoading}
+    >
       <AuthHeader
-        title={authConfig.bootstrapRequired ? 'Create first admin' : 'Create account'}
-        description={authConfig.bootstrapRequired ? 'The first account becomes the app admin' : 'Enter your details to get started'}
+        title={authConfig.bootstrapRequired
+          ? isMultiTenant ? `Create your ${tenantTerm}` : 'Create first admin'
+          : 'Create account'}
+        description={authConfig.bootstrapRequired
+          ? bootstrapSecretRequired
+            ? isMultiTenant
+              ? `Enter the operator setup key to create the first administrator and ${tenantTerm}.`
+              : 'Enter the operator setup key to create the first administrator.'
+            : isMultiTenant
+              ? `The first account becomes the app administrator and ${tenantTerm} owner.`
+              : 'The first account becomes the app administrator.'
+          : isMultiTenant
+            ? `Create your identity, then create a new ${tenantTerm} or join an existing one.`
+            : 'Enter your details to get started'}
       />
 
       <div className="space-y-4">
+        {canOfferTenantCreation && (
+          <div className="flex items-start gap-2 rounded-md border border-border/75 bg-muted/25 p-3">
+            <Checkbox
+              id="reg-create-tenant"
+              size="sm"
+              checked={createTenantOnRegistration}
+              onCheckedChange={(value) => setCreateTenantOnRegistration(value === true)}
+              className="mt-0.5"
+            />
+            <Label
+              htmlFor="reg-create-tenant"
+              className="cursor-pointer text-xs font-normal leading-relaxed text-muted-foreground"
+            >
+              Create a new {tenantTerm} that I will own.
+            </Label>
+          </div>
+        )}
+
+        {shouldCreateTenant && (
+          <div className="space-y-1.5">
+            <Label htmlFor="reg-organization" className="text-sm font-medium">
+              {capitalize(tenantTerm)} name
+            </Label>
+            <Input
+              id="reg-organization"
+              placeholder="Acme, Inc."
+              autoComplete="organization"
+              required={requiresBootstrapTenant || legacyRequiresTenant || createTenantOnRegistration}
+              value={form.organizationName}
+              onChange={update('organizationName')}
+              className={cn('h-10 text-sm', displayError && 'ring-[1px] ring-destructive/30')}
+            />
+          </div>
+        )}
+
         {hasNames && (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             {fields.includes('firstName') && (
               <div className="space-y-1.5">
                 <Label htmlFor="reg-first" className="text-sm font-medium">First name</Label>
@@ -351,6 +429,24 @@ function RegisterForm({
           </div>
         )}
 
+        {bootstrapSecretRequired && (
+          <div className="space-y-1.5">
+            <Label htmlFor="reg-bootstrap-secret" className="text-sm font-medium">
+              Operator setup key
+            </Label>
+            <Input
+              id="reg-bootstrap-secret"
+              type="password"
+              placeholder="Bootstrap secret"
+              autoComplete="off"
+              required
+              value={form.bootstrapSecret}
+              onChange={update('bootstrapSecret')}
+              className={cn('h-10 text-sm', displayError && 'ring-[1px] ring-destructive/30')}
+            />
+          </div>
+        )}
+
         {canRequestOptionalMfa && (
           <div className="flex items-start gap-2 rounded-md border border-border/75 bg-muted/25 p-3">
             <Checkbox
@@ -396,15 +492,20 @@ function RegisterForm({
 
       <Button type="submit" className="h-10 w-full" disabled={isLoading || configPending}>
         {isLoading ? (
-          <AnimateIcon animate loop>
-            <Loader size={16} />
-          </AnimateIcon>
+          <>
+            <AnimateIcon animate loop>
+              <Loader size={16} />
+            </AnimateIcon>
+            <span className="sr-only">Creating account</span>
+          </>
         ) : (
-          'Create account'
+          authConfig.bootstrapRequired
+            ? isMultiTenant ? `Create ${tenantTerm}` : 'Create administrator'
+            : shouldCreateTenant ? `Create account and ${tenantTerm}` : 'Create account'
         )}
       </Button>
 
-      {socialProviders && socialProviders.length > 0 && (
+      {!authConfig.bootstrapRequired && socialProviders && socialProviders.length > 0 && (
         <SocialLoginGroup providers={socialProviders} />
       )}
 
@@ -418,6 +519,10 @@ function RegisterForm({
       )}
     </form>
   );
+}
+
+function capitalize(value: string): string {
+  return value.length === 0 ? value : value[0]!.toUpperCase() + value.slice(1);
 }
 
 function RegistrationPolicyLoading() {
@@ -462,7 +567,10 @@ function RegistrationUnavailable({
 }) {
   return (
     <div className="space-y-3">
-      <AuthHeader title="Registration closed" description="An administrator must create new accounts for this app." />
+      <AuthHeader
+        title="Registration closed"
+        description="An administrator or deployment operator must enable account creation for this app."
+      />
       {showLoginLink && (
         <p className="text-center text-xs text-muted-foreground">
           Already have an account?{' '}

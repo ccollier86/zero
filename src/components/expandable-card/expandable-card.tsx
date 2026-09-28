@@ -11,10 +11,10 @@
 import * as React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 
-import { ZeroIcon } from '@/components/animate-ui/icons/zero-icon';
-import { buttonVariants } from '@/components/ui/button';
-import { useClickAway } from '@/hooks/use-click-away';
-import { cn } from '@/lib/utils';
+import { ZeroIcon } from '#zero/components/animate-ui/icons/zero-icon';
+import { buttonVariants } from '#zero/components/ui/button';
+import { useClickAway } from '#zero/hooks/use-click-away';
+import { cn } from '#zero/lib/utils';
 
 import type { ExpandableCardItem, ExpandableCardsProps } from './expandable-card.types';
 

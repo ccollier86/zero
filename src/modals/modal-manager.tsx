@@ -10,9 +10,9 @@ import {
   DialogContent,
   DialogClose,
   DialogTitle,
-} from '@/components/animate-ui/primitives/radix/dialog';
-import { AnimateIcon, X } from '@/components/animate-ui/icons';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/primitives/radix/dialog';
+import { AnimateIcon, X } from '#zero/components/animate-ui/icons';
+import { cn } from '#zero/lib/utils';
 import { modalStore } from './modal-store';
 import { modals } from './modal-events';
 import { ConfirmModalContent } from './confirm-modal';

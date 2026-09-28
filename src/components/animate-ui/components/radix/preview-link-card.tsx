@@ -10,8 +10,8 @@ import {
   type PreviewLinkCardTriggerProps as PreviewLinkCardTriggerPrimitiveProps,
   type PreviewLinkCardContentProps as PreviewLinkCardContentPrimitiveProps,
   type PreviewLinkCardImageProps as PreviewLinkCardImagePrimitiveProps,
-} from '@/components/animate-ui/primitives/radix/preview-link-card';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/primitives/radix/preview-link-card';
+import { cn } from '#zero/lib/utils';
 
 type PreviewLinkCardProps = PreviewLinkCardPrimitiveProps;
 

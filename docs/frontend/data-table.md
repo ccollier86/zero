@@ -216,13 +216,13 @@ combobox, number, date, and text.
 
 ```tsx
 <DataTableView
-  schema={userTable.schema}
-  collection="users"
+  schema={contactTable.schema}
+  collection="contacts"
   selectable
-  onSelectionChange={(ids) => setSelectedUserIds(ids)}
-  onRowClick={(row) => setFocusedUser(row)}
-  onRowDoubleClick={(row) => openUser(row)}
-  highlightedRowId={focusedUserId}
+  onSelectionChange={(ids) => setSelectedContactIds(ids)}
+  onRowClick={(row) => setFocusedContact(row)}
+  onRowDoubleClick={(row) => openContact(row)}
+  highlightedRowId={focusedContactId}
   actions={[
     { label: 'Edit', icon: Pencil, onClick: openEditor },
     { label: 'Delete', icon: Trash2, variant: 'destructive', onClick: confirmDelete },

@@ -1,6 +1,17 @@
 /** Internal persistence records for Zero native OpenID Connect flows. */
 
-export interface NativeAuthorizationRequestRecord {
+import type { NativeAuthoritySnapshot } from './native-tenant-authority';
+
+export interface StoredNativeAuthority {
+  scopeKind: NativeAuthoritySnapshot['scopeKind'] | null;
+  scopeId: string | null;
+  tenantId: string | null;
+  membershipId: string | null;
+  tenantAuthorizationGeneration: number | null;
+  membershipAuthorizationGeneration: number | null;
+}
+
+export interface NativeAuthorizationRequestRecord extends StoredNativeAuthority {
   requestId: string;
   clientId: string;
   redirectUri: string;
@@ -16,7 +27,7 @@ export interface NativeAuthorizationRequestRecord {
   consumedAt: number | null;
 }
 
-export interface NativeAuthorizationCodeRecord {
+export interface NativeAuthorizationCodeRecord extends StoredNativeAuthority {
   codeId: string;
   requestId: string;
   userId: string;
@@ -31,7 +42,7 @@ export interface NativeAuthorizationCodeRecord {
   consumedAt: number | null;
 }
 
-export interface NativeSessionRecord {
+export interface NativeSessionRecord extends StoredNativeAuthority {
   tokenId: string;
   familyId: string;
   userId: string;
@@ -46,6 +57,8 @@ export interface NativeSessionRecord {
   replacedBy: string | null;
 }
 
-export interface PreparedNativeSession extends NativeSessionRecord {
+export interface PreparedNativeSession
+  extends Omit<NativeSessionRecord, keyof StoredNativeAuthority>,
+    Partial<StoredNativeAuthority> {
   tokenHash: string;
 }

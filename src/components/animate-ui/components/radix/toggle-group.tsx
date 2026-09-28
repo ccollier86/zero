@@ -9,10 +9,10 @@ import {
   useToggleGroup as useToggleGroupPrimitive,
   type ToggleGroupProps as ToggleGroupPrimitiveProps,
   type ToggleGroupItemProps as ToggleGroupItemPrimitiveProps,
-} from '@/components/animate-ui/primitives/radix/toggle-group';
-import { toggleVariants } from '@/components/animate-ui/components/radix/toggle';
-import { cn } from '@/lib/utils';
-import { getStrictContext } from '@/lib/get-strict-context';
+} from '#zero/components/animate-ui/primitives/radix/toggle-group';
+import { toggleVariants } from '#zero/components/animate-ui/components/radix/toggle';
+import { cn } from '#zero/lib/utils';
+import { getStrictContext } from '#zero/lib/get-strict-context';
 
 const [ToggleGroupProvider, useToggleGroup] =
   getStrictContext<VariantProps<typeof toggleVariants>>('ToggleGroupContext');

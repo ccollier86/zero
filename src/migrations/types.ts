@@ -72,8 +72,10 @@ export interface MigratorConfig {
   ownsDatabase?: boolean;
   /** Ordered list of migrations to apply. */
   migrations: Migration[];
-  /** Apply WAL pragmas before running. Default: true. */
+  /** Apply WAL pragmas. Defaults to true for owned DBs and false for injected handles. */
   applyPragmas?: boolean;
+  /** How long this connection waits for another migration writer. Default: 30000ms. */
+  busyTimeoutMs?: number;
   /** Allow forward destructive migrations. Default: false. */
   allowDestructive?: boolean;
   /** Allow destructive rollback migrations. Default: false. */

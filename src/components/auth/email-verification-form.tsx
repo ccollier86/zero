@@ -10,23 +10,19 @@
 
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import type {
-  AuthActionTokenInfo,
-  AuthMfaChallengeRequiredResult,
-  AuthMfaSetupRequiredResult,
-} from '../../frontend/client/auth-client';
+import type { AuthActionTokenInfo } from '../../frontend/client/auth-client';
 import { useAuth } from '../../frontend/client/auth-hooks';
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { AuthHeader } from '@/components/auth/auth-header';
-import { MFAContinuation } from '@/components/auth/mfa-continuation';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { CircleCheck } from '@/components/animate-ui/icons/circle-check';
-import { CircleX } from '@/components/animate-ui/icons/circle-x';
-import { Loader } from '@/components/animate-ui/icons/loader';
-import { Send } from '@/components/animate-ui/icons/send';
+import { cn } from '#zero/lib/utils';
+import { Button } from '#zero/components/ui/button';
+import { Input } from '#zero/components/ui/input';
+import { Label } from '#zero/components/ui/label';
+import { AuthHeader } from '#zero/components/auth/auth-header';
+import { AuthFlowContinuation } from '#zero/components/auth/auth-flow-continuation';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
+import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
+import { Loader } from '#zero/components/animate-ui/icons/loader';
+import { Send } from '#zero/components/animate-ui/icons/send';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
 import {
   authFeedbackAnimate,
@@ -34,7 +30,10 @@ import {
   authFeedbackInitial,
   authPresenceTransition,
 } from './auth-motion';
-import { isMfaContinuationResult } from './auth-continuation';
+import {
+  type AuthFlowContinuationResult,
+  isAuthFlowContinuationResult,
+} from './auth-continuation';
 import {
   useNativeAuthContinuation,
   useNativeAuthRoute,
@@ -57,6 +56,8 @@ export function EmailVerificationForm({
   className,
 }: EmailVerificationFormProps) {
   const { inspectActionToken, verifyEmail, resendVerificationEmail } = useAuth();
+  const tokenInputId = React.useId();
+  const resendEmailId = React.useId();
   const [tokenInfo, setTokenInfo] = React.useState<AuthActionTokenInfo | null>(null);
   const [tokenInput, setTokenInput] = React.useState('');
   const [manualToken, setManualToken] = React.useState('');
@@ -67,8 +68,8 @@ export function EmailVerificationForm({
   const [resent, setResent] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [complete, setComplete] = React.useState(false);
-  const [mfaContinuation, setMfaContinuation] = React.useState<
-    AuthMfaSetupRequiredResult | AuthMfaChallengeRequiredResult | null
+  const [authContinuation, setAuthContinuation] = React.useState<
+    AuthFlowContinuationResult | null
   >(null);
   const activeToken = (token?.trim() || manualToken.trim()).trim();
   const continuedLoginHref = useNativeAuthRoute(loginHref);
@@ -126,8 +127,8 @@ export function EmailVerificationForm({
     setError(null);
     try {
       const result = await verifyEmail(activeToken);
-      if (isMfaContinuationResult(result)) {
-        setMfaContinuation(result);
+      if (isAuthFlowContinuationResult(result)) {
+        setAuthContinuation(result);
         return;
       }
       setComplete(true);
@@ -174,20 +175,25 @@ export function EmailVerificationForm({
 
   if (loadingToken) {
     return (
-      <div className={cn('flex items-center justify-center py-8', className)}>
+      <div
+        className={cn('flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground', className)}
+        role="status"
+        aria-live="polite"
+      >
         <AnimateIcon animate loop>
           <Loader size={20} />
         </AnimateIcon>
+        Checking verification link…
       </div>
     );
   }
 
-  if (mfaContinuation) {
+  if (authContinuation) {
     return (
-      <MFAContinuation
-        result={mfaContinuation}
+      <AuthFlowContinuation
+        result={authContinuation}
         onSuccess={onSuccess}
-        onBack={() => setMfaContinuation(null)}
+        onBack={() => setAuthContinuation(null)}
         className={className}
       />
     );
@@ -197,9 +203,9 @@ export function EmailVerificationForm({
     return (
       <div className={cn('space-y-4', className)}>
         <AuthHeader title="Email verified" description="Your account is ready to use." />
-        <div className="flex items-center gap-2 rounded-md border border-green-500/30 bg-green-500/5 px-3 py-2 text-sm text-green-600">
+        <div className="flex items-center gap-2 rounded-md border border-success/35 bg-success/10 px-3 py-2 text-sm text-foreground dark:border-success/45 dark:bg-success/15">
           <AnimateIcon animate>
-            <CircleCheck size={16} />
+            <CircleCheck size={16} className="text-success" />
           </AnimateIcon>
           Email verified successfully.
         </div>
@@ -220,9 +226,9 @@ export function EmailVerificationForm({
           />
 
           <div className="space-y-1.5">
-            <Label htmlFor="email-verification-token" className="text-sm font-medium">Email token</Label>
+            <Label htmlFor={tokenInputId} className="text-sm font-medium">Email token</Label>
             <Input
-              id="email-verification-token"
+              id={tokenInputId}
               value={tokenInput}
               onChange={(event) => setTokenInput(event.target.value)}
               autoComplete="one-time-code"
@@ -244,6 +250,7 @@ export function EmailVerificationForm({
           onSubmit={handleResend}
           isLoading={resending}
           sent={resent}
+          inputId={resendEmailId}
         />
 
         <a href={continuedLoginHref} className="block text-center text-sm text-primary hover:underline">
@@ -254,7 +261,7 @@ export function EmailVerificationForm({
   }
 
   return (
-    <form onSubmit={handleVerify} className={cn('space-y-4', className)}>
+    <form onSubmit={handleVerify} className={cn('space-y-4', className)} aria-busy={submitting}>
       <AuthHeader
         title="Verify email"
         description={tokenInfo ? `Confirm ${tokenInfo.user.email} to continue.` : 'Confirm your email to continue.'}
@@ -264,9 +271,12 @@ export function EmailVerificationForm({
 
       <Button type="submit" className="h-10 w-full" disabled={!tokenInfo || submitting}>
         {submitting ? (
-          <AnimateIcon animate loop>
-            <Loader size={16} />
-          </AnimateIcon>
+          <>
+            <AnimateIcon animate loop>
+              <Loader size={16} />
+            </AnimateIcon>
+            <span className="sr-only">Verifying email</span>
+          </>
         ) : (
           'Verify email'
         )}
@@ -278,6 +288,7 @@ export function EmailVerificationForm({
         onSubmit={handleResend}
         isLoading={resending}
         sent={resent}
+        inputId={resendEmailId}
       />
     </form>
   );
@@ -312,22 +323,24 @@ function VerificationResendForm({
   onSubmit,
   isLoading,
   sent,
+  inputId,
 }: {
   email: string;
   onEmailChange: (email: string) => void;
   onSubmit: (event: React.FormEvent) => void;
   isLoading: boolean;
   sent: boolean;
+  inputId: string;
 }) {
   return (
     <form onSubmit={onSubmit} className="rounded-md border border-border/70 bg-muted/30 p-3">
       <div className="space-y-2">
-        <Label htmlFor="email-verification-resend" className="text-xs font-medium text-muted-foreground">
+        <Label htmlFor={inputId} className="text-xs font-medium text-muted-foreground">
           Need another link?
         </Label>
         <div className="flex gap-2">
           <Input
-            id="email-verification-resend"
+            id={inputId}
             type="email"
             value={email}
             onChange={(event) => onEmailChange(event.target.value)}
@@ -349,9 +362,9 @@ function VerificationResendForm({
           </Button>
         </div>
         {sent && (
-          <p className="flex items-center gap-1.5 text-xs text-green-600">
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <AnimateIcon animate>
-              <CircleCheck size={14} />
+              <CircleCheck size={14} className="text-success" />
             </AnimateIcon>
             If that account needs verification, a new link was sent.
           </p>

@@ -21,7 +21,7 @@ describe('native password recovery continuation', () => {
     const db = createReactiveDB({ mode: 'memory' });
     const app = new Elysia()
       .use(createAuthPlugin({
-        db, nativeIssuer: issuer, nativeAudience: baseUrl,
+        db, bootstrap: 'public', nativeIssuer: issuer, nativeAudience: baseUrl,
         accountEmails: { requestCooldown: '0s' },
         nativeApps: { clients: [{ clientId, name: 'Recovery App', redirectUris: [redirectUri] }] },
       }))

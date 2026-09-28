@@ -1,6 +1,13 @@
 import * as v from 'valibot';
 import type { FieldDef, FieldMeta } from './field-types';
-import type { TableSchema, ClientTableDef, DeclaredSyncMode } from '../sync/types';
+import {
+  SYNC_TABLE_MUTATION_VALIDATOR,
+  type ClientTableDef,
+  type DeclaredSyncMode,
+  type Row,
+  type SyncTableMutationValidator,
+  type TableSchema,
+} from '../sync/types';
 import { assertIdentityFields } from '../sync/identity';
 import { decodeFieldValue, encodeFieldValue } from './field-codecs';
 
@@ -53,6 +60,8 @@ export interface TableDefinition<
   readonly schema: SchemaDescriptor<T, TPk>;
   /** Server-side table schema (SQL column defs). */
   readonly serverTable: TableSchema;
+  /** Server-side logical validator used by websocket mutation handling. */
+  readonly mutationValidator: SyncTableMutationValidator;
   /** Client-side table def for createClient(). */
   readonly clientTable: ClientTableDef;
 }
@@ -128,6 +137,13 @@ export function defineSchema<
         }
       }
 
+      result[SYNC_TABLE_MUTATION_VALIDATOR] = createSyncMutationValidator({
+        primaryKey: pk,
+        fieldNames: names,
+        fieldDefs,
+        schema,
+      });
+
       return result;
     },
 
@@ -137,6 +153,8 @@ export function defineSchema<
       const result: ClientTableDef = { _pk: pk };
       if (opts?.sync) result._sync = opts.sync;
       if (tableIdentity.length > 0) result._identity = [...tableIdentity];
+      const booleanFields = names.filter((name) => fieldDefs[name]!._meta.type === 'boolean');
+      if (booleanFields.length > 0) result._booleanFields = booleanFields;
 
       // Add PK if not already defined
       if (!fieldDefs[pk]) {
@@ -230,10 +248,12 @@ export function defineTable<
   opts?: { pk?: TPk; sync?: DeclaredSyncMode; identity?: readonly (keyof T & string)[] },
 ): TableDefinition<T, TPk> {
   const desc = defineSchema(fieldDefs, { pk: opts?.pk, identity: opts?.identity });
+  const serverTable = desc.toTableSchema({ identity: opts?.identity });
   return {
     name,
     schema: desc,
-    serverTable: desc.toTableSchema({ identity: opts?.identity }),
+    serverTable,
+    mutationValidator: serverTable[SYNC_TABLE_MUTATION_VALIDATOR]!,
     clientTable: desc.toClientTableDef({ sync: opts?.sync, identity: opts?.identity }),
   };
 }
@@ -342,4 +362,78 @@ function normalizeIdentity(
   }
 
   return [...identity];
+}
+
+function createSyncMutationValidator(input: {
+  primaryKey: string;
+  fieldNames: readonly string[];
+  fieldDefs: Record<string, FieldDef>;
+  schema: v.ObjectSchema<v.ObjectEntries, undefined>;
+}): SyncTableMutationValidator {
+  const fieldNames = [...input.fieldNames];
+
+  return {
+    primaryKey: input.primaryKey,
+    fieldNames,
+
+    decodeRow(row: Row): Row {
+      const next: Row = { ...row };
+      for (const name of fieldNames) {
+        if (!(name in next)) continue;
+        const meta = input.fieldDefs[name]!._meta;
+        if (meta.type === 'boolean' && !isBooleanWireValue(next[name])) {
+          throw new Error(`Field "${name}" must be a boolean or SQLite boolean value`);
+        }
+        next[name] = decodeFieldValue(meta, next[name]);
+      }
+      return next;
+    },
+
+    encodeRow(row: Row): Row {
+      const next: Row = { ...row };
+      for (const name of fieldNames) {
+        if (name in next) {
+          next[name] = encodeFieldValue(input.fieldDefs[name]!._meta, next[name]);
+        }
+      }
+      return next;
+    },
+
+    validateRow(row: Row) {
+      const candidate: Row = {};
+      for (const name of fieldNames) {
+        if (name in row) candidate[name] = row[name];
+      }
+      const result = v.safeParse(input.schema, candidate);
+      if (result.success) {
+        return { success: true, output: result.output as Row };
+      }
+      return {
+        success: false,
+        issues: result.issues.map((issue) => ({
+          path: validationIssuePath(issue),
+          message: issue.message,
+        })),
+      };
+    },
+  };
+}
+
+function isBooleanWireValue(value: unknown): boolean {
+  return value === true
+    || value === false
+    || value === 1
+    || value === 0
+    || value === '1'
+    || value === '0'
+    || value === 'true'
+    || value === 'false';
+}
+
+function validationIssuePath(issue: v.BaseIssue<unknown>): string | undefined {
+  const path = issue.path
+    ?.map((item) => String(item.key))
+    .filter(Boolean)
+    .join('.');
+  return path || undefined;
 }

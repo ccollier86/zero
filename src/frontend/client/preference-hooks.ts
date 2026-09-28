@@ -6,9 +6,14 @@
  * cross-device synchronization remain in StateClient/useServerState.
  */
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import type { JsonValue } from '../../sync/types';
 import { useServerState } from '../../sync/client/state-hooks';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from './authorization-scope-hooks';
+import { useClientMaybe } from './client-context';
 
 type JsonObject = Record<string, JsonValue>;
 
@@ -31,7 +36,22 @@ export function usePreference<T extends JsonValue>(
   key: string,
   defaultValue: T,
 ): UsePreferenceResult<T> {
-  const [value, setValue] = useServerState<T>(stateKey('preferences', key), defaultValue);
+  const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
+  const [value, setServerValue] = useServerState<T>(stateKey('preferences', key), defaultValue);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const setValue = useCallback((nextValue: T) => {
+    if (!isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    )) return;
+    setServerValue(nextValue);
+  }, [callbackBoundaryKey, setServerValue]);
   const reset = useCallback(() => setValue(defaultValue), [defaultValue, setValue]);
 
   return useMemo(
@@ -63,8 +83,23 @@ export function useFormDraft<T extends JsonObject>(
   initialValue: T,
   options: UseFormDraftOptions = {},
 ): UseFormDraftResult<T> {
+  const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const namespace = options.namespace ?? 'drafts';
-  const [draft, setDraft] = useServerState<T>(stateKey(namespace, key), initialValue);
+  const [draft, setServerDraft] = useServerState<T>(stateKey(namespace, key), initialValue);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const setDraft = useCallback((nextDraft: T) => {
+    if (!isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    )) return;
+    setServerDraft(nextDraft);
+  }, [callbackBoundaryKey, setServerDraft]);
 
   const updateDraft = useCallback(
     (partial: Partial<T>) => setDraft({ ...draft, ...partial }),

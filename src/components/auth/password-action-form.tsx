@@ -10,23 +10,19 @@
 
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import type {
-  AuthActionTokenInfo,
-  AuthMfaChallengeRequiredResult,
-  AuthMfaSetupRequiredResult,
-} from '../../frontend/client/auth-client';
+import type { AuthActionTokenInfo } from '../../frontend/client/auth-client';
 import { useAuth } from '../../frontend/client/auth-hooks';
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { AuthHeader } from '@/components/auth/auth-header';
-import { MFAContinuation } from '@/components/auth/mfa-continuation';
-import { PasswordInput } from '@/components/auth/password-input';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { CircleCheck } from '@/components/animate-ui/icons/circle-check';
-import { CircleX } from '@/components/animate-ui/icons/circle-x';
-import { Loader } from '@/components/animate-ui/icons/loader';
+import { cn } from '#zero/lib/utils';
+import { Button } from '#zero/components/ui/button';
+import { Input } from '#zero/components/ui/input';
+import { Label } from '#zero/components/ui/label';
+import { AuthHeader } from '#zero/components/auth/auth-header';
+import { AuthFlowContinuation } from '#zero/components/auth/auth-flow-continuation';
+import { PasswordInput } from '#zero/components/auth/password-input';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
+import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
+import { Loader } from '#zero/components/animate-ui/icons/loader';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
 import {
   isPasswordActionModeMismatch,
@@ -38,7 +34,10 @@ import {
   authFeedbackInitial,
   authPresenceTransition,
 } from './auth-motion';
-import { isMfaContinuationResult } from './auth-continuation';
+import {
+  type AuthFlowContinuationResult,
+  isAuthFlowContinuationResult,
+} from './auth-continuation';
 import { useNativeAuthRoute } from './use-native-auth-route';
 
 export interface PasswordActionFormProps {
@@ -58,6 +57,9 @@ export function PasswordActionForm({
   className,
 }: PasswordActionFormProps) {
   const { inspectActionToken, resetPassword, setupPassword } = useAuth();
+  const tokenInputId = React.useId();
+  const newPasswordId = React.useId();
+  const confirmPasswordId = React.useId();
   const [tokenInfo, setTokenInfo] = React.useState<AuthActionTokenInfo | null>(null);
   const [tokenInput, setTokenInput] = React.useState('');
   const [manualToken, setManualToken] = React.useState('');
@@ -67,8 +69,8 @@ export function PasswordActionForm({
   const [confirm, setConfirm] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   const [complete, setComplete] = React.useState(false);
-  const [mfaContinuation, setMfaContinuation] = React.useState<
-    AuthMfaSetupRequiredResult | AuthMfaChallengeRequiredResult | null
+  const [authContinuation, setAuthContinuation] = React.useState<
+    AuthFlowContinuationResult | null
   >(null);
   const activeToken = (token?.trim() || manualToken.trim()).trim();
   const continuedLoginHref = useNativeAuthRoute(loginHref);
@@ -132,8 +134,8 @@ export function PasswordActionForm({
       const result = action === 'setup'
         ? await setupPassword(activeToken, password)
         : await resetPassword(activeToken, password);
-      if (isMfaContinuationResult(result)) {
-        setMfaContinuation(result);
+      if (isAuthFlowContinuationResult(result)) {
+        setAuthContinuation(result);
         return;
       }
       setComplete(true);
@@ -159,20 +161,25 @@ export function PasswordActionForm({
 
   if (loadingToken) {
     return (
-      <div className={cn('flex items-center justify-center py-8', className)}>
+      <div
+        className={cn('flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground', className)}
+        role="status"
+        aria-live="polite"
+      >
         <AnimateIcon animate loop>
           <Loader size={20} />
         </AnimateIcon>
+        Checking password link…
       </div>
     );
   }
 
-  if (mfaContinuation) {
+  if (authContinuation) {
     return (
-      <MFAContinuation
-        result={mfaContinuation}
+      <AuthFlowContinuation
+        result={authContinuation}
         onSuccess={onSuccess}
-        onBack={() => setMfaContinuation(null)}
+        onBack={() => setAuthContinuation(null)}
         className={className}
       />
     );
@@ -185,9 +192,9 @@ export function PasswordActionForm({
           title="Password updated"
           description="Sign in with your new password to continue."
         />
-        <div className="flex items-center gap-2 rounded-md border border-green-500/30 bg-green-500/5 px-3 py-2 text-sm text-green-600">
+        <div className="flex items-center gap-2 rounded-md border border-success/35 bg-success/10 px-3 py-2 text-sm text-foreground dark:border-success/45 dark:bg-success/15">
           <AnimateIcon animate>
-            <CircleCheck size={16} />
+            <CircleCheck size={16} className="text-success" />
           </AnimateIcon>
           Password updated successfully.
         </div>
@@ -207,9 +214,9 @@ export function PasswordActionForm({
         />
 
         <div className="space-y-1.5">
-          <Label htmlFor="password-action-token" className="text-sm font-medium">Email token</Label>
+          <Label htmlFor={tokenInputId} className="text-sm font-medium">Email token</Label>
           <Input
-            id="password-action-token"
+            id={tokenInputId}
             value={tokenInput}
             onChange={(event) => setTokenInput(event.target.value)}
             autoComplete="one-time-code"
@@ -248,7 +255,7 @@ export function PasswordActionForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className={cn('space-y-4', className)}>
+    <form onSubmit={handleSubmit} className={cn('space-y-4', className)} aria-busy={submitting}>
       <AuthHeader
         title={title}
         description={tokenInfo ? `For ${tokenInfo.user.email}` : 'Enter a new password to continue'}
@@ -256,9 +263,9 @@ export function PasswordActionForm({
 
       <div className="space-y-4">
         <div className="space-y-1.5">
-          <Label htmlFor="password-action-new" className="text-sm font-medium">New password</Label>
+          <Label htmlFor={newPasswordId} className="text-sm font-medium">New password</Label>
           <PasswordInput
-            id="password-action-new"
+            id={newPasswordId}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             autoComplete="new-password"
@@ -268,9 +275,9 @@ export function PasswordActionForm({
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="password-action-confirm" className="text-sm font-medium">Confirm password</Label>
+          <Label htmlFor={confirmPasswordId} className="text-sm font-medium">Confirm password</Label>
           <PasswordInput
-            id="password-action-confirm"
+            id={confirmPasswordId}
             value={confirm}
             onChange={(event) => setConfirm(event.target.value)}
             autoComplete="new-password"
@@ -301,9 +308,12 @@ export function PasswordActionForm({
 
       <Button type="submit" className="h-10 w-full" disabled={!action || submitting}>
         {submitting ? (
-          <AnimateIcon animate loop>
-            <Loader size={16} />
-          </AnimateIcon>
+          <>
+            <AnimateIcon animate loop>
+              <Loader size={16} />
+            </AnimateIcon>
+            <span className="sr-only">Updating password</span>
+          </>
         ) : (
           title
         )}

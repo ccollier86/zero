@@ -1,8 +1,15 @@
-# Zero Stabilization Plan
+# Zero Stabilization Plan (Historical)
 
-This plan freezes broad feature expansion and moves Zero toward a reliable
-local framework workflow: audit, shore up existing contracts, tighten docs, and
-make local project creation repeatable before the next app build.
+> Status: historical planning snapshot. It is not the current release checklist.
+>
+> Use [Releasing Zero](./releasing.md) for the supported-versus-preview boundary,
+> candidate verification, clean-checkout package test, version, commit, and tag
+> gates. Use the root [README](../README.md) and [Start Here](./start-here.md) for
+> current setup.
+
+This document records the stabilization pass that established Zero's local
+package-mode workflow. Statements below describe the repository at the time of
+that pass and may be superseded by current reference documentation.
 
 ## Goals
 
@@ -16,7 +23,7 @@ make local project creation repeatable before the next app build.
 - Preserve LaunchBoard as a reference app, but keep generated apps clean and
   framework-driven.
 
-## Current Findings
+## Findings At The Time Of The Plan
 
 - `create-zero` scaffolds from the blank `examples/package-mode` starter and
   supports `--zero`, `--local`, `--install`, `--force`, and `--template`.
@@ -29,8 +36,8 @@ make local project creation repeatable before the next app build.
   pass before npm release.
 - `bun run test:package` now verifies package-mode creation, package exports,
   package scripts, and the packed tarball contents required by `create-zero`.
-- The repository root has no `README.md`, so a fresh clone has no obvious human
-  entry point besides `docs/start-here.md`.
+- The repository root did not yet have the `README.md` that now serves as the
+  human entry point.
 - `llms.txt` now exists as the main agent-facing documentation bundle. It
   should stay comprehensive enough for agents to build with Zero without
   recreating existing platform surfaces.
@@ -40,9 +47,9 @@ make local project creation repeatable before the next app build.
 - Docs are extensive, but the most important path should be shorter:
   create app locally, run dev, choose app shape, use platform surfaces first,
   then follow deeper feature docs.
-- `git diff --check` may be blocked on this machine by the local Xcode license
-  prompt; use direct whitespace scans as a fallback until the license is
-  accepted outside this repo.
+- One development machine had an Xcode-license issue while running
+  `git diff --check`; this was an environment note, not a framework release
+  exception.
 
 ## Phase 1: Audit And Baseline
 
@@ -116,7 +123,8 @@ make local project creation repeatable before the next app build.
    - bin strategy.
    - CSS export strategy.
    - peer dependency expectations.
-   - smoke test for `bunx create-zero` after publish.
+   - smoke test for
+     `bunx -p @zero/framework create-zero <app-name>` after publish.
 
 ## Phase 5: Stabilization Fixes
 

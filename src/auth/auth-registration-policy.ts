@@ -2,6 +2,7 @@
 
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
+import { assertBootstrapRequest } from './auth-bootstrap';
 import type { AccountEmailService } from './account-email-service';
 import { AuthError, type ResolvedAuthBehaviorConfig } from './types';
 
@@ -18,8 +19,10 @@ export function resolveRegistrationPolicy(params: {
   accountEmail: AccountEmailService;
   authConfig: ResolvedAuthBehaviorConfig;
   mfaEnrollment?: boolean;
+  bootstrapSecret?: string;
 }): RegistrationPolicy {
   const { isBootstrap, accountEmail, authConfig } = params;
+  assertBootstrapRequest(authConfig, isBootstrap, params.bootstrapSecret);
   if (!isBootstrap && authConfig.registration.mode !== 'public') {
     emitPlatformCode(OBS_CODES.AUTH_REGISTRATION_DISABLED, {
       metadata: { mode: authConfig.registration.mode },

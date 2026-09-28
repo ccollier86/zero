@@ -90,6 +90,30 @@ export function renderEmailVerificationEmail(
   };
 }
 
+/** Render the dedicated mailbox-possession proof used before domain discovery. */
+export function renderDomainMailboxProofEmail(
+  ctx: AccountEmailTemplateContext,
+): AuthEmailTemplateResult {
+  const subject = `Verify your work email for ${ctx.branding.appName}`;
+  const text = [
+    `A company-domain access request was started for your ${ctx.branding.appName} account.`,
+    '',
+    'Confirm this mailbox using this one-time link:',
+    ctx.actionUrl,
+    '',
+    `This link expires ${formatExpiration(ctx.expiresAt)}.`,
+    '',
+    'This link does not sign you in or grant organization access.',
+    'If you did not request this, you can ignore this email.',
+  ].join('\n');
+
+  return {
+    subject,
+    text,
+    html: renderHtml(subject, text, ctx),
+  };
+}
+
 /** Render the default email OTP challenge email. */
 export function renderEmailOtpEmail(
   ctx: AccountEmailTemplateContext

@@ -28,6 +28,16 @@ export async function resolveSyncAuthContext(
 ): Promise<SyncAuthResolution> {
   if (!auth) return { ok: true, authContext: null };
 
+  const verifier = auth.getTokenVerifier();
+  try {
+    // This check intentionally precedes the missing-token branch. An optional
+    // anonymous socket is still using the managed Sync runtime's authority
+    // policy and must not survive an installed-profile transition.
+    verifier?.assertCurrentProfile?.();
+  } catch {
+    return authResolutionFailed();
+  }
+
   if (!token) {
     if (auth.required) {
       return {
@@ -40,7 +50,6 @@ export async function resolveSyncAuthContext(
     return { ok: true, authContext: null };
   }
 
-  const verifier = auth.getTokenVerifier();
   if (!verifier) {
     return {
       ok: false,
@@ -52,6 +61,7 @@ export async function resolveSyncAuthContext(
   try {
     if (verifier.resolveAuthContext) {
       const authContext = await verifier.resolveAuthContext(token);
+      verifier.assertCurrentProfile?.();
       return authContext
         ? { ok: true, authContext }
         : invalidTokenResolution();
@@ -60,6 +70,7 @@ export async function resolveSyncAuthContext(
     // Compatibility for standalone sync integrations. Platform auth always
     // exposes resolveAuthContext so current account gates are enforced.
     const payload = await verifier.verifyAccessToken(token);
+    verifier.assertCurrentProfile?.();
     if (
       !payload ||
       typeof payload.email !== 'string' ||
@@ -75,12 +86,16 @@ export async function resolveSyncAuthContext(
       },
     };
   } catch {
-    return {
-      ok: false,
-      closeCode: 1011,
-      reason: 'Auth resolution failed',
-    };
+    return authResolutionFailed();
   }
+}
+
+function authResolutionFailed(): SyncAuthResolution {
+  return {
+    ok: false,
+    closeCode: 1011,
+    reason: 'Auth resolution failed',
+  };
 }
 
 function invalidTokenResolution(): SyncAuthResolution {

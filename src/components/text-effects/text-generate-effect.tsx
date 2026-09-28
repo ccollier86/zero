@@ -11,7 +11,7 @@
 import * as React from 'react';
 import { motion } from 'motion/react';
 
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 
 export interface TextGenerateEffectProps extends React.ComponentProps<'span'> {
   words: string;

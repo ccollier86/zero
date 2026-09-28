@@ -25,9 +25,12 @@ import { normalizeNativeAuthContinuation } from './native/continuation';
 import {
   renderAccountSetupEmail,
   renderEmailVerificationEmail,
+  renderDomainMailboxProofEmail,
   renderEmailOtpEmail,
   renderPasswordResetEmail,
 } from './account-email-templates';
+import { renderTenantInvitationEmail } from './tenant-invitation-email';
+import type { AuthTenantInvitationDelivery } from './auth-tenant-onboarding-types';
 
 /** Auth account email sender built on the platform email boundary. */
 export class AccountEmailService {
@@ -188,6 +191,121 @@ export class AccountEmailService {
     assertAuthEmailRecipientAccepted(result, params.user.email);
   }
 
+  /** Deliver the dedicated non-login mailbox proof for domain discovery. */
+  async sendDomainMailboxProof(params: {
+    user: UserRecord;
+    rawToken: string;
+    expiresAt: number;
+    deliveryId: string;
+    signal?: AbortSignal;
+  }): Promise<void> {
+    const runtime = this.assertReady();
+    const policy = this.config.tenancy?.onboarding?.verifiedDomains;
+    if (!policy?.enabled) {
+      throw new AuthError(
+        'Verified-domain onboarding is disabled',
+        'AUTH_DOMAIN_ONBOARDING_UNAVAILABLE',
+        503,
+      );
+    }
+    const branding = resolveAuthEmailBranding(runtime.app, this.config.branding);
+    const publicUrl = this.requirePublicUrl(branding.publicUrl);
+    const actionUrl = this.createActionUrl(
+      publicUrl,
+      policy.mailboxLandingPath,
+      params.rawToken,
+    );
+    const rendered = await this.renderTemplate(
+      'domainMailboxProof',
+      {
+        branding,
+        actionUrl,
+        user: params.user,
+        expiresAt: params.expiresAt,
+      },
+      {
+        userId: params.user.userId,
+        tokenType: 'domain_mailbox_proof',
+      },
+    );
+    const result = await runtime.service.send({
+      to: params.user.email,
+      subject: rendered.subject,
+      text: rendered.text,
+      html: rendered.html,
+      tags: { category: 'auth', action: 'domain_mailbox_proof' },
+      metadata: { userId: params.user.userId, tokenType: 'domain_mailbox_proof' },
+      idempotencyKey: params.deliveryId,
+      signal: params.signal,
+    });
+    assertAuthEmailRecipientAccepted(result, params.user.email);
+  }
+
+  /** Deliver one tenant-bound invitation from the durable auth outbox. */
+  async sendTenantInvitation(params: {
+    delivery: AuthTenantInvitationDelivery;
+    rawToken: string;
+    deliveryId: string;
+    signal?: AbortSignal;
+  }): Promise<void> {
+    const runtime = this.assertReady();
+    const onboarding = this.config.tenancy?.onboarding;
+    if (!onboarding?.invitations.delivery.email.enabled) {
+      throw new AuthError(
+        'Tenant invitation email delivery is disabled',
+        'TENANT_INVITATION_EMAIL_DISABLED',
+        503,
+      );
+    }
+    const branding = resolveAuthEmailBranding(runtime.app, this.config.branding);
+    const publicUrl = this.requirePublicUrl(branding.publicUrl);
+    const actionUrl = this.createActionUrl(
+      publicUrl,
+      onboarding.invitations.delivery.email.landingPath,
+      params.rawToken,
+    );
+    const defaults = renderTenantInvitationEmail({
+      branding,
+      tenant: params.delivery.tenant,
+      actionUrl,
+      expiresAt: params.delivery.expiresAt,
+    });
+    const template = onboarding.invitations.delivery.email.template;
+    const rendered = template
+      ? this.assertRenderedEmail(await template({
+          branding,
+          recipient: params.delivery.recipient,
+          tenant: params.delivery.tenant,
+          invitation: {
+            invitationId: params.delivery.invitationId,
+            roles: params.delivery.roles,
+            expiresAt: params.delivery.expiresAt,
+          },
+          actionUrl,
+          defaultSubject: defaults.subject,
+          defaultText: defaults.text,
+          defaultHtml: defaults.html ?? '',
+        }), 'tenantInvitation')
+      : defaults;
+
+    const result = await runtime.service.send({
+      to: params.delivery.recipient,
+      subject: rendered.subject,
+      text: rendered.text,
+      html: rendered.html,
+      tags: { category: 'auth', action: 'tenant_invitation' },
+      metadata: {
+        invitationId: params.delivery.invitationId,
+        tenantId: params.delivery.tenant.tenantId,
+      },
+      // Stable across retries so provider-side idempotency suppresses a send
+      // whose acknowledgement was lost after the provider accepted it.
+      idempotencyKey: params.deliveryId,
+      signal: params.signal,
+    });
+    assertAuthEmailRecipientAccepted(result, params.delivery.recipient);
+  }
+
   /**
    * Send an MFA email OTP code.
    *
@@ -255,7 +373,7 @@ export class AccountEmailService {
 
   private assertRenderedEmail(
     rendered: AuthEmailTemplateResult,
-    key: AuthEmailTemplateKey
+    key: AuthEmailTemplateKey | 'tenantInvitation'
   ): AuthEmailTemplateResult {
     if (!rendered.subject?.trim()) {
       throw new AuthError(
@@ -319,6 +437,7 @@ function renderDefaultTemplate(
 ): AuthEmailTemplateResult {
   if (key === 'accountSetup') return renderAccountSetupEmail(input);
   if (key === 'emailVerification') return renderEmailVerificationEmail(input);
+  if (key === 'domainMailboxProof') return renderDomainMailboxProofEmail(input);
   if (key === 'emailOtp') return renderEmailOtpEmail(input);
   return renderPasswordResetEmail(input);
 }

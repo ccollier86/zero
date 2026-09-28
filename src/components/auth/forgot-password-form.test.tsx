@@ -12,5 +12,8 @@ describe('forgot-password success state', () => {
     );
     expect(markup).not.toContain('We sent a reset link');
     expect(markup).not.toContain('@');
+    expect(markup).toContain('bg-success/10');
+    expect(markup).toContain('text-success');
+    expect(markup).not.toContain('green-');
   });
 });

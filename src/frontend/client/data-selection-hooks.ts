@@ -6,7 +6,9 @@
  * render table/detail UI.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
+import { useClientMaybe } from './client-context';
 
 export type DataSelectionMode = 'single' | 'multiple';
 
@@ -51,19 +53,36 @@ export function useDataSelection<T>(
   items: readonly T[],
   options: UseDataSelectionOptions<T> = {},
 ): UseDataSelectionReturn<T> {
+  const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const mode = options.mode ?? 'multiple';
   const getId = options.getId ?? defaultGetId<T>;
   const [selectedSet, setSelectedSet] = useState<Set<string>>(
     () => new Set(options.initialIds ?? []),
   );
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+
+  useEffect(() => {
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    setSelectedSet(authorizationBoundary.ready
+      ? new Set(options.initialIds ?? [])
+      : new Set());
+  }, [authorizationBoundary.key, authorizationBoundary.ready]);
 
   const commit = useCallback(
     (next: Set<string>) => {
+      if (!boundaryReadyRef.current
+        || boundaryKeyRef.current !== callbackBoundaryKey) return;
       const nextIds = [...next];
       setSelectedSet(next);
       options.onChange?.(nextIds);
     },
-    [options],
+    [callbackBoundaryKey, options.onChange],
   );
 
   const toId = useCallback(
@@ -125,15 +144,19 @@ export function useDataSelection<T>(
     commit(new Set());
   }, [commit]);
 
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
   const isSelected = useCallback(
-    (idOrItem: string | T) => selectedSet.has(toId(idOrItem)),
-    [selectedSet, toId],
+    (idOrItem: string | T) => visible && selectedSet.has(toId(idOrItem)),
+    [selectedSet, toId, visible],
   );
-
-  const selectedIds = useMemo(() => [...selectedSet], [selectedSet]);
+  const selectedIds = useMemo(
+    () => visible ? [...selectedSet] : [],
+    [selectedSet, visible],
+  );
   const selectedItems = useMemo(
-    () => items.filter((item) => selectedSet.has(getId(item))),
-    [getId, items, selectedSet],
+    () => visible ? items.filter((item) => selectedSet.has(getId(item))) : [],
+    [getId, items, selectedSet, visible],
   );
 
   return {

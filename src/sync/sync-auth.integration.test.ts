@@ -32,6 +32,7 @@ function createApp(
   verifier: SyncTokenVerifier = createVerifier(),
   revalidateIntervalMs?: number,
   allowLegacyQueryToken = true,
+  invalidationPollIntervalMs?: number,
 ) {
 
   return new Elysia()
@@ -49,6 +50,7 @@ function createApp(
           required: authRequired,
           getTokenVerifier: () => verifier,
           revalidateIntervalMs,
+          invalidationPollIntervalMs,
           ...(allowLegacyQueryToken ? { allowLegacyQueryToken: true } : {}),
         },
       })
@@ -294,5 +296,107 @@ describe('sync WebSocket auth integration', () => {
     const close = await conn.waitForClose();
     expect(close.code).toBe(4001);
     expect(close.reason).toBe('Invalid auth token');
+  });
+
+  test('shared authority revision closes revoked sockets without waiting for periodic revalidation', async () => {
+    let active = true;
+    let authorityRevision = 1;
+    const verifier: SyncTokenVerifier = {
+      getAuthorityRevision: () => authorityRevision,
+      async resolveAuthContext(token) {
+        if (!active || token !== 'revision-token') return null;
+        return { userId: 'user-1', email: 'user@test.local', role: 'user' };
+      },
+      async verifyAccessToken() {
+        return { sub: 'user-1', email: 'user@test.local', role: 'user' };
+      },
+    };
+    app = createApp(true, verifier, 60_000, true, 10);
+    const conn = await connectWS(getUrl(app));
+
+    conn.ws.send(JSON.stringify({ type: 'sync.auth', token: 'revision-token' }));
+    await conn.waitForMessage((msg) => msg.type === 'sync.auth.ready');
+    active = false;
+    authorityRevision += 1;
+
+    const close = await conn.waitForClose();
+    expect(close.code).toBe(4001);
+    expect(close.reason).toBe('Invalid auth token');
+  });
+
+  test('first authority revision baseline revalidates sockets admitted during auth startup', async () => {
+    let resolutions = 0;
+    const verifier: SyncTokenVerifier = {
+      // Model managed composition: Sync starts before Auth exposes its durable
+      // clock. The clock first becomes readable after this socket's initial
+      // token resolution, while the exact session has already been revoked.
+      getAuthorityRevision: () => resolutions === 0 ? null : 2,
+      async resolveAuthContext(token) {
+        resolutions += 1;
+        if (resolutions !== 1 || token !== 'startup-race-token') return null;
+        return { userId: 'user-1', email: 'user@test.local', role: 'user' };
+      },
+      async verifyAccessToken() {
+        return { sub: 'user-1', email: 'user@test.local', role: 'user' };
+      },
+    };
+    app = createApp(true, verifier, 60_000, true, 10);
+    const conn = await connectWS(getUrl(app));
+
+    conn.ws.send(JSON.stringify({ type: 'sync.auth', token: 'startup-race-token' }));
+    const close = await conn.waitForClose();
+    expect(close.code).toBe(4001);
+    expect(close.reason).toBe('Invalid auth token');
+    expect(resolutions).toBeGreaterThanOrEqual(2);
+  });
+
+  test('authority changes queued during an in-flight pass cannot be lost', async () => {
+    const context = { userId: 'user-1', email: 'user@test.local', role: 'user' };
+    let authorityRevision = 1;
+    let resolutions = 0;
+    let releaseSecondResolution!: () => void;
+    let secondResolutionStarted!: () => void;
+    const secondResolutionPending = new Promise<void>((resolve) => {
+      releaseSecondResolution = resolve;
+    });
+    const secondResolutionObserved = new Promise<void>((resolve) => {
+      secondResolutionStarted = resolve;
+    });
+    const verifier: SyncTokenVerifier = {
+      getAuthorityRevision: () => authorityRevision,
+      async resolveAuthContext(token) {
+        if (token !== 'queued-revision-token') return null;
+        resolutions += 1;
+        if (resolutions === 1) return context;
+        if (resolutions === 2) {
+          secondResolutionStarted();
+          await secondResolutionPending;
+          return context;
+        }
+        return null;
+      },
+      async verifyAccessToken() {
+        return { sub: 'user-1', email: 'user@test.local', role: 'user' };
+      },
+    };
+    app = createApp(true, verifier, 60_000, true, 10);
+    const conn = await connectWS(getUrl(app));
+
+    conn.ws.send(JSON.stringify({ type: 'sync.auth', token: 'queued-revision-token' }));
+    await conn.waitForMessage((msg) => msg.type === 'sync.auth.ready');
+    authorityRevision = 2;
+    await secondResolutionObserved;
+
+    // Commit a second invalidation while revision 2 is still resolving. The
+    // next poll must queue another pass instead of joining and then forgetting
+    // the stale single-flight check.
+    authorityRevision = 3;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    releaseSecondResolution();
+
+    const close = await conn.waitForClose();
+    expect(close.code).toBe(4001);
+    expect(close.reason).toBe('Invalid auth token');
+    expect(resolutions).toBeGreaterThanOrEqual(3);
   });
 });

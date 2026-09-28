@@ -121,6 +121,11 @@ export class MfaMethodStore {
     };
   }
 
+  /** Share this store's SQLite boundary with coordinated MFA mutations. */
+  transaction<T>(operation: () => T): T {
+    return this.db.transaction(operation);
+  }
+
   /**
    * Create a pending or active MFA method.
    *

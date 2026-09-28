@@ -35,6 +35,17 @@ export async function discoverNativeOidc(
   if (metadata.userinfo_endpoint) {
     requireUrl(metadata.userinfo_endpoint, 'userinfo_endpoint', origin);
   }
+  if (metadata.zero_tenant_sessions !== undefined) {
+    const capability = metadata.zero_tenant_sessions;
+    if (capability.version !== 1 || capability.proof !== 'refresh_token') {
+      throw new NativeAuthError(
+        'OpenID discovery has an unsupported tenant-session capability.',
+        'OIDC_TENANT_SESSIONS_UNSUPPORTED',
+      );
+    }
+    requireUrl(capability.list_endpoint, 'zero_tenant_sessions.list_endpoint', origin);
+    requireUrl(capability.switch_endpoint, 'zero_tenant_sessions.switch_endpoint', origin);
+  }
   if (!metadata.response_types_supported?.includes('code')) {
     throw new NativeAuthError('The issuer does not advertise the code flow.', 'OIDC_CODE_FLOW_UNSUPPORTED');
   }

@@ -11,6 +11,7 @@ import type { JsonValue } from '../../sync/types';
 import { useEphemeralTopic } from '../../sync/client/ephemeral-hooks';
 import { useClient } from './client-context';
 import { useAuth } from './auth-hooks';
+import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
 import type { AuthUser } from './auth-client';
 import type { InternalClient } from './sdk';
 
@@ -84,7 +85,9 @@ function readTypingMember(key: string, value: JsonValue): TypingIndicatorMember 
 }
 
 /**
- * Publish and read "user is typing" state for a room, thread, or document.
+ * Publish and read "user is typing" state. The default `typing:<scope>` topic
+ * treats `scope` as a Zero room ID and is authorized by live membership.
+ * Non-room scopes require an explicit `topic` plus an app topic policy.
  *
  * Typing state is sent through ephemeral sync with a TTL, so it is never
  * persisted and stale entries expire even if a browser disconnects suddenly.
@@ -94,13 +97,17 @@ export function useTypingIndicator(
   options: UseTypingIndicatorOptions = {},
 ): UseTypingIndicatorReturn {
   const client = useClient() as InternalClient;
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const { user } = useAuth();
   const anonymousIdRef = useRef<string | null>(null);
   if (!anonymousIdRef.current) anonymousIdRef.current = createAnonymousActorId();
 
+  const scopedUser = authorizationBoundary.ready ? user : null;
   const topic = options.topic ?? `typing:${scope}`;
-  const actorId = options.userId ?? user?.userId ?? user?.username ?? anonymousIdRef.current;
-  const label = options.label ?? getUserLabel(user) ?? actorId;
+  const actorId = topic.startsWith('typing:') && scopedUser?.userId
+    ? scopedUser.userId
+    : options.userId ?? scopedUser?.userId ?? scopedUser?.username ?? anonymousIdRef.current;
+  const label = options.label ?? getUserLabel(scopedUser) ?? actorId;
   const key = `user:${actorId}`;
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
   const idleMs = options.idleMs ?? DEFAULT_IDLE_MS;
@@ -112,19 +119,27 @@ export function useTypingIndicator(
   const lastSentRef = useRef(0);
   const sinceRef = useRef(0);
   const clearTimerRef = useRef<number | null>(null);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
 
   const clearLocalTimer = useCallback(() => {
-    if (!clearTimerRef.current) return;
+    if (clearTimerRef.current === null) return;
     window.clearTimeout(clearTimerRef.current);
     clearTimerRef.current = null;
   }, []);
 
   const clearTyping = useCallback(() => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
     clearLocalTimer();
     setIsTypingState(false);
     sinceRef.current = 0;
+    lastSentRef.current = 0;
     client.ephemeral.delete(topic, key);
-  }, [clearLocalTimer, client.ephemeral, key, topic]);
+  }, [callbackBoundaryKey, clearLocalTimer, client.ephemeral, key, topic]);
 
   const scheduleIdleClear = useCallback(() => {
     clearLocalTimer();
@@ -132,6 +147,8 @@ export function useTypingIndicator(
   }, [clearLocalTimer, clearTyping, idleMs]);
 
   const setTyping = useCallback((typing: boolean) => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) return;
     if (!typing) {
       clearTyping();
       return;
@@ -155,6 +172,7 @@ export function useTypingIndicator(
     client.ephemeral.set(topic, key, value, ttlMs);
   }, [
     actorId,
+    callbackBoundaryKey,
     clearTyping,
     client.ephemeral,
     key,
@@ -171,18 +189,35 @@ export function useTypingIndicator(
   }, [setTyping]);
 
   useEffect(() => {
+    if (!authorizationBoundary.ready) return;
     const interval = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [authorizationBoundary.key, authorizationBoundary.ready]);
 
   useEffect(() => {
+    clearLocalTimer();
+    setIsTypingState(false);
+    sinceRef.current = 0;
+    lastSentRef.current = 0;
+    setNow(Date.now());
+    const effectBoundaryKey = authorizationBoundary.key;
     return () => {
-      if (clearTimerRef.current) window.clearTimeout(clearTimerRef.current);
-      client.ephemeral.delete(topic, key);
+      clearLocalTimer();
+      if (boundaryReadyRef.current
+        && boundaryKeyRef.current === effectBoundaryKey) {
+        client.ephemeral.delete(topic, key);
+      }
     };
-  }, [client.ephemeral, key, topic]);
+  }, [
+    authorizationBoundary.key,
+    clearLocalTimer,
+    client.ephemeral,
+    key,
+    topic,
+  ]);
 
   const typingUsers = useMemo(() => {
+    if (!authorizationBoundary.ready) return [];
     const cutoff = now - idleMs;
     return Object.entries(entries)
       .map(([entryKey, entry]) => readTypingMember(entryKey, entry.value))
@@ -192,12 +227,12 @@ export function useTypingIndicator(
         return member.updatedAt >= cutoff;
       })
       .sort((left, right) => right.updatedAt - left.updatedAt);
-  }, [actorId, entries, idleMs, includeSelf, now]);
+  }, [actorId, authorizationBoundary.ready, entries, idleMs, includeSelf, now]);
 
   return {
     topic,
     key,
-    isTyping,
+    isTyping: authorizationBoundary.ready && isTyping,
     isAnyoneTyping: typingUsers.length > 0,
     typingUsers,
     markTyping,

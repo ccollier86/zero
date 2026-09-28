@@ -110,6 +110,16 @@ function closeAll(): void {
 }
 
 /**
+ * Immediately discard modal content without invoking app-owned close
+ * callbacks. Authorization-scope replacement uses this so tenant-A callbacks
+ * cannot run after tenant B becomes active. Pending confirms resolve `false`
+ * inside the store.
+ */
+function discardAll(): void {
+  modalStore.send({ type: 'closeAll' });
+}
+
+/**
  * Update an open modal's properties.
  */
 function update(id: string, updates: Partial<OpenModalOptions>): void {
@@ -122,5 +132,6 @@ export const modals = {
   close,
   closeLast,
   closeAll,
+  discardAll,
   update,
 } as const;

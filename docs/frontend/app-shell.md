@@ -164,6 +164,46 @@ Use `activeActions` when the current workspace/category/team needs edit,
 delete, export, or archive controls. Use nav item `actions` for item-specific
 menus lower in the sidebar.
 
+For a Zero multi-tenant auth scope, do not map `useAuth()` data into this
+generic list or switch a local `activeId`. Use the packaged adapter:
+
+```tsx
+import { AppShell, useTenantAppShellWorkspaces } from '@zero/framework/react';
+
+function AuthenticatedShell({ children }: { children: React.ReactNode }) {
+  const workspaces = useTenantAppShellWorkspaces({
+    // Optional: expose the same tenant-creation route from the menu.
+    onCreate: () => { window.location.href = '/organizations/new'; },
+  });
+
+  return <AppShell workspaces={workspaces}>{children}</AppShell>;
+}
+```
+
+The adapter requires an exact server-committed active tenant; AppShell will not
+mask a missing/mismatched selection by showing the first membership. It uses
+the same session-rotation and authorization-scope barrier as
+`<TenantSwitcher>`, retains the committed label while pending, exposes load or
+switch errors with a retry action, announces completion, and restores focus to
+the workspace trigger. A normal app-owned `workspaces` object keeps the legacy
+first-item fallback unless it explicitly sets `requireActiveSelection: true`.
+
+`useTenantAppShellWorkspaces(options)` accepts:
+
+| Option | Behavior |
+|--------|----------|
+| `onSwitched(tenantId)` | Runs after the server-committed tenant becomes active. |
+| `hideWhenSingle` | Hides a completed one-membership switcher by default; create and active actions keep it visible. |
+| `label` | Overrides the terminology-derived menu heading. |
+| `createLabel` | Overrides the terminology-derived create label. |
+| `onCreate()` | Adds an app-owned tenant creation action. |
+| `activeActions` | Adds standard `AppShellMenuItem` actions for the active tenant. |
+| `itemSubtitle(tenant)` | Maps safe tenant summary data to each item's subtitle. |
+
+The hook owns only tenant selection state. Creation and active actions remain
+app callbacks and are frozen with all other workspace mutations while a tenant
+session replacement is pending.
+
 For category-driven apps, use the workspace switcher for categories and the
 main nav group for the active category's boards:
 

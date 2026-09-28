@@ -13,8 +13,19 @@ import { pathToFileURL } from 'node:url';
 import { describe, expect, test } from 'bun:test';
 
 import { clearKvService, getKvService } from '../../kv';
-import { clearPlatformSQLiteService, getPlatformSQLiteService } from '../../persistence';
-import { defineResource, getResourceRegistry, readOnly } from '../../resources';
+import {
+  clearPlatformSQLiteService,
+  createPlatformSQLiteService,
+  getPlatformSQLiteService,
+} from '../../persistence';
+import {
+  authenticatedOnly,
+  defineResource,
+  getResourceRegistry,
+  readOnly,
+  ResourceRegistryError,
+  tenantRealm,
+} from '../../resources';
 import { createApp } from './app-factory';
 
 async function createTempRoot(): Promise<string> {
@@ -24,11 +35,155 @@ async function createTempRoot(): Promise<string> {
 }
 
 describe('createApp resource registration', () => {
+  test('fails startup when an existing tenant discriminator is actually nullable', async () => {
+    const rootDir = await createTempRoot();
+    const sqlite = createPlatformSQLiteService({ mode: 'memory' });
+    sqlite.raw.run(`
+      CREATE TABLE documents (
+        id text primary key,
+        tenant_id text,
+        title text not null
+      )
+    `);
+
+    try {
+      await expect(createApp({
+        db: { sqlite },
+        migrate: false,
+        tables: {
+          documents: {
+            id: 'text primary key',
+            tenant_id: 'text not null',
+            title: 'text not null',
+          },
+        },
+        resources: [defineResource({
+          table: 'documents',
+          exposure: 'all',
+          realm: tenantRealm(),
+          policy: authenticatedOnly(),
+        })],
+        auth: { tenancy: 'multi', bootstrap: 'public' },
+        serverResourcesDir: false,
+        serverPluginsDir: false,
+        serverMiddlewareDir: false,
+        serverEndpointsDir: false,
+        serverRoutesDir: false,
+        appDir: join(rootDir, 'app'),
+        outDir: join(rootDir, 'out'),
+        generatedDir: join(rootDir, '.zero', 'generated'),
+        observability: false,
+        kv: false,
+      })).rejects.toThrow('Apply the required schema migration');
+    } finally {
+      sqlite.close();
+      cleanupPlatformSQLiteService();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  test('fails startup when an existing tenant resource lacks its actual leading index', async () => {
+    const rootDir = await createTempRoot();
+    const sqlite = createPlatformSQLiteService({ mode: 'memory' });
+    sqlite.raw.run(`
+      CREATE TABLE documents (
+        id text primary key,
+        tenant_id text not null,
+        title text not null
+      )
+    `);
+
+    try {
+      let startupError: unknown;
+      try {
+        await createApp({
+          db: { sqlite },
+          migrate: false,
+          tables: {
+            documents: {
+              id: 'text primary key',
+              tenant_id: 'text not null',
+              title: 'text not null',
+            },
+          },
+          resources: [defineResource({
+            table: 'documents',
+            exposure: 'all',
+            realm: tenantRealm(),
+            policy: authenticatedOnly(),
+          })],
+          auth: { tenancy: 'multi', bootstrap: 'public' },
+          serverResourcesDir: false,
+          serverPluginsDir: false,
+          serverMiddlewareDir: false,
+          serverEndpointsDir: false,
+          serverRoutesDir: false,
+          appDir: join(rootDir, 'app'),
+          outDir: join(rootDir, 'out'),
+          generatedDir: join(rootDir, '.zero', 'generated'),
+          observability: false,
+          kv: false,
+        });
+      } catch (error) {
+        startupError = error;
+      }
+
+      expect(startupError).toBeInstanceOf(ResourceRegistryError);
+      expect((startupError as ResourceRegistryError).issues).toContainEqual(
+        expect.objectContaining({
+          code: 'resource-tenant-storage-index-missing',
+          resource: 'documents',
+        }),
+      );
+    } finally {
+      sqlite.close();
+      cleanupPlatformSQLiteService();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects sync-only resources whose loading mode can require HTTP hydration', async () => {
+    const rootDir = await createTempRoot();
+    try {
+      for (const mode of ['lazy', 'auto'] as const) {
+        await expect(createApp({
+          db: { mode: 'memory' },
+          tables: {
+            documents: {
+              serverTable: { id: 'text primary key', title: 'text not null' },
+              clientTable: { _pk: 'id', _sync: mode },
+            },
+          },
+          resources: [defineResource({
+            table: 'documents',
+            exposure: 'sync',
+            policy: readOnly(),
+          })],
+          auth: false,
+          serverResourcesDir: false,
+          serverPluginsDir: false,
+          serverMiddlewareDir: false,
+          serverEndpointsDir: false,
+          serverRoutesDir: false,
+          appDir: join(rootDir, `app-${mode}`),
+          outDir: join(rootDir, `out-${mode}`),
+          generatedDir: join(rootDir, '.zero', `generated-${mode}`),
+          observability: false,
+          kv: false,
+        })).rejects.toThrow('lazy Sync hydration requires /api/data');
+      }
+    } finally {
+      cleanupPlatformSQLiteService();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   test('registers inline and package-mode resource definitions', async () => {
     const rootDir = await createTempRoot();
     const resourcesDir = join(rootDir, 'server', 'resources');
     const appDir = join(rootDir, 'app');
     const serverImport = pathToFileURL(join(process.cwd(), 'src/frontend/server.ts')).href;
+    let app: Awaited<ReturnType<typeof createApp>> | undefined;
 
     try {
       await mkdir(resourcesDir, { recursive: true });
@@ -42,7 +197,7 @@ describe('createApp resource registration', () => {
         ].join('\n')
       );
 
-      await createApp({
+      app = await createApp({
         db: { mode: 'memory' },
         tables: {
           tickets: {
@@ -70,11 +225,13 @@ describe('createApp resource registration', () => {
         observability: false,
         kv: false,
       });
+      app.listen(0);
 
       const registry = getResourceRegistry();
       expect(registry.getByTable('tickets')?.primaryKey).toBe('ticket_id');
       expect(registry.getByTable('projects')?.primaryKey).toBe('project_id');
     } finally {
+      await app?.stop();
       cleanupPlatformSQLiteService();
       await rm(rootDir, { recursive: true, force: true });
     }
@@ -85,6 +242,7 @@ describe('createApp resource registration', () => {
     const routesDir = join(rootDir, 'server', 'routes');
     const appDir = join(rootDir, 'app');
     const serverImport = pathToFileURL(join(process.cwd(), 'src/frontend/server.ts')).href;
+    let app: Awaited<ReturnType<typeof createApp>> | undefined;
 
     try {
       await mkdir(routesDir, { recursive: true });
@@ -102,7 +260,7 @@ describe('createApp resource registration', () => {
         ].join('\n')
       );
 
-      const app = await createApp({
+      app = await createApp({
         db: { mode: 'memory' },
         tables: {
           notes: {
@@ -121,10 +279,11 @@ describe('createApp resource registration', () => {
         auth: false,
         kv: false,
       });
+      app.listen(0);
 
-      const response = await app.handle(new Request('http://localhost/api/sql', {
+      const response = await fetch(`http://localhost:${app.server!.port}/api/sql`, {
         method: 'POST',
-      }));
+      });
 
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toEqual({
@@ -132,8 +291,8 @@ describe('createApp resource registration', () => {
         title: 'Shared SQL',
       });
 
-      cleanupPlatformSQLiteService();
     } finally {
+      await app?.stop();
       cleanupPlatformSQLiteService();
       await rm(rootDir, { recursive: true, force: true });
     }

@@ -4,13 +4,13 @@ import * as React from 'react';
 import { InboxIcon } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 
-import { cn } from '@/lib/utils';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '#zero/lib/utils';
+import { ScrollArea } from '#zero/components/ui/scroll-area';
 import {
   NotificationItem,
   type NotificationItemProps,
   type NotificationItemType,
-} from '@/components/ui/notification-item';
+} from '#zero/components/ui/notification-item';
 
 // ─── Types ───────────────────────────────────────────────────────────────
 

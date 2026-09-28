@@ -1,9 +1,23 @@
 import type { ReactiveDB } from '../sync/reactive-db';
+import type { EmailRuntime } from '../email/types';
+import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
+import type { PlatformTokenService } from '../tokens/token-service';
+import type { AuthRuntime } from './auth-runtime';
+import type { AuthSessionService } from './auth-session-service';
+import type {
+  AuthRequestAdmissionConfig,
+  ResolvedAuthRequestAdmissionConfig,
+} from './auth-request-admission-types';
+import type {
+  AuthTenantOnboardingConfig,
+  ResolvedAuthTenantOnboardingConfig,
+} from './auth-tenant-onboarding-types';
 import type {
   AuthEmailBrandingConfig,
   AuthEmailTemplates,
 } from './auth-email-templates';
 import type { NativeAuthConfig, ResolvedNativeAuthConfig } from './native/types';
+import type { AuthAuditConfig, ResolvedAuthAuditConfig } from './auth-audit-types';
 
 // ─── Auth Context ──────────────────────────────────────────────────────────
 
@@ -22,8 +36,50 @@ export interface AuthContext {
   sessionKind?: 'web' | 'native';
   /** OIDC identity scopes only; app permissions still come from Zero policy. */
   scope?: readonly string[];
-  /** Opaque native refresh-family id. Present only for native app sessions. */
+  /** Opaque durable parent-session or native refresh-family id. */
   sessionId?: string;
+  /** Durable parent generation carried by browser access credentials. */
+  sessionGeneration?: number;
+  /** Live server-validated authorization scope for this browser session. */
+  sessionScopeKind?: 'application' | 'tenant';
+  sessionScopeId?: string;
+  /** Present only after a live tenant and membership generation check. */
+  tenantId?: string;
+  membershipId?: string;
+  tenantRole?: string | null;
+  tenantAuthorizationGeneration?: number;
+  membershipAuthorizationGeneration?: number;
+  /** Live advanced-role assignment revision; never accepted from token input. */
+  authorizationAssignmentRevision?: string;
+}
+
+/**
+ * Secret-free handle that lets trusted background runtimes re-resolve the
+ * exact live authority which originally admitted an authenticated request.
+ *
+ * This is not a bearer credential: it contains no access/refresh token and
+ * cannot create a new session. The opaque session id is useful only for a
+ * server-side lookup which must also match the user, client, security
+ * generation, scope generations, and assignment revision captured here.
+ */
+export interface AuthContextAuthorityReference {
+  readonly version: 1;
+  readonly userId: string;
+  readonly platformRole: string;
+  readonly authGeneration: number;
+  readonly sessionKind: 'web' | 'native';
+  readonly sessionId: string;
+  readonly sessionGeneration: number | null;
+  readonly clientId: string | null;
+  readonly identityScopes: readonly string[];
+  readonly sessionScopeKind: 'application' | 'tenant';
+  readonly sessionScopeId: string;
+  readonly tenantId: string | null;
+  readonly membershipId: string | null;
+  readonly tenantRole: string | null;
+  readonly tenantAuthorizationGeneration: number | null;
+  readonly membershipAuthorizationGeneration: number | null;
+  readonly authorizationAssignmentRevision: string | null;
 }
 
 // ─── User Record ───────────────────────────────────────────────────────────
@@ -32,8 +88,9 @@ export interface AuthContext {
 export type UserStatus = 'active' | 'suspended';
 
 /**
- * Public user record — safe to expose (no password hash).
- * Maps from the `users` table + joined `user_properties`.
+ * Sanitized user projection returned by authorized auth APIs (no secrets).
+ * This is not a globally public Sync row. Maps from the `users` table plus
+ * joined `user_properties`.
  */
 export interface UserRecord {
   userId: string;
@@ -73,11 +130,13 @@ export interface AccessTokenPayload {
   /** Per-user security generation used to durably invalidate bearer tokens. */
   authGeneration: number;
   clientId?: string;
-  sessionKind?: 'native';
+  sessionKind?: 'web' | 'native';
+  /** Durable browser parent generation. Native families use their own store. */
+  sessionGeneration?: number;
   scope?: readonly string[];
   audience?: string;
   jti?: string;
-  /** OIDC `sid`, bound to a live native refresh-token family. */
+  /** Opaque `sid`: durable browser parent session or native refresh family. */
   sessionId?: string;
 }
 
@@ -109,6 +168,8 @@ export interface AuthTransitionTokenPayload {
 export interface RefreshTokenRecord {
   tokenId: string;
   userId: string;
+  /** Null only for refresh rows created before durable parent sessions. */
+  sessionId: string | null;
   tokenHash: string;
   expiresAt: number;
   createdAt: number;
@@ -185,10 +246,176 @@ export interface AuthMfaChallengeRecord {
 /** Public registration mode after the first-user bootstrap account exists. */
 export type AuthRegistrationMode = 'public' | 'admin-only' | 'disabled';
 
-/** Configuration for public registration and first-user bootstrap. */
+/** How an empty installation may create its one bootstrap administrator. */
+export type AuthBootstrapMode = 'secret' | 'public' | 'disabled';
+
+/** Developer-authored first-administrator bootstrap ceremony. */
+export interface AuthBootstrapOptions {
+  /**
+   * `secret` requires the request to present the configured high-entropy
+   * secret. `public` preserves the legacy first-registration-wins behavior and
+   * must be selected explicitly. `disabled` requires trusted provisioning.
+   * Default: `secret`.
+   */
+  mode?: AuthBootstrapMode;
+  /**
+   * Operator-held secret required by `mode: 'secret'`. Use at least 32
+   * characters and inject it from deployment secrets rather than source.
+   * An omitted secret leaves bootstrap safely unavailable.
+   */
+  secret?: string;
+}
+
+/** Compact or extensible first-administrator bootstrap configuration. */
+export type AuthBootstrapConfig = AuthBootstrapMode | AuthBootstrapOptions;
+
+/** Normalized server-only bootstrap configuration. Never expose `secret`. */
+export interface ResolvedAuthBootstrapConfig {
+  mode: AuthBootstrapMode;
+  secret?: string;
+}
+
+/** Whether authorization operates in one application scope or tenant scopes. */
+export type AuthTenancyMode = 'single' | 'multi';
+
+/** Who may create a new tenant after installation bootstrap has completed. */
+export type AuthTenantCreationMode = 'authenticated' | 'platform-admin' | 'disabled';
+
+/** App-authored names used by packaged tenant UI. */
+export interface AuthTenantTerminologyConfig {
+  /** Lowercase singular noun. Default: 'organization'. */
+  singular?: string;
+  /** Lowercase plural noun. Default: 'organizations'. */
+  plural?: string;
+}
+
+/** App ceiling for post-bootstrap tenant creation. */
+export interface AuthTenantCreationConfig {
+  /** Default in multi mode: 'authenticated'. */
+  mode?: AuthTenantCreationMode;
+}
+
+/** Developer-authored tenancy capability selection. */
+export interface AuthTenancyOptions {
+  /** Tenancy capability mode. Default: 'single'. */
+  mode?: AuthTenancyMode;
+  /** Packaged UI vocabulary. Available only in multi mode. */
+  terminology?: AuthTenantTerminologyConfig;
+  /** Who may create another tenant after bootstrap. Available only in multi mode. */
+  creation?: AuthTenantCreationConfig;
+  /** Invitation and join-request onboarding. Available only in multi mode. */
+  onboarding?: AuthTenantOnboardingConfig;
+}
+
+/** Compact or extensible tenancy capability configuration. */
+export type AuthTenancyConfig = AuthTenancyMode | AuthTenancyOptions;
+
+/** Normalized tenancy capability selection. */
+export interface ResolvedAuthTenancyConfig {
+  readonly mode: AuthTenancyMode;
+  readonly terminology: Readonly<Required<AuthTenantTerminologyConfig>>;
+  readonly creation: Readonly<Required<AuthTenantCreationConfig>>;
+  /** Present only in multi-tenant mode. */
+  readonly onboarding?: ResolvedAuthTenantOnboardingConfig;
+}
+
+/** Whether authorization uses current simple roles or advanced RBAC. */
+export type AuthAuthorizationMode = 'simple' | 'advanced';
+
+/** Stable, application-declared capability key such as `patients:read`. */
+export type PermissionKey = string;
+
+/** Developer-authored metadata for one statically declared permission. */
+export interface AuthPermissionConfig {
+  /** Human-readable control-plane label. Defaults to the permission key. */
+  label?: string;
+  /** Optional bounded help text for future administrative UI. */
+  description?: string;
+}
+
+/** Deterministically normalized permission metadata. */
+export interface ResolvedAuthPermissionConfig {
+  readonly key: PermissionKey;
+  readonly label: string;
+  readonly description?: string;
+}
+
+/** Static role template expanded inside the current authorization scope. */
+export interface AuthRoleTemplateConfig {
+  /** Human-readable control-plane label. Defaults to the role key. */
+  label?: string;
+  /** Optional bounded help text for future administrative UI. */
+  description?: string;
+  /** Declared permissions granted by this role. */
+  permissions?: readonly PermissionKey[];
+  /** Grant every statically declared permission without using a wildcard key. */
+  allPermissions?: boolean;
+  /** Marks a framework/application protected role template. */
+  system?: boolean;
+}
+
+/** Deterministically normalized static role template. */
+export interface ResolvedAuthRoleTemplateConfig {
+  readonly key: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly permissions: readonly PermissionKey[];
+  readonly allPermissions: boolean;
+  readonly system: boolean;
+}
+
+/** Explicit one-time adoption target for an existing single/advanced app. */
+export interface AuthAuthorizationOwnerAdoptionConfig {
+  /** Exact existing internal user id. Mutually exclusive with email. */
+  userId?: string;
+  /** Exact canonical existing email. Mutually exclusive with userId. */
+  email?: string;
+}
+
+/** Developer-authored authorization capability selection. */
+export interface AuthAuthorizationOptions {
+  /** Authorization capability mode. Default: 'simple'. */
+  mode?: AuthAuthorizationMode;
+  /** Canonical application/framework permission registry. */
+  permissions?: Record<PermissionKey, AuthPermissionConfig>;
+  /** Static application role templates. */
+  roles?: Record<string, AuthRoleTemplateConfig>;
+  /**
+   * Explicitly adopt one existing identity as protected application owner when
+   * upgrading an installed single-tenant app to advanced authorization.
+   */
+  ownerAdoption?: AuthAuthorizationOwnerAdoptionConfig;
+  /**
+   * One-time trust assertion for an unmarked legacy multi/simple database.
+   * Use only when upgrading that exact database to multi/advanced; remove it
+   * after Zero persists the installed profile marker.
+   */
+  legacySimpleRoleAdoption?: true;
+}
+
+/** Compact or extensible authorization capability configuration. */
+export type AuthAuthorizationConfig =
+  | AuthAuthorizationMode
+  | AuthAuthorizationOptions;
+
+/** Normalized authorization capability selection. */
+export interface ResolvedAuthAuthorizationConfig {
+  readonly mode: AuthAuthorizationMode;
+  readonly permissions: Readonly<Record<PermissionKey, ResolvedAuthPermissionConfig>>;
+  readonly roles: Readonly<Record<string, ResolvedAuthRoleTemplateConfig>>;
+  readonly ownerAdoption?: Readonly<AuthAuthorizationOwnerAdoptionConfig> | null;
+  readonly legacySimpleRoleAdoption?: true;
+}
+
+/** Configuration for ordinary registration after installation bootstrap. */
 export interface AuthRegistrationConfig {
   /** Public registration mode after bootstrap. Default: 'public'. */
   mode?: AuthRegistrationMode;
+}
+
+/** Registration behavior accepted by legacy resolved-config test doubles. */
+export interface ResolvedAuthRegistrationConfig {
+  mode: AuthRegistrationMode;
 }
 
 /** Auth/account lifecycle email switches. */
@@ -342,8 +569,18 @@ export interface ResolvedUserPropertyFieldConfig {
 
 /** Developer-authored auth behavior config. */
 export interface AuthBehaviorConfig {
-  /** Public registration and first-user bootstrap behavior. */
+  /** Durable authorization/control-plane audit retention. */
+  audit?: AuthAuditConfig;
+  /** Application or tenant-scoped authorization. Default: 'single'. */
+  tenancy?: AuthTenancyConfig;
+  /** Simple current roles or advanced RBAC. Default: 'simple'. */
+  authorization?: AuthAuthorizationConfig;
+  /** Ordinary account registration behavior after installation bootstrap. */
   registration?: AuthRegistrationConfig;
+  /** Installation bootstrap ceremony. Default: secret-gated and unavailable. */
+  bootstrap?: AuthBootstrapConfig;
+  /** Durable source/identifier admission for public bootstrap, registration, and login. */
+  requestAdmission?: AuthRequestAdmissionConfig;
   /** Account lifecycle policy that affects token issuance. */
   account?: AuthAccountConfig;
   /** MFA policy and enabled methods. */
@@ -364,9 +601,20 @@ export interface AuthBehaviorConfig {
 
 /** Normalized auth behavior config used by backend services and routes. */
 export interface ResolvedAuthBehaviorConfig {
-  registration: {
-    mode: AuthRegistrationMode;
-  };
+  /** Durable authorization/control-plane audit retention. */
+  audit: ResolvedAuthAuditConfig;
+  /**
+   * Normalized by resolveAuthBehaviorConfig(). Optional on this legacy public
+   * interface so existing hand-built test doubles remain source-compatible.
+   */
+  tenancy?: ResolvedAuthTenancyConfig;
+  /** See tenancy compatibility note above. */
+  authorization?: ResolvedAuthAuthorizationConfig;
+  /** Present on normalized current config; absent means the safe secret mode. */
+  bootstrap?: ResolvedAuthBootstrapConfig;
+  /** Present on normalized current config; omitted only by legacy test doubles. */
+  requestAdmission?: ResolvedAuthRequestAdmissionConfig;
+  registration: ResolvedAuthRegistrationConfig;
   account: ResolvedAuthAccountConfig;
   mfa: ResolvedAuthMfaConfig;
   accountEmails: ResolvedAuthAccountEmailConfig;
@@ -377,12 +625,41 @@ export interface ResolvedAuthBehaviorConfig {
   nativeApps: ResolvedNativeAuthConfig;
 }
 
+/** Exact return contract of resolveAuthBehaviorConfig(). */
+export interface NormalizedAuthBehaviorConfig extends ResolvedAuthBehaviorConfig {
+  tenancy: ResolvedAuthTenancyConfig;
+  authorization: ResolvedAuthAuthorizationConfig;
+  bootstrap: ResolvedAuthBootstrapConfig;
+  requestAdmission: ResolvedAuthRequestAdmissionConfig;
+}
+
 /**
  * Configuration for createAuthPlugin().
  */
 export interface AuthPluginConfig extends AuthBehaviorConfig {
   /** Shared ReactiveDB instance — auth defines its tables here */
   db: ReactiveDB;
+
+  /** Managed app-local service/lifecycle container. */
+  runtime?: ZeroAppRuntime;
+
+  /** Fixed app-local email boundary; preferred for direct plugin composition. */
+  emailRuntime?: EmailRuntime;
+
+  /** Lazy app-local email boundary; useful when plugin startup order matters. */
+  getEmailRuntime?: () => EmailRuntime;
+
+  /** Fixed app-local platform action-token service. `null` selects legacy storage. */
+  platformTokenService?: PlatformTokenService | null;
+
+  /** Lazy app-local platform action-token dependency. */
+  getPlatformTokenService?: () => PlatformTokenService | null;
+
+  /**
+   * Receives this plugin's app-local runtime at composition time.
+   * Advanced integrations should normally prefer services on `ZeroAppRuntime`.
+   */
+  onRuntimeCreated?: (runtime: AuthRuntime) => void;
 
   /** Access token TTL in jose duration format (default: '15m') */
   accessTokenTTL?: string;
@@ -419,6 +696,9 @@ export interface TokenServiceConfig {
   /** Canonical issuer and audience accepted for native access tokens. */
   nativeIssuer?: string;
   nativeAudience?: string;
+
+  /** App-local durable browser-session authority. Defaults to single mode. */
+  authSessionService?: AuthSessionService;
 }
 
 // ─── Error ─────────────────────────────────────────────────────────────────

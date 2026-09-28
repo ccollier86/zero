@@ -5,12 +5,12 @@ import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { FieldMeta } from '../../schema/field-types';
 import { useForm, type UseFormOptions } from '../../hooks/use-form';
 import { FieldRenderer } from './field-renderer';
-import { Button } from '@/components/ui/button';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
-import { cn } from '@/lib/utils';
+import { Button } from '#zero/components/ui/button';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '#zero/components/ui/card';
+import { cn } from '#zero/lib/utils';
 import type { Row } from '../../sync/types';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { Loader } from '@/components/animate-ui/icons/loader';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { Loader } from '#zero/components/animate-ui/icons/loader';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -30,6 +30,8 @@ export interface AutoFormProps<T extends Row = Row> {
   columns?: number;
   card?: { title: string; description?: string };
   fields?: Record<string, FieldOverrides>;
+  /** Field allow-list used for rendering, validation, and submitted data. */
+  includeFields?: readonly string[];
   onSubmit?: (data: T) => void | Promise<void>;
   onSuccess?: () => void;
   onError?: (error: string) => void;
@@ -50,6 +52,7 @@ export function AutoForm<T extends Row = Row>({
   columns = 1,
   card,
   fields: fieldOverrides = {},
+  includeFields,
   onSubmit,
   onSuccess,
   onError,
@@ -63,6 +66,7 @@ export function AutoForm<T extends Row = Row>({
     collection,
     mode,
     editId,
+    includeFields,
     onSubmit,
     onSuccess,
     onError,

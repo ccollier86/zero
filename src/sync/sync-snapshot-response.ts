@@ -21,22 +21,26 @@ export function sendSyncSnapshot(
   db: ReactiveDB,
   reset: NonNullable<SyncSnapshotMessage['reset']>,
 ): void {
-  const tableData: Record<string, Record<string, Row>> = {};
-  for (const table of tables) {
-    const filter = socket.data.resourceRowFilters.get(table);
-    const keyed: Record<string, Row> = {};
-    for (const row of filterSyncRows(db.query(table), filter)) {
-      keyed[String(row[db.getPrimaryKey(table)])] = row;
+  const snapshot = db.readAtCurrentSequence(() => {
+    const tableData: Record<string, Record<string, Row>> = {};
+    for (const table of tables) {
+      const filter = socket.data.resourceRowFilters.get(table);
+      const projector = socket.data.resourceRowProjectors?.get(table);
+      const keyed: Record<string, Row> = {};
+      for (const row of filterSyncRows(db.query(table), filter, projector)) {
+        keyed[String(row[db.getPrimaryKey(table)])] = row;
+      }
+      tableData[table] = keyed;
     }
-    tableData[table] = keyed;
-  }
+    return tableData;
+  });
   const message: SyncSnapshotMessage = {
     type: 'sync.snapshot',
-    tables: tableData,
-    seq: db.currentSeq,
+    tables: snapshot.value,
+    seq: snapshot.seq,
     epoch: db.syncEpoch,
     scope: socket.data.authorizationScope,
     reset,
   };
-  if (sendSyncWire(socket, message)) socket.data.lastSeq = db.currentSeq;
+  if (sendSyncWire(socket, message)) socket.data.lastSeq = snapshot.seq;
 }

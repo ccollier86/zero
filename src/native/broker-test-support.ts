@@ -1,6 +1,11 @@
 /** Test-only NativeAuthClient double shared by broker regression suites. */
 
-import type { NativeAuthClient, NativeAuthState, NativeAuthStateListener } from './client-types';
+import type {
+  NativeAuthClient,
+  NativeAuthState,
+  NativeAuthStateListener,
+  NativeTenantListResult,
+} from './client-types';
 import { NativeAuthError } from './errors';
 
 export class FakeNativeClient implements NativeAuthClient {
@@ -12,6 +17,10 @@ export class FakeNativeClient implements NativeAuthClient {
 
   async initialize() { this.initializeCalls += 1; await Bun.sleep(5); this.authenticate(); return this.state; }
   async refresh() { this.refreshCalls += 1; await Bun.sleep(5); this.accessToken = 'access-two'; return this.state; }
+  async listTenants(): Promise<NativeTenantListResult> {
+    return { activeTenantId: null, tenants: [] };
+  }
+  async switchTenant(_tenantId: string): Promise<NativeAuthState> { return this.state; }
   async signIn() { this.authenticate(); return this.state; }
   async signUp(): Promise<NativeAuthState> {
     throw new NativeAuthError('Registration blocked.', 'REGISTRATION_BLOCKED', 403);

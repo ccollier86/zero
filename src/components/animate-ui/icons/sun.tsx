@@ -8,7 +8,7 @@ import {
   useAnimateIconContext,
   IconWrapper,
   type IconProps,
-} from '@/components/animate-ui/icons/icon';
+} from '#zero/components/animate-ui/icons/icon';
 
 type SunProps = IconProps<keyof typeof animations>;
 

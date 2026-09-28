@@ -1,8 +1,8 @@
 import * as React from "react"
 
-import { cn } from "@/lib/utils"
-import { Label } from "@/components/ui/label"
-import { getStrictContext } from "@/lib/get-strict-context"
+import { cn } from "#zero/lib/utils"
+import { Label } from "#zero/components/ui/label"
+import { getStrictContext } from "#zero/lib/get-strict-context"
 
 // ─── Context ────────────────────────────────────────────────────────────────
 

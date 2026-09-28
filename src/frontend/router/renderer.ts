@@ -9,6 +9,12 @@ import { hasUseClientDirective } from './scanner';
 import { OBS_CODES } from '../../observability/codes';
 import { emitPlatformCode } from '../../observability/sink';
 import type { RouteAuthMode } from './auth-policy';
+import { safeParse } from 'valibot';
+import { createRequestAuthorizationAccess } from '../../auth/authorization-access';
+import {
+  createRouteAuthorizationBoundary,
+  type RouteAuthorizationBoundary,
+} from './authorization-route-boundary';
 
 // ─── Module Cache ──────────────────────────────────────────────────────────
 
@@ -151,10 +157,36 @@ export async function renderRoute(options: RenderOptions): Promise<Response> {
 
     const pageModule = await loadModule(pagePath);
 
+    // Validation failures are ordinary route misses, not renderer failures.
+    // Run this before loaders so invalid params never reach data access code.
+    if (!isNotFound && pageModule.validate?.params) {
+      const validation = safeParse(pageModule.validate.params, match.params);
+      if (!validation.success) {
+        if (match.notFoundPath) {
+          return renderRoute({
+            ...options,
+            match: {
+              ...match,
+              pagePath: null,
+            },
+          });
+        }
+
+        return new Response(notFoundHtml(), {
+          status: 404,
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+    }
+
     // Run page loader if present — use enriched context from router plugin
     const loaderCtx: LoaderContext = loaderContext ?? {
       params: match.params,
       request,
+      access: createRequestAuthorizationAccess({
+        authContext: null,
+        kernel: null,
+      }),
       redirect: (url: string, status = 302) =>
         new Response(null, { status, headers: { Location: url } }),
     };
@@ -188,6 +220,9 @@ export async function renderRoute(options: RenderOptions): Promise<Response> {
       cssPath,
       isClientRoute ? match : undefined,
       isClientRoute ? loaderData : undefined,
+      isClientRoute
+        ? createRouteAuthorizationBoundary(loaderCtx.auth, loaderCtx.access)
+        : undefined,
       isClientRoute ? platformConfig : undefined,
       isClientRoute ? 'client' : 'ssr',
       isClientRoute ? clientEntry : undefined,
@@ -274,6 +309,7 @@ function buildHtmlHead(
   cssPath?: string,
   match?: MatchResult,
   loaderData?: unknown,
+  authorizationBoundary?: RouteAuthorizationBoundary,
   platformConfig?: PlatformConfig,
   renderMode?: 'client' | 'ssr',
   clientEntry?: string,
@@ -299,6 +335,7 @@ function buildHtmlHead(
       pattern: match.pattern,
       params: match.params,
       loaderData: loaderData ?? null,
+      authorizationBoundary: authorizationBoundary ?? null,
       renderMode: renderMode ?? 'ssr',
     };
     parts.push(

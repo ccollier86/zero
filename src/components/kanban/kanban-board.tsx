@@ -32,10 +32,10 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { AnimatePresence, motion } from 'motion/react';
 
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Badge, badgeVariants } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { cn } from '@/lib/utils';
+import { Avatar, AvatarFallback, AvatarImage } from '#zero/components/ui/avatar';
+import { Badge, badgeVariants } from '#zero/components/ui/badge';
+import { ScrollArea } from '#zero/components/ui/scroll-area';
+import { cn } from '#zero/lib/utils';
 import type { ProjectKanbanMoveResult } from './kanban-utils';
 import { groupKanbanItemIds, projectKanbanMove, type KanbanTarget } from './kanban-utils';
 

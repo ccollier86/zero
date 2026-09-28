@@ -1,8 +1,9 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { Elysia } from 'elysia';
 import { createReactiveDB, ReactiveDB } from '../sync/reactive-db';
-import { createAuthPlugin, getAuthEmailOutbox, getTokenService } from './auth.plugin';
+import { createAuthPlugin } from './auth.plugin';
 import { createAuthMiddleware } from './auth.middleware';
+import type { AuthRuntime } from './auth-runtime';
 import {
   configureEmail,
   MemoryEmailProvider,
@@ -25,13 +26,21 @@ let db: ReactiveDB;
 let app: any;
 let baseUrl: string;
 let bootstrapAdminToken: string;
+let authRuntime: AuthRuntime;
+const authRuntimesByUrl = new Map<string, AuthRuntime>();
 
 beforeAll(async () => {
   db = createReactiveDB({ mode: 'memory' });
 
   app = new Elysia()
-    .use(createAuthPlugin({ db }))
-    .use(createAuthMiddleware(getTokenService))
+    .use(createAuthPlugin({
+      db,
+      bootstrap: 'public',
+      onRuntimeCreated(runtime) {
+        authRuntime = runtime;
+      },
+    }))
+    .use(createAuthMiddleware(() => authRuntime.getTokenService()))
     // A protected test route to verify middleware
     .get('/api/whoami', (ctx: any) => {
       if (!ctx.authContext) return new Response('Unauthorized', { status: 401 });
@@ -41,9 +50,11 @@ beforeAll(async () => {
   app.listen(0);
   const server = app.server!;
   baseUrl = `http://localhost:${server.port}`;
+  authRuntimesByUrl.set(baseUrl, authRuntime);
 });
 
 afterAll(() => {
+  authRuntimesByUrl.delete(baseUrl);
   app.stop();
   db.dispose();
 });
@@ -75,7 +86,7 @@ async function requestJson(
   });
   const data = await res.json().catch(() => null);
   if (path === '/auth/forgot-password' || path === '/auth/resend-verification') {
-    await getAuthEmailOutbox()?.processDue();
+    await authRuntimesByUrl.get(url)?.getAuthEmailOutbox()?.processDue();
   }
   return { status: res.status, data, headers: res.headers };
 }
@@ -106,21 +117,34 @@ async function get(path: string, token?: string): Promise<JsonResponse> {
 
 async function startAuthApp(config: Omit<Parameters<typeof createAuthPlugin>[0], 'db'> = {}) {
   const localDb = createReactiveDB({ mode: 'memory' });
+  let localRuntime!: AuthRuntime;
+  const configuredRuntimeCallback = config.onRuntimeCreated;
   const localApp = new Elysia()
-    .use(createAuthPlugin({ db: localDb, ...config }))
-    .use(createAuthMiddleware(getTokenService))
+    .use(createAuthPlugin({
+      db: localDb,
+      bootstrap: 'public',
+      ...config,
+      onRuntimeCreated(runtime) {
+        localRuntime = runtime;
+        configuredRuntimeCallback?.(runtime);
+      },
+    }))
+    .use(createAuthMiddleware(() => localRuntime.getTokenService()))
     .get('/api/whoami', (ctx: any) => {
       if (!ctx.authContext) return new Response('Unauthorized', { status: 401 });
       return { userId: ctx.authContext.userId, role: ctx.authContext.role };
     });
   localApp.listen(0);
   const url = `http://localhost:${localApp.server!.port}`;
+  authRuntimesByUrl.set(url, localRuntime);
 
   return {
     db: localDb,
     app: localApp,
+    runtime: localRuntime,
     url,
     async stop() {
+      authRuntimesByUrl.delete(url);
       await localApp.stop();
       localDb.dispose();
     },
@@ -178,7 +202,13 @@ describe('Auth Plugin — Registration', () => {
     expect(status).toBe(200);
     expect(data.registration.bootstrapRequired).toBe(true);
     expect(data.registration.publicRegistrationEnabled).toBe(true);
-    expect(data.registration.userCount).toBe(0);
+    expect(data.registration.userCount).toBeUndefined();
+    expect(data.tenancy).toEqual({
+      mode: 'single',
+      terminology: { singular: 'organization', plural: 'organizations' },
+      creation: { mode: 'disabled' },
+    });
+    expect(data.authorization).toEqual({ mode: 'simple' });
     expect(data.mfa).toMatchObject({
       enabled: false,
       policy: 'optional',
@@ -216,7 +246,7 @@ describe('Auth Plugin — Registration', () => {
     expect(status).toBe(200);
     expect(data.registration.bootstrapRequired).toBe(false);
     expect(data.registration.publicRegistrationEnabled).toBe(true);
-    expect(data.registration.userCount).toBeGreaterThan(0);
+    expect(data.registration.userCount).toBeUndefined();
   });
 
   test('POST /auth/register rejects duplicate username', async () => {
@@ -274,6 +304,12 @@ describe('Auth Plugin — Admin Users', () => {
   test('admin can inspect config and manage users/properties/passwords', async () => {
     const config = await get('/auth/admin/config', bootstrapAdminToken);
     expect(config.status).toBe(200);
+    expect(config.data.tenancy).toEqual({
+      mode: 'single',
+      terminology: { singular: 'organization', plural: 'organizations' },
+      creation: { mode: 'disabled' },
+    });
+    expect(config.data.authorization).toEqual({ mode: 'simple' });
     expect(config.data.registration.publicRegistrationEnabled).toBe(true);
     expect(config.data.mfa).toMatchObject({
       enabled: false,
@@ -567,7 +603,7 @@ describe('Auth Plugin — Page Session Cookie', () => {
 
     const loginCookie = cookiePair(loginSetCookie!);
     const loginPageToken = cookieValue(loginCookie);
-    expect(await getTokenService()!.resolvePageSessionToken(loginPageToken)).toMatchObject({
+    expect(await authRuntime.getTokenService()!.resolvePageSessionToken(loginPageToken)).toMatchObject({
       userId: login.user.userId,
       role: login.user.role,
     });
@@ -593,8 +629,8 @@ describe('Auth Plugin — Page Session Cookie', () => {
 
     expect(refreshResponse.status).toBe(200);
     expect(refreshedCookie).not.toBe(loginCookie);
-    expect(await getTokenService()!.resolvePageSessionToken(loginPageToken)).toBeNull();
-    expect(await getTokenService()!.resolvePageSessionToken(refreshedPageToken)).toMatchObject({
+    expect(await authRuntime.getTokenService()!.resolvePageSessionToken(loginPageToken)).toBeNull();
+    expect(await authRuntime.getTokenService()!.resolvePageSessionToken(refreshedPageToken)).toMatchObject({
       userId: login.user.userId,
     });
 
@@ -611,7 +647,7 @@ describe('Auth Plugin — Page Session Cookie', () => {
     expect(logoutResponse.status).toBe(200);
     expect(logoutSetCookie).toContain(`${PAGE_SESSION_COOKIE_NAME}=`);
     expect(logoutSetCookie).toContain('Max-Age=0');
-    expect(await getTokenService()!.resolvePageSessionToken(refreshedPageToken)).toBeNull();
+    expect(await authRuntime.getTokenService()!.resolvePageSessionToken(refreshedPageToken)).toBeNull();
   });
 
   test('a rejected refresh clears and revokes the cookie-bound session', async () => {
@@ -637,7 +673,7 @@ describe('Auth Plugin — Page Session Cookie', () => {
 
     expect(refreshResponse.status).toBe(401);
     expect(refreshResponse.headers.get('set-cookie')).toContain('Max-Age=0');
-    expect(await getTokenService()!.resolvePageSessionToken(pageToken)).toBeNull();
+    expect(await authRuntime.getTokenService()!.resolvePageSessionToken(pageToken)).toBeNull();
   });
 
   test('generic admin eligibility updates revoke rather than temporarily gate page sessions', async () => {
@@ -661,7 +697,7 @@ describe('Auth Plugin — Page Session Cookie', () => {
     const pageToken = cookieValue(
       cookiePair(loginResponse.headers.get('set-cookie')!)
     );
-    expect(await getTokenService()!.resolvePageSessionToken(pageToken)).not.toBeNull();
+    expect(await authRuntime.getTokenService()!.resolvePageSessionToken(pageToken)).not.toBeNull();
 
     const suspended = await patch(
       `/auth/admin/users/${created.data.user.userId}`,
@@ -669,7 +705,7 @@ describe('Auth Plugin — Page Session Cookie', () => {
       bootstrapAdminToken
     );
     expect(suspended.status).toBe(200);
-    expect(await getTokenService()!.resolvePageSessionToken(pageToken)).toBeNull();
+    expect(await authRuntime.getTokenService()!.resolvePageSessionToken(pageToken)).toBeNull();
 
     const reactivated = await patch(
       `/auth/admin/users/${created.data.user.userId}`,
@@ -677,7 +713,7 @@ describe('Auth Plugin — Page Session Cookie', () => {
       bootstrapAdminToken
     );
     expect(reactivated.status).toBe(200);
-    expect(await getTokenService()!.resolvePageSessionToken(pageToken)).toBeNull();
+    expect(await authRuntime.getTokenService()!.resolvePageSessionToken(pageToken)).toBeNull();
   });
 });
 
@@ -916,7 +952,7 @@ describe('Auth Plugin — Registration Policy And Configured Properties', () => 
     }
   });
 
-  test('admin-only mode keeps bootstrap open, then requires admin-created users', async () => {
+  test('admin-only mode with explicit public bootstrap then requires admin-created users', async () => {
     const local = await startAuthApp({
       registration: {
         mode: 'admin-only',
@@ -1075,7 +1111,7 @@ describe('Auth Plugin — Registration Policy And Configured Properties', () => 
     }
   });
 
-  test('disabled registration mode keeps bootstrap open, then blocks all user creation', async () => {
+  test('disabled registration mode with explicit public bootstrap then blocks all user creation', async () => {
     const local = await startAuthApp({
       registration: {
         mode: 'disabled',

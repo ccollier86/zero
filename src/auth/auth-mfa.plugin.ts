@@ -13,25 +13,33 @@ import type { TokenService } from './token-service';
 import type { UserStore } from './user-store';
 import type { AuthTransitionTokenPayload, ResolvedAuthBehaviorConfig, UserRecord } from './types';
 import { AuthError } from './types';
-import { toAuthUserResponse } from './auth-user-response';
+import { buildSessionCompletionResponse } from './auth-mfa-response';
+import type { AuthTenantSessionService } from './auth-tenant-session-service';
 import {
   authMfaCodeSchema,
   authMfaLabelSchema,
   authTokenSchema,
 } from './auth-request-schema';
 import { syncPageSessionCookie } from './page-session';
+import {
+  authAuditActorFromContext,
+  authAuditRequestFromRequest,
+} from './auth-audit-service';
+import { applyAuthPrivateNoStore } from './auth-response-cache';
 
 export interface AuthMfaPluginConfig {
   getUserStore: () => UserStore | null;
   getTokenService: () => TokenService | null;
   getMfaChallengeService: () => MfaChallengeService | null;
   getAuthConfig: () => ResolvedAuthBehaviorConfig;
+  getAuthTenantSessionService: () => AuthTenantSessionService | null;
 }
 
 /** Create MFA lifecycle routes mounted under `/auth/mfa`. */
 export function createAuthMfaPlugin(config: AuthMfaPluginConfig) {
   return new Elysia({ name: 'auth-mfa', prefix: '/mfa' })
-    .get('/methods', async ({ request }) => {
+    .get('/methods', async ({ request, set }) => {
+      applyAuthPrivateNoStore(set);
       const { store, tokenService, mfa } = requireMfaServices(config);
       const user = await requireFullSessionUser(request, store, tokenService);
 
@@ -83,7 +91,7 @@ export function createAuthMfaPlugin(config: AuthMfaPluginConfig) {
     .post(
       '/setup/verify',
       async ({ body, request, set }) => {
-        const { store, tokenService, mfa } = requireMfaServices(config);
+        const { store, tokenService, mfa, tenantSessions } = requireMfaServices(config);
         const payload = await verifyTransitionToken(
           tokenService,
           body.verificationToken,
@@ -94,22 +102,30 @@ export function createAuthMfaPlugin(config: AuthMfaPluginConfig) {
         }
 
         const user = requireTokenUser(store, payload);
+        const liveAuth = await extractAuthContext(request, tokenService);
         const method = await mfa.verifyEnrollment({
           user,
           methodId: payload.methodId,
           challengeId: payload.challengeId,
           code: body.code,
+          auditActor: liveAuth?.userId === user.userId
+            ? authAuditActorFromContext(liveAuth)
+            : { userId: user.userId, provenance: 'authenticated-request' },
+          auditRequest: authAuditRequestFromRequest(request),
         });
 
         if (payload.flow === 'auth') {
-          const tokens = await tokenService.issueTokenPair(user);
+          const completion = await buildSessionCompletionResponse({
+            user,
+            tenantSessionService: tenantSessions,
+          });
           const response = {
-            user: toAuthUserResponse(user),
+            ...completion,
             method,
-            accessToken: tokens.accessToken,
-            refreshToken: tokens.refreshToken,
           };
-          await syncPageSessionCookie(set, request, tokenService, response);
+          await syncPageSessionCookie(set, request, tokenService, response, {
+            clearWhenMissing: true,
+          });
           return response;
         }
 
@@ -129,7 +145,7 @@ export function createAuthMfaPlugin(config: AuthMfaPluginConfig) {
     .post(
       '/challenge/verify',
       async ({ body, request, set }) => {
-        const { store, tokenService, mfa } = requireMfaServices(config);
+        const { store, tokenService, mfa, tenantSessions } = requireMfaServices(config);
         const payload = await verifyTransitionToken(
           tokenService,
           body.challengeToken,
@@ -146,15 +162,17 @@ export function createAuthMfaPlugin(config: AuthMfaPluginConfig) {
           challengeId: payload.challengeId,
           code: body.code,
         });
-        const tokens = await tokenService.issueTokenPair(user);
-
+        const completion = await buildSessionCompletionResponse({
+          user,
+          tenantSessionService: tenantSessions,
+        });
         const response = {
-          user: toAuthUserResponse(user),
+          ...completion,
           method,
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
         };
-        await syncPageSessionCookie(set, request, tokenService, response);
+        await syncPageSessionCookie(set, request, tokenService, response, {
+          clearWhenMissing: true,
+        });
         return response;
       },
       {
@@ -170,16 +188,18 @@ interface MfaServices {
   store: UserStore;
   tokenService: TokenService;
   mfa: MfaChallengeService;
+  tenantSessions: AuthTenantSessionService;
 }
 
 function requireMfaServices(config: AuthMfaPluginConfig): MfaServices {
   const store = config.getUserStore();
   const tokenService = config.getTokenService();
   const mfa = config.getMfaChallengeService();
-  if (!store || !tokenService || !mfa) {
+  const tenantSessions = config.getAuthTenantSessionService();
+  if (!store || !tokenService || !mfa || !tenantSessions) {
     throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
   }
-  return { store, tokenService, mfa };
+  return { store, tokenService, mfa, tenantSessions };
 }
 
 async function resolveMfaSetupActor(params: {

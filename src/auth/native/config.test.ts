@@ -68,6 +68,27 @@ describe('resolveNativeAuthConfig', () => {
     }] })).toThrow('redirectUris contains duplicates');
   });
 
+  test('rejects unknown native auth fields and wrong runtime shapes', () => {
+    expect(() => resolveNativeAuthConfig({ enabeld: true } as never))
+      .toThrow('config contains unsupported field "enabeld"');
+    expect(() => resolveNativeAuthConfig({ enabled: 'true' } as never))
+      .toThrow('enabled must be a boolean');
+    expect(() => resolveNativeAuthConfig({ clients: 'desktop' } as never))
+      .toThrow('clients must be an array');
+    expect(() => resolveNativeAuthConfig({ clients: [{
+      clientId: 'desktop',
+      name: 'Desktop',
+      redirectUris: ['com.example.desktop:/callback'],
+      redirectUri: 'typo',
+    } as never] })).toThrow('client contains unsupported field "redirectUri"');
+    expect(() => resolveNativeAuthConfig({
+      requestAdmission: { maxOutstandingGlobla: 1 } as never,
+    })).toThrow('requestAdmission contains unsupported field "maxOutstandingGlobla"');
+    expect(() => resolveNativeAuthConfig({
+      refreshRotation: { minRotationInterval: false } as never,
+    })).toThrow('minRotationInterval must be a duration string');
+  });
+
   test('rejects unsafe registration values', () => {
     expect(() => resolveNativeAuthConfig({
       issuer: 'http://auth.example.com',

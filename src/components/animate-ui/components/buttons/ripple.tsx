@@ -3,14 +3,14 @@
 import * as React from 'react';
 import { type VariantProps } from 'class-variance-authority';
 
-import { buttonVariants } from '@/components/animate-ui/components/buttons/button';
+import { buttonVariants } from '#zero/components/animate-ui/components/buttons/button';
 import {
   RippleButton as RippleButtonPrimitive,
   RippleButtonRipples as RippleButtonRipplesPrimitive,
   type RippleButtonProps as RippleButtonPrimitiveProps,
   type RippleButtonRipplesProps as RippleButtonRipplesPrimitiveProps,
-} from '@/components/animate-ui/primitives/buttons/ripple';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/primitives/buttons/ripple';
+import { cn } from '#zero/lib/utils';
 
 const rippleButtonVariants = {
   default: '[--ripple-button-ripple-color:var(--primary-foreground)]',

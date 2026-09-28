@@ -7,6 +7,26 @@ import { defineAuthTables } from './auth-schema';
 import { AuthEmailOutboxStore } from './auth-email-outbox-store';
 
 describe('AuthEmailOutboxStore', () => {
+  test('fences cached direct reads and leasing writes after a profile change', () => {
+    const db = prepareDb();
+    let current = true;
+    const store = new AuthEmailOutboxStore(db, 'worker-a', () => {
+      if (!current) throw new Error('AUTH_PROFILE_CHANGED');
+    });
+    try {
+      store.enqueue(request('profile@test.com'), 100, 1_000, 10, 100);
+      expect(store.count('pending')).toBe(1);
+      current = false;
+      expect(() => store.count('pending')).toThrow('AUTH_PROFILE_CHANGED');
+      expect(() => store.claim(100, 50)).toThrow('AUTH_PROFILE_CHANGED');
+      expect(() => store.cleanup(1_000)).toThrow('AUTH_PROFILE_CHANGED');
+      expect(db.prepare(`SELECT status, lease_owner FROM _auth_email_outbox`).get())
+        .toEqual({ status: 'pending', lease_owner: null });
+    } finally {
+      db.dispose();
+    }
+  });
+
   test('deduplicates, caps, leases, scrubs, and expires terminal jobs', () => {
     const db = prepareDb();
     const store = new AuthEmailOutboxStore(db, 'worker-a');

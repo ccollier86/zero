@@ -6,7 +6,9 @@
  * execution, persistence, and authorization remain in the workflow backend.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
+import { useClientMaybe } from './client-context';
 import { useMutation } from './mutation-hooks';
 import { useWorkflow, useWorkflowActions, type UseWorkflowResult } from './workflow-hooks';
 
@@ -53,18 +55,36 @@ export function useWorkflowRun(
   name: string,
   options: UseWorkflowRunOptions = {},
 ): UseWorkflowRunResult {
+  const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const [localInstanceId, setLocalInstanceId] = useState<string | null>(options.instanceId ?? null);
-  const instanceId = options.instanceId ?? localInstanceId;
+  const [loadedBoundaryKey, setLoadedBoundaryKey] = useState(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const previousBoundaryKeyRef = useRef(authorizationBoundary.key);
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  boundaryKeyRef.current = authorizationBoundary.key;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const visible = authorizationBoundary.ready
+    && loadedBoundaryKey === authorizationBoundary.key;
+  const instanceId = visible ? options.instanceId ?? localInstanceId : null;
   const workflow = useWorkflow(instanceId);
   const actions = useWorkflowActions();
 
+  useEffect(() => {
+    setLoadedBoundaryKey(authorizationBoundary.key);
+    if (previousBoundaryKeyRef.current !== authorizationBoundary.key) {
+      setLocalInstanceId(null);
+      previousBoundaryKeyRef.current = authorizationBoundary.key;
+    }
+  }, [authorizationBoundary.key]);
+
   const startMutation = useMutation(
-    async (input?: unknown) => {
-      const nextInstanceId = await actions.start(name, input);
-      setLocalInstanceId(nextInstanceId);
-      return nextInstanceId;
+    (input?: unknown) => actions.start(name, input),
+    {
+      metadata: { workflow: name, action: 'start' },
+      onSuccess: setLocalInstanceId,
     },
-    { metadata: { workflow: name, action: 'start' } },
   );
 
   const actionMutation = useMutation(
@@ -105,6 +125,12 @@ export function useWorkflowRun(
     (eventName: string, payload?: unknown) => actionMutation.run('event', eventName, payload),
     [actionMutation.run],
   );
+  const setInstanceId = useCallback((nextInstanceId: string | null) => {
+    if (boundaryReadyRef.current
+      && boundaryKeyRef.current === callbackBoundaryKey) {
+      setLocalInstanceId(nextInstanceId);
+    }
+  }, [callbackBoundaryKey]);
 
   return {
     ...workflow,
@@ -118,6 +144,6 @@ export function useWorkflowRun(
     starting: startMutation.pending,
     actionPending: actionMutation.pending,
     actionError: startMutation.error ?? actionMutation.error,
-    setInstanceId: setLocalInstanceId,
+    setInstanceId,
   };
 }

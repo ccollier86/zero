@@ -8,23 +8,40 @@
  * remains inside the SDK client.
  */
 
-import { createElement, Fragment, useEffect, useRef } from 'react';
+import { createElement, Fragment, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ClientTableDef, SyncMode } from '../../sync/types';
 import type { Client, InternalClient } from './sdk';
 import { createClient, getClient } from './sdk';
 import { useAuth } from './auth-hooks';
+import { useAuthorization } from './authorization-hooks';
 import { ClientProvider } from './client-context';
 import { RouterProvider, useHasRouter, usePathname, useRouter } from './router-context';
 import { SyncProvider } from '../../sync/client/hooks';
 import { ErrorBoundary } from './error-boundary';
-import { ModalManager } from '../../modals';
+import { ModalManager, modals } from '../../modals';
+import { toast } from 'sonner';
 import { FRONTEND_OBS_CODES, emitFrontendCode } from './observability';
 import { useRouteAuthRequirement } from './route-auth-context';
+import {
+  readAuthorizationScopeBoundaryKey,
+  useAuthorizationScopeBoundary,
+} from './authorization-scope-hooks';
+import {
+  authorizationScopeTransitionMessage,
+  resolveAuthorizationScopeDisplay,
+  resolveAuthorizationScopeReloadAction,
+  resolveHydrationScopeMatch,
+} from './authorization-scope-display';
 import {
   shouldRequireAuthForRoute,
   type RouteAuthMode,
 } from '../router/auth-policy';
+import {
+  readBrowserRouteAuthorizationBoundary,
+  routeAuthorizationBoundaryMatches,
+  type RouteAuthorizationBoundary,
+} from '../router/authorization-route-boundary';
 
 // ─── AppProvider ───────────────────────────────────────────────────────────
 
@@ -45,9 +62,21 @@ interface BrowserPlatformConfig {
   loginPath?: string;
 }
 
+/** Minimal hydration payload used by the root authorization guard. */
+interface BrowserAuthorizationRouteData {
+  authorizationBoundary?: RouteAuthorizationBoundary | null;
+}
+
 function getBrowserPlatformConfig(): BrowserPlatformConfig {
   if (typeof window === 'undefined') return {};
   return (window as Window & { __PLATFORM_CONFIG__?: BrowserPlatformConfig }).__PLATFORM_CONFIG__ ?? {};
+}
+
+function getBrowserAuthorizationRouteData(): BrowserAuthorizationRouteData | undefined {
+  if (typeof window === 'undefined') return undefined;
+  return (window as Window & {
+    __ROUTE_DATA__?: BrowserAuthorizationRouteData;
+  }).__ROUTE_DATA__;
 }
 
 /** Return true when a table input is a defineTable() result. */
@@ -231,6 +260,11 @@ export function AppProvider({
       )
     : children;
 
+  const modalTree = createElement(ModalManager, { children: guardedChildren });
+  const authorizationScopedTree = authEnabled
+    ? createElement(AuthorizationScopeGuard, { client, children: modalTree })
+    : modalTree;
+
   let tree: ReactNode = createElement(
     ClientProvider,
     { client, children:
@@ -239,7 +273,7 @@ export function AppProvider({
         {
           client: internal._syncClient,
           stateClient: internal.state,
-          children: createElement(ModalManager, { children: guardedChildren }),
+          children: authorizationScopedTree,
         }
       )
     }
@@ -252,6 +286,159 @@ export function AppProvider({
   }
 
   return createElement(ErrorBoundary, { fallback: errorFallback }, tree);
+}
+
+/**
+ * Prevent app component state and server loader data from crossing an auth
+ * scope replacement. The subtree is synchronously hidden at transition start.
+ * Installed hydration routes then reload the current URL once the replacement
+ * scope is committed so server loaders/page-session policy run for that scope.
+ */
+function AuthorizationScopeGuard({
+  client,
+  children,
+}: {
+  client: Client;
+  children?: ReactNode;
+}) {
+  const boundary = useAuthorizationScopeBoundary(client);
+  const auth = (client as InternalClient).auth;
+  const authorizationState = useAuthorization();
+  const [scopeRecoveryRequired, setScopeRecoveryRequired] = useState(false);
+  const displayedScopeRef = useRef<string | null>(null);
+  // AppProvider is a standalone public export. Do not rely on the ambient
+  // Window augmentation declared by the separately exported hydration runtime;
+  // package consumers may typecheck this module without importing that entry.
+  const routeData = getBrowserAuthorizationRouteData();
+  const hasHydrationRoute = Boolean(routeData);
+  const browserRouteBoundary = {
+    ...readBrowserRouteAuthorizationBoundary(auth),
+    scopeRevision: authorizationState.authorization?.scope?.revision ?? null,
+    authorizationReady: authorizationState.isReady,
+  };
+  const hydrationScopeMatches = resolveHydrationScopeMatch(
+    hasHydrationRoute,
+    routeData?.authorizationBoundary
+      ? routeAuthorizationBoundaryMatches(
+        routeData.authorizationBoundary,
+        browserRouteBoundary,
+      )
+      : undefined,
+  );
+  const display = resolveAuthorizationScopeDisplay({
+    displayedScopeKey: displayedScopeRef.current,
+    currentScopeKey: boundary.scopeKey,
+    ready: boundary.ready,
+    hasHydrationRoute,
+    hydrationScopeMatches,
+  });
+  displayedScopeRef.current = display.displayedScopeKey;
+  const requiresRouteReload = display.reload;
+  const reloadKey = JSON.stringify([
+    typeof window === 'undefined' ? '' : window.location.pathname,
+    routeData?.authorizationBoundary ?? null,
+    browserRouteBoundary,
+  ]);
+  useEffect(() => {
+    if (!auth) return;
+    let observedBoundaryKey = readAuthorizationScopeBoundaryKey(auth);
+    return auth.subscribe(() => {
+      const nextBoundaryKey = readAuthorizationScopeBoundaryKey(auth);
+      if (nextBoundaryKey === observedBoundaryKey) return;
+      observedBoundaryKey = nextBoundaryKey;
+      // Scope teardown is synchronous and deliberately does not invoke modal
+      // close callbacks that may still capture previous-tenant actions.
+      modals.discardAll();
+      toast.dismiss();
+    });
+  }, [auth]);
+
+  useEffect(() => {
+    const marker = '__zeroAuthorizationBoundaryReload';
+    const historyState = isPlainHistoryState(window.history.state)
+      ? window.history.state
+      : {};
+    if (!requiresRouteReload) {
+      setScopeRecoveryRequired(false);
+      if (marker in historyState) {
+        const nextState = { ...historyState };
+        delete nextState[marker];
+        window.history.replaceState(nextState, '');
+      }
+      return;
+    }
+    const action = resolveAuthorizationScopeReloadAction({
+      recordedReloadKey: typeof historyState[marker] === 'string'
+        ? historyState[marker]
+        : null,
+      reloadKey,
+      serverUserId: routeData?.authorizationBoundary?.userId ?? null,
+      browserUserId: browserRouteBoundary.userId,
+    });
+    // A same-document history marker makes a persistent cookie/session
+    // disagreement fail closed without creating an infinite reload loop.
+    if (action === 'show-recovery') {
+      setScopeRecoveryRequired(true);
+      return;
+    }
+    setScopeRecoveryRequired(false);
+    window.history.replaceState({ ...historyState, [marker]: reloadKey }, '');
+    void (async () => {
+      if (action === 'clear-page-session-and-reload') {
+        // No browser credential exists to supersede the server-only page
+        // session. Use the normal logout route to clear its HttpOnly cookie.
+        await auth?.logout().catch(() => undefined);
+      }
+      window.location.reload();
+    })();
+  }, [auth, browserRouteBoundary.userId, reloadKey, requiresRouteReload,
+    routeData?.authorizationBoundary?.userId]);
+
+  const retryScopeRecovery = async () => {
+    const historyState = isPlainHistoryState(window.history.state)
+      ? { ...window.history.state }
+      : {};
+    delete historyState.__zeroAuthorizationBoundaryReload;
+    window.history.replaceState(historyState, '');
+    setScopeRecoveryRequired(false);
+    if (routeData?.authorizationBoundary?.userId && !browserRouteBoundary.userId) {
+      await auth?.logout().catch(() => undefined);
+    }
+    window.location.reload();
+  };
+
+  if (scopeRecoveryRequired) {
+    return createElement(
+      'main',
+      { role: 'alert', 'data-zero-auth-recovery': true },
+      createElement('h1', null, 'Session refresh required'),
+      createElement(
+        'p',
+        null,
+        'The browser and server sessions still disagree. Retry to safely clear the stale page session.',
+      ),
+      createElement('button', { type: 'button', onClick: retryScopeRecovery }, 'Retry session'),
+    );
+  }
+  if (!display.render) {
+    return createElement(
+      'main',
+      {
+        role: 'status',
+        'aria-live': 'polite',
+        'aria-atomic': true,
+        'aria-busy': true,
+        'data-zero-auth-transition': true,
+        className: 'grid min-h-screen place-items-center p-6 text-sm text-muted-foreground',
+      },
+      authorizationScopeTransitionMessage(auth?.sessionTransition.operation ?? null),
+    );
+  }
+  return createElement(Fragment, { key: display.displayedScopeKey }, children);
+}
+
+function isPlainHistoryState(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function AuthRouteGuard({

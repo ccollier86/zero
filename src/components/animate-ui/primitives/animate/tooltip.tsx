@@ -20,8 +20,8 @@ import {
   type UseFloatingReturn,
 } from '@floating-ui/react';
 
-import { getStrictContext } from '@/lib/get-strict-context';
-import { Slot, type WithAsChild } from '@/components/animate-ui/primitives/animate/slot';
+import { getStrictContext } from '#zero/lib/get-strict-context';
+import { Slot, type WithAsChild } from '#zero/components/animate-ui/primitives/animate/slot';
 
 type Side = 'top' | 'bottom' | 'left' | 'right';
 type Align = 'start' | 'center' | 'end';

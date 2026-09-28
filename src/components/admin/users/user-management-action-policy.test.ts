@@ -95,6 +95,30 @@ describe('admin user UI policy', () => {
     expect(Object.entries(policy).filter(([key]) => key !== 'deleteUser').every(([, value]) => !value)).toBe(true);
   });
 
+  test('hides live hard deletion in multi-tenant mode and offers suspension', () => {
+    const multi = config();
+    multi.tenancy = {
+      mode: 'multi',
+      terminology: { singular: 'organization', plural: 'organizations' },
+      creation: { mode: 'authenticated' },
+    } as NonNullable<AuthAdminConfig['tenancy']>;
+    const policy = resolveUserManagementActionPolicy({
+      user, config: multi, mfaStatus, currentUserId: 'admin',
+      controlled: false, controlledDelete: false,
+    });
+
+    expect(policy.deleteUser).toBe(false);
+    expect(policy.suspend).toBe(true);
+  });
+
+  test('fails live deletion closed until admin config is loaded', () => {
+    const policy = resolveUserManagementActionPolicy({
+      user, config: null, mfaStatus, currentUserId: 'admin',
+      controlled: false, controlledDelete: false,
+    });
+    expect(policy.deleteUser).toBe(false);
+  });
+
   test('generic fields exclude status and policy-gate MFA', () => {
     const unavailable = config({ mfa: false });
     expect(getUserManagementEditableFields(unavailable)).not.toContain('status');

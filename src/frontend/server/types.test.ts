@@ -6,6 +6,9 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
+import { defineTable, field, schema } from '../../schema';
+import { SYNC_TABLE_MUTATION_VALIDATOR } from '../../sync/types';
 import { defineZeroConfig, resolveConfig } from './types';
 
 const tables = {
@@ -16,6 +19,78 @@ const tables = {
 };
 
 describe('resolveConfig', () => {
+  test('validates auth behavior while preserving app token TTL settings', () => {
+    const config = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: {
+        accessTokenTTL: '20m',
+        refreshTokenTTL: '14d',
+        registration: { mode: 'admin-only' },
+      },
+    });
+
+    expect(config.auth).not.toBe(false);
+    if (config.auth !== false) {
+      expect(config.auth.accessTokenTTL).toBe('20m');
+      expect(config.auth.refreshTokenTTL).toBe('14d');
+    }
+
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: { tennacy: 'multi' } as never,
+    })).toThrow('Auth config contains unsupported field "tennacy"');
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: null as never,
+    })).toThrow('Auth config must be an object');
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: { account: { requireEmailVerification: 'true' } } as never,
+    })).toThrow('requireEmailVerification must be a boolean');
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: { accessTokenTTL: true } as never,
+    })).toThrow('accessTokenTTL must be a duration string');
+  });
+
+  test('preserves schema mutation validators only in server-side resolved config', () => {
+    const todoTable = defineTable('todos', {
+      title: field.text({ required: true }),
+    });
+    const catalog = schema({
+      accounts: {
+        fields: { name: field.text({ required: true }) },
+        pk: 'account_id',
+      },
+    });
+    const config = resolveConfig({
+      db: { mode: 'memory' },
+      tables: {
+        todos: todoTable,
+        accounts: catalog.serverTables.accounts,
+        raw: { id: 'text primary key', value: 'text' },
+        validatedRaw: {
+          serverTable: { id: 'text primary key', title: 'text not null' },
+          mutationValidator: todoTable.mutationValidator,
+        },
+      },
+    });
+
+    expect(config.mutationValidators.todos).toBe(todoTable.mutationValidator);
+    expect(config.mutationValidators.accounts).toBe(
+      catalog.serverTables.accounts[SYNC_TABLE_MUTATION_VALIDATOR]!,
+    );
+    expect(config.mutationValidators.raw).toBeUndefined();
+    expect(config.mutationValidators.validatedRaw).toBe(todoTable.mutationValidator);
+    expect(Object.keys(config.tables.todos)).not.toContain('mutationValidator');
+    expect(JSON.stringify(config.tables.todos)).not.toContain('mutationValidator');
+  });
+
   test('defineZeroConfig returns the same app config object', () => {
     const input = {
       db: { mode: 'memory' },
@@ -27,6 +102,59 @@ describe('resolveConfig', () => {
 
     expect(config).toBe(input);
     expect(config.ai).toBe(false);
+  });
+
+  test('normalizes storage capability signing config with explicit-over-env precedence', () => {
+    const envOnly = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: true,
+    }, {
+      ZERO_STORAGE_SIGNING_SECRET: 'env-storage-capability-secret-32-bytes',
+    });
+    expect(envOnly.storage).toEqual({
+      signingSecret: 'env-storage-capability-secret-32-bytes',
+      defaultPresignedTTL: 3600,
+    });
+
+    const explicit = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: true,
+      storage: {
+        signingSecret: 'config-storage-capability-secret-32-bytes',
+        defaultPresignedTTL: 900,
+      },
+    }, {
+      ZERO_STORAGE_SIGNING_SECRET: 'env-storage-capability-secret-32-bytes',
+    });
+    expect(explicit.storage).toEqual({
+      signingSecret: 'config-storage-capability-secret-32-bytes',
+      defaultPresignedTTL: 900,
+    });
+  });
+
+  test('rejects empty signing secrets and invalid storage capability TTLs', () => {
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: true,
+      storage: { signingSecret: '' },
+    })).toThrow('storage.signingSecret must be a non-empty string');
+
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: true,
+      storage: { signingSecret: '   ' },
+    })).toThrow('storage.signingSecret must be a non-empty string');
+
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: true,
+      storage: { defaultPresignedTTL: 0 },
+    })).toThrow('storage.defaultPresignedTTL must be a positive integer');
   });
 
   test('allows state sync when auth is enabled', () => {
@@ -49,6 +177,21 @@ describe('resolveConfig', () => {
     expect(config.serverResourcesDir).toBe('./server/resources');
     expect(config.resourceRoutes).toEqual({});
     expect(config.routeAuth).toBe('protected-by-default');
+  });
+
+  test('normalizes auth: true to the backward-compatible capability profile', () => {
+    const config = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: true,
+    });
+
+    expect(config.auth).not.toBe(false);
+    if (config.auth === false) throw new Error('Expected auth to be enabled.');
+    expect(resolveAuthBehaviorConfig(config.auth)).toMatchObject({
+      tenancy: { mode: 'single' },
+      authorization: { mode: 'simple' },
+    });
   });
 
   test('supports explicit route auth for public-first apps', () => {

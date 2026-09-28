@@ -8,7 +8,7 @@ import {
   HighlightItem,
   type HighlightItemProps,
   type HighlightProps,
-} from '@/components/animate-ui/primitives/effects/highlight';
+} from '#zero/components/animate-ui/primitives/effects/highlight';
 import {
   Accordion,
   AccordionItem,
@@ -20,9 +20,9 @@ import {
   type AccordionHeaderProps,
   type AccordionTriggerProps,
   type AccordionContentProps,
-} from '@/components/animate-ui/primitives/radix/accordion';
-import { getStrictContext } from '@/lib/get-strict-context';
-import { useControlledState } from '@/hooks/use-controlled-state';
+} from '#zero/components/animate-ui/primitives/radix/accordion';
+import { getStrictContext } from '#zero/lib/get-strict-context';
+import { useControlledState } from '#zero/hooks/use-controlled-state';
 
 type FilesContextType = {
   open: string[];

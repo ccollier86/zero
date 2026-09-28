@@ -2,7 +2,10 @@
 
 import { Elysia, t } from 'elysia';
 import { AdminUserCreateService } from './admin-user-create-service';
-import { requireAdminServices, type AuthAdminPluginConfig } from './auth-admin-dependencies';
+import {
+  requireAdminMutationServices,
+  type AuthAdminPluginConfig,
+} from './auth-admin-dependencies';
 import { canonicalEmailSchema } from './auth-email-schema';
 import { assertAuthPropertiesBound } from './auth-request-property-bounds';
 import {
@@ -12,14 +15,30 @@ import {
   authRoleSchema,
   authUsernameSchema,
 } from './auth-request-schema';
+import {
+  authAuditActorFromContext,
+  authAuditRequestFromRequest,
+} from './auth-audit-service';
 
 /** Create the administrator user-creation route. */
 export function createAuthAdminUserCreatePlugin(config: AuthAdminPluginConfig) {
   return new Elysia({ name: 'auth-admin-user-create' }).post(
     '/users',
     async ({ request, body }) => {
-      const { store, propertyService, auth } = await requireAdminServices(config, request);
-      return new AdminUserCreateService(store, propertyService, config).create(body, auth.userId);
+      const {
+        store,
+        propertyService,
+        auth,
+        assertCurrentAuthority,
+      } = await requireAdminMutationServices(config, request);
+      return new AdminUserCreateService(store, propertyService, config).create(
+        body,
+        assertCurrentAuthority,
+        {
+          actor: authAuditActorFromContext(auth),
+          request: authAuditRequestFromRequest(request),
+        },
+      );
     },
     {
       body: t.Object({

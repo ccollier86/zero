@@ -7,6 +7,7 @@ import type { NativeAuthHttpConfig } from './native-plugin-types';
 import { createNativeAuthorizePlugin } from './native-authorize.plugin';
 import { createNativeTokenPlugin } from './native-token.plugin';
 import { createNativeUserInfoPlugin } from './native-userinfo.plugin';
+import { createNativeTenantPlugin } from './native-tenant.plugin';
 
 export function createNativeAuthPlugin(config: NativeAuthHttpConfig) {
   return new Elysia({ name: 'auth-native-oidc' })
@@ -14,5 +15,6 @@ export function createNativeAuthPlugin(config: NativeAuthHttpConfig) {
       oauthJson(buildNativeDiscovery(config.issuer)))
     .use(createNativeAuthorizePlugin(config))
     .use(createNativeTokenPlugin(config))
+    .use(createNativeTenantPlugin(config))
     .use(createNativeUserInfoPlugin(config));
 }

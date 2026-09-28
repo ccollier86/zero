@@ -2,9 +2,9 @@
 
 import * as React from 'react';
 import { OTPInput as OTPInputHeadless, SlotProps } from 'input-otp';
-import { motion } from 'motion/react';
+import { motion, useReducedMotion } from 'motion/react';
 
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -20,25 +20,28 @@ interface OTPInputProps {
 // ─── Slot ────────────────────────────────────────────────────────────────────
 
 function Slot({ char, isActive, hasFakeCaret }: SlotProps) {
+  const reduceMotion = useReducedMotion() === true;
   return (
     <div
       className={cn(
-        'relative flex h-10 w-10 items-center justify-center rounded-md border bg-transparent text-center text-base font-medium transition-all',
+        'relative flex size-9 items-center justify-center rounded-md border bg-transparent text-center text-sm font-medium transition-all motion-reduce:transition-none sm:size-10 sm:text-base',
         isActive && 'ring-2 ring-primary border-primary',
       )}
     >
       {char ? (
         <motion.span
-          initial={{ scale: 0.8 }}
-          animate={{ scale: [1, 1.06, 1] }}
-          transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+          initial={reduceMotion ? false : { scale: 0.8 }}
+          animate={reduceMotion ? { scale: 1 } : { scale: [1, 1.06, 1] }}
+          transition={reduceMotion
+            ? { duration: 0 }
+            : { type: 'spring', stiffness: 400, damping: 20 }}
         >
           {char}
         </motion.span>
       ) : null}
       {hasFakeCaret && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="h-5 w-px animate-caret-blink bg-foreground" />
+          <div className="h-5 w-px animate-caret-blink bg-foreground motion-reduce:animate-none" />
         </div>
       )}
     </div>
@@ -62,21 +65,22 @@ function OTPInput({
   className,
 }: OTPInputProps) {
   const halfLength = Math.floor(length / 2);
+  const reduceMotion = useReducedMotion() === true;
 
   return (
     <motion.div
-      animate={error ? { x: [0, -8, 8, -4, 4, 0] } : { x: 0 }}
-      transition={{ duration: 0.4 }}
-      className={className}
+      animate={error && !reduceMotion ? { x: [0, -8, 8, -4, 4, 0] } : { x: 0 }}
+      transition={{ duration: reduceMotion ? 0 : 0.4 }}
+      className={cn('max-w-full overflow-x-auto', className)}
     >
       <OTPInputHeadless
         value={value}
         onChange={onChange}
         onComplete={onComplete}
         maxLength={length}
-        containerClassName="flex items-center gap-1.5"
+        containerClassName="flex min-w-full w-max items-center justify-center gap-1 sm:gap-1.5"
         render={({ slots }) => (
-          <div className="flex items-center gap-1.5">
+          <div className="flex w-max items-center gap-1 sm:gap-1.5">
             {slots.map((slot, i) => (
               <React.Fragment key={i}>
                 {i === halfLength && <Separator />}

@@ -13,6 +13,11 @@ interface IdTokenValidationInput {
   expectedSubject?: string;
 }
 
+interface VerifiedIdTokenClaims extends NativeIdTokenClaims {
+  at_hash?: unknown;
+  [claim: string]: unknown;
+}
+
 /** Issuer-bound verifier with jose's bounded, rotation-aware remote JWKS cache. */
 export class NativeIdTokenValidator {
   private readonly jwks: ReturnType<typeof createRemoteJWKSet>;
@@ -49,7 +54,7 @@ export class NativeIdTokenValidator {
       });
     }
 
-    const claims = payload as NativeIdTokenClaims;
+    const claims = payload as VerifiedIdTokenClaims;
     this.validateClaims(claims, input);
     if (claims.at_hash !== undefined) {
       if (typeof claims.at_hash !== 'string'
@@ -57,10 +62,10 @@ export class NativeIdTokenValidator {
         throw new NativeAuthError('ID token access-token hash did not match.', 'OIDC_AT_HASH_MISMATCH');
       }
     }
-    return claims;
+    return publicIdentityClaims(claims);
   }
 
-  private validateClaims(claims: NativeIdTokenClaims, input: IdTokenValidationInput): void {
+  private validateClaims(claims: VerifiedIdTokenClaims, input: IdTokenValidationInput): void {
     if (typeof claims.sub !== 'string' || !claims.sub) invalid('subject');
     if (typeof claims.iat !== 'number' || claims.iat > this.now() / 1000 + this.clockSkewSeconds) {
       invalid('issued-at time');
@@ -78,6 +83,36 @@ export class NativeIdTokenValidator {
       throw new NativeAuthError('ID token subject changed during refresh.', 'OIDC_SUBJECT_MISMATCH');
     }
   }
+}
+
+/**
+ * Return only Zero's documented public identity contract. A signed ID token
+ * can carry arbitrary private claims, but those claims must not silently enter
+ * persisted SDK state or cross a native/browser broker boundary.
+ */
+function publicIdentityClaims(claims: VerifiedIdTokenClaims): NativeIdTokenClaims {
+  const aud = Array.isArray(claims.aud) ? [...claims.aud] : claims.aud;
+  if (Array.isArray(aud)) Object.freeze(aud);
+  return Object.freeze({
+    iss: claims.iss,
+    sub: claims.sub,
+    aud,
+    exp: claims.exp,
+    iat: claims.iat,
+    ...(claims.azp === undefined ? {} : { azp: claims.azp }),
+    ...(claims.nonce === undefined ? {} : { nonce: claims.nonce }),
+    ...(claims.auth_time === undefined ? {} : { auth_time: claims.auth_time }),
+    ...(claims.email === undefined ? {} : { email: claims.email }),
+    ...(claims.email_verified === undefined
+      ? {}
+      : { email_verified: claims.email_verified }),
+    ...(claims.preferred_username === undefined
+      ? {}
+      : { preferred_username: claims.preferred_username }),
+    ...(claims.name === undefined ? {} : { name: claims.name }),
+    ...(claims.given_name === undefined ? {} : { given_name: claims.given_name }),
+    ...(claims.family_name === undefined ? {} : { family_name: claims.family_name }),
+  });
 }
 
 function invalid(field: string): never {

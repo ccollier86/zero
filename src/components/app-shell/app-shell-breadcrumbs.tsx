@@ -16,8 +16,8 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
-import { cn } from '@/lib/utils';
+} from '#zero/components/ui/breadcrumb';
+import { cn } from '#zero/lib/utils';
 import type { AppShellBreadcrumb } from './app-shell.types';
 import { renderAppShellIcon } from './app-shell-utils';
 

@@ -1,6 +1,11 @@
 import type { Database, Statement } from 'bun:sqlite';
 import type { PlatformSQLiteService, SQLiteStorageConfig } from '../persistence';
 import type { SyncPolicy } from './sync-policy';
+import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
+import type {
+  EphemeralErrorMessage,
+  EphemeralTopicPolicy,
+} from './ephemeral-policy';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -33,9 +38,10 @@ export interface ReactiveDBConfig extends SQLiteStorageConfig {
   ownsDatabase?: boolean;
 
   /**
-   * Clear the process-local `_changes` ring buffer during startup.
+   * Clear retained positive `_changes` rows during startup without reusing the
+   * monotonic database cursor. Older cursors then require a fresh snapshot.
    *
-   * Defaults to true for durable/hot modes and false for ephemeral modes.
+   * This is a destructive stop-all maintenance escape hatch. Default: false.
    */
   clearChangesOnStart?: boolean;
 
@@ -46,13 +52,49 @@ export interface ReactiveDBConfig extends SQLiteStorageConfig {
 // ─── Schema ─────────────────────────────────────────────────────────────────
 
 /**
+ * Server-table metadata key used to carry logical row validation into Sync.
+ *
+ * Symbols are ignored by SQL column enumeration and JSON serialization, so
+ * validation metadata never becomes a database column or browser policy
+ * payload.
+ */
+export const SYNC_TABLE_MUTATION_VALIDATOR: unique symbol = Symbol.for(
+  '@zero/framework/sync-table-mutation-validator',
+) as any;
+
+export interface SyncMutationValidationIssue {
+  path?: string;
+  message: string;
+}
+
+export type SyncRowValidationResult =
+  | { success: true; output: Row }
+  | { success: false; issues: readonly SyncMutationValidationIssue[] };
+
+/** Logical schema boundary applied to websocket mutations for one table. */
+export interface SyncTableMutationValidator {
+  /** Configured sync primary key, including custom generated keys. */
+  readonly primaryKey: string;
+  /** Logical schema fields. Generated primary keys may be absent from this list. */
+  readonly fieldNames: readonly string[];
+  /** Decode SQLite/wire values into the logical schema representation. */
+  decodeRow(row: Row): Row;
+  /** Encode a validated logical row for ReactiveDB/SQLite. */
+  encodeRow(row: Row): Row;
+  /** Validate and normalize one complete logical row. */
+  validateRow(row: Row): SyncRowValidationResult;
+}
+
+/**
  * Table schema definition.
  * Maps column names to SQLite column definitions.
  *
  * The first column whose definition includes 'primary key' (case-insensitive)
  * is treated as the sync primary key. `_identity` optionally declares a
  * natural/business identity whose fields get a unique index and deterministic
- * sync primary key generation.
+ * sync primary key generation. Mutating referential actions (`CASCADE`,
+ * `SET NULL`, or `SET DEFAULT`) are rejected because they could change a
+ * tracked row without a matching durable event.
  *
  * @example
  * {
@@ -64,7 +106,9 @@ export interface ReactiveDBConfig extends SQLiteStorageConfig {
 export interface TableSchema {
   /** Ordered natural identity fields used for deterministic sync ids. */
   _identity?: string[];
-  /** SQLite column definitions (name → SQL column definition). */
+  /** Server-only logical mutation validator carried outside string-key columns. */
+  [SYNC_TABLE_MUTATION_VALIDATOR]?: SyncTableMutationValidator;
+  /** SQLite column definitions (name → non-cascading SQL column definition). */
   [column: string]: string | string[] | undefined;
 }
 
@@ -89,7 +133,7 @@ export type ChangeOp = 'INSERT' | 'UPDATE' | 'DELETE';
  * Represents one mutation (insert, update, or delete) on one row.
  */
 export interface Change {
-  /** Global monotonic sequence number (unique within process lifetime) */
+  /** Database-wide monotonic sequence number for the retained change history. */
   seq: number;
 
   /** Name of the table that was mutated */
@@ -98,10 +142,10 @@ export interface Change {
   /** The type of mutation */
   op: ChangeOp;
 
-  /** Primary key value of the affected row */
+  /** Canonical string form of the affected row's primary key. */
   rowId: string;
 
-  /** Full row after mutation (null for DELETE) */
+  /** Canonical full row after mutation (null for DELETE). */
   row: Row | null;
 
   /** Full row before mutation, used internally for filtered DELETE fanout. */
@@ -111,8 +155,32 @@ export interface Change {
   ts: number;
 }
 
-/** Listener function for change events. */
-export type ChangeListener = (change: Change) => void;
+/** Process-local delivery context copied for one listener invocation. */
+export interface ChangeDeliveryMetadata {
+  /** Whether this ReactiveDB handle or another SQLite connection wrote the row. */
+  source: 'local' | 'external';
+}
+
+/** Why a replica dispatcher cannot continue incremental delivery. */
+export interface SyncHistoryGap {
+  /** Retention, a missing sequence, or an undecodable/future-format row. */
+  kind: 'retention' | 'continuity' | 'format';
+  afterSeq: number;
+  oldestSeq: number;
+  currentSeq: number;
+}
+
+/**
+ * Synchronous listener for committed changes.
+ *
+ * Each invocation receives its own canonical Change and delivery-metadata
+ * copies. Returning a Promise/thenable is a reported contract violation; it is
+ * never awaited and its eventual rejection is consumed.
+ */
+export type ChangeListener = (
+  change: Change,
+  delivery: ChangeDeliveryMetadata,
+) => void;
 
 // ─── Internal ───────────────────────────────────────────────────────────────
 
@@ -149,11 +217,27 @@ export interface TableDef {
  * Created once in the ReactiveDB constructor.
  */
 export interface ChangeStatements {
-  /** INSERT INTO _changes (seq, tbl, op, row_id, data, ts) VALUES (?, ?, ?, ?, ?, ?) */
+  /** Read main/temp schema versions for protected-trigger and managed-table fences. */
+  mainSchemaVersion: Statement;
+  tempSchemaVersion: Statement;
+
+  /** Atomically increments and returns the database-owned sequence value. */
+  allocate: Statement;
+
+  /** SELECT the current durable log state. */
+  current: Statement;
+
+  /** INSERT one explicit-format row and RETURN its sequence for exact confirmation. */
   insert: Statement;
 
-  /** DELETE FROM _changes WHERE seq <= ? */
+  /** Advance the durable pruning watermark; callers verify its exact result. */
+  advancePrune: Statement;
+
+  /** DELETE positive _changes rows through the verified watermark. */
   prune: Statement;
+
+  /** Detect a positive row that a suppressed prune left through the watermark. */
+  unprunedThrough: Statement;
 
   /** SELECT * FROM _changes WHERE seq > ? ORDER BY seq */
   after: Statement;
@@ -173,6 +257,12 @@ export interface ChangeRow {
   data: string | null;
   previous_data?: string | null;
   ts: number;
+  /** Process-local writer identity used to suppress duplicate local fanout. */
+  origin?: string | null;
+  /** NULL is retained legacy-v0 history; every new row explicitly uses v1. */
+  format_version?: number | null;
+  /** SQLite storage class selected alongside format_version. */
+  format_version_type?: string;
 }
 
 // ─── Sync Plugin ────────────────────────────────────────────────────────────
@@ -183,10 +273,29 @@ export interface ChangeRow {
 export interface SyncPluginConfig {
   /** Database configuration */
   db: ReactiveDBConfig;
+  /** App-local runtime used by managed createApp() composition. */
+  runtime?: ZeroAppRuntime;
+  /**
+   * Composition hook invoked synchronously with this plugin's own ReactiveDB.
+   *
+   * Platform factories use this to close authorization services over the
+   * app-local database instead of the legacy process-global compatibility
+   * getter. Most standalone callers should omit it.
+   */
+  onDatabaseCreated?: (db: import('./reactive-db').ReactiveDB) => void;
   /** Table schemas to define on startup */
   tables: Record<string, TableSchema>;
+  /**
+   * Optional explicit logical validators keyed by table.
+   *
+   * Schema-generated tables carry these automatically. Raw SQL tables retain
+   * their historical permissive mutation behavior unless a validator is set.
+   */
+  mutationValidators?: Record<string, SyncTableMutationValidator>;
   /** Enable per-user state sync (requires auth) */
   stateSync?: boolean;
+  /** Managed state boundary. Multi mode requires a tenant-bound identity. */
+  tenancyMode?: 'single' | 'multi';
   /**
    * Optional WebSocket auth bridge.
    *
@@ -212,6 +321,13 @@ export interface SyncPluginConfig {
    */
   resourcePolicy?: SyncResourcePolicyAdapter;
   /**
+   * Authorization and namespace policy for ephemeral collaboration topics.
+   *
+   * Authenticated plugins fail closed when this is omitted. Standalone
+   * authless plugins retain the historical unrestricted topic behavior.
+   */
+  ephemeralPolicy?: EphemeralTopicPolicy;
+  /**
    * Optional table allow-list for full snapshot payloads.
    *
    * Platform apps pass a mutable set populated during startup after table
@@ -219,6 +335,13 @@ export interface SyncPluginConfig {
    * old behavior where any readable table requested in `snapshot` can be sent.
    */
   snapshotTables?: Set<string>;
+  /**
+   * Durable change polling for multiple runtimes sharing one SQLite file.
+   * File-mode databases enable it automatically. Set false only when a single
+   * runtime owns the file; pass an object to enable/configure injected DBs.
+   * `intervalMs` must be a positive safe integer; values below 10 are clamped.
+   */
+  replicaChangePolling?: false | { intervalMs?: number };
 }
 
 /**
@@ -228,6 +351,45 @@ export interface SyncAuthContext {
   userId: string;
   email: string;
   role: string;
+  /** Present when authority belongs to a registered native public client. */
+  clientId?: string;
+  /** Browser access remains web; native access is explicitly attributed. */
+  sessionKind?: 'web' | 'native';
+  /** OIDC identity scopes for native sessions. */
+  scope?: readonly string[];
+  /** Durable authority fields are optional for standalone/legacy verifiers. */
+  sessionId?: string;
+  sessionGeneration?: number;
+  sessionScopeKind?: 'application' | 'tenant';
+  sessionScopeId?: string;
+  tenantId?: string;
+  membershipId?: string;
+  tenantRole?: string | null;
+  tenantAuthorizationGeneration?: number;
+  membershipAuthorizationGeneration?: number;
+  /** Live advanced-role assignment revision resolved server-side. */
+  authorizationAssignmentRevision?: string;
+}
+
+/** Secret-free durable authority handle exposed by Zero's token service. */
+export interface SyncAuthContextAuthorityReference {
+  readonly version: 1;
+  readonly userId: string;
+  readonly platformRole: string;
+  readonly authGeneration: number;
+  readonly sessionKind: 'web' | 'native';
+  readonly sessionId: string;
+  readonly sessionGeneration: number | null;
+  readonly clientId: string | null;
+  readonly identityScopes: readonly string[];
+  readonly sessionScopeKind: 'application' | 'tenant';
+  readonly sessionScopeId: string;
+  readonly tenantId: string | null;
+  readonly membershipId: string | null;
+  readonly tenantRole: string | null;
+  readonly tenantAuthorizationGeneration: number | null;
+  readonly membershipAuthorizationGeneration: number | null;
+  readonly authorizationAssignmentRevision: string | null;
 }
 
 /**
@@ -239,10 +401,28 @@ export interface SyncAuthContext {
  */
 export interface SyncTokenVerifier {
   /**
+   * Fail closed when this verifier belongs to an auth runtime whose installed
+   * profile has since changed. Managed Zero auth supplies this fence; the
+   * optional shape preserves standalone verifier compatibility.
+   */
+  assertCurrentProfile?(): void;
+
+  /**
    * Resolve the token against current account state. Zero auth implements this
    * so suspended, reset-gated, and superseded auth generations fail closed.
    */
   resolveAuthContext?(token: string): Promise<SyncAuthContext | null>;
+
+  /** Zero auth's synchronous durable-authority commit boundary. */
+  captureAuthContextAuthority?(
+    context: SyncAuthContext,
+  ): SyncAuthContextAuthorityReference | null;
+  resolveAuthContextAuthority?(
+    reference: SyncAuthContextAuthorityReference,
+  ): SyncAuthContext | null;
+
+  /** Monotonic shared authority revision for event-driven socket revalidation. */
+  getAuthorityRevision?(): string | number | null;
 
   /** Legacy standalone verifier fallback. Prefer `resolveAuthContext`. */
   verifyAccessToken(token: string): Promise<{
@@ -264,6 +444,8 @@ export interface SyncAuthConfig {
   getTokenVerifier: () => SyncTokenVerifier | null;
   /** Current-account revalidation cadence for active authenticated sockets. */
   revalidateIntervalMs?: number;
+  /** Poll cadence for the shared authority revision. Omit to disable. */
+  invalidationPollIntervalMs?: number;
   /** Temporary migration escape hatch. Query-string bearer tokens are rejected by default. */
   allowLegacyQueryToken?: boolean;
 }
@@ -286,6 +468,8 @@ export interface SyncSocketData {
   authContext: SyncAuthContext | null;
   /** Bearer token retained in server memory for current-account revalidation. */
   authToken?: string;
+  /** Secret-free, synchronously revalidated authority captured at handshake. */
+  authAuthorityReference?: SyncAuthContextAuthorityReference | null;
   /** True after the WebSocket auth bridge has allowed this connection to proceed. */
   authResolved: boolean;
   /** Comparable effective read-policy snapshot used by live revalidation. */
@@ -298,10 +482,16 @@ export interface SyncSocketData {
   query: { token?: string };
   /** Whether this socket has subscribed to state sync */
   stateSubscribed: boolean;
+  /** Exact server-derived state principal represented by this subscription. */
+  statePrincipal?: string | null;
+  /** Durable sequence already represented by the latest state snapshot/change. */
+  stateLastSeq?: number;
   /** Ephemeral topics this socket has subscribed to */
   ephemeralTopics: Set<string>;
   /** Tables with row-filtered resource sync access for this socket. */
   resourceRowFilters: Map<string, SyncRowFilter>;
+  /** Optional per-table projection applied after row-policy evaluation. */
+  resourceRowProjectors?: Map<string, SyncRowProjector>;
   /** Row-filtered tables this socket requested over sync.subscribe. */
   rowFilteredSubscribedTables: Set<string>;
 }
@@ -317,10 +507,17 @@ export interface SyncRowFilter {
   matches(row: Row): boolean;
 }
 
+/** Synchronous client-row projection returned by a resource policy adapter. */
+export interface SyncRowProjector {
+  project(row: Row): Row;
+}
+
 /** Connection-time table access resolved from resource policy. */
 export interface SyncResourceTableAccess {
   readableTables: Set<string>;
   rowFilters: Map<string, SyncRowFilter>;
+  /** Projectors run only after filters inspect the complete server row. */
+  rowProjectors?: Map<string, SyncRowProjector>;
   /** Stable representation of effective row-filter policy for revalidation. */
   policyFingerprint?: string;
 }
@@ -335,9 +532,26 @@ export interface SyncResourceMutationContext {
   loadRow: (table: string, rowId: string) => Row | null;
 }
 
+/** Trusted row predicate carried from resource authorization to persistence. */
+export interface SyncResourceMutationScope {
+  field: string;
+  value: string | number;
+}
+
 /** Resource-aware sync mutation authorization result. */
 export type SyncResourceMutationDecision =
-  | { ok: true; row?: Row | Partial<Row> }
+  | {
+    ok: true;
+    row?: Row | Partial<Row>;
+    /** Registered CREATE must reject a primary-key collision, never replace. */
+    createOnly?: boolean;
+    /** Row snapshot evaluated by policy; persistence compares it atomically. */
+    expectedRow?: Row;
+    /** Exact identity/property snapshot used by the resource policy. */
+    authorityFingerprint?: string;
+    /** Enforced by ReactiveDB in the actual INSERT/UPDATE/DELETE boundary. */
+    scope?: SyncResourceMutationScope;
+  }
   | { ok: false; reason: string; code?: string };
 
 /**
@@ -347,12 +561,44 @@ export type SyncResourceMutationDecision =
  * boundary so sync does not depend on app resource definitions directly.
  */
 export interface SyncResourcePolicyAdapter {
+  /**
+   * Return the explicit non-discretionary realm for an app-managed table.
+   * Multi-tenant Sync startup rejects every configured app table when this
+   * proof is missing; a custom policy callback is not a realm declaration.
+   */
+  classifyManagedTableRealm?(table: string): 'global' | 'tenant' | null;
+  /**
+   * Return the immutable managed-client exposure classification. Multi-tenant
+   * Sync startup requires this proof independently from realm classification.
+   */
+  classifyManagedTableExposure?(
+    table: string,
+  ): 'internal' | 'http' | 'sync' | 'all' | null;
   resolveTableAccess(
     context: SyncResourceTableAccessContext
   ): Promise<SyncResourceTableAccess>;
   authorizeMutation(
     context: SyncResourceMutationContext
   ): Promise<SyncResourceMutationDecision>;
+  /** Re-read policy identity/properties inside the SQLite commit transaction. */
+  validateMutationAuthorityAtCommit?(
+    authContext: SyncAuthContext | null,
+    expectedFingerprint: string,
+  ): boolean;
+  /**
+   * Observe every committed database change before socket subscription
+   * filtering. Stateful authorization adapters use this to invalidate cached
+   * scope independently of which data tables a client requested. This hook
+   * must complete synchronously; a throw or Promise invalidates the runtime.
+   */
+  observeChange?(change: Change): void;
+  /**
+   * Synchronously invalidate/reset state derived only from observeChange
+   * before clients reconnect after skipped history. Expensive reconstruction
+   * should be lazy in the next access-resolution call. Returning a Promise or
+   * throwing permanently invalidates the Sync runtime.
+   */
+  onHistoryGap?(gap: SyncHistoryGap): void;
 }
 
 // ─── Wire Protocol Messages ─────────────────────────────────────────────────
@@ -488,7 +734,8 @@ export type ServerMessage =
   | StateAckMessage
   | StateChangeMessage
   | EphemeralSnapshotMessage
-  | EphemeralChangeMessage;
+  | EphemeralChangeMessage
+  | EphemeralErrorMessage;
 
 // ─── Client Store ───────────────────────────────────────────────────────────
 
@@ -533,6 +780,8 @@ export interface ClientTableDef {
   _sync?: DeclaredSyncMode;
   /** Ordered natural identity fields used for deterministic sync ids. */
   _identity?: string[];
+  /** Boolean columns encoded as SQLite integers in the sync store. */
+  _booleanFields?: string[];
   /** Column definitions (name → type hint) */
   [column: string]: string | string[] | undefined;
 }
@@ -565,6 +814,12 @@ export interface SyncClientConfig {
   refreshAuth?: () => string | null | undefined | Promise<string | null | undefined>;
   /** Bind auth state changes to socket and local-cache lifecycle. */
   bindAuthLifecycle?: SyncAuthLifecycleBinder;
+  /**
+   * Subscribe to scoped-user State Sync after each accepted socket auth
+   * handshake. Default: false. This enables only the wire subscription;
+   * low-level callers still own state-message routing and storage.
+   */
+  stateSync?: boolean;
   /** Connect WebSocket immediately. Default: true */
   autoConnect?: boolean;
   /** Callback on unrecoverable error */
@@ -610,8 +865,17 @@ export const STATE_LIMITS = {
   maxTotalSize: 10_485_760,
 } as const;
 
+/**
+ * Outgoing Sync queue ceiling. The maximum State snapshot is below 12 MiB:
+ * 10 MiB of stored key/value bytes plus worst-case JSON escaping for at most
+ * 1,000 keys. Sixteen MiB leaves bounded headroom without raising the 1 MiB
+ * inbound WebSocket payload limit.
+ */
+export const SYNC_OUTGOING_BACKPRESSURE_LIMIT = 16 * 1_024 * 1_024;
+
 /** Machine-readable error codes for state operations. */
 export type StateErrorCode =
+  | 'INVALID_REQUEST'
   | 'VALUE_TOO_LARGE'
   | 'TOO_MANY_KEYS'
   | 'KEY_TOO_LONG'

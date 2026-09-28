@@ -13,8 +13,8 @@ import {
 import {
   useIsInView,
   type UseIsInViewOptions,
-} from '@/hooks/use-is-in-view';
-import { getStrictContext } from '@/lib/get-strict-context';
+} from '#zero/hooks/use-is-in-view';
+import { getStrictContext } from '#zero/lib/get-strict-context';
 
 const formatter = new Intl.NumberFormat('en-US');
 

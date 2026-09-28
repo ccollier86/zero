@@ -2,8 +2,8 @@
 
 import * as React from 'react';
 import { motion, type Transition } from 'motion/react';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/animate-ui/components/radix/checkbox';
+import { Label } from '#zero/components/ui/label';
+import { Checkbox } from '#zero/components/animate-ui/components/radix/checkbox';
 
 const checkboxItems = [
   {

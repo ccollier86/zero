@@ -39,6 +39,7 @@ export async function loginUser(
     tokenService: services.tokenService,
     authConfig: config.getAuthConfig(),
     mfaChallengeService: services.mfaChallengeService,
+    tenantSessionService: services.tenantSessions,
   });
 }
 

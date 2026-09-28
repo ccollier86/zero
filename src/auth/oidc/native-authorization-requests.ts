@@ -8,6 +8,7 @@ import {
 import { OBS_CODES } from '../../observability/codes';
 import { emitPlatformCode } from '../../observability/sink';
 import type { NativeAuthorizationRequestRecord } from './native-auth-records';
+import type { AuthContext } from '../types';
 import type { NativeServiceContext } from './native-service-context';
 import { authorizationClient, canReceiveTokens } from './native-service-policy';
 import { resolveNativeRequestSource } from './native-request-source';
@@ -53,12 +54,16 @@ export function getNativeRequest(
 }
 
 export function approveNativeRequest(
-  context: NativeServiceContext, rawRequestId: string, userId: string,
+  context: NativeServiceContext, rawRequestId: string, auth: AuthContext,
 ) {
+  const userId = auth.userId;
   const user = context.users.getUserById(userId);
   if (!user || !canReceiveTokens(user)) return null;
+  const authority = context.authority.capturePageAuthority(auth);
+  if (!authority) return null;
   const issued = context.codes.issue(
-    rawRequestId, userId, context.users.getAuthGeneration(userId), context.config.codeTtlMs
+    rawRequestId, userId, context.users.getAuthGeneration(userId),
+    authority, context.config.codeTtlMs,
   );
   if (issued) emitPlatformCode(OBS_CODES.AUTH_NATIVE_AUTHORIZATION_APPROVED, {
     userId, metadata: { clientId: issued.request.clientId },

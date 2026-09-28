@@ -7,9 +7,14 @@
  */
 
 let _encoder: TextEncoder | null = null;
+let _decoder: TextDecoder | null = null;
 
 function encoder(): TextEncoder {
   return (_encoder ??= new TextEncoder());
+}
+
+function decoder(): TextDecoder {
+  return (_decoder ??= new TextDecoder('utf-8', { fatal: true }));
 }
 
 /**
@@ -81,13 +86,16 @@ function toBase64Url(bytes: Uint8Array): string {
 }
 
 function toBase64UrlString(str: string): string {
-  return btoa(str)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
+  return toBase64Url(encoder().encode(str));
 }
 
 function fromBase64UrlString(b64: string): string {
-  const padded = b64.replace(/-/g, '+').replace(/_/g, '/');
-  return atob(padded);
+  const normalized = b64.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized.padEnd(
+    normalized.length + ((4 - normalized.length % 4) % 4),
+    '=',
+  );
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return decoder().decode(bytes);
 }

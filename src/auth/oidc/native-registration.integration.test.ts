@@ -21,7 +21,7 @@ const verifier = 'v'.repeat(64);
 describe('native registration continuation', () => {
   test('survives verification email and returns the new user to consent', async () => {
     const port = await availablePort();
-    const baseUrl = `http://localhost:${port}`;
+    const baseUrl = `http://127.0.0.1:${port}`;
     const issuer = `${baseUrl}/auth`;
     const provider = new MemoryEmailProvider();
     configureEmail({ from: 'Zero <zero@example.test>', provider }, {
@@ -30,7 +30,7 @@ describe('native registration continuation', () => {
     const db = createReactiveDB({ mode: 'memory' });
     const app = new Elysia()
       .use(createAuthPlugin({
-        db, nativeIssuer: issuer, nativeAudience: baseUrl,
+        db, bootstrap: 'public', nativeIssuer: issuer, nativeAudience: baseUrl,
         account: { requireEmailVerification: true },
         accountEmails: { requestCooldown: '0s' },
         nativeApps: { clients: [{ clientId, name: 'Registration App', redirectUris: [redirectUri] }] },
@@ -93,6 +93,7 @@ describe('native registration continuation', () => {
       });
       const userCookie = verified.response.headers.get('set-cookie')!.split(';', 1)[0]!;
       const consent = await fetch(`${baseUrl}${continuation}`, {
+        redirect: 'manual',
         headers: { Cookie: userCookie },
       });
       const html = await consent.text();
@@ -121,7 +122,7 @@ describe('native registration continuation', () => {
 
   test('releases a claimed request when verification delivery fails so retry can resume', async () => {
     const port = await availablePort();
-    const baseUrl = `http://localhost:${port}`;
+    const baseUrl = `http://127.0.0.1:${port}`;
     const issuer = `${baseUrl}/auth`;
     const provider = new FailOnceEmailProvider();
     configureEmail({ from: 'Zero <zero@example.test>', provider }, {
@@ -129,7 +130,7 @@ describe('native registration continuation', () => {
     });
     const db = createReactiveDB({ mode: 'memory' });
     const app = new Elysia().use(createAuthPlugin({
-      db, nativeIssuer: issuer, nativeAudience: baseUrl,
+      db, bootstrap: 'public', nativeIssuer: issuer, nativeAudience: baseUrl,
       account: { requireEmailVerification: true },
       accountEmails: { requestCooldown: '0s' },
       nativeApps: { clients: [{ clientId, name: 'Registration App', redirectUris: [redirectUri] }] },
@@ -174,11 +175,11 @@ describe('native registration continuation', () => {
 
   test('rejects every unavailable supplied continuation without creating an account', async () => {
     const port = await availablePort();
-    const baseUrl = `http://localhost:${port}`;
+    const baseUrl = `http://127.0.0.1:${port}`;
     const issuer = `${baseUrl}/auth`;
     const db = createReactiveDB({ mode: 'memory' });
     const app = new Elysia().use(createAuthPlugin({
-      db, nativeIssuer: issuer, nativeAudience: baseUrl,
+      db, bootstrap: 'public', nativeIssuer: issuer, nativeAudience: baseUrl,
       nativeApps: { clients: [{ clientId, name: 'Registration App', redirectUris: [redirectUri] }] },
     }));
     app.listen(port);
@@ -221,11 +222,11 @@ describe('native registration continuation', () => {
 
   test('claim race rolls back the bootstrap account and leaves the request retryable', async () => {
     const port = await availablePort();
-    const baseUrl = `http://localhost:${port}`;
+    const baseUrl = `http://127.0.0.1:${port}`;
     const issuer = `${baseUrl}/auth`;
     const db = createReactiveDB({ mode: 'memory' });
     const app = new Elysia().use(createAuthPlugin({
-      db, nativeIssuer: issuer, nativeAudience: baseUrl,
+      db, bootstrap: 'public', nativeIssuer: issuer, nativeAudience: baseUrl,
       userProperties: {
         plan: { type: 'string', default: 'starter', editableBy: 'admin' },
       },
@@ -264,9 +265,9 @@ describe('native registration continuation', () => {
 
   test('supplied continuation fails closed when native auth is unavailable', async () => {
     const port = await availablePort();
-    const baseUrl = `http://localhost:${port}`;
+    const baseUrl = `http://127.0.0.1:${port}`;
     const db = createReactiveDB({ mode: 'memory' });
-    const app = new Elysia().use(createAuthPlugin({ db }));
+    const app = new Elysia().use(createAuthPlugin({ db, bootstrap: 'public' }));
     app.listen(port);
     try {
       const result = await post(baseUrl, '/auth/register', {
@@ -282,6 +283,91 @@ describe('native registration continuation', () => {
       db.dispose();
     }
   });
+
+  test('multi-tenant verification gates creation and preserves native consent through onboarding', async () => {
+    const port = await availablePort();
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const issuer = `${baseUrl}/auth`;
+    const provider = new MemoryEmailProvider();
+    configureEmail({ from: 'Zero <zero@example.test>', provider }, {
+      name: 'Zero', publicUrl: baseUrl,
+    });
+    const db = createReactiveDB({ mode: 'memory' });
+    const app = new Elysia().use(createAuthPlugin({
+      db,
+      bootstrap: 'public',
+      tenancy: 'multi',
+      account: { requireEmailVerification: true },
+      accountEmails: { requestCooldown: '0s' },
+      nativeIssuer: issuer,
+      nativeAudience: baseUrl,
+      nativeApps: {
+        clients: [{ clientId, name: 'Registration App', redirectUris: [redirectUri] }],
+      },
+    }));
+    app.listen(port);
+    try {
+      const bootstrapped = await post(baseUrl, '/auth/register', {
+        username: 'tenant-bootstrap',
+        email: 'tenant-bootstrap@example.test',
+        password: 'password123',
+        organizationName: 'Bootstrap Workspace',
+      });
+      expect(bootstrapped.response.status).toBe(200);
+
+      const nativeContinuation = await beginNativeRegistration(baseUrl, issuer);
+      const registered = await post(baseUrl, '/auth/register', {
+        username: 'tenant-native',
+        email: 'tenant-native@example.test',
+        password: 'password123',
+        nativeContinuation,
+      });
+      expect(registered.response.status).toBe(200);
+      expect(registered.data.user.emailVerificationRequired).toBe(true);
+      expect(registered.data.tenantOnboardingRequired).toBeUndefined();
+      expect(registered.data.onboarding).toBeUndefined();
+      expect(registered.data.accessToken).toBeUndefined();
+      expect(registered.data.refreshToken).toBeUndefined();
+      expect((db.prepare(`
+        SELECT COUNT(*) AS count FROM _auth_session_continuations
+        WHERE user_id = ? AND purpose = 'tenant_onboarding'
+      `).get(registered.data.user.userId) as { count: number }).count).toBe(0);
+
+      const verificationMessage = provider.messages.find(({ message }) =>
+        String(message.to).includes('tenant-native@example.test'));
+      expect(verificationMessage).toBeDefined();
+      const verificationUrl = firstUrl(verificationMessage!.message.text);
+      expect(verificationUrl.searchParams.get('redirect')).toBe(nativeContinuation);
+      const verified = await post(baseUrl, '/auth/verify-email', {
+        token: verificationUrl.searchParams.get('token'),
+      });
+      expect(verified.response.status).toBe(200);
+      expect(verified.data.tenantOnboardingRequired).toBe(true);
+      expect(verified.data.accessToken).toBeUndefined();
+      const onboardingContinuation =
+        verified.data.onboarding.tenantCreation.continuation as string;
+      expect(onboardingContinuation).toBeString();
+
+      const created = await post(baseUrl, '/auth/tenants/create', {
+        continuation: onboardingContinuation,
+        name: 'Native User Workspace',
+      });
+      expect(created.response.status).toBe(200);
+      const pageCookie = created.response.headers.get('set-cookie')!.split(';', 1)[0]!;
+      const consent = await fetch(`${baseUrl}${nativeContinuation}`, {
+        redirect: 'manual',
+        headers: { Cookie: pageCookie },
+      });
+      expect(consent.status).toBe(200);
+      const html = await consent.text();
+      expect(html).toContain('tenant-native@example.test');
+      expect(html).toContain('value="approve"');
+    } finally {
+      await app.stop();
+      db.dispose();
+      configureEmail(false);
+    }
+  }, 60_000);
 });
 
 class FailOnceEmailProvider implements EmailProvider {

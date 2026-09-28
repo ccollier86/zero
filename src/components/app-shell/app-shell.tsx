@@ -7,8 +7,8 @@
  * layout; sidebar, header, and breadcrumb details live in focused components.
  */
 
-import { SidebarInset, SidebarProvider } from '@/components/sidebar';
-import { cn } from '@/lib/utils';
+import { SidebarInset, SidebarProvider } from '#zero/components/sidebar';
+import { cn } from '#zero/lib/utils';
 import { AppShellHeader } from './app-shell-header';
 import { AppShellSidebar } from './app-shell-sidebar';
 import type { AppShellHeaderConfig, AppShellProps } from './app-shell.types';

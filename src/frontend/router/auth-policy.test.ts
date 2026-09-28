@@ -55,5 +55,13 @@ describe('route auth policy', () => {
     expect(mergeRouteAuthRequirements([undefined, false])).toBe(false);
     expect(mergeRouteAuthRequirements(['required', false])).toBe('required');
     expect(mergeRouteAuthRequirements(['required', 'admin'])).toBe('admin');
+    expect(mergeRouteAuthRequirements([
+      { tenant: 'required', permission: 'documents:read' },
+      false,
+    ])).toBe('required');
+    expect(mergeRouteAuthRequirements([
+      { platformRole: 'admin' },
+      { permission: 'audit:read' },
+    ])).toBe('admin');
   });
 });

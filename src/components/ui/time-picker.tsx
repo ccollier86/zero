@@ -9,20 +9,20 @@
 import * as React from 'react';
 import { Clock3 } from 'lucide-react';
 
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '#zero/components/ui/select';
 import {
   formatTimeValue,
   normalizeMinute,
   parseTimeValue,
   type TimeParts,
-} from '@/components/ui/time-picker-value';
+} from '#zero/components/ui/time-picker-value';
 
 export interface TimePickerProps {
   value?: string;

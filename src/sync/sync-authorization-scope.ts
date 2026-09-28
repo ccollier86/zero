@@ -17,7 +17,24 @@ export function createSyncAuthorizationScope(
     auth?.userId ?? null,
     auth?.email ?? null,
     auth?.role ?? null,
+    auth?.clientId ?? null,
+    auth?.sessionKind ?? null,
+    auth?.scope ? [...auth.scope].sort(compareText) : null,
+    auth?.sessionId ?? null,
+    auth?.sessionGeneration ?? null,
+    auth?.sessionScopeKind ?? null,
+    auth?.sessionScopeId ?? null,
+    auth?.tenantId ?? null,
+    auth?.membershipId ?? null,
+    auth?.tenantRole ?? null,
+    auth?.tenantAuthorizationGeneration ?? null,
+    auth?.membershipAuthorizationGeneration ?? null,
+    auth?.authorizationAssignmentRevision ?? null,
     fingerprint,
   ]);
   return new Bun.CryptoHasher('sha256').update(value).digest('hex');
+}
+
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }

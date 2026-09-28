@@ -10,7 +10,9 @@ no API key or client secret to ship inside the application.
 Use this when an installed app needs the same Zero user identity, account
 lifecycle, route guards, resource policies, and session revocation as the web
 app. Native access tokens resolve to the normal Zero `AuthContext`; roles and
-user properties remain the authorization source.
+permissions are expanded from the same live application or active-tenant RBAC
+scope as browser sessions, while policy-trusted user properties remain
+available for the same declarative resource and route rules.
 
 If you are choosing between the web, TypeScript native, Rust/Tauri, and Chrome
 surfaces, begin with the [App Authentication SDK Guide](./app-auth-sdk-guide.md).
@@ -20,7 +22,7 @@ The important availability distinction is:
 |---|---|
 | `@zero/framework/native` | Implemented TypeScript client and broker; use only from a framework release that includes this export |
 | Packaged desktop/mobile recipes | Implemented narrow host factories distributed with the framework |
-| `zero-native-auth` and `tauri-plugin-zero-auth` | Independent `0.0.0` design preview; configuration/state contracts only, with no working OIDC engine or platform adapters yet |
+| `zero-native-auth` and `tauri-plugin-zero-auth` | Independent functional `0.0.0` preview with a Rust OIDC/PKCE engine, rotating/tenant sessions, bounded authenticated HTTP, and deny-by-default Tauri commands; host platform adapters and certification are not bundled |
 | `@zero/chrome-auth` | Independent private `0.0.0` MV3 preview; functional source, but no released framework peer range, real-Chrome release gate, or independent security review yet |
 
 The standalone Rust/Tauri and Chrome repositories have their own Git history,
@@ -39,10 +41,13 @@ verifier and stores the rotating refresh session in its platform vault.
 
 The resulting bearer does not create a second kind of Zero user. HTTP auth
 resolves the current database user and returns the usual `userId`, `email`,
-and `role` auth context with native attribution added. Middleware and resource
-policy rehydrate trusted user properties from the same user store when needed.
-Resource CRUD, `/api/data`, app endpoints, middleware, and Sync continue to
-enforce their existing server-side policy.
+and global/platform `role` auth context with native attribution added. In
+`multi`, it also resolves the selected tenant, retained membership, live
+generations, and current role-assignment revision; in `single/advanced`, it
+resolves application assignments. Middleware and resource policy rehydrate
+trusted user properties from the same user store when needed. Resource CRUD,
+`/api/data`, app endpoints, middleware, managed services, and Sync continue to
+enforce the same server-side authorization kernel.
 
 OIDC `profile` and `email` scopes control released identity claims only. They
 do not grant route, table, mutation, administrator, or tenant permission.
@@ -282,18 +287,23 @@ so its state listener is removed. Preserve each broker snapshot's `revision`
 unchanged across the bridge; the proxy uses it to ignore delayed state and token
 responses after sign-out or another newer credential transition.
 
-Tauri is different: its trusted main process is Rust, so it cannot directly
-host this TypeScript broker. The standalone Rust/Tauri packages are still a
-non-functional design preview. Do not instantiate the TypeScript credential
-owner in the Svelte/webview UI. Until the Rust engine exists, a prototype needs
-a separately secured JavaScript sidecar hosting this broker and narrow IPC, or
-it should remain a web-only prototype. See the
+Tauri is different: its trusted main process is Rust, so it should not host the
+TypeScript broker in the Svelte/webview UI. The standalone Rust/Tauri preview
+now provides the Rust-owned engine and a deny-by-default Tauri v2 command
+boundary. The host still supplies audited OS secure-store, system-browser,
+callback/deep-link, and single-instance adapters and must validate them on each
+packaged target. See the
 [SDK selection guide](./app-auth-sdk-guide.md#tauri-boundary-today).
 
 Other lifecycle calls are:
 
 - `signUp({ loginHint })` opens the registration path in the system browser.
 - `refresh()` explicitly rotates/refetches the session.
+- `listTenants()` asks Zero for the current identity's live tenant choices
+  using broker/process-held refresh proof; it never exposes that proof.
+- `switchTenant(tenantId)` atomically replaces the native refresh family with
+  one bound to the selected live membership and publishes its safe tenant
+  summary.
 - `signOut()` attempts native-family revocation, clears local memory
   unconditionally, and reports any vault deletion or revocation failure.
 - `subscribe(listener)` observes `uninitialized`, `anonymous`, `authorizing`,
@@ -310,7 +320,10 @@ The public TypeScript surface is intentionally small:
 | `createNativeAuthBrokerClient(options)` | Revision-ordered proxy over host-owned IPC; call `dispose()` when its window/root is destroyed |
 | `initialize()` | Discovers the provider, reads the vault, and immediately rotates a stored refresh session before authenticating |
 | `signIn()` / `signUp()` | Persists pending PKCE state, opens the system browser, waits for the armed callback, validates tokens, and commits the replacement session |
-| `getUser()` | Returns validated ID-token identity claims, never server authorization policy |
+| `state.activeTenant` | Safe current tenant projection (`tenantId`, `slug`, `name`, `role`); never a credential or permission decision |
+| `listTenants()` | Lists live tenant choices with the credential owner's refresh proof; no refresh token crosses the SDK/broker boundary |
+| `switchTenant(tenantId)` | Replaces the native family with a server-validated tenant-bound family and returns the new state |
+| `getUser()` | Returns the allowlisted standard OIDC identity projection, never arbitrary/private ID-token claims or server authorization policy |
 | `getAccessToken()` | Returns a short-lived bearer for trusted integrations; never persist or log it |
 | `fetch()` | Sends same-origin Bearer requests without ambient cookies or automatic redirects and retries one 401 after serialized refresh |
 | `signOut()` | Clears local pending/session state, reports any cleanup/revocation failure, and leaves local state signed out |
@@ -322,6 +335,36 @@ bodies and tokens are not copied into those errors. Treat a rejected
 `initialize()` or refresh according to the resulting auth state rather than
 assuming the prior identity is usable: only `status === 'authenticated'` is an
 authenticated session.
+
+### Native tenant sessions
+
+When the provider advertises `zero_tenant_sessions` version 1 in discovery,
+both the TypeScript SDK and the standalone Rust/Tauri preview support tenant
+discovery and switching. The advertised list and switch endpoints must remain
+same-origin under the exact issuer. Requests are public-client form requests
+containing the registered `client_id` and the credential owner's rotating
+refresh proof; they never use a client secret, ambient browser cookie, or UI
+Bearer as tenant-selection authority.
+
+Tenant listing, refresh, and tenant switching share one credential-operation
+queue inside the trusted owner. A list that already holds the proof completes
+before a rotation can consume it; a list requested during a rotation waits and
+then reads the replacement proof. This ordering is security-critical because
+the server treats use of a consumed proof as refresh-family replay.
+
+The server revalidates the account, native family, tenant, membership, and
+captured authorization generations. A successful switch revokes the source
+family and creates a replacement bound to the selected tenant. Old HTTP and
+Sync access then fail their live family/authority checks. If a switch response
+is lost after the request may have committed, the TypeScript SDK discards its
+old local proof rather than continuing with ambiguous authority; the caller
+must authenticate or restore from known current state.
+
+The SDK exposes only `activeTenant` and `TenantList`/`NativeTenantListResult`
+safe projections. Permissions are still resolved live by Zero and are not
+embedded in those display objects. The Rust Tauri plugin provides
+`list_tenants` and `switch_tenant` commands from the Rust credential owner, so
+the Svelte/webview layer never receives a refresh token.
 
 Temporary network/408/429/5xx refresh failures retain the stored session for a
 later retry. An accepted but invalid response, `invalid_grant`, invalid client,
@@ -488,16 +531,19 @@ deployment diagnostics. With `app.publicUrl` set to
 | `POST` | `/oauth/token` | Exchange an authorization code or rotate a refresh token |
 | `POST` | `/oauth/revoke` | Revoke the matching refresh-token family; unknown tokens remain an idempotent success |
 | `GET`, `POST` | `/oauth/userinfo` | Return scope-filtered claims for a live native bearer |
+| `POST` | `/oauth/tenants` | List live tenant memberships using refresh-token proof |
+| `POST` | `/oauth/tenants/switch` | Rotate the refresh family into a server-validated target tenant session |
 | `GET` | `/jwks` | Publish the ES256 verification key set |
 
 Discovery advertises response type `code`, response mode `query`, grants
 `authorization_code` and `refresh_token`, public endpoint authentication
 method `none`, PKCE method `S256`, ES256 ID tokens, authorization response
 issuer parameters, and scopes `openid`, `profile`, and `email`. The current
-discovery document does not contain a Zero profile-version extension. A
-third-party client must validate every required advertised capability and pin
-a tested compatible Zero framework release; it must not infer compatibility
-from a future server accepting the same URL shape.
+discovery document also advertises the `zero_tenant_sessions` extension at
+version `1`, including the list/switch endpoints and its `refresh_token` proof
+contract. A third-party client must validate every required advertised
+capability and pin a tested compatible Zero framework release; it must not infer
+compatibility from a future server accepting the same URL shape.
 
 ### Authorization request
 
@@ -594,9 +640,15 @@ Suspending a user, changing security-sensitive account state, signing out,
 removing the registered client, evicting the family, or detecting refresh-token
 replay invalidates native access. Zero checks the current user generation,
 client registration, and exact live family on every HTTP request, so even a
-bearer copied outside the SDK stops working without waiting for JWT expiry. An
-already-open Sync socket rechecks on its configured authorization interval (30
-seconds by default). A separate service that verifies JWT signatures offline
+bearer copied outside the SDK stops working without waiting for JWT expiry.
+Before an authenticated Sync socket receives a committed live change, Zero
+synchronously resolves its captured secret-free session authority and closes a
+stale socket. Managed file-mode `createApp()` runtimes also poll the shared
+SQLite authority revision every 250 ms by default, so a security change on one
+runtime promptly revalidates sockets and managed ephemeral bindings on another
+runtime using that database. The 30-second socket authorization interval
+remains the bounded fallback and recomputes policy changes outside that durable
+revision contract. A separate service that verifies JWT signatures offline
 cannot observe these database-backed decisions; route native traffic through
 Zero or implement an equivalent live introspection/session check.
 
@@ -628,9 +680,10 @@ Zero or implement an equivalent live introspection/session check.
 11. Run `bun run test:package` in Zero before release; it packs the framework,
    installs it outside the checkout, and compiles both native adapter recipes.
    This does not replace real-device/runtime verification.
-12. Do not release the standalone Rust/Tauri Phase 0 scaffold or private Chrome
-    preview merely because their unit/package checks pass; complete their
-    documented runtime, browser, security, and versioning gates first.
+12. Do not publish the functional but private Rust/Tauri or Chrome previews
+    merely because their deterministic unit/package checks pass; complete their
+    documented real-platform/browser, adapter, security, ownership, license,
+    compatibility, and versioning gates first.
 
 Doctor reports missing issuers/public URLs, enabled configurations without
 clients, malformed proxy policy, malformed or duplicate client settings,

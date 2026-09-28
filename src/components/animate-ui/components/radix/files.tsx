@@ -20,8 +20,8 @@ import {
   type FolderContentProps as FolderContentPrimitiveProps,
   type FileProps as FilePrimitiveProps,
   type FileLabelProps as FileLabelPrimitiveProps,
-} from '@/components/animate-ui/primitives/radix/files';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/primitives/radix/files';
+import { cn } from '#zero/lib/utils';
 
 type GitStatus = 'untracked' | 'modified' | 'deleted';
 

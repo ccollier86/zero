@@ -41,4 +41,23 @@ describe('modal store', () => {
 
     expect(modalStore.getSnapshot().context.closingIds).toEqual([cardId, boardId]);
   });
+
+  test('discardAll resolves confirms safely without invoking stale close callbacks', async () => {
+    let closeCalls = 0;
+    modals.open({
+      title: 'Tenant-scoped content',
+      content: 'secret',
+      onClose: () => {
+        closeCalls += 1;
+      },
+    });
+    const confirmation = modals.confirm({ title: 'Tenant-scoped confirmation' });
+
+    modals.discardAll();
+
+    expect(modalStore.getSnapshot().context.modals).toEqual([]);
+    expect(modalStore.getSnapshot().context.closingIds).toEqual([]);
+    await expect(confirmation).resolves.toBe(false);
+    expect(closeCalls).toBe(0);
+  });
 });

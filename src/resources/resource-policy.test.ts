@@ -9,11 +9,13 @@
 import { describe, expect, test } from 'bun:test';
 
 import { resolveAuthBehaviorConfig } from '../auth/auth-config';
+import { createAuthorizationKernel } from '../auth/authorization-kernel';
 import type { ResourcePolicyContext, ResourcePolicyUser } from './resource-policy';
 import {
   adminOnly,
   allOf,
   anyOf,
+  authorizationPolicy,
   authenticatedOnly,
   customPolicy,
   evaluateResourcePolicy,
@@ -178,6 +180,74 @@ describe('resource policy core', () => {
       path: 'metadata.theme',
     }]);
     await expectDenied(untrustedPolicy, context({ user }), 'policy-invalid', 500);
+  });
+
+  test('authorization policy reuses the route RBAC vocabulary and live scope', async () => {
+    const resolved = resolveAuthBehaviorConfig({
+      tenancy: 'multi',
+      authorization: {
+        mode: 'advanced',
+        permissions: {
+          'tickets:read': { label: 'Read tickets' },
+          'tickets:write': { label: 'Write tickets' },
+        },
+        roles: {
+          agent: { permissions: ['tickets:read'] },
+        },
+      },
+    });
+    const kernel = createAuthorizationKernel(resolved);
+    const subject = {
+      platformRole: 'user',
+      properties: {},
+      authorization: {
+        tenancy: 'multi' as const,
+        mode: 'advanced' as const,
+        scopeKind: 'tenant' as const,
+        scopeId: 'tenant_1',
+        tenantId: 'tenant_1',
+        membershipId: 'membership_1',
+        roles: ['agent'],
+        permissions: ['tickets:read'],
+        revision: 'tenant:tenant_1:membership_1:1',
+      },
+    };
+    const read = authorizationPolicy({
+      tenant: 'required',
+      permission: 'tickets:read',
+    });
+
+    expect(validateResourcePolicy(read, { authConfig: resolved })).toEqual([]);
+    await expectAllowed(read, context({
+      authConfig: resolved,
+      authorization: { kernel, subject },
+    }));
+    await expectDenied(
+      authorizationPolicy({ permission: 'tickets:write' }),
+      context({ authConfig: resolved, authorization: { kernel, subject } }),
+      'authorization-denied',
+      403,
+    );
+    await expectDenied(
+      read,
+      context({ authConfig: resolved, user: null, authorization: { kernel, subject: null } }),
+      'unauthorized',
+      401,
+    );
+    await expectDenied(
+      read,
+      context({ authConfig: resolved, authorization: null }),
+      'authorization-unavailable',
+      503,
+    );
+
+    expect(validateResourcePolicy(
+      authorizationPolicy({ permission: 'tickets:delete' }),
+      { authConfig: resolved },
+    )).toMatchObject([{
+      code: 'authorization-requirement-invalid',
+      path: 'authorization',
+    }]);
   });
 
   test('anyOf composes admin overrides and constrained owner branches', async () => {

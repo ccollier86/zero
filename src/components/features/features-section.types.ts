@@ -9,7 +9,7 @@
 
 import type * as React from 'react';
 
-import type { ZeroAnimatedIconName } from '@/components/animate-ui/icons';
+import type { ZeroAnimatedIconName } from '#zero/components/animate-ui/icons';
 
 /** One feature bullet rendered by FeaturesSection. */
 export interface FeatureSectionItem {

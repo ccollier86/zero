@@ -2,14 +2,18 @@
 
 **Set a key. It persists. Switch devices. It's there.**
 
-Per-user reactive KV state that lives on the server. No schema, no tables, no migrations. Keys are strings, values are JSON. Survives refresh, device switch, server restart. Uses the same WebSocket the sync engine already has.
+Per-authorized-scope user reactive KV state that lives on the server. No app
+schema or migrations are required. Keys are strings, values are JSON, and the
+state survives refresh, device switch, and server restart. It uses the same
+WebSocket as the sync engine. Single mode keeps one keyspace per user; multi
+mode derives a distinct tenant + user keyspace from the authenticated session.
 
 ## What This Solves
 
 Applications have two kinds of state:
 
-1. **Application data** — todos, users, projects. Structured, relational, shared between users. That's the [sync engine](./realtime-sync/realtime-sync/README.md) with ReactiveDB.
-2. **Client state** — theme preference, sidebar open/closed, form draft half filled out, wizard step, last visited page, game board between two players. Unstructured, per-user, doesn't belong in a SQL table.
+1. **Application data** — todos, contacts, projects. Structured, relational, and shared with policy-authorized collaborators. That's the [sync engine](./realtime-sync/realtime-sync/README.md) with ReactiveDB.
+2. **Client state** — theme preference, sidebar open/closed, form draft half filled out, wizard step, or last visited page. Unstructured, private to one user inside the current authorization scope, and not worth an app SQL table.
 
 Most frameworks punt on #2. It lives in `localStorage`, vanishes on cache clear, doesn't sync across devices, and is gone if the user switches machines. State Sync moves it to the server. Same WebSocket pipe as the sync engine, same reconnect logic, same optimistic apply. But no schema — just a bag of keys.
 
@@ -22,45 +26,34 @@ import { resolveConfig, createApp } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
 const config = resolveConfig({
-  db: { mode: 'memory' },
+  // File mode is required for durability across process restarts and for
+  // multiple Zero runtimes serving this same application database.
+  db: { mode: './data/app.sqlite' },
   tables,
-  auth: true,          // Required: state is keyed by authenticated user
-  stateSync: true,     // Enables per-user KV state
+  auth: true,          // Required: state is keyed by authenticated scope + user
+  stateSync: true,     // Enables scoped-user KV state
 });
 
-const app = createApp(config);
+const app = await createApp(config);
 app.listen(3000);
 ```
 
-```ts
-// ─── Client: set state, it persists everywhere ─────────
-
-import { createClient } from '@zero/framework/react';
-
-const client = createClient({ url: 'http://localhost:3000', tables });
-await client.login('alice', 'secret');
-
-// Set some state
-client.state.set('theme', 'dark');
-client.state.set('sidebar.open', true);
-client.state.set('dashboard.lastTab', 'analytics');
-client.state.set('intake-form.step2', {
-  insurance: 'Blue Cross',
-  memberId: 'BC-12345',
-  groupNumber: '',   // partially filled
-});
-
-// Close laptop. Open phone. Login.
-client.state.get('theme');              // 'dark'
-client.state.get('intake-form.step2');  // { insurance: 'Blue Cross', ... }
-// Exactly where they left off.
-```
-
 ```tsx
-// ─── React: reactive state hook ────────────────────────
+// ─── Client: public reactive state hooks ───────────────
+
+'use client';
+
+import {
+  useFormDraft,
+  useServerState,
+  useServerStateReady,
+} from '@zero/framework/react';
 
 function Sidebar() {
   const [open, setOpen] = useServerState('sidebar.open', true);
+  const ready = useServerStateReady();
+
+  if (!ready) return <LoadingSpinner />;
 
   return (
     <aside className={open ? 'expanded' : 'collapsed'}>
@@ -70,215 +63,71 @@ function Sidebar() {
   );
 }
 
-// User toggles sidebar on desktop → opens phone → sidebar is in the same position.
-// No localStorage. No cookies. Server-persisted, device-synced.
+function IntakeForm() {
+  const { draft, setField } = useFormDraft('intake', {
+    insurance: '',
+    memberId: '',
+    groupNumber: '',
+  });
+
+  return (
+    <input
+      value={draft.memberId}
+      onChange={(event) => setField('memberId', event.target.value)}
+    />
+  );
+}
 ```
+
+User state is restored after the authenticated State snapshot is ready. No
+`localStorage`, cookies, or manual token handling is involved. `AppProvider`
+owns the internal State client; the public application `Client` has no State
+field, and the hooks expose scope-safe reads and writes.
 
 ## Core Properties
 
 | Property | What it means |
 |----------|--------------|
-| **Per-user keyspace** | Each authenticated user gets an isolated KV namespace. Users cannot see each other's state. |
+| **Per-scope user keyspace** | Single mode keeps the historical per-user namespace. A multi-mode tenant session uses a server-derived tenant + user namespace, so the same user has independent state in each organization. |
 | **Schemaless** | Keys are strings, values are any JSON-serializable type. No defineTable, no migrations. |
-| **Server-persisted** | State lives in server memory (Map) with SQLite backing for durability. Survives server restart. |
-| **Device-synced** | Same user on multiple devices/tabs sees the same state. Change on one, updates on all. |
+| **Server-persisted** | SQLite is authoritative. File mode survives server restart; memory mode is intentionally ephemeral. |
+| **Device-synced** | The same user in the same authorization scope sees updates across devices/tabs. Different tenants stay isolated. |
 | **Optimistic** | `set()` applies locally first (instant), then syncs to server. Same pattern as sync engine mutations. |
 | **Same transport** | Rides the existing sync WebSocket. No additional connection. |
 
-## Client API
+## Public React API
 
-### state.set(key, value)
+The application-facing `Client` deliberately does not expose its provider-owned
+`StateClient`. In a Zero React application, use these exports from
+`@zero/framework/react` beneath `AppProvider` or `ClientProvider`:
 
-Set a key in the user's state. Value must be JSON-serializable.
+- `useServerState()` for an arbitrary JSON value;
+- `useServerStateReady()` for the initial authoritative-snapshot boundary;
+- `usePreference()` for a named preference with a reset action;
+- `useFormDraft()` for object-shaped drafts with field and partial-update
+  helpers.
 
-```ts
-client.state.set('theme', 'dark');
-client.state.set('sidebar.open', false);
-client.state.set('wizard.currentStep', 3);
-client.state.set('draft.newPost', {
-  title: 'Hello World',
-  body: 'This is a draft...',
-  tags: ['intro', 'first-post'],
-});
-```
+Set `stateSync: true` on the server and provider/client configuration. Full-stack
+apps can inherit the server-injected setting instead of repeating it.
 
-**Behavior:**
-1. Validates value is JSON-serializable
-2. Updates local @xstate/store immediately (optimistic)
-3. Sends `state.set { key, value }` over WebSocket
-4. Server persists to KV store, acks
-5. If user has other devices/tabs connected, server pushes `state.change` to them
+### `useServerState(key, defaultValue)`
 
-**Key format:** Flat strings. Dots are convention for grouping but have no special meaning — `'sidebar.open'` is just a string key, not a nested path.
-
-**Overwrite:** Setting an existing key replaces the value entirely. No deep merge.
-
-```ts
-client.state.set('prefs', { theme: 'dark', lang: 'en' });
-client.state.set('prefs', { theme: 'light' });
-client.state.get('prefs');  // { theme: 'light' } — lang is gone
-```
-
-### state.get(key)
-
-Read a key from the user's state. Returns `undefined` if not set.
-
-```ts
-const theme = client.state.get('theme');         // 'dark'
-const missing = client.state.get('nonexistent');  // undefined
-```
-
-**Reads are local.** Reads come from the in-memory store, not a server round-trip. The store is populated from the server snapshot on connect and kept current via WebSocket changes.
-
-### state.get(key, defaultValue)
-
-Read with a default. Returns the default if the key doesn't exist.
-
-```ts
-const theme = client.state.get('theme', 'light');     // 'dark' (exists)
-const lang = client.state.get('language', 'en');       // 'en' (doesn't exist, returns default)
-```
-
-### state.delete(key)
-
-Remove a key from the user's state.
-
-```ts
-client.state.delete('draft.newPost');
-client.state.get('draft.newPost');  // undefined
-```
-
-**Behavior:**
-1. Removes from local store immediately
-2. Sends `state.delete { key }` over WebSocket
-3. Server removes from KV, acks
-4. Other devices see the key disappear
-
-### state.getAll()
-
-Get the entire state as a flat object.
-
-```ts
-const all = client.state.getAll();
-// {
-//   'theme': 'dark',
-//   'sidebar.open': true,
-//   'wizard.currentStep': 3,
-//   'draft.newPost': { title: '...', body: '...', tags: [...] },
-// }
-```
-
-Returns a shallow copy. Mutating the returned object does not affect the store.
-
-### state.getByPrefix(prefix)
-
-Get all keys matching a prefix.
-
-```ts
-client.state.set('draft.post-1', { title: 'Draft 1' });
-client.state.set('draft.post-2', { title: 'Draft 2' });
-client.state.set('theme', 'dark');
-
-const drafts = client.state.getByPrefix('draft.');
-// {
-//   'draft.post-1': { title: 'Draft 1' },
-//   'draft.post-2': { title: 'Draft 2' },
-// }
-```
-
-### state.clear()
-
-Remove all keys. Nuclear option — wipes the user's entire state.
-
-```ts
-client.state.clear();
-client.state.getAll();  // {}
-```
-
-### state.subscribe(key, callback)
-
-Subscribe to changes on a specific key. Fires when the value changes (from any source — local set, server push from another device).
-
-```ts
-const unsub = client.state.subscribe('theme', (value) => {
-  console.log('Theme changed:', value);
-  // value is the new value, or undefined if deleted
-});
-
-// Later
-unsub();
-```
-
-### state.subscribe(callback)
-
-Subscribe to all state changes.
-
-```ts
-const unsub = client.state.subscribe((event) => {
-  console.log(event.type, event.key, event.value);
-  // type: 'set' | 'delete' | 'clear'
-  // key: the affected key (null for 'clear')
-  // value: new value (undefined for 'delete', null for 'clear')
-});
-```
-
-### Full Client Interface
-
-```ts
-interface StateClient {
-  /** Set a key. Optimistic — applies locally, syncs to server. */
-  set(key: string, value: JsonValue): void;
-
-  /** Get a key. Local read — no server round-trip. */
-  get(key: string): JsonValue | undefined;
-  get<T extends JsonValue>(key: string, defaultValue: T): T;
-
-  /** Delete a key. */
-  delete(key: string): void;
-
-  /** Get all keys as a flat object. */
-  getAll(): Record<string, JsonValue>;
-
-  /** Get all keys matching a prefix. */
-  getByPrefix(prefix: string): Record<string, JsonValue>;
-
-  /** Remove all keys. */
-  clear(): void;
-
-  /** Subscribe to a specific key's changes. */
-  subscribe(key: string, callback: (value: JsonValue | undefined) => void): () => void;
-
-  /** Subscribe to all state changes. */
-  subscribe(callback: (event: StateChangeEvent) => void): () => void;
-
-  /** Number of keys in the store. */
-  readonly size: number;
-
-  /** Whether the state has been loaded from the server (snapshot received). */
-  readonly ready: boolean;
-}
-
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
-
-interface StateChangeEvent {
-  type: 'set' | 'delete' | 'clear';
-  key: string | null;
-  value: JsonValue | undefined;
-  source: 'local' | 'remote';  // Did this change originate from this client or another device?
-}
-```
-
----
-
-## React Hook
-
-### useServerState
-
-Like `useState`, but persisted on the server and synced across devices.
+Like `useState`, but persisted on the server and synchronized across devices
+inside the current authorization scope:
 
 ```tsx
+'use client';
+
+import {
+  useServerState,
+  useServerStateReady,
+} from '@zero/framework/react';
+
 function ThemeToggle() {
+  const ready = useServerStateReady();
   const [theme, setTheme] = useServerState('theme', 'light');
+
+  if (!ready) return <LoadingSpinner />;
 
   return (
     <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
@@ -288,7 +137,7 @@ function ThemeToggle() {
 }
 ```
 
-**Signature:**
+Signature:
 
 ```ts
 function useServerState<T extends JsonValue>(
@@ -297,55 +146,54 @@ function useServerState<T extends JsonValue>(
 ): [T, (value: T) => void];
 ```
 
-**Behavior:**
-- Returns `[currentValue, setter]` — same API as `useState`
-- `currentValue` reads from the server-synced store. If the key doesn't exist, returns `defaultValue`.
-- `setter` calls `client.state.set(key, value)` — optimistic, persisted, synced
-- Re-renders when the value changes (from local set OR remote push from another device/tab)
-- Uses `useSyncExternalStore` internally — tear-free reads
+The returned value is a local, tear-free snapshot. The setter applies
+optimistically, sends one `state.set` operation, and rolls back if the server
+rejects it. Other authorized devices in the same exact scope receive the
+committed value.
 
-**SSR:** During server-side rendering, `useServerState` reads from the user's persisted state (loaded from SQLite). The server-rendered HTML includes the correct value. On hydration, the client store is populated from the snapshot — no flash of default values.
+Values must be complete JSON values. JavaScript callers can bypass TypeScript,
+so the server repeats strict runtime validation of the ref, key, and value.
+Invalid or oversized values receive `INVALID_REQUEST` and the optimistic write
+rolls back.
 
-### useServerState with objects
+Keys are flat strings up to 256 characters. Dots are a naming convention, not
+nested-path syntax. Names such as `__proto__`, `constructor`, and `toString`
+are ordinary keys because both server and client dictionaries are
+prototype-free.
+
+Setting an existing key replaces its whole value; it does not deep-merge:
 
 ```tsx
-function IntakeForm() {
-  const [formData, setFormData] = useServerState('intake.demographics', {
-    name: '',
-    dob: '',
-    address: '',
-    phone: '',
+function Preferences() {
+  const [preferences, setPreferences] = useServerState('preferences', {
+    theme: 'dark',
+    language: 'en',
   });
 
-  const updateField = (field: string, value: string) => {
-    setFormData({ ...formData, [field]: value });
+  // The stored value becomes exactly { theme: 'light', language: 'en' }.
+  const useLightTheme = () => {
+    setPreferences({ ...preferences, theme: 'light' });
   };
 
-  return (
-    <form>
-      <input value={formData.name} onChange={e => updateField('name', e.target.value)} />
-      <input value={formData.dob} onChange={e => updateField('dob', e.target.value)} />
-      <input value={formData.address} onChange={e => updateField('address', e.target.value)} />
-      <input value={formData.phone} onChange={e => updateField('phone', e.target.value)} />
-    </form>
-  );
+  return <button onClick={useLightTheme}>Use light theme</button>;
 }
-
-// User fills out name and DOB. Phone dies. Opens laptop. Name and DOB are there.
 ```
 
-**Important:** `setFormData` replaces the entire value (same as `state.set`). For objects, spread the previous value and override the changed field.
+For object updates, spread the prior value or use `useFormDraft()`. The public
+hook setter accepts a JSON value; it does not use `undefined` as a deletion
+sentinel.
 
-### useServerStateReady
+### `useServerStateReady()`
 
-Check if the state snapshot has been loaded from the server.
+Returns `true` only after the authoritative State snapshot for the current
+authenticated scope has loaded:
 
 ```tsx
-function App() {
+function Dashboard() {
   const ready = useServerStateReady();
 
   if (!ready) return <LoadingSpinner />;
-  return <Dashboard />;
+  return <DashboardContent />;
 }
 ```
 
@@ -353,13 +201,114 @@ function App() {
 function useServerStateReady(): boolean;
 ```
 
-On initial page load, there's a brief moment between hydration and WebSocket connect where the state snapshot hasn't arrived yet. `useServerState` returns the default value during this window. `useServerStateReady` lets you show a loading state if needed. For most apps this gap is <100ms and the SSR-rendered values are correct, so this hook is rarely needed.
+State Sync does not perform a per-user SQLite read during React server
+rendering. The server snapshot for `useSyncExternalStore` is the supplied
+default and readiness is `false`. After hydration and the authenticated
+WebSocket baseline, the authoritative value replaces that default. Render a
+loading boundary whenever showing the default early would be misleading.
 
----
+### `usePreference(key, defaultValue)`
+
+Adds a stable `preferences.` namespace and an explicit reset-to-default
+operation:
+
+```tsx
+'use client';
+
+import { usePreference } from '@zero/framework/react';
+
+function DensityControl() {
+  const { value, setValue, reset } = usePreference(
+    'table-density',
+    'comfortable',
+  );
+
+  return (
+    <>
+      <button onClick={() => setValue('compact')}>Compact</button>
+      <button onClick={reset}>Reset</button>
+      <span>{value}</span>
+    </>
+  );
+}
+```
+
+`reset()` writes the supplied default value. It does not expose the internal
+whole-key deletion operation.
+
+### `useFormDraft(key, initialValue, options?)`
+
+Persists one object-shaped draft and supplies safe whole-value update helpers:
+
+```tsx
+'use client';
+
+import { useFormDraft } from '@zero/framework/react';
+
+function IntakeForm() {
+  const {
+    draft,
+    setField,
+    updateDraft,
+    resetDraft,
+  } = useFormDraft('patient-intake', {
+    name: '',
+    dateOfBirth: '',
+    insurance: '',
+  });
+
+  return (
+    <form>
+      <input
+        value={draft.name}
+        onChange={(event) => setField('name', event.target.value)}
+      />
+      <button
+        type="button"
+        onClick={() => updateDraft({ insurance: 'Blue Cross' })}
+      >
+        Use insurer
+      </button>
+      <button type="button" onClick={resetDraft}>Reset</button>
+    </form>
+  );
+}
+```
+
+The default namespace is `drafts`; pass `{ namespace: 'intake' }` when an app
+needs a different stable prefix. `resetDraft()` writes the complete initial
+object.
+
+### Scope and provider boundary
+
+The hooks subscribe through React's external-store contract and re-render for
+local optimistic writes and committed remote changes. They also bind callbacks
+to the current authorization boundary. During logout, account replacement, or
+tenant switching, the old keyspace is hidden and writes are frozen until the
+new authenticated baseline arrives.
+
+Do not cast `useClient()` or a public `Client` to reach `state`. The
+provider-managed `StateClient` is intentionally internal to the integrated
+SDK. `@zero/framework/sync/client` exports lower-level store and client
+primitives for authors assembling a standalone Sync provider, but those
+primitives require explicit message routing and lifecycle ownership; they are
+not a hidden field on `createClient()`.
+
+The integrated `createClient({ stateSync: true })` transport sends
+`state.subscribe` immediately after every accepted socket-auth handshake,
+including reconnects, so the provider-owned state store receives a fresh
+snapshot. Low-level `createSyncClient()` keeps table-only behavior by default;
+pass `stateSync: true` to opt its socket into that same wire subscription, then
+route state messages from `onMessage()` into the state store you own.
+
+The wire protocol still defines `state.delete` and `state.clear` for that
+low-level transport and framework lifecycle work. Their presence does not add
+delete or clear methods to the public application `Client`.
 
 ## Wire Protocol
 
-State sync adds four message types to the existing sync WebSocket. No new connection — same pipe.
+State sync adds four client request types and three server response types to the
+existing sync WebSocket. No new connection — same pipe.
 
 ### Client → Server
 
@@ -390,7 +339,7 @@ Set a key.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `ref` | `string` | Client-generated UUID for ack correlation |
+| `ref` | `string` | Non-empty client correlation ID, at most 128 characters (the bundled client uses a UUID) |
 | `key` | `string` | The key to set |
 | `value` | `JsonValue` | The value (JSON-serializable) |
 
@@ -438,7 +387,10 @@ Full state sent on initial subscribe. One flat object with all keys.
 |-------|------|-------------|
 | `entries` | `Record<string, JsonValue>` | All key-value pairs for this user |
 
-The client replaces its local state entirely with the snapshot contents. This is authoritative — same principle as `sync.snapshot` for tables.
+The client replaces its local state entirely with the snapshot contents. This
+is authoritative — the same principle as `sync.snapshot` for tables. The
+bundled client copies entries into a prototype-free dictionary before exposing
+them.
 
 #### `state.ack`
 
@@ -471,17 +423,24 @@ Acknowledgment of a set/delete/clear operation.
 
 | Code | Meaning |
 |------|---------|
-| `VALUE_TOO_LARGE` | Value exceeds 64KB when JSON-serialized |
-| `TOO_MANY_KEYS` | User has exceeded the 1,000 key limit |
+| `INVALID_REQUEST` | Malformed ref, key, or non-JSON value |
+| `VALUE_TOO_LARGE` | Value exceeds 64 KiB when JSON-serialized |
+| `TOO_MANY_KEYS` | Scoped user keyspace has exceeded the 1,000 key limit |
 | `KEY_TOO_LONG` | Key exceeds 256 characters |
-| `TOTAL_SIZE_EXCEEDED` | Total state exceeds 10MB per user |
-| `UNAUTHORIZED` | No authenticated user on the connection |
+| `TOTAL_SIZE_EXCEEDED` | Total state exceeds 10 MiB for this scoped user keyspace |
+| `UNAUTHORIZED` | No authenticated user or no valid application/tenant data scope on the connection |
+
+State messages are validated before any SQLite transaction or change-log
+append. Rejected messages do not allocate a sequence. For malformed refs the
+stable error ack uses an empty `ref`, because no valid correlation ID is
+available.
 
 On `ok: true`, the optimistic change is confirmed. On `ok: false`, the client rolls back to the previous value.
 
 #### `state.change`
 
-Pushed to other devices/tabs when the state changes. Same user, different connection.
+Pushed to other devices/tabs when the state changes. Same user and authorization
+scope, different connection.
 
 ```json
 {
@@ -496,7 +455,6 @@ Pushed to other devices/tabs when the state changes. Same user, different connec
 {
   "type": "state.change",
   "key": "draft.newPost",
-  "value": null,
   "op": "delete"
 }
 ```
@@ -505,7 +463,6 @@ Pushed to other devices/tabs when the state changes. Same user, different connec
 {
   "type": "state.change",
   "key": null,
-  "value": null,
   "op": "clear"
 }
 ```
@@ -513,27 +470,20 @@ Pushed to other devices/tabs when the state changes. Same user, different connec
 | Field | Type | Description |
 |-------|------|-------------|
 | `key` | `string \| null` | The affected key (null for clear) |
-| `value` | `JsonValue \| null` | New value (null for delete/clear) |
+| `value` | `JsonValue?` | New value for `set`; omitted for delete/clear |
 | `op` | `'set' \| 'delete' \| 'clear'` | Operation type |
 
 ---
 
 ## Server Implementation
 
-### Storage
+### Storage and commit boundary
 
-Two-tier: RAM for speed, SQLite for durability.
-
-**Hot path (RAM):**
-
-```ts
-// Per-user state held in a Map
-const userStates: Map<string, Map<string, JsonValue>> = new Map();
-```
-
-All reads and writes go to the Map first. Nanosecond access. The Map is the source of truth during runtime.
-
-**Cold path (SQLite):**
+SQLite is the sole server-side source of truth. State Sync does not retain a
+per-principal RAM projection. Snapshots, reads, and limit validation load the
+current SQLite rows, so memory use does not grow with every principal a
+runtime has ever seen and a second runtime cannot make the first runtime's
+cache stale.
 
 ```sql
 CREATE TABLE IF NOT EXISTS _user_state (
@@ -546,27 +496,29 @@ CREATE TABLE IF NOT EXISTS _user_state (
 CREATE INDEX IF NOT EXISTS idx_user_state_user ON _user_state(user_id);
 ```
 
-`_` prefix — internal table, never broadcast by the sync engine.
+`_` prefix makes this an internal table, so it is never exposed as an ordinary
+table-sync payload. The historical
+`user_id` column stores Zero's server-derived principal; in multi mode that
+value includes the tenant scope rather than a caller-supplied tenant field.
 
-**Write-through:** Every `state.set` and `state.delete` writes to both the Map and SQLite in the same operation. SQLite uses WAL mode — writes don't block reads.
+Every `set`, `delete`, and `clear` runs under ReactiveDB's SQLite writer lock.
+The manager reads the authoritative rows for limit validation, mutates
+`_user_state`, allocates the database-wide sequence, and appends exactly one
+logical `_changes` event in the same transaction. If event recording fails,
+the state row and sequence allocation roll back too.
 
-**Load on connect:** When a user connects and sends `state.subscribe`, the server checks the Map first. If empty (server restarted since last connection), loads from SQLite into the Map, then sends the snapshot.
+The current durable session/tenant authority validator runs synchronously
+*inside* that same writer transaction, immediately before any mutation. A
+revocation racing an earlier asynchronous token check therefore returns an
+`UNAUTHORIZED` ack without changing `_user_state`, allocating a sequence, or
+writing an event.
 
-```ts
-function getUserState(userId: string): Map<string, JsonValue> {
-  let state = userStates.get(userId);
-  if (!state) {
-    // Load from SQLite
-    state = new Map();
-    const rows = stmts.getUserState.all(userId);
-    for (const row of rows) {
-      state.set(row.key, JSON.parse(row.value));
-    }
-    userStates.set(userId, state);
-  }
-  return state;
-}
-```
+`state.subscribe` reads `_user_state` and the represented durable cursor from
+one SQLite read snapshot. A concurrent commit is therefore either included in
+the snapshot or remains available to the ordered change dispatcher; a pending
+event already represented by the snapshot is not delivered again. The same
+current-authority validator executes inside this read boundary. If it fails,
+no snapshot is sent.
 
 ### Elysia Integration
 
@@ -574,116 +526,117 @@ State sync integrates into the existing sync WebSocket handler — not a separat
 
 The sync client sends its bearer token in the first `sync.auth` WebSocket
 message and waits for `sync.auth.ready` before subscribing. A valid token
-populates `ws.data.authContext`, and state sync uses `authContext.userId` as the
-per-user keyspace. Without a valid auth context, `state.subscribe` is ignored
-and mutating state messages return an unauthorized ack. Auth-enabled
+populates `ws.data.authContext`. State Sync derives its storage and delivery
+principal from that server-validated identity: the user ID in single mode, or
+`tenant:<tenantId>:user:<userId>` in multi mode. It never accepts a tenant ID
+from a state message. Without a valid scope, `state.subscribe` is ignored and
+mutating state messages return an unauthorized ack. Auth-enabled
 `createApp()` deployments default sync to required, and revalidation closes a
 socket when its current account or property-derived permissions change.
 
 `createApp()` rejects `stateSync: true` unless auth is enabled. Use `auth: true` or an auth config object whenever server-persisted state is enabled.
 
 ```ts
-// Inside the sync plugin's .ws('/sync') message handler:
+// Condensed shape of the State path inside the sync plugin.
 
 case 'state.subscribe': {
-  const userId = ws.data.authContext?.userId;
-  if (!userId) break;  // Auth required for state sync
+  const principal = resolveStatePrincipal(ws.data.authContext, tenancyMode);
+  if (!principal) break;  // Auth and a valid data scope are required
 
-  const state = getUserState(userId);
-  ws.send(JSON.stringify({
+  const snapshot = stateManager.getUserStateSnapshot(
+    principal,
+    validateCurrentAuthority,
+  );
+  if (!snapshot) break;
+
+  ws.data.stateSubscribed = true;
+  ws.data.statePrincipal = principal;
+  ws.data.stateLastSeq = snapshot.seq;
+
+  if (!sendSyncWire(ws, {
     type: 'state.snapshot',
-    entries: Object.fromEntries(state),
-  }));
-
-  // Subscribe to user's state topic for multi-device sync
-  ws.subscribe(`state:${userId}`);
+    entries: snapshot.entries,
+  })) {
+    // A dropped snapshot must not leave a socket marked as subscribed.
+    ws.data.stateSubscribed = false;
+    ws.data.statePrincipal = null;
+    ws.data.stateLastSeq = 0;
+  }
   break;
 }
 
 case 'state.set': {
-  const userId = ws.data.authContext?.userId;
-  if (!userId) break;
+  // The router first validates ref, key, and the complete JSON value.
+  const principal = resolveStatePrincipal(ws.data.authContext, tenancyMode);
+  if (!principal) return sendUnauthorizedAck(ws, msg.ref);
 
-  const state = getUserState(userId);
-
-  // Validate size
-  const serialized = JSON.stringify(msg.value);
-  if (serialized.length > 65536) {
-    ws.send(JSON.stringify({ type: 'state.ack', ref: msg.ref, ok: false, error: 'Value too large (max 64KB)' }));
+  const result = withStateMutationOrigin(ws, mutationOrigin, () =>
+    stateManager.set(
+      principal,
+      msg.key,
+      msg.value,
+      validateCurrentAuthority, // executes inside the write transaction
+    )); // helper restores the prior origin in finally
+  if (!result.ok) {
+    sendSyncWire(ws, {
+      type: 'state.ack', ref: msg.ref, ok: false, error: result.error,
+    });
     break;
   }
 
-  // Write to Map + SQLite
-  state.set(msg.key, msg.value);
-  stmts.upsertState.run(userId, msg.key, serialized, Date.now());
-
-  // Ack the sender
-  ws.send(JSON.stringify({ type: 'state.ack', ref: msg.ref, ok: true }));
-
-  // Push to other devices/tabs via topic
-  server.publish(`state:${userId}`, JSON.stringify({
-    type: 'state.change',
-    key: msg.key,
-    value: msg.value,
-    op: 'set',
-  }));
+  // The ordered onChange path has already considered other recipients. The
+  // origin is excluded, so this socket receives only its operation ack.
+  sendSyncWire(ws, { type: 'state.ack', ref: msg.ref, ok: true });
   break;
 }
 
-case 'state.delete': {
-  const userId = ws.data.authContext?.userId;
-  if (!userId) break;
-
-  const state = getUserState(userId);
-  state.delete(msg.key);
-  stmts.deleteState.run(userId, msg.key);
-
-  ws.send(JSON.stringify({ type: 'state.ack', ref: msg.ref, ok: true }));
-  server.publish(`state:${userId}`, JSON.stringify({
-    type: 'state.change',
-    key: msg.key,
-    value: null,
-    op: 'delete',
-  }));
-  break;
-}
-
-case 'state.clear': {
-  const userId = ws.data.authContext?.userId;
-  if (!userId) break;
-
-  userStates.set(userId, new Map());
-  stmts.clearUserState.run(userId);
-
-  ws.send(JSON.stringify({ type: 'state.ack', ref: msg.ref, ok: true }));
-  server.publish(`state:${userId}`, JSON.stringify({
-    type: 'state.change',
-    key: null,
-    value: null,
-    op: 'clear',
-  }));
-  break;
-}
+// state.delete and state.clear use the same ref/key validation, mutation-origin
+// exclusion, in-transaction authority fence, ordered event, and ack path.
 ```
 
-### Multi-Device Delivery
+### Multi-Device and Multi-Runtime Delivery
 
-Uses the same Bun pub/sub as the sync engine. Each user gets a topic `state:{userId}`. All of a user's connections (tabs, devices) subscribe to that topic.
+State Sync does not use a blind Bun state topic. Local and external commits use
+the same ordered ReactiveDB `onChange` path. For each active socket, delivery
+requires all of these conditions at the last boundary before send:
+
+1. The socket completed `state.subscribe`.
+2. Its bound `statePrincipal` exactly equals the event's stored principal.
+3. The event sequence is newer than the snapshot/change cursor already sent.
+4. Re-deriving the principal from the current auth context still produces the
+   same value.
+5. Synchronous durable authority validation still succeeds.
+6. For a local client mutation, the socket is not the originating connection.
+
+Only then does `sendSyncWire` queue `state.change`. A successful queue advances
+that socket's state cursor. A dropped send closes the socket instead of
+silently claiming delivery.
 
 ```
 User Alice — Desktop (Tab 1)  ──┐
-User Alice — Desktop (Tab 2)  ──┤── all subscribed to topic 'state:u_alice'
+User Alice — Desktop (Tab 2)  ──┤── exact-principal, authority-fenced recipients
 User Alice — Phone             ──┘
 
 Alice sets theme=dark on Tab 1:
   1. Tab 1 sends state.set { key: 'theme', value: 'dark' }
-  2. Server persists, acks Tab 1
-  3. server.publish('state:u_alice', state.change { key: 'theme', value: 'dark' })
-  4. Tab 2 and Phone receive the change
-  5. Their local stores update, useServerState re-renders
+  2. SQLite commits the row and its ordered internal event atomically
+  3. The ordered listener excludes Tab 1 and revalidates Tab 2 and Phone
+  4. Tab 2 and Phone receive state.change; Tab 1 receives only state.ack
+  5. Their local stores update and useServerState re-renders
 ```
 
-`server.publish()` delivers to ALL subscribers on the topic including the sender. The sender's local store already has the optimistic value — the change is a no-op (same key, same value). Other connections apply the change.
+The sender already applied its optimistic value, so a successful operation is
+confirmed by its ack rather than echoed as a change.
+
+For multiple Zero runtimes sharing one file-mode SQLite database, `_user_state`
+events travel through the same ordered durable dispatcher as table changes.
+The receiving runtime decodes the event and applies the same per-socket checks
+listed above. There is no process-local state projection to update. Internal
+state events never pass through generic table broadcast.
+
+This is a shared-file topology boundary. It does not relay State Sync between
+separate SQLite files or hosts without a shared filesystem, and `memory`/`hot`
+mode remains process-local.
 
 ### Prepared Statements
 
@@ -696,24 +649,39 @@ const stmts = {
   `),
   deleteState: db.prepare('DELETE FROM _user_state WHERE user_id = ? AND key = ?'),
   clearUserState: db.prepare('DELETE FROM _user_state WHERE user_id = ?'),
-  deleteByPrefix: db.prepare('DELETE FROM _user_state WHERE user_id = ? AND key LIKE ? || \'%\''),
 };
 ```
 
-All prepared once on plugin start, reused per call. Same pattern as every other SQLite layer in the codebase.
+All statements are prepared once on plugin start and finalized when the State
+Manager is disposed. Raw writes run inside a ReactiveDB transaction that also
+records the logical internal event.
 
 ### Limits
 
 | Limit | Default | Why |
 |-------|---------|-----|
-| Max value size | 64 KB | Prevents abuse — state values should be small. A form draft is ~1KB. |
-| Max keys per user | 1,000 | Prevents unbounded growth. 1000 keys covers any reasonable app state. |
+| Max value size | 64 KiB of UTF-8 JSON bytes | Prevents abuse — state values should be small. A form draft is usually about 1 KiB. |
+| Max keys per scoped user | 1,000 | Prevents unbounded growth. 1000 keys covers any reasonable app state. |
 | Max key length | 256 chars | Keys are paths like `'draft.post-123.body'` — 256 is generous. |
-| Total state per user | 10 MB | Sum of all serialized values. Circuit breaker. |
+| Total state per scoped user | 10 MiB of UTF-8 bytes | Sum of key bytes and serialized JSON value bytes. Circuit breaker. |
 
 Exceeding a limit returns `state.ack { ok: false, error: '...' }`. The optimistic local change rolls back.
 
-**Snapshot pagination:** V1 does not paginate snapshots. With a max of 1,000 keys at realistic value sizes, a typical snapshot is under 100KB. If a snapshot exceeds 1MB, the server logs a warning. Pagination is a V2 concern.
+### Transport bounds
+
+V1 deliberately sends one complete snapshot rather than paginating it. The
+10 MiB state limit counts raw UTF-8 key bytes plus already JSON-serialized value
+bytes. At most 1,000 keys of at most 256 characters can add JSON key escaping
+and object punctuation; even the worst allowed snapshot wire encoding remains
+below 12 MiB. The WebSocket's **outgoing** backpressure capacity is therefore a
+bounded 16 MiB, and every snapshot uses the checked `sendSyncWire` path.
+
+The **incoming** WebSocket payload limit remains 1 MiB. State writes are much
+smaller because a single serialized value is limited to 64 KiB. Raising the
+outgoing capacity does not allow clients to submit larger messages. If the
+state/key limits change enough that the worst encoded snapshot no longer fits
+safely below 16 MiB, the protocol must gain bounded pagination before those
+limits are raised.
 
 ---
 
@@ -725,6 +693,8 @@ The state sync client uses its own @xstate/store instance, separate from the syn
 
 ```ts
 interface StateStoreContext {
+  // Always a null-prototype dictionary; user keys cannot collide with
+  // Object.prototype.
   entries: Record<string, JsonValue>;
   ready: boolean;
   pending: PendingStateOp[];
@@ -745,35 +715,52 @@ interface StateStoreContext {
 **Reducers:**
 
 ```ts
+const emptyEntries = () => Object.create(null) as Record<string, JsonValue>;
+
+const copyEntries = (source?: Readonly<Record<string, JsonValue>>) => {
+  const entries = emptyEntries();
+  if (source) {
+    for (const key of Object.keys(source)) entries[key] = source[key];
+  }
+  return entries;
+};
+
+const readEntry = (entries: Readonly<Record<string, JsonValue>>, key: string) =>
+  Object.hasOwn(entries, key) ? entries[key] : undefined;
+
 const reducers = {
   'state.snapshot': (ctx, { entries }) => ({
-    entries,
+    entries: copyEntries(entries),
     ready: true,
     pending: [],
   }),
 
   'state.change': (ctx, { key, value, op }) => {
-    const entries = { ...ctx.entries };
+    const entries = copyEntries(ctx.entries);
     switch (op) {
       case 'set': entries[key] = value; break;
       case 'delete': delete entries[key]; break;
-      case 'clear': return { ...ctx, entries: {} };
+      case 'clear': return { ...ctx, entries: emptyEntries() };
     }
     return { ...ctx, entries };
   },
 
-  'state.optimistic-set': (ctx, { key, value, ref }) => ({
-    entries: { ...ctx.entries, [key]: value },
-    ready: ctx.ready,
-    pending: [...ctx.pending, {
-      ref, op: 'set', key,
-      previousValue: ctx.entries[key],  // For rollback
-    }],
-  }),
+  'state.optimistic-set': (ctx, { key, value, ref }) => {
+    const entries = copyEntries(ctx.entries);
+    entries[key] = value;
+    return {
+      entries,
+      ready: ctx.ready,
+      pending: [...ctx.pending, {
+        ref, op: 'set', key,
+        previousValue: readEntry(ctx.entries, key),  // For rollback
+      }],
+    };
+  },
 
   'state.optimistic-delete': (ctx, { key, ref }) => {
-    const entries = { ...ctx.entries };
-    const previousValue = entries[key];
+    const entries = copyEntries(ctx.entries);
+    const previousValue = readEntry(entries, key);
     delete entries[key];
     return {
       entries,
@@ -792,7 +779,7 @@ const reducers = {
     // Rollback
     const op = ctx.pending.find(p => p.ref === ref);
     if (!op) return ctx;
-    const entries = { ...ctx.entries };
+    const entries = copyEntries(ctx.entries);
     if (op.previousValue !== undefined) {
       entries[op.key] = op.previousValue;
     } else {
@@ -807,30 +794,21 @@ const reducers = {
 };
 ```
 
-### useServerState Implementation
+### Public hook composition
 
-```ts
-function useServerState<T extends JsonValue>(
-  key: string,
-  defaultValue: T,
-): [T, (value: T) => void] {
-  const client = useClient();
+```tsx
+import { useServerState } from '@zero/framework/react';
 
-  const value = useSyncExternalStore(
-    (cb) => client.state.subscribe(key, cb),
-    () => client.state.get(key, defaultValue),
-  );
-
-  const setValue = useCallback(
-    (newValue: T) => client.state.set(key, newValue),
-    [client, key],
-  );
-
-  return [value as T, setValue];
+export function useSidebarState() {
+  return useServerState('sidebar.open', true);
 }
 ```
 
-Same `useSyncExternalStore` pattern as the sync hooks. Tear-free reads, change-detected subscriptions, stable setter reference.
+Applications compose the exported hook rather than reaching into the public
+`Client`. Internally, Zero's provider-owned implementation uses
+`useSyncExternalStore`, the private State context, and the authorization-scope
+boundary to provide tear-free reads, change-detected subscriptions, and a
+stable scope-fenced setter.
 
 ---
 
@@ -839,18 +817,18 @@ Same `useSyncExternalStore` pattern as the sync hooks. Tear-free reads, change-d
 | | Sync Engine (ReactiveDB) | State Sync |
 |---|-------------------------|------------|
 | **Data model** | Relational tables with schema | Flat KV, no schema |
-| **Scope** | Shared between all users | Per-user (isolated keyspaces) |
+| **Scope** | Shared with policy-authorized collaborators | Per authorized-scope user (isolated keyspaces) |
 | **Definition** | `defineTable()` with column types | No definition needed — just set keys |
 | **Queries** | SQL-like reads, filtered views | Key lookup, prefix scan |
-| **Mutations** | `insert(table, row)` / `update(table, id, partial)` | `set(key, value)` / `delete(key)` |
+| **Mutations** | `insert(table, row)` / `update(table, id, partial)` | Public hook setter replaces one key's value; low-level transport also supports delete/clear |
 | **Optimistic** | Yes — pending queue with rollback | Yes — same pattern |
-| **Broadcast** | All subscribed clients (multi-user) | Same user's other devices (single-user) |
+| **Broadcast** | Eligible policy-authorized subscribers | Same scoped user's other devices |
 | **Persistence** | SQLite (ReactiveDB tables) | SQLite (`_user_state` table) |
 | **React hook** | `useCollection()`, `useRow()`, `useQuery()` | `useServerState()` |
 | **Transport** | Same WebSocket | Same WebSocket |
-| **Use case** | Todos, users, projects, records | Theme, sidebar, form drafts, game state |
+| **Use case** | Todos, contacts, projects, records | Theme, sidebar, form drafts, game state |
 
-They complement each other. Both ride the same WebSocket. Both use @xstate/store. Both do optimistic mutations. The difference is structured shared data vs unstructured per-user state.
+They complement each other. Both ride the same WebSocket. Both use @xstate/store. Both do optimistic mutations. The difference is structured shared data vs unstructured state private to one user in the current authorization scope.
 
 ---
 
@@ -858,12 +836,24 @@ They complement each other. Both ride the same WebSocket. Both use @xstate/store
 
 | Scenario | Behavior |
 |----------|----------|
-| Set value exceeds 64KB | `state.ack { ok: false }`, optimistic rollback |
+| Set value exceeds 64 KiB | `state.ack { ok: false }`, optimistic rollback |
 | Key count exceeds 1,000 | `state.ack { ok: false }`, optimistic rollback |
 | Not authenticated | `state.subscribe` ignored, no snapshot sent |
-| Server restart | Map is empty, loads from SQLite on first `state.subscribe` |
+| Server restart | File mode reads the authoritative SQLite rows on `state.subscribe`; memory mode intentionally starts empty. |
 | WebSocket disconnect | Local state preserved in @xstate/store. On reconnect, `state.subscribe` → fresh snapshot reconciles. |
-| Concurrent set from two devices | Last-write-wins. Both apply optimistically on their own device, server processes in arrival order, both get the final state via `state.change`. |
+| Concurrent set from two runtimes | SQLite serializes writers. Limit checks use authoritative rows under the writer lock; last committed write wins and the ordered durable log fans it out. |
+
+### Multi-tenant boundary
+
+The wire protocol still sends only logical state keys. The server derives the durable
+principal from the validated socket identity: single mode uses the existing user ID, while
+multi mode stores and publishes under `tenant:<tenantId>:user:<userId>`. A tenant ID is
+never accepted from a state message. A multi-mode application/selection session without a
+live membership receives `UNAUTHORIZED` for writes and no snapshot for subscriptions.
+
+Changing the active tenant therefore changes the complete state keyspace. The browser auth
+transition clears the old in-memory state before reconnecting, and the new socket receives
+only the selected tenant's snapshot.
 
 ### Offline Behavior
 
@@ -878,7 +868,7 @@ Connection is expected. State sync does not have an offline-first design.
 
 ## Future: Multi-User Shared State
 
-V1 is per-user only. Future versions could support shared keyspaces:
+V1 is scoped-user only. Future versions could support shared keyspaces:
 
 ```ts
 // Future API — NOT V1
@@ -889,4 +879,7 @@ game.set('turn', 'O');
 // Both players subscribed to 'game:room-123' see the same state
 ```
 
-This would use a different topic pattern (`shared:{roomId}` instead of `state:{userId}`) and require access control (who can join a room). The wire protocol and client-side store patterns would be identical — just different scoping. Designed for later, not now.
+This would require a server-derived shared principal, an explicit access policy
+for joining the room, and the same ordered, authority-fenced delivery path. The
+wire protocol and client-side store patterns could remain similar, but this is
+designed for later and is not part of V1.

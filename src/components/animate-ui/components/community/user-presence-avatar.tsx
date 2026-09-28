@@ -7,14 +7,14 @@ import {
   Avatar,
   AvatarFallback,
   AvatarImage,
-} from '@/components/ui/avatar';
+} from '#zero/components/ui/avatar';
 import {
   TooltipProvider,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/animate-ui/components/animate/tooltip';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/components/animate/tooltip';
+import { cn } from '#zero/lib/utils';
 
 const USERS = [
   {

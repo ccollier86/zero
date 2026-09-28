@@ -7,7 +7,10 @@
  */
 
 import type { ServerWebSocket } from 'bun';
-import type { ReactiveDB } from './reactive-db';
+import {
+  withReactiveDBLocalChangeOrigin,
+  type ReactiveDB,
+} from './reactive-db';
 import type {
   SyncSocketData,
   SyncSubscribeMessage,
@@ -23,15 +26,20 @@ import type {
   Row,
   Change,
   SyncResourcePolicyAdapter,
+  SyncResourceMutationScope,
+  SyncTableMutationValidator,
 } from './types';
 import type { StateManager } from './state-manager';
 import type { EphemeralStateManager } from './ephemeral-manager';
+import type { EphemeralChannel } from './ephemeral-channel';
 import {
   handleStateSubscribe,
   handleStateSet,
   handleStateDelete,
   handleStateClear,
+  sendInvalidStateRequest,
 } from './state-handler';
+import { isJsonValue } from './state-manager';
 import {
   handleEphemeralSubscribe,
   handleEphemeralUnsubscribe,
@@ -46,6 +54,22 @@ import {
   hashSyncMutation,
   type SyncMutationReceiptStore,
 } from './sync-mutation-receipt-store';
+import { validateSyncMutation } from './sync-mutation-validation';
+
+/**
+ * Plugin-local mutation metadata shared only by one sync transport and its
+ * ReactiveDB change listener.
+ */
+export interface SyncMutationOriginContext {
+  current: string | null;
+}
+
+/**
+ * Legacy origin observer for callers that invoke routeMessage() directly.
+ * createSyncPlugin always supplies an instance-local context and never reads
+ * this compatibility value.
+ */
+export let currentMutationOrigin: string | null = null;
 
 /**
  * Route an incoming WebSocket message to the appropriate handler.
@@ -64,6 +88,12 @@ export async function routeMessage(
   snapshotTables?: Set<string>,
   resourcePolicy?: SyncResourcePolicyAdapter,
   mutationReceipts?: SyncMutationReceiptStore,
+  mutationOrigin?: SyncMutationOriginContext,
+  mutationValidators?: Readonly<Record<string, SyncTableMutationValidator>>,
+  ephemeralChannel?: EphemeralChannel | null,
+  tenancyMode: 'single' | 'multi' = 'single',
+  revalidateMutationAuthority?: () => Promise<boolean>,
+  validateMutationAuthorityAtCommit?: () => boolean,
 ): Promise<void> {
   let msg: { type: string; [key: string]: unknown };
 
@@ -93,36 +123,136 @@ export async function routeMessage(
         policy,
         resourcePolicy,
         mutationReceipts,
+        mutationOrigin,
+        mutationValidators,
+        revalidateMutationAuthority,
+        validateMutationAuthorityAtCommit,
       );
       break;
     case 'state.subscribe':
-      if (stateManager) handleStateSubscribe(ws, stateManager, server);
+      if (stateManager) handleStateSubscribe(
+        ws,
+        stateManager,
+        server,
+        tenancyMode,
+        validateMutationAuthorityAtCommit,
+      );
       break;
     case 'state.set':
-      if (stateManager) handleStateSet(ws, msg as unknown as StateSetMessage, stateManager, server);
+      if (stateManager) {
+        if (!isValidStateRef(msg.ref)
+          || typeof msg.key !== 'string'
+          || !Object.hasOwn(msg, 'value')
+          || !isJsonValue(msg.value)) {
+          sendInvalidStateRequest(ws, safeStateRef(msg.ref));
+          break;
+        }
+        withReactiveDBLocalChangeOrigin(
+          db,
+          ws.data.connectionId,
+          () => handleStateSet(
+            ws,
+            msg as unknown as StateSetMessage,
+            stateManager,
+            server,
+            tenancyMode,
+            mutationOrigin,
+            validateMutationAuthorityAtCommit,
+          ),
+        );
+      }
       break;
     case 'state.delete':
-      if (stateManager) handleStateDelete(ws, msg as unknown as StateDeleteMessage, stateManager, server);
+      if (stateManager) {
+        if (!isValidStateRef(msg.ref) || typeof msg.key !== 'string') {
+          sendInvalidStateRequest(ws, safeStateRef(msg.ref));
+          break;
+        }
+        withReactiveDBLocalChangeOrigin(
+          db,
+          ws.data.connectionId,
+          () => handleStateDelete(
+            ws,
+            msg as unknown as StateDeleteMessage,
+            stateManager,
+            server,
+            tenancyMode,
+            mutationOrigin,
+            validateMutationAuthorityAtCommit,
+          ),
+        );
+      }
       break;
     case 'state.clear':
-      if (stateManager) handleStateClear(ws, msg as unknown as StateClearMessage, stateManager, server);
+      if (stateManager) {
+        if (!isValidStateRef(msg.ref)) {
+          sendInvalidStateRequest(ws, safeStateRef(msg.ref));
+          break;
+        }
+        withReactiveDBLocalChangeOrigin(
+          db,
+          ws.data.connectionId,
+          () => handleStateClear(
+            ws,
+            msg as unknown as StateClearMessage,
+            stateManager,
+            server,
+            tenancyMode,
+            mutationOrigin,
+            validateMutationAuthorityAtCommit,
+          ),
+        );
+      }
       break;
     case 'ephemeral.subscribe':
-      if (ephemeralManager) handleEphemeralSubscribe(ws, msg as unknown as EphemeralSubscribeMessage, ephemeralManager, server.publish.bind(server));
+      if (ephemeralChannel) {
+        await ephemeralChannel.subscribe(ws, msg.topic);
+      } else if (ephemeralManager) {
+        handleEphemeralSubscribe(ws, msg as unknown as EphemeralSubscribeMessage, ephemeralManager, server.publish.bind(server));
+      }
       break;
     case 'ephemeral.unsubscribe':
-      if (ephemeralManager) handleEphemeralUnsubscribe(ws, msg as unknown as EphemeralUnsubscribeMessage, ephemeralManager);
+      if (ephemeralChannel) {
+        ephemeralChannel.unsubscribe(ws, msg.topic);
+      } else if (ephemeralManager) {
+        handleEphemeralUnsubscribe(ws, msg as unknown as EphemeralUnsubscribeMessage, ephemeralManager);
+      }
       break;
     case 'ephemeral.set':
-      if (ephemeralManager) handleEphemeralSet(ws, msg as unknown as EphemeralSetMessage, ephemeralManager, server);
+      if (ephemeralChannel) {
+        await ephemeralChannel.set(ws, {
+          topic: msg.topic,
+          key: msg.key,
+          value: msg.value,
+          ttl: msg.ttl,
+        });
+      } else if (ephemeralManager) {
+        handleEphemeralSet(ws, msg as unknown as EphemeralSetMessage, ephemeralManager, server);
+      }
       break;
     case 'ephemeral.delete':
-      if (ephemeralManager) handleEphemeralDelete(ws, msg as unknown as EphemeralDeleteMessage, ephemeralManager, server);
+      if (ephemeralChannel) {
+        await ephemeralChannel.delete(ws, msg.topic, msg.key);
+      } else if (ephemeralManager) {
+        handleEphemeralDelete(ws, msg as unknown as EphemeralDeleteMessage, ephemeralManager, server);
+      }
       break;
     default:
       // Unknown message type — ignore
       break;
   }
+}
+
+const MAX_STATE_REF_LENGTH = 128;
+
+function isValidStateRef(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= MAX_STATE_REF_LENGTH;
+}
+
+function safeStateRef(value: unknown): string {
+  return isValidStateRef(value) ? value : '';
 }
 
 /**
@@ -143,6 +273,10 @@ async function handleMutate(
   policy: SyncPolicy,
   resourcePolicy?: SyncResourcePolicyAdapter,
   receipts?: SyncMutationReceiptStore,
+  mutationOrigin?: SyncMutationOriginContext,
+  mutationValidators?: Readonly<Record<string, SyncTableMutationValidator>>,
+  revalidateMutationAuthority?: () => Promise<boolean>,
+  validateMutationAuthorityAtCommit?: () => boolean,
 ): Promise<void> {
   const { ref, table, op, rowId, row } = msg;
 
@@ -189,6 +323,10 @@ async function handleMutate(
   }
 
   let mutationRow = row;
+  let mutationScope: SyncResourceMutationScope | undefined;
+  let mutationExpectedRow: Row | undefined;
+  let mutationCreateOnly = false;
+  let mutationAuthorityFingerprint: string | undefined;
   if (op === 'INSERT') {
     if (!mutationRow || typeof mutationRow !== 'object') {
       sendAck(ws, ref, false, null, 'INSERT requires a row');
@@ -226,26 +364,86 @@ async function handleMutate(
     if (resourceDecision.row !== undefined) {
       mutationRow = resourceDecision.row;
     }
+    mutationScope = resourceDecision.scope;
+    mutationExpectedRow = resourceDecision.expectedRow;
+    mutationCreateOnly = resourceDecision.createOnly ?? false;
+    mutationAuthorityFingerprint = resourceDecision.authorityFingerprint;
   }
+
+  // Custom resource policies may yield. Re-resolve the socket's live token,
+  // tenant generations, assignments, and effective policy after that work and
+  // immediately before the remaining synchronous write boundary.
+  if (revalidateMutationAuthority
+    && !await revalidateMutationAuthority()) {
+    sendAck(ws, ref, false, null, 'Authorization changed during mutation');
+    return;
+  }
+
+  const validation = validateSyncMutation(
+    db,
+    table,
+    op,
+    rowId,
+    mutationRow,
+    mutationValidators?.[table],
+  );
+  if (!validation.ok) {
+    sendAck(ws, ref, false, null, validation.error);
+    return;
+  }
+  mutationRow = validation.row;
 
   try {
     let ack: SyncAckMessage | undefined;
-    currentMutationOrigin = ws.data.connectionId;
-    db.transaction(() => {
-      const raced = receipts?.find(principal, ref, requestHash);
-      if (raced?.status === 'conflict') throw new Error('Mutation reference conflict');
-      if (raced?.status === 'hit') {
-        ack = raced.ack;
-        return;
+    const previousOrigin = mutationOrigin
+      ? mutationOrigin.current
+      : currentMutationOrigin;
+    if (mutationOrigin) {
+      mutationOrigin.current = ws.data.connectionId;
+    } else {
+      currentMutationOrigin = ws.data.connectionId;
+    }
+    try {
+      withReactiveDBLocalChangeOrigin(db, ws.data.connectionId, () => db.transaction(() => {
+        if (validateMutationAuthorityAtCommit
+          && !validateMutationAuthorityAtCommit()) {
+          throw new Error('Authorization changed during mutation');
+        }
+        if (mutationAuthorityFingerprint
+          && !(resourcePolicy?.validateMutationAuthorityAtCommit?.(
+            ws.data.authContext,
+            mutationAuthorityFingerprint,
+          ) ?? true)) {
+          throw new Error('Authorization changed during mutation');
+        }
+        const raced = receipts?.find(principal, ref, requestHash);
+        if (raced?.status === 'conflict') throw new Error('Mutation reference conflict');
+        if (raced?.status === 'hit') {
+          ack = raced.ack;
+          return;
+        }
+        const change = applyMutation(
+          db,
+          table,
+          op,
+          rowId,
+          mutationRow,
+          mutationScope,
+          mutationExpectedRow,
+          mutationCreateOnly,
+        );
+        ack = createSuccessAck(ref, change);
+        receipts?.save(principal, ref, requestHash, ack);
+      }));
+    } finally {
+      if (mutationOrigin) {
+        mutationOrigin.current = previousOrigin;
+      } else {
+        currentMutationOrigin = previousOrigin;
       }
-      const change = applyMutation(db, table, op, rowId, mutationRow);
-      ack = createSuccessAck(ref, change);
-      receipts?.save(principal, ref, requestHash, ack);
-    });
-    currentMutationOrigin = null;
+    }
     if (ack) sendResolvedAck(ws, db, ack);
   } catch (err) {
-    currentMutationOrigin = null;
     const message = err instanceof Error ? err.message : 'Internal error';
     sendAck(ws, ref, false, null, message);
   }
@@ -257,11 +455,28 @@ function applyMutation(
   op: SyncMutateMessage['op'],
   rowId: string | undefined,
   row: Row | Partial<Row> | undefined,
+  scope?: SyncResourceMutationScope,
+  expectedRow?: Row,
+  createOnly = false,
 ): Change {
-  if (op === 'INSERT') return db.insert(table, row as Row);
+  if (op === 'INSERT') {
+    return scope
+      ? db.createScoped(table, row as Row, scope)
+      : createOnly
+        ? db.createStrict(table, row as Row)
+        : db.insert(table, row as Row);
+  }
   const change = op === 'UPDATE'
-    ? db.update(table, rowId!, row as Partial<Row>)
-    : db.delete(table, rowId!);
+    ? scope
+      ? db.updateScoped(table, rowId!, row as Partial<Row>, scope, expectedRow)
+      : expectedRow
+        ? db.updateIfCurrent(table, rowId!, row as Partial<Row>, expectedRow)
+        : db.update(table, rowId!, row as Partial<Row>)
+    : scope
+      ? db.deleteScoped(table, rowId!, scope, expectedRow)
+      : expectedRow
+        ? db.deleteIfCurrent(table, rowId!, expectedRow)
+        : db.delete(table, rowId!);
   if (!change) throw new Error(`Row not found: ${rowId!}`);
   return change;
 }
@@ -277,7 +492,7 @@ function createSuccessAck(ref: string, change: Change): SyncAckMessage {
 
 function mutationPrincipal(ws: ServerWebSocket<SyncSocketData>): string {
   return ws.data.authContext
-    ? `user:${ws.data.authContext.userId}`
+    ? `user:${ws.data.authContext.userId}:scope:${ws.data.authorizationScope ?? 'unresolved'}`
     : `anonymous:${ws.data.authorizationScope ?? 'public'}`;
 }
 
@@ -293,11 +508,14 @@ function sendResolvedAck(
   const matches = row
     ? ws.data.resourceRowFilters.get(table)?.matches(row) ?? true
     : false;
+  const projectedRow = row
+    ? ws.data.resourceRowProjectors?.get(table)?.project(row) ?? row
+    : null;
   sendSyncWire(ws, {
     ...ack,
     seq: db.currentSeq,
-    change: readable && row && matches
-      ? { table, rowId, op: 'UPDATE', row }
+    change: readable && projectedRow && matches
+      ? { table, rowId, op: 'UPDATE', row: projectedRow }
       : { table, rowId, op: 'DELETE', row: null },
   });
 }
@@ -313,12 +531,3 @@ function sendAck(
   if (error) ack.error = error;
   sendSyncWire(ws, ack);
 }
-
-/**
- * Module-level variable to track which connection originated the current mutation.
- * Set before db.insert/update/delete, read in the onChange listener, cleared after.
- *
- * This is safe because bun:sqlite is synchronous and single-threaded —
- * the entire write + onChange + publish sequence completes before yielding.
- */
-export let currentMutationOrigin: string | null = null;

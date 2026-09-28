@@ -6,12 +6,14 @@ import {
   type AuthAccountPluginConfig,
 } from './auth-account-dependencies';
 import { authTokenSchema } from './auth-request-schema';
+import { applyAuthPrivateNoStore } from './auth-response-cache';
 import type { UserRecord } from './types';
 
 export function createAuthActionTokenPlugin(config: AuthAccountPluginConfig) {
   return new Elysia({ name: 'auth-action-token' }).get(
     '/action-token/:token',
-    ({ params }) => {
+    ({ params, set }) => {
+      applyAuthPrivateNoStore(set);
       const { record, user } = requireAccountServices(config)
         .actionTokens.inspect(params.token);
       return {

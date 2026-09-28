@@ -1,19 +1,27 @@
 /** Public auth capability and policy discovery route. */
 
 import { Elysia } from 'elysia';
-import { getEmailRuntime, isEmailDeliveryReady } from '../email';
+import { isEmailDeliveryReady } from '../email';
 import { resolveAuthEmailBranding } from './auth-email-templates';
+import {
+  buildBootstrapCapability,
+  buildRegistrationCapability,
+} from './auth-bootstrap';
 import {
   requireSessionServices,
   type AuthSessionPluginConfig,
 } from './auth-session-dependencies';
+import { applyAuthPrivateNoStore } from './auth-response-cache';
 
 export function createAuthSessionConfigPlugin(config: AuthSessionPluginConfig) {
-  return new Elysia({ name: 'auth-session-config' }).get('/config', () => {
+  return new Elysia({ name: 'auth-session-config' }).get('/config', ({ set }) => {
+    applyAuthPrivateNoStore(set);
     const { store } = requireSessionServices(config);
     const authConfig = config.getAuthConfig();
-    const userCount = store.countUsers();
-    const emailRuntime = getEmailRuntime();
+    const bootstrapRequired = store.isBootstrapRequired();
+    const bootstrap = buildBootstrapCapability(authConfig, bootstrapRequired);
+    const registration = buildRegistrationCapability(authConfig, bootstrapRequired);
+    const emailRuntime = config.getEmailRuntime();
     const branding = resolveAuthEmailBranding(emailRuntime.app, authConfig.branding);
     const emailReady = isEmailDeliveryReady(emailRuntime);
     const accountEmailReady = emailReady && Boolean(branding.publicUrl);
@@ -22,13 +30,50 @@ export function createAuthSessionConfigPlugin(config: AuthSessionPluginConfig) {
     });
 
     return {
-      registration: {
-        ...authConfig.registration,
-        bootstrapRequired: userCount === 0,
-        publicRegistrationEnabled:
-          userCount === 0 || authConfig.registration.mode === 'public',
-        userCount,
+      tenancy: {
+        mode: authConfig.tenancy?.mode ?? 'single' as const,
+        terminology: authConfig.tenancy?.terminology ?? {
+          singular: 'organization',
+          plural: 'organizations',
+        },
+        creation: {
+          mode: authConfig.tenancy?.creation.mode ?? 'disabled' as const,
+        },
+        onboarding: authConfig.tenancy?.mode === 'multi' ? {
+          invitations: {
+            enabled: authConfig.tenancy.onboarding?.invitations.enabled ?? true,
+            accountCreation:
+              authConfig.tenancy.onboarding?.invitations.accountCreation ?? true,
+            delivery: {
+              default: authConfig.tenancy.onboarding?.invitations.delivery.default
+                ?? 'manual',
+              manual: authConfig.tenancy.onboarding?.invitations.delivery.allowManual
+                ?? true,
+              email: Boolean(
+                authConfig.tenancy.onboarding?.invitations.delivery.email.enabled
+                && accountEmailReady,
+              ),
+            },
+          },
+          joinRequests: {
+            enabled: authConfig.tenancy.onboarding?.joinRequests.enabled ?? true,
+          },
+          ...(authConfig.tenancy.onboarding?.verifiedDomains.enabled
+            && accountEmailReady
+            ? {
+                verifiedDomains: {
+                  enabled: true,
+                  admission: 'request-to-join' as const,
+                },
+              }
+            : {}),
+        } : undefined,
       },
+      authorization: {
+        mode: authConfig.authorization?.mode ?? 'simple' as const,
+      },
+      bootstrap,
+      registration,
       accountEmails: {
         adminCreatedUser: authConfig.accountEmails.adminCreatedUser && accountEmailReady,
         passwordReset: authConfig.accountEmails.passwordReset && accountEmailReady,

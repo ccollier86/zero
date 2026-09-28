@@ -8,9 +8,9 @@ import { CheckIcon, CopyIcon } from 'lucide-react';
 import {
   Button as ButtonPrimitive,
   type ButtonProps as ButtonPrimitiveProps,
-} from '@/components/animate-ui/primitives/buttons/button';
-import { cn } from '@/lib/utils';
-import { useControlledState } from '@/hooks/use-controlled-state';
+} from '#zero/components/animate-ui/primitives/buttons/button';
+import { cn } from '#zero/lib/utils';
+import { useControlledState } from '#zero/hooks/use-controlled-state';
 import { OBS_CODES } from '../../../../observability/codes';
 import { emitFrontendCode } from '../../../../frontend/client/observability';
 

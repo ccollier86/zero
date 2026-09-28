@@ -7,10 +7,10 @@
  * shell. Breadcrumbs, title, custom content, and actions are optional slots.
  */
 
-import { ThemeTogglerButton } from '@/components/animate-ui/components/buttons/theme-toggler';
-import { SidebarTrigger } from '@/components/sidebar';
-import { Separator } from '@/components/ui/separator';
-import { cn } from '@/lib/utils';
+import { ThemeTogglerButton } from '#zero/components/animate-ui/components/buttons/theme-toggler';
+import { SidebarTrigger } from '#zero/components/sidebar';
+import { Separator } from '#zero/components/ui/separator';
+import { cn } from '#zero/lib/utils';
 import type {
   AppShellBreadcrumb,
   AppShellHeaderConfig,

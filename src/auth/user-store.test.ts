@@ -1,6 +1,10 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createReactiveDB, ReactiveDB } from '../sync/reactive-db';
 import { UserStore } from './user-store';
+import { defineAuthTables } from './auth-schema';
 import { AuthError } from './types';
 import { AuthActionTokenService } from './action-token-service';
 import { PlatformTokenService } from '../tokens/token-service';
@@ -102,6 +106,59 @@ afterEach(() => {
 // ─── User CRUD ────────────────────────────────────────────────────────────
 
 describe('UserStore — User CRUD', () => {
+  test('fences cached direct reads and writes after the runtime profile changes', async () => {
+    const user = await store.createUser({
+      username: 'profile-fenced',
+      email: 'profile-fenced@example.com',
+      password: 'password123',
+    });
+    store.setProperty(user.userId, 'department', 'before');
+    let current = true;
+    store.setRuntimeProfileGuard(() => {
+      if (current) return;
+      throw new AuthError(
+        'This runtime auth profile is stale',
+        'AUTH_PROFILE_CHANGED',
+        503,
+      );
+    });
+
+    expect(store.getUserById(user.userId)?.userId).toBe(user.userId);
+    expect(store.getProperty(user.userId, 'department')).toBe('before');
+    current = false;
+
+    for (const operation of [
+      () => store.assertCurrentProfile(),
+      () => store.getUserById(user.userId),
+      () => store.getProperty(user.userId, 'department'),
+      () => store.setProperty(user.userId, 'department', 'after'),
+      () => store.setConfig('profile-fence-test', 'unsafe'),
+      () => store.storeActionToken({
+        tokenId: 'aat_profile_fence',
+        userId: user.userId,
+        type: 'password_reset' as const,
+        tokenHash: 'profile-fence-hash',
+        expiresAt: Date.now() + 60_000,
+        createdAt: Date.now(),
+      }),
+    ]) {
+      expect(operation).toThrow(expect.objectContaining({
+        code: 'AUTH_PROFILE_CHANGED',
+        status: 503,
+      }));
+    }
+
+    expect(db.prepare(
+      'SELECT value FROM user_properties WHERE user_id = ? AND key = ?',
+    ).get(user.userId, 'department')).toEqual({ value: 'before' });
+    expect(db.prepare(
+      "SELECT 1 AS present FROM _auth_config WHERE key = 'profile-fence-test'",
+    ).get()).toBeNull();
+    expect(db.prepare(
+      "SELECT 1 AS present FROM _auth_action_tokens WHERE token_id = 'aat_profile_fence'",
+    ).get()).toBeNull();
+  });
+
   test('createUser returns a valid UserRecord', async () => {
     const user = await store.createUser({
       username: 'alice',
@@ -477,6 +534,62 @@ describe('UserStore — User CRUD', () => {
     expect(store.getUserById(bob.userId)?.email).toBe('bob-update@example.com');
   });
 
+  test('serializes email comparison with update so another process cannot carry verification across addresses', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'zero-user-email-transition-'));
+    const path = join(directory, 'auth.sqlite');
+    let first: ReactiveDB | null = null;
+    let second: ReactiveDB | null = null;
+
+    try {
+      first = createReactiveDB({ mode: path, busyTimeout: 1 });
+      second = createReactiveDB({ mode: path, busyTimeout: 1 });
+      defineAuthTables(first);
+      defineAuthTables(second);
+      const firstStore = new UserStore(first);
+      const secondStore = new UserStore(second);
+      const user = await firstStore.createUser({
+        username: 'email-race',
+        email: 'address-a@example.com',
+        password: 'password123',
+        emailVerificationRequired: true,
+        emailVerifiedAt: 100,
+      });
+
+      const getUserById = firstStore.getUserById.bind(firstStore);
+      let attemptedInterleaving = false;
+      let interleavingBlocked = false;
+      firstStore.getUserById = (userId) => {
+        const stale = getUserById(userId);
+        if (!attemptedInterleaving) {
+          attemptedInterleaving = true;
+          try {
+            secondStore.updateUser(userId, { email: 'address-b@example.com' });
+            secondStore.updateUser(userId, { emailVerifiedAt: 200 });
+          } catch (error) {
+            interleavingBlocked = /locked|busy/i.test(String(error));
+          }
+        }
+        return stale;
+      };
+
+      const updated = firstStore.updateUser(user.userId, {
+        email: 'address-a@example.com',
+      });
+      firstStore.getUserById = getUserById;
+
+      expect(attemptedInterleaving).toBe(true);
+      expect(interleavingBlocked).toBe(true);
+      expect(updated).toMatchObject({
+        email: 'address-a@example.com',
+        emailVerifiedAt: 100,
+      });
+    } finally {
+      second?.dispose();
+      first?.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test('legacy canonical email collisions fail closed without rewriting rows', async () => {
     const first = await store.createUser({
       username: 'legacy-email-one',
@@ -541,6 +654,98 @@ describe('UserStore — User CRUD', () => {
 
   test('deleteUser returns false for missing user', () => {
     expect(store.deleteUser('u_nope')).toBe(false);
+  });
+
+  test('multi-tenant deletion retains known organization history with a stable conflict', async () => {
+    const user = await store.createUser({
+      username: 'history-user',
+      email: 'history-user@example.com',
+      password: 'pass12345',
+    });
+    db.exec(`
+      CREATE TABLE _auth_tenant_memberships (
+        membership_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+        created_by TEXT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT
+      )
+    `);
+    db.prepare(`
+      INSERT INTO _auth_tenant_memberships (membership_id, user_id, created_by)
+      VALUES ('m_history', ?, ?)
+    `).run(user.userId, user.userId);
+    const multiStore = new UserStore(db, { tenancyMode: 'multi' });
+
+    expect(() => multiStore.deleteUser(user.userId)).toThrow(AuthError);
+    try {
+      multiStore.deleteUser(user.userId);
+    } catch (error) {
+      expect(error).toMatchObject({
+        status: 409,
+        code: 'USER_HAS_TENANT_HISTORY',
+      });
+      expect((error as Error).message).toContain('suspend');
+    }
+    expect(multiStore.getUserById(user.userId)).not.toBeNull();
+  });
+
+  test('a mapped tenant-history conflict remains rollback-only when swallowed by an outer transaction', async () => {
+    const user = await store.createUser({
+      username: 'nested-history-user',
+      email: 'nested-history-user@example.com',
+      password: 'pass12345',
+    });
+    db.exec(`
+      CREATE TABLE _auth_tenant_memberships (
+        membership_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+        created_by TEXT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT
+      )
+    `);
+    db.prepare(`
+      INSERT INTO _auth_tenant_memberships (membership_id, user_id, created_by)
+      VALUES ('m_nested_history', ?, ?)
+    `).run(user.userId, user.userId);
+    const multiStore = new UserStore(db, { tenancyMode: 'multi' });
+
+    expect(() => db.transaction(() => {
+      try {
+        multiStore.deleteUser(user.userId);
+      } catch (error) {
+        expect(error).toMatchObject({
+          status: 409,
+          code: 'USER_HAS_TENANT_HISTORY',
+        });
+      }
+    })).toThrow('ReactiveDB transaction is rollback-only: FOREIGN KEY constraint failed');
+    expect(multiStore.getUserById(user.userId)).not.toBeNull();
+  });
+
+  test('multi-tenant deletion does not mislabel an unrelated restrictive foreign key', async () => {
+    const user = await store.createUser({
+      username: 'foreign-user',
+      email: 'foreign-user@example.com',
+      password: 'pass12345',
+    });
+    db.exec(`
+      CREATE TABLE _unrelated_user_reference (
+        reference_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT
+      )
+    `);
+    db.prepare(`
+      INSERT INTO _unrelated_user_reference (reference_id, user_id)
+      VALUES ('ref_1', ?)
+    `).run(user.userId);
+    const multiStore = new UserStore(db, { tenancyMode: 'multi' });
+
+    try {
+      multiStore.deleteUser(user.userId);
+      throw new Error('Expected restrictive foreign key failure');
+    } catch (error) {
+      expect(error).not.toBeInstanceOf(AuthError);
+      expect(String(error)).toContain('FOREIGN KEY constraint failed');
+    }
+    expect(multiStore.getUserById(user.userId)).not.toBeNull();
   });
 
   test('createUser emits change event via ReactiveDB', async () => {

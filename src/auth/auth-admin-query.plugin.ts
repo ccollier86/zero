@@ -8,6 +8,7 @@ import { Elysia, t } from 'elysia';
 import { buildAdminConfigResponse } from './auth-admin-config-response';
 import { requireAdminServices, type AuthAdminPluginConfig } from './auth-admin-dependencies';
 import { normalizeUserListQuery } from './auth-admin-user-list';
+import { applyAuthPrivateNoStore } from './auth-response-cache';
 import {
   authRoleSchema,
   authUserIdParamsSchema,
@@ -18,11 +19,18 @@ import { AuthError } from './types';
 /** Create read-only admin routes mounted below `/auth/admin`. */
 export function createAuthAdminQueryPlugin(config: AuthAdminPluginConfig) {
   return new Elysia({ name: 'auth-admin-query' })
-    .get('/config', async ({ request }) => {
+    .get('/config', async ({ request, set }) => {
+      applyAuthPrivateNoStore(set);
       const { store } = await requireAdminServices(config, request);
-      return buildAdminConfigResponse(store, config.getAuthConfig(), config.getMfaService?.() ?? null);
+      return buildAdminConfigResponse(
+        store,
+        config.getAuthConfig(),
+        config.getMfaService?.() ?? null,
+        config.getEmailRuntime(),
+      );
     })
-    .get('/users', async ({ request, query }) => {
+    .get('/users', async ({ request, query, set }) => {
+      applyAuthPrivateNoStore(set);
       const { store } = await requireAdminServices(config, request);
       const options = normalizeUserListQuery(query);
       const users = store.listUsers(options);
@@ -52,7 +60,8 @@ export function createAuthAdminQueryPlugin(config: AuthAdminPluginConfig) {
         status: t.Optional(t.Union([t.Literal('active'), t.Literal('suspended')])),
       }),
     })
-    .get('/users/:userId', async ({ request, params }) => {
+    .get('/users/:userId', async ({ request, params, set }) => {
+      applyAuthPrivateNoStore(set);
       const { store } = await requireAdminServices(config, request);
       const user = store.getUserById(params.userId);
       if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);

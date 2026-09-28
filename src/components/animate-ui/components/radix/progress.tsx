@@ -4,8 +4,8 @@ import {
   Progress as ProgressPrimitive,
   ProgressIndicator as ProgressIndicatorPrimitive,
   type ProgressProps as ProgressPrimitiveProps,
-} from '@/components/animate-ui/primitives/radix/progress';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/primitives/radix/progress';
+import { cn } from '#zero/lib/utils';
 
 type ProgressProps = ProgressPrimitiveProps;
 

@@ -1,14 +1,21 @@
 import { describe, test, expect, afterEach } from 'bun:test';
 import { Elysia } from 'elysia';
-import { createSyncPlugin, getSyncDB } from './sync.plugin';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { ReactiveDB } from './reactive-db';
+import { createSyncPlugin } from './sync.plugin';
 import type { ServerMessage } from './types';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 let app: ReturnType<typeof createApp> | null = null;
+const appDatabases = new WeakMap<object, ReactiveDB>();
 
 function createApp(options: { ringBufferDepth?: number; snapshotTables?: Set<string> } = {}) {
-  return new Elysia()
+  let db: ReactiveDB | null = null;
+  const testApp = new Elysia()
     .use(
       createSyncPlugin({
         db: { mode: 'memory', ringBufferDepth: options.ringBufferDepth ?? 100 },
@@ -24,9 +31,22 @@ function createApp(options: { ringBufferDepth?: number; snapshotTables?: Set<str
           },
         },
         snapshotTables: options.snapshotTables,
+        onDatabaseCreated(created) {
+          db = created;
+        },
       })
     )
     .listen(0); // Random available port
+
+  if (!db) throw new Error('Sync test database was not created');
+  appDatabases.set(testApp, db);
+  return testApp;
+}
+
+function getAppDatabase(testApp: object): ReactiveDB {
+  const db = appDatabases.get(testApp);
+  if (!db) throw new Error('Sync test database is not bound to this app');
+  return db;
 }
 
 function getUrl(app: ReturnType<typeof createApp>): string {
@@ -107,15 +127,286 @@ async function connectWS(
   };
 }
 
-afterEach(() => {
-  app?.stop();
+afterEach(async () => {
+  await app?.stop(true);
   app = null;
 });
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 describe('sync engine integration', () => {
+  test('closes current and future sockets after a fatal replica-log failure', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'zero-sync-replica-invalid-'));
+    const path = join(directory, 'app.sqlite');
+    try {
+      const fixture = fileURLToPath(new URL(
+        './test-fixtures/fatal-replica-log-sockets.ts',
+        import.meta.url,
+      ));
+      const child = Bun.spawn([process.execPath, fixture, path], {
+        cwd: process.cwd(),
+        env: Bun.env,
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+      expect(exitCode, `${stdout}\n${stderr}`).toBe(0);
+      const prefix = 'ZERO_FATAL_REPLICA_RESULT:';
+      const resultLine = stdout.split('\n').find((line) => line.startsWith(prefix));
+      expect(resultLine, stdout).toBeDefined();
+      const result = JSON.parse(resultLine!.slice(prefix.length)) as {
+        current: { code: number; reason: string };
+        future: { code: number; reason: string };
+        futureMessages: unknown[];
+        pending: { code: number; reason: string };
+        pendingMessages: Array<{ type?: string }>;
+        recovery: {
+          close: { code: number; reason: string };
+          replacement: {
+            type?: string;
+            seq?: number;
+            reset?: string;
+            tables?: Record<string, unknown>;
+          };
+          observedHistoryGaps: Array<{
+            kind?: string;
+            afterSeq?: number;
+            oldestSeq?: number;
+            currentSeq?: number;
+          }>;
+        };
+        missingPolicyReset: {
+          current: { code: number; reason: string };
+          future: { code: number; reason: string };
+        };
+        asyncPolicyReset: {
+          current: { code: number; reason: string };
+          future: { code: number; reason: string };
+        };
+        localObserverFailure: {
+          current: { code: number; reason: string };
+          future: { code: number; reason: string };
+        };
+        externalObserverFailure: {
+          current: { code: number; reason: string };
+          future: { code: number; reason: string };
+        };
+        asyncObserverFailure: {
+          current: { code: number; reason: string };
+          future: { code: number; reason: string };
+        };
+        projectorFailure: {
+          current: { code: number; reason: string };
+          future: { code: number; reason: string };
+        };
+      };
+      expect(result.current).toEqual({
+        code: 1012,
+        reason: 'Sync replica history invalid',
+      });
+      expect(result.future).toEqual({
+        code: 1012,
+        reason: 'Sync replica history invalid',
+      });
+      expect(result.futureMessages).toEqual([]);
+      expect(result.pending).toEqual({
+        code: 1012,
+        reason: 'Sync replica history invalid',
+      });
+      expect(result.pendingMessages).toEqual([]);
+      expect(result.recovery.close).toEqual({
+        code: 1012,
+        reason: 'Sync replica history gap',
+      });
+      expect(result.recovery.replacement).toMatchObject({
+        type: 'sync.snapshot',
+        seq: 1,
+        reset: 'preserve-pending',
+        tables: { todos: {} },
+      });
+      expect(result.recovery.observedHistoryGaps).toEqual([{
+        kind: 'format',
+        afterSeq: 0,
+        oldestSeq: 1,
+        currentSeq: 1,
+      }]);
+      for (const unsafe of [
+        result.missingPolicyReset,
+        result.asyncPolicyReset,
+        result.localObserverFailure,
+        result.externalObserverFailure,
+        result.asyncObserverFailure,
+        result.projectorFailure,
+      ]) {
+        expect(unsafe.current).toEqual({
+          code: 1012,
+          reason: 'Sync replica history invalid',
+        });
+        expect(unsafe.future).toEqual({
+          code: 1012,
+          reason: 'Sync replica history invalid',
+        });
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('relays file-backed changes across active runtime replicas exactly once', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'zero-sync-replica-'));
+    const path = join(directory, 'app.sqlite');
+    let firstDb: ReactiveDB | null = null;
+    let secondDb: ReactiveDB | null = null;
+    const tables = {
+      todos: {
+        id: 'text primary key',
+        title: 'text not null',
+        done: 'integer default 0',
+      },
+    };
+    const firstApp = new Elysia().use(createSyncPlugin({
+      db: { mode: path, ringBufferDepth: 100, busyTimeout: 10_000 },
+      tables,
+      replicaChangePolling: { intervalMs: 10 },
+      onDatabaseCreated(created) { firstDb = created; },
+    })).listen(0);
+    const secondApp = new Elysia().use(createSyncPlugin({
+      db: { mode: path, ringBufferDepth: 100, busyTimeout: 10_000 },
+      tables,
+      replicaChangePolling: { intervalMs: 10 },
+      onDatabaseCreated(created) { secondDb = created; },
+    })).listen(0);
+
+    try {
+      expect(firstDb).not.toBeNull();
+      expect(secondDb).not.toBeNull();
+      const connection = await connectWS(
+        `ws://${secondApp.server!.hostname}:${secondApp.server!.port}/sync`,
+      );
+      connection.ws.send(JSON.stringify({
+        type: 'sync.subscribe',
+        tables: ['todos'],
+        snapshot: ['todos'],
+        lastSeq: 0,
+      }));
+      await connection.waitForMessage((message) => message.type === 'sync.snapshot');
+
+      firstDb!.insert('todos', { id: 'remote', title: 'Replica write', done: 0 });
+      const change = await connection.waitForMessage(
+        (message) => message.type === 'sync.change' && message.rowId === 'remote',
+      );
+      expect(change).toMatchObject({
+        type: 'sync.change',
+        op: 'INSERT',
+        table: 'todos',
+        rowId: 'remote',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 35));
+      expect(connection.messages.filter(
+        (message) => message.type === 'sync.change' && message.rowId === 'remote',
+      )).toHaveLength(1);
+      connection.close();
+    } finally {
+      // Bun's graceful server stop waits for the WebSocket close handshake and
+      // can hold the test open for the full idle timeout. The transport
+      // behavior is already asserted above, so force-close the two disposable
+      // test servers before removing their shared database.
+      await secondApp.stop(true);
+      await firstApp.stop(true);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('delivers pending remote N before local N+1 with continuous origins and cursors', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'zero-sync-replica-order-'));
+    const path = join(directory, 'app.sqlite');
+    let firstDb: ReactiveDB | null = null;
+    let secondDb: ReactiveDB | null = null;
+    const tables = {
+      todos: {
+        id: 'text primary key',
+        title: 'text not null',
+        done: 'integer default 0',
+      },
+    };
+    const firstApp = new Elysia().use(createSyncPlugin({
+      db: { mode: path, ringBufferDepth: 100, busyTimeout: 10_000 },
+      tables,
+      replicaChangePolling: { intervalMs: 1_000 },
+      onDatabaseCreated(created) { firstDb = created; },
+    })).listen(0);
+    const secondApp = new Elysia().use(createSyncPlugin({
+      db: { mode: path, ringBufferDepth: 100, busyTimeout: 10_000 },
+      tables,
+      replicaChangePolling: { intervalMs: 1_000 },
+      onDatabaseCreated(created) { secondDb = created; },
+    })).listen(0);
+
+    try {
+      expect(firstDb).not.toBeNull();
+      expect(secondDb).not.toBeNull();
+      const connection = await connectWS(
+        `ws://${secondApp.server!.hostname}:${secondApp.server!.port}/sync`,
+      );
+      connection.ws.send(JSON.stringify({
+        type: 'sync.subscribe',
+        tables: ['todos'],
+        snapshot: ['todos'],
+        lastSeq: 0,
+      }));
+      const snapshot = await connection.waitForMessage(
+        (message) => message.type === 'sync.snapshot',
+      );
+      expect(snapshot.type === 'sync.snapshot' && snapshot.seq).toBe(0);
+
+      // Runtime A commits seq 1, but runtime B's long polling interval leaves it
+      // pending until B's own seq 2 commit synchronously wakes the ordered drain.
+      firstDb!.insert('todos', { id: 'remote', title: 'Remote N', done: 0 });
+      connection.ws.send(JSON.stringify({
+        type: 'sync.mutate',
+        ref: 'local-n-plus-one',
+        table: 'todos',
+        op: 'INSERT',
+        row: { id: 'local', title: 'Local N+1', done: 0 },
+      }));
+
+      await connection.waitForMessage(
+        (message) => message.type === 'sync.ack' && message.ref === 'local-n-plus-one',
+      );
+      await connection.waitForMessage(
+        (message) => message.type === 'sync.change' && message.rowId === 'local',
+      );
+      const changes = connection.messages.filter(
+        (message) => message.type === 'sync.change'
+          && (message.rowId === 'remote' || message.rowId === 'local'),
+      );
+      expect(changes).toHaveLength(2);
+      expect(changes.map((message) => message.type === 'sync.change'
+        ? [message.seq, message.prevSeq, message.rowId, message.origin]
+        : null)).toEqual([
+        [1, 0, 'remote', ''],
+        [2, 1, 'local', 'conn_1'],
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 35));
+      expect(connection.messages.filter(
+        (message) => message.type === 'sync.change'
+          && (message.rowId === 'remote' || message.rowId === 'local'),
+      )).toHaveLength(2);
+      expect(connection.ws.readyState).toBe(WebSocket.OPEN);
+      connection.close();
+    } finally {
+      await secondApp.stop(true);
+      await firstApp.stop(true);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test('exposes ReactiveDB during plugin composition for dependent plugins', () => {
+    let db: ReactiveDB | null = null;
     const plugin = createSyncPlugin({
       db: { mode: 'memory' },
       tables: {
@@ -124,8 +415,10 @@ describe('sync engine integration', () => {
           title: 'text not null',
         },
       },
+      onDatabaseCreated(created) {
+        db = created;
+      },
     });
-    const db = getSyncDB();
 
     expect(db).not.toBeNull();
     expect(db!.hasTable('todos')).toBe(true);
@@ -164,9 +457,8 @@ describe('sync engine integration', () => {
 
   test('server snapshot allow-list excludes tables while keeping live subscriptions', async () => {
     app = createApp({ snapshotTables: new Set(['todos']) });
-    const db = getSyncDB();
-    expect(db).not.toBeNull();
-    db!.insert('logs', { id: 'l1', message: 'lazy row' });
+    const db = getAppDatabase(app);
+    db.insert('logs', { id: 'l1', message: 'lazy row' });
 
     const url = getUrl(app);
     const { ws, waitForMessage, close } = await connectWS(url);
@@ -290,6 +582,70 @@ describe('sync engine integration', () => {
     }
 
     close();
+  });
+
+  test('does not inherit a socket origin for a reentrant application write', async () => {
+    app = createApp();
+    const db = getAppDatabase(app);
+    const first = await connectWS(getUrl(app));
+    const second = await connectWS(getUrl(app));
+
+    for (const connection of [first, second]) {
+      connection.ws.send(JSON.stringify({
+        type: 'sync.subscribe',
+        tables: ['todos'],
+        snapshot: ['todos'],
+        lastSeq: 0,
+      }));
+      await connection.waitForMessage((message) => message.type === 'sync.snapshot');
+    }
+
+    db.onChange((change) => {
+      if (change.rowId === 'socket-write') {
+        db.insert('todos', {
+          id: 'reentrant-write',
+          title: 'Application listener write',
+          done: 0,
+        });
+      }
+    });
+
+    first.ws.send(JSON.stringify({
+      type: 'sync.mutate',
+      ref: 'origin-reentrant',
+      table: 'todos',
+      op: 'INSERT',
+      row: { id: 'socket-write', title: 'Socket write', done: 0 },
+    }));
+
+    await first.waitForMessage(
+      (message) => message.type === 'sync.ack'
+        && message.ref === 'origin-reentrant',
+    );
+    const firstSocketWrite = await first.waitForMessage(
+      (message) => message.type === 'sync.change'
+        && message.rowId === 'socket-write',
+    );
+    const firstReentrantWrite = await first.waitForMessage(
+      (message) => message.type === 'sync.change'
+        && message.rowId === 'reentrant-write',
+    );
+    const secondSocketWrite = await second.waitForMessage(
+      (message) => message.type === 'sync.change'
+        && message.rowId === 'socket-write',
+    );
+    const secondReentrantWrite = await second.waitForMessage(
+      (message) => message.type === 'sync.change'
+        && message.rowId === 'reentrant-write',
+    );
+
+    expect(firstSocketWrite).toMatchObject({ origin: 'conn_1' });
+    expect(secondSocketWrite).toMatchObject({ origin: 'conn_1' });
+    expect(firstReentrantWrite).toMatchObject({ origin: '' });
+    expect(secondReentrantWrite).toMatchObject({ origin: '' });
+
+    first.close();
+    second.close();
   });
 
   test('update mutation round-trip', async () => {
@@ -515,10 +871,9 @@ describe('sync engine integration', () => {
 
   test('reconnect catchup includes lazy table changes omitted from snapshots', async () => {
     app = createApp();
-    const db = getSyncDB();
-    expect(db).not.toBeNull();
+    const db = getAppDatabase(app);
 
-    db!.insert('todos', { id: 'seed', title: 'Seed row', done: 0 });
+    db.insert('todos', { id: 'seed', title: 'Seed row', done: 0 });
 
     const conn1 = await connectWS(getUrl(app));
     conn1.ws.send(
@@ -538,8 +893,8 @@ describe('sync engine integration', () => {
     const epoch = snapshot.type === 'sync.snapshot' ? snapshot.epoch : undefined;
     const scope = snapshot.type === 'sync.snapshot' ? snapshot.scope : undefined;
 
-    db!.insert('logs', { id: 'l1', message: 'Lazy table catchup' });
-    db!.insert('todos', { id: 'after', title: 'Full table catchup', done: 0 });
+    db.insert('logs', { id: 'l1', message: 'Lazy table catchup' });
+    db.insert('todos', { id: 'after', title: 'Full table catchup', done: 0 });
     conn1.close();
 
     const conn2 = await connectWS(getUrl(app));
@@ -574,15 +929,14 @@ describe('sync engine integration', () => {
 
   test('reconnect falls back to snapshot when requested seq was pruned', async () => {
     app = createApp({ ringBufferDepth: 2 });
-    const db = getSyncDB();
-    expect(db).not.toBeNull();
+    const db = getAppDatabase(app);
 
-    db!.insert('todos', { id: 'old', title: 'Old row', done: 0 });
-    const staleLastSeq = db!.currentSeq;
+    db.insert('todos', { id: 'old', title: 'Old row', done: 0 });
+    const staleLastSeq = db.currentSeq;
 
-    db!.insert('todos', { id: 'new-1', title: 'New row 1', done: 0 });
-    db!.insert('todos', { id: 'new-2', title: 'New row 2', done: 0 });
-    db!.insert('todos', { id: 'new-3', title: 'New row 3', done: 0 });
+    db.insert('todos', { id: 'new-1', title: 'New row 1', done: 0 });
+    db.insert('todos', { id: 'new-2', title: 'New row 2', done: 0 });
+    db.insert('todos', { id: 'new-3', title: 'New row 3', done: 0 });
 
     const conn = await connectWS(getUrl(app));
     conn.ws.send(
@@ -602,7 +956,7 @@ describe('sync engine integration', () => {
         title: 'New row 3',
         done: 0,
       });
-      expect(snapshot.seq).toBe(db!.currentSeq);
+      expect(snapshot.seq).toBe(db.currentSeq);
     }
 
     conn.close();

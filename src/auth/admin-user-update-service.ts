@@ -15,8 +15,9 @@ import { assertMfaRequirementAvailable, type AuthAdminPluginConfig } from './aut
 import { hasAuthenticationBoundaryChange } from './auth-user-security-state';
 import { AuthError, type UserStatus } from './types';
 import type { UserPropertyService } from './user-property-service';
-import type { UserStore } from './user-store';
+import type { AuthSecurityAuditContext, UserStore } from './user-store';
 import { canonicalizeEmail } from './auth-email-identity';
+import type { AssertAuthAdminMutationAuthority } from './auth-admin-mutation-authority';
 
 export interface AdminUpdateUserInput {
   username?: string;
@@ -38,7 +39,24 @@ export class AdminUserUpdateService {
   ) {}
 
   /** Validate all policy inputs before atomically ordered user/property writes. */
-  update(userId: string, input: AdminUpdateUserInput, actorId: string) {
+  update(
+    userId: string,
+    input: AdminUpdateUserInput,
+    assertCurrentAuthority: AssertAuthAdminMutationAuthority,
+    audit?: AuthSecurityAuditContext,
+  ) {
+    return this.store.transaction(() => {
+      const authority = assertCurrentAuthority();
+      return this.updateLocked(userId, input, authority.userId, audit);
+    });
+  }
+
+  private updateLocked(
+    userId: string,
+    input: AdminUpdateUserInput,
+    actorId: string,
+    audit?: AuthSecurityAuditContext,
+  ) {
     const existing = this.store.getUserById(userId);
     if (!existing) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
     if (input.passwordChangeRequired === true && !existing.passwordChangeRequired) {
@@ -49,6 +67,9 @@ export class AdminUserUpdateService {
       );
     }
     const properties = this.properties.validateWrites(input.properties, 'admin');
+    const policyAuthorityChanged = Object.entries(properties).some(([key, value]) =>
+      this.properties.isPolicyTrusted(key)
+      && this.store.getProperty(userId, key) !== value);
     if (input.mfaRequired === true && !existing.mfaRequired) {
       assertMfaRequirementAvailable(this.config);
     }
@@ -82,13 +103,30 @@ export class AdminUserUpdateService {
       mfaRequired: input.mfaRequired,
     });
     if (!updated) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
-    if (hasAuthenticationBoundaryChange(existing, updated)) this.store.revokeAllUserTokens(userId);
     this.store.setProperties(userId, properties);
+    if (hasAuthenticationBoundaryChange(existing, updated) || policyAuthorityChanged) {
+      this.store.revokeAllUserTokens(userId);
+    }
 
     const user = this.store.getUserById(userId)!;
     emitPlatformCode(OBS_CODES.AUTH_ADMIN_USER_UPDATED, {
       userId: actorId,
       metadata: { updatedUserId: userId },
+    });
+    this.store.appendControlPlaneAudit({
+      action: 'account.updated-by-admin',
+      outcome: 'succeeded',
+      scope: { kind: 'application' },
+      actor: audit?.actor ?? {
+        userId: actorId,
+        provenance: 'authenticated-request',
+      },
+      request: audit?.request,
+      target: { type: 'user', id: userId },
+      metadata: {
+        'security-boundary-changed': hasAuthenticationBoundaryChange(existing, updated)
+          || policyAuthorityChanged,
+      },
     });
     return user;
   }

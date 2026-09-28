@@ -1,8 +1,8 @@
 import * as React from 'react';
 import type { Column } from '@tanstack/react-table';
 import { ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
+import { cn } from '#zero/lib/utils';
+import { Button } from '#zero/components/ui/button';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

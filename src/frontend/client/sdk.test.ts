@@ -7,7 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { AUTH_DISABLED_MESSAGE } from './auth-client';
-import { createClient, getClient } from './sdk';
+import { createClient, getClient, type InternalClient } from './sdk';
 
 const tables = {
   todos: { _pk: 'id', id: 'text', title: 'text' },
@@ -22,6 +22,7 @@ class MockWebSocket {
   static CLOSING = 2;
   static CLOSED = 3;
   static instances: MockWebSocket[] = [];
+  static stateEntries: Record<string, unknown> = {};
 
   readyState = MockWebSocket.CONNECTING;
   sent: string[] = [];
@@ -43,12 +44,38 @@ class MockWebSocket {
   send(data: string): void {
     this.sent.push(data);
     try {
-      const message = JSON.parse(data) as { type?: string; token?: string };
+      const message = JSON.parse(data) as {
+        type?: string;
+        token?: string;
+        epoch?: string;
+        scope?: string;
+        snapshot?: string[];
+      };
       if (message.type === 'sync.auth') {
         this.onmessage?.(new MessageEvent('message', {
           data: JSON.stringify({
             type: 'sync.auth.ready',
             authenticated: Boolean(message.token),
+          }),
+        }));
+      } else if (message.type === 'sync.subscribe') {
+        this.onmessage?.(new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'sync.snapshot',
+            tables: Object.fromEntries(
+              (message.snapshot ?? []).map((table) => [table, {}]),
+            ),
+            seq: 0,
+            epoch: message.epoch ?? 'test-epoch',
+            scope: message.scope ?? 'test-scope',
+            reset: 'preserve-pending',
+          }),
+        }));
+      } else if (message.type === 'state.subscribe') {
+        this.onmessage?.(new MessageEvent('message', {
+          data: JSON.stringify({
+            type: 'state.snapshot',
+            entries: MockWebSocket.stateEntries,
           }),
         }));
       }
@@ -62,6 +89,7 @@ class MockWebSocket {
 
   static reset(): void {
     MockWebSocket.instances = [];
+    MockWebSocket.stateEntries = {};
   }
 
   static latest(): MockWebSocket {
@@ -95,10 +123,19 @@ describe('createClient auth configuration', () => {
     });
 
     expect(client.user).toBeNull();
+    expect(client.authorization).toBeNull();
+    expect(client.authorizationState).toEqual({
+      status: 'disabled',
+      snapshot: null,
+      error: null,
+    });
     expect(client.isAuthenticated).toBe(false);
     expect(client.token).toBeNull();
+    await expect(client.getAuthorization()).rejects.toThrow(AUTH_DISABLED_MESSAGE);
+    await expect(client.refreshAuthorization()).rejects.toThrow(AUTH_DISABLED_MESSAGE);
     await expect(client.login('alice', 'password')).rejects.toThrow(AUTH_DISABLED_MESSAGE);
     await expect(client.forgotPassword('alice@example.com')).rejects.toThrow(AUTH_DISABLED_MESSAGE);
+    await expect(client.applicationAdmin.getConfig()).rejects.toThrow(AUTH_DISABLED_MESSAGE);
   });
 
   test('rejects state sync unless auth is enabled', () => {
@@ -132,6 +169,10 @@ describe('createClient auth configuration', () => {
     expect(JSON.parse(MockWebSocket.latest().sent[0])).toEqual({
       type: 'sync.auth',
       token: 'access-1',
+    });
+    expect(await client.applicationAdmin.getConfig()).toMatchObject({
+      authorization: 'advanced',
+      actor: { userId: 'u_1' },
     });
 
     const todos = client.collection('todos');
@@ -170,11 +211,68 @@ describe('createClient auth configuration', () => {
       token: 'access-1',
     });
   });
+
+  test('public authenticated fetch never sends credentials to another origin', async () => {
+    const requests: string[] = [];
+    mockAuthFetch(requests);
+    const client = createClient({
+      url: 'http://localhost:3000/platform',
+      tables,
+      auth: true,
+      autoConnect: false,
+    });
+
+    await client.login('alice', 'password');
+    await expect(
+      client.fetch('https://attacker.example/collect'),
+    ).rejects.toMatchObject({ code: 'AUTH_REQUEST_ORIGIN_MISMATCH' });
+
+    expect(requests).toEqual(['http://localhost:3000/platform/auth/login']);
+  });
+
+  test('state sync hydrates a fresh snapshot on connect and reconnect', async () => {
+    mockAuthFetch();
+    const client = createClient({
+      url: 'http://localhost:3000',
+      tables,
+      auth: true,
+      stateSync: true,
+      autoConnect: false,
+    });
+    const internal = client as InternalClient;
+
+    await client.login('alice', 'password');
+    MockWebSocket.stateEntries = { theme: 'dark' };
+    client.connect();
+    await flushMicrotasks();
+
+    expect(MockWebSocket.latest().sent.map((item) => JSON.parse(item).type)).toEqual([
+      'sync.auth',
+      'sync.subscribe',
+      'state.subscribe',
+    ]);
+    expect(internal.state?.ready).toBe(true);
+    expect(internal.state?.get('theme')).toBe('dark');
+
+    MockWebSocket.stateEntries = { theme: 'light' };
+    internal._syncClient.reconnect();
+    await flushMicrotasks();
+
+    expect(MockWebSocket.instances).toHaveLength(2);
+    expect(MockWebSocket.latest().sent.map((item) => JSON.parse(item).type)).toEqual([
+      'sync.auth',
+      'sync.subscribe',
+      'state.subscribe',
+    ]);
+    expect(internal.state?.ready).toBe(true);
+    expect(internal.state?.get('theme')).toBe('light');
+  });
 });
 
-function mockAuthFetch(): void {
+function mockAuthFetch(requests?: string[]): void {
   globalThis.fetch = ((input: string | URL | Request) => {
     const url = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
+    requests?.push(url);
     if (url.endsWith('/auth/login')) {
       return Promise.resolve(Response.json({
         user: {
@@ -199,6 +297,23 @@ function mockAuthFetch(): void {
     }
     if (url.endsWith('/auth/logout')) {
       return Promise.resolve(Response.json({ ok: true }));
+    }
+    if (url.endsWith('/auth/application/config')) {
+      return Promise.resolve(Response.json({
+        authorization: 'advanced',
+        actor: {
+          userId: 'u_1',
+          roles: ['owner'],
+          permissions: [],
+          allPermissions: true,
+        },
+        capabilities: {
+          canReadUsers: true,
+          canManageRoles: true,
+          canTransferOwnership: true,
+        },
+        roles: [],
+      }));
     }
     return Promise.resolve(Response.json({ ok: true }));
   }) as typeof fetch;

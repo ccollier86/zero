@@ -11,7 +11,7 @@ type ExternalMessage = { type: string; [key: string]: unknown };
 interface SyncSocketMessageRouterInput {
   store: ReturnType<typeof createSyncStore>['store'];
   ready: (socket: WebSocket) => boolean;
-  authenticated: (socket: WebSocket) => void;
+  authenticated: (socket: WebSocket, authenticated: boolean) => void;
   handlers: Set<(message: ExternalMessage) => void>;
   mutations: SyncMutationQueue;
   recover: () => void;
@@ -36,7 +36,7 @@ export function routeSyncSocketEvent(
   }
   if (!message || typeof message.type !== 'string') return;
   if (message.type === 'sync.auth.ready') {
-    input.authenticated(socket);
+    input.authenticated(socket, message.authenticated);
     return;
   }
   if (!input.ready(socket)) return;

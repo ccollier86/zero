@@ -39,6 +39,45 @@ recreate auth forms, modal managers, storage browsers, data tables, sidebars,
 app shells, hooks, CRUD/sync plumbing, or backend service wiring unless the
 framework surface is genuinely missing.
 
+Current unreleased-candidate boundary:
+
+- This unreleased tree implements `single/simple`, `single/advanced`,
+  `multi/simple`, and `multi/advanced` through one app-local runtime and
+  authorization kernel. Omitted capability axes still resolve to
+  `single/simple`. Treat the new profiles as a release candidate until the
+  implementation and cross-cutting release gates pass.
+- Auth-enabled `createApp()` installs Bearer-required Sync plus private/scoped
+  framework-table policy. Direct `createSyncPlugin()` is a lower-level,
+  public/allow-all primitive unless the app explicitly supplies auth and policy.
+- Managed ephemeral and presence topics use server-owned user/tenant
+  namespaces, and room topics revalidate membership. Raw/custom Sync
+  compositions must supply equivalent policy and cannot treat a caller topic
+  or room ID as authority.
+- The TypeScript `@zero/framework/native` core is implemented in this package.
+  The separate Rust/Tauri and Chrome MV3 repositories are functional private
+  `0.0.0` previews; none is a released package.
+- Auth services are app-local and isolated across concurrent runtimes. Legacy
+  no-argument `get*` helpers are compatibility adapters only and fail when no
+  unambiguous runtime exists.
+- Opt-in verified-company-domain request admission and the bounded append-only
+  authorization/control-plane audit are implemented in this unreleased tree.
+  The protected Administration Organization/platform-tenant lifecycle,
+  break-glass support, tenant-custom roles, populated-app adoption tooling,
+  domain autojoin/aliases/direct transfer, and upstream enterprise SSO remain
+  separate future capabilities. File-mode runtimes sharing one SQLite database
+  relay durable row and State Sync changes and poll durable auth authority so
+  another runtime's security change promptly revalidates local sockets and
+  managed ephemeral bindings. This is not replication for `hot`/`ephemeral`
+  databases, separate database files, cross-host messages, or RAM-only
+  ephemeral topic values. Registered resources now use explicit server-owned
+  client exposure plus optional immutable read/create/update/filter/sort field
+  allow-lists. Multi-mode startup validates actual non-partial tenant-leading
+  indexes, tenant-scoped business uniqueness, and tenant-consistent composite
+  foreign keys between registered tenant resources.
+
+Read [Releasing Zero](docs/releasing.md) before describing a capability as
+publicly supported.
+
 ## Authoritative Docs
 
 - `README.md`: human repo entry point and local create workflow.
@@ -50,6 +89,9 @@ framework surface is genuinely missing.
 - `docs/frontend/router.md`: file router, layouts, route groups, auth
   boundaries, sitemap.
 - `docs/frontend/sdk.md`: frontend client, hooks, auth, sync, resources.
+- `docs/auth/README.md`: canonical auth subsystem map for bootstrap, all four
+  profiles, permissions/RBAC, administration, onboarding, audit, browser
+  state, and installed-app authentication.
 - `docs/auth/app-auth-sdk-guide.md`: selection and onboarding for web,
   TypeScript native, Rust/Tauri, Chrome, and other installed-app clients,
   including honest package release status.
@@ -62,9 +104,37 @@ framework surface is genuinely missing.
 - `docs/pdf.md`: PDF browser setup, rendering API, print options, resource
   security, storage composition, workflows, errors, and adapters.
 - `docs/engineering-standards.md`: repository engineering rules.
-- `docs/stabilization-plan.md`: release-readiness and stabilization checklist.
+- `docs/releasing.md`: current supported/preview boundary and release checklist.
+- `docs/auth/zero-auth-philosophy.md`: authoritative direction and invariants
+  for the four-profile auth system; it separates implemented and planned
+  capability.
+- `docs/auth/multi-tenant-auth-implementation-checklist.md`: authoritative
+  delivery gates for the unreleased multi-tenant/advanced-auth runtime.
+- `docs/auth/application-access-administration.md`: implemented
+  single/advanced application-role administration contract.
+- `docs/auth/tenant-member-administration.md` and
+  `docs/auth/tenant-invitations-and-join-requests.md`: implemented active-tenant
+  control-plane, SDK, hook, and packaged UI contracts.
+- `docs/auth/verified-domain-onboarding.md`: implemented exact-domain DNS plus
+  mailbox-proof request-to-join contract and deliberate v1 exclusions.
+- `docs/auth/control-plane-audit.md`: implemented bounded append-only
+  authorization/security audit, query/export, retention, hook, and viewer.
+- `docs/auth/auth-data-plane-capability-matrix.md`: enforcement owner, live
+  scope source, focused evidence, and trusted escape hatch for every official
+  access-surface family.
+- `docs/auth/browser-authorization.md`: implemented browser-safe live
+  authorization projection and visibility-gate contract.
+- `docs/stabilization-plan.md`: historical stabilization snapshot, not the
+  current release gate.
 - `docs/doctor-usage-audit-plan.md`: planned doctor checks for catching app
   code that bypasses Zero APIs/components/services.
+
+## Historical And Working Design
+
+- `docs/auth/multi-tenant-sso-rbac-working-design.md`: temporary detailed audit
+  and implementation rationale. It intentionally preserves pre-implementation
+  findings and proposed language; it is not an authoritative current API or
+  release contract.
 
 ## Engineering Rules For Agents
 
@@ -126,7 +196,7 @@ bun run dev
 Published package shape later:
 
 ```sh
-bunx create-zero my-zero-app
+bunx -p @zero/framework create-zero my-zero-app
 cd my-zero-app
 bun install
 bun run dev
@@ -154,14 +224,18 @@ zero-update --dry-run
 zero-update --check
 ```
 
-The wrapper is bound to the checkout that installed it and manages only the
-exact `file:./.zero/framework/zero-framework.tgz` dependency, its ignored
-archive cache, the installed framework package, and Bun install state. The app
-must have exactly one committed `bun.lock` or `bun.lockb`, including for a
-dry-run. A clean clone may omit `.zero/`, `.zero/framework/`, the archive, and
-`node_modules`; a mutating update creates the managed cache and installs Zero,
-while `--dry-run` reports the pending bootstrap without creating anything.
-Existing symlinks or wrong-type managed entries are rejected.
+The wrapper consumes the package saved from committed local `main` by the
+checkout that installed it. It never packs that checkout's live working tree,
+does not fall back when the saved archive is missing or corrupt, and manages
+only the exact `file:./.zero/framework/zero-framework.tgz` dependency, its
+ignored archive cache, the installed framework package, and Bun install state.
+Use `zero update --project <app> --local <checkout>` explicitly when testing an
+unreleased working checkout. The app must have exactly one committed `bun.lock`
+or `bun.lockb`, including for a dry-run. A clean clone may omit `.zero/`,
+`.zero/framework/`, the archive, and `node_modules`; a mutating update creates
+the managed cache and installs Zero, while `--dry-run` reports the pending
+bootstrap without creating anything. Existing symlinks or wrong-type managed
+entries are rejected.
 
 The default update does not rewrite app source, configuration, environment
 files, databases, or storage and runs no app-defined scripts. `--check` runs
@@ -389,7 +463,7 @@ app.listen(config.port ?? 3000);
 | Email | Resend default or custom provider boundary. |
 | Storage | Local drives, object routes, permissions, uploads, public upload grants. |
 | KV/cache | Durable memory-first KV, counters, limiters. |
-| State sync | Per-user persisted reactive state. |
+| State sync | Persisted reactive state isolated per authorized-scope user. |
 | Notifications | Notifications and per-user receipts when auth is enabled. |
 | Rooms/presence | Room membership and presence primitives when auth is enabled. |
 | Workflows | Workflow registry/service when auth is enabled. |
@@ -483,10 +557,30 @@ Table sync defaults to `auto`.
 - Explicit lazy tables skip initial snapshots and load on demand through
   `collection.load()`, `useLazyCollection()`, `/api/data`, DataTable source
   contracts, or MasterDetail source contracts.
-- Live changes still stream after rows are present locally.
+- Authorized live changes still stream after rows are present locally.
 - Ring-buffer reconnect replays missed changes when possible.
 - Same-row optimistic mutations are serialized.
 - Disconnected sends are buffered and flushed on reconnect.
+
+Sync mode controls loading, not authorization. For auth-enabled `createApp()`:
+
+- `users`, workflow definitions, and Storage drive/object metadata are private
+  from generic Sync snapshots, catch-up, and live delivery;
+- notifications and receipts are target/owner scoped;
+- rooms and room members require actual membership, including for a global
+  administrator;
+- workflow execution rows are starter-scoped, with the documented legacy
+  global-administrator workflow override;
+- framework-owned tables reject direct Sync mutation; use their supported HTTP
+  or service APIs; and
+- app-owned tables still need an explicit resource/Sync policy appropriate to
+  the application's data.
+
+These decisions compose deny-wins with application resource policy. A local
+hook filter such as `useQuery()` or `useRoomData()` is only presentation logic;
+it cannot replace server read-row and mutation policy. Lower-level standalone
+`createSyncPlugin()` intentionally retains public/allow-all compatibility, so
+private deployments must configure both WebSocket auth and read/write policy.
 
 ## Frontend Root Provider
 
@@ -652,11 +746,24 @@ must enforce access.
 Use resources when an app table needs server-side CRUD, `/api/data` policy, and
 WebSocket sync policy integration.
 
+Every multi-mode resource declares server-owned `exposure`: `internal`,
+`http`, `sync`, or `all`. Omission retains legacy `all` only in single mode.
+`_sync` and `syncDefaults` choose loading strategy, not authority. A
+`sync`-only resource must stay full Sync; lazy or auto-lazy Sync hydration
+requires `all` because it also uses `/api/data`. An HTTP-only resource may use
+`/api/data` without joining Sync.
+
+Omitting `actions` enables the standard list/get/create/update/delete set.
+Explicit `actions: []` enables none. A per-action policy map may name only
+declared actions; unknown or extra keys are rejected.
+
 Important helpers:
 
 - `defineResource()`
 - `ownerPolicy()`
 - `metadataPolicy()`
+- `authorizationPolicy()` — the same structured live RBAC requirement used by
+  routes, enforced across generated CRUD, `/api/data`, and Sync
 - `adminOnly()`
 - `anyOf()`
 - `allOf()`
@@ -678,12 +785,35 @@ server-side.
 WebSocket sync enforces resource list/write policy too. Row-constrained list
 policies use row-filtered sync.
 
+Keep the enforceable declaration in a server-only resource module next to the
+shared schema. `defineTable()` metadata and `sync: 'full' | 'lazy' | 'auto'`
+are not access control and must not contain executable client-trusted policy.
+
 ## Auth
+
+The current tree keeps the existing global identity/platform-role model and
+adds independent tenancy and authorization axes:
+
+```ts
+auth: {
+  tenancy: 'single',
+  authorization: 'simple',
+}
+```
+
+Omitting either field has the same result. All four explicit profiles are
+implemented. Multi mode requires classified registered resources and uses
+tenant-bound durable sessions; advanced mode expands retained scoped role
+assignments through the same kernel. User/session projections come from auth
+APIs; generic Sync does not expose the `users` table under default
+`createApp()` policy. Raw SQL and deliberate `zero.unsafe` use remain trusted
+application code outside Zero's tenant-isolation guarantee.
 
 Zero auth supports:
 
 - enabled/disabled auth
-- first-user bootstrap admin
+- secret-gated, durable installation bootstrap by default; explicit public
+  first-request compatibility or disabled/trusted provisioning modes
 - public registration or admin-only registration
 - admin-created users and setup emails
 - password reset/setup action tokens
@@ -693,8 +823,12 @@ Zero auth supports:
 - authenticator/TOTP MFA
 - self-hosted TOTP secret encryption
 - refresh token rotation
-- session persistence and refresh
+- durable application/tenant session persistence, refresh, selection, and switching
 - admin user management
+- single/advanced application access management
+- tenant member and role administration
+- exact-email invitations, invitation-bound registration, and retained join requests
+- sanitized browser authorization snapshots and permission/tenant/platform gates
 - configured public/private user properties
 - property-based backend policy
 - desktop/mobile/extension public clients using the same users and
@@ -704,6 +838,12 @@ Common auth config:
 
 ```ts
 auth: {
+  tenancy: 'single',
+  authorization: 'simple',
+  bootstrap: {
+    mode: 'secret',
+    secret: Bun.env.AUTH_BOOTSTRAP_SECRET || undefined,
+  },
   registration: { mode: 'admin-only' },
   account: {
     requireEmailVerification: Bun.env.AUTH_REQUIRE_EMAIL_VERIFICATION === 'true',
@@ -747,6 +887,17 @@ Auth UI components:
 - `MFAEnrollmentForm`
 - `MFAChallengeForm`
 - `MFAManagementPanel`
+- `AuthFlowContinuation`
+- `TenantSelectionForm`
+- `TenantCreationForm`
+- `TenantSwitcher`
+- `TenantMemberManagement`
+- `TenantInvitationForm`
+- `TenantOnboardingManagement`
+- `ApplicationAccessManagement`
+- `PermissionGate`
+- `TenantGate`
+- `PlatformAdminGate`
 - `UserPropertiesForm`
 - `SignedIn`
 - `SignedOut`
@@ -761,11 +912,14 @@ reason.
 Choose the surface before implementing a host bridge:
 
 - `@zero/framework/native` is the implemented TypeScript native core in the
-  current source. Pin a framework release that includes the export.
+  current source. Pin a published framework release that includes the export;
+  source presence alone is not proof that an older package version has it.
 - `zero-native-auth` and `tauri-plugin-zero-auth` are standalone Rust/Tauri
-  Phase 0 `0.0.0` scaffolds. They validate configuration and draft secret-free
-  state only; they do not authenticate, store credentials, handle callbacks,
-  expose Tauri commands, or send authenticated requests.
+  `0.0.0` private previews with OIDC discovery, Authorization Code + PKCE,
+  callback/state validation, rotating sessions, tenant operations,
+  authenticated HTTP, vault adapters, and Tauri commands. They still require
+  independent release ownership, versioning, license, platform adapter, and
+  security gates.
 - `@zero/chrome-auth` is a standalone private `0.0.0` Chrome MV3 preview. It
   has no released framework peer range, real-Chrome release gate, or
   independent security review yet. Do not treat it as an installable registry
@@ -978,7 +1132,7 @@ inside backend routes instead of importing the KV engine directly.
 
 State sync:
 
-- per-user server-persisted reactive key/value state
+- per-authorized-scope user server-persisted reactive key/value state
 - useful for preferences and UI state
 
 Hooks:
@@ -989,10 +1143,24 @@ Hooks:
 
 Rooms/presence:
 
-- room membership
+- membership-scoped built-in `rooms` and `room_members` rows
 - online/idle/away presence
 - typing indicators
 - ephemeral topics
+
+The room HTTP `join` action does not admit an arbitrary authenticated user. It
+is idempotent only for a user already admitted by trusted server-side app
+policy. Room detail and member lists require actual membership; global admin is
+not a data-plane read bypass. A room owner cannot leave and orphan the room;
+the route returns `409 ROOM_OWNER_CANNOT_LEAVE`. Global-admin room deletion is
+a separate control-plane compatibility rule.
+
+App-owned rows with a `room_id` are not protected automatically.
+`useRoomData(roomId, table)` is a client-side filter, so the app must enforce
+membership and validate or stamp `room_id` in server read/write policy.
+Presence, typing, and other ephemeral helpers currently use caller-selected
+topic names. A `presence:${roomId}` topic does not prove membership; keep those
+payloads non-sensitive until server-derived topic authorization exists.
 
 Hooks:
 
@@ -1009,6 +1177,10 @@ Notifications:
 - read/dismiss actions
 - sync-backed UI updates
 
+Default `createApp()` projects notification rows only to actual targets and
+receipt rows only to their owning user. The protected administrator receipt
+audit is an HTTP view, not a generic all-receipts Sync subscription.
+
 Hooks:
 
 - `useNotifications`
@@ -1018,6 +1190,12 @@ Hooks:
 
 Zero workflows and scheduler are in-process platform services. Use them for
 app-owned background orchestration, scheduled work, and domain workflows.
+
+Workflow definitions are authenticated shared metadata over the purpose-built
+HTTP API, not generic Sync rows. Normal instance lists and instance/step/event
+reads are starter-scoped; send/cancel/pause/resume use the same owner check,
+with the documented legacy global-administrator workflow authority. Missing and
+inaccessible instance IDs both return 404.
 
 Hooks:
 
@@ -1254,13 +1432,19 @@ Platform hooks:
 
 | Area | Hooks |
 | --- | --- |
-| Auth/session | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty` |
+| Auth/session and access | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useAuthorization`, `useAuthorizationScopeBoundary`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher` |
 | Live data | `useCollection`, `useLazyCollection`, `useDataPage`, `useRecord`, `useRecordByIdentity`, `useDataSelection` |
 | Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
 | Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveQuota` |
 | Rooms/presence | `usePresence`, `usePresenceList`, `useTypingIndicator`, `useEphemeral`, `useEphemeralTopic` |
 | Workflows/notifications | `useWorkflowRun`, `useWorkflow`, `useWorkflowList`, `useNotifications`, `useUnreadCount` |
 | State and health | `useServerState`, `usePreference`, `useFormDraft`, `useConnectionHealth`, `useMutation` |
+
+Zero-owned browser hooks fence cached work at the current account/tenant
+authorization boundary. App-owned caches must key or purge on the opaque,
+credential-free `useAuthorizationScopeBoundary().key`, reject older callbacks,
+and hide or freeze scope-sensitive UI while `ready` is false. This key is cache
+metadata, never server authority or a substitute for route/resource policy.
 
 Generic hooks:
 
@@ -1583,7 +1767,7 @@ bun run build
 For broad platform changes:
 
 ```sh
-bun test
+bun run test
 git diff --check
 ```
 
@@ -1638,9 +1822,10 @@ reference docs confirm the behavior is implemented.
   runtime architecture, frontend/server boundaries, and where to edit.
 - [SDK Reference](docs/sdk-reference.md): large API reference for frontend SDK,
   hooks, components, icons, storage, auth, and app-facing package exports.
-- [Platform Configuration](docs/platform-configuration.md): config protocol for
-  `zero.config.ts`, app identity, database modes, auth, email, AI, vector, PDF,
-  storage, sync, sitemap, and generated app defaults.
+- [Platform Configuration](docs/platform-configuration.md): current explicit
+  `AppConfig`/`zero.config.ts` composition for app identity, database modes,
+  auth, email, AI, vector, PDF, storage, sync, sitemap, and generated defaults,
+  with automatic focused-config discovery labeled as a future proposal.
 - [Engineering Standards](docs/engineering-standards.md): repository coding
   standards, Elysia practices, separation of concerns, comments, docs, tests,
   and observability requirements.
@@ -1656,8 +1841,8 @@ reference docs confirm the behavior is implemented.
   platform ideas.
 - [Platform Hardening Plan](docs/platform-hardening-plan.md): historical
   hardening plan for backend, frontend, docs, performance, and security.
-- [Stabilization Plan](docs/stabilization-plan.md): current stabilization,
-  release-readiness, package-mode, docs, and local create-app checklist.
+- [Stabilization Plan](docs/stabilization-plan.md): historical package-mode
+  stabilization snapshot; use Releasing Zero for current release gates.
 - [Doctor Usage Audit Plan](docs/doctor-usage-audit-plan.md): planned doctor
   source scanner for frontend/backend usage warnings when app code bypasses
   Zero APIs, components, services, or package-mode conventions.
@@ -1672,8 +1857,8 @@ reference docs confirm the behavior is implemented.
   package imports, generated app shape, composition root, backend extensions,
   resources, package mode, and frontend/backend usage examples.
 - [Framework API Standardization Plan](docs/framework/api-standardization-plan.md):
-  plan for unifying framework APIs, package-mode behavior, extension loaders,
-  resource APIs, and future generators.
+  historical plan for unifying framework APIs, package-mode behavior,
+  extension loaders, resource APIs, and generators.
 - [Phase 1: Backend Extensions](docs/framework/phase-1-backend-extensions.md):
   implemented/target contract for app-owned endpoints, routers, middleware,
   plugins, loader behavior, and package-mode acceptance criteria.
@@ -1686,11 +1871,11 @@ reference docs confirm the behavior is implemented.
   canonical service method aliases and grouped storage APIs for app-owned
   backend code.
 - [Phase 5: Resource And Policy API Plan](docs/framework/phase-5-resource-policy-plan.md):
-  resource declarations, trusted user-property policy rules, generated CRUD,
-  `/api/data`, WebSocket sync integration, and doctor integration plan.
-- [Resource Policy Core](docs/framework/resource-policy.md): implemented
-  server-side resource policy helpers, trusted metadata validation, owner
-  constraints, composition, and evaluator contract.
+  historical implementation record for resource declarations, trusted
+  user-property policy, generated CRUD, `/api/data`, Sync, and Doctor.
+- [Resource Policy Core](docs/framework/resource-policy.md): current
+  server-owned realm/client-exposure/action/policy contract, direct route-RBAC
+  reuse, SQLite-shape validation, generated CRUD, `/api/data`, Sync, and Doctor.
 - [Hot Storage Architecture](docs/framework/hot-storage-architecture.md):
   target architecture for hot SQLite snapshots, file/WAL mode, persistent
   cache/KV alignment, vector storage, and ReactiveDB refactoring.
@@ -1757,9 +1942,38 @@ reference docs confirm the behavior is implemented.
 - [Auth System](docs/auth/README.md): main auth documentation covering
   registration, admin bootstrap, email verification, MFA, password reset/setup,
   auth UI, config, routes, sessions, user properties, and admin user management.
+- [Zero Auth Philosophy](docs/auth/zero-auth-philosophy.md): authoritative
+  product/security direction for the additive single/multi-tenancy and
+  simple/advanced-authorization model, with current limitations stated first.
+- [Multi-tenant Auth Implementation Checklist](docs/auth/multi-tenant-auth-implementation-checklist.md):
+  authoritative phased delivery and release gates; unchecked future work is not
+  a shipped capability.
+- [Multi-tenant, SSO, and RBAC Working Design](docs/auth/multi-tenant-sso-rbac-working-design.md):
+  detailed temporary audit and design rationale, not a frozen public API.
 - [Auth Architecture](docs/auth/architecture.md): auth plugin architecture,
   stores, services, routes, frontend clients, tokens, and separation of
   responsibility.
+- [Application Access Administration](docs/auth/application-access-administration.md):
+  single/advanced application roles, ownership, revisions, typed SDK/hook, and
+  packaged control UI without tenant semantics.
+- [Tenant Member Administration](docs/auth/tenant-member-administration.md):
+  active-tenant member lifecycle, role assignments, ownership transfer,
+  grant ceilings, SDK/hooks, and packaged UI.
+- [Tenant Invitations and Join Requests](docs/auth/tenant-invitations-and-join-requests.md):
+  one-time invitations, delivery, invitation-bound registration, retained join
+  review, routes, SDK/hooks, and control UI.
+- [Verified Company-Domain Onboarding](docs/auth/verified-domain-onboarding.md):
+  exact-domain DNS ownership, current-mailbox proof, non-enumerating discovery,
+  request-to-join, claim release/quarantine, SDK/hooks, and packaged controls.
+- [Control-Plane Audit](docs/auth/control-plane-audit.md): bounded append-only
+  authorization/security events, atomic mutation wiring, retention,
+  authorized query/export, SDK/hook, and packaged viewer.
+- [Auth And Data-Plane Capability Matrix](docs/auth/auth-data-plane-capability-matrix.md):
+  current enforcement owner, authoritative scope source, test evidence, and
+  explicit trusted/unsafe boundary for each official surface.
+- [Browser Authorization Snapshot and Gates](docs/auth/browser-authorization.md):
+  sanitized live authorization state, identity/scope-safe revalidation,
+  permission hooks, credential-free app-cache boundary, and visibility gates.
 - [App Authentication SDK Guide](docs/auth/app-auth-sdk-guide.md): choose the
   web, TypeScript native, Rust/Tauri, Chrome, or another client surface, then
   follow server/client onboarding and honest release gates.
@@ -1785,10 +1999,12 @@ reference docs confirm the behavior is implemented.
   plan/current behavior for email verification, email OTP, authenticator/TOTP,
   optional/required MFA, enrollment, challenge, and auth UI integration.
 - [Auth Metadata, Access Control, And Avatars Plan](docs/auth/metadata-access-avatar-plan.md):
-  planned advanced user metadata, access control, avatar storage, and future
-  role/group/tenant direction.
-- [Guards & Activity Audit](docs/auth/guards-and-audit.md): plan for auth guards,
-  activity audit trails, regulated app audit needs, and future auditing sinks.
+  historical metadata/access sketch retained for avatar ideas; current
+  tenancy/RBAC contracts live in the philosophy, checklist, and focused docs.
+- [Auth Guards And Audit Boundaries](docs/auth/guards-and-audit.md): implemented
+  request-scoped auth/admin guards and durable bounded authorization/control-
+  plane audit, clearly separated from deferred general application activity
+  tracking and regulated-app audit requirements.
 
 ### AI And Vector
 
@@ -1812,7 +2028,7 @@ reference docs confirm the behavior is implemented.
 
 ### Data, Sync, KV, Persistence, And Tokens
 
-- [State Sync](docs/state-sync.md): per-user persistent state sync, client hooks,
+- [State Sync](docs/state-sync.md): per-authorized-scope user persistent state sync, client hooks,
   backend routes, optimistic writes, limits, and use cases such as preferences.
 - [Platform KV/cache](docs/kv.md): durable memory-first KV/cache service,
   checkpoint/journal recovery, counters, namespaces, TTL, LRU, limiters, and
@@ -1845,8 +2061,9 @@ reference docs confirm the behavior is implemented.
 - [Observability](docs/observability.md): observability event codes, sinks,
   frontend ingest, memory event store, protected event route, and how new logs,
   warnings, errors, and lifecycle events should flow.
-- [Observability Audit](docs/observability-audit.md): audit of existing logging
-  and events, gaps, and improvement notes.
+- [Observability Audit](docs/observability-audit.md): historical
+  pre-observability baseline; use the current Observability guide for runtime
+  behavior.
 - [Durable Workflow System](docs/workflows.md): workflow service, workflow
   registry, scheduled/background work concepts, app-facing usage, and future
   workflow expansion.
@@ -1856,11 +2073,11 @@ reference docs confirm the behavior is implemented.
 ### Package, Release, And Maintenance
 
 - [Releasing Zero](docs/releasing.md): package state, source-export strategy,
-  package files, version bump, release verification, changelog, commit, and tag
-  checklist.
-- [Zero Stabilization Plan](docs/stabilization-plan.md): current stabilization
-  plan for repo audit, local create flow, docs, `llms.txt`, package/distribution
-  polish, package smoke tests, and remaining risks.
+  current supported/preview boundary, package files, version bump, candidate
+  verification, changelog, clean-checkout, commit, and tag checklist.
+- [Zero Stabilization Plan](docs/stabilization-plan.md): historical record of
+  the earlier local-create/package-mode stabilization pass; not a current
+  release checklist.
 - [Doctor Usage Audit Plan](docs/doctor-usage-audit-plan.md): source audit plan
   for warning agents about raw controls, custom modal/toast/sidebar systems,
   direct backend service bypasses, internal imports, missing root wiring, and

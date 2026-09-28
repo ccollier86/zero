@@ -35,6 +35,41 @@ export type InferSchemaInput<T extends SchemaDescriptor> =
 type InferFieldOutput<F> = F extends FieldDef<any, infer O> ? O : unknown;
 
 /**
+ * Type-only metadata carried by rows inferred from `defineTable()`.
+ *
+ * The symbol is intentionally not exported: callers use `PrimaryKeyOf` and
+ * `InsertInput`, while ordinary row objects remain free of runtime metadata.
+ */
+declare const inferredRowPrimaryKey: unique symbol;
+
+type InferredRowPrimaryKey<T> =
+  typeof inferredRowPrimaryKey extends keyof T
+    ? Extract<T[typeof inferredRowPrimaryKey], keyof T & string>
+    : never;
+
+/** Resolve the sync primary-key field for a row type. */
+export type PrimaryKeyOf<T extends Record<string, unknown>> =
+  [InferredRowPrimaryKey<T>] extends [never]
+    ? 'id' extends keyof T
+      ? 'id'
+      : never
+    : InferredRowPrimaryKey<T>;
+
+/**
+ * Input accepted by collection insert/load APIs.
+ *
+ * Zero generates a missing sync primary key at runtime, so that one field is
+ * optional at creation boundaries. Every other row field keeps its inferred
+ * type and requiredness.
+ */
+export type InsertInput<
+  T extends Record<string, unknown>,
+  TPrimaryKey extends keyof T & string = PrimaryKeyOf<T>,
+> = [TPrimaryKey] extends [never]
+  ? T
+  : Omit<T, TPrimaryKey> & Partial<Pick<T, TPrimaryKey>>;
+
+/**
  * Infer the row type from a defineTable() result.
  *
  * Maps each field to its TypeScript type via the phantom `TOutput` parameter
@@ -49,10 +84,18 @@ type InferFieldOutput<F> = F extends FieldDef<any, infer O> ? O : unknown;
  * });
  *
  * type TodoRow = InferRow<typeof todosTable>;
- * // { id: string; title: string; done: number }
+ * // { id: string; title: string; done: boolean }
  * ```
  */
 export type InferRow<T extends TableDefinition<any, any>> =
   T extends TableDefinition<infer F, infer PK>
-    ? { [K in PK]: string } & { [K in keyof F]: InferFieldOutput<F[K]> }
+    ? { [K in PK]: string }
+      & { [K in keyof F]: InferFieldOutput<F[K]> }
+      & { readonly [inferredRowPrimaryKey]?: PK }
+    : never;
+
+/** Infer the insert/load input for a `defineTable()` result. */
+export type InferInsert<T extends TableDefinition<any, any>> =
+  T extends TableDefinition<any, infer PK>
+    ? InsertInput<InferRow<T>, Extract<PK, keyof InferRow<T> & string>>
     : never;

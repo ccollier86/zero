@@ -1,8 +1,17 @@
 import { useSyncExternalStore, useCallback, useRef, useEffect, useContext } from 'react';
 import type { JsonValue } from '../types';
 import type { EphemeralClient } from './ephemeral-client';
+import type { EphemeralErrorMessage } from '../ephemeral-policy';
 import type { EphemeralEntryClient } from './ephemeral-store';
 import { SyncContext } from './hooks';
+import { useClientMaybe } from '../../frontend/client/client-context';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from '../../frontend/client/authorization-scope-hooks';
+
+const NOOP_UNSUBSCRIBE = () => {};
+const EMPTY_EPHEMERAL_ENTRIES: Record<string, EphemeralEntryClient> = {};
 
 /**
  * Get the EphemeralClient from context.
@@ -17,6 +26,31 @@ function useEphemeralClient(): EphemeralClient {
     throw new Error('Ephemeral client is not available.');
   }
   return ctx.ephemeralClient;
+}
+
+/** Observe authorization/validation failures from ephemeral operations. */
+export function useEphemeralErrors(
+  listener: (error: EphemeralErrorMessage) => void,
+): void {
+  const client = useEphemeralClient();
+  const platformClient = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(platformClient);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+
+  useEffect(() => {
+    if (!authorizationBoundary.ready) return;
+    return client.onError((error) => {
+      if (isAuthorizationScopeCallbackCurrent(
+        boundaryKeyRef.current,
+        boundaryReadyRef.current,
+        callbackBoundaryKey,
+      )) listener(error);
+    });
+  }, [authorizationBoundary.key, authorizationBoundary.ready, callbackBoundaryKey, client, listener]);
 }
 
 /**
@@ -41,10 +75,18 @@ export function useEphemeral<T extends JsonValue>(
   defaultValue: T
 ): [T, (value: T) => void] {
   const client = useEphemeralClient();
+  const platformClient = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(platformClient);
   const subscribed = useRef(false);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
 
   // Ensure subscription
   useEffect(() => {
+    if (!authorizationBoundary.ready) return;
     if (subscribed.current) return;
     subscribed.current = true;
 
@@ -53,25 +95,36 @@ export function useEphemeral<T extends JsonValue>(
       unsub();
       subscribed.current = false;
     };
-  }, [client, topic]);
+  }, [authorizationBoundary.key, authorizationBoundary.ready, client, topic]);
 
   const subscribe = useCallback(
     (cb: () => void) => {
-      return client.subscribe(topic, () => cb());
+      return authorizationBoundary.ready
+        ? client.subscribe(topic, () => cb())
+        : NOOP_UNSUBSCRIBE;
     },
-    [client, topic]
+    [authorizationBoundary.key, authorizationBoundary.ready, client, topic]
   );
 
   const getSnapshot = useCallback(
-    () => (client.get(topic, key) as T) ?? defaultValue,
-    [client, topic, key, defaultValue]
+    () => authorizationBoundary.ready
+      ? (client.get(topic, key) as T) ?? defaultValue
+      : defaultValue,
+    [authorizationBoundary.ready, client, topic, key, defaultValue]
   );
 
   const value = useSyncExternalStore(subscribe, getSnapshot, () => defaultValue);
 
   const setValue = useCallback(
-    (newValue: T) => client.set(topic, key, newValue),
-    [client, topic, key]
+    (newValue: T) => {
+      if (!isAuthorizationScopeCallbackCurrent(
+        boundaryKeyRef.current,
+        boundaryReadyRef.current,
+        callbackBoundaryKey,
+      )) return;
+      client.set(topic, key, newValue);
+    },
+    [callbackBoundaryKey, client, topic, key]
   );
 
   return [value as T, setValue];
@@ -97,16 +150,24 @@ export function useEphemeral<T extends JsonValue>(
  */
 export function useEphemeralTopic(topic: string): Record<string, EphemeralEntryClient> {
   const client = useEphemeralClient();
+  const platformClient = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(platformClient);
 
   const subscribe = useCallback(
-    (cb: () => void) => client.subscribe(topic, () => cb()),
-    [client, topic]
+    (cb: () => void) => authorizationBoundary.ready
+      ? client.subscribe(topic, () => cb())
+      : NOOP_UNSUBSCRIBE,
+    [authorizationBoundary.key, authorizationBoundary.ready, client, topic]
   );
 
   const getSnapshot = useCallback(
-    () => client.getEntries(topic),
-    [client, topic]
+    () => {
+      if (!authorizationBoundary.ready) return EMPTY_EPHEMERAL_ENTRIES;
+      const entries = client.getEntries(topic);
+      return Object.keys(entries).length > 0 ? entries : EMPTY_EPHEMERAL_ENTRIES;
+    },
+    [authorizationBoundary.ready, client, topic]
   );
 
-  return useSyncExternalStore(subscribe, getSnapshot, () => ({}));
+  return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY_EPHEMERAL_ENTRIES);
 }

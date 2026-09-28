@@ -1,4 +1,13 @@
-export type AuthEmailOutboxKind = 'password_reset' | 'email_verification';
+export type AuthEmailOutboxKind =
+  | 'password_reset'
+  | 'email_verification'
+  | 'tenant_invitation'
+  | 'domain_mailbox_proof';
+/** Kinds accepted by the generic, secret-free account-link enqueue path. */
+export type AuthEmailAccountLinkKind = Extract<
+  AuthEmailOutboxKind,
+  'password_reset' | 'email_verification'
+>;
 export type AuthEmailOutboxTerminal = 'delivered' | 'suppressed' | 'dead';
 
 export interface AuthEmailOutboxJob {
@@ -6,6 +15,13 @@ export interface AuthEmailOutboxJob {
   kind: AuthEmailOutboxKind;
   recipient: string;
   nativeContinuation: string | null;
+  invitationId: string | null;
+  secretEnvelope: string | null;
+  domainUserId: string | null;
+  domainEmailGeneration: number | null;
+  domainAuthGeneration: number | null;
+  domainIdentityKind: 'session' | 'continuation' | null;
+  domainIdentityContinuationId: string | null;
   attempts: number;
   leaseOwner: string;
 }

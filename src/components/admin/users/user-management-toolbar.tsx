@@ -20,11 +20,13 @@ export function UserManagementToolbar({
   config,
   live,
   roleOptions,
+  roleFieldLabel,
 }: {
   controlled: boolean;
   config: AuthAdminConfig | null;
   live: UseAdminUsersResult;
   roleOptions: readonly UserRoleOption[];
+  roleFieldLabel: string;
 }) {
   const page = getAdminUserPageWindow(live.page);
   return (
@@ -46,6 +48,7 @@ export function UserManagementToolbar({
           filters={live.filters}
           page={live.page}
           roleOptions={roleOptions}
+          roleFieldLabel={roleFieldLabel}
           isLoading={live.isLoading}
           onSearchChange={live.setSearch}
           onRoleChange={live.setRole}

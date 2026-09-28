@@ -51,10 +51,18 @@ export function setPlatformSink(sink: PlatformSink): void {
 
 /** Emit a fully custom platform event. */
 export function emitPlatformEvent(input: PlatformEventInput): PlatformEvent {
+  return emitPlatformEventTo(runtime, input);
+}
+
+/** Emit through an explicitly app-bound observability runtime. */
+export function emitPlatformEventTo(
+  target: PlatformObservabilityRuntime,
+  input: PlatformEventInput,
+): PlatformEvent {
   const event = normalizeEvent(input);
 
   try {
-    const result = runtime.sink.emit(event);
+    const result = target.sink.emit(event);
     if (result && typeof (result as Promise<void>).catch === 'function') {
       (result as Promise<void>).catch(() => {});
     }
@@ -71,6 +79,27 @@ export function emitPlatformCode(
   options: PlatformCodeEmitOptions = {}
 ): PlatformEvent {
   return emitPlatformEvent({
+    source: options.source,
+    level: options.level ?? definition.level,
+    category: options.category ?? definition.category,
+    code: definition.code,
+    prefix: definition.prefix,
+    message: options.message ?? definition.message,
+    metadata: options.metadata,
+    error: options.error,
+    requestId: options.requestId,
+    userId: options.userId,
+    traceId: options.traceId,
+  });
+}
+
+/** Emit a known code through an explicitly app-bound observability runtime. */
+export function emitPlatformCodeTo(
+  target: PlatformObservabilityRuntime,
+  definition: PlatformCodeDefinition,
+  options: PlatformCodeEmitOptions = {},
+): PlatformEvent {
+  return emitPlatformEventTo(target, {
     source: options.source,
     level: options.level ?? definition.level,
     category: options.category ?? definition.category,

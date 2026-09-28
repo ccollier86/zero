@@ -39,6 +39,13 @@ export function resolveUserManagementActionPolicy(params: {
   const active = user.status === 'active';
   const verificationPending = user.emailVerificationRequired && user.emailVerifiedAt === null;
   const mfaRequired = mfaStatus?.required ?? user.mfaRequired;
+  // Multi-tenant identities may own retained membership, invitation, join-
+  // request, or tenant-attribution history that must not be cascaded. The
+  // generic identity list does not expose enough lifecycle detail to prove a
+  // row is history-free, so the packaged live UI offers suspension instead.
+  // A controlled surface owns its own lifecycle ceremony and may opt in.
+  const liveDelete = live && config !== null
+    && (config.tenancy?.mode ?? 'single') === 'single';
 
   return {
     setupEmail: live && !self && active && user.passwordChangeRequired
@@ -53,7 +60,7 @@ export function resolveUserManagementActionPolicy(params: {
     revokeSessions: live && !self && active,
     suspend: live && !self && active && Boolean(config?.capabilities.suspendUsers),
     activate: live && !self && !active && Boolean(config?.capabilities.suspendUsers),
-    deleteUser: !self && (live || params.controlledDelete),
+    deleteUser: !self && (liveDelete || (!live && params.controlledDelete)),
     requireMfa: live && !self && !mfaRequired && Boolean(config?.capabilities.mfa),
     clearMfa: live && !self && user.mfaRequired,
     resetMfa: live && !self && Boolean(mfaStatus?.methods.length),

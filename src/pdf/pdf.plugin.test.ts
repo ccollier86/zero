@@ -7,6 +7,8 @@ import { resolvePdfConfig } from './pdf-config';
 import { createPdfPlugin, getPdfService } from './pdf.plugin';
 import { PdfService } from './pdf-service';
 import type { PdfRenderer, PreparedPdfRenderInput } from './pdf-types';
+import { ZERO_PDF_SERVICE } from '../runtime/service-keys';
+import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 
 describe('createPdfPlugin', () => {
   test('decorates handlers and closes the renderer on app stop', async () => {
@@ -41,6 +43,41 @@ describe('createPdfPlugin', () => {
     }
 
     expect(renderer.closed).toBe(true);
+    expect(getPdfService()).toBeNull();
+  });
+
+  test('joins renderer shutdown at the managed runtime boundary', async () => {
+    let releaseClose!: () => void;
+    let closeEntered!: () => void;
+    const release = new Promise<void>((resolve) => { releaseClose = resolve; });
+    const entered = new Promise<void>((resolve) => { closeEntered = resolve; });
+    const renderer: PdfRenderer = {
+      name: 'managed-test',
+      async render(_input: PreparedPdfRenderInput) {
+        return {
+          bytes: new TextEncoder().encode('%PDF-1.7\n%%EOF'),
+          renderer: 'managed-test',
+        };
+      },
+      async close() {
+        closeEntered();
+        await release;
+      },
+    };
+    const config = resolvePdfConfig({ renderer }, {});
+    if (config === false) throw new Error('Expected PDF config.');
+    const service = new PdfService(config, { renderer });
+    const runtime = new ZeroAppRuntime('pdf-stop-barrier');
+    createPdfPlugin({ config, service, runtime });
+
+    const disposing = runtime.dispose();
+    await entered;
+    expect(runtime.get(ZERO_PDF_SERVICE)).toBe(service);
+
+    releaseClose();
+    await disposing;
+
+    expect(runtime.get(ZERO_PDF_SERVICE)).toBeNull();
     expect(getPdfService()).toBeNull();
   });
 });

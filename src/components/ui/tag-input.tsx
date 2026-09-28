@@ -4,8 +4,8 @@ import * as React from 'react';
 import { XIcon } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 
-import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
+import { cn } from '#zero/lib/utils';
+import { Badge } from '#zero/components/ui/badge';
 
 // ─── Types ───────────────────────────────────────────────────────────────
 

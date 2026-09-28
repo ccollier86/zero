@@ -8,9 +8,10 @@
  * Actions go through the SDK client's fetch (auth token included).
  */
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import type { Row } from '../../sync/types';
 import { useClient } from './client-context';
+import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
 import { useQuery, useRow } from './data-hooks';
 import { unwrap } from './api';
 import type {
@@ -117,29 +118,48 @@ export function useWorkflowList(filter?: {
  */
 export function useWorkflowActions(): WorkflowActions {
   const client = useClient();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
 
-  const start = useCallback(async (name: string, input?: unknown): Promise<string> => {
+  const runAction = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) {
+      throw new Error('Workflow actions are unavailable during an authorization scope transition.');
+    }
+    const result = await operation();
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) {
+      throw new Error('The authorization scope changed before the workflow action completed.');
+    }
+    return result;
+  }, [callbackBoundaryKey]);
+
+  const start = useCallback((name: string, input?: unknown): Promise<string> => runAction(async () => {
     const res = unwrap(await client.api.workflows.post({ name, input }));
     return (res as { instanceId: string }).instanceId;
-  }, [client]);
+  }), [client, runAction]);
 
-  const cancel = useCallback(async (instanceId: string): Promise<void> => {
+  const cancel = useCallback((instanceId: string): Promise<void> => runAction(async () => {
     unwrap(await client.api.workflows[instanceId].cancel.post());
-  }, [client]);
+  }), [client, runAction]);
 
-  const pause = useCallback(async (instanceId: string): Promise<void> => {
+  const pause = useCallback((instanceId: string): Promise<void> => runAction(async () => {
     unwrap(await client.api.workflows[instanceId].pause.post());
-  }, [client]);
+  }), [client, runAction]);
 
-  const resume = useCallback(async (instanceId: string): Promise<void> => {
+  const resume = useCallback((instanceId: string): Promise<void> => runAction(async () => {
     unwrap(await client.api.workflows[instanceId].resume.post());
-  }, [client]);
+  }), [client, runAction]);
 
   const sendEvent = useCallback(
-    async (instanceId: string, eventName: string, payload?: unknown): Promise<void> => {
+    (instanceId: string, eventName: string, payload?: unknown): Promise<void> => runAction(async () => {
       unwrap(await client.api.workflows[instanceId].events.post({ eventName, payload }));
-    },
-    [client],
+    }),
+    [client, runAction],
   );
 
   return { start, cancel, pause, resume, sendEvent };

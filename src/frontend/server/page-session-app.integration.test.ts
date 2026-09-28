@@ -53,7 +53,11 @@ describe('createApp page-session SSR integration', () => {
     activeApp = await createApp({
       db: { mode: 'memory' },
       tables: {},
-      auth: true,
+      auth: {
+        tenancy: { mode: 'single' },
+        authorization: { mode: 'simple' },
+        bootstrap: 'public',
+      },
       routeAuth: 'protected-by-default',
       publicPaths: ['/login'],
       appDir,
@@ -74,6 +78,12 @@ describe('createApp page-session SSR integration', () => {
     });
     activeApp.listen(0);
     const baseUrl = `http://localhost:${activeApp.server!.port}`;
+
+    const authConfigResponse = await fetch(`${baseUrl}/auth/config`);
+    const authConfig = await authConfigResponse.json();
+    expect(authConfigResponse.status).toBe(200);
+    expect(authConfig.tenancy).toMatchObject({ mode: 'single' });
+    expect(authConfig.authorization).toMatchObject({ mode: 'simple' });
 
     const anonymous = await fetch(`${baseUrl}/app`, { redirect: 'manual' });
     expect(anonymous.status).toBe(302);

@@ -1,6 +1,11 @@
 # Platform Overview
 
-A full-stack reactive application framework that ships as a single Bun binary. One import, one server, everything in-process. No microservices, no Redis, no external queue. SQLite + WebSockets + React — wired end to end.
+A full-stack reactive application framework whose deployment unit is a single
+Bun binary with its services in-process. The normal shape is one server; file
+mode also supports multiple runtimes sharing one local SQLite database for
+durable Sync, State Sync, and authorization invalidation. No microservices,
+Redis, or external queue are required. SQLite + WebSockets + React are wired end
+to end.
 
 For the practical app setup path, start with [Start Here](./start-here.md).
 
@@ -13,15 +18,18 @@ Browser (React)  <->  WebSocket /sync  <->  Bun Server (Elysia)
 
 ## Core Engine: ReactiveDB + Real-Time Sync
 
-Every write to SQLite automatically broadcasts to every connected client via WebSocket pub/sub. No polling, no manual event emission. Insert a row on the server — every browser tab sees it instantly.
+ReactiveDB changes can update eligible subscribed clients over WebSocket
+without polling or manual invalidation. Delivery is not global: table policy,
+resource policy, row filters, the requested subscription, and snapshot mode all
+constrain what each connection may receive.
 
 **How it works:**
 1. Client calls `collection.insert(row)` — applies optimistically to local @xstate/store
 2. Mutation sent over WebSocket as `sync.mutate`
-3. Server checks sync mutation policy, writes to bun:sqlite (synchronous), triggers onChange listener
-4. onChange publishes `sync.change` to Bun pub/sub — all subscribers get it
+3. Server checks sync mutation policy and writes a durably sequenced change to bun:sqlite (synchronous)
+4. The ordered dispatcher evaluates the change for each eligible subscribed connection
 5. Originating client gets `sync.ack` — confirms or rolls back the optimistic write
-6. Other clients receive the change, apply to their local store, React re-renders
+6. Other authorized subscribers receive the change, apply it to their local store, and React re-renders
 
 **Auto/lazy sync for large tables:** Omitted table sync mode defaults to `auto`.
 Startup counts rows, keeps small tables in full websocket snapshots, and
@@ -30,7 +38,15 @@ resolved lazy mode skip the initial snapshot and load on demand via
 `collection.load()` or `useLazyCollection()`. Live changes still stream once
 rows are present locally.
 
-**Ring buffer reconnect:** If a client disconnects briefly, it sends its last `seq` on reconnect. Server replays missed changes from an in-memory ring buffer (default 1000 entries). No full re-download unless the gap exceeds buffer depth.
+**Retained-log reconnect:** If a client disconnects briefly, it sends its last
+`seq` on reconnect. The server replays missed changes from the retained,
+explicitly versioned SQLite `_changes` log (default 1000 positive entries).
+`_zero_sync_log_state` owns its monotonic cursor and pruning watermark, while a
+seq-0 sentinel fences pre-format binaries. File-mode runtimes sharing that
+database also poll the same ordered log for each other's commits. A
+retention/format/corruption gap closes the socket so reconnect receives an
+authoritative replacement snapshot. First adoption of the fence requires the
+documented stop-all upgrade in the release guide.
 
 **Transactions:** Batch writes with deferred change emission — clients see them atomically.
 
@@ -48,10 +64,12 @@ periodically re-resolve account and property-derived read policy, closing when
 permissions change. `createApp()` protects service-owned platform tables from
 direct sync mutation by default, while app-owned tables keep the fast
 optimistic write path unless you configure stricter policy. If an app table is
-registered with `defineResource()`, WebSocket sync also enforces resource
-policy: unconstrained `list` policies use the normal fast path, row-constrained
-lists use per-connection row filters, and direct `sync.mutate` writes evaluate
-resource create/update/delete policy.
+registered with `defineResource()` and exposed to Sync, WebSocket sync also
+enforces resource policy: unconstrained `list` policies use the normal fast
+path, row-constrained lists use per-connection row filters, and direct
+`sync.mutate` writes evaluate resource create/update/delete policy. The
+server-owned resource `exposure` value independently selects `internal`,
+`http`, `sync`, or `all`; multi mode requires an explicit choice.
 
 **Migrations:** Zero uses explicit migration files plus first-class tooling for
 schema history, drift detection, draft migration planning, rollback, and
@@ -73,6 +91,14 @@ protected `/api/_zero/observability/events` endpoint. See
 - **JWT access + refresh tokens** with rotation
 - **Persistent browser sessions:** refresh-token restore, 401 retry, sync reconnect with fresh tokens
 - **Role-based middleware:** `requireAuth()` and `requireAdmin()` — fully typed, zero casts
+- **Four additive profiles:** `single/simple`, `single/advanced`,
+  `multi/simple`, and `multi/advanced` through one authorization kernel
+- **Multi-tenant sessions and controls:** tenant selection/switching, member
+  administration, invitations/join requests, and request-only verified domains
+- **Advanced RBAC:** app-declared permissions and static role templates with
+  durable application/tenant assignments and packaged administration UI
+- **Control-plane audit:** bounded append-only authorization/security events,
+  authorized query/export, retention, hooks, and packaged viewer
 - **User properties:** arbitrary KV per user (`setProperty`, `getProperty`)
 - **Platform tokens:** generic one-time action tokens plus resumable public-flow tokens
 - **React integration:** `useAuth()` returns full state + actions in one call
@@ -116,12 +142,27 @@ console.log(client.isAuthenticated); // true
 | `<SignedIn>` / `<SignedOut>` | Auth-state visibility gates |
 | `<PropertyGate>` / `<HasFlag>` | UI-only visibility gates based on current-user properties |
 | `<Gate allow={['admin']}>` / `<AdminGate>` | Role-based conditional rendering |
+| `<PermissionGate>` / `<TenantGate>` / `<PlatformAdminGate>` | Browser-safe visibility gates over the live authorization snapshot; server enforcement is still required |
+| `<AuthFlowContinuation>` | Shared account-gate, tenant-selection/creation, invitation, and onboarding continuation |
+| `<TenantSwitcher>` / `<TenantSelectionForm>` / `<TenantCreationForm>` | Refresh-proof-backed tenant scope selection and creation controls |
+| `<TenantMemberManagement>` / `<TenantOnboardingManagement>` | Active-tenant member, role, invitation, and join-request administration |
+| `<TenantDomainManagement>` / `<DomainOnboarding>` | Exact-domain claim administration and request-to-join onboarding |
+| `<ApplicationAccessManagement>` | `single/advanced` application role administration |
+| `<ControlPlaneAuditViewer>` | Authorized bounded tenant/platform control-plane audit view and export |
+
+Zero-owned hooks and the app subtree are fenced across account/tenant
+replacement. App-owned caches can key or purge on the opaque,
+credential-free `useAuthorizationScopeBoundary()` result and should hide
+scope-sensitive UI while its `ready` flag is false. The key is cache metadata,
+not server authority.
 
 ---
 
-## State Sync — Per-User Persistent KV
+## State Sync — Per-Authorized-Scope User Persistent KV
 
-Like `useState` but persisted on the server and synced across all of a user's devices.
+Like `useState` but persisted on the server and synced across the user's
+devices in the same authorization scope. Single mode keeps one per-user
+keyspace; multi mode derives an independent tenant + user keyspace.
 
 ```tsx
 function Sidebar() {
@@ -130,13 +171,30 @@ function Sidebar() {
 }
 ```
 
-Open the sidebar on your laptop, it opens on your phone. Optimistic writes — instant local update, background sync. Two-tier storage: RAM (fast reads) + SQLite (persistence). 64KB per value, 1000 keys, 10MB per user.
+Open the sidebar on your laptop, it opens on your phone in the same scope.
+Optimistic writes are instant locally and persist in the background. SQLite is
+authoritative; a file-mode database supports ordered state fanout across Zero
+runtimes sharing that file. Limits are 64KB per value, 1,000 keys, and 10MB per
+scoped user keyspace.
 
 ---
 
 ## Ephemeral KV — High-Frequency Shared State
 
-Shared between all users, no persistence, no SQLite writes. Pure RAM + pub/sub. Fire-and-forget — no ack, no rollback. If an update is lost, the next one corrects it.
+Shared by connections that choose the same topic, with no persistence or
+SQLite writes. It is pure RAM + pub/sub and fire-and-forget—no ack or rollback.
+If an update is lost, the next one corrects it.
+
+> **Current security boundary:** auth-enabled `createApp()` rejects
+> unclassified topics. It reserves membership-checked
+> `presence:<roomId>`/`typing:<roomId>` and user-owned
+> `user:<currentUserId>:<name>` families; define `ephemeralPolicy` for other
+> app topics. Authless standalone Sync retains unrestricted compatibility
+> behavior. A raw caller-selected topic is never authority by itself.
+
+The `poll:*` example below therefore assumes either an authless standalone
+Sync plugin or an app `ephemeralPolicy` that derives and authorizes that poll
+namespace from trusted server state.
 
 ```tsx
 function LivePoll() {
@@ -146,10 +204,26 @@ function LivePoll() {
 ```
 
 **Built-in throttle** for high-frequency updates:
-```ts
-// Send cursor at ~15fps, not every mousemove
-client.ephemeral.setThrottled('cursors', 'alice', { x, y }, 66);
+```tsx
+import { usePresence, useThrottledCallback } from '@zero/framework/react';
+
+function SharedCanvas({ roomId }: { roomId: string }) {
+  const presence = usePresence(roomId);
+  const publishCursor = useThrottledCallback((x: number, y: number) => {
+    presence.update({ cursor: { x, y } });
+  }, 66);
+
+  return (
+    <canvas
+      onPointerMove={(event) => publishCursor(event.clientX, event.clientY)}
+    />
+  );
+}
 ```
+
+This sends cursor presence at roughly 15 fps without exposing the
+provider-owned ephemeral client. The room hook also keeps the write inside the
+built-in membership-checked topic and actor-owned key contract.
 
 **Use cases:** Cursor positions, typing indicators, live poll votes, drag positions, game state during a match.
 
@@ -157,7 +231,9 @@ client.ephemeral.setThrottled('cursors', 'alice', { x, y }, 66);
 
 ## Rooms — Collaborative Spaces
 
-Scoped collaboration with membership tracking. A room is a namespace that groups users and filters shared data.
+Membership-tracked collaboration primitives. The built-in room policy scopes
+`rooms` and `room_members`; app-owned room content needs its own server-side
+resource/Sync row and mutation policy.
 
 ```tsx
 function GameLobby({ roomId }) {
@@ -166,16 +242,34 @@ function GameLobby({ roomId }) {
   const { insert } = useCollection('game_moves');
 
   const makeMove = (pos: number) => {
-    insert({ room_id: roomId, player: me.id, position: pos });  // Auto-PK
+    // This table's server policy must validate membership and room_id.
+    insert({ room_id: roomId, player: me.id, position: pos });
   };
 
   return <Board moves={moves} players={members} onMove={makeMove} />;
 }
 ```
 
-**The key insight:** `useRoomData<T>(roomId, tableName)` makes any table with a `room_id` column collaborative. No new protocol, no new sync mechanism — it's `useQuery` with a pre-applied filter. The data lives in regular ReactiveDB tables and syncs like everything else.
+`useRoomData<T>(roomId, tableName)` is a client-side `useQuery` convenience
+with a pre-applied `room_id` filter. It does **not** authorize the table, prove
+membership, prevent a raw subscription, or validate writes. Declare a
+server-side read-row policy and insert/update/delete policy for `game_moves`;
+the server should validate or stamp `room_id`. Only then does the hook provide
+the convenient collaborative view.
 
-**Server:** `createRoomPlugin()` provides REST routes (`/rooms/*`) — create, join, leave, delete, list members.
+**Server:** `createRoomPlugin()` provides authenticated REST routes under
+`/rooms`. Creating a room makes its creator the owner and first member. Reading
+a room or its members requires membership; an unauthorized or missing room is
+reported as `404` to avoid an ID oracle. The default `POST /rooms/:id/join`
+does not admit arbitrary authenticated users—it only confirms an existing
+membership. Apps implement invitation/domain/approval admission in trusted
+server code with `RoomService.join()`, then the HTTP action is idempotent.
+Non-owners may leave; the owner must delete the room and receives
+`409 ROOM_OWNER_CANNOT_LEAVE` from `leave`. In `single`, the creator or global
+admin may delete a room. In `multi`, the creator or a live tenant owner,
+`allPermissions` role, or role with `rooms:manage` may delete it; a global
+platform admin who is only a tenant member has no tenant room authority.
+Unauthorized and cross-tenant IDs return the same `404` as missing IDs.
 
 **Hooks:**
 
@@ -184,14 +278,20 @@ function GameLobby({ roomId }) {
 | `useRoom(roomId)` | Room details + member list, live |
 | `useRoomMembers(roomId)` | Just the member list |
 | `useRooms(userId)` | All rooms user belongs to |
-| `useRoomActions()` | `{ create, join, leave, deleteRoom }` |
-| `useRoomData<T>(roomId, table)` | Rows from any table filtered by room_id |
+| `useRoomActions()` | `{ create, join, leave, deleteRoom }`; `join` confirms prior server-side admission |
+| `useRoomData<T>(roomId, table)` | Client-side `room_id` filter; server policy still required |
 
 ---
 
 ## Presence — Who's Online
 
-Built on ephemeral KV. Convention: topic `presence:{roomId}`, key `user:{userId}`. Auto-heartbeat every 10s, auto-expire after 30s, disconnect = gone.
+Built on ephemeral KV. Convention: topic `presence:{roomId}`, key
+`user:{userId}`. Auto-heartbeat every 10s, auto-expire after 30s, disconnect =
+gone. In managed authenticated apps, the server resolves the room through the
+app-local `RoomService`, requires current membership, owns the `user:{userId}`
+key, and prefixes the internal namespace with the validated application/tenant
+scope. Authless standalone Sync retains its explicitly unrestricted legacy
+topic behavior.
 
 ```tsx
 function Canvas({ roomId }) {
@@ -220,9 +320,19 @@ const { notifications, markRead, dismiss } = useNotifications();
 const unread = useUnreadCount();
 ```
 
-**Targeting:** Broadcast to all, target by user, by user list, or by role.
+**Targeting:** Broadcast to all, target by user, by user list, or by role. In
+`multi`, create/broadcast/target/audit/delete operations require live tenant
+owner, `allPermissions`, or `notifications:manage` authority. A global
+platform admin does not inherit that tenant authority. Role targets match the
+complete current tenant-role assignment set, including additive advanced
+roles; they never match `users.role` or a stale retained membership role.
 
-**Receipt tracking:** seen/read/dismissed state per user per notification, with admin audit trail. Receipt actions use authenticated notification routes and then broadcast the updated receipt rows through sync.
+**Receipt tracking:** seen/read/dismissed state per user per notification, with
+an admin audit trail. Receipt actions use authenticated notification routes;
+Sync projects an updated receipt row only to its owning user. The admin audit
+trail is protected HTTP and must be refetched or polled for later changes.
+Cross-tenant, unauthorized, and nonexistent notification IDs use
+non-enumerating `404` responses once management authority is established.
 
 **Pre-built UI:**
 
@@ -269,6 +379,12 @@ support owner access plus explicit grants by role, exact user ID, or trusted
 auth user-property key/value. The drive list and `useDriveCapabilities()` expose
 effective `read`, `write`, and `admin` capabilities so UI can disable controls
 without duplicating backend policy.
+In `multi`, owner and grant authority is limited to the active tenant. Role
+grants use the complete live tenant assignment set in advanced mode; neither a
+global platform-admin role nor the retained membership role is an implicit
+grant. Guessed private drive or permission IDs outside the active tenant return
+the same `404` as missing IDs. Explicitly public drive/object reads remain
+public capabilities.
 For public intake or resume-token flows, backend code can create scoped upload
 grants with `zero.storage.uploads.create()`. Those grants allow a browser to
 upload one file to one path without granting read access or opening the drive.
@@ -279,13 +395,15 @@ permission grants, browses files, filters/sorts folders, uploads through
 `StorageDropzone`, and creates presigned download links for protected files.
 
 **Frontend model:** storage hooks use the platform SDK client for auth. JSON
-actions go through `client.fetch()` and multipart uploads use the SDK access
-token with one refresh retry on 401 while preserving upload progress events.
+actions go through `client.fetch()`, while multipart uploads obtain each
+attempt's bearer from the same auth controller, wait for restoration, retry
+once after a successful refresh, and abort on an account/tenant scope change
+while preserving upload progress events.
 
-**Sync model:** storage metadata tables are readable through sync for reactive
-UI, but direct client `sync.mutate` writes to storage tables are blocked by
-default. Use storage actions/routes for creates, uploads, permissions, and
-visibility changes.
+**Sync model:** default `createApp()` keeps Storage drive/object metadata
+private from generic Sync reads and blocks direct `sync.mutate` writes. The
+official authenticated Storage hooks and actions/routes are the supported path
+for listing, creates, uploads, permissions, downloads, and visibility changes.
 
 **Standalone server:** `createApp()` mounts storage automatically. If you mount
 `createStoragePlugin()` yourself, mount `createAuthPlugin({ db })` first; the
@@ -420,7 +538,12 @@ const { start, cancel, pause, resume, sendEvent } = useWorkflowActions();
 await start('onboarding', { userId: 'alice' });
 ```
 
-SQLite-backed — state survives server restart. Scheduler polls for retries and timeouts every minute.
+SQLite-backed — state survives server restart. Each instance retains a private,
+MAC-protected actor or explicit system-authority seal. Zero revalidates the
+session/account/tenant/membership/role revision before dispatch and again before
+accepting async output, so stale work cannot commit after authorization changes.
+Scheduler polls for retries and timeouts every minute; those global scans do not
+bypass the per-instance authority gate.
 
 ---
 
@@ -476,7 +599,7 @@ export const tables = { todos: todoTable };
 />
 ```
 
-Generates the full form from the schema: inputs, validation, error messages, submit/reset buttons. Supports create and edit modes. Grid layout with configurable columns. Optional Card wrapper. `collection` can be a collection object or table name, and boolean fields can use the animated switch renderer with `fields={{ enabled: { useSwitch: true } }}`.
+Generates the full form from the schema: inputs, validation, error messages, submit/reset buttons. Supports create and edit modes. Grid layout with configurable columns. Optional Card wrapper. `collection` can be a collection object or table name, and boolean fields can use the animated switch renderer with `fields={{ enabled: { useSwitch: true } }}`. `includeFields={resourceFields.create}` (or `.update`) restricts rendering, validation, and submitted data to one shared resource allow-list; `CrudPage resourceFields={resourceFields}` wires this automatically.
 
 ### Wizard — Multi-Step Forms
 
@@ -546,7 +669,9 @@ sources. See the full guide in [DataTableView](./frontend/data-table.md).
 Full-sync tables use `collection="todos"` and write inline edits back through
 the reactive DB automatically. Lazy tables can fetch through Zero's `/api/data`
 endpoint without hand-writing a hook; when the table is a registered resource,
-its `list` policy is enforced on those reads too:
+it must permit HTTP (`http` or `all`), and its `list` policy is enforced on
+those reads too. Use `all` when the same resource also participates in lazy
+Sync:
 
 ```tsx
 <DataTableView
@@ -576,7 +701,7 @@ Caller-owned data stays simple:
 
 **Features:**
 - **Live binding:** Point it at a collection name, it auto-updates as data changes
-- **Lazy backend reads:** Use `source={{ type: 'lazy', table }}` for `/api/data` with sync/resource policy enforcement
+- **Lazy backend reads:** Use `source={{ type: 'lazy', table }}` for eligible `/api/data` tables with resource policy enforcement; registered resources must permit HTTP, and lazy Sync resources use `exposure: 'all'`
 - **Inline editing:** Click a cell, edit in-place, Tab to next — changes sync instantly
 - **Sorting/filtering:** Column headers with sort toggles and filter inputs
 - **Composable toolbar:** Search, filters, export, column visibility, and app actions can be shown independently
@@ -617,22 +742,24 @@ See the full organism and low-level detail primitive guide in
 
 ```tsx
 <MasterDetailView
-  schema={userSchema}
-  collection="users"
+  schema={contactSchema}
+  collection="contacts"
   listColumns={['name', 'email', 'role']}
   editableFields={['name', 'email', 'role', 'bio']}
   searchable
   paginated={{ pageSize: 20 }}
-  detailHeader={({ item }) => <UserAvatar user={item} />}
-  navigationActions={(user) => user ? [
-    { label: 'Message', icon: <Mail />, onClick: () => openChat(user) },
+  detailHeader={({ item }) => <ContactAvatar contact={item} />}
+  navigationActions={(contact) => contact ? [
+    { label: 'Message', icon: <Mail />, onClick: () => openChat(contact) },
   ] : []}
 />
 ```
 
-DataTable on the left, auto-generated edit form on the right. Click a row, the detail panel loads. Edit fields, changes sync to all clients. Responsive — detail panel slides up on mobile.
+DataTable on the left, auto-generated edit form on the right. Click a row, the
+detail panel loads. Edits sync to connections authorized for that app row.
+Responsive — the detail panel slides up on mobile.
 
-For full-sync tables, `collection="users"` is the fastest path: the component
+For full-sync app tables, `collection="contacts"` is the fastest path: the component
 subscribes once through the reactive DB, feeds both the list and detail panel,
 and writes detail-form updates back to the collection unless `onUpdate` is
 provided.
@@ -643,10 +770,10 @@ live:
 
 ```tsx
 <MasterDetailView
-  schema={userSchema}
+  schema={contactSchema}
   source={{
     type: 'lazy',
-    table: 'users',
+    table: 'contacts',
     filters: { department: 'ops' },
     options: { limit: 100, order: 'created_at', dir: 'desc' },
   }}
@@ -785,19 +912,19 @@ const config = resolveConfig({
   stateSync: true,
 });
 
-const app = createApp(config);
+const app = await createApp(config);
 app.listen(3000);
 ```
 
 This single call wires up: ReactiveDB, WebSocket sync, auth (JWT + user store),
 state sync, platform KV/cache, ephemeral KV, rooms, notifications, workflows,
 scheduler, file-based router, resource policy, auto `/api/data` endpoint for
-lazy tables, SSR, and static file serving.
+eligible lazy tables, SSR, and static file serving.
 
 To make app-owned tables read-only or role-gated over direct sync writes, pass a `syncPolicy`. Platform defaults still compose with your policy using deny-wins semantics.
 
 ```ts
-import { createDefaultSyncPolicy } from '@platform/sync';
+import { createDefaultSyncPolicy } from '@zero/framework/sync';
 
 const config = resolveConfig({
   db: { mode: ':memory:' },
@@ -873,4 +1000,8 @@ const { users } = await client.listAuthAdminUsers();
 | Animation | Framer Motion |
 | Icons | Animate UI animated Lucide icons via `@zero/framework/icons`; raw `lucide-react` only for missing shapes |
 
-Everything runs in one process. Zero network hops between components. SQLite write -> onChange -> pub/sub broadcast completes synchronously before yielding the event loop.
+Within one runtime, Zero's services communicate in-process with no component
+network hop. Local commits enter the same ordered dispatcher synchronously;
+file-mode peer runtimes observe committed rows by polling the shared SQLite
+log. `hot`/`ephemeral` databases, separate files, and RAM-only ephemeral topics
+remain process-local unless an application supplies external coordination.

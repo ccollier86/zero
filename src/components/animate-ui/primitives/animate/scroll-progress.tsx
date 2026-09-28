@@ -10,9 +10,9 @@ import {
   type SpringOptions,
 } from 'motion/react';
 
-import { Slot, type WithAsChild } from '@/components/animate-ui/primitives/animate/slot';
-import { getStrictContext } from '@/lib/get-strict-context';
-import { useMotionValueState } from '@/hooks/use-motion-value-state';
+import { Slot, type WithAsChild } from '#zero/components/animate-ui/primitives/animate/slot';
+import { getStrictContext } from '#zero/lib/get-strict-context';
+import { useMotionValueState } from '#zero/hooks/use-motion-value-state';
 
 type ScrollProgressDirection = 'horizontal' | 'vertical';
 

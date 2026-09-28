@@ -22,6 +22,12 @@ export const DEFAULT_USER_ROLE_OPTIONS: readonly UserRoleOption[] = [
   { value: 'admin', label: 'Admin' },
 ];
 
+/** Multi-tenant installations keep these global roles separate from tenant roles. */
+export const MULTI_TENANT_USER_ROLE_OPTIONS: readonly UserRoleOption[] = [
+  { value: 'user', label: 'Standard identity' },
+  { value: 'admin', label: 'Platform administrator' },
+];
+
 /** Convert an API auth user into the row shape consumed by admin components. */
 export function mapAuthUserToManagementUser(user: AuthUser): UserManagementUser {
   return {
@@ -47,9 +53,13 @@ export function mapAuthUserToManagementUser(user: AuthUser): UserManagementUser 
 export function normalizeRoleOptions(
   users: readonly UserManagementUser[],
   configured: readonly UserRoleOption[] | undefined,
+  tenancyMode: 'single' | 'multi' = 'single',
 ): UserRoleOption[] {
   const byValue = new Map<string, UserRoleOption>();
-  for (const option of DEFAULT_USER_ROLE_OPTIONS) byValue.set(option.value, option);
+  const defaults = tenancyMode === 'multi'
+    ? MULTI_TENANT_USER_ROLE_OPTIONS
+    : DEFAULT_USER_ROLE_OPTIONS;
+  for (const option of defaults) byValue.set(option.value, option);
   for (const option of configured ?? []) byValue.set(option.value, option);
   for (const user of users) {
     if (!byValue.has(user.role)) {

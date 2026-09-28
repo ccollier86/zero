@@ -228,6 +228,41 @@ describe('createSyncClient', () => {
     client.disconnect();
   });
 
+  test('opts into state.subscribe on every accepted auth handshake', async () => {
+    const client = makeClient({ stateSync: true, token: 'state-token' });
+    await flushMicrotasks();
+
+    expect(MockWebSocket.latest().sent.map((item) => JSON.parse(item).type)).toEqual([
+      'sync.auth',
+      'sync.subscribe',
+      'state.subscribe',
+    ]);
+
+    client.reconnect();
+    await flushMicrotasks();
+
+    expect(MockWebSocket.instances).toHaveLength(2);
+    expect(MockWebSocket.latest().sent.map((item) => JSON.parse(item).type)).toEqual([
+      'sync.auth',
+      'sync.subscribe',
+      'state.subscribe',
+    ]);
+
+    client.disconnect();
+  });
+
+  test('does not send state.subscribe for an anonymous auth resolution', async () => {
+    const client = makeClient({ stateSync: true });
+    await flushMicrotasks();
+
+    expect(MockWebSocket.latest().sent.map((item) => JSON.parse(item).type)).toEqual([
+      'sync.auth',
+      'sync.subscribe',
+    ]);
+
+    client.disconnect();
+  });
+
   test('does not subscribe, flush, or report connected before auth is ready', async () => {
     MockWebSocket.autoAuthReady = false;
     const client = makeClient({ token: 'my-token' });
@@ -433,6 +468,39 @@ describe('createSyncClient', () => {
     expect(getCtx(client)._sync.pending).toEqual([]);
     expect(getCtx(client).todos).toEqual({});
 
+    client.disconnect();
+  });
+
+  test('freezes writes, purges old rows, and waits for a replacement-scope baseline', async () => {
+    let token = 'tenant-a-token';
+    const client = makeClient({ getToken: () => token });
+    await flushMicrotasks();
+    MockWebSocket.latest().simulateMessage(JSON.stringify({
+      type: 'sync.snapshot',
+      tables: {
+        todos: { old: { id: 'old', title: 'Tenant A', done: 0 } },
+      },
+      seq: 4,
+    }));
+    client.update('todos', 'old', { done: 1 });
+
+    client.beginAuthorizationScopeTransition();
+    expect(getCtx(client).todos).toEqual({});
+    expect(getCtx(client)._sync.pending).toEqual([]);
+    expect(() => client.insert('todos', {
+      id: 'blocked', title: 'Must not cross tenants', done: 0,
+    })).toThrow('authorization scope transition');
+
+    token = 'tenant-b-token';
+    client.completeAuthorizationScopeTransition(true);
+    await waitForSocketCount(2);
+    await client.waitForAuthorizationBaseline();
+
+    expect(JSON.parse(MockWebSocket.latest().sent[0]!).token).toBe('tenant-b-token');
+    expect(getCtx(client).todos).toEqual({});
+    expect(() => client.insert('todos', {
+      id: 'allowed', title: 'Tenant B', done: 0,
+    })).not.toThrow();
     client.disconnect();
   });
 

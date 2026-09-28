@@ -1,23 +1,37 @@
 /** XState store for browser authentication and current-user properties. */
 
 import { createStore } from '@xstate/store';
-import type { AuthUser } from './auth-types';
+import type {
+  AuthSessionTransitionState,
+  AuthTenantSummary,
+  AuthUser,
+} from './auth-types';
 
 export interface AuthStoreContext {
   user: AuthUser | null;
+  activeTenant: AuthTenantSummary | null;
   accessToken: string | null;
   refreshToken: string | null;
   isLoading: boolean;
   error: string | null;
+  sessionTransition: AuthSessionTransitionState;
 }
 
 export function createAuthStore() {
   const initial: AuthStoreContext = {
     user: null,
+    activeTenant: null,
     accessToken: null,
     refreshToken: null,
     isLoading: false as boolean,
     error: null,
+    sessionTransition: {
+      phase: 'idle',
+      operation: null,
+      revision: 0,
+      recoverable: false,
+      error: null,
+    },
   };
 
   return createStore({
@@ -30,10 +44,16 @@ export function createAuthStore() {
       }),
       'auth.success': (
         context: AuthStoreContext,
-        event: { user: AuthUser; accessToken: string; refreshToken: string },
+        event: {
+          user: AuthUser;
+          activeTenant?: AuthTenantSummary;
+          accessToken: string;
+          refreshToken: string;
+        },
       ): AuthStoreContext => ({
         ...context,
         user: event.user,
+        activeTenant: event.activeTenant ?? null,
         accessToken: event.accessToken,
         refreshToken: event.refreshToken,
         isLoading: false,
@@ -50,6 +70,7 @@ export function createAuthStore() {
       'auth.logout': (context: AuthStoreContext): AuthStoreContext => ({
         ...context,
         user: null,
+        activeTenant: null,
         accessToken: null,
         refreshToken: null,
         isLoading: false,
@@ -57,11 +78,16 @@ export function createAuthStore() {
       }),
       'auth.refresh': (
         context: AuthStoreContext,
-        event: { accessToken: string; refreshToken: string },
+        event: {
+          accessToken: string;
+          refreshToken: string;
+          activeTenant?: AuthTenantSummary;
+        },
       ): AuthStoreContext => ({
         ...context,
         accessToken: event.accessToken,
         refreshToken: event.refreshToken,
+        activeTenant: event.activeTenant ?? context.activeTenant,
       }),
       'auth.properties.patch': (
         context: AuthStoreContext,
@@ -99,6 +125,13 @@ export function createAuthStore() {
       'auth.clearError': (context: AuthStoreContext): AuthStoreContext => ({
         ...context,
         error: null,
+      }),
+      'auth.transition': (
+        context: AuthStoreContext,
+        event: { transition: AuthSessionTransitionState },
+      ): AuthStoreContext => ({
+        ...context,
+        sessionTransition: event.transition,
       }),
     },
   });

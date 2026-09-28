@@ -1,21 +1,85 @@
 import type { Row, ClientTableDef, JsonValue } from '../../sync/types';
+import type { PrimaryKeyOf } from '../../schema/infer';
 import { createSyncClient } from '../../sync/client/sync-client';
 import type { SyncClient } from '../../sync/client/sync-client';
 import { StateClient } from '../../sync/client/state-client';
 import { createStateStore, routeStateMessage, type StateStore } from '../../sync/client/state-store';
 import { EphemeralClient } from '../../sync/client/ephemeral-client';
 import { createEphemeralStore, routeEphemeralMessage } from '../../sync/client/ephemeral-store';
+import type { EphemeralErrorMessage } from '../../sync/ephemeral-policy';
 import { AuthClient, createAuthDisabledError } from './auth-client';
 import type {
+  AuthDomainOnboardingAdmissionResult,
+  AuthDomainOnboardingCompletion,
+  AuthTenantDomainAdministration,
+  AuthTenantDomainChallengeResult,
+  AuthTenantDomainClaimResult,
+  AuthTenantDomainPolicyUpdate,
+  AuthTenantDomainReleaseInput,
+  AuthTenantDomainReleaseResult,
+} from './auth-domain-types';
+import type {
+  AuthApplicationAdministrationConfig,
+  AuthApplicationAdminSdkSurface,
+  AuthApplicationOwnershipTransferResult,
+  AuthApplicationRoleDescriptor,
+  AuthApplicationRoleMutationResult,
+  AuthApplicationUser,
+  AuthApplicationUserIdentity,
+  AuthApplicationUserListParams,
+  AuthApplicationUserPage,
+  AuthApplicationUserStatus,
+} from './auth-application-administration-types';
+import type { AuthAuditSdkSurface } from './auth-audit-types';
+import type {
+  AuthAuthorizationSnapshot,
+  AuthAuthorizationState,
   AuthActionTokenInfo,
   AuthCompletionResult,
+  AuthEmailVerificationRequiredResult,
   AuthMfaMethod,
   AuthMfaMethodType,
   AuthMfaSetupStartResult,
   AuthMfaSetupVerifyResult,
   AuthPasswordUpdatedResult,
   AuthPublicConfig,
+  AuthRegistrationResult,
   AuthSessionResult,
+  AuthSessionTransitionState,
+  AuthTenantListResult,
+  AuthTenantCreateParams,
+  AuthTenantOnboardingRequiredResult,
+  AuthTenantSelectionRequiredResult,
+  AuthTenantSummary,
+  AuthTenantAddMemberParams,
+  AuthTenantAdministrationConfig,
+  AuthTenantMember,
+  AuthTenantMemberIdentity,
+  AuthTenantMemberListParams,
+  AuthTenantMemberMutationResult,
+  AuthTenantMemberPage,
+  AuthTenantMembershipStatus,
+  AuthTenantOwnershipTransferResult,
+  AuthTenantRoleDescriptor,
+  AuthTenantUpdateMemberParams,
+  AuthTenantAcceptInvitationParams,
+  AuthTenantInvitation,
+  AuthTenantInvitationAcceptanceResult,
+  AuthTenantInvitationInspection,
+  AuthTenantInvitationListParams,
+  AuthTenantInvitationPage,
+  AuthTenantInvitationStatus,
+  AuthTenantIssueInvitationParams,
+  AuthTenantIssueInvitationResult,
+  AuthTenantDenyJoinRequestParams,
+  AuthTenantJoinRequest,
+  AuthTenantJoinRequestApprovalPolicy,
+  AuthTenantJoinRequestApprovalRole,
+  AuthTenantJoinRequestListParams,
+  AuthTenantJoinRequestPage,
+  AuthTenantJoinRequestRoleSelection,
+  AuthTenantJoinRequestStatus,
+  AuthTenantReviewJoinRequestParams,
   AuthUserPropertyConfig,
   AuthUser,
   RegisterParams,
@@ -53,6 +117,33 @@ const PLATFORM_TABLES: Record<string, ClientTableDef> = {
 
 export type { SyncClient };
 
+export type {
+  AuthAuthorizationIdentitySnapshot,
+  AuthAuthorizationScopeSnapshot,
+  AuthAuthorizationSnapshot,
+  AuthAuthorizationState,
+  AuthAuthorizationStatus,
+} from './auth-authorization-types';
+
+export type {
+  AuthDomainOnboardingAdmissionResult,
+  AuthDomainOnboardingCompletion,
+  AuthDomainOnboardingPendingRequest,
+  AuthDomainOnboardingStatus,
+  AuthDomainOnboardingTenantSummary,
+  AuthTenantDomainAdministration,
+  AuthTenantDomainChallengeResult,
+  AuthTenantDomainClaim,
+  AuthTenantDomainClaimResult,
+  AuthTenantDomainClaimStatus,
+  AuthTenantDomainDnsChallenge,
+  AuthTenantDomainPolicy,
+  AuthTenantDomainPolicyUpdate,
+  AuthTenantDomainReleaseInput,
+  AuthTenantDomainReleaseResult,
+  AuthTenantDomainRequestRole,
+} from './auth-domain-types';
+
 export type { Collection } from './collection';
 
 export type {
@@ -65,6 +156,16 @@ export type {
 } from './resource-client';
 
 export type {
+  AuthApplicationAdministrationConfig,
+  AuthApplicationAdminSdkSurface,
+  AuthApplicationOwnershipTransferResult,
+  AuthApplicationRoleDescriptor,
+  AuthApplicationRoleMutationResult,
+  AuthApplicationUser,
+  AuthApplicationUserIdentity,
+  AuthApplicationUserListParams,
+  AuthApplicationUserPage,
+  AuthApplicationUserStatus,
   AuthActionTokenInfo,
   AuthAdminConfig,
   AuthAdminCreateUserParams,
@@ -76,6 +177,7 @@ export type {
   AuthAdminUserListParams,
   AuthAdminUserListResult,
   AuthCompletionResult,
+  AuthEmailVerificationRequiredResult,
   AuthMfaMethod,
   AuthMfaMethodType,
   AuthMfaSetupStartResult,
@@ -83,10 +185,60 @@ export type {
   AuthPasswordUpdatedResult,
   AuthPublicConfig,
   AuthSessionResult,
+  AuthSessionTransitionState,
+  AuthTenantListResult,
+  AuthTenantCreateParams,
+  AuthTenantOnboardingRequiredResult,
+  AuthTenantSelectionRequiredResult,
+  AuthTenantSummary,
+  AuthTenantAddMemberParams,
+  AuthTenantAdministrationConfig,
+  AuthTenantMember,
+  AuthTenantMemberIdentity,
+  AuthTenantMemberListParams,
+  AuthTenantMemberMutationResult,
+  AuthTenantMemberPage,
+  AuthTenantMembershipStatus,
+  AuthTenantOwnershipTransferResult,
+  AuthTenantRoleDescriptor,
+  AuthTenantUpdateMemberParams,
+  AuthTenantAcceptInvitationParams,
+  AuthTenantInvitation,
+  AuthTenantInvitationAcceptanceResult,
+  AuthTenantInvitationInspection,
+  AuthTenantInvitationListParams,
+  AuthTenantInvitationPage,
+  AuthTenantInvitationStatus,
+  AuthTenantIssueInvitationParams,
+  AuthTenantIssueInvitationResult,
+  AuthTenantDenyJoinRequestParams,
+  AuthTenantJoinRequest,
+  AuthTenantJoinRequestApprovalPolicy,
+  AuthTenantJoinRequestApprovalRole,
+  AuthTenantJoinRequestListParams,
+  AuthTenantJoinRequestPage,
+  AuthTenantJoinRequestRoleSelection,
+  AuthTenantJoinRequestStatus,
+  AuthTenantReviewJoinRequestParams,
   AuthUserPropertyConfig,
   AuthUser,
   RegisterParams,
 };
+
+export type {
+  AuthAuditActorProvenance,
+  AuthAuditEvent,
+  AuthAuditExport,
+  AuthAuditMetadata,
+  AuthAuditMetadataValue,
+  AuthAuditOutcome,
+  AuthAuditPage,
+  AuthAuditPruneResult,
+  AuthAuditQuery,
+  AuthAuditReadScope,
+  AuthAuditScopeKind,
+  AuthAuditSdkSurface,
+} from './auth-audit-types';
 
 // ─── FetchError ─────────────────────────────────────────────────────────────
 
@@ -145,6 +297,9 @@ export interface ClientConfig {
   /** Enable auth. Default: false, matching createApp(). */
   auth?: boolean;
 
+  /** Revalidate observed authorization hints in milliseconds. Default: 30000; 0 disables polling. */
+  authorizationRevalidationIntervalMs?: number;
+
   /** Enable per-user state sync. Requires auth: true. Default: false */
   stateSync?: boolean;
 
@@ -170,19 +325,46 @@ export interface Client extends AuthAdminSdkSurface {
   /** Server URL this client connects to. */
   readonly url: string;
 
+  /** Namespaced single/advanced application-role administration. */
+  readonly applicationAdmin: AuthApplicationAdminSdkSurface;
+
+  /** Authorized durable auth/control-plane audit access. */
+  readonly audit: AuthAuditSdkSurface;
+
   // ─── Auth (top-level shortcuts) ──────────────────────────────────
 
   /** Current authenticated user, or null. */
   readonly user: AuthUser | null;
 
+  /** Last live browser authorization hint; never authoritative for server access. */
+  readonly authorization: AuthAuthorizationSnapshot | null;
+
+  /** Load/error/revocation state for the authorization hint cache. */
+  readonly authorizationState: AuthAuthorizationState;
+
+  /** Load the current hint if absent. */
+  getAuthorization(): Promise<AuthAuthorizationSnapshot | null>;
+
+  /** Force a live server authorization read. */
+  refreshAuthorization(): Promise<AuthAuthorizationSnapshot | null>;
+
+  /** Subscribe to authorization hint state. */
+  subscribeAuthorization(callback: () => void): () => void;
+
+  /** Current live tenant binding in multi-tenant mode, or null. */
+  readonly activeTenant: AuthTenantSummary | null;
+
   /** Whether the user is authenticated. */
   readonly isAuthenticated: boolean;
+
+  /** Scope replacement phase, including committed-but-recoverable Sync state. */
+  readonly sessionTransition: AuthSessionTransitionState;
 
   /** Log in. Returns a session or an MFA continuation payload. */
   login(username: string, password: string): Promise<AuthCompletionResult>;
 
   /** Register a new account. Returns a session or account/MFA continuation payload. */
-  register(params: RegisterParams): Promise<AuthCompletionResult>;
+  register(params: RegisterParams): Promise<AuthRegistrationResult>;
 
   /** Load public auth config for registration/bootstrap UI decisions. */
   getAuthConfig(): Promise<AuthPublicConfig>;
@@ -221,11 +403,128 @@ export interface Client extends AuthAdminSdkSurface {
     code: string;
   }): Promise<AuthMfaSetupVerifyResult>;
 
-  /** Verify an MFA login challenge and receive a full session. */
+  /** Verify an MFA login challenge and receive the next auth completion result. */
   verifyMfaChallenge(params: {
     challengeToken: string;
     code: string;
-  }): Promise<AuthSessionResult>;
+  }): Promise<AuthCompletionResult>;
+
+  /** Exchange a short-lived identity continuation for one tenant-bound session. */
+  selectTenant(continuation: string, tenantId: string): Promise<AuthSessionResult>;
+
+  /** List live organizations using proof from the current refresh family. */
+  listTenants(): Promise<AuthTenantListResult>;
+
+  /** Create and activate an owned tenant using onboarding or current-session proof. */
+  createTenant(params: AuthTenantCreateParams): Promise<AuthSessionResult>;
+
+  /** Atomically replace the current browser session with another tenant binding. */
+  switchTenant(tenantId: string): Promise<AuthSessionResult>;
+
+  /** Load capabilities and role metadata for the active tenant. */
+  getTenantAdministrationConfig(): Promise<AuthTenantAdministrationConfig>;
+
+  /** List safe member projections from the active tenant only. */
+  listTenantMembers(params?: AuthTenantMemberListParams): Promise<AuthTenantMemberPage>;
+
+  /** Add an already-existing exact-email account to the active tenant. */
+  addTenantMember(params: AuthTenantAddMemberParams): Promise<AuthTenantMemberMutationResult>;
+
+  /** Update active-tenant membership status or assignable roles. */
+  updateTenantMember(
+    membershipId: string,
+    params: AuthTenantUpdateMemberParams,
+  ): Promise<AuthTenantMemberMutationResult>;
+
+  /** Permanently remove authority while retaining the membership audit row. */
+  removeTenantMember(membershipId: string): Promise<AuthTenantMemberMutationResult>;
+
+  /** Transfer the caller's protected ownership to another active member. */
+  transferTenantOwnership(
+    membershipId: string,
+  ): Promise<AuthTenantOwnershipTransferResult>;
+
+  /** Inspect an invitation without revealing whether arbitrary identities exist. */
+  inspectTenantInvitation(token: string): Promise<AuthTenantInvitationInspection>;
+
+  /** Accept with a completed session/onboarding proof, or create the exact invited account. */
+  acceptTenantInvitation(
+    params: AuthTenantAcceptInvitationParams,
+  ): Promise<AuthTenantInvitationAcceptanceResult>;
+
+  /** Submit a retained, reviewer-safe request for organization access. */
+  submitTenantJoinRequest(
+    tenantSlug: string,
+    continuation?: string,
+  ): Promise<{ submitted: true }>;
+
+  /** List invitation audit records for the active tenant. */
+  listTenantInvitations(
+    params?: AuthTenantInvitationListParams,
+  ): Promise<AuthTenantInvitationPage>;
+
+  /** Issue by email or explicitly request the one-time manual token contract. */
+  issueTenantInvitation(
+    params: AuthTenantIssueInvitationParams,
+  ): Promise<AuthTenantIssueInvitationResult>;
+
+  revokeTenantInvitation(invitationId: string): Promise<{
+    invitation: AuthTenantInvitation;
+  }>;
+
+  listTenantJoinRequests(
+    params?: AuthTenantJoinRequestListParams,
+  ): Promise<AuthTenantJoinRequestPage>;
+
+  approveTenantJoinRequest(
+    joinRequestId: string,
+    params: AuthTenantReviewJoinRequestParams,
+  ): Promise<{ request: AuthTenantJoinRequest }>;
+
+  denyTenantJoinRequest(
+    joinRequestId: string,
+    params: AuthTenantDenyJoinRequestParams,
+  ): Promise<{ request: AuthTenantJoinRequest }>;
+
+  /** Load verified-domain controls for the bearer-bound active tenant. */
+  getTenantDomainAdministration(signal?: AbortSignal): Promise<AuthTenantDomainAdministration>;
+
+  /** Create an exact-domain claim and receive its one-time DNS challenge. */
+  createTenantDomainClaim(domain: string): Promise<AuthTenantDomainChallengeResult>;
+
+  /** Rotate the one-time DNS challenge for one loaded claim revision. */
+  issueTenantDomainChallenge(
+    claimId: string,
+    expectedRevision: string,
+  ): Promise<AuthTenantDomainChallengeResult>;
+
+  verifyTenantDomainClaim(
+    claimId: string,
+    expectedRevision: string,
+  ): Promise<AuthTenantDomainClaimResult>;
+
+  updateTenantDomainPolicy(
+    claimId: string,
+    update: AuthTenantDomainPolicyUpdate,
+  ): Promise<AuthTenantDomainClaimResult>;
+
+  /** Release one claim into quarantine after exact typed confirmation. */
+  releaseTenantDomainClaim(
+    claimId: string,
+    input: AuthTenantDomainReleaseInput,
+  ): Promise<AuthTenantDomainReleaseResult>;
+
+  /** Begin generic mailbox proof using current Bearer or a pre-session identity proof. */
+  startDomainOnboarding(identityContinuation?: string): Promise<{ accepted: true }>;
+
+  /** Resolve only server-derived post-proof onboarding options; never logs in. */
+  completeDomainOnboarding(proofToken: string): Promise<AuthDomainOnboardingCompletion>;
+
+  /** Submit request-to-join using proof only; no tenant/domain/role input. */
+  admitDomainOnboarding(
+    continuation: string,
+    identityContinuation?: string,
+  ): Promise<AuthDomainOnboardingAdmissionResult>;
 
   /** Log out and clear tokens. */
   logout(): Promise<void>;
@@ -238,6 +537,9 @@ export interface Client extends AuthAdminSdkSurface {
 
   /** Refresh the access token. Deduplicates concurrent calls. */
   refresh(): Promise<void>;
+
+  /** Retry local reconciliation after a committed scope transition timed out. */
+  reconcileAuthSession(): Promise<void>;
 
   /** Set a user property (key-value). */
   setProperty(key: string, value: unknown): Promise<void>;
@@ -256,6 +558,7 @@ export interface Client extends AuthAdminSdkSurface {
   /**
    * Authenticated fetch with auto-JSON handling.
    * - Prepends server URL to relative paths (e.g., '/api/users' → 'http://localhost:3000/api/users')
+   * - Rejects absolute URLs on any origin other than the configured Zero server
    * - Auto-sets Content-Type and JSON.stringifies body objects
    * - Auto-parses JSON response
    * - Throws FetchError on non-2xx responses
@@ -309,7 +612,10 @@ export interface Client extends AuthAdminSdkSurface {
   // ─── Data ────────────────────────────────────────────────────────
 
   /** Get a typed collection for a table. */
-  collection<T extends Row = Row>(name: string): Collection<T>;
+  collection<
+    T extends Row = Row,
+    TPrimaryKey extends keyof T & string = PrimaryKeyOf<T>,
+  >(name: string): Collection<T, TPrimaryKey>;
 
   /** Get a generated-resource CRUD client. */
   resource<T extends Row = Row>(name: string, options?: ResourceClientOptions): ResourceClient<T>;
@@ -349,6 +655,34 @@ export interface InternalClient extends Client {
 
 let _instance: Client | null = null;
 
+const AUTHORIZATION_DISABLED_STATE: AuthAuthorizationState = Object.freeze({
+  status: 'disabled',
+  snapshot: null,
+  error: null,
+});
+
+/**
+ * Read the opaque parent-session id only to decide whether local client data
+ * crosses an authorization boundary. This is cache hygiene, never trust or
+ * authorization; malformed/opaque tokens conservatively become unique scopes.
+ */
+function readAuthorizationScope(token: string | null): string | null {
+  if (!token) return null;
+  try {
+    const payload = token.split('.')[1];
+    if (!payload || typeof globalThis.atob !== 'function') return `opaque:${token}`;
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const claims = JSON.parse(globalThis.atob(padded)) as Record<string, unknown>;
+    if (typeof claims.sid !== 'string' || typeof claims.sub !== 'string') {
+      return `opaque:${token}`;
+    }
+    return `${claims.sub}:${claims.sid}`;
+  } catch {
+    return `opaque:${token}`;
+  }
+}
+
 // ─── Factory ───────────────────────────────────────────────────────────────
 
 /**
@@ -362,9 +696,15 @@ let _instance: Client | null = null;
  *
  * @example
  * ```ts
+ * import { createClient, defineTable, field, type InferRow } from '@zero/framework/react';
+ *
+ * const todos = defineTable('todos', {
+ *   title: field.text({ required: true }),
+ *   done: field.boolean(),
+ * });
  * const client = createClient({
  *   url: 'http://localhost:3000',
- *   tables: { todos: { _pk: 'id', id: 'text', title: 'text', done: 'integer' } },
+ *   tables: { todos },
  * });
  *
  * // Auth — top-level
@@ -378,8 +718,8 @@ let _instance: Client | null = null;
  * await client.delete('/api/todos/1');
  *
  * // Collections — real-time sync
- * const col = client.collection('todos');
- * col.insert({ id: crypto.randomUUID(), title: 'Buy milk', done: 0 });
+ * const col = client.collection<InferRow<typeof todos>>('todos');
+ * col.insert({ title: 'Buy milk', done: true });
  * ```
  */
 export function createClient(config: ClientConfig): Client {
@@ -394,6 +734,7 @@ export function createClient(config: ClientConfig): Client {
     url,
     tables: rawTables,
     auth: authEnabled = false,
+    authorizationRevalidationIntervalMs,
     stateSync = false,
     autoConnect = true,
     maxReconnectAttempts,
@@ -423,7 +764,112 @@ export function createClient(config: ClientConfig): Client {
   };
 
   // ─── Auth ─────────────────────────────────────────────────────────
-  const authClient = authEnabled ? new AuthClient(url) : null;
+  // Authorization-scope lifecycle callbacks are installed into AuthClient
+  // before the concrete sync clients are constructed. They are only invoked
+  // by user actions after createClient() has returned.
+  let authorizationScopeEpoch = 0;
+  let authorizationScopeTransition = false;
+  const authorizationScopeRequestCancellations = new Map<number, Set<() => void>>();
+  let syncClient!: SyncClient;
+  let stateClient: StateClient | null = null;
+  let ephemeralClient!: EphemeralClient;
+  let syncStarted = autoConnect;
+
+  function cancelAuthorizationScopeRequests(): void {
+    const cancellations = [...authorizationScopeRequestCancellations.values()]
+      .flatMap((callbacks) => [...callbacks]);
+    authorizationScopeRequestCancellations.clear();
+    for (const cancel of cancellations) {
+      try {
+        cancel();
+      } catch {
+        // Scope invalidation must continue even if one transport cleanup fails.
+      }
+    }
+  }
+
+  function beginAuthorizationScopeTransition(): void {
+    if (authorizationScopeTransition) {
+      throw new Error('[client] An authorization scope transition is already in progress.');
+    }
+    authorizationScopeTransition = true;
+    authorizationScopeEpoch += 1;
+    cancelAuthorizationScopeRequests();
+    syncClient.beginAuthorizationScopeTransition();
+    stateClient?.beginAuthorizationScopeTransition();
+    ephemeralClient.beginAuthorizationScopeTransition();
+  }
+
+  async function completeAuthorizationScopeTransition(): Promise<void> {
+    const shouldConnect = syncStarted && Boolean(authClient?.accessToken);
+    syncClient.completeAuthorizationScopeTransition(shouldConnect);
+    try {
+      if (shouldConnect) await syncClient.waitForAuthorizationBaseline();
+    } finally {
+      // A baseline timeout is recoverable and must not strand every HTTP,
+      // state, and ephemeral operation behind a permanently closed barrier.
+      stateClient?.completeAuthorizationScopeTransition();
+      ephemeralClient.completeAuthorizationScopeTransition();
+      authorizationScopeTransition = false;
+    }
+  }
+
+  function abortAuthorizationScopeTransition(): void {
+    const shouldConnect = syncStarted && Boolean(authClient?.accessToken);
+    syncClient.completeAuthorizationScopeTransition(shouldConnect);
+    stateClient?.completeAuthorizationScopeTransition();
+    ephemeralClient.completeAuthorizationScopeTransition();
+    authorizationScopeTransition = false;
+  }
+
+  function beginAuthorizationScopeRequest(): number {
+    if (authorizationScopeTransition) {
+      throw new Error('[client] Requests are unavailable during an authorization scope transition.');
+    }
+    return authorizationScopeEpoch;
+  }
+
+  function assertAuthorizationScopeRequestCurrent(epoch: number): void {
+    if (authorizationScopeTransition || epoch !== authorizationScopeEpoch) {
+      throw new Error('[client] Discarded a response from a previous authorization scope.');
+    }
+  }
+
+  function registerAuthorizationScopeRequestCancellation(
+    epoch: number,
+    cancel: () => void,
+  ): () => void {
+    assertAuthorizationScopeRequestCurrent(epoch);
+    let callbacks = authorizationScopeRequestCancellations.get(epoch);
+    if (!callbacks) {
+      callbacks = new Set();
+      authorizationScopeRequestCancellations.set(epoch, callbacks);
+    }
+    callbacks.add(cancel);
+    return () => {
+      callbacks?.delete(cancel);
+      if (callbacks?.size === 0) authorizationScopeRequestCancellations.delete(epoch);
+    };
+  }
+
+  async function reconcileAuthorizationScopeTransition(): Promise<void> {
+    if (!syncStarted || !authClient?.accessToken) return;
+    if (!syncClient.connected) syncClient.connect();
+    await syncClient.waitForAuthorizationBaseline();
+  }
+
+  const authClient = authEnabled ? new AuthClient(url, {
+    authorizationRevalidationIntervalMs,
+    authorizationScopeLifecycle: {
+      beginTransition: beginAuthorizationScopeTransition,
+      completeTransition: completeAuthorizationScopeTransition,
+      abortTransition: abortAuthorizationScopeTransition,
+      reconcileTransition: reconcileAuthorizationScopeTransition,
+      beginRequest: beginAuthorizationScopeRequest,
+      assertRequestCurrent: assertAuthorizationScopeRequestCurrent,
+      registerRequestCancellation: registerAuthorizationScopeRequestCancellation,
+    },
+  }) : null;
 
   function requireAuthClient(): AuthClient {
     if (!authClient) throw createAuthDisabledError();
@@ -441,8 +887,6 @@ export function createClient(config: ClientConfig): Client {
   // ─── Sync Client (always created — owns the WebSocket) ────────────
   const currentAuthToken = () => authClient?.accessToken || null;
   let syncAuthRefresh: Promise<void> | null = null;
-  let syncStarted = autoConnect;
-  let syncClient!: SyncClient;
   let stateStore: StateStore | null = null;
 
   function resetClientSessionState(): void {
@@ -476,6 +920,7 @@ export function createClient(config: ClientConfig): Client {
     url: getWsUrl(),
     tables,
     getToken: currentAuthToken,
+    stateSync,
     autoConnect,
     onError,
     onAuthFailure: handleSyncAuthFailure,
@@ -484,7 +929,6 @@ export function createClient(config: ClientConfig): Client {
   });
 
   // ─── State Client (optional) ──────────────────────────────────────
-  let stateClient: StateClient | null = null;
   if (stateSync) {
     stateStore = createStateStore();
     stateClient = new StateClient(
@@ -512,7 +956,7 @@ export function createClient(config: ClientConfig): Client {
 
   // ─── Ephemeral Client (always created) ───────────────────────────
   const ephemeralStore = createEphemeralStore();
-  const ephemeralClient = new EphemeralClient(
+  ephemeralClient = new EphemeralClient(
     (msg) => syncClient.sendRaw(msg),
     ephemeralStore
   );
@@ -520,34 +964,59 @@ export function createClient(config: ClientConfig): Client {
   // Route incoming ephemeral messages from WS to ephemeral store
   syncClient.onMessage((msg) => {
     routeEphemeralMessage(ephemeralStore, msg);
+    if (msg.type === 'ephemeral.error') {
+      ephemeralClient.handleError(msg as unknown as EphemeralErrorMessage);
+    }
   });
 
   // ─── Collection Cache ─────────────────────────────────────────────
-  const collections = new Map<string, Collection<any>>();
+  const collections = new Map<string, Collection<any, any>>();
   const resourceClients = new Map<string, ResourceClient<any>>();
 
   let previousAuthToken = currentAuthToken();
+  let previousAuthorizationScope = readAuthorizationScope(previousAuthToken);
   const unsubscribeAuth = authClient?.subscribe(() => {
     const nextAuthToken = currentAuthToken();
     if (nextAuthToken === previousAuthToken) return;
 
+    const nextAuthorizationScope = readAuthorizationScope(nextAuthToken);
+    const scopeChanged = nextAuthorizationScope !== previousAuthorizationScope;
     previousAuthToken = nextAuthToken;
-    if (nextAuthToken && syncStarted) {
+    previousAuthorizationScope = nextAuthorizationScope;
+
+    // Tenant selection/switch owns its reconnect barrier. The token store
+    // notification occurs while that barrier is deliberately still closed.
+    if (authorizationScopeTransition) return;
+
+    if (scopeChanged) {
+      authorizationScopeEpoch += 1;
+      cancelAuthorizationScopeRequests();
+      syncClient.beginAuthorizationScopeTransition();
+      stateClient?.beginAuthorizationScopeTransition();
+      ephemeralClient.beginAuthorizationScopeTransition();
+      syncClient.completeAuthorizationScopeTransition(false);
+      stateClient?.completeAuthorizationScopeTransition();
+      ephemeralClient.completeAuthorizationScopeTransition();
+      if (nextAuthToken && syncStarted) syncClient.connect();
+    } else if (nextAuthToken && syncStarted) {
       syncClient.reconnect();
     } else {
       resetClientSessionState();
     }
   }) ?? null;
 
-  function getCollection<T extends Row>(name: string): Collection<T> {
+  function getCollection<
+    T extends Row,
+    TPrimaryKey extends keyof T & string = PrimaryKeyOf<T>,
+  >(name: string): Collection<T, TPrimaryKey> {
     if (!tables[name]) throw new Error(`Unknown table: ${name}`);
 
     let col = collections.get(name);
-    if (col) return col as Collection<T>;
+    if (col) return col as Collection<T, TPrimaryKey>;
 
-    col = createCollection<T>(name, syncClient, tables[name]);
+    col = createCollection<T, TPrimaryKey>(name, syncClient, tables[name]);
     collections.set(name, col);
-    return col as Collection<T>;
+    return col as Collection<T, TPrimaryKey>;
   }
 
   function getResource<T extends Row>(
@@ -597,10 +1066,32 @@ export function createClient(config: ClientConfig): Client {
 
   // ─── Eden Treaty API ────────────────────────────────────────────
   const api = createApi(url, authClient);
+  const applicationAdmin: AuthApplicationAdminSdkSurface = Object.freeze({
+    getConfig: async () => requireAuthClient().applicationAdmin.getConfig(),
+    listUsers: async (params?: AuthApplicationUserListParams) => (
+      requireAuthClient().applicationAdmin.listUsers(params)
+    ),
+    replaceUserRoles: async (
+      userId: string,
+      roles: readonly string[],
+      expectedRevision: string,
+    ) => (
+      requireAuthClient().applicationAdmin.replaceUserRoles(
+        userId,
+        roles,
+        expectedRevision,
+      )
+    ),
+    transferOwnership: async (userId: string) => (
+      requireAuthClient().applicationAdmin.transferOwnership(userId)
+    ),
+  });
 
   // ─── Client Instance ──────────────────────────────────────────────
   const client = {
     get url() { return url; },
+    get applicationAdmin() { return applicationAdmin; },
+    get audit() { return requireAuthClient().audit; },
     /** @internal */
     get auth() { return authClient; },
     get state() { return stateClient; },
@@ -614,7 +1105,26 @@ export function createClient(config: ClientConfig): Client {
 
     // ─── Auth (top-level) ──────────────────────────────────────────
     get user() { return authClient?.user ?? null; },
+    get authorization() { return authClient?.authorization ?? null; },
+    get authorizationState(): AuthAuthorizationState {
+      return authClient?.authorizationState ?? AUTHORIZATION_DISABLED_STATE;
+    },
+    getAuthorization: async () => requireAuthClient().getAuthorization(),
+    refreshAuthorization: async () => requireAuthClient().refreshAuthorization(),
+    subscribeAuthorization: (callback: () => void) => (
+      authClient ? authClient.subscribeAuthorization(callback) : () => {}
+    ),
+    get activeTenant() { return authClient?.activeTenant ?? null; },
     get isAuthenticated() { return authClient?.isAuthenticated ?? false; },
+    get sessionTransition() {
+      return authClient?.sessionTransition ?? {
+        phase: 'idle' as const,
+        operation: null,
+        revision: 0,
+        recoverable: false,
+        error: null,
+      };
+    },
     get token() { return authClient?.accessToken ?? null; },
     login: async (username: string, password: string) => requireAuthClient().login(username, password),
     register: async (params: RegisterParams) => requireAuthClient().register(params),
@@ -641,9 +1151,96 @@ export function createClient(config: ClientConfig): Client {
       challengeToken: string;
       code: string;
     }) => requireAuthClient().verifyMfaChallenge(params),
+    selectTenant: async (continuation: string, tenantId: string) =>
+      requireAuthClient().selectTenant(continuation, tenantId),
+    listTenants: async () => requireAuthClient().listTenants(),
+    createTenant: async (params: AuthTenantCreateParams) =>
+      requireAuthClient().createTenant(params),
+    switchTenant: async (tenantId: string) => requireAuthClient().switchTenant(tenantId),
+    getTenantAdministrationConfig: async () => (
+      requireAuthClient().getTenantAdministrationConfig()
+    ),
+    listTenantMembers: async (params?: AuthTenantMemberListParams) => (
+      requireAuthClient().listTenantMembers(params)
+    ),
+    addTenantMember: async (params: AuthTenantAddMemberParams) => (
+      requireAuthClient().addTenantMember(params)
+    ),
+    updateTenantMember: async (
+      membershipId: string,
+      params: AuthTenantUpdateMemberParams,
+    ) => requireAuthClient().updateTenantMember(membershipId, params),
+    removeTenantMember: async (membershipId: string) => (
+      requireAuthClient().removeTenantMember(membershipId)
+    ),
+    transferTenantOwnership: async (membershipId: string) => (
+      requireAuthClient().transferTenantOwnership(membershipId)
+    ),
+    inspectTenantInvitation: async (token: string) => (
+      requireAuthClient().inspectTenantInvitation(token)
+    ),
+    acceptTenantInvitation: async (params: AuthTenantAcceptInvitationParams) => (
+      requireAuthClient().acceptTenantInvitation(params)
+    ),
+    submitTenantJoinRequest: async (tenantSlug: string, continuation?: string) => (
+      requireAuthClient().submitTenantJoinRequest(tenantSlug, continuation)
+    ),
+    listTenantInvitations: async (params?: AuthTenantInvitationListParams) => (
+      requireAuthClient().listTenantInvitations(params)
+    ),
+    issueTenantInvitation: async (params: AuthTenantIssueInvitationParams) => (
+      requireAuthClient().issueTenantInvitation(params)
+    ),
+    revokeTenantInvitation: async (invitationId: string) => (
+      requireAuthClient().revokeTenantInvitation(invitationId)
+    ),
+    listTenantJoinRequests: async (params?: AuthTenantJoinRequestListParams) => (
+      requireAuthClient().listTenantJoinRequests(params)
+    ),
+    approveTenantJoinRequest: async (
+      joinRequestId: string,
+      params: AuthTenantReviewJoinRequestParams,
+    ) => requireAuthClient().approveTenantJoinRequest(joinRequestId, params),
+    denyTenantJoinRequest: async (
+      joinRequestId: string,
+      params: AuthTenantDenyJoinRequestParams,
+    ) => (
+      requireAuthClient().denyTenantJoinRequest(joinRequestId, params)
+    ),
+    getTenantDomainAdministration: async (signal?: AbortSignal) => (
+      requireAuthClient().getTenantDomainAdministration(signal)
+    ),
+    createTenantDomainClaim: async (domain: string) => (
+      requireAuthClient().createTenantDomainClaim(domain)
+    ),
+    issueTenantDomainChallenge: async (claimId: string, expectedRevision: string) => (
+      requireAuthClient().issueTenantDomainChallenge(claimId, expectedRevision)
+    ),
+    verifyTenantDomainClaim: async (claimId: string, expectedRevision: string) => (
+      requireAuthClient().verifyTenantDomainClaim(claimId, expectedRevision)
+    ),
+    updateTenantDomainPolicy: async (
+      claimId: string,
+      update: AuthTenantDomainPolicyUpdate,
+    ) => requireAuthClient().updateTenantDomainPolicy(claimId, update),
+    releaseTenantDomainClaim: async (
+      claimId: string,
+      input: AuthTenantDomainReleaseInput,
+    ) => requireAuthClient().releaseTenantDomainClaim(claimId, input),
+    startDomainOnboarding: async (identityContinuation?: string) => (
+      requireAuthClient().startDomainOnboarding(identityContinuation)
+    ),
+    completeDomainOnboarding: async (proofToken: string) => (
+      requireAuthClient().completeDomainOnboarding(proofToken)
+    ),
+    admitDomainOnboarding: async (
+      continuation: string,
+      identityContinuation?: string,
+    ) => requireAuthClient().admitDomainOnboarding(continuation, identityContinuation),
     logout: async () => requireAuthClient().logout(),
     changePassword: async (currentPassword: string, newPassword: string) => requireAuthClient().changePassword(currentPassword, newPassword),
     refresh: async () => { await requireAuthClient().refresh(); },
+    reconcileAuthSession: async () => requireAuthClient().reconcileSession(),
     setProperty: async (key: string, value: unknown) => requireAuthClient().setProperty(key, value),
     getProperty: async (key: string) => requireAuthClient().getProperty(key),
     getProperties: async () => requireAuthClient().getProperties(),
@@ -679,8 +1276,11 @@ export function createClient(config: ClientConfig): Client {
     delete: <T = unknown>(path: string) => clientFetch<T>(path, { method: 'DELETE' }),
 
     // ─── Data ──────────────────────────────────────────────────────
-    collection<T extends Row>(name: string): Collection<T> {
-      return getCollection<T>(name);
+    collection<
+      T extends Row,
+      TPrimaryKey extends keyof T & string = PrimaryKeyOf<T>,
+    >(name: string): Collection<T, TPrimaryKey> {
+      return getCollection<T, TPrimaryKey>(name);
     },
 
     resource<T extends Row>(name: string, options?: ResourceClientOptions): ResourceClient<T> {
@@ -709,8 +1309,11 @@ export function createClient(config: ClientConfig): Client {
     },
 
     disconnect() {
+      authorizationScopeEpoch += 1;
+      cancelAuthorizationScopeRequests();
       syncClient.disconnect();
       unsubscribeAuth?.();
+      authClient?.dispose();
       stateClient?.dispose();
       ephemeralClient.dispose();
       collections.clear();

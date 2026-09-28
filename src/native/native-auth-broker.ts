@@ -36,6 +36,8 @@ export function createNativeAuthBroker(client: NativeAuthClient): NativeAuthBrok
     refresh: () => afterSignOut(() => single(
       refresh, () => client.refresh(), (next) => { refresh = next; },
     )),
+    listTenants: () => afterSignOut(() => client.listTenants()),
+    switchTenant: (tenantId) => afterSignOut(() => client.switchTenant(tenantId)),
     getUser: () => client.getUser(),
     getAccessToken: () => afterSignOut(() => client.getAccessToken()),
     fetch: (input, init) => afterSignOut(() => client.fetch(input, init)),

@@ -7,10 +7,13 @@ import {
 } from 'react';
 import type { Row, JsonValue } from '../../sync/types';
 import { useClient } from './client-context';
+import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
 import { useQuery, useRow } from './data-hooks';
 import type { InternalClient } from './sdk';
 import { unwrap } from './api';
 import type { RoomRecord, RoomMemberRecord, RoomRole } from '../../rooms/types';
+
+const NOOP_UNSUBSCRIBE = () => {};
 
 // ─── useRoom ────────────────────────────────────────────────────────────────
 
@@ -71,6 +74,10 @@ export function useRooms(userId: string): RoomRecord[] {
 
 export interface RoomActions {
   create: (name: string, type?: string, maxMembers?: number) => Promise<RoomRecord>;
+  /**
+   * Confirm and return an existing membership. Zero's default HTTP policy does
+   * not self-admit arbitrary users; admission is an app-owned server action.
+   */
   join: (roomId: string) => Promise<RoomMemberRecord>;
   leave: (roomId: string) => Promise<void>;
   deleteRoom: (roomId: string) => Promise<void>;
@@ -81,35 +88,54 @@ export interface RoomActions {
  */
 export function useRoomActions(): RoomActions {
   const client = useClient();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+
+  const runAction = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) {
+      throw new Error('Room actions are unavailable during an authorization scope transition.');
+    }
+    const result = await operation();
+    if (!boundaryReadyRef.current
+      || boundaryKeyRef.current !== callbackBoundaryKey) {
+      throw new Error('The authorization scope changed before the room action completed.');
+    }
+    return result;
+  }, [callbackBoundaryKey]);
 
   const create = useCallback(
-    async (name: string, type?: string, maxMembers?: number) => {
+    (name: string, type?: string, maxMembers?: number) => runAction(async () => {
       const res = unwrap(await client.api.rooms.post({ name, type, maxMembers }));
       return (res as { room: RoomRecord }).room;
-    },
-    [client]
+    }),
+    [client, runAction]
   );
 
   const join = useCallback(
-    async (roomId: string) => {
+    (roomId: string) => runAction(async () => {
       const res = unwrap(await client.api.rooms[roomId].join.post());
       return (res as { member: RoomMemberRecord }).member;
-    },
-    [client]
+    }),
+    [client, runAction]
   );
 
   const leave = useCallback(
-    async (roomId: string) => {
+    (roomId: string) => runAction(async () => {
       unwrap(await client.api.rooms[roomId].leave.post());
-    },
-    [client]
+    }),
+    [client, runAction]
   );
 
   const deleteRoom = useCallback(
-    async (roomId: string) => {
+    (roomId: string) => runAction(async () => {
       unwrap(await client.api.rooms[roomId].delete());
-    },
-    [client]
+    }),
+    [client, runAction]
   );
 
   return { create, join, leave, deleteRoom };
@@ -146,6 +172,8 @@ export interface PresenceMember {
   custom?: Record<string, unknown>;
 }
 
+const EMPTY_PRESENCE_MEMBERS: PresenceMember[] = [];
+
 export interface UsePresenceResult {
   members: PresenceMember[];
   update: (data: Record<string, unknown>) => void;
@@ -168,6 +196,7 @@ export interface UsePresenceResult {
  */
 export function usePresence(roomId: string, myData?: Record<string, unknown>): UsePresenceResult {
   const client = useClient() as InternalClient;
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const ephemeral = client.ephemeral;
   const userId = client.user?.userId ?? client.user?.username ?? 'anonymous';
 
@@ -175,10 +204,21 @@ export function usePresence(roomId: string, myData?: Record<string, unknown>): U
   const key = `user:${userId}`;
 
   const myDataRef = useRef(myData);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
   myDataRef.current = myData;
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
 
   // Subscribe to presence topic and set initial presence
   useEffect(() => {
+    if (!authorizationBoundary.ready) return;
+    const effectBoundaryKey = authorizationBoundary.key;
+
+    const scopeIsCurrent = () => boundaryReadyRef.current
+      && boundaryKeyRef.current === effectBoundaryKey;
+
     function buildPresenceValue(): JsonValue {
       const val: Record<string, JsonValue> = {
         status: 'online',
@@ -189,28 +229,41 @@ export function usePresence(roomId: string, myData?: Record<string, unknown>): U
     }
 
     // Set initial presence
+    if (!scopeIsCurrent()) return;
     ephemeral.set(topic, key, buildPresenceValue(), 30_000);
 
     // Heartbeat every 10s
     const heartbeat = setInterval(() => {
-      ephemeral.set(topic, key, buildPresenceValue(), 30_000);
+      if (scopeIsCurrent()) {
+        ephemeral.set(topic, key, buildPresenceValue(), 30_000);
+      }
     }, 10_000);
 
     return () => {
       clearInterval(heartbeat);
-      ephemeral.delete(topic, key);
+      if (scopeIsCurrent()) {
+        ephemeral.delete(topic, key);
+      }
     };
-  }, [ephemeral, topic, key]);
+  }, [authorizationBoundary.key, authorizationBoundary.ready, ephemeral, topic, key]);
 
   // Subscribe to the topic for live updates
   const subscribe = useCallback(
-    (cb: () => void) => ephemeral.subscribe(topic, () => cb()),
-    [ephemeral, topic]
+    (cb: () => void) => authorizationBoundary.ready
+      ? ephemeral.subscribe(topic, () => cb())
+      : NOOP_UNSUBSCRIBE,
+    [authorizationBoundary.key, authorizationBoundary.ready, ephemeral, topic]
   );
 
   const prevSnapshotRef = useRef<PresenceMember[]>([]);
+  const prevBoundaryKeyRef = useRef<string | null>(null);
 
   const getSnapshot = useCallback(() => {
+    if (!authorizationBoundary.ready) {
+      prevBoundaryKeyRef.current = authorizationBoundary.key;
+      prevSnapshotRef.current = EMPTY_PRESENCE_MEMBERS;
+      return EMPTY_PRESENCE_MEMBERS;
+    }
     const entries = ephemeral.getEntries(topic);
     const members: PresenceMember[] = [];
 
@@ -226,23 +279,30 @@ export function usePresence(roomId: string, myData?: Record<string, unknown>): U
       });
     }
 
-    // Return stable reference if data hasn't changed (useSyncExternalStore uses Object.is)
-    const prev = prevSnapshotRef.current;
-    if (
-      prev.length === members.length &&
-      prev.every((m, i) => m.userId === members[i].userId && m.status === members[i].status && m.lastSeen === members[i].lastSeen)
-    ) {
-      return prev;
+    const previous = prevSnapshotRef.current;
+    if (prevBoundaryKeyRef.current === authorizationBoundary.key
+      && previous.length === members.length
+      && previous.every((member, index) => {
+        const next = members[index];
+        return member.userId === next.userId
+          && member.status === next.status
+          && member.lastSeen === next.lastSeen
+          && member.custom === next.custom;
+      })) {
+      return previous;
     }
+    prevBoundaryKeyRef.current = authorizationBoundary.key;
     prevSnapshotRef.current = members;
     return members;
-  }, [ephemeral, topic]);
+  }, [authorizationBoundary.key, authorizationBoundary.ready, ephemeral, topic]);
 
   const emptyMembers: PresenceMember[] = useMemo(() => [], []);
   const members = useSyncExternalStore(subscribe, getSnapshot, () => emptyMembers);
 
   const update = useCallback(
     (data: Record<string, unknown>) => {
+      if (!boundaryReadyRef.current
+        || boundaryKeyRef.current !== callbackBoundaryKey) return;
       const val: Record<string, JsonValue> = {
         status: 'online',
         lastSeen: Date.now(),
@@ -250,7 +310,7 @@ export function usePresence(roomId: string, myData?: Record<string, unknown>): U
       };
       ephemeral.set(topic, key, val, 30_000);
     },
-    [ephemeral, topic, key]
+    [callbackBoundaryKey, ephemeral, topic, key]
   );
 
   return { members, update };

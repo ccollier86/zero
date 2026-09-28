@@ -6,6 +6,133 @@ All notable Zero Platform changes are tracked here.
 
 ### Added
 
+- Added a safe-by-default installation bootstrap ceremony at `auth.bootstrap`.
+  Fresh authenticated apps now require an operator-held secret of at least 32
+  characters (or an explicit `public`/`disabled` choice); Zero rejects invalid
+  setup authority before password hashing, rechecks it under the serialized
+  registration transaction, and durably closes bootstrap with the first admin.
+  Public/admin config responses expose only readiness flags, the packaged
+  register form supports the setup key, Doctor diagnoses missing/public setup,
+  and upgraded databases with existing users are sealed automatically.
+- Added explicit auth capability axes for `tenancy: 'single' | 'multi'` and
+  `authorization: 'simple' | 'advanced'`. Existing/omitted configuration
+  normalizes to `single/simple`; all four profiles now resolve through the same
+  app-local authorization kernel while preserving the existing global
+  `users.role` contract for platform administration.
+- Added durable multi-tenant browser sessions, explicit tenant selection and
+  refresh-family-backed switching, transactional tenant creation, protected
+  owner invariants, live membership/tenant generation validation, and
+  tenant-aware native sessions. Registration can atomically provision the
+  first organization during installation bootstrap or return an identity-only
+  onboarding continuation after bootstrap.
+- Added static declarative permissions and simple/advanced scoped roles with
+  retained assignment history, protected ownership transfer, optimistic role
+  revisions, live grant-ceiling checks, and inert cleanup of retired role
+  definitions. `single/advanced` includes the namespaced `/auth/application`
+  control plane, typed client surface, identity-safe hook, and packaged
+  `ApplicationAccessManagement` UI.
+- Added multi-tenant member administration, one-time expiring invitations,
+  invitation-bound account creation, retained join requests, typed tenant
+  administration clients/hooks, and packaged member, invitation, onboarding,
+  creation, selection, and switching controls.
+- Added opt-in verified-company-domain request onboarding with exact DNS and
+  current-mailbox proof, non-enumerating discovery, retained fixed-role join
+  requests, packaged administration/onboarding controls, and an owner-only
+  release lifecycle with retained provenance and a seven-day cross-tenant
+  quarantine. Domain autojoin, aliases/wildcards/subdomain inference, direct
+  transfer, and upstream enterprise SSO remain separate future capabilities.
+- Added a bounded append-only authorization and account-security control-plane
+  audit. Protected mutations write their event transactionally where the
+  underlying change is local; authorized platform/tenant list and export,
+  retention, strict browser parsing, hooks, and a packaged viewer are included.
+  This is deliberately not a general page/read/application-CRUD activity log.
+- Added a sanitized current-authorization browser snapshot plus permission,
+  tenant, and platform-admin gates. Browser credential transport now owns
+  restoration, refresh, multipart authentication, authorization epochs,
+  response-body fencing, cross-tab coordination, Zero-owned hook cache purging,
+  and app-subtree/overlay replacement so UI state cannot be reused across
+  accounts or tenants. Apps with their own caches can consume the public,
+  credential-free `useAuthorizationScopeBoundary()` key and readiness state.
+- Added `authorizationPolicy()` for server-only resource declarations. Managed
+  CRUD, lazy `/api/data`, and WebSocket Sync now evaluate the same structured
+  access requirement and live application/tenant RBAC scope used by route
+  guards, including advanced additive assignments and transaction/socket
+  authority fencing.
+- Added an explicit server-owned resource `exposure` axis: `internal`, `http`,
+  `sync`, or `all`. Multi-tenant mode requires every registered resource to
+  choose one; single mode preserves omitted-as-`all` compatibility. Sync-only
+  resources must use full Sync, while lazy or auto-lazy Sync hydration requires
+  `all` because it also reads through `/api/data`. Explicit `actions: []` now
+  means no managed operations, and per-action policy maps reject unknown or
+  undeclared action keys instead of silently retaining dead policy.
+- Added opt-in immutable registered-resource field allow-lists through
+  `defineResourceFields({ read, create, update, filter, sort })`. Managed CRUD,
+  `/api/data`, Sync snapshot/catch-up/live/ack delivery, filters/sorts, caches,
+  packaged forms, and cache-backed exports now use the same projection and
+  client-write contract. Writes default to no fields once the contract is
+  present; direct SQL, unregistered tables, custom endpoints, and app-owned
+  exports remain trusted application code.
+- Added migration `020`'s durable auth-authority revision. Security-relevant
+  account/session/tenant/membership/assignment writes advance it through
+  SQLite triggers, and managed Sync runtimes sharing the file poll it to
+  promptly revalidate local sockets and managed ephemeral bindings.
+- Added migration `021`'s join-request provenance fence. Verified-domain
+  evidence now names its exact retained-request revision/source, legacy rows
+  remain fail-closed until explicit resubmission, approve and deny require an
+  optimistic `expectedRequestRevision`, and fixed/default approval roles stay
+  entirely server-owned.
+- Added migration `023`'s durable installed-auth-profile identity and monotonic
+  generation. Startup now distinguishes exact restarts from supported
+  simple-to-advanced adoption, transactionally preserves retained
+  multi-tenant roles and live browser/native session families, rejects
+  ambiguous legacy or reverse/tenancy-axis reinterpretation, blocks transitions
+  around pending registration provisioning, and fences stale runtimes and Sync
+  authority through the shared revision clock.
+- Hardened the durable Sync log as an exact, versioned compatibility boundary:
+  storage classes, collations, indexes, triggers, and affected-row counts are
+  validated; application/log writes remain atomic; history gaps reset policy
+  state synchronously; and observer, filter, or projector failures now latch
+  the runtime closed for current, pending, and future sockets instead of
+  advancing past an authorization event. Managed writes now use PK-targeted
+  ABORT upserts, canonical persisted row ids, target postconditions, lossless
+  JSON payloads, rollback-only synchronous transactions, validated polling
+  intervals, exact `RETURNING` confirmation for durable log inserts, and reject
+  unobservable cascading/value-setting foreign-key actions. Replica dispatchers
+  also latch closed if a trusted sequence or pruning watermark moves backward.
+  Schema definition is now atomic and prohibited inside managed transactions;
+  internal change row IDs must be non-empty strings; and pruning verifies the
+  exact sequence, watermark, and retained-row postconditions before commit.
+  Every outer managed write also fences the exact protected main/temp trigger
+  set after any schema-version change and again after in-transaction DDL.
+  Main-schema changes additionally revalidate every registered table's stored
+  `CREATE TABLE` definition, object, column/default/constraint/collation/
+  primary-key structure, and nonmutating FK actions. DDL-only schema installers
+  remain supported, while transactions that mix any DDL with tracked changes
+  roll back to prevent create/use/remove trigger or cascade side effects from
+  escaping the durable log. Trusted scoped reads/writes and optimistic expected-
+  row predicates now require exact JavaScript, SQLite storage-class, and
+  `BINARY` equality, so declared `NOCASE` collations or affinity coercion cannot
+  broaden an authorization boundary.
+  Snapshot readers are explicitly synchronous and managed-read-only: escaped
+  continuations remain poisoned, and caught write/schema/dispose attempts still
+  roll back any enclosing transaction. Listener thenables are reported as
+  contract violations with later rejections consumed, and listeners receive
+  isolated canonical payloads through stable subscription snapshots and whole-
+  batch reentrant ordering.
+- Added the authoritative Zero auth philosophy, phased implementation
+  checklist, and detailed audit/design record covering tenant isolation, RBAC,
+  onboarding, verified domains, upstream SSO, Elysia integration, packaged
+  control UI, installed clients, and the server-only schema-adjacent table-
+  security direction.
+- Documented the candidate boundary explicitly: protected Administration
+  Organization/platform-tenant lifecycle UI, upstream enterprise SSO,
+  break-glass, tenant-custom roles, populated-app adoption tooling, verified-
+  domain autojoin/aliases/direct transfer, and distributed coordination for
+  separate-database/cross-host replicas remain deferred. Shared-file row
+  fanout/auth invalidation and managed resource field policy are implemented;
+  `hot`/`ephemeral` runtime replication, a cross-runtime ephemeral topic bus,
+  application-owned caches, and raw SQL/custom response projection are not
+  implied by those managed boundaries.
 - Added native desktop and mobile authentication through a registered public
   OpenID Connect Authorization Code + PKCE provider and the
   `@zero/framework/native` SDK. Native sessions use the existing Zero users,
@@ -23,9 +150,10 @@ All notable Zero Platform changes are tracked here.
   `chromiumapp.org` redirects, Chrome Identity, narrow host permissions, and
   non-synced credential storage. Privileged extension pages remain explicitly
   trusted because Chrome storage is not worker-isolated. The independently
-  versioned Chrome adapter is not bundled into applications created or updated
-  by Zero. Its extension-global storage binding prevents server, client,
-  persistence, or namespace changes from orphaning an older refresh family.
+  versioned Chrome adapter is a functional private `0.0.0` preview and is not
+  bundled into applications created or updated by Zero. Its extension-global
+  storage binding prevents server, client, persistence, or namespace changes
+  from orphaning an older refresh family.
 - Added safe-by-default native authorization admission keyed from the direct
   socket peer, plus explicit trusted-proxy CIDR unwrapping that ignores spoofed
   forwarding headers from untrusted connections and rejects universal `/0`
@@ -48,6 +176,124 @@ All notable Zero Platform changes are tracked here.
 
 ### Fixed
 
+- Updated the Elysia, validation, file detection, Tailwind/Vite/PostCSS, and
+  synchronized AI SDK dependency families within their supported major lines,
+  eliminating all advisories reported by `bun audit`. Dependency auditing is
+  now an explicit candidate and clean-checkout release gate.
+- Bound authenticated browser fetches to the configured Zero server origin.
+  Cross-origin targets now fail locally with
+  `AUTH_REQUEST_ORIGIN_MISMATCH` before restoration or credential access, while
+  relative, root-relative, and same-origin absolute requests keep their public
+  behavior.
+- Restricted native identity state and Chrome broker IPC to the documented
+  standard OIDC identity claims. Arbitrary signed private claims are discarded
+  after validation instead of being persisted or copied across the public
+  credential-free boundary.
+- Made application startup and shutdown ownership atomic. Managed Auth, KV,
+  and Workflow services now finish startup before `createApp()` publishes the
+  app; standalone plugins gate requests on the same caught startup promise and
+  stop their listener after failure. Failed composition disposes app-local
+  registrations and owned SQLite, while Scheduler, PDF, Vector, and KV cleanup
+  is idempotent and awaited by the runtime stop barrier.
+- Closed a hot-SQLite shutdown durability race: a final synchronous snapshot
+  now supersedes older in-flight periodic work without allowing that older
+  completion to overwrite the close snapshot, and a failed final snapshot
+  leaves the database open for an explicit retry.
+- Fixed `multi/simple` to `multi/advanced` upgrades silently retaining only
+  protected owners. Zero now validates and adopts every non-removed active or
+  suspended membership role, preserves owner behavior, excludes removed
+  history, rolls back the complete transition on any registry/readiness/audit
+  failure, and records framework adoption with system provenance instead of a
+  fabricated user actor.
+
+- Fixed public tenant-onboarding request admission so invitation inspection,
+  join-request submission, and verified-domain onboarding use the same
+  exhaustive six-flow runtime and persistence contract. Append-only migration
+  `022` preserves legacy rows and indexes while widening historical databases;
+  migration `012` remains immutable, and tenant-only onboarding routes are
+  concealed before admission in single-tenant mode.
+- Made managed app shutdown transport-first and deterministic on Bun: Zero now
+  force-closes the native listener before runtime/database cleanup, then runs
+  Elysia stop hooks. Accordingly, `createApp().stop(false)` and `.stop()` also
+  force-close active native connections; applications that need a protocol-
+  level drain must complete it before calling `stop()`.
+- Bound live Sync mutation origins to exact committed local sequences instead
+  of ambient delivery state. Transaction batches retain one socket origin,
+  reentrant application writes remain originless, delayed local drains keep
+  their attribution, and rollback, gap, invalidation, external, and replay
+  paths cannot leak it.
+- Serialized concurrent migration runners on SQLite's writer lock and rechecked
+  durable state inside each forward/rollback transaction, preventing two stale
+  replicas from both applying the same migration during startup. Opposing
+  forward/rollback operations now fail safely instead of creating dependency
+  gaps, and incomplete registries refuse unknown durable versions. Lock-
+  acquisition timeouts do not create false failure events; failed rollbacks
+  retain their applied state; rollback keeps `_migrations` synchronized; and
+  partial or previously stale legacy ledgers reconcile per version. Concurrent
+  backup contenders retain one audited backup, while skipped copies are
+  discarded. Migration Doctor now reports the latest failed attempt separately
+  from the last successful applied/rolled-back state.
+- Closed mutation-authority time-of-check/time-of-use windows across platform
+  user administration, application-role administration, tenant invitations,
+  join review, verified-domain operations, and related lifecycle email work.
+  Long-running mutations now capture a secret-free reference to the exact
+  request session and revalidate it at the transaction/commit boundary; email
+  delivery rechecks authority before persisting usable links. Auth responses
+  now use private/no-store cache policy except for public JWKS discovery.
+- Hardened shared auth-authority polling against startup and concurrency races.
+  A first durable revision observed after a socket handshake now revalidates
+  that socket, and authority changes arriving during an in-flight socket or
+  managed-ephemeral sweep queue a follow-up pass instead of waiting for the
+  slower periodic fallback.
+- Moved ReactiveDB change-sequence allocation from a process-local counter to
+  a SQLite-owned transactional log state. Application writes, explicit-format
+  replay rows, sequence advancement, pruning-watermark movement, and physical
+  pruning now commit or roll back together; retained legacy-v0 histories resume
+  above their existing maximum without collisions across file-backed writers.
+  A reserved seq-0 sentinel, immutable-log triggers, exact startup validation,
+  and a poisoned legacy allocator make format/downgrade mistakes fail closed.
+  The first fenced upgrade requires a coordinated stop of every pre-fence
+  process sharing the SQLite file and cannot be rolled back to an older binary.
+  Database reopen retains replay history by default; intentional clear now
+  discards retained positive rows without resetting/reusing the sequence.
+  File-mode Sync now
+  polls that durable log, relays other connections' writes through each
+  runtime's ordinary policy/fanout path, suppresses local duplicates, and
+  classifies retention/continuity/format gaps, synchronously resets stateful
+  authorization-policy caches, and closes sockets for a clean snapshot.
+  Missing/async/throwing resets and non-retryable log failures latch the
+  runtime closed for current, pending-auth, and future sockets until restart.
+  Managed table and State SQL is explicitly bound to SQLite's `main` schema so
+  connection-local temporary tables cannot shadow durable writes. This shared-file
+  support does not replicate `hot`/`ephemeral` databases, separate database
+  files, cross-host messages, or RAM-only ephemeral topic values.
+- Closed default `createApp()` framework-table Sync reads across snapshots,
+  catch-up, and live delivery: users, workflow definitions, and Storage
+  metadata are private; notifications, receipts, rooms, and workflows now use
+  their target/owner/membership policies. Room authorization revisions update
+  independently of requested tables, and each app's policy captures its own
+  ReactiveDB instance.
+- Hardened framework authorization boundaries for notification receipts, room
+  membership/detail routes, workflow ownership, inherited file-route API auth,
+  middleware user properties, and Storage property grants. Direct
+  `StorageService` consumers using property grants must now provide
+  `isPolicyTrustedProperty`; without it, new property grants are rejected and
+  persisted property grants fail closed.
+- Tenant-scoped registered resources now server-stamp their discriminator and
+  enforce it in generated CRUD, `/api/data`, Sync snapshot/catch-up/live
+  delivery, mutations, and final SQL commit boundaries. Notifications, rooms,
+  Storage, state/ephemeral channels, and durable workflow execution use the
+  same live tenant authority; a global platform administrator receives no
+  implicit tenant data-plane access. Startup also verifies that the actual
+  SQLite table has the configured resource primary key as its sole primary key
+  and that its tenant discriminator exists, is `NOT NULL`, and is not the row
+  primary key; Doctor separately warns when declared index guidance does not
+  show the tenant field leading a likely index.
+- Added request-bound server service facades for multi-tenant routes and sealed,
+  revalidated workflow execution authority. Raw database and setup services
+  remain available only through the explicit `zero.unsafe` escape hatch in
+  tenant-shaped request code.
+
 - Upgraded `DatePicker` from a button-only calendar trigger to a synchronized
   typed input and calendar control. Unambiguous U.S. numeric dates with `/` or
   `-` normalize to the existing long display, while invalid or disabled dates
@@ -69,7 +315,8 @@ All notable Zero Platform changes are tracked here.
 - Isolated independently versioned Rust/Tauri and Chrome SDK repositories from
   framework packaging, test discovery, generated apps, and updates. Scaffold
   replacement now refuses targets containing root or nested Git repositories,
-  and custom templates never copy `.git` metadata.
+  and custom templates never copy `.git` metadata. Both SDK repositories remain
+  functional private `0.0.0` previews, not released framework packages.
 - Moved public password-recovery and verification-resend delivery onto a
   durable privacy-safe outbox with identical immediate responses, bounded
   leasing/retry/dead-letter behavior, terminal PII scrubbing, crash recovery,

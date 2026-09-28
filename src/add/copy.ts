@@ -156,6 +156,11 @@ async function rewriteImports(
 
     if (isAppOwnedSource(resolved, sourceRoot)) {
       await enqueueFile(resolved);
+      if (specifier.startsWith('#zero/')) {
+        const appImport = `@/${specifier.slice('#zero/'.length)}`;
+        replacements.set(specifier, appImport);
+        rewrites.push({ file: sourceRel, from: specifier, to: appImport });
+      }
       continue;
     }
 
@@ -185,7 +190,11 @@ function collectImportSpecifiers(content: string): string[] {
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(content))) {
       const specifier = match[1];
-      if (specifier.startsWith('.') || specifier.startsWith('@/')) specifiers.add(specifier);
+      if (specifier.startsWith('.')
+        || specifier.startsWith('@/')
+        || specifier.startsWith('#zero/')) {
+        specifiers.add(specifier);
+      }
     }
   }
   return [...specifiers];
@@ -194,7 +203,9 @@ function collectImportSpecifiers(content: string): string[] {
 async function resolveSourceImport(sourceFile: string, specifier: string, sourceRoot: string): Promise<string | null> {
   const basePath = specifier.startsWith('@/')
     ? join(sourceRoot, specifier.slice(2))
-    : resolve(dirname(sourceFile), specifier);
+    : specifier.startsWith('#zero/')
+      ? join(sourceRoot, specifier.slice('#zero/'.length))
+      : resolve(dirname(sourceFile), specifier);
 
   return resolveSourceFile(basePath, sourceRoot);
 }

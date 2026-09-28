@@ -15,6 +15,12 @@ import type {
 } from './auth-types';
 
 export interface AuthAdminConfig {
+  /** Present on current servers; optional for compatibility with older payloads. */
+  tenancy?: AuthPublicConfig['tenancy'];
+  /** Present on current servers; optional for compatibility with older payloads. */
+  authorization?: AuthPublicConfig['authorization'];
+  /** Present on current servers; optional for compatibility with older payloads. */
+  bootstrap?: AuthPublicConfig['bootstrap'];
   registration: AuthPublicConfig['registration'];
   email: {
     enabled: boolean;

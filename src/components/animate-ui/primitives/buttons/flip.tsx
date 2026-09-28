@@ -3,8 +3,8 @@
 import * as React from 'react';
 import { motion, type HTMLMotionProps, type Variant } from 'motion/react';
 
-import { getStrictContext } from '@/lib/get-strict-context';
-import { Slot, type WithAsChild } from '@/components/animate-ui/primitives/animate/slot';
+import { getStrictContext } from '#zero/lib/get-strict-context';
+import { Slot, type WithAsChild } from '#zero/components/animate-ui/primitives/animate/slot';
 
 const buildVariant = ({
   opacity,

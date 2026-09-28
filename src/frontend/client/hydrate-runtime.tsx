@@ -18,6 +18,7 @@ import {
 } from 'react';
 import type { ReactNode } from 'react';
 import type { SyncMode } from '../../sync/types';
+import type { RouteAuthorizationBoundary } from '../router/authorization-route-boundary';
 import { registerRoute, navigateTo } from './client-router';
 import { RouterProvider } from './router-context';
 import { ErrorBoundary } from './error-boundary';
@@ -47,6 +48,7 @@ declare global {
       pattern: string;
       params: Record<string, string>;
       loaderData: unknown;
+      authorizationBoundary?: RouteAuthorizationBoundary | null;
       renderMode?: 'client' | 'ssr';
     };
     __PLATFORM_CONFIG__?: {

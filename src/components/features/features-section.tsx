@@ -10,9 +10,9 @@
 
 import * as React from 'react';
 
-import { AnimateIcon } from '@/components/animate-ui/icons';
-import { ZeroIcon } from '@/components/animate-ui/icons/zero-icon';
-import { cn } from '@/lib/utils';
+import { AnimateIcon } from '#zero/components/animate-ui/icons';
+import { ZeroIcon } from '#zero/components/animate-ui/icons/zero-icon';
+import { cn } from '#zero/lib/utils';
 
 import type { FeatureSectionItem, FeaturesSectionProps } from './features-section.types';
 

@@ -7,9 +7,12 @@ from a framework release that contains the native export.
 
 The desktop factory requires a trusted JavaScript credential owner, such as an
 Electron main process or a deliberately secured sidecar. It is not the normal
-Rust-first Tauri path: Tauri's main process is Rust, the standalone Rust/Tauri
-packages are still Phase 0 design scaffolds, and the Svelte webview must not own
-the refresh session. See the
+Rust-first Tauri path: Tauri's main process is Rust, and the standalone
+`zero-native-auth` and `tauri-plugin-zero-auth` packages are functional private
+`0.0.0` previews whose refresh session remains owned by Rust. They are not
+published or production-certified, and still require audited host adapters for
+the system browser, callback/deep-link handling, OS vault, and single-instance
+lifecycle. The Svelte webview must not own the refresh session. See the
 [SDK selection guide](../../docs/auth/app-auth-sdk-guide.md) before choosing a
 host architecture.
 

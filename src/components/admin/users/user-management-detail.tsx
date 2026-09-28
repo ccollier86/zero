@@ -17,6 +17,7 @@ import { UserDetailHeader } from './user-detail-header';
 import { UserManagementPropertiesForm } from './user-management-properties-form';
 import { UserManagementSecurityPanel } from './user-management-security-panel';
 import type { UserManagementUser } from './user-management-types';
+import type { UserRoleOption } from './user-management-types';
 
 type PrimaryAction = {
   label: string;
@@ -29,6 +30,7 @@ export function UserManagementDetail(params: {
   schema: ReturnType<typeof createUserManagementSchema>;
   users: UserManagementUser[];
   config: AuthAdminConfig | null;
+  roleOptions: readonly UserRoleOption[];
   editableFields: string[];
   controlled: boolean;
   canUpdate: boolean;
@@ -50,7 +52,12 @@ export function UserManagementDetail(params: {
       primaryKey="id"
       data={params.users}
       searchable={params.controlled}
-      detailHeader={DetailHeader}
+      detailHeader={({ item }) => (
+        <UserDetailHeader
+          user={item}
+          roleLabel={params.roleOptions.find((option) => option.value === item.role)?.label}
+        />
+      )}
       renderDetail={params.canUpdate ? undefined : () => (
         <p className="mt-4 text-sm text-muted-foreground">This controlled user record is read-only.</p>
       )}
@@ -81,8 +88,4 @@ export function UserManagementDetail(params: {
       className="min-h-0 flex-1"
     />
   );
-}
-
-function DetailHeader({ item }: { item: UserManagementUser }) {
-  return <UserDetailHeader user={item} />;
 }

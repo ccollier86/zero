@@ -20,6 +20,158 @@ import {
 } from '../resources';
 
 describe('runPlatformDoctor', () => {
+  test('accepts the multi/advanced runtime without a compatibility rewrite', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        users: { id: 'text primary key' },
+      },
+      auth: {
+        tenancy: 'multi',
+        authorization: { mode: 'advanced' },
+      },
+      email: false,
+    });
+
+    expect(report.ok).toBe(false);
+    expect(hasFinding(report, 'auth.tenancy.runtime_unsupported')).toBe(false);
+    expect(hasFinding(report, 'auth.authorization.runtime_unsupported')).toBe(false);
+    expect(hasFinding(report, 'resource.resource-managed-table-unclassified')).toBe(true);
+    expect(hasFinding(report, 'auth.config.invalid')).toBe(false);
+  });
+
+  test('documents the runtime owner adoption guard for single/advanced upgrades', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {},
+      auth: { tenancy: 'single', authorization: { mode: 'advanced' } },
+      email: false,
+    });
+
+    expect(hasFinding(report, 'auth.authorization.runtime_unsupported')).toBe(false);
+    expect(hasFinding(report, 'auth.authorization.owner_adoption.runtime_guard')).toBe(true);
+  });
+
+  test('validates explicit tenant resource realms in multi mode', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        documents: {
+          document_id: 'text primary key',
+          tenant_id: 'text not null',
+          title: 'text not null',
+        },
+      },
+      auth: { tenancy: 'multi' },
+      email: false,
+      resources: [
+        defineResource({
+          table: 'documents',
+          exposure: 'all',
+          realm: 'tenant',
+          policy: adminOnly(),
+        }),
+      ],
+    });
+
+    expect(hasFinding(report, 'auth.tenancy.runtime_unsupported')).toBe(false);
+    expect(hasFinding(report, 'resource.resource-realm-missing')).toBe(false);
+    expect(hasFinding(report, 'resource.resource-exposure-missing')).toBe(false);
+    expect(hasFinding(report, 'resource.resource-managed-table-unclassified')).toBe(false);
+    expect(hasFinding(report, 'resource.tenant_field.index_guidance')).toBe(true);
+  });
+
+  test('only treats a compound natural identity as tenant-leading when the realm field leads', () => {
+    const config = (identity: string[]): AppConfig => ({
+      db: { mode: ':memory:' },
+      tables: {
+        documents: {
+          document_id: 'text primary key',
+          tenant_id: 'text not null',
+          slug: 'text not null',
+          _identity: identity,
+        },
+      },
+      auth: { tenancy: 'multi' },
+      email: false,
+      resources: [
+        defineResource({
+          table: 'documents',
+          exposure: 'all',
+          realm: 'tenant',
+          policy: adminOnly(),
+        }),
+      ],
+    });
+
+    const trailing = runPlatformDoctor(config(['slug', 'tenant_id']));
+    expect(hasFinding(trailing, 'resource.tenant_field.index_guidance')).toBe(true);
+
+    const leading = runPlatformDoctor(config(['tenant_id', 'slug']));
+    expect(hasFinding(leading, 'resource.tenant_field.index_guidance')).toBe(false);
+  });
+
+  test('diagnoses missing multi-mode exposure and sync-only lazy hydration conflicts', () => {
+    const missing = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        documents: {
+          id: 'text primary key',
+          tenant_id: 'text not null',
+        },
+      },
+      auth: { tenancy: 'multi' },
+      resources: [defineResource({
+        table: 'documents',
+        realm: 'tenant',
+        policy: readOnly(),
+      })],
+    });
+    expect(hasFinding(missing, 'resource.resource-exposure-missing')).toBe(true);
+
+    const conflicting = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        lazy_docs: {
+          serverTable: { id: 'text primary key' },
+          clientTable: { _pk: 'id', _sync: 'lazy' },
+        },
+        auto_docs: { id: 'text primary key' },
+        full_docs: {
+          serverTable: { id: 'text primary key' },
+          clientTable: { _pk: 'id', _sync: 'full' },
+        },
+      },
+      auth: false,
+      resources: [
+        defineResource({ table: 'lazy_docs', exposure: 'sync', policy: readOnly() }),
+        defineResource({ table: 'auto_docs', exposure: 'sync', policy: readOnly() }),
+        defineResource({ table: 'full_docs', exposure: 'sync', policy: readOnly() }),
+      ],
+    });
+    expect(conflicting.findings.filter((finding) =>
+      finding.code === 'resource.exposure.sync_lazy_requires_http'))
+      .toHaveLength(2);
+    expect(conflicting.findings.some((finding) =>
+      finding.path === 'resources.full_docs.exposure'
+      && finding.code === 'resource.exposure.sync_lazy_requires_http'))
+      .toBe(false);
+  });
+
+  test('does not accept primary-key words inside quoted or commented schema text', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        quoted: { id: "text default 'primary key'" },
+        commented: { id: 'text /* PRIMARY KEY */' },
+      },
+      auth: false,
+    });
+
+    expect(report.findings.filter((finding) =>
+      finding.code === 'schema.primary_key.missing')).toHaveLength(2);
+  });
+
   test('checks PDF executable paths and unsafe renderer policy', () => {
     const report = runPlatformDoctor({
       db: { mode: 'memory' },
@@ -60,6 +212,84 @@ describe('runPlatformDoctor', () => {
 
     const strict = runPlatformDoctor(config, { env: {}, strict: true });
     expect(strict.ok).toBe(false);
+  });
+
+  test('diagnoses unsafe or inoperable installation bootstrap configuration', () => {
+    const missing = runPlatformDoctor({
+      db: { mode: 'memory' }, tables: {}, auth: true, email: false,
+    });
+    expect(hasFinding(missing, 'auth.bootstrap.secret_missing')).toBe(true);
+
+    const publicBootstrap = runPlatformDoctor({
+      db: { mode: 'memory' }, tables: {},
+      auth: { bootstrap: 'public' }, email: false,
+    });
+    expect(hasFinding(publicBootstrap, 'auth.bootstrap.public')).toBe(true);
+
+    const configured = runPlatformDoctor({
+      db: { mode: 'memory' }, tables: {},
+      auth: {
+        bootstrap: {
+          mode: 'secret',
+          secret: 'doctor-bootstrap-secret-with-more-than-32-characters',
+        },
+      },
+      email: false,
+    });
+    expect(hasFinding(configured, 'auth.bootstrap.secret_missing')).toBe(false);
+    expect(hasFinding(configured, 'auth.bootstrap.public')).toBe(false);
+  });
+
+  test('requires durable strong storage capability signing in production', () => {
+    const ephemeral = runPlatformDoctor({
+      db: { mode: 'ephemeral' },
+      tables: {},
+      auth: true,
+      email: false,
+    }, { env: { NODE_ENV: 'production' } });
+    expect(ephemeral.ok).toBe(false);
+    expect(hasFinding(
+      ephemeral,
+      'storage.signing_secret.ephemeral_database',
+    )).toBe(true);
+
+    const durable = runPlatformDoctor({
+      db: { mode: 'file', path: './data/doctor-storage.db' },
+      tables: {},
+      auth: true,
+      email: false,
+    }, { env: { NODE_ENV: 'production' } });
+    expect(hasFinding(
+      durable,
+      'storage.signing_secret.ephemeral_database',
+    )).toBe(false);
+
+    const externallyManaged = runPlatformDoctor({
+      db: { mode: 'ephemeral' },
+      tables: {},
+      auth: true,
+      email: false,
+    }, {
+      env: {
+        NODE_ENV: 'production',
+        ZERO_STORAGE_SIGNING_SECRET: 'doctor-storage-secret-with-at-least-32-bytes',
+      },
+    });
+    expect(hasFinding(
+      externallyManaged,
+      'storage.signing_secret.ephemeral_database',
+    )).toBe(false);
+    expect(hasFinding(externallyManaged, 'storage.signing_secret.weak')).toBe(false);
+
+    const weak = runPlatformDoctor({
+      db: { mode: 'file', path: './data/doctor-storage.db' },
+      tables: {},
+      auth: true,
+      email: false,
+      storage: { signingSecret: 'too-short' },
+    }, { env: { NODE_ENV: 'production' } });
+    expect(weak.ok).toBe(false);
+    expect(hasFinding(weak, 'storage.signing_secret.weak')).toBe(true);
   });
 
   test('reports schema primary-key and natural-identity mistakes', () => {
@@ -107,6 +337,159 @@ describe('runPlatformDoctor', () => {
     expect(hasFinding(report, 'auth.email.public_url_missing')).toBe(true);
     expect(hasFinding(report, 'email.from_missing')).toBe(true);
     expect(hasFinding(report, 'email.resend_api_key_missing')).toBe(true);
+  });
+
+  test('reports strict auth config resolution failures through Doctor', () => {
+    const rootTypo = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {},
+      auth: { tennacy: 'multi' } as never,
+      email: false,
+    });
+    expect(rootTypo.ok).toBe(false);
+    expect(rootTypo.findings).toContainEqual(expect.objectContaining({
+      code: 'auth.config.invalid',
+      message: expect.stringContaining('unsupported field "tennacy"'),
+    }));
+
+    const nestedTypo = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {},
+      auth: { registration: { mode: 'publci' } } as never,
+      email: false,
+    });
+    expect(nestedTypo.ok).toBe(false);
+    expect(nestedTypo.findings).toContainEqual(expect.objectContaining({
+      code: 'auth.config.invalid',
+      message: expect.stringContaining('Unsupported registration mode'),
+    }));
+  });
+
+  test('checks required email-verification delivery and link readiness', () => {
+    const auth = {
+      account: { requireEmailVerification: true },
+    };
+    const noDelivery = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, auth,
+      app: { publicUrl: 'https://app.example.test' },
+      email: false,
+    }, { env: {} });
+    expect(noDelivery.ok).toBe(false);
+    expect(hasFinding(
+      noDelivery,
+      'auth.email_verification.delivery_unavailable',
+    )).toBe(true);
+    expect(hasFinding(
+      noDelivery,
+      'auth.email_verification.public_url_missing',
+    )).toBe(false);
+
+    const noPublicUrl = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, auth,
+      email: { from: 'Zero <zero@example.test>', provider: 'console' },
+    }, { env: {} });
+    expect(noPublicUrl.ok).toBe(false);
+    expect(hasFinding(
+      noPublicUrl,
+      'auth.email_verification.delivery_unavailable',
+    )).toBe(false);
+    expect(hasFinding(
+      noPublicUrl,
+      'auth.email_verification.public_url_missing',
+    )).toBe(true);
+
+    const ready = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {},
+      auth: {
+        ...auth,
+        branding: { publicUrl: 'https://accounts.example.test' },
+      },
+      email: { from: 'Zero <zero@example.test>', provider: 'console' },
+    }, { env: {} });
+    expect(hasFinding(
+      ready,
+      'auth.email_verification.delivery_unavailable',
+    )).toBe(false);
+    expect(hasFinding(
+      ready,
+      'auth.email_verification.public_url_missing',
+    )).toBe(false);
+  });
+
+  test('checks operational methods when application policy requires MFA', () => {
+    const requiredMfa = (methods: Array<'email' | 'totp'>) => ({
+      mfa: { enabled: true, policy: 'required' as const, methods },
+    });
+    const emailUnavailable = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {},
+      auth: requiredMfa(['email']), email: false,
+    }, { env: {} });
+    expect(emailUnavailable.ok).toBe(false);
+    expect(emailUnavailable.findings).toContainEqual(expect.objectContaining({
+      code: 'auth.mfa.email_delivery_unavailable',
+      severity: 'error',
+    }));
+
+    const totpUnavailable = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {},
+      auth: requiredMfa(['totp']), email: false,
+    }, { env: {} });
+    expect(totpUnavailable.ok).toBe(false);
+    expect(totpUnavailable.findings).toContainEqual(expect.objectContaining({
+      code: 'auth.mfa.totp_encryption_key_missing',
+      severity: 'error',
+    }));
+
+    const emailFallback = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {},
+      auth: requiredMfa(['email', 'totp']),
+      email: { from: 'Zero <zero@example.test>', provider: 'console' },
+    }, { env: {} });
+    expect(emailFallback.findings).toContainEqual(expect.objectContaining({
+      code: 'auth.mfa.totp_encryption_key_missing',
+      severity: 'warning',
+    }));
+    expect(hasFinding(
+      emailFallback,
+      'auth.mfa.email_delivery_unavailable',
+    )).toBe(false);
+
+    const optional = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {},
+      auth: { mfa: { enabled: true, policy: 'optional', methods: ['totp'] } },
+      email: false,
+    }, { env: {} });
+    expect(hasFinding(optional, 'auth.mfa.totp_encryption_key_missing')).toBe(false);
+  });
+
+  test('fails closed when verified-domain onboarding email links cannot operate', () => {
+    const auth = {
+      tenancy: {
+        mode: 'multi' as const,
+        onboarding: { verifiedDomains: { enabled: true } },
+      },
+    };
+    const disabled = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, auth, email: false,
+    }, { env: {} });
+    expect(disabled.ok).toBe(false);
+    expect(hasFinding(disabled, 'auth.email.disabled')).toBe(true);
+
+    const missingUrl = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, auth,
+      email: { from: 'Zero <zero@example.test>', provider: 'console' },
+    }, { env: {} });
+    expect(missingUrl.ok).toBe(false);
+    expect(hasFinding(missingUrl, 'auth.email.public_url_missing')).toBe(true);
+
+    const ready = runPlatformDoctor({
+      db: { mode: ':memory:' }, tables: {}, auth,
+      app: { publicUrl: 'https://app.example.test' },
+      email: { from: 'Zero <zero@example.test>', provider: 'console' },
+    }, { env: {} });
+    expect(hasFinding(ready, 'auth.email.disabled')).toBe(false);
+    expect(hasFinding(ready, 'auth.email.public_url_missing')).toBe(false);
+    expect(hasFinding(ready, 'email.from_missing')).toBe(false);
   });
 
   test('fails invalid account email duration strings', () => {
@@ -237,7 +620,12 @@ describe('runPlatformDoctor', () => {
       loginPath: '/signin',
       publicPaths: ['/login', '/forgot-password'],
       observability: false,
-    }, { env: { NODE_ENV: 'production' } });
+    }, {
+      env: {
+        NODE_ENV: 'production',
+        ZERO_STORAGE_SIGNING_SECRET: 'doctor-production-storage-secret-at-least-32-bytes',
+      },
+    });
 
     expect(report.ok).toBe(true);
     expect(hasFinding(report, 'auth.login_path.not_public')).toBe(true);

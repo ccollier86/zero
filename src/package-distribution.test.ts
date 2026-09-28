@@ -10,7 +10,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
+const EXPECTED_MIGRATION_VERSIONS = Array.from(
+  { length: 23 },
+  (_, index) => String(index + 1).padStart(3, '0'),
+);
+
 describe('package distribution', () => {
+  // Packing, installing, typechecking, and booting a fresh consumer is a
+  // deliberately heavyweight release gate. It runs beside CPU-intensive auth
+  // integration tests in the full suite, so keep a bounded but realistic
+  // parallel-run budget rather than treating host contention as a failure.
   test('packed package creates a reusable app with docs and working SSR', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'zero-pack-'));
     const packDir = join(rootDir, 'pack');
@@ -54,6 +63,13 @@ describe('package distribution', () => {
       expect(contents).toContain('package/src/migrations/definitions/005_native_app_auth.ts');
       expect(contents).toContain('package/src/migrations/definitions/006_native_auth_hardening.ts');
       expect(contents).toContain('package/src/migrations/definitions/007_auth_email_outbox.ts');
+      expect(contents).toContain('package/src/migrations/index.ts');
+      for (const version of EXPECTED_MIGRATION_VERSIONS) {
+        expect(packagedFiles.some((file) =>
+          file.startsWith(`package/src/migrations/definitions/${version}_`)
+          && file.endsWith('.ts')
+        )).toBe(true);
+      }
       expect(contents).toContain('package/src/native/index.ts');
       expect(contents).toContain('package/src/native/zero-native-auth.ts');
       expect(contents).toContain('package/src/native/zero-native-auth-broker.ts');
@@ -90,6 +106,7 @@ describe('package distribution', () => {
       ) as {
         dependencies: Record<string, string>;
         files: string[];
+        imports: Record<string, string>;
       };
       expect(frameworkPackageJson.dependencies['@sinclair/typebox']).toBeDefined();
       expect(frameworkPackageJson.dependencies['file-type']).toBeDefined();
@@ -97,6 +114,10 @@ describe('package distribution', () => {
       expect(frameworkPackageJson.files).not.toContain('.');
       expect(frameworkPackageJson.files).not.toContain('sdk');
       expect(frameworkPackageJson.files.some((file) => file.startsWith('sdk/'))).toBe(false);
+      expect(Object.keys(frameworkPackageJson.imports).length).toBeGreaterThan(0);
+      expect(Object.values(frameworkPackageJson.imports).every((target) =>
+        /^\.\/src\/.+\.tsx?$/.test(target)
+      )).toBe(true);
 
       await spawnChecked([
         'bun',
@@ -110,8 +131,13 @@ describe('package distribution', () => {
       const packageJson = JSON.parse(await readFile(join(appDir, 'package.json'), 'utf8')) as {
         dependencies: Record<string, string>;
       };
+      const generatedTsconfig = JSON.parse(
+        await readFile(join(appDir, 'tsconfig.json'), 'utf8')
+      ) as { compilerOptions: { paths: Record<string, string[]> } };
 
       expect(packageJson.dependencies['@zero/framework']).toBe(`file:${tarball}`);
+      expect(JSON.stringify(generatedTsconfig.compilerOptions.paths))
+        .not.toContain('node_modules/@zero/framework/src');
       await expect(stat(join(appDir, 'app/server.ts')).then((value) => value.isFile())).resolves.toBe(true);
       await expect(stat(join(appDir, 'app/layout.tsx')).then((value) => value.isFile())).resolves.toBe(true);
       await expect(stat(join(appDir, 'app/page.tsx')).then((value) => value.isFile())).resolves.toBe(true);
@@ -140,12 +166,14 @@ describe('package distribution', () => {
       ).resolves.toBe(true);
       await buildInstalledNativeRecipes(appDir);
       await writePackageRuntimeSmoke(appDir);
+      await writePackageReleaseSmoke(appDir);
       await spawnChecked(['bun', 'run', 'typecheck'], appDir);
       await spawnChecked(['bun', 'package-runtime-smoke.ts'], appDir);
+      await spawnChecked(['bun', 'package-release-smoke.ts'], appDir);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
-  }, 120_000);
+  }, 240_000);
 });
 
 async function findPackedTarball(packDir: string): Promise<string> {
@@ -198,9 +226,28 @@ async function buildInstalledNativeRecipes(appDir: string): Promise<void> {
 /** Write the packed-package runtime check used by the distribution test. */
 async function writePackageRuntimeSmoke(appDir: string): Promise<void> {
   const source = `import { createApp } from '@zero/framework/server';
-import type { AuthPasswordUpdatedResult, Client } from '@zero/framework/react';
+import type {
+  AuthPasswordUpdatedResult,
+  Client,
+  LoginFormProps,
+  PlatformUserManagementProps,
+} from '@zero/framework/react';
 import { createZeroNativeAuth, type ZeroNativeAuthOptions } from '@zero/framework/native';
+import type {
+  ApplicationAccessManagementProps,
+  TenantMemberManagementProps,
+} from '@zero/framework/components/auth';
 import config from './zero.config';
+
+type PackagedAuthUiContract =
+  ApplicationAccessManagementProps
+  | LoginFormProps
+  | PlatformUserManagementProps
+  | TenantMemberManagementProps;
+void (null as PackagedAuthUiContract | null);
+
+const legacyLoginFormProps: LoginFormProps = { showRememberMe: true };
+void legacyLoginFormProps;
 
 function assertPackagedAuthContract(client: Client, result: AuthPasswordUpdatedResult) {
   void client.clearAuthAdminPasswordChangeRequirement(result.user.userId);
@@ -234,6 +281,482 @@ if (!html.includes('Build your app from here')) throw new Error('starter SSR con
 `;
 
   await writeFile(join(appDir, 'package-runtime-smoke.ts'), source);
+}
+
+/**
+ * Exercise release-critical behavior through the installed tarball. The smoke
+ * uses only disposable local persistence and explicitly disables integrations
+ * that could contact an external service.
+ */
+async function writePackageReleaseSmoke(appDir: string): Promise<void> {
+  const source = `import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createApp } from '@zero/framework/server';
+import { Migrator, migrations } from '@zero/framework/migrations';
+
+const expectedVersions = ${JSON.stringify(EXPECTED_MIGRATION_VERSIONS)};
+const rootDir = await mkdtemp(join(tmpdir(), 'zero-packed-release-'));
+const authProfiles = [
+  { tenancy: 'single', authorization: 'simple' },
+  { tenancy: 'single', authorization: 'advanced' },
+  { tenancy: 'multi', authorization: 'simple' },
+  { tenancy: 'multi', authorization: 'advanced' },
+] as const;
+
+type AuthProfile = (typeof authProfiles)[number];
+
+try {
+  await smokeCleanMigrations(rootDir);
+  for (const profile of authProfiles) {
+    await smokeAuthProfile(rootDir, profile);
+  }
+} finally {
+  await rm(rootDir, { recursive: true, force: true });
+}
+
+async function smokeCleanMigrations(root: string): Promise<void> {
+  const migrationDir = join(root, 'migration');
+  await mkdir(migrationDir, { recursive: true });
+  const migrator = new Migrator({
+    dbPath: join(migrationDir, 'platform.db'),
+    migrations,
+    backupDir: join(migrationDir, 'backups'),
+    log: () => {},
+  });
+
+  try {
+    const registered = migrations.map((migration) => migration.version);
+    assertEqualList(registered, expectedVersions, 'packed migration registry');
+
+    const applied = migrator.run();
+    assertEqualList(applied, expectedVersions, 'clean migration run');
+    const status = migrator.status();
+    assert(status.length === expectedVersions.length, 'migration status length mismatch');
+    assert(status.every((entry) => entry.applied), 'not every packed migration is applied');
+    assert(status.every((entry) => entry.checksumMatches === true), 'migration checksum mismatch');
+    assert(migrator.run().length === 0, 'packed migrations are not idempotent');
+
+    const auditTable = migrator.database.query(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_auth_audit_events'"
+    ).get() as { name?: string } | null;
+    assert(auditTable?.name === '_auth_audit_events', 'migration 018 audit table is missing');
+
+    const claimColumns = migrator.database.query(
+      'PRAGMA table_info(_auth_tenant_domain_claims)'
+    ).all() as Array<{ name: string }>;
+    const claimColumnNames = new Set(claimColumns.map((column) => column.name));
+    for (const name of ['released_at', 'released_by', 'quarantine_until']) {
+      assert(claimColumnNames.has(name), 'migration 019 claim column is missing: ' + name);
+    }
+
+    const authorityRevisionTable = migrator.database.query(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_auth_authority_revision'"
+    ).get() as { name?: string } | null;
+    assert(
+      authorityRevisionTable?.name === '_auth_authority_revision',
+      'migration 020 authority revision table is missing',
+    );
+    const authorityTriggerCount = migrator.database.query(
+      "SELECT COUNT(*) AS count FROM sqlite_master " +
+      "WHERE type = 'trigger' AND name LIKE 'trg_zero_authority_%_v1'"
+    ).get() as { count: number };
+    assert(authorityTriggerCount.count > 0, 'migration 020 authority triggers are missing');
+
+    const provenanceColumns = migrator.database.query(
+      'PRAGMA table_info(_auth_domain_join_request_provenance)'
+    ).all() as Array<{ name: string }>;
+    const provenanceColumnNames = new Set(provenanceColumns.map((column) => column.name));
+    for (const name of ['source', 'request_revision']) {
+      assert(
+        provenanceColumnNames.has(name),
+        'migration 021 provenance column is missing: ' + name,
+      );
+    }
+
+    const admissionSchema = migrator.database.query(
+      "SELECT sql FROM sqlite_master " +
+      "WHERE type = 'table' AND name = '_auth_request_admissions'"
+    ).get() as { sql?: string } | null;
+    for (const flow of [
+      'bootstrap',
+      'registration',
+      'login',
+      'invitation',
+      'join-request',
+      'domain-onboarding',
+    ]) {
+      assert(
+        admissionSchema?.sql?.includes("'" + flow + "'") === true,
+        'migration 022 admission flow is missing: ' + flow,
+      );
+    }
+
+    const installedProfileColumns = migrator.database.query(
+      'PRAGMA table_info(_auth_installed_profile)'
+    ).all() as Array<{ name: string }>;
+    const installedProfileColumnNames = new Set(
+      installedProfileColumns.map((column) => column.name),
+    );
+    for (const name of [
+      'singleton', 'version', 'generation', 'tenancy', 'authorization', 'updated_at',
+    ]) {
+      assert(
+        installedProfileColumnNames.has(name),
+        'migration 023 installed-profile column is missing: ' + name,
+      );
+    }
+    const installedProfileTriggerCount = migrator.database.query(
+      "SELECT COUNT(*) AS count FROM sqlite_master " +
+      "WHERE type = 'trigger' " +
+      "AND name LIKE 'trg_zero_authority__auth_installed_profile_%'"
+    ).get() as { count: number };
+    assert(
+      installedProfileTriggerCount.count === 3,
+      'migration 023 installed-profile authority triggers are missing',
+    );
+  } finally {
+    migrator.dispose();
+  }
+}
+
+async function smokeAuthProfile(root: string, profile: AuthProfile): Promise<void> {
+  const profileName = profile.tenancy + '/' + profile.authorization;
+  const profileRoot = join(root, profile.tenancy + '-' + profile.authorization);
+  const dbPath = await migrateFreshProfileDatabase(profileRoot, profileName);
+  const bootstrapSecret = 'packed-release-' + profile.tenancy + '-bootstrap-secret-000000000000';
+  await mkdir(join(profileRoot, 'app'), { recursive: true });
+
+  const tenancy = profile.tenancy === 'multi'
+    ? {
+        mode: 'multi' as const,
+        terminology: { singular: 'workspace', plural: 'workspaces' },
+        creation: { mode: 'authenticated' as const },
+      }
+    : { mode: 'single' as const };
+  const authorization = profile.authorization === 'advanced'
+    ? {
+        mode: 'advanced' as const,
+        permissions: {
+          'records:read': { label: 'Read records' },
+          'records:write': { label: 'Write records' },
+        },
+        roles: {
+          reader: { permissions: ['records:read'] },
+          editor: { permissions: ['records:read', 'records:write'] },
+        },
+      }
+    : { mode: 'simple' as const };
+
+  const app = await createApp({
+    db: { mode: 'file', path: dbPath },
+    tables: {},
+    auth: {
+      bootstrap: profile.tenancy === 'multi'
+        ? { mode: 'secret', secret: bootstrapSecret }
+        : 'public',
+      registration: { mode: 'public' },
+      tenancy,
+      authorization,
+    },
+    routeAuth: 'explicit',
+    stateSync: false,
+    email: false,
+    ai: false,
+    vector: false,
+    pdf: false,
+    kv: false,
+    observability: false,
+    migrate: false,
+    resourceRoutes: false,
+    serverResourcesDir: false,
+    serverPluginsDir: false,
+    serverMiddlewareDir: false,
+    serverEndpointsDir: false,
+    serverRoutesDir: false,
+    storageDir: join(profileRoot, 'storage'),
+    appDir: join(profileRoot, 'app'),
+    outDir: join(profileRoot, 'out'),
+    generatedDir: join(profileRoot, 'generated'),
+  });
+
+  app.listen(0);
+  try {
+    const baseUrl = 'http://localhost:' + app.server!.port;
+    await assertHealth(baseUrl, profileName);
+    const initialConfig = await assertProfileConfig(
+      baseUrl,
+      profile.tenancy,
+      profile.authorization,
+      true,
+    );
+    assert(
+      !JSON.stringify(initialConfig).includes(bootstrapSecret),
+      profileName + ' bootstrap secret leaked in config',
+    );
+
+    const registrationBody: Record<string, string> = {
+      username: 'packed-' + profile.tenancy + '-' + profile.authorization + '-owner',
+      email: 'packed-' + profile.tenancy + '-' + profile.authorization + '-owner@example.test',
+      password: 'password123',
+    };
+    if (profile.tenancy === 'multi') {
+      registrationBody.organizationName = 'Packed ' + profile.authorization + ' Workspace';
+      registrationBody.bootstrapSecret = bootstrapSecret;
+    }
+
+    const registration = await postJson(baseUrl + '/auth/register', registrationBody);
+    assert(registration.status === 200, profileName + ' bootstrap failed: ' + registration.text);
+    assert(registration.body.user?.role === 'admin', profileName + ' bootstrap owner is not admin');
+    if (profile.tenancy === 'multi') {
+      assert(
+        registration.body.tenant?.name === registrationBody.organizationName,
+        profileName + ' bootstrap workspace is missing',
+      );
+      assert(registration.body.tenant?.role === 'owner', profileName + ' tenant owner is missing');
+    } else {
+      assert(registration.body.tenant === undefined, profileName + ' returned an unexpected tenant');
+    }
+    assert(
+      !registration.text.includes(bootstrapSecret),
+      profileName + ' bootstrap secret leaked in registration',
+    );
+
+    const accessToken = requireString(registration.body.accessToken, profileName + ' access token');
+    await assertAuthorization(
+      baseUrl,
+      accessToken,
+      profile.tenancy,
+      profile.authorization,
+      profile.tenancy === 'multi' ? 'tenant' : 'application',
+    );
+    if (profile.tenancy === 'multi') {
+      const tenantConfig = await getJson(baseUrl + '/auth/tenant/config', accessToken);
+      assert(tenantConfig.status === 200, profileName + ' tenant config failed');
+      assert(
+        tenantConfig.body.terminology?.singular === 'workspace'
+          && tenantConfig.body.terminology?.plural === 'workspaces',
+        profileName + ' tenant terminology was not preserved',
+      );
+      const memberRole = tenantConfig.body.roles?.find?.(
+        (role: { key?: string }) => role.key === 'member',
+      );
+      assert(
+        memberRole?.description === 'Standard workspace membership.',
+        profileName + ' framework role metadata ignored tenant terminology',
+      );
+    }
+    await assertProfileConfig(
+      baseUrl,
+      profile.tenancy,
+      profile.authorization,
+      false,
+    );
+  } finally {
+    await app.stop(true);
+  }
+
+  assertPersistedProfile(dbPath, profileRoot, profile);
+}
+
+async function migrateFreshProfileDatabase(
+  profileRoot: string,
+  profileName: string,
+): Promise<string> {
+  await mkdir(profileRoot, { recursive: true });
+  const dbPath = join(profileRoot, 'platform.db');
+  const migrator = new Migrator({
+    dbPath,
+    migrations,
+    backupDir: join(profileRoot, 'migration-backups'),
+    log: () => {},
+  });
+
+  try {
+    assertEqualList(
+      migrator.run(),
+      expectedVersions,
+      profileName + ' fresh migration run',
+    );
+    const status = migrator.status();
+    assert(status.length === expectedVersions.length, profileName + ' migration status mismatch');
+    assert(status.every((entry) => entry.applied), profileName + ' has unapplied migrations');
+    assert(
+      status.every((entry) => entry.checksumMatches === true),
+      profileName + ' has a migration checksum mismatch',
+    );
+    assert(migrator.run().length === 0, profileName + ' migrations are not idempotent');
+  } finally {
+    migrator.dispose();
+  }
+
+  return dbPath;
+}
+
+function assertPersistedProfile(
+  dbPath: string,
+  profileRoot: string,
+  profile: AuthProfile,
+): void {
+  const profileName = profile.tenancy + '/' + profile.authorization;
+  const verifier = new Migrator({
+    dbPath,
+    migrations,
+    backupDir: join(profileRoot, 'verification-backups'),
+    log: () => {},
+  });
+
+  try {
+    assert(verifier.run().length === 0, profileName + ' runtime changed migration state');
+    assert(tableCount(verifier, 'users') === 1, profileName + ' bootstrap user was not persisted');
+    const tenantCount = tableCount(verifier, '_auth_tenants');
+    const membershipCount = tableCount(verifier, '_auth_tenant_memberships');
+    assert(
+      tenantCount === (profile.tenancy === 'multi' ? 1 : 0),
+      profileName + ' persisted an unexpected tenant count',
+    );
+    assert(
+      membershipCount === (profile.tenancy === 'multi' ? 1 : 0),
+      profileName + ' persisted an unexpected membership count',
+    );
+    const installedProfile = verifier.database.query(\`
+      SELECT version, generation, tenancy, authorization
+      FROM _auth_installed_profile
+      WHERE singleton = 1
+    \`).get() as {
+      version: number;
+      generation: number;
+      tenancy: string;
+      authorization: string;
+    } | null;
+    assert(installedProfile?.version === 1, profileName + ' profile version was not persisted');
+    assert(
+      installedProfile?.generation === 1,
+      profileName + ' initial profile generation was not persisted',
+    );
+    assert(
+      installedProfile?.tenancy === profile.tenancy
+        && installedProfile?.authorization === profile.authorization,
+      profileName + ' persisted the wrong installed auth profile',
+    );
+    const applicationOwnerCount = Number((verifier.database.query(\`
+      SELECT COUNT(*) AS count FROM _auth_application_role_assignments
+      WHERE role_key = 'owner' AND source = 'bootstrap' AND revoked_at IS NULL
+    \`).get() as { count: number }).count);
+    assert(
+      applicationOwnerCount === (profile.tenancy === 'single' && profile.authorization === 'advanced' ? 1 : 0),
+      profileName + ' persisted an unexpected application-owner count',
+    );
+  } finally {
+    verifier.dispose();
+  }
+}
+
+function tableCount(migrator: Migrator, table: string): number {
+  const row = migrator.database.query(
+    'SELECT COUNT(*) AS count FROM ' + table,
+  ).get() as { count: number };
+  return Number(row.count);
+}
+
+async function assertHealth(baseUrl: string, profile: string): Promise<void> {
+  const response = await fetch(baseUrl + '/api/health');
+  assert(response.status === 200, profile + ' health check failed');
+}
+
+async function assertProfileConfig(
+  baseUrl: string,
+  tenancy: 'single' | 'multi',
+  authorization: 'simple' | 'advanced',
+  bootstrapRequired: boolean,
+): Promise<Record<string, any>> {
+  const response = await getJson(baseUrl + '/auth/config');
+  assert(response.status === 200, tenancy + '/' + authorization + ' config failed');
+  assert(response.body.tenancy?.mode === tenancy, 'unexpected tenancy profile');
+  if (tenancy === 'multi') {
+    assert(
+      response.body.tenancy?.terminology?.singular === 'workspace'
+        && response.body.tenancy?.terminology?.plural === 'workspaces',
+      'unexpected tenant terminology',
+    );
+  }
+  assert(response.body.authorization?.mode === authorization, 'unexpected authorization profile');
+  assert(
+    response.body.registration?.bootstrapRequired === bootstrapRequired,
+    'unexpected bootstrap-required state',
+  );
+  return response.body;
+}
+
+async function assertAuthorization(
+  baseUrl: string,
+  accessToken: string,
+  tenancy: 'single' | 'multi',
+  authorization: 'simple' | 'advanced',
+  scopeKind: 'application' | 'tenant',
+): Promise<Record<string, any>> {
+  const response = await getJson(baseUrl + '/auth/authorization', accessToken);
+  assert(response.status === 200, tenancy + '/' + authorization + ' authorization failed');
+  assert(response.body.profile?.tenancy === tenancy, 'authorization tenancy mismatch');
+  assert(response.body.profile?.authorization === authorization, 'authorization mode mismatch');
+  assert(response.body.scope?.kind === scopeKind, 'authorization scope mismatch');
+  assert(response.body.identity?.platformRole === 'admin', 'bootstrap admin identity is missing');
+  if (tenancy === 'multi' || authorization === 'advanced') {
+    assert(response.body.scope?.roles?.includes('owner') === true, 'bootstrap owner role is missing');
+    assert(response.body.scope?.allPermissions === true, 'bootstrap owner lacks full authority');
+  } else {
+    assert(response.body.scope?.roles?.includes('admin') === true, 'compatibility admin role is missing');
+  }
+  if (tenancy === 'multi') {
+    assert(typeof response.body.scope?.tenantId === 'string', 'active tenant scope is missing');
+  }
+  return response.body;
+}
+
+async function getJson(url: string, bearer?: string) {
+  const response = await fetch(url, {
+    headers: bearer ? { Authorization: 'Bearer ' + bearer } : undefined,
+  });
+  const text = await response.text();
+  return { status: response.status, text, body: parseJson(text, url) };
+}
+
+async function postJson(url: string, body: Record<string, unknown>) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  return { status: response.status, text, body: parseJson(text, url) };
+}
+
+function parseJson(text: string, source: string): Record<string, any> {
+  try {
+    return JSON.parse(text) as Record<string, any>;
+  } catch {
+    throw new Error('Expected JSON from ' + source + ': ' + text);
+  }
+}
+
+function requireString(value: unknown, label: string): string {
+  assert(typeof value === 'string' && value.length > 0, label + ' is missing');
+  return value;
+}
+
+function assertEqualList(actual: string[], expected: string[], label: string): void {
+  assert(
+    JSON.stringify(actual) === JSON.stringify(expected),
+    label + ' mismatch: ' + JSON.stringify(actual),
+  );
+}
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+`;
+
+  await writeFile(join(appDir, 'package-release-smoke.ts'), source);
 }
 
 async function spawnText(cmd: string[]): Promise<string> {

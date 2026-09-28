@@ -11,8 +11,8 @@
 import * as React from 'react';
 import { AnimatePresence, motion, type MotionProps } from 'motion/react';
 
-import { ZeroIcon } from '@/components/animate-ui/icons/zero-icon';
-import { cn } from '@/lib/utils';
+import { ZeroIcon } from '#zero/components/animate-ui/icons/zero-icon';
+import { cn } from '#zero/lib/utils';
 
 import type { AnimatedListCardProps, AnimatedListItemProps, AnimatedListProps } from './animated-list.types';
 

@@ -5,6 +5,7 @@ import { useCollection } from './data-hooks';
 import type { Row } from '../../sync/types';
 import { OBS_CODES } from '../../observability/codes';
 import { emitFrontendCode } from './observability';
+import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
 
 // ─── Client-Side Types (snake_case — matches SQLite columns) ─────────────────
 
@@ -41,7 +42,7 @@ export interface NotificationWithStatus extends Notification {
 
 // ─── Target Matching ─────────────────────────────────────────────────────────
 
-function isForUser(n: Notification, userId: string, role: string): boolean {
+function isForUser(n: Notification, userId: string): boolean {
   switch (n.target_type) {
     case 'all':
       return true;
@@ -56,7 +57,12 @@ function isForUser(n: Notification, userId: string, role: string): boolean {
       }
     }
     case 'role':
-      return n.target_value === role;
+      // Managed Sync has already matched this row against the server-owned,
+      // live effective role set. The browser only knows the platform account
+      // role here; rechecking that value would incorrectly discard tenant
+      // roles and additive advanced-RBAC roles. This is display filtering, not
+      // an authorization boundary.
+      return true;
     default:
       return false;
   }
@@ -83,8 +89,13 @@ export interface UseNotificationsResult {
 export function useNotifications(): UseNotificationsResult {
   const { user } = useAuth();
   const client = useClientMaybe();
-  const userId = user?.userId ?? '';
-  const role = user?.role ?? 'user';
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
+  const userId = authorizationBoundary.ready ? user?.userId ?? '' : '';
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
 
   const notifs = useCollection<Notification & Row>('notifications');
   const receipts = useCollection<NotificationReceipt & Row>('notification_receipts');
@@ -105,7 +116,7 @@ export function useNotifications(): UseNotificationsResult {
     if (!userId) return [];
 
     return notifs.data
-      .filter((n) => isForUser(n, userId, role))
+      .filter((n) => isForUser(n, userId))
       .filter((n) => {
         const receipt = receiptMap.get(n.notification_id);
         return !receipt?.dismissed_at;
@@ -121,7 +132,7 @@ export function useNotifications(): UseNotificationsResult {
         };
       })
       .sort((a, b) => b.created_at - a.created_at);
-  }, [notifs.data, receiptMap, userId, role]);
+  }, [notifs.data, receiptMap, userId]);
 
   const unreadCount = useMemo(
     () => notifications.filter((n) => !n.read).length,
@@ -137,15 +148,21 @@ export function useNotifications(): UseNotificationsResult {
 
   const postReceiptAction = useCallback(
     (path: string) => {
-      if (!client || !userId) return;
+      if (!client
+        || !userId
+        || !boundaryReadyRef.current
+        || boundaryKeyRef.current !== callbackBoundaryKey) return;
+      const requestBoundaryKey = callbackBoundaryKey;
       void client.post(path).catch((err) => {
+        if (!boundaryReadyRef.current
+          || boundaryKeyRef.current !== requestBoundaryKey) return;
         emitFrontendCode(OBS_CODES.FRONTEND_NOTIFICATION_RECEIPT_FAILED, {
           error: err,
           metadata: { path },
         });
       });
     },
-    [client, userId],
+    [callbackBoundaryKey, client, userId],
   );
 
   const markSeen = useCallback(
@@ -215,34 +232,42 @@ export function useOnNewNotification(
   callback: (n: Notification) => void,
 ): void {
   const { user } = useAuth();
-  const userId = user?.userId ?? '';
-  const role = user?.role ?? 'user';
+  const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
+  const userId = authorizationBoundary.ready ? user?.userId ?? '' : '';
   const notifs = useCollection<Notification & Row>('notifications');
 
   const seenIds = useRef(new Set<string>());
   const callbackRef = useRef(callback);
+  const initializedBoundaryKeyRef = useRef<string | null>(null);
   callbackRef.current = callback;
 
-  // Pre-seed with all notifications present at mount (prevents re-firing on load/reconnect)
-  const initialized = useRef(false);
-  if (!initialized.current) {
+  // Pre-seed each committed scope independently. IDs from one account or
+  // tenant must neither suppress callbacks nor be retained in another.
+  if (initializedBoundaryKeyRef.current !== authorizationBoundary.key) {
+    seenIds.current = new Set<string>();
+    initializedBoundaryKeyRef.current = null;
+  }
+  if (authorizationBoundary.ready && initializedBoundaryKeyRef.current === null) {
     for (const n of notifs.data) {
       seenIds.current.add(n.notification_id);
     }
-    initialized.current = true;
+    initializedBoundaryKeyRef.current = authorizationBoundary.key;
   }
 
   useEffect(() => {
-    if (!userId) return;
+    if (!authorizationBoundary.ready
+      || initializedBoundaryKeyRef.current !== authorizationBoundary.key
+      || !userId) return;
 
     for (const n of notifs.data) {
       if (
         !seenIds.current.has(n.notification_id) &&
-        isForUser(n, userId, role)
+        isForUser(n, userId)
       ) {
         seenIds.current.add(n.notification_id);
         callbackRef.current(n);
       }
     }
-  }, [notifs.data, userId, role]);
+  }, [authorizationBoundary.key, authorizationBoundary.ready, notifs.data, userId]);
 }

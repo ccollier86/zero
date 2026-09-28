@@ -9,6 +9,12 @@ import { access, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, test } from 'bun:test';
 
+import {
+  configureObservability,
+  getObservabilityRuntime,
+  MemoryEventStore,
+  OBS_CODES,
+} from '../observability';
 import { KvService, ManualKvClock } from './index';
 
 const testRoot = join(process.cwd(), '.zero/kv-service-tests');
@@ -157,4 +163,66 @@ describe('KvService', () => {
 
     await expect(access(dir)).rejects.toThrow();
   });
+
+  test('becomes terminal while preserving a failed final flush', async () => {
+    const dir = join(testRoot, 'failed-stop');
+    const service = new KvService({ baseDir: dir, durability: 'always' });
+    await service.start();
+    await service.set('pending', 'value');
+    const failure = new Error('forced final flush failure');
+    let flushes = 0;
+    service.flush = async () => {
+      flushes += 1;
+      throw failure;
+    };
+
+    await expect(service.stop()).rejects.toBe(failure);
+    expect(service.status().started).toBeFalse();
+    expect(flushes).toBe(1);
+
+    await service.stop();
+    expect(flushes).toBe(1);
+  });
+
+  test('observes periodic persistence failures without an unhandled rejection', async () => {
+    const previousObservability = getObservabilityRuntime().config;
+    const events = new MemoryEventStore();
+    configureObservability({ console: false, store: events });
+    const service = new KvService({
+      baseDir: join(testRoot, 'background-failure'),
+      durability: 'everysec',
+      fsyncMs: 1,
+      checkpointIntervalMs: 60_000,
+    });
+    const failure = new Error('forced periodic flush failure');
+    let failFlush = true;
+    service.flush = async () => {
+      if (failFlush) throw failure;
+    };
+
+    try {
+      await service.start();
+      await waitFor(() => events.query({
+        code: OBS_CODES.KV_BACKGROUND_PERSIST_FAILED.code,
+      }).events.length > 0);
+
+      const [event] = events.query({
+        code: OBS_CODES.KV_BACKGROUND_PERSIST_FAILED.code,
+      }).events;
+      expect(event?.metadata?.operation).toBe('flush');
+      expect(event?.error).toBe(failure);
+    } finally {
+      failFlush = false;
+      await service.stop();
+      configureObservability(previousObservability);
+    }
+  });
 });
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for KV background persistence event.');
+    await Bun.sleep(5);
+  }
+}

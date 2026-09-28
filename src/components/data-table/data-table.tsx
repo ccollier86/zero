@@ -40,12 +40,12 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { Checkbox } from '@/components/animate-ui/components/radix/checkbox';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
+} from '#zero/components/ui/table';
+import { Checkbox } from '#zero/components/animate-ui/components/radix/checkbox';
+import { ScrollArea, ScrollBar } from '#zero/components/ui/scroll-area';
+import { Button } from '#zero/components/ui/button';
+import { Skeleton } from '#zero/components/ui/skeleton';
+import { cn } from '#zero/lib/utils';
 import type { LazyCollectionOptions } from '../../frontend/client/data-hooks';
 
 // ─── Types ──────────────────────────────────────────────────────────────────

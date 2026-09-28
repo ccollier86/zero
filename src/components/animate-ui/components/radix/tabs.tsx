@@ -13,8 +13,8 @@ import {
   type TabsTriggerProps as TabsTriggerPrimitiveProps,
   type TabsContentProps as TabsContentPrimitiveProps,
   type TabsContentsProps as TabsContentsPrimitiveProps,
-} from '@/components/animate-ui/primitives/radix/tabs';
-import { cn } from '@/lib/utils';
+} from '#zero/components/animate-ui/primitives/radix/tabs';
+import { cn } from '#zero/lib/utils';
 
 type TabsProps = TabsPrimitiveProps;
 

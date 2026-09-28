@@ -52,11 +52,12 @@ describe('createServerRoute', () => {
       );
 
     try {
-      const response = await app.handle(new Request('http://localhost/api/customers', {
+      app.listen(0);
+      const response = await fetch(`http://localhost:${app.server!.port}/api/customers`, {
         method: 'POST',
         body: JSON.stringify({ name: 'Ada' }),
         headers: { 'Content-Type': 'application/json' },
-      }));
+      });
 
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toEqual({
@@ -64,6 +65,7 @@ describe('createServerRoute', () => {
         name: 'Ada',
       });
     } finally {
+      if (app.server) await app.stop();
       const service = getPlatformSQLiteService();
       service?.close();
       clearPlatformSQLiteService(service);

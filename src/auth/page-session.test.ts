@@ -49,10 +49,13 @@ describe('TokenService page sessions', () => {
     expect(pageSession).not.toBeNull();
     expect(pageSession!.token.split('.')).toHaveLength(3);
     expect(pageSession!.expiresAt).toBeGreaterThan(Date.now());
-    await expect(tokenService.resolvePageSessionToken(pageSession!.token)).resolves.toEqual({
+    await expect(tokenService.resolvePageSessionToken(pageSession!.token)).resolves.toMatchObject({
       userId: user.userId,
       email: user.email,
       role: 'user',
+      sessionKind: 'web',
+      sessionScopeKind: 'application',
+      sessionScopeId: 'application',
     });
   });
 
@@ -120,7 +123,7 @@ describe('TokenService page sessions', () => {
       email: 'current-role@example.test',
       role: 'admin',
     });
-    await expect(tokenService.resolvePageSessionToken(pageSession!.token)).resolves.toEqual({
+    await expect(tokenService.resolvePageSessionToken(pageSession!.token)).resolves.toMatchObject({
       userId: user.userId,
       email: 'current-role@example.test',
       role: 'admin',

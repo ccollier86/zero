@@ -2,8 +2,10 @@
 
 import type { Database } from 'bun:sqlite';
 import { repairNativeAuthSchema } from '../../auth/oidc/native-auth-schema-repair';
-import { createNativeAuthIndexStatements } from '../../auth/oidc/native-auth-schema-sql';
-import { REGISTRATION_INTENT_TABLE_SQL } from '../../auth/registration-intent-schema';
+import { createNativeAuthHardeningIndexStatements } from '../../auth/oidc/native-auth-schema-sql';
+import {
+  LEGACY_REGISTRATION_INTENT_TABLE_SQL,
+} from '../../auth/registration-intent-schema';
 import type { Migration } from '../migrator';
 
 export const migration: Migration = {
@@ -18,7 +20,7 @@ export const migration: Migration = {
       exec: (sql) => db.exec(sql),
       prepare: (sql) => ({ all: () => db.query(sql).all() }),
     });
-    db.run(REGISTRATION_INTENT_TABLE_SQL);
-    for (const statement of createNativeAuthIndexStatements()) db.run(statement);
+    db.run(LEGACY_REGISTRATION_INTENT_TABLE_SQL);
+    for (const statement of createNativeAuthHardeningIndexStatements()) db.run(statement);
   },
 };

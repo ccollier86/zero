@@ -10,6 +10,7 @@ async function startAuthApp() {
   const db = createReactiveDB({ mode: 'memory' });
   const app = new Elysia().use(createAuthPlugin({
     db,
+    bootstrap: 'public',
     accountEmails: { passwordReset: true },
   }));
   app.listen(0);

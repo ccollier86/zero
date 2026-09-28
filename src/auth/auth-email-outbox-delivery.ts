@@ -7,11 +7,21 @@ import { AuthEmailDeliveryFailure, type AuthEmailDeliveryOutcome,
   type AuthEmailOutboxDeliveryDeps } from './auth-email-outbox-delivery-types';
 import { waitForAuthEmailDelivery } from './auth-email-outbox-abort';
 import { classifyAuthEmailFailure } from './auth-email-outbox-failure-classification';
+import {
+  TenantInvitationEnvelopeError,
+  tenantInvitationEnvelopeAad,
+} from './auth-tenant-invitation-envelope';
 
 export class AuthEmailOutboxDelivery {
   constructor(private readonly deps: AuthEmailOutboxDeliveryDeps) {}
 
   async deliver(job: AuthEmailOutboxJob, signal: AbortSignal): Promise<AuthEmailDeliveryOutcome> {
+    if (job.kind === 'tenant_invitation') {
+      return this.deliverTenantInvitation(job, signal);
+    }
+    if (job.kind === 'domain_mailbox_proof') {
+      return this.deliverDomainMailboxProof(job, signal);
+    }
     if (!this.kindEnabled(job)) return suppressed('policy_disabled');
     const user = this.deps.store.getUserByEmail(job.recipient);
     if (!user) return suppressed('account_not_found');
@@ -22,6 +32,95 @@ export class AuthEmailOutboxDelivery {
     }
     const continuation = this.validateContinuation(job, user);
     return this.createAndSend(job, user, continuation, signal);
+  }
+
+  private async deliverDomainMailboxProof(
+    job: AuthEmailOutboxJob,
+    signal: AbortSignal,
+  ): Promise<AuthEmailDeliveryOutcome> {
+    const service = this.deps.getVerifiedDomainOnboarding?.();
+    if (!service || !job.domainUserId || !job.domainEmailGeneration
+      || job.domainAuthGeneration === null || !job.domainIdentityKind) {
+      return suppressed('domain_onboarding_unavailable');
+    }
+    const created = service.createMailboxDelivery({
+      jobId: job.jobId,
+      userId: job.domainUserId,
+      email: job.recipient,
+      emailGeneration: job.domainEmailGeneration,
+      authGeneration: job.domainAuthGeneration,
+      identityKind: job.domainIdentityKind,
+      identityContinuationId: job.domainIdentityContinuationId,
+    });
+    if (!created) return suppressed('account_not_eligible', undefined);
+    try {
+      await waitForAuthEmailDelivery(this.deps.email.sendDomainMailboxProof({
+        ...created,
+        // Each attempt owns a different token. An attempt-specific provider
+        // key prevents accidental dedupe from accepting only an older link.
+        deliveryId: `${job.jobId}:${job.attempts}`,
+        signal,
+      }), signal);
+      return { status: 'delivered', userId: created.user.userId };
+    } catch (error) {
+      // The provider may have accepted the message before its response was
+      // lost. Retain this bounded sibling token until consumption/expiry.
+      throw failure(error, created.user.userId, false);
+    }
+  }
+
+  private async deliverTenantInvitation(
+    job: AuthEmailOutboxJob,
+    signal: AbortSignal,
+  ): Promise<AuthEmailDeliveryOutcome> {
+    const invitationId = job.invitationId;
+    const envelope = job.secretEnvelope;
+    const envelopeService = this.deps.invitationEnvelope;
+    const onboarding = this.deps.getTenantOnboarding?.();
+    if (!invitationId || !envelope || !envelopeService || !onboarding) {
+      throw new AuthEmailDeliveryFailure(
+        'TENANT_INVITATION_DELIVERY_STATE_INVALID',
+        false,
+        undefined,
+        false,
+      );
+    }
+    let rawToken: string;
+    try {
+      rawToken = envelopeService.decrypt(
+        envelope,
+        tenantInvitationEnvelopeAad(job.jobId, invitationId, job.recipient),
+      );
+    } catch (error) {
+      const code = error instanceof TenantInvitationEnvelopeError
+        ? error.code
+        : 'TENANT_INVITATION_ENVELOPE_AUTHENTICATION_FAILED';
+      throw new AuthEmailDeliveryFailure(code, false, undefined, false);
+    }
+    const delivery = onboarding.resolveInvitationDelivery({
+      invitationId,
+      recipient: job.recipient,
+      rawToken,
+    });
+    if (!delivery) return suppressed('invitation_unavailable');
+    try {
+      await waitForAuthEmailDelivery(this.deps.email.sendTenantInvitation({
+        delivery,
+        rawToken,
+        // One key for every retry prevents duplicate provider acceptance.
+        deliveryId: job.jobId,
+        signal,
+      }), signal);
+      return { status: 'delivered' };
+    } catch (error) {
+      const classified = classifyAuthEmailFailure(error);
+      throw new AuthEmailDeliveryFailure(
+        classified.code,
+        classified.retryable,
+        undefined,
+        false,
+      );
+    }
   }
 
   private kindEnabled(job: AuthEmailOutboxJob): boolean {
@@ -36,7 +135,9 @@ export class AuthEmailOutboxDelivery {
     try {
       created = createActionTokenOrHideCooldown(() => this.deps.tokens.create({
         userId: user.userId,
-        type: job.kind,
+        type: job.kind === 'password_reset'
+          ? 'password_reset'
+          : 'email_verification',
         metadata: this.metadata(job, user, continuation),
         // The durable outbox request window is this flow's admission control.
         // Lease recovery must not be suppressed by a token left by a crash.

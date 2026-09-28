@@ -3,13 +3,13 @@
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { AuthHeader } from '@/components/auth/auth-header';
-import { OTPInput } from '@/components/auth/otp-input';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { CircleX } from '@/components/animate-ui/icons/circle-x';
-import { Loader } from '@/components/animate-ui/icons/loader';
+import { cn } from '#zero/lib/utils';
+import { Button } from '#zero/components/ui/button';
+import { AuthHeader } from '#zero/components/auth/auth-header';
+import { OTPInput } from '#zero/components/auth/otp-input';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
+import { Loader } from '#zero/components/animate-ui/icons/loader';
 import {
   authFeedbackAnimate,
   authFeedbackExit,
@@ -106,9 +106,12 @@ function OTPVerification({
         />
 
         {loading && (
-          <AnimateIcon animate loop>
-            <Loader size={16} className="text-muted-foreground" />
-          </AnimateIcon>
+          <div role="status" aria-live="polite">
+            <AnimateIcon animate loop>
+              <Loader size={16} className="text-muted-foreground" />
+            </AnimateIcon>
+            <span className="sr-only">Verifying code</span>
+          </div>
         )}
 
         <AnimatePresence>

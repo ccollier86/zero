@@ -1,11 +1,11 @@
 'use client';
 
 import * as React from 'react';
-import { motion, useReducedMotion } from 'motion/react';
+import { MotionConfig, motion, useReducedMotion } from 'motion/react';
 
-import { cn } from '@/lib/utils';
-import { Card, CardContent } from '@/components/ui/card';
-import { GradientText } from '@/components/animate-ui/primitives/texts/gradient';
+import { cn } from '#zero/lib/utils';
+import { Card, CardContent } from '#zero/components/ui/card';
+import { GradientText } from '#zero/components/animate-ui/primitives/texts/gradient';
 import {
   authShellAnimate,
   authShellInitial,
@@ -39,27 +39,29 @@ function AuthLayout({
   const reduceMotion = useReducedMotion();
 
   return (
-    <div className={cn('relative min-h-screen overflow-hidden bg-background text-foreground', className)}>
-      <AuthBackground variant={background} />
+    <MotionConfig reducedMotion="user">
+      <div className={cn('relative min-h-screen overflow-hidden bg-background text-foreground', className)}>
+        <AuthBackground variant={background} />
 
-      <motion.div
-        data-zero-auth-shell
-        className="relative mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-4 py-10 sm:px-6"
-        initial={reduceMotion ? false : authShellInitial}
-        animate={reduceMotion ? undefined : authShellAnimate}
-        transition={authShellTransition}
-      >
-        <div className="mb-6 flex justify-center">
-          {image ?? <AuthBrand appName={displayName} gradient={gradient} logo={logo} />}
-        </div>
+        <motion.div
+          data-zero-auth-shell
+          className="relative mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-4 py-10 sm:px-6"
+          initial={reduceMotion ? false : authShellInitial}
+          animate={reduceMotion ? undefined : authShellAnimate}
+          transition={reduceMotion ? { duration: 0 } : authShellTransition}
+        >
+          <div className="mb-6 flex justify-center">
+            {image ?? <AuthBrand appName={displayName} gradient={gradient} logo={logo} />}
+          </div>
 
-        <Card className="w-full border-border/80 bg-card/90 shadow-2xl shadow-black/10 backdrop-blur-xl dark:shadow-black/35">
-          <CardContent className="px-6 py-6 sm:px-7 sm:py-7">
-            {children}
-          </CardContent>
-        </Card>
-      </motion.div>
-    </div>
+          <Card className="w-full border-border/80 bg-card/90 shadow-2xl shadow-black/10 backdrop-blur-xl dark:shadow-black/35">
+            <CardContent className="px-6 py-6 sm:px-7 sm:py-7">
+              {children}
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
+    </MotionConfig>
   );
 }
 

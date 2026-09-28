@@ -13,14 +13,19 @@ import { emitPlatformCode, warnPlatform } from '../observability/sink';
 import { AIService } from './ai-service';
 import type { AIStatusEndpointReadMode, ResolvedAIConfig } from './ai-types';
 import { emitAIProviderStatus } from './ai-observability';
+import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
+import { ZERO_AI_SERVICE } from '../runtime/service-keys';
+import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 
-let activeAIService: AIService | null = null;
+const aiProviders = new CompatibilityProviderRegistry<AIService>('AI service');
 
 /** Options for mounting the Zero AI Elysia plugin. */
 export interface AIPluginConfig {
   config: ResolvedAIConfig;
   authEnabled?: boolean;
   service?: AIService;
+  runtime?: ZeroAppRuntime;
+  onServiceCreated?: (service: AIService) => void;
 }
 
 /**
@@ -31,7 +36,11 @@ export interface AIPluginConfig {
  */
 export function createAIPlugin(options: AIPluginConfig) {
   const service = options.service ?? new AIService(options.config);
-  activeAIService = service;
+  const owner = {};
+  const registration = aiProviders.register(owner, () => service);
+  options.runtime?.set(ZERO_AI_SERVICE, service);
+  options.onServiceCreated?.(service);
+  options.runtime?.addCleanup(() => registration.unregister());
 
   const endpoint = options.config.statusEndpoint;
   const readMode = endpoint.read ?? (options.authEnabled ? 'admin' : 'development');
@@ -53,6 +62,10 @@ export function createAIPlugin(options: AIPluginConfig) {
           reason: provider.reason,
         });
       }
+    })
+    .onStop(() => {
+      options.runtime?.clear(ZERO_AI_SERVICE, service);
+      registration.unregister();
     });
 
   if (!endpoint.enabled) return app;
@@ -82,7 +95,7 @@ export function createAIPlugin(options: AIPluginConfig) {
  * server-side convenience escape hatch, not browser API.
  */
 export function getAI(): AIService | null {
-  return activeAIService;
+  return aiProviders.get();
 }
 
 async function canReadAIStatus(

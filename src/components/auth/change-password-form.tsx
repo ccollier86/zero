@@ -11,15 +11,15 @@
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../../frontend/client/auth-hooks';
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { AuthHeader } from '@/components/auth/auth-header';
-import { PasswordInput } from '@/components/auth/password-input';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { CircleCheck } from '@/components/animate-ui/icons/circle-check';
-import { CircleX } from '@/components/animate-ui/icons/circle-x';
-import { Loader } from '@/components/animate-ui/icons/loader';
+import { cn } from '#zero/lib/utils';
+import { Button } from '#zero/components/ui/button';
+import { Label } from '#zero/components/ui/label';
+import { AuthHeader } from '#zero/components/auth/auth-header';
+import { PasswordInput } from '#zero/components/auth/password-input';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
+import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
+import { Loader } from '#zero/components/animate-ui/icons/loader';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
 import {
   authFeedbackAnimate,
@@ -75,7 +75,7 @@ export function ChangePasswordForm({ onSuccess, className }: ChangePasswordFormP
   }
 
   return (
-    <form onSubmit={handleSubmit} className={cn('space-y-3', className)}>
+    <form onSubmit={handleSubmit} className={cn('space-y-3', className)} aria-busy={submitting}>
       <AuthHeader title="Change password" description="Update the password for the signed-in account" />
 
       <div className="space-y-3">
@@ -119,9 +119,12 @@ export function ChangePasswordForm({ onSuccess, className }: ChangePasswordFormP
 
       <Button type="submit" size="sm" className="h-8 w-full" disabled={submitting}>
         {submitting ? (
-          <AnimateIcon animate loop>
-            <Loader size={16} />
-          </AnimateIcon>
+          <>
+            <AnimateIcon animate loop>
+              <Loader size={16} />
+            </AnimateIcon>
+            <span className="sr-only">Changing password</span>
+          </>
         ) : (
           'Change password'
         )}
@@ -149,12 +152,14 @@ function FormFeedback({ error, success }: { error: string | null; success: strin
             'flex items-start gap-2 rounded-md border px-3 py-2.5',
             destructive
               ? 'border-destructive/30 bg-destructive/5 text-destructive'
-              : 'border-green-500/30 bg-green-500/5 text-green-600',
+              : 'border-success/35 bg-success/10 text-foreground dark:border-success/45 dark:bg-success/15',
           )}
           role={destructive ? 'alert' : 'status'}
         >
           <AnimateIcon animate>
-            {destructive ? <CircleX size={16} /> : <CircleCheck size={16} />}
+            {destructive
+              ? <CircleX size={16} />
+              : <CircleCheck size={16} className="text-success" />}
           </AnimateIcon>
           <p className="text-xs font-medium leading-relaxed">{message}</p>
         </div>

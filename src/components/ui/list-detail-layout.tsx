@@ -2,8 +2,8 @@
 
 import * as React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Separator } from '@/components/ui/separator';
-import { cn } from '@/lib/utils';
+import { Separator } from '#zero/components/ui/separator';
+import { cn } from '#zero/lib/utils';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

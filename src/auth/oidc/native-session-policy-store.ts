@@ -26,8 +26,11 @@ export class NativeSessionPolicyStore {
     this.clock = now ?? Date.now;
     this.deleteExpired = db.prepare(`DELETE FROM _auth_native_sessions WHERE token_id IN
       (SELECT token_id FROM _auth_native_sessions
-       WHERE expires_at <= ? ORDER BY expires_at LIMIT ?)`);
-    this.deleteFamily = db.prepare('DELETE FROM _auth_native_sessions WHERE family_id = ?');
+       WHERE expires_at <= ? ORDER BY expires_at LIMIT ?)
+      RETURNING token_id`);
+    this.deleteFamily = db.prepare(
+      'DELETE FROM _auth_native_sessions WHERE family_id = ? RETURNING token_id',
+    );
     this.evictFamilies = db.prepare(`DELETE FROM _auth_native_sessions WHERE family_id IN
       (SELECT family_id FROM _auth_native_sessions
        WHERE user_id = ? AND client_id = ? AND consumed_at IS NULL
@@ -54,12 +57,12 @@ export class NativeSessionPolicyStore {
     return 'ready';
   }
 
-  revokeFamily(familyId: string): void {
-    this.deleteFamily.run(familyId);
+  revokeFamily(familyId: string): number {
+    return this.deleteFamily.all(familyId).length;
   }
 
   cleanupExpired(now = this.now()): number {
-    return this.deleteExpired.run(now, this.config.cleanupBatchSize).changes;
+    return this.deleteExpired.all(now, this.config.cleanupBatchSize).length;
   }
 }
 

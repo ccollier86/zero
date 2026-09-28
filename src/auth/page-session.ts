@@ -9,6 +9,7 @@
 import type { HTTPHeaders } from 'elysia';
 import type { TokenService } from './token-service';
 import type { AuthContext } from './types';
+import { authAuditRequestFromRequest } from './auth-audit-service';
 
 export const PAGE_SESSION_COOKIE_NAME = '__zero_page_session';
 
@@ -68,7 +69,10 @@ export async function setPageSessionCookie(
 ): Promise<void> {
   const previousSession = readPageSessionCookie(request);
   if (previousSession) {
-    await tokenService.revokePageSessionToken(previousSession);
+    await tokenService.revokePageSessionToken(
+      previousSession,
+      authAuditRequestFromRequest(request),
+    );
   }
 
   const session = await tokenService.issuePageSessionToken(rawRefreshToken);
@@ -99,7 +103,10 @@ export async function revokeAndClearPageSessionCookie(
 ): Promise<void> {
   const session = readPageSessionCookie(request);
   if (session) {
-    await tokenService.revokePageSessionToken(session);
+    await tokenService.revokePageSessionToken(
+      session,
+      authAuditRequestFromRequest(request),
+    );
   }
   clearPageSessionCookie(set, request);
 }

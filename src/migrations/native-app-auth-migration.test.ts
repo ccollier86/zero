@@ -42,7 +42,16 @@ describe('migration 005 native app auth', () => {
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?"
         ).get(table)).toEqual({ name: table });
       }
-      expect(migrator.run()).toEqual(['006', '007']);
+      const nativeMigrationIndex = migrations.findIndex(
+        (migration) => migration.version === '005',
+      );
+      expect(nativeMigrationIndex).toBeGreaterThanOrEqual(0);
+      expect(migrator.run()).toEqual(
+        migrations
+          .slice(nativeMigrationIndex + 1)
+          .map((migration) => migration.version),
+      );
+      expect(migrator.run()).toEqual([]);
       expect(db.query('SELECT email FROM users WHERE user_id = ?').get('u_existing')).toEqual({
         email: 'existing@example.com',
       });

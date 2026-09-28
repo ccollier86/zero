@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { ResponsiveContainer, Tooltip, Legend } from 'recharts';
 
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 
 // ─── Chart Config ────────────────────────────────────────────────────────────
 

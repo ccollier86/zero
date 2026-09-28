@@ -11,7 +11,9 @@ const client = {
 
 function resolve(plugin: Partial<AuthPluginConfig>) {
   const config = { nativeApps: { clients: [client] }, ...plugin } as AuthPluginConfig;
-  return resolveNativeRuntimeConfig(config, resolveAuthBehaviorConfig(config));
+  return resolveNativeRuntimeConfig(config, resolveAuthBehaviorConfig({
+    nativeApps: config.nativeApps,
+  }));
 }
 
 describe('native runtime config', () => {

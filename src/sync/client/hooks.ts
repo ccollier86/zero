@@ -15,6 +15,16 @@ import { createSyncClient } from './sync-client';
 import type { SyncStoreContext } from './sync-store';
 import type { StateClient } from './state-client';
 import type { EphemeralClient } from './ephemeral-client';
+import { useClientMaybe } from '../../frontend/client/client-context';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from '../../frontend/client/authorization-scope-hooks';
+
+const NOOP_UNSUBSCRIBE = () => {};
+const EMPTY_TABLE_ROWS: Record<string, never> = {};
+const EMPTY_QUERY_ROWS: never[] = [];
+const EMPTY_SYNC_STATUS: SyncStatus = Object.freeze({ connected: false, pending: 0 });
 
 // ─── Context ───────────────────────────────────────────────────────────────
 
@@ -186,28 +196,64 @@ export function useTable<T extends Row = Row>(
   tableName: string
 ): UseTableResult<T> {
   const client = useSyncClient();
-  const subscribe = useStoreSubscribe(client);
+  const platformClient = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(platformClient);
+  const subscribeToStore = useStoreSubscribe(client);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const subscribe = useCallback(
+    (callback: () => void) => authorizationBoundary.ready
+      ? subscribeToStore(callback)
+      : NOOP_UNSUBSCRIBE,
+    [authorizationBoundary.key, authorizationBoundary.ready, subscribeToStore],
+  );
 
   const getSnapshot = useCallback(
-    () => getStoreContext(client)[tableName] as Record<string, T>,
-    [client, tableName]
+    () => authorizationBoundary.ready
+      ? getStoreContext(client)[tableName] as Record<string, T>
+      : EMPTY_TABLE_ROWS as Record<string, T>,
+    [authorizationBoundary.ready, client, tableName]
   );
 
   const rows = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   const insert = useCallback(
-    (row: T) => client.insert(tableName, row),
-    [client, tableName]
+    (row: T) => {
+      if (!isAuthorizationScopeCallbackCurrent(
+        boundaryKeyRef.current,
+        boundaryReadyRef.current,
+        callbackBoundaryKey,
+      )) return;
+      client.insert(tableName, row);
+    },
+    [callbackBoundaryKey, client, tableName]
   );
 
   const update = useCallback(
-    (id: string, partial: Partial<T>) => client.update(tableName, id, partial),
-    [client, tableName]
+    (id: string, partial: Partial<T>) => {
+      if (!isAuthorizationScopeCallbackCurrent(
+        boundaryKeyRef.current,
+        boundaryReadyRef.current,
+        callbackBoundaryKey,
+      )) return;
+      client.update(tableName, id, partial);
+    },
+    [callbackBoundaryKey, client, tableName]
   );
 
   const remove = useCallback(
-    (id: string) => client.delete(tableName, id),
-    [client, tableName]
+    (id: string) => {
+      if (!isAuthorizationScopeCallbackCurrent(
+        boundaryKeyRef.current,
+        boundaryReadyRef.current,
+        callbackBoundaryKey,
+      )) return;
+      client.delete(tableName, id);
+    },
+    [callbackBoundaryKey, client, tableName]
   );
 
   return { rows, insert, update, remove };
@@ -234,25 +280,52 @@ export function useRow<T extends Row = Row>(
   id: string
 ): UseRowResult<T> {
   const client = useSyncClient();
-  const subscribe = useStoreSubscribe(client);
+  const platformClient = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(platformClient);
+  const subscribeToStore = useStoreSubscribe(client);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const subscribe = useCallback(
+    (callback: () => void) => authorizationBoundary.ready
+      ? subscribeToStore(callback)
+      : NOOP_UNSUBSCRIBE,
+    [authorizationBoundary.key, authorizationBoundary.ready, subscribeToStore],
+  );
 
   const getSnapshot = useCallback(
-    () =>
-      ((getStoreContext(client)[tableName] as Record<string, T>)?.[id] ??
-        null) as T | null,
-    [client, tableName, id]
+    () => authorizationBoundary.ready
+      ? ((getStoreContext(client)[tableName] as Record<string, T>)?.[id] ?? null)
+      : null,
+    [authorizationBoundary.ready, client, tableName, id]
   );
 
   const row = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   const update = useCallback(
-    (partial: Partial<T>) => client.update(tableName, id, partial),
-    [client, tableName, id]
+    (partial: Partial<T>) => {
+      if (!isAuthorizationScopeCallbackCurrent(
+        boundaryKeyRef.current,
+        boundaryReadyRef.current,
+        callbackBoundaryKey,
+      )) return;
+      client.update(tableName, id, partial);
+    },
+    [callbackBoundaryKey, client, tableName, id]
   );
 
   const remove = useCallback(
-    () => client.delete(tableName, id),
-    [client, tableName, id]
+    () => {
+      if (!isAuthorizationScopeCallbackCurrent(
+        boundaryKeyRef.current,
+        boundaryReadyRef.current,
+        callbackBoundaryKey,
+      )) return;
+      client.delete(tableName, id);
+    },
+    [callbackBoundaryKey, client, tableName, id]
   );
 
   return { row, update, remove };
@@ -272,7 +345,15 @@ export function useQuery<T extends Row = Row>(
   filterFn: (row: T) => boolean
 ): T[] {
   const client = useSyncClient();
-  const subscribe = useStoreSubscribe(client);
+  const platformClient = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(platformClient);
+  const subscribeToStore = useStoreSubscribe(client);
+  const subscribe = useCallback(
+    (callback: () => void) => authorizationBoundary.ready
+      ? subscribeToStore(callback)
+      : NOOP_UNSUBSCRIBE,
+    [authorizationBoundary.key, authorizationBoundary.ready, subscribeToStore],
+  );
 
   const prevRef = useRef<T[]>([]);
 
@@ -286,13 +367,17 @@ export function useQuery<T extends Row = Row>(
   );
 
   const getSnapshot = useCallback(() => {
+    if (!authorizationBoundary.ready) {
+      prevRef.current = EMPTY_QUERY_ROWS as T[];
+      return prevRef.current;
+    }
     const next = selector(getStoreContext(client));
     if (shallowArrayEqual(prevRef.current, next)) {
       return prevRef.current;
     }
     prevRef.current = next;
     return next;
-  }, [client, selector]);
+  }, [authorizationBoundary.ready, client, selector]);
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
@@ -312,11 +397,23 @@ export interface SyncStatus {
  */
 export function useSyncStatus(): SyncStatus {
   const client = useSyncClient();
-  const subscribe = useStoreSubscribe(client);
+  const platformClient = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(platformClient);
+  const subscribeToStore = useStoreSubscribe(client);
+  const subscribe = useCallback(
+    (callback: () => void) => authorizationBoundary.ready
+      ? subscribeToStore(callback)
+      : NOOP_UNSUBSCRIBE,
+    [authorizationBoundary.key, authorizationBoundary.ready, subscribeToStore],
+  );
 
   const prevRef = useRef<SyncStatus>({ connected: false, pending: 0 });
 
   const getSnapshot = useCallback(() => {
+    if (!authorizationBoundary.ready) {
+      prevRef.current = EMPTY_SYNC_STATUS;
+      return EMPTY_SYNC_STATUS;
+    }
     const sync = getStoreContext(client)._sync;
     const next: SyncStatus = {
       connected: sync.connected,
@@ -332,7 +429,7 @@ export function useSyncStatus(): SyncStatus {
 
     prevRef.current = next;
     return next;
-  }, [client]);
+  }, [authorizationBoundary.ready, client]);
 
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

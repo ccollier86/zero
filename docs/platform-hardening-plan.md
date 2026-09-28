@@ -1,6 +1,12 @@
 # Zero Platform Hardening Plan
 
-This document captures the current platform assessment, issue inventory, and backend-first fix plan. The intent is to work through one numbered item at a time and keep this file updated as decisions and fixes land.
+This document is the living hardening log: it preserves the assessment,
+numbered fixes, and the verification snapshot recorded when each item landed.
+Older per-item test totals and known-failure notes are historical, not the
+current release result. Release candidates must use the gates in
+`docs/releasing.md` and repeat them from the exact candidate commit and fresh
+package archive; no passing total recorded in this historical log substitutes
+for that run.
 
 Companion references:
 
@@ -49,17 +55,22 @@ periodically revalidates both. Auth-enabled `createApp()` instances default to
 required sync auth. The old URL-token bridge is available only through an
 explicit, temporary compatibility flag and is disabled by default.
 
-### 3.2 Sync Table Access Is Too Broad
+### 3.2 Sync Table Access Was Too Broad — resolved for managed platform tables
 
-Before item 7.2, `allowedTables` defaulted to every non-internal table and was also used as a write gate.
+Historical baseline before items 7.2 and the Phase-0 auth hardening:
+`allowedTables` defaulted to every non-internal table and was also used as a
+write gate.
 
-Current status: partially addressed in 7.2. `allowedTables` is now read/subscription state derived through `SyncPolicy.canReadTable`, and direct sync mutation is checked separately through mutation policy. Standalone sync still defaults to allow-all for app tables unless a policy is configured.
+Current status: read/subscription state and mutation authority are separate.
+Default `createApp()` makes users, workflow definitions, and Storage metadata
+private; notifications/receipts, rooms/members, and workflow execution rows use
+target, membership, or owner filters across snapshot, catch-up, and live
+delivery; framework table mutations use purpose-built routes/services. Direct
+standalone `createSyncPlugin()` remains allow-all unless the caller supplies
+auth and policy, and unclassified app tables retain their app policy.
 
-Impact:
-
-1. Raw sync clients can subscribe to all non-internal tables unless app code adds policy externally.
-2. Raw sync clients can mutate allowed tables because read access and write access are not separated.
-3. Platform tables such as notifications, rooms, workflows, and storage can become too permissive if exposed through generic sync mutation.
+The remaining design work is tenant classification and mandatory tenant row
+scope, not the former framework-table exposure.
 
 ### 3.3 Missing Read/Write Policy Separation
 
@@ -328,7 +339,11 @@ Work:
 2. Done: `canReadTable` controls subscriptions/snapshots; `canMutateTable` controls direct `sync.mutate`.
 3. Done: added operation-specific callbacks: `canInsert`, `canUpdate`, and `canDelete`.
 4. Done: mutation callbacks receive `row`, `rowId`, `op`, and `authContext`, which supports row-level app policy without coupling sync to app domains.
-5. Done: `createApp()` installs platform-safe write protection for `users`, `notifications`, rooms, workflows, and storage metadata tables.
+5. Done: `createApp()` installs private/scoped framework-table read policy and
+   protects service-owned tables from direct mutation. Users, workflow
+   definitions, and Storage metadata are private; notifications/receipts,
+   rooms/members, and workflow execution rows are target/membership/owner
+   filtered.
 6. Done: added `syncPolicy` to app config and deny-wins composition with platform defaults.
 
 Verification:
@@ -361,10 +376,14 @@ Work:
 1. Done: notification creation already flows through notification service/routes.
 2. Done: notification receipt actions now flow through authenticated notification routes instead of direct `notification_receipts` sync writes.
 3. Done: added `NotificationService.markAllSeen()` and `POST /notifications/seen-all`.
-4. Done: `useNotifications()` now calls authenticated HTTP routes for seen/read/dismiss/read-all/seen-all and relies on ReactiveDB sync broadcasts for receipt state updates.
+4. Done: `useNotifications()` now calls authenticated HTTP routes for
+   seen/read/dismiss/read-all/seen-all; receipt Sync delivery is restricted to
+   the owning user.
 5. Done: `notification_receipts` is now included in the platform sync write-protected table set.
 6. Done: fixed `createAuthMiddleware()` so `requireAuth()` and `requireAdmin()` are resolved from the same async request lifecycle as `authContext`; this makes route-side authorization work correctly for service-owned table writes.
-7. Existing service-owned tables remain write-protected by the 7.2 platform policy: users, notifications, rooms, workflows, and storage metadata.
+7. Existing service-owned tables remain write-protected by the platform policy,
+   while their read side is either private or explicitly row-scoped as
+   described in 7.2.
 
 Verification:
 

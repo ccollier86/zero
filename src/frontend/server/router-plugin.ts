@@ -11,6 +11,21 @@ import { OBS_CODES } from '../../observability/codes';
 import { emitPlatformCode } from '../../observability/sink';
 import { generateSitemapXml } from './sitemap';
 import type { ResolvedSitemapConfig } from './types';
+import {
+  createRequestAuthorizationAccess,
+  type AuthorizationPropertyStore,
+  type AuthorizationRoleAssignmentResolver,
+  type RequestAuthorizationAccess,
+} from '../../auth/authorization-access';
+import {
+  compileAccessRequirement,
+  isCompiledAccessRequirement,
+  mergeAccessRequirements,
+  type AccessRequirement,
+  type AuthorizationKernel,
+  type CompiledAccessRequirement,
+} from '../../auth/authorization-kernel';
+import { AuthError, type AuthContext } from '../../auth/types';
 
 // ─── ISR Cache ────────────────────────────────────────────────────────────
 
@@ -20,8 +35,6 @@ interface CacheEntry {
   timestamp: number;
   maxAge: number;
 }
-
-const isrCache = new Map<string, CacheEntry>();
 
 // ─── Router Plugin ─────────────────────────────────────────────────────────
 
@@ -59,6 +72,12 @@ export interface RouterPluginOptions {
     /** Build a deletion header after an attempted page credential is rejected. */
     clearRejectedPageSession?: (request: Request) => string | null;
   };
+  /** App-local authorization services used by file pages, layouts, and route.ts APIs. */
+  authorization?: {
+    getKernel: () => AuthorizationKernel | null;
+    getPropertyStore?: () => AuthorizationPropertyStore | null;
+    getRoleAssignments?: () => AuthorizationRoleAssignmentResolver | null;
+  };
   /** Optional automatic sitemap route mounted before the file-router catch-all. */
   sitemap?: {
     config: ResolvedSitemapConfig;
@@ -86,6 +105,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
   const appDir = options.appDir ?? './app';
   const outDir = resolve(options.outDir ?? '.build');
   const routeTree = options.routeTree ?? buildRouteTree(scanRoutes(appDir));
+  const isrCache = new Map<string, CacheEntry>();
 
   const router = new Elysia({ name: 'router' })
 
@@ -137,6 +157,10 @@ export function createRouterPlugin(options: RouterPluginOptions) {
     .all('/*', async ({ request, set, ...ctx }) => {
       const url = new URL(request.url);
       const pathname = url.pathname;
+      const isrCacheKey = `${url.origin}${pathname}${url.search}`;
+      const isIsrRequest = request.method === 'GET'
+        && !request.headers.has('authorization')
+        && !request.headers.has('cookie');
 
       // Skip /_build (handled above)
       if (pathname.startsWith('/_build')) return;
@@ -144,11 +168,18 @@ export function createRouterPlugin(options: RouterPluginOptions) {
       const match = matchRoute(routeTree, pathname);
 
       // Build enriched LoaderContext
+      const bearerAuth = ((ctx as { authContext?: AuthContext | null }).authContext
+        ?? null);
       const loaderCtx: LoaderContext = {
         params: match.params,
         request,
         // Pull auth from Elysia's resolve chain if available
-        auth: (ctx as any).authContext ?? undefined,
+        auth: bearerAuth ?? undefined,
+        access: resolveRouterAccess({
+          authContext: bearerAuth,
+          existing: (ctx as { access?: RequestAuthorizationAccess }).access,
+          options,
+        }),
         redirect: (redirectUrl: string, status = 302) =>
           new Response(null, {
             status,
@@ -166,12 +197,62 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         // route's middleware when this method actually has an API handler;
         // colocated page requests must be allowed to continue to page routing.
         if (handler) {
+          let apiRequiresAuth = false;
+          const kernel = options.authorization?.getKernel() ?? null;
+          let apiAccess = compileRouteAccess(false, kernel);
+
+          // A colocated route.ts remains inside its parent layout auth
+          // boundary. Evaluate inherited auth root-to-leaf with Bearer identity
+          // only. Layout middleware is page-oriented and does not implicitly
+          // run for APIs; route.ts may declare its own API middleware below.
+          for (const layoutPath of match.layouts) {
+            try {
+              const layoutModule = await import(layoutPath);
+              const layoutConfig: RouteConfig | undefined = layoutModule.config;
+              if (layoutConfig) {
+                apiAccess = mergeRouteAccess(apiAccess, layoutConfig.auth, kernel);
+                apiRequiresAuth ||= apiAccess.user === 'required';
+                const middlewareResult = await runRouteMiddleware(
+                  layoutConfig,
+                  loaderCtx,
+                  {
+                    requirement: apiAccess,
+                    requestKind: 'api',
+                    runCustomMiddleware: false,
+                  },
+                );
+                if (middlewareResult) {
+                  return withPrivateApiHeaders(middlewareResult);
+                }
+              }
+            } catch (err) {
+              emitPlatformCode(OBS_CODES.ROUTER_LAYOUT_CONFIG_FAILED, {
+                error: err,
+                metadata: { layoutPath, path: pathname },
+              });
+              return withPrivateApiHeaders(
+                new Response('Route policy unavailable', { status: 500 })
+              );
+            }
+          }
+
           const routeConfig: RouteConfig | undefined = routeModule.config;
           if (routeConfig) {
-            const middlewareResult = await runRouteMiddleware(routeConfig, loaderCtx);
-            if (middlewareResult) return middlewareResult;
+            apiAccess = mergeRouteAccess(apiAccess, routeConfig.auth, kernel);
+            apiRequiresAuth ||= apiAccess.user === 'required';
+            const middlewareResult = await runRouteMiddleware(
+              routeConfig,
+              loaderCtx,
+              { requirement: apiAccess, requestKind: 'api' },
+            );
+            if (middlewareResult) {
+              return withPrivateApiHeaders(middlewareResult);
+            }
           }
-          return handler(loaderCtx);
+          const response = await handler(loaderCtx);
+          return loaderCtx.auth || apiRequiresAuth
+            ? withPrivateApiHeaders(response)
+            : response;
         }
 
         // Method not allowed
@@ -189,6 +270,12 @@ export function createRouterPlugin(options: RouterPluginOptions) {
       if (!loaderCtx.auth && options.authGuard?.resolvePageAuth) {
         loaderCtx.auth =
           (await options.authGuard.resolvePageAuth(request)) ?? undefined;
+        if (loaderCtx.auth) {
+          loaderCtx.access = resolveRouterAccess({
+            authContext: loaderCtx.auth,
+            options,
+          });
+        }
       }
       const rejectedPageSessionHeader = loaderCtx.auth
         ? null
@@ -225,20 +312,26 @@ export function createRouterPlugin(options: RouterPluginOptions) {
 
       // Check layout configs for auth guards (walk root → leaf)
       // Layouts can export `config: RouteConfig` to enforce auth on all children.
+      const pageKernel = options.authorization?.getKernel() ?? null;
+      let pageAccess = compileRouteAccess(false, pageKernel);
       for (const layoutPath of match.layouts) {
         try {
           const layoutModule = await import(layoutPath);
           const layoutConfig: RouteConfig | undefined = layoutModule.config;
           if (layoutConfig) {
+            pageAccess = mergeRouteAccess(pageAccess, layoutConfig.auth, pageKernel);
             const middlewareResult = await runRouteMiddleware(
               layoutConfig,
               loaderCtx,
-              options.authGuard?.loginPath,
+              {
+                requirement: pageAccess,
+                loginPath: options.authGuard?.loginPath,
+              },
             );
             if (middlewareResult) {
               if (
                 loaderCtx.auth ||
-                layoutConfig.auth ||
+                pageAccess.user === 'required' ||
                 rejectedPageSessionHeader
               ) {
                 return withPrivatePageHeaders(
@@ -250,11 +343,16 @@ export function createRouterPlugin(options: RouterPluginOptions) {
             }
           }
         } catch (err) {
-          // Layout import failed — log and skip (global authGuard handles the common case)
+          // A layout config is an inherited authorization boundary. Import or
+          // middleware evaluation failures must never weaken that boundary.
           emitPlatformCode(OBS_CODES.ROUTER_LAYOUT_CONFIG_FAILED, {
             error: err,
             metadata: { layoutPath, path: pathname },
           });
+          return withPrivatePageHeaders(
+            new Response('Route policy unavailable', { status: 500 }),
+            rejectedPageSessionHeader
+          );
         }
       }
 
@@ -265,16 +363,33 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         const routeConfig: RouteConfig | undefined = pageModule.config;
 
         if (routeConfig) {
-          // Run route-level middleware (auth guards, custom middleware)
-          const middlewareResult = await runRouteMiddleware(
-            routeConfig,
-            loaderCtx,
-            options.authGuard?.loginPath,
-          );
+          // Run route-level middleware after monotonically inheriting every
+          // layout requirement. A child `auth: false` cannot weaken a parent.
+          let middlewareResult: Response | null;
+          try {
+            pageAccess = mergeRouteAccess(pageAccess, routeConfig.auth, pageKernel);
+            middlewareResult = await runRouteMiddleware(
+              routeConfig,
+              loaderCtx,
+              {
+                requirement: pageAccess,
+                loginPath: options.authGuard?.loginPath,
+              },
+            );
+          } catch (err) {
+            emitPlatformCode(OBS_CODES.ROUTER_LAYOUT_CONFIG_FAILED, {
+              error: err,
+              metadata: { pagePath, path: pathname },
+            });
+            return withPrivatePageHeaders(
+              new Response('Route policy unavailable', { status: 500 }),
+              rejectedPageSessionHeader,
+            );
+          }
           if (middlewareResult) {
             if (
               loaderCtx.auth ||
-              routeConfig.auth ||
+              pageAccess.user === 'required' ||
               rejectedPageSessionHeader
             ) {
               return withPrivatePageHeaders(
@@ -287,12 +402,13 @@ export function createRouterPlugin(options: RouterPluginOptions) {
 
           // ISR: check cache
           if (
+            isIsrRequest &&
             !loaderCtx.auth &&
             !rejectedPageSessionHeader &&
             routeConfig.revalidate &&
             routeConfig.revalidate > 0
           ) {
-            const cached = isrCache.get(pathname);
+            const cached = isrCache.get(isrCacheKey);
             if (cached && Date.now() - cached.timestamp < cached.maxAge * 1000) {
               return new Response(cached.body, {
                 status: cached.status,
@@ -323,6 +439,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
 
         // ISR: cache the response
         if (
+          isIsrRequest &&
           !loaderCtx.auth &&
           !rejectedPageSessionHeader &&
           routeConfig?.revalidate &&
@@ -331,7 +448,7 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         ) {
           // Clone the response body for caching
           const body = await response.clone().text();
-          isrCache.set(pathname, {
+          isrCache.set(isrCacheKey, {
             body,
             status: response.status,
             timestamp: Date.now(),
@@ -366,29 +483,106 @@ export function createRouterPlugin(options: RouterPluginOptions) {
 
 // ─── Route Middleware Runner ──────────────────────────────────────────────
 
+function resolveRouterAccess(input: {
+  authContext: AuthContext | null;
+  existing?: RequestAuthorizationAccess;
+  options: RouterPluginOptions;
+}): RequestAuthorizationAccess {
+  if (input.existing && input.existing.context === input.authContext) {
+    return input.existing;
+  }
+  return createRequestAuthorizationAccess({
+    authContext: input.authContext,
+    kernel: input.options.authorization?.getKernel() ?? null,
+    propertyStore: input.authContext
+      ? input.options.authorization?.getPropertyStore?.() ?? null
+      : null,
+    roleAssignments: input.authContext
+      ? input.options.authorization?.getRoleAssignments?.() ?? null
+      : null,
+  });
+}
+
+function compileRouteAccess(
+  requirement: AccessRequirement | CompiledAccessRequirement,
+  kernel: AuthorizationKernel | null,
+): CompiledAccessRequirement {
+  if (isCompiledAccessRequirement(requirement)) {
+    return kernel
+      ? kernel.merge(requirement, false)
+      : mergeAccessRequirements(requirement, false);
+  }
+  return kernel?.compile(requirement) ?? compileAccessRequirement(requirement);
+}
+
+function mergeRouteAccess(
+  parent: CompiledAccessRequirement,
+  child: AccessRequirement | undefined,
+  kernel: AuthorizationKernel | null,
+): CompiledAccessRequirement {
+  if (child === undefined) return parent;
+  return kernel
+    ? kernel.merge(parent, child)
+    : mergeAccessRequirements(parent, child);
+}
+
 async function runRouteMiddleware(
   config: RouteConfig,
   ctx: LoaderContext,
-  loginPath = '/login',
+  options: {
+    requirement: CompiledAccessRequirement;
+    loginPath?: string;
+    requestKind?: 'page' | 'api';
+    runCustomMiddleware?: boolean;
+  },
 ): Promise<Response | null> {
-  // Auth guard
-  if (config.auth) {
-    if (!ctx.auth) {
-      // Not authenticated — redirect to login
-      return ctx.redirect(loginPath);
+  const requestKind = options.requestKind ?? 'page';
+
+  try {
+    ctx.access.authorize(options.requirement);
+  } catch (error) {
+    if (!(error instanceof AuthError)) throw error;
+    // Browser pages enter the configured login flow only when identity is
+    // absent. Authenticated authorization failures never masquerade as login.
+    if (requestKind === 'page' && error.status === 401) {
+      return ctx.redirect(options.loginPath ?? '/login');
     }
-    if (config.auth === 'admin' && ctx.auth.role !== 'admin') {
-      return new Response('Forbidden', { status: 403 });
-    }
+    const message = error.status >= 500 ? 'Route policy unavailable' : error.message;
+    return requestKind === 'api'
+      ? Response.json(
+          { error: message, code: error.code },
+          { status: error.status },
+        )
+      : new Response(message, { status: error.status });
   }
 
   // Custom middleware
-  if (config.middleware) {
+  if (options.runCustomMiddleware !== false && config.middleware) {
     const result = await config.middleware(ctx);
     if (result instanceof Response) return result;
   }
 
   return null;
+}
+
+function withPrivateApiHeaders(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set('Cache-Control', 'private, no-store');
+
+  const vary = new Set(
+    (headers.get('Vary') ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+  vary.add('Authorization');
+  headers.set('Vary', [...vary].join(', '));
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function withPrivatePageHeaders(

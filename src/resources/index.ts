@@ -1,17 +1,33 @@
 export {
   RESOURCE_ACTIONS,
+  RESOURCE_EXPOSURES,
   ZERO_RESOURCE_DEFINITION_KIND,
   defineResource,
+  globalRealm,
   isResourceDefinition,
   isResourcePolicy,
+  tenantRealm,
 } from './resource-definition';
+
+export {
+  defineResourceFields,
+  normalizeResourceFieldAccess,
+  projectResourceRow,
+  projectResourceRows,
+  validateResourceClientWriteFields,
+} from './resource-field-access';
 
 export {
   ResourceRegistry,
   ResourceRegistryError,
+  clearResourceRegistry,
   configureResourceRegistry,
+  createResourceRegistry,
+  assertResourceStorageRealms,
   getResourceRegistry,
+  registerResourceRegistry,
   validateResourceDefinitions,
+  validateResourceStorageRealms,
 } from './resource-registry';
 
 export {
@@ -23,10 +39,12 @@ export {
 export {
   inferTablePrimaryKey,
   getResourceTableColumns,
+  tableColumnIsDeclaredNotNull,
   tableHasColumn,
 } from './resource-schema';
 
 export {
+  createResourcePolicyAuthorization,
   createResourcePolicyUser,
 } from './resource-auth';
 
@@ -57,6 +75,7 @@ export {
   adminOnly,
   allOf,
   anyOf,
+  authorizationPolicy,
   authenticatedOnly,
   customPolicy,
   evaluateResourcePolicy,
@@ -70,17 +89,31 @@ export {
   readOnly,
   requiresAuthenticatedUser,
   validateResourcePolicy,
+  validateAuthorizationPolicy,
 } from './resource-policy';
 
 export type {
   ResourceDefinition,
   ResourceDefinitionOptions,
+  ResourceExposure,
+  ResourceRealm,
+  ResourceRealmInput,
+  ResourceTableInput,
+  GlobalResourceRealm,
+  TenantResourceRealm,
   ResourcePolicyInput,
 } from './resource-definition';
 
 export type {
+  ResourceFieldAccess,
+  ResourceFieldAccessInput,
+  ResourceFieldWriteError,
+} from './resource-field-access';
+
+export type {
   ConfigureResourceRegistryOptions,
   RegisteredResourceDefinition,
+  RegisteredResourceExposure,
   ResourceRegistryIssue,
   ResourceRegistryIssueCode,
   ResourceRegistryValidationContext,
@@ -133,6 +166,7 @@ export type {
   ResourceMaybePromise,
   ResourcePolicy,
   ResourcePolicyAuthConfig,
+  ResourcePolicyAuthorizationContext,
   ResourcePolicyContext,
   ResourcePolicyDecision,
   ResourcePolicyDecisionInput,
@@ -146,4 +180,5 @@ export type {
   ResourcePolicyValidationCode,
   ResourcePolicyValidationContext,
   ResourcePolicyValidationIssue,
+  ResourceAuthorizationRequirement,
 } from './resource-policy';

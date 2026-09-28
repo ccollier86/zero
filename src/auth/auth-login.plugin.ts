@@ -2,6 +2,7 @@
 
 import { Elysia, t } from 'elysia';
 import { loginUser } from './auth-login-service';
+import { admitAuthRequest } from './auth-request-admission';
 import {
   requireSessionTokenService,
   type AuthSessionPluginConfig,
@@ -12,7 +13,14 @@ import { syncPageSessionCookie } from './page-session';
 export function createAuthLoginPlugin(config: AuthSessionPluginConfig) {
   return new Elysia({ name: 'auth-login' }).post(
     '/login',
-    async ({ body, request, set }) => {
+    async ({ body, request, set, server }) => {
+      admitAuthRequest({
+        service: config.getRequestAdmissionService?.() ?? null,
+        request,
+        peerAddress: server?.requestIP(request)?.address,
+        flow: 'login',
+        subject: body.username,
+      });
       const response = await loginUser(config, body);
       await syncPageSessionCookie(
         set, request, requireSessionTokenService(config), response,

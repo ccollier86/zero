@@ -7,9 +7,10 @@
  */
 
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { AppConfig } from '../frontend/server/types';
+import { loadResourceDefinitions } from '../resources/resource-loader';
 
 const DEFAULT_CONFIG_PATHS = [
   './zero.config.ts',
@@ -29,7 +30,8 @@ export function resolveDoctorConfigPath(input?: string | null): string | null {
 }
 
 /**
- * Load an AppConfig from a module.
+ * Load an AppConfig and the same conventional server resource modules that
+ * `createApp()` validates at startup.
  *
  * The module may export `config`, `appConfig`, `zeroConfig`, or default.
  */
@@ -45,5 +47,25 @@ export async function loadDoctorConfig(modulePath: string): Promise<AppConfig> {
     );
   }
 
-  return candidate as AppConfig;
+  const config = candidate as AppConfig;
+  const projectRoot = doctorProjectRoot(modulePath);
+  const configuredDir = config.serverResourcesDir;
+  const resourcesDir = configuredDir === false
+    ? false
+    : isAbsolute(configuredDir ?? '')
+      ? configuredDir!
+      : resolve(projectRoot, configuredDir ?? './server/resources');
+  const discovered = await loadResourceDefinitions({ resourcesDir });
+
+  return discovered.length === 0
+    ? config
+    : {
+        ...config,
+        resources: [...(config.resources ?? []), ...discovered],
+      };
+}
+
+function doctorProjectRoot(modulePath: string): string {
+  const configDir = dirname(resolve(modulePath));
+  return basename(configDir) === 'config' ? dirname(configDir) : configDir;
 }

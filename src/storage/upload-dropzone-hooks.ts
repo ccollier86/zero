@@ -6,7 +6,7 @@
  * backend authorization stay inside the SDK-backed storage hooks and routes.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import {
   useDropzone,
   type Accept,
@@ -17,6 +17,11 @@ import {
 } from 'react-dropzone';
 import { OBS_CODES } from '../observability/codes';
 import { emitFrontendCode } from '../frontend/client/observability';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from '../frontend/client/authorization-scope-hooks';
+import { useClientMaybe } from '../frontend/client/client-context';
 import type { FileInfo } from './types';
 import { useUploadQueue, type UploadQueueFilesOptions, type UseUploadQueueReturn } from './upload-queue-hooks';
 import { joinStorageObjectPath } from './storage-paths';
@@ -59,12 +64,29 @@ function toUploadError(err: unknown): Error {
  * app UI with `onRejected`.
  */
 export function useUploadDropzone(options: UseUploadDropzoneOptions): UseUploadDropzoneReturn {
+  const client = useClientMaybe();
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const queue = useUploadQueue();
-  const disabled = options.disabled === true || !options.driveId;
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const callbackBoundaryKey = authorizationBoundary.key;
+  const isCurrentScope = useCallback(
+    () => isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      callbackBoundaryKey,
+    ),
+    [callbackBoundaryKey],
+  );
+  const disabled = options.disabled === true
+    || !options.driveId
+    || !authorizationBoundary.ready;
 
   const uploadFiles = useCallback(
     async (files: File[] | FileList, uploadOptions: UploadQueueFilesOptions = {}) => {
-      if (!options.driveId) return [];
+      if (!options.driveId || !isCurrentScope()) return [];
 
       try {
         const result = await queue.uploadFiles(options.driveId, files, {
@@ -76,9 +98,10 @@ export function useUploadDropzone(options: UseUploadDropzoneOptions): UseUploadD
             uploadOptions.resolvePath?.(file)
             ?? joinStorageObjectPath(options.path, file.name),
         });
-        options.onUploaded?.(result);
+        if (isCurrentScope()) options.onUploaded?.(result);
         return result;
       } catch (err) {
+        if (!isCurrentScope()) throw err;
         const error = toUploadError(err);
         emitFrontendCode(OBS_CODES.FRONTEND_STORAGE_ACTION_FAILED, {
           error,
@@ -88,16 +111,17 @@ export function useUploadDropzone(options: UseUploadDropzoneOptions): UseUploadD
         throw error;
       }
     },
-    [options, queue],
+    [isCurrentScope, options, queue],
   );
 
   const onDrop = useCallback<NonNullable<DropzoneOptions['onDrop']>>(
     (acceptedFiles: File[], fileRejections: FileRejection[], event: DropEvent) => {
+      if (!isCurrentScope()) return;
       if (fileRejections.length > 0) options.onRejected?.(fileRejections);
       if (acceptedFiles.length === 0 || disabled) return;
       void uploadFiles(acceptedFiles);
     },
-    [disabled, options, uploadFiles],
+    [disabled, isCurrentScope, options, uploadFiles],
   );
 
   const dropzone = useDropzone({

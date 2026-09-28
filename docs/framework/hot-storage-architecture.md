@@ -1,5 +1,12 @@
 # Hot Storage Architecture
 
+> **Status:** historical implementation design. The shared SQLite persistence
+> foundation and `createApp()` composition described as targets here have
+> since landed. Use [bun:sqlite Best Practices](../bun-sqlite-best-practices.md),
+> [Sync Architecture](../realtime-sync/realtime-sync/architecture.md), and the
+> current source for supported APIs; snippets below preserve design history and
+> are not package-mode copy-paste examples.
+
 ## Purpose
 
 Zero's fastest production path should be a hot in-process storage runtime with
@@ -458,11 +465,18 @@ Dispose policy:
 
 Startup policy:
 
+The following bullets preserve the original target and are superseded by the
+current file-mode implementation: `_zero_sync_log_state` now owns the
+monotonic cursor and pruning watermark, `_changes` is explicitly versioned and
+retained by default, and each runtime can poll the shared log for
+cross-connection fanout. The seq-0 sentinel and trigger fence require a
+coordinated stop-all on first adoption. See
+[ReactiveDB](../realtime-sync/realtime-sync/reactive-db.md#multi-process-boundary)
+for the supported boundary.
+
 - Create `_changes`.
-- Truncate `_changes` on every process start for durable modes, because `seq`
-  remains process-local.
-- Keep `seq` process-local; sync reconnect still gets fresh snapshots after
-  restart.
+- Originally proposed: truncate `_changes` on every durable-mode process start.
+- Originally proposed: keep `seq` process-local and snapshot after restart.
 
 ### `src/sync/sync.plugin.ts`
 

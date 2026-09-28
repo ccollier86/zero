@@ -6,6 +6,8 @@ export type RoomRole = 'owner' | 'admin' | 'member';
 
 export interface RoomRecord {
   room_id: string;
+  /** Null in single-tenant mode; required for records created in multi mode. */
+  tenant_id: string | null;
   name: string;
   type: string;
   created_by: string;
@@ -16,6 +18,8 @@ export interface RoomRecord {
 
 export interface RoomMemberRecord {
   member_id: string;
+  /** Duplicated from the parent room for direct Sync row filtering. */
+  tenant_id: string | null;
   room_id: string;
   user_id: string;
   role: RoomRole;
@@ -49,6 +53,7 @@ export const ROOM_TABLES: Record<string, ClientTableDef> = {
   rooms: {
     _pk: 'room_id',
     room_id: 'text',
+    tenant_id: 'text',
     name: 'text',
     type: 'text',
     created_by: 'text',
@@ -59,6 +64,7 @@ export const ROOM_TABLES: Record<string, ClientTableDef> = {
   room_members: {
     _pk: 'member_id',
     member_id: 'text',
+    tenant_id: 'text',
     room_id: 'text',
     user_id: 'text',
     role: 'text',

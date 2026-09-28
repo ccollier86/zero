@@ -6,21 +6,35 @@
  */
 
 import type { ReactiveDB } from '../sync/reactive-db';
-import { repairNativeAuthSchema } from './oidc/native-auth-schema-repair';
+import {
+  ensureNativeTenantAuthorityColumns,
+  repairNativeAuthSchema,
+} from './oidc/native-auth-schema-repair';
 import {
   createNativeAuthIndexStatements,
   createNativeAuthTableStatements,
 } from './oidc/native-auth-schema-sql';
-import { REGISTRATION_INTENT_TABLE_SQL } from './registration-intent-schema';
+import { defineRegistrationIntentTable } from './registration-intent-schema';
+import { defineRegistrationProvisioningTable } from './registration-provisioning-schema';
 import { createAuthEmailOutboxSchema } from './auth-email-outbox-schema';
+import { defineCurrentAuthRequestAdmissionTables } from './auth-request-admission-schema';
+import {
+  defineAuthSessionTables,
+  ensureRefreshSessionColumn,
+} from './auth-session-schema';
+import { defineAuthSessionContinuationTables } from './auth-session-continuation-schema';
+import { defineAuthAuditTables } from './auth-audit-schema';
+import { defineAuthInstalledProfileTable } from './auth-profile-state';
 
 /**
  * Define all auth tables on the shared ReactiveDB.
  *
- * Public tables go through defineTable() for change tracking. Internal tables
- * use raw SQL and `_` prefixes so they are not broadcast to sync subscribers.
+ * Tracked tables go through defineTable() for change sequencing. Internal
+ * tables use raw SQL and `_` prefixes so they have no client Sync surface.
+ * Non-internal table delivery is still controlled by composed Sync policy.
  */
 export function defineAuthTables(db: ReactiveDB): void {
+  defineAuthAuditTables(db);
   // Create/upgrade users before defineTable() prepares statements for all
   // lifecycle columns. Existing databases may have been created before these
   // columns existed.
@@ -46,11 +60,13 @@ export function defineAuthTables(db: ReactiveDB): void {
   ensureColumn(db, 'users', 'email_verified_at', 'INTEGER');
   ensureColumn(db, 'users', 'email_verification_required', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'users', 'mfa_required', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'users', 'email_generation', 'INTEGER NOT NULL DEFAULT 1');
 
   db.defineTable('users', {
     user_id: 'text primary key',
     username: 'text unique not null',
     email: 'text unique not null',
+    email_generation: 'integer not null default 1',
     first_name: 'text',
     last_name: 'text',
     role: "text not null default 'user'",
@@ -81,17 +97,22 @@ export function defineAuthTables(db: ReactiveDB): void {
     )
   `);
 
+  defineAuthSessionTables(db);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS _refresh_tokens (
       token_id   TEXT PRIMARY KEY,
       user_id    TEXT NOT NULL,
+      session_id TEXT,
       token_hash TEXT NOT NULL,
       expires_at INTEGER NOT NULL,
       created_at INTEGER NOT NULL,
       revoked_at INTEGER,
-      FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+      FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+      FOREIGN KEY (session_id) REFERENCES _auth_sessions(session_id) ON DELETE CASCADE
     )
   `);
+  ensureRefreshSessionColumn(db);
   db.exec('CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON _refresh_tokens(token_hash)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON _refresh_tokens(user_id)');
 
@@ -184,13 +205,23 @@ export function defineAuthTables(db: ReactiveDB): void {
     )
   `);
 
-  db.exec(REGISTRATION_INTENT_TABLE_SQL);
+  defineAuthInstalledProfileTable(db);
+
+  defineCurrentAuthRequestAdmissionTables(db);
+
+  defineAuthSessionContinuationTables(db);
+
+  defineRegistrationIntentTable(db);
+  defineRegistrationProvisioningTable(db);
   createAuthEmailOutboxSchema((sql) => db.exec(sql));
 
   for (const statement of createNativeAuthTableStatements()) db.exec(statement);
   ensureColumn(db, '_auth_native_requests', 'bound_user_id',
     'TEXT REFERENCES users(user_id) ON DELETE CASCADE');
-  db.transaction(() => repairNativeAuthSchema(db));
+  db.transaction(() => {
+    repairNativeAuthSchema(db);
+    ensureNativeTenantAuthorityColumns(db);
+  });
   for (const statement of createNativeAuthIndexStatements()) db.exec(statement);
 }
 

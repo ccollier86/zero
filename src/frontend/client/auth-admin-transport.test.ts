@@ -18,6 +18,7 @@ describe('AuthAdminTransport', () => {
         expect(url).toBe('http://zero.test/auth/admin/config');
         return Response.json({ error: 'Forbidden' }, { status: 403 });
       },
+      assertResponseCurrent: () => {},
       createResponseError: (_response, _body, message) => {
         fallback = message;
         return expected;
@@ -46,6 +47,7 @@ describe('AuthAdminTransport', () => {
         expect(init?.method).toBe('POST');
         return Response.json({ user: { userId: 'target/user' } });
       },
+      assertResponseCurrent: () => {},
       createResponseError: () => new Error('unexpected response error'),
       createTimeoutError: () => new Error('unexpected timeout'),
     });
@@ -59,6 +61,7 @@ describe('AuthAdminTransport', () => {
     const transport = new AuthAdminTransport({
       baseUrl: 'http://zero.test',
       authenticatedFetch: () => new Promise(() => {}),
+      assertResponseCurrent: () => {},
       createResponseError: () => new Error('unexpected response error'),
       createTimeoutError: () => expected,
       requestTimeoutMs: 1,
@@ -83,6 +86,7 @@ describe('AuthAdminTransport', () => {
           // Intentionally never enqueue or close: headers resolve, body does not.
         },
       })),
+      assertResponseCurrent: () => {},
       createResponseError: () => new Error('unexpected response error'),
       createTimeoutError: () => expected,
       requestTimeoutMs: 1,
@@ -101,6 +105,7 @@ describe('AuthAdminTransport', () => {
     const transport = new AuthAdminTransport({
       baseUrl: 'http://zero.test',
       authenticatedFetch: () => new Promise(() => {}),
+      assertResponseCurrent: () => {},
       createResponseError: () => new Error('unexpected response error'),
       createTimeoutError: () => new Error('unexpected timeout'),
       requestTimeoutMs: 1_000,

@@ -1,18 +1,18 @@
 'use client';
 
 import * as React from 'react';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { Bell } from '@/components/animate-ui/icons/bell';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { Bell } from '#zero/components/animate-ui/icons/bell';
 import type { Transition } from 'motion/react';
 
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { NotificationBadge, type NotificationBadgeProps } from '@/components/ui/notification-badge';
+import { cn } from '#zero/lib/utils';
+import { Button } from '#zero/components/ui/button';
+import { NotificationBadge, type NotificationBadgeProps } from '#zero/components/ui/notification-badge';
 import {
   NotificationDropdown,
   type NotificationDropdownProps,
-} from '@/components/ui/notification-dropdown';
-import type { NotificationListItem } from '@/components/ui/notification-list';
+} from '#zero/components/ui/notification-dropdown';
+import type { NotificationListItem } from '#zero/components/ui/notification-list';
 
 // ─── Types ───────────────────────────────────────────────────────────────
 

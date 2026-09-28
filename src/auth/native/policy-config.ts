@@ -29,6 +29,32 @@ export const DEFAULT_NATIVE_REFRESH_POLICY: ResolvedNativeRefreshRotationPolicy 
 export function resolveNativeRequestPolicy(
   input: NativeAuthorizationRequestPolicyConfig = {},
 ): ResolvedNativeAuthorizationRequestPolicy {
+  assertRecord(input, 'requestAdmission');
+  assertOnlyKeys(input, [
+    'cleanupBatchSize',
+    'maxOutstandingGlobal',
+    'maxOutstandingPerClient',
+    'maxOutstandingPerSource',
+    'rollingWindow',
+    'maxAdmissionsGlobal',
+    'maxAdmissionsPerClient',
+    'maxAdmissionsPerSource',
+    'trustedProxyRanges',
+    'forwardedForHeader',
+    'sourceKey',
+  ], 'requestAdmission');
+  if (input.trustedProxyRanges !== undefined
+    && (!Array.isArray(input.trustedProxyRanges)
+      || input.trustedProxyRanges.some((value) => typeof value !== 'string'))) {
+    throw new Error('[native-auth] requestAdmission trustedProxyRanges must be an array of strings.');
+  }
+  if (input.forwardedForHeader !== undefined
+    && typeof input.forwardedForHeader !== 'string') {
+    throw new Error('[native-auth] requestAdmission forwardedForHeader must be a string.');
+  }
+  if (input.sourceKey !== undefined && typeof input.sourceKey !== 'function') {
+    throw new Error('[native-auth] requestAdmission sourceKey must be a function.');
+  }
   assertSourcePolicy(input);
   const trustedProxyRanges = [...(input.trustedProxyRanges ?? [])];
   const forwardedForHeader = input.forwardedForHeader ?? 'x-forwarded-for';
@@ -63,6 +89,13 @@ function assertSourcePolicy(input: NativeAuthorizationRequestPolicyConfig): void
 export function resolveNativeRefreshPolicy(
   input: NativeRefreshRotationPolicyConfig = {},
 ): ResolvedNativeRefreshRotationPolicy {
+  assertRecord(input, 'refreshRotation');
+  assertOnlyKeys(input, [
+    'cleanupBatchSize',
+    'minRotationInterval',
+    'maxRotationsPerFamily',
+    'maxActiveFamiliesPerUserClient',
+  ], 'refreshRotation');
   return {
     cleanupBatchSize: positive(input.cleanupBatchSize, 100, 'cleanupBatchSize', 10_000),
     minRotationIntervalMs: duration(
@@ -78,6 +111,9 @@ export function resolveNativeRefreshPolicy(
 }
 
 export function duration(value: string, label: string, maxMs: number, allowZero = false): number {
+  if (typeof value !== 'string') {
+    throw new Error(`[native-auth] ${label} must be a duration string.`);
+  }
   const match = value.match(/^(\d+)(s|m|h|d)$/);
   const amount = match ? Number(match[1]) : Number.NaN;
   const unit = match?.[2];
@@ -97,4 +133,20 @@ function positive(value: number | undefined, fallback: number, label: string, ma
     throw new Error(`[native-auth] ${label} must be an integer between 1 and ${max}.`);
   }
   return resolved;
+}
+
+function assertRecord(value: unknown, label: string): asserts value is object {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
+    throw new Error(`[native-auth] ${label} must be an object.`);
+  }
+}
+
+function assertOnlyKeys(value: object, allowed: readonly string[], label: string): void {
+  const unknown = Object.keys(value).find((key) => !allowed.includes(key));
+  if (unknown) {
+    throw new Error(
+      `[native-auth] ${label} contains unsupported field "${unknown}".`,
+    );
+  }
 }

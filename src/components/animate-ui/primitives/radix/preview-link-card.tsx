@@ -13,8 +13,8 @@ import {
   type HoverCardContentProps as HoverCardContentPropsPrimitive,
   type HoverCardPortalProps as HoverCardPortalPropsPrimitive,
   type HoverCardArrowProps as HoverCardArrowPropsPrimitive,
-} from '@/components/animate-ui/primitives/radix/hover-card';
-import { getStrictContext } from '@/lib/get-strict-context';
+} from '#zero/components/animate-ui/primitives/radix/hover-card';
+import { getStrictContext } from '#zero/lib/get-strict-context';
 
 type PreviewLinkCardContextType = {
   href: string;

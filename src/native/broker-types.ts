@@ -1,11 +1,16 @@
 /** Serializable native-auth broker commands and host transport contracts. */
 
-import type { NativeAuthErrorInfo, NativeAuthState } from './client-types';
+import type {
+  NativeAuthErrorInfo,
+  NativeAuthState,
+  NativeTenantListResult,
+} from './client-types';
 
 export type NativeAuthBrokerRequest =
-  | { operation: 'state' | 'initialize' | 'refresh' | 'getAccessToken' | 'signOut' }
+  | { operation: 'state' | 'initialize' | 'refresh' | 'getAccessToken' | 'signOut' | 'listTenants' }
   | { operation: 'signIn' | 'signUp'; loginHint?: string }
-  | { operation: 'completeAuthorization'; callbackUrl: string };
+  | { operation: 'completeAuthorization'; callbackUrl: string }
+  | { operation: 'switchTenant'; tenantId: string };
 
 export interface NativeAuthBrokerSnapshot {
   revision: number;
@@ -13,7 +18,12 @@ export interface NativeAuthBrokerSnapshot {
 }
 
 export type NativeAuthBrokerResponse =
-  | { ok: true; snapshot: NativeAuthBrokerSnapshot; accessToken?: string | null }
+  | {
+      ok: true;
+      snapshot: NativeAuthBrokerSnapshot;
+      accessToken?: string | null;
+      tenantList?: NativeTenantListResult;
+    }
   | { ok: false; snapshot: NativeAuthBrokerSnapshot; error: NativeAuthErrorInfo };
 
 export type NativeAuthBrokerStateListener = (snapshot: NativeAuthBrokerSnapshot) => void;

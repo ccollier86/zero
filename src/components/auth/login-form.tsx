@@ -11,23 +11,18 @@
 import * as React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 
-import { cn } from '@/lib/utils';
+import { cn } from '#zero/lib/utils';
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/animate-ui/components/radix/checkbox';
-import { PasswordInput } from '@/components/auth/password-input';
-import { AuthHeader } from '@/components/auth/auth-header';
-import { MFAContinuation } from '@/components/auth/mfa-continuation';
-import { SocialLoginGroup, type SocialProvider } from '@/components/auth/social-login-group';
-import type {
-  AuthMfaChallengeRequiredResult,
-  AuthMfaSetupRequiredResult,
-} from '../../frontend/client/auth-client';
-import { AnimateIcon } from '@/components/animate-ui/icons/icon';
-import { CircleX } from '@/components/animate-ui/icons/circle-x';
-import { Loader } from '@/components/animate-ui/icons/loader';
+import { Button } from '#zero/components/ui/button';
+import { Input } from '#zero/components/ui/input';
+import { Label } from '#zero/components/ui/label';
+import { PasswordInput } from '#zero/components/auth/password-input';
+import { AuthHeader } from '#zero/components/auth/auth-header';
+import { AuthFlowContinuation } from '#zero/components/auth/auth-flow-continuation';
+import { SocialLoginGroup, type SocialProvider } from '#zero/components/auth/social-login-group';
+import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
+import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
+import { Loader } from '#zero/components/animate-ui/icons/loader';
 import {
   getAuthDisplayMessage,
   getAuthErrorCode,
@@ -43,7 +38,10 @@ import {
   authFeedbackInitial,
   authPresenceTransition,
 } from './auth-motion';
-import { isMfaContinuationResult } from './auth-continuation';
+import {
+  type AuthFlowContinuationResult,
+  isAuthFlowContinuationResult,
+} from './auth-continuation';
 import { useNativeAuthRoute, useNativeLoginHint } from './use-native-auth-route';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -57,6 +55,10 @@ interface LoginFormProps {
   forgotPasswordHref?: string;
   showRegisterLink?: boolean;
   respectRegistrationPolicy?: boolean;
+  /**
+   * @deprecated Accepted for source compatibility. Session persistence is
+   * controlled by the server and this prop does not render a checkbox.
+   */
   showRememberMe?: boolean;
   registerHref?: string;
   identifierLabel?: string;
@@ -77,7 +79,6 @@ function LoginForm({
   forgotPasswordHref = '#forgot-password',
   showRegisterLink = true,
   respectRegistrationPolicy = true,
-  showRememberMe = false,
   registerHref = '#register',
   identifierLabel = 'Username or email',
   identifierPlaceholder = 'you@example.com',
@@ -91,9 +92,12 @@ function LoginForm({
   const [password, setPassword] = React.useState('');
   const [localError, setLocalError] = React.useState<string | null>(null);
   const loginHint = useNativeLoginHint();
-  const [mfaContinuation, setMfaContinuation] = React.useState<
-    AuthMfaSetupRequiredResult | AuthMfaChallengeRequiredResult | null
+  const [authContinuation, setAuthContinuation] = React.useState<
+    AuthFlowContinuationResult | null
   >(null);
+  const fieldId = React.useId();
+  const emailId = `${fieldId}-email`;
+  const passwordId = `${fieldId}-password`;
 
   const displayError = localError ?? error;
   const canShowRegisterLink = canShowRegistrationLink(
@@ -118,8 +122,8 @@ function LoginForm({
     setLocalError(null);
     try {
       const result = await login(email, password);
-      if (isMfaContinuationResult(result)) {
-        setMfaContinuation(result);
+      if (isAuthFlowContinuationResult(result)) {
+        setAuthContinuation(result);
         return;
       }
       onSuccess?.();
@@ -132,26 +136,30 @@ function LoginForm({
     }
   }
 
-  if (mfaContinuation) {
+  if (authContinuation) {
     return (
-      <MFAContinuation
-        result={mfaContinuation}
+      <AuthFlowContinuation
+        result={authContinuation}
         onSuccess={onSuccess}
-        onBack={() => setMfaContinuation(null)}
+        onBack={() => setAuthContinuation(null)}
         className={className}
       />
     );
   }
 
   return (
-    <form onSubmit={handleSubmit} className={cn('space-y-4', className)}>
+    <form
+      onSubmit={handleSubmit}
+      className={cn('space-y-4', className)}
+      aria-busy={isLoading}
+    >
       <AuthHeader title="Sign in" description="Enter your credentials to continue" />
 
       <div className="space-y-4">
         <div className="space-y-1.5">
-          <Label htmlFor="login-email" className="text-sm font-medium">{identifierLabel}</Label>
+          <Label htmlFor={emailId} className="text-sm font-medium">{identifierLabel}</Label>
           <Input
-            id="login-email"
+            id={emailId}
             type="text"
             placeholder={identifierPlaceholder}
             autoComplete={identifierAutoComplete}
@@ -164,7 +172,7 @@ function LoginForm({
 
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
-            <Label htmlFor="login-password" className="text-sm font-medium">Password</Label>
+            <Label htmlFor={passwordId} className="text-sm font-medium">Password</Label>
             {canShowForgotPassword && (
               <a
                 href={continuedForgotPasswordHref}
@@ -175,7 +183,7 @@ function LoginForm({
             )}
           </div>
           <PasswordInput
-            id="login-password"
+            id={passwordId}
             placeholder="Enter password"
             autoComplete="current-password"
             required
@@ -185,14 +193,6 @@ function LoginForm({
           />
         </div>
 
-        {showRememberMe && (
-          <div className="flex items-center gap-2">
-            <Checkbox id="login-remember" size="sm" />
-            <Label htmlFor="login-remember" className="text-xs font-normal text-muted-foreground cursor-pointer">
-              Remember me
-            </Label>
-          </div>
-        )}
       </div>
 
       <AnimatePresence>
@@ -221,9 +221,12 @@ function LoginForm({
 
       <Button type="submit" className="h-10 w-full" disabled={isLoading}>
         {isLoading ? (
-          <AnimateIcon animate loop>
-            <Loader size={16} />
-          </AnimateIcon>
+          <>
+            <AnimateIcon animate loop>
+              <Loader size={16} />
+            </AnimateIcon>
+            <span className="sr-only">Signing in</span>
+          </>
         ) : (
           'Sign in'
         )}

@@ -10,6 +10,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from 'react';
@@ -26,19 +27,32 @@ import type {
   AuthAdminUserListParams,
   AuthAdminUserListResult,
   AuthCompletionResult,
+  AuthEmailVerificationRequiredResult,
   AuthMfaMethod,
   AuthMfaMethodType,
   AuthMfaSetupStartResult,
   AuthMfaSetupVerifyResult,
   AuthPasswordUpdatedResult,
   AuthSessionResult,
+  AuthSessionTransitionState,
+  AuthTenantListResult,
+  AuthTenantCreateParams,
+  AuthTenantOnboardingRequiredResult,
+  AuthTenantSelectionRequiredResult,
+  AuthTenantSummary,
   AuthPublicConfig,
+  AuthRegistrationResult,
+  AuthRegistrationTenant,
   AuthUserPropertyConfig,
   AuthUser,
   RegisterParams,
 } from './auth-client';
 import { createAuthDisabledError } from './auth-client';
 import { shouldUseSsrFallback, useClientMaybe } from './client-context';
+import {
+  isAuthorizationScopeCallbackCurrent,
+  useAuthorizationScopeBoundary,
+} from './authorization-scope-hooks';
 
 export type {
   AuthActionTokenInfo,
@@ -52,13 +66,22 @@ export type {
   AuthAdminUserListParams,
   AuthAdminUserListResult,
   AuthCompletionResult,
+  AuthEmailVerificationRequiredResult,
   AuthMfaMethod,
   AuthMfaMethodType,
   AuthMfaSetupStartResult,
   AuthMfaSetupVerifyResult,
   AuthPasswordUpdatedResult,
   AuthSessionResult,
+  AuthSessionTransitionState,
+  AuthTenantListResult,
+  AuthTenantCreateParams,
+  AuthTenantOnboardingRequiredResult,
+  AuthTenantSelectionRequiredResult,
+  AuthTenantSummary,
   AuthPublicConfig,
+  AuthRegistrationResult,
+  AuthRegistrationTenant,
   AuthUserPropertyConfig,
   AuthUser,
   RegisterParams,
@@ -66,14 +89,16 @@ export type {
 
 export interface AuthState {
   user: AuthUser | null;
+  activeTenant: AuthTenantSummary | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  sessionTransition: AuthSessionTransitionState;
 }
 
 export interface AuthActions {
   login: (username: string, password: string) => Promise<AuthCompletionResult | null>;
-  register: (params: RegisterParams) => Promise<AuthCompletionResult | null>;
+  register: (params: RegisterParams) => Promise<AuthRegistrationResult | null>;
   getConfig: () => Promise<AuthPublicConfig | null>;
   forgotPassword: (email: string, nativeContinuation?: string) => Promise<void>;
   resendVerificationEmail: (email: string, nativeContinuation?: string) => Promise<void>;
@@ -94,9 +119,14 @@ export interface AuthActions {
   verifyMfaChallenge: (params: {
     challengeToken: string;
     code: string;
-  }) => Promise<AuthSessionResult | null>;
+  }) => Promise<AuthCompletionResult | null>;
+  selectTenant: (continuation: string, tenantId: string) => Promise<AuthSessionResult | null>;
+  listTenants: () => Promise<AuthTenantListResult | null>;
+  createTenant: (params: AuthTenantCreateParams) => Promise<AuthSessionResult | null>;
+  switchTenant: (tenantId: string) => Promise<AuthSessionResult | null>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  reconcileSession: () => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   setProperty: (key: string, value: unknown) => Promise<void>;
   getProperty: (key: string) => Promise<string | null>;
@@ -108,18 +138,28 @@ const NOOP_UNSUB = () => {};
 const SSR_AUTH_NOOP = async () => {};
 const SSR_AUTH_SNAPSHOT = {
   user: null,
+  activeTenant: null,
   accessToken: null,
   refreshToken: null,
   isLoading: false as boolean,
   error: null,
+  sessionTransition: {
+    phase: 'idle' as const,
+    operation: null,
+    revision: 0,
+    recoverable: false,
+    error: null,
+  },
 };
 
 /** SSR-safe no-op defaults for auth hooks. */
 const SSR_AUTH_DEFAULTS: AuthState & AuthActions = {
   user: null,
+  activeTenant: null,
   isAuthenticated: false,
   isLoading: false,
   error: null,
+  sessionTransition: SSR_AUTH_SNAPSHOT.sessionTransition,
   login: SSR_AUTH_NOOP as any,
   register: SSR_AUTH_NOOP as any,
   getConfig: async () => null,
@@ -133,8 +173,13 @@ const SSR_AUTH_DEFAULTS: AuthState & AuthActions = {
   startMfaSetup: async () => null,
   verifyMfaSetup: async () => null,
   verifyMfaChallenge: async () => null,
+  selectTenant: async () => null,
+  listTenants: async () => null,
+  createTenant: async () => null,
+  switchTenant: async () => null,
   logout: SSR_AUTH_NOOP as any,
   refresh: SSR_AUTH_NOOP as any,
+  reconcileSession: SSR_AUTH_NOOP as any,
   changePassword: SSR_AUTH_NOOP as any,
   setProperty: SSR_AUTH_NOOP as any,
   getProperty: async () => null,
@@ -152,6 +197,39 @@ export function useAuth(): AuthState & AuthActions {
   const client = useClientMaybe() as InternalClient | null;
   const authClient = client?.auth ?? null;
   const authDisabled = client !== null && authClient === null;
+  const authorizationBoundary = useAuthorizationScopeBoundary(client);
+  const boundaryKeyRef = useRef(authorizationBoundary.key);
+  const boundaryReadyRef = useRef(authorizationBoundary.ready);
+  boundaryKeyRef.current = authorizationBoundary.key;
+  boundaryReadyRef.current = authorizationBoundary.ready;
+  const accountCallbackBoundaryKey = authorizationBoundary.key;
+  const assertAccountActionCurrent = useCallback(() => {
+    if (!isAuthorizationScopeCallbackCurrent(
+      boundaryKeyRef.current,
+      boundaryReadyRef.current,
+      accountCallbackBoundaryKey,
+    )) throw staleAccountOperation();
+  }, [accountCallbackBoundaryKey]);
+  const runAccountAction = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
+    assertAccountActionCurrent();
+    try {
+      const result = await operation();
+      assertAccountActionCurrent();
+      return result;
+    } catch (cause) {
+      assertAccountActionCurrent();
+      throw cause;
+    }
+  }, [assertAccountActionCurrent]);
+  const runScopeChangingAction = useCallback(async <T,>(
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    // Login/logout, continuation completion, refresh reconciliation, and
+    // tenant replacement may intentionally change the boundary. They still
+    // reject handlers retained from an older boundary before dispatch.
+    assertAccountActionCurrent();
+    return operation();
+  }, [assertAccountActionCurrent]);
 
   const subscribe = useCallback(
     (cb: () => void) => authClient ? authClient.subscribe(cb) : NOOP_UNSUB,
@@ -166,28 +244,28 @@ export function useAuth(): AuthState & AuthActions {
 
   const login = useCallback(
     async (username: string, password: string) => {
-      if (authClient) return authClient.login(username, password);
+      if (authClient) return runScopeChangingAction(() => authClient.login(username, password));
       else if (authDisabled) throw createAuthDisabledError();
       return null;
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runScopeChangingAction],
   );
 
   const register = useCallback(
     async (params: RegisterParams) => {
-      if (authClient) return authClient.register(params);
+      if (authClient) return runScopeChangingAction(() => authClient.register(params));
       else if (authDisabled) throw createAuthDisabledError();
       return null;
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runScopeChangingAction],
   );
 
   const logout = useCallback(
     async () => {
-      if (authClient) await authClient.logout();
+      if (authClient) await runScopeChangingAction(() => authClient.logout());
       else if (authDisabled) throw createAuthDisabledError();
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runScopeChangingAction],
   );
 
   const getConfig = useCallback(
@@ -201,63 +279,71 @@ export function useAuth(): AuthState & AuthActions {
 
   const forgotPassword = useCallback(
     async (email: string, nativeContinuation?: string) => {
-      if (authClient) await authClient.forgotPassword(email, nativeContinuation);
+      if (authClient) await runScopeChangingAction(
+        () => authClient.forgotPassword(email, nativeContinuation),
+      );
       else if (authDisabled) throw createAuthDisabledError();
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runScopeChangingAction],
   );
 
   const resendVerificationEmail = useCallback(
     async (email: string, nativeContinuation?: string) => {
-      if (authClient) await authClient.resendVerificationEmail(email, nativeContinuation);
+      if (authClient) await runScopeChangingAction(
+        () => authClient.resendVerificationEmail(email, nativeContinuation),
+      );
       else if (authDisabled) throw createAuthDisabledError();
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runScopeChangingAction],
   );
 
   const verifyEmail = useCallback(
     async (token: string) => {
-      if (authClient) return authClient.verifyEmail(token);
+      if (authClient) return runScopeChangingAction(() => authClient.verifyEmail(token));
       if (authDisabled) throw createAuthDisabledError();
       return null;
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runScopeChangingAction],
   );
 
   const inspectActionToken = useCallback(
     async (token: string) => {
-      if (authClient) return authClient.inspectActionToken(token);
+      if (authClient) return runAccountAction(() => authClient.inspectActionToken(token));
       if (authDisabled) throw createAuthDisabledError();
       return null;
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runAccountAction],
   );
 
   const resetPassword = useCallback(
     async (token: string, newPassword: string) => {
-      if (authClient) return authClient.resetPassword(token, newPassword);
+      if (authClient) return runScopeChangingAction(
+        () => authClient.resetPassword(token, newPassword),
+      );
       else if (authDisabled) throw createAuthDisabledError();
       return null;
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runScopeChangingAction],
   );
 
   const setupPassword = useCallback(
     async (token: string, newPassword: string) => {
-      if (authClient) return authClient.setupPassword(token, newPassword);
+      if (authClient) return runScopeChangingAction(
+        () => authClient.setupPassword(token, newPassword),
+      );
       else if (authDisabled) throw createAuthDisabledError();
       return null;
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runScopeChangingAction],
   );
 
   const listMfaMethods = useCallback(
     async () => {
-      if (authClient) return authClient.listMfaMethods();
+      if (authClient) return runAccountAction(() => authClient.listMfaMethods());
       if (authDisabled) throw createAuthDisabledError();
       return null;
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runAccountAction],
   );
 
   const startMfaSetup = useCallback(
@@ -266,11 +352,11 @@ export function useAuth(): AuthState & AuthActions {
       method: AuthMfaMethodType;
       label?: string;
     }) => {
-      if (authClient) return authClient.startMfaSetup(params);
+      if (authClient) return runAccountAction(() => authClient.startMfaSetup(params));
       if (authDisabled) throw createAuthDisabledError();
       return null;
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runAccountAction],
   );
 
   const verifyMfaSetup = useCallback(
@@ -278,11 +364,11 @@ export function useAuth(): AuthState & AuthActions {
       verificationToken: string;
       code: string;
     }) => {
-      if (authClient) return authClient.verifyMfaSetup(params);
+      if (authClient) return runScopeChangingAction(() => authClient.verifyMfaSetup(params));
       if (authDisabled) throw createAuthDisabledError();
       return null;
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runScopeChangingAction],
   );
 
   const verifyMfaChallenge = useCallback(
@@ -290,61 +376,111 @@ export function useAuth(): AuthState & AuthActions {
       challengeToken: string;
       code: string;
     }) => {
-      if (authClient) return authClient.verifyMfaChallenge(params);
+      if (authClient) return runScopeChangingAction(
+        () => authClient.verifyMfaChallenge(params),
+      );
       if (authDisabled) throw createAuthDisabledError();
       return null;
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runScopeChangingAction],
   );
 
   const refresh = useCallback(
     async () => {
-      if (authClient) await authClient.refresh();
+      if (authClient) await runScopeChangingAction(() => authClient.refresh());
       else if (authDisabled) throw createAuthDisabledError();
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runScopeChangingAction],
+  );
+
+  const reconcileSession = useCallback(
+    async () => {
+      if (authClient) await runScopeChangingAction(() => authClient.reconcileSession());
+      else if (authDisabled) throw createAuthDisabledError();
+    },
+    [authClient, authDisabled, runScopeChangingAction],
+  );
+
+  const selectTenant = useCallback(
+    async (continuation: string, tenantId: string) => {
+      if (authClient) return runScopeChangingAction(
+        () => authClient.selectTenant(continuation, tenantId),
+      );
+      if (authDisabled) throw createAuthDisabledError();
+      return null;
+    },
+    [authClient, authDisabled, runScopeChangingAction],
+  );
+
+  const listTenants = useCallback(
+    async () => {
+      if (authClient) return runAccountAction(() => authClient.listTenants());
+      if (authDisabled) throw createAuthDisabledError();
+      return null;
+    },
+    [authClient, authDisabled, runAccountAction],
+  );
+
+  const createTenant = useCallback(
+    async (params: AuthTenantCreateParams) => {
+      if (authClient) return runScopeChangingAction(() => authClient.createTenant(params));
+      if (authDisabled) throw createAuthDisabledError();
+      return null;
+    },
+    [authClient, authDisabled, runScopeChangingAction],
+  );
+
+  const switchTenant = useCallback(
+    async (tenantId: string) => {
+      if (authClient) return runScopeChangingAction(() => authClient.switchTenant(tenantId));
+      if (authDisabled) throw createAuthDisabledError();
+      return null;
+    },
+    [authClient, authDisabled, runScopeChangingAction],
   );
 
   const changePassword = useCallback(
     async (currentPassword: string, newPassword: string) => {
-      if (authClient) await authClient.changePassword(currentPassword, newPassword);
+      if (authClient) await runAccountAction(
+        () => authClient.changePassword(currentPassword, newPassword),
+      );
       else if (authDisabled) throw createAuthDisabledError();
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runAccountAction],
   );
 
   const setProperty = useCallback(
     async (key: string, value: unknown) => {
-      if (authClient) await authClient.setProperty(key, value);
+      if (authClient) await runAccountAction(() => authClient.setProperty(key, value));
       else if (authDisabled) throw createAuthDisabledError();
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runAccountAction],
   );
 
   const getProperty = useCallback(
     async (key: string) => {
-      if (authClient) return authClient.getProperty(key);
+      if (authClient) return runAccountAction(() => authClient.getProperty(key));
       if (authDisabled) throw createAuthDisabledError();
       return null;
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runAccountAction],
   );
 
   const getProperties = useCallback(
     async () => {
-      if (authClient) return authClient.getProperties();
+      if (authClient) return runAccountAction(() => authClient.getProperties());
       if (authDisabled) throw createAuthDisabledError();
       return {};
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runAccountAction],
   );
 
   const deleteProperty = useCallback(
     async (key: string) => {
-      if (authClient) await authClient.deleteProperty(key);
+      if (authClient) await runAccountAction(() => authClient.deleteProperty(key));
       else if (authDisabled) throw createAuthDisabledError();
     },
-    [authClient, authDisabled],
+    [authClient, authDisabled, runAccountAction],
   );
 
   if (!authClient && !authDisabled && shouldUseSsrFallback(client, 'useAuth')) {
@@ -352,10 +488,12 @@ export function useAuth(): AuthState & AuthActions {
   }
 
   return {
-    user: state.user,
-    isAuthenticated: state.user !== null,
-    isLoading: state.isLoading,
-    error: state.error,
+    user: authorizationBoundary.ready ? state.user : null,
+    activeTenant: authorizationBoundary.ready ? state.activeTenant : null,
+    isAuthenticated: authorizationBoundary.ready && state.user !== null,
+    isLoading: state.isLoading || !authorizationBoundary.ready,
+    error: authorizationBoundary.ready ? state.error : null,
+    sessionTransition: state.sessionTransition,
     login,
     register,
     getConfig,
@@ -369,8 +507,13 @@ export function useAuth(): AuthState & AuthActions {
     startMfaSetup,
     verifyMfaSetup,
     verifyMfaChallenge,
+    selectTenant,
+    listTenants,
+    createTenant,
+    switchTenant,
     logout,
     refresh,
+    reconcileSession,
     changePassword,
     setProperty,
     getProperty,
@@ -441,7 +584,10 @@ export function useAuthConfig(): AuthConfigState {
     config,
     isLoading,
     error,
-    canRegister: config?.registration.publicRegistrationEnabled ?? false,
+    canRegister:
+      config?.registration.registrationEnabled
+      ?? config?.registration.publicRegistrationEnabled
+      ?? false,
     bootstrapRequired: config?.registration.bootstrapRequired ?? false,
     reload,
   };
@@ -551,4 +697,8 @@ export function useUserProperty<T = string>(
     refresh,
     remove,
   };
+}
+
+function staleAccountOperation(): Error {
+  return new Error('The authorization scope changed before the account operation completed.');
 }
