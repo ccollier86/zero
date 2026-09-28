@@ -12,6 +12,7 @@ import type { WorkflowRegistry } from '../workflows/workflow-registry';
 import type { WorkflowService } from '../workflows/workflow-service';
 import type { ReactiveDB } from '../sync/reactive-db';
 import type { PlatformSQLiteService } from '../persistence/storage-types';
+import type { DatabaseManager } from '../databases/database-manager';
 import type { UserStore } from '../auth/user-store';
 import type { TokenService } from '../auth/token-service';
 import type { EmailRuntime } from '../email/types';
@@ -30,6 +31,10 @@ export const ZERO_SYNC_DB = createZeroRuntimeServiceKey<ReactiveDB>(
 
 export const ZERO_SQLITE_SERVICE = createZeroRuntimeServiceKey<PlatformSQLiteService>(
   'Platform SQLite service',
+);
+
+export const ZERO_DATABASE_MANAGER = createZeroRuntimeServiceKey<DatabaseManager>(
+  'Database manager',
 );
 
 export const ZERO_AUTH_STORE = createZeroRuntimeServiceKey<UserStore>('Auth user store');

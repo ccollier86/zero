@@ -57,11 +57,43 @@ describe('native sync auth bridge', () => {
       for (const listener of listeners) listener(next);
     }
   });
+
+  test('purges and reconnects when the same subject switches tenants', () => {
+    let state = authenticated('user-1', 'tenant-a');
+    const listeners = new Set<NativeAuthStateListener>();
+    const auth = {
+      get state() { return state; },
+      subscribe(listener: NativeAuthStateListener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      async getAccessToken() { return 'access'; },
+      async refresh() { return state; },
+    };
+    let connected = false;
+    let connects = 0;
+    let resets = 0;
+    const bridge = createNativeSyncAuth(auth);
+    bridge.bindAuthLifecycle?.({
+      get connected() { return connected; },
+      connect() { connected = true; connects += 1; },
+      reset() { connected = false; resets += 1; },
+    }, true);
+
+    state = authenticated('user-1', 'tenant-b');
+    for (const listener of listeners) listener(state);
+
+    expect(connects).toBe(2);
+    expect(resets).toBe(1);
+  });
 });
 
-function authenticated(subject: string): NativeAuthState {
+function authenticated(subject: string, tenantId?: string): NativeAuthState {
   return {
     status: 'authenticated', error: null,
     identity: { iss: 'https://zero.example/auth', sub: subject, aud: 'desktop', exp: 1, iat: 1 },
+    activeTenant: tenantId
+      ? { tenantId, slug: tenantId, name: tenantId, role: 'member' }
+      : null,
   };
 }

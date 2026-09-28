@@ -45,12 +45,15 @@ import type {
 } from '../../storage/types';
 import type { WorkflowService } from '../../workflows/workflow-service';
 import { canManageWorkflowScope } from '../../workflows/workflow-access';
+import type { AsyncDatabaseClient } from '../../databases/database-operations';
+import { createRequestDatabaseClient } from './request-database-client';
 
 const REQUEST_SERVICES = Symbol('zero.request-server-services');
 
 const MULTI_TENANT_UNSCOPED_SERVICES = new Set<PropertyKey>([
   'db',
   'syncDB',
+  'databases',
   'sql',
   'sqlite',
   'tokens',
@@ -118,6 +121,8 @@ export interface ServerRequestServices extends ServerRouteServices {
   readonly access: RequestAuthorizationAccess;
   /** Validated data boundary, or null for a multi-tenant selection/anonymous session. */
   readonly scope: ServiceDataScope | null;
+  /** Tenant-file data client, or null outside tenant-database isolation. */
+  readonly data: AsyncDatabaseClient | null;
   /**
    * Explicit raw/setup surface. Calls through this object bypass request data
    * scoping and are trusted application code.
@@ -156,6 +161,8 @@ export interface CreateAuthorityScopedServerServicesOptions {
 export interface AuthorityScopedServerServices extends ServerRouteServices {
   readonly access: RequestAuthorizationAccess;
   readonly scope: ServiceDataScope;
+  /** Tenant-file data client, or null outside tenant-database isolation. */
+  readonly data: AsyncDatabaseClient | null;
 }
 
 /** Create (or preserve) the authorized service view for one HTTP request. */
@@ -189,6 +196,7 @@ export function createServerRequestServices(
 export function createAuthorityScopedServerServices(
   options: CreateAuthorityScopedServerServicesOptions,
 ): AuthorityScopedServerServices {
+  const databaseAuthoritySync = options.assertCurrentAuthoritySync;
   const {
     access,
     services,
@@ -262,11 +270,22 @@ export function createAuthorityScopedServerServices(
         request ?? null,
       )
     : services.observability;
+  // Tenant-file operations require an explicit durable synchronous fence.
+  // The no-op compatibility default used by older scoped service adapters is
+  // not sufficient authority to mint a database capability.
+  const requestData = databaseAuthoritySync
+    ? createRequestDatabaseClient({
+        manager: services.databases,
+        scope,
+        assertCurrentAuthoritySync: databaseAuthoritySync,
+      })
+    : null;
 
   const overrides: Record<PropertyKey, unknown> = {
     [REQUEST_SERVICES]: true,
     access,
     scope,
+    data: requestData,
     auth,
     observability,
     storage,
@@ -279,26 +298,24 @@ export function createAuthorityScopedServerServices(
 
   return new Proxy(services, {
     get(target, property, receiver) {
-      if (Reflect.has(overrides, property)) return Reflect.get(overrides, property);
-      if (strict && WORKFLOW_UNSCOPED_SERVICES.has(property)) {
-        throw unsafeService(property);
-      }
-      if (multiTenant && MULTI_TENANT_UNSCOPED_SERVICES.has(property)) {
+      if (Object.hasOwn(overrides, property)) return Reflect.get(overrides, property);
+      if (isHiddenRequestService(property, { strict, multiTenant })) {
         throw unsafeService(property);
       }
       return Reflect.get(target, property, receiver);
     },
     has(target, property) {
-      if (strict && WORKFLOW_UNSCOPED_SERVICES.has(property)) return false;
-      return Reflect.has(overrides, property) || Reflect.has(target, property);
+      if (isHiddenRequestService(property, { strict, multiTenant })) return false;
+      return Object.hasOwn(overrides, property) || Reflect.has(target, property);
     },
     ownKeys(target) {
-      return Reflect.ownKeys(target).filter(
-        (property) => !strict || !WORKFLOW_UNSCOPED_SERVICES.has(property),
-      );
+      return requestServiceOwnKeys(target, overrides, { strict, multiTenant });
     },
     getOwnPropertyDescriptor(target, property) {
-      if (strict && WORKFLOW_UNSCOPED_SERVICES.has(property)) return undefined;
+      if (isHiddenRequestService(property, { strict, multiTenant })) return undefined;
+      if (Object.hasOwn(overrides, property)) {
+        return requestServiceOverrideDescriptor(overrides, property);
+      }
       return Reflect.getOwnPropertyDescriptor(target, property);
     },
   }) as AuthorityScopedServerServices;
@@ -314,6 +331,7 @@ function createUncommittedRequestServices(
     [REQUEST_SERVICES]: true,
     access,
     scope: null,
+    data: null,
     unsafe: services,
     auth: createRequestAuthServices(services.auth),
     observability: createRequestObservabilityServices(
@@ -338,14 +356,60 @@ function createUncommittedRequestServices(
 
   return new Proxy(services, {
     get(target, property, receiver) {
-      if (Reflect.has(overrides, property)) return Reflect.get(overrides, property);
+      if (Object.hasOwn(overrides, property)) return Reflect.get(overrides, property);
       if (MULTI_TENANT_UNSCOPED_SERVICES.has(property)) throw unsafeService(property);
       return Reflect.get(target, property, receiver);
     },
     has(target, property) {
-      return Reflect.has(overrides, property) || Reflect.has(target, property);
+      if (MULTI_TENANT_UNSCOPED_SERVICES.has(property)) return false;
+      return Object.hasOwn(overrides, property) || Reflect.has(target, property);
+    },
+    ownKeys(target) {
+      return requestServiceOwnKeys(target, overrides, {
+        strict: false,
+        multiTenant: true,
+      });
+    },
+    getOwnPropertyDescriptor(target, property) {
+      if (MULTI_TENANT_UNSCOPED_SERVICES.has(property)) return undefined;
+      if (Object.hasOwn(overrides, property)) {
+        return requestServiceOverrideDescriptor(overrides, property);
+      }
+      return Reflect.getOwnPropertyDescriptor(target, property);
     },
   }) as ServerRequestServices;
+}
+
+function isHiddenRequestService(
+  property: PropertyKey,
+  mode: { readonly strict: boolean; readonly multiTenant: boolean },
+): boolean {
+  return (mode.strict && WORKFLOW_UNSCOPED_SERVICES.has(property))
+    || (mode.multiTenant && MULTI_TENANT_UNSCOPED_SERVICES.has(property));
+}
+
+function requestServiceOwnKeys(
+  target: ServerRouteServices,
+  overrides: Record<PropertyKey, unknown>,
+  mode: { readonly strict: boolean; readonly multiTenant: boolean },
+): Array<string | symbol> {
+  return [...new Set([
+    ...Reflect.ownKeys(target),
+    ...Reflect.ownKeys(overrides),
+  ])].filter((property) => property !== REQUEST_SERVICES
+    && !isHiddenRequestService(property, mode));
+}
+
+function requestServiceOverrideDescriptor(
+  overrides: Record<PropertyKey, unknown>,
+  property: PropertyKey,
+): PropertyDescriptor {
+  return {
+    configurable: true,
+    enumerable: typeof property === 'string',
+    writable: false,
+    value: Reflect.get(overrides, property),
+  };
 }
 
 function isMultiTenantRequest(

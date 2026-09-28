@@ -71,7 +71,7 @@ export interface MigratorConfig {
   /** Close an injected database on dispose. Default: false for injected handles. */
   ownsDatabase?: boolean;
   /** Ordered list of migrations to apply. */
-  migrations: Migration[];
+  migrations: readonly Migration[];
   /** Apply WAL pragmas. Defaults to true for owned DBs and false for injected handles. */
   applyPragmas?: boolean;
   /** How long this connection waits for another migration writer. Default: 30000ms. */
@@ -87,6 +87,9 @@ export interface MigratorConfig {
   /** Log output. Default: platform observability sink. */
   log?: (...args: unknown[]) => void;
 }
+
+/** Immutable snapshot of a validated, ordered migration registry. */
+export type MigrationRegistry = readonly Readonly<Migration>[];
 
 export interface SchemaColumnSnapshot {
   name: string;

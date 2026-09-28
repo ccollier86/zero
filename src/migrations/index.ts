@@ -35,7 +35,13 @@ import { migration as m021 } from './definitions/021_verified_domain_request_pro
 import { migration as m022 } from './definitions/022_auth_request_admission_flows';
 import { migration as m023 } from './definitions/023_auth_installed_profile';
 
-export { Migrator, type MigratorConfig, type MigrationStatus } from './migrator';
+export {
+  createMigrationRegistry,
+  Migrator,
+  type MigrationRegistry,
+  type MigratorConfig,
+  type MigrationStatus,
+} from './migrator';
 export type {
   DeclaredTables,
   Migration,

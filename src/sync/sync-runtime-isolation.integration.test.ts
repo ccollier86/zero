@@ -7,10 +7,14 @@ import {
 import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 import { ZERO_SQLITE_SERVICE, ZERO_SYNC_DB } from '../runtime/service-keys';
 import { getPlatformSQLiteService } from '../persistence';
-import type { ReactiveDB } from './reactive-db';
+import { createReactiveDB, type ReactiveDB } from './reactive-db';
 import { createSyncPlugin, getSyncDB } from './sync.plugin';
 import { allowLegacyEphemeralTopicPolicy } from './ephemeral-policy';
-import type { ServerMessage, SyncTokenVerifier } from './types';
+import type {
+  ServerMessage,
+  SyncResourcePolicyAdapter,
+  SyncTokenVerifier,
+} from './types';
 
 interface SyncApp {
   server: { hostname?: string; port?: number } | null;
@@ -155,6 +159,180 @@ describe('sync plugin runtime isolation', () => {
     expect(runtime.get(ZERO_SQLITE_SERVICE)).toBeNull();
     expect(capturedDB).not.toBeNull();
     expect(() => capturedDB!.currentSeq).toThrow('disposed');
+  });
+
+  test('keeps an injected ReactiveDB caller-owned and removes its Sync listener on stop', async () => {
+    const injected = createReactiveDB({ mode: 'memory' });
+    let observedChanges = 0;
+    let capturedDB: ReactiveDB | null = null;
+    const resourcePolicy: SyncResourcePolicyAdapter = {
+      async resolveTableAccess({ tableNames }) {
+        return {
+          readableTables: new Set(tableNames),
+          rowFilters: new Map(),
+        };
+      },
+      async authorizeMutation() {
+        return { ok: true };
+      },
+      observeChange() {
+        observedChanges += 1;
+      },
+    };
+    const app = new Elysia({ name: 'injected-sync-database' }).use(createSyncPlugin({
+      db: { mode: 'memory' },
+      reactiveDB: injected,
+      tables: {
+        todos: {
+          id: 'text primary key',
+          title: 'text not null',
+        },
+      },
+      resourcePolicy,
+      onDatabaseCreated(db) {
+        expect(db).toBe(injected);
+        capturedDB = db;
+      },
+    })).listen(0);
+    apps.push(app);
+    let connection: TestConnection | null = null;
+
+    try {
+      expect(capturedDB).not.toBeNull();
+      connection = await connect(app);
+      connections.push(connection);
+      await subscribeToTodos(connection);
+
+      injected.insert('todos', { id: 'before-stop', title: 'Delivered by Sync' });
+      const delivered = await connection.waitForMessage(
+        (message) => message.type === 'sync.change'
+          && message.rowId === 'before-stop',
+      );
+      expect(delivered).toMatchObject({
+        type: 'sync.change',
+        table: 'todos',
+        rowId: 'before-stop',
+      });
+      expect(observedChanges).toBe(1);
+
+      const transportClosed = new Promise<void>((resolve) => {
+        connection!.ws.addEventListener('close', () => resolve(), { once: true });
+      });
+      await app.stop(true);
+      await transportClosed;
+      const connectionIndex = connections.indexOf(connection);
+      if (connectionIndex >= 0) connections.splice(connectionIndex, 1);
+      connection = null;
+      const appIndex = apps.indexOf(app);
+      if (appIndex >= 0) apps.splice(appIndex, 1);
+
+      injected.insert('todos', { id: 'after-stop', title: 'Caller still owns DB' });
+      expect(injected.queryOne('todos', 'after-stop')).toEqual({
+        id: 'after-stop',
+        title: 'Caller still owns DB',
+      });
+      expect(observedChanges).toBe(1);
+      expect(getSyncDB()).toBeNull();
+      expect(getPlatformSQLiteService()).toBeNull();
+    } finally {
+      connection?.close();
+      const connectionIndex = connection ? connections.indexOf(connection) : -1;
+      if (connectionIndex >= 0) connections.splice(connectionIndex, 1);
+      const appIndex = apps.indexOf(app);
+      if (appIndex >= 0) {
+        await app.stop(true);
+        apps.splice(appIndex, 1);
+      }
+      injected.dispose();
+    }
+  });
+
+  test('disposes an explicitly owned injected ReactiveDB on stop', async () => {
+    const injected = createReactiveDB({ mode: 'memory' });
+    const app = new Elysia({ name: 'owned-injected-sync-database' }).use(createSyncPlugin({
+      db: { mode: 'memory' },
+      reactiveDB: injected,
+      ownsReactiveDB: true,
+      tables: {},
+    })).listen(0);
+    apps.push(app);
+
+    await app.stop(true);
+    apps.splice(apps.indexOf(app), 1);
+
+    expect(() => injected.currentSeq).toThrow('disposed');
+  });
+
+  test('continues to own a ReactiveDB created from the standalone db config', async () => {
+    let capturedDB: ReactiveDB | null = null;
+    const app = new Elysia({ name: 'standalone-owned-sync-database' }).use(createSyncPlugin({
+      db: { mode: 'memory' },
+      tables: {},
+      onDatabaseCreated(db) {
+        capturedDB = db;
+      },
+    })).listen(0);
+    apps.push(app);
+
+    expect(capturedDB).not.toBeNull();
+    await app.stop(true);
+    apps.splice(apps.indexOf(app), 1);
+
+    expect(() => capturedDB!.currentSeq).toThrow('disposed');
+  });
+
+  test('keeps a caller-owned injected ReactiveDB usable after composition failure', () => {
+    const injected = createReactiveDB({ mode: 'memory' });
+    try {
+      expect(() => createSyncPlugin({
+        db: { mode: 'memory' },
+        reactiveDB: injected,
+        tables: {
+          parents: { id: 'text primary key' },
+          children: {
+            id: 'text primary key',
+            parent_id: 'text references parents(id) on delete cascade',
+          },
+        },
+      })).toThrow('foreign-key actions are not observable');
+
+      expect(injected.currentSeq).toBe(0);
+      expect(getSyncDB()).toBeNull();
+      injected.defineTable('still_usable', { id: 'text primary key' });
+      injected.insert('still_usable', { id: 'retained' });
+      expect(injected.queryOne('still_usable', 'retained')).toEqual({ id: 'retained' });
+    } finally {
+      injected.dispose();
+    }
+  });
+
+  test('disposes an owned injected ReactiveDB after composition failure', () => {
+    const injected = createReactiveDB({ mode: 'memory' });
+
+    expect(() => createSyncPlugin({
+      db: { mode: 'memory' },
+      reactiveDB: injected,
+      ownsReactiveDB: true,
+      tables: {
+        parents: { id: 'text primary key' },
+        children: {
+          id: 'text primary key',
+          parent_id: 'text references parents(id) on delete cascade',
+        },
+      },
+    })).toThrow('foreign-key actions are not observable');
+
+    expect(getSyncDB()).toBeNull();
+    expect(() => injected.currentSeq).toThrow('disposed');
+  });
+
+  test('rejects an injected-database ownership flag without an injected database', () => {
+    expect(() => createSyncPlugin({
+      db: { mode: 'memory' },
+      ownsReactiveDB: false,
+      tables: {},
+    })).toThrow('ownsReactiveDB is valid only when reactiveDB is provided');
+    expect(getSyncDB()).toBeNull();
   });
 
   test('keeps database, managers, listeners, sockets, and mutation origin instance-local', async () => {

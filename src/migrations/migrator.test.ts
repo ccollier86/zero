@@ -17,7 +17,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Migrator } from './migrator';
+import { createMigrationRegistry, Migrator } from './migrator';
 import { runMigrationDoctor, statusToFindings } from './migration-doctor';
 import type { Migration } from './types';
 
@@ -565,6 +565,95 @@ describe('Migrator first-class ledger and history', () => {
       log: () => {},
     })).toThrow('duplicate version 001');
     expect(existsSync(dbPath)).toBe(false);
+  });
+
+  test('composes detached immutable migration registries', () => {
+    const first: Migration = {
+      version: '001',
+      description: 'first immutable migration',
+      up() {},
+    };
+    const second: Migration = {
+      version: '002',
+      description: 'second immutable migration',
+      up() {},
+    };
+    const source = [first];
+    const registry = createMigrationRegistry(source, [second]);
+
+    expect(registry.map((migration) => migration.version)).toEqual(['001', '002']);
+    expect(Object.isFrozen(registry)).toBe(true);
+    expect(registry.every(Object.isFrozen)).toBe(true);
+    expect(registry[0]).not.toBe(first);
+    expect(registry[1]).not.toBe(second);
+
+    first.version = '999';
+    first.description = 'mutated by caller';
+    source.splice(0, 1, second);
+    expect(registry.map((migration) => migration.version)).toEqual(['001', '002']);
+    expect(registry[0].description).toBe('first immutable migration');
+
+    expect(() => (registry as Migration[]).push(second)).toThrow();
+    expect(() => {
+      (registry[0] as Migration).description = 'cannot mutate snapshot';
+    }).toThrow();
+    expect(() => createMigrationRegistry([second], [{
+      version: '001',
+      description: 'out of order across registries',
+      up() {},
+    }])).toThrow('out-of-order version 001');
+  });
+
+  test('keeps a live migrator isolated from caller registry mutation', () => {
+    const dbPath = tempDbPath();
+    const migration: Migration = {
+      version: '001',
+      description: 'snapshotted migration',
+      up(db: Database) {
+        db.run('CREATE TABLE registry_snapshot (id TEXT PRIMARY KEY)');
+      },
+    };
+    const callerRegistry = [migration];
+    const migrator = new Migrator({
+      dbPath,
+      migrations: callerRegistry,
+      log: () => {},
+    });
+
+    callerRegistry.push({
+      version: '002',
+      description: 'late caller addition',
+      up(db: Database) {
+        db.run('CREATE TABLE late_registry_addition (id TEXT PRIMARY KEY)');
+      },
+    });
+    migration.version = '999';
+    migration.description = 'changed by caller';
+    migration.up = (db: Database) => {
+      db.run('CREATE TABLE mutated_registry_step (id TEXT PRIMARY KEY)');
+    };
+
+    try {
+      expect(migrator.run()).toEqual(['001']);
+      expect(migrator.status()).toEqual([
+        expect.objectContaining({
+          version: '001',
+          description: 'snapshotted migration',
+          applied: true,
+        }),
+      ]);
+      expect(migrator.database.query(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name IN (
+          'registry_snapshot',
+          'late_registry_addition',
+          'mutated_registry_step'
+        )
+        ORDER BY name
+      `).all()).toEqual([{ name: 'registry_snapshot' }]);
+    } finally {
+      migrator.dispose();
+    }
   });
 
   test('refuses rollback from a stale registry while a newer migration remains applied', () => {

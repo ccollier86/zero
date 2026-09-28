@@ -190,6 +190,56 @@ interface TransactionExecutionContext {
   snapshotReaderDepth: number;
 }
 
+export type ReactiveDBCommitGuardSnapshot =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined;
+
+/**
+ * Synchronous last-moment fence for commits coordinated with another durable
+ * database. The guard runs inside the SQLite transaction immediately before
+ * commit and may return a lease release callback held until commit/rollback is
+ * known. It must never wait while SQLite locks are held.
+ */
+export interface ReactiveDBCommitGuard {
+  capture(): ReactiveDBCommitGuardSnapshot;
+  beforeCommit(
+    snapshot: ReactiveDBCommitGuardSnapshot,
+  ): (() => undefined) | undefined;
+}
+
+const reactiveDBCommitGuards = new WeakMap<ReactiveDB, ReactiveDBCommitGuard>();
+
+/** Install one app-local commit fence and return an identity-safe remover. */
+export function registerReactiveDBCommitGuard(
+  db: ReactiveDB,
+  guard: ReactiveDBCommitGuard,
+): () => void {
+  if (!(db instanceof ReactiveDB)
+    || !guard
+    || typeof guard !== 'object'
+    || typeof guard.capture !== 'function'
+    || typeof guard.beforeCommit !== 'function'
+    || reactiveDBCommitGuards.has(db)) {
+    throw new TypeError('ReactiveDB commit guard configuration is invalid');
+  }
+  const detached = Object.freeze({
+    capture: guard.capture,
+    beforeCommit: guard.beforeCommit,
+  });
+  reactiveDBCommitGuards.set(db, detached);
+  let removed = false;
+  return () => {
+    if (removed) return;
+    removed = true;
+    if (reactiveDBCommitGuards.get(db) === detached) {
+      reactiveDBCommitGuards.delete(db);
+    }
+  };
+}
+
 interface SQLiteSchemaVersions {
   main: number;
   temp: number;
@@ -1596,6 +1646,9 @@ export class ReactiveDB {
     this.inTransaction = true;
     this.deferredChanges = pendingChanges;
     this.activeTransactionChangeOrigin = transactionChangeOrigin;
+    const commitGuardLease: { release: (() => undefined) | null } = {
+      release: null,
+    };
 
     try {
       const execution: TransactionExecutionContext = {
@@ -1603,8 +1656,17 @@ export class ReactiveDB {
         snapshotReaderDepth: 0,
       };
       let committedSchemaVersions: SQLiteSchemaVersions | null = null;
+      const commitGuard = reactiveDBCommitGuards.get(this) ?? null;
       const result = this.transactionExecution.run(execution, () =>
         this.db.transaction(() => {
+          const guardSnapshot = commitGuard?.capture();
+          if (guardSnapshot !== undefined
+            && guardSnapshot !== null
+            && typeof guardSnapshot !== 'string'
+            && typeof guardSnapshot !== 'number'
+            && typeof guardSnapshot !== 'boolean') {
+            throw new TypeError('ReactiveDB commit guard returned an invalid snapshot');
+          }
           // Verify the protected log triggers and registered managed-table
           // contracts while BEGIN IMMEDIATE holds the writer lock. The normal
           // path is two scalar schema-version reads; DDL forces a catalog audit.
@@ -1638,6 +1700,11 @@ export class ReactiveDB {
               );
             }
           }
+          const release = commitGuard?.beforeCommit(guardSnapshot);
+          if (release !== undefined && typeof release !== 'function') {
+            throw new TypeError('ReactiveDB commit guard returned an invalid lease');
+          }
+          commitGuardLease.release = release ?? null;
           committedSchemaVersions = finalSchemaVersions;
           return value;
         }).immediate());
@@ -1671,6 +1738,8 @@ export class ReactiveDB {
         clearCommittedLocalChangeOrigin(this, change.seq);
       }
       throw err;
+    } finally {
+      commitGuardLease.release?.();
     }
   }
 

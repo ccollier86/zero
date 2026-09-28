@@ -31,6 +31,7 @@ import { emitPlatformCode } from '../observability/sink';
 import type {
   Migration,
   MigrationLedgerRecord,
+  MigrationRegistry,
   MigrationSafety,
   MigratorConfig,
   MigrationStatus,
@@ -38,6 +39,7 @@ import type {
 
 export type {
   Migration,
+  MigrationRegistry,
   MigrationSafety,
   MigratorConfig,
   MigrationStatus,
@@ -47,7 +49,7 @@ export type {
 
 export class Migrator {
   private db: Database;
-  private migrations: Migration[];
+  private readonly migrations: MigrationRegistry;
   private log: (...args: unknown[]) => void;
   private dbPath: string;
   private ownsDatabase: boolean;
@@ -64,13 +66,13 @@ export class Migrator {
     if (!config.database && !config.dbPath) {
       throw new Error('[migrator] dbPath is required when database is not provided.');
     }
-    validateMigrationRegistry(config.migrations);
+    const migrations = createMigrationRegistry(config.migrations);
     this.busyTimeoutMs = normalizeBusyTimeout(config.busyTimeoutMs ?? 30_000);
 
     this.db = config.database ?? new Database(config.dbPath!);
     this.dbPath = config.dbPath ?? ':memory:';
     this.ownsDatabase = config.database ? config.ownsDatabase ?? false : true;
-    this.migrations = config.migrations;
+    this.migrations = migrations;
     this.log = config.log ?? defaultMigratorLog;
     this.allowDestructive = config.allowDestructive ?? false;
     this.allowDestructiveDown = config.allowDestructiveDown ?? false;
@@ -615,7 +617,24 @@ function normalizeBusyTimeout(value: number): number {
   return Math.floor(value);
 }
 
-function validateMigrationRegistry(migrations: Migration[]): void {
+/**
+ * Compose migration lists into a detached, immutable registry.
+ *
+ * The returned array and each migration entry are frozen snapshots, so later
+ * mutation of a caller-owned array or migration object cannot change a live
+ * migrator's ordering, checksums, or executable steps.
+ */
+export function createMigrationRegistry(
+  ...registries: ReadonlyArray<readonly Migration[]>
+): MigrationRegistry {
+  const migrations = registries.flatMap((registry) =>
+    registry.map((migration) => Object.freeze({ ...migration }))
+  );
+  validateMigrationRegistry(migrations);
+  return Object.freeze(migrations);
+}
+
+function validateMigrationRegistry(migrations: readonly Readonly<Migration>[]): void {
   let previous: string | null = null;
   for (const migration of migrations) {
     if (migration.version.trim().length === 0) {

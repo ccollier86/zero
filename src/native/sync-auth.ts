@@ -8,6 +8,11 @@ export type NativeSyncAuthConfig = Pick<
   'getToken' | 'refreshAuth' | 'bindAuthLifecycle'
 >;
 
+interface NativeSyncAuthority {
+  readonly subject: string;
+  readonly activeTenantId: string | null;
+}
+
 /** Connect a NativeAuthClient without exposing its refresh credential. */
 export function createNativeSyncAuth(
   auth: Pick<NativeAuthClient, 'getAccessToken' | 'refresh' | 'state' | 'subscribe'>,
@@ -19,27 +24,28 @@ export function createNativeSyncAuth(
       return auth.getAccessToken();
     },
     bindAuthLifecycle(client, autoConnect) {
-      let subject = authenticatedSubject(auth.state);
+      let authority = authenticatedAuthority(auth.state);
       let halted = auth.state.status !== 'authenticated';
       let wantsConnection = autoConnect;
       if (!halted && wantsConnection) client.connect();
       const unsubscribe = auth.subscribe((state) => {
-        const nextSubject = authenticatedSubject(state);
-        if (!nextSubject) {
+        const nextAuthority = authenticatedAuthority(state);
+        if (!nextAuthority) {
           if (!halted) {
             wantsConnection ||= client.connected;
             client.reset();
           }
           halted = true;
-          if (state.status === 'anonymous') subject = null;
+          if (state.status === 'anonymous') authority = null;
           return;
         }
-        const shouldResume = halted || subject !== nextSubject;
-        if (!halted && subject !== nextSubject) {
+        const authorityChanged = !sameAuthority(authority, nextAuthority);
+        const shouldResume = halted || authorityChanged;
+        if (!halted && authorityChanged) {
           wantsConnection ||= client.connected;
           client.reset();
         }
-        subject = nextSubject;
+        authority = nextAuthority;
         halted = false;
         if (shouldResume && wantsConnection) client.connect();
       });
@@ -51,6 +57,18 @@ export function createNativeSyncAuth(
   };
 }
 
-function authenticatedSubject(state: NativeAuthState): string | null {
-  return state.status === 'authenticated' ? state.identity?.sub ?? null : null;
+function authenticatedAuthority(state: NativeAuthState): NativeSyncAuthority | null {
+  if (state.status !== 'authenticated' || !state.identity?.sub) return null;
+  return Object.freeze({
+    subject: state.identity.sub,
+    activeTenantId: state.activeTenant?.tenantId ?? null,
+  });
+}
+
+function sameAuthority(
+  left: NativeSyncAuthority | null,
+  right: NativeSyncAuthority,
+): boolean {
+  return left?.subject === right.subject
+    && left.activeTenantId === right.activeTenantId;
 }

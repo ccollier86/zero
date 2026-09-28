@@ -38,16 +38,11 @@ const AUTHORITY_TABLES: readonly AuthorityTableTarget[] = [
   { table: '_auth_user_generations', updateColumns: ['generation'] },
   {
     table: '_auth_sessions',
-    updateColumns: [
-      'status',
-      'generation',
-      'scope_kind',
-      'scope_id',
-      'tenant_id',
-      'membership_id',
-      'tenant_authorization_generation',
-      'membership_authorization_generation',
-    ],
+    // Every mutable durable-session field is security-adjacent. In
+    // particular user_id, kind, and expires_at must not be able to change
+    // without crossing the same commit fence as revocation and scope fields.
+    updateColumns: [],
+    updateTriggerVersion: 2,
   },
   {
     table: '_auth_tenants',
@@ -75,21 +70,11 @@ const AUTHORITY_TABLES: readonly AuthorityTableTarget[] = [
   { table: '_auth_tenant_membership_roles', updateColumns: [] },
   {
     table: '_auth_native_sessions',
-    updateColumns: [
-      'user_id',
-      'client_id',
-      'scope',
-      'auth_generation',
-      'expires_at',
-      'consumed_at',
-      'revoked_at',
-      'scope_kind',
-      'scope_id',
-      'tenant_id',
-      'membership_id',
-      'tenant_authorization_generation',
-      'membership_authorization_generation',
-    ],
+    // Refresh-family identity, token replacement, and rotation fields are as
+    // authoritative as explicit revocation/scope columns. Keep this table
+    // fail-closed as its schema evolves by observing every UPDATE.
+    updateColumns: [],
+    updateTriggerVersion: 2,
   },
 ] as const;
 

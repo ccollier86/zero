@@ -60,6 +60,11 @@ sync, auth, email, storage, workflows, notifications, AI, vector storage,
 [PDF rendering](./pdf.md), and [platform tokens](./tokens.md) for one-time
 actions plus resumable public flows.
 
+Multi-database tenant isolation is active feature-branch work rather than a
+released app contract. Its compatibility, subprocess execution, WAL reader,
+ReactiveDB/realtime, tenant-authority, and future hybrid-placement requirements
+are tracked in the [Multi-Database Architecture](./framework/multi-database-architecture.md).
+
 Create a new app with:
 
 ```sh

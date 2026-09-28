@@ -27,6 +27,7 @@ import {
 } from './server-request-services';
 import { createWorkflowExecutionServiceProvider } from './workflow-execution-services';
 import type { ServerRouteServices } from './server-services';
+import type { DatabaseManager } from '../../databases/database-manager';
 
 describe('request-bound server services', () => {
   test('scopes storage to the live tenant and keeps raw access explicit', () => {
@@ -138,6 +139,7 @@ describe('request-bound server services', () => {
       const alpha = fixture.forToken('alpha');
 
       expect(() => alpha.db).toThrow('zero.unsafe.db');
+      expect(() => alpha.databases).toThrow('zero.unsafe.databases');
       expect(() => alpha.sql).toThrow('zero.unsafe.sql');
       expect(() => alpha.kv).toThrow('zero.unsafe.kv');
       expect(() => alpha.vector).toThrow('zero.unsafe.vector');
@@ -149,6 +151,7 @@ describe('request-bound server services', () => {
 
       expect(alpha.auth.authorizationKernel).toBe(fixture.kernel);
       expect(alpha.unsafe.db).toBe(fixture.db);
+      expect(alpha.unsafe.databases).toBe(fixture.databases);
       expect(alpha.unsafe.auth.store).toBe(fixture.store);
 
       alpha.observability.emitEvent({
@@ -179,6 +182,7 @@ describe('request-bound server services', () => {
       const requestServices = fixture.forToken('alpha');
       expect(requestServices.db).toBe(fixture.db);
       expect(requestServices.syncDB).toBe(fixture.db);
+      expect(requestServices.databases).toBe(fixture.databases);
       expect(requestServices.auth.store).toBe(fixture.store);
       expect(requestServices.auth.tokens).toBeTruthy();
       expect(requestServices.scope).toMatchObject({ scopeKind: 'application' });
@@ -329,12 +333,15 @@ describe('request-bound server services', () => {
 
       expect(() => (zero as any).unsafe).toThrow('zero.unsafe');
       expect(() => (zero as any).db).toThrow('zero.db');
+      expect(() => (zero as any).databases).toThrow('zero.databases');
       expect(() => (zero as any).email).toThrow('zero.email');
       expect(() => (zero.auth as any).store).toThrow('zero.unsafe.auth.store');
       expect(Object.getOwnPropertyDescriptor(zero, 'db')).toBeUndefined();
+      expect(Object.getOwnPropertyDescriptor(zero, 'databases')).toBeUndefined();
       expect(Object.getOwnPropertyDescriptor(zero.auth, 'store')).toBeUndefined();
       expect(Object.getOwnPropertyDescriptor(zero.storage!, 'db')).toBeUndefined();
       expect('db' in zero).toBeFalse();
+      expect('databases' in zero).toBeFalse();
       expect('store' in zero.auth).toBeFalse();
     } finally {
       fixture.db.dispose();
@@ -390,6 +397,10 @@ function createFixture(
   tenancyMode: 'single' | 'multi' = 'multi',
 ) {
   const db = createReactiveDB({ mode: 'memory' });
+  const databases = {
+    fixture: true,
+    diagnostics: () => ({ tenantDatabasesEnabled: false }),
+  } as unknown as DatabaseManager;
   defineStorageTables(db);
   defineNotificationTables(db);
   defineRoomTables(db);
@@ -504,6 +515,7 @@ function createFixture(
   const services = {
     db,
     syncDB: db,
+    databases,
     auth: {
       authorization: kernel,
       authorizationKernel: kernel,
@@ -529,6 +541,7 @@ function createFixture(
     adapterStarted,
     contexts,
     db,
+    databases,
     kernel,
     notifications,
     observabilityEvents,

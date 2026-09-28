@@ -271,8 +271,7 @@ export class AuthSessionService {
   }
 
   deleteExpiredSessions(now = Date.now()): number {
-    this.assertCurrentProfile();
-    return this.store.deleteExpired(now);
+    return this.transaction(() => this.store.deleteExpired(now));
   }
 
   /**

@@ -17,12 +17,20 @@ export { createApp } from './server/app-factory';
 export type { App } from './server/app-factory';
 export { defineZeroConfig, resolveConfig } from './server/types';
 export type {
+  AppDatabaseActorConfig,
+  AppDatabaseTopologyConfig,
+  AppMultipleDatabaseTopologyConfig,
+  AppSingleDatabaseTopologyConfig,
   AppConfig,
   AppDoctorConfig,
   AppStorageConfig,
   AppTableInput,
+  AppTenantDataIsolation,
   AutoLazyAction,
   ResolvedConfig,
+  ResolvedAppDatabaseTopologyConfig,
+  ResolvedAppMultipleDatabaseTopologyConfig,
+  ResolvedAppSingleDatabaseTopologyConfig,
   ResolvedAppStorageConfig,
   ResolvedSitemapConfig,
   ResolvedSyncDefaults,
@@ -34,6 +42,38 @@ export type {
   SyncDefaultsConfig,
   TableSyncDefaultConfig,
 } from './server/types';
+
+// ─── Actor-backed Databases ─────────────────────────────────────────────
+export {
+  DATABASE_ACTOR_CHILD_FLAG,
+  DatabaseError,
+  defineDatabaseRealm,
+  runDatabaseActorIfRequested,
+} from '../databases';
+export type {
+  AsyncDatabaseClient,
+  DatabaseActorBundleLaunch,
+  DatabaseActorCommandPrefixLaunch,
+  DatabaseActorExecutorPolicy,
+  DatabaseActorLaunch,
+  DatabaseActorSourceLaunch,
+  DatabaseActorSQLiteConfig,
+  DatabaseBatchInput,
+  DatabaseCommitResult,
+  DatabaseErrorCode,
+  DatabaseListPage,
+  DatabaseListPageOptions,
+  DatabaseMutation,
+  DatabaseMutationOptions,
+  DatabaseOperationRow,
+  DatabaseReadOptions,
+  DatabaseReadResult,
+  DatabaseRealm,
+  DatabaseRealmDefinition,
+  DatabaseSequenceToken,
+  DatabaseSerializableValue,
+  RunDatabaseActorIfRequestedOptions,
+} from '../databases';
 export {
   PdfError,
   PdfService,

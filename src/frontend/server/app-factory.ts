@@ -35,11 +35,19 @@ import type { AppConfig } from './types';
 import type { AuthBehaviorConfig } from '../../auth/types';
 import { resolveConfig } from './types';
 import { applyTableSyncResolution, resolveTableSyncModes } from './sync-mode-resolver';
-import { Migrator, migrations } from '../../migrations';
+import { migrations } from '../../migrations';
 import { OBS_CODES, configureObservability, createObservabilityPlugin, emitPlatformCode } from '../../observability';
 import { createVectorPlugin } from '../../vector';
 import { createPlatformTokenPlugin } from '../../tokens';
 import { createPlatformSQLiteService, type PlatformSQLiteService } from '../../persistence';
+import {
+  AuthorityCommitCoordinator,
+  DatabaseCoordinator,
+  DatabaseManager,
+  DatabaseRuntime,
+  createDatabaseObservability,
+  registerDatabaseAuthorityCommitGuard,
+} from '../../databases';
 import {
   isPolicyTrustedUserProperty,
   resolveAuthBehaviorConfig,
@@ -61,6 +69,7 @@ import {
 import { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import {
   ZERO_EMAIL_RUNTIME,
+  ZERO_DATABASE_MANAGER,
   ZERO_AUTHORIZATION_KERNEL,
   ZERO_AUTHORIZATION_ROLE_SERVICE,
   ZERO_AUTH_STORE,
@@ -131,6 +140,8 @@ export async function createApp(userConfig: AppConfig) {
   const getAppAuthorizationKernel = () => runtime.get(ZERO_AUTHORIZATION_KERNEL);
   const getAppRoleAssignments = () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE);
   let appSyncDB: ReactiveDB | null = null;
+  let defaultDatabaseRuntime: DatabaseRuntime | null = null;
+  let databaseManager: DatabaseManager | null = null;
   if (config.db.database && !config.db.sqlite) {
     throw new Error('[app] createApp({ db.database }) bypasses the platform SQL service. Pass db.sqlite or a platform storage config instead.');
   }
@@ -139,10 +150,6 @@ export async function createApp(userConfig: AppConfig) {
   const sqlite = config.db.sqlite ?? createPlatformSQLiteService(config.db);
   const ownsSqlite = !config.db.sqlite;
   try {
-    // Register the owned SQL handle first so reverse-order runtime teardown
-    // releases every dependent service before the final durability boundary.
-    // This also covers createApp() results that are disposed before listen().
-    if (ownsSqlite) runtime.addCleanup(() => sqlite.close());
     const emailRuntime = createEmailRuntime(config.email, config.app);
     runtime.set(ZERO_EMAIL_RUNTIME, emailRuntime);
     const emailRuntimeRegistration = registerEmailRuntime(runtime, emailRuntime);
@@ -222,34 +229,90 @@ export async function createApp(userConfig: AppConfig) {
       });
     }
 
-    // ─── Run database migrations ──────────────────────────────
-    // Migrations run BEFORE the server starts against the shared platform SQL
-    // handle. This keeps backend-only SQL, ReactiveDB, and platform services on
-    // the same persistence boundary.
-    if (shouldRunMigrations(sqlite, config.migrate)) {
-      const migrator = new Migrator({
-        database: sqlite.raw,
-        dbPath: sqlite.snapshotPath ?? sqlite.path ?? ':memory:',
-        migrations,
-        applyPragmas: false,
-        // Both file and hot modes are durable migration targets. Hot mode is a
-        // live in-memory handle, so Migrator snapshots that handle even before
-        // its configured snapshot file exists.
-        createBackups: sqlite.mode !== 'ephemeral',
-      });
-      try {
-        migrator.run();
-      } finally {
-        migrator.dispose();
-      }
-      sqlite.snapshot?.snapshotSync();
+    // ─── Build the database runtime boundary ───────────────────
+    // The pinned runtime preserves the historical `zero.db`/`zero.sql`
+    // identity. Additional files are owned exclusively by isolated actor
+    // processes; createApp never opens one on the application thread.
+    const openedDefaultRuntime = DatabaseRuntime.open({
+      id: 'default',
+      role: 'default',
+      sqlite,
+      ownsSQLite: ownsSqlite,
+      reactive: {
+        clearChangesOnStart: config.db.clearChangesOnStart,
+        ringBufferDepth: config.db.ringBufferDepth,
+      },
+      migrations,
+      migrate: shouldRunMigrations(sqlite, config.migrate),
+    });
+    defaultDatabaseRuntime = openedDefaultRuntime;
+
+    // Cover the small construction window before the manager takes ownership.
+    const removeDefaultRuntimeCleanup = runtime.addCleanup(
+      () => openedDefaultRuntime.close(),
+    );
+    const multipleTopology = config.databaseTopology.mode === 'multiple'
+      ? config.databaseTopology
+      : null;
+    const authorityCommitCoordinator = multipleTopology?.tenantIsolation
+      === 'tenant-database'
+      ? new AuthorityCommitCoordinator()
+      : undefined;
+    if (authorityCommitCoordinator) {
+      const removeAuthorityCommitGuard = registerDatabaseAuthorityCommitGuard(
+        openedDefaultRuntime.db,
+        authorityCommitCoordinator,
+      );
+      runtime.addCleanup(removeAuthorityCommitGuard);
     }
+    const coordinator = multipleTopology
+      ? new DatabaseCoordinator({
+          rootDirectory: multipleTopology.rootDirectory,
+          realm: multipleTopology.realm,
+          createExecutor: multipleTopology.createExecutor,
+          sqlite: multipleTopology.sqlite,
+          maxDatabases: multipleTopology.maxDatabases,
+          maxBlockedDatabases: multipleTopology.maxBlockedDatabases,
+          readers: multipleTopology.readers,
+          maxQueuedPerDatabase: multipleTopology.maxQueuedPerDatabase,
+          maxQueuedTotal: multipleTopology.maxQueuedTotal,
+          queueTimeoutMs: multipleTopology.queueTimeoutMs,
+          operationTimeoutMs: multipleTopology.operationTimeoutMs,
+          idleTimeoutMs: multipleTopology.idleTimeoutMs,
+          sweepIntervalMs: multipleTopology.sweepIntervalMs,
+          observability: createDatabaseObservability(observabilityRuntime),
+          ...(authorityCommitCoordinator
+            ? {
+                authorityCommitCoordinator,
+                requireCommitAuthority: true,
+              }
+            : {}),
+        })
+      : undefined;
+    const openedDatabaseManager = new DatabaseManager({
+      defaultRuntime: openedDefaultRuntime,
+      multiple: coordinator
+        ? {
+            coordinator,
+            ...(authorityCommitCoordinator
+              ? { authorityCommitCoordinator, tenantDatabases: true }
+              : {}),
+          }
+        : undefined,
+    });
+    databaseManager = openedDatabaseManager;
+    runtime.set(ZERO_DATABASE_MANAGER, openedDatabaseManager);
+    runtime.addCleanup(() => {
+      runtime.clear(ZERO_DATABASE_MANAGER, openedDatabaseManager);
+      return openedDatabaseManager.close();
+    });
+    removeDefaultRuntimeCleanup();
 
     // ─── Assemble Elysia app ────────────────────────────────
     const app = new Elysia({ name: 'platform' });
 
     app.onStart(() => {
-      sqlite.start();
+      openedDatabaseManager.start();
     });
 
     // 1. Sync engine — always first (provides ReactiveDB over shared SQL)
@@ -260,6 +323,8 @@ export async function createApp(userConfig: AppConfig) {
           ...config.db,
           sqlite,
         },
+        reactiveDB: openedDefaultRuntime.db,
+        ownsReactiveDB: false,
         onDatabaseCreated(db) {
           appSyncDB = db;
         },
@@ -315,28 +380,46 @@ export async function createApp(userConfig: AppConfig) {
     });
     return installAppSignalLifecycle(stopped);
   } catch (error) {
-    return cleanupFailedAppCreation(error, runtime, sqlite, ownsSqlite);
+    return cleanupFailedAppCreation({
+      startupError: error,
+      runtime,
+      sqlite,
+      ownsSqlite,
+      defaultDatabaseRuntime,
+      databaseManager,
+    });
   }
 }
 
-async function cleanupFailedAppCreation(
-  startupError: unknown,
-  runtime: ZeroAppRuntime,
-  sqlite: PlatformSQLiteService,
-  ownsSqlite: boolean,
-): Promise<never> {
+interface FailedAppCreationCleanupInput {
+  startupError: unknown;
+  runtime: ZeroAppRuntime;
+  sqlite: PlatformSQLiteService;
+  ownsSqlite: boolean;
+  defaultDatabaseRuntime: DatabaseRuntime | null;
+  databaseManager: DatabaseManager | null;
+}
+
+async function cleanupFailedAppCreation({
+  startupError,
+  runtime,
+  sqlite,
+  ownsSqlite,
+  defaultDatabaseRuntime,
+  databaseManager,
+}: FailedAppCreationCleanupInput): Promise<never> {
   const failures = [startupError];
   try {
     await runtime.dispose();
   } catch (error) {
     failures.push(error);
   }
-  if (ownsSqlite) {
-    try {
-      sqlite.close();
-    } catch (error) {
-      failures.push(error);
-    }
+  try {
+    if (databaseManager) await databaseManager.close();
+    else if (defaultDatabaseRuntime) defaultDatabaseRuntime.close();
+    else if (ownsSqlite) sqlite.close();
+  } catch (error) {
+    failures.push(error);
   }
   if (failures.length === 1) throw startupError;
   throw new AggregateError(

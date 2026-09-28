@@ -19,6 +19,7 @@ import type {
 } from '../../auth/authorization-kernel';
 import type { ServiceDataScope } from '../../auth/service-data-scope';
 import { AuthError, type PermissionKey } from '../../auth/types';
+import type { AsyncDatabaseClient } from '../../databases/database-operations';
 import type { NotificationService } from '../../notifications/notification-service';
 import type { ServerObservabilityServices } from './server-services';
 import type { PdfService } from '../../pdf/pdf-service';
@@ -58,6 +59,7 @@ export type WorkflowExecutionObservabilityServices = Pick<
 export interface WorkflowExecutionServerServices {
   readonly access: RequestAuthorizationAccess;
   readonly scope: ServiceDataScope;
+  readonly data: AsyncDatabaseClient | null;
   readonly auth: WorkflowExecutionAuthServices;
   readonly storage: StorageService | null;
   readonly notifications: NotificationService | null;

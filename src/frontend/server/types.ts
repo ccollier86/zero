@@ -1,3 +1,5 @@
+import { parse, resolve } from 'node:path';
+
 import {
   SYNC_TABLE_MUTATION_VALIDATOR,
   type ClientTableDef,
@@ -11,7 +13,10 @@ import type { SyncPolicy } from '../../sync/sync-policy';
 import type { EphemeralTopicPolicy } from '../../sync/ephemeral-policy';
 import type { ObservabilityConfig } from '../../observability/types';
 import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
-import type { AuthBehaviorConfig } from '../../auth/types';
+import type {
+  AuthBehaviorConfig,
+  NormalizedAuthBehaviorConfig,
+} from '../../auth/types';
 import { parseTokenTTL } from '../../tokens/token-utils';
 import type { AppIdentityConfig, EmailConfig } from '../../email/types';
 import { resolveAIConfig } from '../../ai/ai-env';
@@ -22,6 +27,22 @@ import type { ResourceCrudRoutesConfig, ResourceDefinition } from '../../resourc
 import type { KvServiceConfig } from '../../kv';
 import { resolvePdfConfig } from '../../pdf/pdf-config';
 import type { PdfConfig, ResolvedPdfConfig } from '../../pdf/pdf-types';
+import {
+  normalizeDatabaseActorSQLiteConfig,
+  type DatabaseActorSQLiteConfig,
+} from '../../databases/database-actor-protocol';
+import type { DatabaseRealm } from '../../databases/database-realm';
+import {
+  createSubprocessDatabaseExecutorFactory,
+  type DatabaseActorLaunch,
+  type DatabaseActorExecutorPolicy,
+  type SubprocessDatabaseExecutorFactory,
+} from '../../databases/subprocess-database-executor-factory';
+import { createDatabaseRealmOperationCatalog } from '../../databases/database-realm';
+import {
+  hashSchemaSnapshot,
+  snapshotDeclaredTables,
+} from '../../migrations/schema-snapshot';
 import {
   resolveRouteAuthMode,
   type RouteAuthMode,
@@ -36,6 +57,99 @@ export type AppTableInput = TableSchema | {
   /** Optional logical websocket-mutation validator for a raw server table. */
   mutationValidator?: SyncTableMutationValidator;
 };
+
+/** Historical one-physical-database topology. Omission remains equivalent. */
+export interface AppSingleDatabaseTopologyConfig {
+  mode?: 'single';
+}
+
+/**
+ * Production subprocess launch policy for file-backed database actors.
+ * The child receives only this explicit environment allowlist; Zero never
+ * copies the parent process environment implicitly.
+ */
+export interface AppDatabaseActorConfig {
+  readonly launch: DatabaseActorLaunch;
+  readonly env?: Readonly<Record<string, string>>;
+  readonly executor?: DatabaseActorExecutorPolicy;
+}
+
+/** How authenticated tenant application data is physically isolated. */
+export type AppTenantDataIsolation = 'shared-row' | 'tenant-database';
+
+/**
+ * Bounded actor-backed SQLite files sharing one immutable database realm.
+ * Logical ids are trusted routing inputs and are mapped to opaque filenames;
+ * callers never provide a filesystem path.
+ */
+export interface AppMultipleDatabaseTopologyConfig {
+  mode: 'multiple';
+  /** Private parent directory containing only Zero-managed database files. */
+  rootDirectory: string;
+  /** Side-effect-free schema, migrations, and named actor operations. */
+  realm: DatabaseRealm;
+  /** Same-entry or explicitly packaged actor launch contract. */
+  actors: AppDatabaseActorConfig;
+  /** Default: shared-row. tenant-database requires multi-tenant auth. */
+  tenantIsolation?: AppTenantDataIsolation;
+  /** Current phase supports durable file/WAL placement only. */
+  placement?: 'file';
+  /** File-safe SQLite and ReactiveDB tuning applied inside every actor. */
+  sqlite?: DatabaseActorSQLiteConfig;
+  /** Maximum simultaneously active physical databases. Default: 16. */
+  maxDatabases?: number;
+  /** Maximum retained permanent-open failures. Default: 1024. */
+  maxBlockedDatabases?: number;
+  /** Enable a separate read-only WAL actor for each active file. Default: true. */
+  readers?: boolean;
+  /** Per-file pending operation bound. Default: 128. */
+  maxQueuedPerDatabase?: number;
+  /** App-wide pending operation bound. Default: 1024. */
+  maxQueuedTotal?: number;
+  /** Maximum wait before an operation reaches dispatch. Default: 15000ms. */
+  queueTimeoutMs?: number;
+  /** Maximum dispatched actor operation duration. Default: 30000ms. */
+  operationTimeoutMs?: number;
+  /** Close an unused actor pair after this duration. Default: 60000ms. */
+  idleTimeoutMs?: number;
+  /** Idle sweep cadence, or false to disable automatic sweeping. */
+  sweepIntervalMs?: number | false;
+}
+
+/** App-level physical-database topology. Omitted configuration stays single. */
+export type AppDatabaseTopologyConfig =
+  | AppSingleDatabaseTopologyConfig
+  | AppMultipleDatabaseTopologyConfig;
+
+/** Normalized historical single-database topology. */
+export interface ResolvedAppSingleDatabaseTopologyConfig {
+  readonly mode: 'single';
+}
+
+/** Normalized immutable actor-backed database topology. */
+export interface ResolvedAppMultipleDatabaseTopologyConfig {
+  readonly mode: 'multiple';
+  readonly rootDirectory: string;
+  readonly realm: DatabaseRealm;
+  readonly createExecutor: SubprocessDatabaseExecutorFactory;
+  readonly tenantIsolation: AppTenantDataIsolation;
+  readonly placement: 'file';
+  readonly sqlite: DatabaseActorSQLiteConfig;
+  readonly maxDatabases: number;
+  readonly maxBlockedDatabases: number;
+  readonly readers: boolean;
+  readonly maxQueuedPerDatabase: number;
+  readonly maxQueuedTotal: number;
+  readonly queueTimeoutMs: number;
+  readonly operationTimeoutMs: number;
+  readonly idleTimeoutMs: number;
+  readonly sweepIntervalMs: number | false;
+}
+
+/** Normalized app-level physical-database topology. */
+export type ResolvedAppDatabaseTopologyConfig =
+  | ResolvedAppSingleDatabaseTopologyConfig
+  | ResolvedAppMultipleDatabaseTopologyConfig;
 
 /** Action taken when an auto-mode table crosses the row limit. */
 export type AutoLazyAction = 'lazy' | 'warn' | 'reject';
@@ -176,6 +290,13 @@ export interface AppConfig {
 
   /** Database configuration. Uses the platform SQLite persistence foundation. */
   db: ReactiveDBConfig;
+
+  /**
+   * Optional app-level database topology. Omission preserves the historical
+   * single database represented by `db`; named mode adds isolated lazy files
+   * without changing which database backs existing platform services.
+   */
+  databaseTopology?: AppDatabaseTopologyConfig;
 
   /**
    * Table definitions — accepts ANY of:
@@ -429,6 +550,7 @@ export function defineZeroConfig<const TConfig extends AppConfig>(config: TConfi
 export interface ResolvedConfig {
   app: AppIdentityConfig;
   db: ReactiveDBConfig;
+  databaseTopology: ResolvedAppDatabaseTopologyConfig;
   tables: Record<string, TableSchema>;
   /** Server-only logical validators used by websocket mutation handling. */
   mutationValidators: Record<string, SyncTableMutationValidator>;
@@ -488,7 +610,7 @@ export function resolveConfig(
     : config.auth === false || config.auth === undefined
       ? false
       : config.auth;
-  if (auth !== false) validateAppAuthConfig(auth);
+  const authBehavior = auth === false ? null : validateAppAuthConfig(auth);
   const email = config.email === true
     ? {}
     : config.email === false || config.email === undefined
@@ -536,6 +658,12 @@ export function resolveConfig(
     if (validator) mutationValidators[name] = validator;
   }
 
+  const databaseTopology = resolveAppDatabaseTopology(
+    config.databaseTopology,
+    authBehavior?.tenancy.mode ?? 'single',
+    normalized,
+  );
+
   // Preserve declared modes so startup can resolve omitted/auto modes with DB row counts.
   const declaredSyncModes = new Map<string, DeclaredSyncMode>();
   for (const [name, def] of Object.entries(config.tables)) {
@@ -567,6 +695,7 @@ export function resolveConfig(
   return {
     app: config.app ?? {},
     db: config.db,
+    databaseTopology,
     tables: normalized,
     mutationValidators,
     auth,
@@ -614,13 +743,262 @@ export function resolveConfig(
   };
 }
 
+const DEFAULT_DATABASE_MAX_DATABASES = 16;
+const DEFAULT_DATABASE_MAX_BLOCKED = 1_024;
+const DEFAULT_DATABASE_MAX_QUEUED_PER_DATABASE = 128;
+const DEFAULT_DATABASE_MAX_QUEUED_TOTAL = 1_024;
+const DEFAULT_DATABASE_QUEUE_TIMEOUT_MS = 15_000;
+const DEFAULT_DATABASE_OPERATION_TIMEOUT_MS = 30_000;
+const DEFAULT_DATABASE_IDLE_TIMEOUT_MS = 60_000;
+const MIN_DATABASE_SWEEP_INTERVAL_MS = 1_000;
+const MAX_DATABASE_SWEEP_INTERVAL_MS = 30_000;
+const SINGLE_DATABASE_TOPOLOGY = Object.freeze({
+  mode: 'single' as const,
+});
+const MULTIPLE_DATABASE_TOPOLOGY_FIELDS = new Set([
+  'mode',
+  'rootDirectory',
+  'realm',
+  'actors',
+  'tenantIsolation',
+  'placement',
+  'sqlite',
+  'maxDatabases',
+  'maxBlockedDatabases',
+  'readers',
+  'maxQueuedPerDatabase',
+  'maxQueuedTotal',
+  'queueTimeoutMs',
+  'operationTimeoutMs',
+  'idleTimeoutMs',
+  'sweepIntervalMs',
+]);
+
+/** Resolve logical database topology without touching the filesystem. */
+function resolveAppDatabaseTopology(
+  input: AppDatabaseTopologyConfig | undefined,
+  authTenancy: 'single' | 'multi',
+  appTables: Readonly<Record<string, TableSchema>>,
+): ResolvedAppDatabaseTopologyConfig {
+  if (input === undefined) return SINGLE_DATABASE_TOPOLOGY;
+  assertConfigRecord(input, 'databaseTopology');
+
+  const mode = input.mode ?? 'single';
+  if (mode === 'single') {
+    assertOnlyConfigFields(input, new Set(['mode']), 'databaseTopology single mode');
+    return SINGLE_DATABASE_TOPOLOGY;
+  }
+  if (mode !== 'multiple') {
+    throw new Error(
+      `[app] databaseTopology.mode must be "single" or "multiple"; received ${JSON.stringify(mode)}.`,
+    );
+  }
+
+  const multiple = input as AppMultipleDatabaseTopologyConfig;
+  assertOnlyConfigFields(
+    multiple,
+    MULTIPLE_DATABASE_TOPOLOGY_FIELDS,
+    'databaseTopology multiple mode',
+  );
+  const rootDirectory = normalizeMultipleDatabaseRootDirectory(
+    multiple.rootDirectory,
+  );
+  const realm = normalizeMultipleDatabaseRealm(multiple.realm);
+  const createExecutor = normalizeMultipleDatabaseActors(multiple.actors);
+  const tenantIsolation = multiple.tenantIsolation ?? 'shared-row';
+  if (tenantIsolation !== 'shared-row'
+    && tenantIsolation !== 'tenant-database') {
+    throw new Error(
+      '[app] databaseTopology.tenantIsolation must be "shared-row" or "tenant-database".',
+    );
+  }
+  if (tenantIsolation === 'tenant-database' && authTenancy !== 'multi') {
+    throw new Error(
+      '[app] databaseTopology tenant-database isolation requires auth.tenancy: "multi".',
+    );
+  }
+  if (tenantIsolation === 'tenant-database'
+    && realm.schemaChecksum !== hashSchemaSnapshot(snapshotDeclaredTables(
+      appTables as Record<string, TableSchema>,
+    ))) {
+    throw new Error(
+      '[app] databaseTopology tenant realm tables must match createApp({ tables }).',
+    );
+  }
+  if (multiple.placement !== undefined && multiple.placement !== 'file') {
+    throw new Error(
+      '[app] databaseTopology.placement currently supports only "file".',
+    );
+  }
+
+  const sqlite = normalizeDatabaseActorSQLiteConfig(multiple.sqlite ?? {});
+  const maxDatabases = normalizePositiveSafeInteger(
+    multiple.maxDatabases ?? DEFAULT_DATABASE_MAX_DATABASES,
+    'databaseTopology.maxDatabases',
+  );
+  const maxBlockedDatabases = normalizePositiveSafeInteger(
+    multiple.maxBlockedDatabases ?? DEFAULT_DATABASE_MAX_BLOCKED,
+    'databaseTopology.maxBlockedDatabases',
+  );
+  const readers = multiple.readers ?? true;
+  if (typeof readers !== 'boolean') {
+    throw new Error('[app] databaseTopology.readers must be a boolean.');
+  }
+  const maxQueuedPerDatabase = normalizePositiveSafeInteger(
+    multiple.maxQueuedPerDatabase
+      ?? DEFAULT_DATABASE_MAX_QUEUED_PER_DATABASE,
+    'databaseTopology.maxQueuedPerDatabase',
+  );
+  const maxQueuedTotal = normalizePositiveSafeInteger(
+    multiple.maxQueuedTotal ?? DEFAULT_DATABASE_MAX_QUEUED_TOTAL,
+    'databaseTopology.maxQueuedTotal',
+  );
+  const queueTimeoutMs = normalizePositiveSafeInteger(
+    multiple.queueTimeoutMs ?? DEFAULT_DATABASE_QUEUE_TIMEOUT_MS,
+    'databaseTopology.queueTimeoutMs',
+  );
+  const operationTimeoutMs = normalizePositiveSafeInteger(
+    multiple.operationTimeoutMs ?? DEFAULT_DATABASE_OPERATION_TIMEOUT_MS,
+    'databaseTopology.operationTimeoutMs',
+  );
+  const idleTimeoutMs = normalizeNonNegativeSafeInteger(
+    multiple.idleTimeoutMs ?? DEFAULT_DATABASE_IDLE_TIMEOUT_MS,
+    'databaseTopology.idleTimeoutMs',
+  );
+  const sweepIntervalMs = multiple.sweepIntervalMs === false
+    ? false
+    : normalizePositiveSafeInteger(
+      multiple.sweepIntervalMs
+        ?? Math.min(
+          MAX_DATABASE_SWEEP_INTERVAL_MS,
+          Math.max(
+            MIN_DATABASE_SWEEP_INTERVAL_MS,
+            Math.ceil(idleTimeoutMs / 2),
+          ),
+        ),
+      'databaseTopology.sweepIntervalMs',
+    );
+
+  return Object.freeze({
+    mode: 'multiple',
+    rootDirectory,
+    realm,
+    createExecutor,
+    tenantIsolation,
+    placement: 'file',
+    sqlite,
+    maxDatabases,
+    maxBlockedDatabases,
+    readers,
+    maxQueuedPerDatabase,
+    maxQueuedTotal,
+    queueTimeoutMs,
+    operationTimeoutMs,
+    idleTimeoutMs,
+    sweepIntervalMs,
+  });
+}
+
+function normalizeMultipleDatabaseRootDirectory(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) {
+    throw new Error(
+      '[app] databaseTopology.rootDirectory must be a non-empty path without null bytes.',
+    );
+  }
+  if (value.trim() !== value) {
+    throw new Error(
+      '[app] databaseTopology.rootDirectory must not contain leading or trailing whitespace.',
+    );
+  }
+
+  const normalized = resolve(value);
+  if (normalized === parse(normalized).root) {
+    throw new Error('[app] databaseTopology.rootDirectory must not be a filesystem root.');
+  }
+  return normalized;
+}
+
+function normalizeMultipleDatabaseRealm(value: unknown): DatabaseRealm {
+  try {
+    const realm = value as DatabaseRealm;
+    if (!realm || typeof realm !== 'object'
+      || typeof realm.fingerprint !== 'string'
+      || typeof realm.schemaChecksum !== 'string') {
+      throw new TypeError('invalid realm');
+    }
+    createDatabaseRealmOperationCatalog(realm);
+    return realm;
+  } catch {
+    throw new Error(
+      '[app] databaseTopology.realm must be created with defineDatabaseRealm().',
+    );
+  }
+}
+
+function normalizeMultipleDatabaseActors(
+  value: unknown,
+): SubprocessDatabaseExecutorFactory {
+  try {
+    assertConfigRecord(value, 'databaseTopology.actors');
+    return createSubprocessDatabaseExecutorFactory(value as unknown as {
+      launch: DatabaseActorLaunch;
+      env?: Readonly<Record<string, string>>;
+      executor?: DatabaseActorExecutorPolicy;
+    });
+  } catch {
+    throw new Error(
+      '[app] databaseTopology.actors contains an invalid subprocess launch policy.',
+    );
+  }
+}
+
+function normalizePositiveSafeInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+    throw new Error(`[app] ${label} must be a positive safe integer.`);
+  }
+  return value as number;
+}
+
+function normalizeNonNegativeSafeInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new Error(`[app] ${label} must be a non-negative safe integer.`);
+  }
+  return value as number;
+}
+
+function assertConfigRecord(
+  value: unknown,
+  label: string,
+): asserts value is Record<string, any> {
+  if (
+    value === null
+    || typeof value !== 'object'
+    || Array.isArray(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))
+  ) {
+    throw new Error(`[app] ${label} must be an object.`);
+  }
+}
+
+function assertOnlyConfigFields(
+  value: object,
+  supported: ReadonlySet<string>,
+  label: string,
+): void {
+  for (const field of Object.keys(value)) {
+    if (!supported.has(field)) {
+      throw new Error(`[app] ${label} contains unsupported field "${field}".`);
+    }
+  }
+}
+
 /** Validate behavior and app-only token fields before config reaches startup. */
 function validateAppAuthConfig(
   config: AuthBehaviorConfig & {
     accessTokenTTL?: string;
     refreshTokenTTL?: string;
   },
-): void {
+): NormalizedAuthBehaviorConfig {
   if (
     config === null
     || typeof config !== 'object'
@@ -634,9 +1012,10 @@ function validateAppAuthConfig(
     refreshTokenTTL,
     ...behavior
   } = config;
-  resolveAuthBehaviorConfig(behavior);
+  const normalized = resolveAuthBehaviorConfig(behavior);
   validateAuthTokenTTL(accessTokenTTL, 'accessTokenTTL');
   validateAuthTokenTTL(refreshTokenTTL, 'refreshTokenTTL');
+  return normalized;
 }
 
 function validateAuthTokenTTL(value: unknown, field: string): void {

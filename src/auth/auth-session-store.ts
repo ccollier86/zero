@@ -87,26 +87,28 @@ export class AuthSessionStore {
   }
 
   insert(record: AuthSessionRecord): void {
-    this.insertSession.run(
-      record.sessionId,
-      record.userId,
-      record.kind,
-      record.status,
-      record.generation,
-      record.scopeKind,
-      record.scopeId,
-      record.tenantId,
-      record.membershipId,
-      record.tenantAuthorizationGeneration,
-      record.membershipAuthorizationGeneration,
-      record.provenance,
-      record.authenticatedAt,
-      record.createdAt,
-      record.lastSeenAt,
-      record.expiresAt,
-      record.revokedAt,
-      record.revocationReason,
-    );
+    this.transaction(() => {
+      this.insertSession.run(
+        record.sessionId,
+        record.userId,
+        record.kind,
+        record.status,
+        record.generation,
+        record.scopeKind,
+        record.scopeId,
+        record.tenantId,
+        record.membershipId,
+        record.tenantAuthorizationGeneration,
+        record.membershipAuthorizationGeneration,
+        record.provenance,
+        record.authenticatedAt,
+        record.createdAt,
+        record.lastSeenAt,
+        record.expiresAt,
+        record.revokedAt,
+        record.revocationReason,
+      );
+    });
   }
 
   getById(sessionId: string): AuthSessionRecord | null {
@@ -115,14 +117,18 @@ export class AuthSessionStore {
   }
 
   revoke(sessionId: string, reason: string, now = Date.now()): boolean {
-    const row = this.revokeSession.get(now, reason, sessionId) as {
-      session_id: string;
-    } | null;
-    return row?.session_id === sessionId;
+    return this.transaction(() => {
+      const row = this.revokeSession.get(now, reason, sessionId) as {
+        session_id: string;
+      } | null;
+      return row?.session_id === sessionId;
+    });
   }
 
   revokeAllForUser(userId: string, reason: string, now = Date.now()): number {
-    return this.revokeUserSessions.all(now, reason, userId).length;
+    return this.transaction(
+      () => this.revokeUserSessions.all(now, reason, userId).length,
+    );
   }
 
   touch(
@@ -132,14 +138,16 @@ export class AuthSessionStore {
     expiresAt: number,
     now = Date.now(),
   ): boolean {
-    const row = this.touchSession.get(
-      now,
-      expiresAt,
-      sessionId,
-      userId,
-      generation,
-    ) as { session_id: string } | null;
-    return row?.session_id === sessionId;
+    return this.transaction(() => {
+      const row = this.touchSession.get(
+        now,
+        expiresAt,
+        sessionId,
+        userId,
+        generation,
+      ) as { session_id: string } | null;
+      return row?.session_id === sessionId;
+    });
   }
 
   linkLegacyRefresh(
@@ -148,17 +156,21 @@ export class AuthSessionStore {
     userId: string,
     now = Date.now(),
   ): boolean {
-    const row = this.adoptLegacyRefresh.get(
-      sessionId,
-      tokenId,
-      userId,
-      now,
-    ) as { token_id: string } | null;
-    return row?.token_id === tokenId;
+    return this.transaction(() => {
+      const row = this.adoptLegacyRefresh.get(
+        sessionId,
+        tokenId,
+        userId,
+        now,
+      ) as { token_id: string } | null;
+      return row?.token_id === tokenId;
+    });
   }
 
   deleteExpired(now = Date.now()): number {
-    return this.deleteExpiredSessions.all(now, now).length;
+    return this.transaction(
+      () => this.deleteExpiredSessions.all(now, now).length,
+    );
   }
 }
 

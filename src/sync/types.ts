@@ -273,10 +273,25 @@ export interface ChangeRow {
 export interface SyncPluginConfig {
   /** Database configuration */
   db: ReactiveDBConfig;
+  /**
+   * Existing ReactiveDB used by this Sync transport.
+   *
+   * Omit this for the historical standalone behavior where createSyncPlugin()
+   * creates and owns its database from `db`. Injected databases remain owned by
+   * their caller unless `ownsReactiveDB` is explicitly true.
+   */
+  reactiveDB?: import('./reactive-db').ReactiveDB;
+  /**
+   * Dispose an injected `reactiveDB` when Sync tears down. Default: false.
+   *
+   * This option is valid only with `reactiveDB`; databases created from `db`
+   * are always owned by the Sync plugin.
+   */
+  ownsReactiveDB?: boolean;
   /** App-local runtime used by managed createApp() composition. */
   runtime?: ZeroAppRuntime;
   /**
-   * Composition hook invoked synchronously with this plugin's own ReactiveDB.
+   * Composition hook invoked synchronously with this plugin's active ReactiveDB.
    *
    * Platform factories use this to close authorization services over the
    * app-local database instead of the legacy process-global compatibility

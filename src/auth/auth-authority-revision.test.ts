@@ -146,6 +146,51 @@ describe('durable auth authority revision', () => {
       db.dispose();
     }
   });
+
+  test('treats every durable browser and native session update as authority', () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    try {
+      defineAuthTables(db);
+      installAuthAuthorityRevision(db);
+      const now = Date.now();
+      db.prepare(`
+        INSERT INTO users (
+          user_id, username, email, role, status, created_at
+        ) VALUES ('session-user', 'session-user', 'session@example.test',
+          'user', 'active', ?)
+      `).run(now);
+      db.prepare(`
+        INSERT INTO _auth_sessions (
+          session_id, user_id, kind, status, generation, scope_kind,
+          scope_id, provenance, authenticated_at, created_at, last_seen_at,
+          expires_at
+        ) VALUES ('web-session', 'session-user', 'web', 'active', 0,
+          'application', 'application', 'local', ?, ?, ?, ?)
+      `).run(now, now, now, now + 60_000);
+      db.prepare(`
+        INSERT INTO _auth_native_sessions (
+          token_id, family_id, user_id, client_id, token_hash, scope,
+          auth_generation, expires_at, created_at
+        ) VALUES ('native-session', 'family-a', 'session-user', 'client-a',
+          'hash-a', 'openid', 0, ?, ?)
+      `).run(now + 60_000, now);
+
+      const baseline = readAuthAuthorityRevision(db)!;
+      db.prepare(`
+        UPDATE _auth_sessions SET expires_at = ? WHERE session_id = 'web-session'
+      `).run(now + 120_000);
+      expect(readAuthAuthorityRevision(db)).toBe(baseline + 1);
+
+      db.prepare(`
+        UPDATE _auth_native_sessions
+        SET family_id = 'family-b', token_hash = 'hash-b', rotation_count = 1
+        WHERE token_id = 'native-session'
+      `).run();
+      expect(readAuthAuthorityRevision(db)).toBe(baseline + 2);
+    } finally {
+      db.dispose();
+    }
+  });
 });
 
 function runAndFinalize(

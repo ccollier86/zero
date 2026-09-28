@@ -4,7 +4,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPlatformSQLiteService } from '../persistence';
-import { createReactiveDB, ReactiveDB } from './reactive-db';
+import {
+  createReactiveDB,
+  ReactiveDB,
+  registerReactiveDBCommitGuard,
+} from './reactive-db';
 import type { Change, ChangeDeliveryMetadata } from './types';
 
 let db: ReactiveDB;
@@ -1130,6 +1134,57 @@ describe('ring buffer', () => {
 // ─── Transactions ─────────────────────────────────────────────────────────
 
 describe('transactions', () => {
+  test('runs a synchronous commit guard at the final transaction boundary and releases after commit', () => {
+    let authorityRevision = 1;
+    const events: string[] = [];
+    const remove = registerReactiveDBCommitGuard(db, {
+      capture() {
+        events.push('capture');
+        return authorityRevision;
+      },
+      beforeCommit(snapshot) {
+        events.push(`before:${snapshot}:${authorityRevision}`);
+        if (snapshot === authorityRevision) return undefined;
+        events.push('acquire');
+        return () => {
+          events.push('release');
+          return undefined;
+        };
+      },
+    });
+
+    db.transaction(() => {
+      db.insert('todos', { id: 'guarded', title: 'Guarded', done: 0 });
+      authorityRevision += 1;
+      events.push('mutation');
+    });
+
+    expect(db.get('todos', 'guarded')).toBeTruthy();
+    expect(events).toEqual([
+      'capture',
+      'mutation',
+      'before:1:2',
+      'acquire',
+      'release',
+    ]);
+    remove();
+  });
+
+  test('rolls back when the final commit guard cannot establish authority', () => {
+    const remove = registerReactiveDBCommitGuard(db, {
+      capture: () => 1,
+      beforeCommit() {
+        throw new Error('commit boundary unavailable');
+      },
+    });
+
+    expect(() => db.transaction(() => {
+      db.insert('todos', { id: 'rolled-back', title: 'Nope', done: 0 });
+    })).toThrow('commit boundary unavailable');
+    expect(db.get('todos', 'rolled-back')).toBeNull();
+    remove();
+  });
+
   test('all writes in a transaction are atomic', () => {
     db.transaction(() => {
       db.insert('todos', { id: '1', title: 'First', done: 0 });

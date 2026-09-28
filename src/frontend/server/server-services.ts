@@ -58,6 +58,7 @@ import type { KvCounterService, KvLimiterService, KvService } from '../../kv';
 import { getKvService } from '../../kv';
 import type { PlatformSQLiteService } from '../../persistence';
 import { getPlatformSQLiteService } from '../../persistence';
+import type { DatabaseManager } from '../../databases/database-manager';
 import type { PdfService } from '../../pdf';
 import { getPdfService } from '../../pdf';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
@@ -67,6 +68,7 @@ import {
   ZERO_AUTHORIZATION_KERNEL,
   ZERO_AUTHORIZATION_ROLE_SERVICE,
   ZERO_AUTH_TOKEN_SERVICE,
+  ZERO_DATABASE_MANAGER,
   ZERO_EMAIL_RUNTIME,
   ZERO_KV_SERVICE,
   ZERO_NOTIFICATION_SERVICE,
@@ -146,6 +148,8 @@ export interface ServerRouteServices {
   readonly db: ReactiveDB;
   /** Backwards-compatible alias for the primary reactive database handle. */
   readonly syncDB: ReactiveDB;
+  /** App-local database runtime manager, when managed database topology is mounted. */
+  readonly databases: DatabaseManager | null;
   /** Shared platform SQLite foundation for backend-only SQL access. */
   readonly sql: PlatformSQLiteService | null;
   /** Explicit alias for the shared platform SQLite foundation. */
@@ -219,6 +223,9 @@ function createServerRouteServices(runtime?: ZeroAppRuntime): ServerRouteService
     },
     get syncDB() {
       return requireSyncDB(runtime);
+    },
+    get databases() {
+      return runtime ? runtime.get(ZERO_DATABASE_MANAGER) : null;
     },
     get sql() {
       return runtime

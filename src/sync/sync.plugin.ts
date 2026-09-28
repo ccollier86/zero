@@ -93,7 +93,7 @@ export function getEphemeralManager(): EphemeralStateManager | null {
 /**
  * Create the sync engine Elysia plugin.
  *
- * - Creates ReactiveDB during plugin composition for cross-plugin access
+ * - Uses an injected ReactiveDB or creates one during plugin composition
  * - Defines app tables from config before dependent plugins compose
  * - Registers the ordered onChange listener used for direct socket delivery
  * - Exposes WS endpoint at /sync
@@ -103,8 +103,12 @@ export function createSyncPlugin(config: SyncPluginConfig) {
   assertMultiTenantResourceClassification(config);
   let connectionCounter = 0;
   const policy = config.policy ?? allowAllSyncPolicy;
-  const db = createReactiveDB(config.db);
-  const cleanupOnCompositionFailure: Array<() => void> = [() => db.dispose()];
+  const databaseRuntime = resolveSyncDatabase(config);
+  const db = databaseRuntime.db;
+  const cleanupOnCompositionFailure: Array<() => void> = [];
+  if (databaseRuntime.owned) {
+    cleanupOnCompositionFailure.push(() => db.dispose());
+  }
 
   try {
   const databaseCreated = config.onDatabaseCreated?.(db);
@@ -190,7 +194,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     if (sqlite) attempt(() => config.runtime?.clear(ZERO_SQLITE_SERVICE, sqlite));
     attempt(() => compatibilityRegistration.unregister());
     if (sqlite) attempt(() => clearPlatformSQLiteService(sqlite));
-    attempt(() => db.dispose());
+    if (databaseRuntime.owned) attempt(() => db.dispose());
     if (startEventEmitted) {
       attempt(() => emitPlatformCode(OBS_CODES.SYNC_STOPPED, {
         metadata: { db: databaseDescription },
@@ -637,6 +641,28 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     }
     throw error;
   }
+}
+
+function resolveSyncDatabase(config: SyncPluginConfig): {
+  db: ReactiveDB;
+  owned: boolean;
+} {
+  if (!config.reactiveDB) {
+    if (config.ownsReactiveDB !== undefined) {
+      throw new Error(
+        '[sync] ownsReactiveDB is valid only when reactiveDB is provided',
+      );
+    }
+    return {
+      db: createReactiveDB(config.db),
+      owned: true,
+    };
+  }
+
+  return {
+    db: config.reactiveDB,
+    owned: config.ownsReactiveDB ?? false,
+  };
 }
 
 function closeReplicaInvalidSocket(socket: ServerWebSocket<SyncSocketData>): void {

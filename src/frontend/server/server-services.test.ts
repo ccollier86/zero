@@ -31,6 +31,7 @@ import { getPdfService } from '../../pdf';
 import { createLazyServerRouteServices, getServerRouteServices } from './server-services';
 import { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import {
+  ZERO_DATABASE_MANAGER,
   ZERO_EMAIL_RUNTIME,
   ZERO_OBSERVABILITY_RUNTIME,
   ZERO_RESOURCE_REGISTRY,
@@ -42,6 +43,7 @@ import type { PlatformSQLiteService } from '../../persistence';
 import type { ResourceRegistry } from '../../resources';
 import type { EmailRuntime } from '../../email';
 import type { PlatformCodeDefinition } from '../../observability';
+import type { DatabaseManager } from '../../databases/database-manager';
 
 describe('server service context', () => {
   test('exposes canonical names and compatibility aliases lazily', () => {
@@ -61,6 +63,7 @@ describe('server service context', () => {
     expect(zero.auth.authorizationKernel).toBe(zero.auth.authorization);
     expect(zero.auth.getAuthorizationKernel()).toBe(zero.auth.authorization);
     expect(zero.tokens).toBe(getPlatformTokenService());
+    expect(zero.databases).toBeNull();
     expect(zero.sql).toBe(getPlatformSQLiteService());
     expect(zero.sqlite).toBe(zero.sql);
     expect(zero.kv).toBe(getKvService());
@@ -100,6 +103,8 @@ describe('server service context', () => {
 
     expect(first.db).toBe(firstRuntime.db);
     expect(second.db).toBe(secondRuntime.db);
+    expect(first.databases).toBe(firstRuntime.databases);
+    expect(second.databases).toBe(secondRuntime.databases);
     expect(first.sql).toBe(firstRuntime.sqlite);
     expect(second.sql).toBe(secondRuntime.sqlite);
     expect(first.resources).toBe(firstRuntime.resources);
@@ -124,6 +129,7 @@ describe('server service context', () => {
 function createTestRuntime(label: string) {
   const runtime = new ZeroAppRuntime(`server-services-${label}`);
   const db = { label } as unknown as ReactiveDB;
+  const databases = { label } as unknown as DatabaseManager;
   const sqlite = { label } as unknown as PlatformSQLiteService;
   const resources = { label } as unknown as ResourceRegistry;
   const email = {
@@ -136,6 +142,7 @@ function createTestRuntime(label: string) {
   const store = new MemoryEventStore({ maxEvents: 5 });
 
   runtime.set(ZERO_SYNC_DB, db);
+  runtime.set(ZERO_DATABASE_MANAGER, databases);
   runtime.set(ZERO_SQLITE_SERVICE, sqlite);
   runtime.set(ZERO_RESOURCE_REGISTRY, resources);
   runtime.set(ZERO_EMAIL_RUNTIME, email);
@@ -145,5 +152,5 @@ function createTestRuntime(label: string) {
     store,
   });
 
-  return { runtime, db, sqlite, resources, email, store };
+  return { runtime, db, databases, sqlite, resources, email, store };
 }
