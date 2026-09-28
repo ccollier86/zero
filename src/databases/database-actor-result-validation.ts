@@ -17,6 +17,7 @@ import {
   validateDatabaseCommitResult,
   validateDatabaseReadResult,
   type DatabaseCommitResult,
+  type DatabaseFindOperation,
   type DatabaseMutation,
   type DatabaseOperation,
   type DatabaseOperationCatalog,
@@ -98,6 +99,9 @@ export function validateDatabaseActorExecuteResult(
     if (operation.consistency?.mode === 'read-your-writes'
       && result.sequence.seq < operation.consistency.minSeq.seq) {
       throw protocolFailure(false);
+    }
+    if (operation.type === 'find') {
+      validateFindResult(result.value, operation, catalog);
     }
     return result;
   });
@@ -278,6 +282,27 @@ function validateReplayChange(value: unknown, expectedSeq: number): void {
     if (!row || !previousRow) throw protocolFailure(false);
   } else if (change.row !== null || !previousRow) {
     throw protocolFailure(false);
+  }
+}
+
+function validateFindResult(
+  value: DatabaseSerializableValue,
+  operation: DatabaseFindOperation,
+  catalog: DatabaseOperationCatalog,
+): void {
+  if (!Array.isArray(value) || value.length > operation.limit) {
+    throw protocolFailure(false);
+  }
+  const expected = operation.select ?? catalog.columns?.[operation.table];
+  if (!expected || expected.length === 0) throw protocolFailure(false);
+  const expectedFields = new Set(expected);
+  for (const row of value) {
+    if (!isRow(row)) throw protocolFailure(false);
+    const fields = Object.keys(row);
+    if (fields.length !== expectedFields.size
+      || fields.some((field) => !expectedFields.has(field))) {
+      throw protocolFailure(false);
+    }
   }
 }
 

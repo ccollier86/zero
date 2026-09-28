@@ -11,6 +11,7 @@ import { lstatSync, realpathSync } from 'node:fs';
 
 import { quoteSqlIdentifier } from '../sync/identity';
 import { DatabaseError } from './database-error';
+import { runDatabaseFind } from './database-find';
 import {
   cloneDatabaseSerializableValue,
   createDatabaseSequenceToken,
@@ -234,6 +235,8 @@ export class DatabaseReaderRuntime {
         return this.get(operation.table, operation.id);
       case 'list':
         return this.list(operation);
+      case 'find':
+        return runDatabaseFind(this.database, operation, this.catalog);
       case 'query':
         return runDatabaseRealmQuery(
           this.realm,
@@ -329,6 +332,7 @@ function isReadOperation(
 ): operation is DatabaseReadOperation {
   return operation.type === 'get'
     || operation.type === 'list'
+    || operation.type === 'find'
     || operation.type === 'query';
 }
 

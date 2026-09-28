@@ -60,6 +60,7 @@ describe('createRequestDatabaseClient', () => {
 
     await client!.get('todos', 'a');
     await client!.list('todos', { limit: 10 });
+    await client!.find('todos', { limit: 10 });
     await client!.query('todos.count', null);
     await client!.mutate(
       { type: 'delete', table: 'todos', id: 'a' },
@@ -70,18 +71,20 @@ describe('createRequestDatabaseClient', () => {
     }, { idempotencyKey: 'delete:b' });
     await client!.command('todos.clear', null, { idempotencyKey: 'clear' });
 
-    expect(harness.binds).toHaveLength(6);
+    expect(harness.binds).toHaveLength(7);
     expect(harness.binds.map((binding) => binding.options.tenantId))
-      .toEqual(Array(6).fill('tenant-from-authority'));
+      .toEqual(Array(7).fill('tenant-from-authority'));
     expect(harness.binds.map((binding) => binding.releaseCount))
-      .toEqual(Array(6).fill(1));
+      .toEqual(Array(7).fill(1));
     expect(harness.calls.map((call) => call.method)).toEqual([
-      'get', 'list', 'query', 'mutate', 'batch', 'command',
+      'get', 'list', 'find', 'query', 'mutate', 'batch', 'command',
     ]);
   });
 
   test('releases every acquired lease when each operation fails', async () => {
-    const methods = ['get', 'list', 'query', 'mutate', 'batch', 'command'] as const;
+    const methods = [
+      'get', 'list', 'find', 'query', 'mutate', 'batch', 'command',
+    ] as const;
 
     for (const failedMethod of methods) {
       const harness = createManagerHarness({
@@ -155,7 +158,14 @@ describe('createRequestDatabaseClient', () => {
   });
 });
 
-type ClientMethod = 'get' | 'list' | 'query' | 'mutate' | 'batch' | 'command';
+type ClientMethod =
+  | 'get'
+  | 'list'
+  | 'find'
+  | 'query'
+  | 'mutate'
+  | 'batch'
+  | 'command';
 
 function createManagerHarness(options: {
   tenantDatabasesEnabled: boolean;
@@ -180,7 +190,10 @@ function createManagerHarness(options: {
         calls.push({ method, args });
         if (options.invokeAuthority) bindingOptions.assertCurrentReadAuthority?.();
         if (options.failedMethod === method) throw new Error(`failed:${method}`);
-        return method === 'get' || method === 'list' || method === 'query'
+        return method === 'get'
+          || method === 'list'
+          || method === 'find'
+          || method === 'query'
           ? readResult(null)
           : commitResult(null);
       });
@@ -201,6 +214,7 @@ function clientFixture(
   return {
     get: (...args) => call('get', args) as ReturnType<AsyncDatabaseClient['get']>,
     list: (...args) => call('list', args) as ReturnType<AsyncDatabaseClient['list']>,
+    find: (...args) => call('find', args) as ReturnType<AsyncDatabaseClient['find']>,
     query: (...args) => call('query', args) as ReturnType<AsyncDatabaseClient['query']>,
     mutate: (...args) => call('mutate', args) as ReturnType<AsyncDatabaseClient['mutate']>,
     batch: (...args) => call('batch', args) as ReturnType<AsyncDatabaseClient['batch']>,
@@ -229,6 +243,7 @@ function invoke(client: AsyncDatabaseClient, method: ClientMethod): Promise<unkn
   switch (method) {
     case 'get': return client.get('todos', 'a');
     case 'list': return client.list('todos', { limit: 1 });
+    case 'find': return client.find('todos', { limit: 1 });
     case 'query': return client.query('todos.count', null);
     case 'mutate': return client.mutate(
       { type: 'delete', table: 'todos', id: 'a' },

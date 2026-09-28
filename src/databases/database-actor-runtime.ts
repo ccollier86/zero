@@ -476,6 +476,7 @@ function bindingSequence(binding: DatabaseActorBinding): number {
 function operationKind(operation: DatabaseOperation): DatabaseExecutorOperationKind {
   return operation.type === 'get'
     || operation.type === 'list'
+    || operation.type === 'find'
     || operation.type === 'query'
     ? 'read'
     : 'write';

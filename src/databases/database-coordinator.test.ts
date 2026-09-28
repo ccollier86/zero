@@ -119,6 +119,28 @@ describe('DatabaseCoordinator', () => {
     await harness.coordinator.close();
   });
 
+  test('routes snapshot finds to the reader and strong finds through writer FIFO', async () => {
+    const harness = createHarness(roots);
+    const roles: string[] = [];
+    harness.onOperation = ({ role, operation }) => {
+      if (operation.type === 'find') roles.push(role);
+    };
+    const lease = await harness.coordinator.acquire('tenant-a');
+
+    await expect(lease.execute({
+      type: 'find', table: 'todos', select: ['id'], limit: 1,
+      consistency: { mode: 'snapshot' },
+    })).resolves.toMatchObject({ value: [{ id: 'reader' }] });
+    await expect(lease.execute({
+      type: 'find', table: 'todos', select: ['id'], limit: 1,
+      consistency: { mode: 'strong' },
+    })).resolves.toMatchObject({ value: [{ id: 'writer' }] });
+    expect(roles).toEqual(['reader', 'writer']);
+
+    lease.release();
+    await harness.coordinator.close();
+  });
+
   test('acquires and revalidates commit authority only at the writer FIFO head', async () => {
     const authorityGate = new AuthorityCommitCoordinator();
     const harness = createHarness(roots, {
@@ -1204,7 +1226,12 @@ class FakeExecutor implements DatabaseExecutor {
         )
         : (this.harness.sequences.get(this.boundRef) ?? 0);
       return {
-        value: { actor: this.context.role },
+        value: operation.type === 'find'
+          ? [Object.fromEntries(
+              (operation.select ?? ['id', 'title'])
+                .map((field: string) => [field, this.context.role]),
+            )]
+          : { actor: this.context.role },
         sequence: { seq: readSequence },
       } as unknown as Result;
     } catch (error) {

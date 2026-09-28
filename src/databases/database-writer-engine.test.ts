@@ -28,7 +28,7 @@ import {
 const todoTables = {
   todos: {
     id: 'text primary key',
-    title: 'text not null',
+    title: 'text not null collate nocase',
   },
 } satisfies Record<string, TableSchema>;
 
@@ -389,6 +389,70 @@ describe('DatabaseWriterOperationEngine reads and replay', () => {
           minSeq: { seq: 4 },
         },
       }), 'DATABASE_NOT_READY');
+    } finally {
+      harness.close();
+    }
+  });
+
+  test('executes the same bounded structured find semantics on the writer lane', () => {
+    const harness = createHarness();
+    try {
+      for (const [id, title] of [
+        ['b', 'Same'],
+        ['a', 'Same'],
+        ['c', 'Different'],
+      ] as const) {
+        harness.engine.execute({
+          type: 'mutate',
+          idempotencyKey: `find-seed:${id}`,
+          mutation: { type: 'create', table: 'todos', row: { id, title } },
+        });
+      }
+
+      expect(asRead(harness.engine.execute({
+        type: 'find',
+        table: 'todos',
+        select: ['id'],
+        filters: [{
+          type: 'allOf',
+          filters: [
+            { type: 'field', field: 'title', operator: 'ne', value: 'different' },
+            { type: 'field', field: 'id', operator: 'in', value: ['a', 'b', null] },
+          ],
+        }],
+        order: [{ field: 'title', direction: 'asc' }],
+        limit: 1,
+        offset: 1,
+        consistency: { mode: 'strong' },
+      }))).toEqual({
+        value: [{ id: 'b' }],
+        sequence: { seq: 3 },
+      });
+
+      expect(asRead(harness.engine.execute({
+        type: 'find', table: 'todos', limit: 10,
+        filters: [{
+          type: 'field', field: 'title', operator: 'ne', value: 'different',
+          match: 'exact',
+        }],
+      })).value).toEqual([
+        { id: 'a', title: 'Same' },
+        { id: 'b', title: 'Same' },
+        { id: 'c', title: 'Different' },
+      ]);
+
+      const ranges = [
+        ['gt', 'Different', ['a', 'b']],
+        ['gte', 'Same', ['a', 'b']],
+        ['lt', 'Same', ['c']],
+        ['lte', 'Different', ['c']],
+      ] as const;
+      for (const [operator, value, ids] of ranges) {
+        expect(asRead(harness.engine.execute({
+          type: 'find', table: 'todos', select: ['id'], limit: 10,
+          filters: [{ type: 'field', field: 'title', operator, value }],
+        })).value).toEqual(ids.map((id) => ({ id })));
+      }
     } finally {
       harness.close();
     }

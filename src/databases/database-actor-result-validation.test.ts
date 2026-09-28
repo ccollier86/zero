@@ -72,6 +72,42 @@ describe('database actor execute result validation', () => {
     }, read), 'DATABASE_RESULT_LIMIT', null);
   });
 
+  test('correlates bounded find rows with the requested projection', () => {
+    const find = operation({
+      type: 'find',
+      table: 'todos',
+      select: ['title'],
+      filters: [{ type: 'field', field: 'title', operator: 'contains', value: 'A' }],
+      limit: 2,
+    });
+    expect(validateDatabaseActorExecuteResult({
+      value: [{ title: 'A' }, { title: 'AA' }],
+      sequence: { seq: 3 },
+    }, find, catalog)).toEqual({
+      value: [{ title: 'A' }, { title: 'AA' }],
+      sequence: { seq: 3 },
+    });
+
+    for (const value of [
+      { title: 'A' },
+      [{ id: 'a', title: 'A' }],
+      [{ title: 'A', secret: 'leak' }],
+      [{ title: 'A' }, { title: 'B' }, { title: 'C' }],
+    ]) {
+      expectFailure(() => validateDatabaseActorExecuteResult({
+        value,
+        sequence: { seq: 3 },
+      }, find, catalog), 'DATABASE_PROTOCOL_ERROR', null);
+    }
+
+    const allColumns = operation({
+      type: 'find', table: 'todos', limit: 1,
+    });
+    expectFailure(() => validateDatabaseActorExecuteResult({
+      value: [{ id: 'a' }], sequence: { seq: 1 },
+    }, allColumns, catalog), 'DATABASE_PROTOCOL_ERROR', null);
+  });
+
   test('correlates mutation receipts and effect coherence exactly', () => {
     const valid = mutationResult();
     expect(validateDatabaseActorExecuteResult(valid, updateOperation)).toEqual(valid);

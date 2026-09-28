@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { createAsyncDatabaseClient } from './database-client';
 import { DatabaseError } from './database-error';
 import type {
+  AsyncDatabaseClient,
   AsyncDatabaseOperationExecutor,
   DatabaseOperation,
   DatabaseOperationExecutionOptions,
@@ -28,6 +29,15 @@ describe('createAsyncDatabaseClient', () => {
       operationTimeoutMs: 50,
     });
     await client.list('todos', { limit: 10, after: 'a' });
+    await client.find('todos', {
+      select: ['id', 'title'],
+      filters: [{
+        type: 'field', field: 'title', operator: 'contains', value: 'open',
+      }],
+      order: [{ field: 'title', direction: 'asc' }],
+      limit: 20,
+      offset: 5,
+    }, { consistency: { mode: 'snapshot' } });
     await client.query('todos.count', null);
     await client.mutate(
       { type: 'delete', table: 'todos', id: 'a' },
@@ -42,7 +52,7 @@ describe('createAsyncDatabaseClient', () => {
     });
 
     expect(calls.map((call) => call.operation.type)).toEqual([
-      'get', 'list', 'query', 'mutate', 'batch', 'command',
+      'get', 'list', 'find', 'query', 'mutate', 'batch', 'command',
     ]);
     expect(calls[0]).toEqual({
       operation: {
@@ -53,7 +63,22 @@ describe('createAsyncDatabaseClient', () => {
       },
       options: { queueTimeoutMs: 25, operationTimeoutMs: 50 },
     });
-    expect(calls[3]!.operation).toMatchObject({
+    expect(calls[2]).toEqual({
+      operation: {
+        type: 'find',
+        table: 'todos',
+        select: ['id', 'title'],
+        filters: [{
+          type: 'field', field: 'title', operator: 'contains', value: 'open',
+        }],
+        order: [{ field: 'title', direction: 'asc' }],
+        limit: 20,
+        offset: 5,
+        consistency: { mode: 'snapshot' },
+      },
+      options: {},
+    });
+    expect(calls[4]!.operation).toMatchObject({
       type: 'mutate',
       idempotencyKey: 'delete:a',
     });
@@ -158,6 +183,35 @@ describe('createAsyncDatabaseClient', () => {
     await Promise.resolve();
     expect(rejectionWasDelivered).toBe(true);
   });
+
+  test('rejects hostile and extended find inputs before dispatch', async () => {
+    const calls: Array<{
+      operation: DatabaseOperation;
+      options: DatabaseOperationExecutionOptions | undefined;
+    }> = [];
+    const client = createAsyncDatabaseClient({ executor: createExecutor(calls) });
+    let getterCalls = 0;
+    const hostile: Record<string, unknown> = { limit: 1 };
+    Object.defineProperty(hostile, 'filters', {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return [];
+      },
+    });
+
+    await expect(client.find(
+      'todos',
+      hostile as unknown as Parameters<AsyncDatabaseClient['find']>[1],
+    )).rejects.toMatchObject({ code: 'DATABASE_PAYLOAD_INVALID' });
+    expect(getterCalls).toBe(0);
+    await expect(client.find('todos', {
+      limit: 1,
+      rawSql: 'SELECT secret FROM auth',
+    } as unknown as Parameters<AsyncDatabaseClient['find']>[1]))
+      .rejects.toMatchObject({ code: 'DATABASE_PAYLOAD_INVALID' });
+    expect(calls).toHaveLength(0);
+  });
 });
 
 function createExecutor(
@@ -174,6 +228,7 @@ function createExecutor(
       calls.push({ operation, options });
       return operation.type === 'get'
         || operation.type === 'list'
+        || operation.type === 'find'
         || operation.type === 'query'
         ? { value: null, sequence: { seq: 0 } }
         : {

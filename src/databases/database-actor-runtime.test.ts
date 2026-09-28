@@ -322,6 +322,26 @@ describe('database actor subprocess integration', () => {
         value: { id: 'a', title: 'IPC First' },
         sequence: { seq: 1 },
       });
+      const firstFind: unknown = await reader.execute({
+        operation: DATABASE_ACTOR_OPERATIONS.execute,
+        kind: 'read',
+        payload: {
+          databaseRef: firstRef,
+          operation: {
+            type: 'find',
+            table: 'todos',
+            select: ['id'],
+            filters: [{
+              type: 'field', field: 'title', operator: 'contains', value: 'First',
+            }],
+            limit: 1,
+          },
+        },
+      });
+      expect(firstFind).toEqual({
+        value: [{ id: 'a' }],
+        sequence: { seq: 1 },
+      });
       await unbindExecutor(reader, firstRef);
       await withStage(
         'reader second bind',

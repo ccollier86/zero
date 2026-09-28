@@ -16,7 +16,11 @@ const realm = defineDatabaseRealm({
   tables: {
     todos: {
       id: 'text primary key',
-      title: 'text not null',
+      title: 'text not null collate nocase',
+    },
+    flags: {
+      id: 'text primary key',
+      value: 'any',
     },
   },
   queries: {
@@ -114,6 +118,86 @@ describe('DatabaseReaderRuntime', () => {
     });
   });
 
+  test('runs projected nested finds with exact constraints and stable PK ties', () => {
+    writer.db.createStrict('todos', { id: 'd', title: 'First' });
+
+    expect(reader.execute({
+      type: 'find',
+      table: 'todos',
+      select: ['id', 'title'],
+      filters: [{
+        type: 'anyOf',
+        filters: [
+          { type: 'field', field: 'title', operator: 'contains', value: 'ir' },
+          { type: 'field', field: 'id', operator: 'in', value: ['missing'] },
+        ],
+      }],
+      order: [{ field: 'title', direction: 'asc' }],
+      limit: 10,
+    })).toEqual({
+      value: [
+        { id: 'a', title: 'First' },
+        { id: 'd', title: 'First' },
+        { id: 'c', title: 'Third' },
+      ],
+      sequence: { seq: 4 },
+    });
+
+    // The declared NOCASE collation broadens ordinary caller equality.
+    expect(reader.execute({
+      type: 'find', table: 'todos', limit: 10,
+      filters: [{ type: 'field', field: 'title', operator: 'eq', value: 'first' }],
+    }).value).toHaveLength(2);
+    // Framework-owned exact equality remains storage-class/BINARY exact.
+    expect(reader.execute({
+      type: 'find', table: 'todos', limit: 10,
+      filters: [{
+        type: 'field', field: 'title', operator: 'eq', value: 'first',
+        match: 'exact',
+      }],
+    }).value).toEqual([]);
+  });
+
+  test('binds find values and escapes contains wildcards', () => {
+    writer.db.createStrict('todos', { id: 'percent', title: '100% ready' });
+    expect(reader.execute({
+      type: 'find', table: 'todos', select: ['id'], limit: 10,
+      filters: [{ type: 'field', field: 'title', operator: 'contains', value: '%' }],
+    }).value).toEqual([{ id: 'percent' }]);
+    expect(reader.execute({
+      type: 'find', table: 'todos', limit: 10,
+      filters: [{
+        type: 'field', field: 'title', operator: 'eq', value: "' OR 1=1 --",
+      }],
+    }).value).toEqual([]);
+  });
+
+  test('preserves canonical exact-boolean storage alternatives', () => {
+    for (const [id, value] of [
+      ['integer', true],
+      ['text-number', '1'],
+      ['text-boolean', 'true'],
+      ['false-number', false],
+      ['unrelated', 'yes'],
+    ] as const) {
+      writer.db.createStrict('flags', { id, value });
+    }
+    expect(reader.execute({
+      type: 'find',
+      table: 'flags',
+      select: ['id'],
+      filters: [{
+        type: 'field', field: 'value', operator: 'eq', value: true,
+        match: 'exact',
+      }],
+      limit: 10,
+    }).value).toEqual([
+      { id: 'integer' },
+      { id: 'text-boolean' },
+      { id: 'text-number' },
+    ]);
+  });
+
   test('reads the previous committed WAL value while another writer is uncommitted', () => {
     const external = new Database(filePath);
     try {
@@ -148,6 +232,9 @@ describe('DatabaseReaderRuntime', () => {
   test('rejects strong reads, writes, and query-handler mutation attempts', () => {
     expect(captureError(() => reader.execute({
       type: 'get', table: 'todos', id: 'a', consistency: { mode: 'strong' },
+    })).code).toBe('DATABASE_OPERATION_UNSUPPORTED');
+    expect(captureError(() => reader.execute({
+      type: 'find', table: 'todos', limit: 1, consistency: { mode: 'strong' },
     })).code).toBe('DATABASE_OPERATION_UNSUPPORTED');
     expect(captureError(() => reader.execute({
       type: 'mutate',

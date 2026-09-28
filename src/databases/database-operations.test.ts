@@ -4,6 +4,10 @@ import { DatabaseError, type DatabaseErrorCode } from './database-error';
 import {
   DATABASE_OPERATION_MAX_DEPTH,
   DATABASE_OPERATION_MAX_STRING_BYTES,
+  DATABASE_FIND_MAX_FILTER_DEPTH,
+  DATABASE_FIND_MAX_OFFSET,
+  DATABASE_FIND_MAX_PARAMETERS,
+  DATABASE_FIND_MAX_ROWS,
   DATABASE_LIST_MAX_ROWS,
   cloneDatabaseSerializableValue,
   createDatabaseSequenceToken,
@@ -171,6 +175,157 @@ describe('database operation contract', () => {
       limit: 10,
       after: '',
     }, catalog), 'DATABASE_PAYLOAD_INVALID');
+  });
+
+  test('normalizes a bounded immutable structured find contract', () => {
+    const find = validateDatabaseOperation({
+      type: 'find',
+      table: 'todos',
+      select: ['title', 'id'],
+      filters: [
+        { type: 'field', field: 'title', operator: 'contains', value: 'open' },
+        {
+          type: 'anyOf',
+          filters: [
+            {
+              type: 'field', field: 'id', operator: 'eq', value: 'one',
+              match: 'exact',
+            },
+            {
+              type: 'allOf',
+              filters: [
+                { type: 'field', field: 'title', operator: 'like', value: 'Next%' },
+                {
+                  type: 'field', field: 'id', operator: 'in',
+                  value: ['two', 'three', null],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      order: [{ field: 'title', direction: 'desc' }],
+      limit: DATABASE_FIND_MAX_ROWS,
+      offset: DATABASE_FIND_MAX_OFFSET,
+      consistency: { mode: 'snapshot' },
+    }, catalog);
+
+    expect(find).toMatchObject({
+      type: 'find',
+      table: 'todos',
+      select: ['title', 'id'],
+      limit: DATABASE_FIND_MAX_ROWS,
+      offset: DATABASE_FIND_MAX_OFFSET,
+    });
+    expect(Object.isFrozen(find)).toBe(true);
+    expect(find.type).toBe('find');
+    if (find.type !== 'find') throw new Error('expected find operation');
+    expect(Object.isFrozen(find.select)).toBe(true);
+    expect(Object.isFrozen(find.filters)).toBe(true);
+    expect(Object.isFrozen(find.filters?.[1])).toBe(true);
+    expect(Object.isFrozen(find.order)).toBe(true);
+    expect(structuredClone(find)).toEqual(find);
+  });
+
+  test('rejects unsafe, ambiguous, and unbounded structured finds', () => {
+    const invalid: unknown[] = [
+      { type: 'find', table: 'todos', limit: 0 },
+      { type: 'find', table: 'todos', limit: DATABASE_FIND_MAX_ROWS + 1 },
+      { type: 'find', table: 'todos', limit: 1, offset: DATABASE_FIND_MAX_OFFSET + 1 },
+      { type: 'find', table: 'todos', limit: 1, select: [] },
+      { type: 'find', table: 'todos', limit: 1, select: ['id', 'id'] },
+      { type: 'find', table: 'todos', limit: 1, select: ['secret'] },
+      { type: 'find', table: 'todos', limit: 1, filters: [] },
+      {
+        type: 'find', table: 'todos', limit: 1,
+        filters: [{ type: 'anyOf', filters: [] }],
+      },
+      {
+        type: 'find', table: 'todos', limit: 1,
+        filters: [{ type: 'field', field: 'secret', operator: 'eq', value: 'x' }],
+      },
+      {
+        type: 'find', table: 'todos', limit: 1,
+        filters: [{
+          type: 'field', field: 'title', operator: 'contains', value: 1,
+        }],
+      },
+      {
+        type: 'find', table: 'todos', limit: 1,
+        filters: [{ type: 'field', field: 'title', operator: 'in', value: [] }],
+      },
+      {
+        type: 'find', table: 'todos', limit: 1,
+        filters: [{
+          type: 'field', field: 'title', operator: 'like', value: '%',
+          match: 'exact',
+        }],
+      },
+      {
+        type: 'find', table: 'todos', limit: 1,
+        order: [{ field: 'id', direction: 'asc' }, { field: 'id', direction: 'desc' }],
+      },
+      {
+        type: 'find', table: 'todos', limit: 1,
+        order: [{ field: 'title', direction: 'sideways' }],
+      },
+      { type: 'find', table: 'todos', limit: 1, rawSql: 'SELECT * FROM secrets' },
+    ];
+    for (const value of invalid) {
+      expectDatabaseCode(
+        () => validateDatabaseOperation(value, catalog),
+        'DATABASE_PAYLOAD_INVALID',
+      );
+    }
+
+    let nested: unknown = {
+      type: 'field', field: 'id', operator: 'eq', value: 'one',
+    };
+    for (let index = 0; index <= DATABASE_FIND_MAX_FILTER_DEPTH; index += 1) {
+      nested = { type: 'allOf', filters: [nested] };
+    }
+    expectDatabaseCode(() => validateDatabaseOperation({
+      type: 'find', table: 'todos', limit: 1, filters: [nested],
+    }, catalog), 'DATABASE_PAYLOAD_LIMIT');
+
+    const exactBooleans = Array.from(
+      { length: Math.floor((DATABASE_FIND_MAX_PARAMETERS - 2) / 6) + 1 },
+      () => ({
+        type: 'field', field: 'id', operator: 'eq', value: true, match: 'exact',
+      }),
+    );
+    expectDatabaseCode(() => validateDatabaseOperation({
+      type: 'find', table: 'todos', limit: 1, filters: exactBooleans,
+    }, catalog), 'DATABASE_PAYLOAD_LIMIT');
+  });
+
+  test('requires immutable realm columns and a primary key for find', () => {
+    expectDatabaseCode(() => validateDatabaseOperation({
+      type: 'find', table: 'todos', limit: 1,
+    }, { tables: ['todos'] }), 'DATABASE_SCHEMA_MISMATCH');
+    expectDatabaseCode(() => validateDatabaseOperation({
+      type: 'find', table: 'todos', limit: 1,
+    }, { tables: ['todos'], columns: { todos: ['id', 'title'] } }),
+    'DATABASE_SCHEMA_MISMATCH');
+
+    const wideColumns = [
+      'id',
+      ...Array.from(
+        { length: 128 },
+        (_, index) => `field_${index}`,
+      ),
+    ];
+    const wideCatalog = {
+      tables: ['wide'],
+      columns: { wide: wideColumns },
+      primaryKeys: { wide: 'id' },
+    };
+    expectDatabaseCode(() => validateDatabaseOperation({
+      type: 'find', table: 'wide', limit: 1,
+    }, wideCatalog), 'DATABASE_PAYLOAD_LIMIT');
+    expect(validateDatabaseOperation({
+      type: 'find', table: 'wide', select: ['id'], limit: 1,
+    }, wideCatalog)).toMatchObject({ select: ['id'] });
   });
 
   test('validates exact immutable read and commit result envelopes', () => {

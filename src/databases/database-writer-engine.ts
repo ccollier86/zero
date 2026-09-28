@@ -21,6 +21,7 @@ import {
   type SyncTableMutationValidator,
 } from '../sync/types';
 import { DatabaseError } from './database-error';
+import { runDatabaseFind } from './database-find';
 import {
   cloneDatabaseSerializableValue,
   createDatabaseSequenceToken,
@@ -352,6 +353,12 @@ export class DatabaseWriterOperationEngine {
               return this.runtime.db.get(operation.table, operation.id);
             case 'list':
               return this.readListPage(operation);
+            case 'find':
+              return runDatabaseFind(
+                this.runtime.sqlite.raw,
+                operation,
+                this.catalog,
+              );
             case 'query':
               return runDatabaseRealmQuery(
                 this.realm,
@@ -802,6 +809,7 @@ export class DatabaseWriterOperationEngine {
 function isReadOperation(operation: DatabaseOperation): operation is DatabaseReadOperation {
   return operation.type === 'get'
     || operation.type === 'list'
+    || operation.type === 'find'
     || operation.type === 'query';
 }
 

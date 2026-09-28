@@ -96,6 +96,29 @@ describe('database actor protocol', () => {
       after: 'todo-10',
       consistency: { mode: 'snapshot' },
     });
+    expect(validateDatabaseActorExecutePayload({
+      databaseRef,
+      operation: {
+        type: 'find',
+        table: 'todos',
+        select: ['id'],
+        filters: [{
+          type: 'allOf',
+          filters: [{
+            type: 'field', field: 'title', operator: 'eq', value: 'Open',
+            match: 'exact',
+          }],
+        }],
+        order: [{ field: 'title', direction: 'asc' }],
+        limit: 25,
+        offset: 5,
+      },
+    }, catalog).operation).toMatchObject({
+      type: 'find',
+      select: ['id'],
+      limit: 25,
+      offset: 5,
+    });
     expectCode(() => validateDatabaseActorExecutePayload({
       databaseRef,
       operation: {

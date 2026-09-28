@@ -6,10 +6,13 @@
  */
 
 import {
+  cloneDatabaseSerializableValue,
   type AsyncDatabaseClient,
   type AsyncDatabaseOperationExecutor,
   type DatabaseBatchInput,
   type DatabaseCommitResult,
+  type DatabaseFindInput,
+  type DatabaseFindRows,
   type DatabaseListPage,
   type DatabaseListPageOptions,
   type DatabaseMutation,
@@ -98,6 +101,24 @@ class BoundAsyncDatabaseClient implements AsyncDatabaseClient {
     }, executionOptions(options)) as DatabaseReadResult<DatabaseListPage>;
   }
 
+  async find(
+    table: string,
+    input: DatabaseFindInput,
+    options: DatabaseReadOptions = {},
+  ): Promise<DatabaseReadResult<DatabaseFindRows>> {
+    const normalized = normalizeFindInput(input);
+    return await this.#read({
+      type: 'find',
+      table,
+      ...(normalized.select === undefined ? {} : { select: normalized.select }),
+      ...(normalized.filters === undefined ? {} : { filters: normalized.filters }),
+      ...(normalized.order === undefined ? {} : { order: normalized.order }),
+      limit: normalized.limit,
+      ...(normalized.offset === undefined ? {} : { offset: normalized.offset }),
+      ...readConsistency(options),
+    }, executionOptions(options)) as DatabaseReadResult<DatabaseFindRows>;
+  }
+
   async query(
     name: string,
     input: DatabaseSerializableValue,
@@ -180,6 +201,24 @@ class BoundAsyncDatabaseClient implements AsyncDatabaseClient {
       );
     }
   }
+}
+
+function normalizeFindInput(value: unknown): DatabaseFindInput {
+  const detached = cloneDatabaseSerializableValue(value);
+  if (detached === null || Array.isArray(detached) || typeof detached !== 'object') {
+    throw new DatabaseError(
+      'DATABASE_PAYLOAD_INVALID',
+      'Database find input must be a plain object.',
+    );
+  }
+  const allowed = new Set(['select', 'filters', 'order', 'limit', 'offset']);
+  if (Object.keys(detached).some((field) => !allowed.has(field))) {
+    throw new DatabaseError(
+      'DATABASE_PAYLOAD_INVALID',
+      'Database find input contains an unknown field.',
+    );
+  }
+  return detached as unknown as DatabaseFindInput;
 }
 
 function readConsistency(
