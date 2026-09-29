@@ -21,9 +21,11 @@ import {
 } from './types';
 import type { TenantKind } from './tenancy/tenancy-types';
 import { createAuthStateInvariantError } from './auth-observability';
+import { captureAuthAuditRequestContext } from './auth-audit-service';
 
 export interface WebSessionRefreshProof {
   user: UserRecord;
+  authGeneration: number;
   record: RefreshTokenRecord;
   session: AuthSessionRecord;
   tenantKind: TenantKind | null;
@@ -74,6 +76,7 @@ export class AuthWebSessionTokenService {
 
     const user = userStore.getUserById(record.userId);
     if (!user || !canUserReceiveTokens(user)) return null;
+    const authGeneration = userStore.getAuthGeneration(user.userId);
     const parent = this.resolveOrAdoptRefreshParent(record);
     if (!parent) return null;
     const { session } = parent;
@@ -81,27 +84,39 @@ export class AuthWebSessionTokenService {
     const token = await this.options.codec.signPageSessionToken({
       tokenId: record.tokenId,
       userId: user.userId,
+      authGeneration,
       expiresAtSeconds: Math.floor(expiresAt / 1_000),
     });
     this.options.assertCurrentProfile();
+    const current = userStore.getRefreshTokenById(record.tokenId);
+    if (!current
+      || current.userId !== user.userId
+      || current.revokedAt !== null
+      || current.expiresAt <= Date.now()
+      || userStore.getAuthGeneration(user.userId) !== authGeneration) return null;
+    const currentParent = this.resolveOrAdoptRefreshParent(current);
+    if (!currentParent
+      || currentParent.session.sessionId !== session.sessionId
+      || currentParent.session.generation !== session.generation) return null;
     return { token, expiresAt };
   }
 
   async resolvePageSessionToken(token: string): Promise<AuthContext | null> {
     this.options.assertCurrentProfile();
-    const record = await this.resolvePageSessionRecord(token);
+    const proof = await this.resolvePageSessionRecord(token);
     this.options.assertCurrentProfile();
     const userStore = this.options.getUserStore();
-    if (!record || !userStore) return null;
+    if (!proof || !userStore) return null;
 
-    const user = userStore.getUserById(record.userId);
+    const user = userStore.getUserById(proof.record.userId);
     if (!user || !canUserReceiveTokens(user)) return null;
-    const parent = this.resolveOrAdoptRefreshParent(record);
+    const parent = this.resolveOrAdoptRefreshParent(proof.record);
     return parent ? this.options.withAuthorizationRevision(this.toWebAuthContext(
       user,
       parent.session,
       parent.tenantRole,
       parent.tenantKind,
+      proof.authGeneration,
     )) : null;
   }
 
@@ -109,18 +124,20 @@ export class AuthWebSessionTokenService {
     token: string,
     auditRequest?: AuthAuditRequestContext,
   ): Promise<boolean> {
+    const capturedAuditRequest = captureAuthAuditRequestContext(auditRequest);
     this.options.assertCurrentProfile();
-    const record = await this.resolvePageSessionRecord(token);
+    const proof = await this.resolvePageSessionRecord(token);
     this.options.assertCurrentProfile();
     const userStore = this.options.getUserStore();
-    if (!record || !userStore) return false;
+    if (!proof || !userStore) return false;
+    const { record } = proof;
 
     if (record.sessionId) {
       this.options.authSessionService.revoke(
         record.sessionId,
         'page-session-replaced',
         Date.now(),
-        { provenance: 'authenticated-request', request: auditRequest },
+        { provenance: 'authenticated-request', request: capturedAuditRequest },
       );
     }
     userStore.revokeRefreshToken(record.tokenId);
@@ -169,8 +186,9 @@ export class AuthWebSessionTokenService {
 
     // Sign before consuming the old token. The atomic rotation invalidates a
     // losing concurrent candidate before that response can remain usable.
-    const user = userStore.getUserById(record.userId);
-    if (!user) return null;
+    const resolvedUser = userStore.getUserById(record.userId);
+    if (!resolvedUser) return null;
+    const user = captureWebSessionUser(resolvedUser);
     assertUserCanReceiveTokens(user);
     const authGeneration = userStore.getAuthGeneration(user.userId);
     const parent = this.resolveOrAdoptRefreshParent(record);
@@ -216,8 +234,9 @@ export class AuthWebSessionTokenService {
     if (record.expiresAt <= Date.now()) return null;
     const user = userStore.getUserById(record.userId);
     if (!user || !canUserReceiveTokens(user)) return null;
+    const authGeneration = userStore.getAuthGeneration(user.userId);
     const parent = this.resolveOrAdoptRefreshParent(record);
-    return parent ? { user, ...parent } : null;
+    return parent ? { user, authGeneration, ...parent } : null;
   }
 
   resolveWebRefreshAuthContext(rawToken: string): AuthContext | null {
@@ -228,6 +247,7 @@ export class AuthWebSessionTokenService {
       proof.session,
       proof.tenantRole,
       proof.tenantKind,
+      proof.authGeneration,
     ));
   }
 
@@ -253,8 +273,9 @@ export class AuthWebSessionTokenService {
 
     const proof = this.options.resolveWebRefreshProof(rawToken);
     if (!proof) return null;
-    const { user, record: current, session: previous } = proof;
-    const authGeneration = userStore.getAuthGeneration(user.userId);
+    const user = captureWebSessionUser(proof.user);
+    const { record: current, session: previous } = proof;
+    const authGeneration = proof.authGeneration;
     const createdAt = Date.now();
     const expiresAt = createdAt + this.options.refreshTokenTTLMs;
     const replacement = this.options.authSessionService.prepareWebSession({
@@ -293,7 +314,11 @@ export class AuthWebSessionTokenService {
         )) return false;
         if (onReplaced) {
           invokeSynchronousAuthCallback(
-            () => onReplaced({ user, previous, replacement }),
+            () => onReplaced({
+              user: cloneWebSessionUser(user),
+              previous,
+              replacement,
+            }),
             {
               component: 'token-service',
               invariant: 'web-session-replaced-callback-async',
@@ -307,7 +332,10 @@ export class AuthWebSessionTokenService {
       createdAt,
     );
     return rotated === 'rotated'
-      ? { user, tokens: { accessToken, refreshToken } }
+      ? {
+          user: cloneWebSessionUser(user),
+          tokens: { accessToken, refreshToken },
+        }
       : null;
   }
 
@@ -315,6 +343,7 @@ export class AuthWebSessionTokenService {
     rawToken: string,
     auditRequest?: AuthAuditRequestContext,
   ): boolean {
+    const capturedAuditRequest = captureAuthAuditRequestContext(auditRequest);
     this.options.assertCurrentProfile();
     const userStore = this.options.getUserStore();
     if (!userStore) return false;
@@ -326,7 +355,7 @@ export class AuthWebSessionTokenService {
         record.sessionId,
         'logout',
         Date.now(),
-        { provenance: 'authenticated-request', request: auditRequest },
+        { provenance: 'authenticated-request', request: capturedAuditRequest },
       );
     }
     userStore.revokeRefreshToken(record.tokenId);
@@ -338,11 +367,13 @@ export class AuthWebSessionTokenService {
     session: AuthSessionRecord,
     tenantRole: string | null,
     tenantKind: TenantKind | null,
+    authGeneration: number,
   ): AuthContext {
     return {
       userId: user.userId,
       email: user.email,
       role: user.role,
+      authGeneration,
       sessionKind: 'web',
       sessionId: session.sessionId,
       ...(session.mfaVerifiedAt !== null
@@ -368,21 +399,24 @@ export class AuthWebSessionTokenService {
     options: WebSessionIssueOptions,
     admit?: () => boolean,
   ): Promise<TokenPair | null> {
+    const capturedUser = captureWebSessionUser(user);
+    const expectedAuthGeneration = options.expectedAuthGeneration;
     this.options.assertCurrentProfile();
     const userStore = this.requireUserStore();
-    assertUserCanReceiveTokens(user);
+    assertUserCanReceiveTokens(capturedUser);
 
-    const authGeneration = userStore.getAuthGeneration(user.userId);
+    const authGeneration = expectedAuthGeneration
+      ?? userStore.getAuthGeneration(capturedUser.userId);
     const createdAt = Date.now();
     const expiresAt = createdAt + this.options.refreshTokenTTLMs;
     const session = this.options.authSessionService.prepareWebSession({
-      userId: user.userId,
+      userId: capturedUser.userId,
       expiresAt,
       binding: options.binding,
       mfaVerifiedAt: options.mfaVerifiedAt,
     });
     const accessToken = await this.options.signAccessToken(
-      user,
+      capturedUser,
       authGeneration,
       session,
     );
@@ -393,7 +427,7 @@ export class AuthWebSessionTokenService {
       session,
       () => this.requireUserStore().storeRefreshTokenIfCurrent(
         tokenId,
-        user,
+        capturedUser,
         refreshHash,
         expiresAt,
         createdAt,
@@ -415,7 +449,10 @@ export class AuthWebSessionTokenService {
 
   private async resolvePageSessionRecord(
     token: string,
-  ): Promise<RefreshTokenRecord | null> {
+  ): Promise<{
+    record: RefreshTokenRecord;
+    authGeneration: number;
+  } | null> {
     if (!this.options.getUserStore() || !token) return null;
     try {
       const claims = await this.options.codec.verifyPageSessionToken(token);
@@ -425,7 +462,13 @@ export class AuthWebSessionTokenService {
       const record = userStore.getRefreshTokenById(claims.tokenId);
       if (!record || record.userId !== claims.userId) return null;
       if (record.revokedAt !== null || record.expiresAt <= Date.now()) return null;
-      return record;
+      const currentAuthGeneration = userStore.getAuthGeneration(record.userId);
+      if (claims.authGeneration !== null
+        && currentAuthGeneration !== claims.authGeneration) return null;
+      // Pre-claim page cookies remain safe to upgrade only while their exact
+      // durable refresh row is live. Every auth-generation transition revokes
+      // that row, so a missing legacy claim cannot cross a security change.
+      return { record, authGeneration: claims.authGeneration ?? currentAuthGeneration };
     } catch {
       return null;
     }
@@ -484,4 +527,31 @@ function assertUserCanReceiveTokens(user: UserRecord): void {
   if (user.emailVerificationRequired && !user.emailVerifiedAt) {
     throw new AuthError('Email verification required', 'EMAIL_VERIFICATION_REQUIRED', 403);
   }
+}
+
+/** Detach the complete identity projection before token signing yields. */
+function captureWebSessionUser(user: UserRecord): UserRecord {
+  const captured = cloneWebSessionUser(user);
+  Object.freeze(captured.properties);
+  return Object.freeze(captured);
+}
+
+/** Preserve the public mutable record contract without sharing internal state. */
+function cloneWebSessionUser(user: UserRecord): UserRecord {
+  return {
+    userId: user.userId,
+    username: user.username,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    role: user.role,
+    status: user.status,
+    passwordChangeRequired: user.passwordChangeRequired,
+    emailVerifiedAt: user.emailVerifiedAt,
+    emailVerificationRequired: user.emailVerificationRequired,
+    mfaRequired: user.mfaRequired,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    properties: { ...user.properties },
+  };
 }

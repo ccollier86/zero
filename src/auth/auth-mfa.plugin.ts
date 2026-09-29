@@ -11,7 +11,13 @@ import { extractAuthContext } from './auth-context';
 import type { MfaChallengeService } from './mfa-challenge-service';
 import type { TokenService } from './token-service';
 import type { UserStore } from './user-store';
-import type { AuthTransitionTokenPayload, ResolvedAuthBehaviorConfig, UserRecord } from './types';
+import type {
+  AuthContext,
+  AuthContextAuthorityReference,
+  AuthTransitionTokenPayload,
+  ResolvedAuthBehaviorConfig,
+  UserRecord,
+} from './types';
 import { AuthError } from './types';
 import { buildSessionCompletionResponse } from './auth-mfa-response';
 import type { AuthTenantSessionService } from './auth-tenant-session-service';
@@ -26,6 +32,7 @@ import {
   authAuditRequestFromRequest,
 } from './auth-audit-service';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
+import { authContextAuthorityReferenceFingerprint } from './auth-context-authority';
 
 export interface AuthMfaPluginConfig {
   getUserStore: () => UserStore | null;
@@ -62,15 +69,25 @@ export function createAuthMfaPlugin(config: AuthMfaPluginConfig) {
           user: actor.user,
           methodType: body.method,
           label: body.label,
+          expectedAuthGeneration: actor.authGeneration,
+          admitAuthority: actor.admitAuthority,
         });
-        const verificationToken = await tokenService.signTransitionToken(actor.user, {
-          purpose: 'mfa_setup',
-          ttl: config.getAuthConfig().mfa.challengeTTL,
-          methodId: started.method.methodId,
-          methodType: started.method.type,
-          challengeId: started.challenge?.challengeId,
-          flow: actor.flow,
-        });
+        let verificationToken: string;
+        try {
+          verificationToken = await tokenService.signTransitionToken(actor.user, {
+            purpose: 'mfa_setup',
+            ttl: config.getAuthConfig().mfa.challengeTTL,
+            methodId: started.method.methodId,
+            methodType: started.method.type,
+            challengeId: started.challenge?.challengeId,
+            flow: actor.flow,
+            expectedAuthGeneration: actor.authGeneration,
+            profileAuthority: actor.authority,
+          });
+        } catch (error) {
+          if (started.rollbackReceipt) mfa.rollbackEnrollment(started.rollbackReceipt);
+          throw error;
+        }
 
         return {
           setupRequired: actor.flow === 'auth',
@@ -97,17 +114,25 @@ export function createAuthMfaPlugin(config: AuthMfaPluginConfig) {
           body.verificationToken,
           'mfa_setup'
         );
-        if (!payload.methodId) {
+        if (!payload.methodId || (payload.flow !== 'auth' && payload.flow !== 'profile')) {
           throw new AuthError('MFA setup method is missing', 'MFA_SETUP_TOKEN_INVALID', 401);
         }
 
         const user = requireTokenUser(store, payload);
-        const liveAuth = await extractAuthContext(request, tokenService);
+        const profileAdmission = await resolveProfileEnrollmentAdmission({
+          request,
+          tokenService,
+          payload,
+        });
+        const liveAuth = profileAdmission?.auth
+          ?? await extractAuthContext(request, tokenService);
         const method = await mfa.verifyEnrollment({
           user,
           methodId: payload.methodId,
           challengeId: payload.challengeId,
           code: body.code,
+          expectedAuthGeneration: payload.authGeneration,
+          admitAuthority: profileAdmission?.admit,
           auditActor: liveAuth?.userId === user.userId
             ? authAuditActorFromContext(liveAuth)
             : { userId: user.userId, provenance: 'authenticated-request' },
@@ -119,6 +144,7 @@ export function createAuthMfaPlugin(config: AuthMfaPluginConfig) {
             user,
             tenantSessionService: tenantSessions,
             mfaVerifiedAt: Date.now(),
+            expectedAuthGeneration: payload.authGeneration,
           });
           const response = {
             ...completion,
@@ -162,11 +188,13 @@ export function createAuthMfaPlugin(config: AuthMfaPluginConfig) {
           methodId: payload.methodId,
           challengeId: payload.challengeId,
           code: body.code,
+          expectedAuthGeneration: payload.authGeneration,
         });
         const completion = await buildSessionCompletionResponse({
           user,
           tenantSessionService: tenantSessions,
           mfaVerifiedAt: Date.now(),
+          expectedAuthGeneration: payload.authGeneration,
         });
         const response = {
           ...completion,
@@ -209,25 +237,40 @@ async function resolveMfaSetupActor(params: {
   setupToken?: string;
   store: UserStore;
   tokenService: TokenService;
-}): Promise<{ user: UserRecord; flow: 'auth' | 'profile' }> {
+}): Promise<{
+  user: UserRecord;
+  flow: 'auth' | 'profile';
+  authGeneration: number;
+  authority?: AuthContextAuthorityReference;
+  admitAuthority?: () => boolean;
+}> {
   if (params.setupToken) {
     const payload = await verifyTransitionToken(
       params.tokenService,
       params.setupToken,
       'mfa_setup'
     );
-    if (payload.methodId) {
+    if (payload.methodId || payload.flow !== 'auth') {
       throw new AuthError('MFA setup token is already bound to a method', 'MFA_SETUP_TOKEN_INVALID', 401);
     }
     return {
       user: requireTokenUser(params.store, payload),
       flow: 'auth',
+      authGeneration: payload.authGeneration,
     };
   }
 
+  const actor = await requireFullSessionActor(
+    params.request,
+    params.store,
+    params.tokenService,
+  );
   return {
-    user: await requireFullSessionUser(params.request, params.store, params.tokenService),
+    user: actor.user,
     flow: 'profile',
+    authGeneration: actor.authGeneration,
+    authority: actor.authority,
+    admitAuthority: actor.admitAuthority,
   };
 }
 
@@ -241,6 +284,58 @@ async function requireFullSessionUser(
   const user = store.getUserById(auth.userId);
   if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
   return user;
+}
+
+async function requireFullSessionActor(
+  request: Request,
+  store: UserStore,
+  tokenService: TokenService,
+): Promise<{
+  user: UserRecord;
+  authGeneration: number;
+  authority: AuthContextAuthorityReference;
+  admitAuthority: () => boolean;
+}> {
+  const auth = await extractAuthContext(request, tokenService);
+  if (!auth) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
+  const authority = tokenService.captureAuthContextAuthority(auth);
+  if (!authority) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
+  const user = store.getUserById(auth.userId);
+  if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
+  return {
+    user,
+    authGeneration: authority.authGeneration,
+    authority,
+    admitAuthority: () => tokenService.resolveAuthContextAuthority(authority) !== null,
+  };
+}
+
+async function resolveProfileEnrollmentAdmission(params: {
+  request: Request;
+  tokenService: TokenService;
+  payload: AuthTransitionTokenPayload;
+}): Promise<{
+  auth: AuthContext;
+  admit: () => boolean;
+} | null> {
+  if (params.payload.flow !== 'profile') return null;
+  const expectedFingerprint = params.payload.profileAuthorityFingerprint;
+  if (!expectedFingerprint) throw invalidMfaSetupToken();
+
+  const auth = await extractAuthContext(params.request, params.tokenService);
+  if (!auth) throw authenticationStateChanged();
+  const authority = params.tokenService.captureAuthContextAuthority(auth);
+  if (!authority
+    || authority.userId !== params.payload.sub
+    || authority.authGeneration !== params.payload.authGeneration
+    || authContextAuthorityReferenceFingerprint(authority) !== expectedFingerprint) {
+    throw authenticationStateChanged();
+  }
+
+  return {
+    auth,
+    admit: () => params.tokenService.resolveAuthContextAuthority(authority) !== null,
+  };
 }
 
 async function verifyTransitionToken(
@@ -271,4 +366,16 @@ function requireTokenUser(
     throw new AuthError('Email verification required', 'EMAIL_VERIFICATION_REQUIRED', 403);
   }
   return user;
+}
+
+function invalidMfaSetupToken(): AuthError {
+  return new AuthError('Invalid MFA setup token', 'MFA_SETUP_TOKEN_INVALID', 401);
+}
+
+function authenticationStateChanged(): AuthError {
+  return new AuthError(
+    'Authentication state changed; sign in again',
+    'AUTH_STATE_CHANGED',
+    409,
+  );
 }

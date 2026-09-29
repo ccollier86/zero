@@ -37,7 +37,7 @@ import {
 } from './auth-audit-service';
 import type { AuthAuditActor } from './auth-audit-types';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
-import { captureAuthSessionIdentityProof } from './auth-session-identity-proof';
+import { captureAuthSessionIdentityAdmission } from './auth-session-identity-proof';
 
 const idSchema = t.String({
   minLength: 1,
@@ -90,6 +90,8 @@ interface TenantActor {
 
 interface IdentityProof {
   userId: string;
+  /** Exact generation proven by the admitted session or continuation. */
+  authGeneration: number;
   /** Live server-derived assurance from the admitted bearer/continuation. */
   mfaVerifiedAt: number | null;
   consume?: () => boolean;
@@ -158,6 +160,7 @@ export function createAuthTenantOnboardingPlugin(
             mfaChallengeService: config.getMfaChallengeService(),
             tenantSessionService: tenantSessions,
             requestedMfaSetup: requestedMfaSetup || administrationMfaSetup,
+            expectedAuthGeneration: account.authGeneration,
           });
           const pending = {
             ...completion,
@@ -184,6 +187,7 @@ export function createAuthTenantOnboardingPlugin(
             actor: identity.auditActor,
             request: authAuditRequestFromRequest(request),
           },
+          identity.authGeneration,
         );
       }
 
@@ -197,6 +201,7 @@ export function createAuthTenantOnboardingPlugin(
         mfaChallengeService: config.getMfaChallengeService(),
         tenantSessionService: tenantSessions,
         mfaVerifiedAt: acceptedMfaVerifiedAt,
+        expectedAuthGeneration: accepted.authGeneration,
         sessionBinding: {
           tenantId: accepted.tenant.tenantId,
           membershipId: accepted.membership.membershipId,
@@ -509,10 +514,12 @@ async function resolveIdentityProof(
     if (body.continuation) throw ambiguousProof();
     const auth = await extractAuthContext(request, tokenService);
     if (!auth) throw unauthorized();
+    const admission = captureAuthSessionIdentityAdmission(auth, tokenService);
     return {
       userId: auth.userId,
+      authGeneration: admission.authGeneration,
       mfaVerifiedAt: auth.mfaVerifiedAt ?? null,
-      consume: captureAuthSessionIdentityProof(auth, tokenService),
+      consume: admission.consume,
       auditActor: authAuditActorFromContext(auth),
     };
   }
@@ -536,10 +543,12 @@ async function resolveJoinRequestIdentity(
     const tokenService = requireTokenService(config);
     const auth = await extractAuthContext(request, tokenService);
     if (!auth) throw unauthorized();
+    const admission = captureAuthSessionIdentityAdmission(auth, tokenService);
     return {
       userId: auth.userId,
+      authGeneration: admission.authGeneration,
       mfaVerifiedAt: auth.mfaVerifiedAt ?? null,
-      consume: captureAuthSessionIdentityProof(auth, tokenService),
+      consume: admission.consume,
       auditActor: authAuditActorFromContext(auth),
     };
   }
@@ -578,14 +587,16 @@ function resolveOnboardingContinuation(
   }
   return {
     userId: user.userId,
+    authGeneration: record.authGeneration,
     mfaVerifiedAt: record.mfaVerifiedAt,
     auditActor: { userId: user.userId, provenance: 'authenticated-request' },
-    consume: () => sessions.continuations.consumeInspected(
-      record,
-      'tenant_onboarding',
-      user.userId,
-      record.authGeneration,
-    ),
+    consume: () => store.getAuthGeneration(user.userId) === record.authGeneration
+      && sessions.continuations.consumeInspected(
+        record,
+        'tenant_onboarding',
+        user.userId,
+        record.authGeneration,
+      ),
   };
 }
 

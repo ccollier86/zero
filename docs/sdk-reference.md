@@ -844,6 +844,17 @@ tenant-selection/onboarding continuation, a password-updated result, or a
 pending email-verification registration. The
 email-verification variant has no access or refresh token:
 
+`startMfaSetup({ method, label })` starts account-settings/profile enrollment
+from the current session; `startMfaSetup({ setupToken, method, label })`
+continues pre-session authentication. For profile enrollment,
+`verifyMfaSetup({ verificationToken, code })` automatically sends the current
+access bearer and the server requires it to resolve to the exact same live
+web/native session that started setup. A different login—even for the same
+user—or a changed/revoked authority returns `AUTH_STATE_CHANGED` (409), and the
+caller should discard that setup result and restart enrollment. Custom HTTP
+clients must likewise attach the originating bearer to
+`POST /auth/mfa/setup/verify`; auth-flow setup remains bearer-optional.
+
 ```ts
 interface AuthEmailVerificationRequiredResult {
   user: AuthUser & {
@@ -981,12 +992,27 @@ if (config.capabilities.canCreateTenants) {
     ownerEmail: 'owner@acme.example',
   });
 }
+
+await client.platformAdmin.addMember({
+  email: 'operator@platform.example',
+  roles: ['administrator'],
+});
+await client.platformAdmin.issueInvitation({
+  email: 'auditor@platform.example',
+  roles: ['access-manager'],
+  delivery: 'email',
+});
 ```
 
 `client.platformAdmin` also manages administration members/invitations and
 ownership, suspends/reactivates customer organizations with generation
 fencing, and exposes capability-gated read-only customer-member drill-in. It
-never accepts the administration tenant ID. React consumers can use
+never accepts the administration tenant ID. Its add-member, role-replacement,
+and invitation contracts use `AuthPlatformRoleSelection`, a non-empty tuple;
+they cannot accidentally default to or clear into a customer role. A direct
+role replacement also requires the target's `expectedRoleRevision`; the React
+hook obtains and injects it from its current fenced member view. React consumers
+can use
 `usePlatformAdministration()`, `usePlatformTenants()`,
 `PlatformAdministrationManagement`, and `PlatformTenantManagement`. See
 [Platform Administration Organization](./auth/platform-administration.md).

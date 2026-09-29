@@ -20,7 +20,12 @@ import { AuthError } from './types';
 import { AuthGenerationStore } from './auth-generation-store';
 import { defineAuthSessionTables } from './auth-session-schema';
 import { defineRegistrationProvisioningTable } from './registration-provisioning-schema';
-import type { AuthAuditService } from './auth-audit-service';
+import { defineAdminUserProvisioningTable } from './admin-user-provisioning-schema';
+import {
+  captureAuthAuditActor,
+  captureAuthAuditRequestContext,
+  type AuthAuditService,
+} from './auth-audit-service';
 import { OBS_CODES } from '../observability/codes';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
 import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
@@ -43,8 +48,16 @@ import {
   type RegistrationProvisioningResources,
 } from './registration-provisioning-store';
 import {
+  AdminUserProvisioningStore,
+  prepareAdminUserProvisioning,
+  type AdminUserProvisioningReceipt,
+} from './admin-user-provisioning-store';
+import {
   UserCredentialStore,
   type AuthSecurityAuditContext,
+  type PasswordAuthenticationProof,
+  type PasswordChangeAuthenticationAdmission,
+  type PasswordChangeAuthenticationReceipt,
 } from './user-credential-store';
 import {
   USER_IDENTITY_LIST_DEFAULT_LIMIT,
@@ -64,7 +77,14 @@ export type {
   RegistrationProvisioningResources,
 } from './registration-provisioning-store';
 export { REGISTRATION_PROVISIONING_LEASE_MS } from './registration-provisioning-store';
-export type { AuthSecurityAuditContext } from './user-credential-store';
+export type { AdminUserProvisioningReceipt } from './admin-user-provisioning-store';
+export { ADMIN_USER_PROVISIONING_LEASE_MS } from './admin-user-provisioning-store';
+export type {
+  AuthSecurityAuditContext,
+  PasswordAuthenticationProof,
+  PasswordChangeAuthenticationAdmission,
+  PasswordChangeAuthenticationReceipt,
+} from './user-credential-store';
 
 export interface CreateUserInput {
   username: string;
@@ -87,6 +107,17 @@ export interface AtomicRegistrationPolicy {
   mfaRequired: boolean;
 }
 
+/**
+ * Exact security generation committed by an identity ceremony.
+ *
+ * Session issuance must carry this receipt across every asynchronous boundary
+ * instead of looking up whatever generation happens to be current later.
+ */
+export interface AuthGenerationReceipt {
+  readonly user: UserRecord;
+  readonly authGeneration: number;
+}
+
 const REGISTRATION_PROVISIONING_WAIT_MS = 30_000;
 
 export interface UserStoreOptions {
@@ -104,6 +135,27 @@ interface PreparedUserCreate {
   userId: string;
   now: number;
   passwordHash: string;
+}
+
+/** Detach every caller-owned identity field before password hashing yields. */
+function captureCreateUserInput(input: CreateUserInput): CreateUserInput {
+  const properties = input.properties;
+  return Object.freeze({
+    username: input.username,
+    email: input.email,
+    password: input.password,
+    firstName: input.firstName,
+    lastName: input.lastName,
+    role: input.role,
+    status: input.status,
+    passwordChangeRequired: input.passwordChangeRequired,
+    emailVerifiedAt: input.emailVerifiedAt,
+    emailVerificationRequired: input.emailVerificationRequired,
+    mfaRequired: input.mfaRequired,
+    ...(properties === undefined
+      ? {}
+      : { properties: Object.freeze({ ...properties }) }),
+  });
 }
 
 /** Filter and pagination options for admin user listing. */
@@ -138,6 +190,7 @@ export class UserStore {
   private readonly tokenStore: UserTokenStore;
   private readonly credentials: UserCredentialStore;
   private readonly registrationProvisioning: RegistrationProvisioningStore;
+  private readonly adminUserProvisioning: AdminUserProvisioningStore;
   private authSessionRevoker: AuthSessionRevoker | null = null;
   private runtimeProfileGuard: (() => void) | null = null;
   private readonly tenancyMode: AuthTenancyMode;
@@ -152,6 +205,7 @@ export class UserStore {
     // Ensure additive private lifecycle tables exist before preparing SQL.
     defineAuthSessionTables(db);
     defineRegistrationProvisioningTable(db);
+    defineAdminUserProvisioningTable(db);
     this.authGenerations = new AuthGenerationStore(db);
     this.propertyConfig = new UserPropertyConfigStore(db, {
       mutation: (operation) => this.mutation(operation),
@@ -179,6 +233,7 @@ export class UserStore {
         this.updateUser(userId, { passwordChangeRequired: required }) !== null
       ),
       revokeAllUserTokens: (userId) => this.revokeAllUserTokens(userId),
+      getAuthGeneration: (userId) => this.getAuthGeneration(userId),
       recordSecurityAudit: (action, userId, context, fallbackActor) => {
         this.recordSecurityAudit(action, userId, context, fallbackActor);
       },
@@ -188,12 +243,22 @@ export class UserStore {
     });
     this.registrationProvisioning = new RegistrationProvisioningStore(db, {
       mutation: (operation) => this.mutation(operation),
+      afterCommit: (callback) => this.afterCommit(callback),
       assertCurrentProfile: () => this.assertRuntimeProfileCurrent(),
       getConfig: (key) => this.getConfig(key),
       setConfig: (key, value) => this.setConfig(key, value),
       countUsers: () => this.countUsers(),
       getUserById: (userId) => this.getUserById(userId),
       getAuthorizationBootstrapper: () => this.authorizationBootstrapper,
+      auditService: this.auditService,
+      emitCode: this.emitCode ?? undefined,
+    });
+    this.adminUserProvisioning = new AdminUserProvisioningStore(db, {
+      mutation: (operation) => this.mutation(operation),
+      afterCommit: (callback) => this.afterCommit(callback),
+      assertCurrentProfile: () => this.assertRuntimeProfileCurrent(),
+      getUserById: (userId) => this.getUserById(userId),
+      getAuthGeneration: (userId) => this.getAuthGeneration(userId),
       auditService: this.auditService,
       emitCode: this.emitCode ?? undefined,
     });
@@ -264,6 +329,13 @@ export class UserStore {
     provisioning?: AuthSecurityAuditContext & { setupRequested?: boolean },
     beforeInsert?: () => void,
   ): Promise<UserRecord> {
+    const capturedProvisioning = provisioning
+      ? Object.freeze({
+        actor: captureAuthAuditActor(provisioning.actor)!,
+        request: captureAuthAuditRequestContext(provisioning.request),
+        setupRequested: provisioning.setupRequested === true,
+      })
+      : undefined;
     const prepared = await this.prepareUserCreate(params);
     return this.mutation(() => {
       this.registrationProvisioning.lockWrites();
@@ -286,18 +358,78 @@ export class UserStore {
         this.registrationProvisioning.markBootstrapCompleted();
         this.registrationProvisioning.recordAudit(user.userId, null, true);
       }
-      if (provisioning) {
+      if (capturedProvisioning) {
         this.auditService?.append({
           action: 'identity.provisioned-by-admin',
           outcome: 'succeeded',
           scope: { kind: 'application' },
-          actor: provisioning.actor,
-          request: provisioning.request,
+          actor: capturedProvisioning.actor,
+          request: capturedProvisioning.request,
           target: { type: 'user', id: user.userId },
-          metadata: { 'setup-requested': provisioning.setupRequested === true },
+          metadata: { 'setup-requested': capturedProvisioning.setupRequested },
         });
       }
       return user;
+    });
+  }
+
+  /**
+   * Create an administrator-managed identity with a durable provisional
+   * receipt. The caller must finalize after setup delivery or roll back using
+   * the exact receipt; recovery can safely finish an abandoned lease.
+   */
+  async createAdminProvisionedUser(
+    params: CreateUserInput,
+    provisioning: AuthSecurityAuditContext & { setupRequested?: boolean },
+    beforeInsert: () => void,
+  ): Promise<{
+    user: UserRecord;
+    provisioning: AdminUserProvisioningReceipt;
+  }> {
+    const capturedProvisioning = Object.freeze({
+      actor: captureAuthAuditActor(provisioning.actor)!,
+      request: captureAuthAuditRequestContext(provisioning.request),
+      setupRequested: provisioning.setupRequested === true,
+    });
+    const prepared = await this.prepareUserCreate(params);
+    const provisional = prepareAdminUserProvisioning();
+    return this.mutation(() => {
+      this.registrationProvisioning.lockWrites();
+      invokeSynchronousAuthCallback(beforeInsert, {
+        component: 'user-store',
+        invariant: 'admin-user-create-before-insert-async',
+        message: '[auth] Administrator user creation authority must be synchronous.',
+        emitCode: this.emitCode ?? undefined,
+      });
+      this.registrationProvisioning.assertNoPendingBootstrap();
+      if (this.isBootstrapRequired()) {
+        throw new AuthError(
+          'Application bootstrap must be completed before administrator provisioning',
+          'AUTH_NOT_READY',
+          503,
+        );
+      }
+      const user = this.insertPreparedUser(prepared);
+      const authGeneration = this.getAuthGeneration(user.userId);
+      const receipt = this.adminUserProvisioning.insert({
+        ...provisional,
+        user,
+        authGeneration,
+        createdAt: Date.now(),
+      });
+      this.auditService?.append({
+        action: 'identity.provisioned-by-admin',
+        outcome: 'succeeded',
+        scope: { kind: 'application' },
+        actor: capturedProvisioning.actor,
+        request: capturedProvisioning.request,
+        target: { type: 'user', id: user.userId },
+        metadata: { 'setup-requested': capturedProvisioning.setupRequested },
+      });
+      return {
+        user,
+        provisioning: receipt,
+      };
     });
   }
 
@@ -320,11 +452,14 @@ export class UserStore {
     } = {},
   ): Promise<{
     user: UserRecord;
+    authGeneration: number;
     policy: TPolicy;
     provisioning: RegistrationProvisioningReceipt | null;
   }> {
+    const provisionalRequested = options.provisional === true;
+    const auditRequest = captureAuthAuditRequestContext(options.auditRequest);
     const prepared = await this.prepareUserCreate(params);
-    const provisional = options.provisional
+    const provisional = provisionalRequested
       ? prepareRegistrationProvisioning()
       : null;
     const registrationId = provisional?.registrationId ?? null;
@@ -347,7 +482,7 @@ export class UserStore {
           const user = this.insertPreparedUser({
             ...prepared,
             params: {
-              ...params,
+              ...prepared.params,
               role: policy.role,
               emailVerifiedAt: policy.requireEmailVerification ? null : Date.now(),
               emailVerificationRequired: policy.requireEmailVerification,
@@ -356,6 +491,7 @@ export class UserStore {
           });
           if (provisional) {
             const createdAt = Date.now();
+            const authGeneration = this.getAuthGeneration(user.userId);
             this.registrationProvisioning.insert({
               ...provisional,
               userId: user.userId,
@@ -400,11 +536,12 @@ export class UserStore {
               user.userId,
               tenantId,
               isBootstrap,
-              options.auditRequest,
+              auditRequest,
             );
           }
           return {
             user,
+            authGeneration: this.getAuthGeneration(user.userId),
             policy,
             provisioning: registrationId ? Object.freeze({
               registrationId,
@@ -479,19 +616,54 @@ export class UserStore {
     return this.registrationProvisioning.rollback(receipt);
   }
 
+  /** Renew an administrator-created account receipt before external delivery. */
+  renewAdminUserProvisioningLease(receipt: AdminUserProvisioningReceipt): number {
+    return this.adminUserProvisioning.renewLease(receipt);
+  }
+
+  /** Bind the exact setup token in the token-creation transaction. */
+  bindAdminUserProvisioningSetupToken(
+    receipt: AdminUserProvisioningReceipt,
+    setupTokenId: string,
+  ): void {
+    this.adminUserProvisioning.bindSetupToken(receipt, setupTokenId);
+  }
+
+  /** Fence the final setup commit against changes to the provisional account. */
+  assertAdminUserProvisioningCommitReady(
+    receipt: AdminUserProvisioningReceipt,
+  ): void {
+    this.adminUserProvisioning.assertCommitReady(receipt);
+  }
+
+  /** Close a successful administrator-created setup receipt. */
+  finalizeAdminUserProvisioning(receipt: AdminUserProvisioningReceipt): void {
+    this.adminUserProvisioning.finalize(receipt);
+  }
+
+  /** Delete only the exact untouched administrator-created identity graph. */
+  rollbackAdminUserProvisioning(receipt: AdminUserProvisioningReceipt): boolean {
+    return this.adminUserProvisioning.rollback(receipt);
+  }
+
   recoverPendingRegistrationProvisioning(): number {
     return this.registrationProvisioning.recoverPending();
   }
 
+  recoverPendingAdminUserProvisioning(): number {
+    return this.adminUserProvisioning.recoverPending();
+  }
+
   private async prepareUserCreate(params: CreateUserInput): Promise<PreparedUserCreate> {
-    const email = this.identity.requireCanonicalEmail(params.email);
-    this.identity.assertNewIdentityAvailable(params.username, email);
+    const captured = captureCreateUserInput(params);
+    const email = this.identity.requireCanonicalEmail(captured.email);
+    this.identity.assertNewIdentityAvailable(captured.username, email);
     return {
-      params,
+      params: captured,
       email,
       userId: `u_${crypto.randomUUID()}`,
       now: Date.now(),
-      passwordHash: await this.credentials.hashPassword(params.password),
+      passwordHash: await this.credentials.hashPassword(captured.password),
     };
   }
 
@@ -628,6 +800,14 @@ export class UserStore {
     return this.credentials.verifyPassword(userId, password);
   }
 
+  /** Bind successful password verification to its exact security generation. */
+  verifyPasswordForAuthentication(
+    userId: string,
+    password: string,
+  ): Promise<PasswordAuthenticationProof | null> {
+    return this.credentials.verifyPasswordForAuthentication(userId, password);
+  }
+
   /**
    * Change password. Verifies current password, hashes new one, revokes all refresh tokens.
    * Returns true if changed, false if current password wrong.
@@ -643,6 +823,23 @@ export class UserStore {
       currentPassword,
       newPassword,
       auditContext,
+    );
+  }
+
+  /** Change a password and bind replacement-session issuance to that commit. */
+  updatePasswordForAuthentication(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    auditContext?: AuthSecurityAuditContext,
+    admission?: PasswordChangeAuthenticationAdmission,
+  ): Promise<PasswordChangeAuthenticationReceipt | null> {
+    return this.credentials.updatePasswordForAuthentication(
+      userId,
+      currentPassword,
+      newPassword,
+      auditContext,
+      admission,
     );
   }
 
@@ -740,6 +937,26 @@ export class UserStore {
     afterVerify?: (user: UserRecord, verifiedAt: number) => void,
     auditContext?: AuthSecurityAuditContext,
   ): UserRecord | null {
+    return this.completeEmailVerificationForAuthentication(
+      userId,
+      consumeActionToken,
+      verifiedAt,
+      afterVerify,
+      auditContext,
+    )?.user ?? null;
+  }
+
+  /**
+   * Atomically verify an address and return the exact post-revocation security
+   * generation authorized to continue into MFA or parent-session issuance.
+   */
+  completeEmailVerificationForAuthentication(
+    userId: string,
+    consumeActionToken: () => void,
+    verifiedAt = Date.now(),
+    afterVerify?: (user: UserRecord, verifiedAt: number) => void,
+    auditContext?: AuthSecurityAuditContext,
+  ): AuthGenerationReceipt | null {
     return this.mutation(() => {
       const current = this.getUserById(userId);
       if (!current) return null;
@@ -771,7 +988,10 @@ export class UserStore {
         auditContext,
         { userId, provenance: 'registration' },
       );
-      return user;
+      return Object.freeze({
+        user,
+        authGeneration: this.getAuthGeneration(userId),
+      });
     });
   }
 

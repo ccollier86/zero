@@ -3,8 +3,12 @@
 import type { Statement } from 'bun:sqlite';
 import type { ReactiveDB } from '../sync/reactive-db';
 import type { AuthAuditActor, AuthAuditRequestContext } from './auth-audit-types';
+import {
+  captureAuthAuditActor,
+  captureAuthAuditRequestContext,
+} from './auth-audit-service';
 import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
-import type { AuthError } from './types';
+import { AuthError } from './types';
 
 export interface AuthSecurityAuditContext {
   actor: AuthAuditActor;
@@ -16,12 +20,35 @@ interface CredentialRow {
   password_hash: string;
 }
 
+interface AuthenticationCredentialRow extends CredentialRow {
+  auth_generation: number;
+}
+
+/** Secret-free continuity proof produced by a current password verification. */
+export interface PasswordAuthenticationProof {
+  readonly userId: string;
+  readonly authGeneration: number;
+}
+
+/** Post-commit generation authorized to replace a changed-password session. */
+export interface PasswordChangeAuthenticationReceipt {
+  readonly userId: string;
+  readonly authGeneration: number;
+}
+
+/** Exact live-session proof required by authenticated password changes. */
+export interface PasswordChangeAuthenticationAdmission {
+  readonly expectedAuthGeneration: number;
+  readonly admit: () => boolean;
+}
+
 interface UserCredentialStoreHooks {
   mutation<T>(operation: () => T): T;
   assertCurrentProfile(): void;
   identityExists(userId: string): boolean;
   setPasswordChangeRequired(userId: string, required: boolean): boolean;
   revokeAllUserTokens(userId: string): void;
+  getAuthGeneration(userId: string): number;
   recordSecurityAudit(
     action: string,
     userId: string,
@@ -46,6 +73,7 @@ export class UserCredentialStore {
   private readonly stmts: {
     insertCredential: Statement;
     getCredential: Statement;
+    getAuthenticationCredential: Statement;
     updateCredential: Statement;
     updateCredentialIfCurrent: Statement;
   };
@@ -61,6 +89,14 @@ export class UserCredentialStore {
       getCredential: db.prepare(
         'SELECT * FROM _credentials WHERE user_id = ?',
       ),
+      getAuthenticationCredential: db.prepare(`
+        SELECT credential.user_id, credential.password_hash,
+          COALESCE(generation.generation, 0) AS auth_generation
+        FROM _credentials credential
+        LEFT JOIN _auth_user_generations generation
+          ON generation.user_id = credential.user_id
+        WHERE credential.user_id = ?
+      `),
       updateCredential: db.prepare(
         'UPDATE _credentials SET password_hash = ? WHERE user_id = ?',
       ),
@@ -75,17 +111,43 @@ export class UserCredentialStore {
     return Bun.password.hash(password);
   }
 
+  verifyPasswordHash(password: string, passwordHash: string): Promise<boolean> {
+    return Bun.password.verify(password, passwordHash);
+  }
+
   insertCredential(userId: string, passwordHash: string): void {
     this.stmts.insertCredential.run(userId, passwordHash);
   }
 
   async verifyPassword(userId: string, password: string): Promise<boolean> {
+    return (await this.verifyPasswordForAuthentication(userId, password)) !== null;
+  }
+
+  /**
+   * Verify a password and bind the result to the exact security generation.
+   * Session/transition admission must carry this proof so a later reset cannot
+   * bless the old password with a new generation.
+   */
+  async verifyPasswordForAuthentication(
+    userId: string,
+    password: string,
+  ): Promise<PasswordAuthenticationProof | null> {
     this.hooks.assertCurrentProfile();
-    const credential = this.getCredential(userId);
-    if (!credential) return false;
-    const valid = await Bun.password.verify(password, credential.password_hash);
+    const credential = this.getAuthenticationCredential(userId);
+    if (!credential) return null;
+    const valid = await this.verifyPasswordHash(password, credential.password_hash);
     this.hooks.assertCurrentProfile();
-    return valid;
+    if (!valid) return null;
+    // A password verification may overlap an administrator reset or another
+    // credential transition. Never let a result for the old hash authenticate
+    // against the new security generation.
+    const current = this.getAuthenticationCredential(userId);
+    if (current?.password_hash !== credential.password_hash
+      || current.auth_generation !== credential.auth_generation) return null;
+    return Object.freeze({
+      userId: credential.user_id,
+      authGeneration: credential.auth_generation,
+    });
   }
 
   async updatePassword(
@@ -94,23 +156,61 @@ export class UserCredentialStore {
     newPassword: string,
     auditContext?: AuthSecurityAuditContext,
   ): Promise<boolean> {
+    return (await this.updatePasswordForAuthentication(
+      userId,
+      currentPassword,
+      newPassword,
+      auditContext,
+    )) !== null;
+  }
+
+  /** Change a password and return the exact generation committed with it. */
+  async updatePasswordForAuthentication(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    auditContext?: AuthSecurityAuditContext,
+    admission?: PasswordChangeAuthenticationAdmission,
+  ): Promise<PasswordChangeAuthenticationReceipt | null> {
+    const capturedAuditContext = captureSecurityAuditContext(auditContext);
+    const capturedAdmission = capturePasswordChangeAdmission(admission);
     this.hooks.assertCurrentProfile();
-    const credential = this.getCredential(userId);
-    if (!credential) return false;
-    const valid = await Bun.password.verify(currentPassword, credential.password_hash);
+    const credential = this.getAuthenticationCredential(userId);
+    if (!credential) return null;
+    const valid = await this.verifyPasswordHash(currentPassword, credential.password_hash);
     this.hooks.assertCurrentProfile();
-    if (!valid) return false;
+    if (!valid) return null;
 
     const newHash = await this.hashPassword(newPassword);
     this.hooks.assertCurrentProfile();
     return this.hooks.mutation(() => {
+      if (this.hooks.getAuthGeneration(userId) !== credential.auth_generation) {
+        if (capturedAdmission) throw authenticationStateChanged();
+        return null;
+      }
+      if (capturedAdmission) {
+        if (capturedAdmission.expectedAuthGeneration !== credential.auth_generation) {
+          throw authenticationStateChanged();
+        }
+        const admitted = invokeSynchronousAuthCallback(capturedAdmission.admit, {
+          component: 'credentials',
+          invariant: 'password-change-session-admission-async',
+          message: '[auth] Password change session admission must be synchronous.',
+          createError: () => this.hooks.invariant(
+            'credentials',
+            'password-change-session-admission-async',
+            '[auth] Password change session admission must be synchronous.',
+          ),
+        });
+        if (!admitted) throw authenticationStateChanged();
+      }
       // Compare-and-swap the exact hash that was verified. Two concurrent
       // changes from one old password cannot both commit after async hashing.
       if (this.stmts.updateCredentialIfCurrent.run(
         newHash,
         userId,
         credential.password_hash,
-      ).changes !== 1) return false;
+      ).changes !== 1) return null;
       if (!this.hooks.setPasswordChangeRequired(userId, false)) {
         throw this.hooks.invariant(
           'credentials',
@@ -122,10 +222,13 @@ export class UserCredentialStore {
       this.hooks.recordSecurityAudit(
         'account.password-changed',
         userId,
-        auditContext,
+        capturedAuditContext,
         { userId, provenance: 'authenticated-request' },
       );
-      return true;
+      return Object.freeze({
+        userId,
+        authGeneration: this.hooks.getAuthGeneration(userId),
+      });
     });
   }
 
@@ -134,12 +237,13 @@ export class UserCredentialStore {
     newPassword: string,
     options: ResetPasswordOptions = {},
   ): Promise<boolean> {
+    const capturedOptions = captureResetPasswordOptions(options);
     if (!this.hooks.identityExists(userId)) return false;
 
     const newHash = await this.hashPassword(newPassword);
     return this.hooks.mutation(() => {
-      if (options.beforeCommit) {
-        invokeSynchronousAuthCallback(options.beforeCommit, {
+      if (capturedOptions.beforeCommit) {
+        invokeSynchronousAuthCallback(capturedOptions.beforeCommit, {
           component: 'credentials',
           invariant: 'password-reset-before-commit-async',
           message: '[auth] Password reset beforeCommit must be synchronous.',
@@ -163,7 +267,7 @@ export class UserCredentialStore {
       }
       if (!this.hooks.setPasswordChangeRequired(
         userId,
-        options.passwordChangeRequired ?? false,
+        capturedOptions.passwordChangeRequired ?? false,
       )) {
         throw this.hooks.invariant(
           'credentials',
@@ -175,7 +279,7 @@ export class UserCredentialStore {
       this.hooks.recordSecurityAudit(
         'account.password-reset-by-admin',
         userId,
-        options.audit,
+        capturedOptions.audit,
       );
       return true;
     });
@@ -187,11 +291,13 @@ export class UserCredentialStore {
     consumeActionToken: () => void,
     auditContext?: AuthSecurityAuditContext,
   ): Promise<boolean> {
+    const capturedConsumeActionToken = consumeActionToken;
+    const capturedAuditContext = captureSecurityAuditContext(auditContext);
     const newHash = await this.hashPassword(newPassword);
 
     return this.hooks.mutation(() => {
       if (!this.hooks.identityExists(userId)) return false;
-      invokeSynchronousAuthCallback(consumeActionToken, {
+      invokeSynchronousAuthCallback(capturedConsumeActionToken, {
         component: 'credentials',
         invariant: 'password-recovery-token-consumer-async',
         message: '[auth] Password recovery token consumption must be synchronous.',
@@ -219,7 +325,7 @@ export class UserCredentialStore {
       this.hooks.recordSecurityAudit(
         'account.password-recovered',
         userId,
-        auditContext,
+        capturedAuditContext,
         { userId, provenance: 'account-recovery' },
       );
       return true;
@@ -254,6 +360,12 @@ export class UserCredentialStore {
     return this.stmts.getCredential.get(userId) as CredentialRow | null;
   }
 
+  private getAuthenticationCredential(userId: string): AuthenticationCredentialRow | null {
+    return this.stmts.getAuthenticationCredential.get(
+      userId,
+    ) as AuthenticationCredentialRow | null;
+  }
+
   private setPasswordChangeRequired(
     userId: string,
     required: boolean,
@@ -267,4 +379,46 @@ export class UserCredentialStore {
       return true;
     });
   }
+}
+
+/** Detach caller-owned audit attribution before an async password hash yields. */
+function captureSecurityAuditContext(
+  input: AuthSecurityAuditContext | undefined,
+): AuthSecurityAuditContext | undefined {
+  if (input === undefined) return undefined;
+  const actor = captureAuthAuditActor(input.actor);
+  if (!actor) return undefined;
+  const request = captureAuthAuditRequestContext(input.request);
+  return Object.freeze({
+    actor,
+    ...(request === undefined ? {} : { request }),
+  });
+}
+
+/** Snapshot reset controls and audit attribution before an async password hash yields. */
+function captureResetPasswordOptions(
+  input: ResetPasswordOptions,
+): Readonly<ResetPasswordOptions> {
+  const passwordChangeRequired = input.passwordChangeRequired;
+  const beforeCommit = input.beforeCommit;
+  const audit = captureSecurityAuditContext(input.audit);
+  return Object.freeze({ passwordChangeRequired, beforeCommit, audit });
+}
+
+function capturePasswordChangeAdmission(
+  input: PasswordChangeAuthenticationAdmission | undefined,
+): Readonly<PasswordChangeAuthenticationAdmission> | null {
+  if (!input) return null;
+  return Object.freeze({
+    expectedAuthGeneration: input.expectedAuthGeneration,
+    admit: input.admit,
+  });
+}
+
+function authenticationStateChanged(): AuthError {
+  return new AuthError(
+    'Authentication state changed; sign in again',
+    'AUTH_STATE_CHANGED',
+    409,
+  );
 }

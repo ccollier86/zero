@@ -83,7 +83,7 @@ The current trail records these successful local control-plane transitions:
 
 | Area | Action families |
 | --- | --- |
-| Installation and identity | `application.bootstrap-completed`, `application.auth-profile-adopted`, `tenant.administration-adopted`, `identity.registered`, `identity.provisioned-by-admin`, `identity.provisioning-rolled-back` |
+| Installation and identity | `application.bootstrap-completed`, `application.auth-profile-adopted`, `tenant.administration-adopted`, `identity.registered`, `identity.provisioned-by-admin`, `identity.provisioning-rolled-back`, `identity.provisioning-reconciled` |
 | Application access | `application.roles-replaced`, `application.ownership-transferred`, `application.ownership-adopted`, `application.tenant-owner-roles-reconciled`, `application.authorization-registry-initialized`, `application.authorization-registry-updated` |
 | Tenant lifecycle and authority | `tenant.created`, `tenant.member-added`, `tenant.member-updated`, `tenant.member-removed`, `tenant.ownership-transferred`, `application.tenant-created`, `application.tenant-suspended`, `application.tenant-reactivated` |
 | Invitations and requests | `tenant.invitation-issued`, `tenant.invitation-revoked`, `tenant.invitation-accepted`, `tenant.join-request-submitted`, `tenant.join-request-approved`, `tenant.join-request-denied` |
@@ -97,6 +97,15 @@ event with `metadata.changed: false`. A failed domain proof is retained as a
 completed verification action with outcome `failed` and reason
 `proof-mismatch`. The platform-user deletion conflict caused by retained
 tenant history is retained as denied without deleting the identity.
+
+Administrator setup compensation records `identity.provisioning-rolled-back`
+when the exact untouched identity is removed. Its reason distinguishes a
+provider rejection (`setup-delivery-failed`) from a receipt, token-binding, or
+final state-commit failure (`provisioning-failed`). If concurrent authorized
+work has adopted that identity, Zero instead records
+`identity.provisioning-reconciled` with reason `newer-state-preserved`; the
+setup token and stale receipt are retired while the account remains. Crash
+recovery writes the same durable distinction in the recovery transaction.
 
 This inventory deliberately excludes generic application reads/writes,
 automatic read auditing, SSO, break-glass administration, platform-directory

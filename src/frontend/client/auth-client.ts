@@ -157,8 +157,11 @@ export type {
   AuthApplicationUserStatus,
 } from './auth-application-administration-types';
 export type {
+  AuthPlatformAddMemberParams,
   AuthPlatformAdministrationConfig,
   AuthPlatformAdminSdkSurface,
+  AuthPlatformIssueInvitationParams,
+  AuthPlatformRoleSelection,
   AuthPlatformTenant,
   AuthPlatformTenantCreateParams,
   AuthPlatformTenantCreateResult,
@@ -168,6 +171,8 @@ export type {
   AuthPlatformTenantStatus,
   AuthPlatformTenantUpdateParams,
   AuthPlatformTenantUpdateResult,
+  AuthPlatformUpdateMemberInput,
+  AuthPlatformUpdateMemberParams,
 } from './auth-platform-administration-types';
 export type {
   AuthAuditActorProvenance,

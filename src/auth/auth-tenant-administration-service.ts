@@ -18,7 +18,11 @@ import type {
 } from './auth-tenant-mutation-authority';
 import { AuthError, type PermissionKey } from './types';
 import type { UserStore } from './user-store';
-import { AuthAuditService, authAuditActorFromContext } from './auth-audit-service';
+import {
+  AuthAuditService,
+  authAuditActorFromContext,
+  captureAuthAuditRequestContext,
+} from './auth-audit-service';
 import type { AuthAuditRequestContext } from './auth-audit-types';
 import type { TenancyService } from './tenancy/tenancy-service';
 import {
@@ -37,6 +41,10 @@ import {
 } from './authorization-role-grant';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
 import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
+import {
+  normalizeAuthTenantMemberCreateRoleKeys,
+  normalizeAuthTenantMemberReplacementRoleKeys,
+} from './auth-tenant-member-role-selection';
 
 interface MemberRow {
   membership_id: string;
@@ -62,6 +70,11 @@ const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
 const MAX_SEARCH_LENGTH = 120;
 const MAX_CURSOR_LENGTH = 512;
+
+type MemberCreateRoleSelection =
+  | Readonly<{ kind: 'omitted' }>
+  | Readonly<{ kind: 'empty' }>
+  | Readonly<{ kind: 'selected'; roleKeys: readonly string[] }>;
 
 /**
  * Headless tenant-member control plane.
@@ -191,11 +204,12 @@ export class AuthTenantAdministrationService {
     const limit = normalizeLimit(input.limit);
     const cursor = decodeCursor(input.cursor);
     const search = normalizeSearch(input.search);
+    const status = normalizeMembershipPageStatus(input.status);
     const clauses = ['membership.tenant_id = ?'];
     const args: Array<string | number> = [tenantId];
-    if (input.status) {
+    if (status) {
       clauses.push('membership.status = ?');
-      args.push(input.status);
+      args.push(status);
     }
     if (search) {
       clauses.push(`(
@@ -252,29 +266,46 @@ export class AuthTenantAdministrationService {
   addMember(input: {
     tenantId: string;
     email: string;
-    roleKeys: readonly string[];
+    roleKeys?: readonly string[];
     assertCurrentAuthority: AssertAuthTenantMutationAuthority;
     auditRequest?: AuthAuditRequestContext;
   }): AuthTenantMemberMutationResult {
+    const tenantId = input.tenantId;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
+    const suppliedRoleKeys: unknown = input.roleKeys;
     const email = canonicalizeEmail(input.email);
     if (!isValidEmail(email)) {
       throw new AuthError('Invalid email address', 'INVALID_EMAIL', 422);
     }
+    const roleSelection = snapshotMemberCreateRoleSelection(
+      suppliedRoleKeys,
+      this.kernel.authorization.mode,
+    );
 
     try {
       const membership = this.db.transaction(() => {
         this.users.assertCurrentProfile();
-        this.lockTenant.run(input.tenantId);
+        this.lockTenant.run(tenantId);
         const authority = this.requireMutationAuthority(
-          input.tenantId,
-          input.assertCurrentAuthority,
-          isDefaultMemberRole(input.roleKeys)
+          tenantId,
+          assertCurrentAuthority,
+          roleSelection.kind !== 'selected'
+            || isDefaultMemberRole(roleSelection.roleKeys)
             ? ['tenant.members:manage']
             : ['tenant.members:manage', 'tenant.roles:manage'],
         );
-        const roleKeys = this.normalizeDesiredRoleKeys(input.tenantId, input.roleKeys, []);
+        const selectedRoleKeys = this.normalizeCreateRoleKeys(
+          tenantId,
+          roleSelection,
+        );
+        const roleKeys = this.normalizeDesiredRoleKeys(
+          tenantId,
+          selectedRoleKeys,
+          [],
+        );
         for (const roleKey of roleKeys) {
-          if (!this.canGrantRole(input.tenantId, authority, roleKey)) {
+          if (!this.canGrantRole(tenantId, authority, roleKey)) {
             throw roleEscalationForbidden();
           }
         }
@@ -294,14 +325,14 @@ export class AuthTenantAdministrationService {
           );
         }
         const created = this.tenancy.addMembership({
-          tenantId: input.tenantId,
+          tenantId,
           userId: user.userId,
           roleKey: roleKeys[0]!,
           createdBy: authority.auth.userId,
         });
         if (this.kernel.authorization.mode === 'advanced') {
           this.requireAdvancedRoles().replaceTenantRoles({
-            tenantId: input.tenantId,
+            tenantId,
             membershipId: created.membershipId,
             roleKeys,
             changedBy: authority.auth.userId,
@@ -316,16 +347,16 @@ export class AuthTenantAdministrationService {
         this.audit.append({
           action: 'tenant.member-added',
           outcome: 'succeeded',
-          scope: { kind: 'tenant', tenantId: input.tenantId },
+          scope: { kind: 'tenant', tenantId },
           actor: authAuditActorFromContext(authority.auth),
-          request: input.auditRequest,
+          request: auditRequest,
           target: { type: 'tenant-membership', id: persisted.membershipId },
           metadata: { 'role-count': roleKeys.length },
         });
         return persisted;
       });
       return {
-        member: this.getMember(input.tenantId, membership.membershipId),
+        member: this.getMember(tenantId, membership.membershipId),
         actorSessionInvalidated: false,
       };
     } catch (error) {
@@ -342,18 +373,37 @@ export class AuthTenantAdministrationService {
     assertCurrentAuthority: AssertAuthTenantMutationAuthority;
     auditRequest?: AuthAuditRequestContext;
   }): AuthTenantMemberMutationResult {
+    const tenantId = input.tenantId;
+    const membershipId = input.membershipId;
+    const expectedRoleRevision = input.expectedRoleRevision;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
+    const suppliedRoleKeys: unknown = input.roleKeys;
+    const replacementRoleKeys = suppliedRoleKeys === undefined
+      ? undefined
+      : normalizeAuthTenantMemberReplacementRoleKeys(
+          suppliedRoleKeys as readonly string[],
+        );
+    const status = normalizeMembershipUpdateStatus(input.status);
+    if (status === undefined && replacementRoleKeys === undefined) {
+      throw new AuthError(
+        'Provide a membership status or role change',
+        'TENANT_MEMBER_UPDATE_EMPTY',
+        422,
+      );
+    }
     try {
       const result = this.db.transaction(() => {
         this.users.assertCurrentProfile();
-        this.lockTenant.run(input.tenantId);
+        this.lockTenant.run(tenantId);
         const authority = this.requireMutationAuthority(
-          input.tenantId,
-          input.assertCurrentAuthority,
-          input.roleKeys === undefined
+          tenantId,
+          assertCurrentAuthority,
+          replacementRoleKeys === undefined
             ? ['tenant.members:manage']
             : ['tenant.members:manage', 'tenant.roles:manage'],
         );
-        const current = this.requireTenantMembership(input.tenantId, input.membershipId);
+        const current = this.requireTenantMembership(tenantId, membershipId);
         if (current.roleKey === TENANT_OWNER_ROLE_KEY) throw protectedOwnerLifecycle();
         if (current.status === 'removed') {
           throw new AuthError(
@@ -362,17 +412,17 @@ export class AuthTenantAdministrationService {
             409,
           );
         }
-        const replacement = input.roleKeys === undefined
+        const replacement = replacementRoleKeys === undefined
           ? null
           : this.prepareRoleReplacement({
-              tenantId: input.tenantId,
+              tenantId,
               membership: current,
-              roleKeys: input.roleKeys,
-              expectedRevision: input.expectedRoleRevision,
+              roleKeys: replacementRoleKeys,
+              expectedRevision: expectedRoleRevision,
               authority,
             });
         const roleKeys = replacement?.roleKeys;
-        if ((input.status === 'active' || roleKeys !== undefined)
+        if ((status === 'active' || roleKeys !== undefined)
           && this.users.getUserById(current.userId)?.status !== 'active') {
           throw new AuthError(
             'The account is not available for active tenant authority',
@@ -389,8 +439,8 @@ export class AuthTenantAdministrationService {
           );
         }
         let membership = current;
-        if (input.status && membership.status !== input.status) {
-          membership = input.status === 'active'
+        if (status !== undefined && membership.status !== status) {
+          membership = status === 'active'
             ? this.tenancy.reactivateMembership(membership.membershipId)
             : this.tenancy.suspendMembership(membership.membershipId);
         }
@@ -404,7 +454,7 @@ export class AuthTenantAdministrationService {
           }
           if (this.kernel.authorization.mode === 'advanced') {
             this.requireAdvancedRoles().replaceTenantRoles({
-              tenantId: input.tenantId,
+              tenantId,
               membershipId: membership.membershipId,
               roleKeys,
               changedBy: authority.auth.userId,
@@ -420,14 +470,14 @@ export class AuthTenantAdministrationService {
         this.audit.append({
           action: 'tenant.member-updated',
           outcome: 'succeeded',
-          scope: { kind: 'tenant', tenantId: input.tenantId },
+          scope: { kind: 'tenant', tenantId },
           actor: authAuditActorFromContext(authority.auth),
-          request: input.auditRequest,
+          request: auditRequest,
           target: { type: 'tenant-membership', id: changed.membershipId },
           metadata: {
             status: changed.status,
             'status-changed': changed.status !== current.status,
-            'roles-requested': input.roleKeys !== undefined,
+            'roles-requested': replacementRoleKeys !== undefined,
           },
         });
         return {
@@ -437,7 +487,7 @@ export class AuthTenantAdministrationService {
         };
       });
       return {
-        member: this.getMember(input.tenantId, result.changed.membershipId),
+        member: this.getMember(tenantId, result.changed.membershipId),
         actorSessionInvalidated: result.changed.membershipId === result.actorMembershipId
           && result.changed.authorizationGeneration
             !== result.current.authorizationGeneration,
@@ -453,24 +503,28 @@ export class AuthTenantAdministrationService {
     assertCurrentAuthority: AssertAuthTenantMutationAuthority;
     auditRequest?: AuthAuditRequestContext;
   }): AuthTenantMemberMutationResult {
+    const tenantId = input.tenantId;
+    const membershipId = input.membershipId;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
     try {
       const result = this.db.transaction(() => {
         this.users.assertCurrentProfile();
-        this.lockTenant.run(input.tenantId);
+        this.lockTenant.run(tenantId);
         const authority = this.requireMutationAuthority(
-          input.tenantId,
-          input.assertCurrentAuthority,
+          tenantId,
+          assertCurrentAuthority,
           ['tenant.members:manage'],
         );
-        const current = this.requireTenantMembership(input.tenantId, input.membershipId);
+        const current = this.requireTenantMembership(tenantId, membershipId);
         if (current.roleKey === TENANT_OWNER_ROLE_KEY) throw protectedOwnerLifecycle();
         const removed = this.tenancy.removeMembership(current.membershipId);
         this.audit.append({
           action: 'tenant.member-removed',
           outcome: 'succeeded',
-          scope: { kind: 'tenant', tenantId: input.tenantId },
+          scope: { kind: 'tenant', tenantId },
           actor: authAuditActorFromContext(authority.auth),
-          request: input.auditRequest,
+          request: auditRequest,
           target: { type: 'tenant-membership', id: removed.membershipId },
         });
         return {
@@ -480,7 +534,7 @@ export class AuthTenantAdministrationService {
         };
       });
       return {
-        member: this.getMember(input.tenantId, result.removed.membershipId),
+        member: this.getMember(tenantId, result.removed.membershipId),
         actorSessionInvalidated: result.removed.membershipId === result.actorMembershipId
           && result.removed.authorizationGeneration
             !== result.current.authorizationGeneration,
@@ -496,30 +550,34 @@ export class AuthTenantAdministrationService {
     assertCurrentAuthority: AssertAuthTenantMutationAuthority;
     auditRequest?: AuthAuditRequestContext;
   }): AuthTenantOwnershipTransferResult {
+    const tenantId = input.tenantId;
+    const targetMembershipId = input.targetMembershipId;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
     try {
       const transferred = this.db.transaction(() => {
         this.users.assertCurrentProfile();
-        this.lockTenant.run(input.tenantId);
+        this.lockTenant.run(tenantId);
         const authority = this.requireMutationAuthority(
-          input.tenantId,
-          input.assertCurrentAuthority,
+          tenantId,
+          assertCurrentAuthority,
           ['tenant.roles:manage'],
         );
         const actor = this.requireActorMembership(
-          input.tenantId,
+          tenantId,
           authority.scope.membershipId,
           authority.auth.userId,
         );
         if (actor.roleKey !== TENANT_OWNER_ROLE_KEY) throw forbidden();
-        this.requireTenantMembership(input.tenantId, input.targetMembershipId);
-        const tenant = this.tenancy.getTenant(input.tenantId);
+        this.requireTenantMembership(tenantId, targetMembershipId);
+        const tenant = this.tenancy.getTenant(tenantId);
         if (!tenant) throw memberNotFound();
         const demotedRoleKey = tenant.kind === 'administration'
           ? 'administrator'
           : 'member';
         const result = this.tenancy.transferOwnership(
           actor.membershipId,
-          input.targetMembershipId,
+          targetMembershipId,
           demotedRoleKey,
         );
         if (this.kernel.authorization.mode === 'advanced') {
@@ -527,7 +585,7 @@ export class AuthTenantAdministrationService {
           // its atomic owner hook. Also ensure the former owner retains Zero's
           // ordinary member role; keep any other assignable roles intact.
           this.requireAdvancedRoles().assignTenantRole({
-            tenantId: input.tenantId,
+            tenantId,
             membershipId: result.previousOwnerMembership.membershipId,
             roleKey: demotedRoleKey,
             createdBy: authority.auth.userId,
@@ -537,9 +595,9 @@ export class AuthTenantAdministrationService {
         this.audit.append({
           action: 'tenant.ownership-transferred',
           outcome: 'succeeded',
-          scope: { kind: 'tenant', tenantId: input.tenantId },
+          scope: { kind: 'tenant', tenantId },
           actor: authAuditActorFromContext(authority.auth),
-          request: input.auditRequest,
+          request: auditRequest,
           target: {
             type: 'tenant-membership',
             id: result.ownerMembership.membershipId,
@@ -548,9 +606,9 @@ export class AuthTenantAdministrationService {
         return result;
       });
       return {
-        owner: this.getMember(input.tenantId, transferred.ownerMembership.membershipId),
+        owner: this.getMember(tenantId, transferred.ownerMembership.membershipId),
         previousOwner: this.getMember(
-          input.tenantId,
+          tenantId,
           transferred.previousOwnerMembership.membershipId,
         ),
         actorSessionInvalidated: true,
@@ -633,12 +691,7 @@ export class AuthTenantAdministrationService {
     input: readonly string[],
     current: readonly string[],
   ): readonly string[] {
-    if (!Array.isArray(input) || input.length > 32
-      || input.some((value) => typeof value !== 'string')) {
-      throw new AuthError('Role selection is invalid', 'TENANT_ROLE_SELECTION_INVALID', 422);
-    }
-    const keys = [...new Set(input.map((value) => value.trim()).filter(Boolean))]
-      .sort(compareKeys);
+    const keys = normalizeAuthTenantMemberReplacementRoleKeys(input);
     const currentSet = new Set(current);
     const tenant = this.tenancy.getTenant(tenantId);
     if (!tenant) throw memberNotFound();
@@ -669,6 +722,23 @@ export class AuthTenantAdministrationService {
       }
     }
     return Object.freeze(keys);
+  }
+
+  private normalizeCreateRoleKeys(
+    tenantId: string,
+    selection: MemberCreateRoleSelection,
+  ): readonly string[] {
+    const tenant = this.tenancy.getTenant(tenantId);
+    if (!tenant) throw memberNotFound();
+    if (tenant.kind === 'administration'
+      && selection.kind !== 'selected') {
+      throw administrationRoleRequired();
+    }
+    if (selection.kind === 'selected') return selection.roleKeys;
+    return normalizeAuthTenantMemberCreateRoleKeys(
+      selection.kind === 'omitted' ? undefined : [],
+      this.kernel.authorization.mode,
+    );
   }
 
   private canGrantRole(
@@ -820,13 +890,61 @@ function isDefaultMemberRole(roles: readonly string[]): boolean {
   return roles.length === 1 && roles[0] === 'member';
 }
 
-function normalizeSearch(value: string | undefined): string {
+function snapshotMemberCreateRoleSelection(
+  input: unknown,
+  mode: Parameters<typeof normalizeAuthTenantMemberCreateRoleKeys>[1],
+): MemberCreateRoleSelection {
+  // Absence and a literal empty selection have tenant-kind-specific meaning.
+  // Defer those cases until live authority has been proven for the target.
+  if (input === undefined) return Object.freeze({ kind: 'omitted' });
+  if (Array.isArray(input) && input.length === 0) {
+    return Object.freeze({ kind: 'empty' });
+  }
+  return Object.freeze({
+    kind: 'selected',
+    roleKeys: normalizeAuthTenantMemberCreateRoleKeys(
+      input as readonly string[],
+      mode,
+    ),
+  });
+}
+
+function normalizeSearch(value: unknown): string {
   if (value === undefined) return '';
+  if (typeof value !== 'string') {
+    throw new AuthError('Member search is invalid', 'TENANT_MEMBER_PAGE_INVALID', 422);
+  }
   const normalized = value.trim().toLocaleLowerCase('en-US');
   if (normalized.length > MAX_SEARCH_LENGTH) {
     throw new AuthError('Member search is too long', 'TENANT_MEMBER_PAGE_INVALID', 422);
   }
   return normalized;
+}
+
+function normalizeMembershipPageStatus(
+  value: unknown,
+): TenantMembershipStatus | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'active' || value === 'suspended' || value === 'removed') {
+    return value;
+  }
+  throw new AuthError(
+    'Member status filter is invalid',
+    'TENANT_MEMBER_PAGE_INVALID',
+    422,
+  );
+}
+
+function normalizeMembershipUpdateStatus(
+  value: unknown,
+): Extract<TenantMembershipStatus, 'active' | 'suspended'> | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'active' || value === 'suspended') return value;
+  throw new AuthError(
+    'Membership status must be active or suspended',
+    'TENANT_MEMBER_STATUS_INVALID',
+    422,
+  );
 }
 
 function escapeLike(value: string): string {
@@ -837,9 +955,11 @@ function encodeCursor(cursor: MemberCursor): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
 }
 
-function decodeCursor(value: string | undefined): MemberCursor | null {
-  if (!value) return null;
-  if (value.length > MAX_CURSOR_LENGTH) throw invalidCursor();
+function decodeCursor(value: unknown): MemberCursor | null {
+  if (value === undefined || value === '') return null;
+  if (typeof value !== 'string' || value.length > MAX_CURSOR_LENGTH) {
+    throw invalidCursor();
+  }
   try {
     const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as unknown;
     if (!parsed || typeof parsed !== 'object') throw invalidCursor();

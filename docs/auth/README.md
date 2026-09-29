@@ -1,8 +1,13 @@
-# Auth System
+# Guardian Authentication and Authorization
 
 **Register. Login. Keep identity private by default.**
 
-An app-local authentication primitive—self-hosted inside each Bun runtime and
+**Guardian** is Zero's app-local identity, session, tenancy, and authorization
+system. The product name is documentation vocabulary only: existing `auth.*`
+configuration, `/auth/*` routes, package exports, and TypeScript symbols remain
+stable.
+
+Guardian is self-hosted inside each Bun runtime and
 backed by the app's ReactiveDB. File-mode runtimes sharing one SQLite database
 also share durable session authority and promptly revalidate their own sockets;
 this is not coordination between separate databases or hosts. User and session
@@ -268,12 +273,17 @@ interface AuthContext {
   userId: string;
   email: string;
   role: string;
+  authGeneration?: number;
   clientId?: string;
   sessionKind?: 'web' | 'native';
   scope?: readonly string[];
   sessionId?: string;
 }
 ```
+
+Managed Guardian contexts always populate `authGeneration`; it remains
+optional in the public shape for source compatibility with standalone or
+manually constructed contexts.
 
 Use role, trusted user properties, ownership, middleware, endpoint auth, and
 resource/Sync policy exactly as web routes do. `clientId` and `sessionKind` are
@@ -662,6 +672,7 @@ src/auth/
 ├── user-property-service.ts    # Configured user property validation/defaults
 ├── auth-email-templates.ts     # Auth email template contracts/branding helper
 ├── mfa-challenge-service.ts    # MFA enrollment/challenge policy and OTP/TOTP verification
+├── mfa-challenge-rollback.ts   # Exact pending-method/challenge compensation receipts
 ├── mfa-challenge-store.ts      # SQLite operations for MFA challenge rows
 ├── mfa-method-store.ts         # SQLite operations for enrolled MFA methods
 ├── mfa-secret-crypto.ts        # AES-GCM encryption for authenticator seeds
@@ -983,8 +994,10 @@ creates a one-time action token, and requires the provider boundary to accept
 the intended recipient. Only after that succeeds does Zero set
 `passwordChangeRequired` and revoke the user's sessions. A provider exception
 or rejected recipient deletes the undelivered token and leaves an existing
-account ungated. Admin creation with setup email is all-or-cleanup: failed
-delivery removes the new account so the same identity can be retried.
+account ungated. Admin creation with setup email is exact-state cleanup: failed
+delivery removes the untouched new account so the same identity can be
+retried, while any account changed or linked by another authorized operation
+is preserved and only its provisional setup link and receipt are retired.
 Those administrator delivery failures emit distinct verification, setup,
 reset, and provisioning-compensation events with stable classifications and
 cleanup status, but no address, provider message, or email content. See the
@@ -1332,6 +1345,31 @@ an authenticated bearer token from account settings. Email setup sends a
 six-digit code through the platform email provider and does not require
 `app.publicUrl`. TOTP setup returns `{ secret, otpauthUrl, issuer, accountName }`
 so the UI can render a QR code and verify the first authenticator code.
+
+Account-settings setup is a profile ceremony and is bound to the exact live
+web or native session that started it—not merely the same user. Its signed
+verification token carries an opaque fingerprint of that session authority;
+`POST /auth/mfa/setup/verify` must also present a bearer from the same live
+session. Session revocation/expiry, tenant or membership generation changes,
+advanced-role revision changes, an account security-generation change, or a
+different concurrent login rejects activation with `AUTH_STATE_CHANGED` (409).
+The browser SDK attaches the current bearer automatically for
+`verifyMfaSetup()`. A custom client must preserve and send the originating
+session bearer. Auth-flow setup that began from `mfaSetupToken` remains a
+pre-session ceremony and does not require an existing bearer.
+
+Official MFA routes carry the exact `authGeneration` proved by the preceding
+password/session/transition boundary into challenge creation, method
+activation, and final session issuance. `MfaChallengeService` keeps its
+optional generation arguments only for source-compatible trusted-server calls
+that do not bridge an earlier credential check; application ceremonies must
+not use that fallback. Profile calls also pass a synchronous live-authority
+admission callback, which is rechecked inside the enrollment write/activation
+transaction. If email delivery or transition-token signing fails, exact
+service-issued rollback receipts consume only the challenge and disable only
+the still-pending method created by that attempt. A receipt mismatch fails
+closed as `AUTH_STATE_INVARIANT_FAILED`; it never disables a newer or active
+method.
 
 `POST /auth/mfa/challenge/verify` exchanges a valid challenge token and OTP/TOTP
 code for the normal access/refresh token pair.

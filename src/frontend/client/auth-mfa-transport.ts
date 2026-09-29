@@ -63,7 +63,7 @@ export class AuthMfaTransport {
   }): Promise<AuthMfaSetupVerifyResult> {
     const attempt = this.options.beginAuthentication(false);
     try {
-      const response = await fetch(
+      const response = await this.options.optionalAuthenticatedFetch(
         `${this.options.baseUrl}/auth/mfa/setup/verify`,
         { ...jsonRequest(params), signal: attempt.signal },
       );

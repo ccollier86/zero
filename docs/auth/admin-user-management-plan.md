@@ -197,11 +197,13 @@ reset flows through emailed action links.
 Setup/reset email actions validate real email readiness and require the
 provider boundary to accept the intended recipient before setting
 `passwordChangeRequired` or revoking sessions. A failed delivery removes its
-token and leaves an existing user ungated; failed setup delivery during admin
-creation removes the new account. Generic profile updates cannot newly enable
-the gate. The clear-requirement route is an explicit, audited recovery for
-another user whose gate already exists; it leaves the password unchanged and
-invalidates sessions plus outstanding action links.
+token and leaves an existing user ungated. Admin creation is protected by a
+durable exact-state receipt: failed setup delivery removes an untouched new
+account, but preserves an account that another authorized operation has
+already changed or linked to durable state. Generic profile updates cannot
+newly enable the gate. The clear-requirement route is an explicit, audited
+recovery for another user whose gate already exists; it leaves the password
+unchanged and invalidates sessions plus outstanding action links.
 
 Admin user creation should accept:
 

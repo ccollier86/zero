@@ -103,9 +103,10 @@ All notable Zero Platform changes are tracked here.
   ambiguous legacy or reverse/tenancy-axis reinterpretation, blocks transitions
   around pending registration provisioning, and fences stale runtimes and Sync
   authority through the shared revision clock.
-- Added migrations `024` through `027` for the protected Administration
+- Added migrations `024` through `028` for the protected Administration
   Organization, server-owned MFA assurance, invitation grant snapshots, and
-  the durable authorization-registry manifest. Legacy or missing MFA assurance
+  the durable authorization-registry manifest, plus exact administrator-user
+  provisioning receipts. Legacy or missing MFA assurance
   steps up under the configured policy; pre-snapshot pending invitations must
   be reissued and current grants may narrow but never widen; and permission,
   role, profile, and evaluator semantics are fingerprinted behind monotonic
@@ -202,6 +203,33 @@ All notable Zero Platform changes are tracked here.
 
 ### Fixed
 
+- Made tenant-member role selection explicit across validation and service
+  boundaries. Creation defaults an omitted role list to `member`, rejects an
+  explicit empty list, requires exactly one simple-mode role, and bounds
+  advanced creation to 32 roles without silently choosing the first value.
+  Customer membership updates may still deliberately clear assignable roles,
+  while Administration Organization memberships must retain administration
+  authority. Application and customer advanced replacement now treat only a
+  literal empty array as a deliberate clear; malformed, sparse, blank, and
+  duplicate headless inputs fail with stable validation errors instead of
+  being filtered into a different grant set.
+- Validated verified-domain request roles as customer-organization roles even
+  while the feature is disabled, hardened tenant input canonicalization against
+  non-string values, and kept empty/runtime auth service contexts structurally
+  identical.
+- Kept verified-domain onboarding `/start` non-enumerating during internal
+  failures while reporting `AUTH_DOMAIN_START_FAILED` through the app-local
+  error channel, retained private DNS causes without reflecting them to Auth
+  clients, and deferred transaction-coupled Auth success events plus every Auth
+  email-outbox worker wake until the outer commit succeeds. Invalid headless
+  status/filter inputs now fail with stable typed errors before mutation,
+  explicit runtime `null` role selections no longer become defaults, stale DNS
+  leases emit no result, and platform-admin SDK role contracts encode non-empty
+  selections with their required revision fence. Caller-owned registration,
+  invitation-acceptance, and user-creation inputs are now detached before
+  password hashing, DNS, proof, and live-authority callbacks can yield or mutate
+  audit/authorization state; a failed post-commit observer can no longer report
+  a committed domain verification as a failed request.
 - Updated the Elysia, validation, file detection, Tailwind/Vite/PostCSS, and
   synchronized AI SDK dependency families within their supported major lines,
   eliminating all advisories reported by `bun audit`. Dependency auditing is
@@ -358,6 +386,20 @@ All notable Zero Platform changes are tracked here.
   `installAuthStopBarrier()` so `await app.stop()` joins auth email delivery
   before the caller disposes its injected database; Doctor warns when a direct
   public plugin composition omits that barrier.
+- Bound every local authentication completion to the exact security generation
+  proved or committed by its password, registration, email-verification, MFA,
+  invitation, or password-change ceremony. A concurrent reset or revocation can
+  no longer let an older proof adopt a newer generation while token signing is
+  in flight; the handoff fails with `AUTH_STATE_CHANGED`. Tenant-onboarding
+  continuation consumers also recheck that generation inside the invitation or
+  join-request transaction before consuming the one-time proof.
+- Named Zero's integrated identity, tenancy, session, and authorization system
+  **Guardian** in documentation without renaming any `auth.*` configuration,
+  route, package export, database object, or TypeScript API.
+- Preserved the documented single-tenant page-cookie upgrade path: a verified
+  pre-upgrade cookie with no generation claim may adopt the current generation
+  only through its exact live refresh row, while explicit mismatches and all
+  unbound multi-tenant legacy credentials continue to fail closed.
 - Replaced per-app anonymous SIGINT/SIGTERM listeners with one process-shared
   createApp shutdown dispatcher. Normal stops unregister cleanly, repeated
   signals share one shutdown, and every active app lifecycle settles before the
@@ -394,9 +436,11 @@ All notable Zero Platform changes are tracked here.
 - Made administrator-forced password gates delivery-only: setup/reset email
   must be accepted before Zero gates the account and revokes sessions, generic
   user updates cannot enable the gate, failed admin-created setup delivery
-  rolls back the new account, and an explicit confirmed recovery action can
-  clear an already-stranded gate for another user while invalidating sessions
-  and outstanding links.
+  rolls back only an exact untouched new account, concurrent identity or
+  durable-reference adoption preserves the account, expired receipts recover
+  by the same rule, and an explicit confirmed recovery action can clear an
+  already-stranded gate for another user while invalidating sessions and
+  outstanding links.
 - Made reset/setup password completion atomic and sessionless. A successful
   action consumes its exact one-time link, saves the new password, clears the
   password gate, revokes existing sessions, clears browser auth state, and

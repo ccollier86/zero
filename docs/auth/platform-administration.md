@@ -137,9 +137,13 @@ roles.
 
 Every newly added or invited non-owner administration member must receive only
 explicit administration-only roles; these flows never fall back to the customer
-`member` role. Generic role replacement applies the same tenant-kind policy. A
-missing/empty/invalid set fails with
-`AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED`. The protected `owner` role is
+`member` role. Generic role replacement applies the same tenant-kind policy.
+For member creation, a missing or empty role set fails with
+`AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED`; a declared customer-only role
+uses the same code. An undeclared role fails with
+`AUTHORIZATION_ROLE_UNDECLARED`, while the protected `owner` or another system
+role fails with `TENANT_OWNER_ROLE_PROTECTED`. Malformed JSON values remain
+`AUTH_VALIDATION_FAILED`. The protected `owner` role is
 handled only by bootstrap and the dedicated ownership lifecycle: ownership
 transfer demotes the former owner to `administrator`, invalidates that actor's
 current session, and promotes the target atomically. Retained legacy
@@ -183,13 +187,29 @@ organization and uses the ordinary active-tenant APIs and
 `TenantMemberManagement`. This keeps customer mutations on the same tenant
 authority boundary as the rest of the data plane.
 
+Directory and member reads validate the request shape and then revalidate live
+application authority before customer-tenant discovery or SQL projection. A
+revoked caller therefore receives the same authority failure for existing and
+missing customer IDs, without an unauthorized existence probe.
+
 Tenant directory reads represent `active`, `suspended`, and terminal
 `archived` rows. Lifecycle mutation accepts only `active` or `suspended`.
+Direct/headless tenant and member list calls reject invalid filters with
+`PLATFORM_TENANT_PAGE_INVALID` (`422`) before authority or persistence work.
+On HTTP routes, values rejected by the Elysia query schema (for example an
+unknown status enum or malformed numeric field) use the namespace-wide
+`AUTH_VALIDATION_FAILED` contract; semantic values that pass that schema but
+fail service validation, such as an invalid opaque cursor, retain
+`PLATFORM_TENANT_PAGE_INVALID`. A headless lifecycle value outside the two
+mutable statuses fails with `PLATFORM_TENANT_STATUS_INVALID` (`422`) before
+authority or persistence work.
 Every list cursor, identifier, role, permission, page, and response object is
 strictly parsed and bounded by the browser transport; unknown or malformed
 server fields fail closed. Lifecycle writes use
 `expectedAuthorizationGeneration`, and a generation conflict reloads the
-directory before the user retries.
+directory before the user retries. Tenant-created/suspended/reactivated success
+events publish only after the outermost ReactiveDB transaction commits;
+rollbacks and idempotent lifecycle retries emit no false or duplicate success.
 
 ## Browser SDK
 
@@ -222,8 +242,15 @@ The namespace also provides `listMembers`, `addMember`, `updateMember`,
 `removeMember`, `transferOwnership`, `listInvitations`, `issueInvitation`,
 `revokeInvitation`, and read-only `listTenantMembers`. Exact request and result
 types are exported from `@zero/framework/react`, including
-`AuthPlatformAdministrationConfig`, `AuthPlatformTenant`, and
-`AuthPlatformAdminSdkSurface`.
+`AuthPlatformAdministrationConfig`, `AuthPlatformRoleSelection`,
+`AuthPlatformAddMemberParams`, `AuthPlatformUpdateMemberParams`,
+`AuthPlatformUpdateMemberInput`, `AuthPlatformIssueInvitationParams`,
+`AuthPlatformTenant`, and `AuthPlatformAdminSdkSurface`. Platform add,
+role-replacement, and invitation requests use a non-empty role tuple; direct
+role replacement also requires `expectedRoleRevision`. The administration
+hook accepts `AuthPlatformUpdateMemberInput` and injects that revision from its
+fenced member view. Ordinary tenant `addTenantMember` keeps `roles` optional so
+omission can select `member`.
 
 The platform config is intentionally capability-driven. In particular,
 `canManageTenants` controls suspend/reactivate, while `canCreateTenants`

@@ -189,6 +189,151 @@ describe('tenant invitation and join-request HTTP ceremonies', () => {
     });
   }, 60_000);
 
+  test('rejects onboarding continuations whose auth generation changes before commit', async () => {
+    const harness = await start();
+    const existing = await createIdentity(harness, 'stale-continuation');
+    const issued = await issue(harness, existing.email);
+    const service = harness.runtime.getTenantOnboardingService()!;
+    const store = harness.runtime.getStore()!;
+
+    const invitationLogin = await request(harness, 'POST', '/auth/login', {
+      username: existing.email,
+      password: 'password123',
+    });
+    const invitationContinuation = invitationLogin.body.onboarding.tenantCreation.continuation;
+    const acceptInvitation = service.acceptInvitationForUser.bind(service);
+    (service as any).acceptInvitationForUser = (...args: any[]) => {
+      store.revokeAllUserTokens(existing.userId);
+      return acceptInvitation(...args as Parameters<typeof acceptInvitation>);
+    };
+    let acceptance: HttpResult;
+    try {
+      acceptance = await request(harness, 'POST', '/auth/invitations/accept', {
+        token: issued.token,
+        continuation: invitationContinuation,
+      });
+    } finally {
+      (service as any).acceptInvitationForUser = acceptInvitation;
+    }
+    expect(acceptance!).toMatchObject({
+      status: 409,
+      body: { code: 'AUTH_STATE_CHANGED' },
+    });
+    expect(harness.runtime.getTenancyService()!.getMembership(
+      harness.owner.tenant.tenantId,
+      existing.userId,
+    )).toBeNull();
+    expect((await request(harness, 'POST', '/auth/invitations/inspect', {
+      token: issued.token,
+    })).body.available).toBe(true);
+
+    const joinLogin = await request(harness, 'POST', '/auth/login', {
+      username: existing.email,
+      password: 'password123',
+    });
+    const joinContinuation = joinLogin.body.onboarding.tenantCreation.continuation;
+    const submitJoinRequest = service.submitJoinRequest.bind(service);
+    (service as any).submitJoinRequest = (input: any) => {
+      store.revokeAllUserTokens(existing.userId);
+      return submitJoinRequest(input);
+    };
+    let submitted: HttpResult;
+    try {
+      submitted = await request(harness, 'POST', '/auth/tenant-join-requests', {
+        tenantSlug: 'owner-organization',
+        continuation: joinContinuation,
+      });
+    } finally {
+      (service as any).submitJoinRequest = submitJoinRequest;
+    }
+    expect(submitted!).toMatchObject({
+      status: 400,
+      body: { code: 'TENANT_ONBOARDING_PROOF_INVALID' },
+    });
+    expect(service.listJoinRequests({
+      tenantId: harness.owner.tenant.tenantId,
+      status: 'pending',
+    }).requests).toEqual([]);
+  }, 60_000);
+
+  test('does not mint a newer-generation session after invitation acceptance commits', async () => {
+    const harness = await start();
+    const service = harness.runtime.getTenantOnboardingService()!;
+    const store = harness.runtime.getStore()!;
+    const tenancy = harness.runtime.getTenancyService()!;
+
+    const existing = await createIdentity(harness, 'post-commit-existing');
+    const existingInvitation = await issue(harness, existing.email);
+    const login = await request(harness, 'POST', '/auth/login', {
+      username: existing.email,
+      password: 'password123',
+    });
+    const originalAccept = service.acceptInvitationForUser.bind(service);
+    (service as any).acceptInvitationForUser = (...args: any[]) => {
+      const accepted = originalAccept(
+        ...args as Parameters<typeof originalAccept>
+      );
+      store.revokeAllUserTokens(existing.userId);
+      return accepted;
+    };
+    let existingResponse: HttpResult;
+    try {
+      existingResponse = await request(harness, 'POST', '/auth/invitations/accept', {
+        token: existingInvitation.token,
+        continuation: login.body.onboarding.tenantCreation.continuation,
+      });
+    } finally {
+      (service as any).acceptInvitationForUser = originalAccept;
+    }
+    expect(existingResponse!).toMatchObject({
+      status: 409,
+      body: { code: 'AUTH_STATE_CHANGED' },
+    });
+    expect(tenancy.getMembership(
+      harness.owner.tenant.tenantId,
+      existing.userId,
+    )).not.toBeNull();
+    expect((await request(harness, 'POST', '/auth/invitations/inspect', {
+      token: existingInvitation.token,
+    })).body.available).toBe(false);
+
+    const newEmail = 'post-commit-new@example.test';
+    const newInvitation = await issue(harness, newEmail);
+    const originalCreate = service.createInvitationAccount.bind(service);
+    (service as any).createInvitationAccount = async (
+      ...args: Parameters<typeof originalCreate>
+    ) => {
+      const accepted = await originalCreate(...args);
+      if (!('invitationAcceptancePending' in accepted)) {
+        store.revokeAllUserTokens(accepted.user.userId);
+      }
+      return accepted;
+    };
+    let newResponse: HttpResult;
+    try {
+      newResponse = await request(harness, 'POST', '/auth/invitations/accept', {
+        token: newInvitation.token,
+        username: 'post-commit-new',
+        email: newEmail,
+        password: 'password123',
+      });
+    } finally {
+      (service as any).createInvitationAccount = originalCreate;
+    }
+    expect(newResponse!).toMatchObject({
+      status: 409,
+      body: { code: 'AUTH_STATE_CHANGED' },
+    });
+    const created = store.getUserByEmail(newEmail)!;
+    expect(tenancy.getMembership(
+      harness.owner.tenant.tenantId,
+      created.userId,
+    )).not.toBeNull();
+    expect((await request(harness, 'POST', '/auth/invitations/inspect', {
+      token: newInvitation.token,
+    })).body.available).toBe(false);
+  }, 60_000);
+
   test('keeps a new account invitation pending until required MFA completes', async () => {
     const harness = await startRequiredMfa();
     const service = harness.runtime.getTenantOnboardingService()!;

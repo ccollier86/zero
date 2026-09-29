@@ -520,8 +520,13 @@ import type {
   AuthApplicationAdminSdkSurface,
   AuthAuditEvent,
   AuthAuditSdkSurface,
+  AuthPlatformAddMemberParams,
   AuthPlatformAdminSdkSurface,
+  AuthPlatformIssueInvitationParams,
+  AuthPlatformRoleSelection,
   AuthPlatformTenantPage,
+  AuthPlatformUpdateMemberInput,
+  AuthPlatformUpdateMemberParams,
   ControlPlaneAuditViewerProps,
   AuthAuthorizationState,
   AuthorizationScopeBoundary,
@@ -549,6 +554,11 @@ import type {
 	const applicationAccessProps: ApplicationAccessManagementProps = {};
 	const applicationAdmin = {} as AuthApplicationAdminSdkSurface;
 	const platformAdmin = {} as AuthPlatformAdminSdkSurface;
+	const platformAddMember = {} as AuthPlatformAddMemberParams;
+	const platformIssueInvitation = {} as AuthPlatformIssueInvitationParams;
+	const platformRoleSelection = {} as AuthPlatformRoleSelection;
+	const platformUpdateMemberInput = {} as AuthPlatformUpdateMemberInput;
+	const platformUpdateMember = {} as AuthPlatformUpdateMemberParams;
 	const platformTenantPage = {} as AuthPlatformTenantPage;
 	const auditEvent = {} as AuthAuditEvent;
 	const auditSdk = {} as AuthAuditSdkSurface;
@@ -734,6 +744,11 @@ export const clientSymbols = {
   applicationAccessProps,
   applicationAdmin,
   platformAdmin,
+  platformAddMember,
+  platformIssueInvitation,
+  platformRoleSelection,
+  platformUpdateMemberInput,
+  platformUpdateMember,
   platformTenantPage,
   platformAdministrationResult,
   platformTenantsResult,

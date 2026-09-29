@@ -20,7 +20,10 @@ import {
 } from './auth-tenant-creation';
 import { AuthError, type ResolvedAuthBehaviorConfig, type UserRecord } from './types';
 import type { UserStore } from './user-store';
-import { AuthAuditService } from './auth-audit-service';
+import {
+  AuthAuditService,
+  captureAuthAuditRequestContext,
+} from './auth-audit-service';
 import type { AuthAuditRequestContext } from './auth-audit-types';
 import type { AuthorizationKernel } from './authorization-kernel';
 import type { AuthorizationRoleService } from './authorization-role-service';
@@ -52,9 +55,14 @@ export class AuthTenantSessionService {
   /** Finish password/email/MFA authentication without bypassing tenant choice. */
   async complete(
     user: UserRecord,
-    explicitBinding?: WebSessionBinding,
-    mfaVerifiedAt: number | null = null,
+    explicitBinding: WebSessionBinding | undefined,
+    mfaVerifiedAt: number | null,
+    expectedAuthGeneration: number,
   ): Promise<AuthTenantSessionCompletion> {
+    const authGeneration = this.requireCompletionAuthGeneration(
+      user.userId,
+      expectedAuthGeneration,
+    );
     if (this.tenancyMode === 'single') {
       if (explicitBinding) {
         throw new AuthError(
@@ -65,7 +73,10 @@ export class AuthTenantSessionService {
       }
       return {
         kind: 'session',
-        tokens: await this.tokens.issueTokenPair(user, { mfaVerifiedAt }),
+        tokens: await this.tokens.issueTokenPair(user, {
+          mfaVerifiedAt,
+          expectedAuthGeneration: authGeneration,
+        }),
       };
     }
 
@@ -77,6 +88,7 @@ export class AuthTenantSessionService {
         tokens: await this.tokens.issueTokenPair(user, {
           binding: explicitBinding,
           mfaVerifiedAt,
+          expectedAuthGeneration: authGeneration,
         }),
         tenant: toTenantSummary(active),
       };
@@ -84,7 +96,7 @@ export class AuthTenantSessionService {
 
     const memberships = tenancy.listActiveTenantMembershipsForUser(user.userId);
     if (memberships.length === 0) {
-      return this.createOnboardingCompletion(user, mfaVerifiedAt);
+      return this.createOnboardingCompletion(user, mfaVerifiedAt, authGeneration);
     }
     if (memberships.length === 1) {
       const active = memberships[0]!;
@@ -93,6 +105,7 @@ export class AuthTenantSessionService {
         tokens: await this.tokens.issueTokenPair(user, {
           binding: toBinding(active),
           mfaVerifiedAt,
+          expectedAuthGeneration: authGeneration,
         }),
         tenant: toTenantSummary(active),
       };
@@ -101,7 +114,7 @@ export class AuthTenantSessionService {
     const created = this.continuations.create({
       userId: user.userId,
       purpose: 'tenant_selection',
-      authGeneration: this.users.getAuthGeneration(user.userId),
+      authGeneration,
       mfaVerifiedAt,
       ttlMs: TENANT_SELECTION_CONTINUATION_TTL_MS,
     });
@@ -122,6 +135,7 @@ export class AuthTenantSessionService {
     user: UserRecord;
     completion: Extract<AuthTenantSessionCompletion, { kind: 'session' }>;
   }> {
+    const capturedAuditRequest = captureAuthAuditRequestContext(auditRequest);
     if (this.tenancyMode !== 'multi') {
       throw new AuthError(
         'Tenant selection is unavailable in single-tenant mode',
@@ -141,8 +155,12 @@ export class AuthTenantSessionService {
       {
         binding: toBinding(active),
         mfaVerifiedAt: record.mfaVerifiedAt,
+        expectedAuthGeneration: record.authGeneration,
       },
       () => {
+        if (this.users.getAuthGeneration(user.userId) !== record.authGeneration) {
+          return false;
+        }
         if (!this.continuations.consumeInspected(
           record,
           'tenant_selection',
@@ -154,7 +172,7 @@ export class AuthTenantSessionService {
           outcome: 'succeeded',
           scope: { kind: 'tenant', tenantId: active.tenant.tenantId },
           actor: { userId: user.userId, provenance: 'authenticated-request' },
-          request: auditRequest,
+          request: capturedAuditRequest,
           target: { type: 'tenant-membership', id: active.membership.membershipId },
         });
         return true;
@@ -179,6 +197,7 @@ export class AuthTenantSessionService {
     tokens: { accessToken: string; refreshToken: string };
     tenant: AuthTenantSummary;
   }> {
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
     if (this.tenancyMode !== 'multi') {
       throw new AuthError(
         'Organization creation is unavailable',
@@ -197,8 +216,8 @@ export class AuthTenantSessionService {
     }
     const fields = normalizeTenantCreateFields(input.name, input.slug);
     return hasContinuation
-      ? this.createTenantFromContinuation(input.continuation!, fields, input.auditRequest)
-      : this.createTenantFromRefresh(input.refreshToken!, fields, input.auditRequest);
+      ? this.createTenantFromContinuation(input.continuation!, fields, auditRequest)
+      : this.createTenantFromRefresh(input.refreshToken!, fields, auditRequest);
   }
 
   /** List live tenant choices only after proving the current refresh family. */
@@ -225,6 +244,7 @@ export class AuthTenantSessionService {
     tokens: { accessToken: string; refreshToken: string };
     tenant: AuthTenantSummary;
   }> {
+    const capturedAuditRequest = captureAuthAuditRequestContext(auditRequest);
     if (this.tenancyMode !== 'multi') {
       throw new AuthError(
         'Tenant switching is unavailable in single-tenant mode',
@@ -256,7 +276,7 @@ export class AuthTenantSessionService {
             sessionKind: 'web',
             provenance: 'authenticated-request',
           },
-          request: auditRequest,
+          request: capturedAuditRequest,
           target: { type: 'tenant-membership', id: active.membership.membershipId },
         });
       },
@@ -277,12 +297,17 @@ export class AuthTenantSessionService {
    */
   createOnboardingCompletion(
     user: UserRecord,
-    mfaVerifiedAt: number | null = null,
+    mfaVerifiedAt: number | null,
+    expectedAuthGeneration: number,
   ): TenantOnboardingCompletion {
+    const authGeneration = this.requireCompletionAuthGeneration(
+      user.userId,
+      expectedAuthGeneration,
+    );
     const created = this.continuations.create({
       userId: user.userId,
       purpose: 'tenant_onboarding',
-      authGeneration: this.users.getAuthGeneration(user.userId),
+      authGeneration,
       mfaVerifiedAt,
       ttlMs: TENANT_ONBOARDING_CONTINUATION_TTL_MS,
     });
@@ -345,6 +370,7 @@ export class AuthTenantSessionService {
             membershipAuthorizationGeneration: 0,
           },
           mfaVerifiedAt: record.mfaVerifiedAt,
+          expectedAuthGeneration: record.authGeneration,
         },
         () => {
           const current = this.users.getUserById(user.userId);
@@ -448,6 +474,17 @@ export class AuthTenantSessionService {
     } catch (error) {
       throw mapTenantCreationError(error);
     }
+  }
+
+  private requireCompletionAuthGeneration(
+    userId: string,
+    expectedAuthGeneration: number,
+  ): number {
+    const current = this.users.getAuthGeneration(userId);
+    if (current !== expectedAuthGeneration) {
+      throw authenticationStateChanged();
+    }
+    return expectedAuthGeneration;
   }
 
   private get tenancyMode() {
@@ -556,5 +593,13 @@ function invalidRefreshProof(): AuthError {
     'Current session proof is invalid or expired',
     'INVALID_REFRESH_TOKEN',
     401,
+  );
+}
+
+function authenticationStateChanged(): AuthError {
+  return new AuthError(
+    'Authentication state changed; sign in again',
+    'AUTH_STATE_CHANGED',
+    409,
   );
 }

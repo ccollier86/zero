@@ -30,7 +30,10 @@ import {
 import { cn } from '#zero/lib/utils';
 import { authRoleLabel, createAuthRoleLabelMap } from './auth-role-presentation';
 import { PlatformAdministrationInvitations } from './platform-administration-invitations';
-import { platformAssignableRoles } from './platform-administration-role-policy';
+import {
+  platformAssignableRoles,
+  platformRoleSelection,
+} from './platform-administration-role-policy';
 import { TenantRolePicker } from './tenant-role-picker';
 
 type MemberAction = 'suspend' | 'remove' | 'transfer';
@@ -253,17 +256,20 @@ export function PlatformAdministrationMembers({
   async function addMember(event: React.FormEvent) {
     event.preventDefault();
     const nextEmail = email.trim();
-    if (!nextEmail) return;
+    const roles = platformRoleSelection(addRoles);
+    if (!nextEmail || !roles) return;
     if (await run(
-      () => administration.addMember({ email: nextEmail, roles: addRoles }),
+      () => administration.addMember({ email: nextEmail, roles }),
       `Added ${nextEmail} to platform administration`,
     )) setEmail('');
   }
 
   async function saveRoles() {
     if (!editedMember) return;
+    const roles = platformRoleSelection(draftRoles);
+    if (!roles) return;
     const result = await run(
-      () => administration.updateMember(editedMember.membershipId, { roles: draftRoles }),
+      () => administration.updateMember(editedMember.membershipId, { roles }),
       `Updated platform roles for ${memberName(editedMember)}`,
     );
     if (result && editedMember.membershipId === actorMembershipId) {

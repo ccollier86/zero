@@ -246,7 +246,7 @@ countUsersByRole(role: string): number
 `listUsers()` returns newest users first with joined properties. Count helpers
 are used by first-user bootstrap and last-admin safety checks.
 
-### Registration provisioning receipts
+### Registration and administrator provisioning receipts
 
 `createRegistrationUser(..., { provisional: true })` serializes bootstrap
 election and commits the new identity with an exact
@@ -287,6 +287,27 @@ rollback require the exact lease; recovery rechecks expiry under the SQLite
 writer lock. This leaves an interrupted install retryable without reopening a
 completed installation or silently accepting partial success.
 
+Administrator-created accounts that request setup email use a separate
+`_auth_admin_user_provisioning` receipt table. They never count as pending
+registrations and therefore cannot inherit a registration-only bootstrap or
+tenant-owner exception. Zero persists an exact identity fingerprint, security
+generation, lease capability, and the ID of the exact setup token before
+crossing the email provider boundary. The final password gate and receipt
+finalization share one transaction and recheck the original state under the
+SQLite writer lock.
+
+Failed delivery removes only the still-untouched provisional identity and its
+exact setup token. If another authorized operation has already changed the
+identity, security generation, authority, session state, unrelated token
+state, or an app row linked to that user by a foreign key, compensation
+invalidates the provisional setup link, preserves the adopted account, and
+retires only the stale receipt. Startup applies the same rule to an expired
+receipt and emits `AUTH_ADMIN_USER_PROVISIONING_RECOVERED` with
+`cleanupSucceeded`; it never blindly deletes newer user state after a process
+interruption. Recovery success signals are scheduled at the enclosing
+transaction's after-commit boundary, so rolled-back startup work is never
+reported as recovered.
+
 Protected application and tenant ownership uses the same predicate as token
 issuance: `status = active`, no password-change requirement, and either no
 email-verification requirement or a positive verification timestamp.
@@ -299,6 +320,14 @@ that would leave an installed application or active tenant without another
 token-eligible owner. The only gated-owner exceptions are the exact pending
 registration receipt during atomic creation/rollback and the scoped
 registration intent during delivered-email verification.
+
+The registration result also carries `authGeneration`, captured inside the
+identity/provisioning transaction. Authentication orchestration must pass that
+exact value through MFA, tenant selection/onboarding, and session issuance. It
+must not query the current generation after an asynchronous boundary: a reset
+which commits in between invalidates the receipt and produces
+`AUTH_STATE_CHANGED` instead of blessing the original ceremony with newer
+security state.
 
 ### updateUser
 
@@ -349,6 +378,10 @@ not an ordinary administrator deletion.
 
 ```ts
 async verifyPassword(userId: string, password: string): Promise<boolean>
+verifyPasswordForAuthentication(
+  userId: string,
+  password: string,
+): Promise<PasswordAuthenticationProof | null>
 ```
 
 The facade delegates the lookup and verification to `UserCredentialStore`.
@@ -357,10 +390,20 @@ returns `true`/`false`; an incorrect password is not an exception. The runtime
 profile fence is checked before and after the asynchronous verification so a
 profile change cannot authorize a stale in-flight result.
 
+Authentication flows use `verifyPasswordForAuthentication()`. Its secret-free
+proof contains the exact auth generation read with the verified hash, and the
+store rechecks both after Argon2 returns. `verifyPassword()` remains the
+compatible boolean wrapper for callers that do not issue authentication state.
+
 ### updatePassword
 
 ```ts
 async updatePassword(userId: string, currentPassword: string, newPassword: string): Promise<boolean>
+updatePasswordForAuthentication(
+  userId: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<PasswordChangeAuthenticationReceipt | null>
 ```
 
 **Steps:**
@@ -373,7 +416,11 @@ async updatePassword(userId: string, currentPassword: string, newPassword: strin
    `true` after commit.
 
 The compare-and-swap prevents two concurrent updates that verified the same
-old password from both committing.
+old password from both committing. The authenticated change-password route uses
+`updatePasswordForAuthentication()`, whose receipt captures the post-revocation
+generation in that same transaction. Replacement-session issuance is bound to
+the receipt; a later reset fails with `AUTH_STATE_CHANGED`. `updatePassword()`
+retains its existing boolean contract.
 
 ### resetPassword
 

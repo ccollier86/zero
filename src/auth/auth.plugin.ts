@@ -381,6 +381,7 @@ export function createAuthPlugin(config: AuthPluginConfig) {
           getAuthorizationRoleService,
           getAccountEmailService,
           getAuthEmailOutbox,
+          emitCode,
         })
       : new Elysia({ name: 'auth-verified-domain-disabled' }))
     .use(nativeRuntime

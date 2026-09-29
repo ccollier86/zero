@@ -32,6 +32,8 @@ export interface AuthContext {
   userId: string;
   email: string;
   role: string;
+  /** Exact user security generation validated by this request credential. */
+  authGeneration?: number;
   /** Present when the bearer was issued to a registered native public client. */
   clientId?: string;
   /** Browser access remains `web`; native OIDC access is explicitly attributed. */
@@ -168,6 +170,11 @@ export interface AuthTransitionTokenPayload {
   methodType?: AuthMfaMethodType;
   challengeId?: string;
   flow?: 'auth' | 'profile';
+  /**
+   * Opaque binding to the exact live session authority that began a profile
+   * MFA enrollment. The same live authority must present the token to finish.
+   */
+  profileAuthorityFingerprint?: string;
 }
 
 /**

@@ -66,7 +66,7 @@ All routes require a current tenant-bound Bearer access token.
 |---|---|---|
 | `GET /auth/tenant/config` | active tenant membership | Returns safe tenant metadata, current actor authority/capabilities, and static role metadata |
 | `GET /auth/tenant/members` | `tenant.members:read` | Search and cursor-page safe member projections |
-| `POST /auth/tenant/members` | `tenant.members:manage` | Adds an already-existing account by exact canonical email |
+| `POST /auth/tenant/members` | `tenant.members:manage`; non-default roles also require `tenant.roles:manage` | Adds an already-existing account by exact canonical email |
 | `PATCH /auth/tenant/members/:membershipId` | `tenant.members:manage`; role changes also require `tenant.roles:manage` | Suspends/reactivates membership and/or replaces assignable roles |
 | `DELETE /auth/tenant/members/:membershipId` | `tenant.members:manage` | Marks a retained membership `removed`; it does not delete the identity |
 | `POST /auth/tenant/ownership/transfer` | `tenant.roles:manage` plus the caller's live `owner` membership | Atomically promotes the target and demotes the caller |
@@ -83,8 +83,9 @@ The list route accepts:
 ```
 
 Cursor order is deterministic (`joinedAt`, then `membershipId`). Search and
-all SQL values are parameterized. A malformed or oversized cursor returns
-`422 TENANT_MEMBER_PAGE_INVALID`.
+all SQL values are parameterized. An invalid limit, cursor, search, or status
+filter returns `422 TENANT_MEMBER_PAGE_INVALID`; direct/headless callers cannot
+turn a malformed falsy status into an unfiltered query.
 
 Adding a member does not create an identity or set a password. The email is
 canonicalized and must identify exactly one existing account. Missing and
@@ -107,15 +108,30 @@ await client.updateTenantMember(membershipId, {
 });
 ```
 
-In simple mode exactly one role is required when `roles` is changed. In
-advanced mode the array replaces all assignable roles while protected system
-roles remain untouched. The write is one SQLite transaction; a failed role
-change rolls back a status change in the same request. A direct SDK role-set
+On member creation, omitting `roles` selects Zero's default `member` role;
+supplying an explicit empty array is invalid. Simple mode accepts exactly one
+role, while advanced mode accepts between one and 32 distinct assignable roles.
+Creation never silently selects the first element from a multi-role simple-mode
+request. The separate platform-administration `addMember` contract requires
+explicit administration roles and never applies this customer-role default.
+
+On member update, advanced-mode `roles: []` deliberately removes every
+assignable role from an ordinary customer-organization membership; protected
+system roles remain untouched. Administration Organization memberships must
+always retain at least one administration-only role, and simple mode still
+requires exactly one role whenever `roles` is changed. The write is one SQLite
+transaction; a failed role change rolls back a status change in the same
+request. A direct SDK role-set
 write must include the member's latest `expectedRoleRevision`; a missing
 revision returns `422 TENANT_ROLE_REVISION_REQUIRED`, while an intervening role
 write returns `409 TENANT_ROLE_REVISION_CONFLICT` without overwriting it. The
 packaged hook supplies the loaded revision automatically and reloads after a
-conflict.
+conflict. An update with neither status nor roles returns
+`422 TENANT_MEMBER_UPDATE_EMPTY`. Headless callers that supply a status other
+than exact `active` or `suspended` receive
+`422 TENANT_MEMBER_STATUS_INVALID` before authority or persistence work; the
+HTTP schema continues to use Zero's standard `AUTH_VALIDATION_FAILED` for a
+malformed JSON field.
 
 Role definitions are static application configuration, but retained
 assignments can outlive a definition during a deployment. Such retired keys

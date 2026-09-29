@@ -34,6 +34,10 @@ import type { AuthAuditService } from '../auth-audit-service';
 import type { AuthAuditRequestContext } from '../auth-audit-types';
 import { emitPlatformCode } from '../../observability/sink';
 import type { AuthPlatformCodeEmitter } from '../auth-observability';
+import {
+  captureNativePageAuthorityProof,
+  isNativePageAuthorityProofCurrent,
+} from './native-page-authority-proof';
 
 export class NativeAuthorizationService {
   private readonly context: NativeServiceContext;
@@ -105,18 +109,22 @@ export class NativeAuthorizationService {
   claimContinuationForAuth(value: unknown, auth: AuthContext): string | null {
     this.assertCurrentProfile();
     const parsed = parseNativeAuthContinuation(value);
-    const authority = this.context.authority.capturePageAuthority(auth);
-    if (!parsed || !authority || !this.context.requests.claimForAuthority(
-      parsed.requestId, auth.userId, authority,
+    const proof = captureNativePageAuthorityProof(this.context, auth);
+    if (!parsed || !proof || !this.context.requests.claimForAuthority(
+      parsed.requestId,
+      auth.userId,
+      proof.authority,
+      () => isNativePageAuthorityProofCurrent(this.context, proof),
     )) return null;
     return parsed.continuation;
   }
   validateContinuationForAuth(value: unknown, auth: AuthContext): string | null {
     this.assertCurrentProfile();
     const parsed = parseNativeAuthContinuation(value);
-    const authority = this.context.authority.capturePageAuthority(auth);
-    if (!parsed || !authority || !this.context.requests.matchesAuthority(
-      parsed.requestId, auth.userId, authority,
+    const proof = captureNativePageAuthorityProof(this.context, auth);
+    if (!parsed || !proof || !isNativePageAuthorityProofCurrent(this.context, proof)
+      || !this.context.requests.matchesAuthority(
+      parsed.requestId, auth.userId, proof.authority,
     )) return null;
     return parsed.continuation;
   }
@@ -136,9 +144,9 @@ export class NativeAuthorizationService {
     return approveNativeRequest(this.context, rawRequestId, auth);
   }
 
-  deny(rawRequestId: string) {
+  deny(rawRequestId: string, auth: AuthContext) {
     this.assertCurrentProfile();
-    return denyNativeRequest(this.context, rawRequestId);
+    return denyNativeRequest(this.context, rawRequestId, auth);
   }
   exchangeCode(input: NativeCodeExchangeInput) {
     this.assertCurrentProfile();

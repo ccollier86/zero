@@ -10,7 +10,11 @@ import { timingSafeEqual } from 'node:crypto';
 import { OBS_CODES } from '../observability/codes';
 import type { ReactiveDB } from '../sync/reactive-db';
 import { hashToken } from '../tokens/token-utils';
-import { authAuditActorFromContext, type AuthAuditService } from './auth-audit-service';
+import {
+  authAuditActorFromContext,
+  captureAuthAuditRequestContext,
+  type AuthAuditService,
+} from './auth-audit-service';
 import type { AuthAuditRequestContext } from './auth-audit-types';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
 import type { AssertAuthTenantMutationAuthority } from './auth-tenant-mutation-authority';
@@ -108,14 +112,22 @@ export class VerifiedDomainDnsCoordinator {
   }): Promise<AuthTenantDomainClaimProjection> {
     this.dependencies.users.assertCurrentProfile();
     this.requireEnabled();
-    const lease = this.acquireManualLease(input);
+    const request = Object.freeze({
+      tenantId: input.tenantId,
+      claimId: input.claimId,
+      expectedRevision: input.expectedRevision,
+      assertCurrentAuthority: input.assertCurrentAuthority,
+      auditRequest: captureAuthAuditRequestContext(input.auditRequest),
+    });
+    const lease = this.acquireManualLease(request);
     let answers: readonly string[];
     try {
       answers = await this.resolveAnswers(lease.domain);
-    } catch {
+    } catch (error) {
       this.releaseUnavailableLease({ ...lease, scheduleRetry: false });
       this.dependencies.emitCode(OBS_CODES.AUTH_DOMAIN_DNS_UNAVAILABLE, {
-        metadata: { claimId: input.claimId, tenantId: input.tenantId },
+        error,
+        metadata: { claimId: request.claimId, tenantId: request.tenantId },
       });
       throw dnsUnavailable();
     }
@@ -123,7 +135,7 @@ export class VerifiedDomainDnsCoordinator {
     let claim: AuthTenantDomainClaimProjection;
     try {
       claim = this.finalizeManualLease({
-        ...input,
+        ...request,
         leaseOwner: lease.leaseOwner,
         expectedNumericRevision: lease.revision,
         matched,
@@ -139,10 +151,6 @@ export class VerifiedDomainDnsCoordinator {
       }
       throw error;
     }
-    this.dependencies.emitCode(
-      matched ? OBS_CODES.AUTH_DOMAIN_VERIFIED : OBS_CODES.AUTH_DOMAIN_VERIFICATION_FAILED,
-      { metadata: { claimId: input.claimId, tenantId: input.tenantId } },
-    );
     return claim;
   }
 
@@ -167,17 +175,17 @@ export class VerifiedDomainDnsCoordinator {
       let answers: readonly string[];
       try {
         answers = await this.resolveAnswers(lease.domain);
-      } catch {
+      } catch (error) {
         this.releaseUnavailableLease({ ...lease, scheduleRetry: true });
         this.dependencies.emitCode(OBS_CODES.AUTH_DOMAIN_DNS_UNAVAILABLE, {
+          error,
           metadata: { claimId: lease.claimId, tenantId: lease.tenantId },
         });
         processed += 1;
         continue;
       }
       const matched = answers.some((answer) => digestMatches(lease.digest, answer));
-      this.finalizeSystemLease(lease, matched);
-      processed += 1;
+      if (this.finalizeSystemLease(lease, matched)) processed += 1;
     }
     return processed;
   }
@@ -190,6 +198,7 @@ export class VerifiedDomainDnsCoordinator {
         this.timer = null;
       }
       this.dependencies.emitCode(OBS_CODES.AUTH_DOMAIN_WORKER_FAILED, {
+        error,
         metadata: { error: error instanceof Error ? error.name : 'UnknownError' },
       });
     });
@@ -203,12 +212,16 @@ export class VerifiedDomainDnsCoordinator {
   }): VerificationLease {
     const { config, db, users } = this.dependencies;
     const now = this.dependencies.now();
+    const tenantId = input.tenantId;
+    const claimId = input.claimId;
+    const expectedRevision = input.expectedRevision;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
     return db.transaction(() => {
       users.assertCurrentProfile();
-      this.dependencies.lockTenant(input.tenantId);
-      this.dependencies.requireAuthority(input.tenantId, input.assertCurrentAuthority);
-      const claim = this.dependencies.requireClaim(input.tenantId, input.claimId);
-      if (claimRevision(claim.revision) !== input.expectedRevision) {
+      this.dependencies.lockTenant(tenantId);
+      this.dependencies.requireAuthority(tenantId, assertCurrentAuthority);
+      const claim = this.dependencies.requireClaim(tenantId, claimId);
+      if (claimRevision(claim.revision) !== expectedRevision) {
         throw claimRevisionConflict();
       }
       const digest = claim.challenge_digest ?? claim.verification_digest;
@@ -233,15 +246,15 @@ export class VerifiedDomainDnsCoordinator {
       `).run(
         leaseOwner,
         now + config.dnsTimeoutMs + 5_000,
-        input.tenantId,
-        input.claimId,
+        tenantId,
+        claimId,
         claim.revision,
         now,
       );
       if (changed.changes !== 1) throw rateLimited();
       return {
-        tenantId: input.tenantId,
-        claimId: input.claimId,
+        tenantId,
+        claimId,
         domain: claim.domain,
         digest,
         revision: claim.revision,
@@ -261,28 +274,41 @@ export class VerifiedDomainDnsCoordinator {
   }): AuthTenantDomainClaimProjection {
     const { db, users } = this.dependencies;
     const now = this.dependencies.now();
+    const tenantId = input.tenantId;
+    const claimId = input.claimId;
+    const leaseOwner = input.leaseOwner;
+    const expectedNumericRevision = input.expectedNumericRevision;
+    const matched = input.matched;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
     db.transaction(() => {
       users.assertCurrentProfile();
-      this.dependencies.lockTenant(input.tenantId);
+      this.dependencies.lockTenant(tenantId);
       const authority = this.dependencies.requireAuthority(
-        input.tenantId,
-        input.assertCurrentAuthority,
+        tenantId,
+        assertCurrentAuthority,
       );
-      const claim = this.dependencies.requireClaim(input.tenantId, input.claimId);
-      if (claim.revision !== input.expectedNumericRevision
-        || claim.lease_owner !== input.leaseOwner) throw claimRevisionConflict();
-      this.persistVerificationResult(claim, input.leaseOwner, input.matched, now);
+      const claim = this.dependencies.requireClaim(tenantId, claimId);
+      if (claim.revision !== expectedNumericRevision
+        || claim.lease_owner !== leaseOwner) throw claimRevisionConflict();
+      this.persistVerificationResult(claim, leaseOwner, matched, now);
       this.dependencies.auditService?.append({
         action: 'tenant.domain-verification-completed',
-        outcome: input.matched ? 'succeeded' : 'failed',
-        ...(input.matched ? {} : { reason: 'proof-mismatch' }),
-        scope: { kind: 'tenant', tenantId: input.tenantId },
+        outcome: matched ? 'succeeded' : 'failed',
+        ...(matched ? {} : { reason: 'proof-mismatch' }),
+        scope: { kind: 'tenant', tenantId },
         actor: authAuditActorFromContext(authority.auth),
-        request: input.auditRequest,
-        target: { type: 'tenant-domain-claim', id: input.claimId },
+        request: auditRequest,
+        target: { type: 'tenant-domain-claim', id: claimId },
       });
+      const code = matched
+        ? OBS_CODES.AUTH_DOMAIN_VERIFIED
+        : OBS_CODES.AUTH_DOMAIN_VERIFICATION_FAILED;
+      db.afterCommit(() => this.dependencies.emitCode(code, {
+        metadata: { claimId, tenantId },
+      }));
     });
-    return this.dependencies.requireProjectedClaim(input.tenantId, input.claimId);
+    return this.dependencies.requireProjectedClaim(tenantId, claimId);
   }
 
   private acquireDueLease(): VerificationLease | null {
@@ -328,19 +354,26 @@ export class VerifiedDomainDnsCoordinator {
     });
   }
 
-  private finalizeSystemLease(lease: VerificationLease, matched: boolean): void {
+  private finalizeSystemLease(lease: VerificationLease, matched: boolean): boolean {
     const { db, users } = this.dependencies;
     const now = this.dependencies.now();
-    db.transaction(() => {
+    const tenantId = lease.tenantId;
+    const claimId = lease.claimId;
+    return db.transaction(() => {
       users.assertCurrentProfile();
-      const claim = this.dependencies.requireClaim(lease.tenantId, lease.claimId);
-      if (claim.revision !== lease.revision || claim.lease_owner !== lease.leaseOwner) return;
+      const claim = this.dependencies.requireClaim(tenantId, claimId);
+      if (claim.revision !== lease.revision || claim.lease_owner !== lease.leaseOwner) {
+        return false;
+      }
       this.persistVerificationResult(claim, lease.leaseOwner, matched, now);
+      const code = matched
+        ? OBS_CODES.AUTH_DOMAIN_REVERIFIED
+        : OBS_CODES.AUTH_DOMAIN_REVERIFICATION_FAILED;
+      db.afterCommit(() => this.dependencies.emitCode(code, {
+        metadata: { claimId, tenantId },
+      }));
+      return true;
     });
-    this.dependencies.emitCode(
-      matched ? OBS_CODES.AUTH_DOMAIN_REVERIFIED : OBS_CODES.AUTH_DOMAIN_REVERIFICATION_FAILED,
-      { metadata: { claimId: lease.claimId, tenantId: lease.tenantId } },
-    );
   }
 
   private releaseUnavailableLease(input: VerificationLease & { scheduleRetry: boolean }): void {

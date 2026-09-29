@@ -1,19 +1,67 @@
 /** Browser-safe contracts for the protected administration organization. */
 
 import type {
-  AuthTenantAddMemberParams,
   AuthTenantInvitation,
   AuthTenantInvitationListParams,
   AuthTenantInvitationPage,
-  AuthTenantIssueInvitationParams,
   AuthTenantIssueInvitationResult,
   AuthTenantMemberListParams,
   AuthTenantMemberMutationResult,
   AuthTenantMemberPage,
   AuthTenantOwnershipTransferResult,
   AuthTenantRoleDescriptor,
-  AuthTenantUpdateMemberParams,
+  AuthTenantMembershipStatus,
 } from './auth-types';
+
+/** At least one explicitly selected administration-organization role. */
+export type AuthPlatformRoleSelection = readonly [string, ...string[]];
+
+/**
+ * Add an existing identity to the protected administration organization.
+ *
+ * Unlike an ordinary tenant member addition, this control-plane operation
+ * never defaults to the customer `member` role. Callers must choose one or
+ * more administration roles explicitly.
+ */
+export interface AuthPlatformAddMemberParams {
+  email: string;
+  roles: AuthPlatformRoleSelection;
+}
+
+/**
+ * Update an administration member without permitting an empty mutation or an
+ * explicitly empty administration-role set at the TypeScript boundary.
+ */
+export type AuthPlatformUpdateMemberParams =
+  | {
+      status: Extract<AuthTenantMembershipStatus, 'active' | 'suspended'>;
+      roles?: never;
+      expectedRoleRevision?: string;
+    }
+  | {
+      status?: Extract<AuthTenantMembershipStatus, 'active' | 'suspended'>;
+      roles: AuthPlatformRoleSelection;
+      expectedRoleRevision: string;
+    };
+
+/** Hook input; the hook injects the current fenced role revision. */
+export type AuthPlatformUpdateMemberInput =
+  | {
+      status: Extract<AuthTenantMembershipStatus, 'active' | 'suspended'>;
+      roles?: never;
+    }
+  | {
+      status?: Extract<AuthTenantMembershipStatus, 'active' | 'suspended'>;
+      roles: AuthPlatformRoleSelection;
+    };
+
+/** Issue an administration invitation with an explicit non-empty role set. */
+export interface AuthPlatformIssueInvitationParams {
+  email: string;
+  roles: AuthPlatformRoleSelection;
+  expiresIn?: string;
+  delivery?: 'manual' | 'email';
+}
 
 export type AuthPlatformTenantStatus = 'active' | 'suspended' | 'archived';
 export type AuthPlatformMutableTenantStatus = Exclude<AuthPlatformTenantStatus, 'archived'>;
@@ -99,10 +147,10 @@ export interface AuthPlatformTenantUpdateResult {
 export interface AuthPlatformAdminSdkSurface {
   getConfig(): Promise<AuthPlatformAdministrationConfig>;
   listMembers(params?: AuthTenantMemberListParams): Promise<AuthTenantMemberPage>;
-  addMember(params: AuthTenantAddMemberParams): Promise<AuthTenantMemberMutationResult>;
+  addMember(params: AuthPlatformAddMemberParams): Promise<AuthTenantMemberMutationResult>;
   updateMember(
     membershipId: string,
-    params: AuthTenantUpdateMemberParams,
+    params: AuthPlatformUpdateMemberParams,
   ): Promise<AuthTenantMemberMutationResult>;
   removeMember(membershipId: string): Promise<AuthTenantMemberMutationResult>;
   transferOwnership(membershipId: string): Promise<AuthTenantOwnershipTransferResult>;
@@ -110,7 +158,7 @@ export interface AuthPlatformAdminSdkSurface {
     params?: AuthTenantInvitationListParams,
   ): Promise<AuthTenantInvitationPage>;
   issueInvitation(
-    params: AuthTenantIssueInvitationParams,
+    params: AuthPlatformIssueInvitationParams,
   ): Promise<AuthTenantIssueInvitationResult>;
   revokeInvitation(invitationId: string): Promise<{ invitation: AuthTenantInvitation }>;
   listTenants(params?: AuthPlatformTenantListParams): Promise<AuthPlatformTenantPage>;

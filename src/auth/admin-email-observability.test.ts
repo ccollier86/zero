@@ -143,6 +143,139 @@ describe('admin email delivery observability', () => {
       expect(JSON.stringify(event)).not.toContain(TARGET.email);
     }
   });
+
+  test('detaches lifecycle audit request before queued delivery yields', async () => {
+    const auditEvents: Array<{ request?: { requestId?: string } }> = [];
+    let markDeliveryStarted!: () => void;
+    let releaseDelivery!: () => void;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      markDeliveryStarted = resolve;
+    });
+    const deliveryGate = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    const store = {
+      transaction: <T>(operation: () => T) => operation(),
+      getUserById: () => TARGET,
+      appendControlPlaneAudit(event: { request?: { requestId?: string } }) {
+        auditEvents.push(event);
+      },
+      countActiveAdmins: () => 1,
+      requirePasswordChange: () => true,
+    };
+    const tokens = {
+      create: () => createdToken('admin_password_reset'),
+      revokeUndelivered: () => true,
+    };
+    const email = {
+      assertReady() {},
+      async sendPasswordReset() {
+        markDeliveryStarted();
+        await deliveryGate;
+      },
+    };
+    const request = { requestId: 'original-request' };
+    const service = new AdminLifecycleEmailService(
+      store as never,
+      tokens as never,
+      email as never,
+      (() => undefined) as never,
+    );
+
+    const pending = service.sendPasswordReset(TARGET.userId, () => ACTOR, request);
+    await deliveryStarted;
+    request.requestId = 'mutated-request';
+    releaseDelivery();
+    await pending;
+
+    expect(auditEvents).toHaveLength(2);
+    expect(auditEvents.every((event) => event.request?.requestId === 'original-request'))
+      .toBe(true);
+  });
+
+  test('runs provisioning token binding and finalization inside their owning transactions', async () => {
+    let transactionDepth = 0;
+    let passwordGateWritten = false;
+    const order: string[] = [];
+    const store = {
+      transaction<T>(operation: () => T): T {
+        transactionDepth += 1;
+        try {
+          return operation();
+        } finally {
+          transactionDepth -= 1;
+        }
+      },
+      getUserById: () => TARGET,
+      appendControlPlaneAudit() {},
+      countActiveAdmins: () => 1,
+      requirePasswordChange() {
+        expect(transactionDepth).toBe(1);
+        passwordGateWritten = true;
+        order.push('password-gate');
+        return true;
+      },
+    };
+    const token = createdToken('account_setup');
+    const tokens = {
+      create() {
+        expect(transactionDepth).toBe(1);
+        order.push('token-created');
+        return token;
+      },
+      revokeUndelivered: () => true,
+    };
+    const email = {
+      assertReady() {},
+      async sendAccountSetup() {
+        expect(transactionDepth).toBe(0);
+        order.push('provider-accepted');
+      },
+    };
+    const service = new AdminLifecycleEmailService(
+      store as never,
+      tokens as never,
+      email as never,
+      (() => undefined) as never,
+    );
+
+    await service.sendSetup(TARGET.userId, () => ACTOR, undefined, {
+      onTokenPrepared(created) {
+        expect(created).toBe(token);
+        expect(transactionDepth).toBe(1);
+        order.push('token-bound');
+      },
+      onDeliveryAttempted() {
+        expect(transactionDepth).toBe(0);
+        order.push('delivery-attempted');
+      },
+      onDeliveryAccepted() {
+        expect(transactionDepth).toBe(0);
+        order.push('delivery-accepted');
+      },
+      onBeforeCommit() {
+        expect(transactionDepth).toBe(1);
+        expect(passwordGateWritten).toBe(false);
+        order.push('state-fenced');
+      },
+      onCommitted() {
+        expect(transactionDepth).toBe(1);
+        expect(passwordGateWritten).toBe(true);
+        order.push('receipt-finalized');
+      },
+    });
+
+    expect(order).toEqual([
+      'token-created',
+      'token-bound',
+      'delivery-attempted',
+      'provider-accepted',
+      'delivery-accepted',
+      'state-fenced',
+      'password-gate',
+      'receipt-finalized',
+    ]);
+  });
 });
 
 function eventCapture(): {

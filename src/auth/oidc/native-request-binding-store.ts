@@ -11,6 +11,7 @@ export class NativeRequestBindingStore {
   private readonly claimAuthority: Statement;
   private readonly matchUser: Statement;
   private readonly matchAuthority: Statement;
+  private readonly consumeAuthority: Statement;
   private readonly available: Statement;
   private readonly release: Statement;
 
@@ -43,6 +44,13 @@ export class NativeRequestBindingStore {
         AND membership_id IS ? AND tenant_authorization_generation IS ?
         AND membership_authorization_generation IS ?
         AND (prompt IS NULL OR prompt = 'create-resume')
+        AND consumed_at IS NULL AND expires_at > ?`);
+    this.consumeAuthority = db.prepare(`UPDATE _auth_native_requests
+      SET consumed_at = ?
+      WHERE request_hash = ? AND bound_user_id = ?
+        AND scope_kind = ? AND scope_id = ? AND tenant_id IS ?
+        AND membership_id IS ? AND tenant_authorization_generation IS ?
+        AND membership_authorization_generation IS ?
         AND consumed_at IS NULL AND expires_at > ?`);
     this.available = db.prepare(`SELECT 1 FROM _auth_native_requests
       WHERE request_hash = ? AND bound_user_id IS NULL
@@ -95,6 +103,21 @@ export class NativeRequestBindingStore {
       ...authorityValues(authority),
       this.now(),
     ));
+  }
+
+  consumeForAuthority(
+    raw: string,
+    userId: string,
+    authority: NativeAuthoritySnapshot,
+  ): boolean {
+    const now = this.now();
+    return this.consumeAuthority.run(
+      now,
+      hashToken(raw),
+      userId,
+      ...authorityValues(authority),
+      now,
+    ).changes === 1;
   }
 
   isAvailable(raw: string): boolean {

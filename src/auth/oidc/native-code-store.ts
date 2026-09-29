@@ -77,6 +77,7 @@ export class NativeCodeStore {
     authorityOrTtl: NativeAuthoritySnapshot | number,
     explicitTtlMs?: number,
     mfaVerifiedAt: number | null = null,
+    admit: () => boolean = () => true,
   ) {
     const legacyApplicationIssue = typeof authorityOrTtl === 'number';
     const authority = legacyApplicationIssue
@@ -102,6 +103,12 @@ export class NativeCodeStore {
           membershipAuthorizationGeneration: request.membershipAuthorizationGeneration,
         }))
         || request.consumedAt !== null || request.expiresAt <= Date.now()) return null;
+      if (!invokeSynchronousAuthCallback(admit, {
+        component: 'native-code-store',
+        invariant: 'native-code-issuance-admission-async',
+        message: '[auth] Native code issuance admission must be synchronous.',
+        emitCode: this.emitCode,
+      })) return null;
       const now = Date.now();
       const consumed = this.consumeRequest.run(
         now, request.requestId, userId,

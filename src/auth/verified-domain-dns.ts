@@ -11,8 +11,11 @@ export interface BoundedTxtResolverOptions {
 }
 
 export class VerifiedDomainDnsError extends Error {
-  constructor(readonly code: 'timeout' | 'lookup' | 'bounds' | 'invalid') {
-    super('DNS TXT verification was unavailable');
+  constructor(
+    readonly code: 'timeout' | 'lookup' | 'bounds' | 'invalid',
+    options?: ErrorOptions,
+  ) {
+    super('DNS TXT verification was unavailable', options);
     this.name = 'VerifiedDomainDnsError';
   }
 }
@@ -51,7 +54,7 @@ export async function resolveBoundedTxt(
   } catch (error) {
     if (error instanceof VerifiedDomainDnsError) throw error;
     if (isAuthoritativeAbsence(error)) return Object.freeze([]);
-    throw new VerifiedDomainDnsError('lookup');
+    throw new VerifiedDomainDnsError('lookup', { cause: error });
   } finally {
     if (timer) clearTimeout(timer);
   }

@@ -113,13 +113,35 @@ export function normalizeLimit(value: number | undefined): number {
   return value;
 }
 
+/** Validate the exact durable invitation statuses accepted by list filters. */
+export function normalizeInvitationPageStatus(
+  value: unknown,
+): AuthTenantInvitationStatus | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'pending' || value === 'accepted'
+    || value === 'revoked' || value === 'expired') return value;
+  throw invalidCursor('Invitation status filter is invalid');
+}
+
+/** Validate the exact durable join-request statuses accepted by list filters. */
+export function normalizeJoinRequestPageStatus(
+  value: unknown,
+): AuthTenantJoinRequestStatus | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'pending' || value === 'approved'
+    || value === 'denied' || value === 'cancelled') return value;
+  throw invalidCursor('Join request status filter is invalid');
+}
+
 export function encodeCursor(cursor: Cursor): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
 }
 
-export function decodeCursor(value: string | undefined): Cursor | null {
-  if (!value) return null;
-  if (value.length > MAX_CURSOR_LENGTH) throw invalidCursor();
+export function decodeCursor(value: unknown): Cursor | null {
+  if (value === undefined || value === '') return null;
+  if (typeof value !== 'string' || value.length > MAX_CURSOR_LENGTH) {
+    throw invalidCursor();
+  }
   try {
     const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as unknown;
     if (!parsed || typeof parsed !== 'object') throw invalidCursor();

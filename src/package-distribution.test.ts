@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
 const EXPECTED_MIGRATION_VERSIONS = Array.from(
-  { length: 27 },
+  { length: 28 },
   (_, index) => String(index + 1).padStart(3, '0'),
 );
 
@@ -240,8 +240,13 @@ import type {
   AuthAuthorizationScopeLifecycle,
   AuthClientOptions,
   AuthPasswordUpdatedResult,
+  AuthPlatformAddMemberParams,
   AuthPlatformAdminSdkSurface,
+  AuthPlatformIssueInvitationParams,
+  AuthPlatformRoleSelection,
   AuthPlatformTenantPage,
+  AuthPlatformUpdateMemberInput,
+  AuthPlatformUpdateMemberParams,
   Client,
   LoginFormProps,
   PlatformUserManagementProps,
@@ -286,8 +291,13 @@ type PackagedAuthExtensionContract =
   | AuthAuthorizationScopeLifecycle
   | AuthClientOptions
   | AuthPermissionScope
+  | AuthPlatformAddMemberParams
   | AuthPlatformAdminSdkSurface
+  | AuthPlatformIssueInvitationParams
+  | AuthPlatformRoleSelection
   | AuthPlatformTenantPage
+  | AuthPlatformUpdateMemberInput
+  | AuthPlatformUpdateMemberParams
   | AssertAuthApplicationMutationAuthority
   | AssertAuthTenantMutationAuthority
   | AtomicRegistrationPolicy
@@ -307,6 +317,31 @@ void (null as PackagedAuthExtensionContract | null);
 
 function assertPackagedPlatformContract(client: Client) {
   const admin: AuthPlatformAdminSdkSurface = client.platformAdmin;
+  const member: AuthPlatformAddMemberParams = {
+    email: 'operator@example.test',
+    roles: ['administrator'],
+  };
+  void admin.addMember(member);
+  // @ts-expect-error Platform administration members require explicit roles.
+  void admin.addMember({ email: 'operator@example.test' });
+  // @ts-expect-error Platform administration roles cannot be empty.
+  void admin.addMember({ email: 'operator@example.test', roles: [] });
+  void admin.updateMember('member-1', {
+    roles: ['administrator'],
+    expectedRoleRevision: 'tenant:1',
+  });
+  // @ts-expect-error Direct role replacement requires a current revision fence.
+  void admin.updateMember('member-1', { roles: ['administrator'] });
+  // @ts-expect-error Platform administration role replacement cannot be empty.
+  void admin.updateMember('member-1', { roles: [] });
+  void admin.issueInvitation({
+    email: 'invited@example.test',
+    roles: ['administrator'],
+  });
+  // @ts-expect-error Platform administration invitations require roles.
+  void admin.issueInvitation({ email: 'invited@example.test' });
+  // @ts-expect-error Platform administration invitation roles cannot be empty.
+  void admin.issueInvitation({ email: 'invited@example.test', roles: [] });
   const tenants: Promise<AuthPlatformTenantPage> = admin.listTenants({ limit: 25 });
   return tenants;
 }

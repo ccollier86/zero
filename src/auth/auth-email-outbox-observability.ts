@@ -16,10 +16,12 @@ export function emitAuthEmailQueued(kind: AuthEmailOutboxKind, result: AuthEmail
       ? OBS_CODES.AUTH_EMAIL_VERIFICATION_REQUESTED
       : null;
   if (requested) emitCode(requested, { metadata: { source: 'outbox' } });
-  emitCode(OBS_CODES.AUTH_EMAIL_OUTBOX_ENQUEUED, {
-    metadata: { kind, result },
-  });
-  if (result === 'enqueued') return;
+  if (result === 'enqueued') {
+    emitCode(OBS_CODES.AUTH_EMAIL_OUTBOX_ENQUEUED, {
+      metadata: { kind, result },
+    });
+    return;
+  }
   const reason = result === 'duplicate' ? 'request_window' : 'queue_capacity';
   if (kind === 'password_reset' && result === 'duplicate') {
     emitPasswordResetSuppressed('cooldown', undefined, emitCode);

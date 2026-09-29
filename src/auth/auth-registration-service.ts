@@ -27,6 +27,7 @@ import {
 } from './auth-tenant-creation';
 import { AuthError } from './types';
 import type { AuthAuditRequestContext } from './auth-audit-types';
+import { captureAuthAuditRequestContext } from './auth-audit-service';
 import { createAuthStateInvariantError } from './auth-observability';
 
 export interface RegistrationInput {
@@ -49,29 +50,47 @@ export async function registerUser(
   input: RegistrationInput,
   auditRequest?: AuthAuditRequestContext,
 ) {
+  const registration = Object.freeze({
+    username: input.username,
+    email: input.email,
+    password: input.password,
+    firstName: input.firstName,
+    lastName: input.lastName,
+    mfaEnrollment: input.mfaEnrollment,
+    nativeContinuation: input.nativeContinuation,
+    bootstrapSecret: input.bootstrapSecret,
+    organizationName: input.organizationName,
+    organizationSlug: input.organizationSlug,
+  });
+  const capturedAuditRequest = captureAuthAuditRequestContext(auditRequest);
   const services = requireSessionServices(config);
   const emitCode = config.emitCode ?? emitPlatformCode;
   const authConfig = config.getAuthConfig();
   const nativeAuthorization = config.getNativeAuthorizationService();
   const nativeContinuation = requireRegistrationContinuation(
-    nativeAuthorization, input.nativeContinuation
+    nativeAuthorization, registration.nativeContinuation
   );
   const multiTenant = authConfig.tenancy?.mode === 'multi';
   const bootstrapRequired = services.store.isBootstrapRequired();
-  if (!multiTenant && (input.organizationName !== undefined
-    || input.organizationSlug !== undefined)) {
+  if (!multiTenant && (registration.organizationName !== undefined
+    || registration.organizationSlug !== undefined)) {
     throw new AuthError(
       'Organization creation is unavailable in single-tenant mode',
       'TENANT_CREATION_UNAVAILABLE',
       422,
     );
   }
-  if (multiTenant && bootstrapRequired && !input.organizationName?.trim()) {
+  if (multiTenant && bootstrapRequired
+    && (typeof registration.organizationName !== 'string'
+      || registration.organizationName.trim().length === 0)) {
     throw new AuthError('Organization name is required', 'TENANT_NAME_REQUIRED', 422);
   }
-  const organization = input.organizationName !== undefined
-    || input.organizationSlug !== undefined
-    ? normalizeTenantCreateFields(input.organizationName, input.organizationSlug)
+  const organization = registration.organizationName !== undefined
+    || registration.organizationSlug !== undefined
+    ? normalizeTenantCreateFields(
+      registration.organizationName,
+      registration.organizationSlug,
+    )
     : null;
   if (organization && !services.tenancyService) {
     throw new AuthError('Tenant services are not initialized', 'AUTH_NOT_READY', 503);
@@ -82,18 +101,26 @@ export async function registerUser(
   assertBootstrapRequest(
     authConfig,
     services.store.isBootstrapRequired(),
-    input.bootstrapSecret,
+    registration.bootstrapSecret,
     emitCode,
   );
   let tenantCreation: TenantCreationResult | null = null;
-  const { user, policy, provisioning } = await services.store.createRegistrationUser({
-    username: input.username, email: input.email, password: input.password,
-    firstName: input.firstName, lastName: input.lastName,
+  const {
+    user,
+    authGeneration,
+    policy,
+    provisioning,
+  } = await services.store.createRegistrationUser({
+    username: registration.username,
+    email: registration.email,
+    password: registration.password,
+    firstName: registration.firstName,
+    lastName: registration.lastName,
     properties: services.propertyService.getDefaultProperties(),
   }, (isBootstrap) => resolveRegistrationPolicy({
     isBootstrap, accountEmail: services.accountEmail, authConfig,
-    mfaEnrollment: input.mfaEnrollment,
-    bootstrapSecret: input.bootstrapSecret,
+    mfaEnrollment: registration.mfaEnrollment,
+    bootstrapSecret: registration.bootstrapSecret,
     emitCode,
   }), (created, resolvedPolicy) => {
     claimRegistrationContinuation(nativeAuthorization, nativeContinuation, created.userId);
@@ -138,7 +165,7 @@ export async function registerUser(
       }
     }
     return undefined;
-  }, { provisional: true, auditRequest });
+  }, { provisional: true, auditRequest: capturedAuditRequest });
   if (!provisioning) {
     throw createAuthStateInvariantError(emitCode, {
       component: 'registration-service',
@@ -165,9 +192,10 @@ export async function registerUser(
         tenantSessionService: services.tenantSessions,
         requestedMfaSetup: policy.requestedMfaSetup,
         sessionBinding: toRegistrationSessionBinding(tenantCreation),
+        expectedAuthGeneration: authGeneration,
       });
     }
-    services.store.finalizeRegistrationProvisioning(provisioning, auditRequest);
+    services.store.finalizeRegistrationProvisioning(provisioning, capturedAuditRequest);
   } catch (error) {
     let rollback;
     try {

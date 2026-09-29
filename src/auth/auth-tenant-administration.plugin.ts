@@ -17,6 +17,10 @@ import type { TenancyService } from './tenancy/tenancy-service';
 import { AuthError, type AuthContext } from './types';
 import { authAuditRequestFromRequest } from './auth-audit-service';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
+import {
+  AUTH_TENANT_MEMBER_MAX_ROLE_COUNT,
+  normalizeAuthTenantMemberCreateRoleKeys,
+} from './auth-tenant-member-role-selection';
 
 const membershipIdSchema = t.String({
   minLength: 1,
@@ -28,8 +32,15 @@ const roleKeySchema = t.String({
   maxLength: 64,
   pattern: '^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$',
 });
-const rolesSchema = t.Array(roleKeySchema, {
-  maxItems: 32,
+// Keep create-time cardinality in the semantic validator so an explicit []
+// receives the stable tenant-role error instead of Elysia's generic schema
+// error. Replacement intentionally permits [] for advanced customer tenants.
+const memberCreateRolesSchema = t.Array(roleKeySchema, {
+  maxItems: AUTH_TENANT_MEMBER_MAX_ROLE_COUNT,
+  uniqueItems: true,
+});
+const memberReplacementRolesSchema = t.Array(roleKeySchema, {
+  maxItems: AUTH_TENANT_MEMBER_MAX_ROLE_COUNT,
   uniqueItems: true,
 });
 
@@ -52,6 +63,7 @@ interface TenantActor {
   access: ReturnType<typeof createRequestAuthorizationAccess>;
   service: AuthTenantAdministrationService;
   assertCurrentAuthority: AssertAuthTenantMutationAuthority;
+  authorizationMode: 'simple' | 'advanced';
 }
 
 /**
@@ -98,7 +110,10 @@ export function createAuthTenantAdministrationPlugin(
     .post('/members', async ({ request, body }) => {
       const actor = await requireTenantActor(config, request);
       actor.access.requirePermission('tenant.members:manage');
-      const roles = body.roles ?? ['member'];
+      const roles = normalizeAuthTenantMemberCreateRoleKeys(
+        body.roles,
+        actor.authorizationMode,
+      );
       if (!isDefaultMemberRole(roles)) {
         actor.access.requirePermission('tenant.roles:manage');
       }
@@ -116,7 +131,7 @@ export function createAuthTenantAdministrationPlugin(
           maxLength: EMAIL_MAX_LENGTH,
           pattern: `^${EMAIL_PATTERN_SOURCE}$`,
         }),
-        roles: t.Optional(rolesSchema),
+        roles: t.Optional(memberCreateRolesSchema),
       }, { additionalProperties: false }),
     })
     .patch('/members/:membershipId', async ({ request, params, body }) => {
@@ -147,7 +162,7 @@ export function createAuthTenantAdministrationPlugin(
       }),
       body: t.Object({
         status: t.Optional(t.Union([t.Literal('active'), t.Literal('suspended')])),
-        roles: t.Optional(rolesSchema),
+        roles: t.Optional(memberReplacementRolesSchema),
         expectedRoleRevision: t.Optional(t.String({ minLength: 1, maxLength: 512 })),
       }, { additionalProperties: false }),
     })
@@ -218,7 +233,14 @@ async function requireTenantActor(
     store,
     roles: config.getAuthorizationRoleService(),
   });
-  return { auth, access, scope, service, assertCurrentAuthority };
+  return {
+    auth,
+    access,
+    scope,
+    service,
+    assertCurrentAuthority,
+    authorizationMode: kernel.authorization.mode,
+  };
 }
 
 function isDefaultMemberRole(roles: readonly string[]): boolean {

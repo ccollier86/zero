@@ -1,10 +1,12 @@
 /** Elysia boundary for exact verified-domain administration and onboarding. */
 
 import { Elysia, t } from 'elysia';
+import { OBS_CODES } from '../observability/codes';
 import { createRequestAuthorizationAccess } from './authorization-access';
 import type { AuthorizationKernel, AuthorizationScopeSnapshot } from './authorization-kernel';
 import type { AuthorizationRoleService } from './authorization-role-service';
 import { extractAuthContext } from './auth-context';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 import { admitAuthRequest } from './auth-request-admission';
 import type { AuthRequestAdmissionService } from './auth-request-admission-service';
 import type { AuthTenantSessionService } from './auth-tenant-session-service';
@@ -24,7 +26,10 @@ import type {
 } from './verified-domain-service';
 import { authAuditRequestFromRequest } from './auth-audit-service';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
-import { captureAuthSessionIdentityProof } from './auth-session-identity-proof';
+import {
+  captureAuthSessionIdentityAdmission,
+  captureAuthSessionIdentityProof,
+} from './auth-session-identity-proof';
 
 const idSchema = t.String({
   minLength: 1,
@@ -44,6 +49,7 @@ export interface AuthVerifiedDomainPluginConfig {
   getAuthorizationRoleService: () => AuthorizationRoleService | null;
   getAccountEmailService: () => AccountEmailService | null;
   getAuthEmailOutbox: () => AuthEmailOutbox | null;
+  emitCode: AuthPlatformCodeEmitter;
 }
 
 interface TenantActor {
@@ -187,17 +193,21 @@ export function createAuthVerifiedDomainPlugin(
       // Everything after admission is deliberately suppression-safe. Neither
       // an invalid identity nor an ineligible/unclaimed domain changes shape.
       try {
-        const service = requireService(config);
         const identity = await resolveStartIdentity(config, request, body.identityContinuation);
         if (identity) {
+          const service = requireService(config);
           const binding = service.prepareMailboxRequest(identity);
           if (binding) {
-            config.getAccountEmailService()?.assertReady();
-            config.getAuthEmailOutbox()?.enqueueDomainMailboxProof(binding);
+            requireAccountEmailService(config).assertReady();
+            requireAuthEmailOutbox(config).enqueueDomainMailboxProof(
+              binding,
+              identity.assertCurrentIdentity,
+            );
           }
         }
-      } catch {
+      } catch (error) {
         // Do not turn delivery, identity, account, or domain state into an oracle.
+        config.emitCode(OBS_CODES.AUTH_DOMAIN_START_FAILED, { error });
       }
       return { accepted: true as const };
     }, {
@@ -290,24 +300,47 @@ async function resolveStartIdentity(
   rawContinuation: string | undefined,
 ): Promise<null | {
   userId: string;
+  expectedAuthGeneration: number;
   identityKind: 'session' | 'continuation';
   identityContinuation?: AuthSessionContinuationRecord;
+  assertCurrentIdentity: () => boolean;
 }> {
   if (request.headers.has('authorization')) {
     if (rawContinuation) return null;
-    const auth = await extractAuthContext(request, requireTokens(config));
-    return auth ? { userId: auth.userId, identityKind: 'session' } : null;
+    const tokens = requireTokens(config);
+    const auth = await extractAuthContext(request, tokens);
+    if (!auth) return null;
+    const admission = captureAuthSessionIdentityAdmission(auth, tokens);
+    return {
+      userId: auth.userId,
+      expectedAuthGeneration: admission.authGeneration,
+      identityKind: 'session',
+      assertCurrentIdentity: admission.consume,
+    };
   }
   if (!rawContinuation) return null;
-  const record = config.getTenantSessionService()?.continuations.inspect(
+  const sessions = config.getTenantSessionService();
+  if (!sessions) throw notReady();
+  const record = sessions.continuations.inspect(
     rawContinuation,
     'tenant_onboarding',
   );
   if (!record) return null;
+  const store = config.getUserStore();
   return {
     userId: record.userId,
+    expectedAuthGeneration: record.authGeneration,
     identityKind: 'continuation',
     identityContinuation: record,
+    assertCurrentIdentity: () => {
+      const current = sessions.continuations.inspect(
+        rawContinuation,
+        'tenant_onboarding',
+      );
+      return current?.continuationId === record.continuationId
+        && current.authGeneration === record.authGeneration
+        && store?.getAuthGeneration(record.userId) === record.authGeneration;
+    },
   };
 }
 
@@ -363,6 +396,18 @@ function requireTokens(config: AuthVerifiedDomainPluginConfig) {
   const tokens = config.getTokenService();
   if (!tokens) throw notReady();
   return tokens;
+}
+
+function requireAccountEmailService(config: AuthVerifiedDomainPluginConfig) {
+  const service = config.getAccountEmailService();
+  if (!service) throw notReady();
+  return service;
+}
+
+function requireAuthEmailOutbox(config: AuthVerifiedDomainPluginConfig) {
+  const outbox = config.getAuthEmailOutbox();
+  if (!outbox) throw notReady();
+  return outbox;
 }
 
 function invalidProof(): AuthError {

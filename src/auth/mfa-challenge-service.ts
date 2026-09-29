@@ -25,10 +25,26 @@ import type {
 import { AuthError } from './types';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
-import type { AuthAuditService } from './auth-audit-service';
+import {
+  captureAuthAuditActor,
+  captureAuthAuditRequestContext,
+  type AuthAuditService,
+} from './auth-audit-service';
 import type { AuthAuditActor, AuthAuditRequestContext } from './auth-audit-types';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
 import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
+import {
+  createEnrollmentRollbackReceipt,
+  createLoginChallengeRollbackReceipt,
+  MfaChallengeRollbackService,
+  type MfaEnrollmentRollbackReceipt,
+  type MfaLoginChallengeRollbackReceipt,
+} from './mfa-challenge-rollback';
+
+export type {
+  MfaEnrollmentRollbackReceipt,
+  MfaLoginChallengeRollbackReceipt,
+} from './mfa-challenge-rollback';
 
 /** Public MFA method metadata returned by account routes. */
 export interface PublicMfaMethod {
@@ -52,6 +68,8 @@ export interface MfaEnrollmentStart {
     issuer: string;
     accountName: string;
   };
+  /** Trusted-server receipt used to clean up if transition-token signing fails. */
+  rollbackReceipt?: MfaEnrollmentRollbackReceipt;
 }
 
 /** Public challenge metadata safe for clients. */
@@ -66,6 +84,8 @@ export interface PublicMfaChallenge {
 export interface MfaLoginChallengeStart {
   method: PublicMfaMethod;
   challenge?: PublicMfaChallenge;
+  /** Trusted-server receipt used to clean up if transition-token signing fails. */
+  rollbackReceipt?: MfaLoginChallengeRollbackReceipt;
 }
 
 export type MfaRequirementSource = 'user' | 'global' | 'admin-role' | 'none';
@@ -77,6 +97,7 @@ type MfaPolicyUser = Pick<UserRecord, 'role' | 'mfaRequired'>
 export class MfaChallengeService {
   private readonly challengeTTLMs: number;
   private readonly challengeCooldownMs: number;
+  private readonly rollbackService: MfaChallengeRollbackService;
 
   constructor(
     private readonly config: ResolvedAuthBehaviorConfig,
@@ -86,9 +107,15 @@ export class MfaChallengeService {
     private readonly auditService?: AuthAuditService,
     private readonly isAdministrationMember: (userId: string) => boolean = () => false,
     private readonly emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
+    private readonly getAuthGeneration: (userId: string) => number = () => 0,
   ) {
     this.challengeTTLMs = parseDurationToMs(config.mfa.challengeTTL);
     this.challengeCooldownMs = parseDurationToMs(config.mfa.challengeCooldown);
+    this.rollbackService = new MfaChallengeRollbackService(
+      methodStore,
+      challengeStore,
+      emitCode,
+    );
   }
 
   /** Return public-safe MFA methods for the current user. */
@@ -149,51 +176,106 @@ export class MfaChallengeService {
     return this.methodStore.getActivePreferredMethod(userId);
   }
 
-  /** Start MFA enrollment for email or authenticator. */
+  /**
+   * Start MFA enrollment for email or authenticator.
+   *
+   * `expectedAuthGeneration` remains optional for source compatibility with
+   * trusted server integrations that begin a ceremony without an earlier
+   * credential proof. Official auth/profile routes always pass it. Profile
+   * enrollment must also pass `admitAuthority`, which is rechecked at every
+   * persistent commit and after asynchronous crypto/email work.
+   */
   async startEnrollment(params: {
     user: UserRecord;
     methodType: AuthMfaMethodType;
     label?: string | null;
+    expectedAuthGeneration?: number;
+    admitAuthority?: () => boolean;
   }): Promise<MfaEnrollmentStart> {
+    const user = captureMfaUser(params.user);
+    const methodType = params.methodType;
+    const label = params.label;
+    const expectedAuthGeneration = params.expectedAuthGeneration;
+    const admitAuthority = params.admitAuthority;
     this.assertMfaEnabled();
-    this.assertMethodConfigured(params.methodType);
+    this.assertMethodConfigured(methodType);
+    this.assertAuthGeneration(user.userId, expectedAuthGeneration);
+    this.assertAuthorityAdmission(admitAuthority);
 
-    if (params.methodType === 'email') {
-      const method = this.methodStore.createMethod({
-        userId: params.user.userId,
-        type: 'email',
-        label: params.label ?? 'Email',
-        metadata: { source: 'enrollment' },
-      });
-      let challenge: AuthMfaChallengeRecord;
-      try {
-        challenge = await this.createAndSendEmailChallenge({
-          user: params.user,
+    if (methodType === 'email') {
+      const prepared = this.methodStore.transaction(() => {
+        this.assertAuthGeneration(user.userId, expectedAuthGeneration);
+        this.assertAuthorityAdmission(admitAuthority);
+        const method = this.methodStore.createMethod({
+          userId: user.userId,
+          type: 'email',
+          label: label ?? 'Email',
+          metadata: { source: 'enrollment' },
+        });
+        const delivery = this.createEmailChallenge({
+          userId: user.userId,
+          methodId: method.methodId,
+          purpose: 'setup',
+        });
+        return {
           method,
+          delivery,
+          receipt: createEnrollmentRollbackReceipt(method, delivery.challenge),
+        };
+      });
+
+      try {
+        await this.sendEmailChallenge({
+          user,
+          ...prepared.delivery,
           purpose: 'setup',
         });
       } catch (error) {
-        this.methodStore.disableMethod(method.methodId);
+        let cleanupSucceeded = false;
+        try {
+          this.rollbackEnrollment(prepared.receipt);
+          cleanupSucceeded = true;
+        } finally {
+          this.emitCode(OBS_CODES.AUTH_MFA_EMAIL_DELIVERY_FAILED, {
+            userId: user.userId,
+            metadata: { source: 'setup', cleanupSucceeded },
+          });
+        }
+        throw error;
+      }
+
+      try {
+        this.assertAuthGeneration(user.userId, expectedAuthGeneration);
+        this.assertAuthorityAdmission(admitAuthority);
+      } catch (error) {
+        this.rollbackEnrollment(prepared.receipt);
         throw error;
       }
 
       return {
-        method: toPublicMfaMethod(method),
-        challenge: toPublicMfaChallenge(challenge),
+        method: toPublicMfaMethod(prepared.method),
+        challenge: toPublicMfaChallenge(prepared.delivery.challenge),
+        rollbackReceipt: prepared.receipt,
       };
     }
 
     const encryptionKey = this.requireTotpEncryptionKey();
     const secret = generateTotpSecret();
     const issuer = this.config.mfa.totp.issuer ?? 'Zero';
-    const accountName = params.user.email;
-    const method = this.methodStore.createMethod({
-      userId: params.user.userId,
-      type: 'totp',
-      label: params.label ?? 'Authenticator',
-      secretCiphertext: await encryptMfaSecret(secret, encryptionKey),
-      metadata: { source: 'enrollment' },
+    const accountName = user.email;
+    const secretCiphertext = await encryptMfaSecret(secret, encryptionKey);
+    const method = this.methodStore.transaction(() => {
+      this.assertAuthGeneration(user.userId, expectedAuthGeneration);
+      this.assertAuthorityAdmission(admitAuthority);
+      return this.methodStore.createMethod({
+        userId: user.userId,
+        type: 'totp',
+        label: label ?? 'Authenticator',
+        secretCiphertext,
+        metadata: { source: 'enrollment' },
+      });
     });
+    const rollbackReceipt = createEnrollmentRollbackReceipt(method, null);
 
     return {
       method: toPublicMfaMethod(method),
@@ -203,20 +285,40 @@ export class MfaChallengeService {
         issuer,
         accountName,
       },
+      rollbackReceipt,
     };
   }
 
-  /** Verify a pending MFA enrollment method. */
+  /**
+   * Verify a pending MFA enrollment method.
+   *
+   * Generation is optional only for legacy trusted-server callers. Official
+   * ceremony routes pass the exact generation; profile activation additionally
+   * supplies the exact originating-session admission callback.
+   */
   async verifyEnrollment(params: {
     user: UserRecord;
     methodId: string;
     code: string;
     challengeId?: string;
+    expectedAuthGeneration?: number;
+    admitAuthority?: () => boolean;
     auditActor?: AuthAuditActor;
     auditRequest?: AuthAuditRequestContext;
   }): Promise<PublicMfaMethod> {
+    const userId = params.user.userId;
+    const methodId = params.methodId;
+    const code = params.code;
+    const challengeId = params.challengeId;
+    const expectedAuthGeneration = params.expectedAuthGeneration;
+    const admitAuthority = params.admitAuthority;
+    const auditActor = captureAuthAuditActor(params.auditActor) ?? Object.freeze({
+      userId,
+      provenance: 'authenticated-request' as const,
+    });
+    const auditRequest = captureAuthAuditRequestContext(params.auditRequest);
     this.assertMfaEnabled();
-    const method = this.requireUserMethod(params.user.userId, params.methodId);
+    const method = this.requireUserMethod(userId, methodId);
     if (method.status !== 'pending') {
       throw new AuthError('MFA method is not pending verification', 'MFA_METHOD_NOT_PENDING', 400);
     }
@@ -227,40 +329,51 @@ export class MfaChallengeService {
         throw new AuthError('MFA method has no secret', 'MFA_METHOD_INVALID', 500);
       }
       const secret = await decryptMfaSecret(method.secretCiphertext, encryptionKey);
-      if (!verifyTotpCode({ secret, code: params.code })) {
+      if (!verifyTotpCode({ secret, code })) {
         throw new AuthError('Invalid MFA code', 'MFA_CODE_INVALID', 401);
       }
     }
 
     return this.methodStore.transaction(() => {
-      if (method.type === 'email') {
-        if (!params.challengeId) {
+      this.assertAuthGeneration(userId, expectedAuthGeneration);
+      this.assertAuthorityAdmission(admitAuthority);
+      const liveMethod = this.requireUserMethod(userId, methodId);
+      if (liveMethod.status !== 'pending') {
+        throw new AuthError('MFA method is not pending verification', 'MFA_METHOD_NOT_PENDING', 400);
+      }
+      if (liveMethod.type !== method.type) {
+        throw new AuthError('MFA method changed during verification', 'MFA_METHOD_INVALID', 500);
+      }
+
+      if (liveMethod.type === 'email') {
+        if (!challengeId) {
           throw new AuthError('MFA challenge is required', 'MFA_CHALLENGE_REQUIRED', 400);
         }
         this.verifyEmailChallenge({
-          userId: params.user.userId,
-          methodId: method.methodId,
-          challengeId: params.challengeId,
-          code: params.code,
+          userId,
+          methodId: liveMethod.methodId,
+          challengeId,
+          code,
         });
       }
 
-      const activated = this.methodStore.activateMethod(method.methodId, {
+      const activated = this.methodStore.activateMethod(liveMethod.methodId, {
         singleActive: !this.config.mfa.allowMultipleMethods,
         makePrimary: true,
       });
       if (!activated) {
+        const current = this.methodStore.getMethod(methodId);
+        if (current?.userId === userId) {
+          throw new AuthError('MFA method is not pending verification', 'MFA_METHOD_NOT_PENDING', 400);
+        }
         throw new AuthError('MFA method not found', 'MFA_METHOD_NOT_FOUND', 404);
       }
       this.auditService?.append({
         action: 'account.mfa-enrolled',
         outcome: 'succeeded',
         scope: { kind: 'application' },
-        actor: params.auditActor ?? {
-          userId: params.user.userId,
-          provenance: 'authenticated-request',
-        },
-        request: params.auditRequest,
+        actor: auditActor,
+        request: auditRequest,
         target: { type: 'mfa-method', id: activated.methodId },
         metadata: { type: activated.type },
       });
@@ -268,30 +381,74 @@ export class MfaChallengeService {
     });
   }
 
-  /** Start login MFA challenge for an active method. */
+  /**
+   * Start login MFA challenge for an active method. Official auth ceremonies
+   * always pass the exact password-proof generation. The optional fallback is
+   * retained only for compatible trusted-server callers.
+   */
   async startLoginChallenge(params: {
     user: UserRecord;
     method: AuthMfaMethodRecord;
+    expectedAuthGeneration?: number;
   }): Promise<MfaLoginChallengeStart> {
+    const user = captureMfaUser(params.user);
+    const methodId = params.method.methodId;
+    const methodType = params.method.type;
+    const methodStatus = params.method.status;
+    const expectedAuthGeneration = params.expectedAuthGeneration;
+    const publicMethod = toPublicMfaMethod(params.method);
     this.assertMfaEnabled();
-    if (params.method.status !== 'active') {
+    if (methodStatus !== 'active') {
       throw new AuthError('MFA method is not active', 'MFA_METHOD_NOT_ACTIVE', 400);
     }
+    this.assertAuthGeneration(user.userId, expectedAuthGeneration);
 
-    if (params.method.type === 'email') {
-      const challenge = await this.createAndSendEmailChallenge({
-        user: params.user,
-        method: params.method,
-        purpose: 'login',
+    if (methodType === 'email') {
+      const delivery = this.methodStore.transaction(() => {
+        this.assertAuthGeneration(user.userId, expectedAuthGeneration);
+        return this.createEmailChallenge({
+          userId: user.userId,
+          methodId,
+          purpose: 'login',
+        });
       });
+      const rollbackReceipt = createLoginChallengeRollbackReceipt(
+        user.userId,
+        methodId,
+        delivery.challenge,
+      );
+
+      try {
+        await this.sendEmailChallenge({ user, ...delivery, purpose: 'login' });
+      } catch (error) {
+        let cleanupSucceeded = false;
+        try {
+          this.rollbackLoginChallenge(rollbackReceipt);
+          cleanupSucceeded = true;
+        } finally {
+          this.emitCode(OBS_CODES.AUTH_MFA_EMAIL_DELIVERY_FAILED, {
+            userId: user.userId,
+            metadata: { source: 'login', cleanupSucceeded },
+          });
+        }
+        throw error;
+      }
+
+      try {
+        this.assertAuthGeneration(user.userId, expectedAuthGeneration);
+      } catch (error) {
+        this.rollbackLoginChallenge(rollbackReceipt);
+        throw error;
+      }
       return {
-        method: toPublicMfaMethod(params.method),
-        challenge: toPublicMfaChallenge(challenge),
+        method: publicMethod,
+        challenge: toPublicMfaChallenge(delivery.challenge),
+        rollbackReceipt,
       };
     }
 
     return {
-      method: toPublicMfaMethod(params.method),
+      method: publicMethod,
       challenge: {
         challengeId: '',
         methodType: 'totp',
@@ -301,80 +458,152 @@ export class MfaChallengeService {
     };
   }
 
-  /** Verify an active method login challenge. */
+  /**
+   * Verify an active method login challenge. Official auth ceremonies always
+   * pass their exact generation; omission is a legacy trusted-server fallback.
+   */
   async verifyLoginChallenge(params: {
     user: UserRecord;
     methodId: string;
     code: string;
     challengeId?: string;
+    expectedAuthGeneration?: number;
   }): Promise<PublicMfaMethod> {
+    const userId = params.user.userId;
+    const methodId = params.methodId;
+    const code = params.code;
+    const challengeId = params.challengeId;
+    const expectedAuthGeneration = params.expectedAuthGeneration;
     this.assertMfaEnabled();
-    const method = this.requireUserMethod(params.user.userId, params.methodId);
+    const method = this.requireUserMethod(userId, methodId);
     if (method.status !== 'active') {
       throw new AuthError('MFA method is not active', 'MFA_METHOD_NOT_ACTIVE', 400);
     }
 
-    if (method.type === 'email') {
-      if (!params.challengeId) {
-        throw new AuthError('MFA challenge is required', 'MFA_CHALLENGE_REQUIRED', 400);
-      }
-      this.verifyEmailChallenge({
-        userId: params.user.userId,
-        methodId: method.methodId,
-        challengeId: params.challengeId,
-        code: params.code,
-      });
-    } else {
+    if (method.type !== 'email') {
       const encryptionKey = this.requireTotpEncryptionKey();
       if (!method.secretCiphertext) {
         throw new AuthError('MFA method has no secret', 'MFA_METHOD_INVALID', 500);
       }
       const secret = await decryptMfaSecret(method.secretCiphertext, encryptionKey);
-      if (!verifyTotpCode({ secret, code: params.code })) {
+      if (!verifyTotpCode({ secret, code })) {
         throw new AuthError('Invalid MFA code', 'MFA_CODE_INVALID', 401);
       }
     }
 
-    this.methodStore.recordUse(method.methodId);
-    return toPublicMfaMethod(this.methodStore.getMethod(method.methodId)!);
+    return this.methodStore.transaction(() => {
+      this.assertAuthGeneration(userId, expectedAuthGeneration);
+      const liveMethod = this.requireUserMethod(userId, methodId);
+      if (liveMethod.status !== 'active') {
+        throw new AuthError('MFA method is not active', 'MFA_METHOD_NOT_ACTIVE', 400);
+      }
+      if (liveMethod.type !== method.type) {
+        throw new AuthError('MFA method changed during verification', 'MFA_METHOD_INVALID', 500);
+      }
+
+      if (liveMethod.type === 'email') {
+        if (!challengeId) {
+          throw new AuthError('MFA challenge is required', 'MFA_CHALLENGE_REQUIRED', 400);
+        }
+        this.verifyEmailChallenge({
+          userId,
+          methodId: liveMethod.methodId,
+          challengeId,
+          code,
+        });
+      }
+
+      this.methodStore.recordUse(liveMethod.methodId);
+      const usedMethod = this.methodStore.getMethod(liveMethod.methodId);
+      if (!usedMethod || usedMethod.userId !== userId || usedMethod.status !== 'active') {
+        throw new AuthError('MFA method is not active', 'MFA_METHOD_NOT_ACTIVE', 400);
+      }
+      return toPublicMfaMethod(usedMethod);
+    });
   }
 
-  private async createAndSendEmailChallenge(params: {
-    user: UserRecord;
-    method: AuthMfaMethodRecord;
+  /**
+   * Idempotently disable exactly the pending enrollment represented by a
+   * service-issued receipt. A mismatched/reused receipt fails closed instead
+   * of touching a newer or already-activated method.
+   */
+  rollbackEnrollment(receipt: MfaEnrollmentRollbackReceipt): {
+    methodDisabled: boolean;
+    challengeConsumed: boolean;
+  } {
+    return this.rollbackService.rollbackEnrollment(receipt);
+  }
+
+  /** Consume exactly one unfinished login challenge after token issuance fails. */
+  rollbackLoginChallenge(receipt: MfaLoginChallengeRollbackReceipt): {
+    challengeConsumed: boolean;
+  } {
+    return this.rollbackService.rollbackLoginChallenge(receipt);
+  }
+
+  /** Fence persistent MFA state to the ceremony generation that authorized it. */
+  private assertAuthGeneration(
+    userId: string,
+    expectedAuthGeneration: number | undefined,
+  ): void {
+    if (expectedAuthGeneration !== undefined
+      && this.getAuthGeneration(userId) !== expectedAuthGeneration) {
+      throw new AuthError(
+        'Authentication state changed; sign in again',
+        'AUTH_STATE_CHANGED',
+        409,
+      );
+    }
+  }
+
+  /** Fence profile mutations to the exact session authority that began them. */
+  private assertAuthorityAdmission(admitAuthority: (() => boolean) | undefined): void {
+    if (!admitAuthority) return;
+    if (!invokeSynchronousAuthCallback(admitAuthority, {
+      component: 'mfa-challenge-service',
+      invariant: 'profile-authority-admission-async',
+      message: '[auth] MFA profile authority admission must be synchronous.',
+      emitCode: this.emitCode,
+    })) throw authenticationStateChanged();
+  }
+
+  private createEmailChallenge(params: {
+    userId: string;
+    methodId: string;
     purpose: 'setup' | 'login';
-  }): Promise<AuthMfaChallengeRecord> {
-    this.assertEmailMethodReady(params.user.userId);
+  }): { challenge: AuthMfaChallengeRecord; code: string } {
+    const userId = params.userId;
+    const methodId = params.methodId;
+    const purpose = params.purpose;
+    this.assertEmailMethodReady(userId);
 
     const code = generateEmailOtpCode();
     const expiresAt = Date.now() + this.challengeTTLMs;
     const challenge = this.challengeStore.createChallenge({
-      userId: params.user.userId,
-      methodId: params.method.methodId,
+      userId,
+      methodId,
       methodType: 'email',
       codeHash: hashOtpCode(code),
       expiresAt,
       maxAttempts: this.config.mfa.maxAttempts,
-      metadata: { purpose: params.purpose },
+      metadata: { purpose },
     });
 
-    try {
-      await this.accountEmail.sendEmailOtp({
-        user: params.user,
-        code,
-        expiresAt,
-        purpose: params.purpose,
-      });
-    } catch (error) {
-      const cleanupSucceeded = this.challengeStore.consumeChallenge(challenge.challengeId);
-      this.emitCode(OBS_CODES.AUTH_MFA_EMAIL_DELIVERY_FAILED, {
-        userId: params.user.userId,
-        metadata: { source: params.purpose, cleanupSucceeded },
-      });
-      throw error;
-    }
+    return { challenge, code };
+  }
 
-    return challenge;
+  private sendEmailChallenge(params: {
+    user: UserRecord;
+    challenge: AuthMfaChallengeRecord;
+    code: string;
+    purpose: 'setup' | 'login';
+  }): Promise<void> {
+    return this.accountEmail.sendEmailOtp({
+      user: params.user,
+      code: params.code,
+      expiresAt: params.challenge.expiresAt,
+      purpose: params.purpose,
+    });
   }
 
   private verifyEmailChallenge(params: {
@@ -466,6 +695,34 @@ function toPublicMfaChallenge(challenge: AuthMfaChallengeRecord): PublicMfaChall
     expiresAt: challenge.expiresAt,
     delivery: challenge.methodType === 'email' ? 'email' : 'authenticator',
   };
+}
+
+function authenticationStateChanged(): AuthError {
+  return new AuthError(
+    'Authentication state changed; sign in again',
+    'AUTH_STATE_CHANGED',
+    409,
+  );
+}
+
+/** Detach the identity projection passed into an MFA operation before it yields. */
+function captureMfaUser(user: UserRecord): UserRecord {
+  return Object.freeze({
+    userId: user.userId,
+    username: user.username,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    role: user.role,
+    status: user.status,
+    passwordChangeRequired: user.passwordChangeRequired,
+    emailVerifiedAt: user.emailVerifiedAt,
+    emailVerificationRequired: user.emailVerificationRequired,
+    mfaRequired: user.mfaRequired,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    properties: Object.freeze({ ...user.properties }),
+  });
 }
 
 function generateEmailOtpCode(): string {

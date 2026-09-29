@@ -81,7 +81,9 @@ The list route supports bounded `limit`, opaque cursor, `search`, and
 email, account availability, role keys, the opaque `roleRevision` concurrency
 token, and timestamps. They never expose
 password state, MFA state, verification state, properties, credentials,
-tokens, or the global platform role.
+tokens, or the global platform role. Invalid limit, cursor, search, or status
+values fail with `APPLICATION_USER_PAGE_INVALID` (`422`), including malformed
+falsy values from a direct/headless caller.
 
 The config response is capability-driven and safe to render directly:
 
@@ -124,11 +126,17 @@ transfer returns `{ owner, previousOwner, actorAuthorizationChanged: true }`.
 The flag describes a committed change to the caller's live authority; it is
 not a signal that the user was logged out.
 
-Role replacement accepts the complete desired set of assignable role keys.
-System roles are preserved and cannot be added or removed by the generic
-operation. An actor may retain a target's existing higher role but cannot use
-omission to revoke a role outside its own grant ceiling. New grants require an
-active target; role revocation from a suspended account remains available.
+Role replacement accepts the complete desired set of assignable role keys. A
+literal `roles: []` is the only deliberate clear operation. Zero never turns a
+sparse array, non-string or malformed key, blank value, or duplicate into a
+smaller grant set by filtering or deduplicating it. Direct/headless service
+calls reject those values with `APPLICATION_ROLE_SELECTION_INVALID` (`422`);
+requests rejected earlier by the HTTP schema retain Zero's standard
+`AUTH_VALIDATION_FAILED` contract. System roles are preserved and cannot be
+added or removed by the generic operation. An actor may retain a target's
+existing higher role but cannot use omission to revoke a role outside its own
+grant ceiling. New grants require an active target; role revocation from a
+suspended account remains available.
 If a deployment removes a role template, retained assignments for that key
 become inert immediately: they grant no permissions, remain visible as
 retired, cannot be granted again, and only an owner may remove them. Other role

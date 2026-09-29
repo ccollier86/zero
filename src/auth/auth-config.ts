@@ -58,6 +58,7 @@ import {
   validateRoleKey,
 } from './authorization-kernel';
 import {
+  isRoleAssignableToTenantKind,
   mergeAuthorizationPermissionConfigs,
   mergeAuthorizationRoleConfigs,
 } from './authorization-registry';
@@ -229,8 +230,8 @@ function validateVerifiedDomainRoles(
   authorization: ResolvedAuthAuthorizationConfig,
 ): void {
   const domains = tenancy.onboarding?.verifiedDomains;
-  if (!domains?.enabled) return;
-  if (!tenancy.onboarding?.joinRequests.enabled) {
+  if (!domains) return;
+  if (domains.enabled && !tenancy.onboarding?.joinRequests.enabled) {
     throw new Error(
       '[auth] Verified-domain request onboarding requires joinRequests.enabled.',
     );
@@ -245,6 +246,11 @@ function validateVerifiedDomainRoles(
     if (role.system || role.allPermissions || key === 'owner') {
       throw new Error(
         `[auth] Verified-domain request role must be non-system and bounded: "${key}".`,
+      );
+    }
+    if (!isRoleAssignableToTenantKind(key, 'organization', authorization)) {
+      throw new Error(
+        `[auth] Verified-domain request role must be assignable to organization tenants: "${key}".`,
       );
     }
   }

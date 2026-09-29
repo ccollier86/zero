@@ -13,6 +13,7 @@ import {
   authAuditActorFromContext,
   authAuditRequestFromRequest,
 } from './auth-audit-service';
+import { captureAuthSessionIdentityAdmission } from './auth-session-identity-proof';
 
 export function createAuthChangePasswordPlugin(config: AuthSessionPluginConfig) {
   return new Elysia({ name: 'auth-change-password' }).post(
@@ -21,8 +22,9 @@ export function createAuthChangePasswordPlugin(config: AuthSessionPluginConfig) 
       const { store, tokenService } = requireSessionServices(config);
       const auth = await extractAuthContext(request, tokenService);
       if (!auth) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
+      const admission = captureAuthSessionIdentityAdmission(auth, tokenService);
 
-      const changed = await store.updatePassword(
+      const receipt = await store.updatePasswordForAuthentication(
         auth.userId,
         body.currentPassword,
         body.newPassword,
@@ -30,8 +32,12 @@ export function createAuthChangePasswordPlugin(config: AuthSessionPluginConfig) 
           actor: authAuditActorFromContext(auth),
           request: authAuditRequestFromRequest(request),
         },
+        {
+          expectedAuthGeneration: admission.authGeneration,
+          admit: admission.consume,
+        },
       );
-      if (!changed) {
+      if (!receipt) {
         throw new AuthError(
           'Current password is incorrect', 'INVALID_PASSWORD', 400
         );
@@ -46,6 +52,7 @@ export function createAuthChangePasswordPlugin(config: AuthSessionPluginConfig) 
         binding: auth.tenantId && auth.membershipId
           ? { tenantId: auth.tenantId, membershipId: auth.membershipId }
           : undefined,
+        expectedAuthGeneration: receipt.authGeneration,
       });
       const response = {
         accessToken: tokens.accessToken,

@@ -187,9 +187,12 @@ export type {
   RegisterParams,
 } from './client/auth-client';
 export type {
+  AuthPlatformAddMemberParams,
   AuthPlatformAdministrationConfig,
   AuthPlatformAdminSdkSurface,
+  AuthPlatformIssueInvitationParams,
   AuthPlatformMutableTenantStatus,
+  AuthPlatformRoleSelection,
   AuthPlatformTenant,
   AuthPlatformTenantCreateParams,
   AuthPlatformTenantCreateResult,
@@ -198,6 +201,8 @@ export type {
   AuthPlatformTenantStatus,
   AuthPlatformTenantUpdateParams,
   AuthPlatformTenantUpdateResult,
+  AuthPlatformUpdateMemberInput,
+  AuthPlatformUpdateMemberParams,
 } from './client/auth-client';
 
 // ─── React: Providers ────────────────────────────────────────────────────

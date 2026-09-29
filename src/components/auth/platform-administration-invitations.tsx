@@ -19,7 +19,10 @@ import { Input } from '#zero/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#zero/components/ui/select';
 import { authRoleLabel, createAuthRoleLabelMap } from './auth-role-presentation';
 import { writeAuthClipboardText } from './auth-clipboard';
-import { platformAssignableRoles } from './platform-administration-role-policy';
+import {
+  platformAssignableRoles,
+  platformRoleSelection,
+} from './platform-administration-role-policy';
 import { TenantRolePicker } from './tenant-role-picker';
 
 interface InvitationDelivery {
@@ -76,13 +79,14 @@ export function PlatformAdministrationInvitations({
   async function issue(event: React.FormEvent) {
     event.preventDefault();
     const nextEmail = email.trim();
-    if (!nextEmail) return;
+    const roles = platformRoleSelection(selectedRoles);
+    if (!nextEmail || !roles) return;
     onError(null);
     setManualToken(null);
     try {
       const result = await administration.issueInvitation({
         email: nextEmail,
-        roles: selectedRoles,
+        roles,
         delivery: effectiveMode,
       });
       setEmail('');

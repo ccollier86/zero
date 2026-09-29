@@ -27,6 +27,7 @@ import { AuthError } from './types';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
 import { VerifiedDomainOnboardingService } from './verified-domain-service';
 import { VERIFIED_DOMAIN_RELEASE_QUARANTINE_MS } from './verified-domain-service';
+import { VerifiedDomainDnsError } from './verified-domain-dns';
 
 const active: ReactiveDB[] = [];
 const temporaryDirectories: string[] = [];
@@ -40,7 +41,13 @@ afterEach(async () => {
 
 describe('verified-domain onboarding service', () => {
   test('fails cached control-plane and worker boundaries after a profile change', async () => {
-    const harness = await createHarness();
+    const events: Array<{ code: string; error: unknown }> = [];
+    const harness = await createHarness({
+      emitCode: (definition, options) => {
+        events.push({ code: definition.code, error: options?.error });
+        return emitPlatformCode(definition, options);
+      },
+    });
     const owner = await createUser(harness, 'profile-owner', 'owner@platform.com');
     const tenant = harness.tenancy.createTenant({
       name: 'Profile Domain',
@@ -57,10 +64,9 @@ describe('verified-domain onboarding service', () => {
       ),
     });
     let current = true;
+    const profileFailure = new AuthError('Profile changed', 'AUTH_PROFILE_CHANGED', 503);
     harness.users.setRuntimeProfileGuard(() => {
-      if (!current) {
-        throw new AuthError('Profile changed', 'AUTH_PROFILE_CHANGED', 503);
-      }
+      if (!current) throw profileFailure;
     });
     expect(harness.domains.listClaims(tenant.tenant.tenantId)).toHaveLength(1);
 
@@ -89,10 +95,462 @@ describe('verified-domain onboarding service', () => {
     await Promise.resolve();
     expect(workerState.stopped).toBe(true);
     expect(workerState.timer).toBeNull();
+    expect(events.find((event) => (
+      event.code === OBS_CODES.AUTH_DOMAIN_WORKER_FAILED.code
+    ))).toEqual({
+      code: OBS_CODES.AUTH_DOMAIN_WORKER_FAILED.code,
+      error: profileFailure,
+    });
+  });
+
+  test('rejects malformed policy fields before authority or persistence', async () => {
+    const events: string[] = [];
+    const harness = await createHarness({
+      emitCode(definition, options) {
+        events.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+    const owner = await createUser(harness, 'policy-input-owner', 'owner@platform.com');
+    const tenant = harness.tenancy.createTenant({
+      name: 'Policy Input', slug: 'policy-input', ownerUserId: owner.userId,
+    });
+    const validAuthority = authority(
+      owner.userId,
+      tenant.ownerMembership.membershipId,
+      tenant.tenant.tenantId,
+    );
+    const claim = harness.domains.createClaim({
+      tenantId: tenant.tenant.tenantId,
+      domain: 'policy-input.com',
+      assertCurrentAuthority: validAuthority,
+    }).claim;
+    const before = harness.db.prepare(`SELECT enabled, request_role_key, revision,
+      updated_by, updated_at FROM _auth_tenant_domain_policies
+      WHERE claim_id = ?`).get(claim.claimId);
+    const beforeSeq = harness.db.currentSeq;
+    let authorityCalls = 0;
+    const rejectedAuthority = (() => {
+      authorityCalls += 1;
+      throw new Error('authority must not run');
+    }) as AssertAuthTenantMutationAuthority;
+
+    for (const fields of [
+      { enabled: 1, requestRoleKey: null },
+      { enabled: true, requestRoleKey: undefined },
+      { enabled: false, requestRoleKey: { key: 'member' } },
+    ] as const) {
+      expect(() => harness.domains.updatePolicy({
+        tenantId: tenant.tenant.tenantId,
+        claimId: claim.claimId,
+        enabled: fields.enabled as never,
+        requestRoleKey: fields.requestRoleKey as never,
+        expectedRevision: claim.policy.revision,
+        assertCurrentAuthority: rejectedAuthority,
+      })).toThrow(expect.objectContaining({
+        code: 'AUTH_DOMAIN_POLICY_INVALID',
+        status: 422,
+      }));
+    }
+
+    expect(authorityCalls).toBe(0);
+    expect(harness.db.currentSeq).toBe(beforeSeq);
+    expect(harness.db.prepare(`SELECT enabled, request_role_key, revision,
+      updated_by, updated_at FROM _auth_tenant_domain_policies
+      WHERE claim_id = ?`).get(claim.claimId)).toEqual(before);
+    expect(events.filter(
+      (code) => code === OBS_CODES.AUTH_DOMAIN_POLICY_UPDATED.code,
+    )).toHaveLength(0);
+  });
+
+  test('authorizes challenge rotation before revealing claim existence', async () => {
+    const events: string[] = [];
+    const harness = await createHarness({
+      emitCode(definition, options) {
+        events.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+    const owner = await createUser(harness, 'claim-owner', 'owner@platform.com');
+    const outsider = await createUser(
+      harness,
+      'claim-outsider',
+      'outsider@platform.com',
+    );
+    const tenant = harness.tenancy.createTenant({
+      name: 'Claim Boundary',
+      slug: 'claim-boundary',
+      ownerUserId: owner.userId,
+    });
+    const outsiderTenant = harness.tenancy.createTenant({
+      name: 'Outsider Boundary',
+      slug: 'outsider-boundary',
+      ownerUserId: outsider.userId,
+    });
+    const created = harness.domains.createClaim({
+      tenantId: tenant.tenant.tenantId,
+      domain: 'claim-boundary.com',
+      assertCurrentAuthority: authority(
+        owner.userId,
+        tenant.ownerMembership.membershipId,
+        tenant.tenant.tenantId,
+      ),
+    });
+    const deniedAuthority = authority(
+      outsider.userId,
+      outsiderTenant.ownerMembership.membershipId,
+      outsiderTenant.tenant.tenantId,
+    );
+    const before = harness.db.prepare(`
+      SELECT challenge_digest, challenge_expires_at, revision, updated_at
+      FROM _auth_tenant_domain_claims WHERE claim_id = ?
+    `).get(created.claim.claimId);
+    const beforeSeq = harness.db.currentSeq;
+    events.length = 0;
+
+    const attempt = (claimId: string) => {
+      try {
+        harness.domains.issueChallenge({
+          tenantId: tenant.tenant.tenantId,
+          claimId,
+          expectedRevision: created.claim.revision,
+          assertCurrentAuthority: deniedAuthority,
+        });
+        throw new Error('Expected challenge rotation to be denied');
+      } catch (error) {
+        if (!(error instanceof AuthError)) throw error;
+        return {
+          name: error.name,
+          message: error.message,
+          code: error.code,
+          status: error.status,
+        };
+      }
+    };
+
+    expect(attempt(created.claim.claimId)).toEqual({
+      name: 'AuthError',
+      message: 'Forbidden',
+      code: 'FORBIDDEN',
+      status: 403,
+    });
+    expect(attempt('vdc_missing')).toEqual(attempt(created.claim.claimId));
+    expect(harness.db.currentSeq).toBe(beforeSeq);
+    expect(harness.db.prepare(`
+      SELECT challenge_digest, challenge_expires_at, revision, updated_at
+      FROM _auth_tenant_domain_claims WHERE claim_id = ?
+    `).get(created.claim.claimId)).toEqual(before);
+    expect(events).toEqual([]);
+    expect(harness.db.prepare(`
+      SELECT COUNT(*) AS count FROM _auth_audit_events
+      WHERE action = 'tenant.domain-challenge-issued' AND target_id = ?
+    `).get(created.claim.claimId)).toEqual({ count: 0 });
+  });
+
+  test('publishes synchronous mutation success only after the outer commit', async () => {
+    const events: Array<{
+      code: string;
+      metadata: Record<string, unknown> | undefined;
+    }> = [];
+    const harness = await createHarness({
+      emitCode(definition, options) {
+        events.push({ code: definition.code, metadata: options?.metadata });
+        return emitPlatformCode(definition, options);
+      },
+    });
+    const owner = await createUser(harness, 'commit-owner', 'owner@platform.com');
+    const tenant = harness.tenancy.createTenant({
+      name: 'Commit Truth', slug: 'commit-truth', ownerUserId: owner.userId,
+    });
+    const tenantId = tenant.tenant.tenantId;
+    const assertCurrentAuthority = authority(
+      owner.userId,
+      tenant.ownerMembership.membershipId,
+      tenantId,
+    );
+    const eventsFor = (code: string) => events.filter((event) => event.code === code);
+
+    expect(() => harness.db.transaction(() => {
+      harness.domains.createClaim({
+        tenantId,
+        domain: 'rolled-back-company.com',
+        assertCurrentAuthority,
+      });
+      throw new Error('roll back claim creation');
+    })).toThrow('roll back claim creation');
+    expect(eventsFor(OBS_CODES.AUTH_DOMAIN_CLAIM_CREATED.code)).toHaveLength(0);
+    expect(rowCount(harness.db, '_auth_tenant_domain_claims')).toBe(0);
+
+    const createInput = {
+      tenantId,
+      domain: 'commit-truth.com',
+      assertCurrentAuthority,
+    };
+    const created = harness.db.transaction(() => {
+      const result = harness.domains.createClaim(createInput);
+      createInput.tenantId = 'mutated-after-create';
+      return result;
+    });
+    expect(eventsFor(OBS_CODES.AUTH_DOMAIN_CLAIM_CREATED.code)).toEqual([{
+      code: OBS_CODES.AUTH_DOMAIN_CLAIM_CREATED.code,
+      metadata: { claimId: created.claim.claimId, tenantId },
+    }]);
+
+    harness.now.value += harness.domains.config.dnsCheckCooldownMs + 1;
+    expect(() => harness.db.transaction(() => {
+      harness.domains.issueChallenge({
+        tenantId,
+        claimId: created.claim.claimId,
+        expectedRevision: created.claim.revision,
+        assertCurrentAuthority,
+      });
+      throw new Error('roll back challenge issuance');
+    })).toThrow('roll back challenge issuance');
+    expect(eventsFor(OBS_CODES.AUTH_DOMAIN_CHALLENGE_ISSUED.code)).toHaveLength(0);
+    expect(harness.domains.listClaims(tenantId)[0]?.revision).toBe(created.claim.revision);
+
+    const challengeInput = {
+      tenantId,
+      claimId: created.claim.claimId,
+      expectedRevision: created.claim.revision,
+      assertCurrentAuthority,
+    };
+    const challenged = harness.db.transaction(() => {
+      const result = harness.domains.issueChallenge(challengeInput);
+      challengeInput.tenantId = 'mutated-after-challenge';
+      challengeInput.claimId = 'mutated-after-challenge';
+      return result;
+    });
+    expect(eventsFor(OBS_CODES.AUTH_DOMAIN_CHALLENGE_ISSUED.code)).toEqual([{
+      code: OBS_CODES.AUTH_DOMAIN_CHALLENGE_ISSUED.code,
+      metadata: { claimId: created.claim.claimId, tenantId },
+    }]);
+
+    expect(() => harness.db.transaction(() => {
+      harness.domains.updatePolicy({
+        tenantId,
+        claimId: created.claim.claimId,
+        enabled: false,
+        requestRoleKey: 'member',
+        expectedRevision: challenged.claim.policy.revision,
+        assertCurrentAuthority,
+      });
+      throw new Error('roll back policy update');
+    })).toThrow('roll back policy update');
+    expect(eventsFor(OBS_CODES.AUTH_DOMAIN_POLICY_UPDATED.code)).toHaveLength(0);
+    expect(harness.domains.listClaims(tenantId)[0]?.policy.revision)
+      .toBe(challenged.claim.policy.revision);
+
+    const policyInput = {
+      tenantId,
+      claimId: created.claim.claimId,
+      enabled: false,
+      requestRoleKey: 'member' as string | null,
+      expectedRevision: challenged.claim.policy.revision,
+      assertCurrentAuthority,
+    };
+    const updated = harness.db.transaction(() => {
+      const result = harness.domains.updatePolicy(policyInput);
+      policyInput.tenantId = 'mutated-after-policy';
+      policyInput.claimId = 'mutated-after-policy';
+      return result;
+    });
+    expect(eventsFor(OBS_CODES.AUTH_DOMAIN_POLICY_UPDATED.code)).toEqual([{
+      code: OBS_CODES.AUTH_DOMAIN_POLICY_UPDATED.code,
+      metadata: { claimId: created.claim.claimId, tenantId },
+    }]);
+
+    expect(() => harness.db.transaction(() => {
+      harness.domains.releaseClaim({
+        tenantId,
+        claimId: created.claim.claimId,
+        expectedRevision: challenged.claim.revision,
+        expectedPolicyRevision: updated.policy.revision,
+        confirmDomain: created.claim.domain,
+        assertCurrentAuthority,
+      });
+      throw new Error('roll back claim release');
+    })).toThrow('roll back claim release');
+    expect(eventsFor(OBS_CODES.AUTH_DOMAIN_CLAIM_RELEASED.code)).toHaveLength(0);
+    expect(harness.domains.listClaims(tenantId)).toHaveLength(1);
+
+    const releaseInput = {
+      tenantId,
+      claimId: created.claim.claimId,
+      expectedRevision: challenged.claim.revision,
+      expectedPolicyRevision: updated.policy.revision,
+      confirmDomain: created.claim.domain,
+      assertCurrentAuthority,
+    };
+    const released = harness.db.transaction(() => {
+      const result = harness.domains.releaseClaim(releaseInput);
+      releaseInput.tenantId = 'mutated-after-release';
+      releaseInput.claimId = 'mutated-after-release';
+      return result;
+    });
+    expect(eventsFor(OBS_CODES.AUTH_DOMAIN_CLAIM_RELEASED.code)).toEqual([{
+      code: OBS_CODES.AUTH_DOMAIN_CLAIM_RELEASED.code,
+      metadata: {
+        claimId: created.claim.claimId,
+        tenantId,
+        quarantineUntil: released.release.quarantineUntil,
+      },
+    }]);
+    expect(harness.domains.listClaims(tenantId)).toHaveLength(0);
+  });
+
+  test('detaches synchronous mutation input before live authority callbacks', async () => {
+    const harness = await createHarness();
+    const owner = await createUser(
+      harness,
+      'authority-snapshot-owner',
+      'owner@platform.com',
+    );
+    const tenant = harness.tenancy.createTenant({
+      name: 'Authority Snapshot',
+      slug: 'authority-snapshot',
+      ownerUserId: owner.userId,
+    });
+    const tenantId = tenant.tenant.tenantId;
+    const liveAuthority = authority(
+      owner.userId,
+      tenant.ownerMembership.membershipId,
+      tenantId,
+    );
+
+    const createAudit = { requestId: 'create-before-authority' };
+    const createInput: Parameters<
+      VerifiedDomainOnboardingService['createClaim']
+    >[0] = {
+      tenantId,
+      domain: 'authority-snapshot.com',
+      auditRequest: createAudit,
+      assertCurrentAuthority: (permissions) => {
+        createInput.tenantId = 'tenant_mutated_by_create_authority';
+        createInput.domain = 'mutated-create.example';
+        createAudit.requestId = 'create-after-authority';
+        return liveAuthority(permissions);
+      },
+    };
+    const created = harness.domains.createClaim(createInput);
+    expect(created.claim.domain).toBe('authority-snapshot.com');
+
+    harness.now.value += harness.domains.config.dnsCheckCooldownMs + 1;
+    const challengeAudit = { requestId: 'challenge-before-authority' };
+    const challengeInput: Parameters<
+      VerifiedDomainOnboardingService['issueChallenge']
+    >[0] = {
+      tenantId,
+      claimId: created.claim.claimId,
+      expectedRevision: created.claim.revision,
+      auditRequest: challengeAudit,
+      assertCurrentAuthority: (permissions) => {
+        challengeInput.tenantId = 'tenant_mutated_by_challenge_authority';
+        challengeInput.claimId = 'claim_mutated_by_challenge_authority';
+        challengeInput.expectedRevision = 'revision_mutated_by_challenge_authority';
+        challengeAudit.requestId = 'challenge-after-authority';
+        return liveAuthority(permissions);
+      },
+    };
+    const challenged = harness.domains.issueChallenge(challengeInput);
+    expect(challenged.claim.claimId).toBe(created.claim.claimId);
+
+    const policyAudit = { requestId: 'policy-before-authority' };
+    const policyInput: Parameters<
+      VerifiedDomainOnboardingService['updatePolicy']
+    >[0] = {
+      tenantId,
+      claimId: created.claim.claimId,
+      enabled: true,
+      requestRoleKey: 'member',
+      expectedRevision: challenged.claim.policy.revision,
+      auditRequest: policyAudit,
+      assertCurrentAuthority: (permissions) => {
+        policyInput.tenantId = 'tenant_mutated_by_policy_authority';
+        policyInput.claimId = 'claim_mutated_by_policy_authority';
+        policyInput.enabled = false;
+        policyInput.requestRoleKey = null;
+        policyInput.expectedRevision = 'revision_mutated_by_policy_authority';
+        policyAudit.requestId = 'policy-after-authority';
+        return liveAuthority(permissions);
+      },
+    };
+    const updated = harness.domains.updatePolicy(policyInput);
+    expect(updated.policy).toMatchObject({
+      enabled: true,
+      requestRoleKey: 'member',
+    });
+
+    const releaseAudit = { requestId: 'release-before-authority' };
+    const releaseInput: Parameters<
+      VerifiedDomainOnboardingService['releaseClaim']
+    >[0] = {
+      tenantId,
+      claimId: created.claim.claimId,
+      expectedRevision: challenged.claim.revision,
+      expectedPolicyRevision: updated.policy.revision,
+      confirmDomain: created.claim.domain,
+      auditRequest: releaseAudit,
+      assertCurrentAuthority: (permissions) => {
+        releaseInput.tenantId = 'tenant_mutated_by_release_authority';
+        releaseInput.claimId = 'claim_mutated_by_release_authority';
+        releaseInput.expectedRevision = 'claim_revision_mutated_by_release_authority';
+        releaseInput.expectedPolicyRevision = 'policy_revision_mutated_by_release_authority';
+        releaseInput.confirmDomain = 'mutated-release.example';
+        releaseAudit.requestId = 'release-after-authority';
+        return liveAuthority(permissions);
+      },
+    };
+    expect(harness.domains.releaseClaim(releaseInput).release).toMatchObject({
+      claimId: created.claim.claimId,
+      domain: created.claim.domain,
+    });
+
+    const auditRows = harness.db.prepare(`
+      SELECT action, request_id, target_id FROM _auth_audit_events
+      WHERE target_id = ? AND action IN (
+        'tenant.domain-claim-created',
+        'tenant.domain-challenge-issued',
+        'tenant.domain-policy-updated',
+        'tenant.domain-claim-released'
+      )
+    `).all(created.claim.claimId) as Array<{
+      action: string;
+      request_id: string | null;
+      target_id: string | null;
+    }>;
+    expect(Object.fromEntries(auditRows.map((row) => [row.action, row]))).toEqual({
+      'tenant.domain-claim-created': {
+        action: 'tenant.domain-claim-created',
+        request_id: 'create-before-authority',
+        target_id: created.claim.claimId,
+      },
+      'tenant.domain-challenge-issued': {
+        action: 'tenant.domain-challenge-issued',
+        request_id: 'challenge-before-authority',
+        target_id: created.claim.claimId,
+      },
+      'tenant.domain-policy-updated': {
+        action: 'tenant.domain-policy-updated',
+        request_id: 'policy-before-authority',
+        target_id: created.claim.claimId,
+      },
+      'tenant.domain-claim-released': {
+        action: 'tenant.domain-claim-released',
+        request_id: 'release-before-authority',
+        target_id: created.claim.claimId,
+      },
+    });
   });
 
   test('binds DNS and mailbox proof to one fixed-role retained request and provenance', async () => {
-    const harness = await createHarness();
+    const emittedCodes: string[] = [];
+    const harness = await createHarness({
+      emitCode(definition, options) {
+        emittedCodes.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
     const owner = await createUser(harness, 'owner', 'owner@platform.com');
     const applicant = await createUser(harness, 'applicant', 'person@acme.com');
     const tenant = harness.tenancy.createTenant({
@@ -152,6 +610,7 @@ describe('verified-domain onboarding service', () => {
 
     const binding = harness.domains.prepareMailboxRequest({
       userId: applicant.userId,
+      expectedAuthGeneration: harness.users.getAuthGeneration(applicant.userId),
       identityKind: 'session',
     });
     expect(binding).not.toBeNull();
@@ -160,11 +619,28 @@ describe('verified-domain onboarding service', () => {
     expect(first.rawToken).not.toBe(rotated.rawToken);
     expect(rowCount(harness.db, `_auth_domain_mailbox_tokens
       WHERE outbox_job_id = 'job-one'`)).toBe(2);
+
+    expect(() => harness.db.transaction(() => {
+      const rolledBack = harness.domains.completeMailboxProof(first.rawToken);
+      expect(rolledBack.option.action).toBe('request-to-join');
+      throw new Error('rollback after mailbox proof');
+    })).toThrow('rollback after mailbox proof');
+    expect(rowCount(harness.db, '_auth_domain_onboarding_transactions')).toBe(0);
+    expect(rowCount(harness.db, '_auth_mailbox_proofs')).toBe(0);
+    expect(rowCount(harness.db, `_auth_domain_mailbox_tokens
+      WHERE outbox_job_id = 'job-one' AND consumed_at IS NOT NULL`)).toBe(0);
+    expect(emittedCodes.filter(
+      (code) => code === OBS_CODES.AUTH_DOMAIN_MAILBOX_PROVED.code,
+    )).toHaveLength(0);
+
     const completed = harness.domains.completeMailboxProof(first.rawToken);
     expect(completed.option).toMatchObject({
       action: 'request-to-join',
       tenant: { name: 'Acme', slug: 'acme' },
     });
+    expect(emittedCodes.filter(
+      (code) => code === OBS_CODES.AUTH_DOMAIN_MAILBOX_PROVED.code,
+    )).toHaveLength(1);
     if (!('continuation' in completed)) {
       throw new Error('Expected a proof-bound admission continuation');
     }
@@ -193,6 +669,21 @@ describe('verified-domain onboarding service', () => {
     expect(harness.domains.inspectAdmissionIdentity(completed.continuation)).toEqual(identity);
     expect(rowCount(harness.db, '_auth_tenant_join_requests')).toBe(0);
 
+    expect(() => harness.db.transaction(() => {
+      const rolledBack = harness.domains.admit({
+        continuation: completed.continuation,
+        identity: identity!,
+      });
+      expect(rolledBack.request.status).toBe('pending');
+      throw new Error('rollback after domain admission');
+    })).toThrow('rollback after domain admission');
+    expect(harness.domains.inspectAdmissionIdentity(completed.continuation)).toEqual(identity);
+    expect(rowCount(harness.db, '_auth_tenant_join_requests')).toBe(0);
+    expect(rowCount(harness.db, '_auth_domain_join_request_provenance')).toBe(0);
+    expect(emittedCodes.filter(
+      (code) => code === OBS_CODES.AUTH_DOMAIN_JOIN_REQUESTED.code,
+    )).toHaveLength(0);
+
     const admitted = harness.domains.admit({
       continuation: completed.continuation,
       identity: identity!,
@@ -201,6 +692,9 @@ describe('verified-domain onboarding service', () => {
       status: 'pending',
       tenant: { name: 'Acme', slug: 'acme' },
     });
+    expect(emittedCodes.filter(
+      (code) => code === OBS_CODES.AUTH_DOMAIN_JOIN_REQUESTED.code,
+    )).toHaveLength(1);
     const provenance = harness.db.prepare(`SELECT *
       FROM _auth_domain_join_request_provenance WHERE join_request_id = ?`).get(
       admitted.request.joinRequestId,
@@ -417,6 +911,7 @@ describe('verified-domain onboarding service', () => {
     });
     const binding = harness.domains.prepareMailboxRequest({
       userId: applicant.userId,
+      expectedAuthGeneration: harness.users.getAuthGeneration(applicant.userId),
       identityKind: 'session',
     })!;
     const delivery = harness.domains.createMailboxDelivery({
@@ -532,6 +1027,7 @@ describe('verified-domain onboarding service', () => {
     expect(rowCount(harness.db, '_auth_mailbox_proofs')).toBe(1);
     const binding = harness.domains.prepareMailboxRequest({
       userId: harness.applicantId,
+      expectedAuthGeneration: harness.users.getAuthGeneration(harness.applicantId),
       identityKind: 'session',
     })!;
     harness.domains.createMailboxDelivery({ ...binding, jobId: 'still-live' });
@@ -549,6 +1045,7 @@ describe('verified-domain onboarding service', () => {
     harness.now.value += harness.domains.config.mailboxProofMaxAgeMs + 1;
     const freshBinding = harness.domains.prepareMailboxRequest({
       userId: harness.applicantId,
+      expectedAuthGeneration: harness.users.getAuthGeneration(harness.applicantId),
       identityKind: 'session',
     })!;
     harness.domains.createMailboxDelivery({ ...freshBinding, jobId: 'fresh' });
@@ -573,6 +1070,7 @@ describe('verified-domain onboarding service', () => {
     );
     const binding = harness.domains.prepareMailboxRequest({
       userId: applicant.userId,
+      expectedAuthGeneration: harness.users.getAuthGeneration(applicant.userId),
       identityKind: 'session',
     })!;
     const deliveries: Array<{ rawToken: string; deliveryId: string }> = [];
@@ -683,6 +1181,7 @@ describe('verified-domain onboarding service', () => {
 
     const binding = harness.domains.prepareMailboxRequest({
       userId: applicant.userId,
+      expectedAuthGeneration: harness.users.getAuthGeneration(applicant.userId),
       identityKind: 'session',
     })!;
     const before = harness.users.getEmailGeneration(applicant.userId);
@@ -698,7 +1197,13 @@ describe('verified-domain onboarding service', () => {
   });
 
   test('releases manual and background DNS leases on resolver outages', async () => {
-    const harness = await createHarness();
+    const events: Array<{ code: string; error: unknown }> = [];
+    const harness = await createHarness({
+      emitCode: (definition, options) => {
+        events.push({ code: definition.code, error: options?.error });
+        return emitPlatformCode(definition, options);
+      },
+    });
     const owner = await createUser(harness, 'dns-owner', 'owner@platform.com');
     const tenant = harness.tenancy.createTenant({
       name: 'DNS', slug: 'dns', ownerUserId: owner.userId,
@@ -725,6 +1230,14 @@ describe('verified-domain onboarding service', () => {
       code: 'AUTH_DOMAIN_DNS_UNAVAILABLE',
       status: 503,
     });
+    expect(events.at(-1)).toMatchObject({
+      code: OBS_CODES.AUTH_DOMAIN_DNS_UNAVAILABLE.code,
+      error: { name: 'VerifiedDomainDnsError', code: 'lookup' },
+    });
+    expect(events.at(-1)?.error).toBeInstanceOf(VerifiedDomainDnsError);
+    expect((events.at(-1)?.error as Error).cause).toBe(harness.txtError);
+    expect(JSON.stringify(events.at(-1))).not.toContain('servfail');
+    expect(JSON.stringify(events.at(-1))).not.toContain('ESERVFAIL');
     expect(claimLease(harness.db, created.claim.claimId)).toMatchObject({
       status: 'pending',
       revision: 1,
@@ -753,6 +1266,11 @@ describe('verified-domain onboarding service', () => {
     const before = claimLease(harness.db, created.claim.claimId);
     harness.txtError = Object.assign(new Error('timeout'), { code: 'ETIMEOUT' });
     expect(await harness.domains.processDueReverification(1)).toBe(1);
+    expect(events.at(-1)).toMatchObject({
+      code: OBS_CODES.AUTH_DOMAIN_DNS_UNAVAILABLE.code,
+      error: { name: 'VerifiedDomainDnsError', code: 'lookup' },
+    });
+    expect((events.at(-1)?.error as Error).cause).toBe(harness.txtError);
     const after = claimLease(harness.db, created.claim.claimId);
     expect(after).toMatchObject({
       status: 'verified',
@@ -762,6 +1280,244 @@ describe('verified-domain onboarding service', () => {
       next_check_at: harness.now.value
         + harness.domains.config.reverifyRetryIntervalMs,
       updated_at: before.updated_at,
+    });
+  });
+
+  test('detaches verification input across the asynchronous DNS boundary', async () => {
+    const events: Array<{
+      code: string;
+      metadata: Record<string, unknown> | undefined;
+    }> = [];
+    let answers: readonly (readonly string[])[] = [];
+    let resolvedHostname: string | null = null;
+    let markResolverEntered!: () => void;
+    let resumeResolver!: () => void;
+    const resolverEntered = new Promise<void>((resolve) => {
+      markResolverEntered = resolve;
+    });
+    const resolverResume = new Promise<void>((resolve) => {
+      resumeResolver = resolve;
+    });
+    const harness = await createHarness({
+      emitCode(definition, options) {
+        events.push({ code: definition.code, metadata: options?.metadata });
+        return emitPlatformCode(definition, options);
+      },
+      resolveTxt: async (hostname) => {
+        resolvedHostname = hostname;
+        markResolverEntered();
+        await resolverResume;
+        return answers;
+      },
+    });
+    const owner = await createUser(
+      harness,
+      'async-snapshot-owner',
+      'owner@platform.com',
+    );
+    const tenant = harness.tenancy.createTenant({
+      name: 'Async Snapshot',
+      slug: 'async-snapshot',
+      ownerUserId: owner.userId,
+    });
+    const tenantId = tenant.tenant.tenantId;
+    const liveAuthority = authority(
+      owner.userId,
+      tenant.ownerMembership.membershipId,
+      tenantId,
+    );
+    const created = harness.domains.createClaim({
+      tenantId,
+      domain: 'async-snapshot.com',
+      assertCurrentAuthority: liveAuthority,
+    });
+    answers = [[created.challenge.value]];
+    events.length = 0;
+    harness.now.value += harness.domains.config.dnsCheckCooldownMs + 1;
+
+    let authorityCalls = 0;
+    const originalAuthority: AssertAuthTenantMutationAuthority = (permissions) => {
+      authorityCalls += 1;
+      return liveAuthority(permissions);
+    };
+    const auditRequest = {
+      requestId: 'verify-before-dns',
+      correlationId: 'correlation-before-dns',
+    };
+    const verificationInput: Parameters<
+      VerifiedDomainOnboardingService['verifyClaim']
+    >[0] = {
+      tenantId,
+      claimId: created.claim.claimId,
+      expectedRevision: created.claim.revision,
+      assertCurrentAuthority: originalAuthority,
+      auditRequest,
+    };
+
+    const pending = harness.domains.verifyClaim(verificationInput);
+    await resolverEntered;
+    verificationInput.tenantId = 'tenant_mutated_during_dns';
+    verificationInput.claimId = 'claim_mutated_during_dns';
+    verificationInput.expectedRevision = 'revision_mutated_during_dns';
+    verificationInput.assertCurrentAuthority = () => {
+      throw new Error('mutated authority callback must not run');
+    };
+    auditRequest.requestId = 'verify-after-dns';
+    auditRequest.correlationId = 'correlation-after-dns';
+    resumeResolver();
+
+    const verified = await pending;
+    expect(verified).toMatchObject({
+      claimId: created.claim.claimId,
+      domain: created.claim.domain,
+      status: 'verified',
+    });
+    expect(authorityCalls).toBe(2);
+    expect(resolvedHostname as string | null).toBe(
+      `${'_zero-domain-verification'}.${created.claim.domain}`,
+    );
+    expect(events).toEqual([{
+      code: OBS_CODES.AUTH_DOMAIN_VERIFIED.code,
+      metadata: { claimId: created.claim.claimId, tenantId },
+    }]);
+    expect(harness.db.prepare(`
+      SELECT request_id, correlation_id, target_id, outcome
+      FROM _auth_audit_events
+      WHERE action = 'tenant.domain-verification-completed'
+        AND target_id = ?
+    `).get(created.claim.claimId)).toEqual({
+      request_id: 'verify-before-dns',
+      correlation_id: 'correlation-before-dns',
+      target_id: created.claim.claimId,
+      outcome: 'succeeded',
+    });
+  });
+
+  test('does not fail a committed verification when its result emitter throws', async () => {
+    let resultEmissionAttempts = 0;
+    const harness = await createHarness({
+      emitCode(definition, options) {
+        if (definition === OBS_CODES.AUTH_DOMAIN_VERIFIED) {
+          resultEmissionAttempts += 1;
+          throw new Error('injected result emitter failure');
+        }
+        return emitPlatformCode(definition, options);
+      },
+    });
+    const owner = await createUser(
+      harness,
+      'throwing-emitter-owner',
+      'owner@platform.com',
+    );
+    const tenant = harness.tenancy.createTenant({
+      name: 'Throwing Emitter',
+      slug: 'throwing-emitter',
+      ownerUserId: owner.userId,
+    });
+    const assertCurrentAuthority = authority(
+      owner.userId,
+      tenant.ownerMembership.membershipId,
+      tenant.tenant.tenantId,
+    );
+    const created = harness.domains.createClaim({
+      tenantId: tenant.tenant.tenantId,
+      domain: 'throwing-emitter.com',
+      assertCurrentAuthority,
+    });
+    harness.txtAnswers = [[created.challenge.value]];
+
+    await expect(harness.domains.verifyClaim({
+      tenantId: tenant.tenant.tenantId,
+      claimId: created.claim.claimId,
+      expectedRevision: created.claim.revision,
+      assertCurrentAuthority,
+    })).resolves.toMatchObject({
+      claimId: created.claim.claimId,
+      status: 'verified',
+    });
+    expect(resultEmissionAttempts).toBe(1);
+    expect(harness.domains.listClaims(tenant.tenant.tenantId)[0]).toMatchObject({
+      claimId: created.claim.claimId,
+      status: 'verified',
+    });
+    expect(harness.audit.listTenant(tenant.tenant.tenantId, {
+      action: 'tenant.domain-verification-completed',
+    }).events[0]).toMatchObject({
+      outcome: 'succeeded',
+      targetId: created.claim.claimId,
+    });
+  });
+
+  test('does not publish reverification success for a stale system lease', async () => {
+    const events: string[] = [];
+    let answers: readonly (readonly string[])[] = [];
+    let pauseReverification = false;
+    let markResolverEntered!: () => void;
+    let resumeResolver!: () => void;
+    const resolverEntered = new Promise<void>((resolve) => {
+      markResolverEntered = resolve;
+    });
+    const resolverResume = new Promise<void>((resolve) => {
+      resumeResolver = resolve;
+    });
+    const harness = await createHarness({
+      emitCode(definition, options) {
+        events.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+      resolveTxt: async () => {
+        if (pauseReverification) {
+          markResolverEntered();
+          await resolverResume;
+        }
+        return answers;
+      },
+    });
+    const owner = await createUser(harness, 'stale-lease-owner', 'owner@platform.com');
+    const tenant = harness.tenancy.createTenant({
+      name: 'Stale Lease', slug: 'stale-lease', ownerUserId: owner.userId,
+    });
+    const assertCurrentAuthority = authority(
+      owner.userId,
+      tenant.ownerMembership.membershipId,
+      tenant.tenant.tenantId,
+    );
+    const created = harness.domains.createClaim({
+      tenantId: tenant.tenant.tenantId,
+      domain: 'stale-lease.com',
+      assertCurrentAuthority,
+    });
+    answers = [[created.challenge.value]];
+    await harness.domains.verifyClaim({
+      tenantId: tenant.tenant.tenantId,
+      claimId: created.claim.claimId,
+      expectedRevision: created.claim.revision,
+      assertCurrentAuthority,
+    });
+    events.length = 0;
+    harness.now.value += 1_000;
+    harness.db.prepare(`UPDATE _auth_tenant_domain_claims SET next_check_at = ?
+      WHERE claim_id = ?`).run(harness.now.value, created.claim.claimId);
+    const before = claimLease(harness.db, created.claim.claimId);
+
+    pauseReverification = true;
+    const processing = harness.domains.processDueReverification(1);
+    await resolverEntered;
+    harness.db.prepare(`UPDATE _auth_tenant_domain_claims
+      SET revision = revision + 1, lease_owner = NULL, lease_expires_at = NULL
+      WHERE claim_id = ?`).run(created.claim.claimId);
+    resumeResolver();
+
+    expect(await processing).toBe(0);
+    expect(events.filter((code) => (
+      code === OBS_CODES.AUTH_DOMAIN_REVERIFIED.code
+        || code === OBS_CODES.AUTH_DOMAIN_REVERIFICATION_FAILED.code
+    ))).toHaveLength(0);
+    expect(claimLease(harness.db, created.claim.claimId)).toMatchObject({
+      status: 'verified',
+      revision: before.revision + 1,
+      last_checked_at: before.last_checked_at,
+      lease_owner: null,
     });
   });
 
@@ -808,6 +1564,7 @@ describe('verified-domain onboarding service', () => {
     );
     const binding = harness.domains.prepareMailboxRequest({
       userId: secondApplicant.userId,
+      expectedAuthGeneration: harness.users.getAuthGeneration(secondApplicant.userId),
       identityKind: 'session',
     })!;
     const delivery = harness.domains.createMailboxDelivery({
@@ -949,6 +1706,7 @@ describe('verified-domain onboarding service', () => {
 
     const blockedBinding = harness.domains.prepareMailboxRequest({
       userId: harness.applicantId,
+      expectedAuthGeneration: harness.users.getAuthGeneration(harness.applicantId),
       identityKind: 'session',
     })!;
     const blockedDelivery = harness.domains.createMailboxDelivery({
@@ -962,6 +1720,7 @@ describe('verified-domain onboarding service', () => {
     harness.now.value = release.quarantineUntil;
     const retryBinding = harness.domains.prepareMailboxRequest({
       userId: harness.applicantId,
+      expectedAuthGeneration: harness.users.getAuthGeneration(harness.applicantId),
       identityKind: 'session',
     })!;
     const retryDelivery = harness.domains.createMailboxDelivery({
@@ -1259,6 +2018,9 @@ interface Harness {
 interface HarnessOptions {
   maxClaimsPerTenant?: number;
   emitCode?: AuthPlatformCodeEmitter;
+  resolveTxt?: (
+    hostname: string,
+  ) => Promise<readonly (readonly string[])[]>;
 }
 
 async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
@@ -1281,11 +2043,11 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
       onboarding: {
         verifiedDomains: {
           enabled: true,
-          resolveTxt: async (hostname) => {
+          resolveTxt: options.resolveTxt ?? (async (hostname) => {
             harness.lastTxtName = hostname;
             if (harness.txtError) throw harness.txtError;
             return harness.txtAnswers;
-          },
+          }),
           maxClaimsPerTenant: options.maxClaimsPerTenant,
         },
       },
@@ -1364,6 +2126,7 @@ async function createAdmittedHarness(options: HarnessOptions = {}) {
   });
   const binding = harness.domains.prepareMailboxRequest({
     userId: applicant.userId,
+    expectedAuthGeneration: harness.users.getAuthGeneration(applicant.userId),
     identityKind: 'session',
   })!;
   const delivery = harness.domains.createMailboxDelivery({

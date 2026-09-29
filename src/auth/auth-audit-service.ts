@@ -150,7 +150,7 @@ export class AuthAuditService {
 
   /** Delete only expired rows, in one bounded batch, through the schema gate. */
   prune(now = Date.now(), limit = this.config.pruneBatchSize): number {
-    if (!Number.isSafeInteger(now) || now < 0) throw new Error('Invalid audit retention time.');
+    assertValidRetentionTime(now);
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > this.config.pruneBatchSize) {
       throw new Error(`Audit retention limit must be between 1 and ${this.config.pruneBatchSize}.`);
     }
@@ -234,9 +234,14 @@ export class AuthAuditService {
     /** Revalidate operator authority after BEGIN IMMEDIATE and before delete. */
     assertCurrentAuthority?: () => unknown;
   }): Readonly<{ deleted: number; hasMore: boolean }> {
+    const actor = captureAuthAuditActor(input.actor)!;
+    const request = captureAuthAuditRequestContext(input.request);
+    const now = input.now ?? Date.now();
+    assertValidRetentionTime(now);
+    const assertCurrentAuthority = input.assertCurrentAuthority;
     return this.db.transaction(() => {
-      if (input.assertCurrentAuthority) {
-        invokeSynchronousAuthCallback(input.assertCurrentAuthority, {
+      if (assertCurrentAuthority) {
+        invokeSynchronousAuthCallback(assertCurrentAuthority, {
           component: 'auth-audit',
           invariant: 'prune-authority-async',
           message: '[auth] Audit retention authority revalidation must be synchronous.',
@@ -246,7 +251,7 @@ export class AuthAuditService {
       // Keep the operator transaction bounded to one configured batch. The
       // caller may repeat while hasMore is true; the background worker owns
       // multi-transaction backlog draining.
-      const deleted = this.prune(input.now);
+      const deleted = this.prune(now);
       const result = Object.freeze({
         deleted,
         hasMore: deleted === this.config.pruneBatchSize,
@@ -255,8 +260,8 @@ export class AuthAuditService {
         action: 'audit.retention-pruned',
         outcome: 'succeeded',
         scope: { kind: 'application' },
-        actor: input.actor,
-        request: input.request,
+        actor,
+        request,
         target: { type: 'audit-events' },
         metadata: { deleted: result.deleted, 'has-more': result.hasMore },
       });
@@ -346,6 +351,12 @@ export class AuthAuditService {
   }
 }
 
+function assertValidRetentionTime(now: number): void {
+  if (!Number.isSafeInteger(now) || now < 0 || now > MAX_DATE_MS) {
+    throw new Error('Invalid audit retention time.');
+  }
+}
+
 export function authAuditActorFromContext(
   auth: AuthContext,
   provenance: AuthAuditActorProvenance = 'authenticated-request',
@@ -365,6 +376,44 @@ export function authAuditRequestFromRequest(request: Request): AuthAuditRequestC
   return Object.freeze({
     requestId: optionalHeaderId(request.headers.get('x-request-id')),
     correlationId: optionalHeaderId(request.headers.get('x-correlation-id')),
+  });
+}
+
+/**
+ * Detach caller-owned tracing context before a live authority callback.
+ * A synchronous headless callback must not be able to rewrite the audit
+ * attribution used by the mutation that follows it.
+ */
+export function captureAuthAuditRequestContext(
+  input: AuthAuditRequestContext | undefined,
+): AuthAuditRequestContext | undefined {
+  if (input === undefined) return undefined;
+  const requestId = input.requestId;
+  const correlationId = input.correlationId;
+  return Object.freeze({
+    ...(requestId === undefined ? {} : { requestId }),
+    ...(correlationId === undefined ? {} : { correlationId }),
+  });
+}
+
+/** Detach caller-owned actor attribution before a synchronous proof callback. */
+export function captureAuthAuditActor(
+  input: AuthAuditActor | undefined,
+): AuthAuditActor | undefined {
+  if (input === undefined) return undefined;
+  const userId = input.userId;
+  const membershipId = input.membershipId;
+  const sessionId = input.sessionId;
+  const sessionKind = input.sessionKind;
+  const clientId = input.clientId;
+  const provenance = input.provenance;
+  return Object.freeze({
+    ...(userId === undefined ? {} : { userId }),
+    ...(membershipId === undefined ? {} : { membershipId }),
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ...(sessionKind === undefined ? {} : { sessionKind }),
+    ...(clientId === undefined ? {} : { clientId }),
+    provenance,
   });
 }
 

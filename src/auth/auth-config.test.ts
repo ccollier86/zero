@@ -498,6 +498,46 @@ describe('resolveAuthBehaviorConfig', () => {
     });
   });
 
+  test('rejects non-organization verified-domain roles while onboarding is disabled', () => {
+    expect(() => resolveAuthBehaviorConfig({
+      tenancy: {
+        mode: 'multi',
+        onboarding: {
+          verifiedDomains: {
+            enabled: false,
+            allowedRequestRoles: ['administrator'],
+            defaultRequestRole: 'administrator',
+          },
+        },
+      },
+      authorization: 'advanced',
+    })).toThrow('must be assignable to organization tenants: "administrator"');
+
+    expect(() => resolveAuthBehaviorConfig({
+      tenancy: {
+        mode: 'multi',
+        onboarding: {
+          verifiedDomains: {
+            enabled: false,
+            allowedRequestRoles: ['application-auditor'],
+            defaultRequestRole: 'application-auditor',
+          },
+        },
+      },
+      authorization: {
+        mode: 'advanced',
+        permissions: {
+          'application.reports:read': { scope: 'application' },
+        },
+        roles: {
+          'application-auditor': {
+            permissions: ['application.reports:read'],
+          },
+        },
+      },
+    })).toThrow('must be assignable to organization tenants: "application-auditor"');
+  });
+
   test('normalizes a validated permission registry and static role templates', () => {
     const first = resolveAuthBehaviorConfig({
       authorization: {

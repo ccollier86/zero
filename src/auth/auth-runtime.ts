@@ -430,6 +430,7 @@ export class AuthRuntime {
           // owner state but before returning a completed registration. Recover
           // only under the same startup transaction as profile validation.
           this.userStore!.recoverPendingRegistrationProvisioning();
+          this.userStore!.recoverPendingAdminUserProvisioning();
           this.userStore!.reconcileBootstrapState();
 
           if (this.tenancyService) {
@@ -542,6 +543,7 @@ export class AuthRuntime {
         this.auditService,
         isAdministrationMember,
         this.emitCode,
+        (userId) => this.userStore!.getAuthGeneration(userId),
       );
       const requiresMfaAssurance = (userId: string): boolean => {
         const current = this.userStore!.getUserById(userId);

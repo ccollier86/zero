@@ -285,6 +285,17 @@ Opaque IDs are scoped to the Bearer's active tenant. A guessed ID from another
 tenant receives the same `404` contract as a missing ID. List DTOs do not expose
 token hashes, envelopes, accepted user IDs, issuer internals, reviewer IDs,
 credentials, MFA state, global roles, or session metadata.
+Invitation listing revalidates live tenant authority before tenant discovery,
+expiry maintenance, or query work. Expiry maintenance triggered by a list is
+scoped to that active tenant and never updates another tenant's invitations.
+Invitation and join-request list filters accept only their documented exact
+status enums. Direct/headless list calls return
+`TENANT_ONBOARDING_PAGE_INVALID` (`422`) for invalid limit, cursor, or status
+input before expiry maintenance, authority, or query work. HTTP values rejected
+by the Elysia query schema, including an unknown status enum or malformed
+numeric field, use `AUTH_VALIDATION_FAILED`; semantic values that pass the
+schema but fail service validation, such as an invalid opaque cursor, retain
+`TENANT_ONBOARDING_PAGE_INVALID`.
 
 ## Browser SDK
 
@@ -476,6 +487,9 @@ registry in both simple and advanced authorization modes:
   assignments, and fixed policy rejects a conflicting override. Selectable
   approval accepts at most the server-projected `maxRoleCount` and remains
   subject to commit-time revalidation.
+- Omission is the only default signal. An explicit `null`, sparse, blank,
+  malformed, or duplicate role selection is rejected instead of being
+  converted into the default grant.
 - Stored invitation roles are revalidated at acceptance, so removed or newly
   protected role definitions fail closed.
 - Administration Organization invitations require at least one explicit
@@ -497,6 +511,7 @@ Applications should branch on `code`, not error text. Important codes include:
 | `TENANT_INVITATION_ACCOUNT_AUTH_REQUIRED` | The exact email already belongs to an account; authenticate it instead of creating another |
 | `TENANT_ONBOARDING_PROOF_INVALID` | Continuation expired, was consumed, belongs to another app, or was invalidated by auth generation |
 | `TENANT_ONBOARDING_PROOF_AMBIGUOUS` | Both Bearer and continuation were supplied |
+| `TENANT_ONBOARDING_PAGE_INVALID` | Invitation/join-request list limit, cursor, or status filter is invalid |
 | `TENANT_INVITATION_MEMBERSHIP_BLOCKED` | A suspended/removed retained membership prevents silent invitation rejoin |
 | `TENANT_JOIN_REACTIVATION_REQUIRED` | Reviewer must explicitly acknowledge retained-membership re-admission |
 | `TENANT_JOIN_REQUEST_REVISION_CONFLICT` | The loaded request revision is stale because the request reopened or its server-owned policy/provenance changed; reload before deciding |

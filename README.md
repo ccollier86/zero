@@ -6,7 +6,12 @@ components, routing, auth, storage, sync, workflows, notifications, AI, vector
 storage, browser-grade PDF rendering, migrations, observability, and app-ready
 hooks so new apps do not start by rebuilding the same foundation.
 
-Current development boundary: this unreleased tree implements all four auth
+Zero's integrated identity, session, tenancy, and authorization subsystem is
+called **Guardian**. This is a documentation/product name; its established
+`auth.*` configuration, `/auth/*` routes, and `@zero/framework/auth` API remain
+unchanged.
+
+Current development boundary: Guardian implements all four auth
 profiles—`single/simple`, `single/advanced`, `multi/simple`, and
 `multi/advanced`—through one app-local authorization system. Multi-tenant
 sessions, registered resources, Sync, scoped built-in services, tenant

@@ -155,8 +155,12 @@ export type {
 export { UserStore } from './user-store';
 export type {
   AtomicRegistrationPolicy,
+  AuthGenerationReceipt,
   AuthSecurityAuditContext,
   CreateUserInput,
+  PasswordAuthenticationProof,
+  PasswordChangeAuthenticationAdmission,
+  PasswordChangeAuthenticationReceipt,
   UserListOptions,
   UserStoreOptions,
 } from './user-store';
@@ -286,6 +290,15 @@ export { MfaMethodStore } from './mfa-method-store';
 export { MfaService } from './mfa-service';
 export { MfaChallengeStore } from './mfa-challenge-store';
 export { MfaChallengeService } from './mfa-challenge-service';
+export type {
+  MfaEnrollmentRollbackReceipt,
+  MfaEnrollmentStart,
+  MfaLoginChallengeRollbackReceipt,
+  MfaLoginChallengeStart,
+  MfaRequirementSource,
+  PublicMfaChallenge,
+  PublicMfaMethod,
+} from './mfa-challenge-service';
 export type {
   AdminMfaConfig,
   MfaReadiness,

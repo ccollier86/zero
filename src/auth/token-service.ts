@@ -34,10 +34,13 @@ import { loadOrCreateAuthSigningKeys } from './auth-signing-keys';
 import { AuthTokenCodec } from './auth-token-codec';
 import { AuthWebSessionTokenService } from './auth-web-session-token-service';
 import {
+  authContextAuthorityReferenceFingerprint,
   authContextMatchesAuthorityReference,
+  snapshotAuthContextAuthorityReference,
 } from './auth-context-authority';
 import { parseTokenTTL } from '../tokens/token-utils';
 import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
+import { createAuthStateInvariantError } from './auth-observability';
 
 /** Page credential bound to one persisted refresh-session record. */
 export interface IssuedPageSession {
@@ -48,6 +51,8 @@ export interface IssuedPageSession {
 /** Server-only proof resolved from a live browser refresh/session family. */
 export interface WebRefreshProof {
   user: UserRecord;
+  /** Exact user security generation validated with this refresh family. */
+  authGeneration: number;
   record: RefreshTokenRecord;
   session: AuthSessionRecord;
   tenantKind: import('./tenancy/tenancy-types').TenantKind | null;
@@ -299,6 +304,9 @@ export class TokenService {
    * Transition tokens are not app sessions and cannot be used with normal
    * auth middleware. They let auth routes carry users through MFA setup or
    * challenge flows before a full access/refresh pair is issued.
+   * Authentication ceremonies must pass the exact generation proved by their
+   * password or durable transition receipt. Omitting it is reserved for
+   * trusted server issuance that did not authenticate an earlier credential.
    */
   async signTransitionToken(
     user: {
@@ -313,16 +321,69 @@ export class TokenService {
       methodType?: AuthTransitionTokenPayload['methodType'];
       challengeId?: string;
       flow?: AuthTransitionTokenPayload['flow'];
+      /** Preserve the generation proven by the ceremony that requested this token. */
+      expectedAuthGeneration?: number;
+      /**
+       * Exact live session authority that began a profile MFA enrollment.
+       * The credential-free reference is checked before and after signing; only
+       * its opaque fingerprint is placed in the transition token.
+       */
+      profileAuthority?: AuthContextAuthorityReference;
     }
   ): Promise<string> {
     this.assertRuntimeProfileCurrent();
-    const authGeneration = currentAuthGeneration(this.userStore, user.userId);
+    const capturedUser = Object.freeze({
+      userId: user.userId,
+      email: user.email,
+      role: user.role,
+    });
+    const authGeneration = params.expectedAuthGeneration
+      ?? currentAuthGeneration(this.userStore, capturedUser.userId);
+    const profileAuthority = params.profileAuthority
+      ? snapshotAuthContextAuthorityReference(params.profileAuthority)
+      : null;
+    if ((params.flow === 'profile' && params.purpose !== 'mfa_setup')
+      || (params.flow === 'profile') !== Boolean(profileAuthority)
+      || (profileAuthority
+        && (profileAuthority.userId !== capturedUser.userId
+          || profileAuthority.authGeneration !== authGeneration))) {
+      throw createAuthStateInvariantError(this.emitCode, {
+        component: 'token-service',
+        invariant: 'profile-transition-authority-invalid',
+        message: '[auth] Profile transition token authority is invalid.',
+      });
+    }
+    if (this.userStore && !isCurrentAuthGeneration(
+      this.userStore,
+      capturedUser.userId,
+      authGeneration,
+    )) throw authenticationStateChanged();
+    if (profileAuthority && !this.resolveAuthContextAuthority(profileAuthority)) {
+      throw authenticationStateChanged();
+    }
     const token = await this.codec.signTransitionToken({
-      subject: { ...user, authGeneration },
-      claims: params,
+      subject: { ...capturedUser, authGeneration },
+      claims: {
+        purpose: params.purpose,
+        methodId: params.methodId,
+        methodType: params.methodType,
+        challengeId: params.challengeId,
+        flow: params.flow,
+        profileAuthorityFingerprint: profileAuthority
+          ? authContextAuthorityReferenceFingerprint(profileAuthority)
+          : undefined,
+      },
       ttl: params.ttl,
     });
     this.assertRuntimeProfileCurrent();
+    if (this.userStore && !isCurrentAuthGeneration(
+      this.userStore,
+      capturedUser.userId,
+      authGeneration,
+    )) throw authenticationStateChanged();
+    if (profileAuthority && !this.resolveAuthContextAuthority(profileAuthority)) {
+      throw authenticationStateChanged();
+    }
     return token;
   }
 
@@ -349,6 +410,14 @@ export class TokenService {
         return null;
       }
       const authGeneration = readAuthGeneration(payload.authGeneration);
+      const flow = payload.flow === 'auth' || payload.flow === 'profile'
+        ? payload.flow
+        : undefined;
+      const profileAuthorityFingerprint = isAuthorityFingerprint(
+        payload.profileAuthorityFingerprint,
+      ) ? payload.profileAuthorityFingerprint : undefined;
+      if (flow === 'profile' && purpose !== 'mfa_setup') return null;
+      if ((flow === 'profile') !== Boolean(profileAuthorityFingerprint)) return null;
       if (this.userStore) {
         const user = this.userStore.getUserById(userId);
         if (!user || !isCurrentAuthGeneration(this.userStore, userId, authGeneration)) {
@@ -365,9 +434,8 @@ export class TokenService {
         methodId: typeof payload.methodId === 'string' ? payload.methodId : undefined,
         methodType: isMfaMethodType(payload.methodType) ? payload.methodType : undefined,
         challengeId: typeof payload.challengeId === 'string' ? payload.challengeId : undefined,
-        flow: payload.flow === 'auth' || payload.flow === 'profile'
-          ? payload.flow
-          : undefined,
+        flow,
+        profileAuthorityFingerprint,
       };
     } catch (error) {
       if (error instanceof AuthError) throw error;
@@ -403,6 +471,7 @@ export class TokenService {
         userId: user.userId,
         email: user.email,
         role: user.role,
+        authGeneration: payload.authGeneration,
         clientId: payload.clientId,
         sessionKind: 'native',
         scope: payload.scope,
@@ -436,6 +505,7 @@ export class TokenService {
         authority.session,
         authority.tenantRole,
         authority.tenantKind,
+        payload.authGeneration,
       ));
     } else {
       // Upgrade compatibility only: an already-issued single-tenant browser
@@ -451,6 +521,7 @@ export class TokenService {
         userId: user.userId,
         email: user.email,
         role: user.role,
+        authGeneration: payload.authGeneration,
       });
     }
 
@@ -470,13 +541,14 @@ export class TokenService {
       || !context.sessionKind
       || !context.sessionId
       || !context.sessionScopeKind
-      || !context.sessionScopeId) return null;
+      || !context.sessionScopeId
+      || context.authGeneration === undefined) return null;
 
     const reference: AuthContextAuthorityReference = Object.freeze({
       version: 1,
       userId: context.userId,
       platformRole: context.role,
-      authGeneration: this.userStore.getAuthGeneration(context.userId),
+      authGeneration: context.authGeneration,
       sessionKind: context.sessionKind,
       sessionId: context.sessionId,
       mfaVerifiedAt: context.mfaVerifiedAt ?? null,
@@ -533,6 +605,7 @@ export class TokenService {
         authority.session,
         authority.tenantRole,
         authority.tenantKind,
+        reference.authGeneration,
       ));
     } else {
       if (!reference.clientId
@@ -549,6 +622,7 @@ export class TokenService {
         userId: user.userId,
         email: user.email,
         role: user.role,
+        authGeneration: reference.authGeneration,
         clientId: reference.clientId,
         sessionKind: 'native',
         scope: Object.freeze(authority.session.scope
@@ -614,6 +688,9 @@ export class TokenService {
   /**
    * Issue a full token pair (access + refresh) for a user.
    * Stores the refresh token hash in the database.
+   * Authentication ceremonies must pass `expectedAuthGeneration` from their
+   * exact proof/receipt; the optional fallback exists only for compatible,
+   * trusted server issuance with no earlier credential-verification gap.
    */
   async issueTokenPair(
     user: UserRecord,
@@ -714,12 +791,14 @@ export class TokenService {
     session: AuthSessionRecord,
     tenantRole: string | null,
     tenantKind: import('./tenancy/tenancy-types').TenantKind | null,
+    authGeneration: number,
   ): AuthContext {
     return this.webSessions.toWebAuthContext(
       user,
       session,
       tenantRole,
       tenantKind,
+      authGeneration,
     );
   }
 
@@ -780,6 +859,18 @@ export class TokenService {
 
 function isMfaMethodType(value: unknown): value is AuthTransitionTokenPayload['methodType'] {
   return value === 'email' || value === 'totp';
+}
+
+function isAuthorityFingerprint(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
+}
+
+function authenticationStateChanged(): AuthError {
+  return new AuthError(
+    'Authentication state changed; sign in again',
+    'AUTH_STATE_CHANGED',
+    409,
+  );
 }
 
 function compareText(left: string, right: string): number {

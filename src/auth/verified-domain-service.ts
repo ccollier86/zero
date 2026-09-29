@@ -29,6 +29,7 @@ import {
 } from './verified-domain-schema';
 import {
   authAuditActorFromContext,
+  captureAuthAuditRequestContext,
   type AuthAuditService,
 } from './auth-audit-service';
 import type { AuthAuditRequestContext } from './auth-audit-types';
@@ -206,6 +207,9 @@ export class VerifiedDomainOnboardingService {
   }): AuthTenantDomainChallengeResult {
     this.users.assertCurrentProfile();
     this.requireEnabled();
+    const tenantId = input.tenantId;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
     const domain = this.canonicalizeDomain(input.domain);
     const challenge = createDnsChallenge(domain, this.config.challengeTTLms, this.now());
     const claimId = `vdc_${crypto.randomUUID()}`;
@@ -213,10 +217,10 @@ export class VerifiedDomainOnboardingService {
     try {
       this.db.transaction(() => {
         this.users.assertCurrentProfile();
-        this.lockTenant(input.tenantId);
+        this.lockTenant(tenantId);
         const authority = this.requireAuthority(
-          input.tenantId,
-          input.assertCurrentAuthority,
+          tenantId,
+          assertCurrentAuthority,
           ['tenant.domains:verify'],
         );
         if (this.getClaimByDomain.get(domain)) throw domainUnavailable();
@@ -228,14 +232,14 @@ export class VerifiedDomainOnboardingService {
             tenant_id: string;
             quarantine_until: number;
           } | null;
-        if (quarantine && quarantine.tenant_id !== input.tenantId
+        if (quarantine && quarantine.tenant_id !== tenantId
           && quarantine.quarantine_until > now) {
           throw domainUnavailable();
         }
         const retained = this.db.prepare(`SELECT COUNT(*) AS count
           FROM _auth_tenant_domain_claims
           WHERE tenant_id = ? AND released_at IS NULL`).get(
-          input.tenantId,
+          tenantId,
         ) as { count: number };
         if (retained.count >= this.config.maxClaimsPerTenant) {
           throw new AuthError(
@@ -254,7 +258,7 @@ export class VerifiedDomainOnboardingService {
             NULL, NULL, NULL, NULL, 1, NULL, NULL, ?, ?, ?)
         `).run(
           claimId,
-          input.tenantId,
+          tenantId,
           domain,
           challenge.digest,
           challenge.expiresAt,
@@ -271,22 +275,23 @@ export class VerifiedDomainOnboardingService {
         this.auditService?.append({
           action: 'tenant.domain-claim-created',
           outcome: 'succeeded',
-          scope: { kind: 'tenant', tenantId: input.tenantId },
+          scope: { kind: 'tenant', tenantId },
           actor: authAuditActorFromContext(authority.auth),
-          request: input.auditRequest,
+          request: auditRequest,
           target: { type: 'tenant-domain-claim', id: claimId },
         });
+        const code = OBS_CODES.AUTH_DOMAIN_CLAIM_CREATED;
+        this.db.afterCommit(() => this.emitCode(code, {
+          userId: undefined,
+          metadata: { claimId, tenantId },
+        }));
       });
     } catch (error) {
       if (isUniqueConstraint(error)) throw domainUnavailable();
       throw error;
     }
-    this.emitCode(OBS_CODES.AUTH_DOMAIN_CLAIM_CREATED, {
-      userId: undefined,
-      metadata: { claimId, tenantId: input.tenantId },
-    });
     return {
-      claim: this.requireProjectedClaim(input.tenantId, claimId),
+      claim: this.requireProjectedClaim(tenantId, claimId),
       challenge: challenge.public,
     };
   }
@@ -300,27 +305,31 @@ export class VerifiedDomainOnboardingService {
   }): AuthTenantDomainChallengeResult {
     this.users.assertCurrentProfile();
     this.requireEnabled();
-    const current = this.requireClaim(input.tenantId, input.claimId);
-    const challenge = createDnsChallenge(
-      current.domain,
-      this.config.challengeTTLms,
-      this.now(),
-    );
-    const now = this.now();
-    this.db.transaction(() => {
+    const tenantId = input.tenantId;
+    const claimId = input.claimId;
+    const expectedRevision = input.expectedRevision;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
+    const challenge = this.db.transaction(() => {
       this.users.assertCurrentProfile();
-      this.lockTenant(input.tenantId);
+      this.lockTenant(tenantId);
       const authority = this.requireAuthority(
-        input.tenantId,
-        input.assertCurrentAuthority,
+        tenantId,
+        assertCurrentAuthority,
         ['tenant.domains:verify'],
       );
-      const claim = this.requireClaim(input.tenantId, input.claimId);
-      this.assertClaimRevision(claim, input.expectedRevision);
+      const claim = this.requireClaim(tenantId, claimId);
+      this.assertClaimRevision(claim, expectedRevision);
+      const now = this.now();
       if (claim.challenge_expires_at
         && now - claim.updated_at < this.config.dnsCheckCooldownMs) {
         throw rateLimited();
       }
+      const generated = createDnsChallenge(
+        claim.domain,
+        this.config.challengeTTLms,
+        now,
+      );
       const changed = this.db.prepare(`
         UPDATE _auth_tenant_domain_claims
         SET challenge_digest = ?, challenge_expires_at = ?, revision = revision + 1,
@@ -328,29 +337,31 @@ export class VerifiedDomainOnboardingService {
         WHERE tenant_id = ? AND claim_id = ? AND revision = ?
           AND released_at IS NULL
       `).run(
-        challenge.digest,
-        challenge.expiresAt,
+        generated.digest,
+        generated.expiresAt,
         now,
-        input.tenantId,
-        input.claimId,
+        tenantId,
+        claimId,
         claim.revision,
       );
       if (changed.changes !== 1) throw claimRevisionConflict();
       this.auditService?.append({
         action: 'tenant.domain-challenge-issued',
         outcome: 'succeeded',
-        scope: { kind: 'tenant', tenantId: input.tenantId },
+        scope: { kind: 'tenant', tenantId },
         actor: authAuditActorFromContext(authority.auth),
-        request: input.auditRequest,
-        target: { type: 'tenant-domain-claim', id: input.claimId },
+        request: auditRequest,
+        target: { type: 'tenant-domain-claim', id: claimId },
       });
-    });
-    this.emitCode(OBS_CODES.AUTH_DOMAIN_CHALLENGE_ISSUED, {
-      metadata: { claimId: input.claimId, tenantId: input.tenantId },
+      const code = OBS_CODES.AUTH_DOMAIN_CHALLENGE_ISSUED;
+      this.db.afterCommit(() => this.emitCode(code, {
+        metadata: { claimId, tenantId },
+      }));
+      return generated.public;
     });
     return {
-      claim: this.requireProjectedClaim(input.tenantId, input.claimId),
-      challenge: challenge.public,
+      claim: this.requireProjectedClaim(tenantId, claimId),
+      challenge,
     };
   }
 
@@ -375,10 +386,21 @@ export class VerifiedDomainOnboardingService {
   }): AuthTenantDomainClaimProjection {
     this.users.assertCurrentProfile();
     this.requireEnabled();
-    const role = input.requestRoleKey === null
+    const enabled: unknown = input.enabled;
+    const requestRoleKey: unknown = input.requestRoleKey;
+    if (typeof enabled !== 'boolean'
+      || (requestRoleKey !== null && typeof requestRoleKey !== 'string')) {
+      throw domainPolicyInvalid();
+    }
+    const tenantId = input.tenantId;
+    const claimId = input.claimId;
+    const expectedRevision = input.expectedRevision;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
+    const role = requestRoleKey === null
       ? null
-      : this.requireConfiguredRole(input.requestRoleKey);
-    if (input.enabled && !role) {
+      : this.requireConfiguredRole(requestRoleKey);
+    if (enabled && !role) {
       throw new AuthError(
         'An enabled domain policy requires a configured request role',
         'AUTH_DOMAIN_POLICY_INVALID',
@@ -388,15 +410,15 @@ export class VerifiedDomainOnboardingService {
     const now = this.now();
     this.db.transaction(() => {
       this.users.assertCurrentProfile();
-      this.lockTenant(input.tenantId);
+      this.lockTenant(tenantId);
       const authority = this.requireAuthority(
-        input.tenantId,
-        input.assertCurrentAuthority,
+        tenantId,
+        assertCurrentAuthority,
         ['tenant.onboarding:manage'],
       );
-      this.requireClaim(input.tenantId, input.claimId);
-      const policy = this.getPolicy(input.claimId);
-      if (policyRevision(policy.policy_revision) !== input.expectedRevision) {
+      this.requireClaim(tenantId, claimId);
+      const policy = this.getPolicy(claimId);
+      if (policyRevision(policy.policy_revision) !== expectedRevision) {
         throw policyRevisionConflict();
       }
       const changed = this.db.prepare(`
@@ -405,28 +427,29 @@ export class VerifiedDomainOnboardingService {
             updated_by = ?, updated_at = ?
         WHERE claim_id = ? AND revision = ?
       `).run(
-        input.enabled ? 1 : 0,
+        enabled ? 1 : 0,
         role,
         authority.auth.userId,
         now,
-        input.claimId,
+        claimId,
         policy.policy_revision,
       );
       if (changed.changes !== 1) throw policyRevisionConflict();
       this.auditService?.append({
         action: 'tenant.domain-policy-updated',
         outcome: 'succeeded',
-        scope: { kind: 'tenant', tenantId: input.tenantId },
+        scope: { kind: 'tenant', tenantId },
         actor: authAuditActorFromContext(authority.auth),
-        request: input.auditRequest,
-        target: { type: 'tenant-domain-claim', id: input.claimId },
-        metadata: { enabled: input.enabled },
+        request: auditRequest,
+        target: { type: 'tenant-domain-claim', id: claimId },
+        metadata: { enabled },
       });
+      const code = OBS_CODES.AUTH_DOMAIN_POLICY_UPDATED;
+      this.db.afterCommit(() => this.emitCode(code, {
+        metadata: { claimId, tenantId },
+      }));
     });
-    this.emitCode(OBS_CODES.AUTH_DOMAIN_POLICY_UPDATED, {
-      metadata: { claimId: input.claimId, tenantId: input.tenantId },
-    });
-    return this.requireProjectedClaim(input.tenantId, input.claimId);
+    return this.requireProjectedClaim(tenantId, claimId);
   }
 
   /**
@@ -444,21 +467,28 @@ export class VerifiedDomainOnboardingService {
   }): AuthTenantDomainReleaseResult {
     this.users.assertCurrentProfile();
     this.requireEnabled();
+    const tenantId = input.tenantId;
+    const claimId = input.claimId;
+    const expectedRevision = input.expectedRevision;
+    const expectedPolicyRevision = input.expectedPolicyRevision;
+    const confirmDomain = input.confirmDomain;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
     const result = this.db.transaction(() => {
       this.users.assertCurrentProfile();
-      this.lockTenant(input.tenantId);
+      this.lockTenant(tenantId);
       const authority = this.requireAuthority(
-        input.tenantId,
-        input.assertCurrentAuthority,
+        tenantId,
+        assertCurrentAuthority,
         ['tenant.domains:release'],
       );
-      const claim = this.requireClaim(input.tenantId, input.claimId);
-      this.assertClaimRevision(claim, input.expectedRevision);
-      const policy = this.getPolicy(input.claimId);
-      if (policyRevision(policy.policy_revision) !== input.expectedPolicyRevision) {
+      const claim = this.requireClaim(tenantId, claimId);
+      this.assertClaimRevision(claim, expectedRevision);
+      const policy = this.getPolicy(claimId);
+      if (policyRevision(policy.policy_revision) !== expectedPolicyRevision) {
         throw policyRevisionConflict();
       }
-      if (input.confirmDomain !== claim.domain) throw releaseConfirmationMismatch();
+      if (confirmDomain !== claim.domain) throw releaseConfirmationMismatch();
 
       const releasedAt = this.now();
       const quarantineUntil = releasedAt + VERIFIED_DOMAIN_RELEASE_QUARANTINE_MS;
@@ -563,7 +593,7 @@ export class VerifiedDomainOnboardingService {
         releasedAt,
         authority.auth.userId,
         quarantineUntil,
-        input.tenantId,
+        tenantId,
         claim.claim_id,
         claim.revision,
       );
@@ -572,9 +602,9 @@ export class VerifiedDomainOnboardingService {
       this.auditService?.append({
         action: 'tenant.domain-claim-released',
         outcome: 'succeeded',
-        scope: { kind: 'tenant', tenantId: input.tenantId },
+        scope: { kind: 'tenant', tenantId },
         actor: authAuditActorFromContext(authority.auth),
-        request: input.auditRequest,
+        request: auditRequest,
         target: { type: 'tenant-domain-claim', id: claim.claim_id },
         metadata: {
           'quarantine-until': quarantineUntil,
@@ -582,6 +612,15 @@ export class VerifiedDomainOnboardingService {
           'cancelled-request-count': cancelledRequests,
         },
       });
+      const code = OBS_CODES.AUTH_DOMAIN_CLAIM_RELEASED;
+      const releasedClaimId = claim.claim_id;
+      this.db.afterCommit(() => this.emitCode(code, {
+        metadata: {
+          claimId: releasedClaimId,
+          tenantId,
+          quarantineUntil,
+        },
+      }));
       return Object.freeze({
         release: Object.freeze({
           claimId: claim.claim_id,
@@ -591,19 +630,13 @@ export class VerifiedDomainOnboardingService {
         }),
       });
     });
-    this.emitCode(OBS_CODES.AUTH_DOMAIN_CLAIM_RELEASED, {
-      metadata: {
-        claimId: result.release.claimId,
-        tenantId: input.tenantId,
-        quarantineUntil: result.release.quarantineUntil,
-      },
-    });
     return result;
   }
 
   /** Resolve a live identity to a secret-free durable email-job binding. */
   prepareMailboxRequest(input: {
     userId: string;
+    expectedAuthGeneration: number;
     identityKind: 'session' | 'continuation';
     identityContinuation?: AuthSessionContinuationRecord | null;
   }): DomainMailboxJobBinding | null {
@@ -886,6 +919,14 @@ function claimRevision(revision: number): string {
 
 function policyRevision(revision: number): string {
   return `${POLICY_REVISION_PREFIX}${revision.toString(36)}`;
+}
+
+function domainPolicyInvalid(): AuthError {
+  return new AuthError(
+    'Verified-domain policy input is invalid',
+    'AUTH_DOMAIN_POLICY_INVALID',
+    422,
+  );
 }
 
 function claimNotFound(): AuthError {

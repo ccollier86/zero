@@ -7,6 +7,7 @@ import { AuthEmailOutboxStore, type AuthEmailEnqueueResult } from './auth-email-
 import { AuthEmailOutboxWorker } from './auth-email-outbox-worker';
 import type {
   AuthEmailAccountLinkKind,
+  AuthEmailOutboxKind,
   AuthEmailOutboxOptions,
 } from './auth-email-outbox-types';
 import { resolveAuthEmailOutboxOptions } from './auth-email-outbox-options';
@@ -21,6 +22,8 @@ import {
   createAuthStateInvariantError,
   type AuthPlatformCodeEmitter,
 } from './auth-observability';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
+import { AuthError } from './types';
 
 export class AuthEmailOutbox {
   private readonly store: AuthEmailOutboxStore;
@@ -30,7 +33,7 @@ export class AuthEmailOutbox {
   private readonly assertCurrentProfile: () => void;
   private readonly emitCode: AuthPlatformCodeEmitter;
 
-  constructor(db: ReactiveDB, deliveryDeps: AuthEmailOutboxDeliveryDeps,
+  constructor(private readonly db: ReactiveDB, deliveryDeps: AuthEmailOutboxDeliveryDeps,
     options: Partial<AuthEmailOutboxOptions> = {}, private readonly clock = Date.now) {
     this.options = resolveAuthEmailOutboxOptions(options);
     this.emitCode = deliveryDeps.emitCode ?? emitPlatformCode;
@@ -98,15 +101,15 @@ export class AuthEmailOutbox {
       input.rawToken,
       tenantInvitationEnvelopeAad(jobId, input.invitationId, recipient),
     );
-    const result = this.store.enqueueInvitation({
-      invitationId: input.invitationId,
-      recipient,
-      recipientHash: hashRecipient(recipient),
-      secretEnvelope: envelope,
-      jobId,
-    }, this.clock(), this.options.maxActiveJobs, this.options.maxStoredJobs);
-    emitAuthEmailQueued('tenant_invitation', result, this.emitCode);
-    if (result === 'enqueued') this.worker.wake();
+    const result = this.enqueueTransactionally('tenant_invitation', () => {
+      return this.store.enqueueInvitation({
+        invitationId: input.invitationId,
+        recipient,
+        recipientHash: hashRecipient(recipient),
+        secretEnvelope: envelope,
+        jobId,
+      }, this.clock(), this.options.maxActiveJobs, this.options.maxStoredJobs);
+    });
     return { result, jobId };
   }
 
@@ -114,30 +117,68 @@ export class AuthEmailOutbox {
     nativeContinuation?: string }): AuthEmailEnqueueResult {
     this.assertCurrentProfile();
     const normalized = { ...input, recipient: canonicalizeEmail(input.recipient) };
-    const result = this.store.enqueue(normalized, this.clock(),
-      this.options.requestWindowMs, this.options.maxActiveJobs,
-      this.options.maxStoredJobs);
-    emitAuthEmailQueued(input.kind, result, this.emitCode);
-    if (result === 'enqueued') this.worker.wake();
-    return result;
+    return this.enqueueTransactionally(input.kind, () => {
+      return this.store.enqueue(normalized, this.clock(),
+        this.options.requestWindowMs, this.options.maxActiveJobs,
+        this.options.maxStoredJobs);
+    });
   }
 
-  enqueueDomainMailboxProof(input: DomainMailboxJobBinding): AuthEmailEnqueueResult {
+  enqueueDomainMailboxProof(
+    input: DomainMailboxJobBinding,
+    admit: () => boolean = () => true,
+  ): AuthEmailEnqueueResult {
     this.assertCurrentProfile();
     const recipient = canonicalizeEmail(input.email);
-    const result = this.store.enqueueDomainMailbox({
-      jobId: `aem_${crypto.randomUUID()}`,
-      recipient,
-      recipientHash: hashRecipient(recipient),
-      userId: input.userId,
-      emailGeneration: input.emailGeneration,
-      authGeneration: input.authGeneration,
-      identityKind: input.identityKind,
-      identityContinuationId: input.identityContinuationId,
-    }, this.clock(), this.options.requestWindowMs, this.options.maxActiveJobs,
-    this.options.maxStoredJobs);
-    emitAuthEmailQueued('domain_mailbox_proof', result, this.emitCode);
-    if (result === 'enqueued') this.worker.wake();
+    return this.enqueueTransactionally('domain_mailbox_proof', () => {
+      if (!invokeSynchronousAuthCallback(admit, {
+        component: 'auth-email-outbox',
+        invariant: 'domain-mailbox-enqueue-admission-async',
+        message: '[auth] Domain mailbox enqueue admission must be synchronous.',
+        emitCode: this.emitCode,
+      })) {
+        throw new AuthError(
+          'Authentication state changed; sign in again',
+          'AUTH_STATE_CHANGED',
+          409,
+        );
+      }
+      return this.store.enqueueDomainMailbox({
+        jobId: `aem_${crypto.randomUUID()}`,
+        recipient,
+        recipientHash: hashRecipient(recipient),
+        userId: input.userId,
+        emailGeneration: input.emailGeneration,
+        authGeneration: input.authGeneration,
+        identityKind: input.identityKind,
+        identityContinuationId: input.identityContinuationId,
+      }, this.clock(), this.options.requestWindowMs, this.options.maxActiveJobs,
+      this.options.maxStoredJobs);
+    });
+  }
+
+  /**
+   * Keep durable enqueue success, its operational event, and worker activity
+   * on one commit boundary. Rejections have no durable success to await, so
+   * their suppression telemetry is emitted immediately and never wakes work.
+   */
+  private enqueueTransactionally<Result extends AuthEmailEnqueueResult>(
+    kind: AuthEmailOutboxKind,
+    persist: () => Result,
+  ): Result {
+    const result = this.db.transaction(() => {
+      const persisted = persist();
+      if (persisted === 'enqueued') {
+        this.db.afterCommit(() => {
+          emitAuthEmailQueued(kind, persisted, this.emitCode);
+        });
+        this.db.afterCommit(() => this.worker.wake());
+      }
+      return persisted;
+    });
+    if (result !== 'enqueued') {
+      emitAuthEmailQueued(kind, result, this.emitCode);
+    }
     return result;
   }
 

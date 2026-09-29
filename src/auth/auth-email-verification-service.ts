@@ -23,7 +23,7 @@ export async function completeEmailVerification(
 
   const verifiedDomainConfig = config.getAuthConfig().tenancy?.onboarding
     ?.verifiedDomains;
-  const user = services.store.completeEmailVerification(
+  const receipt = services.store.completeEmailVerificationForAuthentication(
     inspection.user.userId,
     () => {
       services.actionTokens.consume(rawToken, ['email_verification']);
@@ -52,7 +52,8 @@ export async function completeEmailVerification(
       request: auditRequest,
     },
   );
-  if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
+  if (!receipt) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
+  const { user, authGeneration } = receipt;
   getAuthAccountEmitter(config)(OBS_CODES.AUTH_EMAIL_VERIFIED, { userId: user.userId });
 
   return buildAuthCompletionResponse({
@@ -62,5 +63,6 @@ export async function completeEmailVerification(
     mfaChallengeService: services.mfaChallengeService,
     tenantSessionService: services.tenantSessions,
     requestedMfaSetup: inspection.record.metadata.mfaEnrollment === true,
+    expectedAuthGeneration: authGeneration,
   });
 }

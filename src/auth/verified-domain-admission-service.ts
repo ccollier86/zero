@@ -125,6 +125,7 @@ export class VerifiedDomainAdmissionService {
   /** Resolve a live identity to a secret-free durable email-job binding. */
   prepareMailboxRequest(input: {
     userId: string;
+    expectedAuthGeneration: number;
     identityKind: 'session' | 'continuation';
     identityContinuation?: AuthSessionContinuationRecord | null;
   }): DomainMailboxJobBinding | null {
@@ -133,6 +134,8 @@ export class VerifiedDomainAdmissionService {
     if (!config.enabled) return null;
     const user = users.getUserById(input.userId);
     if (!isEligibleUser(user)) return null;
+    const authGeneration = users.getAuthGeneration(user.userId);
+    if (authGeneration !== input.expectedAuthGeneration) return null;
     try {
       verifiedDomainFromEmail(user.email, config.sharedMailboxDomains);
     } catch (error) {
@@ -143,14 +146,14 @@ export class VerifiedDomainAdmissionService {
     if (input.identityKind === 'continuation'
       && (!continuation || continuation.userId !== user.userId
         || continuation.applicationId !== applicationId
-        || continuation.authGeneration !== users.getAuthGeneration(user.userId))) {
+        || continuation.authGeneration !== authGeneration)) {
       return null;
     }
     return {
       userId: user.userId,
       email: canonicalizeEmail(user.email),
       emailGeneration: users.getEmailGeneration(user.userId),
-      authGeneration: users.getAuthGeneration(user.userId),
+      authGeneration,
       identityKind: input.identityKind,
       identityContinuationId: continuation?.continuationId ?? null,
     };
@@ -324,10 +327,13 @@ export class VerifiedDomainAdmissionService {
         expiresAt,
         now,
       );
-      this.dependencies.emitCode(OBS_CODES.AUTH_DOMAIN_MAILBOX_PROVED, {
-        userId: user.userId,
-        metadata: { claimId: eligible.claim.claim_id },
-      });
+      db.afterCommit(() => this.dependencies.emitCode(
+        OBS_CODES.AUTH_DOMAIN_MAILBOX_PROVED,
+        {
+          userId: user.userId,
+          metadata: { claimId: eligible.claim.claim_id },
+        },
+      ));
       return {
         option: {
           action: 'request-to-join',
@@ -532,10 +538,13 @@ export class VerifiedDomainAdmissionService {
         now,
         request.request_revision,
       );
-      this.dependencies.emitCode(OBS_CODES.AUTH_DOMAIN_JOIN_REQUESTED, {
-        userId: user.userId,
-        metadata: { claimId: claim.claim_id, tenantId: tenant.tenantId },
-      });
+      db.afterCommit(() => this.dependencies.emitCode(
+        OBS_CODES.AUTH_DOMAIN_JOIN_REQUESTED,
+        {
+          userId: user.userId,
+          metadata: { claimId: claim.claim_id, tenantId: tenant.tenantId },
+        },
+      ));
       return {
         request: {
           joinRequestId: request.join_request_id,

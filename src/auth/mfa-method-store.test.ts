@@ -69,6 +69,32 @@ describe('MfaMethodStore', () => {
     expect(store.getActivePreferredMethod('u_test')?.methodId).toBe(totp.methodId);
   });
 
+  test('does not reactivate a disabled method or disturb the current primary method', () => {
+    const primary = store.createMethod({
+      userId: 'u_test',
+      type: 'email',
+      status: 'active',
+      isPrimary: true,
+      verifiedAt: 1000,
+    });
+    const disabled = store.createMethod({
+      userId: 'u_test',
+      type: 'totp',
+      status: 'disabled',
+      secretCiphertext: 'encrypted-secret',
+    });
+
+    expect(store.activateMethod(disabled.methodId, {
+      verifiedAt: 2000,
+      singleActive: true,
+    })).toBeNull();
+    expect(store.getMethod(disabled.methodId)?.status).toBe('disabled');
+    expect(store.getMethod(primary.methodId)).toMatchObject({
+      status: 'active',
+      isPrimary: true,
+    });
+  });
+
   test('can switch preference between active methods when multiple are retained', () => {
     const email = store.createMethod({
       userId: 'u_test',

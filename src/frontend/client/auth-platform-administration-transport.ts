@@ -1,27 +1,27 @@
 /** Authenticated browser transport for protected platform administration. */
 
 import type {
-  AuthTenantAddMemberParams,
   AuthTenantInvitation,
   AuthTenantInvitationListParams,
   AuthTenantInvitationPage,
-  AuthTenantIssueInvitationParams,
   AuthTenantIssueInvitationResult,
   AuthTenantMemberListParams,
   AuthTenantMemberMutationResult,
   AuthTenantMemberPage,
   AuthTenantOwnershipTransferResult,
-  AuthTenantUpdateMemberParams,
 } from './auth-types';
 import type {
+  AuthPlatformAddMemberParams,
   AuthPlatformAdministrationConfig,
   AuthPlatformAdminSdkSurface,
+  AuthPlatformIssueInvitationParams,
   AuthPlatformTenantCreateParams,
   AuthPlatformTenantCreateResult,
   AuthPlatformTenantListParams,
   AuthPlatformTenantPage,
   AuthPlatformTenantUpdateParams,
   AuthPlatformTenantUpdateResult,
+  AuthPlatformUpdateMemberParams,
 } from './auth-platform-administration-types';
 import {
   parsePlatformAdministrationConfig,
@@ -68,7 +68,7 @@ implements AuthPlatformAdminSdkSurface {
     );
   }
 
-  addMember(params: AuthTenantAddMemberParams): Promise<AuthTenantMemberMutationResult> {
+  addMember(params: AuthPlatformAddMemberParams): Promise<AuthTenantMemberMutationResult> {
     return this.memberMutation(
       '/auth/platform/members',
       jsonRequest('POST', params),
@@ -79,7 +79,7 @@ implements AuthPlatformAdminSdkSurface {
 
   updateMember(
     membershipId: string,
-    params: AuthTenantUpdateMemberParams,
+    params: AuthPlatformUpdateMemberParams,
   ): Promise<AuthTenantMemberMutationResult> {
     return this.memberMutation(
       this.memberPath(membershipId),
@@ -118,7 +118,7 @@ implements AuthPlatformAdminSdkSurface {
   }
 
   issueInvitation(
-    params: AuthTenantIssueInvitationParams,
+    params: AuthPlatformIssueInvitationParams,
   ): Promise<AuthTenantIssueInvitationResult> {
     return this.write(
       '/auth/platform/invitations',

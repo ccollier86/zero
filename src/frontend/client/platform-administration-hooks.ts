@@ -3,20 +3,22 @@
 import * as React from 'react';
 import { reportAuthClientActionFailure } from './auth-action-observability';
 import { AuthClientError } from './auth-errors';
-import type { AuthPlatformAdministrationConfig } from './auth-platform-administration-types';
 import type {
-  AuthTenantAddMemberParams,
+  AuthPlatformAddMemberParams,
+  AuthPlatformAdministrationConfig,
+  AuthPlatformIssueInvitationParams,
+  AuthPlatformUpdateMemberInput,
+} from './auth-platform-administration-types';
+import type {
   AuthTenantInvitation,
   AuthTenantInvitationListParams,
   AuthTenantInvitationPage,
-  AuthTenantIssueInvitationParams,
   AuthTenantIssueInvitationResult,
   AuthTenantMember,
   AuthTenantMemberListParams,
   AuthTenantMemberMutationResult,
   AuthTenantMemberPage,
   AuthTenantOwnershipTransferResult,
-  AuthTenantUpdateMemberParams,
 } from './auth-types';
 import { useAuth } from './auth-hooks';
 import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
@@ -58,15 +60,15 @@ export interface UsePlatformAdministrationResult {
   reload(): void;
   loadMoreMembers(): Promise<void>;
   loadMoreInvitations(): Promise<void>;
-  addMember(params: AuthTenantAddMemberParams): Promise<AuthTenantMemberMutationResult>;
+  addMember(params: AuthPlatformAddMemberParams): Promise<AuthTenantMemberMutationResult>;
   updateMember(
     membershipId: string,
-    params: AuthTenantUpdateMemberParams,
+    params: AuthPlatformUpdateMemberInput,
   ): Promise<AuthTenantMemberMutationResult>;
   removeMember(membershipId: string): Promise<AuthTenantMemberMutationResult>;
   transferOwnership(membershipId: string): Promise<AuthTenantOwnershipTransferResult>;
   issueInvitation(
-    params: AuthTenantIssueInvitationParams,
+    params: AuthPlatformIssueInvitationParams,
   ): Promise<AuthTenantIssueInvitationResult>;
   revokeInvitation(invitationId: string): Promise<AuthTenantInvitation>;
 }

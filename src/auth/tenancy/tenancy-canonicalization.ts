@@ -10,7 +10,13 @@ const TENANT_ROLE_PATTERN = /^[a-z][a-z0-9:_-]{0,63}$/;
  * hyphens, and repeated hyphens collapse so equivalent routing identifiers
  * cannot occupy separate tenant rows.
  */
-export function canonicalizeTenantSlug(value: string): string {
+export function canonicalizeTenantSlug(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new TenancyError(
+      'Tenant slug must be a 1-63 character lowercase ASCII label',
+      'TENANT_INVALID_SLUG',
+    );
+  }
   const slug = value
     .normalize('NFKC')
     .trim()
@@ -28,7 +34,13 @@ export function canonicalizeTenantSlug(value: string): string {
 }
 
 /** Normalize product-facing whitespace while preserving international names. */
-export function canonicalizeTenantName(value: string): string {
+export function canonicalizeTenantName(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new TenancyError(
+      'Tenant name must contain between 1 and 120 characters',
+      'TENANT_INVALID_NAME',
+    );
+  }
   const name = value.normalize('NFKC').trim().replace(/\s+/g, ' ');
   if (name.length === 0 || name.length > 120) {
     throw new TenancyError(
@@ -40,7 +52,13 @@ export function canonicalizeTenantName(value: string): string {
 }
 
 /** Canonical simple-mode role key used by the protected owner invariant. */
-export function canonicalizeTenantRoleKey(value: string): string {
+export function canonicalizeTenantRoleKey(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new TenancyError(
+      'Tenant role key must be a 1-64 character lowercase identifier',
+      'TENANT_INVALID_ROLE',
+    );
+  }
   const roleKey = value.normalize('NFKC').trim().toLowerCase();
   if (!TENANT_ROLE_PATTERN.test(roleKey)) {
     throw new TenancyError(

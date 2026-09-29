@@ -8,7 +8,10 @@ import {
   platformMemberAnnouncement,
 } from './platform-administration-management';
 import { PlatformAdministrationInvitations } from './platform-administration-invitations';
-import { platformAssignableRoles } from './platform-administration-role-policy';
+import {
+  platformAssignableRoles,
+  platformRoleSelection,
+} from './platform-administration-role-policy';
 import {
   PlatformTenantManagement,
   PlatformTenantUnavailable,
@@ -129,6 +132,9 @@ describe('packaged platform administration components', () => {
       { ...role('locked', true), grantable: false },
       { ...role('owner', true), key: 'owner' },
     ]).map((role) => role.key)).toEqual(['administrator', 'access-manager']);
+    expect(platformRoleSelection([])).toBeNull();
+    expect(platformRoleSelection(['administrator', 'access-manager']))
+      .toEqual(['administrator', 'access-manager']);
   });
 
   test('uses specific live-region completion language for sensitive changes', () => {

@@ -108,13 +108,22 @@ export function reconcileInstalledAuthProfile(input: {
       markerExisted: persisted !== null,
     });
 
+    const pendingRegistrationProvisioning = countRows(
+      input.db,
+      '_auth_registration_provisioning',
+    ) > 0;
+    const pendingAdminUserProvisioning = countRows(
+      input.db,
+      '_auth_admin_user_provisioning',
+    ) > 0;
     if (plan.kind !== 'unchanged' && plan.kind !== 'initialized'
-      && countRows(input.db, '_auth_registration_provisioning') > 0) {
+      && (pendingRegistrationProvisioning || pendingAdminUserProvisioning)) {
       throw new Error(
         '[auth] Cannot change the installed authorization profile while an '
-          + 'auth registration provisioning receipt is pending. Restart with '
-          + 'the installed simple profile so Zero can finish or recover that '
-          + 'registration, then retry the advanced upgrade.',
+          + 'auth registration provisioning receipt is pending, or while an '
+          + 'administrator-user provisioning receipt is pending. Restart with '
+          + 'the installed simple profile so Zero can finish or recover the '
+          + 'provisioning operation, then retry the advanced upgrade.',
       );
     }
 

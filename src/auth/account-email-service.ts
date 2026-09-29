@@ -63,38 +63,43 @@ export class AccountEmailService {
     rawToken: string;
     token: AuthActionTokenRecord;
   }): Promise<void> {
+    const user = captureEmailDeliveryUser(params.user);
+    const rawToken = params.rawToken;
+    const tokenId = params.token.tokenId;
+    const tokenType = params.token.type;
+    const expiresAt = params.token.expiresAt;
     const runtime = this.assertReady();
     const branding = resolveAuthEmailBranding(runtime.app, this.config.branding);
     const publicUrl = this.requirePublicUrl(branding.publicUrl);
     const actionUrl = this.createActionUrl(
       publicUrl,
       this.config.accountEmails.setupPath,
-      params.rawToken
+      rawToken
     );
     const rendered = await this.renderTemplate(
       'accountSetup',
       {
         branding,
         actionUrl,
-        user: params.user,
-        expiresAt: params.token.expiresAt,
+        user,
+        expiresAt,
       },
       {
-        userId: params.user.userId,
-        tokenId: params.token.tokenId,
-        tokenType: params.token.type,
+        userId: user.userId,
+        tokenId,
+        tokenType,
       }
     );
 
     const result = await runtime.service.send({
-      to: params.user.email,
+      to: user.email,
       subject: rendered.subject,
       text: rendered.text,
       html: rendered.html,
       tags: { category: 'auth', action: 'account_setup' },
-      metadata: { userId: params.user.userId, tokenType: params.token.type },
+      metadata: { userId: user.userId, tokenType },
     });
-    assertAuthEmailRecipientAccepted(result, params.user.email);
+    assertAuthEmailRecipientAccepted(result, user.email);
   }
 
   /**
@@ -107,41 +112,49 @@ export class AccountEmailService {
     deliveryId?: string;
     signal?: AbortSignal;
   }): Promise<void> {
+    const user = captureEmailDeliveryUser(params.user);
+    const rawToken = params.rawToken;
+    const tokenId = params.token.tokenId;
+    const tokenType = params.token.type;
+    const expiresAt = params.token.expiresAt;
+    const nativeContinuation = params.token.metadata.nativeContinuation;
+    const deliveryId = params.deliveryId;
+    const signal = params.signal;
     const runtime = this.assertReady();
     const branding = resolveAuthEmailBranding(runtime.app, this.config.branding);
     const publicUrl = this.requirePublicUrl(branding.publicUrl);
     const actionUrl = this.createActionUrl(
       publicUrl,
       this.config.accountEmails.resetPath,
-      params.rawToken,
-      params.token.metadata.nativeContinuation,
+      rawToken,
+      nativeContinuation,
     );
     const rendered = await this.renderTemplate(
       'passwordReset',
       {
         branding,
         actionUrl,
-        user: params.user,
-        expiresAt: params.token.expiresAt,
+        user,
+        expiresAt,
       },
       {
-        userId: params.user.userId,
-        tokenId: params.token.tokenId,
-        tokenType: params.token.type,
+        userId: user.userId,
+        tokenId,
+        tokenType,
       }
     );
 
     const result = await runtime.service.send({
-      to: params.user.email,
+      to: user.email,
       subject: rendered.subject,
       text: rendered.text,
       html: rendered.html,
-      tags: { category: 'auth', action: params.token.type },
-      metadata: { userId: params.user.userId, tokenType: params.token.type },
-      idempotencyKey: params.deliveryId,
-      signal: params.signal,
+      tags: { category: 'auth', action: tokenType },
+      metadata: { userId: user.userId, tokenType },
+      idempotencyKey: deliveryId,
+      signal,
     });
-    assertAuthEmailRecipientAccepted(result, params.user.email);
+    assertAuthEmailRecipientAccepted(result, user.email);
   }
 
   /**
@@ -154,41 +167,49 @@ export class AccountEmailService {
     deliveryId?: string;
     signal?: AbortSignal;
   }): Promise<void> {
+    const user = captureEmailDeliveryUser(params.user);
+    const rawToken = params.rawToken;
+    const tokenId = params.token.tokenId;
+    const tokenType = params.token.type;
+    const expiresAt = params.token.expiresAt;
+    const nativeContinuation = params.token.metadata.nativeContinuation;
+    const deliveryId = params.deliveryId;
+    const signal = params.signal;
     const runtime = this.assertReady();
     const branding = resolveAuthEmailBranding(runtime.app, this.config.branding);
     const publicUrl = this.requirePublicUrl(branding.publicUrl);
     const actionUrl = this.createActionUrl(
       publicUrl,
       this.config.account.emailVerificationPath,
-      params.rawToken,
-      params.token.metadata.nativeContinuation,
+      rawToken,
+      nativeContinuation,
     );
     const rendered = await this.renderTemplate(
       'emailVerification',
       {
         branding,
         actionUrl,
-        user: params.user,
-        expiresAt: params.token.expiresAt,
+        user,
+        expiresAt,
       },
       {
-        userId: params.user.userId,
-        tokenId: params.token.tokenId,
-        tokenType: params.token.type,
+        userId: user.userId,
+        tokenId,
+        tokenType,
       }
     );
 
     const result = await runtime.service.send({
-      to: params.user.email,
+      to: user.email,
       subject: rendered.subject,
       text: rendered.text,
       html: rendered.html,
       tags: { category: 'auth', action: 'email_verification' },
-      metadata: { userId: params.user.userId, tokenType: params.token.type },
-      idempotencyKey: params.deliveryId,
-      signal: params.signal,
+      metadata: { userId: user.userId, tokenType },
+      idempotencyKey: deliveryId,
+      signal,
     });
-    assertAuthEmailRecipientAccepted(result, params.user.email);
+    assertAuthEmailRecipientAccepted(result, user.email);
   }
 
   /** Deliver the dedicated non-login mailbox proof for domain discovery. */
@@ -199,6 +220,11 @@ export class AccountEmailService {
     deliveryId: string;
     signal?: AbortSignal;
   }): Promise<void> {
+    const user = captureEmailDeliveryUser(params.user);
+    const rawToken = params.rawToken;
+    const expiresAt = params.expiresAt;
+    const deliveryId = params.deliveryId;
+    const signal = params.signal;
     const runtime = this.assertReady();
     const policy = this.config.tenancy?.onboarding?.verifiedDomains;
     if (!policy?.enabled) {
@@ -213,32 +239,32 @@ export class AccountEmailService {
     const actionUrl = this.createActionUrl(
       publicUrl,
       policy.mailboxLandingPath,
-      params.rawToken,
+      rawToken,
     );
     const rendered = await this.renderTemplate(
       'domainMailboxProof',
       {
         branding,
         actionUrl,
-        user: params.user,
-        expiresAt: params.expiresAt,
+        user,
+        expiresAt,
       },
       {
-        userId: params.user.userId,
+        userId: user.userId,
         tokenType: 'domain_mailbox_proof',
       },
     );
     const result = await runtime.service.send({
-      to: params.user.email,
+      to: user.email,
       subject: rendered.subject,
       text: rendered.text,
       html: rendered.html,
       tags: { category: 'auth', action: 'domain_mailbox_proof' },
-      metadata: { userId: params.user.userId, tokenType: 'domain_mailbox_proof' },
-      idempotencyKey: params.deliveryId,
-      signal: params.signal,
+      metadata: { userId: user.userId, tokenType: 'domain_mailbox_proof' },
+      idempotencyKey: deliveryId,
+      signal,
     });
-    assertAuthEmailRecipientAccepted(result, params.user.email);
+    assertAuthEmailRecipientAccepted(result, user.email);
   }
 
   /** Deliver one tenant-bound invitation from the durable auth outbox. */
@@ -248,6 +274,10 @@ export class AccountEmailService {
     deliveryId: string;
     signal?: AbortSignal;
   }): Promise<void> {
+    const delivery = captureTenantInvitationDelivery(params.delivery);
+    const rawToken = params.rawToken;
+    const deliveryId = params.deliveryId;
+    const signal = params.signal;
     const runtime = this.assertReady();
     const onboarding = this.config.tenancy?.onboarding;
     if (!onboarding?.invitations.delivery.email.enabled) {
@@ -262,13 +292,13 @@ export class AccountEmailService {
     const actionUrl = this.createActionUrl(
       publicUrl,
       onboarding.invitations.delivery.email.landingPath,
-      params.rawToken,
+      rawToken,
     );
     const defaults = renderTenantInvitationEmail({
       branding,
-      tenant: params.delivery.tenant,
+      tenant: delivery.tenant,
       actionUrl,
-      expiresAt: params.delivery.expiresAt,
+      expiresAt: delivery.expiresAt,
     });
     const template = onboarding.invitations.delivery.email.template;
     let rendered = defaults;
@@ -276,13 +306,13 @@ export class AccountEmailService {
       let custom: AuthEmailTemplateResult;
       try {
         custom = await template({
-          branding,
-          recipient: params.delivery.recipient,
-          tenant: params.delivery.tenant,
+          branding: { ...branding },
+          recipient: delivery.recipient,
+          tenant: { ...delivery.tenant },
           invitation: {
-            invitationId: params.delivery.invitationId,
-            roles: params.delivery.roles,
-            expiresAt: params.delivery.expiresAt,
+            invitationId: delivery.invitationId,
+            roles: [...delivery.roles],
+            expiresAt: delivery.expiresAt,
           },
           actionUrl,
           defaultSubject: defaults.subject,
@@ -296,21 +326,21 @@ export class AccountEmailService {
     }
 
     const result = await runtime.service.send({
-      to: params.delivery.recipient,
+      to: delivery.recipient,
       subject: rendered.subject,
       text: rendered.text,
       html: rendered.html,
       tags: { category: 'auth', action: 'tenant_invitation' },
       metadata: {
-        invitationId: params.delivery.invitationId,
-        tenantId: params.delivery.tenant.tenantId,
+        invitationId: delivery.invitationId,
+        tenantId: delivery.tenant.tenantId,
       },
       // Stable across retries so provider-side idempotency suppresses a send
       // whose acknowledgement was lost after the provider accepted it.
-      idempotencyKey: params.deliveryId,
-      signal: params.signal,
+      idempotencyKey: deliveryId,
+      signal,
     });
-    assertAuthEmailRecipientAccepted(result, params.delivery.recipient);
+    assertAuthEmailRecipientAccepted(result, delivery.recipient);
   }
 
   /**
@@ -324,32 +354,36 @@ export class AccountEmailService {
     expiresAt: number;
     purpose: 'setup' | 'login';
   }): Promise<void> {
+    const user = captureEmailDeliveryUser(params.user);
+    const code = params.code;
+    const expiresAt = params.expiresAt;
+    const purpose = params.purpose;
     const runtime = this.requireEmailRuntime();
     const branding = resolveAuthEmailBranding(runtime.app, this.config.branding);
     const rendered = await this.renderTemplate(
       'emailOtp',
       {
         branding,
-        code: params.code,
-        user: params.user,
-        expiresAt: params.expiresAt,
+        code,
+        user,
+        expiresAt,
       },
       {
-        userId: params.user.userId,
+        userId: user.userId,
         tokenType: 'email_otp',
-        purpose: params.purpose,
+        purpose,
       }
     );
 
     const result = await runtime.service.send({
-      to: params.user.email,
+      to: user.email,
       subject: rendered.subject,
       text: rendered.text,
       html: rendered.html,
       tags: { category: 'auth', action: 'email_otp' },
-      metadata: { userId: params.user.userId, purpose: params.purpose },
+      metadata: { userId: user.userId, purpose },
     });
-    assertAuthEmailRecipientAccepted(result, params.user.email);
+    assertAuthEmailRecipientAccepted(result, user.email);
   }
 
   private async renderTemplate(
@@ -366,15 +400,16 @@ export class AccountEmailService {
     try {
       rendered = await template({
         key,
-        branding: input.branding,
-        user: input.user,
+        branding: { ...input.branding },
+        user: cloneEmailTemplateUser(input.user),
         actionUrl: input.actionUrl,
+        code: input.code,
         expiresAt: input.expiresAt,
         tokenType: typeof metadata.tokenType === 'string' ? metadata.tokenType : undefined,
         defaultSubject: defaults.subject,
         defaultText: defaults.text,
         defaultHtml: defaults.html ?? '',
-        metadata,
+        metadata: { ...metadata },
       } satisfies AuthEmailTemplateContext);
     } catch {
       throw authEmailTemplateFailure(key);
@@ -441,6 +476,57 @@ export class AccountEmailService {
     if (continuation) url.searchParams.set('redirect', continuation);
     return url.toString();
   }
+}
+
+/** Immutable delivery identity retained across app-authored async templates. */
+function captureEmailDeliveryUser(user: UserRecord): UserRecord {
+  return Object.freeze({
+    userId: user.userId,
+    username: user.username,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    role: user.role,
+    status: user.status,
+    passwordChangeRequired: user.passwordChangeRequired,
+    emailVerifiedAt: user.emailVerifiedAt,
+    emailVerificationRequired: user.emailVerificationRequired,
+    mfaRequired: user.mfaRequired,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    properties: Object.freeze({ ...user.properties }),
+  });
+}
+
+/** Immutable invitation authority retained across app-authored async templates. */
+function captureTenantInvitationDelivery(
+  delivery: AuthTenantInvitationDelivery,
+): AuthTenantInvitationDelivery {
+  return Object.freeze({
+    invitationId: delivery.invitationId,
+    recipient: delivery.recipient,
+    roles: Object.freeze([...delivery.roles]),
+    expiresAt: delivery.expiresAt,
+    tenant: Object.freeze({
+      tenantId: delivery.tenant.tenantId,
+      name: delivery.tenant.name,
+      slug: delivery.tenant.slug,
+      kind: delivery.tenant.kind,
+    }),
+  });
+}
+
+/** Public template contexts remain mutable without aliasing delivery authority. */
+function cloneEmailTemplateUser(user: UserRecord): AuthEmailTemplateContext['user'] {
+  return {
+    userId: user.userId,
+    username: user.username,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    role: user.role,
+    properties: { ...user.properties },
+  };
 }
 
 function authEmailTemplateFailure(

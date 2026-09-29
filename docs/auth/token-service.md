@@ -102,15 +102,23 @@ JWKS identifier. An explicit `kid` is preserved.
 ### Signing
 
 ```ts
-// Application auth flows use this entry point. It validates the selected
-// tenant (when enabled), creates the durable parent, and links the first
-// refresh child in one transaction.
+// Custom password-auth flows carry the exact generation proven alongside the
+// password hash. Official Guardian flows already do this internally.
+const proof = await userStore.verifyPasswordForAuthentication(user.userId, password);
+if (!proof) throw new AuthError('Invalid credentials', 'INVALID_CREDENTIALS', 401);
+
 const pair = await tokenService.issueTokenPair(user, {
   binding: tenancyMode === 'multi'
     ? { tenantId, membershipId }
     : undefined,
+  expectedAuthGeneration: proof.authGeneration,
 });
 ```
+
+Credential-derived flows must pass `expectedAuthGeneration` from their exact
+password or durable transition receipt. Omitting it is retained only for
+compatible trusted server issuance that did not verify an earlier credential;
+it must not be used to bridge an asynchronous authentication ceremony.
 
 `signAccessToken()` is a low-level cryptographic helper used internally by the
 token service; it is not a complete browser-session issuance API. New browser
@@ -188,6 +196,42 @@ header carries `alg: ES256` and `kid`; the payload carries the identity,
 security generation, and session-family binding described above. Exact length
 depends on whether the credential is web- or native-scoped.
 
+## Auth Transition Tokens
+
+MFA setup and challenge continuations are short-lived ES256 JWTs with issuer
+`auth-transition`. They are not app sessions. `signTransitionToken()` and the
+official auth routes preserve the exact `authGeneration` proved by the
+password, session, or preceding transition ceremony and recheck it both before
+and after asynchronous signing. A generation change rejects the unfinished
+ceremony with `AUTH_STATE_CHANGED` (409).
+
+Profile MFA enrollment has an additional exact-session boundary. The route
+captures an `AuthContextAuthorityReference`, passes it as `profileAuthority`,
+and the token service verifies that live reference before and after signing.
+Only a SHA-256 `profileAuthorityFingerprint` is placed in the JWT; the
+credential-free authority reference and session details are not serialized
+into the client token. Activation requires a current bearer whose recaptured
+authority has the same fingerprint, then resolves that same reference again
+inside the method-activation transaction. A token copied to another session
+for the same user therefore cannot activate the method.
+
+```ts
+await tokenService.signTransitionToken(user, {
+  purpose: 'mfa_setup',
+  ttl: authConfig.mfa.challengeTTL,
+  flow: 'profile',
+  expectedAuthGeneration: authority.authGeneration,
+  profileAuthority: authority,
+});
+```
+
+The optional generation fallback remains for source compatibility with
+trusted server issuance that did not authenticate an earlier credential. It
+is not valid for a ceremony that crosses an asynchronous credential boundary.
+Official MFA paths always supply the exact generation. Profile signing without
+`profileAuthority`, or non-profile signing with one, fails as
+`AUTH_STATE_INVARIANT_FAILED` because it is an internal wiring error.
+
 ## Page Session
 
 When an auth flow produces a complete access/refresh pair, Zero signs a
@@ -195,7 +239,10 @@ dedicated page JWT and sends it only as the HttpOnly
 `__zero_page_session` cookie. Its expiration matches the backing refresh row.
 
 ```ts
-new SignJWT({ sid: refreshRecord.tokenId })
+new SignJWT({
+  sid: refreshRecord.tokenId,
+  authGeneration: currentAuthGeneration,
+})
   .setSubject(user.userId)
   .setIssuer('auth-page-session')
   .setExpirationTime(Math.floor(refreshRecord.expiresAt / 1000));
@@ -338,7 +385,10 @@ Compatibility is mode-specific and intentionally asymmetric:
 
 - In `single`, a live legacy refresh row with a null link is adopted lazily and
   transactionally into its own application-scoped parent. An old page cookie
-  resolves through that refresh row and triggers the same adoption. A
+  without an `authGeneration` claim resolves through that exact live refresh
+  row, adopts its current generation, and triggers the same parent adoption.
+  Generation-changing security transitions revoke every such row, while an
+  explicit mismatched or malformed claim still fails closed. A
   pre-upgrade access JWT without `sessionKind`/`sid` may finish only its
   already-signed access-token lifetime after process startup, provided the
   live user and `authGeneration` still match; new official issuance is always
@@ -454,6 +504,7 @@ getJWKS(): { keys: JWK[] } {
 | Expired access token | `verifyAccessToken()` → `null` → middleware sets `authContext: null` → route returns 401 |
 | Tampered access token | Signature check fails → `null` → same as expired |
 | Wrong algorithm | `jose` rejects non-ES256 → `null` |
+| Security generation changes while an authentication, MFA, or session-signing ceremony is in flight | HTTP 409 `AUTH_STATE_CHANGED`; discard the stale ceremony and restart sign-in |
 | Expired refresh token | `rotateRefreshToken()` → `null` → client must re-login |
 | Revoked refresh token | Replay detection → revoke all user tokens → `null` → client must re-login |
 | Unknown refresh token | Hash not found in DB → `null` |

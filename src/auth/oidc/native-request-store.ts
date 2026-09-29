@@ -112,9 +112,16 @@ export class NativeRequestStore {
     rawRequestId: string,
     userId: string,
     authority: NativeAuthoritySnapshot,
+    admit: () => boolean = () => true,
   ): boolean {
     return this.db.transaction(() => {
       this.assertCurrentProfile();
+      if (!invokeSynchronousAuthCallback(admit, {
+        component: 'native-request-store',
+        invariant: 'native-authority-claim-admission-async',
+        message: '[auth] Native authority claim admission must be synchronous.',
+        emitCode: this.emitCode,
+      })) return false;
       return this.bindings.claimForAuthority(rawRequestId, userId, authority);
     });
   }
@@ -142,6 +149,28 @@ export class NativeRequestStore {
       return this.consumeTerminalStatement.run(
         now, hashToken(rawRequestId), now,
       ).changes === 1 ? request : null;
+    });
+  }
+
+  consumeTerminalForAuthority(
+    rawRequestId: string,
+    userId: string,
+    authority: NativeAuthoritySnapshot,
+    admit: () => boolean,
+  ): NativeAuthorizationRequestRecord | null {
+    return this.db.transaction(() => {
+      this.assertCurrentProfile();
+      const request = this.get(rawRequestId);
+      if (!request) return null;
+      if (!invokeSynchronousAuthCallback(admit, {
+        component: 'native-request-store',
+        invariant: 'native-authority-denial-admission-async',
+        message: '[auth] Native authority denial admission must be synchronous.',
+        emitCode: this.emitCode,
+      })) return null;
+      return this.bindings.consumeForAuthority(rawRequestId, userId, authority)
+        ? request
+        : null;
     });
   }
 
