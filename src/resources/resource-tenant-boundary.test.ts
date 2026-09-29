@@ -414,6 +414,35 @@ describe('tenant resource CRUD boundary', () => {
       id: 'escape-delete', tenant_id: 'tenant-a', title: 'Original',
     });
   });
+
+  test('does not expose unexpected SQLite mutation details to resource clients', async () => {
+    const service = createService(authenticatedOnly());
+    db.exec(`
+      CREATE TRIGGER documents_private_failure
+      BEFORE INSERT ON documents
+      WHEN NEW.id = 'private-failure'
+      BEGIN
+        SELECT RAISE(ABORT, 'private_rule /srv/customer.sqlite secret-column');
+      END
+    `);
+
+    const result = await service.create('documents', {
+      id: 'private-failure',
+      title: 'Must not commit',
+    }, { authContext: tenantAuth('tenant-a') });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 500,
+      body: {
+        error: 'Resource mutation failed',
+        code: 'resource-mutation-failed',
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('private_rule');
+    expect(JSON.stringify(result)).not.toContain('customer.sqlite');
+    expect(db.get('documents', 'private-failure')).toBeNull();
+  });
 });
 
 function createService(policy: ReturnType<typeof authenticatedOnly>) {

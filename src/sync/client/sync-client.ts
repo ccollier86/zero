@@ -1,9 +1,15 @@
 import type {
-  SyncCatchupMessage,
   SyncClientConfig,
+  SyncCatchupMessage,
+  SyncDataPlaneName,
   SyncSnapshotMessage,
 } from '../types';
-import { createSyncStore, type SyncStoreContext } from './sync-store';
+import { SYNC_TERMINAL_DATA_CLOSE_CODE } from '../types';
+import {
+  createSyncStore,
+  getSyncPlaneCursor,
+  type SyncStoreContext,
+} from './sync-store';
 import type { SyncClient } from './sync-client-types';
 import { SyncAckMonitor } from './sync-ack-monitor';
 import { requiresSyncCachePurge } from './sync-authorization-boundary';
@@ -14,6 +20,11 @@ import { SyncSocketAuthClient } from './sync-socket-auth-client';
 import { SyncSocketConnection } from './sync-socket-connection';
 import { finishSyncSocketHandshake } from './sync-socket-handshake';
 import { routeSyncSocketEvent } from './sync-socket-message-router';
+import {
+  messageSyncDataPlane,
+  resolveSyncClientDataPlaneTopology,
+} from './sync-data-planes';
+import { SyncSnapshotAssembler } from './sync-snapshot-assembler';
 
 export type { SyncClient } from './sync-client-types';
 
@@ -39,11 +50,19 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     ackTimeout = DEFAULT_ACK_TIMEOUT,
     maxReconnectAttempts = DEFAULT_MAX_RECONNECT_ATTEMPTS,
   } = config;
-  const { store, tables: tableDefs } = createSyncStore(tables);
+  const topology = resolveSyncClientDataPlaneTopology(
+    tables,
+    config.tableSyncPlanes,
+  );
+  const { store, tables: tableDefs } = createSyncStore(tables, {
+    tableSyncPlanes: topology.tablePlanes,
+  });
+  const snapshots = new SyncSnapshotAssembler(tableDefs, topology.tablePlanes);
   let disposed = false;
   let authorizationScopeTransition = false;
   let isFirstConnect = true;
   let baselineReady = false;
+  const synchronizedPlanes = new Set<SyncDataPlaneName>();
   let unbindAuthLifecycle: (() => void) | undefined;
   const sendBuffer: string[] = [];
   const messageHandlers = new Set<
@@ -58,6 +77,8 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
       authenticated: finishSocketHandshake,
       handlers: messageHandlers,
       mutations,
+      snapshots,
+      tablePlanes: topology.tablePlanes,
       recover: recoverSyncStream,
       synchronized: finishSyncBaseline,
     }, socket, event),
@@ -66,9 +87,14 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
   const mutations = new SyncMutationQueue({
     apply: (event) => store.send(event as never),
     send: sendMutation,
-    epoch: () => (
-      store.getSnapshot().context as SyncStoreContext
-    )._sync.epoch,
+    route: (table) => {
+      const plane = topology.tablePlanes[table];
+      const context = store.getSnapshot().context as SyncStoreContext;
+      return {
+        epoch: getSyncPlaneCursor(context._sync, plane).epoch,
+        ...(topology.assertMutationPlanes ? { plane } : {}),
+      };
+    },
   });
   const ackMonitor = new SyncAckMonitor({
     timeoutMs: ackTimeout,
@@ -110,19 +136,30 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
   ): void {
     if (!connection.authenticate(socket)) return;
     reconnectScheduler.succeeded();
+    synchronizedPlanes.clear();
     finishSyncSocketHandshake({
       socket,
       store,
       tables: tableDefs,
+      expectedPlanes: topology.expectedPlanes,
       stateSync: stateSync && authenticated,
     });
+    if (topology.expectedPlanes.size === 0) finishSyncBaseline();
   }
 
   function finishSyncBaseline(
-    message: SyncSnapshotMessage | SyncCatchupMessage,
+    message?: SyncSnapshotMessage | SyncCatchupMessage,
   ): void {
-    if (message.type === 'sync.snapshot' && message.reset === 'purge') {
+    if (message?.type === 'sync.snapshot' && message.reset === 'purge') {
       sendBuffer.length = 0;
+    }
+    if (message) {
+      const plane = messageSyncDataPlane(message);
+      if (plane === null || !topology.expectedPlanes.has(plane)) return;
+      synchronizedPlanes.add(plane);
+      if ([...topology.expectedPlanes].some(
+        (expected) => !synchronizedPlanes.has(expected),
+      )) return;
     }
     if (baselineReady) return;
     baselineReady = true;
@@ -149,7 +186,9 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     currentToken: string | null | undefined,
     event: CloseEvent,
   ): void {
+    snapshots.reset();
     baselineReady = false;
+    synchronizedPlanes.clear();
     ackMonitor.stop();
     store.send({ type: 'sync.disconnected' });
     if (disposed) return;
@@ -160,6 +199,12 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     }
     if (event.code === 4003) {
       reportAuthFailure(`Auth failed (code ${event.code}): ${event.reason}`);
+      return;
+    }
+    if (event.code === SYNC_TERMINAL_DATA_CLOSE_CODE) {
+      onError?.(
+        `Sync stopped (code ${event.code}): ${event.reason || 'data configuration is not transportable'}`,
+      );
       return;
     }
     reconnectScheduler.schedule();
@@ -179,7 +224,9 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
   }
 
   function closeSocket(reason = 'Client reconnect'): void {
+    snapshots.reset();
     baselineReady = false;
+    synchronizedPlanes.clear();
     socketAuth.cancel();
     reconnectScheduler.cancel();
     ackMonitor.stop();
@@ -245,6 +292,7 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
   function purgeLocalState(): void {
     sendBuffer.length = 0;
     mutations.clear();
+    synchronizedPlanes.clear();
     isFirstConnect = true;
     store.send({ type: 'sync.reset' });
   }

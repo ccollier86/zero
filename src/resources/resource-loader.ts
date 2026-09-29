@@ -13,7 +13,8 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
+import { emitPlatformCode, emitPlatformCodeTo } from '../observability/sink';
+import type { PlatformObservabilityRuntime } from '../observability/types';
 import { isResourceDefinition, type ResourceDefinition } from './resource-definition';
 
 const RESOURCE_MODULE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
@@ -23,6 +24,8 @@ const RESOURCE_EXPORT_KEYS = ['default', 'resource', 'resources'] as const;
 export interface ResourceLoaderOptions {
   /** Conventional resource directory. Defaults to `./server/resources`. */
   resourcesDir?: string | false;
+  /** App-owned observability target supplied by managed createApp(). */
+  observability?: PlatformObservabilityRuntime;
 }
 
 /** Error thrown when a resource module export is invalid. */
@@ -51,9 +54,13 @@ export async function loadResourceDefinitions(
       const module = await import(pathToFileURL(filePath).href);
       resources.push(...normalizeResourceModule(module, filePath));
     } catch (error) {
-      emitPlatformCode(OBS_CODES.RESOURCE_LOAD_FAILED, {
-        error,
-        metadata: { filePath },
+      const emit = options.observability
+        ? emitPlatformCodeTo.bind(null, options.observability)
+        : emitPlatformCode;
+      // The original import error still reaches the caller. Telemetry must not
+      // retain its stack/message or the absolute module path.
+      emit(OBS_CODES.RESOURCE_LOAD_FAILED, {
+        metadata: { stage: 'module-import' },
       });
       throw error;
     }

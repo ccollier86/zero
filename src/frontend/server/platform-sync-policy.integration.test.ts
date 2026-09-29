@@ -42,6 +42,10 @@ interface SyncConnection {
     timeout?: number,
     description?: string,
   ): Promise<ServerMessage>;
+  waitForClose(
+    timeout?: number,
+    description?: string,
+  ): Promise<CloseEvent>;
   close(): Promise<void>;
 }
 
@@ -122,17 +126,29 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
-  await Promise.all([...openConnections].map((connection) => connection.close()));
-  await app?.stop(true);
+  await withTimeout(
+    Promise.all([...openConnections].map((connection) => connection.close())),
+    5_000,
+    'platform Sync test client cleanup',
+  );
+  if (app) {
+    await withTimeout(app.stop(true), 5_000, 'platform Sync test app stop');
+  }
   app = null;
   testServices = null;
-  if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+  if (tempRoot) {
+    await withTimeout(
+      rm(tempRoot, { recursive: true, force: true }),
+      5_000,
+      'platform Sync test directory cleanup',
+    );
+  }
   tempRoot = null;
 }, 30_000);
 
 describe('createApp framework-table Sync policy', () => {
   test('scopes snapshots, catchup, and live delivery without narrowing app tables', async () => {
-    const userConnection = await connectSync(syncUrl, first.token);
+    let userConnection = await connectSync(syncUrl, first.token);
     subscribe(userConnection, 0);
     const userSnapshot = await userConnection.waitForMessage(
       (message) => message.type === 'sync.snapshot',
@@ -270,38 +286,42 @@ describe('createApp framework-table Sync policy', () => {
       first.user.userId,
     );
 
-    // Membership changes update the shared per-socket room scope as their own
-    // membership row crosses the wire. Revocation blocks subsequent room
-    // changes immediately; admission enables subsequent changes immediately.
+    // A membership change invalidates the comparable room-read authority at
+    // the final send fence. The socket must reconnect with a complete current
+    // snapshot; it cannot keep a stale room cache while an incremental
+    // membership row happens to cross the wire.
     const rooms = requirePlatformServices().rooms;
     expect(rooms.leave('room-shared', first.user.userId)).toBe(true);
-    await userConnection.waitForMessage(
-      (message) => message.type === 'sync.change'
-        && message.rowId === 'member-shared-first'
-        && message.op === 'DELETE',
+    const revoked = await userConnection.waitForClose(
       3_000,
-      'revoked membership DELETE',
+      'room-membership revocation close',
     );
+    expect({ code: revoked.code, reason: revoked.reason }).toEqual({
+      code: 4001,
+      reason: 'Sync read authority changed',
+    });
     db.update('rooms', 'room-shared', { name: 'Revoked room update' });
-    db.insert('todos', { todo_id: 'todo-room-revoke', title: 'Room revoke sentinel' });
-    await userConnection.waitForMessage(
-      (message) => message.type === 'sync.change' && message.rowId === 'todo-room-revoke',
-      3_000,
-      'room revocation sentinel',
-    );
     expect(userConnection.messages.some(
       (message) => message.type === 'sync.change'
         && message.rowId === 'room-shared',
     )).toBe(false);
 
-    const admitted = rooms.join('room-second', first.user.userId);
-    await userConnection.waitForMessage(
-      (message) => message.type === 'sync.change'
-        && message.rowId === admitted.member_id
-        && message.op === 'INSERT',
+    rooms.join('room-second', first.user.userId);
+    userConnection = await connectSync(syncUrl, first.token);
+    subscribe(userConnection, 0);
+    const refreshed = await userConnection.waitForMessage(
+      (message) => message.type === 'sync.snapshot',
       3_000,
-      'admitted membership INSERT',
+      'post-membership-change snapshot',
     );
+    expect(refreshed.type).toBe('sync.snapshot');
+    if (refreshed.type !== 'sync.snapshot') throw new Error('Expected refreshed snapshot');
+    // A lastSeq=0 subscription already asks for a complete replacement, so it
+    // preserves pending local mutations while returning only current rows.
+    expect(refreshed.reset).toBe('preserve-pending');
+    expect(refreshed.tables.rooms).not.toHaveProperty('room-shared');
+    expect(refreshed.tables.rooms).toHaveProperty('room-second');
+
     db.update('rooms', 'room-second', { name: 'Admitted room update' });
     const admittedRoomUpdate = await userConnection.waitForMessage(
       (message) => message.type === 'sync.change'
@@ -478,15 +498,15 @@ describe('createApp framework-table Sync policy', () => {
       expect(snapshot.tables.rooms).toHaveProperty(revokedRoom.room_id);
 
       expect(rooms.leave(revokedRoom.room_id, first.user.userId)).toBe(true);
-      db.update('rooms', revokedRoom.room_id, { name: 'Must stay hidden' });
-      db.update('rooms', 'room-first', { name: 'Authorized sentinel' });
-      await connection.waitForMessage(
-        (message) => message.type === 'sync.change'
-          && message.rowId === 'room-first'
-          && message.op === 'UPDATE',
+      const revoked = await connection.waitForClose(
         3_000,
-        'authorized rooms-only sentinel',
+        'rooms-only authorization close',
       );
+      expect({ code: revoked.code, reason: revoked.reason }).toEqual({
+        code: 4001,
+        reason: 'Sync access changed',
+      });
+      db.update('rooms', revokedRoom.room_id, { name: 'Must stay hidden' });
       expect(connection.messages.some(
         (message) => message.type === 'sync.change'
           && message.rowId === revokedRoom.room_id
@@ -587,7 +607,10 @@ describe('createApp framework-table Sync policy', () => {
       );
       expect(snapshot.type).toBe('sync.snapshot');
       if (snapshot.type !== 'sync.snapshot') throw new Error('Expected snapshot');
-      expect(snapshot.tables.rooms).toHaveProperty('room-second');
+      // This row belongs to the first app before any test-local membership
+      // churn. Depending on a prior test to admit room-second hid policy/DB
+      // isolation regressions behind suite ordering.
+      expect(snapshot.tables.rooms).toHaveProperty('room-first');
     } finally {
       await connection?.close();
       await secondApp?.stop(true);
@@ -902,7 +925,14 @@ async function connectSync(url: string, token: string): Promise<SyncConnection> 
   });
 
   let closePromise: Promise<void> | null = null;
-  const connection: SyncConnection = {
+  let connection!: SyncConnection;
+  const closed = new Promise<CloseEvent>((resolve) => {
+    ws.addEventListener('close', (event) => {
+      if (connection) openConnections.delete(connection);
+      resolve(event);
+    }, { once: true });
+  });
+  connection = {
     ws,
     messages,
     waitForMessage(predicate, timeout = 3_000, description = 'Sync message') {
@@ -922,24 +952,20 @@ async function connectSync(url: string, token: string): Promise<SyncConnection> 
         });
       });
     },
+    waitForClose(timeout = 3_000, description = 'Sync socket close') {
+      return withTimeout(closed, timeout, description);
+    },
     close() {
       if (closePromise) return closePromise;
       if (ws.readyState === WebSocket.CLOSED) {
         openConnections.delete(connection);
         return Promise.resolve();
       }
-      closePromise = new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
+      ws.close();
+      closePromise = withTimeout(closed, 2_000, 'Sync socket cleanup close')
+        .then(() => undefined, () => {
           openConnections.delete(connection);
-          resolve();
-        }, 2_000);
-        ws.addEventListener('close', () => {
-          clearTimeout(timer);
-          openConnections.delete(connection);
-          resolve();
-        }, { once: true });
-        ws.close();
-      });
+        });
       return closePromise;
     },
   };
@@ -948,4 +974,25 @@ async function connectSync(url: string, token: string): Promise<SyncConnection> 
   await connection.waitForMessage((message) => message.type === 'sync.auth.ready');
   openConnections.add(connection);
   return connection;
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeout: number,
+  description: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Timed out waiting for ${description}`)),
+          timeout,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

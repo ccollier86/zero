@@ -84,6 +84,71 @@ describe('SubprocessDatabaseServer', () => {
     });
   });
 
+  test('relays the exact hot durability signal once without accepting payload data', async () => {
+    const transport = new FakeTransport();
+    const server = createServer(transport);
+    await startServer(server, transport);
+
+    server.reportHotPeriodicDurabilityFailure();
+    server.reportHotPeriodicDurabilityFailure();
+
+    expect(transport.sent.slice(1)).toEqual([{
+      ...SESSION,
+      type: 'telemetry',
+      signal: 'hot-periodic-durability-failed',
+    }]);
+    transport.emitMessage(shutdown());
+    await server.finished();
+  });
+
+  test('relays payload-free periodic snapshot watchdog boundaries', async () => {
+    const transport = new FakeTransport();
+    const server = createServer(transport);
+    await startServer(server, transport);
+
+    server.reportHotPeriodicSnapshotStarted();
+    server.reportHotPeriodicSnapshotFinished();
+
+    expect(transport.sent.slice(1)).toEqual([
+      {
+        ...SESSION,
+        type: 'telemetry',
+        signal: 'hot-periodic-snapshot-started',
+      },
+      {
+        ...SESSION,
+        type: 'telemetry',
+        signal: 'hot-periodic-snapshot-finished',
+      },
+    ]);
+    transport.emitMessage(shutdown());
+    await server.finished();
+  });
+
+  test('relays payload-free periodic acknowledged-write boundaries', async () => {
+    const transport = new FakeTransport();
+    const server = createServer(transport);
+    await startServer(server, transport);
+
+    server.reportHotPeriodicDurabilityDirty();
+    server.reportHotPeriodicDurabilityClean();
+
+    expect(transport.sent.slice(1)).toEqual([
+      {
+        ...SESSION,
+        type: 'telemetry',
+        signal: 'hot-periodic-durability-dirty',
+      },
+      {
+        ...SESSION,
+        type: 'telemetry',
+        signal: 'hot-periodic-durability-clean',
+      },
+    ]);
+    transport.emitMessage(shutdown());
+    await server.finished();
+  });
+
   test('rejects an extended initial handshake and cleans up once', async () => {
     const transport = new FakeTransport();
     let closeCalls = 0;
@@ -97,6 +162,17 @@ describe('SubprocessDatabaseServer', () => {
     await expectDatabaseError(server.finished(), 'DATABASE_PROTOCOL_ERROR');
     expect(closeCalls).toBe(1);
     expect(transport.disconnectCalls).toBe(1);
+    expect(transport.sent).toHaveLength(0);
+  });
+
+  test('rejects a stale v2 actor at the handshake boundary', async () => {
+    const transport = new FakeTransport();
+    const server = createServer(transport);
+    const starting = server.start();
+    transport.emitMessage({ ...handshake(), version: 2 });
+
+    await expectDatabaseError(starting, 'DATABASE_PROTOCOL_ERROR');
+    await expectDatabaseError(server.finished(), 'DATABASE_PROTOCOL_ERROR');
     expect(transport.sent).toHaveLength(0);
   });
 

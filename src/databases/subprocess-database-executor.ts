@@ -12,11 +12,12 @@ import {
   DatabaseError,
   deserializeDatabaseError,
   isSerializedDatabaseError,
-  type SerializedDatabaseError,
 } from './database-error';
 import type {
   DatabaseExecutor,
   DatabaseExecutorDiagnostics,
+  DatabaseExecutorEvent,
+  DatabaseExecutorEventListener,
   DatabaseExecutorExecuteOptions,
   DatabaseExecutorOperationKind,
   DatabaseExecutorRequest,
@@ -26,122 +27,45 @@ import type {
 import {
   hasExactDatabaseExecutorKeys as hasExactKeys,
   isDatabaseExecutorOperationName,
-  isDatabaseExecutorRole,
   isDatabaseExecutorValue,
   readDatabaseExecutorDataRecord as ownDataRecord,
 } from './database-executor-validation';
+import {
+  normalizeSubprocessDatabaseExecutorOptions,
+  normalizeSubprocessDatabaseExecutorTimeout,
+  type NormalizedSubprocessDatabaseExecutorOptions as NormalizedOptions,
+  type SubprocessDatabaseExecutorOptions,
+} from './subprocess-database-executor-config';
+import {
+  DATABASE_EXECUTOR_PROTOCOL_KIND,
+  DATABASE_EXECUTOR_PROTOCOL_VERSION,
+  type DatabaseExecutorHandshakeMessage,
+  type DatabaseExecutorOperationMessage,
+  type DatabaseExecutorProtocolIdentity as ProtocolIdentity,
+  type DatabaseExecutorShutdownMessage,
+  type SubprocessDatabaseExecutorCommand,
+} from './subprocess-database-protocol';
 
-/** Wire discriminator shared by the parent transport and subprocess actor. */
-export const DATABASE_EXECUTOR_PROTOCOL_KIND = 'zero.database-executor' as const;
-
-/** Current subprocess IPC protocol version. */
-export const DATABASE_EXECUTOR_PROTOCOL_VERSION = 1 as const;
-
-const DEFAULT_MAX_IN_FLIGHT = 64;
-const DEFAULT_STARTUP_TIMEOUT_MS = 5_000;
-const DEFAULT_OPERATION_TIMEOUT_MS = 30_000;
-const DEFAULT_SHUTDOWN_ACK_TIMEOUT_MS = 5_000;
-const DEFAULT_SHUTDOWN_EXIT_TIMEOUT_MS = 5_000;
-const DEFAULT_SIGTERM_TIMEOUT_MS = 2_000;
-const DEFAULT_SIGKILL_TIMEOUT_MS = 2_000;
+export {
+  DATABASE_EXECUTOR_PROTOCOL_KIND,
+  DATABASE_EXECUTOR_PROTOCOL_VERSION,
+} from './subprocess-database-protocol';
+export type {
+  DatabaseExecutorFailureMessage,
+  DatabaseExecutorHandshakeMessage,
+  DatabaseExecutorOperationMessage,
+  DatabaseExecutorReadyMessage,
+  DatabaseExecutorShutdownAckMessage,
+  DatabaseExecutorShutdownMessage,
+  DatabaseExecutorSuccessMessage,
+  DatabaseExecutorTelemetryMessage,
+  SubprocessDatabaseExecutorCommand,
+  SubprocessDatabaseExecutorEvent,
+} from './subprocess-database-protocol';
+export type { SubprocessDatabaseExecutorOptions } from './subprocess-database-executor-config';
 
 let nextExecutorGeneration = 1;
 
-interface ProtocolIdentity {
-  readonly protocol: typeof DATABASE_EXECUTOR_PROTOCOL_KIND;
-  readonly version: typeof DATABASE_EXECUTOR_PROTOCOL_VERSION;
-  readonly nonce: string;
-  readonly role: string;
-  readonly slot: number;
-  readonly generation: number;
-}
-
-export interface DatabaseExecutorHandshakeMessage extends ProtocolIdentity {
-  readonly type: 'handshake';
-}
-
-export interface DatabaseExecutorOperationMessage<
-  Payload extends DatabaseExecutorValue = DatabaseExecutorValue,
-> extends ProtocolIdentity {
-  readonly type: 'request';
-  readonly requestId: number;
-  readonly operation: string;
-  readonly operationKind: DatabaseExecutorOperationKind;
-  readonly payload: Payload;
-}
-
-export interface DatabaseExecutorShutdownMessage extends ProtocolIdentity {
-  readonly type: 'shutdown';
-}
-
-/** Messages accepted by a subprocess actor. */
-export type SubprocessDatabaseExecutorCommand =
-  | DatabaseExecutorHandshakeMessage
-  | DatabaseExecutorOperationMessage
-  | DatabaseExecutorShutdownMessage;
-
-export interface DatabaseExecutorReadyMessage extends ProtocolIdentity {
-  readonly type: 'ready';
-}
-
-export interface DatabaseExecutorSuccessMessage<
-  Value extends DatabaseExecutorValue = DatabaseExecutorValue,
-> extends ProtocolIdentity {
-  readonly type: 'response';
-  readonly requestId: number;
-  readonly ok: true;
-  readonly value: Value;
-}
-
-export interface DatabaseExecutorFailureMessage extends ProtocolIdentity {
-  readonly type: 'response';
-  readonly requestId: number;
-  readonly ok: false;
-  readonly error: SerializedDatabaseError;
-}
-
-export interface DatabaseExecutorShutdownAckMessage extends ProtocolIdentity {
-  readonly type: 'shutdown-ack';
-}
-
-/** Messages emitted by a subprocess actor. */
-export type SubprocessDatabaseExecutorEvent =
-  | DatabaseExecutorReadyMessage
-  | DatabaseExecutorSuccessMessage
-  | DatabaseExecutorFailureMessage
-  | DatabaseExecutorShutdownAckMessage;
-
-export interface SubprocessDatabaseExecutorOptions {
-  /** Complete executable and argument vector. It is never exposed in diagnostics. */
-  readonly command: readonly [string, ...string[]];
-  /** Complete allowlist passed to the child; the parent environment is not inherited. */
-  readonly env: Readonly<Record<string, string>>;
-  /** Non-secret actor role included in the startup challenge. */
-  readonly role: string;
-  /** Stable non-negative pool slot. */
-  readonly slot: number;
-  readonly maxInFlight?: number;
-  readonly startupTimeoutMs?: number;
-  readonly operationTimeoutMs?: number;
-  readonly shutdownAckTimeoutMs?: number;
-  readonly shutdownExitTimeoutMs?: number;
-  readonly sigtermTimeoutMs?: number;
-  readonly sigkillTimeoutMs?: number;
-}
-
-interface NormalizedOptions {
-  readonly command: [string, ...string[]];
-  readonly env: Readonly<Record<string, string>>;
-  readonly role: string;
-  readonly slot: number;
-  readonly maxInFlight: number;
-  readonly startupTimeoutMs: number;
-  readonly operationTimeoutMs: number;
-  readonly shutdownAckTimeoutMs: number;
-  readonly shutdownExitTimeoutMs: number;
-  readonly sigtermTimeoutMs: number;
-  readonly sigkillTimeoutMs: number;
-}
 
 interface PendingRequest {
   readonly kind: DatabaseExecutorOperationKind;
@@ -178,17 +102,30 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
   private nextRequestId = 1;
   private closeRequested = false;
   private shutdownAcknowledged = false;
+  private hotPeriodicSnapshotActive = false;
+  private hotPeriodicDurabilityDirty = false;
   private disconnectObserved = false;
   private exitObserved = false;
   private settlementObserved = false;
   private exitCode: number | null = null;
   private signalCode: string | number | null = null;
   private lastFailure: DatabaseError | null = null;
+  private eventListener: DatabaseExecutorEventListener | null = null;
 
   constructor(options: SubprocessDatabaseExecutorOptions) {
-    this.options = normalizeOptions(options);
+    this.options = normalizeSubprocessDatabaseExecutorOptions(options);
     this.slot = this.options.slot;
     this.generation = allocateGeneration();
+  }
+
+  setEventListener(listener: DatabaseExecutorEventListener): void {
+    if (typeof listener !== 'function') {
+      throw new TypeError('Database executor event listener must be a function.');
+    }
+    if (this.state !== 'created' || this.eventListener) {
+      throw new TypeError('Database executor event listener must be installed once before startup.');
+    }
+    this.eventListener = listener;
   }
 
   start(): Promise<void> {
@@ -241,7 +178,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
       );
     }
 
-    const timeoutMs = normalizePositiveSafeInteger(
+    const timeoutMs = normalizeSubprocessDatabaseExecutorTimeout(
       options.timeoutMs ?? this.options.operationTimeoutMs,
       'timeoutMs',
     );
@@ -529,6 +466,9 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
       case 'response':
         this.handleResponse(record);
         return;
+      case 'telemetry':
+        this.handleTelemetry(record);
+        return;
       case 'shutdown-ack':
         if (!hasExactKeys(record, SHUTDOWN_ACK_KEYS)
           || this.state !== 'closing'
@@ -581,6 +521,92 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
       return;
     }
     this.failProtocol();
+  }
+
+  private handleTelemetry(record: Record<string, unknown>): void {
+    if (!hasExactKeys(record, TELEMETRY_KEYS)) {
+      this.failProtocol();
+      return;
+    }
+
+    if (record.signal === 'hot-periodic-snapshot-started') {
+      if ((this.state !== 'ready' && this.state !== 'draining')
+        || this.hotPeriodicSnapshotActive) {
+        this.failProtocol();
+        return;
+      }
+      this.hotPeriodicSnapshotActive = true;
+      this.emitEvent('hot-periodic-snapshot-started');
+      return;
+    }
+
+    if (record.signal === 'hot-periodic-snapshot-finished') {
+      if ((this.state !== 'ready'
+          && this.state !== 'draining'
+          && this.state !== 'closing')
+        || !this.hotPeriodicSnapshotActive) {
+        this.failProtocol();
+        return;
+      }
+      this.hotPeriodicSnapshotActive = false;
+      this.emitEvent('hot-periodic-snapshot-finished');
+      return;
+    }
+
+    if (record.signal === 'hot-periodic-durability-dirty') {
+      if ((this.state !== 'ready' && this.state !== 'draining')
+        || this.hotPeriodicDurabilityDirty) {
+        this.failProtocol();
+        return;
+      }
+      this.hotPeriodicDurabilityDirty = true;
+      this.emitEvent('hot-periodic-durability-dirty');
+      return;
+    }
+
+    if (record.signal === 'hot-periodic-durability-clean') {
+      if ((this.state !== 'ready'
+          && this.state !== 'draining'
+          && this.state !== 'closing')
+        || !this.hotPeriodicDurabilityDirty) {
+        this.failProtocol();
+        return;
+      }
+      this.hotPeriodicDurabilityDirty = false;
+      this.emitEvent('hot-periodic-durability-clean');
+      return;
+    }
+
+    if (record.signal !== 'hot-periodic-durability-failed'
+      || (this.state !== 'ready'
+        && this.state !== 'draining'
+        && this.state !== 'closing')) {
+      this.failProtocol();
+      return;
+    }
+    this.hotPeriodicSnapshotActive = false;
+    this.hotPeriodicDurabilityDirty = false;
+
+    const error = new DatabaseError(
+      'DATABASE_EXECUTOR_FAILED',
+      'Database executor hot durability failed.',
+      { retryable: false, outcome: 'unknown' },
+    );
+    this.recordFailure(error);
+    this.state = 'failed';
+    this.emitEvent('hot-periodic-durability-failed');
+    this.startDeferred?.reject(error);
+    this.shutdownDeferred?.reject(error);
+    this.rejectPendingForTransportFailure('hot-periodic-durability');
+    this.beginTermination();
+  }
+
+  private emitEvent(type: DatabaseExecutorEvent['type']): void {
+    try {
+      this.eventListener?.(Object.freeze({ type }));
+    } catch {
+      // Lifecycle listeners cannot alter the transport control path.
+    }
   }
 
   private handleDisconnect(): void {
@@ -959,6 +985,10 @@ const IDENTITY_KEYS = [
 ] as const;
 const READY_KEYS = new Set(IDENTITY_KEYS);
 const SHUTDOWN_ACK_KEYS = new Set(IDENTITY_KEYS);
+const TELEMETRY_KEYS = new Set([
+  ...IDENTITY_KEYS,
+  'signal',
+]);
 const SUCCESS_KEYS = new Set([
   ...IDENTITY_KEYS,
   'requestId',
@@ -971,75 +1001,6 @@ const FAILURE_KEYS = new Set([
   'ok',
   'error',
 ]);
-
-function normalizeOptions(
-  options: SubprocessDatabaseExecutorOptions,
-): NormalizedOptions {
-  if (!Array.isArray(options.command)
-    || options.command.length === 0
-    || options.command.some((part) => typeof part !== 'string')
-    || options.command[0]?.length === 0) {
-    throw new TypeError('command must contain a non-empty executable string.');
-  }
-  if (!isDatabaseExecutorRole(options.role)) {
-    throw new TypeError('role must be a bounded executor identifier.');
-  }
-
-  return Object.freeze({
-    command: [...options.command] as [string, ...string[]],
-    env: normalizeEnvironment(options.env),
-    role: options.role,
-    slot: normalizeNonNegativeSafeInteger(options.slot, 'slot'),
-    maxInFlight: normalizePositiveSafeInteger(
-      options.maxInFlight ?? DEFAULT_MAX_IN_FLIGHT,
-      'maxInFlight',
-    ),
-    startupTimeoutMs: normalizePositiveSafeInteger(
-      options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
-      'startupTimeoutMs',
-    ),
-    operationTimeoutMs: normalizePositiveSafeInteger(
-      options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS,
-      'operationTimeoutMs',
-    ),
-    shutdownAckTimeoutMs: normalizePositiveSafeInteger(
-      options.shutdownAckTimeoutMs ?? DEFAULT_SHUTDOWN_ACK_TIMEOUT_MS,
-      'shutdownAckTimeoutMs',
-    ),
-    shutdownExitTimeoutMs: normalizePositiveSafeInteger(
-      options.shutdownExitTimeoutMs ?? DEFAULT_SHUTDOWN_EXIT_TIMEOUT_MS,
-      'shutdownExitTimeoutMs',
-    ),
-    sigtermTimeoutMs: normalizePositiveSafeInteger(
-      options.sigtermTimeoutMs ?? DEFAULT_SIGTERM_TIMEOUT_MS,
-      'sigtermTimeoutMs',
-    ),
-    sigkillTimeoutMs: normalizePositiveSafeInteger(
-      options.sigkillTimeoutMs ?? DEFAULT_SIGKILL_TIMEOUT_MS,
-      'sigkillTimeoutMs',
-    ),
-  });
-}
-
-function normalizeEnvironment(
-  value: Readonly<Record<string, string>>,
-): Readonly<Record<string, string>> {
-  const record = ownDataRecord(value);
-  if (!record) {
-    throw new TypeError('env must be an explicit plain-data allowlist.');
-  }
-  const normalized: Record<string, string> = Object.create(null);
-  for (const [key, entry] of Object.entries(record)) {
-    if (key.length === 0 || key.includes('=') || key.includes('\0')) {
-      throw new TypeError('env contains an invalid environment variable name.');
-    }
-    if (typeof entry !== 'string' || entry.includes('\0')) {
-      throw new TypeError('env values must be strings without null bytes.');
-    }
-    normalized[key] = entry;
-  }
-  return Object.freeze(normalized);
-}
 
 function normalizeRequest<Payload extends DatabaseExecutorValue>(
   request: DatabaseExecutorRequest<Payload>,
@@ -1069,20 +1030,6 @@ function allocateGeneration(): number {
   nextExecutorGeneration += 1;
   if (!Number.isSafeInteger(nextExecutorGeneration)) nextExecutorGeneration = 1;
   return generation;
-}
-
-function normalizePositiveSafeInteger(value: unknown, name: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
-    throw new TypeError(`${name} must be a positive safe integer.`);
-  }
-  return value as number;
-}
-
-function normalizeNonNegativeSafeInteger(value: unknown, name: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new TypeError(`${name} must be a non-negative safe integer.`);
-  }
-  return value as number;
 }
 
 function createDeferred<T>(): Deferred<T> {

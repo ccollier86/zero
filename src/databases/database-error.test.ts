@@ -24,6 +24,7 @@ const EXPECTED_DEFAULTS = {
   DATABASE_NOT_READY: [true, 'not-started'],
   DATABASE_CLOSED: [false, 'not-started'],
   DATABASE_BACKPRESSURE: [true, 'not-started'],
+  DATABASE_CAPACITY_EXHAUSTED: [false, 'not-started'],
   DATABASE_QUEUE_TIMEOUT: [true, 'not-started'],
   DATABASE_OPERATION_TIMEOUT: [false, 'unknown'],
   DATABASE_EXECUTOR_START_FAILED: [true, 'not-started'],
@@ -114,6 +115,18 @@ describe('DatabaseError', () => {
       'Contradictory outcome.',
       { outcome: 'not-committed' },
     )).toThrow('must have an unknown outcome');
+
+    expect(() => new DatabaseError(
+      'DATABASE_CAPACITY_EXHAUSTED',
+      'Contradictory retry policy.',
+      { retryable: true, outcome: 'not-started' },
+    )).toThrow('must be non-retryable with a not-started outcome');
+
+    expect(() => new DatabaseError(
+      'DATABASE_CAPACITY_EXHAUSTED',
+      'Contradictory commit boundary.',
+      { retryable: false, outcome: 'not-committed' },
+    )).toThrow('must be non-retryable with a not-started outcome');
   });
 
   test('removes unsafe or non-scalar local details as one atomic set', () => {
@@ -128,6 +141,17 @@ describe('DatabaseError', () => {
     );
 
     expect(error.details).toEqual({});
+  });
+
+  test('uses a stable capacity fallback when an unsafe message is rejected', () => {
+    const error = new DatabaseError(
+      'DATABASE_CAPACITY_EXHAUSTED',
+      'private\u0000capacity detail',
+    );
+
+    expect(error.message).toBe('Database permanent capacity is exhausted.');
+    expect(error.retryable).toBe(false);
+    expect(error.outcome).toBe('not-started');
   });
 });
 
@@ -244,6 +268,18 @@ describe('database error serialization', () => {
       { ...valid, retryable: 'yes' },
       { ...valid, outcome: 'maybe' },
       { ...valid, retryable: true, outcome: 'unknown' },
+      {
+        ...valid,
+        code: 'DATABASE_CAPACITY_EXHAUSTED',
+        retryable: true,
+        outcome: 'not-started',
+      },
+      {
+        ...valid,
+        code: 'DATABASE_CAPACITY_EXHAUSTED',
+        retryable: false,
+        outcome: 'not-committed',
+      },
       { ...valid, details: [] },
       { ...valid, details: { nested: { privateText } } },
       { ...valid, details: { infinite: Number.POSITIVE_INFINITY } },

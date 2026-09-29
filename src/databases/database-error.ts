@@ -31,6 +31,7 @@ export const DATABASE_ERROR_CODES = Object.freeze([
   'DATABASE_NOT_READY',
   'DATABASE_CLOSED',
   'DATABASE_BACKPRESSURE',
+  'DATABASE_CAPACITY_EXHAUSTED',
   'DATABASE_QUEUE_TIMEOUT',
   'DATABASE_OPERATION_TIMEOUT',
   'DATABASE_EXECUTOR_START_FAILED',
@@ -53,6 +54,14 @@ export const DATABASE_ERROR_CODES = Object.freeze([
 
 /** Closed union of stable database error codes. */
 export type DatabaseErrorCode = (typeof DATABASE_ERROR_CODES)[number];
+
+/** Permanent capacity dimensions safe to expose through closed adapters. */
+export const DATABASE_CAPACITY_TYPES = Object.freeze([
+  'files',
+  'receipts',
+] as const);
+
+export type DatabaseCapacityType = (typeof DATABASE_CAPACITY_TYPES)[number];
 
 /**
  * What the executor can assert about a failed operation's commit boundary.
@@ -130,6 +139,7 @@ const DATABASE_ERROR_DEFAULTS = Object.freeze({
   DATABASE_NOT_READY: defaults(true, 'not-started'),
   DATABASE_CLOSED: defaults(false, 'not-started'),
   DATABASE_BACKPRESSURE: defaults(true, 'not-started'),
+  DATABASE_CAPACITY_EXHAUSTED: defaults(false, 'not-started'),
   DATABASE_QUEUE_TIMEOUT: defaults(true, 'not-started'),
   DATABASE_OPERATION_TIMEOUT: defaults(false, 'unknown'),
   DATABASE_EXECUTOR_START_FAILED: defaults(true, 'not-started'),
@@ -176,6 +186,12 @@ export class DatabaseError extends Error {
       : options.outcome;
 
     assertRetryShape(retryable, outcome);
+    if (code === 'DATABASE_CAPACITY_EXHAUSTED'
+      && (retryable !== false || outcome !== 'not-started')) {
+      throw new TypeError(
+        'DATABASE_CAPACITY_EXHAUSTED must be non-retryable with a not-started outcome.',
+      );
+    }
     if (code === 'DATABASE_OUTCOME_UNKNOWN' && outcome !== 'unknown') {
       throw new TypeError('DATABASE_OUTCOME_UNKNOWN must have an unknown outcome.');
     }
@@ -302,6 +318,8 @@ function protocolFallback(): DatabaseError {
 
 function safeMessageForCode(code: DatabaseErrorCode): string {
   switch (code) {
+    case 'DATABASE_CAPACITY_EXHAUSTED':
+      return 'Database permanent capacity is exhausted.';
     case 'DATABASE_EXECUTOR_START_FAILED':
       return 'Database executor could not start.';
     case 'DATABASE_EXECUTOR_FAILED':
@@ -424,6 +442,8 @@ function parseSerializedDatabaseError(
     || typeof retryable !== 'boolean'
     || !isOperationOutcome(outcome)
     || (retryable && outcome === 'unknown')
+    || (code === 'DATABASE_CAPACITY_EXHAUSTED'
+      && (retryable !== false || outcome !== 'not-started'))
     || (code === 'DATABASE_OUTCOME_UNKNOWN' && outcome !== 'unknown')
     || !details) {
     return null;

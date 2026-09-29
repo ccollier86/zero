@@ -8,7 +8,7 @@ import type { ResolvedConfig } from '../frontend/server/types';
 import type {
   PlatformDoctorFinding,
   PlatformDoctorSeverity,
-} from './platform-doctor';
+} from './platform-doctor-contracts';
 
 export type UsageAuditRuleSeverity = PlatformDoctorSeverity | 'off';
 

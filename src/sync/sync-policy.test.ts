@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { MemoryEventStore, OBS_CODES } from '../observability';
 import {
   allowAllSyncPolicy,
   combineSyncPolicies,
@@ -124,9 +125,10 @@ describe('sync policy helpers', () => {
   });
 
   test('policy errors fail closed', () => {
+    const events = new MemoryEventStore();
     const policy: SyncPolicy = {
       canMutateTable: () => {
-        throw new Error('Policy unavailable');
+        throw new Error('private /workspace/customer.sqlite PHI-SECRET');
       },
     };
 
@@ -136,7 +138,17 @@ describe('sync policy helpers', () => {
         op: 'INSERT',
         row: { id: '1' },
         authContext,
+      }, {
+        sink: events,
+        store: events,
+        config: { console: false, store: events },
       })
-    ).toEqual({ ok: false, reason: 'Policy unavailable' });
+    ).toEqual({ ok: false, reason: 'Sync policy evaluation failed' });
+
+    const page = events.query({ code: OBS_CODES.SYNC_POLICY_CALLBACK_FAILED.code });
+    expect(page.count).toBe(1);
+    expect(page.events[0]?.metadata).toEqual({ table: 'todos', operation: 'INSERT' });
+    expect(page.events[0]?.error).toBeUndefined();
+    expect(JSON.stringify(page.events[0])).not.toContain('PHI-SECRET');
   });
 });

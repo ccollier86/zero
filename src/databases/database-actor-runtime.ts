@@ -6,43 +6,68 @@
  * later commands are authorized solely by the opaque bound database reference.
  */
 
-import { createPlatformSQLiteService } from '../persistence';
-import { DatabaseError, type DatabaseErrorCode, type DatabaseErrorDetails } from './database-error';
+import { DatabaseError } from './database-error';
+import {
+  actorBindingSequence,
+  closeActorBinding,
+  establishHotWriteDurability,
+  establishInitialHotDurability,
+  openReaderBinding,
+  openWriterBinding,
+  releaseHotOpenedFileGuard,
+  sameActorPlacement,
+  type DatabaseActorBinding,
+  type DatabaseActorWriterBinding,
+} from './database-actor-binding';
+import {
+  asExecutorValue,
+  invalidActorResult,
+  privacySafeActorError,
+  validateBindResult,
+} from './database-actor-error-boundary';
 import {
   DATABASE_ACTOR_OPERATIONS,
   validateDatabaseActorBindPayload,
   validateDatabaseActorBindResult,
   validateDatabaseActorExecutePayload,
+  validateDatabaseActorFindReceiptPayload,
   validateDatabaseActorReplayPayload,
   validateDatabaseActorUnbindPayload,
-  type DatabaseActorBindPayload,
   type DatabaseActorBindResult,
+  type DatabaseActorPlacementConfig,
   type DatabaseActorRole,
 } from './database-actor-protocol';
 import type { DatabaseRef } from './database-file';
+import { sameDatabaseFileIdentity } from './database-file-identity';
 import {
   createDatabaseSequenceToken,
   type DatabaseOperation,
+  type DatabaseWriteOperation,
 } from './database-operations';
 import {
+  attachDatabaseActorReceiptCompaction,
   validateDatabaseActorExecuteResult,
   validateDatabaseActorReplayResult,
+  validateDatabaseActorTrustedWriteResult,
 } from './database-actor-result-validation';
+import { createDatabaseRealmOperationCatalog, type DatabaseRealm } from './database-realm';
 import {
-  createDatabaseRealmOperationCatalog,
-  type DatabaseRealm,
-} from './database-realm';
-import { DatabaseReaderRuntime } from './database-reader-runtime';
-import { DatabaseRuntime } from './database-runtime';
-import {
-  DatabaseWriterOperationEngine,
   type DatabaseChangeReplayResult,
 } from './database-writer-engine';
+import {
+  validateDatabaseActorTenantSyncSnapshotAbortPayload,
+  validateDatabaseActorTenantSyncSnapshotBeginPayload,
+  validateDatabaseActorTenantSyncSnapshotPagePayload,
+  type DatabaseActorTenantSyncSnapshotAbortResult,
+  type DatabaseActorTenantSyncSnapshotBeginResult,
+  type DatabaseActorTenantSyncSnapshotPageResult,
+} from './database-tenant-sync-snapshot-protocol';
 import type {
+  DatabaseExecutorEvent,
   DatabaseExecutorOperationKind,
   DatabaseExecutorValue,
 } from './database-executor';
-import { isDatabaseExecutorValue } from './database-executor-validation';
+import type { DatabaseTrustedReceiptLookup } from './database-trusted-writer';
 import {
   SubprocessDatabaseServer,
   type DatabaseExecutorServerRequest,
@@ -51,6 +76,7 @@ import {
 
 const REALM_FINGERPRINT_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const SCHEMA_CHECKSUM_PATTERN = /^[0-9a-f]{64}$/u;
+const ACTOR_CLOSE_RETRY_DELAYS_MS = Object.freeze([25, 50, 100, 200, 400]);
 
 export type DatabaseActorRuntimeState =
   | 'unbound'
@@ -64,12 +90,15 @@ export interface DatabaseActorRuntimeOptions {
   readonly role: DatabaseActorRole;
   /** Realm imported independently inside this actor process. */
   readonly realm: DatabaseRealm;
+  /** Closed actor lifecycle signals; never receives paths or raw errors. */
+  readonly onEvent?: (event: DatabaseExecutorEvent) => void;
 }
 
 export interface DatabaseActorRuntimeDiagnostics {
   readonly state: DatabaseActorRuntimeState;
   readonly role: DatabaseActorRole;
   readonly databaseRef: DatabaseRef | null;
+  readonly placement: DatabaseActorPlacementConfig | null;
   readonly realmFingerprint: string;
 }
 
@@ -85,21 +114,6 @@ export interface DatabaseActorServer {
   readonly server: SubprocessDatabaseServer;
 }
 
-interface WriterBinding {
-  readonly role: 'writer';
-  readonly databaseRef: DatabaseRef;
-  readonly runtime: DatabaseRuntime;
-  readonly engine: DatabaseWriterOperationEngine;
-}
-
-interface ReaderBinding {
-  readonly role: 'reader';
-  readonly databaseRef: DatabaseRef;
-  readonly runtime: DatabaseReaderRuntime;
-}
-
-type DatabaseActorBinding = WriterBinding | ReaderBinding;
-
 /**
  * Synchronous database-specific handler hosted behind SubprocessDatabaseServer.
  *
@@ -114,6 +128,8 @@ export class DatabaseActorRuntime implements Disposable {
   private binding: DatabaseActorBinding | null = null;
   private state: DatabaseActorRuntimeState = 'unbound';
   private closeRequested = false;
+  private hotDurabilityFailureReported = false;
+  private readonly onEvent: ((event: DatabaseExecutorEvent) => void) | null;
 
   constructor(options: DatabaseActorRuntimeOptions) {
     if (options.role !== 'writer' && options.role !== 'reader') {
@@ -124,9 +140,13 @@ export class DatabaseActorRuntime implements Disposable {
       || !SCHEMA_CHECKSUM_PATTERN.test(options.realm.schemaChecksum)) {
       throw new TypeError('Database actor realm must be a defined database realm.');
     }
+    if (options.onEvent !== undefined && typeof options.onEvent !== 'function') {
+      throw new TypeError('Database actor event listener must be a function.');
+    }
     this.role = options.role;
     this.realm = options.realm;
     this.catalog = createDatabaseRealmOperationCatalog(options.realm);
+    this.onEvent = options.onEvent ?? null;
   }
 
   /** Validate and execute one already-framed server request. */
@@ -142,6 +162,14 @@ export class DatabaseActorRuntime implements Disposable {
           return this.execute(request);
         case DATABASE_ACTOR_OPERATIONS.replay:
           return asExecutorValue(this.replay(request));
+        case DATABASE_ACTOR_OPERATIONS.tenantSyncSnapshotBegin:
+          return asExecutorValue(this.tenantSyncSnapshotBegin(request));
+        case DATABASE_ACTOR_OPERATIONS.tenantSyncSnapshotPage:
+          return asExecutorValue(this.tenantSyncSnapshotPage(request));
+        case DATABASE_ACTOR_OPERATIONS.tenantSyncSnapshotAbort:
+          return asExecutorValue(this.tenantSyncSnapshotAbort(request));
+        case DATABASE_ACTOR_OPERATIONS.findReceipt:
+          return asExecutorValue(this.findReceipt(request));
         case DATABASE_ACTOR_OPERATIONS.unbind:
           return this.unbind(request);
         default:
@@ -162,7 +190,7 @@ export class DatabaseActorRuntime implements Disposable {
     this.state = 'closing';
     try {
       if (this.binding) {
-        closeBinding(this.binding);
+        closeActorBinding(this.binding);
         this.binding = null;
       }
       this.state = 'closed';
@@ -181,6 +209,7 @@ export class DatabaseActorRuntime implements Disposable {
       state: this.state,
       role: this.role,
       databaseRef: this.binding?.databaseRef ?? null,
+      placement: this.binding?.placement ?? null,
       realmFingerprint: this.realm.fingerprint,
     });
   }
@@ -216,24 +245,58 @@ export class DatabaseActorRuntime implements Disposable {
         'Database actor realm fingerprint does not match.',
       );
     }
+    if (this.role === 'reader' && payload.placement.mode !== 'file') {
+      throw new DatabaseError(
+        'DATABASE_OPERATION_UNSUPPORTED',
+        'Readonly database actors do not support hot placement.',
+      );
+    }
 
     let candidate: DatabaseActorBinding | null = null;
     try {
       candidate = this.role === 'writer'
-        ? openWriterBinding(payload, this.realm)
+        ? openWriterBinding(
+            payload,
+            this.realm,
+            {
+              onStart: () => this.emitHotPeriodicSnapshotLifecycle(
+                'hot-periodic-snapshot-started',
+              ),
+              onFinish: () => this.emitHotPeriodicSnapshotLifecycle(
+                'hot-periodic-snapshot-finished',
+              ),
+              onDirty: () => this.emitHotPeriodicSnapshotLifecycle(
+                'hot-periodic-durability-dirty',
+              ),
+              onClean: () => this.emitHotPeriodicSnapshotLifecycle(
+                'hot-periodic-durability-clean',
+              ),
+              onFailure: () => this.failHotPeriodicDurability(),
+            },
+          )
         : openReaderBinding(payload, this.realm);
+      establishInitialHotDurability(candidate, payload, this.realm);
       const result = validateBindResult(() => validateDatabaseActorBindResult({
         databaseRef: candidate!.databaseRef,
         role: candidate!.role,
+        fileIdentity: candidate!.openedFileIdentity,
+        instanceId: candidate!.bindingIdentity.instanceId,
+        placement: candidate!.placement,
         realmFingerprint: this.realm.fingerprint,
         schemaChecksum: this.realm.schemaChecksum,
-        sequence: createDatabaseSequenceToken(bindingSequence(candidate!)),
+        sequence: createDatabaseSequenceToken(actorBindingSequence(candidate!)),
         syncEpoch: candidate!.role === 'writer'
           ? candidate!.runtime.db.syncEpoch
           : null,
       }));
       if (result.databaseRef !== payload.databaseRef
         || result.role !== this.role
+        || !sameDatabaseFileIdentity(
+          result.fileIdentity,
+          payload.fileIdentity,
+        )
+        || result.instanceId !== payload.instanceId
+        || !sameActorPlacement(result.placement, payload.placement)
         || result.realmFingerprint !== payload.realmFingerprint
         || result.schemaChecksum !== this.realm.schemaChecksum) {
         throw new DatabaseError(
@@ -242,13 +305,16 @@ export class DatabaseActorRuntime implements Disposable {
           { retryable: false, outcome: 'unknown' },
         );
       }
+      // Hot snapshots replace their inode. Retain the verified final readiness
+      // image until every logical/protocol assertion above has succeeded.
+      releaseHotOpenedFileGuard(candidate);
       this.binding = candidate;
       this.state = 'bound';
       return result;
     } catch (error) {
       if (candidate) {
         try {
-          closeBinding(candidate);
+          closeActorBinding(candidate);
         } catch {
           // Retain ownership so a later close hook can retry cleanup. Never
           // discard a possibly-live SQLite authority after a failed bind.
@@ -261,6 +327,13 @@ export class DatabaseActorRuntime implements Disposable {
             { retryable: false, outcome: 'unknown' },
           );
         }
+      }
+      if (error instanceof DatabaseError && error.outcome === 'unknown') {
+        // Startup cleanup could not prove release of every owned resource. Stop
+        // accepting work; the parent will terminate this process, whose exit is
+        // the authoritative release of any otherwise unreachable OS locks.
+        this.closeRequested = true;
+        this.state = 'failed';
       }
       throw error;
     }
@@ -279,11 +352,45 @@ export class DatabaseActorRuntime implements Disposable {
 
     const value = binding.role === 'reader'
       ? binding.runtime.execute(payload.operation)
-      : binding.engine.execute(payload.operation);
-    return asExecutorValue(validateDatabaseActorExecuteResult(
+      : binding.engine.execute(
+        payload.operation,
+        payload.logicalReceiptFingerprint,
+      );
+    if (payload.logicalReceiptFingerprint === undefined) {
+      const result = validateDatabaseActorExecuteResult(
+        value,
+        payload.operation,
+        this.catalog,
+      );
+      if (isWriteOperation(payload.operation)) {
+        if (!('replayed' in result)) throw invalidActorResult();
+        this.establishHotWriteDurability(binding, result.replayed);
+      }
+      return asExecutorValue(attachDatabaseActorReceiptCompaction(
+        result,
+        binding.role === 'writer'
+          ? binding.engine.takeReceiptCompaction()
+          : null,
+      ));
+    }
+    if (!isWriteOperation(payload.operation)) {
+      throw new DatabaseError(
+        'DATABASE_PROTOCOL_ERROR',
+        'Database actor trusted receipt operation is invalid.',
+        { retryable: false, outcome: 'unknown' },
+      );
+    }
+    const result = validateDatabaseActorTrustedWriteResult(
       value,
-      payload.operation,
+      payload.operation.idempotencyKey,
       this.catalog,
+    );
+    this.establishHotWriteDurability(binding, result.replayed);
+    return asExecutorValue(attachDatabaseActorReceiptCompaction(
+      result,
+      binding.role === 'writer'
+        ? binding.engine.takeReceiptCompaction()
+        : null,
     ));
   }
 
@@ -305,12 +412,78 @@ export class DatabaseActorRuntime implements Disposable {
     );
   }
 
+  private tenantSyncSnapshotBegin(
+    request: DatabaseExecutorServerRequest,
+  ): DatabaseActorTenantSyncSnapshotBeginResult {
+    const payload = validateDatabaseActorTenantSyncSnapshotBeginPayload(
+      request.payload,
+      this.catalog,
+    );
+    const binding = this.requireWriterSnapshotBinding(payload.databaseRef, request);
+    return binding.snapshotSessions.begin(payload);
+  }
+
+  private tenantSyncSnapshotPage(
+    request: DatabaseExecutorServerRequest,
+  ): DatabaseActorTenantSyncSnapshotPageResult {
+    const payload = validateDatabaseActorTenantSyncSnapshotPagePayload(
+      request.payload,
+      this.catalog,
+    );
+    const binding = this.requireWriterSnapshotBinding(payload.databaseRef, request);
+    return binding.snapshotSessions.page(payload);
+  }
+
+  private tenantSyncSnapshotAbort(
+    request: DatabaseExecutorServerRequest,
+  ): DatabaseActorTenantSyncSnapshotAbortResult {
+    const payload = validateDatabaseActorTenantSyncSnapshotAbortPayload(
+      request.payload,
+      this.catalog,
+    );
+    const binding = this.requireWriterSnapshotBinding(payload.databaseRef, request);
+    return binding.snapshotSessions.abort(payload);
+  }
+
+  private requireWriterSnapshotBinding(
+    databaseRef: DatabaseRef,
+    request: DatabaseExecutorServerRequest,
+  ): DatabaseActorWriterBinding {
+    const binding = this.requireBinding(databaseRef);
+    requireOperationKind(request.kind, 'read');
+    if (binding.role !== 'writer') {
+      throw new DatabaseError(
+        'DATABASE_OPERATION_UNSUPPORTED',
+        'Readonly database actors do not create tenant Sync snapshot sessions.',
+      );
+    }
+    return binding;
+  }
+
+  private findReceipt(
+    request: DatabaseExecutorServerRequest,
+  ): DatabaseTrustedReceiptLookup {
+    const payload = validateDatabaseActorFindReceiptPayload(request.payload);
+    const binding = this.requireBinding(payload.databaseRef);
+    requireOperationKind(request.kind, 'read');
+    if (binding.role !== 'writer') {
+      throw new DatabaseError(
+        'DATABASE_OPERATION_UNSUPPORTED',
+        'Readonly database actors do not inspect writer receipts.',
+      );
+    }
+    return binding.engine.findReceipt(
+      payload.idempotencyKey,
+      payload.logicalReceiptFingerprint,
+    );
+  }
+
   private unbind(request: DatabaseExecutorServerRequest): null {
     const payload = validateDatabaseActorUnbindPayload(request.payload);
     const binding = this.requireBinding(payload.databaseRef);
     requireOperationKind(request.kind, 'read');
     try {
-      closeBinding(binding);
+      closeActorBinding(binding);
       this.binding = null;
       this.state = 'unbound';
       return null;
@@ -338,19 +511,70 @@ export class DatabaseActorRuntime implements Disposable {
         'Database actor capability does not match its binding.',
       );
     }
+    this.binding.livenessGuard.assertCurrent();
+    this.binding.fileGuard?.assertCurrent();
     return this.binding;
   }
 
   private assertAccepting(): void {
-    if (this.closeRequested || this.state === 'closed') {
-      throw new DatabaseError('DATABASE_CLOSED', 'Database actor is closed.');
-    }
     if (this.state === 'closing' || this.state === 'failed') {
       throw new DatabaseError(
         'DATABASE_EXECUTOR_FAILED',
         'Database actor is unavailable.',
         { retryable: false, outcome: 'unknown' },
       );
+    }
+    if (this.closeRequested || this.state === 'closed') {
+      throw new DatabaseError('DATABASE_CLOSED', 'Database actor is closed.');
+    }
+  }
+
+  private establishHotWriteDurability(
+    binding: DatabaseActorBinding,
+    replayed: boolean,
+  ): void {
+    try {
+      establishHotWriteDurability(binding, replayed);
+    } catch (error) {
+      this.closeRequested = true;
+      this.state = 'failed';
+      throw error;
+    }
+  }
+
+  private failHotPeriodicDurability(): void {
+    if (this.hotDurabilityFailureReported
+      || this.state !== 'bound'
+      || this.binding?.role !== 'writer'
+      || this.binding.placement.mode !== 'hot'
+      || this.binding.placement.durability !== 'periodic') return;
+    this.hotDurabilityFailureReported = true;
+    this.closeRequested = true;
+    this.state = 'failed';
+    try {
+      this.onEvent?.(Object.freeze({
+        type: 'hot-periodic-durability-failed',
+      }));
+    } catch {
+      // The actor is already failed; observers cannot reopen its work lane.
+    }
+  }
+
+  private emitHotPeriodicSnapshotLifecycle(
+    type:
+      | 'hot-periodic-snapshot-started'
+      | 'hot-periodic-snapshot-finished'
+      | 'hot-periodic-durability-dirty'
+      | 'hot-periodic-durability-clean',
+  ): void {
+    if (this.state !== 'bound'
+      || this.binding?.role !== 'writer'
+      || this.binding.placement.mode !== 'hot'
+      || this.binding.placement.durability !== 'periodic') return;
+    try {
+      this.onEvent?.(Object.freeze({ type }));
+    } catch {
+      // Lifecycle observers cannot alter snapshot or actor state.
     }
   }
 }
@@ -359,8 +583,35 @@ export class DatabaseActorRuntime implements Disposable {
 export function createDatabaseActorServer(
   options: DatabaseActorServerOptions,
 ): DatabaseActorServer {
-  const actor = new DatabaseActorRuntime(options);
-  const server = new SubprocessDatabaseServer({
+  let server: SubprocessDatabaseServer | null = null;
+  const actor = new DatabaseActorRuntime({
+    ...options,
+    onEvent: (event) => {
+      switch (event.type) {
+        case 'hot-periodic-snapshot-started':
+          server?.reportHotPeriodicSnapshotStarted();
+          break;
+        case 'hot-periodic-snapshot-finished':
+          server?.reportHotPeriodicSnapshotFinished();
+          break;
+        case 'hot-periodic-durability-dirty':
+          server?.reportHotPeriodicDurabilityDirty();
+          break;
+        case 'hot-periodic-durability-clean':
+          server?.reportHotPeriodicDurabilityClean();
+          break;
+        case 'hot-periodic-durability-failed':
+          server?.reportHotPeriodicDurabilityFailure();
+          break;
+      }
+      try {
+        options.onEvent?.(event);
+      } catch {
+        // The transport relay above remains authoritative for actor failure.
+      }
+    },
+  });
+  server = new SubprocessDatabaseServer({
     role: options.role,
     slot: options.slot,
     // One synchronous SQLite lane per actor. Cross-file concurrency comes from
@@ -370,107 +621,37 @@ export function createDatabaseActorServer(
       ? {}
       : { transport: options.transport }),
     handle: (request) => actor.handle(request),
-    close: () => actor.close(),
+    close: () => closeActorWithRetries(actor),
   });
   return Object.freeze({ actor, server });
 }
 
-function openWriterBinding(
-  payload: DatabaseActorBindPayload,
-  realm: DatabaseRealm,
-): WriterBinding {
-  const { ringBufferDepth, ...sqliteOptions } = payload.sqlite;
-  const sqlite = createPlatformSQLiteService({
-    mode: 'file',
-    path: payload.filePath,
-    ...sqliteOptions,
-  });
-  let runtime: DatabaseRuntime | null = null;
-  let engine: DatabaseWriterOperationEngine | null = null;
-  try {
-    runtime = DatabaseRuntime.open({
-      id: payload.databaseRef,
-      role: 'named',
-      sqlite,
-      ownsSQLite: true,
-      ...(ringBufferDepth === undefined
-        ? {}
-        : { reactive: { ringBufferDepth } }),
-      migrations: realm.migrations,
-      migrate: true,
-      tables: realm.tables,
-    });
-    engine = new DatabaseWriterOperationEngine({ runtime, realm });
-    runtime.start();
-    return {
-      role: 'writer',
-      databaseRef: payload.databaseRef,
-      runtime,
-      engine,
-    };
-  } catch (error) {
-    const cleanupFailures: unknown[] = [];
-    if (engine) attemptClose(() => engine!.close(), cleanupFailures);
-    if (runtime) {
-      attemptClose(() => runtime!.close(), cleanupFailures);
-    } else {
-      // DatabaseRuntime.open owns startup cleanup. This idempotent fallback
-      // also covers a future validation failure before ownership transfer.
-      attemptClose(() => sqlite.close(), cleanupFailures);
+async function closeActorWithRetries(actor: DatabaseActorRuntime): Promise<void> {
+  let lastFailure: unknown = null;
+  for (let attempt = 0; attempt <= ACTOR_CLOSE_RETRY_DELAYS_MS.length; attempt += 1) {
+    if (attempt > 0) {
+      await delay(ACTOR_CLOSE_RETRY_DELAYS_MS[attempt - 1]!);
     }
-    if (cleanupFailures.length > 0) {
-      throw new DatabaseError(
-        'DATABASE_EXECUTOR_FAILED',
-        'Database writer actor startup cleanup failed.',
-        { retryable: false, outcome: 'unknown' },
-      );
+    try {
+      actor.close();
+      return;
+    } catch (error) {
+      lastFailure = error;
     }
-    throw error;
   }
+  throw new DatabaseError(
+    'DATABASE_EXECUTOR_FAILED',
+    'Database actor cleanup failed after bounded retries.',
+    {
+      cause: lastFailure,
+      retryable: false,
+      outcome: 'unknown',
+    },
+  );
 }
 
-function openReaderBinding(
-  payload: DatabaseActorBindPayload,
-  realm: DatabaseRealm,
-): ReaderBinding {
-  return {
-    role: 'reader',
-    databaseRef: payload.databaseRef,
-    runtime: DatabaseReaderRuntime.open({
-      filePath: payload.filePath,
-      realm,
-      ...(payload.sqlite.busyTimeout === undefined
-        ? {}
-        : { busyTimeoutMs: payload.sqlite.busyTimeout }),
-    }),
-  };
-}
-
-function closeBinding(binding: DatabaseActorBinding): void {
-  const failures: unknown[] = [];
-  if (binding.role === 'writer') {
-    attemptClose(() => binding.engine.close(), failures);
-    attemptClose(() => binding.runtime.close(), failures);
-  } else {
-    attemptClose(() => binding.runtime.close(), failures);
-  }
-  if (failures.length > 0) {
-    throw new AggregateError(failures, 'Database actor binding cleanup failed.');
-  }
-}
-
-function attemptClose(close: () => void, failures: unknown[]): void {
-  try {
-    close();
-  } catch (error) {
-    failures.push(error);
-  }
-}
-
-function bindingSequence(binding: DatabaseActorBinding): number {
-  return binding.role === 'writer'
-    ? binding.runtime.db.currentSeq
-    : binding.runtime.currentSeq;
+function delay(durationMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, durationMs));
 }
 
 function operationKind(operation: DatabaseOperation): DatabaseExecutorOperationKind {
@@ -480,6 +661,14 @@ function operationKind(operation: DatabaseOperation): DatabaseExecutorOperationK
     || operation.type === 'query'
     ? 'read'
     : 'write';
+}
+
+function isWriteOperation(
+  operation: DatabaseOperation,
+): operation is DatabaseWriteOperation {
+  return operation.type === 'mutate'
+    || operation.type === 'batch'
+    || operation.type === 'command';
 }
 
 function requireOperationKind(
@@ -493,130 +682,4 @@ function requireOperationKind(
       { retryable: false, outcome: 'unknown' },
     );
   }
-}
-
-function isNonNegativeSafeInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0;
-}
-
-function invalidActorResult(): DatabaseError {
-  return new DatabaseError(
-    'DATABASE_PROTOCOL_ERROR',
-    'Database actor returned an invalid result.',
-    { retryable: false, outcome: 'unknown' },
-  );
-}
-
-function asExecutorValue(value: unknown): DatabaseExecutorValue {
-  if (!isDatabaseExecutorValue(value)) throw invalidActorResult();
-  return value;
-}
-
-function validateBindResult<T>(validate: () => T): T {
-  try {
-    return validate();
-  } catch (error) {
-    if (error instanceof DatabaseError && error.code === 'DATABASE_PAYLOAD_LIMIT') {
-      throw new DatabaseError(
-        'DATABASE_RESULT_LIMIT',
-        'Database actor result is outside the supported contract.',
-        { retryable: false, outcome: 'unknown' },
-      );
-    }
-    throw invalidActorResult();
-  }
-}
-
-function privacySafeActorError(error: unknown): DatabaseError {
-  if (!(error instanceof DatabaseError)) {
-    return new DatabaseError(
-      'DATABASE_EXECUTOR_FAILED',
-      'Database actor operation failed.',
-      { retryable: false, outcome: 'unknown' },
-    );
-  }
-  return new DatabaseError(error.code, safeActorMessage(error.code), {
-    retryable: error.retryable,
-    outcome: error.outcome,
-    details: safeActorDetails(error.code, error.details),
-  });
-}
-
-function safeActorMessage(code: DatabaseErrorCode): string {
-  switch (code) {
-    case 'DATABASE_CONFIG_INVALID':
-      return 'Database actor configuration is invalid.';
-    case 'DATABASE_DISABLED':
-      return 'Database actor is disabled.';
-    case 'DATABASE_NOT_READY':
-      return 'Database actor is not ready.';
-    case 'DATABASE_CLOSED':
-      return 'Database actor is closed.';
-    case 'DATABASE_BACKPRESSURE':
-    case 'DATABASE_QUEUE_TIMEOUT':
-      return 'Database actor capacity is unavailable.';
-    case 'DATABASE_OPERATION_TIMEOUT':
-      return 'Database actor operation timed out.';
-    case 'DATABASE_EXECUTOR_START_FAILED':
-    case 'DATABASE_OPEN_FAILED':
-      return 'Database actor could not open its database.';
-    case 'DATABASE_MIGRATION_FAILED':
-      return 'Database actor migration failed.';
-    case 'DATABASE_SCHEMA_MISMATCH':
-      return 'Database actor schema does not match its realm.';
-    case 'DATABASE_AUTHORITY_CHANGED':
-      return 'Database actor capability changed.';
-    case 'DATABASE_CONFLICT':
-      return 'Database operation conflicted.';
-    case 'DATABASE_HISTORY_GAP':
-      return 'Database change history cannot satisfy the requested cursor.';
-    case 'DATABASE_PAYLOAD_INVALID':
-    case 'DATABASE_PAYLOAD_LIMIT':
-      return 'Database actor request is invalid.';
-    case 'DATABASE_RESULT_LIMIT':
-      return 'Database actor result is outside the supported contract.';
-    case 'DATABASE_OPERATION_UNSUPPORTED':
-      return 'Database actor operation is unsupported.';
-    case 'DATABASE_TRANSACTION_EXPIRED':
-    case 'DATABASE_TRANSACTION_STALE':
-      return 'Database operation snapshot is unavailable.';
-    case 'DATABASE_PROTOCOL_ERROR':
-      return 'Database actor protocol validation failed.';
-    case 'DATABASE_OUTCOME_UNKNOWN':
-      return 'Database operation outcome is unknown.';
-    case 'DATABASE_EXECUTOR_FAILED':
-      return 'Database actor operation failed.';
-  }
-}
-
-function safeActorDetails(
-  code: DatabaseErrorCode,
-  details: DatabaseErrorDetails,
-): DatabaseErrorDetails | undefined {
-  if (code === 'DATABASE_OPEN_FAILED') {
-    const result: Record<string, string> = {};
-    if (details.phase === 'open'
-      || details.phase === 'configure'
-      || details.phase === 'schema'
-      || details.phase === 'sequence'
-      || details.phase === 'schema-version') {
-      result.phase = details.phase;
-    }
-    if (typeof details.sqliteCode === 'string'
-      && /^SQLITE_[A-Z0-9_]{1,64}$/u.test(details.sqliteCode)) {
-      result.sqliteCode = details.sqliteCode;
-    }
-    return Object.keys(result).length === 0 ? undefined : Object.freeze(result);
-  }
-  const allowed = code === 'DATABASE_HISTORY_GAP'
-    ? new Set(['afterSeq', 'currentSeq'])
-    : code === 'DATABASE_TRANSACTION_STALE' || code === 'DATABASE_NOT_READY'
-      ? new Set(['currentSeq', 'requiredSeq', 'minSeq'])
-      : null;
-  if (!allowed) return undefined;
-  const result: Record<string, number> = {};
-  for (const [key, value] of Object.entries(details)) {
-    if (allowed.has(key) && isNonNegativeSafeInteger(value)) result[key] = value;
-  }
-  return Object.keys(result).length === 0 ? undefined : Object.freeze(result);
 }

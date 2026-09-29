@@ -18,11 +18,13 @@ import { basename, dirname, join } from 'node:path';
 import {
   DATABASE_ID_MAX_BYTES,
   DatabasePathError,
+  countZeroManagedDatabaseFiles,
   createDatabaseRef,
   encodeDatabaseFileName,
   normalizeDatabaseId,
   normalizeDatabaseRef,
   prepareDatabaseFile,
+  prepareDatabaseFileWithCreationAdmission,
   prepareDatabaseRoot,
   resolveDatabaseFile,
 } from './database-file';
@@ -148,6 +150,72 @@ describe('database file resolution and preparation', () => {
       expect(lstatSync(first.rootDirectory).mode & 0o777).toBe(0o700);
       expect(lstatSync(first.path).mode & 0o777).toBe(0o600);
     }
+  });
+
+  test('runs creation admission only for an absent managed main file', () => {
+    const base = createTemporaryDirectory();
+    const root = join(base, 'databases');
+    const existing = prepareDatabaseFile(root, 'existing');
+    let admissions = 0;
+
+    expect(prepareDatabaseFileWithCreationAdmission(
+      root,
+      'existing',
+      () => {
+        admissions += 1;
+        throw new Error('must not run');
+      },
+    )).toMatchObject({ path: existing.path, created: false });
+    expect(admissions).toBe(0);
+
+    expect(() => prepareDatabaseFileWithCreationAdmission(
+      root,
+      'denied',
+      () => {
+        admissions += 1;
+        throw new Error('denied');
+      },
+    )).toThrow('denied');
+    expect(admissions).toBe(1);
+    expect(() => lstatSync(resolveDatabaseFile(root, 'denied').path)).toThrow();
+
+    const created = prepareDatabaseFileWithCreationAdmission(
+      root,
+      'created',
+      () => { admissions += 1; },
+    );
+    expect(created.created).toBe(true);
+    expect(admissions).toBe(2);
+  });
+
+  test('counts only canonical regular Zero-managed main database files', () => {
+    const base = createTemporaryDirectory();
+    const root = join(base, 'databases');
+    const first = prepareDatabaseFile(root, 'first');
+    prepareDatabaseFile(root, 'second');
+
+    writeFileSync(`${first.path}-wal`, 'sidecar');
+    writeFileSync(`${first.path}-shm`, 'sidecar');
+    writeFileSync(first.path.replace(/\.sqlite$/u, '.snapshot.sqlite'), 'snapshot');
+    writeFileSync(join(root, 'application.sqlite'), 'unmanaged');
+    writeFileSync(
+      join(root, `db-invalid--hint-${'a'.repeat(64)}.sqlite`),
+      'non-canonical',
+    );
+    mkdirSync(join(root, '.zero-internal'));
+    writeFileSync(
+      join(root, '.zero-internal', encodeDatabaseFileName('internal')),
+      'internal',
+    );
+    const outside = join(base, 'outside.sqlite');
+    writeFileSync(outside, 'outside');
+    symlinkSync(
+      outside,
+      join(root, encodeDatabaseFileName('matching-symlink')),
+      'file',
+    );
+
+    expect(countZeroManagedDatabaseFiles(root)).toBe(2);
   });
 
   test('repairs restrictive permissions on an existing regular database', () => {

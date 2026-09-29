@@ -8,6 +8,8 @@
  */
 
 import { DatabaseError } from './database-error';
+import { DATABASE_OBSERVABILITY_COUNT_MAX } from './database-capacity';
+import { MAX_RUNTIME_TIMER_INTERVAL_MS } from '../runtime/timer-limits';
 
 const DEFAULT_MAX_PENDING = 1_024;
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 30_000;
@@ -92,10 +94,12 @@ export class AuthorityCommitCoordinator {
     this.maxPending = normalizePositiveSafeInteger(
       options.maxPending ?? DEFAULT_MAX_PENDING,
       'maxPending',
+      DATABASE_OBSERVABILITY_COUNT_MAX,
     );
     this.acquireTimeoutMs = normalizePositiveSafeInteger(
       options.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS,
       'acquireTimeoutMs',
+      MAX_RUNTIME_TIMER_INTERVAL_MS,
     );
   }
 
@@ -183,6 +187,7 @@ export class AuthorityCommitCoordinator {
       timeoutMs = normalizePositiveSafeInteger(
         options.timeoutMs ?? this.acquireTimeoutMs,
         'timeoutMs',
+        MAX_RUNTIME_TIMER_INTERVAL_MS,
       );
     } catch (error) {
       return Promise.reject(error);
@@ -368,11 +373,17 @@ function cleanupPending(acquisition: PendingAcquisition): void {
   }
 }
 
-function normalizePositiveSafeInteger(value: unknown, name: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
+function normalizePositiveSafeInteger(
+  value: unknown,
+  name: string,
+  maximum: number,
+): number {
+  if (!Number.isSafeInteger(value)
+    || (value as number) <= 0
+    || (value as number) > maximum) {
     throw new DatabaseError(
       'DATABASE_CONFIG_INVALID',
-      `Authority commit coordinator ${name} must be a positive safe integer.`,
+      `Authority commit coordinator ${name} is outside its supported range.`,
       { details: { option: name } },
     );
   }

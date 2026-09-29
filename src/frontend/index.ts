@@ -40,7 +40,12 @@ export type {
 } from '../resources/resource-field-access';
 
 // ─── SDK Core (vanilla JS — no React required) ──────────────────────────
-export { createClient, getClient, FetchError } from './client/sdk';
+export {
+  createClient,
+  getClient,
+  FetchError,
+  ResourceMutationError,
+} from './client/sdk';
 export type {
   Client,
   Collection,
@@ -51,6 +56,7 @@ export type {
   ResourceClientOptions,
   ResourceDeleteResult,
   ResourceListResult,
+  ResourceMutationOptions,
   ResourceRowResult,
   SyncClient,
 } from './client/sdk';

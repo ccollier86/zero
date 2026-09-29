@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { ReactNode } from 'react';
-import type { SyncMode } from '../../sync/types';
+import type { SyncDataPlaneName, SyncMode } from '../../sync/types';
 import type { MatchResult, RouteModule, PageMeta, LoaderContext, RouteConfig } from './types';
 import { serverErrorHtml, notFoundHtml } from '../client/error-boundary';
 import { hasUseClientDirective } from './scanner';
@@ -101,6 +101,8 @@ export interface PlatformConfig {
   email?: boolean;
   stateSync?: boolean;
   tableSyncModes?: Record<string, SyncMode>;
+  tableSyncPlanes?: Record<string, SyncDataPlaneName>;
+  managedTableNames?: string[];
   publicPaths?: string[];
   routeAuth?: RouteAuthMode;
   loginPath?: string;

@@ -1,4 +1,9 @@
-import type { PendingMutation, Row, SyncMutateMessage } from '../types';
+import type {
+  PendingMutation,
+  Row,
+  SyncDataPlaneName,
+  SyncMutateMessage,
+} from '../types';
 export type SyncOptimisticEvent = {
   type: 'optimistic.insert' | 'optimistic.update' | 'optimistic.delete';
   table: string;
@@ -20,7 +25,10 @@ interface QueuedMutation {
 interface SyncMutationQueueInput {
   apply: (event: SyncMutationEvent) => void;
   send: (message: string) => boolean;
-  epoch: () => string | null;
+  route: (table: string) => {
+    epoch: string | null;
+    plane?: SyncDataPlaneName;
+  };
 }
 /** Serializes optimistic mutations that target the same row. */
 export class SyncMutationQueue {
@@ -78,8 +86,15 @@ export class SyncMutationQueue {
     this.transmit(mutation);
   }
   private transmit(mutation: QueuedMutation): void {
-    const epoch = mutation.message.epoch ?? this.input.epoch() ?? undefined;
-    const message = { ...mutation.message, epoch, attempt: mutation.attempts + 1 };
+    const route = this.input.route(mutation.message.table);
+    const epoch = mutation.message.epoch ?? route.epoch ?? undefined;
+    const plane = mutation.message.plane ?? route.plane;
+    const message = {
+      ...mutation.message,
+      ...(plane === undefined ? {} : { plane }),
+      epoch,
+      attempt: mutation.attempts + 1,
+    };
     if (!this.input.send(JSON.stringify(message))) return;
     mutation.message = message;
     mutation.attempts += 1;

@@ -6,6 +6,7 @@ import {
   routeServerMessage,
   type SyncStoreContext,
 } from './sync-store';
+import { SYNC_ACK_ERROR_CODES } from '../types';
 import type { Row, ClientTableDef, ServerMessage } from '../types';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -37,6 +38,10 @@ describe('createSyncStore', () => {
       lastSeq: 0,
       epoch: null,
       scope: null,
+      cursors: {
+        default: { lastSeq: 0, epoch: null, scope: null },
+        tenant: { lastSeq: 0, epoch: null, scope: null },
+      },
       pending: [],
     });
   });
@@ -436,6 +441,96 @@ describe('sync.ack', () => {
       'Original'
     );
     expect(getCtx(store)._sync.pending).toHaveLength(0);
+  });
+
+  test('expired receipt ack clears pending against the fresh authoritative baseline', () => {
+    const { store } = createSyncStore(makeTables(), {
+      tableSyncPlanes: { todos: 'tenant', users: 'default' },
+    });
+    store.send({
+      type: 'sync.change',
+      seq: 1,
+      table: 'todos',
+      op: 'INSERT',
+      rowId: '1',
+      row: { id: '1', title: 'Before request', done: 0 },
+    });
+    store.send({
+      type: 'optimistic.update',
+      table: 'todos',
+      rowId: '1',
+      partial: { title: 'Old optimistic request' },
+      ref: 'expired-ref',
+    });
+    store.send({
+      type: 'sync.mutation-sent',
+      ref: 'expired-ref',
+      sentAt: 1,
+      attempt: 1,
+    });
+
+    store.send({
+      type: 'sync.snapshot',
+      plane: 'tenant',
+      tables: {
+        todos: {
+          1: { id: '1', title: 'Fresh authoritative state', done: 1 },
+        },
+      },
+      seq: 100,
+      epoch: 'fresh-epoch',
+      reset: 'preserve-pending',
+    });
+    expect((getCtx(store).todos as Record<string, Row>)['1']).toEqual({
+      id: '1', title: 'Fresh authoritative state', done: 1,
+    });
+    expect(getCtx(store)._sync.pending).toHaveLength(1);
+
+    store.send({
+      type: 'sync.ack',
+      plane: 'tenant',
+      ref: 'expired-ref',
+      ok: false,
+      seq: null,
+      error: 'Mutation result expired; current synchronized state is authoritative',
+      errorCode: SYNC_ACK_ERROR_CODES.mutationReceiptExpired,
+    });
+
+    expect((getCtx(store).todos as Record<string, Row>)['1']).toEqual({
+      id: '1', title: 'Fresh authoritative state', done: 1,
+    });
+    expect(getCtx(store)._sync.pending).toEqual([]);
+  });
+
+  test('permanent mutation-capacity ack rolls back optimistic state and settles pending work', () => {
+    const { store } = createSyncStore(makeTables(), {
+      tableSyncPlanes: { todos: 'tenant', users: 'default' },
+    });
+    store.send({
+      type: 'optimistic.insert',
+      table: 'todos',
+      rowId: 'capacity-row',
+      row: { id: 'capacity-row', title: 'Must roll back', done: 0 },
+      ref: 'capacity-ref',
+    });
+
+    expect((getCtx(store).todos as Record<string, Row>)['capacity-row'])
+      .toBeDefined();
+    expect(getCtx(store)._sync.pending).toHaveLength(1);
+
+    store.send({
+      type: 'sync.ack',
+      plane: 'tenant',
+      ref: 'capacity-ref',
+      ok: false,
+      seq: null,
+      error: 'Mutation capacity is exhausted; new mutations are not accepted',
+      errorCode: SYNC_ACK_ERROR_CODES.mutationCapacityExhausted,
+    });
+
+    expect((getCtx(store).todos as Record<string, Row>)['capacity-row'])
+      .toBeUndefined();
+    expect(getCtx(store)._sync.pending).toEqual([]);
   });
 
   test('ok=false for insert rollback removes the row', () => {
@@ -1175,7 +1270,150 @@ describe('sync.reset', () => {
       lastSeq: 0,
       epoch: null,
       scope: null,
+      cursors: {
+        default: { lastSeq: 0, epoch: null, scope: null },
+        tenant: { lastSeq: 0, epoch: null, scope: null },
+      },
       pending: [],
     });
   });
 });
+
+describe('multiplexed data planes', () => {
+  const multiplexedTables: Record<string, ClientTableDef> = {
+    platform_users: { _pk: 'id', id: 'string', name: 'string' },
+    projects: { _pk: 'id', id: 'string', title: 'string' },
+  };
+  const tableSyncPlanes = {
+    platform_users: 'default',
+    projects: 'tenant',
+  } as const;
+
+  test('tracks independent cursors while legacy fields mirror only default', () => {
+    const { store } = createSyncStore(multiplexedTables, { tableSyncPlanes });
+    store.send({
+      type: 'sync.snapshot', plane: 'default', tables: { platform_users: {} },
+      seq: 20, epoch: 'platform-epoch', scope: 'platform-scope',
+    });
+    store.send({
+      type: 'sync.snapshot', plane: 'tenant', tables: { projects: {} },
+      seq: 3, epoch: 'tenant-epoch', scope: 'tenant-scope',
+    });
+
+    const meta = getCtx(store)._sync;
+    expect(meta.cursors).toEqual({
+      default: {
+        lastSeq: 20, epoch: 'platform-epoch', scope: 'platform-scope',
+      },
+      tenant: {
+        lastSeq: 3, epoch: 'tenant-epoch', scope: 'tenant-scope',
+      },
+    });
+    expect({ lastSeq: meta.lastSeq, epoch: meta.epoch, scope: meta.scope })
+      .toEqual(meta.cursors.default);
+  });
+
+  test('tenant purge clears only tenant rows and pending mutations', () => {
+    const { store } = createSyncStore(multiplexedTables, { tableSyncPlanes });
+    store.send({
+      type: 'sync.snapshot', plane: 'default',
+      tables: { platform_users: { u1: { id: 'u1', name: 'Owner' } } },
+      seq: 7, epoch: 'platform-epoch', scope: 'platform-scope',
+    });
+    store.send({
+      type: 'sync.snapshot', plane: 'tenant',
+      tables: { projects: { p1: { id: 'p1', title: 'Private' } } },
+      seq: 4, epoch: 'tenant-old', scope: 'tenant-old-scope',
+    });
+    store.send({
+      type: 'optimistic.update', table: 'platform_users', rowId: 'u1',
+      partial: { name: 'Pending owner' }, ref: 'default-ref',
+    });
+    store.send({
+      type: 'optimistic.update', table: 'projects', rowId: 'p1',
+      partial: { title: 'Pending project' }, ref: 'tenant-ref',
+    });
+
+    store.send({
+      type: 'sync.snapshot', plane: 'tenant', tables: {}, seq: 0,
+      epoch: 'tenant-new', scope: 'tenant-new-scope', reset: 'purge',
+    });
+
+    const context = getCtx(store);
+    expect(context.platform_users).toEqual({
+      u1: { id: 'u1', name: 'Pending owner' },
+    });
+    expect(context.projects).toEqual({});
+    expect(context._sync.pending.map(({ ref }) => ref)).toEqual(['default-ref']);
+    expect(context._sync.cursors.default.lastSeq).toBe(7);
+    expect(context._sync.cursors.tenant).toEqual({
+      lastSeq: 0, epoch: 'tenant-new', scope: 'tenant-new-scope',
+    });
+  });
+
+  test('stale or equal receipt acks clear pending without overwriting newer rows', () => {
+    const { store } = createSyncStore(multiplexedTables, { tableSyncPlanes });
+    store.send({
+      type: 'sync.snapshot', plane: 'tenant',
+      tables: { projects: { p1: { id: 'p1', title: 'Before' } } },
+      seq: 5, epoch: 'tenant-epoch', scope: 'tenant-scope',
+    });
+    store.send({
+      type: 'optimistic.update', table: 'projects', rowId: 'p1',
+      partial: { title: 'Requested' }, ref: 'receipt-ref',
+    });
+    store.send({
+      type: 'sync.change', plane: 'tenant', table: 'projects',
+      seq: 6, op: 'UPDATE', rowId: 'p1',
+      row: { id: 'p1', title: 'Newer canonical' },
+      epoch: 'tenant-epoch', scope: 'tenant-scope',
+    });
+    store.send({
+      type: 'sync.ack', plane: 'tenant', ref: 'receipt-ref', ok: true, seq: 6,
+      change: {
+        table: 'projects', op: 'UPDATE', rowId: 'p1',
+        row: { id: 'p1', title: 'Stale receipt' },
+      },
+    });
+
+    expect(contextRow(store, 'projects', 'p1')).toEqual({
+      id: 'p1', title: 'Newer canonical',
+    });
+    expect(getCtx(store)._sync.pending).toEqual([]);
+  });
+
+  test('a newer receipt ack uses the target table plane cursor', () => {
+    const { store } = createSyncStore(multiplexedTables, { tableSyncPlanes });
+    store.send({
+      type: 'sync.snapshot', plane: 'default', tables: { platform_users: {} },
+      seq: 100, epoch: 'platform-epoch', scope: 'platform-scope',
+    });
+    store.send({
+      type: 'sync.snapshot', plane: 'tenant', tables: { projects: {} },
+      seq: 2, epoch: 'tenant-epoch', scope: 'tenant-scope',
+    });
+    store.send({
+      type: 'optimistic.insert', table: 'projects', rowId: 'p1',
+      row: { id: 'p1', title: 'Requested' }, ref: 'tenant-ref',
+    });
+    store.send({
+      type: 'sync.ack', plane: 'tenant', ref: 'tenant-ref', ok: true, seq: 3,
+      change: {
+        table: 'projects', op: 'INSERT', rowId: 'p1',
+        row: { id: 'p1', title: 'Normalized' },
+      },
+    });
+
+    expect(contextRow(store, 'projects', 'p1')).toEqual({
+      id: 'p1', title: 'Normalized',
+    });
+  });
+});
+
+function contextRow(
+  store: ReturnType<typeof createSyncStore>['store'],
+  table: string,
+  rowId: string,
+): Row | undefined {
+  return (getCtx(store)[table] as Record<string, Row>)[rowId];
+}

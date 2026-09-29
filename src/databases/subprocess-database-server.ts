@@ -30,6 +30,7 @@ import {
   type DatabaseExecutorReadyMessage,
   type DatabaseExecutorShutdownAckMessage,
   type DatabaseExecutorSuccessMessage,
+  type DatabaseExecutorTelemetryMessage,
   type SubprocessDatabaseExecutorEvent,
 } from './subprocess-database-executor';
 
@@ -138,6 +139,7 @@ export class SubprocessDatabaseServer implements AsyncDisposable {
   private closeHookInvoked = false;
   private shutdownAckRequested = false;
   private shutdownAckSent = false;
+  private hotDurabilityFailureSent = false;
   private disconnectInitiated = false;
   private disconnectObserved = false;
   private lastFailure: DatabaseError | null = null;
@@ -255,6 +257,57 @@ export class SubprocessDatabaseServer implements AsyncDisposable {
 
   async [Symbol.asyncDispose](): Promise<void> {
     await this.close();
+  }
+
+  /** Relay the one closed actor-fatal signal to the owning parent generation. */
+  reportHotPeriodicDurabilityFailure(): void {
+    if (this.hotDurabilityFailureSent
+      || (this.state !== 'ready'
+        && this.state !== 'draining'
+        && this.state !== 'closing')) return;
+    this.hotDurabilityFailureSent = true;
+    this.reportHotPeriodicSignal('hot-periodic-durability-failed');
+  }
+
+  /** Arm the parent-side watchdog before periodic image serialization. */
+  reportHotPeriodicSnapshotStarted(): void {
+    if (this.state !== 'ready' && this.state !== 'draining') return;
+    this.reportHotPeriodicSignal('hot-periodic-snapshot-started');
+  }
+
+  /** Disarm the parent-side watchdog after durable publication. */
+  reportHotPeriodicSnapshotFinished(): void {
+    if (this.state !== 'ready'
+      && this.state !== 'draining'
+      && this.state !== 'closing') return;
+    this.reportHotPeriodicSignal('hot-periodic-snapshot-finished');
+  }
+
+  /** Start the maximum acknowledged-write loss window before its response. */
+  reportHotPeriodicDurabilityDirty(): void {
+    if (this.state !== 'ready' && this.state !== 'draining') return;
+    this.reportHotPeriodicSignal('hot-periodic-durability-dirty');
+  }
+
+  /** Close the acknowledged-write loss window after covering publication. */
+  reportHotPeriodicDurabilityClean(): void {
+    if (this.state !== 'ready'
+      && this.state !== 'draining'
+      && this.state !== 'closing') return;
+    this.reportHotPeriodicSignal('hot-periodic-durability-clean');
+  }
+
+  private reportHotPeriodicSignal(
+    signal: DatabaseExecutorTelemetryMessage['signal'],
+  ): void {
+    const session = this.session;
+    if (!session || !this.send({
+      ...session,
+      type: 'telemetry',
+      signal,
+    } satisfies DatabaseExecutorTelemetryMessage)) {
+      this.failClosed(this.transportError());
+    }
   }
 
   private acceptMessage(message: unknown): void {

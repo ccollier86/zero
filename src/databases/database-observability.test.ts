@@ -20,33 +20,29 @@ const EXPECTED_DATABASE_CODES = [
   'DATABASE_COORDINATOR_DRAINING',
   'DATABASE_COORDINATOR_STOPPED',
   'DATABASE_COORDINATOR_FAILED',
-  'DATABASE_EXECUTOR_STARTED',
-  'DATABASE_EXECUTOR_READY',
-  'DATABASE_EXECUTOR_EXITED',
   'DATABASE_EXECUTOR_RESTARTED',
   'DATABASE_EXECUTOR_FAILED',
   'DATABASE_RUNTIME_OPENED',
   'DATABASE_RUNTIME_CLOSED',
   'DATABASE_RUNTIME_OPEN_FAILED',
   'DATABASE_RUNTIME_EVICTED',
-  'DATABASE_MIGRATION_STARTED',
-  'DATABASE_MIGRATION_COMPLETED',
-  'DATABASE_MIGRATION_FAILED',
   'DATABASE_QUEUE_SATURATED',
+  'DATABASE_CAPACITY_EXHAUSTED',
   'DATABASE_QUEUE_TIMEOUT',
-  'DATABASE_OPERATION_SLOW',
   'DATABASE_OPERATION_FAILED',
   'DATABASE_OPERATION_OUTCOME_UNKNOWN',
   'DATABASE_CHANGE_WAKEUP',
-  'DATABASE_REPLAY_STARTED',
-  'DATABASE_REPLAY_COMPLETED',
   'DATABASE_REPLAY_FAILED',
+  'DATABASE_TENANT_SNAPSHOT_FAILED',
+  'DATABASE_HOT_SNAPSHOT_STARTED',
+  'DATABASE_HOT_SNAPSHOT_FINISHED',
+  'DATABASE_HOT_DURABILITY_DIRTY',
+  'DATABASE_HOT_DURABILITY_CLEAN',
+  'DATABASE_HOT_DURABILITY_FAILED',
+  'DATABASE_RECEIPT_LOOKUP_FAILED',
+  'DATABASE_RECEIPT_EXPIRED',
+  'DATABASE_RECEIPT_COMPACTED',
   'DATABASE_HISTORY_GAP',
-  'DATABASE_SHUTDOWN_GRACEFUL_STARTED',
-  'DATABASE_SHUTDOWN_GRACEFUL_COMPLETED',
-  'DATABASE_SHUTDOWN_GRACEFUL_FAILED',
-  'DATABASE_SHUTDOWN_FORCED',
-  'DATABASE_SHUTDOWN_FORCED_FAILED',
 ] as const;
 
 describe('database observability codes', () => {
@@ -65,6 +61,56 @@ describe('database observability codes', () => {
 });
 
 describe('DatabaseObservability', () => {
+  test('emits only closed permanent-capacity metadata', () => {
+    const store = new MemoryEventStore();
+    const observer = createDatabaseObservability(runtimeFor(store));
+    const databaseRef = createDatabaseRef('capacity-database');
+    const event = observer.emit({
+      type: 'capacity-exhausted',
+      databaseRef,
+      capacityType: 'receipts',
+      capacityLimit: 1_000_000,
+    });
+
+    expect(event.code).toBe(OBS_CODES.DATABASE_CAPACITY_EXHAUSTED.code);
+    expect(event.error).toBeUndefined();
+    expect(event.metadata).toEqual({
+      databaseRef,
+      capacityType: 'receipts',
+      capacityLimit: 1_000_000,
+    });
+    expect(() => observer.emit({
+      type: 'capacity-exhausted',
+      databaseRef,
+      capacityType: 'tenant-private' as never,
+      capacityLimit: 1,
+    })).toThrow('capacity type');
+  });
+
+  test('emits bounded coordinator file and tenant Sync limits', () => {
+    const store = new MemoryEventStore();
+    const event = createDatabaseObservability(runtimeFor(store)).emit({
+      type: 'coordinator-configured',
+      writerLimit: 16,
+      readerLimit: 16,
+      runtimeLimit: 16,
+      fileLimit: 10_000,
+      syncDatabaseLimit: 15,
+      syncBindingLimit: 64,
+      queueLimit: 1_024,
+    });
+
+    expect(event.metadata).toEqual({
+      writerLimit: 16,
+      readerLimit: 16,
+      runtimeLimit: 16,
+      fileLimit: 10_000,
+      syncDatabaseLimit: 15,
+      syncBindingLimit: 64,
+      queueLimit: 1_024,
+    });
+  });
+
   test('emits only to its explicitly bound app runtime', () => {
     const ambientStore = new MemoryEventStore();
     const appAStore = new MemoryEventStore();
@@ -195,7 +241,90 @@ describe('DatabaseObservability', () => {
     expect(JSON.stringify(hostileEvent)).not.toContain(privateText);
   });
 
-  test('emits change wakeups, replay ranges, and history gaps without row data', () => {
+  test('emits only bounded placement data for periodic hot durability failure', () => {
+    const store = new MemoryEventStore();
+    const databaseRef = createDatabaseRef('private-periodic-tenant');
+    const privateFailure = '/private/tenant.sqlite token=secret';
+    const event = createDatabaseObservability(runtimeFor(store)).emit({
+      type: 'hot-durability-failed',
+      databaseRef,
+      placement: 'hot',
+      durability: 'periodic',
+      role: 'writer',
+      slot: 2,
+      generation: 4,
+      error: new Error(privateFailure),
+    });
+
+    expect(event.code).toBe(OBS_CODES.DATABASE_HOT_DURABILITY_FAILED.code);
+    expect(event.metadata).toEqual({
+      databaseRef,
+      placement: 'hot',
+      durability: 'periodic',
+      role: 'writer',
+      slot: 2,
+      generation: 4,
+      errorCode: 'DATABASE_EXECUTOR_FAILED',
+      retryable: false,
+      outcome: 'unknown',
+    });
+    expect(JSON.stringify(event)).not.toContain(privateFailure);
+    expect(() => createDatabaseObservability(runtimeFor(store)).emit({
+      type: 'hot-durability-failed',
+      databaseRef,
+      placement: 'file' as 'hot',
+      durability: 'periodic',
+      role: 'writer',
+      slot: 2,
+      generation: 4,
+      error: new Error(privateFailure),
+    })).toThrow('Invalid hot database durability observability event');
+  });
+
+  test('emits payload-free periodic hot snapshot and dirty-window lifecycle', () => {
+    const store = new MemoryEventStore();
+    const observer = createDatabaseObservability(runtimeFor(store));
+    const databaseRef = createDatabaseRef('periodic-lifecycle-tenant');
+    const inputs = [
+      ['hot-snapshot-started', OBS_CODES.DATABASE_HOT_SNAPSHOT_STARTED.code],
+      ['hot-snapshot-finished', OBS_CODES.DATABASE_HOT_SNAPSHOT_FINISHED.code],
+      ['hot-durability-dirty', OBS_CODES.DATABASE_HOT_DURABILITY_DIRTY.code],
+      ['hot-durability-clean', OBS_CODES.DATABASE_HOT_DURABILITY_CLEAN.code],
+    ] as const;
+
+    for (const [type, code] of inputs) {
+      const event = observer.emit({
+        type,
+        databaseRef,
+        placement: 'hot',
+        durability: 'periodic',
+        role: 'writer',
+        slot: 3,
+        generation: 7,
+      });
+      expect(event.code).toBe(code);
+      expect(event.metadata).toEqual({
+        databaseRef,
+        placement: 'hot',
+        durability: 'periodic',
+        role: 'writer',
+        slot: 3,
+        generation: 7,
+      });
+    }
+
+    expect(() => observer.emit({
+      type: 'hot-durability-dirty',
+      databaseRef,
+      placement: 'file' as 'hot',
+      durability: 'periodic',
+      role: 'writer',
+      slot: 3,
+      generation: 7,
+    })).toThrow('Invalid hot database durability observability event');
+  });
+
+  test('emits change wakeups and history gaps without row data', () => {
     const store = new MemoryEventStore();
     const observer = createDatabaseObservability(runtimeFor(store));
     const databaseRef = createDatabaseRef('reactive-database');
@@ -206,14 +335,6 @@ describe('DatabaseObservability', () => {
       generation: 2,
       sequenceStart: 10,
       sequenceEnd: 14,
-    });
-    observer.emit({
-      type: 'replay-completed',
-      databaseRef,
-      generation: 2,
-      sequenceStart: 10,
-      sequenceEnd: 14,
-      durationMs: 9,
     });
     observer.emit({
       type: 'history-gap',
@@ -227,18 +348,10 @@ describe('DatabaseObservability', () => {
     const events = store.query().events;
     expect(events.map((event) => event.code)).toEqual([
       OBS_CODES.DATABASE_CHANGE_WAKEUP.code,
-      OBS_CODES.DATABASE_REPLAY_COMPLETED.code,
       OBS_CODES.DATABASE_HISTORY_GAP.code,
     ]);
     expect(events.map((event) => event.metadata)).toEqual([
       { databaseRef, generation: 2, sequenceStart: 10, sequenceEnd: 14 },
-      {
-        databaseRef,
-        generation: 2,
-        sequenceStart: 10,
-        sequenceEnd: 14,
-        durationMs: 9,
-      },
       {
         databaseRef,
         generation: 2,
@@ -249,16 +362,96 @@ describe('DatabaseObservability', () => {
     ]);
   });
 
+  test('keeps tenant snapshots and receipt outcomes distinct from replay', () => {
+    const store = new MemoryEventStore();
+    const observer = createDatabaseObservability(runtimeFor(store));
+    const databaseRef = createDatabaseRef('private-tenant-receipts');
+    const privateReceipt = 'receipt-key=private fingerprint=private';
+
+    observer.emit({
+      type: 'tenant-snapshot-failed',
+      databaseRef,
+      role: 'writer',
+      slot: 1,
+      generation: 2,
+      sequenceStart: 14,
+      sequenceEnd: 14,
+      durationMs: 7,
+      error: new DatabaseError('DATABASE_PROTOCOL_ERROR', privateReceipt),
+    });
+    observer.emit({
+      type: 'receipt-lookup-failed',
+      databaseRef,
+      role: 'writer',
+      slot: 1,
+      generation: 2,
+      durationMs: 3,
+      error: new DatabaseError('DATABASE_EXECUTOR_FAILED', privateReceipt),
+    });
+    observer.emit({
+      type: 'receipt-expired',
+      databaseRef,
+      role: 'writer',
+      slot: 1,
+      generation: 2,
+      durationMs: 1,
+      error: new DatabaseError('DATABASE_OUTCOME_UNKNOWN', privateReceipt, {
+        details: { receiptState: 'expired', receiptKey: privateReceipt },
+      }),
+    });
+    observer.emit({
+      type: 'receipt-compacted',
+      databaseRef,
+      role: 'writer',
+      slot: 1,
+      generation: 2,
+      totalKeys: 10_001,
+      retainedResults: 10_000,
+      expiredTombstones: 1,
+      retainedResultBytes: 20_260,
+      keyLimit: 1_000_000,
+      prunedCount: 1,
+      prunedResultBytes: 2,
+      retainedLimit: 10_000,
+      retainedByteLimit: 67_108_864,
+      resultByteLimit: 8_388_608,
+    });
+
+    expect(store.query().events.map((event) => event.code)).toEqual([
+      OBS_CODES.DATABASE_TENANT_SNAPSHOT_FAILED.code,
+      OBS_CODES.DATABASE_RECEIPT_LOOKUP_FAILED.code,
+      OBS_CODES.DATABASE_RECEIPT_EXPIRED.code,
+      OBS_CODES.DATABASE_RECEIPT_COMPACTED.code,
+    ]);
+    expect(JSON.stringify(store.query().events)).not.toContain(privateReceipt);
+    expect(store.query().events.at(-1)?.metadata).toEqual({
+      databaseRef,
+      role: 'writer',
+      slot: 1,
+      generation: 2,
+      totalKeys: 10_001,
+      retainedResults: 10_000,
+      expiredTombstones: 1,
+      retainedResultBytes: 20_260,
+      keyLimit: 1_000_000,
+      prunedCount: 1,
+      prunedResultBytes: 2,
+      retainedLimit: 10_000,
+      retainedByteLimit: 67_108_864,
+      resultByteLimit: 8_388_608,
+    });
+  });
+
   test('fails closed on raw fields, malformed references, and unbounded values', () => {
     const store = new MemoryEventStore();
     const observer = createDatabaseObservability(runtimeFor(store));
     const databaseRef = createDatabaseRef('bounded-database');
     const valid = {
-      type: 'operation-slow',
+      type: 'queue-timeout',
       databaseRef,
       operation: 'query',
+      queueDepth: 1,
       durationMs: 20,
-      slowLimitMs: 10,
     } as const;
     const invalid: unknown[] = [
       { ...valid, path: '/private/database.sqlite' },
@@ -270,7 +463,7 @@ describe('DatabaseObservability', () => {
       { ...valid, databaseRef: databaseRef.toUpperCase() },
       { ...valid, operation: 'SELECT' },
       { ...valid, durationMs: Number.POSITIVE_INFINITY },
-      { ...valid, slowLimitMs: -1 },
+      { ...valid, queueDepth: -1 },
       {
         type: 'coordinator-started',
         writerCount: DATABASE_OBSERVABILITY_MAX_COUNT + 1,

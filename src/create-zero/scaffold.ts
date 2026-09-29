@@ -214,6 +214,11 @@ data
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
 .DS_Store
 `;
 

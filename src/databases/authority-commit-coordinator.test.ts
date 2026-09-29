@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 
 import { AuthorityCommitCoordinator } from './authority-commit-coordinator';
+import { DATABASE_OBSERVABILITY_COUNT_MAX } from './database-capacity';
 import { DatabaseError } from './database-error';
+import { MAX_RUNTIME_TIMER_INTERVAL_MS } from '../runtime/timer-limits';
 
 describe('AuthorityCommitCoordinator', () => {
   test('allows concurrent shared leases and gives a queued exclusive lease preference over later shared work', async () => {
@@ -267,12 +269,27 @@ describe('AuthorityCommitCoordinator', () => {
     );
     expect(() => new AuthorityCommitCoordinator({ acquireTimeoutMs: -1 }))
       .toThrow(DatabaseError);
+    expect(() => new AuthorityCommitCoordinator({
+      maxPending: DATABASE_OBSERVABILITY_COUNT_MAX + 1,
+    })).toThrow(DatabaseError);
+    expect(() => new AuthorityCommitCoordinator({
+      acquireTimeoutMs: MAX_RUNTIME_TIMER_INTERVAL_MS + 1,
+    })).toThrow(DatabaseError);
 
     const coordinator = new AuthorityCommitCoordinator();
     const error = await observeDatabaseError(coordinator.acquireShared({
       timeoutMs: Number.POSITIVE_INFINITY,
     }));
     expect(error).toMatchObject({
+      code: 'DATABASE_CONFIG_INVALID',
+      retryable: false,
+      outcome: 'not-started',
+      details: { option: 'timeoutMs' },
+    });
+    const oversized = await observeDatabaseError(coordinator.acquireShared({
+      timeoutMs: MAX_RUNTIME_TIMER_INTERVAL_MS + 1,
+    }));
+    expect(oversized).toMatchObject({
       code: 'DATABASE_CONFIG_INVALID',
       retryable: false,
       outcome: 'not-started',

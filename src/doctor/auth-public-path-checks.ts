@@ -1,6 +1,6 @@
 import { resolveAuthBehaviorConfig } from '../auth/auth-config';
 import type { ResolvedConfig } from '../frontend/server/types';
-import type { PlatformDoctorFinding } from './platform-doctor';
+import type { PlatformDoctorFinding } from './platform-doctor-contracts';
 
 interface RequiredPath {
   label: string;

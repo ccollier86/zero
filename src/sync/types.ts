@@ -1,5 +1,6 @@
 import type { Database, Statement } from 'bun:sqlite';
 import type { PlatformSQLiteService, SQLiteStorageConfig } from '../persistence';
+import type { PlatformObservabilityRuntime } from '../observability/types';
 import type { SyncPolicy } from './sync-policy';
 import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 import type {
@@ -17,6 +18,9 @@ import type {
  * are routed through the platform persistence foundation internally.
  */
 export interface ReactiveDBConfig extends SQLiteStorageConfig {
+  /** App-local telemetry target for persistence and ReactiveDB events. */
+  observability?: PlatformObservabilityRuntime | null;
+
   /** Platform-owned SQLite service. Preferred for createApp/runtime wiring. */
   sqlite?: PlatformSQLiteService;
 
@@ -119,6 +123,12 @@ export type Row = Record<string, unknown>;
 
 /** Resolved table sync behavior used by the client and server. */
 export type SyncMode = 'full' | 'lazy';
+
+/** Independent durable data logs multiplexed over one Sync WebSocket. */
+export type SyncDataPlaneName = 'default' | 'tenant';
+
+/** Non-retryable Sync data/configuration failure requiring operator action. */
+export const SYNC_TERMINAL_DATA_CLOSE_CODE = 4_004 as const;
 
 /** User-declared table sync behavior before startup auto-resolution. */
 export type DeclaredSyncMode = SyncMode | 'auto';
@@ -357,6 +367,15 @@ export interface SyncPluginConfig {
    * `intervalMs` must be a positive safe integer; values below 10 are clamped.
    */
   replicaChangePolling?: false | { intervalMs?: number };
+  /**
+   * Optional actor-backed tenant data plane for physically isolated app data.
+   *
+   * The provider receives only the already-verified socket authority. Tenant
+   * or database selectors are never accepted from the Sync wire protocol.
+   * State Sync, ephemeral collaboration, and framework control tables remain
+   * on the default ReactiveDB plane.
+   */
+  tenantDataPlane?: import('./sync-tenant-data-plane').SyncTenantDataPlane;
 }
 
 /**
@@ -479,6 +498,16 @@ export interface SyncSocketData {
   syncSubscribedTables: Set<string>;
   /** True while Bun has queued outbound data behind socket backpressure. */
   syncBackpressured: boolean;
+  /** True while an atomic default-plane snapshot transfer owns Sync ordering. */
+  syncSnapshotInFlight?: boolean;
+  /** Ordered live changes deferred until the default snapshot end frame drains. */
+  syncDeferredChanges?: Array<{
+    change: Change;
+    epoch: string;
+    origin: string;
+  }>;
+  /** True once this socket subscribes to both independent durable data logs. */
+  syncMultiplexed?: boolean;
   /** Auth context derived from token (null if no auth) */
   authContext: SyncAuthContext | null;
   /** Bearer token retained in server memory for current-account revalidation. */
@@ -489,6 +518,8 @@ export interface SyncSocketData {
   authResolved: boolean;
   /** Comparable effective read-policy snapshot used by live revalidation. */
   authorizationFingerprint: string | null;
+  /** Trusted user/property/RBAC snapshot used to build current read filters. */
+  readAuthorizationFingerprint?: string | null;
   /** Opaque stable hash sent to clients to detect authorization-scope changes. */
   authorizationScope: string | null;
   /** Unique connection identifier for origin tracking */
@@ -535,6 +566,12 @@ export interface SyncResourceTableAccess {
   rowProjectors?: Map<string, SyncRowProjector>;
   /** Stable representation of effective row-filter policy for revalidation. */
   policyFingerprint?: string;
+  /**
+   * Synchronously comparable trusted authority used to build this policy.
+   * Physical tenant Sync requires this value so an async read cannot deliver
+   * rows after trusted properties or live RBAC assignments change.
+   */
+  readAuthorityFingerprint?: string;
 }
 
 /** Context passed to resource-aware sync mutation authorization. */
@@ -544,7 +581,11 @@ export interface SyncResourceMutationContext {
   rowId?: string;
   row?: Row | Partial<Row>;
   authContext: SyncAuthContext | null;
-  loadRow: (table: string, rowId: string) => Row | null;
+  /** Physical tenant databases may require an actor read. */
+  loadRow: (
+    table: string,
+    rowId: string,
+  ) => Row | null | Promise<Row | null>;
 }
 
 /** Trusted row predicate carried from resource authorization to persistence. */
@@ -589,6 +630,8 @@ export interface SyncResourcePolicyAdapter {
   classifyManagedTableExposure?(
     table: string,
   ): 'internal' | 'http' | 'sync' | 'all' | null;
+  /** Trusted storage routing classification used only at plugin composition. */
+  classifyManagedTableDataPlane?(table: string): 'default' | 'tenant' | null;
   resolveTableAccess(
     context: SyncResourceTableAccessContext
   ): Promise<SyncResourceTableAccess>;
@@ -597,6 +640,11 @@ export interface SyncResourcePolicyAdapter {
   ): Promise<SyncResourceMutationDecision>;
   /** Re-read policy identity/properties inside the SQLite commit transaction. */
   validateMutationAuthorityAtCommit?(
+    authContext: SyncAuthContext | null,
+    expectedFingerprint: string,
+  ): boolean;
+  /** Re-read trusted read-policy authority at the final delivery edge. */
+  validateReadAuthorityAtDelivery?(
     authContext: SyncAuthContext | null,
     expectedFingerprint: string,
   ): boolean;
@@ -628,6 +676,8 @@ export interface SyncAuthReadyMessage {
 
 export interface SyncSnapshotMessage {
   type: 'sync.snapshot';
+  /** Omitted by the historical single/default-plane protocol. */
+  plane?: SyncDataPlaneName;
   tables: Record<string, Record<string, Row>>;
   seq: number;
   /** ReactiveDB process epoch. A change requires authoritative cache replacement. */
@@ -638,8 +688,39 @@ export interface SyncSnapshotMessage {
   reset?: 'preserve-pending' | 'purge';
 }
 
+/** Begins one bounded-frame authoritative snapshot transfer. */
+export interface SyncSnapshotBeginMessage {
+  type: 'sync.snapshot.begin';
+  snapshotId: string;
+  /** Omitted only by the historical single/default-plane protocol. */
+  plane?: SyncDataPlaneName;
+  /** Exact tables replaced when the matching end frame is accepted. */
+  tables: string[];
+  seq: number;
+  epoch?: string;
+  scope?: string | null;
+  reset: 'preserve-pending' | 'purge';
+}
+
+/** One wire-bounded table fragment belonging to a snapshot transfer. */
+export interface SyncSnapshotChunkMessage {
+  type: 'sync.snapshot.chunk';
+  snapshotId: string;
+  plane?: SyncDataPlaneName;
+  table: string;
+  rows: Record<string, Row>;
+}
+
+/** Commits the staged snapshot atomically into the client store. */
+export interface SyncSnapshotEndMessage {
+  type: 'sync.snapshot.end';
+  snapshotId: string;
+  plane?: SyncDataPlaneName;
+}
+
 export interface SyncChangeMessage {
   type: 'sync.change';
+  plane?: SyncDataPlaneName;
   seq: number;
   /** Last sequence successfully queued to this socket before this change. */
   prevSeq?: number;
@@ -655,12 +736,23 @@ export interface SyncChangeMessage {
   ts: number;
 }
 
+/** Stable machine-readable Sync mutation rejection codes. */
+export const SYNC_ACK_ERROR_CODES = Object.freeze({
+  mutationReceiptExpired: 'SYNC_MUTATION_RECEIPT_EXPIRED',
+  mutationCapacityExhausted: 'SYNC_MUTATION_CAPACITY_EXHAUSTED',
+} as const);
+
+export type SyncAckErrorCode =
+  (typeof SYNC_ACK_ERROR_CODES)[keyof typeof SYNC_ACK_ERROR_CODES];
+
 export interface SyncAckMessage {
   type: 'sync.ack';
+  plane?: SyncDataPlaneName;
   ref: string;
   seq: number | null;
   ok: boolean;
   error?: string;
+  errorCode?: SyncAckErrorCode;
   /** Canonical mutation result, included so receipt replay cannot leave optimistic drift. */
   change?: {
     table: string;
@@ -672,6 +764,7 @@ export interface SyncAckMessage {
 
 export interface SyncCatchupMessage {
   type: 'sync.catchup';
+  plane?: SyncDataPlaneName;
   changes: Array<{
     seq: number;
     table: string;
@@ -709,10 +802,21 @@ export interface SyncSubscribeMessage {
   epoch?: string;
   /** Last opaque authorization scope accepted by the client. */
   scope?: string | null;
+  /**
+   * Independent reconnect cursors for multiplexed physical-tenant Sync.
+   * Legacy clients omit this and retain the scalar default-plane cursor.
+   */
+  cursors?: Partial<Record<SyncDataPlaneName, Readonly<{
+    lastSeq: number;
+    epoch?: string;
+    scope?: string | null;
+  }>>>;
 }
 
 export interface SyncMutateMessage {
   type: 'sync.mutate';
+  /** Optional protocol assertion; routing is always derived from server catalog. */
+  plane?: SyncDataPlaneName;
   ref: string;
   table: string;
   op: ChangeOp;
@@ -742,6 +846,9 @@ export type ClientMessage =
 export type ServerMessage =
   | SyncAuthReadyMessage
   | SyncSnapshotMessage
+  | SyncSnapshotBeginMessage
+  | SyncSnapshotChunkMessage
+  | SyncSnapshotEndMessage
   | SyncChangeMessage
   | SyncAckMessage
   | SyncCatchupMessage
@@ -821,6 +928,12 @@ export interface SyncClientConfig {
   url: string;
   /** Table definitions for type information */
   tables: Record<string, ClientTableDef>;
+  /**
+   * Exact server-authored route for every configured table. Supplying this
+   * enables default/tenant data-plane multiplexing and mutation assertions;
+   * omission preserves the historical all-default protocol.
+   */
+  tableSyncPlanes?: Readonly<Record<string, SyncDataPlaneName>>;
   /** Auth token to send on connect */
   token?: string;
   /** Return the current auth token at connection time. May refresh asynchronously. */

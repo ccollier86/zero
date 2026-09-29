@@ -6,6 +6,7 @@
  */
 
 import type { ResolvedSQLiteStorageConfig, SQLiteStorageConfig, SQLiteStorageMode } from './storage-types';
+import { MAX_RUNTIME_TIMER_INTERVAL_MS } from '../runtime/timer-limits';
 
 const DEFAULT_DB_PATH = './data/app.db';
 const DEFAULT_SNAPSHOT_PATH = './data/app.snapshot.db';
@@ -23,7 +24,14 @@ export function resolveSQLiteStorageConfig(input: SQLiteStorageConfig = {}): Res
     path: mode === 'ephemeral' ? null : path,
     snapshotPath,
     snapshotEnabled: mode === 'hot' ? input.snapshotEnabled ?? true : false,
-    snapshotIntervalMs: normalizePositiveInteger(input.snapshotIntervalMs ?? 30_000, 'snapshotIntervalMs'),
+    snapshotIntervalMs: normalizeTimerInterval(
+      input.snapshotIntervalMs ?? 30_000,
+      'snapshotIntervalMs',
+    ),
+    hotMaxBytes: mode === 'hot' && input.hotMaxBytes !== undefined
+      ? normalizePositiveInteger(input.hotMaxBytes, 'hotMaxBytes')
+      : null,
+    emitTelemetry: input.emitTelemetry ?? true,
     cacheSize: input.cacheSize ?? -262_144,
     mmapSize: input.mmapSize ?? 1_073_741_824,
     walAutocheckpoint: normalizePositiveInteger(input.walAutocheckpoint ?? 1000, 'walAutocheckpoint'),
@@ -65,4 +73,14 @@ function normalizePositiveInteger(value: number, label: string): number {
     throw new Error(`SQLite ${label} must be a positive integer.`);
   }
   return value;
+}
+
+function normalizeTimerInterval(value: number, label: string): number {
+  const normalized = normalizePositiveInteger(value, label);
+  if (normalized > MAX_RUNTIME_TIMER_INTERVAL_MS) {
+    throw new Error(
+      `SQLite ${label} must not exceed ${MAX_RUNTIME_TIMER_INTERVAL_MS}.`,
+    );
+  }
+  return normalized;
 }

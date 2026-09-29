@@ -238,26 +238,28 @@ present:
   export.
 - `create` and `update` default to empty allow-lists. They apply to raw
   browser/native input before realm or policy stamping. A policy may therefore
-  stamp `created_by`, and Zero may stamp `tenant_id`, without making either
-  field client-writable.
+  stamp `created_by`, and shared-row isolation may stamp `tenant_id`, without
+  making either field client-writable.
 - `filter` and `sort` default to `read` and must be subsets of `read`. A hidden
   field cannot be used as a filter or ordering oracle.
 - an exposed resource must include its primary key in `read`, because managed
   lazy/full caches require stable public row identity. A create may still carry
   the protocol primary key even when it is not a form field; primary keys can
   never appear in `update`.
-- a tenant discriminator can be readable, but it cannot appear in `create` or
-  `update`. It is always derived from the current durable session.
+- a shared-row tenant discriminator can be readable, but it cannot appear in
+  `create` or `update`. It is always derived from the current durable session.
+  Physical tenant isolation has no managed discriminator; any retained tenant
+  field follows the ordinary declared field policy.
 
 Registration rejects unknown fields, mutable primary keys, missing readable
-primary keys, and client-writable tenant discriminators. Definitions and every
-normalized field list are frozen before the registry is sealed.
+primary keys, and client-writable shared-row tenant discriminators. Definitions
+and every normalized field list are frozen before the registry is sealed.
 
 Policies continue to evaluate complete server rows and inputs. Hidden owner,
-tenant, or custom-policy columns remain available internally for constraints,
-row filtering, compare-and-write checks, and stamping; projection occurs only
-after authorization. List SQL also selects only readable columns, while policy
-constraints are compiled against the full validated table schema.
+shared-row tenant, or custom-policy columns remain available internally for
+constraints, row filtering, compare-and-write checks, and stamping; projection
+occurs only after authorization. List SQL also selects only readable columns,
+while policy constraints are compiled against the full validated table schema.
 
 For packaged generated forms, pass the same names-only contract:
 
@@ -328,7 +330,8 @@ defineResource({
   policy: readOnly(),
 });
 
-// Tenant-owned data. `tenant_id` is the validated default field.
+// Tenant-owned data. `tenant_id` is the shared-row default field;
+// tenant-database isolation uses the selected physical database instead.
 defineResource({
   table: patients,
   exposure: 'all',
@@ -340,26 +343,40 @@ defineResource({
 In `auth.tenancy: 'multi'`, every app table managed by `createApp()` must have
 a registered resource with an explicit exposure and an explicit `global` or
 `tenant` realm. Startup rejects omissions, including for `internal` resources;
-that keeps a later exposure change from silently inventing a realm. A tenant
-discriminator must be a real, safe, non-nullable column and cannot double as
-the row primary key. Omitted realms and exposure remain supported for existing
-single-tenant applications.
+that keeps a later exposure change from silently inventing a realm. Omitted
+realms and exposure remain supported for existing single-tenant applications.
 
-Zero validates this twice. Registry/Doctor validation inspects the declared
-table schema and accepts only a real top-level `NOT NULL` constraint (text in a
-default value, comment, or nested `CHECK` does not count). After the database
-is opened, `createApp()` checks SQLite's actual `PRAGMA table_info` result: the
-resource primary key must be the table's sole primary-key column, and a tenant
+The resolved topology applies one tenant-isolation mode to the registry:
+
+| Isolation | Mandatory tenant boundary |
+| --- | --- |
+| `shared-row` (default) | A server-owned row discriminator. The declared field (default `tenant_id`) must be a real, non-nullable column and cannot double as the row primary key. |
+| `tenant-database` | Possession of the authority-derived physical database capability. The Resource remains `tenantRealm()`, but Zero adds no tenant field, stamp, predicate, or row filter. A retained `tenant_id` is business data, not the authorization boundary. |
+
+`tenant-database` requires multi-tenant auth. Its actor realm must be a
+schema-identical subset of `createApp({ tables })` and, after Resource loading,
+must exactly equal all physical tenant Resources, including `internal` and
+HTTP-only tables. A physical tenant Resource is deliberately absent from the
+pinned control database; it cannot fall through to a same-named shadow table.
+See [ReactiveDB Fabric](./multi-database-architecture.md) for actor lifecycle,
+capacity, durability, snapshot, and deployment boundaries.
+
+For default-plane Resources, Zero validates storage after opening SQLite.
+Registry/Doctor validation first inspects the declaration; then `createApp()`
+checks the actual `PRAGMA table_info` result. The Resource primary key must be
+the table's sole primary-key column. For `shared-row` tenant Resources, the
 discriminator must exist, be `NOT NULL`, and not be that primary key. This
 catches an older durable table that `CREATE TABLE IF NOT EXISTS` could not
-repair. Startup names the resource, field, and required migration; it never
+repair. Physical tenant schemas are instead owned and verified by the immutable
+actor realm. Startup names the Resource and required migration; it never
 silently runs a destructive table rebuild.
 
 Startup does not require the discriminator or policy fields to declare a
-particular SQLite collation. Managed realm and policy equality is stricter than
-the table declaration: generated CRUD, `/api/data`, and final scoped writes
-require the stored value to have the same SQLite storage class and compare with
-`BINARY` equality. A legacy `TEXT COLLATE NOCASE` column is therefore accepted
+particular SQLite collation. Managed shared-row realm equality and policy
+equality are stricter than the table declaration: generated CRUD, `/api/data`,
+and final scoped writes require the stored value to have the same SQLite
+storage class and compare with `BINARY` equality. A legacy
+`TEXT COLLATE NOCASE` column is therefore accepted
 but a case-only tenant or owner-id variant is not authorized. The same rule
 prevents numeric affinity from turning a text policy value into a match. Sync's
 in-memory row matcher uses the equivalent exact string/number contract;
@@ -375,9 +392,11 @@ unless its resource-policy adapter proves both a valid exposure and a `global`
 or `tenant` classification for every configured app table. `createApp()` wires
 these proofs automatically.
 
-The tenant realm is always ANDed outside the resource policy. An
+The tenant realm is always enforced outside the Resource policy. An
 `anyOf(adminOnly(), customPolicy(...))` decision can grant an action inside the
-active tenant, but it cannot expose a different tenant. Tenant resources
+active tenant, but it cannot expose a different tenant. In `shared-row` mode
+that enforcement is an ANDed server-owned row constraint; in
+`tenant-database` mode it is the selected database capability. Tenant Resources
 require a live durable session with matching session scope, membership, and
 tenant/membership authorization generations; an arbitrary `tenantId` hint is
 not sufficient.
@@ -448,38 +467,54 @@ GET /api/resources/tickets?filter=priority:gte:3&filter=status:in:open,pending
 
 Supported filter operators are `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`,
 `contains`, and `in`. Column names are validated against the table schema and
-values are parameterized.
+values are parameterized. List queries accept at most 64 filters of at most
+4,096 characters each; order identifiers are capped at 128 characters and
+`dir` at four. Validation failures return the stable
+`400 invalid-resource-query` category without echoing rejected values. The
+same limits apply to `/api/data`, whose category is `400 invalid-data-query`.
 
 CRUD policy behavior:
 
 - `list` evaluates the resource list policy, then translates returned
   constraints such as `owner_id = user.userId` into storage-class/BINARY-exact
   SQL rather than inheriting a column's affinity or collation.
-- tenant-scoped `get`, `update`, and `delete` put the primary-key and tenant
-  predicates in the SQL read; cross-tenant rows are returned as `404`.
+- in `shared-row` mode, tenant-scoped `get`, `update`, and `delete` put the
+  primary-key and tenant predicates in the SQL read; cross-tenant rows are
+  returned as `404`. In `tenant-database` mode the authority-bound physical
+  database is selected before the row operation, so no redundant tenant
+  predicate is added.
 - `create` evaluates create policy before writing. `ownerPolicy()` defaults to
   `create: 'stamp'`, so caller-provided owner fields are overwritten with the
   authenticated user id.
 - every registered create uses collision-safe `INSERT` semantics; a create
   policy can never replace an existing primary key and bypass update policy.
-  Tenant creates additionally server-stamp the trusted tenant field and reject
-  a conflicting caller value.
+  Shared-row tenant creates additionally server-stamp the trusted tenant field
+  and reject a conflicting caller value. Physical tenant creates do not invent
+  a tenant field.
 - `update` strips primary key changes before writing.
-- the tenant discriminator is server-managed and cannot be supplied to an
-  ordinary update. Final update/delete statements repeat the tenant predicate,
-  closing the policy-check-to-write race.
+- a shared-row tenant discriminator is server-managed and cannot be supplied
+  to an ordinary update. Final update/delete statements repeat the tenant
+  predicate, closing the policy-check-to-write race. Physical tenant writes
+  remain bound to the already selected actor capability.
 - `get` re-reads the exact row snapshot after asynchronous policy work.
   Registered update/delete writes compare every stored column evaluated by
   policy in the final SQL statement. Same-tenant owner/status changes therefore
   return `resource-row-changed` instead of applying a stale decision.
-- scoped create/update/delete runs atomically and verifies the stored
-  postcondition before commit. A trigger that rewrites the tenant field or
-  recreates a deleted row makes the whole write roll back.
-- for session-bound Zero auth, the durable session, account, membership,
+- scoped create/update/delete runs atomically in its owning database and
+  verifies the stored postcondition before commit. In shared-row mode, a
+  trigger that rewrites the tenant field or recreates a deleted row makes the
+  whole write roll back.
+- for default/shared-row storage, the durable session, account, membership,
   assignment revision, and trusted policy properties are synchronously re-read
-  inside the same shared SQLite transaction as the final read/write. A change
-  after asynchronous bearer revalidation returns
-  `resource-authority-changed` and nothing commits.
+  inside the same SQLite transaction as the final read/write. Physical tenant
+  storage cannot use a cross-file SQLite transaction: Zero instead captures
+  durable control-plane authority, fences actor acquisition and dispatch, and
+  rechecks before returning the actor result. A change after asynchronous
+  bearer revalidation returns `resource-authority-changed`.
+- generated mutations persist their idempotency receipt atomically with the
+  effect in the owning database. The physical actor ledger and the
+  default/shared-row ledger have equivalent replay semantics and independent
+  bounded retention contracts.
 - writes go through ReactiveDB, so generated route mutations still emit normal
   sync/change events.
 - `metadataPolicy()` hydrates trusted user properties from the auth user store
@@ -509,21 +544,25 @@ For registered resources:
 - denied resource policy returns the policy status/message;
 - `ownerPolicy()` list constraints are translated into SQL and ANDed with
   caller filters;
-- tenant predicates are translated into SQL and ANDed with both caller filters
-  and policy constraints; a caller filter can narrow but never widen them;
-- server-owned realm and policy equality is storage-class/BINARY exact, so a
-  `NOCASE` owner or tenant column and an affinity-coercible value cannot broaden
-  the result;
+- in `shared-row` mode, tenant predicates are translated into SQL and ANDed
+  with both caller filters and policy constraints; a caller filter can narrow
+  but never widen them. In `tenant-database` mode, the query runs through a
+  short-lived actor capability selected only from the verified tenant scope;
+- server-owned shared-row realm and policy equality is storage-class/BINARY
+  exact, so a `NOCASE` owner or tenant column and an affinity-coercible value
+  cannot broaden the result;
 - `anyOf(ownerPolicy(...), adminOnly())` lets admins read all rows while owners
   only read their rows;
 - `metadataPolicy()` hydrates trusted user properties from the auth user store;
 - `authorizationPolicy()` applies the app-local live RBAC scope used by route
   guards, including advanced additive assignments;
 - after an asynchronous custom policy returns, Zero re-resolves the bearer and
-  trusted user properties. It then resolves the captured durable authority and
-  properties again inside the same shared SQLite read transaction as the SQL
-  query. A revoked session, changed membership/generation, role assignment, or
-  policy property returns `resource-authority-changed` and no rows are read;
+  trusted user properties. Default/shared-row queries resolve captured durable
+  authority again inside the same SQLite read transaction as the SQL query.
+  Physical queries fence authority before actor acquisition, at the actor read
+  boundary, and before result delivery. A revoked session, changed
+  membership/generation, role assignment, or policy property returns
+  `resource-authority-changed`;
 - unsafe or unknown constraint columns fail closed instead of running a broad
   query.
 
@@ -557,8 +596,10 @@ Registered resources also participate in `/sync` authorization:
 - If `list` allows with row-level constraints, such as
   `ownerPolicy({ userField: 'owner_id' })`, Zero installs a per-connection row
   filter for snapshots, catchup, and live changes.
-- A tenant realm adds its own mandatory per-connection row filter even when
-  discretionary policy is otherwise unconstrained.
+- A shared-row tenant realm adds its own mandatory per-connection row filter
+  even when discretionary policy is otherwise unconstrained. A physical
+  tenant realm is isolated by the authority-bound tenant database and adds no
+  redundant tenant row filter; discretionary row constraints still apply.
 
 Admins can still receive full-table sync while normal users receive filtered
 sync with:
@@ -573,27 +614,41 @@ constraint, so Zero sends only rows owned by that user. If a row moves out of a
 user's filter during an update, the user receives a `DELETE` change for that
 row so stale data is removed from the local store.
 
+Managed physical tenant Sync keeps one authenticated `/sync` socket but uses a
+separate tenant data plane with its own epoch, sequence, baseline, catch-up,
+and reset boundary. The socket holds one persistent authority-bound database
+lease. Full baselines use bounded `begin`/`page`/`abort` actor snapshot
+sessions and chunked WebSocket frames; they never query a same-named table in
+the control database. The server-generated table-plane catalog is
+authoritative—browser plane fields can assert, but cannot select, storage.
+
 Direct `sync.mutate` writes also evaluate resource policy for registered
 resources:
 
 - `INSERT` maps to `create` and applies `stampedInput`, so
   `ownerPolicy({ create: 'stamp' })` overwrites caller-supplied owner fields.
-- every registered `INSERT` uses a non-replacing persistence boundary. Tenant
-  inserts also stamp the active tenant and reject conflicts.
+- every registered `INSERT` uses a non-replacing persistence boundary.
+  Shared-row tenant inserts also stamp the active tenant and reject conflicts;
+  physical tenant inserts do not add a discriminator.
 - `UPDATE` maps to `update`, loads the current row, and evaluates row policy
   before writing.
 - `DELETE` maps to `delete`, loads the current row, and evaluates row policy
   before deleting.
-- tenant `UPDATE` and `DELETE` carry the trusted tenant predicate into the
-  actual ReactiveDB SQL statement. Cross-tenant target ids are concealed as
-  missing rows. Global and tenant resource writes also compare the exact row
-  snapshot evaluated by policy, closing same-realm row-policy races.
+- shared-row tenant `UPDATE` and `DELETE` carry the trusted tenant predicate
+  into the actual ReactiveDB SQL statement. Cross-tenant target ids are
+  concealed as missing rows. Physical tenant mutations run only through the
+  selected database capability. Global and tenant Resource writes also compare
+  the exact row snapshot evaluated by policy, closing same-realm row-policy
+  races.
 - scoped writes are transactions with a verified postcondition, so database
   triggers cannot commit a row outside the authorized tenant while returning
   an error to the client.
-- after asynchronous mutation policy and token revalidation, Sync checks the
-  durable token authority and trusted-property fingerprint inside the same
-  SQLite transaction as the conditional write and mutation receipt.
+- after asynchronous mutation policy and token revalidation,
+  default/shared-row Sync checks durable token authority and the
+  trusted-property fingerprint inside the same SQLite transaction as the
+  conditional write and mutation receipt. Physical Sync fences control-plane
+  authority at the actor boundary and commits the mutation plus receipt
+  atomically in the tenant database.
 - Platform protected table policy still composes with resource policy using
   deny-wins behavior.
 
@@ -727,11 +782,13 @@ Validation currently checks:
 - exposure values are one of `internal`, `http`, `sync`, or `all`, with an
   explicit value required in multi mode;
 - multi-mode managed tables have an explicit resource realm;
-- tenant realm fields are safe, present, `NOT NULL`, and distinct from the row
-  primary key.
+- shared-row tenant realm fields are safe, present, `NOT NULL`, and distinct
+  from the row primary key. Physical tenant isolation validates the actor realm
+  instead and does not require a discriminator field.
 
-Startup then verifies the actual SQLite table, including the sole-primary-key
-and tenant-discriminator properties above. For every tenant resource it also:
+Startup then verifies default/shared-row SQLite tables, including the
+sole-primary-key and tenant-discriminator properties above. For every
+shared-row tenant Resource it also:
 
 - requires at least one non-partial index whose first key is the tenant
   discriminator;
@@ -741,8 +798,8 @@ and tenant-discriminator properties above. For every tenant resource it also:
 - inspects every foreign key to another registered tenant resource and requires
   the child and parent tenant fields in that same composite foreign key.
 
-For example, a tenant-owned project slug and child document relationship can
-be migrated as:
+For example, a shared-row tenant project slug and child document relationship
+can be migrated as:
 
 ```sql
 CREATE UNIQUE INDEX projects_tenant_slug
@@ -762,11 +819,14 @@ CREATE TABLE documents (
 CREATE INDEX documents_tenant ON documents (tenant_id);
 ```
 
-A partial tenant index does not cover general managed queries and therefore
-does not satisfy startup. If a value is intentionally unique across the whole
-application, model that identity in a registered global resource instead of
-placing a global business-unique constraint on a tenant resource. Declared-
-schema validation alone is not release evidence for a pre-existing database.
+A partial tenant index does not cover general shared-row managed queries and
+therefore does not satisfy startup. If a value is intentionally unique across
+the whole application, model that identity in a registered global Resource
+instead of placing a global business-unique constraint on a shared-row tenant
+Resource. Physical tenant files use the actor realm and ordinary per-file
+indexes, uniqueness, and foreign keys; the selected file—not a row field—is
+their mandatory tenant boundary. Declared-schema validation alone is not
+release evidence for a pre-existing database.
 
 ## Doctor Checks
 
@@ -789,20 +849,25 @@ Resource doctor checks cover:
   WebSocket sync reads for that table fail closed;
 - custom `list` policy branches whose row scope cannot be proven statically;
 - write/delete policies with public or uninspectable custom access;
+- generated HTTP mutations that share the default/shared-row durable receipt
+  ledger, including its retained-result window, permanent identity ceiling,
+  observability events, and required database lifecycle planning;
 - owner/list fields that should usually be indexed for `/api/data` and
   row-filtered sync;
-- tenant discriminators without a likely tenant-leading index. A natural
-  `_identity` satisfies that guidance only when the discriminator is its first
-  field; otherwise add a migration index beginning with the discriminator and,
-  when static schema metadata cannot express it, list the known field under
-  `doctor.indexedFields`.
+- shared-row tenant discriminators without a likely tenant-leading index. A
+  natural `_identity` satisfies that guidance only when the discriminator is
+  its first field; otherwise add a migration index beginning with the
+  discriminator and, when static schema metadata cannot express it, list the
+  known field under `doctor.indexedFields`. Physical tenant Resources instead
+  receive topology/realm and redundant-discriminator findings.
 
 The CLI loads both inline `createApp({ resources })` definitions and the same
 `serverResourcesDir` modules that `createApp()` discovers. The programmatic
 `runPlatformDoctor(config)` API is intentionally filesystem-free; callers of
 that API must include discovered definitions in `config.resources` themselves.
-Doctor validates declared schema. The app startup check against the actual
-SQLite table is the final release/runtime gate for durable databases.
+Doctor validates declared schema. For default/shared-row storage, app startup
+against the actual SQLite table is the final runtime gate; physical tenant
+storage uses the validated actor realm and verifies it when the actor opens.
 
 Doctor uses static policy metadata attached by Zero's policy helpers. It does
 not execute `customPolicy()` callbacks. If a custom list policy is intended to
@@ -823,18 +888,21 @@ longer receive raw process data handles accidentally. Direct DB/SQL, adapters,
 auth stores/tokens, unscoped KV/vector, and control-plane services require the
 explicit `zero.unsafe` surface and remain outside the managed isolation
 guarantee; that code must supply its own server-derived tenant predicate and
-audit/revalidation behavior. Zero's built-in Storage, notifications, rooms,
+audit/revalidation behavior in shared-row mode, or deliberately acquire and
+fence the correct authority-derived physical capability in tenant-database
+mode. Zero's built-in Storage, notifications, rooms,
 workflows, state, and ephemeral transports have independent tenant
 discriminators, request-bound facades, and two-tenant tests. Resource realm
 classification protects app tables reached through generated CRUD,
 `/api/data`, and Sync; it does not magically make an arbitrary unsafe SQL query
 tenant-aware.
 
-Startup proves tenant-leading indexes, tenant-aware business uniqueness, and
-tenant-consistent foreign keys between registered tenant resources from actual
-SQLite metadata. It validates the constraints but does not author migrations;
-apps still add the DDL intentionally. Foreign keys to unregistered tables and
-all direct `zero.unsafe` SQL remain trusted application design. Packaged
+For shared-row Resources, startup proves tenant-leading indexes, tenant-aware
+business uniqueness, and tenant-consistent foreign keys between registered
+tenant Resources from actual SQLite metadata. It validates the constraints but
+does not author migrations; apps still add the DDL intentionally. Foreign keys
+to unregistered tables and all direct `zero.unsafe` SQL remain trusted
+application design. Packaged
 `CrudPage`/`AutoForm` composition can consume the shared field allow-list for
 form ergonomics, while managed server transports remain the authorization
 boundary. UI hiding by itself never grants or denies access.

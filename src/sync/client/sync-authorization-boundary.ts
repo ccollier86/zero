@@ -1,6 +1,7 @@
 const AUTHORIZATION_BOUNDARY_REASONS = new Set([
   'Auth context changed',
   'Sync access changed',
+  'Sync read authority changed',
 ]);
 
 /** True when a server close invalidates the authorization scope of local data. */

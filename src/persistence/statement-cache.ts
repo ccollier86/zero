@@ -46,8 +46,20 @@ export class StatementCache {
 
   /** Finalize every cached statement. */
   clear(): void {
-    for (const cached of this.cache.values()) cached.statement.finalize();
-    this.cache.clear();
+    const failures: unknown[] = [];
+    for (const [sql, cached] of this.cache.entries()) {
+      try {
+        cached.statement.finalize();
+        // Delete only after successful finalization. A transient failure stays
+        // owned by the cache so a later clear/abort can retry it safely.
+        this.cache.delete(sql);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'Cached SQLite statements could not be finalized.');
+    }
   }
 
   /** Return statement cache diagnostics. */
@@ -88,4 +100,3 @@ export class StatementCache {
     }
   }
 }
-

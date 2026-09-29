@@ -57,10 +57,18 @@ export {
 } from './resource-crud-service';
 
 export {
+  RESOURCE_DEFAULT_RECEIPT_MAX_KEYS,
+  RESOURCE_DEFAULT_RECEIPT_MAX_RESULT_BYTES,
+  RESOURCE_DEFAULT_RECEIPT_MAX_RETAINED_BYTES,
+  RESOURCE_DEFAULT_RECEIPT_RETAINED_LIMIT,
+} from './resource-default-receipt-store';
+
+export {
   ResourceSyncPolicyService,
 } from './resource-sync-policy';
 
 export {
+  buildResourceListFindPlan,
   buildResourceListQueryPlan,
   quoteResourceIdentifier,
 } from './resource-query';
@@ -114,6 +122,8 @@ export type {
   ConfigureResourceRegistryOptions,
   RegisteredResourceDefinition,
   RegisteredResourceExposure,
+  RegisteredResourceStorage,
+  ResourceTenantIsolation,
   ResourceRegistryIssue,
   ResourceRegistryIssueCode,
   ResourceRegistryValidationContext,
@@ -141,6 +151,7 @@ export type {
 } from './resource-sync-policy';
 
 export type {
+  ResourceListFindPlan,
   ResourceListQueryInput,
   ResourceListQueryPlan,
   ResourceListQueryPlanOptions,

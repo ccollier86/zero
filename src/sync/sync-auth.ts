@@ -63,7 +63,7 @@ export async function resolveSyncAuthContext(
       const authContext = await verifier.resolveAuthContext(token);
       verifier.assertCurrentProfile?.();
       return authContext
-        ? { ok: true, authContext }
+        ? { ok: true, authContext: detachAuthContext(authContext) }
         : invalidTokenResolution();
     }
 
@@ -79,15 +79,49 @@ export async function resolveSyncAuthContext(
 
     return {
       ok: true,
-      authContext: {
+      authContext: detachAuthContext({
         userId: payload.sub,
         email: payload.email,
         role: payload.role,
-      },
+      }),
     };
   } catch {
     return authResolutionFailed();
   }
+}
+
+/** Retain an immutable socket-owned authority snapshot, never provider state. */
+function detachAuthContext(context: SyncAuthContext): SyncAuthContext {
+  return Object.freeze({
+    ...context,
+    ...(context.scope === undefined
+      ? {}
+      : { scope: Object.freeze([...context.scope]) }),
+  });
+}
+
+/** Exact secret-free socket authority equality shared by auth admission and revalidation. */
+export function sameSyncAuthContext(
+  left: SyncAuthContext,
+  right: SyncAuthContext,
+): boolean {
+  return left.userId === right.userId
+    && left.email === right.email
+    && left.role === right.role
+    && left.clientId === right.clientId
+    && left.sessionKind === right.sessionKind
+    && JSON.stringify([...(left.scope ?? [])].sort())
+      === JSON.stringify([...(right.scope ?? [])].sort())
+    && left.sessionId === right.sessionId
+    && left.sessionGeneration === right.sessionGeneration
+    && left.sessionScopeKind === right.sessionScopeKind
+    && left.sessionScopeId === right.sessionScopeId
+    && left.tenantId === right.tenantId
+    && left.membershipId === right.membershipId
+    && left.tenantRole === right.tenantRole
+    && left.tenantAuthorizationGeneration === right.tenantAuthorizationGeneration
+    && left.membershipAuthorizationGeneration === right.membershipAuthorizationGeneration
+    && left.authorizationAssignmentRevision === right.authorizationAssignmentRevision;
 }
 
 function authResolutionFailed(): SyncAuthResolution {

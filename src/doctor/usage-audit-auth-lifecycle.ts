@@ -1,4 +1,4 @@
-import type { PlatformDoctorFinding } from './platform-doctor';
+import type { PlatformDoctorFinding } from './platform-doctor-contracts';
 import type {
   NormalizedUsageAuditOptions,
   SourceFile,

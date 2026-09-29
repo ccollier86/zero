@@ -16,6 +16,8 @@ quickly from one integrated platform. It combines:
 - React frontend runtime
 - file-router pages, layouts, route groups, and route auth metadata
 - ReactiveDB over SQLite
+- ReactiveDB Fabric for bounded actor-owned file/WAL, hot, and hybrid
+  multi-database topologies (active unreleased feature-branch work)
 - WebSocket sync and lazy `/api/data`
 - generated resource CRUD with server-side policy
 - auth, email, account lifecycle, password reset/setup, email verification,
@@ -71,9 +73,21 @@ Current unreleased-candidate boundary:
   databases, separate database files, cross-host messages, or RAM-only
   ephemeral topic values. Registered resources now use explicit server-owned
   client exposure plus optional immutable read/create/update/filter/sort field
-  allow-lists. Multi-mode startup validates actual non-partial tenant-leading
-  indexes, tenant-scoped business uniqueness, and tenant-consistent composite
-  foreign keys between registered tenant resources.
+  allow-lists. Under shared-row isolation, multi-mode startup validates actual
+  non-partial tenant-leading indexes, tenant-scoped business uniqueness, and
+  tenant-consistent composite foreign keys between registered tenant
+  resources; physical tenant isolation validates the actor realm instead.
+- ReactiveDB Fabric is implemented on an unmerged child feature branch, not a
+  released app contract. It keeps the historical control/auth database pinned
+  and can route physical tenant Resources to isolated actor-owned databases
+  selected only from trusted authorization scope. Generated Resource CRUD,
+  lazy data reads, and one multiplexed WebSocket use that topology. File/WAL
+  databases have independent subprocess writer lanes and optional read lanes;
+  bounded hot placement and synchronous hybrid selection are implemented with
+  explicit durability contracts. Read the architecture document before using
+  or changing this surface; fleet lifecycle, operator-grade backup/restore,
+  online placement migration, and the full package/OS matrix remain release
+  gates.
 
 Read [Releasing Zero](docs/releasing.md) before describing a capability as
 publicly supported.
@@ -85,6 +99,9 @@ publicly supported.
 - `docs/framework/README.md`: installed framework/package-mode docs.
 - `docs/framework-developer-surface.md`: canonical imports and app-owned
   extension APIs.
+- `docs/framework/multi-database-architecture.md`: authoritative unreleased
+  ReactiveDB Fabric contract, including topology, isolation, routing,
+  concurrency, Sync, capacity, durability, and release boundaries.
 - `docs/frontend/component-inventory.md`: component and UI use-first map.
 - `docs/frontend/router.md`: file router, layouts, route groups, auth
   boundaries, sitemap.
@@ -456,6 +473,7 @@ app.listen(config.port ?? 3000);
 | System | Runtime behavior |
 | --- | --- |
 | ReactiveDB | App tables from `tables`; server writes emit sync changes. |
+| ReactiveDB Fabric | With `databaseTopology`, actor-owned application databases use validated file/WAL, bounded hot, or hybrid placement while the control/auth database stays pinned. |
 | Shared SQL | Platform SQLite service available as `zero.sql`/`zero.sqlite`. |
 | WebSocket sync | Mounted at `/sync`; auth and resource-policy aware. |
 | `/api/data` | Lazy table query API with pagination, sorting, filters, limits, and policy integration. |
@@ -547,6 +565,49 @@ export const memberships = defineTable(
 
 Zero generates deterministic ids from natural identity values and creates a
 unique identity index.
+
+### ReactiveDB Fabric (unreleased branch)
+
+Fabric coordinates multiple independently reactive SQLite databases without
+changing the default single-database contract. Configure it only through the
+typed `databaseTopology` surface. Application code receives a database client
+already bound from trusted server authority; URL parameters, request bodies,
+headers, and browser messages never choose a file or logical database.
+
+In tenant-database mode, tables physically stored per tenant do not need a
+`tenant_id` column merely for isolation. Global/control data remains in the
+pinned default database, and logical shared-row tenancy continues to use the
+existing tenant-column rules. The Resource registry is the source of truth for
+which plane owns each exposed table. Resource CRUD, `/api/data`, and Sync all
+follow that server-owned topology and retain their policy and field-access
+checks.
+
+File/WAL placement gives each active database one FIFO writer actor. Separate
+databases can write concurrently when the topology has multiple writer slots;
+an optional reader actor permits committed same-file WAL reads while its writer
+is busy. Hot placement is bounded and writer-only. Hybrid placement chooses
+file or hot synchronously from an opaque, pseudonymous database reference and
+pins that choice for the active entry; it is not live promotion or demotion.
+The deterministic reference is unkeyed operational correlation metadata, not
+a secret or authorization capability, and a low-entropy source ID can be
+guess-correlated.
+
+Fabric has independent hard limits for active actor entries, durable database
+files, tenant-Sync-pinned databases, per-database Sync bindings, queues,
+receipts, and snapshot sessions. Permanent physical or receipt-key exhaustion
+uses `DATABASE_CAPACITY_EXHAUSTED`; transient admission pressure uses
+`DATABASE_BACKPRESSURE`. Do not catch either and silently bypass the
+coordinator. Use Doctor and Zero observability to plan capacity and lifecycle.
+
+Replacement backoff belongs to one database entry. The default
+`databaseTopology.restart` policy waits 10 ms initially, caps exponential
+delay at 1 second, and uses a 5-second half-open cadence after five attempts.
+Waiting operations retain queue timeout/cancellation; the last lease and app
+shutdown cancel pending replacement delays.
+
+This is active implementation on an unmerged child branch. Before treating it
+as supported, follow the remaining gates in
+[ReactiveDB Fabric: Multi-Database Architecture](docs/framework/multi-database-architecture.md).
 
 ## Sync Modes
 
@@ -1856,6 +1917,10 @@ reference docs confirm the behavior is implemented.
 - [Framework Developer Surface](docs/framework-developer-surface.md): canonical
   package imports, generated app shape, composition root, backend extensions,
   resources, package mode, and frontend/backend usage examples.
+- [ReactiveDB Fabric: Multi-Database Architecture](docs/framework/multi-database-architecture.md):
+  authoritative active-branch contract for actor-owned multi-database
+  topology, tenant routing, file/WAL and bounded hot placement, hybrid policy,
+  exact tenant Sync, capacity, durability, observability, and release gates.
 - [Framework API Standardization Plan](docs/framework/api-standardization-plan.md):
   historical plan for unifying framework APIs, package-mode behavior,
   extension loaders, resource APIs, and generators.

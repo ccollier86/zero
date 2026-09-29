@@ -8,9 +8,17 @@
 import type {
   SyncCatchupMessage,
   SyncChangeMessage,
+  SyncDataPlaneName,
   SyncSnapshotMessage,
 } from '../types';
-import type { SyncStoreContext } from './sync-store';
+import {
+  getSyncPlaneCursor,
+  type SyncStoreContext,
+} from './sync-store';
+import {
+  messageSyncDataPlane,
+  syncDataPlaneForTable,
+} from './sync-data-planes';
 
 type StreamMessage = SyncSnapshotMessage | SyncChangeMessage | SyncCatchupMessage;
 
@@ -18,12 +26,21 @@ type StreamMessage = SyncSnapshotMessage | SyncChangeMessage | SyncCatchupMessag
 export function acceptSyncStreamMessage(
   context: SyncStoreContext,
   message: StreamMessage,
+  tablePlanes?: Readonly<Record<string, SyncDataPlaneName>>,
 ): boolean {
+  const plane = messageSyncDataPlane(message);
+  if (plane === null) return false;
+  if (tablePlanes && !messageTablesMatchPlane(message, tablePlanes, plane)) {
+    return false;
+  }
   if (!validSeq(message.seq)) return false;
-  if (message.type === 'sync.snapshot') return acceptSnapshot(context, message);
+  if (message.type === 'sync.snapshot') {
+    return acceptSnapshot(context, message, plane);
+  }
   if (message.epoch === undefined && message.prevSeq === undefined) return true;
-  if (!sameStream(context, message)) return false;
-  if (!validSeq(message.prevSeq) || message.prevSeq !== context._sync.lastSeq) {
+  const cursor = getSyncPlaneCursor(context._sync, plane);
+  if (!sameStream(context, message, plane)) return false;
+  if (!validSeq(message.prevSeq) || message.prevSeq !== cursor.lastSeq) {
     return false;
   }
   if (message.type === 'sync.change') return message.seq > message.prevSeq;
@@ -41,25 +58,47 @@ export function acceptSyncStreamMessage(
 function acceptSnapshot(
   context: SyncStoreContext,
   message: SyncSnapshotMessage,
+  plane: SyncDataPlaneName,
 ): boolean {
   if (message.epoch === undefined) return true;
-  const epochChanged = context._sync.epoch !== null
-    && context._sync.epoch !== message.epoch;
+  const cursor = getSyncPlaneCursor(context._sync, plane);
+  const epochChanged = cursor.epoch !== null
+    && cursor.epoch !== message.epoch;
   const scopeChanged = message.scope !== undefined
-    && context._sync.scope !== null
-    && context._sync.scope !== message.scope;
+    && cursor.scope !== null
+    && cursor.scope !== message.scope;
   if ((epochChanged || scopeChanged) && message.reset === undefined) return false;
-  return message.reset !== undefined || message.seq >= context._sync.lastSeq;
+  return message.reset !== undefined || message.seq >= cursor.lastSeq;
 }
 
 function sameStream(
   context: SyncStoreContext,
   message: Exclude<StreamMessage, SyncSnapshotMessage>,
+  plane: SyncDataPlaneName,
 ): boolean {
+  const cursor = getSyncPlaneCursor(context._sync, plane);
   return typeof message.epoch === 'string'
-    && context._sync.epoch === message.epoch
+    && cursor.epoch === message.epoch
     && message.scope !== undefined
-    && context._sync.scope === message.scope;
+    && cursor.scope === message.scope;
+}
+
+function messageTablesMatchPlane(
+  message: StreamMessage,
+  tablePlanes: Readonly<Record<string, SyncDataPlaneName>>,
+  plane: SyncDataPlaneName,
+): boolean {
+  if (message.type === 'sync.snapshot') {
+    return Object.keys(message.tables).every(
+      (table) => syncDataPlaneForTable(tablePlanes, table) === plane,
+    );
+  }
+  if (message.type === 'sync.change') {
+    return syncDataPlaneForTable(tablePlanes, message.table) === plane;
+  }
+  return message.changes.every(
+    (change) => syncDataPlaneForTable(tablePlanes, change.table) === plane,
+  );
 }
 
 function validSeq(value: unknown): value is number {

@@ -8,7 +8,8 @@ import type { PlatformConfig } from '../router/renderer';
 import type { RouteNode, ApiHandler, LoaderContext, RouteConfig } from '../router/types';
 import { isPublicPath, type RouteAuthMode } from '../router/auth-policy';
 import { OBS_CODES } from '../../observability/codes';
-import { emitPlatformCode } from '../../observability/sink';
+import { emitPlatformCode, emitPlatformCodeTo } from '../../observability/sink';
+import type { PlatformObservabilityRuntime } from '../../observability/types';
 import { generateSitemapXml } from './sitemap';
 import type { ResolvedSitemapConfig } from './types';
 import {
@@ -39,6 +40,8 @@ interface CacheEntry {
 // ─── Router Plugin ─────────────────────────────────────────────────────────
 
 export interface RouterPluginOptions {
+  /** App-owned observability target supplied by managed createApp(). */
+  observability?: PlatformObservabilityRuntime;
   /** Route tree root (pre-built, or we build from appDir) */
   routeTree?: RouteNode;
   /** App directory to scan. Used if routeTree not provided. */
@@ -102,6 +105,9 @@ export interface RouterPluginOptions {
  * Mount this LAST so API plugins get priority.
  */
 export function createRouterPlugin(options: RouterPluginOptions) {
+  const emit = options.observability
+    ? emitPlatformCodeTo.bind(null, options.observability)
+    : emitPlatformCode;
   const appDir = options.appDir ?? './app';
   const outDir = resolve(options.outDir ?? '.build');
   const routeTree = options.routeTree ?? buildRouteTree(scanRoutes(appDir));
@@ -225,10 +231,9 @@ export function createRouterPlugin(options: RouterPluginOptions) {
                   return withPrivateApiHeaders(middlewareResult);
                 }
               }
-            } catch (err) {
-              emitPlatformCode(OBS_CODES.ROUTER_LAYOUT_CONFIG_FAILED, {
-                error: err,
-                metadata: { layoutPath, path: pathname },
+            } catch {
+              emit(OBS_CODES.ROUTER_LAYOUT_CONFIG_FAILED, {
+                metadata: { stage: 'api-layout-policy' },
               });
               return withPrivateApiHeaders(
                 new Response('Route policy unavailable', { status: 500 })
@@ -342,12 +347,11 @@ export function createRouterPlugin(options: RouterPluginOptions) {
               return middlewareResult;
             }
           }
-        } catch (err) {
+        } catch {
           // A layout config is an inherited authorization boundary. Import or
           // middleware evaluation failures must never weaken that boundary.
-          emitPlatformCode(OBS_CODES.ROUTER_LAYOUT_CONFIG_FAILED, {
-            error: err,
-            metadata: { layoutPath, path: pathname },
+          emit(OBS_CODES.ROUTER_LAYOUT_CONFIG_FAILED, {
+            metadata: { stage: 'page-layout-policy' },
           });
           return withPrivatePageHeaders(
             new Response('Route policy unavailable', { status: 500 }),
@@ -376,10 +380,9 @@ export function createRouterPlugin(options: RouterPluginOptions) {
                 loginPath: options.authGuard?.loginPath,
               },
             );
-          } catch (err) {
-            emitPlatformCode(OBS_CODES.ROUTER_LAYOUT_CONFIG_FAILED, {
-              error: err,
-              metadata: { pagePath, path: pathname },
+          } catch {
+            emit(OBS_CODES.ROUTER_LAYOUT_CONFIG_FAILED, {
+              metadata: { stage: 'page-policy' },
             });
             return withPrivatePageHeaders(
               new Response('Route policy unavailable', { status: 500 }),

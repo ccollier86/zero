@@ -16,6 +16,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   realpathSync,
 } from 'node:fs';
 import {
@@ -29,10 +30,17 @@ import {
   sep,
 } from 'node:path';
 
+import {
+  openDatabaseFileIdentityGuard,
+  type DatabaseFileIdentityProof,
+} from './database-file-identity';
+
 const DATABASE_ID_HASH_DOMAIN = 'zero.database-id.v1\0';
 const DATABASE_REF_HASH_DOMAIN = 'zero.database-ref.v1\0';
 const DATABASE_FILE_HINT_MAX_LENGTH = 24;
 const DATABASE_REF_PATTERN = /^[0-9a-f]{64}$/u;
+const MANAGED_DATABASE_FILE_PATTERN =
+  /^db-[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,23}-[0-9a-f]{64}\.sqlite$/u;
 
 /** Maximum size of a normalized logical database identifier in UTF-8 bytes. */
 export const DATABASE_ID_MAX_BYTES = 256;
@@ -43,7 +51,11 @@ declare const databaseRefBrand: unique symbol;
 /** A validated, NFC-normalized logical identifier. It is never used as a path. */
 export type DatabaseId = string & { readonly [databaseIdBrand]: true };
 
-/** Privacy-safe opaque digest used for routing, correlation, and telemetry. */
+/**
+ * Stable pseudonymous routing/correlation digest. It is not a secret or an
+ * authentication capability; low-entropy logical IDs can be dictionary
+ * correlated because derivation is deterministic and unkeyed.
+ */
 export type DatabaseRef = string & { readonly [databaseRefBrand]: true };
 
 export type DatabasePathErrorCode =
@@ -78,6 +90,8 @@ export interface ResolvedDatabaseFile {
 export interface PreparedDatabaseFile extends ResolvedDatabaseFile {
   /** True only when this call atomically reserved a new empty file. */
   readonly created: boolean;
+  /** Exact regular-file inode admitted by the parent for actor handoff. */
+  readonly identity: DatabaseFileIdentityProof;
 }
 
 /**
@@ -149,7 +163,7 @@ export function encodeDatabaseFileName(input: DatabaseId | string): string {
   return `db-${hint}-${digest}.sqlite`;
 }
 
-/** Derive the non-reversible, hint-free reference used outside path handling. */
+/** Derive the deterministic, hint-free pseudonymous routing reference. */
 export function createDatabaseRef(input: DatabaseId | string): DatabaseRef {
   const id = normalizeDatabaseId(input);
   return createHash('sha256')
@@ -207,6 +221,50 @@ export function prepareDatabaseFile(
   rootDirectory: string,
   input: DatabaseId | string,
 ): PreparedDatabaseFile {
+  return prepareDatabaseFileInternal(rootDirectory, input, null);
+}
+
+/**
+ * Coordinator-only creation boundary.
+ *
+ * `admitCreation` runs synchronously only when the managed main file is
+ * absent, immediately before its O_EXCL reservation. The coordinator invokes
+ * this while it owns both the physical root and its catalog gate, keeping a
+ * capacity decision and creation in one serialized critical section.
+ * Existing managed files bypass admission and always remain openable.
+ *
+ * @internal
+ */
+export function prepareDatabaseFileWithCreationAdmission(
+  rootDirectory: string,
+  input: DatabaseId | string,
+  admitCreation: () => void,
+): PreparedDatabaseFile {
+  if (typeof admitCreation !== 'function') {
+    throw new DatabasePathError(
+      'DATABASE_ROOT_INVALID',
+      'Database file creation admission must be a function.',
+    );
+  }
+  return prepareDatabaseFileInternal(rootDirectory, input, admitCreation);
+}
+
+/** Count exact regular Zero-managed main database files, excluding sidecars. */
+export function countZeroManagedDatabaseFiles(rootDirectory: string): number {
+  const canonicalRoot = prepareDatabaseRoot(rootDirectory);
+  let count = 0;
+  for (const name of readdirSync(canonicalRoot)) {
+    if (!MANAGED_DATABASE_FILE_PATTERN.test(name)) continue;
+    if (tryLstat(join(canonicalRoot, name))?.isFile()) count += 1;
+  }
+  return count;
+}
+
+function prepareDatabaseFileInternal(
+  rootDirectory: string,
+  input: DatabaseId | string,
+  admitCreation: (() => void) | null,
+): PreparedDatabaseFile {
   // Preserve resolveDatabaseFile()'s validation order: reject an invalid
   // logical ID before creating or hardening filesystem state.
   const id = normalizeDatabaseId(input);
@@ -220,10 +278,16 @@ export function prepareDatabaseFile(
   assertNoSymlinkComponents(location.rootDirectory, false);
   assertExistingDatabaseFile(location);
 
-  const created = reserveAndHardenDatabaseFile(location);
+  const created = reserveAndHardenDatabaseFile(location, admitCreation);
   assertExistingDatabaseFile(location, true);
 
-  return Object.freeze({ ...location, created });
+  const identityGuard = openDatabaseFileIdentityGuard(location.path, {
+    access: 'readwrite',
+  });
+  const identity = identityGuard.proof;
+  identityGuard.release();
+
+  return Object.freeze({ ...location, created, identity });
 }
 
 /**
@@ -416,12 +480,21 @@ function assertExistingDatabaseFile(
       'Database file path must be a regular file.',
     );
   }
+  if (details.nlink !== 1) {
+    throw new DatabasePathError(
+      'DATABASE_PATH_TYPE',
+      'Database file must not have hardlink aliases.',
+    );
+  }
 
   const realFilePath = realpathSync.native(location.path);
   assertContainedFile(location.rootDirectory, realFilePath);
 }
 
-function reserveAndHardenDatabaseFile(location: ResolvedDatabaseFile): boolean {
+function reserveAndHardenDatabaseFile(
+  location: ResolvedDatabaseFile,
+  admitCreation: (() => void) | null,
+): boolean {
   const noFollow = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0;
   const createFlags = fsConstants.O_CREAT
     | fsConstants.O_EXCL
@@ -429,6 +502,8 @@ function reserveAndHardenDatabaseFile(location: ResolvedDatabaseFile): boolean {
     | noFollow;
   let descriptor: number;
   let created = false;
+
+  if (!tryLstat(location.path)) admitCreation?.();
 
   try {
     descriptor = openSync(location.path, createFlags, 0o600);
@@ -448,10 +523,17 @@ function reserveAndHardenDatabaseFile(location: ResolvedDatabaseFile): boolean {
   }
 
   try {
-    if (!fstatSync(descriptor).isFile()) {
+    const details = fstatSync(descriptor, { bigint: true });
+    if (!details.isFile()) {
       throw new DatabasePathError(
         'DATABASE_PATH_TYPE',
         'Database file path must be a regular file.',
+      );
+    }
+    if (details.nlink !== 1n) {
+      throw new DatabasePathError(
+        'DATABASE_PATH_TYPE',
+        'Database file must not have hardlink aliases.',
       );
     }
     if (process.platform !== 'win32') fchmodSync(descriptor, 0o600);

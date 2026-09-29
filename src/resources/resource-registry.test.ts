@@ -111,6 +111,112 @@ describe('resource definitions and registry', () => {
       kind: 'tenant',
       field: 'tenant_id',
     });
+    expect(registry.getByTable('patients')?.storage).toEqual({
+      kind: 'tenant',
+      isolation: 'shared-row',
+      field: 'tenant_id',
+    });
+  });
+
+  test('normalizes tenant-database resources without requiring a row discriminator', () => {
+    const physicalTables = {
+      documents: {
+        id: 'text primary key',
+        title: 'text not null',
+      },
+    };
+    const registry = createResourceRegistry({
+      resources: [defineResource({
+        table: 'documents',
+        exposure: 'http',
+        realm: tenantRealm(),
+        policy: authenticatedOnly(),
+      })],
+      tables: physicalTables,
+      authConfig,
+      tenancyMode: 'multi',
+      tenantIsolation: 'tenant-database',
+      managedTables: ['documents'],
+    });
+
+    const resource = registry.getByTable('documents');
+    expect(resource?.realm).toEqual({ kind: 'tenant', field: 'tenant_id' });
+    expect(resource?.storage).toEqual({
+      kind: 'tenant',
+      isolation: 'tenant-database',
+    });
+    expect(Object.isFrozen(resource?.storage)).toBe(true);
+    expect(registry.getTenantIsolation()).toBe('tenant-database');
+
+    const db = createReactiveDB({ mode: 'memory' });
+    try {
+      // Physical tenant tables do not exist in the shared default database.
+      // Their actor realm is the authoritative schema boundary.
+      expect(validateResourceStorageRealms(registry, db)).toEqual([]);
+      expect(() => assertResourceStorageRealms(registry, db)).not.toThrow();
+    } finally {
+      db.dispose();
+    }
+  });
+
+  test('accepts physical tenant resources exposed through actor-backed Sync', () => {
+    for (const exposure of ['sync', 'all'] as const) {
+      const issues = validateResourceDefinitions([defineResource({
+        table: 'documents',
+        exposure,
+        realm: tenantRealm(),
+        policy: authenticatedOnly(),
+      })], {
+        tables: {
+          documents: {
+            id: 'text primary key',
+            title: 'text not null',
+          },
+        },
+        authConfig,
+        tenancyMode: 'multi',
+        tenantIsolation: 'tenant-database',
+        managedTables: ['documents'],
+      });
+      expect(issues).not.toContainEqual(expect.objectContaining({
+        resource: 'documents',
+        severity: 'error',
+      }));
+    }
+  });
+
+  test('fails closed for incompatible or mixed tenant isolation contexts', () => {
+    const resource = defineResource({
+      table: 'projects',
+      exposure: 'all',
+      realm: tenantRealm(),
+      policy: authenticatedOnly(),
+    });
+
+    expect(() => createResourceRegistry({
+      resources: [resource],
+      tables,
+      authConfig,
+      tenancyMode: 'single',
+      tenantIsolation: 'tenant-database',
+    })).toThrow(ResourceRegistryError);
+
+    const registry = new ResourceRegistry();
+    registry.register(defineResource({
+      table: 'projects',
+      policy: readOnly(),
+    }), { tables, authConfig });
+    expect(() => registry.register(defineResource({
+      table: 'tickets',
+      exposure: 'all',
+      realm: globalRealm(),
+      policy: readOnly(),
+    }), {
+      tables,
+      authConfig,
+      tenancyMode: 'multi',
+      tenantIsolation: 'tenant-database',
+    })).toThrow(ResourceRegistryError);
   });
 
   test('rejects fake NOT NULL text and verifies the actual SQLite discriminator', () => {

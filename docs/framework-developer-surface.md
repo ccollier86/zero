@@ -237,6 +237,7 @@ SQLite's file/WAL path.
 | System | How it appears |
 | --- | --- |
 | ReactiveDB | Always created by sync plugin; app tables come from `tables`. |
+| ReactiveDB Fabric | With `databaseTopology.mode: 'multiple'`, keeps the default/control database pinned and routes named or physical-tenant Resources through bounded subprocess actors. Active unreleased branch work. |
 | Shared SQL | Always created before plugins; app-owned backend routes can use `zero.sql`/`zero.sqlite` for backend-only SQL. |
 | WebSocket sync | Always mounted at `/sync`. Auth-aware and resource-policy-aware when auth/resources are enabled. |
 | Auth | Mounted when `auth !== false`; adds `/auth/*`, request helpers, and protected page redirects. |
@@ -254,6 +255,22 @@ SQLite's file/WAL path.
 | `/api/data` | Mounted for lazy tables and guarded by sync policy, auth, and registered resource `list` policy. |
 | App backend extensions | Loaded from `server/plugins`, `server/middleware`, `server/endpoints`, and `server/routes` before health and file-router catch-all. |
 | File router | Mounted last; handles `app/**/page.tsx`, `layout.tsx`, `route.ts`, and 404s. |
+
+### Multi-database composition boundary
+
+ReactiveDB Fabric is configured at the composition root; app endpoints do not
+open tenant SQLite files or accept a database path/ref from a request. In
+physical tenant mode, Zero derives an authority-bound database capability from
+the authenticated session and projects it through generated Resource CRUD,
+lazy data queries, Sync, and the request `zero` service boundary.
+
+Because source-mode actors re-enter the application executable, a Fabric app
+must call `runDatabaseActorIfRequested({ realm })` before `createApp()`. Keep
+the realm in a side-effect-free shared module and point `actors.launch` to that
+server entry. Omitting `databaseTopology` preserves the ordinary composition
+shown above. See [Platform Configuration](./platform-configuration.md#reactivedb-fabric-topology-active-unreleased-branch)
+and the [Fabric architecture](./framework/multi-database-architecture.md) for
+the complete, currently unreleased contract.
 
 ## Data Models And ReactiveDB
 

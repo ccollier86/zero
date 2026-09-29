@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, test } from 'bun:test';
 
+import { MemoryEventStore, OBS_CODES } from '../observability';
 import {
   ResourceLoaderError,
   collectResourceFiles,
@@ -90,9 +91,21 @@ describe('resource loader', () => {
       await mkdir(resourcesDir, { recursive: true });
       await writeFile(join(resourcesDir, 'bad.ts'), 'export default { nope: true };\n');
 
-      await expect(loadResourceDefinitions({ resourcesDir })).rejects.toBeInstanceOf(
-        ResourceLoaderError
-      );
+      const events = new MemoryEventStore();
+      const observability = {
+        sink: events,
+        store: events,
+        config: { console: false, store: events },
+      } as const;
+
+      await expect(loadResourceDefinitions({ resourcesDir, observability }))
+        .rejects.toBeInstanceOf(ResourceLoaderError);
+      const [event] = events.query({
+        code: OBS_CODES.RESOURCE_LOAD_FAILED.code,
+      }).events;
+      expect(event?.metadata).toEqual({ stage: 'module-import' });
+      expect(event?.error).toBeUndefined();
+      expect(JSON.stringify(event)).not.toContain(rootDir);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

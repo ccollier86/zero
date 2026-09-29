@@ -81,6 +81,50 @@ runtime writes to console, keeps a bounded in-memory event store, and exposes a
 protected `/api/_zero/observability/events` endpoint. See
 [Observability](./observability.md).
 
+### ReactiveDB Fabric: isolated multi-database runtime
+
+ReactiveDB Fabric is active implementation on Zero's unmerged multi-database
+feature branch. It extends the existing single-database contract without
+moving the default database: identity, sessions, memberships, Zero internals,
+and global/control resources stay pinned, while selected application resources
+can live in separately actor-owned databases.
+
+In physical tenant mode, the server derives an opaque, pseudonymous database
+reference from the authenticated tenant scope. A URL, body, header, WebSocket
+message, or browser cache cannot select a file. Because the database is the
+tenant boundary, physically isolated tables do not need a `tenant_id` column
+merely for separation; shared-row Resources continue to use the normal
+discriminator and schema rules.
+
+```text
+                         pinned control/auth ReactiveDB
+Browser -> Elysia/Sync <             |
+                         Fabric coordinator
+                           |       |
+                      tenant A  tenant B
+                      writer     writer       independent subprocess lanes
+                        + reader   + reader    optional file/WAL readers
+```
+
+Fabric supports direct file/WAL placement, bounded RAM-active hot placement,
+and a synchronous hybrid policy selected from that database reference. The
+reference is deterministic and unkeyed operational correlation metadata, not
+a secret or authorization capability; low-entropy source IDs can be
+guess-correlated. Separate files can write concurrently because each actor has
+its own process;
+writes to one database remain ordered. Resource CRUD, `/api/data`, and a single
+multiplexed WebSocket route each table through the same server-owned data-plane
+classification, with independent tenant/default Sync cursors and exact bounded
+snapshot sessions.
+
+This is not a distributed SQLite service. One app coordinator and its child
+actors exclusively own one local Fabric root. Fleet migration/lifecycle,
+operator-grade backup/restore, online placement changes, and the supported
+package/OS matrix remain explicit release work. Read the
+[Fabric architecture](./framework/multi-database-architecture.md) and
+[SDK reference](./sdk-reference.md#reactivedb-fabric-actor-backed-multi-database-tenancy)
+before configuring it.
+
 ---
 
 ## Authentication

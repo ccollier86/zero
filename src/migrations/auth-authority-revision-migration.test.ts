@@ -31,12 +31,12 @@ test('migration 020 installs the durable authority revision and triggers', () =>
     `).all() as Array<{ name: string }>).map((row) => row.name);
     expect(triggerNames).toEqual(expect.arrayContaining([
       'trg_zero_authority_users_update_v2',
-      'trg_zero_authority__auth_sessions_update_v1',
+      'trg_zero_authority__auth_sessions_update_v2',
       'trg_zero_authority__auth_tenants_update_v1',
       'trg_zero_authority__auth_tenant_memberships_update_v1',
       'trg_zero_authority__auth_application_role_assignments_update_v1',
       'trg_zero_authority__auth_tenant_membership_roles_update_v1',
-      'trg_zero_authority__auth_native_sessions_update_v1',
+      'trg_zero_authority__auth_native_sessions_update_v2',
     ]));
 
     const before = authorityRevision(database);
@@ -72,18 +72,19 @@ test('migration 020 installs the durable authority revision and triggers', () =>
     `).run('session-1', 'migration-user', now, now, now, now + 60_000);
     expect(authorityRevision(database)).toBe(beforeSession + 1);
 
-    // Routine sliding-session touches must not wake and revalidate every
-    // socket across every replica. Revocation/generation changes still do.
+    // Durable sessions are fail-closed: every mutable field is treated as
+    // authority so schema evolution cannot introduce an unobserved security
+    // boundary. This includes sliding-session timestamps.
     database.query(`
       UPDATE _auth_sessions SET last_seen_at = ?, expires_at = ?
       WHERE session_id = ?
     `).run(now + 1_000, now + 61_000, 'session-1');
-    expect(authorityRevision(database)).toBe(beforeSession + 1);
+    expect(authorityRevision(database)).toBe(beforeSession + 2);
     database.query(`
       UPDATE _auth_sessions SET status = 'revoked', generation = generation + 1
       WHERE session_id = ?
     `).run('session-1');
-    expect(authorityRevision(database)).toBe(beforeSession + 2);
+    expect(authorityRevision(database)).toBe(beforeSession + 3);
   } finally {
     migrator.dispose();
     database.close();

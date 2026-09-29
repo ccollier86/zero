@@ -9,17 +9,15 @@
 import {
   DATABASE_ACTOR_MAX_REPLAY_CHANGES,
   DATABASE_ACTOR_OPERATIONS,
+  normalizeDatabaseActorSQLiteConfig,
   validateDatabaseActorBindPayload,
   validateDatabaseActorBindResult,
-  validateDatabaseActorReplayPayload,
+  type DatabaseActorPlacementConfig,
   type DatabaseActorRole,
   type DatabaseActorSQLiteConfig,
 } from './database-actor-protocol';
 import {
   DatabaseError,
-  normalizeDatabaseError,
-  type DatabaseErrorCode,
-  type DatabaseErrorDetails,
 } from './database-error';
 import {
   AuthorityCommitCoordinator,
@@ -36,35 +34,132 @@ import type {
   DatabaseExecutorValue,
 } from './database-executor';
 import {
+  countZeroManagedDatabaseFiles,
   createDatabaseRef,
-  normalizeDatabaseId,
-  prepareDatabaseFile,
+  prepareDatabaseFileWithCreationAdmission,
   type DatabaseId,
   type DatabaseRef,
 } from './database-file';
 import type { DatabaseObservability } from './database-observability';
 import {
+  DATABASE_FILE_PLACEMENT_POLICY,
+  type DatabasePlacementPolicy,
+} from './database-placement';
+import {
   acquireDatabaseRootOwnership,
   type DatabaseRootOwnershipGuard,
 } from './database-root-ownership';
+import {
+  probeDatabaseActorLiveness,
+  type DatabaseActorLivenessBinding,
+} from './database-actor-liveness';
+import {
+  prepareDatabaseBindingIdentity,
+  type DatabaseBindingIdentity,
+} from './database-binding-identity';
+import {
+  openDatabaseFileIdentityGuard,
+  sameDatabaseFileIdentity,
+} from './database-file-identity';
 import {
   createDatabaseRealmOperationCatalog,
   type DatabaseRealm,
 } from './database-realm';
 import {
-  validateDatabaseOperation,
+  createDatabaseSequenceToken,
   type DatabaseCommitResult,
-  type DatabaseOperation,
   type DatabaseReadResult,
   type DatabaseWriteOperation,
 } from './database-operations';
 import {
-  validateDatabaseActorExecuteResult,
-  validateDatabaseActorReplayResult,
-} from './database-actor-result-validation';
+  type DatabaseTenantSyncBinding,
+  type DatabaseTenantSyncExecutionOptions,
+  type DatabaseTenantSyncReplayResult,
+  type DatabaseTenantSyncSnapshotPage,
+  type DatabaseTenantSyncWakeup,
+} from './database-tenant-sync';
+import {
+  type DatabaseLogicalReceiptFingerprint,
+  type DatabaseTrustedReceiptExecutionOptions,
+  type DatabaseTrustedReceiptLookup,
+  type DatabaseTrustedWriteExecutionOptions,
+} from './database-trusted-writer';
+import type { DatabaseWriterCommitValue } from './database-writer-engine';
+import { DATABASE_COORDINATOR_MAX_DATABASES } from './database-capacity';
+import {
+  type DatabaseAcquireOptions,
+  type DatabaseCoordinatorDiagnostics,
+  type DatabaseCoordinatorEntryDiagnostics,
+  type DatabaseCoordinatorEntryState,
+  type DatabaseCoordinatorLease,
+  type DatabaseCoordinatorOptions,
+  type DatabaseCoordinatorState,
+  type DatabaseExecutionOptions,
+  type DatabaseExecutorFactory,
+  type DatabaseTenantSyncAcquireOptions,
+} from './database-coordinator-contract';
+import {
+  CoordinatorLease,
+  CoordinatorTenantSyncBinding,
+  type CoordinatorTenantSyncSnapshotStart,
+} from './database-coordinator-capability';
+import {
+  type DatabaseCoordinatorEntry as DatabaseEntry,
+  type DatabaseCoordinatorSyncBindingHandle,
+  type DatabaseTenantSyncIdentity,
+} from './database-coordinator-entry';
+import { AsyncCatalogGate } from './database-coordinator-catalog-gate';
+import {
+  authorityUnavailable,
+  elapsed,
+  isPermanentOpenFailure,
+  safeCoordinatorError,
+} from './database-coordinator-errors';
+import {
+  normalizeCoordinatorPlacementPolicy as normalizePlacementPolicy,
+  placementPolicyCanSelectFile,
+  resolveCoordinatorEntryPlacement as resolveEntryPlacement,
+  sameCoordinatorActorPlacement as sameActorPlacement,
+} from './database-coordinator-placement';
+import {
+  boundedTimerInterval,
+  compactExecutors,
+  firstSetValue,
+  nonNegativeInteger,
+  normalizeCoordinatorDatabaseId,
+  observablePositiveInteger,
+  positiveInteger,
+} from './database-coordinator-runtime';
+import { DatabaseWriterLane } from './database-writer-lane';
+import { DatabaseHotDurabilitySupervisor } from './database-hot-durability-supervisor';
+import { DatabaseCoordinatorTenantSyncRuntime } from './database-coordinator-tenant-sync-runtime';
+import { DatabaseCoordinatorOperationRuntime } from './database-coordinator-operation-runtime';
+import {
+  nextDatabaseRestartPlan,
+  normalizeDatabaseCoordinatorRestartPolicy,
+  waitForDatabaseRestart,
+  type NormalizedDatabaseCoordinatorRestartPolicy,
+} from './database-restart-policy';
+
+export type {
+  DatabaseAcquireOptions,
+  DatabaseCoordinatorDiagnostics,
+  DatabaseCoordinatorEntryDiagnostics,
+  DatabaseCoordinatorEntryState,
+  DatabaseCoordinatorLease,
+  DatabaseCoordinatorOptions,
+  DatabaseCoordinatorState,
+  DatabaseExecutionOptions,
+  DatabaseExecutorFactory,
+  DatabaseExecutorFactoryContext,
+  DatabaseTenantSyncAcquireOptions,
+} from './database-coordinator-contract';
+export type { DatabaseCoordinatorRestartPolicy } from './database-restart-policy';
 
 const DEFAULT_MAX_DATABASES = 16;
+const DEFAULT_MAX_DATABASE_FILES = 10_000;
 const DEFAULT_MAX_BLOCKED_DATABASES = 1_024;
+const DEFAULT_MAX_TENANT_SYNC_BINDINGS_PER_DATABASE = 64;
 const DEFAULT_MAX_QUEUED_PER_DATABASE = 128;
 const DEFAULT_MAX_QUEUED_TOTAL = 1_024;
 const DEFAULT_QUEUE_TIMEOUT_MS = 15_000;
@@ -73,165 +168,32 @@ const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
 const MIN_SWEEP_INTERVAL_MS = 1_000;
 const MAX_SWEEP_INTERVAL_MS = 30_000;
 
-export type DatabaseCoordinatorState =
-  | 'created'
-  | 'started'
-  | 'draining'
-  | 'close-failed'
-  | 'closed';
-
-export interface DatabaseExecutorFactoryContext {
-  readonly role: DatabaseActorRole;
-  readonly slot: number;
-}
-
-export type DatabaseExecutorFactory = (
-  context: DatabaseExecutorFactoryContext,
-) => DatabaseExecutor;
-
-export interface DatabaseCoordinatorOptions {
-  /** Private root containing only Zero-managed flat database files. */
-  readonly rootDirectory: string;
-  /** Immutable actor-local schema and named-operation registry. */
-  readonly realm: DatabaseRealm;
-  /** Creates one exact-generation executor for a bounded pool slot. */
-  readonly createExecutor: DatabaseExecutorFactory;
-  readonly sqlite?: DatabaseActorSQLiteConfig;
-  readonly maxDatabases?: number;
-  /** Maximum remembered permanent-open failures. Oldest records are retried. */
-  readonly maxBlockedDatabases?: number;
-  /** Set false to route every read through the writer actor. Default: true. */
-  readonly readers?: boolean;
-  readonly maxQueuedPerDatabase?: number;
-  readonly maxQueuedTotal?: number;
-  readonly queueTimeoutMs?: number;
-  readonly operationTimeoutMs?: number;
-  readonly idleTimeoutMs?: number;
-  readonly sweepIntervalMs?: number | false;
-  readonly observability?: DatabaseObservability;
-  /** Shared/exclusive gate also used by control-plane authority mutations. */
-  readonly authorityCommitCoordinator?: AuthorityCommitCoordinator;
-  /** Require every acquired capability to carry live commit authority. */
-  readonly requireCommitAuthority?: boolean;
-  /** Deterministic test seam. */
-  readonly now?: () => number;
-}
-
-export interface DatabaseExecutionOptions {
-  /** Cancellation is honored while waiting for recovery or in the writer FIFO. */
-  readonly signal?: AbortSignal;
-  readonly queueTimeoutMs?: number;
-  readonly operationTimeoutMs?: number;
-}
-
-export interface DatabaseAcquireOptions {
-  /** Opaque live-authority context minted by trusted tenant routing. */
-  readonly commitAuthority?: DatabaseCommitAuthority;
-}
-
-export interface DatabaseCoordinatorLease extends AsyncDisposable {
-  readonly databaseRef: DatabaseRef;
-  readonly released: boolean;
-  execute(
-    operation: unknown,
-    options?: DatabaseExecutionOptions,
-  ): Promise<DatabaseReadResult | DatabaseCommitResult>;
-  replay(
-    afterSeq: number,
-    limit?: number,
-    options?: DatabaseExecutionOptions,
-  ): Promise<DatabaseReadResult>;
-  release(): void;
-}
-
-export type DatabaseCoordinatorEntryState =
-  | 'opening'
-  | 'ready'
-  | 'closing'
-  | 'failed'
-  | 'quarantined'
-  | 'closed';
-
-export interface DatabaseCoordinatorEntryDiagnostics {
-  readonly databaseRef: DatabaseRef;
-  readonly state: DatabaseCoordinatorEntryState;
-  readonly slot: number;
-  readonly leases: number;
-  readonly activeOperations: number;
-  readonly queueDepth: number;
-  readonly writerGeneration: number | null;
-  readonly readerGeneration: number | null;
-  readonly lastUsedAt: number;
-}
-
-export interface DatabaseCoordinatorDiagnostics {
-  readonly state: DatabaseCoordinatorState;
-  readonly maxDatabases: number;
-  readonly maxBlockedDatabases: number;
-  readonly readersEnabled: boolean;
-  readonly openDatabases: number;
-  readonly queuedOperations: number;
-  readonly activeOperations: number;
-  readonly availableSlots: number;
-  readonly quarantinedSlots: number;
-  readonly heldAuthorityLeases: number;
-  readonly blockedDatabases: readonly Readonly<{
-    readonly databaseRef: DatabaseRef;
-    readonly failureCode: DatabaseErrorCode;
-  }>[];
-  readonly databases: readonly DatabaseCoordinatorEntryDiagnostics[];
-}
-
-interface DatabaseEntry {
-  readonly id: DatabaseId;
-  readonly databaseRef: DatabaseRef;
-  readonly filePath: string;
-  readonly slot: number;
-  readonly lane: DatabaseWriterLane;
-  state: DatabaseCoordinatorEntryState;
-  writer: DatabaseExecutor | null;
-  reader: DatabaseExecutor | null;
-  opening: Promise<void>;
-  recovery: Promise<void> | null;
-  settlement: Promise<void> | null;
-  closeTask: Promise<void> | null;
-  failure: DatabaseError | null;
-  leases: number;
-  activeOperations: number;
-  recoveryWaiters: number;
-  lastUsedAt: number;
-}
+type DatabaseBindingRetirementReason =
+  | 'runtime-failure'
+  | 'periodic-durability-failure';
 
 type DatabaseCloseReason = 'requested' | 'idle' | 'capacity' | 'shutdown';
-
-interface WriterLaneTask<T> {
-  readonly execute: () => Promise<T>;
-  readonly resolve: (value: T) => void;
-  readonly reject: (error: DatabaseError) => void;
-  readonly queuedAt: number;
-  readonly timeoutMs: number;
-  readonly operationClass: 'query' | 'mutation' | 'replay';
-  readonly chargedToGlobalQueue: boolean;
-  readonly signal?: AbortSignal;
-  timer: ReturnType<typeof setTimeout> | null;
-  abortListener: (() => void) | null;
-  settled: boolean;
-}
 
 /** Bounded actor coordinator. It never exposes an actor, path, or raw handle. */
 export class DatabaseCoordinator implements AsyncDisposable {
   readonly realm: DatabaseRealm;
 
-  private readonly rootDirectory: string;
+  private readonly configuredRootDirectory: string;
+  private rootDirectory: string;
   private readonly createExecutor: DatabaseExecutorFactory;
+  private readonly placementPolicy: DatabasePlacementPolicy;
   private readonly sqlite: DatabaseActorSQLiteConfig;
   private readonly readersEnabled: boolean;
   private readonly maxDatabases: number;
+  private readonly maxDatabaseFiles: number;
   private readonly maxBlockedDatabases: number;
+  private readonly maxTenantSyncDatabases: number;
+  private readonly maxTenantSyncBindingsPerDatabase: number;
   private readonly maxQueuedPerDatabase: number;
   private readonly maxQueuedTotal: number;
   private readonly queueTimeoutMs: number;
   private readonly operationTimeoutMs: number;
+  private readonly restartPolicy: NormalizedDatabaseCoordinatorRestartPolicy;
   private readonly idleTimeoutMs: number;
   private readonly sweepIntervalMs: number | false;
   private readonly observability: DatabaseObservability | null;
@@ -244,14 +206,19 @@ export class DatabaseCoordinator implements AsyncDisposable {
   private readonly quarantinedSlots = new Set<number>();
   private readonly catalogGate = new AsyncCatalogGate();
   private readonly lastGenerationBySlot = new Map<string, number>();
+  private readonly hotDurabilitySupervisor: DatabaseHotDurabilitySupervisor;
+  private readonly operationRuntime: DatabaseCoordinatorOperationRuntime;
+  private readonly tenantSyncRuntime: DatabaseCoordinatorTenantSyncRuntime;
   private readonly blockedDatabases = new Map<DatabaseId, {
     readonly databaseRef: DatabaseRef;
     readonly failure: DatabaseError;
   }>();
   private state: DatabaseCoordinatorState = 'created';
   private rootOwnership: DatabaseRootOwnershipGuard | null = null;
+  private actorLiveness: DatabaseActorLivenessBinding | null = null;
   private queuedOperations = 0;
   private heldAuthorityLeases = 0;
+  private managedDatabaseFiles = 0;
   private idleTimer: ReturnType<typeof setInterval> | null = null;
   private closeTask: Promise<void> | null = null;
 
@@ -269,25 +236,54 @@ export class DatabaseCoordinator implements AsyncDisposable {
       options.maxDatabases ?? DEFAULT_MAX_DATABASES,
       'maxDatabases',
     );
-    this.maxBlockedDatabases = positiveInteger(
+    if (this.maxDatabases > DATABASE_COORDINATOR_MAX_DATABASES) {
+      throw new DatabaseError(
+        'DATABASE_CONFIG_INVALID',
+        `maxDatabases must not exceed ${DATABASE_COORDINATOR_MAX_DATABASES}.`,
+      );
+    }
+    this.maxDatabaseFiles = observablePositiveInteger(
+      options.maxDatabaseFiles ?? DEFAULT_MAX_DATABASE_FILES,
+      'maxDatabaseFiles',
+    );
+    this.maxBlockedDatabases = observablePositiveInteger(
       options.maxBlockedDatabases ?? DEFAULT_MAX_BLOCKED_DATABASES,
       'maxBlockedDatabases',
     );
-    this.maxQueuedPerDatabase = positiveInteger(
+    this.maxTenantSyncDatabases = nonNegativeInteger(
+      options.maxTenantSyncDatabases
+        ?? (this.maxDatabases === 1 ? 1 : this.maxDatabases - 1),
+      'maxTenantSyncDatabases',
+    );
+    if (this.maxTenantSyncDatabases > this.maxDatabases) {
+      throw new DatabaseError(
+        'DATABASE_CONFIG_INVALID',
+        'maxTenantSyncDatabases must not exceed maxDatabases.',
+      );
+    }
+    this.maxTenantSyncBindingsPerDatabase = observablePositiveInteger(
+      options.maxTenantSyncBindingsPerDatabase
+        ?? DEFAULT_MAX_TENANT_SYNC_BINDINGS_PER_DATABASE,
+      'maxTenantSyncBindingsPerDatabase',
+    );
+    this.maxQueuedPerDatabase = observablePositiveInteger(
       options.maxQueuedPerDatabase ?? DEFAULT_MAX_QUEUED_PER_DATABASE,
       'maxQueuedPerDatabase',
     );
-    this.maxQueuedTotal = positiveInteger(
+    this.maxQueuedTotal = observablePositiveInteger(
       options.maxQueuedTotal ?? DEFAULT_MAX_QUEUED_TOTAL,
       'maxQueuedTotal',
     );
-    this.queueTimeoutMs = positiveInteger(
+    this.queueTimeoutMs = boundedTimerInterval(
       options.queueTimeoutMs ?? DEFAULT_QUEUE_TIMEOUT_MS,
       'queueTimeoutMs',
     );
-    this.operationTimeoutMs = positiveInteger(
+    this.operationTimeoutMs = boundedTimerInterval(
       options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS,
       'operationTimeoutMs',
+    );
+    this.restartPolicy = normalizeDatabaseCoordinatorRestartPolicy(
+      options.restart,
     );
     this.idleTimeoutMs = nonNegativeInteger(
       options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
@@ -295,7 +291,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
     );
     this.sweepIntervalMs = options.sweepIntervalMs === false
       ? false
-      : positiveInteger(
+      : boundedTimerInterval(
         options.sweepIntervalMs
           ?? Math.min(
             MAX_SWEEP_INTERVAL_MS,
@@ -327,24 +323,153 @@ export class DatabaseCoordinator implements AsyncDisposable {
         'Required database commit authority needs an authority coordinator.',
       );
     }
+    if (options.readers !== undefined && typeof options.readers !== 'boolean') {
+      throw new DatabaseError(
+        'DATABASE_CONFIG_INVALID',
+        'Database readers policy must be a boolean.',
+      );
+    }
+    this.configuredRootDirectory = options.rootDirectory;
     this.rootDirectory = options.rootDirectory;
     this.realm = options.realm;
     this.operationCatalog = createDatabaseRealmOperationCatalog(options.realm);
     this.createExecutor = options.createExecutor;
-    this.sqlite = detachSQLiteConfig(options.sqlite ?? {});
+    this.placementPolicy = normalizePlacementPolicy(
+      options.placement === undefined
+        ? DATABASE_FILE_PLACEMENT_POLICY
+        : options.placement,
+    );
+    try {
+      this.sqlite = normalizeDatabaseActorSQLiteConfig(options.sqlite ?? {});
+    } catch {
+      throw new DatabaseError(
+        'DATABASE_CONFIG_INVALID',
+        'Database actor SQLite configuration is invalid.',
+      );
+    }
     this.readersEnabled = options.readers !== false;
     this.observability = options.observability ?? null;
     this.authorityCommitCoordinator = options.authorityCommitCoordinator ?? null;
     this.requireCommitAuthority = options.requireCommitAuthority ?? false;
     this.now = options.now ?? Date.now;
+    this.hotDurabilitySupervisor = new DatabaseHotDurabilitySupervisor({
+      now: this.now,
+      observability: this.observability,
+      isObservedEntryCurrent: (entry, executor, role) => (
+        (entry.state === 'ready' || entry.state === 'opening')
+        && this.entries.get(entry.id) === entry
+        && (role === 'writer' ? entry.writer : entry.reader) === executor
+      ),
+      isReadyWriterCurrent: (entry, executor) => (
+        this.state === 'started'
+        && entry.state === 'ready'
+        && this.entries.get(entry.id) === entry
+        && entry.writer === executor
+      ),
+      onFatal: (entry, executor, error) => {
+        void this.retireBinding(
+          entry,
+          executor,
+          error,
+          'periodic-durability-failure',
+        ).catch((caught) => {
+          this.emit({
+            type: 'coordinator-failed',
+            phase: 'close',
+            error: safeCoordinatorError(caught),
+          });
+        });
+      },
+    });
+    this.operationRuntime = new DatabaseCoordinatorOperationRuntime({
+      operationCatalog: this.operationCatalog,
+      queueTimeoutMs: this.queueTimeoutMs,
+      operationTimeoutMs: this.operationTimeoutMs,
+      maxQueuedPerDatabase: this.maxQueuedPerDatabase,
+      maxQueuedTotal: this.maxQueuedTotal,
+      now: this.now,
+      authorityCommitCoordinator: this.authorityCommitCoordinator,
+      requireCommitAuthority: this.requireCommitAuthority,
+      assertStarted: () => this.assertStarted(),
+      canAwaitOpening: (entry) => this.canAwaitOpening(entry),
+      assertUsableEntry: (entry) => this.assertUsableEntry(entry),
+      requireWriter: (entry) => this.requireWriter(entry),
+      isTerminalFailure: (executor, error) => (
+        this.isTerminalExecutorFailure(executor, error)
+      ),
+      retire: (entry, executor, error) => (
+        this.retireBinding(entry, executor, error, 'runtime-failure')
+      ),
+      publishCommit: (entry, operation, result) => (
+        this.publishTenantSyncCommit(entry, operation, result)
+      ),
+      holdAuthorityUntilSettlement: (lease, executor) => (
+        this.holdAuthorityUntilSettlement(lease, executor)
+      ),
+      queuedOperations: () => this.queuedOperations,
+      incrementQueuedOperations: () => { this.queuedOperations += 1; },
+      decrementQueuedOperations: () => {
+        this.queuedOperations = Math.max(0, this.queuedOperations - 1);
+      },
+      cleanupFailedEntryIfUnused: (entry) => (
+        this.cleanupFailedEntryIfUnused(entry)
+      ),
+      emit: (event) => this.emit(event),
+    });
+    this.tenantSyncRuntime = new DatabaseCoordinatorTenantSyncRuntime({
+      operationCatalog: this.operationCatalog,
+      operationTimeoutMs: this.operationTimeoutMs,
+      now: this.now,
+      assertStarted: () => this.assertStarted(),
+      canAwaitOpening: (entry) => this.canAwaitOpening(entry),
+      awaitReplacementOpening: (entry, execution, operation, resume) => (
+        this.operationRuntime.awaitReplacementOpening(
+          entry,
+          execution,
+          operation,
+          resume,
+        )
+      ),
+      assertUsableEntry: (entry) => this.assertUsableEntry(entry),
+      isReadySessionGeneration: (entry, generation) => (
+        this.state === 'started'
+        && this.entries.get(entry.id) === entry
+        && entry.state === 'ready'
+        && entry.writer !== null
+        && entry.writer.diagnostics().generation === generation
+        && entry.syncIdentity?.generation === generation
+      ),
+      enqueueLane: (entry, operation, execution, run) => (
+        this.operationRuntime.enqueueLane(entry, operation, execution, run)
+      ),
+      requireWriter: (entry) => this.requireWriter(entry),
+      requireIdentity: (entry, writer) => (
+        this.requireTenantSyncIdentity(entry, writer)
+      ),
+      advanceSequence: (entry, sequence) => (
+        this.advanceTenantSyncSequence(entry, sequence)
+      ),
+      isTerminalFailure: (executor, error) => (
+        this.isTerminalExecutorFailure(executor, error)
+      ),
+      retire: (entry, executor, error) => (
+        this.retireBinding(entry, executor, error, 'runtime-failure')
+      ),
+      emit: (event) => this.emit(event),
+    });
     for (let slot = 0; slot < this.maxDatabases; slot += 1) {
       this.freeSlots.add(slot);
     }
     this.emit({
       type: 'coordinator-configured',
       writerLimit: this.maxDatabases,
-      readerLimit: this.readersEnabled ? this.maxDatabases : 0,
+      readerLimit: this.readersEnabled && placementPolicyCanSelectFile(this.placementPolicy)
+        ? this.maxDatabases
+        : 0,
       runtimeLimit: this.maxDatabases,
+      fileLimit: this.maxDatabaseFiles,
+      syncDatabaseLimit: this.maxTenantSyncDatabases,
+      syncBindingLimit: this.maxTenantSyncBindingsPerDatabase,
       queueLimit: this.maxQueuedTotal,
     });
   }
@@ -352,9 +477,29 @@ export class DatabaseCoordinator implements AsyncDisposable {
   start(): void {
     if (this.state === 'started') return;
     if (this.state !== 'created') throw this.closedError();
-    const ownership = acquireDatabaseRootOwnership(this.rootDirectory);
+    let ownership: DatabaseRootOwnershipGuard | null = null;
     try {
+      ownership = acquireDatabaseRootOwnership(this.configuredRootDirectory);
       this.rootOwnership = ownership;
+      // The ownership guard is the authority for path identity. Never resolve
+      // the caller's relative or aliased path again after the lock is held.
+      this.rootDirectory = ownership.rootDirectory;
+      ownership.assertCurrent();
+      try {
+        this.actorLiveness = probeDatabaseActorLiveness(this.rootDirectory);
+        ownership.assertCurrent();
+        this.managedDatabaseFiles = countZeroManagedDatabaseFiles(
+          this.rootDirectory,
+        );
+        ownership.assertCurrent();
+      } catch (error) {
+        if (error instanceof DatabaseError) throw error;
+        throw new DatabaseError(
+          'DATABASE_OPEN_FAILED',
+          'Managed database files could not be counted.',
+          { retryable: true, outcome: 'not-started' },
+        );
+      }
       this.state = 'started';
       if (this.sweepIntervalMs !== false) {
         this.idleTimer = setInterval(() => {
@@ -367,10 +512,43 @@ export class DatabaseCoordinator implements AsyncDisposable {
         this.idleTimer.unref?.();
       }
     } catch (error) {
+      if (!ownership) {
+        const failure = safeCoordinatorError(error);
+        this.emit({
+          type: 'coordinator-failed',
+          phase: 'start',
+          error: failure,
+        });
+        throw failure;
+      }
+      try {
+        ownership.release();
+      } catch (cleanupError) {
+        // A failed release may still own the OS lock. Keep the guard reachable
+        // and latch the coordinator closed so close() can retry cleanup; never
+        // advertise this root as available to another local coordinator.
+        this.rootOwnership = ownership;
+        this.rootDirectory = ownership.rootDirectory;
+        this.state = 'close-failed';
+        const failure = safeCoordinatorError(cleanupError);
+        this.emit({
+          type: 'coordinator-failed',
+          phase: 'start',
+          error: failure,
+        });
+        throw failure;
+      }
       this.rootOwnership = null;
+      this.actorLiveness = null;
+      this.rootDirectory = this.configuredRootDirectory;
       this.state = 'created';
-      try { ownership.release(); } catch { /* Preserve startup failure. */ }
-      throw safeCoordinatorError(error);
+      const failure = safeCoordinatorError(error);
+      this.emit({
+        type: 'coordinator-failed',
+        phase: 'start',
+        error: failure,
+      });
+      throw failure;
     }
     this.emit({
       type: 'coordinator-started',
@@ -385,6 +563,14 @@ export class DatabaseCoordinator implements AsyncDisposable {
     input: string,
     options: DatabaseAcquireOptions = {},
   ): Promise<DatabaseCoordinatorLease> {
+    return await this.acquireCoordinatorLease(input, options, false);
+  }
+
+  private async acquireCoordinatorLease(
+    input: string,
+    options: DatabaseAcquireOptions,
+    reserveTenantSyncBinding: boolean,
+  ): Promise<CoordinatorLease> {
     this.assertStarted();
     const id = normalizeCoordinatorDatabaseId(input);
     const commitAuthority = this.resolveCommitAuthority(id, options);
@@ -411,6 +597,9 @@ export class DatabaseCoordinator implements AsyncDisposable {
           || current.state === 'closed')) {
           throw this.blockedDatabaseError(current.failure);
         }
+        if (reserveTenantSyncBinding) {
+          this.assertTenantSyncAdmission(id, current ?? null);
+        }
         if (!current) {
           const slot = firstSetValue(this.freeSlots);
           if (slot === null) {
@@ -428,6 +617,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
             throw safeCoordinatorError(error);
           }
         }
+        if (reserveTenantSyncBinding) current.tenantSyncBindingSlots += 1;
         current.leases += 1;
         current.lastUsedAt = this.now();
         return { type: 'entry', entry: current };
@@ -445,9 +635,44 @@ export class DatabaseCoordinator implements AsyncDisposable {
         if (entry.state !== 'ready') throw this.notReadyError();
         return new CoordinatorLease(this, entry, commitAuthority);
       } catch (error) {
+        if (reserveTenantSyncBinding) {
+          this.cancelTenantSyncBindingReservation(entry);
+        }
         this.releaseEntry(entry);
         throw safeCoordinatorError(error);
       }
+    }
+  }
+
+  /**
+   * Acquire the persistent, trusted capability used by tenant-database Sync.
+   * This deliberately remains separate from the public AsyncDatabaseClient.
+   */
+  async acquireTenantSync(
+    input: string,
+    options: DatabaseTenantSyncAcquireOptions = {},
+  ): Promise<DatabaseTenantSyncBinding> {
+    if (options.assertReadAuthority !== undefined
+      && typeof options.assertReadAuthority !== 'function') {
+      throw new DatabaseError(
+        'DATABASE_CONFIG_INVALID',
+        'Database tenant Sync read authority is invalid.',
+      );
+    }
+    const lease = await this.acquireCoordinatorLease(input, options, true);
+    const entry = lease.tenantSyncReservedEntry();
+    try {
+      lease.assertTenantSyncAuthority();
+      return new CoordinatorTenantSyncBinding(
+        this,
+        entry,
+        lease,
+        options.assertReadAuthority ?? null,
+      );
+    } catch (error) {
+      this.cancelTenantSyncBindingReservation(entry);
+      lease.release();
+      throw safeCoordinatorError(error);
     }
   }
 
@@ -533,22 +758,41 @@ export class DatabaseCoordinator implements AsyncDisposable {
     const databases = [...this.entries.values()]
       .map((entry): DatabaseCoordinatorEntryDiagnostics => Object.freeze({
         databaseRef: entry.databaseRef,
+        placement: entry.placement.mode,
         state: entry.state,
         slot: entry.slot,
         leases: entry.leases,
+        tenantSyncBindings: entry.tenantSyncBindingSlots,
         activeOperations: entry.activeOperations,
         queueDepth: entry.lane.depth + entry.recoveryWaiters,
         writerGeneration: entry.writer?.diagnostics().generation ?? null,
         readerGeneration: entry.reader?.diagnostics().generation ?? null,
+        restartRetryCount: entry.restartRetryCount,
+        restartCircuitOpen: entry.restartRetryCount
+          >= this.restartPolicy.circuitFailureThreshold,
         lastUsedAt: entry.lastUsedAt,
       }))
       .sort((left, right) => left.databaseRef.localeCompare(right.databaseRef));
     return Object.freeze({
       state: this.state,
       maxDatabases: this.maxDatabases,
+      maxDatabaseFiles: this.maxDatabaseFiles,
       maxBlockedDatabases: this.maxBlockedDatabases,
+      maxTenantSyncDatabases: this.maxTenantSyncDatabases,
+      maxTenantSyncBindingsPerDatabase:
+        this.maxTenantSyncBindingsPerDatabase,
       readersEnabled: this.readersEnabled,
+      fileDatabases: databases.filter((entry) => entry.placement === 'file').length,
+      hotDatabases: databases.filter((entry) => entry.placement === 'hot').length,
       openDatabases: databases.filter((entry) => entry.state === 'ready').length,
+      databaseFiles: this.managedDatabaseFiles,
+      tenantSyncDatabases: databases.filter(
+        (entry) => entry.tenantSyncBindings > 0,
+      ).length,
+      tenantSyncBindings: databases.reduce(
+        (sum, entry) => sum + entry.tenantSyncBindings,
+        0,
+      ),
       queuedOperations: this.queuedOperations,
       activeOperations: databases.reduce(
         (sum, entry) => sum + entry.activeOperations,
@@ -580,58 +824,40 @@ export class DatabaseCoordinator implements AsyncDisposable {
     options: DatabaseExecutionOptions = {},
     commitAuthority: DatabaseCommitAuthority | null = null,
   ): Promise<DatabaseReadResult | DatabaseCommitResult> {
-    this.assertStarted();
-    let operation: DatabaseOperation;
-    try {
-      operation = validateDatabaseOperation(value, this.operationCatalog);
-    } catch (error) {
-      throw safeCoordinatorError(error);
-    }
-    if (this.canAwaitOpening(entry)) {
-      return this.awaitReplacementOpening(
-        entry,
-        options,
-        operationClass(operation),
-        () => this.execute(entry, operation, options, commitAuthority),
-      );
-    }
-    this.assertUsableEntry(entry);
-    if (isWriteOperation(operation)) {
-      return this.enqueueWriterOperation(
-        entry,
-        operation,
-        options,
-        commitAuthority,
-      );
-    }
-    if (operation.consistency?.mode === 'strong'
-      || !entry.reader) {
-      return this.enqueueWriterOperation(entry, operation, options, null);
-    }
-    return this.trackOperation(entry, async () => {
-      try {
-        return await this.executeOnActor(entry, entry.reader!, operation, options);
-      } catch (error) {
-        const normalized = safeCoordinatorError(error);
-        if (operation.consistency?.mode === 'read-your-writes'
-          && normalized.code === 'DATABASE_TRANSACTION_STALE') {
-          return entry.lane.enqueue(
-            () => this.executeOnActor(
-              entry,
-              this.requireWriter(entry),
-              operation,
-              options,
-            ),
-            {
-              signal: options.signal,
-              timeoutMs: queueTimeout(options, this.queueTimeoutMs),
-              operationClass: 'query',
-            },
-          );
-        }
-        throw normalized;
-      }
-    });
+    return this.operationRuntime.execute(
+      entry,
+      value,
+      options,
+      commitAuthority,
+    );
+  }
+
+  executeTrustedWrite(
+    entry: DatabaseEntry,
+    value: unknown,
+    options: DatabaseTrustedWriteExecutionOptions,
+    commitAuthority: DatabaseCommitAuthority | null,
+  ): Promise<DatabaseCommitResult<DatabaseWriterCommitValue>> {
+    return this.operationRuntime.executeTrustedWrite(
+      entry,
+      value,
+      options,
+      commitAuthority,
+    );
+  }
+
+  findTrustedReceipt(
+    entry: DatabaseEntry,
+    idempotencyKey: string,
+    logicalReceiptFingerprint: DatabaseLogicalReceiptFingerprint,
+    options: DatabaseTrustedReceiptExecutionOptions = {},
+  ): Promise<DatabaseTrustedReceiptLookup> {
+    return this.operationRuntime.findTrustedReceipt(
+      entry,
+      idempotencyKey,
+      logicalReceiptFingerprint,
+      options,
+    );
   }
 
   replay(
@@ -640,84 +866,160 @@ export class DatabaseCoordinator implements AsyncDisposable {
     limit = DATABASE_ACTOR_MAX_REPLAY_CHANGES,
     options: DatabaseExecutionOptions = {},
   ): Promise<DatabaseReadResult> {
-    this.assertStarted();
-    let payload: ReturnType<typeof validateDatabaseActorReplayPayload>;
-    try {
-      payload = validateDatabaseActorReplayPayload({
-        databaseRef: entry.databaseRef,
-        afterSeq,
-        limit,
-      });
-    } catch (error) {
-      throw safeCoordinatorError(error);
-    }
-    if (this.canAwaitOpening(entry)) {
-      return this.awaitReplacementOpening(
-        entry,
-        options,
-        'replay',
-        () => this.replay(entry, payload.afterSeq, payload.limit, options),
-      );
-    }
-    this.assertUsableEntry(entry);
-    return this.enqueueLane(
+    return this.operationRuntime.replay(entry, afterSeq, limit, options);
+  }
+
+
+  beginTenantSyncSnapshot(
+    entry: DatabaseEntry,
+    ownerToken: string,
+    tables: readonly string[],
+    options: DatabaseTenantSyncExecutionOptions = {},
+  ): Promise<CoordinatorTenantSyncSnapshotStart> {
+    return this.tenantSyncRuntime.beginSnapshot(
       entry,
-      'replay',
+      ownerToken,
+      tables,
       options,
-      async () => {
-        const writer = this.requireWriter(entry);
-        const startedAt = this.now();
-        try {
-          const result = await writer.execute({
-            operation: DATABASE_ACTOR_OPERATIONS.replay,
-            kind: 'read',
-            payload: payload as unknown as DatabaseExecutorValue,
-          }, { timeoutMs: operationTimeout(options, this.operationTimeoutMs) });
-          return validateDatabaseActorReplayResult(result, payload);
-        } catch (caught) {
-          const error = safeCoordinatorError(caught);
-          this.emit({
-            type: 'replay-failed',
-            databaseRef: entry.databaseRef,
-            role: 'writer',
-            slot: entry.slot,
-            generation: writer.diagnostics().generation,
-            sequenceStart: payload.afterSeq,
-            sequenceEnd: payload.afterSeq,
-            durationMs: elapsed(startedAt, this.now()),
-            error,
-          });
-          if (this.isTerminalExecutorFailure(writer, error)) {
-            await this.retireBinding(entry, writer, error);
-          }
-          throw error;
-        }
-      },
     );
   }
+
+  pageTenantSyncSnapshot(
+    entry: DatabaseEntry,
+    session: Readonly<{
+      generation: number;
+      ownerToken: string;
+      sessionId: string;
+      tables: readonly string[];
+      totalRows: number;
+    }>,
+    cursor: number,
+    options: DatabaseTenantSyncExecutionOptions = {},
+  ): Promise<DatabaseTenantSyncSnapshotPage> {
+    return this.tenantSyncRuntime.pageSnapshot(entry, session, cursor, options);
+  }
+
+  abortTenantSyncSnapshot(
+    entry: DatabaseEntry,
+    session: Readonly<{
+      generation: number;
+      ownerToken: string;
+      sessionId: string;
+      tables: readonly string[];
+    }>,
+    options: DatabaseTenantSyncExecutionOptions = {},
+  ): Promise<void> {
+    return this.tenantSyncRuntime.abortSnapshot(entry, session, options);
+  }
+
+  replayTenantSync(
+    entry: DatabaseEntry,
+    afterSeq: number,
+    limit = DATABASE_ACTOR_MAX_REPLAY_CHANGES,
+    options: DatabaseTenantSyncExecutionOptions = {},
+  ): Promise<DatabaseTenantSyncReplayResult> {
+    return this.tenantSyncRuntime.replay(entry, afterSeq, limit, options);
+  }
+
 
   releaseEntry(entry: DatabaseEntry): void {
     if (entry.leases === 0) return;
     entry.leases -= 1;
     entry.lastUsedAt = this.now();
+    if (entry.leases === 0
+      && entry.state === 'opening'
+      && entry.restartRetryCount > 0) {
+      entry.restartAbortController?.abort();
+      entry.restartAbortController = null;
+      entry.state = 'failed';
+    }
     this.cleanupFailedEntryIfUnused(entry);
   }
 
+  cancelTenantSyncBindingReservation(entry: DatabaseEntry): void {
+    if (entry.tenantSyncBindingSlots <= entry.syncBindings.size) return;
+    entry.tenantSyncBindingSlots -= 1;
+  }
+
+  activateTenantSyncBinding(
+    entry: DatabaseEntry,
+    binding: DatabaseCoordinatorSyncBindingHandle,
+  ): void {
+    if (entry.tenantSyncBindingSlots <= entry.syncBindings.size
+      || entry.syncBindings.has(binding)) {
+      throw new DatabaseError(
+        'DATABASE_PROTOCOL_ERROR',
+        'Database tenant Sync reservation is invalid.',
+        { retryable: false, outcome: 'not-started' },
+      );
+    }
+    entry.syncBindings.add(binding);
+  }
+
+  releaseTenantSyncBinding(
+    entry: DatabaseEntry,
+    binding: DatabaseCoordinatorSyncBindingHandle,
+  ): void {
+    if (!entry.syncBindings.delete(binding)) return;
+    if (entry.tenantSyncBindingSlots > 0) entry.tenantSyncBindingSlots -= 1;
+  }
+
+  assertTenantSyncAuthority(
+    entry: DatabaseEntry,
+    commitAuthority: DatabaseCommitAuthority | null,
+  ): undefined {
+    this.assertStarted();
+    if (this.entries.get(entry.id) !== entry) throw authorityUnavailable();
+    if (!commitAuthority) {
+      if (this.requireCommitAuthority) throw authorityUnavailable();
+      return undefined;
+    }
+    const coordinator = this.authorityCommitCoordinator;
+    if (!coordinator) throw authorityUnavailable();
+    assertDatabaseCommitAuthorityCurrent(
+      commitAuthority,
+      coordinator,
+      entry.databaseRef,
+    );
+    return undefined;
+  }
+
   private createEntry(id: DatabaseId, slot: number): DatabaseEntry {
+    const databaseRef = createDatabaseRef(id);
+    const placement = resolveEntryPlacement(this.placementPolicy, databaseRef);
     let prepared;
     try {
-      prepared = prepareDatabaseFile(this.rootDirectory, id);
-    } catch {
+      this.assertOwnedRootCurrent();
+      prepared = prepareDatabaseFileWithCreationAdmission(
+        this.rootDirectory,
+        id,
+        () => this.assertDatabaseFileAdmission(databaseRef, placement),
+      );
+      this.assertOwnedRootCurrent();
+      if (prepared.created) this.managedDatabaseFiles += 1;
+      const bindingIdentity = prepareDatabaseBindingIdentity({
+        filePath: prepared.path,
+        fileIdentity: prepared.identity,
+        databaseRef,
+        realmName: this.realm.name,
+        initialize: prepared.created,
+      });
+      this.assertOwnedRootCurrent();
+      prepared = Object.freeze({ ...prepared, bindingIdentity });
+    } catch (error) {
+      if (error instanceof DatabaseError) throw error;
       throw new DatabaseError(
         'DATABASE_OPEN_FAILED',
         'Database file could not be prepared.',
       );
     }
-    const databaseRef = createDatabaseRef(id);
     const entry = {
       id,
       databaseRef,
       filePath: prepared.path,
+      fileIdentity: prepared.identity,
+      bindingIdentity: prepared.bindingIdentity,
+      placement,
       slot,
       lane: null as unknown as DatabaseWriterLane,
       state: 'opening' as DatabaseCoordinatorEntryState,
@@ -728,13 +1030,20 @@ export class DatabaseCoordinator implements AsyncDisposable {
       settlement: null,
       closeTask: null,
       failure: null,
+      closeFailure: null,
+      restartRetryCount: 0,
+      restartAbortController: null,
       leases: 0,
       activeOperations: 0,
       recoveryWaiters: 0,
       lastUsedAt: this.now(),
+      syncIdentity: null,
+      tenantSyncBindingSlots: 0,
+      syncBindings: new Set<DatabaseCoordinatorSyncBindingHandle>(),
     };
     entry.lane = new DatabaseWriterLane({
       databaseRef,
+      placement: placement.mode,
       maxQueued: this.maxQueuedPerDatabase,
       now: this.now,
       onQueued: () => {
@@ -754,12 +1063,101 @@ export class DatabaseCoordinator implements AsyncDisposable {
     return entry;
   }
 
-  private async openEntry(entry: DatabaseEntry): Promise<void> {
+  private assertDatabaseFileAdmission(
+    databaseRef: DatabaseRef,
+    placement: DatabaseActorPlacementConfig,
+  ): void {
+    if (this.managedDatabaseFiles < this.maxDatabaseFiles) return;
+    this.emit({
+      type: 'capacity-exhausted',
+      databaseRef,
+      placement: placement.mode,
+      capacityType: 'files',
+      capacityLimit: this.maxDatabaseFiles,
+    });
+    throw new DatabaseError(
+      'DATABASE_CAPACITY_EXHAUSTED',
+      'Database file capacity is exhausted.',
+      {
+        retryable: false,
+        outcome: 'not-started',
+        details: {
+          capacityType: 'files',
+          capacityLimit: this.maxDatabaseFiles,
+        },
+      },
+    );
+  }
+
+  private assertTenantSyncAdmission(
+    id: DatabaseId,
+    entry: DatabaseEntry | null,
+  ): void {
+    const databaseRef = entry?.databaseRef ?? createDatabaseRef(id);
+    const bindingCount = entry?.tenantSyncBindingSlots ?? 0;
+    if (bindingCount >= this.maxTenantSyncBindingsPerDatabase) {
+      this.emit({
+        type: 'queue-saturated',
+        databaseRef,
+        ...(entry ? { placement: entry.placement.mode } : {}),
+        operation: 'sync',
+        queueDepth: bindingCount,
+        queueLimit: this.maxTenantSyncBindingsPerDatabase,
+      });
+      throw new DatabaseError(
+        'DATABASE_BACKPRESSURE',
+        'Database tenant Sync binding capacity is exhausted.',
+        {
+          retryable: true,
+          outcome: 'not-started',
+          details: {
+            maxTenantSyncBindingsPerDatabase:
+              this.maxTenantSyncBindingsPerDatabase,
+          },
+        },
+      );
+    }
+
+    // An already-reserved database consumes no additional actor slot and is
+    // therefore admitted even when the distinct-database ceiling is full.
+    if (bindingCount > 0) return;
+    const distinctDatabases = [...this.entries.values()].filter(
+      (candidate) => candidate.tenantSyncBindingSlots > 0,
+    ).length;
+    if (distinctDatabases < this.maxTenantSyncDatabases) return;
+    this.emit({
+      type: 'queue-saturated',
+      databaseRef,
+      ...(entry ? { placement: entry.placement.mode } : {}),
+      operation: 'sync',
+      queueDepth: distinctDatabases,
+      queueLimit: this.maxTenantSyncDatabases,
+    });
+    throw new DatabaseError(
+      'DATABASE_BACKPRESSURE',
+      'Database tenant Sync database capacity is exhausted.',
+      {
+        retryable: true,
+        outcome: 'not-started',
+        details: { maxTenantSyncDatabases: this.maxTenantSyncDatabases },
+      },
+    );
+  }
+
+  private async openEntry(
+    entry: DatabaseEntry,
+    restartRetryCount = 0,
+  ): Promise<void> {
     const startedAt = this.now();
+    const previousSyncIdentity = entry.syncIdentity;
     try {
       const payload = validateDatabaseActorBindPayload({
         databaseRef: entry.databaseRef,
         filePath: entry.filePath,
+        fileIdentity: entry.fileIdentity,
+        instanceId: entry.bindingIdentity.instanceId,
+        actorLiveness: this.requireActorLiveness(),
+        placement: entry.placement,
         realmFingerprint: this.realm.fingerprint,
         sqlite: this.sqlite,
       });
@@ -774,7 +1172,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
       );
       this.assertBindingResult(entry, 'writer', writerResult);
 
-      if (this.readersEnabled) {
+      if (this.readersEnabled && entry.placement.mode === 'file') {
         entry.reader = this.makeExecutor(entry, 'reader');
         await entry.reader.start();
         const readerResult = validateDatabaseActorBindResult(
@@ -789,11 +1187,59 @@ export class DatabaseCoordinator implements AsyncDisposable {
       if (this.state !== 'started' || entry.state !== 'opening') {
         throw this.closedError();
       }
+      const syncEpoch = writerResult.syncEpoch;
+      if (syncEpoch === null) {
+        throw new DatabaseError(
+          'DATABASE_PROTOCOL_ERROR',
+          'Database writer did not provide a Sync epoch.',
+          { retryable: false, outcome: 'not-started' },
+        );
+      }
+      const nextSyncIdentity: DatabaseTenantSyncIdentity = Object.freeze({
+        syncEpoch,
+        generation: entry.writer.diagnostics().generation,
+        sequence: writerResult.sequence.seq,
+      });
+      if (entry.writer.diagnostics().state !== 'ready'
+        || (entry.reader && entry.reader.diagnostics().state !== 'ready')) {
+        throw new DatabaseError(
+          'DATABASE_EXECUTOR_START_FAILED',
+          'Database executor settled during binding.',
+        );
+      }
       entry.failure = null;
+      entry.syncIdentity = nextSyncIdentity;
       entry.state = 'ready';
+      entry.restartRetryCount = 0;
+      this.watchUnexpectedExecutorSettlement(entry, entry.writer, 'writer');
+      if (entry.reader) {
+        this.watchUnexpectedExecutorSettlement(entry, entry.reader, 'reader');
+      }
+      if (previousSyncIdentity
+        && (previousSyncIdentity.syncEpoch !== nextSyncIdentity.syncEpoch
+          || previousSyncIdentity.generation !== nextSyncIdentity.generation)) {
+        this.publishTenantSyncReset(entry, nextSyncIdentity);
+      }
+      if (restartRetryCount > 0) {
+        this.emitExecutorRestarted(
+          entry,
+          entry.writer,
+          'writer',
+          restartRetryCount,
+        );
+        if (entry.reader) {
+          this.emitExecutorRestarted(
+            entry,
+            entry.reader,
+            'reader',
+            restartRetryCount,
+          );
+        }
+      }
       this.emit({
         type: 'runtime-opened',
         databaseRef: entry.databaseRef,
+        placement: entry.placement.mode,
         slot: entry.slot,
         durationMs: elapsed(startedAt, this.now()),
       });
@@ -813,20 +1259,34 @@ export class DatabaseCoordinator implements AsyncDisposable {
           { retryable: false, outcome: 'unknown' },
         );
       entry.failure = error;
+      const finishFailure = restartRetryCount > 0
+        ? () => this.finishRecoveryOpenFailure(
+            entry,
+            writer,
+            reader,
+            originalError,
+          )
+        : () => this.finishOpenFailure(
+            entry,
+            writer,
+            reader,
+            originalError,
+          );
       if (actors.every((actor) => actor.diagnostics().settled)) {
-        this.finishOpenFailure(entry, writer, reader, originalError);
+        finishFailure();
       } else {
         entry.state = 'quarantined';
         this.quarantinedSlots.add(entry.slot);
         this.watchSettlement(
           entry,
           actors,
-          () => this.finishOpenFailure(entry, writer, reader, originalError),
+          finishFailure,
         );
       }
       this.emit({
         type: 'runtime-open-failed',
         databaseRef: entry.databaseRef,
+        placement: entry.placement.mode,
         slot: entry.slot,
         durationMs: elapsed(startedAt, this.now()),
         error,
@@ -864,6 +1324,31 @@ export class DatabaseCoordinator implements AsyncDisposable {
     // prove its exact settlement before the slot can be reused.
     if (role === 'writer') entry.writer = executor;
     else entry.reader = executor;
+    const requiresEventListener = role === 'writer'
+      && entry.placement.mode === 'hot'
+      && entry.placement.durability === 'periodic';
+    if (requiresEventListener
+      && typeof executor.setEventListener !== 'function') {
+      throw new DatabaseError(
+        'DATABASE_EXECUTOR_START_FAILED',
+        'Periodic hot database executors require an event boundary.',
+      );
+    }
+    if (executor.setEventListener !== undefined) {
+      if (typeof executor.setEventListener !== 'function') {
+        throw new DatabaseError(
+          'DATABASE_EXECUTOR_START_FAILED',
+          'Database executor event boundary is invalid.',
+        );
+      }
+      executor.setEventListener((event) => {
+        try {
+          this.hotDurabilitySupervisor.observe(entry, executor, role, event);
+        } catch {
+          // An executor lifecycle callback must remain synchronous/non-throwing.
+        }
+      });
+    }
     const diagnostics = executor.diagnostics();
     const generationKey = `${role}:${entry.slot}`;
     const previousGeneration = this.lastGenerationBySlot.get(generationKey) ?? 0;
@@ -873,10 +1358,60 @@ export class DatabaseCoordinator implements AsyncDisposable {
       throw new DatabaseError(
         'DATABASE_EXECUTOR_START_FAILED',
         'Database executor identity was stale or did not match its assigned slot.',
+        { retryable: false, outcome: 'not-started' },
       );
     }
     this.lastGenerationBySlot.set(generationKey, diagnostics.generation);
     return executor;
+  }
+
+
+  private watchUnexpectedExecutorSettlement(
+    entry: DatabaseEntry,
+    executor: DatabaseExecutor,
+    role: DatabaseActorRole,
+  ): void {
+    void executor.settled().then(() => {
+      if (this.state !== 'started'
+        || entry.state !== 'ready'
+        || this.entries.get(entry.id) !== entry
+        || (role === 'writer' ? entry.writer : entry.reader) !== executor) return;
+      this.hotDurabilitySupervisor.clear(executor);
+      const diagnostics = executor.diagnostics();
+      const error = new DatabaseError(
+        'DATABASE_EXECUTOR_FAILED',
+        'Database executor settled unexpectedly.',
+        { retryable: false, outcome: 'unknown' },
+      );
+      this.emit({
+        type: 'executor-failed',
+        databaseRef: entry.databaseRef,
+        placement: entry.placement.mode,
+        role,
+        slot: entry.slot,
+        generation: diagnostics.generation,
+        phase: 'execute',
+        error,
+      });
+      void this.retireBinding(
+        entry,
+        executor,
+        error,
+        'runtime-failure',
+      ).catch((caught) => {
+        this.emit({
+          type: 'coordinator-failed',
+          phase: 'close',
+          error: safeCoordinatorError(caught),
+        });
+      });
+    }, (caught) => {
+      this.emit({
+        type: 'coordinator-failed',
+        phase: 'close',
+        error: safeCoordinatorError(caught),
+      });
+    });
   }
 
   private assertBindingResult(
@@ -886,6 +1421,9 @@ export class DatabaseCoordinator implements AsyncDisposable {
   ): void {
     if (result.databaseRef !== entry.databaseRef
       || result.role !== role
+      || !sameDatabaseFileIdentity(result.fileIdentity, entry.fileIdentity)
+      || result.instanceId !== entry.bindingIdentity.instanceId
+      || !sameActorPlacement(result.placement, entry.placement)
       || result.realmFingerprint !== this.realm.fingerprint
       || result.schemaChecksum !== this.realm.schemaChecksum) {
       throw new DatabaseError(
@@ -895,253 +1433,6 @@ export class DatabaseCoordinator implements AsyncDisposable {
     }
   }
 
-  private enqueueWriterOperation(
-    entry: DatabaseEntry,
-    operation: DatabaseOperation,
-    options: DatabaseExecutionOptions,
-    commitAuthority: DatabaseCommitAuthority | null,
-  ): Promise<DatabaseReadResult | DatabaseCommitResult> {
-    const run = () => this.executeWriterAtHead(
-      entry,
-      operation,
-      options,
-      commitAuthority,
-    );
-    return this.enqueueLane(entry, operationClass(operation), options, run);
-  }
-
-  private async executeWriterAtHead(
-    entry: DatabaseEntry,
-    operation: DatabaseOperation,
-    options: DatabaseExecutionOptions,
-    commitAuthority: DatabaseCommitAuthority | null,
-  ): Promise<DatabaseReadResult | DatabaseCommitResult> {
-    if (!isWriteOperation(operation) || !commitAuthority) {
-      if (isWriteOperation(operation) && this.requireCommitAuthority) {
-        throw authorityUnavailable();
-      }
-      return this.executeOnActor(
-        entry,
-        this.requireWriter(entry),
-        operation,
-        options,
-      );
-    }
-
-    const authorityCoordinator = this.authorityCommitCoordinator;
-    if (!authorityCoordinator) {
-      throw new DatabaseError(
-        'DATABASE_CONFIG_INVALID',
-        'Database commit authority coordinator is unavailable.',
-      );
-    }
-    const authorityLease = await authorityCoordinator.acquireShared({
-      ...(options.signal ? { signal: options.signal } : {}),
-      timeoutMs: queueTimeout(options, this.queueTimeoutMs),
-    });
-    let transferred = false;
-    try {
-      // The binding may have been retired and reopened while this operation
-      // waited behind an exclusive authority mutation. Resolve the current
-      // generation only after the gate is held.
-      const writer = this.requireWriter(entry);
-      assertDatabaseCommitAuthorityCurrent(
-        commitAuthority,
-        authorityCoordinator,
-        entry.databaseRef,
-      );
-      try {
-        return await this.executeOnActor(entry, writer, operation, options);
-      } catch (error) {
-        const normalized = safeCoordinatorError(error);
-        if (normalized.outcome === 'unknown'
-          && !writer.diagnostics().settled) {
-          transferred = true;
-          this.holdAuthorityUntilSettlement(authorityLease, writer);
-        }
-        throw normalized;
-      }
-    } finally {
-      if (!transferred) authorityLease.release();
-    }
-  }
-
-  private async executeOnActor(
-    entry: DatabaseEntry,
-    executor: DatabaseExecutor,
-    operation: DatabaseOperation,
-    options: DatabaseExecutionOptions,
-  ): Promise<DatabaseReadResult | DatabaseCommitResult> {
-    const kind = isWriteOperation(operation) ? 'write' : 'read';
-    const startedAt = this.now();
-    try {
-      const value = await executor.execute({
-        operation: DATABASE_ACTOR_OPERATIONS.execute,
-        kind,
-        payload: {
-          databaseRef: entry.databaseRef,
-          operation,
-        } as unknown as DatabaseExecutorValue,
-      }, { timeoutMs: operationTimeout(options, this.operationTimeoutMs) });
-      return validateDatabaseActorExecuteResult(
-        value,
-        operation,
-        this.operationCatalog,
-      );
-    } catch (caught) {
-      const error = safeCoordinatorError(caught);
-      this.emit({
-        type: error.outcome === 'unknown'
-          ? 'operation-outcome-unknown'
-          : 'operation-failed',
-        databaseRef: entry.databaseRef,
-        role: executor === entry.writer ? 'writer' : 'reader',
-        slot: entry.slot,
-        generation: executor.diagnostics().generation,
-        operation: operationClass(operation),
-        durationMs: elapsed(startedAt, this.now()),
-        error,
-      });
-      if ((kind === 'write' && error.outcome === 'unknown')
-        || this.isTerminalExecutorFailure(executor, error)) {
-        await this.retireBinding(entry, executor, error);
-      }
-      throw error;
-    }
-  }
-
-  private enqueueLane<T>(
-    entry: DatabaseEntry,
-    operation: 'query' | 'mutation' | 'replay',
-    options: DatabaseExecutionOptions,
-    execute: () => Promise<T>,
-  ): Promise<T> {
-    return this.trackOperation(entry, () => entry.lane.enqueue(
-      execute,
-      {
-        signal: options.signal,
-        timeoutMs: queueTimeout(options, this.queueTimeoutMs),
-        operationClass: operation,
-      },
-    ));
-  }
-
-  private async trackOperation<T>(
-    entry: DatabaseEntry,
-    operation: () => Promise<T>,
-  ): Promise<T> {
-    this.assertUsableEntry(entry);
-    entry.activeOperations += 1;
-    entry.lastUsedAt = this.now();
-    try {
-      return await operation();
-    } finally {
-      entry.activeOperations -= 1;
-      entry.lastUsedAt = this.now();
-      this.cleanupFailedEntryIfUnused(entry);
-    }
-  }
-
-  private awaitReplacementOpening<T>(
-    entry: DatabaseEntry,
-    options: DatabaseExecutionOptions,
-    operation: 'query' | 'mutation' | 'replay',
-    resume: () => Promise<T>,
-  ): Promise<T> {
-    let timeoutMs: number;
-    try {
-      timeoutMs = queueTimeout(options, this.queueTimeoutMs);
-    } catch (error) {
-      return Promise.reject(safeCoordinatorError(error));
-    }
-    if (options.signal?.aborted) return Promise.reject(queueCancelled());
-
-    if (entry.recoveryWaiters >= this.maxQueuedPerDatabase
-      || this.queuedOperations >= this.maxQueuedTotal) {
-      this.emit({
-        type: 'queue-saturated',
-        databaseRef: entry.databaseRef,
-        operation,
-        queueDepth: entry.recoveryWaiters,
-        queueLimit: this.maxQueuedPerDatabase,
-      });
-      return Promise.reject(new DatabaseError(
-        'DATABASE_BACKPRESSURE',
-        'Database recovery queue capacity is exhausted.',
-        {
-          retryable: true,
-          outcome: 'not-started',
-          details: {
-            queueDepth: entry.recoveryWaiters,
-            queueLimit: this.maxQueuedPerDatabase,
-          },
-        },
-      ));
-    }
-
-    const opening = entry.opening;
-    const queuedAt = this.now();
-    entry.recoveryWaiters += 1;
-    this.queuedOperations += 1;
-    entry.lastUsedAt = queuedAt;
-
-    const waiting = new Promise<void>((resolve, reject) => {
-      let settled = false;
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      let abortListener: (() => void) | null = null;
-
-      const finish = (error?: unknown): void => {
-        if (settled) return;
-        settled = true;
-        if (timer) clearTimeout(timer);
-        timer = null;
-        if (options.signal && abortListener) {
-          options.signal.removeEventListener('abort', abortListener);
-        }
-        abortListener = null;
-        entry.recoveryWaiters = Math.max(0, entry.recoveryWaiters - 1);
-        this.queuedOperations = Math.max(0, this.queuedOperations - 1);
-        entry.lastUsedAt = this.now();
-        this.cleanupFailedEntryIfUnused(entry);
-        if (error === undefined) resolve();
-        else reject(safeCoordinatorError(error));
-      };
-
-      timer = setTimeout(() => {
-        const durationMs = elapsed(queuedAt, this.now());
-        this.emit({
-          type: 'queue-timeout',
-          databaseRef: entry.databaseRef,
-          operation,
-          queueDepth: Math.max(0, entry.recoveryWaiters - 1),
-          durationMs,
-        });
-        finish(new DatabaseError(
-          'DATABASE_QUEUE_TIMEOUT',
-          'Database operation expired while waiting for binding recovery.',
-          {
-            retryable: true,
-            outcome: 'not-started',
-            details: {
-              durationMs,
-              queueDepth: Math.max(0, entry.recoveryWaiters - 1),
-            },
-          },
-        ));
-      }, timeoutMs);
-      if (options.signal) {
-        abortListener = () => finish(queueCancelled());
-        options.signal.addEventListener('abort', abortListener, { once: true });
-        // Cover an abort which raced listener registration.
-        if (options.signal.aborted) finish(queueCancelled());
-      }
-      void opening.then(
-        () => finish(),
-        (error) => finish(error),
-      );
-    });
-    return waiting.then(resume);
-  }
 
   private cleanupFailedEntryIfUnused(entry: DatabaseEntry): void {
     if (entry.state !== 'failed'
@@ -1173,14 +1464,25 @@ export class DatabaseCoordinator implements AsyncDisposable {
     entry: DatabaseEntry,
     executor: DatabaseExecutor,
     error: DatabaseError,
+    reason: DatabaseBindingRetirementReason,
   ): Promise<void> {
     if (executor !== entry.writer && executor !== entry.reader) return;
     if (entry.recovery) {
       await entry.recovery;
       return;
     }
+    // Once any close path owns the entry, it is the sole actor-lifecycle
+    // authority. Starting a second retirement here could race the close path's
+    // executor snapshot and leave a newer identity mapped after shutdown.
+    if (this.state !== 'started'
+      || entry.state === 'closing'
+      || entry.state === 'closed') return;
 
-    const recovery = this.retireBindingOnce(entry, error);
+    const recovery = this.retireBindingOnce(
+      entry,
+      error,
+      reason,
+    );
     entry.recovery = recovery;
     try {
       // Executor close has bounded escalation. Exact settlement may continue
@@ -1194,6 +1496,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
   private async retireBindingOnce(
     entry: DatabaseEntry,
     error: DatabaseError,
+    reason: DatabaseBindingRetirementReason,
   ): Promise<void> {
     entry.failure = safeCoordinatorError(error);
     entry.state = 'failed';
@@ -1201,7 +1504,22 @@ export class DatabaseCoordinator implements AsyncDisposable {
     const writer = entry.writer;
     const reader = entry.reader;
     const actors = compactExecutors(writer, reader);
-    await this.closeExecutors(actors);
+    for (const actor of actors) {
+      this.hotDurabilitySupervisor.clear(actor);
+    }
+    const closeFailures = await this.closeExecutors(actors);
+
+    if (closeFailures.length > 0
+      && requiresHotCloseDurabilityProof(entry)
+      && !allowsPeriodicRuntimeRecovery(entry, reason)) {
+      this.latchCloseFailure(entry);
+      if (!actors.every((actor) => actor.diagnostics().settled)) {
+        this.watchSettlement(entry, actors, () => {
+          this.latchCloseFailure(entry);
+        });
+      }
+      return;
+    }
 
     if (actors.every((actor) => actor.diagnostics().settled)) {
       this.finishBindingRetirement(entry, writer, reader);
@@ -1230,10 +1548,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
     if (this.state === 'started'
       && this.entries.get(entry.id) === entry
       && entry.leases > 0) {
-      entry.state = 'opening';
-      entry.failure = null;
-      entry.opening = this.openEntry(entry);
-      void entry.opening.catch(() => undefined);
+      this.scheduleReplacementOpening(entry);
       return;
     }
 
@@ -1241,9 +1556,248 @@ export class DatabaseCoordinator implements AsyncDisposable {
     this.cleanupFailedEntryIfUnused(entry);
   }
 
+  private scheduleReplacementOpening(entry: DatabaseEntry): void {
+    if (this.state !== 'started'
+      || this.entries.get(entry.id) !== entry
+      || entry.leases === 0
+      || entry.state === 'closing'
+      || entry.state === 'closed') {
+      entry.state = this.state === 'started' ? 'failed' : 'closed';
+      this.cleanupFailedEntryIfUnused(entry);
+      return;
+    }
+
+    try {
+      this.refreshHotEntryFileIdentity(entry);
+    } catch (caught) {
+      const failure = safeCoordinatorError(caught);
+      this.invalidateTenantSyncBindings(entry);
+      entry.failure = failure;
+      entry.state = 'failed';
+      this.emit({
+        type: 'coordinator-failed',
+        phase: 'open',
+        error: failure,
+      });
+      return;
+    }
+
+    const plan = nextDatabaseRestartPlan(
+      this.restartPolicy,
+      entry.restartRetryCount,
+    );
+    entry.restartRetryCount = plan.retryCount;
+    entry.restartAbortController?.abort();
+    const controller = new AbortController();
+    entry.restartAbortController = controller;
+    entry.state = 'opening';
+    entry.failure = null;
+    const opening = this.openReplacementAfterDelay(
+      entry,
+      plan.retryCount,
+      plan.delayMs,
+      controller,
+    );
+    entry.opening = opening;
+    void opening.catch(() => undefined);
+  }
+
+  private async openReplacementAfterDelay(
+    entry: DatabaseEntry,
+    retryCount: number,
+    delayMs: number,
+    controller: AbortController,
+  ): Promise<void> {
+    const allowed = await waitForDatabaseRestart(delayMs, controller.signal);
+    if (entry.restartAbortController === controller) {
+      entry.restartAbortController = null;
+    }
+    if (!allowed
+      || this.state !== 'started'
+      || this.entries.get(entry.id) !== entry
+      || entry.state !== 'opening'
+      || entry.leases === 0) {
+      if (this.entries.get(entry.id) === entry
+        && entry.state === 'opening'
+        && entry.leases === 0) {
+        entry.state = 'failed';
+        this.cleanupFailedEntryIfUnused(entry);
+      }
+      return;
+    }
+    await this.openEntry(entry, retryCount);
+  }
+
+  private finishRecoveryOpenFailure(
+    entry: DatabaseEntry,
+    writer: DatabaseExecutor | null,
+    reader: DatabaseExecutor | null,
+    failure: DatabaseError,
+  ): void {
+    if (entry.writer !== writer || entry.reader !== reader) return;
+    entry.writer = null;
+    entry.reader = null;
+    this.quarantinedSlots.delete(entry.slot);
+
+    if (entry.state === 'closing'
+      || entry.state === 'closed'
+      || this.state !== 'started'
+      || this.entries.get(entry.id) !== entry) return;
+    if (isPermanentOpenFailure(failure)) {
+      this.finishOpenFailure(entry, null, null, failure);
+      return;
+    }
+    if (failure.code === 'DATABASE_EXECUTOR_START_FAILED'
+      && failure.retryable === false
+      && failure.outcome === 'not-started') {
+      this.finishOpenFailure(entry, null, null, failure, false);
+      return;
+    }
+    entry.failure = failure;
+    entry.state = 'failed';
+    if (entry.leases > 0) {
+      this.scheduleReplacementOpening(entry);
+      return;
+    }
+    this.cleanupFailedEntryIfUnused(entry);
+  }
+
+  private emitExecutorRestarted(
+    entry: DatabaseEntry,
+    executor: DatabaseExecutor,
+    role: DatabaseActorRole,
+    retryCount: number,
+  ): void {
+    this.emit({
+      type: 'executor-restarted',
+      databaseRef: entry.databaseRef,
+      placement: entry.placement.mode,
+      role,
+      slot: entry.slot,
+      generation: executor.diagnostics().generation,
+      reason: 'failure',
+      retryCount,
+    });
+  }
+
+  /**
+   * Hot snapshots replace the main-file inode atomically. Refresh only the
+   * physical proof after every old actor has settled; the durable logical
+   * database reference and instance ID must remain unchanged.
+   */
+  private refreshHotEntryFileIdentity(entry: DatabaseEntry): void {
+    if (entry.placement.mode !== 'hot') return;
+    this.assertOwnedRootCurrent();
+    const guard = openDatabaseFileIdentityGuard(entry.filePath, {
+      access: 'readwrite',
+    });
+    try {
+      const bindingIdentity = prepareDatabaseBindingIdentity({
+        filePath: entry.filePath,
+        fileIdentity: guard.proof,
+        databaseRef: entry.databaseRef,
+        realmName: this.realm.name,
+        initialize: false,
+      });
+      guard.assertCurrent();
+      this.assertOwnedRootCurrent();
+      if (bindingIdentity.instanceId !== entry.bindingIdentity.instanceId) {
+        throw new DatabaseError(
+          'DATABASE_SCHEMA_MISMATCH',
+          'Database file binding identity changed after actor settlement.',
+          { retryable: false, outcome: 'not-started' },
+        );
+      }
+      entry.fileIdentity = guard.proof;
+    } finally {
+      guard.release();
+    }
+  }
+
   private requireWriter(entry: DatabaseEntry): DatabaseExecutor {
     if (!entry.writer || entry.state !== 'ready') throw this.notReadyError();
     return entry.writer;
+  }
+
+  private requireTenantSyncIdentity(
+    entry: DatabaseEntry,
+    writer: DatabaseExecutor,
+  ): DatabaseTenantSyncIdentity {
+    const identity = entry.syncIdentity;
+    if (!identity
+      || entry.writer !== writer
+      || identity.generation !== writer.diagnostics().generation) {
+      throw new DatabaseError(
+        'DATABASE_NOT_READY',
+        'Database tenant Sync binding is unavailable.',
+        { retryable: true, outcome: 'not-started' },
+      );
+    }
+    return identity;
+  }
+
+  private advanceTenantSyncSequence(
+    entry: DatabaseEntry,
+    sequence: number,
+  ): void {
+    const identity = entry.syncIdentity;
+    if (!identity || sequence <= identity.sequence) return;
+    entry.syncIdentity = Object.freeze({
+      ...identity,
+      sequence,
+    });
+  }
+
+  private publishTenantSyncCommit(
+    entry: DatabaseEntry,
+    operation: DatabaseWriteOperation,
+    result: DatabaseCommitResult,
+  ): void {
+    if (result.replayed) return;
+    const identity = entry.syncIdentity;
+    const writer = entry.writer;
+    if (!identity || !writer || entry.state !== 'ready'
+      || writer.diagnostics().generation !== identity.generation) return;
+    const throughSeq = result.sequence.seq;
+    if (throughSeq <= identity.sequence) return;
+    const afterSeq = identity.sequence;
+    entry.syncIdentity = Object.freeze({ ...identity, sequence: throughSeq });
+    const wakeup: DatabaseTenantSyncWakeup = Object.freeze({
+      type: 'changes',
+      databaseRef: entry.databaseRef,
+      syncEpoch: identity.syncEpoch,
+      generation: identity.generation,
+      afterSeq,
+      throughSeq,
+      idempotencyKey: operation.idempotencyKey,
+    });
+    for (const binding of [...entry.syncBindings]) binding.notify(wakeup);
+    if (entry.syncBindings.size > 0) {
+      this.emit({
+        type: 'change-wakeup',
+        databaseRef: entry.databaseRef,
+        placement: entry.placement.mode,
+        role: 'writer',
+        slot: entry.slot,
+        generation: identity.generation,
+        sequenceStart: afterSeq + 1,
+        sequenceEnd: throughSeq,
+      });
+    }
+  }
+
+  private publishTenantSyncReset(
+    entry: DatabaseEntry,
+    identity: DatabaseTenantSyncIdentity,
+  ): void {
+    const wakeup: DatabaseTenantSyncWakeup = Object.freeze({
+      type: 'reset',
+      databaseRef: entry.databaseRef,
+      syncEpoch: identity.syncEpoch,
+      generation: identity.generation,
+      sequence: createDatabaseSequenceToken(identity.sequence),
+    });
+    for (const binding of [...entry.syncBindings]) binding.notify(wakeup);
   }
 
   private canAwaitOpening(entry: DatabaseEntry): boolean {
@@ -1350,7 +1904,14 @@ export class DatabaseCoordinator implements AsyncDisposable {
     entry: DatabaseEntry,
     reason: DatabaseCloseReason,
   ): Promise<void> {
+    if (entry.closeFailure) {
+      entry.state = 'quarantined';
+      this.quarantinedSlots.add(entry.slot);
+      throw entry.closeFailure;
+    }
     entry.state = 'closing';
+    entry.restartAbortController?.abort();
+    entry.restartAbortController = null;
     entry.lane.rejectQueued(this.closedError());
     try {
       await entry.opening;
@@ -1359,24 +1920,58 @@ export class DatabaseCoordinator implements AsyncDisposable {
     }
     if (readEntryState(entry) === 'closed') return;
     await entry.lane.idle();
+    // Runtime retirement intentionally executes outside the writer lane. Join
+    // it before taking the actor identity used for final closure. Otherwise a
+    // retirement can clear that identity between this snapshot and
+    // finishEntryClosure(), causing shutdown to silently retain the mapped
+    // entry and its tenant-Sync lease.
+    await this.joinEntryRecovery(entry);
+    if (readEntryState(entry) === 'closed') return;
+    if (entry.closeFailure) {
+      entry.state = 'quarantined';
+      this.quarantinedSlots.add(entry.slot);
+      throw entry.closeFailure;
+    }
+    entry.state = 'closing';
     const startedAt = this.now();
     const writer = entry.writer;
     const reader = entry.reader;
     const actors = compactExecutors(writer, reader);
     const failures = await this.closeBoundActors(writer, reader);
-    if (!actors.every((actor) => actor.diagnostics().settled)) {
+    const actorsSettled = actors.every((actor) => actor.diagnostics().settled);
+    if (failures.length > 0 && requiresHotCloseDurabilityProof(entry)) {
+      // Actor settlement proves process termination, not that a final hot
+      // snapshot became durable. Keep the logical database and its pool slot
+      // quarantined so a later close/reopen cannot silently serve stale data.
+      const failure = this.latchCloseFailure(entry);
+      if (!actorsSettled) {
+        this.watchSettlement(entry, actors, () => {
+          this.latchCloseFailure(entry);
+        });
+      }
+      throw failure;
+    }
+    if (!actorsSettled) {
       entry.state = 'quarantined';
       this.quarantinedSlots.add(entry.slot);
       this.watchSettlement(
         entry,
         actors,
-        () => this.finishEntryClosure(
-          entry,
-          writer,
-          reader,
-          reason,
-          startedAt,
-        ),
+        () => {
+          if (!this.finishEntryClosure(
+            entry,
+            writer,
+            reader,
+            reason,
+            startedAt,
+          )) {
+            throw new DatabaseError(
+              'DATABASE_EXECUTOR_FAILED',
+              'Database actor identity changed during closure.',
+              { retryable: false, outcome: 'unknown' },
+            );
+          }
+        },
       );
       throw new DatabaseError(
         'DATABASE_EXECUTOR_FAILED',
@@ -1385,7 +1980,13 @@ export class DatabaseCoordinator implements AsyncDisposable {
       );
     }
 
-    this.finishEntryClosure(entry, writer, reader, reason, startedAt);
+    if (!this.finishEntryClosure(entry, writer, reader, reason, startedAt)) {
+      throw new DatabaseError(
+        'DATABASE_EXECUTOR_FAILED',
+        'Database actor identity changed during closure.',
+        { retryable: false, outcome: 'unknown' },
+      );
+    }
     if (failures.length > 0) {
       throw new DatabaseError(
         'DATABASE_EXECUTOR_FAILED',
@@ -1401,13 +2002,17 @@ export class DatabaseCoordinator implements AsyncDisposable {
     reader: DatabaseExecutor | null,
     reason: DatabaseCloseReason,
     startedAt: number,
-  ): void {
-    if (entry.state === 'closed'
-      || entry.writer !== writer
-      || entry.reader !== reader) return;
+  ): boolean {
+    if (entry.state === 'closed') return true;
+    if (entry.writer !== writer || entry.reader !== reader) return false;
+    this.invalidateTenantSyncBindings(entry);
     entry.writer = null;
     entry.reader = null;
+    entry.restartAbortController?.abort();
+    entry.restartAbortController = null;
+    entry.restartRetryCount = 0;
     entry.failure = null;
+    entry.closeFailure = null;
     entry.state = 'closed';
     this.quarantinedSlots.delete(entry.slot);
     if (this.entries.get(entry.id) === entry) this.entries.delete(entry.id);
@@ -1415,6 +2020,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
     this.emit({
       type: 'runtime-closed',
       databaseRef: entry.databaseRef,
+      placement: entry.placement.mode,
       slot: entry.slot,
       durationMs: elapsed(startedAt, this.now()),
       reason,
@@ -1423,10 +2029,41 @@ export class DatabaseCoordinator implements AsyncDisposable {
       this.emit({
         type: 'runtime-evicted',
         databaseRef: entry.databaseRef,
+        placement: entry.placement.mode,
         slot: entry.slot,
         reason,
       });
     }
+    return true;
+  }
+
+  private async joinEntryRecovery(entry: DatabaseEntry): Promise<void> {
+    while (entry.recovery) {
+      const recovery = entry.recovery;
+      try {
+        await recovery;
+      } finally {
+        // retireBinding normally clears this reference in its own finally.
+        // Clearing the same fulfilled/rejected task here also makes shutdown
+        // robust to promise-reaction ordering between the two waiters.
+        if (entry.recovery === recovery) entry.recovery = null;
+      }
+    }
+  }
+
+  private latchCloseFailure(entry: DatabaseEntry): DatabaseError {
+    if (entry.closeFailure) return entry.closeFailure;
+    const failure = new DatabaseError(
+      'DATABASE_EXECUTOR_FAILED',
+      'Database actors did not close cleanly.',
+      { retryable: false, outcome: 'unknown' },
+    );
+    this.invalidateTenantSyncBindings(entry);
+    entry.failure = failure;
+    entry.closeFailure = failure;
+    entry.state = 'quarantined';
+    this.quarantinedSlots.add(entry.slot);
+    return failure;
   }
 
   private finishOpenFailure(
@@ -1434,16 +2071,21 @@ export class DatabaseCoordinator implements AsyncDisposable {
     writer: DatabaseExecutor | null,
     reader: DatabaseExecutor | null,
     failure: DatabaseError,
+    rememberPermanentFailure = true,
   ): void {
     if (entry.writer !== writer || entry.reader !== reader) return;
+    this.invalidateTenantSyncBindings(entry);
     entry.writer = null;
     entry.reader = null;
+    entry.restartAbortController?.abort();
+    entry.restartAbortController = null;
     this.quarantinedSlots.delete(entry.slot);
     if (this.entries.get(entry.id) === entry) this.entries.delete(entry.id);
     this.releaseSlot(entry.slot);
 
     if (this.state === 'started'
       && entry.state !== 'closing'
+      && rememberPermanentFailure
       && isPermanentOpenFailure(failure)) {
       entry.state = 'quarantined';
       this.rememberBlockedDatabase(entry, failure);
@@ -1468,6 +2110,13 @@ export class DatabaseCoordinator implements AsyncDisposable {
       databaseRef: entry.databaseRef,
       failure: safeCoordinatorError(failure),
     }));
+  }
+
+  private invalidateTenantSyncBindings(entry: DatabaseEntry): void {
+    for (const binding of [...entry.syncBindings]) {
+      binding.coordinatorClosed();
+    }
+    entry.syncBindings.clear();
   }
 
   private watchSettlement(
@@ -1513,6 +2162,8 @@ export class DatabaseCoordinator implements AsyncDisposable {
     writer: DatabaseExecutor | null,
     reader: DatabaseExecutor | null,
   ): Promise<unknown[]> {
+    this.hotDurabilitySupervisor.clear(reader);
+    this.hotDurabilitySupervisor.clear(writer);
     const failures: unknown[] = [];
     if (reader) failures.push(...await this.closeExecutors([reader]));
     if (writer) failures.push(...await this.closeExecutors([writer]));
@@ -1565,7 +2216,11 @@ export class DatabaseCoordinator implements AsyncDisposable {
       }
     }));
 
-    if (failures.length > 0 || this.quarantinedSlots.size > 0) {
+    const shutdownIncomplete = failures.length > 0
+      || this.quarantinedSlots.size > 0
+      || this.entries.size > 0
+      || this.freeSlots.size !== this.maxDatabases;
+    if (shutdownIncomplete) {
       this.state = 'close-failed';
       const error = new DatabaseError(
         'DATABASE_EXECUTOR_FAILED',
@@ -1582,6 +2237,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
     try {
       this.rootOwnership?.release();
       this.rootOwnership = null;
+      this.actorLiveness = null;
     } catch (caught) {
       this.state = 'close-failed';
       const error = safeCoordinatorError(caught);
@@ -1602,6 +2258,18 @@ export class DatabaseCoordinator implements AsyncDisposable {
 
   private assertStarted(): void {
     if (this.state !== 'started') throw this.closedError();
+  }
+
+  private assertOwnedRootCurrent(): void {
+    const ownership = this.rootOwnership;
+    if (!ownership) throw this.closedError();
+    ownership.assertCurrent();
+  }
+
+  private requireActorLiveness(): DatabaseActorLivenessBinding {
+    const binding = this.actorLiveness;
+    if (!binding) throw this.closedError();
+    return binding;
   }
 
   private closedError(): DatabaseError {
@@ -1651,447 +2319,26 @@ export class DatabaseCoordinator implements AsyncDisposable {
   }
 }
 
-class CoordinatorLease implements DatabaseCoordinatorLease {
-  #active = true;
-  readonly #coordinator: DatabaseCoordinator;
-  readonly #entry: DatabaseEntry;
-  readonly #commitAuthority: DatabaseCommitAuthority | null;
 
-  constructor(
-    coordinator: DatabaseCoordinator,
-    entry: DatabaseEntry,
-    commitAuthority: DatabaseCommitAuthority | null,
-  ) {
-    this.#coordinator = coordinator;
-    this.#entry = entry;
-    this.#commitAuthority = commitAuthority;
-  }
-
-  get databaseRef(): DatabaseRef { return this.#entry.databaseRef; }
-  get released(): boolean { return !this.#active; }
-
-  execute(
-    operation: unknown,
-    options?: DatabaseExecutionOptions,
-  ): Promise<DatabaseReadResult | DatabaseCommitResult> {
-    this.assertActive();
-    return this.#coordinator.execute(
-      this.#entry,
-      operation,
-      options,
-      this.#commitAuthority,
-    );
-  }
-
-  replay(
-    afterSeq: number,
-    limit?: number,
-    options?: DatabaseExecutionOptions,
-  ): Promise<DatabaseReadResult> {
-    this.assertActive();
-    return this.#coordinator.replay(this.#entry, afterSeq, limit, options);
-  }
-
-  release(): void {
-    if (!this.#active) return;
-    this.#active = false;
-    this.#coordinator.releaseEntry(this.#entry);
-  }
-
-  async [Symbol.asyncDispose](): Promise<void> {
-    this.release();
-  }
-
-  private assertActive(): void {
-    if (!this.#active) {
-      throw new DatabaseError('DATABASE_CLOSED', 'Database capability was released.');
-    }
-  }
-}
-
-interface DatabaseWriterLaneOptions {
-  readonly databaseRef: DatabaseRef;
-  readonly maxQueued: number;
-  readonly now: () => number;
-  readonly onQueued: () => boolean;
-  readonly onDequeued: () => void;
-  readonly observability: DatabaseObservability | null;
-}
-
-class DatabaseWriterLane {
-  private readonly queue: WriterLaneTask<any>[] = [];
-  private readonly idleWaiters = new Set<() => void>();
-  private active = false;
-
-  constructor(private readonly options: DatabaseWriterLaneOptions) {}
-
-  get depth(): number { return this.queue.length + (this.active ? 1 : 0); }
-
-  enqueue<T>(
-    execute: () => Promise<T>,
-    options: {
-      readonly signal?: AbortSignal;
-      readonly timeoutMs: number;
-      readonly operationClass: 'query' | 'mutation' | 'replay';
-    },
-  ): Promise<T> {
-    if (options.signal?.aborted) {
-      return Promise.reject(queueCancelled());
-    }
-    const willWait = this.active || this.queue.length > 0;
-    if (willWait
-      && (this.queue.length >= this.options.maxQueued
-        || !this.options.onQueued())) {
-      this.emit({
-        type: 'queue-saturated',
-        databaseRef: this.options.databaseRef,
-        operation: options.operationClass,
-        queueDepth: this.queue.length,
-        queueLimit: this.options.maxQueued,
-      });
-      return Promise.reject(new DatabaseError(
-        'DATABASE_BACKPRESSURE',
-        'Database writer queue capacity is exhausted.',
-        {
-          retryable: true,
-          outcome: 'not-started',
-          details: {
-            queueDepth: this.queue.length,
-            queueLimit: this.options.maxQueued,
-          },
-        },
-      ));
-    }
-
-    const promise = new Promise<T>((resolve, reject) => {
-      const task: WriterLaneTask<T> = {
-        execute,
-        resolve,
-        reject,
-        queuedAt: this.options.now(),
-        timeoutMs: options.timeoutMs,
-        operationClass: options.operationClass,
-        chargedToGlobalQueue: willWait,
-        ...(options.signal ? { signal: options.signal } : {}),
-        timer: null,
-        abortListener: null,
-        settled: false,
-      };
-      if (willWait) task.timer = setTimeout(() => this.expire(task), options.timeoutMs);
-      if (willWait && options.signal) {
-        task.abortListener = () => this.cancel(task);
-        options.signal.addEventListener('abort', task.abortListener, { once: true });
-      }
-      this.queue.push(task);
-    });
-    this.pump();
-    return promise;
-  }
-
-  rejectQueued(error: DatabaseError): void {
-    for (const task of [...this.queue]) this.rejectTask(task, error);
-    this.resolveIdleIfNeeded();
-  }
-
-  idle(): Promise<void> {
-    if (!this.active && this.queue.length === 0) return Promise.resolve();
-    return new Promise((resolve) => this.idleWaiters.add(resolve));
-  }
-
-  private pump(): void {
-    if (this.active) return;
-    let task = this.queue.shift();
-    while (task?.settled) task = this.queue.shift();
-    if (!task) {
-      this.resolveIdleIfNeeded();
-      return;
-    }
-    if (task.chargedToGlobalQueue) this.options.onDequeued();
-    this.detachWaitHooks(task);
-    this.active = true;
-    void Promise.resolve().then(task.execute).then(
-      (value) => {
-        if (!task!.settled) {
-          task!.settled = true;
-          task!.resolve(value);
-        }
-      },
-      (caught) => {
-        if (!task!.settled) {
-          task!.settled = true;
-          task!.reject(safeCoordinatorError(caught));
-        }
-      },
-    ).finally(() => {
-      this.active = false;
-      this.pump();
-    });
-  }
-
-  private expire(task: WriterLaneTask<any>): void {
-    if (!this.removeQueued(task)) return;
-    const durationMs = elapsed(task.queuedAt, this.options.now());
-    task.settled = true;
-    this.detachWaitHooks(task);
-    task.reject(new DatabaseError(
-      'DATABASE_QUEUE_TIMEOUT',
-      'Database operation expired in the writer queue.',
-      {
-        retryable: true,
-        outcome: 'not-started',
-        details: { durationMs, queueDepth: this.queue.length },
-      },
-    ));
-    this.emit({
-      type: 'queue-timeout',
-      databaseRef: this.options.databaseRef,
-      operation: task.operationClass,
-      queueDepth: this.queue.length,
-      durationMs,
-    });
-    this.resolveIdleIfNeeded();
-  }
-
-  private cancel(task: WriterLaneTask<any>): void {
-    if (!this.removeQueued(task)) return;
-    task.settled = true;
-    this.detachWaitHooks(task);
-    task.reject(queueCancelled());
-    this.resolveIdleIfNeeded();
-  }
-
-  private rejectTask(task: WriterLaneTask<any>, error: DatabaseError): void {
-    if (!this.removeQueued(task)) return;
-    task.settled = true;
-    this.detachWaitHooks(task);
-    task.reject(error);
-  }
-
-  private removeQueued(task: WriterLaneTask<any>): boolean {
-    if (task.settled) return false;
-    const index = this.queue.indexOf(task);
-    if (index < 0) return false;
-    this.queue.splice(index, 1);
-    if (task.chargedToGlobalQueue) this.options.onDequeued();
-    return true;
-  }
-
-  private detachWaitHooks(task: WriterLaneTask<any>): void {
-    if (task.timer) clearTimeout(task.timer);
-    task.timer = null;
-    if (task.signal && task.abortListener) {
-      task.signal.removeEventListener('abort', task.abortListener);
-    }
-    task.abortListener = null;
-  }
-
-  private resolveIdleIfNeeded(): void {
-    if (this.active || this.queue.length > 0) return;
-    for (const resolve of this.idleWaiters) resolve();
-    this.idleWaiters.clear();
-  }
-
-  private emit(event: Parameters<DatabaseObservability['emit']>[0]): void {
-    try {
-      this.options.observability?.emit(event);
-    } catch {
-      // Telemetry cannot change queue behavior.
-    }
-  }
-}
-
-class AsyncCatalogGate {
-  private tail: Promise<void> = Promise.resolve();
-
-  async run<T>(operation: () => Promise<T>): Promise<T> {
-    let release!: () => void;
-    const previous = this.tail;
-    this.tail = new Promise<void>((resolve) => { release = resolve; });
-    await previous;
-    try {
-      return await operation();
-    } finally {
-      release();
-    }
-  }
-}
-
-function detachSQLiteConfig(value: DatabaseActorSQLiteConfig): DatabaseActorSQLiteConfig {
-  const bufferPool = value.bufferPool && typeof value.bufferPool === 'object'
-    ? Object.freeze({ ...value.bufferPool })
-    : value.bufferPool;
-  return Object.freeze({
-    ...value,
-    ...(bufferPool === undefined ? {} : { bufferPool }),
-  });
-}
-
-function isWriteOperation(
-  operation: DatabaseOperation,
-): operation is DatabaseWriteOperation {
-  return operation.type === 'mutate'
-    || operation.type === 'batch'
-    || operation.type === 'command';
-}
-
-function operationClass(
-  operation: DatabaseOperation,
-): 'query' | 'mutation' {
-  return isWriteOperation(operation) ? 'mutation' : 'query';
-}
-
-function queueTimeout(
-  options: DatabaseExecutionOptions,
-  fallback: number,
-): number {
-  return positiveInteger(options.queueTimeoutMs ?? fallback, 'queueTimeoutMs');
-}
-
-function operationTimeout(
-  options: DatabaseExecutionOptions,
-  fallback: number,
-): number {
-  return positiveInteger(
-    options.operationTimeoutMs ?? fallback,
-    'operationTimeoutMs',
-  );
-}
-
-function queueCancelled(): DatabaseError {
-  return new DatabaseError(
-    'DATABASE_QUEUE_TIMEOUT',
-    'Database operation was cancelled before execution.',
-    { retryable: true, outcome: 'not-started' },
-  );
-}
-
-function authorityUnavailable(): DatabaseError {
-  return new DatabaseError(
-    'DATABASE_AUTHORITY_CHANGED',
-    'Database commit authority is unavailable.',
-    { retryable: false, outcome: 'not-started' },
-  );
-}
-
-function positiveInteger(value: unknown, field: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
-    throw new DatabaseError(
-      'DATABASE_CONFIG_INVALID',
-      `Database ${field} must be a positive safe integer.`,
-    );
-  }
-  return value as number;
-}
-
-function nonNegativeInteger(value: unknown, field: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new DatabaseError(
-      'DATABASE_CONFIG_INVALID',
-      `Database ${field} must be a non-negative safe integer.`,
-    );
-  }
-  return value as number;
-}
-
-function firstSetValue(values: ReadonlySet<number>): number | null {
-  for (const value of values) return value;
-  return null;
-}
-
-function normalizeCoordinatorDatabaseId(input: string): DatabaseId {
-  try {
-    return normalizeDatabaseId(input);
-  } catch {
-    throw new DatabaseError(
-      'DATABASE_CONFIG_INVALID',
-      'Database identifier is invalid.',
-    );
-  }
-}
-
-function compactExecutors(
-  writer: DatabaseExecutor | null,
-  reader: DatabaseExecutor | null,
-): DatabaseExecutor[] {
-  return [writer, reader].filter(
-    (value): value is DatabaseExecutor => value !== null,
-  );
-}
 
 function readEntryState(entry: DatabaseEntry): DatabaseCoordinatorEntryState {
   return entry.state;
 }
 
-function isPermanentOpenFailure(error: DatabaseError): boolean {
-  return error.code === 'DATABASE_CONFIG_INVALID'
-    || error.code === 'DATABASE_MIGRATION_FAILED'
-    || error.code === 'DATABASE_SCHEMA_MISMATCH'
-    || error.code === 'DATABASE_PROTOCOL_ERROR'
-    || error.code === 'DATABASE_OPERATION_UNSUPPORTED';
+function requiresHotCloseDurabilityProof(entry: DatabaseEntry): boolean {
+  return entry.placement.mode === 'hot'
+    && entry.placement.durability !== 'on-write';
 }
 
-function elapsed(startedAt: number, endedAt: number): number {
-  return Math.max(0, Math.min(MAX_SWEEP_INTERVAL_MS * 20_160, endedAt - startedAt));
-}
-
-const SAFE_COORDINATOR_MESSAGES = Object.freeze({
-  DATABASE_CONFIG_INVALID: 'Database configuration is invalid.',
-  DATABASE_DISABLED: 'Database support is disabled.',
-  DATABASE_NOT_READY: 'Database binding is unavailable.',
-  DATABASE_CLOSED: 'Database coordinator is not accepting work.',
-  DATABASE_BACKPRESSURE: 'Database capacity is exhausted.',
-  DATABASE_QUEUE_TIMEOUT: 'Database operation expired before execution.',
-  DATABASE_OPERATION_TIMEOUT: 'Database operation timed out.',
-  DATABASE_EXECUTOR_START_FAILED: 'Database executor could not start.',
-  DATABASE_EXECUTOR_FAILED: 'Database executor failed.',
-  DATABASE_PROTOCOL_ERROR: 'Invalid database executor response.',
-  DATABASE_OPEN_FAILED: 'Database could not be opened.',
-  DATABASE_MIGRATION_FAILED: 'Database migration failed.',
-  DATABASE_SCHEMA_MISMATCH: 'Database schema does not match its realm.',
-  DATABASE_AUTHORITY_CHANGED: 'Database authority changed.',
-  DATABASE_CONFLICT: 'Database operation conflicts with current state.',
-  DATABASE_HISTORY_GAP: 'Database change history is unavailable.',
-  DATABASE_PAYLOAD_INVALID: 'Database operation payload is invalid.',
-  DATABASE_PAYLOAD_LIMIT: 'Database operation payload exceeds its limit.',
-  DATABASE_RESULT_LIMIT: 'Database operation result exceeds its limit.',
-  DATABASE_OPERATION_UNSUPPORTED: 'Database operation is unsupported.',
-  DATABASE_TRANSACTION_EXPIRED: 'Database transaction expired.',
-  DATABASE_TRANSACTION_STALE: 'Database snapshot is behind the required sequence.',
-  DATABASE_OUTCOME_UNKNOWN: 'Database operation outcome is unknown.',
-} satisfies Record<DatabaseErrorCode, string>);
-
-const SAFE_COORDINATOR_DETAIL_KEYS = new Set([
-  'activeOperations',
-  'durationMs',
-  'generation',
-  'maxDatabases',
-  'maxInFlight',
-  'queueDepth',
-  'queueLimit',
-  'slot',
-]);
-
-/**
- * Strip executor causes, arbitrary messages, and unrecognized detail strings
- * before a failure crosses the coordinator capability boundary.
- */
-function safeCoordinatorError(value: unknown): DatabaseError {
-  const source = normalizeDatabaseError(value);
-  const details: Record<string, number | boolean | null> = {};
-  for (const [key, detail] of Object.entries(source.details)) {
-    if (!SAFE_COORDINATOR_DETAIL_KEYS.has(key)
-      || (typeof detail !== 'number'
-        && typeof detail !== 'boolean'
-        && detail !== null)) continue;
-    details[key] = detail;
+function allowsPeriodicRuntimeRecovery(
+  entry: DatabaseEntry,
+  reason: DatabaseBindingRetirementReason,
+): boolean {
+  if (entry.placement.mode !== 'hot'
+    || entry.placement.durability !== 'periodic') return false;
+  switch (reason) {
+    case 'runtime-failure':
+    case 'periodic-durability-failure':
+      return true;
   }
-  return new DatabaseError(
-    source.code,
-    SAFE_COORDINATOR_MESSAGES[source.code],
-    {
-      retryable: source.retryable,
-      outcome: source.outcome,
-      details: details as DatabaseErrorDetails,
-    },
-  );
 }

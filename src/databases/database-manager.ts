@@ -6,32 +6,34 @@
  * only an already-bound AsyncDatabaseClient produced by bindTenant().
  */
 
-import { createHash } from 'node:crypto';
-
 import { AuthorityCommitCoordinator } from './authority-commit-coordinator';
+import {
+  deriveNamedDatabaseId,
+  deriveTenantDatabaseId,
+} from './database-binding-ref';
 import { createAsyncDatabaseClient } from './database-client';
-import { createDatabaseCommitAuthority } from './database-commit-authority';
+import {
+  assertDatabaseCommitAuthorityCurrent,
+  createDatabaseCommitAuthority,
+  type DatabaseCommitAuthority,
+} from './database-commit-authority';
 import {
   DatabaseCoordinator,
   type DatabaseCoordinatorDiagnostics,
   type DatabaseCoordinatorLease,
 } from './database-coordinator';
 import { DatabaseError } from './database-error';
-import {
-  normalizeDatabaseId,
-  type DatabaseId,
-} from './database-file';
+import { createDatabaseRef, type DatabaseId } from './database-file';
 import type {
   AsyncDatabaseClient,
   AsyncDatabaseOperationExecutor,
 } from './database-operations';
+import type { DatabaseTrustedWriteExecutor } from './database-trusted-writer';
+import type { DatabaseTenantSyncBinding } from './database-tenant-sync';
 import {
   DatabaseRuntime,
   type DatabaseRuntimeRole,
 } from './database-runtime';
-
-const NAMED_BINDING_DOMAIN = 'zero.named-database-binding.v1\0';
-const TENANT_BINDING_DOMAIN = 'zero.tenant-database-binding.v1\0';
 
 export type DatabaseManagerState =
   | 'created'
@@ -68,9 +70,14 @@ export interface BindTenantDatabaseOptions {
 /** Opaque ownership token for one already-routed tenant client. */
 export interface TenantDatabaseBinding extends AsyncDisposable {
   readonly client: AsyncDatabaseClient;
+  /** @internal Framework logical-request receipt capability. */
+  readonly trustedWriter: DatabaseTrustedWriteExecutor;
   readonly released: boolean;
   release(): void;
 }
+
+/** @internal Persistent tenant database capability reserved for Zero Sync. */
+export type TenantDatabaseSyncBinding = DatabaseTenantSyncBinding;
 
 export interface DatabaseManagerDiagnostics {
   readonly state: DatabaseManagerState;
@@ -155,7 +162,7 @@ export class DatabaseManager implements AsyncDisposable {
   async acquireNamed(input: string): Promise<DatabaseCoordinatorLease> {
     this.#assertStarted();
     const coordinator = this.#requireCoordinator();
-    const physicalId = deriveBindingId(NAMED_BINDING_DOMAIN, input);
+    const physicalId = deriveNamedDatabaseId(input);
     // A tenant-file coordinator may require authority for every write. Named
     // setup bindings are already privileged, so bind an internal live proof.
     const commitAuthority = this.#tenantDatabases
@@ -175,26 +182,7 @@ export class DatabaseManager implements AsyncDisposable {
     options: BindTenantDatabaseOptions,
   ): Promise<TenantDatabaseBinding> {
     this.#assertStarted();
-    if (!this.#tenantDatabases) {
-      throw new DatabaseError(
-        'DATABASE_OPERATION_UNSUPPORTED',
-        'Tenant database isolation is not enabled.',
-      );
-    }
-    if (!options || typeof options !== 'object'
-      || typeof options.assertCurrentAuthoritySync !== 'function'
-      || (options.assertCurrentReadAuthority !== undefined
-        && typeof options.assertCurrentReadAuthority !== 'function')) {
-      throw configInvalid('Tenant database authority is invalid.');
-    }
-
-    const physicalId = deriveBindingId(TENANT_BINDING_DOMAIN, options.tenantId);
-    const authorityCoordinator = this.#requireAuthority();
-    const authority = createDatabaseCommitAuthority(
-      authorityCoordinator,
-      physicalId,
-      options.assertCurrentAuthoritySync,
-    );
+    const { physicalId, authority } = this.#resolveTenantBinding(options);
     const lease = await this.#requireCoordinator().acquire(physicalId, {
       commitAuthority: authority,
     });
@@ -210,6 +198,23 @@ export class DatabaseManager implements AsyncDisposable {
       lease.release();
       throw error;
     }
+  }
+
+  /**
+   * Bind the persistent, generation-aware capability consumed by Zero Sync.
+   * It uses the exact physical identity and authority domain as bindTenant().
+   */
+  async bindTenantSync(
+    options: BindTenantDatabaseOptions,
+  ): Promise<TenantDatabaseSyncBinding> {
+    this.#assertStarted();
+    const { physicalId, authority } = this.#resolveTenantBinding(options);
+    return await this.#requireCoordinator().acquireTenantSync(physicalId, {
+      commitAuthority: authority,
+      ...(options.assertCurrentReadAuthority === undefined
+        ? {}
+        : { assertReadAuthority: options.assertCurrentReadAuthority }),
+    });
   }
 
   /** Drain actors, then authority leases, then the default database. */
@@ -285,6 +290,65 @@ export class DatabaseManager implements AsyncDisposable {
     }
     return this.#authority;
   }
+
+  #resolveTenantBinding(options: BindTenantDatabaseOptions): Readonly<{
+    physicalId: DatabaseId;
+    authority: DatabaseCommitAuthority;
+  }> {
+    if (!this.#tenantDatabases) {
+      throw new DatabaseError(
+        'DATABASE_OPERATION_UNSUPPORTED',
+        'Tenant database isolation is not enabled.',
+      );
+    }
+    if (!options || typeof options !== 'object'
+      || typeof options.assertCurrentAuthoritySync !== 'function'
+      || (options.assertCurrentReadAuthority !== undefined
+        && typeof options.assertCurrentReadAuthority !== 'function')) {
+      throw configInvalid('Tenant database authority is invalid.');
+    }
+
+    const physicalId = deriveTenantDatabaseId(options.tenantId);
+    const authorityOwner = this.#requireAuthority();
+    const authority = createDatabaseCommitAuthority(
+      authorityOwner,
+      physicalId,
+      options.assertCurrentAuthoritySync,
+    );
+    // Reject an already-revoked request before actor admission can reserve a
+    // slot or create an otherwise unused tenant file. Operation dispatch still
+    // performs the authoritative check again at the writer FIFO head.
+    assertDatabaseCommitAuthorityCurrent(
+      authority,
+      authorityOwner,
+      createDatabaseRef(physicalId),
+    );
+    assertTenantReadAuthorityCurrent(options.assertCurrentReadAuthority);
+    return Object.freeze({
+      physicalId,
+      authority,
+    });
+  }
+}
+
+function assertTenantReadAuthorityCurrent(
+  check: (() => undefined) | undefined,
+): void {
+  if (!check) return;
+  let result: unknown;
+  try {
+    result = check();
+  } catch {
+    throw new DatabaseError(
+      'DATABASE_AUTHORITY_CHANGED',
+      'Database read authority changed before binding.',
+      { retryable: false, outcome: 'not-started' },
+    );
+  }
+  if (result !== undefined) {
+    void Promise.resolve(result).catch(() => undefined);
+    throw configInvalid('Database read authority checks must be synchronous.');
+  }
 }
 
 class BoundTenantDatabase implements TenantDatabaseBinding {
@@ -302,6 +366,9 @@ class BoundTenantDatabase implements TenantDatabaseBinding {
   }
 
   get client(): AsyncDatabaseClient { return this.#client; }
+  get trustedWriter(): DatabaseTrustedWriteExecutor {
+    return this.#lease.trustedWriter;
+  }
   get released(): boolean { return this.#released; }
 
   release(): void {
@@ -313,23 +380,6 @@ class BoundTenantDatabase implements TenantDatabaseBinding {
   async [Symbol.asyncDispose](): Promise<void> {
     this.release();
   }
-}
-
-function deriveBindingId(domain: string, input: string): DatabaseId {
-  let logicalId: DatabaseId;
-  try {
-    logicalId = normalizeDatabaseId(input);
-  } catch {
-    throw new DatabaseError(
-      'DATABASE_PAYLOAD_INVALID',
-      'Database binding identity is invalid.',
-    );
-  }
-  const digest = createHash('sha256')
-    .update(domain, 'utf8')
-    .update(logicalId, 'utf8')
-    .digest('hex');
-  return normalizeDatabaseId(`binding-v1-${digest}`);
 }
 
 function createLeaseExecutor(

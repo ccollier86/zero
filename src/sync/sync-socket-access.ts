@@ -2,6 +2,7 @@
 
 import type { ReactiveDB } from './reactive-db';
 import { getReadableSyncTables, type SyncPolicy } from './sync-policy';
+import type { PlatformObservabilityRuntime } from '../observability/types';
 import type {
   SyncAuthContext,
   SyncResourcePolicyAdapter,
@@ -14,12 +15,16 @@ export interface SyncSocketAccess {
   rowFilters: Map<string, SyncRowFilter>;
   rowProjectors: Map<string, SyncRowProjector>;
   fingerprint: string | null;
+  readAuthorityFingerprint: string | null;
 }
 
 interface SyncSocketAccessOptions {
   db: ReactiveDB;
   policy: SyncPolicy;
   resourcePolicy?: SyncResourcePolicyAdapter;
+  /** Trusted actor-backed app tables which are not gated by default-db shadow tables. */
+  additionalTables?: Iterable<string>;
+  observability?: PlatformObservabilityRuntime | null;
 }
 
 /** Re-evaluate table policy and resource policy against a live auth context. */
@@ -27,10 +32,17 @@ export async function resolveSyncSocketAccess(
   options: SyncSocketAccessOptions,
   authContext: SyncAuthContext | null,
 ): Promise<SyncSocketAccess> {
-  const tables = getReadableSyncTables(
+  const tableNames = new Set(
     options.db.getTableNames().filter((table) => !table.startsWith('_')),
+  );
+  for (const table of options.additionalTables ?? []) {
+    if (!table.startsWith('_')) tableNames.add(table);
+  }
+  const tables = getReadableSyncTables(
+    tableNames,
     authContext,
     options.policy,
+    options.observability,
   );
   if (!options.resourcePolicy) {
     return {
@@ -38,6 +50,7 @@ export async function resolveSyncSocketAccess(
       rowFilters: new Map(),
       rowProjectors: new Map(),
       fingerprint: tableFingerprint(tables),
+      readAuthorityFingerprint: null,
     };
   }
 
@@ -50,6 +63,7 @@ export async function resolveSyncSocketAccess(
     allowedTables: access.readableTables,
     rowFilters: access.rowFilters,
     rowProjectors: access.rowProjectors ?? new Map(),
+    readAuthorityFingerprint: access.readAuthorityFingerprint ?? null,
     fingerprint: policy === undefined && (
       access.rowFilters.size > 0
       || (access.rowProjectors?.size ?? 0) > 0

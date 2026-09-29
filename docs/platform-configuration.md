@@ -181,6 +181,124 @@ createApp({
 });
 ```
 
+### ReactiveDB Fabric topology (active unreleased branch)
+
+`databaseTopology` is the typed configuration surface for Fabric. Omitting it,
+or using `{ mode: 'single' }`, preserves the historical one-database behavior.
+`mode: 'multiple'` keeps `db` as the pinned default/control database and adds a
+bounded coordinator for named or physical-tenant application databases.
+
+The actor realm must be a side-effect-free module shared by the app config and
+the subprocess bootstrap. It defines only the tables, migrations, and named
+operations that may execute inside those databases:
+
+```ts
+// server/tenant-database.realm.ts
+import { defineDatabaseRealm } from '@zero/framework/server';
+import { tenantTables } from '../db/schema';
+
+export const tenantDatabaseRealm = defineDatabaseRealm({
+  name: 'tenant-data',
+  version: '1',
+  tables: tenantTables,
+  migrations: [],
+  queries: {},
+  commands: {},
+});
+```
+
+```ts
+// zero.config.ts
+import { fileURLToPath } from 'node:url';
+import { defineZeroConfig } from '@zero/framework/server';
+import { tables } from './db/schema';
+import { resources } from './server/resources';
+import { tenantDatabaseRealm } from './server/tenant-database.realm';
+
+export default defineZeroConfig({
+  db: { mode: 'file', path: './data/control.sqlite' },
+  auth: { tenancy: 'multi' },
+  tables,
+  resources,
+  databaseTopology: {
+    mode: 'multiple',
+    rootDirectory: './data/tenant-databases',
+    realm: tenantDatabaseRealm,
+    actors: {
+      launch: {
+        kind: 'source',
+        entrypoint: fileURLToPath(new URL('./app/server.ts', import.meta.url)),
+      },
+      // env is an explicit allowlist; the parent environment is not copied.
+      env: {},
+    },
+    tenantIsolation: 'tenant-database',
+    placement: 'file',
+    maxDatabases: 16,
+    maxDatabaseFiles: 10_000,
+    maxTenantSyncDatabases: 15,
+    maxTenantSyncBindingsPerDatabase: 64,
+    readers: true,
+    restart: {
+      initialDelayMs: 10,
+      maxDelayMs: 1_000,
+      circuitFailureThreshold: 5,
+      circuitCooldownMs: 5_000,
+    },
+  },
+});
+```
+
+The real app entry must branch through the actor bootstrap before ordinary
+server startup:
+
+```ts
+import {
+  createApp,
+  runDatabaseActorIfRequested,
+} from '@zero/framework/server';
+import config from '../zero.config';
+import { tenantDatabaseRealm } from '../server/tenant-database.realm';
+
+if (!await runDatabaseActorIfRequested({ realm: tenantDatabaseRealm })) {
+  const app = await createApp(config);
+  app.listen(config.port ?? 3000);
+}
+```
+
+`placement` accepts `'file'`, bounded `'hot'` shorthand, or an object with a
+default, optional synchronous selector, and explicit hot durability/byte
+budget. A selector receives only an opaque, pseudonymous database reference,
+must return synchronously, and cannot inspect a raw tenant name supplied by a
+request. The deterministic reference is unkeyed operational correlation
+metadata, not a secret or authorization capability; low-entropy source IDs can
+be guess-correlated. Placement stays pinned while an entry is active; changing
+policy does not move an open database.
+
+`restart` controls actor replacement independently for each physical database.
+The values above are the defaults: exponential delays begin at 10 ms and cap
+at 1 second; after five consecutive replacement attempts, Fabric makes one
+half-open attempt per 5-second cooldown until a bind succeeds. Success resets
+the entry's count. Releasing its last lease or draining the app cancels a
+pending delay. Operations waiting during recovery remain subject to the
+ordinary queue limits, timeout, and cancellation signal.
+
+Fabric validates actor/file/queue/timer bounds and the relationship between
+`maxDatabases`, tenant-Sync admission, auth mode, Resources, and the realm
+schema. Configuration resolution does not create directories or database
+files. Startup then repeats filesystem ownership checks before opening the
+control database, actor root, or object storage. Do not reuse `outDir`, the
+control database path, or Storage's owned root/tmp/blob directories as the
+Fabric root. Newly scaffolded apps ignore `data/` plus common `.db`/`.sqlite`
+main, WAL, SHM, and rollback-journal filenames. Existing apps or custom roots
+must apply equivalent source-control exclusions; tenant database files and
+sidecars are runtime data, never application assets.
+
+This surface is not released from the current branch. Its exact options,
+durability semantics, error contract, deployment requirements, and remaining
+release gates are authoritative in
+[ReactiveDB Fabric: Multi-Database Architecture](./framework/multi-database-architecture.md).
+
 ### File-storage capability signing
 
 `createApp()` mounts authenticated file storage whenever auth is enabled.
@@ -440,7 +558,8 @@ Sync use the same request authorization facade; raw `zero.db`/`zero.sql`
 remains compatible at its historical path in single mode. Multi-tenant request
 handlers must opt into that trusted boundary through `zero.unsafe.db` /
 `zero.unsafe.sql`; ordinary app data should use a classified resource so the
-tenant predicate cannot be forgotten.
+resolved shared-row predicate or physical database boundary cannot be
+forgotten.
 
 In `multi` mode, installation bootstrap always requires a tenant name and
 atomically persists the user, credential, first tenant, protected owner
@@ -497,8 +616,10 @@ reuse for seven days. See
 all bounds, routes, lifecycle rules, and deliberate exclusions.
 
 Browser sessions are durably tenant-bound; users with multiple memberships
-must explicitly select one, and managed tenant resources stamp and filter their
-server-owned tenant discriminator. Doctor accepts `tenancy: 'multi'` and both
+must explicitly select one. Managed shared-row tenant Resources stamp and
+filter their server-owned discriminator, while physical tenant Resources use
+the authority-derived database capability as the mandatory boundary. Doctor
+accepts `tenancy: 'multi'` and both
 authorization modes, and validates those resource boundaries. For
 `single/advanced`, its static report documents the runtime owner-adoption
 guard; startup performs the authoritative database-backed active-owner check.

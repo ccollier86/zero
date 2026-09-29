@@ -4,6 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPlatformSQLiteService } from '../persistence';
+import { MemoryEventStore } from '../observability';
+import type { PlatformObservabilityRuntime } from '../observability/types';
 import {
   createReactiveDB,
   ReactiveDB,
@@ -852,6 +854,44 @@ describe('query', () => {
 // ─── onChange ─────────────────────────────────────────────────────────────
 
 describe('onChange', () => {
+  test('keeps listener failure telemetry app-local and privacy-safe', () => {
+    const firstEvents = new MemoryEventStore();
+    const secondEvents = new MemoryEventStore();
+    const first = createReactiveDB({
+      mode: 'memory',
+      observability: observabilityRuntimeFor(firstEvents),
+    });
+    const second = createReactiveDB({
+      mode: 'memory',
+      observability: observabilityRuntimeFor(secondEvents),
+    });
+    first.defineTable('private_records', { id: 'text primary key', value: 'text' });
+    second.defineTable('private_records', { id: 'text primary key', value: 'text' });
+    first.onChange(() => {
+      throw new Error('private-listener-secret');
+    });
+
+    try {
+      first.insert('private_records', {
+        id: 'private-row-id',
+        value: 'private-row-value',
+      });
+      const firstFailures = firstEvents.query({
+        code: 'sync.change_listener.failed',
+      }).events;
+      expect(firstFailures).toHaveLength(1);
+      expect(secondEvents.query({
+        code: 'sync.change_listener.failed',
+      }).events).toHaveLength(0);
+      expect(firstFailures[0]?.error).toBeUndefined();
+      expect(firstFailures[0]?.metadata).toBeUndefined();
+      expect(JSON.stringify(firstFailures[0])).not.toContain('private');
+    } finally {
+      first.dispose();
+      second.dispose();
+    }
+  });
+
   test('listener fires on insert', () => {
     const changes: Change[] = [];
     db.onChange((c) => changes.push(c));
@@ -1052,6 +1092,16 @@ describe('onChange', () => {
     expect(result.seq).toBe(1);
   });
 });
+
+function observabilityRuntimeFor(
+  store: MemoryEventStore,
+): PlatformObservabilityRuntime {
+  return {
+    sink: store,
+    store,
+    config: { console: false, store },
+  };
+}
 
 // ─── Ring Buffer (_changes) ──────────────────────────────────────────────
 
@@ -1621,6 +1671,60 @@ describe('dispose', () => {
   test('dispose is idempotent', () => {
     db.dispose();
     expect(() => db.dispose()).not.toThrow();
+  });
+
+  test('seals operations but retries an owned hot-service close after snapshot failure', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zero-reactive-close-retry-'));
+    const database = createReactiveDB({
+      mode: 'hot',
+      path: join(dir, 'app.db'),
+      snapshotPath: join(dir, 'app.snapshot.db'),
+      snapshotIntervalMs: 60_000,
+    });
+    database.defineTable('items', {
+      id: 'text primary key',
+      name: 'text not null',
+    });
+    database.insert('items', { id: 'one', name: 'Retryable close' });
+    const sqlite = database.getSQLiteService()!;
+    const snapshot = sqlite.snapshot!;
+    const snapshotSync = snapshot.snapshotSyncDetailed.bind(snapshot);
+    let snapshotCalls = 0;
+    snapshot.snapshotSyncDetailed = () => {
+      snapshotCalls += 1;
+      if (snapshotCalls === 1) {
+        return {
+          status: 'failed',
+          durable: false,
+          error: new Error('injected final snapshot failure'),
+        };
+      }
+      return snapshotSync();
+    };
+
+    try {
+      expect(() => database.dispose()).toThrow('final snapshot failed');
+      expect(snapshotCalls).toBe(1);
+      expect(() => database.insert('items', {
+        id: 'two',
+        name: 'Must remain sealed',
+      })).toThrow('disposed');
+      expect(sqlite.raw.query('SELECT 1 AS value').get()).toEqual({ value: 1 });
+
+      expect(() => database.dispose()).not.toThrow();
+      expect(snapshotCalls).toBe(2);
+      expect(() => sqlite.raw.query('SELECT 1').get()).toThrow();
+
+      expect(() => database.dispose()).not.toThrow();
+      expect(snapshotCalls).toBe(2);
+    } finally {
+      try {
+        database.dispose();
+      } catch {
+        // Preserve the assertion failure; cleanup is best effort here.
+      }
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test('cannot dispose inside a transaction or swallow the rollback poison', () => {

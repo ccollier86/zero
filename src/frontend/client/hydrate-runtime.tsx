@@ -17,7 +17,7 @@ import {
   startTransition,
 } from 'react';
 import type { ReactNode } from 'react';
-import type { SyncMode } from '../../sync/types';
+import type { SyncDataPlaneName, SyncMode } from '../../sync/types';
 import type { RouteAuthorizationBoundary } from '../router/authorization-route-boundary';
 import { registerRoute, navigateTo } from './client-router';
 import { RouterProvider } from './router-context';
@@ -56,6 +56,8 @@ declare global {
       auth?: boolean;
       stateSync?: boolean;
       tableSyncModes?: Record<string, SyncMode>;
+      tableSyncPlanes?: Record<string, SyncDataPlaneName>;
+      managedTableNames?: string[];
       publicPaths?: string[];
       routeAuth?: 'protected-by-default' | 'explicit';
       loginPath?: string;

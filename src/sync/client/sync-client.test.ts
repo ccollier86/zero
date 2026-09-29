@@ -224,6 +224,7 @@ describe('createSyncClient', () => {
     expect(msg.type).toBe('sync.subscribe');
     expect(msg.tables).toEqual(['todos']);
     expect(msg.lastSeq).toBe(0);
+    expect(msg.cursors).toEqual({ default: { lastSeq: 0 } });
 
     client.disconnect();
   });
@@ -354,7 +355,11 @@ describe('createSyncClient', () => {
     client.disconnect();
   });
 
-  for (const reason of ['Sync access changed', 'Auth context changed']) {
+  for (const reason of [
+    'Sync access changed',
+    'Auth context changed',
+    'Sync read authority changed',
+  ]) {
     test(`purges authorization-scoped rows and mutations on ${reason}`, async () => {
       let token = 'access-before-policy-change';
       const client = makeClient({
@@ -603,6 +608,7 @@ describe('mutations', () => {
     expect(msg.type).toBe('sync.mutate');
     expect(msg.op).toBe('INSERT');
     expect(msg.table).toBe('todos');
+    expect(msg.plane).toBeUndefined();
 
     client.disconnect();
   });
@@ -1200,5 +1206,341 @@ describe('onError callback', () => {
     expect(errorMsg!).toContain('4001');
 
     client.disconnect();
+  });
+
+  test('reports a terminal data contract failure without reconnecting', async () => {
+    let errorMsg: string | null = null;
+    const client = makeClient({
+      maxReconnectAttempts: 5,
+      onError: (err) => { errorMsg = err; },
+    });
+    await flushMicrotasks();
+    const count = MockWebSocket.instances.length;
+
+    MockWebSocket.latest().simulateClose(
+      4004,
+      'Tenant Sync snapshot cannot fit the transport contract',
+    );
+    await flushMicrotasks();
+
+    expect(errorMsg!).toContain('Sync stopped (code 4004)');
+    expect(MockWebSocket.instances).toHaveLength(count);
+    client.disconnect();
+  });
+
+  test('reports permanent tenant database capacity once without reconnecting', async () => {
+    const errors: string[] = [];
+    const client = makeClient({
+      maxReconnectAttempts: 5,
+      onError: (error) => { errors.push(error); },
+    });
+    await flushMicrotasks();
+    const count = MockWebSocket.instances.length;
+
+    MockWebSocket.latest().simulateClose(
+      4004,
+      'Tenant Sync database capacity is exhausted',
+    );
+    await flushMicrotasks();
+
+    expect(errors).toEqual([
+      'Sync stopped (code 4004): Tenant Sync database capacity is exhausted',
+    ]);
+    expect(MockWebSocket.instances).toHaveLength(count);
+    client.disconnect();
+  });
+});
+
+describe('multiplexed default and tenant data planes', () => {
+  const tables = {
+    platform_users: { _pk: 'id', id: 'string', name: 'string' },
+    projects: { _pk: 'id', id: 'string', title: 'string' },
+  } as const;
+  const tableSyncPlanes = {
+    platform_users: 'default',
+    projects: 'tenant',
+  } as const;
+
+  test('waits for both baselines, routes mutations, and reconnects with independent cursors', async () => {
+    MockWebSocket.autoBaseline = false;
+    const client = makeClient({ tables, tableSyncPlanes });
+    await flushMicrotasks();
+    const firstSocket = MockWebSocket.latest();
+    const subscribe = JSON.parse(firstSocket.sent[1]);
+
+    expect(subscribe.tables).toEqual(['platform_users', 'projects']);
+    expect(subscribe.snapshot).toEqual(['platform_users', 'projects']);
+    expect(subscribe.lastSeq).toBe(0);
+    expect(subscribe.cursors).toEqual({
+      default: { lastSeq: 0 },
+      tenant: { lastSeq: 0 },
+    });
+
+    client.insert('projects', { id: 'p1', title: 'Buffered tenant write' });
+    expect(firstSocket.sent.map((item) => JSON.parse(item).type))
+      .toEqual(['sync.auth', 'sync.subscribe']);
+
+    firstSocket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', plane: 'default',
+      tables: { platform_users: {} }, seq: 40,
+      epoch: 'platform-epoch', scope: 'shared-scope',
+      reset: 'preserve-pending',
+    }));
+    expect(firstSocket.sent.map((item) => JSON.parse(item).type))
+      .toEqual(['sync.auth', 'sync.subscribe']);
+
+    firstSocket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', plane: 'tenant', tables: { projects: {} }, seq: 4,
+      epoch: 'tenant-epoch', scope: 'shared-scope',
+      reset: 'preserve-pending',
+    }));
+    const tenantMutation = JSON.parse(firstSocket.sent[2]);
+    expect(tenantMutation).toMatchObject({
+      type: 'sync.mutate', table: 'projects', plane: 'tenant',
+      epoch: 'tenant-epoch', attempt: 1,
+    });
+
+    client.insert('platform_users', { id: 'u1', name: 'Owner' });
+    const defaultMutation = JSON.parse(firstSocket.sent[3]);
+    expect(defaultMutation).toMatchObject({
+      type: 'sync.mutate', table: 'platform_users', plane: 'default',
+      epoch: 'platform-epoch', attempt: 1,
+    });
+
+    firstSocket.simulateMessage(JSON.stringify({
+      type: 'sync.change', plane: 'default', seq: 41, prevSeq: 40,
+      epoch: 'platform-epoch', scope: 'shared-scope', table: 'platform_users',
+      op: 'INSERT', rowId: 'u2', row: { id: 'u2', name: 'Admin' },
+      origin: 'other', ts: 1,
+    }));
+    firstSocket.simulateMessage(JSON.stringify({
+      type: 'sync.change', plane: 'tenant', seq: 5, prevSeq: 4,
+      epoch: 'tenant-epoch', scope: 'shared-scope', table: 'projects',
+      op: 'INSERT', rowId: 'p2', row: { id: 'p2', title: 'Live tenant row' },
+      origin: 'other', ts: 2,
+    }));
+
+    const firstMeta = getCtx(client)._sync;
+    expect(firstMeta.cursors.default.lastSeq).toBe(41);
+    expect(firstMeta.cursors.tenant.lastSeq).toBe(5);
+    expect(firstMeta.lastSeq).toBe(41);
+
+    client.reconnect();
+    await flushMicrotasks();
+    const reconnectSubscribe = JSON.parse(MockWebSocket.latest().sent[1]);
+    expect(reconnectSubscribe).toMatchObject({
+      lastSeq: 41,
+      epoch: 'platform-epoch',
+      scope: 'shared-scope',
+      cursors: {
+        default: {
+          lastSeq: 41, epoch: 'platform-epoch', scope: 'shared-scope',
+        },
+        tenant: {
+          lastSeq: 5, epoch: 'tenant-epoch', scope: 'shared-scope',
+        },
+      },
+    });
+    client.disconnect();
+  });
+
+  test('applies a chunked tenant baseline only after its matching end frame', async () => {
+    MockWebSocket.autoBaseline = false;
+    const client = makeClient({ tables, tableSyncPlanes });
+    await flushMicrotasks();
+    const socket = MockWebSocket.latest();
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', plane: 'default',
+      tables: { platform_users: {} }, seq: 1,
+      epoch: 'default-epoch', scope: 'scope', reset: 'preserve-pending',
+    }));
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot.begin', snapshotId: 'tenant-baseline', plane: 'tenant',
+      tables: ['projects'], seq: 12, epoch: 'tenant-epoch', scope: 'scope',
+      reset: 'preserve-pending',
+    }));
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot.chunk', snapshotId: 'tenant-baseline', plane: 'tenant',
+      table: 'projects', rows: { p1: { id: 'p1', title: 'Staged' } },
+    }));
+    expect((getCtx(client).projects as Record<string, unknown>).p1).toBeUndefined();
+
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot.end', snapshotId: 'tenant-baseline', plane: 'tenant',
+    }));
+
+    expect((getCtx(client).projects as Record<string, any>).p1.title).toBe('Staged');
+    expect(getCtx(client)._sync.cursors.tenant).toMatchObject({
+      lastSeq: 12, epoch: 'tenant-epoch', scope: 'scope',
+    });
+    client.disconnect();
+  });
+
+  test('does not wait for an empty default plane', async () => {
+    MockWebSocket.autoBaseline = false;
+    const client = makeClient({
+      tables: { projects: tables.projects },
+      tableSyncPlanes: { projects: 'tenant' },
+    });
+    await flushMicrotasks();
+    const socket = MockWebSocket.latest();
+    client.insert('projects', { id: 'p1', title: 'Tenant only' });
+
+    const subscribe = JSON.parse(socket.sent[1]);
+    expect(subscribe.cursors).toEqual({ tenant: { lastSeq: 0 } });
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', plane: 'tenant', tables: { projects: {} }, seq: 2,
+      epoch: 'tenant-epoch', scope: 'tenant-scope',
+      reset: 'preserve-pending',
+    }));
+
+    expect(JSON.parse(socket.sent[2])).toMatchObject({
+      type: 'sync.mutate', plane: 'tenant', epoch: 'tenant-epoch',
+    });
+    client.disconnect();
+  });
+
+  test('tenant purge clears only tenant queues and cache', async () => {
+    MockWebSocket.autoBaseline = false;
+    const client = makeClient({ tables, tableSyncPlanes });
+    await flushMicrotasks();
+    const socket = MockWebSocket.latest();
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', plane: 'default',
+      tables: { platform_users: {} }, seq: 1,
+      epoch: 'platform-epoch', scope: 'scope', reset: 'preserve-pending',
+    }));
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', plane: 'tenant', tables: { projects: {} }, seq: 1,
+      epoch: 'tenant-epoch', scope: 'scope', reset: 'preserve-pending',
+    }));
+
+    client.insert('platform_users', { id: 'u1', name: 'Pending owner' });
+    client.insert('projects', { id: 'p1', title: 'Pending project' });
+    const pending = getCtx(client)._sync.pending;
+    const defaultRef = pending.find(({ table }) => table === 'platform_users')!.ref;
+
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', plane: 'tenant', tables: {}, seq: 0,
+      epoch: 'tenant-replacement', scope: 'replacement-scope', reset: 'purge',
+    }));
+
+    expect(getCtx(client)._sync.pending.map(({ ref }) => ref)).toEqual([defaultRef]);
+    expect(getCtx(client).projects).toEqual({});
+    expect(getCtx(client).platform_users).toEqual({
+      u1: { id: 'u1', name: 'Pending owner' },
+    });
+
+    const sentBeforeReplacement = socket.sent.length;
+    client.insert('projects', { id: 'p2', title: 'Replacement scope' });
+    expect(socket.sent).toHaveLength(sentBeforeReplacement + 1);
+    expect(JSON.parse(socket.sent.at(-1)!)).toMatchObject({
+      type: 'sync.mutate', table: 'projects', plane: 'tenant',
+      epoch: 'tenant-replacement',
+    });
+    client.disconnect();
+  });
+
+  test('stale canonical receipt ack settles pending without regressing the row', async () => {
+    MockWebSocket.autoBaseline = false;
+    const client = makeClient({
+      tables: { projects: tables.projects },
+      tableSyncPlanes: { projects: 'tenant' },
+    });
+    await flushMicrotasks();
+    const socket = MockWebSocket.latest();
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', plane: 'tenant',
+      tables: { projects: { p1: { id: 'p1', title: 'Before' } } }, seq: 5,
+      epoch: 'tenant-epoch', scope: 'scope', reset: 'preserve-pending',
+    }));
+    client.update('projects', 'p1', { title: 'Requested' });
+    const ref = getCtx(client)._sync.pending[0].ref;
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.change', plane: 'tenant', seq: 6, prevSeq: 5,
+      epoch: 'tenant-epoch', scope: 'scope', table: 'projects', op: 'UPDATE',
+      rowId: 'p1', row: { id: 'p1', title: 'Newer canonical' },
+      origin: 'other', ts: 1,
+    }));
+    socket.simulateMessage(JSON.stringify({
+      type: 'sync.ack', plane: 'tenant', ref, ok: true, seq: 6,
+      change: {
+        table: 'projects', op: 'UPDATE', rowId: 'p1',
+        row: { id: 'p1', title: 'Stale receipt' },
+      },
+    }));
+
+    expect((getCtx(client).projects as Record<string, any>).p1.title)
+      .toBe('Newer canonical');
+    expect(getCtx(client)._sync.pending).toEqual([]);
+    client.disconnect();
+  });
+
+  test('replays an unknown-outcome actor mutation after a 1012 close with the same receipt identity', async () => {
+    MockWebSocket.autoBaseline = false;
+    const client = makeClient({ tables, tableSyncPlanes, maxReconnectAttempts: 1 });
+    await flushMicrotasks();
+    const firstSocket = MockWebSocket.latest();
+    firstSocket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', plane: 'default',
+      tables: { platform_users: {} }, seq: 8,
+      epoch: 'platform-epoch', scope: 'scope', reset: 'preserve-pending',
+    }));
+    firstSocket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', plane: 'tenant', tables: { projects: {} }, seq: 3,
+      epoch: 'tenant-epoch', scope: 'scope', reset: 'preserve-pending',
+    }));
+    client.insert('projects', { id: 'p1', title: 'Unknown outcome' });
+    const firstAttempt = JSON.parse(firstSocket.sent.at(-1)!);
+
+    firstSocket.simulateClose(1012, 'Tenant database mutation outcome unknown');
+    expect(getCtx(client)._sync.pending.map(({ ref }) => ref))
+      .toEqual([firstAttempt.ref]);
+
+    // Exercise the same reconnect path immediately; reconnect() cancels the
+    // scheduler installed by the 1012 close so the test remains deterministic.
+    client.reconnect();
+    await flushMicrotasks();
+    const secondSocket = MockWebSocket.latest();
+    secondSocket.simulateMessage(JSON.stringify({
+      type: 'sync.catchup', plane: 'default', changes: [], seq: 8, prevSeq: 8,
+      epoch: 'platform-epoch', scope: 'scope',
+    }));
+    expect(secondSocket.sent.map((item) => JSON.parse(item).type))
+      .toEqual(['sync.auth', 'sync.subscribe']);
+    secondSocket.simulateMessage(JSON.stringify({
+      type: 'sync.catchup', plane: 'tenant', changes: [], seq: 3, prevSeq: 3,
+      epoch: 'tenant-epoch', scope: 'scope',
+    }));
+
+    const replay = JSON.parse(secondSocket.sent.at(-1)!);
+    expect(replay.attempt).toBe(2);
+    expect({ ...replay, attempt: undefined }).toEqual({
+      ...firstAttempt,
+      attempt: undefined,
+    });
+
+    secondSocket.simulateMessage(JSON.stringify({
+      type: 'sync.ack', plane: 'tenant', ref: replay.ref, ok: true, seq: 4,
+      change: {
+        table: 'projects', op: 'INSERT', rowId: 'p1',
+        row: { id: 'p1', title: 'Unknown outcome' },
+      },
+    }));
+    expect(getCtx(client)._sync.pending).toEqual([]);
+    client.disconnect();
+  });
+
+  test('rejects incomplete or extra table-plane catalogs at construction', () => {
+    expect(() => makeClient({
+      tables,
+      tableSyncPlanes: { platform_users: 'default' },
+    } as any)).toThrow('missing table');
+    expect(() => makeClient({
+      tables,
+      tableSyncPlanes: {
+        platform_users: 'default', projects: 'tenant', unknown: 'tenant',
+      },
+    } as any)).toThrow('unknown table');
   });
 });

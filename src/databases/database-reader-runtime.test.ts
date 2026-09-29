@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createPlatformSQLiteService } from '../persistence';
+import { prepareDatabaseBindingIdentity } from './database-binding-identity';
 import { DatabaseError } from './database-error';
+import { createDatabaseRef, prepareDatabaseFile } from './database-file';
 import { DatabaseReaderRuntime } from './database-reader-runtime';
 import { defineDatabaseRealm } from './database-realm';
 import { DatabaseRuntime } from './database-runtime';
@@ -47,7 +49,16 @@ describe('DatabaseReaderRuntime', () => {
     directory = realpathSync.native(
       mkdtempSync(join(tmpdir(), 'zero-database-reader-')),
     );
-    filePath = join(directory, 'tenant.sqlite');
+    const databaseRef = createDatabaseRef('reader-test');
+    const prepared = prepareDatabaseFile(directory, 'reader-test');
+    filePath = prepared.path;
+    const bindingIdentity = prepareDatabaseBindingIdentity({
+      filePath,
+      fileIdentity: prepared.identity,
+      databaseRef,
+      realmName: realm.name,
+      initialize: true,
+    });
     writer = DatabaseRuntime.open({
       id: 'writer-test',
       role: 'tenant',
@@ -58,7 +69,12 @@ describe('DatabaseReaderRuntime', () => {
     writer.db.createStrict('todos', { id: 'b', title: 'Second' });
     writer.db.createStrict('todos', { id: 'a', title: 'First' });
     writer.db.createStrict('todos', { id: 'c', title: 'Third' });
-    reader = DatabaseReaderRuntime.open({ filePath, realm });
+    reader = DatabaseReaderRuntime.open({
+      filePath,
+      realm,
+      databaseRef,
+      instanceId: bindingIdentity.instanceId,
+    });
   });
 
   afterEach(() => {
@@ -261,6 +277,90 @@ describe('DatabaseReaderRuntime', () => {
     }));
     expect(error.code).toBe('DATABASE_CLOSED');
     expect(JSON.stringify(error)).not.toContain(filePath);
+  });
+
+  test('turns startup handle cleanup ambiguity into an unknown executor failure', () => {
+    const closeModes: boolean[] = [];
+    const error = captureError(() => DatabaseReaderRuntime.openForTesting({
+      filePath,
+      realm,
+      databaseRef: createDatabaseRef('wrong-reader'),
+      instanceId: reader.bindingIdentity.instanceId,
+    }, {
+      finalizeStatement(statement) {
+        statement.finalize();
+      },
+      closeDatabase(database, throwOnError) {
+        closeModes.push(throwOnError);
+        database.close(throwOnError);
+        if (throwOnError) throw new Error('injected close-report failure');
+      },
+    }));
+    expect(error).toMatchObject({
+      code: 'DATABASE_EXECUTOR_FAILED',
+      retryable: false,
+      outcome: 'unknown',
+    });
+    expect(error.cause).toBeInstanceOf(AggregateError);
+    expect(closeModes).toEqual([true, false]);
+  });
+
+  test('keeps failed close state retryable until throwing SQLite close succeeds', () => {
+    let injected = false;
+    const injectedReader = DatabaseReaderRuntime.openForTesting({
+      filePath,
+      realm,
+      databaseRef: reader.bindingIdentity.databaseRef,
+      instanceId: reader.bindingIdentity.instanceId,
+    }, {
+      finalizeStatement(statement) {
+        statement.finalize();
+      },
+      closeDatabase(database, throwOnError) {
+        if (throwOnError && !injected) {
+          injected = true;
+          throw new Error('injected pending-query failure');
+        }
+        database.close(throwOnError);
+      },
+    });
+    try {
+      expect(captureError(() => injectedReader.close())).toMatchObject({
+        code: 'DATABASE_EXECUTOR_FAILED',
+        retryable: false,
+        outcome: 'unknown',
+      });
+      expect(injectedReader.diagnostics().state).toBe('ready');
+      injectedReader.close();
+      expect(injectedReader.diagnostics().state).toBe('closed');
+    } finally {
+      try { injectedReader.close(); } catch { /* Preserve the test failure. */ }
+    }
+  });
+
+  test('proves immediate reader-handle release on the normal close path', () => {
+    const closeModes: boolean[] = [];
+    let openedDatabase: Database | null = null;
+    const strictReader = DatabaseReaderRuntime.openForTesting({
+      filePath,
+      realm,
+      databaseRef: reader.bindingIdentity.databaseRef,
+      instanceId: reader.bindingIdentity.instanceId,
+    }, {
+      finalizeStatement(statement) {
+        statement.finalize();
+      },
+      closeDatabase(database, throwOnError) {
+        openedDatabase = database;
+        closeModes.push(throwOnError);
+        database.close(throwOnError);
+      },
+    });
+
+    strictReader.close();
+
+    expect(closeModes).toEqual([true]);
+    expect(() => openedDatabase!.run('SELECT 1')).toThrow();
   });
 });
 

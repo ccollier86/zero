@@ -7,6 +7,7 @@
  */
 
 import type { Database } from 'bun:sqlite';
+import type { PlatformObservabilityRuntime } from '../observability/types';
 import type { BufferPool } from './buffer-pool';
 import type { CheckpointManager } from './checkpoint-manager';
 import type { SnapshotManager } from './snapshot-manager';
@@ -37,6 +38,10 @@ export interface SQLiteStorageConfig {
   snapshotEnabled?: boolean;
   /** Periodic hot-mode snapshot interval in milliseconds. Default: 30000. */
   snapshotIntervalMs?: number;
+  /** Optional hard bound for a serialized hot database image, in bytes. */
+  hotMaxBytes?: number;
+  /** Emit persistence lifecycle telemetry. Internal actor runtimes disable it. */
+  emitTelemetry?: boolean;
   /** SQLite cache_size PRAGMA. Default: -262144. */
   cacheSize?: number;
   /** SQLite mmap_size PRAGMA for file mode. Default: 1073741824. */
@@ -57,6 +62,29 @@ export interface SQLiteStorageConfig {
   bufferPool?: false | BufferPoolConfig;
 }
 
+/**
+ * Internal lifecycle hooks for an owned SQLite service.
+ *
+ * Hooks are deliberately signal-only: persistence never forwards filesystem
+ * paths, SQLite errors, or snapshot bytes across this boundary.
+ */
+export interface PlatformSQLiteServiceHooks {
+  /** App-owned telemetry target. Internal actors normally disable telemetry. */
+  readonly observability?: PlatformObservabilityRuntime;
+  /** Signals that one periodic snapshot has begun before image serialization. */
+  readonly onPeriodicSnapshotStart?: () => void;
+  /** Signals that periodic work completed or a newer image superseded it. */
+  readonly onPeriodicSnapshotFinish?: () => void;
+  /** Signals the first commit not covered by a published periodic image. */
+  readonly onPeriodicDurabilityDirty?: () => void;
+  /** Signals that a published image covers all observed periodic commits. */
+  readonly onPeriodicDurabilityClean?: () => void;
+  /** Called once when the periodic hot-snapshot loop first fails. */
+  readonly onPeriodicSnapshotFailure?: () => void;
+  /** Internal watchdog override for one periodic snapshot request. */
+  readonly periodicSnapshotTimeoutMs?: number;
+}
+
 /** Resolved SQLite config with legacy aliases normalized. */
 export interface ResolvedSQLiteStorageConfig {
   mode: SQLiteStorageMode;
@@ -64,6 +92,10 @@ export interface ResolvedSQLiteStorageConfig {
   snapshotPath: string | null;
   snapshotEnabled: boolean;
   snapshotIntervalMs: number;
+  /** Internal hot-image budget; omitted legacy resolved objects remain unbounded. */
+  hotMaxBytes?: number | null;
+  /** Internal telemetry switch; omitted legacy resolved objects continue emitting. */
+  emitTelemetry?: boolean;
   cacheSize: number;
   mmapSize: number;
   walAutocheckpoint: number;
@@ -109,6 +141,8 @@ export interface PlatformSQLiteService {
   stop(): void;
   /** Close the service, flushing mode-specific durability boundaries first. */
   close(): void;
+  /** Discard startup state without publishing a snapshot or checkpoint. */
+  abort?(): void;
   /** Return cheap diagnostics for doctor checks and tests. */
   diagnostics(): PlatformSQLiteDiagnostics;
 }
@@ -119,6 +153,8 @@ export interface PlatformSQLiteDiagnostics {
   path: string | null;
   snapshotPath: string | null;
   snapshotEnabled: boolean;
+  /** False after any hot snapshot write failure for this service lifetime. */
+  snapshotHealthy?: boolean;
   statementCacheSize: number;
   bufferPoolEnabled: boolean;
 }

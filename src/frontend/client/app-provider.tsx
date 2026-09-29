@@ -10,7 +10,10 @@
 
 import { createElement, Fragment, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { ClientTableDef, SyncMode } from '../../sync/types';
+import type {
+  SyncDataPlaneName,
+  SyncMode,
+} from '../../sync/types';
 import type { Client, InternalClient } from './sdk';
 import { createClient, getClient } from './sdk';
 import { useAuth } from './auth-hooks';
@@ -42,6 +45,10 @@ import {
   routeAuthorizationBoundaryMatches,
   type RouteAuthorizationBoundary,
 } from '../router/authorization-route-boundary';
+import {
+  resolveProviderSyncConfig,
+  type ProviderTableInput,
+} from './app-provider-sync-config';
 
 // ─── AppProvider ───────────────────────────────────────────────────────────
 
@@ -49,7 +56,7 @@ import {
  * Table definition input — accepts raw ClientTableDef OR defineTable() output.
  * The provider auto-detects and extracts `.clientTable` when needed.
  */
-type TableInput = ClientTableDef | { clientTable: ClientTableDef };
+type TableInput = ProviderTableInput;
 
 interface BrowserPlatformConfig {
   url?: string;
@@ -57,6 +64,10 @@ interface BrowserPlatformConfig {
   email?: boolean;
   stateSync?: boolean;
   tableSyncModes?: Record<string, SyncMode>;
+  /** Server-owned Sync-visible application table routing catalog. */
+  tableSyncPlanes?: Record<string, SyncDataPlaneName>;
+  /** All server-managed application tables, including non-Sync resources. */
+  managedTableNames?: string[];
   publicPaths?: string[];
   routeAuth?: RouteAuthMode;
   loginPath?: string;
@@ -79,12 +90,6 @@ function getBrowserAuthorizationRouteData(): BrowserAuthorizationRouteData | und
   }).__ROUTE_DATA__;
 }
 
-/** Return true when a table input is a defineTable() result. */
-function hasClientTable(def: TableInput): def is { clientTable: ClientTableDef } {
-  return typeof (def as { clientTable?: unknown }).clientTable === 'object'
-    && (def as { clientTable?: unknown }).clientTable !== null;
-}
-
 function assertAppProviderConfig(
   auth: boolean,
   stateSync: boolean,
@@ -103,26 +108,6 @@ function assertAppProviderConfig(
   if (explicitStateSync === true && platformConfig.stateSync === false) {
     throw new Error('[app] AppProvider stateSync=true but the server was created with stateSync disabled. Enable createApp({ stateSync: true, auth: true }) or set <AppProvider stateSync={false}>.');
   }
-}
-
-/**
- * Normalize table input and overlay resolved server sync modes before creating
- * the SDK client. This keeps auto-lazy decisions consistent across SSR,
- * websocket snapshots, and browser-side subscribe messages.
- */
-function resolveProviderTables(
-  tables: Record<string, TableInput>,
-  tableSyncModes: Record<string, SyncMode> | undefined,
-): Record<string, ClientTableDef> {
-  const resolved: Record<string, ClientTableDef> = {};
-
-  for (const [name, def] of Object.entries(tables)) {
-    const clientTable = hasClientTable(def) ? def.clientTable : def;
-    const syncMode = tableSyncModes?.[name];
-    resolved[name] = syncMode ? { ...clientTable, _sync: syncMode } : clientTable;
-  }
-
-  return resolved;
 }
 
 export interface AppProviderProps {
@@ -225,13 +210,21 @@ export function AppProvider({
   const resolvedRouteAuth = routeAuth ?? platformConfig.routeAuth ?? 'protected-by-default';
   const resolvedLoginPath = loginPath ?? platformConfig.loginPath ?? '/login';
   assertAppProviderConfig(authEnabled, stateSyncEnabled, auth, stateSync, platformConfig);
-  const resolvedTables = resolveProviderTables(tables, platformConfig.tableSyncModes);
+  const resolvedSyncConfig = resolveProviderSyncConfig(
+    tables,
+    platformConfig.tableSyncModes,
+    platformConfig.tableSyncPlanes,
+    platformConfig.managedTableNames,
+  );
 
   // Create or reuse the SDK client (singleton)
   if (!clientRef.current) {
     clientRef.current = getClient() ?? createClient({
       url,
-      tables: resolvedTables,
+      tables: resolvedSyncConfig.tables,
+      ...(resolvedSyncConfig.tableSyncPlanes
+        ? { tableSyncPlanes: resolvedSyncConfig.tableSyncPlanes }
+        : {}),
       auth: authEnabled,
       stateSync: stateSyncEnabled,
       autoConnect: true,

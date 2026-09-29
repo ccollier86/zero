@@ -7,7 +7,6 @@
  * intentionally untracked internal SQL mutation.
  */
 
-import type { Statement } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { stableStringify } from '../migrations/schema-snapshot';
 import { quoteSqlIdentifier } from '../sync/identity';
@@ -49,27 +48,38 @@ import {
   type DatabaseRealm,
 } from './database-realm';
 import type { DatabaseRuntime } from './database-runtime';
-
-/** Current schema of the private durable write-receipt ledger. */
-export const DATABASE_WRITER_RECEIPT_SCHEMA_VERSION = 1 as const;
+import {
+  validateDatabaseActorLegacyReceiptResult,
+  validateDatabaseActorTrustedWriteResult,
+} from './database-actor-result-validation';
+import {
+  validateDatabaseLogicalReceiptFingerprint,
+  validateDatabaseReceiptLookupIdentity,
+  type DatabaseLogicalReceiptFingerprint,
+  type DatabaseTrustedReceiptLookup,
+} from './database-trusted-writer';
+import {
+  DatabaseReceiptLedger,
+  type DatabaseWriterReceiptCompaction,
+  type DatabaseWriterReceiptRetentionCounts,
+} from './database-receipt-ledger';
+export {
+  DATABASE_WRITER_MAX_RECEIPTS,
+  DATABASE_WRITER_MAX_RECEIPT_KEYS,
+  DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES,
+  DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES,
+  DATABASE_WRITER_RECEIPT_SCHEMA_VERSION,
+} from './database-receipt-ledger';
+export type {
+  DatabaseWriterReceiptCompaction,
+  DatabaseWriterReceiptRetentionCounts,
+} from './database-receipt-ledger';
 
 /** Hard actor-local ceiling for one durable change replay page. */
 export const DATABASE_WRITER_MAX_REPLAY_CHANGES = 500 as const;
 
-const RECEIPT_TABLE = '_zero_database_operation_receipts';
-const RECEIPT_COLUMNS_SQL = `(
-  receipt_key TEXT PRIMARY KEY,
-  realm_fingerprint TEXT NOT NULL,
-  operation_fingerprint TEXT NOT NULL,
-  result_json TEXT NOT NULL,
-  final_seq INTEGER NOT NULL CHECK (final_seq >= 0),
-  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
-  created_at INTEGER NOT NULL CHECK (created_at >= 0)
-) STRICT, WITHOUT ROWID`;
-const RECEIPT_STORED_SQL = `CREATE TABLE ${RECEIPT_TABLE} ${RECEIPT_COLUMNS_SQL}`;
-const RECEIPT_CREATE_SQL =
-  `CREATE TABLE IF NOT EXISTS main.${RECEIPT_TABLE} ${RECEIPT_COLUMNS_SQL}`;
 const OPERATION_FINGERPRINT_DOMAIN = 'zero.database-operation.v1\0';
+const LOGICAL_RECEIPT_FINGERPRINT_DOMAIN = 'zero.database-logical-receipt.v1\0';
 
 /** Precise result for one safe ReactiveDB CRUD mutation. */
 export type DatabaseMutationEffect = Readonly<{
@@ -79,6 +89,16 @@ export type DatabaseMutationEffect = Readonly<{
   readonly changed: boolean;
   readonly op: ChangeOp | null;
   readonly sequence: Readonly<{ seq: number }> | null;
+  /**
+   * Exact post-commit row for inserts/updates, or null for deletion/no-op.
+   * Absent only when replaying an exact receipt created by the v1 contract.
+   */
+  readonly row?: DatabaseOperationRow | null;
+  /**
+   * Exact row replaced/deleted by this change, or null for inserts/no-op.
+   * Absent only when replaying an exact receipt created by the v1 contract.
+   */
+  readonly previousRow?: DatabaseOperationRow | null;
 }>;
 
 export type DatabaseMutationCommitValue = Readonly<{
@@ -148,27 +168,11 @@ export interface DatabaseWriterOperationEngineOptions {
   readonly realm: DatabaseRealm;
 }
 
-interface ReceiptRow {
-  receipt_key: string;
-  realm_fingerprint: string;
-  operation_fingerprint: string;
-  result_json: string;
-  final_seq: number;
-  schema_version: number;
-  created_at: number;
-  receipt_key_type: string;
-  realm_fingerprint_type: string;
-  operation_fingerprint_type: string;
-  result_json_type: string;
-  final_seq_type: string;
-  schema_version_type: string;
-  created_at_type: string;
-}
-
 interface WriteExecution {
   result: DatabaseCommitResult<DatabaseWriterCommitValue>;
   beforeSeq: number;
   replayed: boolean;
+  receiptCompaction: DatabaseWriterReceiptCompaction | null;
 }
 
 /**
@@ -182,11 +186,14 @@ export class DatabaseWriterOperationEngine {
   readonly realm: DatabaseRealm;
 
   private readonly catalog: DatabaseOperationCatalog;
-  private readonly receiptGet: Statement;
-  private readonly receiptInsert: Statement;
+  private readonly receipts: DatabaseReceiptLedger<
+    DatabaseCommitResult<DatabaseWriterCommitValue>
+  >;
   private readonly changeListeners = new Set<DatabaseChangesAvailableListener>();
   private readonly pendingChangeRanges: DatabaseChangesAvailableRange[] = [];
+  private pendingReceiptCompaction: DatabaseWriterReceiptCompaction | null = null;
   private emittingChangeRanges = false;
+  private closing = false;
   private closed = false;
 
   constructor(options: DatabaseWriterOperationEngineOptions) {
@@ -202,61 +209,75 @@ export class DatabaseWriterOperationEngine {
     }
 
     this.assertRealmMatchesRuntime();
-    this.initializeReceiptSchema();
-    let receiptGet: Statement | null = null;
-    try {
-      receiptGet = this.runtime.db.prepare(`
-        SELECT
-          receipt_key,
-          realm_fingerprint,
-          operation_fingerprint,
-          result_json,
-          final_seq,
-          schema_version,
-          created_at,
-          typeof(receipt_key) AS receipt_key_type,
-          typeof(realm_fingerprint) AS realm_fingerprint_type,
-          typeof(operation_fingerprint) AS operation_fingerprint_type,
-          typeof(result_json) AS result_json_type,
-          typeof(final_seq) AS final_seq_type,
-          typeof(schema_version) AS schema_version_type,
-          typeof(created_at) AS created_at_type
-        FROM main.${RECEIPT_TABLE}
-        WHERE receipt_key = ?
-      `);
-      this.receiptInsert = this.runtime.db.prepare(`
-        INSERT INTO main.${RECEIPT_TABLE} (
-          receipt_key,
-          realm_fingerprint,
-          operation_fingerprint,
-          result_json,
-          final_seq,
-          schema_version,
-          created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
-      this.receiptGet = receiptGet;
-    } catch (cause) {
-      try {
-        receiptGet?.finalize();
-      } catch {
-        // Preserve the initialization failure.
-      }
-      throw new DatabaseError(
-        'DATABASE_SCHEMA_MISMATCH',
-        'Database receipt statements could not be prepared.',
-        { cause },
-      );
-    }
+    this.receipts = new DatabaseReceiptLedger({
+      runtime: this.runtime,
+      realmFingerprint: this.realm.fingerprint,
+      parseRetainedResult: (row, idempotencyKey, resultVersion) =>
+        this.parseRetainedReceipt(row, idempotencyKey, resultVersion),
+    });
   }
 
   /** Validate and execute one operation against this actor's bound realm. */
-  execute(value: unknown): DatabaseWriterOperationResult {
+  execute(
+    value: unknown,
+    logicalReceiptFingerprint?: DatabaseLogicalReceiptFingerprint,
+  ): DatabaseWriterOperationResult {
     this.assertOpen();
+    this.pendingReceiptCompaction = null;
     const operation = validateDatabaseOperation(value, this.catalog);
+    const receiptFingerprint = logicalReceiptFingerprint === undefined
+      ? undefined
+      : validateDatabaseLogicalReceiptFingerprint(logicalReceiptFingerprint);
+    if (receiptFingerprint !== undefined && isReadOperation(operation)) {
+      throw new DatabaseError(
+        'DATABASE_PAYLOAD_INVALID',
+        'Logical receipt fingerprints require a write operation.',
+      );
+    }
     return isReadOperation(operation)
       ? this.executeRead(operation)
-      : this.executeWrite(operation);
+      : this.executeWrite(operation, receiptFingerprint);
+  }
+
+  /** @internal Consume one privacy-safe compaction summary after execute(). */
+  takeReceiptCompaction(): DatabaseWriterReceiptCompaction | null {
+    const value = this.pendingReceiptCompaction;
+    this.pendingReceiptCompaction = null;
+    return value;
+  }
+
+  /** Trusted pre-read for a logical request receipt on this writer authority. */
+  findReceipt(
+    idempotencyKey: string,
+    logicalReceiptFingerprint: DatabaseLogicalReceiptFingerprint,
+  ): DatabaseTrustedReceiptLookup {
+    this.assertOpen();
+    const identity = validateDatabaseReceiptLookupIdentity(
+      idempotencyKey,
+      logicalReceiptFingerprint,
+    );
+    const fingerprint = fingerprintLogicalReceipt(
+      this.realm.fingerprint,
+      identity.logicalReceiptFingerprint,
+    );
+    const receipt = this.receipts.lookup(identity.idempotencyKey, fingerprint);
+    if (receipt.status === 'expired') throw receiptExpired();
+    return receipt.status === 'retained'
+      ? Object.freeze({
+        status: 'hit',
+        result: Object.freeze({ ...receipt.result, replayed: true }),
+      })
+      : Object.freeze({ status: 'miss' });
+  }
+
+  /**
+   * Aggregate-only retention counts for diagnostics and operational gauges.
+   * Tombstones are intentionally permanent: safe deletion would require a
+   * separately negotiated retry horizon proving every producer forgot a key.
+   */
+  receiptRetentionCounts(): DatabaseWriterReceiptRetentionCounts {
+    this.assertOpen();
+    return this.receipts.retentionCounts();
   }
 
   /**
@@ -323,23 +344,11 @@ export class DatabaseWriterOperationEngine {
   /** Finalize engine-owned statements; the caller still owns the runtime. */
   close(): void {
     if (this.closed) return;
-    this.closed = true;
+    this.closing = true;
     this.changeListeners.clear();
     this.pendingChangeRanges.length = 0;
-    const failures: unknown[] = [];
-    for (const statement of [this.receiptGet, this.receiptInsert]) {
-      try {
-        statement.finalize();
-      } catch (error) {
-        failures.push(error);
-      }
-    }
-    if (failures.length > 0) {
-      throw new AggregateError(
-        failures,
-        'Database writer engine failed to finalize its statements.',
-      );
-    }
+    this.receipts.close();
+    this.closed = true;
   }
 
   private executeRead(operation: DatabaseReadOperation): DatabaseReadResult {
@@ -434,22 +443,33 @@ export class DatabaseWriterOperationEngine {
 
   private executeWrite(
     operation: DatabaseWriteOperation,
+    logicalReceiptFingerprint?: DatabaseLogicalReceiptFingerprint,
   ): DatabaseCommitResult<DatabaseWriterCommitValue> {
-    const fingerprint = fingerprintOperation(this.realm.fingerprint, operation);
+    const fingerprint = logicalReceiptFingerprint === undefined
+      ? fingerprintOperation(this.realm.fingerprint, operation)
+      : fingerprintLogicalReceipt(
+        this.realm.fingerprint,
+        logicalReceiptFingerprint,
+      );
     try {
       const execution = this.runtime.db.transaction((): WriteExecution => {
-        const receipt = this.findReceipt(operation.idempotencyKey, fingerprint);
-        if (receipt) {
+        const receipt = this.receipts.lookup(operation.idempotencyKey, fingerprint);
+        if (receipt.status === 'expired') throw receiptExpired();
+        if (receipt.status === 'retained') {
           return {
             result: validateDatabaseCommitResult({
-              ...receipt,
+              ...receipt.result,
               replayed: true,
             }) as DatabaseCommitResult<DatabaseWriterCommitValue>,
-            beforeSeq: receipt.sequence.seq,
+            beforeSeq: receipt.result.sequence.seq,
             replayed: true,
+            receiptCompaction: null,
           };
         }
 
+        // The permanent identity quota is checked only after exact replay and
+        // expired-key lookup, but before any application mutation can run.
+        this.receipts.assertCanInsert();
         const beforeSeq = this.runtime.db.currentSeq;
         const value = this.executeWriteValue(operation);
         const finalSeq = this.runtime.db.currentSeq;
@@ -459,9 +479,18 @@ export class DatabaseWriterOperationEngine {
           idempotencyKey: operation.idempotencyKey,
           replayed: false,
         }) as DatabaseCommitResult<DatabaseWriterCommitValue>;
-        this.saveReceipt(operation.idempotencyKey, fingerprint, result);
-        return { result, beforeSeq, replayed: false };
+        const receiptCompaction = this.receipts.save(
+          operation.idempotencyKey,
+          fingerprint,
+          result,
+          result.sequence.seq,
+        );
+        return { result, beforeSeq, replayed: false, receiptCompaction };
       });
+
+      // These counts were derived from values already read while saving the
+      // receipt. Never scan the permanent tombstone ledger on the write path.
+      this.pendingReceiptCompaction = execution.receiptCompaction;
 
       if (!execution.replayed
         && execution.result.sequence.seq > execution.beforeSeq) {
@@ -472,6 +501,18 @@ export class DatabaseWriterOperationEngine {
       }
       return execution.result;
     } catch (error) {
+      if (this.runtime.sqlite.mode === 'hot' && isSQLiteFull(error)) {
+        throw new DatabaseError(
+          'DATABASE_PAYLOAD_LIMIT',
+          'Database write exceeds the configured hot-memory capacity.',
+          {
+            cause: error,
+            retryable: false,
+            outcome: 'not-committed',
+            details: { reason: 'max-bytes' },
+          },
+        );
+      }
       throw normalizeWriteFailure(error);
     }
   }
@@ -535,7 +576,7 @@ export class DatabaseWriterOperationEngine {
         {
           retryable: false,
           outcome: 'not-committed',
-          details: { assertionIndex: index },
+          details: { assertionIndex: index, conflictType: 'cas' },
         },
       );
     }
@@ -594,12 +635,29 @@ export class DatabaseWriterOperationEngine {
             cause: error,
             retryable: false,
             outcome: 'not-committed',
+            details: { conflictType: mutationConflictType(error) },
           },
         );
       }
       throw error;
     }
-    return change ? changeEffect(mutation, change) : noChangeEffect(mutation);
+    if (!change) return noChangeEffect(mutation);
+    const committedRow = change.op === 'DELETE'
+      ? null
+      : this.runtime.db.get(mutation.table, change.rowId);
+    if (change.op !== 'DELETE' && committedRow === null) {
+      throw new DatabaseError(
+        'DATABASE_EXECUTOR_FAILED',
+        'Database mutation could not read its committed row.',
+        { retryable: false, outcome: 'not-committed' },
+      );
+    }
+    return changeEffect(
+      mutation,
+      change,
+      committedRow as DatabaseOperationRow | null,
+      (change.previousRow ?? null) as DatabaseOperationRow | null,
+    );
   }
 
   private validateMutationRow(
@@ -625,61 +683,6 @@ export class DatabaseWriterOperationEngine {
       );
     }
     return result.row;
-  }
-
-  private findReceipt(
-    idempotencyKey: string,
-    operationFingerprint: string,
-  ): DatabaseCommitResult<DatabaseWriterCommitValue> | null {
-    const row = this.receiptGet.get(idempotencyKey) as ReceiptRow | null;
-    if (!row) return null;
-    assertReceiptRow(row, idempotencyKey);
-    if (row.final_seq > this.runtime.db.currentSeq) throw receiptCorrupt();
-    if (row.realm_fingerprint !== this.realm.fingerprint
-      || row.operation_fingerprint !== operationFingerprint) {
-      throw new DatabaseError(
-        'DATABASE_CONFLICT',
-        'Database idempotency key was already used for another operation.',
-        { retryable: false, outcome: 'not-committed' },
-      );
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(row.result_json);
-    } catch (cause) {
-      throw receiptCorrupt(cause);
-    }
-    let result: DatabaseCommitResult;
-    try {
-      result = validateDatabaseCommitResult(parsed);
-    } catch (cause) {
-      throw receiptCorrupt(cause);
-    }
-    if (result.idempotencyKey !== idempotencyKey
-      || result.sequence.seq !== row.final_seq
-      || result.replayed) {
-      throw receiptCorrupt();
-    }
-    return result as DatabaseCommitResult<DatabaseWriterCommitValue>;
-  }
-
-  private saveReceipt(
-    idempotencyKey: string,
-    operationFingerprint: string,
-    result: DatabaseCommitResult<DatabaseWriterCommitValue>,
-  ): void {
-    const encoded = JSON.stringify(result);
-    const outcome = this.receiptInsert.run(
-      idempotencyKey,
-      this.realm.fingerprint,
-      operationFingerprint,
-      encoded,
-      result.sequence.seq,
-      DATABASE_WRITER_RECEIPT_SCHEMA_VERSION,
-      Date.now(),
-    );
-    if (outcome.changes !== 1) throw receiptCorrupt();
   }
 
   private emitChangesAvailable(range: DatabaseChangesAvailableRange): void {
@@ -712,10 +715,22 @@ export class DatabaseWriterOperationEngine {
         const expectedColumns = Object.keys(schema).filter((name) => name !== '_identity');
         const actualColumns = this.runtime.db.getColumns(table);
         const expectedPrimaryKey = this.catalog.primaryKeys?.[table];
+        const columnInfo = this.runtime.db.prepare(
+          `PRAGMA main.table_xinfo(${quoteSqlIdentifier(table)})`,
+        );
+        let physicalColumns: Array<{ name: string; type: string; hidden: number }>;
+        try {
+          physicalColumns = columnInfo.all() as typeof physicalColumns;
+        } finally {
+          columnInfo.finalize();
+        }
         if (expectedColumns.length !== actualColumns.length
           || expectedColumns.some((column, index) => column !== actualColumns[index])
           || !expectedPrimaryKey
-          || this.runtime.db.getPrimaryKey(table) !== expectedPrimaryKey) {
+          || this.runtime.db.getPrimaryKey(table) !== expectedPrimaryKey
+          || physicalColumns.length !== expectedColumns.length
+          || physicalColumns.some((column) => column.hidden !== 0
+            || !hasPortableDatabaseAffinity(column.type))) {
           throw new Error('table contract differs');
         }
       } catch (cause) {
@@ -728,76 +743,47 @@ export class DatabaseWriterOperationEngine {
     }
   }
 
-  private initializeReceiptSchema(): void {
-    try {
-      this.runtime.db.exec(RECEIPT_CREATE_SQL);
-      const definition = this.runtime.db.prepare(`
-        SELECT type, sql FROM main.sqlite_schema WHERE name = ?
-      `);
-      let schema: { type: string; sql: string | null } | null;
-      try {
-        schema = definition.get(RECEIPT_TABLE) as {
-          type: string;
-          sql: string | null;
-        } | null;
-      } finally {
-        definition.finalize();
-      }
-      if (!schema
-        || schema.type !== 'table'
-        || !schema.sql
-        || normalizeSqlShape(schema.sql) !== normalizeSqlShape(RECEIPT_STORED_SQL)) {
-        throw new Error('receipt table definition differs');
-      }
 
-      const details = this.runtime.db.prepare(
-        `PRAGMA main.table_list(${JSON.stringify(RECEIPT_TABLE)})`,
-      );
-      let tableRows: Array<{
-        name: string;
-        type: string;
-        ncol: number;
-        wr: number;
-        strict: number;
-      }>;
-      try {
-        tableRows = details.all() as typeof tableRows;
-      } finally {
-        details.finalize();
-      }
-      if (tableRows.length !== 1
-        || tableRows[0]!.name !== RECEIPT_TABLE
-        || tableRows[0]!.type !== 'table'
-        || tableRows[0]!.ncol !== 7
-        || tableRows[0]!.wr !== 1
-        || tableRows[0]!.strict !== 1) {
-        throw new Error('receipt table flags differ');
-      }
-
-      const triggers = this.runtime.db.prepare(`
-        SELECT COUNT(*) AS count
-        FROM main.sqlite_schema
-        WHERE type = 'trigger' AND tbl_name = ?
-      `);
-      let triggerCount: number;
-      try {
-        triggerCount = (triggers.get(RECEIPT_TABLE) as { count: number }).count;
-      } finally {
-        triggers.finalize();
-      }
-      if (triggerCount !== 0) throw new Error('receipt table has triggers');
-    } catch (cause) {
-      if (cause instanceof DatabaseError) throw cause;
-      throw new DatabaseError(
-        'DATABASE_SCHEMA_MISMATCH',
-        'Database receipt schema is incompatible.',
-        { cause },
-      );
+  private parseRetainedReceipt(
+    row: Readonly<{ resultJson: string; finalSeq: number }>,
+    idempotencyKey: string,
+    resultVersion: number,
+  ): DatabaseCommitResult<DatabaseWriterCommitValue> {
+    if (row.finalSeq > this.runtime.db.currentSeq) {
+      throw receiptCorrupt();
     }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.resultJson);
+    } catch (cause) {
+      throw receiptCorrupt(cause);
+    }
+    let result: DatabaseCommitResult<DatabaseWriterCommitValue>;
+    try {
+      result = resultVersion === 1
+        ? validateDatabaseActorLegacyReceiptResult(
+          parsed,
+          idempotencyKey,
+          this.catalog,
+        )
+        : validateDatabaseActorTrustedWriteResult(
+          parsed,
+          idempotencyKey,
+          this.catalog,
+        );
+    } catch (cause) {
+      throw receiptCorrupt(cause);
+    }
+    if (result.idempotencyKey !== idempotencyKey
+      || result.sequence.seq !== row.finalSeq
+      || result.replayed) {
+      throw receiptCorrupt();
+    }
+    return result;
   }
 
   private assertOpen(): void {
-    if (this.closed || this.runtime.diagnostics().closed) {
+    if (this.closing || this.closed || this.runtime.diagnostics().closed) {
       throw new DatabaseError(
         'DATABASE_CLOSED',
         'Database writer engine is closed.',
@@ -823,9 +809,21 @@ function fingerprintOperation(
     .digest('hex')}`;
 }
 
+function fingerprintLogicalReceipt(
+  realmFingerprint: string,
+  logicalReceiptFingerprint: DatabaseLogicalReceiptFingerprint,
+): string {
+  return `sha256:${createHash('sha256')
+    .update(LOGICAL_RECEIPT_FINGERPRINT_DOMAIN, 'utf8')
+    .update(stableStringify({ realmFingerprint, logicalReceiptFingerprint }), 'utf8')
+    .digest('hex')}`;
+}
+
 function changeEffect(
   mutation: DatabaseMutation,
   change: Change,
+  row: DatabaseOperationRow | null,
+  previousRow: DatabaseOperationRow | null,
 ): DatabaseMutationEffect {
   return {
     type: mutation.type,
@@ -834,6 +832,8 @@ function changeEffect(
     changed: true,
     op: change.op,
     sequence: createDatabaseSequenceToken(change.seq),
+    row,
+    previousRow,
   };
 }
 
@@ -852,6 +852,8 @@ function noChangeEffect(mutation: DatabaseMutation): DatabaseMutationEffect {
     changed: false,
     op: null,
     sequence: null,
+    row: null,
+    previousRow: null,
   };
 }
 
@@ -867,25 +869,6 @@ function toReplayChange(change: Change): DatabaseReplayChange {
   }) as DatabaseReplayChange;
 }
 
-function assertReceiptRow(row: ReceiptRow, idempotencyKey: string): void {
-  if (row.receipt_key !== idempotencyKey
-    || row.receipt_key_type !== 'text'
-    || row.realm_fingerprint_type !== 'text'
-    || row.operation_fingerprint_type !== 'text'
-    || row.result_json_type !== 'text'
-    || row.final_seq_type !== 'integer'
-    || row.schema_version_type !== 'integer'
-    || row.created_at_type !== 'integer'
-    || row.schema_version !== DATABASE_WRITER_RECEIPT_SCHEMA_VERSION
-    || !Number.isSafeInteger(row.final_seq)
-    || row.final_seq < 0
-    || !Number.isSafeInteger(row.created_at)
-    || row.created_at < 0
-    || !/^sha256:[a-f0-9]{64}$/u.test(row.realm_fingerprint)
-    || !/^sha256:[a-f0-9]{64}$/u.test(row.operation_fingerprint)) {
-    throw receiptCorrupt();
-  }
-}
 
 function receiptCorrupt(cause?: unknown): DatabaseError {
   return new DatabaseError(
@@ -893,6 +876,24 @@ function receiptCorrupt(cause?: unknown): DatabaseError {
     'Database idempotency receipt is incompatible.',
     cause === undefined ? undefined : { cause },
   );
+}
+
+class ExpiredReceiptError extends DatabaseError {
+  constructor() {
+    super(
+      'DATABASE_OUTCOME_UNKNOWN',
+      'Database idempotency receipt result is no longer retained.',
+      {
+        retryable: false,
+        outcome: 'unknown',
+        details: { receiptState: 'expired' },
+      },
+    );
+  }
+}
+
+function receiptExpired(): DatabaseError {
+  return new ExpiredReceiptError();
 }
 
 function historyGap(afterSeq: number, currentSeq: number): DatabaseError {
@@ -905,7 +906,10 @@ function historyGap(afterSeq: number, currentSeq: number): DatabaseError {
 
 function normalizeWriteFailure(error: unknown): DatabaseError {
   if (error instanceof DatabaseError) {
-    if (error.outcome === 'not-committed') return error;
+    if (error instanceof ExpiredReceiptError) return error;
+    if (error.outcome === 'not-started' || error.outcome === 'not-committed') {
+      return error;
+    }
     return new DatabaseError(error.code, error.message, {
       cause: error,
       retryable: error.retryable,
@@ -921,6 +925,7 @@ function normalizeWriteFailure(error: unknown): DatabaseError {
         cause: error,
         retryable: false,
         outcome: 'not-committed',
+        details: { conflictType: mutationConflictType(error) },
       },
     );
   }
@@ -944,8 +949,36 @@ function isExpectedMutationConflict(error: unknown): boolean {
     && /already exists|constraint|identity conflict|immutable/iu.test(candidate.message);
 }
 
-function normalizeSqlShape(sql: string): string {
-  return sql.trim().replace(/\s+/gu, ' ').replace(/\s*,\s*/gu, ', ').toLowerCase();
+function isSQLiteFull(error: unknown): boolean {
+  try {
+    if (!error || typeof error !== 'object') return false;
+    let cursor: object | null = error;
+    for (let depth = 0; cursor && depth < 4; depth += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(cursor, 'code');
+      if (descriptor) {
+        return 'value' in descriptor
+          && typeof descriptor.value === 'string'
+          && (descriptor.value === 'SQLITE_FULL'
+            || descriptor.value.startsWith('SQLITE_FULL_'));
+      }
+      cursor = Object.getPrototypeOf(cursor) as object | null;
+    }
+  } catch {
+    // Hostile error objects cannot widen the database failure contract.
+  }
+  return false;
+}
+
+function mutationConflictType(error: unknown): 'primary-key' | 'constraint' {
+  if (!error || typeof error !== 'object') return 'constraint';
+  const candidate = error as { code?: unknown; message?: unknown };
+  if ((typeof candidate.code === 'string'
+      && /(?:PRIMARYKEY|UNIQUE)$/u.test(candidate.code))
+    || (typeof candidate.message === 'string'
+      && /already exists|identity conflict|primary key|unique/iu.test(
+        candidate.message,
+      ))) return 'primary-key';
+  return 'constraint';
 }
 
 function readQueryOnly(runtime: DatabaseRuntime): boolean {
@@ -965,4 +998,12 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     || typeof value === 'function'
     ? typeof (value as { then?: unknown }).then === 'function'
     : false;
+}
+
+function hasPortableDatabaseAffinity(declaredType: string): boolean {
+  const normalized = declaredType.trim().toUpperCase();
+  // SQLite assigns BLOB affinity to both explicit BLOB and typeless columns;
+  // Bun returns binary values for either, which are outside durable JSON
+  // receipts and Zero's DatabaseSerializableValue contract.
+  return normalized.length > 0 && !normalized.includes('BLOB');
 }

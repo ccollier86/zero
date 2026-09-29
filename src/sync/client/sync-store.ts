@@ -5,7 +5,16 @@ import type {
   PendingMutation,
   ClientTableDef,
   ServerMessage,
+  SyncAckErrorCode,
+  SyncDataPlaneName,
 } from '../types';
+import {
+  DEFAULT_SYNC_DATA_PLANE,
+  type SyncPlaneCursorState,
+  messageSyncDataPlane,
+  resolveSyncClientDataPlaneTopology,
+  syncDataPlaneForTable,
+} from './sync-data-planes';
 
 // ─── Store Context ──────────────────────────────────────────────────────────
 
@@ -23,10 +32,18 @@ export interface SyncStoreContext {
 
 export interface SyncMeta {
   connected: boolean;
+  /** Legacy aliases for the default data-plane cursor. */
   lastSeq: number;
   epoch: string | null;
   scope: string | null;
+  /** Independent durable stream cursor for each multiplexed data plane. */
+  cursors: Record<SyncDataPlaneName, SyncPlaneCursorState>;
   pending: PendingMutation[];
+}
+
+export interface SyncStoreOptions {
+  /** Exact client table routing catalog. Omitted means legacy/default-only. */
+  tableSyncPlanes?: Readonly<Record<string, SyncDataPlaneName>>;
 }
 
 // ─── Store Events ───────────────────────────────────────────────────────────
@@ -34,6 +51,7 @@ export interface SyncMeta {
 type SyncStoreEvents = {
   // Server messages
   'sync.snapshot': {
+    plane?: SyncDataPlaneName;
     tables: Record<string, Record<string, Row>>;
     seq: number;
     epoch?: string;
@@ -41,6 +59,7 @@ type SyncStoreEvents = {
     reset?: 'preserve-pending' | 'purge';
   };
   'sync.change': {
+    plane?: SyncDataPlaneName;
     seq: number;
     table: string;
     op: ChangeOp;
@@ -50,13 +69,16 @@ type SyncStoreEvents = {
     scope?: string | null;
   };
   'sync.ack': {
+    plane?: SyncDataPlaneName;
     ref: string;
     ok: boolean;
     error?: string;
+    errorCode?: SyncAckErrorCode;
     seq?: number | null;
     change?: { table: string; op: ChangeOp; rowId: string; row: Row | null };
   };
   'sync.catchup': {
+    plane?: SyncDataPlaneName;
     changes: Array<{
       seq: number;
       table: string;
@@ -89,12 +111,16 @@ type SyncStoreEvents = {
   'optimistic.delete': { table: string; rowId: string; ref: string };
 };
 
-function createEmptyTables(
+function createEmptyPlaneTables(
   context: SyncStoreContext,
   definitions: Record<string, ClientTableDef>,
+  tablePlanes: Readonly<Record<string, SyncDataPlaneName>>,
+  plane: SyncDataPlaneName,
 ): SyncStoreContext {
-  const next: SyncStoreContext = { _sync: context._sync };
-  for (const table of Object.keys(definitions)) next[table] = {};
+  const next: SyncStoreContext = { ...context };
+  for (const table of Object.keys(definitions)) {
+    if (tablePlanes[table] === plane) next[table] = {};
+  }
   return next;
 }
 
@@ -128,14 +154,53 @@ function reapplyPending(
 function restoreAttemptedPending(
   context: SyncStoreContext,
   pending: readonly PendingMutation[],
+  matches: (mutation: PendingMutation) => boolean = () => true,
 ): void {
   for (const mutation of pending) {
-    if (mutation.attempts === 0) continue;
+    if (mutation.attempts === 0 || !matches(mutation)) continue;
     const rows = { ...(context[mutation.table] as Record<string, Row> ?? {}) };
     if (mutation.previousState) rows[mutation.rowId] = mutation.previousState;
     else delete rows[mutation.rowId];
     context[mutation.table] = rows;
   }
+}
+
+function createEmptyCursor(): SyncPlaneCursorState {
+  return { lastSeq: 0, epoch: null, scope: null };
+}
+
+/** Read one plane cursor while accepting pre-multiplex test/consumer contexts. */
+export function getSyncPlaneCursor(
+  meta: SyncMeta,
+  plane: SyncDataPlaneName,
+): SyncPlaneCursorState {
+  const cursor = meta.cursors?.[plane];
+  if (cursor) return cursor;
+  return plane === DEFAULT_SYNC_DATA_PLANE
+    ? { lastSeq: meta.lastSeq, epoch: meta.epoch, scope: meta.scope }
+    : createEmptyCursor();
+}
+
+function updateSyncPlaneCursor(
+  meta: SyncMeta,
+  plane: SyncDataPlaneName,
+  update: Partial<SyncPlaneCursorState>,
+): SyncMeta {
+  const cursor = { ...getSyncPlaneCursor(meta, plane), ...update };
+  const next: SyncMeta = {
+    ...meta,
+    cursors: {
+      default: { ...getSyncPlaneCursor(meta, 'default') },
+      tenant: { ...getSyncPlaneCursor(meta, 'tenant') },
+      [plane]: cursor,
+    },
+  };
+  if (plane === DEFAULT_SYNC_DATA_PLANE) {
+    next.lastSeq = cursor.lastSeq;
+    next.epoch = cursor.epoch;
+    next.scope = cursor.scope;
+  }
+  return next;
 }
 
 // ─── Store Factory ──────────────────────────────────────────────────────────
@@ -148,16 +213,28 @@ function restoreAttemptedPending(
  * - _sync metadata { connected, lastSeq, pending }
  * - Reducers for all server messages and optimistic mutations
  */
-export function createSyncStore(tables: Record<string, ClientTableDef>) {
+export function createSyncStore(
+  tables: Record<string, ClientTableDef>,
+  options: SyncStoreOptions = {},
+) {
   // Build initial context: empty record per table + sync metadata
   const tableDefs = tables;
+  const { tablePlanes } = resolveSyncClientDataPlaneTopology(
+    tables,
+    options.tableSyncPlanes,
+  );
   const createInitialContext = (): SyncStoreContext => {
+    const defaultCursor = createEmptyCursor();
     const context: SyncStoreContext = {
       _sync: {
         connected: false,
-        lastSeq: 0,
-        epoch: null,
-        scope: null,
+        lastSeq: defaultCursor.lastSeq,
+        epoch: defaultCursor.epoch,
+        scope: defaultCursor.scope,
+        cursors: {
+          default: defaultCursor,
+          tenant: createEmptyCursor(),
+        },
         pending: [],
       },
     };
@@ -175,25 +252,36 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
     on: {
       // ─── Server: Full snapshot ──────────────────────────────
       'sync.snapshot': (ctx, event: SyncStoreEvents['sync.snapshot']) => {
-        const newCtx = event.reset ? createEmptyTables(ctx, tableDefs) : { ...ctx };
+        const plane = messageSyncDataPlane(event) ?? DEFAULT_SYNC_DATA_PLANE;
+        const newCtx = event.reset
+          ? createEmptyPlaneTables(ctx, tableDefs, tablePlanes, plane)
+          : { ...ctx };
         const snapshotTables = new Set(Object.keys(event.tables));
         // Replace table contents from snapshot
         for (const [table, rows] of Object.entries(event.tables)) {
           newCtx[table] = rows;
         }
         let pending = event.reset === 'purge'
-          ? []
+          ? ctx._sync.pending.filter(
+              (mutation) => tablePlanes[mutation.table] !== plane,
+            )
           : event.reset === 'preserve-pending'
             ? ctx._sync.pending
             : ctx._sync.pending.filter(p => !snapshotTables.has(p.table));
         if (event.reset === 'preserve-pending') {
-          pending = reapplyPending(newCtx, pending);
+          pending = reapplyPending(
+            newCtx,
+            pending,
+            (mutation) => tablePlanes[mutation.table] === plane,
+          );
         }
+        const cursor = getSyncPlaneCursor(ctx._sync, plane);
         newCtx._sync = {
-          ...ctx._sync,
-          lastSeq: event.seq,
-          epoch: event.epoch ?? ctx._sync.epoch,
-          scope: event.scope === undefined ? ctx._sync.scope : event.scope,
+          ...updateSyncPlaneCursor(ctx._sync, plane, {
+            lastSeq: event.seq,
+            epoch: event.epoch ?? cursor.epoch,
+            scope: event.scope === undefined ? cursor.scope : event.scope,
+          }),
           pending,
         };
         return newCtx;
@@ -205,6 +293,7 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
       // sync.ack handles clearing pending separately.
       'sync.change': (ctx, event: SyncStoreEvents['sync.change']) => {
         const { seq, table, op, rowId, row } = event;
+        const plane = messageSyncDataPlane(event) ?? DEFAULT_SYNC_DATA_PLANE;
         const tableData = { ...(ctx[table] as Record<string, Row>) };
 
         switch (op) {
@@ -220,12 +309,13 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
         const next = {
           ...ctx,
           [table]: tableData,
-          _sync: {
-            ...ctx._sync,
+          _sync: updateSyncPlaneCursor(ctx._sync, plane, {
             lastSeq: seq,
-            epoch: event.epoch ?? ctx._sync.epoch,
-            scope: event.scope === undefined ? ctx._sync.scope : event.scope,
-          },
+            epoch: event.epoch ?? getSyncPlaneCursor(ctx._sync, plane).epoch,
+            scope: event.scope === undefined
+              ? getSyncPlaneCursor(ctx._sync, plane).scope
+              : event.scope,
+          }),
         };
         next._sync.pending = reapplyPending(
           next,
@@ -244,7 +334,20 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
 
         if (ok) {
           const change = event.change;
-          const matches = change
+          const plane = messageSyncDataPlane(event);
+          const mutationPlane = syncDataPlaneForTable(
+            tablePlanes,
+            mutation.table,
+          );
+          const cursor = plane === null
+            ? null
+            : getSyncPlaneCursor(ctx._sync, plane);
+          const canonicalIsNewer = plane !== null
+            && plane === mutationPlane
+            && Number.isSafeInteger(event.seq)
+            && (event.seq as number) > cursor!.lastSeq;
+          const matches = canonicalIsNewer
+            && change
             && change.table === mutation.table
             && change.rowId === mutation.rowId;
           const tableData = { ...(ctx[mutation.table] as Record<string, Row>) };
@@ -283,12 +386,17 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
       // ─── Server: Catchup (array of missed changes) ────────
       // Applies authoritative changes; only a receipt/ack settles pending work.
       'sync.catchup': (ctx, event: SyncStoreEvents['sync.catchup']) => {
+        const plane = messageSyncDataPlane(event) ?? DEFAULT_SYNC_DATA_PLANE;
         let newCtx = { ...ctx };
         let pending = [...ctx._sync.pending];
         const changedRows = new Set(
           event.changes.map((change) => `${change.table}:${change.rowId}`),
         );
-        restoreAttemptedPending(newCtx, pending);
+        restoreAttemptedPending(
+          newCtx,
+          pending,
+          (mutation) => tablePlanes[mutation.table] === plane,
+        );
 
         for (const change of event.changes) {
           const tableData = { ...(newCtx[change.table] as Record<string, Row>) };
@@ -310,18 +418,21 @@ export function createSyncStore(tables: Record<string, ClientTableDef>) {
         pending = reapplyPending(
           newCtx,
           pending,
-          () => true,
+          (mutation) => tablePlanes[mutation.table] === plane,
           (mutation) => mutation.attempts === 0
             || !changedRows.has(`${mutation.table}:${mutation.rowId}`),
         );
 
+        const cursor = getSyncPlaneCursor(newCtx._sync, plane);
+
         return {
           ...newCtx,
           _sync: {
-            ...newCtx._sync,
-            lastSeq: event.seq,
-            epoch: event.epoch ?? newCtx._sync.epoch,
-            scope: event.scope === undefined ? newCtx._sync.scope : event.scope,
+            ...updateSyncPlaneCursor(newCtx._sync, plane, {
+              lastSeq: event.seq,
+              epoch: event.epoch ?? cursor.epoch,
+              scope: event.scope === undefined ? cursor.scope : event.scope,
+            }),
             pending,
           },
         };
@@ -530,7 +641,7 @@ export function routeServerMessage(
   switch (msg.type) {
     case 'sync.snapshot':
       store.send({
-        type: 'sync.snapshot', tables: msg.tables, seq: msg.seq,
+        type: 'sync.snapshot', plane: msg.plane, tables: msg.tables, seq: msg.seq,
         epoch: msg.epoch, scope: msg.scope, reset: msg.reset,
       });
       break;
@@ -538,6 +649,7 @@ export function routeServerMessage(
     case 'sync.change':
       store.send({
         type: 'sync.change',
+        plane: msg.plane,
         seq: msg.seq,
         table: msg.table,
         op: msg.op,
@@ -551,9 +663,11 @@ export function routeServerMessage(
     case 'sync.ack':
       store.send({
         type: 'sync.ack',
+        plane: msg.plane,
         ref: msg.ref,
         ok: msg.ok,
         error: msg.error,
+        errorCode: msg.errorCode,
         seq: msg.seq,
         change: msg.change,
       });
@@ -562,6 +676,7 @@ export function routeServerMessage(
     case 'sync.catchup':
       store.send({
         type: 'sync.catchup',
+        plane: msg.plane,
         changes: msg.changes,
         seq: msg.seq,
         epoch: msg.epoch,

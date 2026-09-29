@@ -12,7 +12,7 @@ import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
 
 import { OBS_CODES } from '../../observability/codes';
-import { emitPlatformCode } from '../../observability/sink';
+import { emitPlatformCode, emitPlatformCodeTo } from '../../observability/sink';
 import {
   createServerExtensionApp,
   isServerRoutePlugin,
@@ -21,6 +21,7 @@ import {
   type ZeroServerExtensionMountable,
 } from './server-extensions';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
+import { ZERO_OBSERVABILITY_RUNTIME } from '../../runtime/service-keys';
 
 const ROUTE_MODULE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 const EXPORT_KEYS = [
@@ -73,6 +74,10 @@ export class ServerRouteLoaderError extends Error {
 export async function loadServerRoutePlugins(
   options: ServerRouteLoaderOptions = {}
 ): Promise<ServerRoutePlugin[]> {
+  const observability = options.runtime?.get(ZERO_OBSERVABILITY_RUNTIME);
+  const emit = observability
+    ? emitPlatformCodeTo.bind(null, observability)
+    : emitPlatformCode;
   const directories = resolveExtensionDirectories(options);
   const loadedFiles: string[] = [];
   const extensions: ZeroServerExtensionMountable[] = [];
@@ -90,9 +95,8 @@ export async function loadServerRoutePlugins(
         extensions.push(...normalizeServerRouteModule(routeModule, filePath));
         loadedFiles.push(filePath);
       } catch (error) {
-        emitPlatformCode(OBS_CODES.ROUTER_SERVER_ROUTE_LOAD_FAILED, {
-          error,
-          metadata: { directoryKind: directory.kind, filePath },
+        emit(OBS_CODES.ROUTER_SERVER_ROUTE_LOAD_FAILED, {
+          metadata: { directoryKind: directory.kind },
         });
         throw error;
       }
@@ -100,12 +104,11 @@ export async function loadServerRoutePlugins(
   }
 
   if (extensions.length > 0) {
-    emitPlatformCode(OBS_CODES.ROUTER_SERVER_ROUTES_LOADED, {
+    emit(OBS_CODES.ROUTER_SERVER_ROUTES_LOADED, {
       metadata: {
-        directories: directories.map((directory) => ({
-          kind: directory.kind,
-          dir: directory.dir ? resolve(directory.dir) : false,
-        })),
+        directoryKinds: directories
+          .filter((directory) => Boolean(directory.dir))
+          .map((directory) => directory.kind),
         modules: loadedFiles.length,
         plugins: extensions.length,
       },

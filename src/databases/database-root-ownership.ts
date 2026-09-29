@@ -11,6 +11,7 @@
  */
 
 import { Database } from 'bun:sqlite';
+import { lstatSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { DatabaseError } from './database-error';
@@ -27,8 +28,12 @@ const ROOT_OWNERSHIP_REGISTRY_SYMBOL = Symbol.for(
 
 /** A lifetime claim over one canonical Zero-managed database root. */
 export interface DatabaseRootOwnershipGuard extends Disposable {
+  /** Canonical root held by this lifetime claim. Use it for every file open. */
+  readonly rootDirectory: string;
   /** True only after the SQLite handle and OS lock were released cleanly. */
   readonly released: boolean;
+  /** Fail closed if the canonical root pathname no longer names this inode. */
+  assertCurrent(): void;
   /** Release the SQLite transaction and its OS file lock exactly once. */
   release(): void;
 }
@@ -82,6 +87,7 @@ export function acquireDatabaseRootOwnership(
 
   let connection: Database | null = null;
   try {
+    const identity = readRootIdentity(canonicalRoot);
     connection = new Database(ownershipPath, {
       create: false,
       readwrite: true,
@@ -102,6 +108,7 @@ export function acquireDatabaseRootOwnership(
     return new SQLiteDatabaseRootOwnershipGuard(
       connection,
       canonicalRoot,
+      identity,
       registry,
     );
   } catch (error) {
@@ -126,11 +133,35 @@ class SQLiteDatabaseRootOwnershipGuard implements DatabaseRootOwnershipGuard {
   constructor(
     private connection: Database | null,
     private readonly canonicalRoot: string,
+    private readonly identity: DatabaseRootIdentity,
     private readonly registry: Set<string>,
   ) {}
 
+  get rootDirectory(): string {
+    return this.canonicalRoot;
+  }
+
   get released(): boolean {
     return this.connection === null;
+  }
+
+  assertCurrent(): void {
+    if (!this.connection) {
+      throw new DatabaseError(
+        'DATABASE_CLOSED',
+        'Database root ownership has been released.',
+      );
+    }
+    let current: DatabaseRootIdentity;
+    try {
+      current = readRootIdentity(this.canonicalRoot);
+    } catch {
+      throw rootIdentityChanged();
+    }
+    if (current.device !== this.identity.device
+      || current.inode !== this.identity.inode) {
+      throw rootIdentityChanged();
+    }
   }
 
   release(): void {
@@ -154,6 +185,26 @@ class SQLiteDatabaseRootOwnershipGuard implements DatabaseRootOwnershipGuard {
   }
 }
 
+interface DatabaseRootIdentity {
+  readonly device: bigint;
+  readonly inode: bigint;
+}
+
+function readRootIdentity(path: string): DatabaseRootIdentity {
+  if (realpathSync.native(path) !== path) throw rootIdentityChanged();
+  const stat = lstatSync(path, { bigint: true });
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw rootIdentityChanged();
+  return Object.freeze({ device: stat.dev, inode: stat.ino });
+}
+
+function rootIdentityChanged(): DatabaseError {
+  return new DatabaseError(
+    'DATABASE_CONFLICT',
+    'Database root identity changed while it was owned.',
+    { retryable: false, outcome: 'not-started' },
+  );
+}
+
 function closeFailedClaim(connection: Database | null): boolean {
   if (!connection) return false;
   try {
@@ -161,12 +212,12 @@ function closeFailedClaim(connection: Database | null): boolean {
       connection.run('ROLLBACK');
     }
   } catch {
-    // A forced close is still authoritative if SQLite accepts it. This also
-    // covers a retry after an earlier close left the handle's state uncertain.
+    // A successful strict close is still authoritative. This also covers a
+    // retry after an earlier close left the handle's state uncertain.
   }
   try {
-    // Bun's forced close finalizes owned statements, releases the underlying
-    // handle immediately, and surfaces SQLite close failures.
+    // Bun closes immediately only when no outstanding statement blocks it;
+    // `true` makes that failure observable instead of deferring the close.
     connection.close(true);
     return false;
   } catch {

@@ -10,6 +10,9 @@ import { resolve, dirname, join } from 'path';
 import { mkdirSync, existsSync, renameSync, unlinkSync, statSync, readdirSync } from 'fs';
 import type { StorageAdapter } from './types';
 
+const OWNED_UPLOAD_TEMP_FILE =
+  /^upload_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 // ─── Content-Addressable Local Adapter ───────────────────────────────────
 
 /**
@@ -126,9 +129,10 @@ export class LocalStorageAdapter implements StorageAdapter {
 
   private cleanupTmpDir(): void {
     try {
-      const files = readdirSync(this.tmpDir);
-      for (const f of files) {
-        try { unlinkSync(join(this.tmpDir, f)); } catch {}
+      const entries = readdirSync(this.tmpDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || !OWNED_UPLOAD_TEMP_FILE.test(entry.name)) continue;
+        try { unlinkSync(join(this.tmpDir, entry.name)); } catch {}
       }
     } catch {}
   }

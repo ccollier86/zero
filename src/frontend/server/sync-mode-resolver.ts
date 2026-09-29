@@ -11,8 +11,11 @@ import type { ReactiveDB } from '../../sync/reactive-db';
 import type { DeclaredSyncMode, SyncMode } from '../../sync/types';
 import type { ResolvedConfig, ResolvedSyncDefaults, ResolvedTableSyncDefault } from './types';
 import { OBS_CODES } from '../../observability/codes';
-import { emitPlatformCode } from '../../observability/sink';
-import type { PlatformCodeDefinition } from '../../observability/types';
+import { emitPlatformCode, emitPlatformCodeTo } from '../../observability/sink';
+import type {
+  PlatformCodeDefinition,
+  PlatformObservabilityRuntime,
+} from '../../observability/types';
 
 const TABLE_SYNC_MODES_TABLE = '_zero_sync_table_modes';
 
@@ -27,8 +30,9 @@ export interface TableSyncModeDecision {
   table: string;
   declaredMode: DeclaredSyncMode;
   resolvedMode: SyncMode;
-  source: 'explicit' | 'auto' | 'persisted';
-  rowCount: number;
+  source: 'explicit' | 'auto' | 'persisted' | 'tenant-database';
+  /** Null when one shared startup count cannot represent isolated tenant files. */
+  rowCount: number | null;
   rowLimit: number;
   persisted: boolean;
   reason: string;
@@ -59,13 +63,21 @@ interface ResolveTableOptions {
   persistedRow: PersistedSyncModeRow | null;
 }
 
+export interface SyncModeResolverOptions {
+  /** Tables physically stored in independently sized tenant databases. */
+  tenantDatabaseTables?: ReadonlySet<string>;
+  /** App-local observability owner. Standalone callers may use the ambient fallback. */
+  observability?: PlatformObservabilityRuntime | null;
+}
+
 /**
  * Resolve all table sync modes and persist auto decisions when configured.
  */
 export function resolveTableSyncModes(
   config: ResolvedConfig,
   db: ReactiveDB,
-  logger?: SyncModeResolverLogger
+  logger?: SyncModeResolverLogger,
+  options: SyncModeResolverOptions = {},
 ): SyncModeResolution {
   ensureSyncModeTable(db);
 
@@ -77,15 +89,16 @@ export function resolveTableSyncModes(
   for (const table of Object.keys(config.tables)) {
     const declaredMode = config.declaredSyncModes.get(table) ?? config.syncDefaults.defaultMode;
     const tableDefault = getTableDefault(config.syncDefaults, table);
-    const rowCount = countRows(db, table);
-    const persistedRow = tableDefault.persist ? readPersistedMode(db, table) : null;
-    const decision = resolveTableMode({
-      table,
-      declaredMode,
-      rowCount,
-      tableDefault,
-      persistedRow,
-    });
+    const tenantDatabase = options.tenantDatabaseTables?.has(table) ?? false;
+    const decision = tenantDatabase
+      ? resolveTenantDatabaseTableMode(table, declaredMode, tableDefault)
+      : resolveTableMode({
+          table,
+          declaredMode,
+          rowCount: countRows(db, table),
+          tableDefault,
+          persistedRow: tableDefault.persist ? readPersistedMode(db, table) : null,
+        });
 
     decisions.push(decision);
     resolvedSyncModes[table] = decision.resolvedMode;
@@ -101,10 +114,45 @@ export function resolveTableSyncModes(
       decision.persisted = true;
     }
 
-    logDecision(decision, logger);
+    logDecision(decision, logger, options.observability);
   }
 
   return { decisions, lazyTables, snapshotTables, resolvedSyncModes };
+}
+
+/**
+ * Resolve a mode without consulting a non-authoritative default-db shadow.
+ * Explicit declarations still win. `auto` is conservatively lazy because
+ * each tenant file has an independent row count which can change after app
+ * startup; one global persisted decision cannot safely represent the fleet.
+ */
+function resolveTenantDatabaseTableMode(
+  table: string,
+  declaredMode: DeclaredSyncMode,
+  tableDefault: ResolvedTableSyncDefault,
+): TableSyncModeDecision {
+  if (declaredMode === 'full' || declaredMode === 'lazy') {
+    return {
+      table,
+      declaredMode,
+      resolvedMode: declaredMode,
+      source: 'explicit',
+      rowCount: null,
+      rowLimit: tableDefault.rowLimit,
+      persisted: false,
+      reason: `explicit ${declaredMode} sync for isolated tenant databases`,
+    };
+  }
+  return {
+    table,
+    declaredMode,
+    resolvedMode: 'lazy',
+    source: 'tenant-database',
+    rowCount: null,
+    rowLimit: tableDefault.rowLimit,
+    persisted: false,
+    reason: 'isolated tenant databases resolve auto sync to lazy',
+  };
 }
 
 /**
@@ -251,6 +299,9 @@ function readPersistedMode(db: ReactiveDB, table: string): PersistedSyncModeRow 
 
 /** Save an auto decision so tables do not flip between startup modes. */
 function persistModeDecision(db: ReactiveDB, decision: TableSyncModeDecision): void {
+  if (decision.rowCount === null) {
+    throw new Error('[sync] Cannot persist a sync mode without an authoritative row count.');
+  }
   const now = Date.now();
   db.prepare(
     `INSERT INTO ${TABLE_SYNC_MODES_TABLE} ` +
@@ -292,14 +343,22 @@ function quoteIdentifier(identifier: string): string {
 }
 
 /** Emit useful startup warnings without making normal auto decisions noisy. */
-function logDecision(decision: TableSyncModeDecision, logger?: SyncModeResolverLogger): void {
-  if (decision.source === 'explicit' && decision.resolvedMode === 'full' && decision.rowCount > decision.rowLimit) {
+function logDecision(
+  decision: TableSyncModeDecision,
+  logger?: SyncModeResolverLogger,
+  observability?: PlatformObservabilityRuntime | null,
+): void {
+  if (decision.source === 'explicit'
+    && decision.resolvedMode === 'full'
+    && decision.rowCount !== null
+    && decision.rowCount > decision.rowLimit) {
     emitSyncModeWarning(
       OBS_CODES.SYNC_MODE_FULL_OVER_LIMIT,
       decision,
       `[sync] Table "${decision.table}" uses explicit full sync with ${decision.rowCount} rows ` +
       `(auto-lazy limit ${decision.rowLimit}). Keeping full sync because explicit config wins.`,
-      logger
+      logger,
+      observability,
     );
     return;
   }
@@ -310,7 +369,8 @@ function logDecision(decision: TableSyncModeDecision, logger?: SyncModeResolverL
       decision,
       `[sync] Table "${decision.table}" has ${decision.rowCount} rows over auto-lazy limit ` +
       `${decision.rowLimit}, but syncDefaults action is warn; keeping full sync.`,
-      logger
+      logger,
+      observability,
     );
     return;
   }
@@ -321,7 +381,8 @@ function logDecision(decision: TableSyncModeDecision, logger?: SyncModeResolverL
       decision,
       `[sync] Table "${decision.table}" auto-resolved to lazy sync ` +
       `(${decision.rowCount} rows > limit ${decision.rowLimit}).`,
-      logger
+      logger,
+      observability,
     );
   }
 }
@@ -330,9 +391,10 @@ function emitSyncModeWarning(
   code: PlatformCodeDefinition,
   decision: TableSyncModeDecision,
   message: string,
-  logger?: SyncModeResolverLogger
+  logger?: SyncModeResolverLogger,
+  observability?: PlatformObservabilityRuntime | null,
 ): void {
-  emitPlatformCode(code, {
+  const options = {
     message,
     metadata: {
       table: decision.table,
@@ -343,6 +405,8 @@ function emitSyncModeWarning(
       rowLimit: decision.rowLimit,
       persisted: decision.persisted,
     },
-  });
+  };
+  if (observability) emitPlatformCodeTo(observability, code, options);
+  else emitPlatformCode(code, options);
   logger?.warn(message);
 }

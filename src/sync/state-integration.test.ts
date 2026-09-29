@@ -725,7 +725,7 @@ describe('routeMessage — state message routing', () => {
     expect(sent).toHaveLength(0);
   });
 
-  test('sync messages still work alongside state messages', () => {
+  test('sync messages still work alongside state messages', async () => {
     db = createReactiveDB({ mode: 'memory' });
     db.defineTable('todos', {
       id: 'text primary key',
@@ -739,7 +739,7 @@ describe('routeMessage — state message routing', () => {
     const { server } = createMockServer();
 
     // Subscribe to sync tables
-    routeMessage(
+    await routeMessage(
       ws,
       { type: 'sync.subscribe', tables: ['todos'], lastSeq: 0 },
       db,
@@ -753,7 +753,7 @@ describe('routeMessage — state message routing', () => {
     expect(syncSnapshot.type).toBe('sync.snapshot');
 
     // Now send state subscribe
-    routeMessage(ws, { type: 'state.subscribe' }, db, server, mgr);
+    await routeMessage(ws, { type: 'state.subscribe' }, db, server, mgr);
 
     // Should get state snapshot
     const stateSnapshot = JSON.parse(sent[sent.length - 1]);

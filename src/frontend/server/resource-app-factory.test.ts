@@ -9,7 +9,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, test } from 'bun:test';
 
 import { clearKvService, getKvService } from '../../kv';
@@ -22,10 +22,12 @@ import {
   authenticatedOnly,
   defineResource,
   getResourceRegistry,
+  globalRealm,
   readOnly,
   ResourceRegistryError,
   tenantRealm,
 } from '../../resources';
+import { defineDatabaseRealm } from '../../databases/database-realm';
 import { createApp } from './app-factory';
 
 async function createTempRoot(): Promise<string> {
@@ -35,6 +37,161 @@ async function createTempRoot(): Promise<string> {
 }
 
 describe('createApp resource registration', () => {
+  test('passes tenant-database isolation into resource registration', async () => {
+    const rootDir = await createTempRoot();
+    const isolatedRoot = join(rootDir, 'tenant-databases');
+    const physicalTables = {
+      documents: {
+        id: 'text primary key',
+        title: 'text not null',
+      },
+      private_notes: {
+        id: 'text primary key',
+        body: 'text not null',
+      },
+    };
+    const realm = defineDatabaseRealm({
+      name: 'resource-app-physical-tenants',
+      version: '1',
+      tables: physicalTables,
+    });
+    const sqlite = createPlatformSQLiteService({ mode: 'memory' });
+    let app: Awaited<ReturnType<typeof createApp>> | undefined;
+
+    try {
+      await mkdir(join(rootDir, 'app'), { recursive: true });
+      app = await createApp({
+        db: { sqlite },
+        tables: physicalTables,
+        resources: [
+          defineResource({
+            table: 'documents',
+            exposure: 'all',
+            realm: tenantRealm(),
+            policy: authenticatedOnly(),
+          }),
+          defineResource({
+            table: 'private_notes',
+            exposure: 'http',
+            realm: tenantRealm(),
+            policy: authenticatedOnly(),
+          }),
+        ],
+        auth: { tenancy: 'multi', bootstrap: 'public' },
+        databaseTopology: {
+          mode: 'multiple',
+          rootDirectory: isolatedRoot,
+          realm,
+          actors: {
+            launch: {
+              kind: 'source',
+              entrypoint: fileURLToPath(import.meta.url),
+            },
+          },
+          tenantIsolation: 'tenant-database',
+        },
+        serverResourcesDir: false,
+        serverPluginsDir: false,
+        serverMiddlewareDir: false,
+        serverEndpointsDir: false,
+        serverRoutesDir: false,
+        appDir: join(rootDir, 'app'),
+        outDir: join(rootDir, 'out'),
+        generatedDir: join(rootDir, '.zero', 'generated'),
+        observability: false,
+        kv: false,
+      });
+      app.listen(0);
+
+      expect(getResourceRegistry().getByTable('documents')?.storage).toEqual({
+        kind: 'tenant',
+        isolation: 'tenant-database',
+      });
+      const physicalShadows = sqlite.raw.query(`
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table' AND name IN ('documents', 'private_notes')
+        ORDER BY name
+      `).all();
+      expect(physicalShadows).toEqual([]);
+    } finally {
+      await app?.stop();
+      sqlite.close();
+      cleanupPlatformSQLiteService();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects a tenant actor realm that includes a global resource table', async () => {
+    const rootDir = await createTempRoot();
+    const isolatedRoot = join(rootDir, 'tenant-databases');
+    const tables = {
+      documents: {
+        id: 'text primary key',
+        title: 'text not null',
+      },
+      app_settings: {
+        id: 'text primary key',
+        value: 'text not null',
+      },
+    };
+    const realm = defineDatabaseRealm({
+      name: 'resource-app-invalid-physical-tenants',
+      version: '1',
+      tables,
+    });
+
+    try {
+      await mkdir(join(rootDir, 'app'), { recursive: true });
+      await expect(createApp({
+        db: { mode: 'memory' },
+        tables,
+        resources: [
+          defineResource({
+            table: 'documents',
+            exposure: 'all',
+            realm: tenantRealm(),
+            policy: authenticatedOnly(),
+          }),
+          defineResource({
+            table: 'app_settings',
+            exposure: 'all',
+            realm: globalRealm(),
+            policy: authenticatedOnly(),
+          }),
+        ],
+        auth: { tenancy: 'multi', bootstrap: 'public' },
+        databaseTopology: {
+          mode: 'multiple',
+          rootDirectory: isolatedRoot,
+          realm,
+          actors: {
+            launch: {
+              kind: 'source',
+              entrypoint: fileURLToPath(import.meta.url),
+            },
+          },
+          tenantIsolation: 'tenant-database',
+        },
+        serverResourcesDir: false,
+        serverPluginsDir: false,
+        serverMiddlewareDir: false,
+        serverEndpointsDir: false,
+        serverRoutesDir: false,
+        appDir: join(rootDir, 'app'),
+        outDir: join(rootDir, 'out'),
+        generatedDir: join(rootDir, '.zero', 'generated'),
+        observability: false,
+        kv: false,
+      })).rejects.toThrow(
+        'tenant realm tables must exactly match tenant-owned resource tables',
+      );
+    } finally {
+      cleanupPlatformSQLiteService();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   test('fails startup when an existing tenant discriminator is actually nullable', async () => {
     const rootDir = await createTempRoot();
     const sqlite = createPlatformSQLiteService({ mode: 'memory' });
@@ -168,6 +325,64 @@ describe('createApp resource registration', () => {
           appDir: join(rootDir, `app-${mode}`),
           outDir: join(rootDir, `out-${mode}`),
           generatedDir: join(rootDir, '.zero', `generated-${mode}`),
+          observability: false,
+          kv: false,
+        })).rejects.toThrow('lazy Sync hydration requires /api/data');
+      }
+    } finally {
+      cleanupPlatformSQLiteService();
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects physical sync-only auto resources for every auto-lazy action', async () => {
+    const rootDir = await createTempRoot();
+    const tables = {
+      documents: {
+        id: 'text primary key',
+        title: 'text not null',
+      },
+    };
+    const realm = defineDatabaseRealm({
+      name: 'sync-only-auto-physical-tenants',
+      version: '1',
+      tables,
+    });
+
+    try {
+      await mkdir(join(rootDir, 'app'), { recursive: true });
+      for (const action of ['warn', 'reject'] as const) {
+        await expect(createApp({
+          db: { mode: 'memory' },
+          tables,
+          resources: [defineResource({
+            table: 'documents',
+            exposure: 'sync',
+            realm: tenantRealm(),
+            policy: authenticatedOnly(),
+          })],
+          auth: { tenancy: 'multi', bootstrap: 'public' },
+          databaseTopology: {
+            mode: 'multiple',
+            rootDirectory: join(rootDir, `tenant-databases-${action}`),
+            realm,
+            actors: {
+              launch: {
+                kind: 'source',
+                entrypoint: fileURLToPath(import.meta.url),
+              },
+            },
+            tenantIsolation: 'tenant-database',
+          },
+          syncDefaults: { autoLazy: { action } },
+          serverResourcesDir: false,
+          serverPluginsDir: false,
+          serverMiddlewareDir: false,
+          serverEndpointsDir: false,
+          serverRoutesDir: false,
+          appDir: join(rootDir, 'app'),
+          outDir: join(rootDir, `out-${action}`),
+          generatedDir: join(rootDir, '.zero', `generated-${action}`),
           observability: false,
           kv: false,
         })).rejects.toThrow('lazy Sync hydration requires /api/data');

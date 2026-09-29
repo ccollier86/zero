@@ -7,7 +7,8 @@
  */
 
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
+import { emitPlatformCode, emitPlatformCodeTo } from '../observability/sink';
+import type { PlatformObservabilityRuntime } from '../observability/types';
 import type { TableSchema } from '../sync/types';
 import type { ReactiveDB } from '../sync/reactive-db';
 import type { AuthTenancyMode } from '../auth/types';
@@ -30,6 +31,7 @@ import {
 } from './resource-schema';
 import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
 import { quoteSqlIdentifier } from '../sync/identity';
+import { bindResourceObservabilityOwner } from './resource-observability';
 
 /** Immutable transport projection normalized by the server-only registry. */
 export interface RegisteredResourceExposure {
@@ -38,6 +40,29 @@ export interface RegisteredResourceExposure {
   readonly sync: boolean;
 }
 
+/** How tenant-owned application rows are isolated by the resolved app topology. */
+export type ResourceTenantIsolation = 'shared-row' | 'tenant-database';
+
+/**
+ * Server-only storage boundary resolved once during resource registration.
+ *
+ * Resource `realm` remains the developer's logical ownership declaration.
+ * This normalized shape tells transports whether that ownership is enforced by
+ * a row discriminator or by possession of the tenant's physical database.
+ */
+export type RegisteredResourceStorage =
+  | Readonly<{ kind: 'unscoped' }>
+  | Readonly<{ kind: 'global' }>
+  | Readonly<{
+      kind: 'tenant';
+      isolation: 'shared-row';
+      field: string;
+    }>
+  | Readonly<{
+      kind: 'tenant';
+      isolation: 'tenant-database';
+    }>;
+
 /** Registered resource with primary key and client exposure fully resolved. */
 export interface RegisteredResourceDefinition extends Omit<
   ResourceDefinition,
@@ -45,6 +70,7 @@ export interface RegisteredResourceDefinition extends Omit<
 > {
   readonly primaryKey: string;
   readonly exposure: RegisteredResourceExposure;
+  readonly storage: RegisteredResourceStorage;
 }
 
 /** Resource validation issue codes for registration-time checks. */
@@ -65,6 +91,8 @@ export type ResourceRegistryIssueCode =
   | 'resource-owner-field-missing'
   | 'resource-realm-missing'
   | 'resource-realm-invalid'
+  | 'resource-tenant-isolation-invalid'
+  | 'resource-tenant-isolation-incompatible'
   | 'resource-tenant-field-invalid'
   | 'resource-tenant-field-missing'
   | 'resource-tenant-field-nullable'
@@ -96,6 +124,8 @@ export interface ResourceRegistryValidationContext {
   authConfig: ResourcePolicyAuthConfig;
   /** Resolved capability mode. Defaults to the legacy-compatible single mode. */
   tenancyMode?: AuthTenancyMode;
+  /** Resolved topology boundary. Omission preserves shared-row behavior. */
+  tenantIsolation?: ResourceTenantIsolation;
   /**
    * App tables exposed through managed HTTP or Sync paths. In multi mode every
    * name in this set must have one explicitly classified resource.
@@ -106,6 +136,8 @@ export interface ResourceRegistryValidationContext {
 /** Options used to create or replace the process resource registry. */
 export interface ConfigureResourceRegistryOptions extends ResourceRegistryValidationContext {
   resources?: readonly ResourceDefinition[];
+  /** App-local event owner. Standalone callers may omit it for legacy behavior. */
+  observability?: PlatformObservabilityRuntime | null;
 }
 
 /** Error thrown when resource registration finds invalid definitions. */
@@ -120,7 +152,12 @@ export class ResourceRegistryError extends Error {
 export class ResourceRegistry {
   private readonly resourcesByName = new Map<string, RegisteredResourceDefinition>();
   private readonly resourcesByTable = new Map<string, RegisteredResourceDefinition>();
+  private tenantIsolation: ResourceTenantIsolation | null = null;
   private sealed = false;
+
+  constructor(
+    private readonly observability: PlatformObservabilityRuntime | null = null,
+  ) {}
 
   /** Register one or more resource definitions after validating them. */
   register(
@@ -132,10 +169,12 @@ export class ResourceRegistry {
     }
     const next = Array.isArray(resources) ? resources : [resources];
     const issues = validateResourceDefinitions(next, context, this);
+    const isolation = normalizeTenantIsolation(context.tenantIsolation);
     if (issues.length > 0) {
       throw new ResourceRegistryError('[resources] Resource registration failed.', issues);
     }
 
+    this.tenantIsolation ??= isolation;
     for (const resource of next) {
       const primaryKey = resource.primaryKey ?? inferTablePrimaryKey(context.tables[resource.table]);
       if (!primaryKey) continue;
@@ -144,7 +183,9 @@ export class ResourceRegistry {
         ...resource,
         primaryKey,
         exposure: normalizeRegisteredResourceExposure(resource.exposure),
+        storage: normalizeRegisteredResourceStorage(resource, isolation),
       });
+      bindResourceObservabilityOwner(registered, this.observability);
       this.resourcesByName.set(registered.name, registered);
       this.resourcesByTable.set(registered.table, registered);
     }
@@ -176,6 +217,11 @@ export class ResourceRegistry {
     return this.resourcesByTable.get(table) ?? null;
   }
 
+  /** Return the immutable topology boundary used to normalize this registry. */
+  getTenantIsolation(): ResourceTenantIsolation | null {
+    return this.tenantIsolation;
+  }
+
   /** Return true when a resource for the table is registered. */
   hasTable(table: string): boolean {
     return this.resourcesByTable.has(table);
@@ -193,21 +239,28 @@ let manualResourceRegistryRegistration: { unregister(): void } | null = null;
 export function createResourceRegistry(
   options: ConfigureResourceRegistryOptions,
 ): ResourceRegistry {
-  const registry = new ResourceRegistry();
+  const registry = new ResourceRegistry(options.observability ?? null);
   registry.register(options.resources ?? [], {
     tables: options.tables,
     authConfig: options.authConfig,
     tenancyMode: options.tenancyMode,
+    tenantIsolation: options.tenantIsolation,
     managedTables: options.managedTables,
   });
   registry.seal();
 
-  emitPlatformCode(OBS_CODES.RESOURCE_REGISTRY_READY, {
+  const event = {
     metadata: {
       resources: registry.list().length,
       tables: registry.list().map((resource) => resource.table),
+      tenantIsolation: registry.getTenantIsolation(),
     },
-  });
+  };
+  if (options.observability) {
+    emitPlatformCodeTo(options.observability, OBS_CODES.RESOURCE_REGISTRY_READY, event);
+  } else {
+    emitPlatformCode(OBS_CODES.RESOURCE_REGISTRY_READY, event);
+  }
 
   return registry;
 }
@@ -228,6 +281,14 @@ export function validateResourceStorageRealms(
   const issues: ResourceRegistryIssue[] = [];
 
   for (const resource of registry.list()) {
+    // A physical tenant resource is deliberately absent from the shared
+    // default/control database. Its actual schema is owned by the immutable
+    // actor realm and is verified when that realm is configured/opened. Do
+    // not turn the default database into a shadow copy merely so this
+    // default-plane validator can inspect it.
+    if (resource.storage.kind === 'tenant'
+      && resource.storage.isolation === 'tenant-database') continue;
+
     const statement = db.prepare(
       `PRAGMA table_info(${quoteSqlIdentifier(resource.table)})`,
     );
@@ -254,38 +315,39 @@ export function validateResourceStorageRealms(
       ));
     }
 
-    if (resource.realm?.kind !== 'tenant') continue;
-    const realm = resource.realm;
+    if (resource.storage.kind !== 'tenant'
+      || resource.storage.isolation !== 'shared-row') continue;
+    const tenantField = resource.storage.field;
 
-    const column = columns.find((candidate) => candidate.name === realm.field);
+    const column = columns.find((candidate) => candidate.name === tenantField);
     if (!column) {
       issues.push(issue(
         'resource-tenant-storage-field-missing',
-        `Tenant resource "${resource.name}" is missing discriminator "${realm.field}" in the actual SQLite table "${resource.table}". Apply a migration before startup.`,
+        `Tenant resource "${resource.name}" is missing discriminator "${tenantField}" in the actual SQLite table "${resource.table}". Apply a migration before startup.`,
         resource,
-        { field: realm.field },
+        { field: tenantField },
       ));
       continue;
     }
     if (column.pk !== 0) {
       issues.push(issue(
         'resource-tenant-storage-field-primary-key',
-        `Tenant resource "${resource.name}" discriminator "${realm.field}" is a primary key in the actual SQLite schema. Use a separate row primary key and migrate the table.`,
+        `Tenant resource "${resource.name}" discriminator "${tenantField}" is a primary key in the actual SQLite schema. Use a separate row primary key and migrate the table.`,
         resource,
-        { field: realm.field },
+        { field: tenantField },
       ));
     }
     if (column.notnull !== 1) {
       issues.push(issue(
         'resource-tenant-storage-field-nullable',
-        `Tenant resource "${resource.name}" discriminator "${realm.field}" is nullable in the actual SQLite schema. Apply a NOT NULL migration before enabling multi-tenancy.`,
+        `Tenant resource "${resource.name}" discriminator "${tenantField}" is nullable in the actual SQLite schema. Apply a NOT NULL migration before enabling multi-tenancy.`,
         resource,
-        { field: realm.field },
+        { field: tenantField },
       ));
     }
 
-    validateTenantStorageIndexes(resource, realm.field, db, issues);
-    validateTenantStorageForeignKeys(resource, realm.field, registry, db, issues);
+    validateTenantStorageIndexes(resource, tenantField, db, issues);
+    validateTenantStorageForeignKeys(resource, tenantField, registry, db, issues);
   }
 
   return issues;
@@ -386,8 +448,9 @@ function validateTenantStorageForeignKeys(
     const parentTable = ordered[0]?.table;
     if (!parentTable) continue;
     const parent = registry.getByTable(parentTable);
-    if (parent?.realm?.kind !== 'tenant') continue;
-    const parentTenantField = parent.realm.field;
+    if (parent?.storage.kind !== 'tenant'
+      || parent.storage.isolation !== 'shared-row') continue;
+    const parentTenantField = parent.storage.field;
 
     const hasTenantPair = ordered.some((entry) =>
       entry.from === tenantField && entry.to === parentTenantField);
@@ -485,6 +548,41 @@ export function validateResourceDefinitions(
   const seenNames = new Set<string>();
   const seenTables = new Set<string>();
   const tenancyMode = context.tenancyMode ?? 'single';
+  const tenantIsolation = normalizeTenantIsolation(context.tenantIsolation);
+
+  if (context.tenantIsolation !== undefined
+    && context.tenantIsolation !== 'shared-row'
+    && context.tenantIsolation !== 'tenant-database') {
+    issues.push({
+      code: 'resource-tenant-isolation-invalid',
+      message: `Unsupported resource tenant isolation "${String(context.tenantIsolation)}". Expected "shared-row" or "tenant-database".`,
+      path: 'tenantIsolation',
+      severity: 'error',
+      metadata: { tenantIsolation: context.tenantIsolation },
+    });
+  }
+  if (tenantIsolation === 'tenant-database' && tenancyMode !== 'multi') {
+    issues.push({
+      code: 'resource-tenant-isolation-incompatible',
+      message: 'Tenant-database resource isolation requires multi-tenant auth.',
+      path: 'tenantIsolation',
+      severity: 'error',
+      metadata: { tenantIsolation, tenancyMode },
+    });
+  }
+  if (existingRegistry?.getTenantIsolation()
+    && existingRegistry.getTenantIsolation() !== tenantIsolation) {
+    issues.push({
+      code: 'resource-tenant-isolation-incompatible',
+      message: `Resource registry is already bound to tenant isolation "${existingRegistry.getTenantIsolation()}" and cannot validate definitions using "${tenantIsolation}".`,
+      path: 'tenantIsolation',
+      severity: 'error',
+      metadata: {
+        expected: existingRegistry.getTenantIsolation(),
+        actual: tenantIsolation,
+      },
+    });
+  }
 
   for (const resource of resources) {
     if (seenNames.has(resource.name) || existingRegistry?.get(resource.name)) {
@@ -513,8 +611,15 @@ export function validateResourceDefinitions(
       issues.push(issue('resource-primary-key-missing', `Resource "${resource.name}" could not resolve a primary key.`, resource));
     }
 
-    validateResourceRealm(resource, schema, primaryKey, tenancyMode, issues);
-    validateResourceFields(resource, schema, primaryKey, issues);
+    validateResourceRealm(
+      resource,
+      schema,
+      primaryKey,
+      tenancyMode,
+      tenantIsolation,
+      issues,
+    );
+    validateResourceFields(resource, schema, primaryKey, tenantIsolation, issues);
     if (tenancyMode === 'multi' && resource.exposure === undefined) {
       issues.push(issue(
         'resource-exposure-missing',
@@ -529,7 +634,6 @@ export function validateResourceDefinitions(
         resource,
       ));
     }
-
     for (const action of resource.actions) {
       const policy = resource.policy[action];
       if (!policy) {
@@ -597,6 +701,7 @@ function validateResourceFields(
   resource: ResourceDefinition,
   schema: TableSchema | undefined,
   primaryKey: string | null | undefined,
+  tenantIsolation: ResourceTenantIsolation,
   issues: ResourceRegistryIssue[],
 ): void {
   if (!resource.fields || !schema) return;
@@ -643,7 +748,7 @@ function validateResourceFields(
     });
   }
 
-  if (resource.realm?.kind !== 'tenant') return;
+  if (resource.realm?.kind !== 'tenant' || tenantIsolation !== 'shared-row') return;
   for (const capability of ['create', 'update'] as const) {
     if (!resource.fields[capability].includes(resource.realm.field)) continue;
     issues.push({
@@ -681,6 +786,7 @@ function validateResourceRealm(
   schema: TableSchema | undefined,
   primaryKey: string | null | undefined,
   tenancyMode: AuthTenancyMode,
+  tenantIsolation: ResourceTenantIsolation,
   issues: ResourceRegistryIssue[],
 ): void {
   const realm = resource.realm;
@@ -715,6 +821,11 @@ function validateResourceRealm(
     return;
   }
 
+  // In tenant-database mode the trusted database capability is the mandatory
+  // tenant boundary. The realm field remains a portable declaration default,
+  // but it is not a required or server-managed application column.
+  if (tenantIsolation === 'tenant-database') return;
+
   if (!schema || !tableHasColumn(schema, realm.field)) {
     issues.push(issue(
       'resource-tenant-field-missing',
@@ -742,6 +853,27 @@ function validateResourceRealm(
       { field: realm.field },
     ));
   }
+}
+
+function normalizeTenantIsolation(
+  isolation: ResourceTenantIsolation | undefined,
+): ResourceTenantIsolation {
+  return isolation === 'tenant-database' ? 'tenant-database' : 'shared-row';
+}
+
+function normalizeRegisteredResourceStorage(
+  resource: ResourceDefinition,
+  tenantIsolation: ResourceTenantIsolation,
+): RegisteredResourceStorage {
+  if (!resource.realm) return Object.freeze({ kind: 'unscoped' });
+  if (resource.realm.kind === 'global') return Object.freeze({ kind: 'global' });
+  return tenantIsolation === 'tenant-database'
+    ? Object.freeze({ kind: 'tenant', isolation: 'tenant-database' })
+    : Object.freeze({
+        kind: 'tenant',
+        isolation: 'shared-row',
+        field: resource.realm.field,
+      });
 }
 
 function issue(

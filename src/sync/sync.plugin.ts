@@ -10,7 +10,6 @@
 import { Elysia, t } from 'elysia';
 import type { ServerWebSocket } from 'bun';
 import {
-  createReactiveDB,
   getReactiveDBLocalChangeOrigin,
   ReactiveDB,
 } from './reactive-db';
@@ -34,25 +33,54 @@ import {
 import { createSyncSocketAuthRuntime } from './sync-socket-auth';
 import { allowAllSyncPolicy } from './sync-policy';
 import { deliverSyncChange } from './sync-change-delivery';
-import { clearSyncBackpressure, sendSyncWire } from './sync-wire-send';
+import {
+  clearSyncBackpressure,
+  rejectSyncDrain,
+  sendSyncWire,
+} from './sync-wire-send';
 import { SyncMutationReceiptStore } from './sync-mutation-receipt-store';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode, warnPlatform } from '../observability/sink';
+import { emitPlatformCode, emitPlatformCodeTo } from '../observability/sink';
 import {
   clearPlatformSQLiteService,
   setPlatformSQLiteService,
 } from '../persistence';
 import type {
-  SyncAuthConfig,
-  SyncAuthContext,
   SyncPluginConfig,
   SyncSocketData,
 } from './types';
 import { SYNC_TABLE_MUTATION_VALIDATOR } from './types';
 import { SYNC_OUTGOING_BACKPRESSURE_LIMIT } from './types';
 import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
-import { ZERO_SQLITE_SERVICE, ZERO_SYNC_DB } from '../runtime/service-keys';
-import type { PlatformCodeDefinition } from '../observability/types';
+import {
+  ZERO_OBSERVABILITY_RUNTIME,
+  ZERO_SQLITE_SERVICE,
+  ZERO_SYNC_DB,
+} from '../runtime/service-keys';
+import type {
+  PlatformCodeDefinition,
+  PlatformCodeEmitOptions,
+} from '../observability/types';
+import {
+  SyncTenantSocketBridge,
+} from './sync-tenant-data-plane';
+import {
+  assertActorMutationValidatorMatchesTable,
+  assertMultiTenantResourceClassification,
+  assertMutationValidatorMatchesTable,
+  assertTenantDataPlaneConfiguration,
+  describeSyncDatabaseMode,
+  resolveReplicaChangePolling,
+  resolveSyncDatabase,
+  tenantSyncAuthorityChanged,
+  validateSyncCommitAuthority,
+  wireUsesTenantDataPlane,
+} from './sync-plugin-config';
+import {
+  SyncSocketIngressQueue,
+  syncIngressEncodedBytes,
+  type SyncIngressFence,
+} from './sync-socket-ingress';
 
 interface SyncRuntime {
   db: ReactiveDB;
@@ -101,6 +129,14 @@ export function getEphemeralManager(): EphemeralStateManager | null {
  */
 export function createSyncPlugin(config: SyncPluginConfig) {
   assertMultiTenantResourceClassification(config);
+  assertTenantDataPlaneConfiguration(config);
+  const observability = config.runtime?.get(ZERO_OBSERVABILITY_RUNTIME) ?? null;
+  const emitSyncCode = (
+    definition: PlatformCodeDefinition,
+    options: PlatformCodeEmitOptions = {},
+  ) => observability
+    ? emitPlatformCodeTo(observability, definition, options)
+    : emitPlatformCode(definition, options);
   let connectionCounter = 0;
   const policy = config.policy ?? allowAllSyncPolicy;
   const databaseRuntime = resolveSyncDatabase(config);
@@ -117,7 +153,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     throw new Error('[sync] onDatabaseCreated must be synchronous');
   }
   const sqlite = db.getSQLiteService();
-  const databaseDescription = describeSyncDatabase(config.db, db);
+  const databaseMode = describeSyncDatabaseMode(config.db, db);
   const replicaPolling = resolveReplicaChangePolling(config, db);
   const runtime: SyncRuntime = {
     db,
@@ -131,6 +167,14 @@ export function createSyncPlugin(config: SyncPluginConfig) {
   };
   const activeSockets = new Set<ServerWebSocket<SyncSocketData>>();
   const openSockets = new Set<ServerWebSocket<SyncSocketData>>();
+  const tenantDataSockets = new Map<
+    ServerWebSocket<SyncSocketData>,
+    SyncTenantSocketBridge
+  >();
+  const ingressQueues = new Map<
+    ServerWebSocket<SyncSocketData>,
+    SyncSocketIngressQueue
+  >();
   const compatibilityOwner = {};
   const compatibilityRegistration = compatibilityRuntimes.register(
     compatibilityOwner,
@@ -142,9 +186,15 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     db,
     policy,
     resourcePolicy: config.resourcePolicy,
+    additionalTables: Object.keys(config.tenantDataPlane?.tables ?? {}),
+    observability,
     activeSockets,
     requireDurableAuthority: config.tenancyMode === 'multi' && Boolean(config.auth),
+    requireComparableReadAuthority: Boolean(config.tenantDataPlane),
     onAuthorityInvalidated: () => runtime.ephemeralChannel?.revalidateAll(),
+    onSocketInvalidated(socket) {
+      releaseSocketCapabilities(socket);
+    },
   });
   cleanupOnCompositionFailure.push(() => socketAuth.dispose());
   let teardownComplete = false;
@@ -169,6 +219,13 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     const unsubscribeChange = runtime.unsubscribeChange;
     runtime.unsubscribeChange = null;
     if (unsubscribeChange) attempt(unsubscribeChange);
+
+    for (const bridge of tenantDataSockets.values()) {
+      attempt(() => bridge.dispose());
+    }
+    tenantDataSockets.clear();
+    for (const queue of ingressQueues.values()) queue.dispose();
+    ingressQueues.clear();
 
     const stateManager = runtime.stateManager;
     runtime.stateManager = null;
@@ -196,20 +253,17 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     if (sqlite) attempt(() => clearPlatformSQLiteService(sqlite));
     if (databaseRuntime.owned) attempt(() => db.dispose());
     if (startEventEmitted) {
-      attempt(() => emitPlatformCode(OBS_CODES.SYNC_STOPPED, {
-        metadata: { db: databaseDescription },
+      attempt(() => emitSyncCode(OBS_CODES.SYNC_STOPPED, {
+        metadata: { databaseMode },
       }));
     }
     return failures;
   };
 
-  const invalidateSyncRuntime = (
-    error: unknown,
-    definition: PlatformCodeDefinition,
-  ): void => {
+  const invalidateSyncRuntime = (definition: PlatformCodeDefinition): void => {
     if (runtime.replicaLogInvalid) return;
     runtime.replicaLogInvalid = true;
-    emitPlatformCode(definition, { error });
+    emitSyncCode(definition);
     const sockets = [...openSockets];
     try {
       socketAuth.invalidateAll(1012, 'Sync replica history invalid');
@@ -218,8 +272,8 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     }
     for (const socket of sockets) {
       try {
-        if (activeSockets.has(socket)) scheduleSocketTermination(socket);
-        else closeReplicaInvalidSocket(socket);
+        releaseSocketCapabilities(socket);
+        closeReplicaInvalidSocket(socket);
       } catch {
         try { socket.terminate(); } catch { /* Already closed. */ }
       }
@@ -228,9 +282,23 @@ export function createSyncPlugin(config: SyncPluginConfig) {
 
   const mutationValidators = { ...config.mutationValidators };
   for (const [name, schema] of Object.entries(config.tables)) {
-    db.defineTable(name, schema);
     const validator = config.mutationValidators?.[name]
       ?? schema[SYNC_TABLE_MUTATION_VALIDATOR];
+    const actorTable = config.tenantDataPlane?.tables[name];
+    const tenantOwned = config.resourcePolicy
+      ?.classifyManagedTableDataPlane?.(name) === 'tenant';
+    if (tenantOwned) {
+      if (actorTable && validator) {
+        assertActorMutationValidatorMatchesTable(name, validator, actorTable);
+        mutationValidators[name] = validator;
+      }
+      // Every physical tenant table belongs exclusively to the actor realm.
+      // HTTP/internal tables are intentionally absent from the Sync wire
+      // catalog, but must still never acquire a default-database shadow.
+      continue;
+    }
+
+    db.defineTable(name, schema);
     if (!validator) continue;
 
     assertMutationValidatorMatchesTable(name, validator, db);
@@ -326,6 +394,13 @@ export function createSyncPlugin(config: SyncPluginConfig) {
               );
             }
             if (change.table === 'room_members') {
+              // Room membership is live read authority, not just row data.
+              // Re-evaluate every authenticated socket even when it did not
+              // subscribe to room_members; the final delivery fence protects
+              // changes while the asynchronous resolver is in flight.
+              void socketAuth.revalidateAll().catch(() => {
+                socketAuth.invalidateAll(1011, 'Sync authority revalidation failed');
+              });
               void runtime.ephemeralChannel?.revalidateAll();
             }
             // Row filters/projectors are authorization code. Any exception must
@@ -340,7 +415,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
               socketAuth.validateCurrentAuthority,
             );
           } catch (error) {
-            invalidateSyncRuntime(error, OBS_CODES.SYNC_POLICY_STATE_FAILED);
+            invalidateSyncRuntime(OBS_CODES.SYNC_POLICY_STATE_FAILED);
           }
         });
 
@@ -364,7 +439,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
           runtime.unsubscribeExternalChanges = db.startExternalChangePolling({
             intervalMs: replicaPolling.intervalMs,
             onGap: (gap) => {
-              emitPlatformCode(OBS_CODES.SYNC_REPLICA_HISTORY_GAP, {
+              emitSyncCode(OBS_CODES.SYNC_REPLICA_HISTORY_GAP, {
                 metadata: { ...gap },
               });
               if (config.resourcePolicy?.observeChange
@@ -385,27 +460,28 @@ export function createSyncPlugin(config: SyncPluginConfig) {
               }
               socketAuth.invalidateAll(1012, 'Sync replica history gap');
             },
-            onInvalid: (error) => {
-              invalidateSyncRuntime(error, OBS_CODES.SYNC_REPLICA_POLL_FAILED);
+            onInvalid: () => {
+              invalidateSyncRuntime(OBS_CODES.SYNC_REPLICA_POLL_FAILED);
             },
-            onError: (error) => {
-              emitPlatformCode(OBS_CODES.SYNC_REPLICA_POLL_FAILED, { error });
+            onError: () => {
+              emitSyncCode(OBS_CODES.SYNC_REPLICA_POLL_FAILED);
             },
           });
         }
         socketAuth.start();
 
         if (config.auth?.required && config.auth.modeDefaulted) {
-          warnPlatform(OBS_CODES.SYNC_AUTH_REQUIRED_DEFAULTED, {
+          emitSyncCode(OBS_CODES.SYNC_AUTH_REQUIRED_DEFAULTED, {
+            level: 'warn',
             metadata: {
               hint: "Set syncAuth: 'public' only when anonymous sync is deliberate.",
             },
           });
         }
 
-        emitPlatformCode(OBS_CODES.SYNC_STARTED, {
+        emitSyncCode(OBS_CODES.SYNC_STARTED, {
           metadata: {
-            db: databaseDescription,
+            databaseMode,
             tables: Object.keys(config.tables),
             stateSync: Boolean(config.stateSync),
             authMode: config.auth
@@ -419,9 +495,9 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         try {
           const stopping = lifecycle.server?.stop(true);
           if (isPromiseLike(stopping)) {
-            void Promise.resolve(stopping).catch((stopError) => {
-              emitPlatformCode(OBS_CODES.SYNC_REPLICA_POLL_FAILED, {
-                error: stopError,
+            void Promise.resolve(stopping).catch(() => {
+              emitSyncCode(OBS_CODES.SYNC_REPLICA_POLL_FAILED, {
+                metadata: { stage: 'startup-cleanup' },
               });
             });
           }
@@ -469,11 +545,13 @@ export function createSyncPlugin(config: SyncPluginConfig) {
       perMessageDeflate: false,
 
       async open(ws) {
+        const socket = syncTransportSocket(ws);
+        ingressQueues.set(socket, new SyncSocketIngressQueue());
         // Assign unique connection ID
         const connectionId = `conn_${++connectionCounter}`;
 
         // Initialize per-socket data
-        const data = ws.data as unknown as SyncSocketData;
+        const data = socket.data;
         data.connectionId = connectionId;
         data.subscribedTopics = new Set();
         data.lastSeq = 0;
@@ -484,6 +562,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         data.authAuthorityReference = null;
         data.authResolved = false;
         data.authorizationFingerprint = null;
+        data.readAuthorizationFingerprint = null;
         data.authorizationScope = null;
         data.allowedTables = new Set();
         data.resourceRowFilters = new Map();
@@ -493,132 +572,269 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         data.statePrincipal = null;
         data.stateLastSeq = 0;
         data.ephemeralTopics = new Set();
-        data.query = (ws.data as { query?: { token?: string } }).query ?? {};
+        data.query = (socket.data as SyncSocketData & {
+          query?: { token?: string };
+        }).query ?? {};
 
-        const socket = ws as unknown as ServerWebSocket<SyncSocketData>;
         openSockets.add(socket);
         if (runtime.replicaLogInvalid) {
+          releaseSocketCapabilities(socket);
           closeReplicaInvalidSocket(socket);
           return;
         }
         if (data.query.token) {
           if (!config.auth?.allowLegacyQueryToken) {
+            releaseSocketCapabilities(socket);
             socket.close(4001, 'Query token authentication disabled');
             return;
           }
-          await socketAuth.authorize(socket, data.query.token);
-          if (runtime.replicaLogInvalid) {
-            activeSockets.delete(socket);
-            socketAuth.clearSocket(socket);
-            closeReplicaInvalidSocket(socket);
-          }
+          const admission = ingressQueues.get(socket)?.admit(0, async (fence) => {
+            const authorized = await socketAuth.authorize(socket, data.query.token);
+            if (!authorized) {
+              releaseSocketCapabilities(socket);
+              return;
+            }
+            if (!fence.active) return;
+            if (runtime.replicaLogInvalid) {
+              releaseSocketCapabilities(socket);
+              closeReplicaInvalidSocket(socket);
+            }
+          });
+          if (admission?.accepted) await admission.completion;
           return;
         }
 
         if (!config.auth) {
-          await socketAuth.authorize(socket);
-          if (runtime.replicaLogInvalid) {
-            activeSockets.delete(socket);
-            socketAuth.clearSocket(socket);
-            closeReplicaInvalidSocket(socket);
-          }
+          const admission = ingressQueues.get(socket)?.admit(0, async (fence) => {
+            const authorized = await socketAuth.authorize(socket);
+            if (!authorized) {
+              releaseSocketCapabilities(socket);
+              return;
+            }
+            if (!fence.active) return;
+            if (runtime.replicaLogInvalid) {
+              releaseSocketCapabilities(socket);
+              closeReplicaInvalidSocket(socket);
+            }
+          });
+          if (admission?.accepted) await admission.completion;
         } else {
           socketAuth.waitForRequiredHandshake(socket);
         }
       },
 
       async message(ws, message) {
-        const data = ws.data as unknown as SyncSocketData;
-        const socket = ws as unknown as ServerWebSocket<SyncSocketData>;
-        if (runtime.replicaLogInvalid) {
-          closeReplicaInvalidSocket(socket);
+        const socket = syncTransportSocket(ws);
+        const queue = ingressQueues.get(socket);
+        const encodedBytes = syncIngressEncodedBytes(message);
+        if (!queue || encodedBytes === null) {
+          releaseSocketCapabilities(socket);
+          socket.close(1008, 'Invalid Sync message');
           return;
         }
         const wireMessage = message as string | Record<string, unknown>;
-        const authMessage = parseSyncAuthMessage(wireMessage);
-
-        if (authMessage.matched) {
-          if (!authMessage.ok) {
-            socket.close(4001, 'Invalid auth handshake');
-            return;
+        const admission = queue.admit(encodedBytes, async (fence) => {
+          await processSocketMessage(socket, wireMessage, fence);
+        });
+        if (!admission.accepted) {
+          if (admission.reason === 'capacity') {
+            emitSyncCode(OBS_CODES.SYNC_INGRESS_ADMISSION_REJECTED, {
+              metadata: { reason: 'capacity' },
+            });
           }
-
-          if (!data.authResolved) {
-            const authorized = await socketAuth.authorize(socket, authMessage.token);
-            if (!authorized) return;
-          }
-          if (runtime.replicaLogInvalid) {
-            activeSockets.delete(socket);
-            socketAuth.clearSocket(socket);
-            closeReplicaInvalidSocket(socket);
-            return;
-          }
-
-          socket.send(JSON.stringify(
-            createSyncAuthReadyMessage(data.authContext !== null)
-          ));
+          releaseSocketCapabilities(socket);
+          socket.close(
+            admission.reason === 'capacity' ? 1013 : 1008,
+            admission.reason === 'capacity'
+              ? 'Sync ingress capacity exceeded'
+              : 'Invalid Sync message',
+          );
           return;
         }
-
-        // Legacy no-token clients can still enter deliberately public sync.
-        // Required mode fails closed until the explicit auth message arrives.
-        if (!data.authResolved) {
-          const authorized = await socketAuth.authorize(socket);
-          if (!authorized) return;
-        } else if (!(await socketAuth.revalidate(socket))) {
-          return;
+        try {
+          await admission.completion;
+        } catch {
+          if (!queue.active) return;
+          releaseSocketCapabilities(socket);
+          socket.close(1011, 'Sync message handling failed');
         }
-        if (runtime.replicaLogInvalid) {
-          activeSockets.delete(socket);
-          socketAuth.clearSocket(socket);
-          closeReplicaInvalidSocket(socket);
-          return;
-        }
-
-        // Elysia auto-parses JSON WebSocket messages — `message` is already an object.
-        // routeMessage accepts both string and pre-parsed objects.
-        await routeMessage(
-          ws as any,
-          wireMessage,
-          db,
-          { publish: (topic: string, data: string) => ws.publish(topic, data) },
-          runtime.stateManager,
-          runtime.ephemeralManager,
-          policy,
-          config.snapshotTables,
-          config.resourcePolicy,
-          mutationReceipts,
-          runtime.mutationOrigin,
-          mutationValidators,
-          runtime.ephemeralChannel,
-          config.tenancyMode ?? 'single',
-          () => socketAuth.revalidate(socket),
-          () => validateSyncCommitAuthority(
-            config.auth,
-            data.authContext,
-            config.tenancyMode ?? 'single',
-          ),
-        );
       },
 
       close(ws, code, reason) {
-        const socket = ws as unknown as ServerWebSocket<SyncSocketData>;
-        activeSockets.delete(socket);
-        openSockets.delete(socket);
-        socketAuth.clearSocket(socket);
-        // Bun automatically unsubscribes from all pub/sub topics on close.
-        // Clean up ephemeral manager subscriptions and presence data.
-        if (runtime.ephemeralChannel) {
-          runtime.ephemeralChannel.cleanup(socket);
-        } else if (runtime.ephemeralManager) {
-          cleanupEphemeralForSocket(ws as any, runtime.ephemeralManager);
-        }
+        const socket = syncTransportSocket(ws);
+        releaseSocketCapabilities(socket);
       },
 
       drain(ws) {
-        clearSyncBackpressure(ws as unknown as ServerWebSocket<SyncSocketData>);
+        const socket = syncTransportSocket(ws);
+        clearSyncBackpressure(socket);
+        tenantDataSockets.get(socket)?.resume();
       },
     });
+
+  async function processSocketMessage(
+    socket: ServerWebSocket<SyncSocketData>,
+    wireMessage: string | Record<string, unknown>,
+    ingress: SyncIngressFence,
+  ): Promise<void> {
+    if (!ingress.active) return;
+    const data = socket.data;
+    if (runtime.replicaLogInvalid) {
+      closeReplicaInvalidSocket(socket);
+      return;
+    }
+    const authMessage = parseSyncAuthMessage(wireMessage);
+
+    if (authMessage.matched) {
+      if (!authMessage.ok) {
+        releaseSocketCapabilities(socket);
+        socket.close(4001, 'Invalid auth handshake');
+        return;
+      }
+      if (!data.authResolved) {
+        const authorized = await socketAuth.authorize(socket, authMessage.token);
+        if (!authorized) {
+          releaseSocketCapabilities(socket);
+          return;
+        }
+        if (!ingress.active) return;
+      }
+      if (runtime.replicaLogInvalid) {
+        releaseSocketCapabilities(socket);
+        closeReplicaInvalidSocket(socket);
+        return;
+      }
+      if (ingress.active) {
+        socket.send(JSON.stringify(
+          createSyncAuthReadyMessage(data.authContext !== null),
+        ));
+      }
+      return;
+    }
+
+    // Legacy no-token clients can still enter deliberately public sync.
+    // Required mode fails closed until the explicit auth message arrives.
+    if (!data.authResolved) {
+      const authorized = await socketAuth.authorize(socket);
+      if (!authorized) {
+        releaseSocketCapabilities(socket);
+        return;
+      }
+      if (!ingress.active) return;
+    } else {
+      const authorized = await socketAuth.revalidate(socket);
+      if (!authorized || !ingress.active) return;
+    }
+    if (runtime.replicaLogInvalid) {
+      releaseSocketCapabilities(socket);
+      closeReplicaInvalidSocket(socket);
+      return;
+    }
+
+    let tenantDataPlane = tenantDataSockets.get(socket);
+    if (config.tenantDataPlane
+      && wireUsesTenantDataPlane(wireMessage, config.tenantDataPlane)) {
+      if (!tenantDataPlane) {
+        const authContext = data.authContext;
+        if (!authContext) {
+          releaseSocketCapabilities(socket);
+          socket.close(4001, 'Tenant Sync requires authentication');
+          return;
+        }
+        try {
+          tenantDataPlane = new SyncTenantSocketBridge({
+            socket,
+            plane: config.tenantDataPlane,
+            observability,
+            authContext,
+            snapshotTables: config.snapshotTables,
+            assertCurrentAuthoritySync: () => {
+              if (!socketAuth.validateCurrentAuthority(socket, authContext)) {
+                throw tenantSyncAuthorityChanged();
+              }
+              return undefined;
+            },
+            assertCurrentReadAuthoritySync: () => {
+              if (!socketAuth.validateCurrentAuthority(socket, authContext)) {
+                throw tenantSyncAuthorityChanged();
+              }
+              return undefined;
+            },
+            assertMutationAuthoritySync: (fingerprint) => {
+              if (!socketAuth.validateCurrentAuthority(socket, authContext)
+                || !(config.resourcePolicy
+                  ?.validateMutationAuthorityAtCommit?.(
+                    data.authContext,
+                    fingerprint,
+                  ) ?? true)) {
+                throw tenantSyncAuthorityChanged();
+              }
+              return undefined;
+            },
+          });
+          tenantDataSockets.set(socket, tenantDataPlane);
+        } catch {
+          releaseSocketCapabilities(socket);
+          socket.close(4001, 'Tenant Sync authority is not tenant scoped');
+          return;
+        }
+      }
+    }
+    if (!ingress.active) return;
+
+    await routeMessage(
+      socket,
+      wireMessage,
+      db,
+      { publish: (topic: string, data: string) => socket.publish(topic, data) },
+      runtime.stateManager,
+      runtime.ephemeralManager,
+      policy,
+      config.snapshotTables,
+      config.resourcePolicy,
+      mutationReceipts,
+      runtime.mutationOrigin,
+      mutationValidators,
+      runtime.ephemeralChannel,
+      config.tenancyMode ?? 'single',
+      () => socketAuth.revalidate(socket),
+      () => validateSyncCommitAuthority(
+        config.auth,
+        data.authContext,
+        config.tenancyMode ?? 'single',
+      ),
+      tenantDataPlane,
+      observability,
+      () => {
+        if (!socketAuth.validateCurrentAuthority(
+          socket,
+          data.authContext ?? undefined,
+        )) {
+          throw tenantSyncAuthorityChanged();
+        }
+      },
+    );
+  }
+
+  function releaseSocketCapabilities(
+    socket: ServerWebSocket<SyncSocketData>,
+  ): void {
+    ingressQueues.get(socket)?.dispose();
+    ingressQueues.delete(socket);
+    rejectSyncDrain(socket);
+    activeSockets.delete(socket);
+    openSockets.delete(socket);
+    tenantDataSockets.get(socket)?.dispose();
+    tenantDataSockets.delete(socket);
+    socketAuth.clearSocket(socket);
+    // Bun automatically unsubscribes from pub/sub on close. Explicit manager
+    // cleanup is still required for presence and in-process subscriptions.
+    if (runtime.ephemeralChannel) {
+      runtime.ephemeralChannel.cleanup(socket);
+    } else if (runtime.ephemeralManager) {
+      cleanupEphemeralForSocket(socket, runtime.ephemeralManager);
+    }
+  }
 
   cleanupOnCompositionFailure.length = 0;
   return plugin;
@@ -643,26 +859,18 @@ export function createSyncPlugin(config: SyncPluginConfig) {
   }
 }
 
-function resolveSyncDatabase(config: SyncPluginConfig): {
-  db: ReactiveDB;
-  owned: boolean;
-} {
-  if (!config.reactiveDB) {
-    if (config.ownsReactiveDB !== undefined) {
-      throw new Error(
-        '[sync] ownsReactiveDB is valid only when reactiveDB is provided',
-      );
-    }
-    return {
-      db: createReactiveDB(config.db),
-      owned: true,
-    };
-  }
-
-  return {
-    db: config.reactiveDB,
-    owned: config.ownsReactiveDB ?? false,
-  };
+/**
+ * Elysia constructs a fresh `ElysiaWS` facade for each lifecycle callback.
+ * Bun's underlying socket is stable for the lifetime of the connection and is
+ * therefore the only safe identity for per-connection maps, timers, and
+ * tenant-data-plane ownership. Standalone/unit-test sockets have no `raw`
+ * facade and already provide that stable identity directly.
+ */
+function syncTransportSocket(
+  socket: unknown,
+): ServerWebSocket<SyncSocketData> {
+  const raw = (socket as { raw?: unknown } | null)?.raw;
+  return (raw ?? socket) as ServerWebSocket<SyncSocketData>;
 }
 
 function closeReplicaInvalidSocket(socket: ServerWebSocket<SyncSocketData>): void {
@@ -696,123 +904,4 @@ function raiseLifecycleCleanupFailures(
 ): void {
   if (failures.length === 1) throw failures[0];
   if (failures.length > 1) throw new AggregateError(failures, message);
-}
-
-function resolveReplicaChangePolling(
-  config: SyncPluginConfig,
-  db: ReactiveDB,
-): { intervalMs: number } | null {
-  if (config.replicaChangePolling === false) return null;
-  if (config.replicaChangePolling) {
-    const requestedInterval = config.replicaChangePolling.intervalMs ?? 250;
-    if (!Number.isSafeInteger(requestedInterval) || requestedInterval < 1) {
-      throw new Error(
-        'ReactiveDB replica polling intervalMs must be a positive safe integer',
-      );
-    }
-    return { intervalMs: Math.max(10, requestedInterval) };
-  }
-  return db.getSQLiteService()?.mode === 'file'
-    ? { intervalMs: 250 }
-    : null;
-}
-
-function validateSyncCommitAuthority(
-  auth: SyncAuthConfig | undefined,
-  context: SyncAuthContext | null,
-  tenancyMode: 'single' | 'multi',
-): boolean {
-  const verifier = auth?.getTokenVerifier() ?? null;
-  try {
-    // This runs after ReactiveDB has acquired its immediate transaction lock.
-    // Fence anonymous/public mutations too: they still rely on this runtime's
-    // installed tenancy and authorization profile.
-    verifier?.assertCurrentProfile?.();
-  } catch {
-    return false;
-  }
-  if (!context) return tenancyMode === 'single';
-  // Pre-boundary single-tenant JWTs intentionally finish their original short
-  // TTL without a durable session handle. Preserve that narrow compatibility
-  // path; multi-tenant authority is always session-bound and reaches this gate.
-  if (!context.sessionKind) return tenancyMode === 'single';
-  if (!verifier
-    || typeof verifier.captureAuthContextAuthority !== 'function'
-    || typeof verifier.resolveAuthContextAuthority !== 'function') {
-    // Standalone/legacy verifier compatibility is single-tenant only. A
-    // multi-tenant scope without a synchronous durable resolver cannot safely
-    // cross a transaction boundary.
-    return tenancyMode === 'single';
-  }
-
-  try {
-    const reference = verifier.captureAuthContextAuthority(context);
-    return Boolean(reference && verifier.resolveAuthContextAuthority(reference));
-  } catch {
-    return false;
-  }
-}
-
-function assertMultiTenantResourceClassification(config: SyncPluginConfig): void {
-  if (config.tenancyMode !== 'multi') return;
-
-  for (const table of Object.keys(config.tables)) {
-    if (table.startsWith('_')) continue;
-    const realm = config.resourcePolicy?.classifyManagedTableRealm?.(table) ?? null;
-    if (realm === 'global' || realm === 'tenant') continue;
-    throw new Error(
-      `[sync] Multi-tenant table "${table}" must have an explicit global or tenant resource realm before Sync starts. ` +
-      'Use defineResource({ realm: globalRealm() | tenantRealm(), ... }) and the resource Sync policy adapter.',
-    );
-  }
-
-  for (const table of Object.keys(config.tables)) {
-    if (table.startsWith('_')) continue;
-    const exposure = config.resourcePolicy
-      ?.classifyManagedTableExposure?.(table) ?? null;
-    if (exposure === 'internal'
-      || exposure === 'http'
-      || exposure === 'sync'
-      || exposure === 'all') continue;
-    throw new Error(
-      `[sync] Multi-tenant table "${table}" must have an explicit resource exposure before Sync starts. `
-      + 'Use defineResource({ exposure: "internal" | "http" | "sync" | "all", ... }).',
-    );
-  }
-}
-
-function assertMutationValidatorMatchesTable(
-  table: string,
-  validator: NonNullable<SyncPluginConfig['mutationValidators']>[string],
-  db: ReactiveDB,
-): void {
-  const primaryKey = db.getPrimaryKey(table);
-  if (validator.primaryKey !== primaryKey) {
-    throw new Error(
-      `[sync] Mutation validator for table "${table}" declares primary key `
-      + `"${validator.primaryKey}", but the SQL table uses "${primaryKey}".`,
-    );
-  }
-
-  const columns = new Set(db.getColumns(table));
-  for (const field of validator.fieldNames) {
-    if (!columns.has(field)) {
-      throw new Error(
-        `[sync] Mutation validator for table "${table}" declares unknown field "${field}".`,
-      );
-    }
-  }
-}
-
-function describeSyncDatabase(config: SyncPluginConfig['db'], db: ReactiveDB): string {
-  const sqlite = db.getSQLiteService();
-  if (sqlite) {
-    return sqlite.mode === 'ephemeral'
-      ? ':memory:'
-      : sqlite.snapshotPath ?? sqlite.path ?? sqlite.mode;
-  }
-
-  if (config.database) return '[injected database]';
-  if (config.mode === 'memory' || config.mode === ':memory:') return ':memory:';
-  return config.path ?? config.mode ?? '[platform sqlite]';
 }

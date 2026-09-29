@@ -34,6 +34,7 @@ import {
 - [Animated Components (animate-ui)](#animated-components)
 - [Animated Icons](#animated-icons)
 - [Server (createApp)](#server)
+  - [ReactiveDB Fabric: Actor-Backed Multi-Database Tenancy](#reactivedb-fabric-actor-backed-multi-database-tenancy)
 - [Hooks Reference](#hooks-reference)
 - [Selected Export Reference](#selected-export-reference)
 
@@ -161,7 +162,7 @@ Browser                          Server
 └─────────────────────┘         └─────────────────────┘
 ```
 
-- **Single live channel** — policy-authorized app data, state, and scoped notifications share one Bearer-authenticated WebSocket; login/session APIs remain HTTP
+- **Single live channel** — policy-authorized app data, state, and scoped notifications share one Bearer-authenticated WebSocket; physical tenant mode multiplexes independent default/control and tenant data-plane cursors on that channel, while login/session APIs remain HTTP
 - **Optimistic mutations** — writes apply locally first, sync to server in background
 - **@xstate/store** — tear-free reactive state via `useSyncExternalStore`
 - **Schema-driven** — define once, get forms + tables + DB + validation
@@ -413,6 +414,21 @@ const client = createClient({
 });
 ```
 
+In a full-stack Zero app, `AppProvider` receives the server-authored Sync table
+catalog through `window.__PLATFORM_CONFIG__`. When physical tenant storage is
+enabled, it automatically supplies `tableSyncPlanes` to the client, removes
+known HTTP-only/internal resources from the Sync schema, and keeps framework
+tables on the `default` plane. Do not hand-author this map in application UI.
+The low-level `createClient({ tableSyncPlanes })` option exists for generated or
+standalone composition and must contain exactly one `default` or `tenant`
+entry for every configured application table.
+
+One client and one WebSocket still back the app. The Sync client maintains
+independent cursor, epoch, authorization scope, baseline, and reset state for
+the default/control and tenant planes; a reconnect sends both cursors. A
+browser `plane` value is only an assertion. The server always routes a table
+from its validated Resource/realm catalog.
+
 ### Client API
 
 ```ts
@@ -450,6 +466,111 @@ client.disconnect()            // Tear everything down
 `client.resource(name)` can reach only registered resources whose server-owned
 exposure is `http` or `all`. `internal` and `sync` resources deliberately look
 unknown to generated HTTP CRUD.
+
+Resource mutation methods accept an optional `idempotencyKey` alongside their
+abort signal. The client generates and sends a bounded header-safe key when it
+is omitted. A failed mutation throws `ResourceMutationError`, which preserves
+the exact sent key even when the network loses the response:
+
+```ts
+import { ResourceMutationError } from '@zero/framework/react';
+
+const todos = client.resource<Todo>('todos');
+try {
+  await todos.update('todo-1', { done: true });
+} catch (error) {
+  if (error instanceof ResourceMutationError) {
+    const body = error.body as {
+      requiresSameIdempotencyKey?: boolean;
+    } | undefined;
+
+    // Apply your retry/backoff policy. If the transport lost the response or
+    // Zero reports an uncertain outcome, preserve this exact key and payload.
+    if (error.status === undefined || body?.requiresSameIdempotencyKey) {
+      await todos.update(
+        'todo-1',
+        { done: true },
+        { idempotencyKey: error.idempotencyKey },
+      );
+    }
+  }
+}
+```
+
+`ResourceMutationError.status` and `.body` mirror the underlying `FetchError`
+when an HTTP response exists, and `.cause` retains the original transport
+error. Explicit keys must contain 1–128 ASCII letters, digits, `.`, `_`, `:`,
+or `-`, beginning with a letter or digit. Never reuse one key for different
+input, resource, action, row, tenant, or principal. `useResourceClient()`,
+`useResourceRecord()` mutation methods, and `useResourceActions()` accept the
+same optional mutation options, so a React caller can recover and replay the
+key without dropping the hook's authorization-scope or abort fencing.
+
+Every generated Resource mutation persists its private operation receipt
+atomically with the effect. `tenant-database` mode uses the actor ledger inside
+that tenant file; global and shared-row Resources use an equivalent ledger in
+the pinned default ReactiveDB. A physical actor `503` response with code
+`resource-mutation-outcome-unknown` or a committed-readback recovery response
+sets `requiresSameIdempotencyKey: true`. Retrying the exact action with the
+same key returns the canonical committed row/preimage after current policy and
+authority are revalidated; it does not substitute a later row read. Reusing a
+key with different canonical input returns `409` with code
+`resource-idempotency-key-reused`. Resource policy, current allowed fields, and
+tenant authority remain server-side on both the first attempt and replay. CAS
+preconditions execute with the mutation on its first execution; an exact
+replay does not read or mutate the later row and instead authorizes the
+immutable receipt preimage and canonical result again.
+
+Each ledger retains at most 10,000 full receipt results and 64 MiB of encoded
+retained results, compacting the oldest full results to permanent tombstones
+until both limits fit. Actor receipts allow up to 8 MiB of encoded JSON per
+result; default/shared-row Resource receipts preserve their existing 4 MiB
+canonical-effect limit. Older keys can never become misses: an exact retry
+after its result expires returns non-retryable `409` with code
+`resource-idempotency-result-expired`.
+
+Permanent identities are also bounded at 1,000,000 per database. At that
+ceiling, an unseen default/shared-row mutation is rejected before its effect
+runs with non-retryable `503`, code
+`resource-idempotency-capacity-exhausted`, and fixed message
+`Resource idempotency receipt capacity is exhausted`; exact replay, expired
+lookup, and changed-key conflict behavior remain available. Monitor aggregate
+key usage and plan a deliberate database lifecycle before exhaustion. The
+public Resource constants are `RESOURCE_DEFAULT_RECEIPT_MAX_KEYS`,
+`RESOURCE_DEFAULT_RECEIPT_RETAINED_LIMIT`,
+`RESOURCE_DEFAULT_RECEIPT_MAX_RESULT_BYTES`, and
+`RESOURCE_DEFAULT_RECEIPT_MAX_RETAINED_BYTES`. Read the authoritative Resource
+state before deciding whether to submit new work with a new key. Do not retry
+an expired key or assume the original write failed.
+
+Actor/database failures are normalized before generated Resource HTTP
+responses. Raw SQLite/IPC messages, paths, tenant/database references, SQL,
+bind values, receipt keys, and internal `DatabaseError.details` are never
+reflected:
+
+| Condition | Generated Resource response |
+| --- | --- |
+| live authority changed | `403 resource-authority-changed` |
+| invalid actor-backed read/write payload | `400 invalid-resource-query` or `400 invalid-resource-input` |
+| compare-and-swap row changed | `409 resource-row-changed` |
+| primary-key or other state conflict | `409 resource-conflict` |
+| receipt key reused for different logical work | `409 resource-idempotency-key-reused` |
+| full receipt result expired | non-retryable `409 resource-idempotency-result-expired` |
+| permanent receipt-key capacity reached | non-retryable `503 resource-idempotency-capacity-exhausted` |
+| permanent managed-file capacity reached | non-retryable `503 database-capacity-exhausted` |
+| dispatched mutation outcome unknown | `503 resource-mutation-outcome-unknown` with `requiresSameIdempotencyKey: true` |
+| committed mutation cannot produce a safe canonical readback | `503 resource-mutation-readback-failed` with `requiresSameIdempotencyKey: true` |
+| other actor/database availability failure | `503 database-unavailable` |
+
+Physical-tenant `/api/data` is read-only and uses its own equally bounded
+public mapping: authority changes are `403 resource-authority-changed`, query
+validation and actor-rejected invalid operations are consistently
+`400 invalid-data-query`, read conflicts are
+`409 data-query-conflict`, permanent capacity is
+`503 database-capacity-exhausted`, and all other actor availability failures
+are `503 database-unavailable`. The exact internal `DatabaseErrorCode` remains
+server-internal; 5xx classifications emit it to app-local observability, and
+it is never returned in the HTTP body.
 
 The public `Client` deliberately does not expose the internal sync, state, or
 ephemeral clients. React apps use `useServerState()`, room/presence hooks, and
@@ -986,10 +1107,11 @@ future work, as do break-glass, tenant-custom roles, populated-app adoption tool
 verified-domain autojoin/aliases/direct transfer. The resource registry now
 has independent server-owned client-exposure and field-access axes. Managed
 file-mode runtimes sharing one SQLite database relay tracked Sync changes and
-auth/session invalidations across active sockets. Multi-mode startup also
-validates actual non-partial tenant-leading indexes, tenant-scoped business
-uniqueness, and composite tenant consistency for foreign keys between
-registered tenant resources.
+auth/session invalidations across active sockets. Under shared-row isolation,
+multi-mode startup also validates actual non-partial tenant-leading indexes,
+tenant-scoped business uniqueness, and composite tenant consistency for foreign
+keys between registered tenant Resources; physical tenant isolation validates
+the actor realm instead.
 
 The live browser authorization projection, imperative subscription APIs, React
 permission hooks, credential-free `useAuthorizationScopeBoundary()` cache key,
@@ -1295,6 +1417,15 @@ and `BINARY` value, so column affinity or `COLLATE NOCASE` cannot broaden an
 owner or tenant match. User-authored `filter=` expressions retain the table's
 normal SQLite comparison behavior, but remain ANDed with those exact security
 constraints.
+
+The query-string contract is explicitly bounded before planning: table and
+order identifiers are at most 128 characters, a request may contain at most
+64 `filter` parameters, each filter is at most 4,096 characters, and `dir` is
+at most four characters (`asc` or `desc`). Generated Resource list routes use
+the same bounds. A rejected `/api/data` shape returns the fixed
+`400 invalid-data-query` response; a rejected generated Resource list shape
+returns `400 invalid-resource-query`. Neither validation response reflects the
+rejected query value.
 
 Registered resources may declare a shared field contract:
 
@@ -2911,6 +3042,567 @@ source, focused tests, and deliberate trusted escape hatch. Use the
 [implementation checklist](./auth/multi-tenant-auth-implementation-checklist.md)
 for the unreleased candidate's final delivery and release gates.
 
+#### ReactiveDB Fabric: Actor-Backed Multi-Database Tenancy
+
+ReactiveDB Fabric is the conceptual name for Zero's isolated multi-database
+runtime. `ReactiveDB` names each reactive database; Fabric owns routing,
+actors, concurrency, isolation, and lifecycle across many databases. The
+typed configuration surface is `databaseTopology`.
+
+`databaseTopology` adds bounded actor-owned SQLite files without changing the
+default database API. Omitting it preserves single-database behavior. In
+physical tenant mode, the existing `db` remains the pinned control/default
+database for identity, sessions, memberships, role assignments, platform
+tables, and global/shared app resources; each selected tenant's application
+resources use a separate actor-owned database whose placement is file/WAL or a
+bounded hot snapshot runtime.
+
+Define the tenant schema as a side-effect-free actor realm and branch the same
+server entry before ordinary app startup:
+
+```ts
+import {
+  authenticatedOnly,
+  createApp,
+  defineDatabaseRealm,
+  defineResource,
+  defineZeroConfig,
+  runDatabaseActorIfRequested,
+  tenantRealm,
+} from '@zero/framework/server';
+import { documentTable, tables } from './lib/schemas';
+
+const tenantServerTables = {
+  documents: documentTable.serverTable,
+};
+
+const tenantData = defineDatabaseRealm({
+  name: 'my-app-tenant-data',
+  version: '1',
+  tables: tenantServerTables,
+  migrations: [],
+  // Optional actor-local synchronous handlers, called by registered name:
+  queries: {},
+  commands: {},
+});
+
+const config = defineZeroConfig({
+  db: { mode: 'file', path: './data/control.db' },
+  tables,
+  auth: { tenancy: 'multi' },
+  resources: [
+    defineResource({
+      table: 'documents',
+      realm: tenantRealm(),
+      exposure: 'all',
+      policy: authenticatedOnly(),
+    }),
+  ],
+  databaseTopology: {
+    mode: 'multiple',
+    rootDirectory: './data/tenant-databases',
+    realm: tenantData,
+    actors: {
+      launch: { kind: 'source', entrypoint: import.meta.path },
+      // env: { ALLOWLISTED_NAME: Bun.env.ALLOWLISTED_NAME ?? '' },
+    },
+    tenantIsolation: 'tenant-database',
+    placement: 'file',
+    maxDatabases: 16,
+    maxDatabaseFiles: 10_000,
+    maxTenantSyncDatabases: 15,
+    maxTenantSyncBindingsPerDatabase: 64,
+    readers: true,
+  },
+});
+
+if (!await runDatabaseActorIfRequested({ realm: tenantData })) {
+  const app = await createApp(config);
+  app.listen(config.port);
+}
+```
+
+`databaseTopology.rootDirectory` is an exclusively managed Fabric location.
+It must not overlap `outDir`, the effective default/control SQLite source, hot
+snapshot, or deterministic WAL/SHM/journal companion paths, the object-storage
+root in a containing direction, or `storageDir/tmp` / `storageDir/blobs`. A
+dedicated unowned child such as `storageDir/databases` is allowed. Zero
+validates both lexical configuration
+and existing filesystem aliases before any build or storage startup side
+effect.
+
+Path ownership comparisons are deliberately case-insensitive and
+Unicode-normalized on every platform. Do not distinguish storage domains only
+by case or alternate Unicode spellings, even when developing on a
+case-sensitive filesystem.
+
+Fabric separates active actor capacity from durable file growth:
+
+All count limits carried by Fabric observability are bounded to
+`2_147_483_647`. This applies equally to direct coordinator configuration and
+`createApp()` topology normalization, including `maxDatabaseFiles`,
+`maxBlockedDatabases`, `maxTenantSyncBindingsPerDatabase`,
+`maxQueuedPerDatabase`, and `maxQueuedTotal`.
+
+- `maxDatabases` (default `16`) bounds simultaneously active database entries.
+- `maxDatabaseFiles` (default `10_000`) hard-limits new canonical managed main
+  files. Existing files remain openable at or above the limit. File/WAL
+  databases and canonical hot-placement snapshot images are both counted;
+  sidecars, internal ownership state, and unrelated files are not.
+  A denied creation returns non-retryable `DATABASE_CAPACITY_EXHAUSTED` with
+  `outcome: 'not-started'`, `capacityType: 'files'`, and the positive aggregate
+  `capacityLimit` before any file or entry is created.
+- `maxTenantSyncDatabases` bounds distinct databases pinned by persistent
+  physical-tenant Sync. It defaults to one less than `maxDatabases` when at
+  least two slots exist, reserving an actor slot for normal request/background
+  work. A one-slot topology defaults to one so Sync remains usable; Doctor
+  warns that it cannot reserve separate capacity. Set it to `0` to disable
+  persistent tenant Sync admission.
+- `maxTenantSyncBindingsPerDatabase` (default `64`) bounds persistent Sync
+  capabilities for one database. Another binding for an already-admitted
+  database does not consume a distinct-database allowance.
+
+The complete public `AppMultipleDatabaseTopologyConfig` surface and defaults
+are:
+
+| Field | Default / contract |
+| --- | --- |
+| `mode` | Required literal `'multiple'`. Omitting `databaseTopology` preserves single-database behavior. |
+| `rootDirectory` | Required private Fabric root; normalized to an absolute path and ownership/overlap checked before startup. |
+| `realm` | Required side-effect-free `DatabaseRealm`; its schema, migrations, queries, and commands execute inside actors. |
+| `actors.launch` | Required `source`, `bundle`, or explicit shell-free `command-prefix` launch. |
+| `actors.env` | Empty by default. This is the actor's complete environment allowlist; the parent environment is never inherited implicitly. |
+| `actors.executor` | Optional subprocess bounds. Defaults: `maxInFlight: 64`, startup/operation `5,000`/`30,000` ms, shutdown acknowledgement/exit `5,000`/`5,000` ms, then SIGTERM/SIGKILL waits `2,000`/`2,000` ms. |
+| `tenantIsolation` | `'shared-row'`; `'tenant-database'` requires multi-tenant auth and a realm whose tables exactly match a subset of app tables. |
+| `placement` | `'file'`; accepts bounded `'hot'` shorthand or an explicit file/hot selector policy. |
+| `sqlite` | Optional actor-local SQLite/ReactiveDB tuning; defaults are listed below. |
+| `maxDatabases` | `16` active database entries. |
+| `maxDatabaseFiles` | `10,000` managed durable main files. |
+| `maxBlockedDatabases` | `1,024` retained permanent-open failures. |
+| `maxTenantSyncDatabases` | `maxDatabases - 1` when at least two slots exist; otherwise `1`. Set `0` to disable persistent tenant Sync admission. |
+| `maxTenantSyncBindingsPerDatabase` | `64`. |
+| `readers` | `true`; file placement receives a separate read-only WAL actor, while hot placement remains writer-only. |
+| `maxQueuedPerDatabase` / `maxQueuedTotal` | `128` / `1,024` undispatched operations. |
+| `queueTimeoutMs` / `operationTimeoutMs` | `15,000` ms waiting for dispatch / `30,000` ms after dispatch. |
+| `restart` | Per-database actor replacement policy: `initialDelayMs: 10`, `maxDelayMs: 1,000`, `circuitFailureThreshold: 5`, and `circuitCooldownMs: 5,000`. |
+| `idleTimeoutMs` | `60,000` ms before an unused entry becomes evictable. |
+| `sweepIntervalMs` | `min(30,000, max(1,000, ceil(idleTimeoutMs / 2)))`; `30,000` ms with defaults. `false` disables automatic idle sweeps. |
+
+`sqlite` uses the same validated persistence defaults inside each actor:
+
+| SQLite/ReactiveDB field | Default |
+| --- | ---: |
+| `cacheSize` | `-262144` |
+| `mmapSize` | `1073741824` bytes for file placement |
+| `walAutocheckpoint` | `1000` pages for file placement |
+| `pageSize` | `4096` bytes |
+| `synchronous` | `'NORMAL'` for file placement |
+| `tempStore` | `'MEMORY'` |
+| `busyTimeout` | `5000` ms |
+| `statementCacheSize` | `1000` prepared statements |
+| `bufferPool` | enabled with `maxPoolSize: 100`, `preallocate: true`; set `false` to disable |
+| `ringBufferDepth` | `1000` durable-change entries |
+
+Hot actors intentionally override file-only journal/mmap/WAL behavior while
+retaining the applicable common tuning. The app-level
+`operationTimeoutMs` is the deadline passed for coordinator-dispatched work;
+the executor policy also bounds transport requests used outside that explicit
+deadline. Keep them aligned unless a shorter transport fail-fast boundary is
+deliberate and tested.
+
+The restart count belongs to one physical database entry. Replacement delays
+double from `initialDelayMs` up to `maxDelayMs`; at and beyond
+`circuitFailureThreshold`, one half-open attempt is allowed after each
+`circuitCooldownMs`. A successful complete bind resets the count. Releasing
+the entry's last lease or shutting down cancels a pending delay. Recovery
+waiters continue to obey `maxQueuedPerDatabase`, `maxQueuedTotal`, their own
+`queueTimeoutMs`, and their `AbortSignal`; the mutation which first discovered
+an unknown outcome is never automatically re-executed. Per-entry coordinator
+diagnostics expose the bounded `restartRetryCount` and derived
+`restartCircuitOpen` flag; they do not expose filesystem or actor-process
+identities.
+
+Physical-file and persistent-Sync admission are serialized before creation or
+lease pinning. Sync-capacity overflow is retryable `DATABASE_BACKPRESSURE` and
+does not create a file, entry, or actor. The coordinator diagnostics expose
+both configured limits and current file/distinct-Sync/binding counts.
+`DATABASE_BACKPRESSURE` represents transient queue, actor-slot, binding, or
+snapshot-session pressure; it is not used for permanent file/receipt ceilings.
+
+Every managed main file also carries an immutable internal binding containing
+its opaque database reference, instance UUID, and stable realm name. Zero
+creates it transactionally only for a pristine file reserved by the current
+coordinator. A legacy/nonempty unbound image, a copied image under another
+tenant filename, a hardlink, or a device/inode mismatch fails closed. Ordinary
+realm migrations do not rewrite this identity. Hot snapshots may replace the
+physical inode, but Zero refreshes that physical proof only after the prior
+actor has exact settlement and the replacement image proves the same instance.
+During hot actor startup, migration and initial-durability image replacements
+use the same handoff: the old admitted descriptor remains retained until the
+new inode and logical binding are verified, and the final guard remains live
+through the readiness checks.
+
+Actor restart fencing uses a private rollback-journal liveness database. Bound
+actors hold SHARED leases; coordinator startup requires a zero-timeout EXCLUSIVE
+probe which transactionally rotates a private generation token. A surviving
+actor from a crashed parent therefore blocks replacement startup with retryable
+`DATABASE_CONFLICT` / `outcome: 'not-started'` until it exits, while a bind
+buffered before the crash is rejected if it arrives after replacement startup.
+The error and telemetry never include paths, logical references, generation or
+instance IDs, or inode/device values.
+
+The filesystem is a trusted deployment boundary. Bun SQLite opens by pathname,
+so Zero combines a retained `O_NOFOLLOW` descriptor with immediate pre/post-open
+device/inode checks and the durable logical binding, but cannot atomically pass
+that descriptor into Bun SQLite. Keep the Fabric root and its ancestors private
+to the Zero service OS identity, use local SQLite-compatible storage, and use
+OS/container isolation against hostile same-UID or privileged processes.
+
+`placement` accepts `'file'`, `'hot'`, or an explicit policy. `'file'` is the
+default. `'hot'` is shorthand for on-write durability with a 64 MiB logical
+SQLite image bound. Use the object form for explicit limits, another durability
+contract, or hybrid selection. The object requires `hot.maxBytes` whenever its
+default is hot or it includes any selector:
+
+```ts
+import {
+  createNamedDatabaseRef,
+  createTenantDatabaseRef,
+  type AppDatabasePlacementConfig,
+} from '@zero/framework/server';
+
+const hotDatabaseRefs = new Set([
+  createTenantDatabaseRef('tenant_acme'),
+  createNamedDatabaseRef('reporting-preview'),
+]);
+
+const placement = {
+  default: 'file',
+  select: ({ databaseRef }) =>
+    hotDatabaseRefs.has(databaseRef) ? 'hot' : 'file',
+  hot: {
+    durability: 'on-write',
+    maxBytes: 32 * 1024 * 1024,
+  },
+} satisfies AppDatabasePlacementConfig;
+```
+
+The selector is synchronous and receives only a frozen, opaque `databaseRef`.
+It never receives the raw tenant/name, path, request, or user. Use the helper
+matching the manager binding namespace; `createDatabaseRef(rawTenantId)` does
+not produce the tenant binding ref. Zero validates the selector result and
+fails closed unless it is exactly `'file'` or `'hot'`.
+
+`databaseRef` is a deterministic, unkeyed pseudonymous correlation ID. It is
+not a secret or an authorization capability, and a low-entropy source ID may
+be dictionary-correlated. Do not publish it as user-facing data or use it in
+place of an authority check.
+
+Placement is pinned to the active coordinator entry and inherited by its crash
+replacement generations. A clean idle/requested eviction lets the next open
+evaluate the selector again. Changing an allowlist does not move a live
+database, and there is no online promotion/demotion or automatic spill API.
+
+The actor realm must be a schema-identical subset of `createApp({ tables })`.
+Once Resource modules are loaded, its table set must exactly equal every
+registered tenant resource assigned to physical storage, including `internal`
+and HTTP-only resources. Startup fails on missing/extra realm tables, schema
+drift, single-tenant auth, or inconsistent Resource ownership. This prevents a
+tenant table from falling through to a same-named shadow table in the control
+database.
+
+Resource declarations drive both storage and client exposure:
+
+| Declaration | Physical tenant behavior |
+| --- | --- |
+| `realm: tenantRealm()` | The selected database capability is the mandatory tenant boundary; the usual realm field is not injected or filtered. |
+| `exposure: 'internal'` | Actor/server use only; no generated HTTP or Sync access. |
+| `exposure: 'http'` | Generated Resource CRUD and `/api/data`; omitted from `AppProvider`'s Sync catalog. |
+| `exposure: 'sync'` | WebSocket snapshot/catch-up/mutations only; must use explicit full Sync. |
+| `exposure: 'all'` | Generated HTTP plus WebSocket Sync. |
+
+Physical tenant tables normally omit `tenant_id`; retaining such a field is a
+business/export choice, not an authorization boundary. Zero derives the file
+only from the live authenticated tenant scope. URL parameters, headers,
+request bodies, WebSocket messages, and browser state cannot select it.
+
+Backend route code receives a bound asynchronous capability as `zero.data`
+when a committed tenant session and physical topology are active:
+
+```ts
+if (!zero.data) throw new Error('A tenant data scope is required');
+
+const projects = await zero.data.list(
+  'projects',
+  { limit: 50 },
+  { consistency: { mode: 'snapshot' } },
+);
+
+await zero.data.mutate(
+  { type: 'update', table: 'projects', id: projectId, patch: { status: 'done' } },
+  { idempotencyKey: `project-status:${operationId}` },
+);
+```
+
+`zero.data` is promise-based because it crosses an actor boundary. It exposes
+structured `get`, `list`, `find`, registered `query`, `mutate`, atomic `batch`,
+and registered `command` operations—never raw SQL, paths, a database manager,
+or a tenant selector. Reads support `snapshot`, `read-your-writes` with a prior
+sequence token, and `strong` consistency. The historical synchronous
+`zero.db`, `zero.syncDB`, `zero.sql`, and `zero.sqlite` identities continue to
+refer only to the pinned default database.
+
+`list(table, { limit, after? })` reads 1–500 rows in declared-primary-key
+ascending order. `after` is an exclusive primary-key cursor, so passing the
+last row ID from one page cannot duplicate it in the next page. Use `find()`
+for projection, filtering, ordering, or offset pagination.
+
+`mutate()` accepts exactly four exported `DatabaseMutation` shapes:
+
+| Mutation | Contract |
+| --- | --- |
+| `{ type: 'create', table, row }` | Strict insert; conflicts when the primary key already exists. |
+| `{ type: 'upsert', table, row }` | Primary-key upsert through ReactiveDB's canonical create/insert path. |
+| `{ type: 'update', table, id, patch }` | Partial update of the named primary-key row; the primary key itself is immutable. |
+| `{ type: 'delete', table, id }` | Delete the named primary-key row. |
+
+Table/column identifiers are at most 128 characters and must use the portable
+SQLite identifier form (`[A-Za-z_][A-Za-z0-9_]*`). Registered query/command
+names also allow `.`, `-`, and an initial ASCII letter. Primary-key IDs are
+bounded to 1,024 UTF-8 bytes. Mutation, batch, and command idempotency keys are
+1–128 characters, begin with an ASCII letter or digit, and otherwise allow
+letters, digits, `.`, `_`, `:`, and `-`. Reuse the exact key only for the exact
+same logical work and payload.
+
+`find()` accepts the exported `DatabaseFindInput` contract. Every referenced
+table and field must exist in the actor realm catalog; there is no raw SQL or
+caller-supplied expression escape hatch:
+
+```ts
+const result = await zero.data.find('projects', {
+  select: ['id', 'name', 'status', 'created_at'],
+  filters: [{
+    type: 'allOf',
+    filters: [
+      { type: 'field', field: 'status', operator: 'in', value: ['open', 'held'] },
+      { type: 'field', field: 'name', operator: 'contains', value: 'intake' },
+    ],
+  }],
+  order: [{ field: 'created_at', direction: 'desc' }],
+  limit: 50,
+  offset: 0,
+});
+```
+
+| `DatabaseFindInput` field | Contract |
+| --- | --- |
+| `select?` | Non-empty unique projection; at most 128 registered fields. Omitting it still requires the table catalog itself to fit that bound. |
+| `filters?` | Top-level predicates are ANDed. A predicate is a field filter or a non-empty nested `allOf`/`anyOf` group. |
+| field operators | `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `like`, `contains`, and `in`. `like`/`contains` require strings; ordered comparisons reject `null`; `in` accepts 1–50 scalars. |
+| `match?: 'exact'` | Reserved exact storage-class/BINARY comparison for framework-owned `eq`/`ne` authorization constraints. |
+| `order?` | Non-empty unique registered fields; at most 8 terms. The actor adds the primary key as the deterministic tie-breaker. |
+| `limit` / `offset?` | `limit` is 1–1,001; `offset` is 0–1,000,000. |
+
+One find admits at most 64 total filter nodes, 8 levels of filter-group
+nesting, and 256 generated SQLite parameters. The normal operation envelope
+also caps payload depth at 16, total scalar/container nodes at 10,000, encoded
+payload size at 1 MiB, one string at 256 KiB, one object at 1,024 properties,
+and one array at 10,000 items. Invalid shape is
+`DATABASE_PAYLOAD_INVALID`; an exceeded hard budget is
+`DATABASE_PAYLOAD_LIMIT`.
+
+`batch()` accepts exported `DatabaseAssertion` preconditions evaluated in the
+same transaction, in declaration order, before its mutations:
+
+| Assertion | Meaning |
+| --- | --- |
+| `{ type: 'row-exists', table, id }` | Require the primary-key row to exist. |
+| `{ type: 'row-missing', table, id }` | Require the primary-key row to be absent. |
+| `{ type: 'row-equals', table, id, row }` | Require exact canonical equality with the current row. |
+| `{ type: 'sequence-equals', sequence }` | Require the durable database sequence to equal the supplied token. |
+
+Each assertions array and mutations array is bounded to 256 entries, and the
+whole batch remains subject to the operation payload limits. A failed
+assertion aborts the batch without applying a partial mutation.
+
+Generated Resource CRUD and `/api/data` use the same physical capability while
+retaining Resource policy, advanced-RBAC context, field projection, authority
+revalidation, strict create semantics, and compare-and-swap update/delete.
+One Resource request holds one private binding across receipt lookup, policy
+pre-read, commit, and canonical result authorization, then releases it in
+`finally`.
+
+Generated mutations use equivalent private receipt ledgers on both storage
+planes. Physical tenant Resources persist the receipt with the actor effect in
+the tenant database; global and shared-row Resources persist the canonical
+receipt with the ReactiveDB effect in the pinned default database. Lookup
+happens before a mutable row pre-read. Exact replay returns the stored canonical
+effect, then rechecks current authority and the original policy shape:
+update/delete use the immutable preimage while create receives its original
+logical input. Current field projection is reapplied whenever the canonical
+response contains a committed row. The public async client and `zero.data`
+never expose the trusted receipt writer.
+
+The physical actor ledger keeps at most 10,000 full results and 64 MiB of
+encoded full-result JSON, with an 8 MiB individual encoded-result ceiling.
+Before inserting another, Zero atomically converts the oldest retained results,
+by durable insertion order, to permanent compact tombstones until both count
+and bytes fit. Tombstones retain the key and realm/operation fingerprints but
+not the result or final sequence. They are never deleted.
+
+One physical database admits at most 1,000,000 permanent actor receipt keys.
+At that bound an unseen write fails before its mutation starts with
+non-retryable `DATABASE_CAPACITY_EXHAUSTED`, `outcome: 'not-started'`,
+`capacityType: 'receipts'`, and the positive aggregate `capacityLimit`; replay
+of a retained key and exact expired-key lookup continue to work. With the same
+fingerprint, an expired physical actor key reports non-retryable
+`DATABASE_OUTCOME_UNKNOWN` with `receiptState: 'expired'`; the Resource HTTP
+surface normalizes an expired result to
+`409 resource-idempotency-result-expired`. A different fingerprint remains an
+idempotency-key-reuse conflict. The exported actor bounds are
+`DATABASE_WRITER_MAX_RECEIPT_KEYS`, `DATABASE_WRITER_MAX_RECEIPTS`,
+`DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES`, and
+`DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES`. See
+[receipt semantics](./framework/multi-database-architecture.md#idempotency-failure-and-restart)
+for migration, statistics, telemetry, and operator guidance.
+
+Realtime remains one authenticated `/sync` socket. The server splits the
+subscription into `default` and `tenant` planes, each with an independent
+sequence, epoch, authorization scope, snapshot/catch-up decision, and reset.
+The tenant plane holds a persistent authority-bound actor lease for that
+socket. `AppProvider` consumes the server-injected table-plane catalog and
+configures the browser automatically; applications should not manually wire
+`tableSyncPlanes`. A tenant selection change replaces the authorization scope,
+freezes pending work, reconnects, and purges the old tenant baseline.
+
+Sync also validates read authority at the final delivery boundary. A Resource
+or platform filter/projector must supply a comparable fingerprint plus a
+synchronous live validator; custom filtered/projected adapters without both
+fail closed. Zero rechecks after asynchronous reads/drains and after projector
+code, immediately before snapshot chunks, catch-up/live/deferred rows, and
+row-bearing mutation acknowledgements are sent. Membership, role/property, or
+policy revision changes therefore close and purge the stale scope instead of
+delivering a row authorized by an earlier subscription decision.
+
+Full tenant baselines materialize one immutable actor snapshot at durable head
+`H`, release its SQLite transaction before IPC, and then stream retry-safe
+100-row actor pages through exact-size-bounded `begin`/`chunk`/`end` frames no
+larger than 900 KiB each. The browser stages the chunks and replaces that plane
+atomically only at the end frame; only then does Sync accept `H` and replay every
+durable change after it. Empty selections use the same exact head protocol. The
+session is generation/owner/table-selection bound and is aborted on completion,
+binding release, authority reset, actor recovery, or close. No complete tenant
+baseline is returned as one actor result or one WebSocket frame. A single
+projected row which cannot fit in one frame is a terminal data-contract error (`4004`),
+reported without a reconnect loop so the operator can correct the row or
+projection.
+
+Permanent managed-file exhaustion while establishing the tenant binding also
+closes once with terminal code `4004` and the fixed reason
+`Tenant Sync database capacity is exhausted`; the browser reports it through
+`onError` and does not reconnect. Durable-receipt exhaustion encountered by a
+tenant mutation is different: the socket stays open and receives a negative
+acknowledgement with `SYNC_MUTATION_CAPACITY_EXHAUSTED`, allowing the optimistic
+change to roll back without treating permanent capacity as a transport error.
+
+Snapshot sessions allow 8 active sessions, 50,000 rows, 64 MiB per snapshot and
+64 MiB across active snapshots, 1 MiB/10,000 nodes per source row, 100 rows/4
+MiB/18,000 nodes per actor page, and a 30-second monotonic elapsed lifetime.
+These values are exported as `DATABASE_TENANT_SYNC_SNAPSHOT_*` constants from
+`@zero/framework/server`. Transient session/aggregate-byte pressure reports
+retryable `DATABASE_BACKPRESSURE`; intrinsic row/snapshot overflow reports
+non-retryable `DATABASE_PAYLOAD_LIMIT`; expiry reports
+`DATABASE_TRANSACTION_EXPIRED`. Metadata contains only a bounded
+`snapshotReason`, never capabilities, paths, table names, SQL, raw errors, or
+row data.
+
+The socket bridge applies a second whole-transfer work budget: at most 512
+actor page attempts (including adaptive retries), 50,000 observed source rows,
+64 MiB across the encoded source rows plus their encoded projected forms, and
+the same 30-second monotonic elapsed deadline. Even an unchanged projection
+counts both the source and projected representation. Exceeding a bridge budget
+closes once with terminal code `4004`, emits only its bounded reason category,
+and does not reconnect-loop. See
+[ReactiveDB Fabric](./framework/multi-database-architecture.md#reactivedb-and-realtime).
+
+Physical tables declared with `sync: 'auto'` resolve conservatively to lazy
+because no count from the shared control database can represent independently
+sized tenant files. Explicit `full` and `lazy` still win. Lazy hydration
+requires HTTP exposure (`all` for a table which also participates in Sync).
+
+Concurrency is per physical database. File placement uses one FIFO writer and,
+when `readers: true`, a separate read-only actor that can overlap committed WAL
+reads with the writer. Hot placement is writer-only; its reads share that
+actor's lane. Different tenant databases can occupy different writer
+subprocesses and write concurrently, bounded by `maxDatabases`, queue limits,
+and actor capacity. One app coordinator owns a database root; sharing that root
+between independent app replicas is rejected because Zero does not yet provide
+a distributed writer/authority coordinator.
+
+Every explicit hot policy requires `maxBytes`. This is a hard logical SQLite
+image/page limit—not a process RSS limit—and it is enforced through restore,
+migration/schema setup, writes, and snapshot serialization. The `'hot'`
+shorthand uses 64 MiB. Budget actor/runtime overhead separately; if all active
+entries can be hot, `maxDatabases * maxBytes` is the maximum configured image
+budget, not the total memory ceiling.
+
+Hot durability is explicit:
+
+| `durability` | Contract |
+| --- | --- |
+| `on-write` | Atomic snapshot and filesystem durability complete before every non-replayed commit is acknowledged. This is the default and the recommended hot policy when acknowledged-write loss is unacceptable. |
+| `periodic` | The first uncovered commit marks the actor dirty before response and starts a snapshot immediately. Later writes do not extend the oldest dirty deadline; writes during I/O force a follow-up. The parent retires the generation if acknowledged state remains uncovered for `snapshotIntervalMs`, while `snapshotTimeoutMs` separately bounds one I/O operation. A crash or runtime durability failure may lose acknowledged writes not covered by the latest image within that configured window. |
+| `final` | Writes are acknowledged without snapshots; a clean actor close must publish a final image. A crash may lose every write since the last durable image. |
+
+Periodic cadence defaults to 30 seconds. `snapshotTimeoutMs` must be at least
+the cadence and defaults to twice it with a two-minute floor. All configuration
+and per-call values which feed JavaScript timers are capped at
+`2_147_483_647` ms; this includes queue, operation, sweep, actor-lifecycle, and
+periodic snapshot timers. `idleTimeoutMs` is only an elapsed-time threshold.
+
+On a periodic runtime snapshot failure or missed oldest-dirty deadline, Fabric
+settles and retires the failed generation, reopens the last durable image, and
+resets tenant Sync to the new authority. Uncovered acknowledgements may be
+absent after that reset, and ordinary HTTP callers can observe the rolled-back
+state. Periodic mode is bounded-loss, not lossless. A periodic or final
+graceful-close snapshot failure instead quarantines the entry because clean
+shutdown durability was not proven. The quarantine is process-local rather
+than a durable poison marker; a whole-app restart reopens the last durable
+image under the selected crash-loss contract. Use `on-write` when that fallback
+is not acceptable.
+
+Run Doctor after configuring the topology:
+
+```sh
+bun run doctor -- --config ./zero.config.ts --strict
+```
+
+Doctor reports active-database and durable-file capacity, disabled readers,
+physical tenant boundaries, retained tenant fields, unsafe root overlap with
+build output or object storage, file/hot selection, hot image capacity,
+writer-only hot reads, and periodic/final loss contracts. For physical-tenant
+Sync it also reports actor-capacity reservation and the bounded snapshot
+transport contract. Receipt findings explain both the full-result retention
+budget and permanent idempotency-key ceiling for physical databases and for
+generated default/shared Resource mutations. Use a dedicated persistent local
+volume and plan for child processes, file descriptors, WAL/SHM companions,
+graceful shutdown, and WAL-aware backup.
+
+In `tenant-database` mode, Doctor explains that application tables do not need
+a managed `tenant_id` discriminator. If one is retained for business/export
+meaning, it is ordinary data and never routing authority. Shared-row mode keeps
+the existing tenant-column and tenant-leading-index checks.
+
+The pinned default/control database remains outside Fabric placement and keeps
+identity, auth, memberships, platform administration, and global/shared
+resources. Splitting Zero-owned control/logging/metrics/plugin realms is future
+work. The current feature branch also does not provide online placement
+migration, automatic heat/spill policy, distributed owners, operator-grade
+fleet backup/restore or tenant lifecycle administration, or a completed
+supported package/OS release matrix. See
+[Multi-Database Architecture](./framework/multi-database-architecture.md) for
+the runtime, security, recovery, deployment, and release contracts.
+
 #### Protected Multipart Endpoints
 
 Zero-compiled server extensions apply auth before parsing protected multipart
@@ -3033,6 +3725,20 @@ constraints, such as owner-only data, Zero applies a per-connection row filter
 to snapshots, catchup, and live changes. Direct `sync.mutate` writes against
 registered resources evaluate `create`, `update`, and `delete` policy
 server-side, including owner create stamping.
+
+For a physical tenant resource, those same checks run around actor reads and
+writes. The tenant database capability replaces only the mandatory tenant-row
+predicate; discretionary Resource policy, advanced RBAC, field projection,
+strict creates, conditional updates/deletes, and commit-time authority
+revalidation remain in force. Actor-backed Sync also uses durable logical
+mutation receipts. If the write may have committed but no safe acknowledgement
+can be produced, Zero reconnects without a negative ack so the client can
+replay the same mutation reference after its new baseline.
+
+If that reference has only a permanent expired-result tombstone, the fresh
+baseline is authoritative: Zero sends a negative acknowledgement with
+`SYNC_MUTATION_RECEIPT_EXPIRED`, clears the old optimistic/pending mutation,
+and neither reconnects nor re-executes it.
 
 #### Ephemeral Topic Policy
 
@@ -3390,7 +4096,7 @@ generated or exhaustive inventory; use TypeScript autocomplete and the package
 barrel for the exact installed-version surface.
 
 ### Functions & Classes
-`createClient`, `getClient`, `AuthClient`, `isAuthEmailVerificationRequiredResult`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
+`createClient`, `getClient`, `AuthClient`, `ResourceMutationError`, `isAuthEmailVerificationRequiredResult`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
 
 ### React Components
 `AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `LoginForm`, `RegisterForm`, `ForgotPasswordForm`, `PasswordActionForm`, `ChangePasswordForm`, `EmailVerificationForm`, `UserPropertiesForm`, `AuthFlowContinuation`, `TenantSelectionForm`, `TenantCreationForm`, `TenantSwitcher`, `ApplicationAccessManagement`, `TenantMemberManagement`, `TenantOnboardingManagement`, `TenantDomainManagement`, `DomainOnboarding`, `TenantInvitationForm`, `TenantJoinRequestForm`, `ControlPlaneAuditViewer`, `PermissionGate`, `TenantGate`, `PlatformAdminGate`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `KanbanBoard`, `KanbanTaskCard`, `PlatformUserManagement`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
@@ -3402,7 +4108,7 @@ barrel for the exact installed-version surface.
 `STORAGE_TABLES`, `zeroAnimatedIconNames`, `zeroAnimatedIcons`
 
 ### Types
-`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `AuthCompletionResult`, `AuthRegistrationResult`, `AuthRegistrationTenant`, `AuthEmailVerificationRequiredResult`, `RegisterParams`, `LoginFormProps`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `PlatformUserManagementProps`, `UserManagementProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `AuthorizationScopeBoundary`, `UseAuthorizationResult`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `UseApplicationAccessOptions`, `UseApplicationAccessResult`, `UseAuthAuditOptions`, `UseAuthAuditResult`, `UseTenantMembersOptions`, `UseTenantMembersResult`, `UseTenantOnboardingAdministrationOptions`, `UseTenantOnboardingAdministrationResult`, `UseTenantDomainAdministrationOptions`, `UseTenantDomainAdministrationResult`, `UseDomainOnboardingOptions`, `UseDomainOnboardingResult`, `UseTenantSwitcherResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `InferInsert`, `InsertInput`, `PrimaryKeyOf`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
+`Client`, `Collection`, `ClientConfig`, `SyncClient`, `ResourceClient`, `ResourceClientOptions`, `ResourceListResult`, `ResourceMutationOptions`, `ResourceRowResult`, `ResourceDeleteResult`, `AuthUser`, `AuthCompletionResult`, `AuthRegistrationResult`, `AuthRegistrationTenant`, `AuthEmailVerificationRequiredResult`, `RegisterParams`, `LoginFormProps`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `PlatformUserManagementProps`, `UserManagementProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `AuthorizationScopeBoundary`, `UseAuthorizationResult`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `UseApplicationAccessOptions`, `UseApplicationAccessResult`, `UseAuthAuditOptions`, `UseAuthAuditResult`, `UseTenantMembersOptions`, `UseTenantMembersResult`, `UseTenantOnboardingAdministrationOptions`, `UseTenantOnboardingAdministrationResult`, `UseTenantDomainAdministrationOptions`, `UseTenantDomainAdministrationResult`, `UseDomainOnboardingOptions`, `UseDomainOnboardingResult`, `UseTenantSwitcherResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `InferInsert`, `InsertInput`, `PrimaryKeyOf`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
 
 `StorageUploadGrantResource` is a server/storage contract rather than a React
 barrel export. Import it from `@zero/framework/storage` or
@@ -3424,9 +4130,9 @@ Native-only (from `@zero/framework/native`): `createZeroNativeAuth`,
 `NativeCallbackSession`, `NativeCryptoAdapter`, `NativeFetch`,
 `NativeSyncAuthConfig`, `NativeIdTokenClaims`, and `NativeOidcMetadata`.
 
-Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `AppStorageConfig`, `ResolvedConfig`, `ResolvedAppStorageConfig`, `AuthPluginConfig`, `AuthTenancyMode`, `AuthTenancyConfig`, `AuthTenancyOptions`, `ResolvedAuthTenancyConfig`, `AuthAuthorizationMode`, `AuthAuthorizationConfig`, `AuthAuthorizationOptions`, `AuthPermissionConfig`, `ResolvedAuthPermissionConfig`, `AuthRoleTemplateConfig`, `ResolvedAuthRoleTemplateConfig`, `ResolvedAuthAuthorizationConfig`, `NormalizedAuthBehaviorConfig`, `ResolvedAuthBehaviorConfig`, `PermissionKey`, `AuthorizationKernel`, `AuthorizationKernelConfig`, `AccessRequirement`, `StructuredAccessRequirement`, `CompiledAccessRequirement`, `AuthorizationSubjectSnapshot`, `AuthorizationScopeSnapshot`, `AuthorizationDecision`, `ProtectedMultipartRequestGuardOptions`, `ZeroElysiaAuthRequirement`, `NativeAuthConfig`, `NativeAuthorizationRequestPolicyConfig`, `NativeAuthorizationSourceResolver`, `NativeRefreshRotationPolicyConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `StorageDriveApi`, `StorageObjectApi`, `StoragePermissionApi`, `StorageUploadGrantApi`, `StorageServiceOptions`, `CreateUploadGrantTokenOptions`, `VerifiedUploadGrant`, `PdfConfig`, `PdfRenderInput`, `PdfRenderResult`, `PdfService`, `PdfStorageTarget`, `PlatformTokenService`, `PlatformActionTokenRecord`, `PlatformResumeTokenRecord`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `defineAuthConfig`, `resolveAuthBehaviorConfig`, `createAuthorizationKernel`, `compileAccessRequirement`, `mergeAccessRequirements`, `validateAuthorizationRegistry`, `defineNativeAuthConfig`, `resolveNativeAuthConfig`, `createAuthPlugin`, `installAuthStopBarrier`, `createAuthMiddleware`, `createProtectedMultipartRequestGuard`, `getTokenService`, `createPlatformTokenPlugin`, `getPlatformTokenService`, `createPdfPlugin`, `getPdfService`, `requirePdfService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `createUploadGrantToken`, `verifyUploadGrantToken`, `emitPlatformCode`, `createObservabilityPlugin`
+Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `AppStorageConfig`, `ResolvedConfig`, `ResolvedAppStorageConfig`, `AppDatabaseTopologyConfig`, `AppSingleDatabaseTopologyConfig`, `AppMultipleDatabaseTopologyConfig`, `AppDatabaseActorConfig`, `AppDatabaseHotPlacementConfig`, `AppDatabasePlacementConfig`, `AppDatabasePlacementPolicyConfig`, `AppTenantDataIsolation`, `ResolvedAppDatabaseTopologyConfig`, `ResolvedAppSingleDatabaseTopologyConfig`, `ResolvedAppMultipleDatabaseTopologyConfig`, `DatabaseCoordinatorRestartPolicy`, `NormalizedDatabaseCoordinatorRestartPolicy`, `DatabaseRealm`, `DatabaseRealmDefinition`, `DatabaseActorLaunch`, `DatabaseActorSourceLaunch`, `DatabaseActorBundleLaunch`, `DatabaseActorCommandPrefixLaunch`, `DatabaseActorExecutorPolicy`, `DatabaseActorSQLiteConfig`, `RunDatabaseActorIfRequestedOptions`, `AsyncDatabaseClient`, `DatabaseOperationRow`, `DatabaseSerializableValue`, `DatabaseListPage`, `DatabaseListPageOptions`, `DatabaseFindInput`, `DatabaseFindRows`, `DatabaseFindFilter`, `DatabaseFindFieldFilter`, `DatabaseFindFilterGroup`, `DatabaseFindFilterOperator`, `DatabaseFindOrder`, `DatabaseMutation`, `DatabaseMutationOptions`, `DatabaseAssertion`, `DatabaseBatchInput`, `DatabaseReadOptions`, `DatabaseReadConsistency`, `DatabaseReadResult`, `DatabaseCommitResult`, `DatabaseSequenceToken`, `DatabaseTenantSyncSnapshotPage`, `DatabaseTenantSyncSnapshotSession`, `DatabaseError`, `DatabaseErrorCode`, `DatabaseRef`, `DatabasePlacement`, `DatabasePlacementPolicy`, `DatabasePlacementSelector`, `DatabasePlacementSelectorContext`, `DatabaseHotDurability`, `DatabaseHotPlacementConfig`, `DATABASE_ACTOR_CHILD_FLAG`, `DATABASE_HOT_DEFAULT_DURABILITY`, `DATABASE_HOT_DEFAULT_SNAPSHOT_INTERVAL_MS`, `DATABASE_HOT_MIN_SNAPSHOT_TIMEOUT_MS`, `DATABASE_HOT_MAX_SNAPSHOT_INTERVAL_MS`, `DATABASE_HOT_MAX_SNAPSHOT_TIMEOUT_MS`, `DATABASE_HOT_SHORTHAND_MAX_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_ROWS`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SESSIONS`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_NODES`, `DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_NODES`, `DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_ROWS`, `DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_SOURCE_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_TTL_MS`, `DATABASE_WRITER_MAX_RECEIPT_KEYS`, `DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES`, `DATABASE_WRITER_MAX_RECEIPTS`, `DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES`, `defaultDatabaseHotSnapshotTimeoutMs`, `createDatabaseRef`, `createNamedDatabaseRef`, `createTenantDatabaseRef`, `AuthPluginConfig`, `AuthTenancyMode`, `AuthTenancyConfig`, `AuthTenancyOptions`, `ResolvedAuthTenancyConfig`, `AuthAuthorizationMode`, `AuthAuthorizationConfig`, `AuthAuthorizationOptions`, `AuthPermissionConfig`, `ResolvedAuthPermissionConfig`, `AuthRoleTemplateConfig`, `ResolvedAuthRoleTemplateConfig`, `ResolvedAuthAuthorizationConfig`, `NormalizedAuthBehaviorConfig`, `ResolvedAuthBehaviorConfig`, `PermissionKey`, `AuthorizationKernel`, `AuthorizationKernelConfig`, `AccessRequirement`, `StructuredAccessRequirement`, `CompiledAccessRequirement`, `AuthorizationSubjectSnapshot`, `AuthorizationScopeSnapshot`, `AuthorizationDecision`, `ProtectedMultipartRequestGuardOptions`, `ZeroElysiaAuthRequirement`, `NativeAuthConfig`, `NativeAuthorizationRequestPolicyConfig`, `NativeAuthorizationSourceResolver`, `NativeRefreshRotationPolicyConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `StorageDriveApi`, `StorageObjectApi`, `StoragePermissionApi`, `StorageUploadGrantApi`, `StorageServiceOptions`, `CreateUploadGrantTokenOptions`, `VerifiedUploadGrant`, `PdfConfig`, `PdfRenderInput`, `PdfRenderResult`, `PdfService`, `PdfStorageTarget`, `PlatformTokenService`, `PlatformActionTokenRecord`, `PlatformResumeTokenRecord`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `defineDatabaseRealm`, `runDatabaseActorIfRequested`, `defineAuthConfig`, `resolveAuthBehaviorConfig`, `createAuthorizationKernel`, `compileAccessRequirement`, `mergeAccessRequirements`, `validateAuthorizationRegistry`, `defineNativeAuthConfig`, `resolveNativeAuthConfig`, `createAuthPlugin`, `installAuthStopBarrier`, `createAuthMiddleware`, `createProtectedMultipartRequestGuard`, `getTokenService`, `createPlatformTokenPlugin`, `getPlatformTokenService`, `createPdfPlugin`, `getPdfService`, `requirePdfService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `createUploadGrantToken`, `verifyUploadGrantToken`, `emitPlatformCode`, `createObservabilityPlugin`
 
-Sync-only (from `@zero/framework/sync`): `createDefaultSyncPolicy`, `combineSyncPolicies`, `allowAllSyncPolicy`, `getReadableSyncTables`, `evaluateSyncReadPolicy`, `evaluateSyncMutationPolicy`, `SyncPolicy`, `SyncReadPolicyContext`, `SyncMutationPolicyContext`
+Sync-only (from `@zero/framework/sync`): `createDefaultSyncPolicy`, `combineSyncPolicies`, `allowAllSyncPolicy`, `getReadableSyncTables`, `evaluateSyncReadPolicy`, `evaluateSyncMutationPolicy`, `SYNC_ACK_ERROR_CODES`, `SyncAckErrorCode`, `SyncPolicy`, `SyncReadPolicyContext`, `SyncMutationPolicyContext`
 
 ### CVA Variant Functions
 `buttonVariants`, `badgeVariants`

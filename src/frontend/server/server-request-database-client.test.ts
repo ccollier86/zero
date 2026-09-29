@@ -153,6 +153,10 @@ function createFixture() {
       } as unknown as AsyncDatabaseClient;
       return {
         client,
+        trustedWriter: {
+          async findReceipt() { return { status: 'miss' } as const; },
+          async executeWrite() { throw new Error('not expected'); },
+        },
         get released() { return record.releaseCount > 0; },
         release() { record.releaseCount += 1; },
         async [Symbol.asyncDispose]() { record.releaseCount += 1; },

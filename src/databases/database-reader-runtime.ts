@@ -11,6 +11,11 @@ import { lstatSync, realpathSync } from 'node:fs';
 
 import { quoteSqlIdentifier } from '../sync/identity';
 import { DatabaseError } from './database-error';
+import {
+  readDatabaseBindingIdentity,
+  type DatabaseBindingIdentity,
+} from './database-binding-identity';
+import type { DatabaseRef } from './database-file';
 import { runDatabaseFind } from './database-find';
 import {
   cloneDatabaseSerializableValue,
@@ -47,6 +52,9 @@ export interface DatabaseReaderRuntimeOptions {
   readonly filePath: string;
   /** Actor-local realm imported from the application server entry. */
   readonly realm: DatabaseRealm;
+  /** Durable logical identity already admitted by the parent coordinator. */
+  readonly databaseRef: DatabaseRef;
+  readonly instanceId: string;
   readonly busyTimeoutMs?: number;
 }
 
@@ -56,6 +64,21 @@ export interface DatabaseReaderRuntimeDiagnostics {
   readonly realmFingerprint: string;
 }
 
+/** @internal Deterministic handle-lifecycle seam; not package-exported. */
+export interface DatabaseReaderRuntimeLifecycle {
+  finalizeStatement(statement: Statement): void;
+  closeDatabase(database: Database, throwOnError: boolean): void;
+}
+
+const PRODUCTION_READER_LIFECYCLE: DatabaseReaderRuntimeLifecycle = Object.freeze({
+  finalizeStatement(statement: Statement) {
+    statement.finalize();
+  },
+  closeDatabase(database: Database, throwOnError: boolean) {
+    database.close(throwOnError);
+  },
+});
+
 /** Readonly, query-only runtime for snapshot and read-your-writes operations. */
 export class DatabaseReaderRuntime {
   readonly realm: DatabaseRealm;
@@ -64,6 +87,10 @@ export class DatabaseReaderRuntime {
   private readonly catalog: DatabaseOperationCatalog;
   private readonly currentSequenceStatement: Statement;
   private readonly schemaVersion: number;
+  private readonly lifecycle: DatabaseReaderRuntimeLifecycle;
+  readonly bindingIdentity: DatabaseBindingIdentity;
+  private sequenceStatementFinalized = false;
+  private databaseClosed = false;
   private closed = false;
 
   private constructor(
@@ -72,16 +99,38 @@ export class DatabaseReaderRuntime {
     catalog: DatabaseOperationCatalog,
     currentSequenceStatement: Statement,
     schemaVersion: number,
+    bindingIdentity: DatabaseBindingIdentity,
+    lifecycle: DatabaseReaderRuntimeLifecycle,
   ) {
     this.database = database;
     this.realm = realm;
     this.catalog = catalog;
     this.currentSequenceStatement = currentSequenceStatement;
     this.schemaVersion = schemaVersion;
+    this.bindingIdentity = bindingIdentity;
+    this.lifecycle = lifecycle;
   }
 
   /** Open and verify one existing writer-prepared file without mutating it. */
   static open(options: DatabaseReaderRuntimeOptions): DatabaseReaderRuntime {
+    return DatabaseReaderRuntime.openWithLifecycle(
+      options,
+      PRODUCTION_READER_LIFECYCLE,
+    );
+  }
+
+  /** @internal Deterministic cleanup-failure seam; not package-exported. */
+  static openForTesting(
+    options: DatabaseReaderRuntimeOptions,
+    lifecycle: DatabaseReaderRuntimeLifecycle,
+  ): DatabaseReaderRuntime {
+    return DatabaseReaderRuntime.openWithLifecycle(options, lifecycle);
+  }
+
+  private static openWithLifecycle(
+    options: DatabaseReaderRuntimeOptions,
+    lifecycle: DatabaseReaderRuntimeLifecycle,
+  ): DatabaseReaderRuntime {
     const busyTimeoutMs = normalizePositiveSafeInteger(
       options.busyTimeoutMs ?? DEFAULT_READER_BUSY_TIMEOUT_MS,
       'busyTimeoutMs',
@@ -99,6 +148,19 @@ export class DatabaseReaderRuntime {
       phase = 'configure';
       database.run(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
       database.run('PRAGMA query_only = ON');
+      phase = 'identity';
+      const bindingIdentity = readDatabaseBindingIdentity(
+        database,
+        options.databaseRef,
+        options.realm.name,
+      );
+      if (bindingIdentity.instanceId !== options.instanceId) {
+        throw new DatabaseError(
+          'DATABASE_SCHEMA_MISMATCH',
+          'Readonly database binding identity does not match.',
+          { retryable: false, outcome: 'not-started' },
+        );
+      }
       phase = 'schema';
       assertRealmSchema(database, options.realm);
       phase = 'sequence';
@@ -117,19 +179,50 @@ export class DatabaseReaderRuntime {
         createDatabaseRealmOperationCatalog(options.realm),
         currentSequenceStatement,
         schemaVersion,
+        bindingIdentity,
+        lifecycle,
       );
     } catch (error) {
-      try { currentSequenceStatement?.finalize(); } catch { /* Best-effort startup cleanup. */ }
-      try { database?.close(); } catch { /* Preserve the safe open failure. */ }
+      const cleanupFailures: unknown[] = [];
+      if (currentSequenceStatement) {
+        try {
+          lifecycle.finalizeStatement(currentSequenceStatement);
+        } catch (cleanupError) {
+          cleanupFailures.push(cleanupError);
+        }
+      }
+      if (database) {
+        try {
+          lifecycle.closeDatabase(database, true);
+        } catch (cleanupError) {
+          cleanupFailures.push(cleanupError);
+          // Request deferred close as a resource fallback, but do not treat it
+          // as proof that actor-local SQLite authority was released now.
+          try {
+            lifecycle.closeDatabase(database, false);
+          } catch (fallbackError) {
+            cleanupFailures.push(fallbackError);
+          }
+        }
+      }
+      if (cleanupFailures.length > 0) {
+        throw readerCleanupFailed(error, cleanupFailures);
+      }
       if (error instanceof DatabaseError) throw error;
+      const sqliteDetails = safeSQLiteErrorCode(error);
       throw new DatabaseError(
         'DATABASE_OPEN_FAILED',
         'Readonly database actor could not open the database.',
         {
           cause: error,
+          retryable: isRetryableReaderOpenFailure(
+            error,
+            sqliteDetails.sqliteCode ?? null,
+          ),
+          outcome: 'not-started',
           details: {
             phase,
-            ...safeSQLiteErrorCode(error),
+            ...sqliteDetails,
           },
         },
       );
@@ -205,12 +298,39 @@ export class DatabaseReaderRuntime {
 
   close(): void {
     if (this.closed) return;
-    try {
-      this.currentSequenceStatement.finalize();
-    } finally {
-      this.database.close();
-      this.closed = true;
+    const failures: unknown[] = [];
+    if (!this.sequenceStatementFinalized) {
+      try {
+        this.lifecycle.finalizeStatement(this.currentSequenceStatement);
+        this.sequenceStatementFinalized = true;
+      } catch (error) {
+        failures.push(error);
+      }
     }
+    // Keep the handle available for a later cleanup retry if statement
+    // finalization failed. Actor process exit remains the ultimate release.
+    if (this.sequenceStatementFinalized && !this.databaseClosed) {
+      try {
+        this.lifecycle.closeDatabase(this.database, true);
+        this.databaseClosed = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) {
+      throw new DatabaseError(
+        'DATABASE_EXECUTOR_FAILED',
+        'Readonly database actor cleanup failed.',
+        {
+          cause: failures.length === 1
+            ? failures[0]
+            : new AggregateError(failures, 'Readonly database cleanup failed.'),
+          retryable: false,
+          outcome: 'unknown',
+        },
+      );
+    }
+    this.closed = true;
   }
 
   /** Read the durable head used by the actor's bind-readiness proof. */
@@ -319,6 +439,24 @@ export class DatabaseReaderRuntime {
   }
 }
 
+function readerCleanupFailed(
+  primaryFailure: unknown,
+  cleanupFailures: readonly unknown[],
+): DatabaseError {
+  return new DatabaseError(
+    'DATABASE_EXECUTOR_FAILED',
+    'Readonly database actor startup cleanup failed.',
+    {
+      cause: new AggregateError(
+        [primaryFailure, ...cleanupFailures],
+        'Readonly database startup and cleanup failed.',
+      ),
+      retryable: false,
+      outcome: 'unknown',
+    },
+  );
+}
+
 function safeSQLiteErrorCode(error: unknown): { sqliteCode?: string } {
   if (!error || typeof error !== 'object') return {};
   const code = (error as { code?: unknown }).code;
@@ -348,16 +486,60 @@ function assertRegularCanonicalFile(filePath: string): void {
     throw new DatabaseError(
       'DATABASE_OPEN_FAILED',
       'Readonly database actor could not verify the database file.',
-      { cause: error },
+      {
+        cause: error,
+        retryable: false,
+        outcome: 'not-started',
+        details: { phase: 'verify' },
+      },
     );
+  }
+}
+
+function isRetryableReaderOpenFailure(
+  error: unknown,
+  sqliteCode: string | null,
+): boolean {
+  if (sqliteCode !== null) {
+    return !/^SQLITE_(CORRUPT|FORMAT|MISMATCH|MISUSE|NOTADB|RANGE)(?:_|$)/u
+      .test(sqliteCode);
+  }
+  const systemCode = safeSystemErrorCode(error);
+  return systemCode === null || ![
+    'EACCES',
+    'EINVAL',
+    'EISDIR',
+    'ENOTDIR',
+    'EPERM',
+  ].includes(systemCode);
+}
+
+function safeSystemErrorCode(error: unknown): string | null {
+  try {
+    if (!error || typeof error !== 'object') return null;
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+    return descriptor
+      && 'value' in descriptor
+      && typeof descriptor.value === 'string'
+      && /^[A-Z][A-Z0-9_]{0,63}$/u.test(descriptor.value)
+      ? descriptor.value
+      : null;
+  } catch {
+    return null;
   }
 }
 
 function assertRealmSchema(database: Database, realm: DatabaseRealm): void {
   for (const [table, schema] of Object.entries(realm.tables)) {
-    const rows = database
-      .prepare(`PRAGMA main.table_info(${quoteSqlIdentifier(table)})`)
-      .all() as TableInfoRow[];
+    const statement = database.prepare(
+      `PRAGMA main.table_info(${quoteSqlIdentifier(table)})`,
+    );
+    let rows: TableInfoRow[];
+    try {
+      rows = statement.all() as TableInfoRow[];
+    } finally {
+      statement.finalize();
+    }
     const expectedColumns = Object.keys(schema).filter((key) => key !== '_identity');
     const actualColumns = rows.map((row) => row.name);
     const expectedPrimaryKey = expectedColumns.find((column) => {
@@ -392,9 +574,13 @@ function readSequence(statement: Statement): number {
 }
 
 function readSchemaVersion(database: Database): number {
-  const row = database.query('PRAGMA main.schema_version').get() as {
-    schema_version?: unknown;
-  } | null;
+  const statement = database.prepare('PRAGMA main.schema_version');
+  let row: { schema_version?: unknown } | null;
+  try {
+    row = statement.get() as { schema_version?: unknown } | null;
+  } finally {
+    statement.finalize();
+  }
   if (!row || !Number.isSafeInteger(row.schema_version)
     || (row.schema_version as number) < 0) {
     throw new DatabaseError(

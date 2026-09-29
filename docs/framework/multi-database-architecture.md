@@ -1,4 +1,4 @@
-# Multi-Database Architecture
+# ReactiveDB Fabric: Multi-Database Architecture
 
 > **Status:** active implementation on the child multi-database feature
 > branch; it is not merged or released. The file/WAL actor foundation is now
@@ -10,10 +10,18 @@
 > derived from trusted authorization scope with a cross-file commit fence.
 > Real subprocess tests prove persistence, same-file read/write overlap, and
 > concurrent writes to separate files. The ordinary request capability,
-> generated resource/data transports, multi-database realtime, migration and
-> doctor workflows, packaging acceptance, and hybrid hot/file placement still
-> have integration work remaining. Nothing in this document marks those
-> unfinished slices as release-ready.
+> generated Resource HTTP CRUD, lazy `/api/data` reads, and multiplexed
+> WebSocket Sync route physical tenant resources through the actor-backed file
+> without a redundant tenant predicate. Resource policy, field projection,
+> conditional writes, durable mutation recovery, independent plane cursors,
+> topology validation, browser routing, and Doctor diagnostics are integrated.
+> Bounded file/hot placement is also integrated: placement is selected from an
+> pseudonymous database reference, pinned while the coordinator entry is
+> active, and
+> backed by explicit on-write, periodic, or final-snapshot durability. Fleet
+> migration and lifecycle operations, online placement changes, operator-grade
+> backup/restore, and the full package/OS deployment matrix remain release
+> work. Nothing in this document marks those unfinished slices as release-ready.
 >
 > A minimal two-Web-Worker `bun:sqlite` proof segfaulted on the installed Bun
 > 1.3.14 runtime and later Worker runs showed nondeterministic corruption or
@@ -23,6 +31,12 @@
 > required before this branch can merge.
 
 ## Purpose
+
+**ReactiveDB Fabric** is Zero's multi-database runtime: the bounded actor,
+routing, isolation, and lifecycle layer around independently reactive
+databases. `ReactiveDB` remains the name of each database engine; Fabric is
+the layer that coordinates many of them. The existing typed configuration
+name remains `databaseTopology`.
 
 Zero needs more than the ability to open several SQLite files. It needs a
 bounded runtime which can safely route work to those files while preserving
@@ -42,18 +56,21 @@ useful in a single-tenant application. A logical database identifier is never
 a filesystem path, and ordinary request code must never select its tenant
 database from caller-controlled input.
 
-The initiative has two distinct storage goals:
+The implementation has two distinct storage forms:
 
 1. File/WAL databases running on bounded writer and reader actor pools. This
-   is the current concurrency phase.
+   provides independent write lanes across files and optional same-file WAL
+   readers.
 2. Policy-driven hybrid placement in which appropriate databases can use
-   Zero's hot snapshot runtime while others remain file/WAL databases. This is
-   a required later phase, not an optional idea and not part of the current
-   actor implementation.
+   Zero's bounded hot snapshot runtime while others remain file/WAL databases.
+   This placement layer is implemented on the feature branch.
 
-The overall multi-database initiative is not complete until the hybrid
-hot/file placement phase has been implemented and tested. Current actor work
-must not imply that multi-database hot placement already exists.
+Hybrid placement does not mean online promotion or demotion. A coordinator
+selects placement synchronously when it creates an entry, pins that decision
+across the entry's actor generations, and may evaluate the policy again only
+after a clean idle/requested eviction creates a new entry. Moving an
+already-open database between file and hot placement remains an explicit
+offline operator migration problem.
 
 ## Current Decision
 
@@ -63,21 +80,28 @@ over an explicit executor abstraction:
 - The historical default database remains pinned to the app runtime.
 - Named and tenant files use asynchronous operations dispatched to isolated
   database actors.
+- Each opened named/tenant database uses either file/WAL or bounded hot
+  snapshot placement according to one validated declarative policy.
 - Exactly one writer actor owned by one coordinator topology controls a
   physical database at a time.
 - Different physical databases can write concurrently on different actor
   processes.
-- Separate reader actors open read-only connections so WAL reads can proceed
-  while the file's writer is active.
+- File-placed entries can open separate read-only actors so WAL reads proceed
+  while the file's writer is active; hot entries stay writer-only.
 - One database's writes remain FIFO and transactional.
 - The public API sends serializable operations; it never sends callbacks,
   SQLite handles, ReactiveDB instances, or arbitrary request-selected SQL to a
   remote actor.
 - ReactiveDB remains the writer-side change-log and ordering engine.
-- The manager already derives tenant-file routing from trusted authorization
-  scope and fences tenant commits against control-plane authority changes.
-  Request/resource projection and the multi-database Sync transport are the
-  next integration slices on the same architecture, not exceptions to it.
+- The manager derives tenant-file routing from trusted authorization scope and
+  fences tenant commits against control-plane authority changes. Ordinary
+  request code, generated Resource HTTP CRUD, `/api/data`, and actor-backed
+  Sync consume that bound capability.
+- One authenticated WebSocket multiplexes the pinned default/control plane and
+  the selected tenant plane. Each plane retains its own epoch, authorization
+  scope, sequence cursor, snapshot/catch-up boundary, and reset behavior.
+- The server derives a table's plane from the validated Resource topology.
+  Browser-supplied plane fields are assertions only and never select storage.
 
 Separate files provide separate SQLite lock domains, but that fact alone is
 not concurrency. Opening several synchronous Bun SQLite handles on the main
@@ -147,10 +171,28 @@ optional backend.
 5. POSIX roots and files are hardened to private permissions.
 6. One Zero coordinator topology has at most one writer actor for a physical
    database, even though that actor runs in a child process.
-7. No named or tenant file is opened in hot or ephemeral mode during the
-   current file/WAL actor phase.
+7. Named and tenant databases open only in their coordinator-selected `file`
+   or `hot` placement. `ephemeral` is not a Fabric placement.
 8. Database paths and logical tenant identifiers never appear in public
    errors, request-visible diagnostics, or ordinary observability metadata.
+9. The Fabric root may not overlap build output, any effective default/control
+   database source, hot snapshot, or deterministic SQLite WAL/SHM/journal
+   companion path, the object-storage root when Fabric would contain it, or
+   the adapter-owned `storageDir/tmp` and
+   `storageDir/blobs` namespaces. A dedicated unowned child such as
+   `storageDir/databases` remains valid.
+10. Config resolution checks those ownership boundaries lexically, and
+    `createApp()` repeats the check through existing filesystem aliases before
+    bundling, opening SQLite, or initializing object storage. Startup fails
+    closed without including filesystem paths in the public error.
+11. Object-storage crash cleanup removes only its own exact
+    `upload_<UUID-v4>` regular files. It never sweeps unrelated files or
+    directories from the temporary namespace.
+12. Ownership paths are compared conservatively after Unicode normalization
+    and case folding on every platform. Case- or normalization-only directory
+    distinctions are unsupported even on a case-sensitive filesystem, keeping
+    the same configuration safe when deployed to default macOS or Windows
+    volumes.
 
 ### Concurrency and ordering
 
@@ -200,11 +242,11 @@ optional backend.
 The default database and multi-database data plane have deliberately different
 contracts:
 
-| Plane | Execution | Storage in current phase | API | Primary purpose |
+| Plane | Execution | Storage | API | Primary purpose |
 | --- | --- | --- | --- | --- |
 | Default/control | App runtime | Existing `hot`, `file`, or `ephemeral` behavior | Existing synchronous `zero.db` and `zero.sql` | Zero control plane and compatibility application data |
-| Named/tenant writer | Bounded subprocess writer actors through `DatabaseExecutor` | File/WAL only | New asynchronous database client | Isolated application data and ordered mutations |
-| Named/tenant reader | Bounded subprocess reader actors through `DatabaseExecutor` | Read-only connections to file/WAL databases | New asynchronous reads | Snapshot reads concurrent with an active writer |
+| Named/tenant writer | Bounded subprocess writer actors through `DatabaseExecutor` | Policy-selected file/WAL or bounded hot snapshot | New asynchronous database client | Isolated application data and ordered mutations |
+| Named/tenant reader | Bounded subprocess reader actors through `DatabaseExecutor` | Read-only connection for file/WAL placement only | New asynchronous reads | Snapshot reads concurrent with an active file writer |
 
 The default database initially continues to hold global identity, sessions,
 tenant membership, tenant registry, platform-administrator state, and any
@@ -212,6 +254,11 @@ other mandatory Zero control-plane tables. Two operations that both mutate
 that one physical file are still subject to SQLite's one-writer rule. Once
 authentication has selected a tenant, application operations against tenant A
 and tenant B use different writer actors and do not wait on one another.
+
+Fabric placement does not move the default/control database. Its storage mode
+continues to come from the existing top-level `db` configuration. Separating
+auth, logs, metrics, or other Zero-owned realms into additional Fabric
+databases is future realm-expansion work.
 
 ### Where tenant scope lives
 
@@ -243,28 +290,230 @@ retain an explicit rollback/cleanup decision. Built-in services and resources
 must select their storage adapter from the resolved topology so application
 code keeps one declarative surface without runtime schema guessing.
 
-Database doctor and planning commands understand the same resolved strategy.
-They remain read-only and may report stable findings such as:
+Platform Doctor resolves the same declarative strategy and remains read-only.
+Its current multi-database findings:
 
-- a tenant-owned realm in `tenant-database` mode still has a likely redundant
-  tenant-scope column or automatic row-scope policy;
-- a retained tenant reference is still used for business meaning, export,
-  audit provenance, or migration compatibility and must not be treated as
-  automatically removable;
-- a `shared-row` table is missing its configured tenant column, scope policy,
-  or supporting tenant-oriented index;
-- a service/resource is wired to the shared-row adapter while its realm is
-  configured for isolated files, or the inverse;
-- a control/shared realm has incorrectly lost the tenant references required
-  for cross-tenant administration.
+- confirm actor-backed mode plus the configured active-database and durable-file
+  capacity limits;
+- explain when disabled reader actors force reads onto a file's writer lane;
+- report all-hot versus hybrid selection, configured hot durability, and the
+  maximum configured hot image budget implied by `maxDatabases * maxBytes`;
+- warn that hot placement has no separate reader actor and explain periodic or
+  final durability loss contracts;
+- report whether persistent tenant Sync leaves actor capacity reserved for
+  ordinary requests and background work;
+- confirm that physical-tenant Sync uses bounded atomic snapshot frames and
+  adaptive actor pages, including the terminal oversized-row contract;
+- explain the finite full-result budget and permanent idempotency-key capacity
+  for physical-database receipts and generated default/shared Resource writes;
+- explain that a physical tenant resource needs no managed `tenant_id`
+  discriminator;
+- identify a retained realm field as ordinary business/export data rather than
+  an authorization boundary;
+- reject a database root which overlaps build output or reuses the object
+  storage directory; and
+- retain the existing shared-row resource validation and tenant-leading index
+  guidance when physical isolation is not selected.
 
-Doctor never drops a column, rewrites a policy, creates a file, or moves data.
-An explicit dry-run tenancy migration planner turns applicable findings into
-ordered operator-reviewed steps.
+Run `bun run doctor -- --config ./zero.config.ts --strict` in CI and review
+informational topology findings during deployment planning. Doctor never drops
+a column, rewrites policy, creates tenant files, or moves data. Conversion from
+`shared-row` to `tenant-database` remains an explicit operator-controlled
+migration; automated tenant-fleet migration planning is still future work.
 
 Later realm separation may move additional Zero subsystems into their own
 databases. That work must use the same coordinator and authority rules rather
 than opening ad hoc SQLite handles.
+
+## Declarative Application Topology
+
+Multi-database behavior is selected in `createApp()` configuration. Omitting
+`databaseTopology` (or setting `{ mode: 'single' }`) preserves the historical
+single-database contract. Physical tenant isolation requires multi-tenant auth,
+an actor realm, and `tenantIsolation: 'tenant-database'`:
+
+```ts
+import {
+  authenticatedOnly,
+  createApp,
+  defineDatabaseRealm,
+  defineResource,
+  defineZeroConfig,
+  runDatabaseActorIfRequested,
+  tenantRealm,
+} from '@zero/framework/server';
+import { documentTable, tables } from './lib/schemas';
+
+const tenantServerTables = {
+  documents: documentTable.serverTable,
+};
+
+export const tenantRealmDefinition = defineDatabaseRealm({
+  name: 'application-tenant-data',
+  version: '1',
+  tables: tenantServerTables,
+  migrations: [],
+});
+
+const config = defineZeroConfig({
+  db: { mode: 'file', path: './data/control.db' },
+  tables,
+  auth: { tenancy: 'multi' },
+  resources: [
+    defineResource({
+      table: 'documents',
+      realm: tenantRealm(),
+      exposure: 'all',
+      policy: authenticatedOnly(),
+    }),
+  ],
+  databaseTopology: {
+    mode: 'multiple',
+    rootDirectory: './data/tenant-databases',
+    realm: tenantRealmDefinition,
+    actors: {
+      launch: { kind: 'source', entrypoint: import.meta.path },
+    },
+    tenantIsolation: 'tenant-database',
+    placement: 'file',
+    maxDatabases: 16,
+    maxDatabaseFiles: 10_000,
+    maxTenantSyncDatabases: 15,
+    maxTenantSyncBindingsPerDatabase: 64,
+    restart: {
+      initialDelayMs: 10,
+      maxDelayMs: 1_000,
+      circuitFailureThreshold: 5,
+      circuitCooldownMs: 5_000,
+    },
+  },
+});
+
+if (!await runDatabaseActorIfRequested({ realm: tenantRealmDefinition })) {
+  const app = await createApp(config);
+  app.listen(config.port);
+}
+```
+
+The actor branch must run before normal server startup. The same entrypoint is
+used by source deployments; bundled and deployment-specific launches can use
+the validated `bundle` or `command-prefix` launch forms. Actor children receive
+only the explicit `actors.env` allowlist, not the parent's ambient environment.
+
+The actor realm must be a schema-identical subset of `createApp({ tables })`.
+After Resource modules load, Zero requires its table set to match *exactly*
+the registered tenant resources assigned to physical storage. This includes
+`internal` and HTTP-only physical resources, not just Sync-visible tables.
+Unknown realm tables, omitted physical resources, schema drift, or a physical
+resource without multi-tenant authority fail startup.
+
+Resource declarations remain the authoritative application-data topology:
+
+- `realm: tenantRealm()` declares logical tenant ownership.
+- `tenantIsolation: 'tenant-database'` turns that logical realm into physical
+  storage ownership; the realm field is no longer a managed row discriminator.
+- `exposure: 'internal' | 'http' | 'sync' | 'all'` independently determines
+  which managed transports may reach the resource.
+- Only physical resources with `sync` or `all` exposure join the tenant Sync
+  catalog. HTTP-only and internal tables remain in the actor realm but are not
+  sent to the browser.
+- Global and shared/control resources stay on the default database and default
+  Sync plane.
+
+The bounded topology options are `maxDatabases`, `maxDatabaseFiles`,
+`maxBlockedDatabases`, `maxTenantSyncDatabases`,
+`maxTenantSyncBindingsPerDatabase`, `readers`, `maxQueuedPerDatabase`,
+`maxQueuedTotal`, `queueTimeoutMs`, `operationTimeoutMs`, `restart`,
+`idleTimeoutMs`, and `sweepIntervalMs`. Their defaults are part of the typed
+`AppMultipleDatabaseTopologyConfig`; tune them from measured workload,
+process/file-descriptor limits, storage/inode budgets, and shutdown budgets
+rather than from tenant count alone. Values which feed JavaScript timers—including
+queue, operation, sweep, actor lifecycle, and periodic snapshot timers—must not
+exceed the portable signed 32-bit timer maximum, `2_147_483_647` milliseconds.
+Per-operation queue/operation overrides are checked against the same maximum.
+`idleTimeoutMs` is an elapsed-time comparison rather than a direct timer and
+may be any non-negative safe integer.
+
+`restart` is a per-database replacement policy. Its defaults are a 10 ms
+initial delay, a 1,000 ms exponential-delay ceiling, a circuit threshold of
+five consecutive replacement attempts, and a 5,000 ms cooldown between
+half-open attempts after that threshold. A successful bind resets the count.
+The pending delay is canceled when the last lease is released or the
+coordinator drains, so an idle or shutting-down app never keeps a retry timer
+alive. The initial delay and maximum delay must be positive bounded timers,
+the threshold must be at least two, and the cooldown must be at least the
+maximum delay.
+
+Count limits represented in Fabric observability—`maxDatabaseFiles`,
+`maxBlockedDatabases`, `maxTenantSyncBindingsPerDatabase`,
+`maxQueuedPerDatabase`, and `maxQueuedTotal`—also have a maximum of
+`2_147_483_647`. Direct coordinator construction and `createApp()` topology
+normalization enforce the same ceiling, so configured and capacity events are
+never silently dropped for an unrepresentable count.
+
+### File, hot, and hybrid placement
+
+`placement` accepts two shorthands and one explicit policy:
+
+- `'file'` is the default. The writer owns a direct SQLite/WAL file and, when
+  `readers: true`, a separate read-only actor can overlap committed reads with
+  the active writer.
+- `'hot'` is bounded shorthand for `{ default: 'hot', hot: { durability:
+  'on-write', maxBytes: 64 * 1024 * 1024 } }`.
+- `{ default, select?, hot? }` declares an all-file, all-hot, or hybrid policy.
+  An explicit `hot.maxBytes` is required when `default` is `'hot'` or any
+  selector is present, because a selector is allowed to return `'hot'`.
+
+For example, keep every database on file/WAL except an intentional allowlist:
+
+```ts
+import {
+  createTenantDatabaseRef,
+  defineZeroConfig,
+} from '@zero/framework/server';
+
+const hotRefs = new Set([
+  createTenantDatabaseRef('tenant_acme'),
+  createTenantDatabaseRef('tenant_zenith'),
+]);
+
+const config = defineZeroConfig({
+  // ...db, auth, tables, resources...
+  databaseTopology: {
+    mode: 'multiple',
+    rootDirectory: './data/tenant-databases',
+    realm: tenantRealmDefinition,
+    actors: { launch: { kind: 'source', entrypoint: import.meta.path } },
+    tenantIsolation: 'tenant-database',
+    placement: {
+      default: 'file',
+      select: ({ databaseRef }) => hotRefs.has(databaseRef) ? 'hot' : 'file',
+      hot: {
+        durability: 'on-write',
+        maxBytes: 32 * 1024 * 1024,
+      },
+    },
+  },
+});
+```
+
+The selector is synchronous. Zero passes it only a frozen, opaque,
+pseudonymous `databaseRef`; it receives no tenant ID, database name, path,
+request, user, or
+mutable runtime object. Build allowlists with `createTenantDatabaseRef()` and
+`createNamedDatabaseRef()` so they use the same domain-separated binding
+identity as `DatabaseManager`. Do not compare the selector value with a raw
+tenant/name or with `createDatabaseRef(rawId)`. A thrown selector or any result
+other than `'file'`/`'hot'` fails closed with `DATABASE_CONFIG_INVALID`.
+
+Placement is resolved once when the coordinator creates an entry. Crash
+replacement actors for that entry inherit the pinned placement; the selector
+does not move live ownership. After clean idle or requested eviction, the next
+acquisition creates a new entry and may observe a changed allowlist.
+There is no online file-to-hot promotion, hot-to-file demotion, spill, or
+placement-migration API. Change policy only when reopening either placement
+against the same verified durable image is operationally valid, and use an
+offline migration procedure for deliberate moves.
 
 ## App-Local Coordinator
 
@@ -273,7 +522,8 @@ owns scheduling and IPC, but not the default database's compatibility API.
 
 Its responsibilities are:
 
-- Maintain internal database bindings and safe database references.
+- Maintain internal database bindings and validated pseudonymous database
+  references.
 - Own writer and reader executor pools.
 - Maintain one FIFO and lifecycle state machine per physical database.
 - Enforce global and per-database queue bounds.
@@ -329,8 +579,9 @@ notification order is not guaranteed. It also:
 - launches only the resolved build-manifest artifact, never a request path;
 - supplies a minimal allowlisted environment rather than inheriting unrelated
   application secrets;
-- captures or redirects child stdout/stderr through bounded, redacted
-  observability handling;
+- launches actor children with stdout and stderr set to `ignore`; child output
+  is discarded, while supported telemetry crosses the validated IPC/event
+  boundary instead of being scraped from process output;
 - owns graceful disconnect, signal escalation, process reaping, and orphan
   prevention;
 - requires a child actor to stop accepting work and exit when its parent IPC
@@ -359,7 +610,9 @@ Each slot executes one database at a time:
 
 1. A bound client submits a serializable mutation or strong read.
 2. The coordinator appends it to that database's FIFO.
-3. If no actor owns the database, the fair scheduler assigns an idle slot.
+3. If no actor owns the database, the coordinator assigns a free slot or
+   closes one eligible idle entry; if neither is possible, acquisition fails
+   immediately with retryable `DATABASE_BACKPRESSURE`.
 4. The writer actor prepares the file, imports the database realm, migrates and
    opens ReactiveDB, registers change delivery, and reports ready.
 5. The coordinator sends one operation at a time for that database.
@@ -371,22 +624,56 @@ slot. It must not hash many active tenant actors permanently onto one process;
 that would make an unrelated long-running operation block every database on
 that execution lane.
 
-The scheduler operates by database, not only by request. Round-robin or
-equivalent fair selection prevents a hot tenant with a large FIFO from
-starving a tenant with one waiting operation.
+Each admitted database has its own FIFO, and different admitted databases can
+run on different slots. There is no cross-database waiter or round-robin
+admission queue: actor-capacity exhaustion does not leave an unbounded request
+waiting for another database to become idle. Callers receive retryable
+`DATABASE_BACKPRESSURE` and may retry under their own bounded policy.
 
-### Bounded backpressure
+### Bounded capacity and backpressure
 
 Configuration needs separate controls for:
 
 - writer concurrency;
 - reader concurrency;
+- total Zero-managed physical main database files;
+- distinct databases held by persistent tenant Sync bindings;
+- persistent tenant Sync bindings per database;
 - maximum pending operations per database;
 - maximum pending operations across the app;
 - queue wait deadline;
 - operation deadline;
-- idle runtime deadline;
-- maximum concurrent migrations.
+- idle runtime deadline.
+
+`maxDatabaseFiles` defaults to `10_000` and is a hard physical-file admission
+limit, distinct from the active actor limit. At coordinator startup Zero counts
+only canonical regular `db-<hint>-<digest>.sqlite` durable images directly
+under the exclusively owned Fabric root. Both file/WAL databases and canonical
+hot-placement snapshot images consume this budget. WAL/SHM/journal companions,
+the `.zero-internal` ownership database, directories, symlinks, and unrelated
+files do not. The catalog gate performs the capacity check
+and O_EXCL main-file reservation in one serialized ownership boundary. Once
+the limit is reached, an existing main file remains openable, while a new file
+fails before creation with non-retryable `DATABASE_CAPACITY_EXHAUSTED`,
+`outcome: 'not-started'`, and closed `capacityType: 'files'` / positive
+`capacityLimit` details. Zero does not delete or recycle tenant data to recover
+capacity; an operator must deliberately raise the limit or perform an offline
+lifecycle operation. `DATABASE_BACKPRESSURE` remains reserved for transient
+queue, actor-slot, and binding/session admission pressure.
+
+Persistent tenant Sync receives its own admission bounds because one socket
+binding holds an actor-backed capability. `maxTenantSyncDatabases` limits the
+number of distinct databases with active or in-flight persistent bindings;
+additional bindings to a database already in that set remain eligible.
+`maxTenantSyncBindingsPerDatabase` (default `64`) bounds sockets/capabilities
+for one database. Admission is serialized before entry creation or lease
+pinning, and overflow returns retryable `DATABASE_BACKPRESSURE` without
+creating a file or consuming an actor slot. By default the distinct limit is
+`maxDatabases - 1`, reserving one actor slot for ordinary request/background
+work. A one-slot topology defaults to one Sync database so Sync still works;
+it cannot reserve separate transient capacity, and Doctor warns about that
+tradeoff. An explicit `maxTenantSyncDatabases: 0` disables persistent physical
+tenant Sync admission.
 
 Queue overflow fails before dispatch with `DATABASE_BACKPRESSURE`. Exceeding a
 queue deadline fails with `DATABASE_QUEUE_TIMEOUT`. An `AbortSignal` can remove
@@ -400,7 +687,9 @@ and emits its committed changes.
 ## Same-File Reader Model
 
 WAL allows readers and one writer to coexist when they use different
-connections. Zero therefore uses a separate bounded reader-actor pool.
+connections. A Fabric entry placed on `file` therefore uses a separate bounded
+reader-actor pool when `readers: true`. A hot entry never opens a reader actor;
+its reads are scheduled on the RAM-active writer lane.
 
 A reader actor:
 
@@ -426,8 +715,8 @@ ambiguous promise of a "latest" read:
 
 | Mode | Execution | Guarantee | Tradeoff |
 | --- | --- | --- | --- |
-| `snapshot` | Reader actor | One committed WAL snapshot at operation start | May not include a concurrent or not-yet-observed commit |
-| `read-your-writes` | Reader actor with `minSeq` | Snapshot sequence is at least the caller's prior commit token | May wait briefly for a fresh read transaction |
+| `snapshot` | File reader actor when available; otherwise the writer lane | One committed SQLite snapshot at operation start | May not include a concurrent or not-yet-observed commit; hot reads do not overlap their writer lane |
+| `read-your-writes` | File reader actor with `minSeq` when available; otherwise the writer lane | Snapshot sequence is at least the caller's prior commit token | May wait for a fresh read transaction or the writer FIFO |
 | `strong` | Writer FIFO | Runs after previously queued writes for that database | Does not overlap that database's writer |
 
 A writer may hold an uncommitted update while a snapshot reader completes and
@@ -440,46 +729,52 @@ deadline error.
 Executor-backed database methods are asynchronous. They do not change the
 existing synchronous default API.
 
-The intended bound surface is conceptually:
+The bound surface is:
 
 ```ts
 interface AsyncDatabaseClient {
-  get<Table extends TableName>(
-    table: Table,
+  get(
+    table: string,
     id: string,
-    options?: ReadOptions,
-  ): Promise<RowFor<Table> | null>;
+    options?: DatabaseReadOptions,
+  ): Promise<DatabaseReadResult<DatabaseOperationRow | null>>;
 
-  list<Table extends TableName>(
-    table: Table,
-    query?: SerializableQuery<RowFor<Table>>,
-    options?: ReadOptions,
-  ): Promise<readonly RowFor<Table>[]>;
+  list(
+    table: string,
+    page: { limit: number; after?: string },
+    options?: DatabaseReadOptions,
+  ): Promise<DatabaseReadResult<DatabaseListPage>>;
 
-  query<Name extends QueryName>(
-    name: Name,
-    input: QueryInput<Name>,
-    options?: ReadOptions,
-  ): Promise<QueryOutput<Name>>;
+  find(
+    table: string,
+    input: DatabaseFindInput,
+    options?: DatabaseReadOptions,
+  ): Promise<DatabaseReadResult<readonly DatabaseOperationRow[]>>;
+
+  query(
+    name: string,
+    input: DatabaseSerializableValue,
+    options?: DatabaseReadOptions,
+  ): Promise<DatabaseReadResult<DatabaseSerializableValue>>;
 
   mutate(
-    mutation: SerializableMutation,
-    options?: MutationOptions,
-  ): Promise<CommitResult>;
+    mutation: DatabaseMutation,
+    options: DatabaseMutationOptions,
+  ): Promise<DatabaseCommitResult>;
 
   batch(
     input: {
-      assertions?: readonly SerializableAssertion[];
-      mutations: readonly SerializableMutation[];
+      assertions?: readonly DatabaseAssertion[];
+      mutations: readonly DatabaseMutation[];
     },
-    options?: MutationOptions,
-  ): Promise<BatchCommitResult>;
+    options: DatabaseMutationOptions,
+  ): Promise<DatabaseCommitResult>;
 
-  command<Name extends CommandName>(
-    name: Name,
-    input: CommandInput<Name>,
-    options?: MutationOptions,
-  ): Promise<CommandOutput<Name>>;
+  command(
+    name: string,
+    input: DatabaseSerializableValue,
+    options: DatabaseMutationOptions,
+  ): Promise<DatabaseCommitResult<DatabaseSerializableValue>>;
 }
 ```
 
@@ -491,26 +786,91 @@ Registered queries and commands live in an app-owned database realm imported
 inside the actor. Public request code sends their registered name and
 validated input. Ordinary bound clients cannot submit raw SQL.
 
-Mutation options include an idempotency key, deadline, and signal. A commit
-result contains the database's durable sequence token. Values and results must
-pass explicit structured-clone and payload-size validation.
+Mutation options require an idempotency key and may override queue/operation
+timeouts or supply an `AbortSignal`. Cancellation is honored only before actor
+dispatch; after dispatch the outcome protocol and same-key recovery take over.
+A commit result contains the database's durable sequence token. Values and
+results must pass the canonical serialization and payload-size validation.
 
 ### Tenant-bound access
 
-Once automatic tenant routing lands, ordinary authenticated route code should
-receive an already-bound async client, for example under a final name such as
-`zero.data` or `zero.tenantDb`. The exact name remains an API decision; the
-security shape does not:
+Ordinary authenticated route code receives the already-bound async client as
+`zero.data`. It is projected only for a live tenant-bound authority when the
+resolved topology uses physical tenant isolation:
 
 ```ts
 handler: async ({ zero }) => {
-  return zero.data.list('projects', { orderBy: ['created_at', 'desc'] });
+  if (!zero.data) throw new Error('A tenant data scope is required');
+  return zero.data.find('projects', {
+    order: [{ field: 'created_at', direction: 'desc' }],
+    limit: 50,
+  });
 }
 ```
 
 There is no `tenantId` argument because the authorization middleware has
-already bound the client. Explicit cross-database administration belongs to a
-privileged setup/admin capability, not the normal request facade.
+already bound the client. Each operation owns and releases a short-lived
+coordinator lease, and read/write authority is checked at the actor boundary.
+Explicit cross-database administration belongs to a privileged setup/admin
+capability, not the normal request facade.
+
+Registered tenant Resources reuse the same boundary. In
+`tenant-database` mode generated list/get/create/update/delete routes and lazy
+`/api/data` reads:
+
+- derive the physical file only from the verified Resource tenant scope;
+- apply the existing declarative Resource policy and advanced-RBAC context;
+- revalidate the complete authority fingerprint around asynchronous policy
+  work and actor reads/commits;
+- translate query filters into schema-validated structured actor operations;
+- use strict create and conditional row-equality batches for race-safe writes;
+- persist actor idempotency receipts and return a normalized
+  `Idempotency-Key` for generated HTTP mutations; and
+- map stable database failures to privacy-safe HTTP responses while retaining
+  database codes and outcomes only in server observability.
+
+One generated Resource request owns one private short-lived tenant binding
+across receipt lookup, row pre-read, asynchronous policy evaluation, commit,
+and result authorization. It releases that binding in `finally`. The trusted
+receipt writer is not present on the public `AsyncDatabaseClient`, `zero.data`,
+or any API that accepts a tenant/database selector.
+
+Shared-row and single-database Resources retain their existing synchronous
+contract. Physical mode adds no implicit fallback to the default database.
+
+Generated Resource receipts use two separate identities. The private receipt
+namespace binds only the caller's public key, stable principal, and verified
+tenant. Session IDs, token generations, and RBAC generation counters remain
+part of live authority fencing but are intentionally excluded from that
+durable namespace, so an exact retry survives token rotation. The separate
+logical fingerprint binds the resource/table, action, client-supplied row
+identity, and canonical request body. Reusing one public key for another
+resource, action, row, or input therefore reaches the same private receipt and
+fails as an idempotency conflict instead of executing a second mutation.
+Different principals cannot consume each other's receipt even inside the same
+tenant.
+
+Physical and default/shared Resource mutation receipts carry the exact
+canonical committed row and exact preimage. Resource CRUD re-evaluates
+update/delete policy against that preimage; create policy receives the same
+original input shape as the first attempt. It revalidates current authority and
+projects a canonical receipt row through the current field policy when the
+response contains one. It never
+substitutes a later database read into the mutation response. Update/delete
+receipt lookup also precedes the current row read, so an exact replay still
+succeeds after the row is changed or deleted.
+The browser SDK sends an explicit or generated key on every Resource mutation;
+`ResourceMutationError.idempotencyKey` lets callers recover an automatically
+generated key after transport failure without changing successful return
+shapes.
+
+A tenant resource using `tenant-database` isolation may declare `sync` or `all`
+exposure when actor-backed tenant Sync is configured. The Resource policy
+adapter classifies each managed table onto the `tenant` or `default` logical
+data plane; physical realm scopes add no row discriminator, stamping, or
+constraint. Sync startup must validate that this classification agrees exactly
+with the actor realm/catalog before accepting connections, so a physical table
+cannot silently fall through to a shadow table in the default ReactiveDB.
 
 ## Actor Protocol
 
@@ -532,9 +892,12 @@ interface DatabaseActorRequest {
 }
 ```
 
-`databaseRef` is a non-sensitive internal digest. It is not a tenant ID,
-logical database name, or path. Only trusted actor initialization receives
-the prepared path required to open SQLite, and that path is never copied into
+`databaseRef` is a pseudonymous internal correlation digest. It omits the raw
+tenant ID, logical database name, and path, but its SHA-256 derivation is
+deterministic and unkeyed: low-entropy logical IDs can be dictionary-correlated.
+Treat it as operational metadata, never as a secret, credential, or
+authorization capability. Only trusted actor initialization receives the
+prepared path required to open SQLite, and that path is never copied into
 public results or ordinary telemetry.
 
 Parent-to-actor messages cover initialization, opening, execution, replay,
@@ -557,14 +920,17 @@ application or returned to a client.
 
 ## Database Realm and Migrations
 
-Functions cannot cross the actor IPC boundary. Inline migration functions,
-mutation validators, and custom query handlers therefore cannot be the final
-topology configuration.
+Functions cannot cross the actor IPC boundary. Migrations and registered
+query/command handlers therefore live in a side-effect-free realm module which
+the actor imports for itself; requests send only validated operation values and
+registered handler names.
 
 An app declares a side-effect-free database realm:
 
 ```ts
 export default defineDatabaseRealm({
+  name: 'application-tenant-data',
+  version: '1',
   tables,
   migrations,
   queries,
@@ -592,23 +958,38 @@ if (!actorProcess) {
 ```
 
 The realm is imported inside the actor process. Its tables and migrations are
-not cloned from the app process. The bootstrap name and final app-server shape
-remain directional until implementation fixes the public package contract.
+not cloned from the app process. `runDatabaseActorIfRequested()` returns
+`false` only when the private actor marker is absent. When the marker is
+present, malformed actor arguments or a missing parent IPC channel fail closed
+instead of starting the ordinary application server.
 
 Opening a writer follows one ordered boundary:
 
-1. Resolve and prepare the encoded file safely.
-2. Confirm the coordinator-owned exclusive writer claim for the file.
-3. Verify protocol, build, and realm fingerprints.
-4. Open the file/WAL SQLite service.
-5. Run the immutable migration registry.
-6. Construct ReactiveDB and initialize declared tables.
-7. Register change delivery.
-8. Publish the schema generation and actor readiness.
+1. Hold the private root-ownership lock and prove that no actor from an older
+   parent generation still holds the rollback-journal liveness lease, then
+   rotate the private liveness generation under that same EXCLUSIVE probe.
+2. Resolve and prepare the encoded file safely, reject symlinks and hardlinks,
+   and retain an `O_NOFOLLOW` descriptor for its exact device/inode.
+3. Verify the file's immutable `_zero_database_binding_v1` singleton. A new
+   binding is created transactionally only in the pristine file atomically
+   reserved by this coordinator; a nonempty unbound image fails closed.
+4. Send the validated pseudonymous database reference, immutable instance ID,
+   opened-file proof, and private liveness generation through the trusted bind
+   message. The
+   actor verifies that generation while acquiring its SHARED liveness lease,
+   before it opens the assigned database pathname.
+5. Verify protocol, build, and realm fingerprints, then open SQLite and repeat
+   the file proof immediately after the path-only Bun SQLite open.
+6. Run the immutable migration registry. The stable realm name and database
+   instance remain unchanged across ordinary realm-version migrations.
+7. Construct ReactiveDB, initialize declared tables, and verify the durable
+   binding again before reporting readiness.
+8. Register change delivery and publish the schema generation, actor
+   generation, instance proof, and safe readiness result.
 9. Admit queued operations and reader handles.
 
-Separate files may migrate concurrently, subject to a dedicated migration
-limit. A failed migration quarantines that database and returns
+Separate files may migrate concurrently within the configured actor capacity.
+A failed migration quarantines that database and returns
 `DATABASE_MIGRATION_FAILED`; it does not enter an automatic open/fail loop.
 
 Lazy migration on first use is acceptable for the initial actor slice. The
@@ -622,63 +1003,168 @@ ReactiveDB remains the writer-side owner of tracked mutations and each
 database's durable `_changes` order.
 
 The writer registers its change listener before accepting work. Change
-notifications contain the safe database reference, actor generation, sync
-epoch, and sequence range. An in-memory notification wakes the parent
+notifications contain the validated pseudonymous database reference, actor
+generation, sync epoch, and sequence range. An in-memory notification wakes
+the parent
 dispatcher; the durable change log remains the recovery source.
 
-The parent tracks one delivered cursor per database and accepts only
-contiguous sequence batches. After an actor restart it requests durable
-changes after the last delivered sequence. If retention, corruption, or a
-format change makes that history unavailable, the dispatcher invalidates the
-subscription and requires an authoritative snapshot. It never advances a
-cursor past missing history.
+Each socket bridge tracks a delivered cursor for its bound tenant database and
+accepts only contiguous sequence batches. After reconnect or actor recovery it
+requests durable changes after the last accepted sequence. If retention,
+corruption, an actor identity change, or a format change makes that history
+unavailable, the bridge invalidates that plane and requires an authoritative
+baseline. It never advances a cursor past missing history.
 
-A snapshot uses one reader transaction:
+Tenant baselines use one exact actor-owned snapshot session rather than
+independent live list pages:
 
-1. Read the durable current sequence to establish the WAL snapshot.
-2. Read every table and row allowed by the subscriber's policy.
-3. Return the rows and represented sequence together.
-4. Replay later contiguous changes.
+1. `database.tenant-sync.snapshot.begin` opens one SQLite read transaction,
+   captures the writer epoch and durable sequence head `H`, and incrementally
+   copies the selected rows in primary-key order into private bounded TEMP
+   tables. The transaction commits before the actor replies, so no transaction
+   or WAL read mark is held across IPC or WebSocket backpressure.
+2. `database.tenant-sync.snapshot.page` reads only that immutable
+   materialization. A page cursor is a global row ordinal across the exact table
+   selection; repeating the same cursor returns the same rows. Concurrent app
+   writes after `H` therefore cannot leak into later baseline pages.
+3. The socket bridge applies Resource row filters and field projection and
+   streams one `sync.snapshot.begin`, bounded `sync.snapshot.chunk` frames, and
+   one matching `sync.snapshot.end`. Every frame is measured from its exact
+   serialized UTF-8 bytes and capped at 900 KiB.
+4. The browser stages those frames without exposing partial table state and
+   applies the complete plane-local replacement atomically only at the matching
+   end frame.
+5. Only after the end frame drains does the bridge accept cursor `H`; it then
+   replays the contiguous durable log strictly after `H`.
+6. `database.tenant-sync.snapshot.abort` runs from `finally`. Binding release,
+   authority reset, actor recovery, and actor close also invalidate or erase
+   every outstanding session. An empty table selection still uses begin/abort,
+   producing an exact epoch/head proof with zero rows.
 
-The current Sync plugin assumes one local synchronous ReactiveDB. Injecting a
-ReactiveDB into that plugin is useful for composing the default runtime, but it
-does not provide tenant-file routing. Multi-database Sync requires an async
-storage-executor boundary beneath the existing wire, policy, receipt, and
-projection logic.
+The actor enforces all snapshot-session bounds before returning data:
 
-The compatibility-preserving transport model is exactly one physical
-application-data change stream per Sync socket. The current wire, client
-store, and stream guard intentionally carry one scalar epoch, scope, and
-sequence cursor; a socket must not silently merge the control database and a
-tenant database into that cursor. Control-plane authority changes reach the
-socket through internal invalidation/revalidation, while its table snapshot,
-catch-up, changes, and mutations all belong to the one bound application-data
-file.
+| Bound | Hard value |
+| --- | ---: |
+| Active sessions per writer actor | 8 |
+| Rows in one materialization | 50,000 |
+| Encoded source bytes in one materialization | 64 MiB |
+| Aggregate encoded source bytes across active sessions | 64 MiB |
+| Encoded bytes in one source row | 1 MiB |
+| Value-tree nodes in one source row | 10,000 |
+| Rows in one actor page | 100 |
+| Encoded source bytes in one actor page | 4 MiB |
+| Value-tree nodes in one actor page | 18,000 |
+| Monotonic elapsed session lifetime, including streaming/backpressure | 30 seconds |
 
-Tenant selection changes are authorization-scope replacements. The client
-enters its existing authorization transition barrier, freezes mutations,
-closes the old socket, purges tenant-scoped XState store data, reconnects, and
-accepts an explicit replacement snapshot for the new scope. The server never
-relabels a live cursor from tenant A as tenant B. Web and native transports
-must compare the full subject and active-tenant scope when deciding whether a
-connection can be reused.
+The actor returns an epoch-shaped `expiresAt` value for correlation, but
+enforces that lifetime with elapsed monotonic time anchored when the
+actor-local session store opens. A backward system-clock correction therefore
+cannot extend the 30-second authority window.
 
-Realtime requirements before tenant-file mode is complete include:
+The socket bridge independently bounds the complete transfer, including
+adaptive actor-page retries and Resource projection work:
 
-- authenticate a socket against the control plane;
-- bind it to the trusted tenant database capability;
-- produce a policy-filtered snapshot from that file;
-- route mutations through the writer actor;
-- preserve mutation receipts and origin attribution;
-- deliver only that file's ordered changes;
-- revalidate live authority around policy work and commit;
-- resnapshot on actor-generation or retained-history gaps.
+| Bridge bound | Hard value |
+| --- | ---: |
+| Actor page attempts, including adaptive retries | 512 |
+| Observed source rows | 50,000 |
+| Combined encoded source and projected bytes | 64 MiB |
+| Whole-transfer monotonic elapsed deadline | 30 seconds |
 
-The first qualified actor slice may expose a production-grade server-side
-async data foundation while this transport extraction is still in progress.
-Neither the failed Web Worker experiment nor the subprocess proof alone meets
-that bar. The overall tenant-file feature must not be called
-realtime-complete until these paths are tested end to end.
+Source rows are counted before filtering, so hidden data cannot evade scan
+bounds. The byte counter includes both each canonical source row and every
+projected row; an unchanged/no-op projection therefore counts both
+representations. This deliberately bounds projector expansion and the total
+work retained across actor IPC and WebSocket framing.
+
+Session, aggregate-byte, row, page, and deadline checks are repeated at the
+SQLite/private-ledger boundary and at actor/coordinator/bridge protocol
+boundaries. Session identity is bound to the opaque database reference, writer
+generation, binding-owner capability, and ordered table selection. Actor and
+coordinator errors preserve only the closed `snapshotReason` vocabulary; logs
+and events never contain the session/owner token, database path, table names,
+SQL, row data, or raw error text. Active-session or aggregate-byte contention is
+retryable `DATABASE_BACKPRESSURE`; an intrinsically oversized snapshot/row is
+non-retryable `DATABASE_PAYLOAD_LIMIT`; an expired, missing, or invalid cursor
+is `DATABASE_TRANSACTION_EXPIRED`. A cleanup failure emits the dedicated
+app-local `sync.tenant_snapshot_cleanup.failed` event with only
+`plane: 'tenant-database'` and fixed reason `snapshot-cleanup-failed`, then
+forces a fresh baseline. It never includes the caught value or snapshot
+identity and never masks an earlier terminal snapshot failure.
+
+No complete tenant baseline is returned as one actor result or one WebSocket
+frame. Memory and transport work remain bounded by the materialization,
+actor-page, aggregate bridge, deadline, and wire-frame limits. If one
+policy-projected row cannot
+fit in an otherwise empty chunk, or the staged transfer violates its table,
+identity, plane, or frame contract, the server closes with terminal Sync code
+`4004`. The browser reports the data/configuration failure and does not enter a
+reconnect loop; the schema, projection, or row size must be corrected.
+Permanent managed-file exhaustion while establishing the tenant binding also
+closes once with `4004` and the fixed safe reason
+`Tenant Sync database capacity is exhausted`; it is not reported as a snapshot
+transport failure. Permanent receipt capacity reached by a mutation instead
+returns a negative `SYNC_MUTATION_CAPACITY_EXHAUSTED` acknowledgement and keeps the
+socket open, so the client rolls back that optimistic mutation without a
+reconnect loop.
+
+The managed Sync implementation preserves one authenticated WebSocket while
+multiplexing two logical data planes:
+
+| Plane | Storage owner | Typical tables |
+| --- | --- | --- |
+| `default` | Pinned app-local ReactiveDB | Zero control/platform tables and global/shared application resources |
+| `tenant` | Persistent authority-bound actor lease for the selected tenant file | Tenant Resources with physical storage and `sync`/`all` exposure |
+
+The server splits one `sync.subscribe` request with its trusted Resource
+catalog. Each plane independently chooses snapshot or catch-up and emits its
+own `plane`, `seq`, `epoch`, and `scope`. Legacy messages without `plane` remain
+default-plane messages. A tenant actor wakeup is only a hint: the socket bridge
+pulls contiguous durable replay, applies Resource row filters and field
+projection, then advances the tenant cursor. Actor generation/epoch changes,
+history gaps, malformed continuity, or delivery failure close the connection
+for an authoritative reconnect rather than guessing across a gap.
+
+The browser receives a server-authored `tableSyncPlanes` catalog in
+`window.__PLATFORM_CONFIG__`. `AppProvider` projects the app's local schemas
+through that catalog, excludes known HTTP-only/internal resources, pins
+SDK-owned platform tables to `default`, and configures the Sync client. The
+client sends both reconnect cursors in one handshake and maintains independent
+epoch, scope, and sequence state for each non-empty plane. It reports the
+connection baseline ready only after every expected non-empty plane has
+accepted a snapshot or catch-up. Plane-local reset and stream validation cannot
+purge or advance the other plane.
+
+Mutation routing is also catalog-derived. The browser includes the resolved
+plane as a protocol assertion, but the server independently classifies the
+table and rejects a mismatch; neither the message nor browser state can select
+a database. Tenant mutations run Resource and Sync policy, actor-side schema
+validation, conditional row assertions, authority revalidation, and the
+tenant writer FIFO. The origin socket consumes the complete ordered durable
+prefix through its commit before receiving a canonical acknowledgement, so a
+later acknowledgement cannot leap over unseen tenant changes. The client
+always clears the matching optimistic mutation on a definitive acknowledgement,
+but applies its canonical row only when the acknowledgement sequence is newer
+than that plane's accepted cursor.
+
+Read authorization is fenced at delivery, not only when a subscription starts.
+When Resource or platform filters/projectors are installed, the policy adapter
+must provide a comparable read-authority fingerprint and a synchronous live
+validator; otherwise the socket fails closed. The fingerprint composes the
+relevant Resource policy/user-property state with platform membership/reset
+revisions. Zero rechecks it after asynchronous reads, drains, filters, and
+projectors and immediately before sending snapshot chunks, catch-up/live rows,
+deferred rows, or a row-bearing mutation acknowledgement. A change closes the
+scope with `Sync read authority changed`; the client purges the affected
+authorization scope instead of displaying a row authorized by stale state.
+Unfiltered legacy Sync remains compatible, but a custom filtered/projected
+adapter cannot opt out of comparable delivery authority.
+
+Tenant selection changes remain authorization-scope replacements. The client
+freezes writes, cancels scope-owned work, discards the old authorization data,
+reconnects with the replacement credentials, and accepts purging baselines for
+the new scope. The server never relabels a tenant A cursor as tenant B, and a
+tenant database binding is created only from the verified socket authority.
 
 ## Authentication and Tenant Routing
 
@@ -758,14 +1244,145 @@ Mutation and command receipts are therefore persisted in the same database
 transaction as their effects. Retrying the same idempotency key returns the
 recorded result without applying the operation twice.
 
-Database failures report an explicit outcome:
+There are two internal implementations relevant to generated Resources:
+
+- The actor operation ledger stores ordinary async `zero.data` mutation and
+  command keys with realm/operation fingerprints. Physical tenant Resources
+  use a private trusted wrapper around that ledger so the receipt commits in
+  the same tenant database transaction as the actor effect. That wrapper is
+  not exposed through `zero.data` or the public async client.
+- Generated Resource mutations on the pinned default database—including
+  global and shared-row Resources—use a private default Resource receipt table.
+  ReactiveDB applies the row effect and canonical receipt in one transaction.
+
+For generated Resources, both implementations namespace the public key by
+stable principal and verified realm, bind it to a separate canonical
+fingerprint of resource/action/row/input, and perform lookup before a mutable
+row pre-read. An exact hit returns the stored effect, not a later row read.
+Current session/tenant authority and Resource policy are rechecked using the
+original action's policy shape—update/delete use the immutable preimage; create
+uses its original logical input—and current field projection is applied to the
+canonical committed row before a row response is returned. Token/session
+generations participate in live fencing but not the durable key namespace, so
+a legitimate exact retry survives rotation. A direct `zero.data` caller still
+owns its explicit actor idempotency key inside the already-bound database; it
+does not gain the private Resource principal namespace.
+
+The actor receipt ledger has four independent hard bounds:
+
+| Bound | Export | Value |
+| --- | --- | ---: |
+| Permanent receipt identities per physical database | `DATABASE_WRITER_MAX_RECEIPT_KEYS` | 1,000,000 |
+| Retained full results | `DATABASE_WRITER_MAX_RECEIPTS` | 10,000 |
+| One encoded actor receipt result | `DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES` | 8 MiB |
+| Aggregate encoded retained results | `DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES` | 64 MiB |
+
+Before inserting a result, the writer atomically converts the oldest retained
+results, ordered by durable monotonic insertion ordinal, into compact permanent
+tombstones until both the result-count and aggregate-byte bounds fit. A
+tombstone keeps the key identity, realm/operation fingerprints, insertion
+ordinal, timestamp, and schema version, but removes the result body and final
+sequence. The 8 MiB individual bound applies to encoded receipt JSON; it is
+large enough for the existing bounded actor result after worst-case JSON string
+escaping, while the aggregate bound prevents 10,000 maximum-size results from
+accumulating.
+
+Tombstones are never silently deleted. Once the one-million-key bound is
+reached, an unseen key fails before application mutation execution with
+non-retryable `DATABASE_CAPACITY_EXHAUSTED`, `outcome: 'not-started'`, and
+closed `capacityType: 'receipts'` / positive `capacityLimit` details. Exact full
+receipt replay still succeeds at the bound, an exact tombstone still returns
+the fixed expired-result outcome, and reuse with a different fingerprint still
+conflicts. This preserves never-reexecute semantics while placing a hard ceiling
+on receipt identity growth; operators must alert on `totalKeys / keyLimit` and
+plan a deliberate database lifecycle before exhaustion.
+
+Private validated aggregate statistics and exact SQLite triggers maintain key,
+retained-result, and retained-byte counts in the same transaction as insertion
+or compaction. Normal writes never scan the permanent tombstone population;
+they read constant-size statistics and scan at most the bounded retained-result
+window when compaction is necessary. Compaction telemetry reports aggregate
+key/result/byte counts, all active limits, and the count/bytes pruned—never
+receipt identities. Existing exact version-1 ledgers migrate transactionally to
+the version-2 rows and initialize this private metadata. Valid replay results
+receive deterministic legacy ordering by creation time and binary key;
+malformed rows, missing/private-schema triggers, or incompatible statistics
+fail startup without partially migrating the ledger. A legacy ledger already
+above the hard permanent-key ceiling also fails migration atomically: Zero
+cannot preserve every identity while claiming a smaller durable bound.
+
+The private default/shared-row Resource ledger enforces the equivalent four
+bounds in the pinned default ReactiveDB, with Resource-specific exports and its
+existing 4 MiB canonical-effect limit:
+
+| Bound | Export | Value |
+| --- | --- | ---: |
+| Permanent default Resource receipt identities | `RESOURCE_DEFAULT_RECEIPT_MAX_KEYS` | 1,000,000 |
+| Retained full Resource results | `RESOURCE_DEFAULT_RECEIPT_RETAINED_LIMIT` | 10,000 |
+| One canonical Resource effect | `RESOURCE_DEFAULT_RECEIPT_MAX_RESULT_BYTES` | 4 MiB |
+| Aggregate encoded retained Resource results | `RESOURCE_DEFAULT_RECEIPT_MAX_RETAINED_BYTES` | 64 MiB |
+
+Its validated private statistics row and exact insert/update/delete guards are
+committed in the same ReactiveDB transaction as the application effect. Normal
+admission is constant-time with respect to permanent tombstones; byte/count
+compaction visits only the bounded retained-result window. If the permanent-key
+ceiling is reached, an unseen generated Resource mutation fails before its
+application callback with non-retryable HTTP `503`, code
+`resource-idempotency-capacity-exhausted`, and a fixed safe message. Exact
+replay, expired-result lookup, and changed-fingerprint conflict detection still
+work at the ceiling. The app-local
+`resource.receipt.capacity_exhausted` event carries only bounded declarative
+Resource context and the aggregate limit—never the key, principal, SQL, row, or
+caught error. Default-plane `database.receipt.compacted` events carry the same
+aggregate key/result/byte counts, all four limits, and pruned count/bytes as
+actor compaction, plus only bounded Resource/action/plane labels. Incompatible
+metadata, accounting, or trigger definitions fail closed without deleting a
+receipt identity.
+
+Database failures report an explicit commit assertion when one is known:
 
 | Outcome | Meaning |
 | --- | --- |
 | `not-started` | Work was rejected, canceled, or timed out while still queued. |
 | `not-committed` | The actor confirmed rollback or rejected the operation before commit. |
-| `committed` | The durable receipt confirms commit. |
 | `unknown` | The actor disappeared or the response boundary failed after dispatch. Retry only with the same idempotency key. |
+| `null` | The error class makes no commit assertion, such as a history gap. |
+
+A successful `DatabaseCommitResult` or durable receipt—not an error outcome—is
+the positive proof that a mutation committed.
+
+An unknown outcome is not a failed mutation acknowledgement. For actor-backed
+Sync, Zero closes the socket with a recoverable service-restart boundary and
+leaves the optimistic mutation pending. After the new authoritative baseline,
+the client retransmits the same mutation reference and operation fingerprint;
+the server looks up the durable logical receipt before reading current row
+state. A receipt hit is reauthorized against its immutable preimage/committed
+row and returns the canonical acknowledgement without applying the write a
+second time. A caller must never replace the reference or change the mutation
+while recovering an unknown outcome.
+
+If the matching result has aged out of the full-result window, its tombstone
+still prevents re-execution. The database reports non-retryable
+`DATABASE_OUTCOME_UNKNOWN` with `outcome: 'unknown'` and safe detail
+`receiptState: 'expired'`; a different fingerprint remains a
+`DATABASE_CONFLICT` with `idempotency-key-reused`. After a fresh actor-backed
+Sync baseline, the same expired mutation receives a negative acknowledgement
+with `SYNC_MUTATION_RECEIPT_EXPIRED`. The client then removes that old pending
+optimistic mutation and treats the synchronized state as authoritative; it
+does not reconnect or execute the mutation again.
+
+Generated Resource HTTP mutations use the same rule through
+`Idempotency-Key`. `ResourceMutationError.idempotencyKey` exposes the exact
+generated or explicit key when a response is unavailable, allowing the caller
+to retry the same logical action. Inside one stable principal-and-tenant
+namespace, reusing a key for different canonical input, resource, action, or
+row is a `409` conflict. Principal and tenant are namespace boundaries, so one
+caller's private receipt cannot expose or conflict with another caller's
+receipt.
+An exact Resource retry whose full result has expired instead returns
+non-retryable `409 resource-idempotency-result-expired`. The caller must read
+the authoritative resource state before deciding whether to submit new work
+under a new key; retrying the expired key can never re-execute the old write.
 
 On process exit, IPC disconnect, protocol failure, or an unexpected actor
 close, the coordinator:
@@ -780,6 +1397,24 @@ close, the coordinator:
 7. Publishes a new actor generation and sync epoch.
 8. Replays contiguous durable changes or requires a new snapshot.
 
+Replacement policy is scoped to the failed database entry, not the whole
+coordinator. Attempts wait `initialDelayMs`, then double up to `maxDelayMs`.
+On the `circuitFailureThreshold` attempt and every unsuccessful half-open
+attempt after it, Fabric waits `circuitCooldownMs` before trying again. A
+successful writer/read-side bind resets that entry's retry count to zero.
+Another database continues to use its own actors and queues during this
+cooldown. Per-entry diagnostics expose `restartRetryCount` and the derived
+`restartCircuitOpen` boolean without exposing paths or process identities.
+
+Operations which arrive while a leased entry is waiting for replacement use
+the normal per-database and app-wide queue admission limits. Their individual
+`queueTimeoutMs` and `AbortSignal` remain authoritative; they are never held
+indefinitely by the restart loop. The operation which discovered an ambiguous
+failure receives that original failure and does not silently execute again.
+If a replacement attempt itself fails, waiters on that exact attempt receive
+its retryable startup failure while the entry schedules the next bounded
+attempt. Callers may retry according to the stable error contract.
+
 SQLite rollback on connection loss protects an incomplete transaction, but it
 does not tell the parent whether the commit completed immediately before the
 loss. The receipt protocol resolves that ambiguity on retry.
@@ -790,28 +1425,64 @@ checkpoints the WAL, closes SQLite, and acknowledges completion. The parent
 must reap child processes and must not leave orphan database actors after app
 shutdown or failed startup.
 
+Parent death is fenced independently from IPC cleanup. Every bound actor keeps
+a SHARED transaction open on the private `.zero-internal` liveness database,
+which is forced to rollback-journal mode. Before a replacement coordinator can
+become ready it performs a zero-timeout EXCLUSIVE probe and transactionally
+rotates a private generation token. A still-running orphan therefore produces
+retryable `DATABASE_CONFLICT` with `outcome: 'not-started'`; new writer
+authority is not admitted until every old actor process has exited or cleanly
+released its lease. A bind buffered immediately before parent death also fails
+if it arrives after replacement startup because its generation is stale. Root
+paths, file proofs, logical references, generation or instance IDs, and inode
+values are never attached to that public error or its telemetry.
+
+Hot snapshots legitimately replace the canonical main-file inode. Fabric does
+not weaken the logical binding to accommodate that: the database reference and
+instance ID stay immutable. Only after the previous actor has exact process
+settlement does the coordinator reopen the canonical image, verify that durable
+binding, and refresh the physical device/inode proof for the replacement bind.
+An ambiguous exit, proof, or instance comparison fails closed.
+
+Within one hot actor's startup, migration and initial-durability snapshots can
+also atomically republish the image. The actor retains the prior admitted file
+descriptor until it has opened the new inode, verified both its physical proof
+and immutable logical binding, and swapped to the new guard. It retains the
+final guard through readiness validation and asserts it again immediately
+before publishing the binding. Startup never leaves an image replacement
+unproved between those boundaries.
+
 ## Stable Errors
 
 Multi-database APIs use a stable `DatabaseError` type with a safe message,
-machine-readable code, `retryable` flag, and operation outcome. Initial codes
-should cover:
+machine-readable code, `retryable` flag, and operation outcome. The closed
+`DatabaseErrorCode` union includes:
 
 | Code | Meaning |
 | --- | --- |
 | `DATABASE_CONFIG_INVALID` | Topology or executor configuration is invalid. |
+| `DATABASE_DISABLED` | The requested multi-database capability is not enabled. |
 | `DATABASE_NOT_READY` | The selected database is opening, migrating, quarantined, or otherwise unavailable. |
-| `DATABASE_BACKPRESSURE` | A bounded queue has reached capacity. |
+| `DATABASE_CLOSED` | The coordinator or bound database capability is closed. |
+| `DATABASE_BACKPRESSURE` | Transient queue, actor-slot, binding, or snapshot-session capacity is exhausted. |
+| `DATABASE_CAPACITY_EXHAUSTED` | A permanent managed-file or durable-receipt ceiling is exhausted; closed details identify only `files` or `receipts` and the positive aggregate limit. |
 | `DATABASE_QUEUE_TIMEOUT` | Work did not begin before its queue deadline. |
 | `DATABASE_OPERATION_TIMEOUT` | The caller's operation deadline elapsed after dispatch; write outcome may be unknown. |
+| `DATABASE_EXECUTOR_START_FAILED` | The configured actor process could not start or complete its handshake. |
 | `DATABASE_EXECUTOR_FAILED` | The assigned executor or actor exited or its communication boundary failed. |
+| `DATABASE_PROTOCOL_ERROR` | IPC validation, versioning, generation, or correlation failed. |
 | `DATABASE_OPEN_FAILED` | The actor could not safely open the physical database. |
 | `DATABASE_MIGRATION_FAILED` | The database could not reach the required schema. |
 | `DATABASE_SCHEMA_MISMATCH` | Actor, realm, reader, or file schema generations disagree. |
 | `DATABASE_AUTHORITY_CHANGED` | Live request authority no longer matches the captured authority. |
 | `DATABASE_CONFLICT` | A declarative precondition or conditional mutation did not match. |
 | `DATABASE_HISTORY_GAP` | Durable incremental changes cannot cover the requested cursor. |
-| `DATABASE_PROTOCOL_ERROR` | IPC validation, versioning, or correlation failed. |
-| `DATABASE_CLOSED` | The coordinator or bound database capability is closed. |
+| `DATABASE_PAYLOAD_INVALID` | An operation is not part of the canonical serializable contract. |
+| `DATABASE_PAYLOAD_LIMIT` | A valid-shaped operation exceeds a payload bound. |
+| `DATABASE_RESULT_LIMIT` | An actor result exceeds its bounded result contract. |
+| `DATABASE_OPERATION_UNSUPPORTED` | A table, query, command, or operation is not registered for the realm. |
+| `DATABASE_TRANSACTION_EXPIRED` | A transaction-scoped operation crossed its allowed lifetime. |
+| `DATABASE_TRANSACTION_STALE` | A transaction or generation token no longer names the active boundary. |
 | `DATABASE_OUTCOME_UNKNOWN` | A dispatched write may have committed; retry with the same idempotency key. |
 
 Filesystem-specific path errors may remain a more detailed internal cause.
@@ -824,33 +1495,37 @@ Every coordinator is app-local, so database events must use that app's
 safe telemetry envelopes to the parent; it does not choose a process-global
 sink.
 
-The central `OBS_CODES` registry should define stable events for:
+The central `OBS_CODES` registry and closed `DatabaseObservabilityEvent` union
+define the events emitted by the current runtime:
 
-- coordinator configured, started, draining, and stopped;
-- writer and reader actor started, ready, exited, and restarted;
-- database open, close, open failure, and quarantine;
-- migration started, completed, and failed;
-- queue saturation and queue timeout;
-- operation failure and slow operation;
-- unknown mutation outcome;
-- change replay and history gap;
-- graceful and forced shutdown failures.
+- coordinator configured, started, draining, stopped, and failure;
+- writer and reader actor restart and failure;
+- database runtime open, close, open failure, and eviction;
+- queue saturation, queue timeout, and permanent-capacity exhaustion;
+- operation failure and unknown operation outcome;
+- change wakeup, replay failure, history gap, and tenant-snapshot failure;
+- receipt lookup failure, expiry, and compaction accounting;
+- selected runtime placement and configured aggregate file capacity;
+- hot periodic dirty/clean state, snapshot start/finish, and fatal durability
+  failure.
 
-Safe metadata includes:
+The event boundary accepts only its declared fields. Current metadata is the
+opaque, pseudonymous, validated `databaseRef`; closed placement, durability,
+role, phase, reason, operation, and capacity enums; bounded
+slot/generation/count/limit,
+duration, queue, sequence-range, and aggregate receipt-compaction numbers; and,
+for failure variants, normalized `errorCode`, `retryable`, and `outcome`.
+There is no process identifier, backend label, SQLite error class, generic
+metadata bag, or caller-provided message field.
 
-- non-sensitive database reference;
-- executor slot, backend, process identifier where safe, and actor generation;
-- operation class, never SQL or row contents;
-- queue depth;
-- sequence range;
-- duration;
-- retry count;
-- normalized SQLite error class.
-
-Do not emit logical tenant IDs, database names, paths, SQL strings, query
+Sanitization occurs at this producer-facing database event boundary, before an
+event reaches the app sink. Unknown fields, accessors/exotic records, invalid
+enums, unsafe references, and out-of-range numbers are rejected. A caught value
+is normalized immediately and only its stable code/retry/outcome projection is
+emitted; its message, stack, cause, and details are not forwarded. Producers
+must never place logical tenant IDs, database names, paths, SQL strings, query
 inputs, rows, credentials, tokens, invitation data, or raw authorization
-references. Raw errors must pass the existing sink redaction boundary and must
-not become public error details.
+references into declared metadata fields.
 
 The coordinator protocol is a useful internal event boundary, but this phase
 does not declare a general Zero event bus. A later logging, metrics, and event
@@ -916,48 +1591,153 @@ File/WAL deployment requires:
   filesystem;
 - backup behavior which understands an active WAL database.
 
+### Local filesystem trust boundary
+
+Fabric defends its managed root against ordinary aliasing and handoff errors:
+canonical direct-child filenames, private permissions, root ownership locking,
+final-component no-follow opens, retained device/inode descriptors, mandatory
+single-link files, pre/post-open path checks, immutable per-image logical
+identity, and actor-generation liveness fencing. Copying one valid image under
+another tenant filename, swapping a pathname during handoff, or hardlinking one
+SQLite main file into two writer lanes fails closed.
+
+Bun SQLite currently opens a pathname and does not expose an API for adopting
+Fabric's already-verified descriptor. The retained descriptor plus immediate
+after-open proof is therefore best-effort against the tiny interval inside the
+native path open. The supported deployment boundary requires the Fabric root
+and all of its ancestors to be writable only by the Zero service OS identity
+and trusted operators. A hostile process with the same UID, root privileges,
+or write access to those directories is outside this in-process check's threat
+model; isolate such tenants at the OS/container/volume boundary. Do not place a
+Fabric root on a filesystem with unstable inode identity, non-POSIX link/lock
+semantics, or unqualified network-filesystem SQLite behavior.
+
 Coolify documentation and templates must configure those requirements
 explicitly. Native-IPC subprocess actors do not require externally exposed
 network ports, but their process count, memory, file descriptors, signals, and
 shutdown/reaping behavior must be included in capacity planning.
 
-## Hybrid Hot/File Placement — Required Later Phase
+Tenant main files and their WAL, SHM, or rollback-journal companions are
+runtime data and must never enter source control. Zero's scaffolder ignores the
+default `data/` tree and common `.db`/`.sqlite` variants; an existing app which
+chooses a custom Fabric root must add an equivalent project-specific ignore.
 
-The current actor/concurrency phase intentionally opens named and tenant
-databases in file/WAL mode. It does not load tenant databases into RAM, choose
-hot tenants, spill cold tenants, or migrate a database between placements.
+## Hybrid Hot/File Placement
 
-The overall initiative remains incomplete until Zero adds a bounded hybrid
-placement layer. That phase must define:
+Fabric can place each named or tenant database in direct file/WAL storage or in
+Zero's RAM-active hot runtime. A hybrid selector makes that decision from the
+opaque logical binding reference. It is a classification policy, not an
+automatic heat detector: Fabric does not measure tenants and promote, demote,
+or spill them on its own.
 
-- a declarative placement policy per database realm and, where appropriate,
-  per trusted database binding;
-- explicit `file` and `hot` eligibility rather than an implicit mode switch;
-- memory budgets, admission limits, and eviction behavior for hot databases;
-- snapshot intervals and final-snapshot failure handling;
-- promotion from file/WAL to a hot runtime;
-- demotion from hot runtime back to a durable file boundary;
-- crash-recovery semantics and accepted loss windows for hot placement;
-- placement-aware executor scheduling and diagnostics;
-- migration and schema parity between hot and file runtimes;
-- realtime sequence and epoch behavior across a placement transition;
-- backup, restore, doctor, observability, and operational controls;
-- tests proving that placement changes never create two active writers or lose
-  acknowledged durability outside the selected hot-mode contract.
+### File placement
 
-Hybrid does not mean that every tenant should be hot. Sensitive or strict
-durability workloads may deliberately remain file/WAL. Small active databases
-may be promoted when an application opts into the hot durability tradeoff.
-Zero-owned control, logging, metrics, or plugin realms may later select their
-own placement through the same policy.
+File placement is the conservative default:
 
-Until that phase lands:
+- SQLite commits directly to the database/WAL durability boundary.
+- One FIFO writer actor owns the file.
+- With `readers: true`, one separate read-only actor per active file can read a
+  committed WAL snapshot while the writer is busy.
+- Separate physical files have separate lock domains and can write
+  concurrently when coordinator capacity is available.
 
-- topology documentation must say `file/WAL only` for named and tenant files;
-- config must reject hot/ephemeral named-database settings;
-- diagnostics must not describe the current manager as hybrid;
-- benchmarks must report only the qualified file/WAL executor behavior;
-- the multi-database initiative must not be marked fully complete.
+Deployment and backup procedures must preserve the database plus active
+WAL/SHM companions and respect the single-parent ownership boundary.
+
+### Hot placement and `maxBytes`
+
+Hot placement restores a durable SQLite image into a RAM-active connection and
+uses the same writer-side ReactiveDB ordering, migrations, receipts, Sync log,
+and schema validation as file placement. It intentionally has no separate
+reader actor: all reads and writes use the hot writer lane. The top-level
+`readers` switch affects only entries placed on file/WAL.
+
+Every explicit hot policy requires a positive safe-integer `maxBytes`; the
+`'hot'` shorthand uses 64 MiB per database. Zero enforces this as a hard
+logical SQLite image/page budget during restore, migrations, ReactiveDB schema
+initialization, runtime writes, and snapshot serialization. App migrations
+cannot enlarge `PRAGMA max_page_count` past the captured budget. A crash-left
+WAL is recovered/checkpointed before the restored logical image is measured,
+so raw main-file-plus-WAL bytes do not falsely reject a valid image.
+
+`maxBytes` is not a promise about process RSS. SQLite, Bun, actor state,
+queries, result buffers, and snapshot I/O add memory overhead. The product of
+`maxDatabases` and `hot.maxBytes` is a useful worst-case configured image
+budget if every active entry can be hot, not a global byte-level admission
+scheduler. Size both bounds from measured production behavior.
+
+### Hot durability policies
+
+Every hot entry writes an initial durable image after restore/migration before
+the actor is published. Its configured durability then controls when later
+commits become snapshots:
+
+| Policy | Acknowledgement boundary | Crash contract |
+| --- | --- | --- |
+| `on-write` | Every non-replayed commit publishes and fsyncs an atomic snapshot before success is returned. | No acknowledged-write loss is accepted by the configured policy. A post-commit snapshot failure reports an unknown outcome and retires the unsafe generation. This default is the recommended hot policy when callers cannot accept rolled-back acknowledged state. |
+| `periodic` | A commit may be acknowledged before its image publishes, within the strict configured `snapshotIntervalMs` window. | A crash or runtime durability failure may lose acknowledged writes not covered by the latest successful snapshot, but the oldest uncovered acknowledgement may not remain dirty beyond the configured interval. |
+| `final` | Ordinary commits do not snapshot. A clean close must publish a final image before the actor acknowledges shutdown. | A crash can lose every acknowledged write since the last durable image. Use only when that explicit loss model is acceptable. |
+
+Periodic mode defaults to a 30-second interval. The first commit not covered by
+the published image marks the actor dirty *before* its response is exposed and
+starts an asynchronous snapshot immediately. Later commits never extend the
+oldest dirty deadline. A commit which lands during snapshot I/O stays dirty and
+forces a follow-up capture. If the current image is already at the interval
+boundary, the writer performs a synchronous snapshot fence before returning.
+The parent coordinator independently tracks the oldest dirty deadline and
+retires the generation if it reaches `snapshotIntervalMs`; a separate
+`snapshotTimeoutMs` watchdog bounds one snapshot operation. The watchdog must
+be at least the interval and defaults to twice the cadence with a two-minute
+minimum, capped at the portable timer maximum.
+
+A periodic runtime snapshot failure or missed dirty deadline retires and
+settles that generation, then the coordinator automatically reopens the last
+durable image under a new actor generation. Tenant Sync resets and resnapshots
+from that authority. Any acknowledgements newer than the durable
+image can disappear—up to the configured oldest-dirty window—and an ordinary
+HTTP caller can later observe the rolled-back state. Periodic mode is therefore
+bounded-loss, not lossless; choose the default `on-write` policy when an
+acknowledged mutation must survive actor/process failure.
+
+`On-write` already has a current durable commit image before each successful
+mutation response. `periodic` and `final` require a final graceful-close
+snapshot to treat release as cleanly durable. A periodic or final
+graceful-close proof failure quarantines the entry
+instead of reopening it as though clean shutdown succeeded. A forced actor exit
+cannot manufacture this proof. That quarantine belongs to the live coordinator
+process; it is not an on-disk poison marker. If the entire app process then
+restarts, Fabric follows the configured crash contract and opens the last
+durable image: periodic may lose only its documented uncovered window, while
+`final` may lose every write since the generation opened. Applications that
+cannot accept either crash contract must use `on-write`.
+
+Placement remains pinned while an entry is owned. Consequently the current
+implementation does not need to reconcile live sequence/epoch state across a
+placement transition and cannot create simultaneous hot and file writers by
+transitioning a live entry. Clean eviction may re-evaluate the selector on the
+next open, but Fabric provides no online promotion/demotion workflow, data-copy
+or cutover API, or operator fleet migration.
+
+Hybrid does not mean every tenant should be hot. Strict disk-first workloads
+can remain file/WAL; carefully bounded workloads can opt into a documented hot
+durability policy. Zero-owned control, auth, logging, metrics, and plugin
+realms do not move under this selector today.
+
+### KV integration boundary
+
+Zero's current [KV service](../kv.md) is an optional, app-local, memory-first
+store with a journal/checkpoint durability path. It is mounted after the core
+database composition, so neither the actor foundation nor the hybrid
+placement selector may depend on KV being present. KV may later hold
+non-authoritative heat/activity hints, compiled placement caches,
+retry/backoff state, or diagnostic TTLs.
+
+KV must never hold tenant rows, routing authority, database ownership or
+leases, authorization fences, replay cursors, mutation/idempotency receipts,
+or distributed locks. Placement selection and recovery state remain
+deterministic outside KV. Losing or rebuilding KV may affect performance only;
+it must not change ownership, authorization, durability, ordering, or
+correctness.
 
 ## Rollout Phases
 
@@ -982,7 +1762,8 @@ deployment-matrix and package acceptance remain release gates.
 
 - `DatabaseExecutor` and executor-factory boundaries.
 - Bun subprocess/native-IPC concurrency and compiled self-spawn proof: passed.
-- Writer-actor coordinator and fair bounded scheduling.
+- Writer-actor coordinator, per-database FIFO lanes, and bounded immediate
+  actor-capacity admission.
 - Separate read-only actor pool.
 - Snapshot, read-your-writes, and strong consistency.
 - Async CRUD, declarative batch, and registered query/command APIs.
@@ -1001,42 +1782,62 @@ overall multi-database initiative.
 
 ### Phase 2 — Realtime execution boundary
 
-Status: not implemented; the durable replay primitive and per-file sequence
-contract required by this phase are implemented in Phase 1.
+Status: implemented on the feature branch with focused server, browser, policy,
+and actor integration coverage; full release/package acceptance remains open.
 
-- Extract Sync storage operations behind an asynchronous executor.
-- Per-database socket binding, snapshot, replay, and change routing.
-- Policy-filtered reads and conditional mutations.
-- Actor-generation recovery and history-gap resnapshot behavior.
-- Per-database mutation receipts and origin handling.
+- One control/default plus tenant data plane multiplexed on one authenticated
+  WebSocket.
+- Persistent per-socket tenant binding, actor snapshot, durable replay, wakeup,
+  and release lifecycle.
+- Independent per-plane epoch, scope, sequence, baseline, catch-up, reset, and
+  browser stream guards.
+- Server-authored table routing injected through `AppProvider`; browser plane
+  values remain assertions rather than routing authority.
+- Resource-policy-filtered reads, field projection, conditional mutations,
+  commit-time authority checks, and canonical acknowledgements.
+- Durable mutation receipt replay, origin handling, unknown-outcome reconnect,
+  and actor-generation/history-gap resnapshot behavior.
 
 ### Phase 3 — Auth-derived tenant files
 
-Status: partially implemented.
+Status: core authenticated request, Resource, lazy-query, and realtime routing
+are implemented on the feature branch. Tenant fleet lifecycle and operational
+administration remain open.
 
 - Bind databases only from verified tenant authority. Implemented in the
-  manager; ordinary request projection is in progress.
-- Install the request, websocket, native, extension, mobile, and background
-  projections.
+  manager, ordinary route `zero.data` projection, generated Resource HTTP CRUD,
+  lazy `/api/data` reads, and actor-backed WebSocket Sync.
+- Use the same bearer/session authority boundary for browser, native, mobile,
+  extension, HTTP, WebSocket, and trusted background-service projections.
+  Ordinary transports never accept a database or tenant selector.
 - Add the authority mutation gate to every relevant control-plane mutation.
-  The ReactiveDB final-commit fence is implemented; the complete managed-auth
-  write-path audit remains a release gate.
-- Adapt resources and built-in services which currently assume one synchronous
-  ReactiveDB.
+  The ReactiveDB final-commit fence and tenant actor commit fence are
+  implemented; the complete managed-auth write-path audit remains a release
+  gate.
+- Adapt remaining built-in services which currently assume one synchronous
+  ReactiveDB. Ordinary route data, generated Resource HTTP, lazy data-query,
+  and WebSocket Sync are adapted; each additional service must use the trusted
+  service-data scope instead of selecting a database directly.
 - Add tenant lifecycle, suspension, deletion, export, backup, and restore
   behavior.
 - Add admin/tenant diagnostics and operational controls.
 
 ### Phase 4 — Hybrid hot/file placement
 
-Status: required and not implemented.
+Status: bounded placement and durability are implemented on the feature branch;
+full release/package acceptance remains open.
 
-- Implement the bounded placement policy described above.
-- Prove promotion, demotion, restart, durability, and realtime behavior.
-- Add capacity planning, metrics, doctor checks, and operator controls.
+- File, hot shorthand, and synchronous opaque-ref hybrid policy.
+- Per-entry placement pinning with clean-eviction re-evaluation.
+- Hard logical-image bounds and placement-aware reader scheduling.
+- On-write, strict periodic-window, and final-close durability contracts.
+- Restart/restore, WAL recovery, durability failure, observability, and Doctor
+  coverage.
 
-Only after this phase and its acceptance tests pass can the overall
-multi-database initiative be described as complete.
+Online promotion/demotion and automatic heat/spill policy are not part of this
+phase. Operator-grade migration, backup/restore, fleet administration, and the
+supported package/OS matrix remain release gaps, so the broader initiative is
+not yet a released platform claim.
 
 ### Phase 5 — Realm expansion
 
@@ -1100,7 +1901,8 @@ option; it does not make it a silent fallback from subprocess failure.
    released.
 5. Release both and verify their independent commits and sequences.
 
-The current same-thread callback manager cannot pass this test.
+The actor-backed coordinator passes this boundary with distinct writer
+subprocesses; the assertion remains part of pinned-runtime qualification.
 
 ### Same-file reader overlaps a writer
 
@@ -1119,12 +1921,13 @@ The current same-thread callback manager cannot pass this test.
 3. Assert the second write does not enter SQLite before the first releases.
 4. Verify commit and change sequence order.
 
-### Backpressure and fairness
+### Backpressure and admission
 
 - Block every writer slot and fill bounded queues.
 - Verify overflow and queue deadlines return their stable error codes.
 - Verify cancellation removes only undispatched work.
-- Verify a hot database cannot starve a different database.
+- Verify an already-admitted database uses its own FIFO while a new database
+  receives retryable backpressure when every slot is active and non-evictable.
 - Verify no runtime with in-flight work is evicted.
 
 ### Failure and ambiguity
@@ -1141,12 +1944,17 @@ The current same-thread callback manager cannot pass this test.
 - Keep different databases' sequences and subscribers independent.
 - Recover an actor by replaying the durable log after the delivered cursor.
 - Force a retained-history gap and verify an authoritative resnapshot.
-- Verify a snapshot and represented sequence come from one WAL transaction.
+- Verify a tenant baseline captures head `H`, pages one immutable snapshot
+  exactly at `H`, applies that snapshot atomically after its end frame, and
+  then replays every contiguous durable change after `H`.
+- Verify every serialized begin/chunk/end frame stays at or below 900 KiB and
+  one untransportable projected row closes once with terminal code `4004`.
 
 ### Migrations and readers
 
 - Race first opens of one database and prove one migration owner.
-- Migrate two different files concurrently within the migration limit.
+- Migrate two different files concurrently when actor capacity admits both
+  database entries.
 - Prevent readers from opening before schema readiness.
 - Close or refresh reader handles on a schema-generation change.
 - Quarantine a failed migration without retry spinning.
@@ -1165,67 +1973,72 @@ The current same-thread callback manager cannot pass this test.
 
 ### Hybrid placement acceptance
 
-These tests belong to Phase 4 and are required before overall completion:
+The feature branch must retain deterministic coverage for:
 
-- bounded hot admission and deterministic eviction;
-- file-to-hot promotion from a consistent durability boundary;
-- hot-to-file demotion with a verified final snapshot/file result;
-- crash restore within the configured hot loss window;
-- no simultaneous hot and file writers for one database;
-- sequence, epoch, and realtime correctness across placement transitions;
-- placement-aware backup, restore, diagnostics, and observability.
+- shorthand and explicit policy normalization, invalid selector results, and
+  opaque-ref helper matching;
+- per-entry placement pinning across crash replacement and policy
+  re-evaluation after clean eviction;
+- hard hot image bounds during restore, migration, schema creation, writes,
+  and snapshot serialization;
+- on-write acknowledgement durability and unknown-outcome handling;
+- the strict periodic oldest-dirty deadline, immediate/follow-up capture,
+  separate I/O watchdog, crash loss window, and failure retirement;
+- final-mode crash loss plus required clean-close snapshot;
+- hot writer-only scheduling and file-only reader actors;
+- sequence, receipt, authority, and realtime behavior in each placement; and
+- placement-safe diagnostics and observability without logical IDs or paths.
 
-## Current Branch Work: Keep and Replace
+Online file-to-hot promotion, hot-to-file demotion, automatic spill, and
+placement-aware fleet backup/restore are explicit non-goals of the implemented
+runtime. They require separate operator design and must not be inferred from a
+selector changing after an entry has already opened.
 
-### Keep and evolve
+## Implemented Branch Surface and Remaining Work
 
-- `src/databases/database-file.ts`: identifier normalization, domain-separated
-  filename encoding, containment, symlink/type checks, and private
-  permissions.
-- The `DatabaseRuntime` concept: move it behind the writer-actor entry and add
-  stable errors, app-local telemetry relaying, and actor lifecycle semantics.
-- Immutable migration-registry composition in `Migrator`.
-- The injected-ReactiveDB ownership seam in `createSyncPlugin()` for default
-  app composition and tests.
-- Configuration allowlisting and validation-before-filesystem-work.
-- The multi-tenant request-facade rule which blocks unscoped raw database
-  capabilities.
-- Isolation, persistence, WAL, sequence, epoch, migration, and cleanup tests,
-  adapted to execute through executors.
+The feature branch now composes the following production-shaped boundaries:
 
-### Replace before publication
+- validated pseudonymous-reference file resolution, private root ownership,
+  and one writer owner per physical database;
+- bounded subprocess writer/reader actors behind `DatabaseCoordinator` and
+  `DatabaseManager`;
+- bounded file/hot placement selected synchronously from opaque binding refs,
+  with per-entry pinning and explicit hot durability contracts;
+- side-effect-free `defineDatabaseRealm()` schema, migration, query, and
+  command registration;
+- authority-derived short-lived request bindings plus persistent per-socket
+  tenant Sync bindings;
+- asynchronous `zero.data`, generated Resource CRUD, `/api/data`, and
+  actor-backed Sync without exposing a manager, path, SQLite handle, or tenant
+  selector to application requests;
+- exact Resource-to-realm topology validation, exposure-aware Sync catalogs,
+  server-injected browser plane routing, and legacy single/default-plane
+  compatibility;
+- app-local structured errors and observability, bounded queues, generation
+  recovery, deterministic shutdown, and focused real-subprocess tests.
 
-- `DatabaseManager.acquire()` returning an in-process lease.
-- `DatabaseLease` exposing runtime, ReactiveDB, and SQLite handles.
-- `DatabaseManager.withDatabase(id, callback)`.
-- The main-thread named-runtime factory in `createApp()`.
-- `ServerRouteServices.databases: DatabaseManager` as an ordinary public
-  application service.
-- Inline function-bearing named `tables` and `migrations` as the final actor
-  configuration.
-- Manager tests which interleave synchronous calls but describe the result as
-  concurrent execution.
-- Documentation which treats separate SQLite lock domains as proof of
-  JavaScript execution concurrency.
-
-The safe file and runtime work is useful foundation. The callback manager is a
-prototype which established lifecycle requirements; it is not the production
-surface and should be removed or made strictly internal while the executor-
-backed coordinator replaces it.
+Publication still requires the complete supported-platform package/bundle/
+deployment matrix, operator-grade tenant fleet migration and lifecycle tools,
+backup/restore and suspension/deletion workflows, and production acceptance of
+the implemented placement policies. Distributed root ownership, online
+placement migration, automatic promotion/spill, and realm separation for
+Zero-owned subsystems are not implemented. Those remaining gates do not make
+Resource, tenant Sync, or bounded hybrid routing "pending"; they constrain the
+narrower release claims that may be made about the branch.
 
 ## Release Boundary
 
 The following claims have different completion points and must not be
 collapsed into one status:
 
-| Claim | Required phase |
-| --- | --- |
-| Multiple isolated SQLite files can be resolved and opened safely | Phase 0 |
-| Different files execute writes concurrently and the same file supports WAL readers | Phase 1 |
-| Each file participates in Zero realtime snapshot and ordered change delivery | Phase 2 |
-| Authenticated tenant requests are automatically and safely routed to their file | Phase 3 |
-| Multi-database mode supports bounded policy-driven hot and file placement | Phase 4 |
-| The overall multi-database initiative is complete | Phases 0–4, documentation, and full acceptance |
+| Claim | Required phase | Feature-branch status |
+| --- | --- | --- |
+| Multiple isolated SQLite files can be resolved and opened safely | Phase 0 | Implemented |
+| Different files execute writes concurrently and the same file supports WAL readers | Phase 1 | Implemented; release matrix pending |
+| A selected tenant file participates in Zero realtime snapshot, catch-up, mutation, and ordered change delivery | Phase 2 | Implemented; release acceptance pending |
+| Authenticated tenant requests are automatically and safely routed to their file | Phase 3 | Core data paths implemented; fleet lifecycle pending |
+| Multi-database mode supports bounded policy-driven hot and file placement | Phase 4 | Implemented; release acceptance pending |
+| The overall multi-database initiative is a released platform contract | Phases 0–4, documentation, package/OS matrix, and operational acceptance | Not complete |
 
 Until the relevant phase passes its tests, Zero's public documentation and
 release notes must use the narrower completed claim.

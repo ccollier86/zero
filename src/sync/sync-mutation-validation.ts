@@ -114,11 +114,11 @@ function validateCompleteRow(
       ok: true,
       row: validator.encodeRow({ ...decoded, ...result.output }),
     };
-  } catch (error) {
-    return invalid(
-      table,
-      error instanceof Error ? error.message : 'logical row validation failed',
-    );
+  } catch {
+    // Codec/validator implementations are app extension points. Their thrown
+    // messages may contain row values, SQL, paths, or secrets, so only an
+    // explicit validation result may contribute client-facing issue text.
+    return invalid(table, 'logical row validation failed');
   }
 }
 

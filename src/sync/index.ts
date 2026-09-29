@@ -68,10 +68,12 @@ export {
 } from './state-handler';
 
 // ─── Wire Protocol Types ──────────────────────────────────────────────────
+export { SYNC_ACK_ERROR_CODES } from './types';
 export type {
   SyncSnapshotMessage,
   SyncChangeMessage,
   SyncAckMessage,
+  SyncAckErrorCode,
   SyncCatchupMessage,
   SyncAuthMessage,
   SyncAuthReadyMessage,

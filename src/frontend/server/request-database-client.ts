@@ -8,7 +8,9 @@
  */
 
 import type { ServiceDataScope } from '../../auth/service-data-scope';
+import { DatabaseError } from '../../databases/database-error';
 import type { DatabaseManager } from '../../databases/database-manager';
+import type { ResourceTenantDatabaseAccess } from '../../resources/resource-crud-service';
 import type {
   AsyncDatabaseClient,
   DatabaseBatchInput,
@@ -58,6 +60,42 @@ export function createRequestDatabaseClient(
     scope.tenantId,
     assertCurrentAuthority,
   );
+}
+
+/**
+ * @internal Acquire one request-owned Resource capability.
+ *
+ * Unlike the public request client above, this keeps one physical binding for
+ * receipt lookup, pre-read, policy work, commit, and canonical result handling.
+ * The caller must release it in a `finally` block. The trusted writer is never
+ * projected onto `zero.data` or the public AsyncDatabaseClient surface.
+ */
+export async function createResourceTenantDatabaseAccess(
+  options: CreateRequestDatabaseClientOptions,
+): Promise<ResourceTenantDatabaseAccess | null> {
+  const { manager, scope, assertCurrentAuthoritySync } = options;
+  if (!manager
+    || scope.scopeKind !== 'tenant'
+    || !manager.diagnostics().tenantDatabasesEnabled) return null;
+
+  const assertCurrentAuthority = (): undefined => (
+    assertCurrentAuthoritySync() as undefined
+  );
+  const binding = await manager.bindTenant({
+    tenantId: scope.tenantId,
+    assertCurrentAuthoritySync: assertCurrentAuthority,
+    assertCurrentReadAuthority: assertCurrentAuthority,
+  });
+  let released = false;
+  return Object.freeze({
+    client: binding.client,
+    trustedWriter: binding.trustedWriter,
+    release: () => {
+      if (released) return;
+      released = true;
+      binding.release();
+    },
+  });
 }
 
 class RequestDatabaseClient implements AsyncDatabaseClient {
@@ -139,9 +177,36 @@ class RequestDatabaseClient implements AsyncDatabaseClient {
       assertCurrentReadAuthority: this.#assertCurrentAuthority,
     });
     try {
-      return await operation(binding.client);
+      const result = await operation(binding.client);
+      // The bound actor client fences reads after its own await, but resolving
+      // that promise yields once more before this request-facing wrapper can
+      // expose the result. Close that continuation window for both reads and
+      // canonical write results without reflecting authority callback errors.
+      this.#assertFinalAuthority();
+      return result;
     } finally {
       binding.release();
+    }
+  }
+
+  #assertFinalAuthority(): void {
+    let result: unknown;
+    try {
+      result = this.#assertCurrentAuthority();
+    } catch {
+      throw new DatabaseError(
+        'DATABASE_AUTHORITY_CHANGED',
+        'Tenant database authority changed before result delivery.',
+        { retryable: false, outcome: null },
+      );
+    }
+    if (result !== undefined) {
+      void Promise.resolve(result).catch(() => undefined);
+      throw new DatabaseError(
+        'DATABASE_CONFIG_INVALID',
+        'Tenant database authority checks must be synchronous.',
+        { retryable: false, outcome: null },
+      );
     }
   }
 }

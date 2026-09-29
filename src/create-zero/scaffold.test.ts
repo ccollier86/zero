@@ -100,6 +100,11 @@ describe('scaffoldZeroApp', () => {
       const gitignore = await readFile(join(targetDir, '.gitignore'), 'utf8');
       expect(gitignore).toContain('.zero');
       expect(gitignore).toContain('*.db-wal');
+      expect(gitignore).toContain('*.db-journal');
+      expect(gitignore).toContain('*.sqlite');
+      expect(gitignore).toContain('*.sqlite-wal');
+      expect(gitignore).toContain('*.sqlite-shm');
+      expect(gitignore).toContain('*.sqlite-journal');
 
       const readme = await readFile(join(targetDir, 'README.md'), 'utf8');
       expect(readme).toContain('cp .env.example .env');

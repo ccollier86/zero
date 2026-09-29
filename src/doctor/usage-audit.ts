@@ -19,7 +19,10 @@ import type {
   UsageAuditRuleSeverity,
   UsageRule,
 } from './usage-audit-types';
-import type { PlatformDoctorFinding, PlatformDoctorSeverity } from './platform-doctor';
+import type {
+  PlatformDoctorFinding,
+  PlatformDoctorSeverity,
+} from './platform-doctor-contracts';
 
 export type {
   UsageAuditAllowEntry,

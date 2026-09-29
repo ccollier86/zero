@@ -8,7 +8,11 @@ import {
   validateResourceClientWriteFields,
 } from './resource-field-access';
 import { authenticatedOnly } from './resource-policy-helpers';
-import { buildResourceListQueryPlan } from './resource-query';
+import {
+  buildResourceListFindPlan,
+  buildResourceListQueryPlan,
+  RESOURCE_QUERY_LIMITS,
+} from './resource-query';
 import { validateResourceDefinitions } from './resource-registry';
 
 describe('resource field access contract', () => {
@@ -135,6 +139,110 @@ describe('resource field access contract', () => {
       query: { order: 'secret' },
     });
     expect(hiddenSort).toMatchObject({ status: 400 });
+  });
+
+  test('builds an equivalent actor-safe find plan with exact policy constraints', () => {
+    const plan = buildResourceListFindPlan({
+      table: 'documents',
+      columns: ['id', 'title', 'owner_id', 'status'],
+      selectColumns: ['id', 'title'],
+      filterColumns: ['title', 'status'],
+      sortColumns: ['title'],
+      constraints: [{
+        type: 'anyOf',
+        constraints: [
+          { type: 'field', field: 'owner_id', operator: 'eq', value: 'owner-1' },
+          { type: 'field', field: 'owner_id', operator: 'eq', value: 'owner-2' },
+        ],
+      }],
+      query: {
+        filter: ['title:contains:hello', 'status:in:open,closed'],
+        order: 'title',
+        dir: 'asc',
+        limit: 100,
+        offset: 20,
+      },
+    });
+
+    expect(plan).toEqual({
+      input: {
+        select: ['id', 'title'],
+        filters: [
+          {
+            type: 'field',
+            field: 'title',
+            operator: 'contains',
+            value: 'hello',
+          },
+          {
+            type: 'field',
+            field: 'status',
+            operator: 'in',
+            value: ['open', 'closed'],
+          },
+          {
+            type: 'anyOf',
+            filters: [
+              {
+                type: 'field',
+                field: 'owner_id',
+                operator: 'eq',
+                value: 'owner-1',
+                match: 'exact',
+              },
+              {
+                type: 'field',
+                field: 'owner_id',
+                operator: 'eq',
+                value: 'owner-2',
+                match: 'exact',
+              },
+            ],
+          },
+        ],
+        order: [{ field: 'title', direction: 'asc' }],
+        limit: 101,
+        offset: 20,
+      },
+      limit: 100,
+      offset: 20,
+    });
+
+    expect(buildResourceListFindPlan({
+      table: 'documents',
+      columns: ['id'],
+      query: { limit: 1_001 },
+      maxLimit: 2_000,
+    })).toMatchObject({ status: 400 });
+  });
+
+  test('bounds Resource list query cardinality and string size on both database planes', () => {
+    const tooManyFilters = Array.from(
+      { length: RESOURCE_QUERY_LIMITS.filterCount + 1 },
+      (_, index) => `id:eq:${index}`,
+    );
+    const overlongFilter = `id:eq:${'x'.repeat(RESOURCE_QUERY_LIMITS.filterExpressionLength)}`;
+    const options = {
+      table: 'documents',
+      columns: ['id'],
+    } as const;
+
+    for (const build of [buildResourceListQueryPlan, buildResourceListFindPlan]) {
+      expect(build({
+        ...options,
+        query: { filter: tooManyFilters },
+      })).toEqual({
+        status: 400,
+        error: `At most ${RESOURCE_QUERY_LIMITS.filterCount} filters are allowed`,
+      });
+      expect(build({
+        ...options,
+        query: { filter: overlongFilter },
+      })).toEqual({
+        status: 400,
+        error: `Filter expressions must not exceed ${RESOURCE_QUERY_LIMITS.filterExpressionLength} characters`,
+      });
+    }
   });
 
   test('keeps server policy equality exact without changing caller filter semantics', () => {

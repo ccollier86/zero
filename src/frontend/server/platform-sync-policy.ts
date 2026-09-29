@@ -79,6 +79,16 @@ interface PlatformFilterCache {
   };
 }
 
+const PLATFORM_READ_AUTHORITY_FINGERPRINT_VERSION = 'zero-platform-read-v1';
+
+interface PlatformReadAuthorityFingerprint {
+  readonly delegate: string;
+  readonly roomMembership: Readonly<{
+    userId: string;
+    revision: number;
+  }>;
+}
+
 /**
  * Compose app resource policy with Zero's framework-table row policy.
  *
@@ -101,6 +111,11 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
     table: string,
   ): 'internal' | 'http' | 'sync' | 'all' | null {
     return this.options.delegate.classifyManagedTableExposure?.(table) ?? null;
+  }
+
+  /** Preserve the Resource registry's trusted default/tenant routing proof. */
+  classifyManagedTableDataPlane(table: string): 'default' | 'tenant' | null {
+    return this.options.delegate.classifyManagedTableDataPlane?.(table) ?? null;
   }
 
   /**
@@ -171,6 +186,7 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
     const rowProjectors = new Map<string, SyncRowProjector>();
     const platformFingerprint: Array<[string, string]> = [];
     const filterCache: PlatformFilterCache = {};
+    let tracksRoomMembershipAuthority = false;
     const db = this.options.getDB();
     const auth = context.authContext;
     const kernel = this.options.getAuthorizationKernel?.() ?? null;
@@ -249,6 +265,9 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
       );
       if (delegateProjector) rowProjectors.set(table, delegateProjector);
       platformFingerprint.push([table, platform.fingerprint]);
+      if (table === 'rooms' || table === 'room_members') {
+        tracksRoomMembershipAuthority = true;
+      }
     }
 
     platformFingerprint.sort(([left], [right]) => left.localeCompare(right));
@@ -258,11 +277,25 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
         delegated.rowFilters.size > 0
         || (delegated.rowProjectors?.size ?? 0) > 0
       );
+    const readAuthorityFingerprint = delegated.readAuthorityFingerprint;
 
     return {
       readableTables,
       rowFilters,
       rowProjectors,
+      ...(readAuthorityFingerprint === undefined
+        ? {}
+        : {
+            readAuthorityFingerprint: tracksRoomMembershipAuthority && auth
+              ? encodePlatformReadAuthorityFingerprint({
+                  delegate: readAuthorityFingerprint,
+                  roomMembership: {
+                    userId: auth.userId,
+                    revision: this.getRoomMembershipRevision(auth.userId),
+                  },
+                })
+              : readAuthorityFingerprint,
+          }),
       policyFingerprint: hasUncomparableDelegatePolicy
         ? undefined
         : JSON.stringify([delegateFingerprint ?? null, platformFingerprint]),
@@ -283,6 +316,24 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
       authContext,
       expectedFingerprint,
     ) ?? true;
+  }
+
+  /** Preserve the delegate's trusted Resource read-authority fence. */
+  validateReadAuthorityAtDelivery(
+    authContext: SyncAuthContext | null,
+    expectedFingerprint: string,
+  ): boolean {
+    const platform = decodePlatformReadAuthorityFingerprint(expectedFingerprint);
+    const delegateFingerprint = platform?.delegate ?? expectedFingerprint;
+    const delegateCurrent = this.options.delegate.validateReadAuthorityAtDelivery?.(
+      authContext,
+      delegateFingerprint,
+    ) ?? false;
+    if (!delegateCurrent) return false;
+    if (!platform) return true;
+    return authContext?.userId === platform.roomMembership.userId
+      && this.getRoomMembershipRevision(platform.roomMembership.userId)
+        === platform.roomMembership.revision;
   }
 
   private createPlatformFilter(
@@ -421,6 +472,42 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
     return this.roomMembershipResetRevision
       + (this.roomMembershipRevisions.get(userId) ?? 0);
   }
+}
+
+function encodePlatformReadAuthorityFingerprint(
+  value: PlatformReadAuthorityFingerprint,
+): string {
+  return JSON.stringify([
+    PLATFORM_READ_AUTHORITY_FINGERPRINT_VERSION,
+    value.delegate,
+    value.roomMembership.userId,
+    value.roomMembership.revision,
+  ]);
+}
+
+function decodePlatformReadAuthorityFingerprint(
+  value: string,
+): PlatformReadAuthorityFingerprint | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)
+    || parsed.length !== 4
+    || parsed[0] !== PLATFORM_READ_AUTHORITY_FINGERPRINT_VERSION
+    || typeof parsed[1] !== 'string'
+    || typeof parsed[2] !== 'string'
+    || !Number.isSafeInteger(parsed[3])
+    || parsed[3] < 0) return null;
+  return {
+    delegate: parsed[1],
+    roomMembership: {
+      userId: parsed[2],
+      revision: parsed[3],
+    },
+  };
 }
 
 function rowFilter(matches: (row: Row) => boolean): SyncRowFilter {

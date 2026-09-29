@@ -110,10 +110,14 @@ Zero.
   phased plan for the Zero-owned KV/cache engine, SQL persistence primitive,
   ReactiveDB refactor, vector storage modes, doctor checks, and generated app
   defaults.
-- [Multi-Database Architecture](./multi-database-architecture.md): active
-  implementation contract for isolated file/WAL databases, subprocess writer
-  and reader actors, ReactiveDB ordering and realtime recovery, trusted tenant
-  routing, and the required later hybrid hot/file phase.
+- [ReactiveDB Fabric: Multi-Database Architecture](./multi-database-architecture.md):
+  active implementation contract for isolated file/WAL and bounded hot
+  databases, subprocess writer/reader actors, exact bounded tenant-Sync
+  snapshot sessions, pseudonymous-ref hybrid placement (not an authority
+  token),
+  explicit hot durability, Resource receipts, multiplexed ReactiveDB
+  ordering/recovery, delivery-time authority fences, trusted tenant routing,
+  and the remaining operational/release boundaries.
 - [Platform KV/cache](../kv.md): Zero-owned memory-first KV/cache service,
   journal/checkpoint recovery, app-facing `zero.kv`, counters, limiters, and
   `createApp()` defaults.

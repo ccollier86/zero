@@ -8,7 +8,11 @@
 
 import type { ChangeOp, Row, SyncAuthContext } from './types';
 import { OBS_CODES } from '../observability/codes';
-import { warnPlatform } from '../observability/sink';
+import { emitPlatformCodeTo, warnPlatform } from '../observability/sink';
+import type { PlatformObservabilityRuntime } from '../observability/types';
+
+const SYNC_POLICY_REASON_MAX_LENGTH = 256;
+const SYNC_POLICY_IDENTIFIER_MAX_LENGTH = 128;
 
 /** Result returned by a sync policy decision callback. */
 export type SyncPolicyDecision = boolean | {
@@ -150,12 +154,17 @@ export function combineSyncPolicies(...policies: Array<SyncPolicy | undefined>):
 export function getReadableSyncTables(
   tableNames: Iterable<string>,
   authContext: SyncAuthContext | null,
-  policy: SyncPolicy = allowAllSyncPolicy
+  policy: SyncPolicy = allowAllSyncPolicy,
+  observability?: PlatformObservabilityRuntime | null,
 ): Set<string> {
   const readable = new Set<string>();
 
   for (const table of tableNames) {
-    const decision = evaluateSyncReadPolicy(policy, { table, authContext });
+    const decision = evaluateSyncReadPolicy(
+      policy,
+      { table, authContext },
+      observability,
+    );
     if (decision.ok) readable.add(table);
   }
 
@@ -167,11 +176,15 @@ export function getReadableSyncTables(
  */
 export function evaluateSyncReadPolicy(
   policy: SyncPolicy,
-  context: SyncReadPolicyContext
+  context: SyncReadPolicyContext,
+  observability?: PlatformObservabilityRuntime | null,
 ): SyncPolicyEvaluation {
   return safelyEvaluate(
     () => normalizeDecision(policy.canReadTable?.(context), `Not allowed: ${context.table}`),
-    `Not allowed: ${context.table}`
+    `Not allowed: ${context.table}`,
+    context.table,
+    'read',
+    observability,
   );
 }
 
@@ -180,11 +193,15 @@ export function evaluateSyncReadPolicy(
  */
 export function evaluateSyncMutationPolicy(
   policy: SyncPolicy,
-  context: SyncMutationPolicyContext
+  context: SyncMutationPolicyContext,
+  observability?: PlatformObservabilityRuntime | null,
 ): SyncPolicyEvaluation {
   const tableDecision = safelyEvaluate(
     () => normalizeDecision(policy.canMutateTable?.(context), `Not allowed: ${context.table}`),
-    `Not allowed: ${context.table}`
+    `Not allowed: ${context.table}`,
+    context.table,
+    context.op,
+    observability,
   );
   if (!tableDecision.ok) return tableDecision;
 
@@ -197,7 +214,10 @@ export function evaluateSyncMutationPolicy(
 
   return safelyEvaluate(
     () => normalizeDecision(operationCallback?.(context), `Not allowed: ${context.table}`),
-    `Not allowed: ${context.table}`
+    `Not allowed: ${context.table}`,
+    context.table,
+    context.op,
+    observability,
   );
 }
 
@@ -220,21 +240,50 @@ function normalizeDecision(
 ): SyncPolicyEvaluation {
   if (decision === undefined || decision === true) return { ok: true };
   if (decision === false) return { ok: false, reason: defaultReason };
-  return decision.ok ? { ok: true } : { ok: false, reason: decision.reason ?? defaultReason };
+  return decision.ok
+    ? { ok: true }
+    : { ok: false, reason: safePolicyReason(decision.reason, defaultReason) };
 }
 
 function safelyEvaluate(
   evaluate: () => SyncPolicyEvaluation,
-  defaultReason: string
+  defaultReason: string,
+  table: string,
+  operation: ChangeOp | 'read',
+  observability?: PlatformObservabilityRuntime | null,
 ): SyncPolicyEvaluation {
   try {
     return evaluate();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : defaultReason;
-    warnPlatform(OBS_CODES.SYNC_POLICY_CALLBACK_FAILED, {
-      error: err,
-      metadata: { defaultReason },
-    });
-    return { ok: false, reason: message };
+  } catch {
+    const options = {
+      level: 'warn' as const,
+      metadata: {
+        table: safePolicyIdentifier(table),
+        operation,
+      },
+    };
+    if (observability) {
+      emitPlatformCodeTo(observability, OBS_CODES.SYNC_POLICY_CALLBACK_FAILED, options);
+    } else {
+      warnPlatform(OBS_CODES.SYNC_POLICY_CALLBACK_FAILED, options);
+    }
+    return { ok: false, reason: 'Sync policy evaluation failed' };
   }
+}
+
+function safePolicyReason(reason: string | undefined, fallback: string): string {
+  if (typeof reason !== 'string'
+    || reason.length === 0
+    || reason.length > SYNC_POLICY_REASON_MAX_LENGTH
+    || /[\u0000-\u001f\u007f-\u009f]/u.test(reason)) {
+    return fallback;
+  }
+  return reason;
+}
+
+function safePolicyIdentifier(value: string): string {
+  if (value.length === 0
+    || value.length > SYNC_POLICY_IDENTIFIER_MAX_LENGTH
+    || !/^[A-Za-z0-9_]+$/u.test(value)) return '[invalid]';
+  return value;
 }

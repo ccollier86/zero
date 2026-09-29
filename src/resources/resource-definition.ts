@@ -32,7 +32,11 @@ export interface GlobalResourceRealm {
   readonly kind: 'global';
 }
 
-/** A table whose every independently accessible row belongs to one tenant. */
+/**
+ * A table whose data belongs to one tenant. `field` is enforced only when the
+ * resolved app topology uses shared-row isolation; tenant-database topology
+ * enforces the same logical realm through the selected database capability.
+ */
 export interface TenantResourceRealm {
   readonly kind: 'tenant';
   readonly field: string;
@@ -179,8 +183,9 @@ export function globalRealm(): GlobalResourceRealm {
 }
 
 /**
- * Mark a resource as tenant-owned. The default discriminator is `tenant_id`;
- * registry validation still requires that exact non-nullable column to exist.
+ * Mark a resource as tenant-owned. Shared-row topology uses `tenant_id` as the
+ * default required discriminator. Tenant-database topology keeps this logical
+ * declaration but does not require or manage that application column.
  */
 export function tenantRealm(
   options: { field?: string } = {},

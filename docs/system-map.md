@@ -21,6 +21,9 @@ The codebase itself is the source of truth. These docs provide orientation — r
 
 ```
 src/
+  databases/               <- ReactiveDB Fabric actors, coordinator, isolation, receipts, tenant Sync
+  persistence/             <- SQLite modes, snapshots, checkpoints, connection ownership
+  resources/               <- Declarative Resource registry, policy, CRUD, field access, realms
   sync/                    <- Core engine: ReactiveDB + WebSocket sync + state sync + ephemeral KV
   sync/client/             <- Client-side sync: stores, clients, React hooks
   auth/                    <- Authentication: JWT, user store, middleware
@@ -32,6 +35,8 @@ src/
   vector/                  <- zvec-backed local vector store, filters, AI bridge
   pdf/                     <- Browser-grade PDF service, Chromium adapter, resource policy, storage bridge
   kv/                      <- Platform KV/cache service, TTL/LRU indexes, journal/checkpoint recovery, Elysia plugin
+  observability/           <- Stable event catalog, runtime sinks, protected event store
+  doctor/                  <- Pure config/source diagnostics and Doctor CLI
   rooms/                   <- Rooms, presence
   scheduler/               <- Cron job scheduler
   workflows/               <- Durable workflow engine
@@ -63,7 +68,10 @@ src/
 | `src/sync/reactive-db.ts` | ReactiveDB class — wraps bun:sqlite with onChange, ring buffer, transactions |
 | `src/sync/types.ts` | All type definitions — schemas, wire protocol, client types |
 | `src/sync/sync.plugin.ts` | Elysia plugin — lifecycle, WS endpoint `/sync`, pub/sub wiring |
+| `src/sync/sync-plugin-config.ts` | Sync composition validation, database resolution, tenant-plane classification, and authority prerequisites |
 | `src/sync/message-handler.ts` | Routes incoming WS messages to handlers (subscribe, mutate, state, ephemeral) |
+| `src/sync/sync-tenant-data-plane.ts` | Per-socket physical-tenant binding, replay ordering, and mutation coordination |
+| `src/sync/sync-tenant-snapshot-transfer.ts` | Exact actor snapshot paging, validation, projection, chunking, budgets, and cleanup |
 | `src/sync/state-manager.ts` | SQLite-authoritative per-scope user KV; atomic internal log events with no retained per-principal RAM projection |
 | `src/sync/state-handler.ts` | WS handlers for state.subscribe/set/delete/clear |
 | `src/sync/ephemeral-manager.ts` | RAM-only topic-scoped KV with TTL (no SQLite) |
@@ -114,6 +122,56 @@ src/
 - Managed auth separately polls `_auth_authority_revision`, installed by
   migration `020`, and revalidates long-lived Sync/ephemeral authorization when
   another runtime changes a session, account, membership, tenant, or role.
+
+### ReactiveDB Fabric (active unreleased branch)
+
+**What:** Bounded multi-database routing around independently reactive SQLite
+databases. The historical default database remains the in-process control/auth
+plane; named or physical-tenant application databases run in isolated Bun
+subprocess actors with one FIFO writer lane per database and optional file/WAL
+reader actors. See
+[ReactiveDB Fabric: Multi-Database Architecture](./framework/multi-database-architecture.md)
+for the authoritative contract and release boundary.
+
+| File | Purpose |
+|------|---------|
+| `src/databases/database-manager.ts` | App-facing named and trusted tenant binding manager; derives capabilities instead of exposing paths |
+| `src/databases/database-coordinator.ts` plus `database-coordinator-*.ts` | Public coordinator facade plus focused catalog entry, lease, queue, placement, recovery/durability, and tenant-Sync ownership modules |
+| `src/databases/database-restart-policy.ts` | Bounded exponential per-entry restart delay and circuit-breaker/cancellation policy |
+| `src/databases/database-hot-durability-supervisor.ts` | Parent-side periodic-hot telemetry validation, dirty/snapshot watchdogs, and one-shot fatal generation retirement |
+| `src/databases/database-actor-protocol.ts` | Closed, versioned parent/actor IPC request and result vocabulary |
+| `src/databases/database-actor-runtime.ts` | Child-side lifecycle and structured-operation dispatch facade |
+| `src/databases/database-actor-binding.ts` / `database-actor-error-boundary.ts` | SQLite binding/identity/durability ownership and privacy-safe actor error projection |
+| `src/databases/subprocess-database-executor.ts` | Parent-side Bun subprocess lifecycle, IPC correlation, timeouts, and settlement |
+| `src/databases/subprocess-database-protocol.ts` / `subprocess-database-executor-config.ts` | Portable IPC envelopes and detached executor launch/lifecycle validation |
+| `src/databases/subprocess-database-server.ts` | Child-side IPC server and deterministic shutdown |
+| `src/databases/database-file.ts` / `database-root-ownership.ts` | Pseudonymous reference-to-file mapping (operational correlation, not authority), exclusive root ownership, and physical file admission |
+| `src/databases/database-binding-identity.ts` / `database-file-identity.ts` | Immutable logical image identity plus no-follow device/inode handoff proof |
+| `src/databases/database-actor-liveness.ts` | Rollback-journal restart fence against orphan actors after parent failure |
+| `src/databases/database-writer-engine.ts` | ReactiveDB-backed structured writes, assertions, durable receipts, and replay ordering |
+| `src/databases/database-tenant-sync*.ts` | Exact immutable snapshot sessions, replay, wakeups, and bounded session storage |
+| `src/frontend/server/database-topology-config.ts` | Typed `databaseTopology` normalization and cross-feature validation |
+| `src/frontend/server/request-database-client.ts` | Request-local authority-bound database client projection |
+| `src/resources/resource-default-crud-engine.ts` / `resource-tenant-crud-engine.ts` | Generated CRUD on the pinned/default and physical-tenant planes |
+
+**Key Fabric patterns:**
+
+- Browser input never selects a database. Tenant routing comes from a live,
+  verified auth scope; named routing is trusted server configuration.
+- Independent files can write concurrently because their synchronous SQLite
+  work runs in separate subprocess actors. One database remains FIFO; optional
+  file/WAL readers can overlap committed reads with its writer.
+- `file`, bounded `hot`, and synchronous hybrid placement share one public
+  coordinator contract. Placement is pinned for an active entry; there is no
+  online promotion/demotion API.
+- Resource HTTP CRUD, lazy `/api/data`, and multiplexed WebSocket Sync all use
+  the same server-owned Resource plane classification and policy boundary.
+- Durable receipt keys, physical files, actor entries, queues, tenant-Sync
+  bindings, and exact snapshot sessions have separate hard bounds. Permanent
+  file/receipt exhaustion is distinct from transient backpressure.
+- The logical database reference and instance ID survive hot snapshot inode
+  replacement. Root ownership, single-link checks, actor liveness leases, and
+  post-settlement proof refresh prevent duplicate writer authority.
 
 ---
 
@@ -241,7 +299,7 @@ resource, and Sync policy.
 **Files:**
 | File | Purpose |
 |------|---------|
-| `src/doctor/platform-doctor.ts` | Pure app config checks for auth/email, schema PKs, storage, sync policy, resources, migrations, observability, AI, vector, PDF, and index guidance |
+| `src/doctor/platform-doctor.ts` / `platform-doctor-*.ts` | Pure orchestration plus focused app-config checks for auth/email, schema PKs, storage, sync policy, Resources, Fabric topology/capacity/placement, migrations, observability, AI, vector, PDF, and index guidance |
 | `src/doctor/config-loader.ts` | Loads an explicit `zero.config.ts`/`config/zero.config.ts` module for CLI checks |
 | `src/doctor/run.ts` | CLI presentation for `bun run doctor` |
 

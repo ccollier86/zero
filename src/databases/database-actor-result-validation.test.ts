@@ -7,9 +7,16 @@ import {
   type DatabaseOperation,
 } from './database-operations';
 import {
+  validateDatabaseActorExecuteOutcome,
   validateDatabaseActorExecuteResult,
   validateDatabaseActorReplayResult,
 } from './database-actor-result-validation';
+import {
+  DATABASE_WRITER_MAX_RECEIPT_KEYS,
+  DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES,
+  DATABASE_WRITER_MAX_RECEIPTS,
+  DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES,
+} from './database-writer-engine';
 
 const catalog = {
   tables: ['todos'],
@@ -110,7 +117,8 @@ describe('database actor execute result validation', () => {
 
   test('correlates mutation receipts and effect coherence exactly', () => {
     const valid = mutationResult();
-    expect(validateDatabaseActorExecuteResult(valid, updateOperation)).toEqual(valid);
+    expect(validateDatabaseActorExecuteResult(valid, updateOperation, catalog))
+      .toEqual(valid);
 
     const hostile = [
       { ...valid, idempotencyKey: 'another-key' },
@@ -143,6 +151,7 @@ describe('database actor execute result validation', () => {
         mutation: {
           type: 'create', table: 'todos', rowId: 'a',
           changed: false, op: null, sequence: null,
+          row: null, previousRow: null,
         },
       },
       sequence: { seq: 0 },
@@ -156,6 +165,7 @@ describe('database actor execute result validation', () => {
         mutation: {
           type: 'create', table: 'todos', rowId: 'a',
           changed: true, op: 'INSERT', sequence: { seq: 1 },
+          row: { id: 'a', title: 'A' }, previousRow: null,
         },
       },
       sequence: { seq: 1 },
@@ -171,11 +181,107 @@ describe('database actor execute result validation', () => {
         mutation: { ...validCreate.value.mutation, rowId: 'forged' },
       },
     }, create, catalog), 'DATABASE_PROTOCOL_ERROR', 'unknown');
+
+    for (const [submittedRow, committedId] of [
+      [{ id: 42, title: 'numeric' }, 42],
+      [{ title: 'generated' }, 7],
+    ] as const) {
+      const numericOrGenerated = operation({
+        type: 'mutate',
+        idempotencyKey: `create:${committedId}`,
+        mutation: { type: 'create', table: 'todos', row: submittedRow },
+      });
+      expect(validateDatabaseActorExecuteResult({
+        value: {
+          kind: 'mutation',
+          mutation: {
+            type: 'create', table: 'todos', rowId: String(committedId),
+            changed: true, op: 'INSERT', sequence: { seq: 2 },
+            row: { id: committedId, title: submittedRow.title },
+            previousRow: null,
+          },
+        },
+        sequence: { seq: 2 },
+        idempotencyKey: `create:${committedId}`,
+        replayed: false,
+      }, numericOrGenerated, catalog)).toMatchObject({
+        value: { mutation: { rowId: String(committedId) } },
+      });
+    }
+  });
+
+  test('detaches only aggregate receipt compaction telemetry', () => {
+    const result = mutationResult();
+    const receiptCompaction = {
+      totalKeys: 10_001,
+      retainedResults: 10_000,
+      expiredTombstones: 1,
+      retainedResultBytes: 20_000,
+      keyLimit: DATABASE_WRITER_MAX_RECEIPT_KEYS,
+      prunedCount: 1,
+      prunedResultBytes: 2,
+      retainedLimit: DATABASE_WRITER_MAX_RECEIPTS,
+      retainedByteLimit: DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES,
+      resultByteLimit: DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES,
+    };
+    expect(validateDatabaseActorExecuteOutcome({
+      result,
+      receiptCompaction,
+    }, updateOperation, catalog)).toEqual({ result, receiptCompaction });
+
+    for (const invalid of [
+      { ...receiptCompaction, receiptKey: 'private' },
+      { ...receiptCompaction, prunedCount: 0 },
+      { ...receiptCompaction, totalKeys: 10_002 },
+      { ...receiptCompaction, retainedLimit: 9_999 },
+      { ...receiptCompaction, keyLimit: 999_999 },
+      { ...receiptCompaction, retainedResultBytes: 67_108_865 },
+      { ...receiptCompaction, prunedResultBytes: 0 },
+    ]) {
+      expectFailure(() => validateDatabaseActorExecuteOutcome({
+        result,
+        receiptCompaction: invalid,
+      }, updateOperation, catalog), 'DATABASE_PROTOCOL_ERROR', 'unknown');
+    }
+    expectFailure(() => validateDatabaseActorExecuteOutcome({
+      result: { ...result, replayed: true },
+      receiptCompaction,
+    }, updateOperation, catalog), 'DATABASE_PROTOCOL_ERROR', 'unknown');
+  });
+
+  test('accepts the exact v1 mutation effect only for a replayed receipt', () => {
+    const legacy = {
+      value: {
+        kind: 'mutation',
+        mutation: {
+          type: 'update',
+          table: 'todos',
+          rowId: 'a',
+          changed: true,
+          op: 'UPDATE',
+          sequence: { seq: 4 },
+        },
+      },
+      sequence: { seq: 4 },
+      idempotencyKey: 'update:1',
+      replayed: true,
+    };
+    expect(validateDatabaseActorExecuteResult(legacy, updateOperation, catalog))
+      .toEqual(legacy);
+    expectWriteProtocol({ ...legacy, replayed: false }, updateOperation);
+    expectWriteProtocol({
+      ...legacy,
+      value: {
+        kind: 'mutation',
+        mutation: { ...legacy.value.mutation, privateField: 'must-fail' },
+      },
+    }, updateOperation);
   });
 
   test('correlates ordered batch effects and their final durable sequence', () => {
     const valid = batchResult();
-    expect(validateDatabaseActorExecuteResult(valid, batchOperation)).toEqual(valid);
+    expect(validateDatabaseActorExecuteResult(valid, batchOperation, catalog))
+      .toEqual(valid);
 
     const tooShort = batchResult();
     tooShort.value.mutations.pop();
@@ -334,6 +440,8 @@ function mutationResult(effect: Record<string, unknown> = {}) {
         changed: true,
         op: 'UPDATE',
         sequence: { seq: 4 },
+        row: { id: 'a', title: 'new' },
+        previousRow: { id: 'a', title: 'old' },
         ...effect,
       },
     },
@@ -351,14 +459,17 @@ function batchResult() {
         {
           type: 'create', table: 'todos', rowId: 'a',
           changed: true, op: 'INSERT', sequence: { seq: 9 },
+          row: { id: 'a', title: 'A' }, previousRow: null,
         },
         {
           type: 'update', table: 'todos', rowId: 'missing',
           changed: false, op: null, sequence: null,
+          row: null, previousRow: null,
         },
         {
           type: 'delete', table: 'todos', rowId: 'b',
           changed: true, op: 'DELETE', sequence: { seq: 10 },
+          row: null, previousRow: { id: 'b', title: 'B' },
         },
       ],
     },

@@ -10,16 +10,16 @@
 import { Elysia, t } from 'elysia';
 import { OBS_CODES } from './codes';
 import {
-  emitPlatformCode,
-  emitPlatformEvent,
-  getPlatformEventStore,
-  warnPlatform,
+  emitPlatformCodeTo,
+  emitPlatformEventTo,
+  getObservabilityRuntime,
 } from './sink';
 import type {
   ObservabilityConfig,
   ObservabilityEndpointReadMode,
   ObservabilityTraceConfig,
   PlatformEventLevel,
+  PlatformObservabilityRuntime,
   PlatformEventSource,
 } from './types';
 import { getSafeRequestPath } from './safe-request-path';
@@ -30,6 +30,8 @@ const DEFAULT_FRONTEND_MAX_PAYLOAD_BYTES = 32_768;
 export interface ObservabilityPluginConfig {
   /** Runtime observability config resolved by createApp(). */
   config?: ObservabilityConfig | false;
+  /** App-owned runtime. Falls back to the captured ambient runtime for standalone use. */
+  runtime?: PlatformObservabilityRuntime;
   /** Whether the app has auth middleware available. */
   authEnabled?: boolean;
 }
@@ -42,6 +44,9 @@ export interface ObservabilityPluginConfig {
  * auth is enabled and development-only when auth is disabled.
  */
 export function createObservabilityPlugin(options: ObservabilityPluginConfig = {}) {
+  // Capture once. Looking up the process-global runtime inside a request would
+  // let a later createApp() redirect this app's events and readable endpoint.
+  const runtime = options.runtime ?? getObservabilityRuntime();
   const config = options.config === false ? { enabled: false } : options.config ?? {};
   const endpoint = config.endpoint === false ? { enabled: false } : config.endpoint ?? {};
   const endpointEnabled = config.enabled !== false && endpoint.enabled !== false;
@@ -53,7 +58,7 @@ export function createObservabilityPlugin(options: ObservabilityPluginConfig = {
 
   const app = new Elysia({ name: 'observability' })
     .onError({ as: 'global' }, function reportPlatformError({ error, request, set }) {
-      emitPlatformCode(OBS_CODES.APP_REQUEST_FAILED, {
+      emitPlatformCodeTo(runtime, OBS_CODES.APP_REQUEST_FAILED, {
         error,
         metadata: {
           method: request.method,
@@ -63,7 +68,9 @@ export function createObservabilityPlugin(options: ObservabilityPluginConfig = {
       });
     });
 
-  const tracedApp = traceConfig?.enabled ? attachTrace(app, traceConfig) : app;
+  const tracedApp = traceConfig?.enabled
+    ? attachTrace(app, traceConfig, runtime)
+    : app;
 
   if (!endpointEnabled) return tracedApp;
 
@@ -76,7 +83,8 @@ export function createObservabilityPlugin(options: ObservabilityPluginConfig = {
 
         if (!(await canReadEvents(readMode, request, authContext ?? null))) {
           set.status = 403;
-          warnPlatform(OBS_CODES.OBSERVABILITY_ACCESS_DENIED, {
+          emitPlatformCodeTo(runtime, OBS_CODES.OBSERVABILITY_ACCESS_DENIED, {
+            level: 'warn',
             metadata: {
               path: getSafeRequestPath(request),
               mode: typeof readMode === 'string' ? readMode : 'custom',
@@ -85,7 +93,7 @@ export function createObservabilityPlugin(options: ObservabilityPluginConfig = {
           return { error: 'Forbidden' };
         }
 
-        const store = getPlatformEventStore();
+        const store = runtime.store;
         if (!store) {
           set.status = 503;
           return { error: 'Observability event store is not configured' };
@@ -131,13 +139,14 @@ export function createObservabilityPlugin(options: ObservabilityPluginConfig = {
         const contentLength = Number(request.headers.get('content-length') ?? 0);
         if (contentLength > maxPayloadBytes) {
           set.status = 413;
-          warnPlatform(OBS_CODES.OBSERVABILITY_FRONTEND_REJECTED, {
+          emitPlatformCodeTo(runtime, OBS_CODES.OBSERVABILITY_FRONTEND_REJECTED, {
+            level: 'warn',
             metadata: { reason: 'payload_too_large', contentLength, maxPayloadBytes },
           });
           return { error: 'Payload too large' };
         }
 
-        emitPlatformEvent({
+        emitPlatformEventTo(runtime, {
           source: 'frontend',
           level: body.level ?? 'error',
           category: body.category ?? 'frontend',
@@ -150,7 +159,7 @@ export function createObservabilityPlugin(options: ObservabilityPluginConfig = {
           traceId: body.traceId,
         });
 
-        emitPlatformCode(OBS_CODES.OBSERVABILITY_FRONTEND_INGESTED, {
+        emitPlatformCodeTo(runtime, OBS_CODES.OBSERVABILITY_FRONTEND_INGESTED, {
           metadata: { code: body.code ?? OBS_CODES.FRONTEND_RENDER_ERROR.code },
         });
 
@@ -180,7 +189,8 @@ export function createObservabilityPlugin(options: ObservabilityPluginConfig = {
 
 function attachTrace<T extends Elysia<any, any, any, any, any, any, any>>(
   app: T,
-  traceConfig: ObservabilityTraceConfig
+  traceConfig: ObservabilityTraceConfig,
+  runtime: PlatformObservabilityRuntime,
 ): T {
   const slowRequestMs = traceConfig.slowRequestMs ?? 500;
   const slowLifecycleMs = traceConfig.slowLifecycleMs ?? 100;
@@ -193,25 +203,25 @@ function attachTrace<T extends Elysia<any, any, any, any, any, any, any>>(
 
     onHandle(({ name, onStop }) => {
       onStop(({ elapsed, error }) => {
-        emitLifecycleEvent('handle', name, elapsed, error, method, path, slowLifecycleMs);
+        emitLifecycleEvent(runtime, 'handle', name, elapsed, error, method, path, slowLifecycleMs);
       });
     });
 
     onBeforeHandle(({ name, onStop }) => {
       onStop(({ elapsed, error }) => {
-        emitLifecycleEvent('beforeHandle', name, elapsed, error, method, path, slowLifecycleMs);
+        emitLifecycleEvent(runtime, 'beforeHandle', name, elapsed, error, method, path, slowLifecycleMs);
       });
     });
 
     onAfterHandle(({ name, onStop }) => {
       onStop(({ elapsed, error }) => {
-        emitLifecycleEvent('afterHandle', name, elapsed, error, method, path, slowLifecycleMs);
+        emitLifecycleEvent(runtime, 'afterHandle', name, elapsed, error, method, path, slowLifecycleMs);
       });
     });
 
     onError(({ name, onStop }) => {
       onStop(({ elapsed, error }) => {
-        emitLifecycleEvent('error', name, elapsed, error, method, path, slowLifecycleMs);
+        emitLifecycleEvent(runtime, 'error', name, elapsed, error, method, path, slowLifecycleMs);
       });
     });
 
@@ -219,7 +229,8 @@ function attachTrace<T extends Elysia<any, any, any, any, any, any, any>>(
       onStop(() => {
         const elapsed = Date.now() - requestStart;
         if (elapsed >= slowRequestMs) {
-          warnPlatform(OBS_CODES.APP_REQUEST_SLOW, {
+          emitPlatformCodeTo(runtime, OBS_CODES.APP_REQUEST_SLOW, {
+            level: 'warn',
             metadata: { method, path, elapsed, slowRequestMs },
           });
         }
@@ -229,6 +240,7 @@ function attachTrace<T extends Elysia<any, any, any, any, any, any, any>>(
 }
 
 function emitLifecycleEvent(
+  runtime: PlatformObservabilityRuntime,
   lifecycle: string,
   name: string,
   elapsed: number,
@@ -238,7 +250,7 @@ function emitLifecycleEvent(
   slowLifecycleMs: number
 ): void {
   if (error) {
-    emitPlatformCode(OBS_CODES.APP_LIFECYCLE_FAILED, {
+    emitPlatformCodeTo(runtime, OBS_CODES.APP_LIFECYCLE_FAILED, {
       error,
       metadata: { lifecycle, name, elapsed, method, path },
     });
@@ -246,7 +258,8 @@ function emitLifecycleEvent(
   }
 
   if (elapsed >= slowLifecycleMs) {
-    warnPlatform(OBS_CODES.APP_LIFECYCLE_SLOW, {
+    emitPlatformCodeTo(runtime, OBS_CODES.APP_LIFECYCLE_SLOW, {
+      level: 'warn',
       metadata: { lifecycle, name, elapsed, method, path, slowLifecycleMs },
     });
   }

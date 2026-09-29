@@ -8,7 +8,6 @@
  */
 
 import { Elysia, t } from 'elysia';
-import { readAuthBearerToken } from '../auth/auth-bearer-token';
 import { authContextAuthorityFingerprint } from '../auth/auth-context-authority';
 import { createAuthMiddleware } from '../auth/auth.middleware';
 import type { TokenService } from '../auth/token-service';
@@ -17,8 +16,15 @@ import type { AuthTenancyMode } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
 import type { AuthorizationKernel } from '../auth/authorization-kernel';
 import type { AuthorizationRoleAssignmentResolver } from '../auth/authorization-access';
+import type { DatabaseErrorCode } from '../databases/database-error';
+import type { DatabaseManager } from '../databases/database-manager';
+import {
+  isDatabaseTableName,
+  type DatabaseFindRows,
+} from '../databases/database-operations';
 import { OBS_CODES } from '../observability/codes';
-import { errorPlatform } from '../observability/sink';
+import { emitPlatformCode, emitPlatformCodeTo } from '../observability/sink';
+import type { PlatformObservabilityRuntime } from '../observability/types';
 import {
   buildResourceListQueryPlan,
   createResourcePolicyAuthorization,
@@ -30,9 +36,15 @@ import {
   type ResourceRegistry,
 } from '../resources';
 import {
+  buildResourceListFindPlan,
+  RESOURCE_QUERY_LIMITS,
+} from '../resources/resource-query';
+import {
   resolveResourceRealm,
   resourceRealmConstraint,
+  type ResourceTenantScope,
 } from '../resources/resource-realm';
+import { DataQueryDatabaseAdapter } from './data-query-database-adapter';
 import { getSyncDB } from './sync.plugin';
 import type { ReactiveDB } from './reactive-db';
 import { allowAllSyncPolicy, evaluateSyncReadPolicy } from './sync-policy';
@@ -57,6 +69,8 @@ export interface DataQueryConfig {
   getRoleAssignments?: () => AuthorizationRoleAssignmentResolver | null;
   /** App-local database provider. Legacy standalone callers may omit it. */
   getDB?: () => ReactiveDB | null;
+  /** App-local actor database owner. It is never projected to request input. */
+  getDatabaseManager?: () => DatabaseManager | null;
   /** Optional registered resource registry for resource-protected lazy reads. */
   resourceRegistry?: ResourceRegistry;
   /** Multi mode denies managed app tables without an explicit resource realm. */
@@ -69,6 +83,8 @@ export interface DataQueryConfig {
   defaultLimit?: number;
   /** Maximum number of rows a single request may return. */
   maxLimit?: number;
+  /** App-local observability runtime. Standalone callers may use the ambient fallback. */
+  observability?: PlatformObservabilityRuntime | null;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -79,8 +95,24 @@ const MAX_LIMIT = 1000;
 /** Default limit when none specified. */
 const DEFAULT_LIMIT = 500;
 
-/** Pattern for valid SQL table identifiers. */
-const SAFE_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const dataQueryFilterSchema = t.String({
+  maxLength: RESOURCE_QUERY_LIMITS.filterExpressionLength,
+});
+
+const dataQuerySchema = t.Object({
+  table: t.String({
+    minLength: 1,
+    maxLength: RESOURCE_QUERY_LIMITS.identifierLength,
+  }),
+  filter: t.Optional(t.Union([
+    dataQueryFilterSchema,
+    t.Array(dataQueryFilterSchema, { maxItems: RESOURCE_QUERY_LIMITS.filterCount }),
+  ])),
+  order: t.Optional(t.String({ maxLength: RESOURCE_QUERY_LIMITS.identifierLength })),
+  dir: t.Optional(t.String({ maxLength: RESOURCE_QUERY_LIMITS.directionLength })),
+  limit: t.Optional(t.Numeric()),
+  offset: t.Optional(t.Numeric()),
+});
 
 // ─── Plugin ──────────────────────────────────────────────────────────────────
 
@@ -106,30 +138,60 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
   const policy = config.policy ?? allowAllSyncPolicy;
   const defaultLimit = config.defaultLimit ?? DEFAULT_LIMIT;
   const maxLimit = config.maxLimit ?? MAX_LIMIT;
+  const database = new DataQueryDatabaseAdapter({
+    tenancyMode: config.tenancyMode,
+    getTokenService: config.getTokenService,
+    getDatabaseManager: config.getDatabaseManager,
+    authorityFingerprint: (authContext) => (
+      resolveDataPolicyAuthority(config, authContext).fingerprint
+    ),
+  });
+  const emitDataQueryFailure = (input: Readonly<{
+    table: string;
+    databaseCode?: DatabaseErrorCode;
+  }>): void => {
+    // Table has already passed bounded identifier validation. The caught error, SQL, bind
+    // values, tenant identity, and caller identity never cross this boundary.
+    const options = {
+      metadata: {
+        table: input.table,
+        ...(input.databaseCode ? { databaseCode: input.databaseCode } : {}),
+      },
+    };
+    if (config.observability) {
+      emitPlatformCodeTo(config.observability, OBS_CODES.DATA_QUERY_FAILED, options);
+      return;
+    }
+    emitPlatformCode(OBS_CODES.DATA_QUERY_FAILED, options);
+  };
 
   return new Elysia({ name: 'data-query' })
     .use(createAuthMiddleware(config.getTokenService ?? (() => null)))
+    .onError(({ code, set }) => {
+      if (code !== 'VALIDATION') return;
+      set.status = 400;
+      return { error: 'Invalid data query', code: 'invalid-data-query' };
+    })
     .get('/api/data', async ({ query, set, authContext, request }) => {
       // An explicit app-local provider owns this dependency even while it is
       // unavailable. Never fall through to another live app's compatibility
       // provider in that case.
       const db = config.getDB ? config.getDB() : getSyncDB();
-      if (!db) {
-        set.status = 503;
-        return { error: 'Database not ready' };
-      }
 
       const { table } = query;
 
       // ─── Validate table ──────────────────────────────────
       if (!table) {
         set.status = 400;
-        return { error: 'Missing required query parameter: table' };
+        return {
+          error: 'Missing required query parameter: table',
+          code: 'invalid-data-query',
+        };
       }
 
-      if (!SAFE_IDENTIFIER.test(table)) {
+      if (!isDatabaseTableName(table)) {
         set.status = 400;
-        return { error: `Invalid table name: ${table}` };
+        return { error: 'Invalid table name', code: 'invalid-data-query' };
       }
 
       const exposure = evaluateDataExposure(config, table);
@@ -138,12 +200,19 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
         return { error: exposure.error, code: exposure.code };
       }
 
-      if (!db.hasTable(table)) {
+      const resource = config.resourceRegistry?.getByTable(table) ?? null;
+      const usesTenantDatabase = resource?.storage.kind === 'tenant'
+        && resource.storage.isolation === 'tenant-database';
+      if (!usesTenantDatabase && db && !db.hasTable(table)) {
         set.status = 400;
-        return { error: `Unknown table: ${table}` };
+        return { error: `Unknown table: ${table}`, code: 'invalid-data-query' };
       }
 
-      const readDecision = evaluateSyncReadPolicy(policy, { table, authContext });
+      const readDecision = evaluateSyncReadPolicy(
+        policy,
+        { table, authContext },
+        config.observability,
+      );
       if (!readDecision.ok) {
         set.status = 403;
         return { error: readDecision.reason ?? `Not allowed: ${table}` };
@@ -153,18 +222,20 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
       const allowedColumns = config.tableColumns.get(table);
       if (!allowedColumns || allowedColumns.length === 0) {
         set.status = 400;
-        return { error: `No column metadata for table: ${table}` };
+        return {
+          error: `No column metadata for table: ${table}`,
+          code: 'invalid-data-query',
+        };
       }
 
-      const commitAuthority = captureDataCommitAuthority(config, authContext);
+      const commitAuthority = database.captureCommitAuthority(authContext);
       const resourceDecision = await evaluateDataResourcePolicy(config, table, authContext);
       if (!resourceDecision.ok) {
         set.status = resourceDecision.status;
         return { error: resourceDecision.error, code: resourceDecision.code };
       }
       if (resourceDecision.authorityFingerprint) {
-        const current = await resolveCurrentDataAuthority(
-          config,
+        const current = await database.isRequestAuthorityCurrent(
           request,
           resourceDecision.authorityFingerprint,
         );
@@ -177,81 +248,136 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
         }
       }
 
-      const plan = buildResourceListQueryPlan({
+      const planOptions = {
         table,
         columns: allowedColumns,
-        selectColumns: config.resourceRegistry?.getByTable(table)?.fields?.read,
-        filterColumns: config.resourceRegistry?.getByTable(table)?.fields?.filter,
-        sortColumns: config.resourceRegistry?.getByTable(table)?.fields?.sort,
+        selectColumns: resource?.fields?.read,
+        filterColumns: resource?.fields?.filter,
+        sortColumns: resource?.fields?.sort,
         constraints: resourceDecision.constraints,
         query,
         defaultLimit,
         maxLimit,
-      });
-      if ('error' in plan) {
-        set.status = plan.status;
-        return { error: plan.error };
-      }
+      } as const;
 
-      const params = [...plan.params, plan.limit + 1, plan.offset];
-      let resultRows: any[];
-      let authorityChangedAtCommit = false;
-      try {
-        resultRows = db.transaction(() => {
-          if (resourceDecision.authorityFingerprint
-            && !isDataAuthorityCurrentAtCommit(
-              config,
-              commitAuthority,
-              resourceDecision.authorityFingerprint,
-            )) {
-            authorityChangedAtCommit = true;
-            return [];
+      let resultRows: DatabaseFindRows | any[];
+      let page: { limit: number; offset: number };
+      if (usesTenantDatabase) {
+        const findPlan = buildResourceListFindPlan(planOptions);
+        if ('error' in findPlan) {
+          set.status = findPlan.status;
+          if (findPlan.status >= 500) {
+            emitDataQueryFailure({ table });
+            return { error: 'Data query failed', code: 'data-query-failed' };
           }
-          return db.prepare(plan.sql).all(...(params as any[]));
-        });
-      } catch (error) {
-        errorPlatform(OBS_CODES.DATA_QUERY_FAILED, {
-          error,
-          metadata: { table },
-          userId: authContext?.userId,
-        });
-        set.status = 500;
-        return { error: 'Data query failed', code: 'data-query-failed' };
-      }
-      if (authorityChangedAtCommit) {
-        set.status = 403;
-        return {
-          error: 'Resource authorization changed during the request',
-          code: 'resource-authority-changed',
-        };
+          return { error: findPlan.error, code: 'invalid-data-query' };
+        }
+        try {
+          resultRows = await database.findTenant({
+            scope: resourceDecision.scope,
+            authority: commitAuthority,
+            authorityFingerprint: resourceDecision.authorityFingerprint,
+            table,
+            clientInput: findPlan.input,
+          });
+        } catch (error) {
+          const response = database.classifyFailure(error);
+          // Validation, authority, and optimistic conflicts are expected HTTP
+          // outcomes. Only an unavailable/indeterminate database is an ERROR.
+          if (response.status >= 500) {
+            emitDataQueryFailure({
+              table,
+              databaseCode: response.databaseCode,
+            });
+          }
+          set.status = response.status;
+          return { error: response.error, code: response.code };
+        }
+        // The actor client fences authority immediately after its read, but
+        // returning through that async boundary yields once more before this
+        // route can expose the rows. Recheck synchronously at the delivery
+        // boundary so a revocation queued by the read cannot leak one final
+        // response from the former tenant scope.
+        if (resourceDecision.authorityFingerprint
+          && !database.isAuthorityCurrentAtCommit(
+            commitAuthority,
+            resourceDecision.authorityFingerprint,
+          )) {
+          set.status = 403;
+          return {
+            error: 'Resource authorization changed during the request',
+            code: 'resource-authority-changed',
+          };
+        }
+        page = findPlan;
+      } else {
+        if (!db) {
+          set.status = 503;
+          return { error: 'Database not ready', code: 'database-unavailable' };
+        }
+        const sqlPlan = buildResourceListQueryPlan(planOptions);
+        if ('error' in sqlPlan) {
+          set.status = sqlPlan.status;
+          if (sqlPlan.status >= 500) {
+            emitDataQueryFailure({ table });
+            return { error: 'Data query failed', code: 'data-query-failed' };
+          }
+          return { error: sqlPlan.error, code: 'invalid-data-query' };
+        }
+
+        const params = [...sqlPlan.params, sqlPlan.limit + 1, sqlPlan.offset];
+        let authorityChangedAtCommit = false;
+        try {
+          resultRows = db.transaction(() => {
+            if (resourceDecision.authorityFingerprint
+              && !database.isAuthorityCurrentAtCommit(
+                commitAuthority,
+                resourceDecision.authorityFingerprint,
+              )) {
+              authorityChangedAtCommit = true;
+              return [];
+            }
+            const statement = db.prepare(sqlPlan.sql);
+            try {
+              return statement.all(...(params as any[]));
+            } finally {
+              statement.finalize();
+            }
+          });
+        } catch {
+          emitDataQueryFailure({ table });
+          set.status = 500;
+          return { error: 'Data query failed', code: 'data-query-failed' };
+        }
+        if (authorityChangedAtCommit) {
+          set.status = 403;
+          return {
+            error: 'Resource authorization changed during the request',
+            code: 'resource-authority-changed',
+          };
+        }
+        page = sqlPlan;
       }
 
-      const hasMore = resultRows.length > plan.limit;
-      const authorizedRows = hasMore ? resultRows.slice(0, plan.limit) : resultRows;
+      const hasMore = resultRows.length > page.limit;
+      const authorizedRows = hasMore ? resultRows.slice(0, page.limit) : resultRows;
       const rows = projectResourceRows(
         authorizedRows,
-        config.resourceRegistry?.getByTable(table)?.fields,
+        resource?.fields,
       );
 
       return {
         rows,
         page: {
-          limit: plan.limit,
-          offset: plan.offset,
+          limit: page.limit,
+          offset: page.offset,
           count: rows.length,
           hasMore,
-          nextOffset: hasMore ? plan.offset + plan.limit : null,
+          nextOffset: hasMore ? page.offset + page.limit : null,
         },
       };
     }, {
-      query: t.Object({
-        table: t.String({ minLength: 1 }),
-        filter: t.Optional(t.Union([t.String(), t.Array(t.String())])),
-        order: t.Optional(t.String()),
-        dir: t.Optional(t.String()),
-        limit: t.Optional(t.Numeric()),
-        offset: t.Optional(t.Numeric()),
-      }),
+      query: dataQuerySchema,
     });
 }
 
@@ -295,6 +421,7 @@ type DataResourcePolicyResult =
     ok: true;
     constraints?: readonly ResourceDataConstraint[];
     authorityFingerprint?: string;
+    scope?: ResourceTenantScope | null;
   }
   | { ok: false; status: number; error: string; code?: string };
 
@@ -361,81 +488,8 @@ async function evaluateDataResourcePolicy(
       ...(decision.constraints ?? []),
     ],
     authorityFingerprint: authority.fingerprint,
+    scope: realm.scope,
   };
-}
-
-async function resolveCurrentDataAuthority(
-  config: DataQueryConfig,
-  request: Request,
-  expectedFingerprint: string,
-): Promise<boolean> {
-  const bearer = readAuthBearerToken(request);
-  const tokens = config.getTokenService?.() ?? null;
-  let current: AuthContext | null = null;
-  try {
-    if (bearer && tokens) {
-      if (typeof tokens.resolveAuthContext === 'function') {
-        current = await tokens.resolveAuthContext(bearer);
-      } else {
-        const payload = await tokens.verifyAccessToken(bearer);
-        current = payload
-          && typeof payload.email === 'string'
-          && typeof payload.role === 'string'
-          ? {
-              userId: payload.sub,
-              email: payload.email,
-              role: payload.role,
-            }
-          : null;
-      }
-    }
-  } catch {
-    current = null;
-  }
-  return resolveDataPolicyAuthority(config, current).fingerprint === expectedFingerprint;
-}
-
-interface DataCommitAuthority {
-  resolve(): AuthContext | null;
-}
-
-function captureDataCommitAuthority(
-  config: DataQueryConfig,
-  authContext: AuthContext | null,
-): DataCommitAuthority | undefined {
-  if (!authContext) return undefined;
-  // Legacy standalone verifiers do not expose the durable synchronous
-  // authority contract. Preserve that compatibility in single mode only.
-  // Multi mode returns a deliberately unavailable resolver so the SQL
-  // boundary fails closed instead of accepting a stale request-time context.
-  const unavailable = (): DataCommitAuthority | undefined =>
-    config.tenancyMode === 'multi' ? { resolve: () => null } : undefined;
-  if (!authContext.sessionKind) return unavailable();
-  const tokens = config.getTokenService?.() ?? null;
-  if (!tokens
-    || typeof tokens.captureAuthContextAuthority !== 'function'
-    || typeof tokens.resolveAuthContextAuthority !== 'function') return unavailable();
-
-  const reference = tokens.captureAuthContextAuthority(authContext);
-  return {
-    resolve: () => reference
-      ? tokens.resolveAuthContextAuthority(reference)
-      : null,
-  };
-}
-
-function isDataAuthorityCurrentAtCommit(
-  config: DataQueryConfig,
-  authority: DataCommitAuthority | undefined,
-  expectedFingerprint: string,
-): boolean {
-  if (!authority) return true;
-  try {
-    const current = authority.resolve();
-    return resolveDataPolicyAuthority(config, current).fingerprint === expectedFingerprint;
-  } catch {
-    return false;
-  }
 }
 
 function resourcePolicyAuthorityFingerprint(

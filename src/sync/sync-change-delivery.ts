@@ -7,7 +7,7 @@
 
 import type { ServerWebSocket } from 'bun';
 import { projectSyncChange } from './row-filter';
-import { sendSyncWire } from './sync-wire-send';
+import { sendSyncWire, waitForSyncDrain } from './sync-wire-send';
 import type { Change, SyncChangeMessage, SyncSocketData } from './types';
 
 /** Deliver one committed change to every socket whose current scope can read it. */
@@ -27,22 +27,68 @@ export function deliverSyncChange(
     if (change.seq <= socket.data.lastSeq) continue;
     if (!socket.data.syncSubscribedTables.has(change.table)) continue;
     if (!socket.data.allowedTables.has(change.table)) continue;
-    if (!validateCurrentAuthority(socket)) continue;
     const projected = projectSyncChange(
       change,
       socket.data.resourceRowFilters.get(change.table),
       socket.data.resourceRowProjectors?.get(change.table),
     );
     if (!projected) continue;
+    // Filters/projectors are trusted extension code and may touch mutable
+    // authority. Fence after they return, at the final synchronous send edge.
+    if (!validateCurrentAuthority(socket)) continue;
 
-    const message: SyncChangeMessage = {
+    if (socket.data.syncSnapshotInFlight) {
+      const deferred = socket.data.syncDeferredChanges ??= [];
+      deferred.push({ change: projected, epoch, origin });
+      continue;
+    }
+
+    const message = syncChangeMessage(socket, projected, epoch, origin);
+    if (sendSyncWire(socket, message)) socket.data.lastSeq = change.seq;
+  }
+}
+
+/** Deliver changes committed while an atomic default snapshot was streaming. */
+export async function flushDeferredSyncChanges(
+  socket: ServerWebSocket<SyncSocketData>,
+  assertCurrentAuthority: () => void = () => undefined,
+): Promise<boolean> {
+  while (true) {
+    const deferred = socket.data.syncDeferredChanges ?? [];
+    if (deferred.length === 0) return true;
+    socket.data.syncDeferredChanges = [];
+    for (const item of deferred) {
+      const change = item.change;
+      if (change.seq <= socket.data.lastSeq) continue;
+      if (!socket.data.syncSubscribedTables.has(change.table)) continue;
+      if (!socket.data.allowedTables.has(change.table)) continue;
+      const message = syncChangeMessage(
+        socket,
+        change,
+        item.epoch,
+        item.origin,
+      );
+      assertCurrentAuthority();
+      if (!sendSyncWire(socket, message)) return false;
+      socket.data.lastSeq = change.seq;
+      await waitForSyncDrain(socket);
+    }
+  }
+}
+
+function syncChangeMessage(
+  socket: ServerWebSocket<SyncSocketData>,
+  change: Change,
+  epoch: string,
+  origin: string,
+): SyncChangeMessage {
+  return {
       type: 'sync.change',
-      ...projected,
+      ...(socket.data.syncMultiplexed ? { plane: 'default' as const } : {}),
+      ...change,
       prevSeq: socket.data.lastSeq,
       epoch,
       scope: socket.data.authorizationScope,
       origin,
     };
-    if (sendSyncWire(socket, message)) socket.data.lastSeq = change.seq;
-  }
 }

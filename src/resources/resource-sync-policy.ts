@@ -41,6 +41,7 @@ import type {
 } from './resource-policy-types';
 import type { RegisteredResourceDefinition, ResourceRegistry } from './resource-registry';
 import {
+  isResourceTenantRowScope,
   rejectResourceRealmUpdate,
   resolveResourceRealm,
   resourceRealmConstraint,
@@ -96,6 +97,16 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     return this.options.registry.getByTable(table)?.exposure.kind ?? null;
   }
 
+  /** Route registered app tables onto the startup-validated Sync data plane. */
+  classifyManagedTableDataPlane(table: string): 'default' | 'tenant' | null {
+    const resource = this.options.registry.getByTable(table);
+    if (!resource) return null;
+    return resource.storage.kind === 'tenant'
+      && resource.storage.isolation === 'tenant-database'
+      ? 'tenant'
+      : 'default';
+  }
+
   /** Resolve readable tables and row filters for already sync-policy-readable tables. */
   async resolveTableAccess(
     context: SyncResourceTableAccessContext
@@ -104,9 +115,16 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     const rowFilters = new Map<string, SyncRowFilter>();
     const rowProjectors = new Map<string, SyncRowProjector>();
     const fingerprints: Array<[string, string]> = [];
+    // One immutable authority snapshot owns the complete table decision. A
+    // separate capture per table could combine policies from two revisions.
+    const readAuthority = this.captureMutationAuthority(context.authContext);
 
     for (const table of context.tableNames) {
-      const decision = await this.evaluateSyncRead(table, context.authContext);
+      const decision = await this.evaluateSyncRead(
+        table,
+        context.authContext,
+        readAuthority,
+      );
       if (!decision.ok) continue;
       readable.add(table);
       if (decision.filter) rowFilters.set(table, decision.filter);
@@ -125,6 +143,7 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
       rowFilters,
       rowProjectors,
       policyFingerprint: JSON.stringify(fingerprints),
+      readAuthorityFingerprint: readAuthority.fingerprint,
     };
   }
 
@@ -214,7 +233,7 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
         row: finalInput.input,
         createOnly: true,
         authorityFingerprint: mutationAuthority.fingerprint,
-        scope: realm.scope
+        scope: isResourceTenantRowScope(realm.scope)
           ? { field: realm.scope.field, value: realm.scope.tenantId }
           : undefined,
       };
@@ -228,7 +247,7 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
       };
     }
 
-    const row = context.loadRow(context.table, context.rowId);
+    const row = await context.loadRow(context.table, context.rowId);
     if (!row || !resourceRowMatchesRealm(row, realm.scope)) {
       return {
         ok: false,
@@ -277,7 +296,7 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
         row: nextInput,
         expectedRow: row,
         authorityFingerprint: mutationAuthority.fingerprint,
-        scope: realm.scope
+        scope: isResourceTenantRowScope(realm.scope)
           ? { field: realm.scope.field, value: realm.scope.tenantId }
           : undefined,
       };
@@ -287,7 +306,7 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
       ok: true,
       expectedRow: row,
       authorityFingerprint: mutationAuthority.fingerprint,
-      scope: realm.scope
+      scope: isResourceTenantRowScope(realm.scope)
         ? { field: realm.scope.field, value: realm.scope.tenantId }
         : undefined,
     };
@@ -301,9 +320,18 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
     return this.mutationAuthorityFingerprint(authContext) === expectedFingerprint;
   }
 
+  /** Re-read the same trusted user/property/RBAC snapshot used by list policy. */
+  validateReadAuthorityAtDelivery(
+    authContext: SyncAuthContext | null,
+    expectedFingerprint: string,
+  ): boolean {
+    return this.mutationAuthorityFingerprint(authContext) === expectedFingerprint;
+  }
+
   private async evaluateSyncRead(
     table: string,
-    authContext: SyncAuthContext | null
+    authContext: SyncAuthContext | null,
+    policyAuthority: ResourceSyncPolicyAuthority,
   ): Promise<ResourceSyncReadDecision> {
     const resource = this.options.registry.getByTable(table);
     if (!resource) {
@@ -338,7 +366,6 @@ export class ResourceSyncPolicyService implements SyncResourcePolicyAdapter {
       };
     }
 
-    const policyAuthority = this.captureMutationAuthority(authContext);
     const decision = await this.evaluatePolicy(
       resource,
       'list',

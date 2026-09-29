@@ -52,6 +52,7 @@ async function buildSmokeEntry(fileName: string, source: string, target: 'bun' |
 }
 
 const serverSmokeSource = `
+import { Database } from 'bun:sqlite';
 import { AIService } from '@zero/framework/ai';
 import {
   AuthApplicationAdministrationService,
@@ -95,9 +96,19 @@ import { Migrator } from '@zero/framework/migrations';
 import { createNotificationPlugin } from '@zero/framework/notifications';
 import { OBS_CODES } from '@zero/framework/observability';
 import { OBS_CODES as PURE_OBS_CODES } from '@zero/framework/observability/codes';
-import { createPlatformSQLiteService } from '@zero/framework/persistence';
+import { createPlatformSQLiteService, SnapshotManager } from '@zero/framework/persistence';
 import { PdfService, getPdfService as getPdfServiceSubpath } from '@zero/framework/pdf';
-import { createResourceCrudPlugin as createSubpathResourceCrudPlugin, defineResource as defineSubpathResource, defineResourceFields as defineSubpathResourceFields, ownerPolicy as resourcesOwnerPolicy, tenantRealm as resourcesTenantRealm } from '@zero/framework/resources';
+import {
+  createResourceCrudPlugin as createSubpathResourceCrudPlugin,
+  defineResource as defineSubpathResource,
+  defineResourceFields as defineSubpathResourceFields,
+  ownerPolicy as resourcesOwnerPolicy,
+  RESOURCE_DEFAULT_RECEIPT_MAX_KEYS as subpathResourceReceiptMaxKeys,
+  RESOURCE_DEFAULT_RECEIPT_MAX_RESULT_BYTES as subpathResourceReceiptMaxResultBytes,
+  RESOURCE_DEFAULT_RECEIPT_MAX_RETAINED_BYTES as subpathResourceReceiptMaxRetainedBytes,
+  RESOURCE_DEFAULT_RECEIPT_RETAINED_LIMIT as subpathResourceReceiptRetainedLimit,
+  tenantRealm as resourcesTenantRealm,
+} from '@zero/framework/resources';
 import {
   RoomOwnerCannotLeaveError,
   createRoomPlugin,
@@ -107,6 +118,27 @@ import { defineTable, encodeFieldValue, field } from '@zero/framework/schema';
 import {
   adminOnly,
   createApp,
+  DATABASE_HOT_MAX_SNAPSHOT_INTERVAL_MS,
+  DATABASE_HOT_MAX_SNAPSHOT_TIMEOUT_MS,
+  DATABASE_HOT_MIN_SNAPSHOT_TIMEOUT_MS,
+  DATABASE_HOT_SHORTHAND_MAX_BYTES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_ROWS,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SESSIONS,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_BYTES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_BYTES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_NODES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_NODES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_ROWS,
+  DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_SOURCE_BYTES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_TTL_MS,
+  DATABASE_WRITER_MAX_RECEIPT_KEYS,
+  DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES,
+  DATABASE_WRITER_MAX_RECEIPTS,
+  DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES,
+  defaultDatabaseHotSnapshotTimeoutMs,
+  createDatabaseRef,
+  createNamedDatabaseRef,
+  createTenantDatabaseRef,
   createAuthorizationKernel as createServerAuthorizationKernel,
   createResourceCrudPlugin,
   createUploadGrantToken,
@@ -129,15 +161,26 @@ import {
   KvService,
   metadataPolicy,
   ownerPolicy,
+  RESOURCE_DEFAULT_RECEIPT_MAX_KEYS,
+  RESOURCE_DEFAULT_RECEIPT_MAX_RESULT_BYTES,
+  RESOURCE_DEFAULT_RECEIPT_MAX_RETAINED_BYTES,
+  RESOURCE_DEFAULT_RECEIPT_RETAINED_LIMIT,
   tenantRealm,
   verifyUploadGrantToken,
 } from '@zero/framework/server';
 import type {
+  AppDatabasePlacementConfig,
   AuthAuthorizationOwnerAdoptionConfig,
   AuthTenantCreationConfig,
   AuthTenantCreationMode,
   AuthTenantTerminologyConfig,
   NativeAuthorizationSourceResolver,
+  DatabaseAssertion,
+  DatabaseCoordinatorRestartPolicy,
+  DatabaseFindInput,
+  DatabaseRef,
+  DatabasePlacementPolicy,
+  NormalizedDatabaseCoordinatorRestartPolicy,
   ZeroPolicyUserPropertyRegistry,
 } from '@zero/framework/server';
 import {
@@ -151,6 +194,16 @@ import { createVectorPlugin } from '@zero/framework/vector';
 import { WorkflowService } from '@zero/framework/workflows';
 
 const nativeSourceResolver: NativeAuthorizationSourceResolver = () => 'trusted-edge';
+const resourceReceiptLimits = [
+  RESOURCE_DEFAULT_RECEIPT_MAX_KEYS,
+  RESOURCE_DEFAULT_RECEIPT_MAX_RESULT_BYTES,
+  RESOURCE_DEFAULT_RECEIPT_MAX_RETAINED_BYTES,
+  RESOURCE_DEFAULT_RECEIPT_RETAINED_LIMIT,
+  subpathResourceReceiptMaxKeys,
+  subpathResourceReceiptMaxResultBytes,
+  subpathResourceReceiptMaxRetainedBytes,
+  subpathResourceReceiptRetainedLimit,
+] as const;
 const policyPropertyRegistry: ZeroPolicyUserPropertyRegistry = {
   isPolicyTrusted: () => true,
 };
@@ -168,6 +221,51 @@ const authTenantTerminology: AuthTenantTerminologyConfig = {
 const authOwnerAdoption: AuthAuthorizationOwnerAdoptionConfig = {
   email: 'owner@example.com',
 };
+const selectedDatabaseRef: DatabaseRef = createDatabaseRef('tenant:hot');
+const selectedNamedDatabaseRef: DatabaseRef = createNamedDatabaseRef('reporting');
+const selectedTenantDatabaseRef: DatabaseRef = createTenantDatabaseRef('tenant:hot');
+const publicDatabaseFind: DatabaseFindInput = {
+  limit: 25,
+  order: [{ field: 'created_at', direction: 'desc' }],
+};
+const publicDatabaseAssertions: readonly DatabaseAssertion[] = [{
+  type: 'row-missing',
+  table: 'documents',
+  id: 'document_1',
+}];
+const publicDatabaseRestart: DatabaseCoordinatorRestartPolicy = {
+  initialDelayMs: 25,
+  maxDelayMs: 1_000,
+  circuitFailureThreshold: 5,
+  circuitCooldownMs: 5_000,
+};
+const normalizedDatabaseRestart = publicDatabaseRestart as
+  NormalizedDatabaseCoordinatorRestartPolicy;
+const legacySnapshotManager = new SnapshotManager(
+  new Database(':memory:'),
+  './data/legacy.snapshot.db',
+  30_000,
+  false,
+);
+const legacySnapshotPromise: Promise<boolean> = legacySnapshotManager.snapshot();
+const legacySnapshotResult: boolean = legacySnapshotManager.snapshotSync();
+const hotDatabaseRefs = new Set<DatabaseRef>([
+  selectedNamedDatabaseRef,
+  selectedTenantDatabaseRef,
+  legacySnapshotManager,
+  legacySnapshotPromise,
+  legacySnapshotResult,
+]);
+const appDatabasePlacement: AppDatabasePlacementConfig = {
+  default: 'file',
+  select: ({ databaseRef }) => hotDatabaseRefs.has(databaseRef) ? 'hot' : 'file',
+  hot: {
+    maxBytes: DATABASE_HOT_SHORTHAND_MAX_BYTES,
+  },
+};
+void publicDatabaseFind;
+void publicDatabaseAssertions;
+const resolvedDatabasePlacement = {} as DatabasePlacementPolicy;
 const definedAuthConfig = defineAuthConfig({
   tenancy: {
     mode: 'multi',
@@ -237,10 +335,36 @@ export const serverSymbols = {
   authAuthorization,
   authAuthorizationMode,
   authOwnerAdoption,
+  appDatabasePlacement,
+  publicDatabaseRestart,
+  normalizedDatabaseRestart,
   authTenantCreation,
   authTenantCreationMode,
   authTenantTerminology,
   createApp,
+  DATABASE_HOT_MAX_SNAPSHOT_INTERVAL_MS,
+  DATABASE_HOT_MAX_SNAPSHOT_TIMEOUT_MS,
+  DATABASE_HOT_MIN_SNAPSHOT_TIMEOUT_MS,
+  DATABASE_HOT_SHORTHAND_MAX_BYTES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_ROWS,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SESSIONS,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_BYTES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_BYTES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_NODES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_NODES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_ROWS,
+  DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_SOURCE_BYTES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_TTL_MS,
+  DATABASE_WRITER_MAX_RECEIPT_KEYS,
+  DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES,
+  DATABASE_WRITER_MAX_RECEIPTS,
+  DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES,
+  defaultDatabaseHotSnapshotTimeoutMs,
+  createDatabaseRef,
+  createNamedDatabaseRef,
+  createTenantDatabaseRef,
+  selectedNamedDatabaseRef,
+  selectedTenantDatabaseRef,
   createAuthAuthorizationSnapshot,
   createAuthPlugin,
   createAuthorizationKernel,
@@ -293,6 +417,8 @@ export const serverSymbols = {
   metadataPolicy,
   nativeSourceResolver,
   normalizedAuth,
+  resolvedDatabasePlacement,
+  selectedDatabaseRef,
   policyPropertyRegistry,
   permissionKey,
   applicationAdministrationConfig,

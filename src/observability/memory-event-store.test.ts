@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 import { OBS_CODES } from './codes';
 import { MemoryEventStore } from './memory-event-store';
-import { configureObservability, emitPlatformCode } from './sink';
+import {
+  configureObservability,
+  emitPlatformCode,
+  emitPlatformCodeTo,
+} from './sink';
+import type { PlatformObservabilityRuntime } from './types';
 
 describe('MemoryEventStore', () => {
   it('retains only the newest events within the configured limit', () => {
@@ -37,6 +42,43 @@ describe('MemoryEventStore', () => {
     expect(store.query({ cursor: first.sequence }).events.map((event) => event.code)).toEqual([
       OBS_CODES.APP_CLIENT_BUNDLE_FAILED.code,
       OBS_CODES.FRONTEND_RENDER_ERROR.code,
+    ]);
+  });
+
+  it('assigns sequences within each app runtime without sibling-volume gaps', () => {
+    const firstStore = new MemoryEventStore();
+    const secondStore = new MemoryEventStore();
+    const firstRuntime: PlatformObservabilityRuntime = {
+      sink: firstStore,
+      store: firstStore,
+      config: { console: false, store: firstStore },
+    };
+    const secondRuntime: PlatformObservabilityRuntime = {
+      sink: secondStore,
+      store: secondStore,
+      config: { console: false, store: secondStore },
+    };
+
+    const first = emitPlatformCodeTo(
+      firstRuntime,
+      OBS_CODES.APP_CLIENT_BUNDLE_READY,
+    );
+    const sibling = emitPlatformCodeTo(
+      secondRuntime,
+      OBS_CODES.APP_CLIENT_BUNDLE_READY,
+    );
+    const second = emitPlatformCodeTo(
+      firstRuntime,
+      OBS_CODES.APP_SHUTDOWN_SIGNAL,
+    );
+
+    expect([first.sequence, second.sequence]).toEqual([1, 2]);
+    expect(sibling.sequence).toBe(1);
+    expect(firstStore.query().events.map((event) => event.id)).toEqual([
+      'obs_1', 'obs_2',
+    ]);
+    expect(secondStore.query().events.map((event) => event.id)).toEqual([
+      'obs_1',
     ]);
   });
 });

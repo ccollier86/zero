@@ -14,6 +14,7 @@ import type {
 
 function socket(tableNames: string[]) {
   const messages: ServerMessage[] = [];
+  const closes: Array<[number, string]> = [];
   const data: SyncSocketData = {
     allowedTables: new Set(tableNames),
     subscribedTopics: new Set(),
@@ -37,11 +38,11 @@ function socket(tableNames: string[]) {
       messages.push(JSON.parse(payload));
       return payload.length;
     },
-    close() {},
+    close(code: number, reason: string) { closes.push([code, reason]); },
     subscribe() {},
     unsubscribe() {},
   } as unknown as ServerWebSocket<SyncSocketData>;
-  return { value, messages };
+  return { value, messages, closes };
 }
 
 async function mutate(input: {
@@ -75,6 +76,88 @@ async function mutate(input: {
 }
 
 describe('Sync logical mutation validation', () => {
+  test('never sends a negative acknowledgement after a projector fails post-commit', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    db.defineTable('documents', {
+      id: 'text primary key',
+      title: 'text not null',
+    });
+    const ws = socket(['documents']);
+    ws.value.data.resourceRowProjectors = new Map([['documents', {
+      project() {
+        throw new Error('projector failed after commit');
+      },
+    }]]);
+
+    await routeMessage(
+      ws.value,
+      {
+        type: 'sync.mutate', ref: 'projector-failed', table: 'documents', op: 'INSERT',
+        row: { id: 'document-1', title: 'Committed' },
+      },
+      db,
+      { publish() {} },
+    );
+
+    expect(db.get('documents', 'document-1')).toMatchObject({ title: 'Committed' });
+    expect(ws.messages).toEqual([]);
+    expect(ws.closes).toEqual([[
+      1011,
+      'Sync acknowledgement projection failed',
+    ]]);
+    db.dispose();
+  });
+
+  test('does not acknowledge a committed row after its projector revokes read authority', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    db.defineTable('documents', {
+      id: 'text primary key',
+      title: 'text not null',
+    });
+    const ws = socket(['documents']);
+    let authorityCurrent = true;
+    let projections = 0;
+    ws.value.data.resourceRowProjectors = new Map([['documents', {
+      project(row) {
+        projections += 1;
+        authorityCurrent = false;
+        return row;
+      },
+    }]]);
+
+    await routeMessage(
+      ws.value,
+      {
+        type: 'sync.mutate', ref: 'revoked-before-ack', table: 'documents', op: 'INSERT',
+        row: { id: 'document-1', title: 'Committed' },
+      },
+      db,
+      { publish() {} },
+      null,
+      null,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'single',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => {
+        if (!authorityCurrent) throw databaseAuthorityChanged();
+      },
+    );
+
+    expect(projections).toBe(1);
+    expect(db.get('documents', 'document-1')).toMatchObject({ title: 'Committed' });
+    expect(ws.messages).toEqual([]);
+    db.dispose();
+  });
+
   test('rejects a missing required field before starting a write', async () => {
     const todos = defineTable('todos', {
       title: field.text({ required: true }),
@@ -98,6 +181,73 @@ describe('Sync logical mutation validation', () => {
     expect(ack.error).toContain('title');
     expect(db.get('todos', 'todo-1')).toBeNull();
     expect(db.currentSeq).toBe(before);
+    db.dispose();
+  });
+
+  test('does not expose thrown validator or codec details on the wire', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    db.defineTable('documents', {
+      id: 'text primary key',
+      title: 'text not null',
+    });
+    const validator: SyncTableMutationValidator = {
+      primaryKey: 'id',
+      fieldNames: ['title'],
+      decodeRow() {
+        throw new Error('private /workspace/customer.sqlite PHI-SECRET');
+      },
+      validateRow() {
+        throw new Error('not reached');
+      },
+      encodeRow() {
+        throw new Error('not reached');
+      },
+    };
+
+    const ack = await mutate({
+      db,
+      validators: { documents: validator },
+      message: {
+        type: 'sync.mutate',
+        ref: 'private-validator-error',
+        table: 'documents',
+        op: 'INSERT',
+        row: { id: 'document-1', title: 'Private' },
+      },
+    });
+
+    expect(ack).toMatchObject({
+      ok: false,
+      error: 'Invalid row for table "documents": logical row validation failed',
+    });
+    expect(JSON.stringify(ack)).not.toContain('PHI-SECRET');
+    expect(db.get('documents', 'document-1')).toBeNull();
+    db.dispose();
+  });
+
+  test('does not expose raw SQLite mutation failures on the wire', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    db.defineTable('accounts', {
+      id: 'text primary key',
+      email: 'text not null unique',
+    });
+    db.insert('accounts', { id: 'account-1', email: 'private@example.com' });
+
+    const ack = await mutate({
+      db,
+      message: {
+        type: 'sync.mutate',
+        ref: 'private-sqlite-error',
+        table: 'accounts',
+        op: 'INSERT',
+        row: { id: 'account-2', email: 'private@example.com' },
+      },
+    });
+
+    expect(ack).toMatchObject({ ok: false, error: 'Mutation failed' });
+    expect(JSON.stringify(ack)).not.toContain('UNIQUE');
+    expect(JSON.stringify(ack)).not.toContain('private@example.com');
+    expect(db.get('accounts', 'account-2')).toBeNull();
     db.dispose();
   });
 
@@ -155,7 +305,8 @@ describe('Sync logical mutation validation', () => {
       },
     });
     expect(invalid.ok).toBe(false);
-    expect(invalid.error).toContain('must be a boolean');
+    expect(invalid.error).toContain('enabled');
+    expect(invalid.error?.toLowerCase()).toContain('boolean');
     expect(db.get('preferences', 'preference-1')?.enabled).toBe(0);
     expect(db.currentSeq).toBe(beforeInvalid);
     db.dispose();
@@ -359,7 +510,7 @@ describe('Sync logical mutation validation', () => {
         return { readableTables: new Set(['documents']), rowFilters: new Map() };
       },
       async authorizeMutation(context) {
-        const expectedRow = context.loadRow(context.table, context.rowId!);
+        const expectedRow = await context.loadRow(context.table, context.rowId!);
         await Promise.resolve();
         db.prepare('UPDATE documents SET title = ? WHERE id = ?')
           .run('Changed while policy yielded', context.rowId!);
@@ -506,3 +657,9 @@ describe('Sync logical mutation validation', () => {
     db.dispose();
   });
 });
+
+function databaseAuthorityChanged(): Error & { code: string } {
+  return Object.assign(new Error('read authority changed'), {
+    code: 'DATABASE_AUTHORITY_CHANGED',
+  });
+}

@@ -6,6 +6,7 @@
  */
 
 import { afterEach, describe, expect, test } from 'bun:test';
+import { MemoryEventStore, OBS_CODES, configureObservability } from '../../observability';
 import { createReactiveDB, type ReactiveDB } from '../../sync';
 import { applyTableSyncResolution, resolveTableSyncModes } from './sync-mode-resolver';
 import { resolveConfig, type ResolvedConfig } from './types';
@@ -126,5 +127,94 @@ describe('sync mode resolver', () => {
     expect(() =>
       resolveTableSyncModes(config, db!, { warn() {}, log() {} })
     ).toThrow('exceeding auto-lazy rowLimit 1');
+  });
+
+  test('resolves isolated tenant tables without querying a default-db shadow', () => {
+    const config = createConfig({ rowLimit: 1, action: 'reject' });
+    db = createReactiveDB({ mode: 'memory' });
+
+    const resolution = resolveTableSyncModes(
+      config,
+      db,
+      { warn() {}, log() {} },
+      { tenantDatabaseTables: new Set(['events']) },
+    );
+
+    expect(resolution.decisions).toEqual([{
+      table: 'events',
+      declaredMode: 'auto',
+      resolvedMode: 'lazy',
+      source: 'tenant-database',
+      rowCount: null,
+      rowLimit: 1,
+      persisted: false,
+      reason: 'isolated tenant databases resolve auto sync to lazy',
+    }]);
+    expect(resolution.lazyTables).toEqual(new Set(['events']));
+    expect(db.hasTable('events')).toBe(false);
+    expect(db.prepare(
+      'SELECT COUNT(*) AS count FROM _zero_sync_table_modes WHERE table_name = ?',
+    ).get('events')).toEqual({ count: 0 });
+  });
+
+  test('honors explicit full mode for isolated tenant tables', () => {
+    const config = resolveConfig({
+      db: { mode: 'memory' },
+      tables: {
+        events: {
+          serverTable: { id: 'text primary key', title: 'text not null' },
+          clientTable: { _pk: 'id', _sync: 'full', id: 'text', title: 'text' },
+        },
+      },
+    });
+    db = createReactiveDB({ mode: 'memory' });
+
+    const resolution = resolveTableSyncModes(
+      config,
+      db,
+      undefined,
+      { tenantDatabaseTables: new Set(['events']) },
+    );
+    expect(resolution.decisions[0]).toMatchObject({
+      resolvedMode: 'full',
+      source: 'explicit',
+      rowCount: null,
+    });
+    expect(resolution.snapshotTables).toEqual(new Set(['events']));
+  });
+
+  test('emits warnings only through the owning app runtime', () => {
+    const ambient = new MemoryEventStore();
+    const appA = new MemoryEventStore();
+    const appB = new MemoryEventStore();
+    const configA = createConfig({ rowLimit: 1 });
+    const configB = createConfig({ rowLimit: 1 });
+    const dbA = createDb(configA);
+    const dbB = createDb(configB);
+    configureObservability({ console: false, store: ambient });
+    try {
+      for (const target of [dbA, dbB]) {
+        target.insert('events', { id: 'e1', title: 'One' });
+        target.insert('events', { id: 'e2', title: 'Two' });
+      }
+      resolveTableSyncModes(configA, dbA, undefined, {
+        observability: { sink: appA, store: appA, config: { store: appA } },
+      });
+      resolveTableSyncModes(configB, dbB, undefined, {
+        observability: { sink: appB, store: appB, config: { store: appB } },
+      });
+
+      expect(appA.query().events.map((event) => event.code)).toEqual([
+        OBS_CODES.SYNC_MODE_AUTO_LAZY.code,
+      ]);
+      expect(appB.query().events.map((event) => event.code)).toEqual([
+        OBS_CODES.SYNC_MODE_AUTO_LAZY.code,
+      ]);
+      expect(ambient.query().count).toBe(0);
+    } finally {
+      dbA.dispose();
+      dbB.dispose();
+      configureObservability(false);
+    }
   });
 });

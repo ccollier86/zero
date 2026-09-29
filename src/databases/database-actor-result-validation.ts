@@ -13,6 +13,7 @@ import {
 } from './database-actor-protocol';
 import {
   DATABASE_OPERATION_MAX_ID_BYTES,
+  isDatabaseRegistryName,
   isDatabaseTableName,
   validateDatabaseCommitResult,
   validateDatabaseReadResult,
@@ -27,16 +28,38 @@ import {
   type DatabaseSerializableValue,
   type DatabaseWriteOperation,
 } from './database-operations';
-import type {
-  DatabaseChangeReplayResult,
-  DatabaseMutationEffect,
-  DatabaseWriterCommitValue,
+import {
+  hasExactDatabaseExecutorKeys,
+  readDatabaseExecutorDataRecord,
+} from './database-executor-validation';
+import {
+  DATABASE_WRITER_MAX_RECEIPT_KEYS,
+  DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES,
+  DATABASE_WRITER_MAX_RECEIPTS,
+  DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES,
+  type DatabaseChangeReplayResult,
+  type DatabaseMutationEffect,
+  type DatabaseWriterReceiptCompaction,
+  type DatabaseWriterCommitValue,
 } from './database-writer-engine';
+import type {
+  DatabaseTrustedReceiptLookup,
+} from './database-trusted-writer';
 
 const MUTATION_VALUE_FIELDS = new Set(['kind', 'mutation']);
 const BATCH_VALUE_FIELDS = new Set(['kind', 'mutations']);
 const COMMAND_VALUE_FIELDS = new Set(['kind', 'name', 'output']);
 const MUTATION_EFFECT_FIELDS = new Set([
+  'type',
+  'table',
+  'rowId',
+  'changed',
+  'op',
+  'sequence',
+  'row',
+  'previousRow',
+]);
+const LEGACY_MUTATION_EFFECT_FIELDS = new Set([
   'type',
   'table',
   'rowId',
@@ -60,11 +83,34 @@ const REPLAY_CHANGE_FIELDS = new Set([
   'previousRow',
   'ts',
 ]);
+const RECEIPT_MISS_FIELDS = new Set(['status']);
+const RECEIPT_HIT_FIELDS = new Set(['status', 'result']);
+const EXECUTION_OUTCOME_FIELDS = new Set(['result', 'receiptCompaction']);
+const RECEIPT_COMPACTION_FIELDS = new Set([
+  'totalKeys',
+  'retainedResults',
+  'expiredTombstones',
+  'retainedResultBytes',
+  'keyLimit',
+  'retainedByteLimit',
+  'resultByteLimit',
+  'prunedCount',
+  'prunedResultBytes',
+  'retainedLimit',
+]);
 const textEncoder = new TextEncoder();
 
 export type DatabaseActorExecuteResult =
   | DatabaseReadResult
   | DatabaseCommitResult<DatabaseWriterCommitValue>;
+
+/** Internal result plus optional aggregate receipt-maintenance telemetry. */
+export interface DatabaseActorExecuteOutcome<
+  Result extends DatabaseActorExecuteResult = DatabaseActorExecuteResult,
+> {
+  readonly result: Result;
+  readonly receiptCompaction: DatabaseWriterReceiptCompaction | null;
+}
 
 export type DatabaseActorReplayExpectation = Pick<
   DatabaseActorReplayPayload,
@@ -104,6 +150,31 @@ export function validateDatabaseActorExecuteResult(
       validateFindResult(result.value, operation, catalog);
     }
     return result;
+  });
+}
+
+/** Validate an execution result and detach its privacy-safe actor telemetry. */
+export function validateDatabaseActorExecuteOutcome(
+  value: unknown,
+  operation: DatabaseOperation,
+  catalog: DatabaseOperationCatalog = {},
+): DatabaseActorExecuteOutcome {
+  const write = isWriteOperation(operation);
+  return resultBoundary(write, () => {
+    const envelope = readExecutionOutcome(value);
+    const result = validateDatabaseActorExecuteResult(
+      envelope.result,
+      operation,
+      catalog,
+    );
+    if (envelope.receiptCompaction !== null
+      && (!write || (result as DatabaseCommitResult).replayed)) {
+      throw protocolFailure(write);
+    }
+    return Object.freeze({
+      result,
+      receiptCompaction: envelope.receiptCompaction,
+    });
   });
 }
 
@@ -152,6 +223,169 @@ export function validateDatabaseActorReplayResult(
   });
 }
 
+/** Validate a writer-only logical receipt lookup across the actor boundary. */
+export function validateDatabaseActorReceiptLookupResult(
+  value: unknown,
+  idempotencyKey: string,
+  catalog: DatabaseOperationCatalog,
+): DatabaseTrustedReceiptLookup {
+  return resultBoundary(false, () => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      throw protocolFailure(false);
+    }
+    const status = (value as { status?: unknown }).status;
+    if (status === 'miss') {
+      exactRecord(value, RECEIPT_MISS_FIELDS);
+      return Object.freeze({ status: 'miss' });
+    }
+    const record = exactRecord(value, RECEIPT_HIT_FIELDS);
+    if (record.status !== 'hit') throw protocolFailure(false);
+    const result = validateDatabaseCommitResult(record.result);
+    if (result.idempotencyKey !== idempotencyKey || !result.replayed) {
+      throw protocolFailure(false);
+    }
+    validateTrustedCommitValue(result, catalog);
+    return Object.freeze({
+      status: 'hit',
+      result: result as DatabaseCommitResult<DatabaseWriterCommitValue>,
+    });
+  });
+}
+
+/**
+ * Validate a trusted logical-receipt write without correlating its replayed
+ * result to a newly reconstructed CAS operation.
+ */
+export function validateDatabaseActorTrustedWriteResult(
+  value: unknown,
+  idempotencyKey: string,
+  catalog: DatabaseOperationCatalog,
+): DatabaseCommitResult<DatabaseWriterCommitValue> {
+  return resultBoundary(true, () => {
+    const result = validateDatabaseCommitResult(value) as DatabaseCommitResult<
+      DatabaseWriterCommitValue
+    >;
+    if (result.idempotencyKey !== idempotencyKey) throw protocolFailure(true);
+    validateTrustedCommitValue(result, catalog);
+    return result;
+  });
+}
+
+/** Validate a trusted write result with optional aggregate compaction data. */
+export function validateDatabaseActorTrustedWriteOutcome(
+  value: unknown,
+  idempotencyKey: string,
+  catalog: DatabaseOperationCatalog,
+): DatabaseActorExecuteOutcome<DatabaseCommitResult<DatabaseWriterCommitValue>> {
+  return resultBoundary(true, () => {
+    const envelope = readExecutionOutcome(value);
+    const result = validateDatabaseActorTrustedWriteResult(
+      envelope.result,
+      idempotencyKey,
+      catalog,
+    );
+    if (envelope.receiptCompaction !== null && result.replayed) {
+      throw protocolFailure(true);
+    }
+    return Object.freeze({
+      result,
+      receiptCompaction: envelope.receiptCompaction,
+    });
+  });
+}
+
+/** Attach actor-local aggregate telemetry without changing the public result. */
+export function attachDatabaseActorReceiptCompaction(
+  result: DatabaseActorExecuteResult,
+  receiptCompaction: DatabaseWriterReceiptCompaction | null,
+): DatabaseActorExecuteResult | Readonly<{
+  readonly result: DatabaseActorExecuteResult;
+  readonly receiptCompaction: DatabaseWriterReceiptCompaction;
+}> {
+  return receiptCompaction === null
+    ? result
+    : Object.freeze({ result, receiptCompaction });
+}
+
+/**
+ * Validate an on-disk receipt written by either the current schema or the
+ * exact v1 writer contract. Legacy mutation effects intentionally remain in
+ * their original shape: their historical result did not contain canonical
+ * row images, and inventing those values during migration would be unsafe.
+ */
+export function validateDatabaseActorLegacyReceiptResult(
+  value: unknown,
+  idempotencyKey: string,
+  catalog: DatabaseOperationCatalog,
+): DatabaseCommitResult<DatabaseWriterCommitValue> {
+  return resultBoundary(true, () => {
+    const result = validateDatabaseCommitResult(value) as DatabaseCommitResult<
+      DatabaseWriterCommitValue
+    >;
+    if (result.idempotencyKey !== idempotencyKey) throw protocolFailure(true);
+    validateTrustedCommitValue(result, catalog, 'legacy');
+    return result;
+  });
+}
+
+type MutationEffectFormat = 'current' | 'legacy' | 'either';
+
+function validateTrustedCommitValue(
+  result: DatabaseCommitResult,
+  catalog: DatabaseOperationCatalog,
+  mutationEffectFormat: MutationEffectFormat = 'current',
+): void {
+  if (typeof result.value !== 'object'
+    || result.value === null
+    || Array.isArray(result.value)) throw protocolFailure(true);
+  const kind = (result.value as { kind?: unknown }).kind;
+  if (kind === 'mutation') {
+    const value = exactRecord(result.value, MUTATION_VALUE_FIELDS);
+    const effect = validateStoredMutationEffect(
+      value.mutation,
+      catalog,
+      mutationEffectFormat,
+    );
+    if (effect.changed && effect.sequence!.seq !== result.sequence.seq) {
+      throw protocolFailure(true);
+    }
+    return;
+  }
+  if (kind === 'batch') {
+    const value = exactRecord(result.value, BATCH_VALUE_FIELDS);
+    if (!Array.isArray(value.mutations) || value.mutations.length > 256) {
+      throw protocolFailure(true);
+    }
+    let previousSequence: number | null = null;
+    for (const candidate of value.mutations) {
+      const effect = validateStoredMutationEffect(
+        candidate,
+        catalog,
+        mutationEffectFormat,
+      );
+      if (!effect.changed) continue;
+      const sequence = effect.sequence!.seq;
+      if (previousSequence !== null && sequence !== previousSequence + 1) {
+        throw protocolFailure(true);
+      }
+      previousSequence = sequence;
+    }
+    if (previousSequence !== null && previousSequence !== result.sequence.seq) {
+      throw protocolFailure(true);
+    }
+    return;
+  }
+  if (kind === 'command') {
+    const value = exactRecord(result.value, COMMAND_VALUE_FIELDS);
+    if (!isDatabaseRegistryName(value.name)
+      || (catalog.commands && !catalog.commands.includes(value.name))) {
+      throw protocolFailure(true);
+    }
+    return;
+  }
+  throw protocolFailure(true);
+}
+
 function validateWriteResult(
   value: unknown,
   operation: DatabaseWriteOperation,
@@ -170,6 +404,7 @@ function validateWriteResult(
         commitValue.mutation,
         operation.mutation,
         catalog,
+        result.replayed ? 'either' : 'current',
       );
       if (effect.changed && effect.sequence!.seq !== result.sequence.seq) {
         throw protocolFailure(true);
@@ -188,6 +423,7 @@ function validateWriteResult(
           commitValue.mutations[index],
           operation.mutations[index]!,
           catalog,
+          result.replayed ? 'either' : 'current',
         );
         if (!effect.changed) continue;
         const seq = effect.sequence!.seq;
@@ -219,12 +455,10 @@ function validateMutationEffect(
   value: unknown,
   mutation: DatabaseMutation,
   catalog: DatabaseOperationCatalog,
+  format: MutationEffectFormat = 'current',
 ): DatabaseMutationEffect {
-  const effect = exactRecord(value, MUTATION_EFFECT_FIELDS);
-  if (effect.type !== mutation.type
-    || effect.table !== mutation.table
-    || !isRowId(effect.rowId)
-    || typeof effect.changed !== 'boolean') {
+  const effect = validateStoredMutationEffect(value, catalog, format);
+  if (effect.type !== mutation.type || effect.table !== mutation.table) {
     throw protocolFailure(true);
   }
   if ((mutation.type === 'update' || mutation.type === 'delete')
@@ -235,30 +469,81 @@ function validateMutationEffect(
     const primaryKey = catalog.primaryKeys?.[mutation.table];
     if (primaryKey) {
       const submittedId = mutation.row[primaryKey];
-      if (!isRowId(submittedId) || effect.rowId !== submittedId) {
+      const canonicalSubmittedId = canonicalRowId(submittedId);
+      if (submittedId !== undefined
+        && (canonicalSubmittedId === null
+          || effect.rowId !== canonicalSubmittedId)) {
         throw protocolFailure(true);
       }
     }
   }
 
+  return effect;
+}
+
+function validateStoredMutationEffect(
+  value: unknown,
+  catalog: DatabaseOperationCatalog,
+  format: MutationEffectFormat = 'current',
+): DatabaseMutationEffect {
+  const legacy = format === 'legacy'
+    || (format === 'either'
+      && hasExactFields(value, LEGACY_MUTATION_EFFECT_FIELDS));
+  const effect = exactRecord(
+    value,
+    legacy ? LEGACY_MUTATION_EFFECT_FIELDS : MUTATION_EFFECT_FIELDS,
+  );
+  if ((effect.type !== 'create'
+      && effect.type !== 'upsert'
+      && effect.type !== 'update'
+      && effect.type !== 'delete')
+    || typeof effect.table !== 'string'
+    || !catalog.tables?.includes(effect.table)
+    || !isRowId(effect.rowId)
+    || typeof effect.changed !== 'boolean') {
+    throw protocolFailure(true);
+  }
   if (!effect.changed) {
-    if ((mutation.type !== 'update' && mutation.type !== 'delete')
+    if ((effect.type !== 'update' && effect.type !== 'delete')
       || effect.op !== null
-      || effect.sequence !== null) {
+      || effect.sequence !== null
+      || (!legacy && (effect.row !== null || effect.previousRow !== null))) {
       throw protocolFailure(true);
     }
     return effect as unknown as DatabaseMutationEffect;
   }
 
-  const expectedOp = mutation.type === 'create'
+  const expectedOp = effect.type === 'create'
     ? effect.op === 'INSERT'
-    : mutation.type === 'upsert'
+    : effect.type === 'upsert'
       ? effect.op === 'INSERT' || effect.op === 'UPDATE'
-      : mutation.type === 'update'
+      : effect.type === 'update'
         ? effect.op === 'UPDATE'
         : effect.op === 'DELETE';
   if (!expectedOp) throw protocolFailure(true);
   readSequence(effect.sequence, true);
+  if (legacy) return effect as unknown as DatabaseMutationEffect;
+  const columns = catalog.columns?.[effect.table];
+  const primaryKey = catalog.primaryKeys?.[effect.table];
+  if (!columns || !primaryKey) throw protocolFailure(true);
+  if (effect.type === 'delete') {
+    if (effect.row !== null) throw protocolFailure(true);
+  } else {
+    const row = effect.row;
+    if (!isCanonicalEffectRow(row, columns, primaryKey, effect.rowId)) {
+      throw protocolFailure(true);
+    }
+  }
+  if (effect.op === 'INSERT') {
+    if (effect.previousRow !== null) throw protocolFailure(true);
+  } else if (!isCanonicalEffectRow(
+    effect.previousRow,
+    columns,
+    primaryKey,
+    effect.rowId,
+  )) {
+    throw protocolFailure(true);
+  }
   return effect as unknown as DatabaseMutationEffect;
 }
 
@@ -319,6 +604,71 @@ function fieldsForOperation(
   }
 }
 
+function readExecutionOutcome(value: unknown): Readonly<{
+  readonly result: unknown;
+  readonly receiptCompaction: DatabaseWriterReceiptCompaction | null;
+}> {
+  const record = readDatabaseExecutorDataRecord(value);
+  if (!record || !hasExactDatabaseExecutorKeys(record, EXECUTION_OUTCOME_FIELDS)) {
+    return Object.freeze({ result: value, receiptCompaction: null });
+  }
+  return Object.freeze({
+    result: record.result,
+    receiptCompaction: validateReceiptCompaction(record.receiptCompaction),
+  });
+}
+
+function validateReceiptCompaction(
+  value: unknown,
+): DatabaseWriterReceiptCompaction {
+  const record = readDatabaseExecutorDataRecord(value);
+  if (!record
+    || !hasExactDatabaseExecutorKeys(record, RECEIPT_COMPACTION_FIELDS)) {
+    throw protocolFailure(true);
+  }
+  const totalKeys = record.totalKeys;
+  const retainedResults = record.retainedResults;
+  const expiredTombstones = record.expiredTombstones;
+  const retainedResultBytes = record.retainedResultBytes;
+  const keyLimit = record.keyLimit;
+  const retainedByteLimit = record.retainedByteLimit;
+  const resultByteLimit = record.resultByteLimit;
+  const prunedCount = record.prunedCount;
+  const prunedResultBytes = record.prunedResultBytes;
+  const retainedLimit = record.retainedLimit;
+  if (!isNonNegativeSafeInteger(totalKeys)
+    || !isNonNegativeSafeInteger(retainedResults)
+    || !isNonNegativeSafeInteger(expiredTombstones)
+    || !isNonNegativeSafeInteger(retainedResultBytes)
+    || !Number.isSafeInteger(prunedCount)
+    || (prunedCount as number) < 1
+    || !Number.isSafeInteger(prunedResultBytes)
+    || (prunedResultBytes as number) < 1
+    || keyLimit !== DATABASE_WRITER_MAX_RECEIPT_KEYS
+    || retainedLimit !== DATABASE_WRITER_MAX_RECEIPTS
+    || retainedByteLimit !== DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES
+    || resultByteLimit !== DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES
+    || (totalKeys as number) > keyLimit
+    || (retainedResults as number) > retainedLimit
+    || (retainedResultBytes as number) > retainedByteLimit
+    || retainedResults + expiredTombstones !== totalKeys
+    || (prunedCount as number) > expiredTombstones) {
+    throw protocolFailure(true);
+  }
+  return Object.freeze({
+    totalKeys,
+    retainedResults,
+    expiredTombstones,
+    retainedResultBytes,
+    keyLimit,
+    retainedByteLimit,
+    resultByteLimit,
+    prunedCount: prunedCount as number,
+    prunedResultBytes: prunedResultBytes as number,
+    retainedLimit,
+  });
+}
+
 function readSequence(value: unknown, write: boolean): number {
   const record = exactRecord(value, SEQUENCE_FIELDS);
   if (!isNonNegativeSafeInteger(record.seq)) throw protocolFailure(write);
@@ -340,6 +690,14 @@ function exactRecord(
   return record;
 }
 
+function hasExactFields(value: unknown, fields: ReadonlySet<string>): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const keys = Object.keys(value);
+  return keys.length === fields.size && keys.every((key) => fields.has(key));
+}
+
 function isRow(value: unknown): value is DatabaseOperationRow {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
@@ -354,6 +712,27 @@ function isRowId(value: unknown): value is string {
     && value.length <= DATABASE_OPERATION_MAX_ID_BYTES
     && !/[\u0000-\u001f\u007f-\u009f]/u.test(value)
     && textEncoder.encode(value).byteLength <= DATABASE_OPERATION_MAX_ID_BYTES;
+}
+
+function canonicalRowId(value: unknown): string | null {
+  if (typeof value !== 'string'
+    && (typeof value !== 'number' || !Number.isFinite(value))) return null;
+  const canonical = String(value);
+  return isRowId(canonical) ? canonical : null;
+}
+
+function isCanonicalEffectRow(
+  value: unknown,
+  columns: readonly string[],
+  primaryKey: string,
+  rowId: string,
+): value is DatabaseOperationRow {
+  if (!isRow(value)) return false;
+  const rowFields = Object.keys(value);
+  const expectedFields = new Set(columns);
+  return rowFields.length === expectedFields.size
+    && rowFields.every((field) => expectedFields.has(field))
+    && canonicalRowId(value[primaryKey]) === rowId;
 }
 
 function isWriteOperation(

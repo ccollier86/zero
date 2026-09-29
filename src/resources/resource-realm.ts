@@ -21,11 +21,32 @@ export interface ResourceRealmAuthContext {
   membershipAuthorizationGeneration?: number;
 }
 
-export interface ResourceTenantScope {
+interface ResourceTenantScopeBase {
   readonly kind: 'tenant';
-  readonly field: string;
   readonly tenantId: string;
   readonly fingerprint: string;
+}
+
+/** Tenant authority enforced by an exact server-owned row discriminator. */
+export interface ResourceTenantRowScope extends ResourceTenantScopeBase {
+  readonly isolation: 'shared-row';
+  readonly field: string;
+}
+
+/** Tenant authority enforced by access to one physical tenant database. */
+export interface ResourceTenantDatabaseScope extends ResourceTenantScopeBase {
+  readonly isolation: 'tenant-database';
+}
+
+export type ResourceTenantScope =
+  | ResourceTenantRowScope
+  | ResourceTenantDatabaseScope;
+
+/** True only when the tenant boundary is the already-routed physical file. */
+export function isResourceTenantDatabaseScope(
+  scope: ResourceTenantScope | null | undefined,
+): scope is ResourceTenantDatabaseScope {
+  return scope?.isolation === 'tenant-database';
 }
 
 export type ResourceRealmResolution =
@@ -58,22 +79,49 @@ export function resolveResourceRealm(
   }
 
   const tenantId = authContext.tenantId;
+  const storage = resource.storage;
+  if (storage.kind !== 'tenant') {
+    // Registered resources normalize logical realms and physical storage
+    // together. An impossible mismatch must deny rather than accidentally
+    // treating tenant-owned data as global/unscoped.
+    return {
+      ok: false,
+      status: 403,
+      code: 'resource-tenant-context-required',
+      message: 'The tenant resource storage boundary is not available',
+    };
+  }
+  const fingerprint = JSON.stringify([
+    storage.isolation,
+    storage.isolation === 'shared-row' ? storage.field : null,
+    authContext.sessionKind,
+    authContext.clientId,
+    authContext.sessionId,
+    authContext.sessionGeneration,
+    tenantId,
+    authContext.membershipId,
+    authContext.tenantAuthorizationGeneration,
+    authContext.membershipAuthorizationGeneration,
+  ]);
+  if (storage.isolation === 'shared-row') {
+    return {
+      ok: true,
+      scope: Object.freeze({
+        kind: 'tenant',
+        isolation: 'shared-row',
+        field: storage.field,
+        tenantId,
+        fingerprint,
+      }),
+    };
+  }
   return {
     ok: true,
     scope: Object.freeze({
       kind: 'tenant',
-      field: resource.realm.field,
+      isolation: 'tenant-database',
       tenantId,
-      fingerprint: JSON.stringify([
-        authContext.sessionKind,
-        authContext.clientId,
-        authContext.sessionId,
-        authContext.sessionGeneration,
-        tenantId,
-        authContext.membershipId,
-        authContext.tenantAuthorizationGeneration,
-        authContext.membershipAuthorizationGeneration,
-      ]),
+      fingerprint,
     }),
   };
 }
@@ -86,7 +134,7 @@ export function resolveResourceRealm(
 export function resourceRealmConstraint(
   scope: ResourceTenantScope | null,
 ): ResourceDataConstraint[] {
-  return scope
+  return isResourceTenantRowScope(scope)
     ? [{ type: 'field', field: scope.field, operator: 'eq', value: scope.tenantId }]
     : [];
 }
@@ -96,7 +144,7 @@ export function resourceRowMatchesRealm(
   row: Record<string, unknown>,
   scope: ResourceTenantScope | null,
 ): boolean {
-  return !scope || row[scope.field] === scope.tenantId;
+  return !isResourceTenantRowScope(scope) || row[scope.field] === scope.tenantId;
 }
 
 /**
@@ -112,7 +160,7 @@ export function stampResourceCreateRealm(
   code: 'resource-tenant-conflict';
   message: string;
 } {
-  if (!scope) return { ok: true, input };
+  if (!isResourceTenantRowScope(scope)) return { ok: true, input };
   if (scope.field in input && input[scope.field] !== scope.tenantId) {
     return {
       ok: false,
@@ -134,13 +182,22 @@ export function rejectResourceRealmUpdate(
   code: 'resource-tenant-immutable';
   message: string;
 } {
-  if (!scope || !(scope.field in input)) return { ok: true };
+  if (!isResourceTenantRowScope(scope) || !(scope.field in input)) {
+    return { ok: true };
+  }
   return {
     ok: false,
     status: 400,
     code: 'resource-tenant-immutable',
     message: `Field "${scope.field}" is server-managed and cannot be updated`,
   };
+}
+
+/** Narrow a tenant scope to the only form that may add row SQL/stamping. */
+export function isResourceTenantRowScope(
+  scope: ResourceTenantScope | null | undefined,
+): scope is ResourceTenantRowScope {
+  return scope?.isolation === 'shared-row';
 }
 
 function hasLiveTenantAuthority(

@@ -10,6 +10,11 @@ data/
 *.db
 *.db-wal
 *.db-shm
+*.db-journal
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
 .DS_Store
 .claude/settings.local.json
 src/frontend/client/_generated/

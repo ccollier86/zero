@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'bun:test';
 
+import { MAX_RUNTIME_TIMER_INTERVAL_MS } from '../runtime/timer-limits';
 import { DatabaseError } from './database-error';
 import { SubprocessDatabaseExecutor } from './subprocess-database-executor';
 
@@ -10,6 +11,66 @@ const FIXTURE_PATH = fileURLToPath(new URL(
 ));
 
 describe('SubprocessDatabaseExecutor', () => {
+  test('accepts the portable JavaScript timer ceiling for every executor deadline', async () => {
+    const executor = createExecutor({
+      startupTimeoutMs: MAX_RUNTIME_TIMER_INTERVAL_MS,
+      operationTimeoutMs: MAX_RUNTIME_TIMER_INTERVAL_MS,
+      shutdownAckTimeoutMs: MAX_RUNTIME_TIMER_INTERVAL_MS,
+      shutdownExitTimeoutMs: MAX_RUNTIME_TIMER_INTERVAL_MS,
+      sigtermTimeoutMs: MAX_RUNTIME_TIMER_INTERVAL_MS,
+      sigkillTimeoutMs: MAX_RUNTIME_TIMER_INTERVAL_MS,
+    });
+
+    expect(executor.diagnostics()).toMatchObject({ state: 'created' });
+    await executor.close();
+  });
+
+  test('rejects executor deadlines above the portable JavaScript timer ceiling', () => {
+    const fields = [
+      'startupTimeoutMs',
+      'operationTimeoutMs',
+      'shutdownAckTimeoutMs',
+      'shutdownExitTimeoutMs',
+      'sigtermTimeoutMs',
+      'sigkillTimeoutMs',
+    ] as const satisfies readonly (keyof TestExecutorOptions)[];
+
+    for (const field of fields) {
+      expect(() => createExecutor({
+        [field]: MAX_RUNTIME_TIMER_INTERVAL_MS + 1,
+      })).toThrow(
+        `${field} must not exceed ${MAX_RUNTIME_TIMER_INTERVAL_MS}`,
+      );
+    }
+  });
+
+  test('bounds each per-operation timer override before dispatch', async () => {
+    const executor = createExecutor();
+    try {
+      await executor.start();
+      expect(await executor.execute<string>({
+        operation: 'echo',
+        kind: 'read',
+        payload: { value: 'portable-timer-boundary', delayMs: 0 },
+      }, { timeoutMs: MAX_RUNTIME_TIMER_INTERVAL_MS })).toBe(
+        'portable-timer-boundary',
+      );
+      await expect(executor.execute({
+        operation: 'echo',
+        kind: 'read',
+        payload: { value: 'must-not-dispatch', delayMs: 0 },
+      }, { timeoutMs: MAX_RUNTIME_TIMER_INTERVAL_MS + 1 })).rejects.toThrow(
+        `timeoutMs must not exceed ${MAX_RUNTIME_TIMER_INTERVAL_MS}`,
+      );
+      expect(executor.diagnostics()).toMatchObject({
+        state: 'ready',
+        inFlight: 0,
+      });
+    } finally {
+      await executor.close();
+    }
+  });
+
   test('correlates out-of-order responses to their original requests', async () => {
     const executor = createExecutor();
     try {
@@ -125,6 +186,71 @@ describe('SubprocessDatabaseExecutor', () => {
       expect(executor.diagnostics().lastFailureCode).toBe(
         'DATABASE_EXECUTOR_FAILED',
       );
+    } finally {
+      await executor.close();
+    }
+  });
+
+  test('fails and settles on the exact payload-free hot durability signal', async () => {
+    const executor = createExecutor();
+    const events: unknown[] = [];
+    executor.setEventListener((event) => events.push(event));
+    try {
+      await executor.start();
+      const result = executor.execute({
+        operation: 'hot-periodic-durability-failed',
+        kind: 'write',
+        payload: null,
+      });
+      await expectDatabaseError(result, 'DATABASE_EXECUTOR_FAILED', 'unknown');
+      expect(events).toEqual([{ type: 'hot-periodic-durability-failed' }]);
+      expect(executor.diagnostics()).toMatchObject({
+        state: 'failed',
+        lastFailureCode: 'DATABASE_EXECUTOR_FAILED',
+      });
+      await executor.settled();
+    } finally {
+      await executor.close();
+    }
+  });
+
+  test('relays exact periodic snapshot watchdog boundaries without payloads', async () => {
+    const executor = createExecutor();
+    const events: unknown[] = [];
+    executor.setEventListener((event) => events.push(event));
+    try {
+      await executor.start();
+      await executor.execute({
+        operation: 'hot-periodic-snapshot-cycle',
+        kind: 'read',
+        payload: null,
+      });
+      expect(events).toEqual([
+        { type: 'hot-periodic-snapshot-started' },
+        { type: 'hot-periodic-snapshot-finished' },
+      ]);
+      expect(JSON.stringify(events)).not.toContain('payload');
+    } finally {
+      await executor.close();
+    }
+  });
+
+  test('relays exact periodic acknowledged-write boundaries without payloads', async () => {
+    const executor = createExecutor();
+    const events: unknown[] = [];
+    executor.setEventListener((event) => events.push(event));
+    try {
+      await executor.start();
+      await executor.execute({
+        operation: 'hot-periodic-durability-cycle',
+        kind: 'write',
+        payload: null,
+      });
+      expect(events).toEqual([
+        { type: 'hot-periodic-durability-dirty' },
+        { type: 'hot-periodic-durability-clean' },
+      ]);
+      expect(JSON.stringify(events)).not.toContain('payload');
     } finally {
       await executor.close();
     }
@@ -408,6 +534,8 @@ interface TestExecutorOptions {
   readonly maxInFlight?: number;
   readonly startupTimeoutMs?: number;
   readonly operationTimeoutMs?: number;
+  readonly shutdownAckTimeoutMs?: number;
+  readonly shutdownExitTimeoutMs?: number;
   readonly secretArgument?: string;
   readonly env?: Readonly<Record<string, string>>;
   readonly sigtermTimeoutMs?: number;
@@ -432,8 +560,8 @@ function createExecutor(
     maxInFlight: options.maxInFlight ?? 4,
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
     operationTimeoutMs: options.operationTimeoutMs ?? 1_000,
-    shutdownAckTimeoutMs: 500,
-    shutdownExitTimeoutMs: 500,
+    shutdownAckTimeoutMs: options.shutdownAckTimeoutMs ?? 500,
+    shutdownExitTimeoutMs: options.shutdownExitTimeoutMs ?? 500,
     sigtermTimeoutMs: options.sigtermTimeoutMs ?? 500,
     sigkillTimeoutMs: options.sigkillTimeoutMs ?? 500,
   });

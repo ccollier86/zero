@@ -6,6 +6,7 @@
  */
 
 import type { ServerWebSocket } from 'bun';
+import type { PlatformObservabilityRuntime } from '../observability/types';
 import { projectSyncChange } from './row-filter';
 import type { ReactiveDB } from './reactive-db';
 import { sendSyncSnapshot } from './sync-snapshot-response';
@@ -18,13 +19,16 @@ import type {
 } from './types';
 
 /** Handle one validated sync.subscribe request. */
-export function handleSyncSubscribe(
+export async function handleSyncSubscribe(
   socket: ServerWebSocket<SyncSocketData>,
   message: SyncSubscribeMessage,
   db: ReactiveDB,
   snapshotTables?: Set<string>,
-): void {
+  observability?: PlatformObservabilityRuntime | null,
+  assertCurrentAuthority: () => void = () => undefined,
+): Promise<void> {
   if (!validSubscribe(message)) return;
+  assertCurrentAuthority();
   const selection = selectSyncSubscription(socket, message, db, snapshotTables);
   const hasPriorCursor = message.epoch !== undefined || message.lastSeq > 0;
   const scopeMatches = typeof message.scope === 'string'
@@ -33,11 +37,13 @@ export function handleSyncSubscribe(
   const epochMatches = message.epoch === db.syncEpoch;
 
   if (!epochMatches || scopeChanged || message.lastSeq > db.currentSeq) {
-    sendSyncSnapshot(
+    await sendSyncSnapshot(
       socket,
       selection.snapshot,
       db,
       scopeChanged ? 'purge' : 'preserve-pending',
+      observability,
+      assertCurrentAuthority,
     );
     return;
   }
@@ -46,7 +52,14 @@ export function handleSyncSubscribe(
   const changes = replay.value;
   if (changes === null
     || (changes.length > 0 && changes[0].seq > message.lastSeq + 1)) {
-    sendSyncSnapshot(socket, selection.snapshot, db, 'preserve-pending');
+    await sendSyncSnapshot(
+      socket,
+      selection.snapshot,
+      db,
+      'preserve-pending',
+      observability,
+      assertCurrentAuthority,
+    );
     return;
   }
 
@@ -61,12 +74,14 @@ export function handleSyncSubscribe(
     .map((change) => ({ ...change, origin: '' }));
   const response: SyncCatchupMessage = {
     type: 'sync.catchup',
+    ...(socket.data.syncMultiplexed ? { plane: 'default' as const } : {}),
     changes: projected,
     seq: replay.seq,
     prevSeq: message.lastSeq,
     epoch: db.syncEpoch,
     scope: socket.data.authorizationScope,
   };
+  assertCurrentAuthority();
   if (sendSyncWire(socket, response)) socket.data.lastSeq = replay.seq;
 }
 
@@ -77,5 +92,23 @@ function validSubscribe(message: SyncSubscribeMessage): boolean {
     && (message.snapshot === undefined || Array.isArray(message.snapshot))
     && (message.epoch === undefined || typeof message.epoch === 'string')
     && (message.scope === undefined || message.scope === null
-      || typeof message.scope === 'string');
+      || typeof message.scope === 'string')
+    && validCursors(message.cursors);
+}
+
+function validCursors(value: SyncSubscribeMessage['cursors']): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  if (Object.keys(value).some((key) => key !== 'default' && key !== 'tenant')) {
+    return false;
+  }
+  return Object.values(value).every((cursor) => cursor === undefined || (
+    cursor !== null
+    && typeof cursor === 'object'
+    && Number.isSafeInteger(cursor.lastSeq)
+    && cursor.lastSeq >= 0
+    && (cursor.epoch === undefined || typeof cursor.epoch === 'string')
+    && (cursor.scope === undefined || cursor.scope === null
+      || typeof cursor.scope === 'string')
+  ));
 }

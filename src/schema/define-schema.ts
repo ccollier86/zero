@@ -382,7 +382,11 @@ function createSyncMutationValidator(input: {
         if (!(name in next)) continue;
         const meta = input.fieldDefs[name]!._meta;
         if (meta.type === 'boolean' && !isBooleanWireValue(next[name])) {
-          throw new Error(`Field "${name}" must be a boolean or SQLite boolean value`);
+          // Keep an invalid wire value intact so the declarative schema can
+          // return its bounded, field-addressed validation issue. Throwing
+          // here would force the Sync boundary either to expose arbitrary
+          // codec exceptions or to discard useful framework-owned feedback.
+          continue;
         }
         next[name] = decodeFieldValue(meta, next[name]);
       }

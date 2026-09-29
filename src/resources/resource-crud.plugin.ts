@@ -6,6 +6,8 @@
  * persistence behavior live in ResourceCrudService.
  */
 
+import { createHash, randomUUID } from 'node:crypto';
+
 import { Elysia, t } from 'elysia';
 import { readAuthBearerToken } from '../auth/auth-bearer-token';
 import { createAuthMiddleware } from '../auth/auth.middleware';
@@ -14,10 +16,17 @@ import type { AuthContext, AuthTenancyMode } from '../auth/types';
 import type { AuthorizationKernel } from '../auth/authorization-kernel';
 import type { AuthorizationRoleAssignmentResolver } from '../auth/authorization-access';
 import type { UserStore } from '../auth/user-store';
+import type { PlatformObservabilityRuntime } from '../observability/types';
 import type { ReactiveDB, TableSchema } from '../sync';
 import { getSyncDB } from '../sync';
-import { ResourceCrudService, type ResourceCrudResult } from './resource-crud-service';
+import {
+  ResourceCrudService,
+  type ResourceCrudRequestContext,
+  type ResourceCrudResult,
+  type ResourceTenantDatabaseClientProvider,
+} from './resource-crud-service';
 import type { ResourcePolicyAuthConfig } from './resource-policy-types';
+import { RESOURCE_QUERY_LIMITS } from './resource-query';
 import type { ResourceRegistry } from './resource-registry';
 
 /** Options for generated resource CRUD route behavior. */
@@ -45,7 +54,13 @@ export interface ResourceCrudPluginConfig extends ResourceCrudRoutesConfig {
   getRoleAssignments?: () => AuthorizationRoleAssignmentResolver | null;
   /** App-local database provider. Legacy standalone callers may omit it. */
   getDB?: () => ReactiveDB | null;
+  /** @internal Verified-realm actor capability; never a request selector. */
+  getTenantDatabaseClient?: ResourceTenantDatabaseClientProvider;
+  /** App-local observability runtime. Standalone plugins may omit it. */
+  observability?: PlatformObservabilityRuntime | null;
 }
+
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 const resourceParamsSchema = t.Object({
   resource: t.String({ minLength: 1 }),
@@ -56,10 +71,17 @@ const resourceIdParamsSchema = t.Object({
   id: t.String({ minLength: 1 }),
 });
 
+const resourceQueryFilterSchema = t.String({
+  maxLength: RESOURCE_QUERY_LIMITS.filterExpressionLength,
+});
+
 const listQuerySchema = t.Object({
-  filter: t.Optional(t.Union([t.String(), t.Array(t.String())])),
-  order: t.Optional(t.String()),
-  dir: t.Optional(t.String()),
+  filter: t.Optional(t.Union([
+    resourceQueryFilterSchema,
+    t.Array(resourceQueryFilterSchema, { maxItems: RESOURCE_QUERY_LIMITS.filterCount }),
+  ])),
+  order: t.Optional(t.String({ maxLength: RESOURCE_QUERY_LIMITS.identifierLength })),
+  dir: t.Optional(t.String({ maxLength: RESOURCE_QUERY_LIMITS.directionLength })),
   limit: t.Optional(t.Numeric()),
   offset: t.Optional(t.Numeric()),
 });
@@ -83,6 +105,15 @@ export function createResourceCrudPlugin(config: ResourceCrudPluginConfig) {
 
   return new Elysia({ name: 'resource-crud' })
     .use(createAuthMiddleware(getTokenService))
+    .onError(({ code, request, set }) => {
+      if (code !== 'VALIDATION') return;
+      const read = request.method === 'GET';
+      set.status = 400;
+      return {
+        error: read ? 'Invalid resource query' : 'Invalid resource input',
+        code: read ? 'invalid-resource-query' : 'invalid-resource-input',
+      };
+    })
     .get(`${prefix}/:resource`, async ({ params, query, set, authContext, request }) => {
       const service = createService(config, getUserStore);
       if (!service) return respond(set, serviceUnavailable());
@@ -125,6 +156,14 @@ export function createResourceCrudPlugin(config: ResourceCrudPluginConfig) {
       params: resourceIdParamsSchema,
     })
     .post(`${prefix}/:resource`, async ({ params, body, set, authContext, request }) => {
+      const requestContext = resourceRequestContext(
+        request,
+        authContext,
+        getTokenService,
+        config.tenancyMode === 'multi',
+        true,
+      );
+      set.headers['Idempotency-Key'] = requestContext.idempotencyKey!;
       const service = createService(config, getUserStore);
       if (!service) return respond(set, serviceUnavailable());
 
@@ -133,12 +172,7 @@ export function createResourceCrudPlugin(config: ResourceCrudPluginConfig) {
         await service.create(
           params.resource,
           body,
-          resourceRequestContext(
-            request,
-            authContext,
-            getTokenService,
-            config.tenancyMode === 'multi',
-          ),
+          requestContext,
         )
       );
     }, {
@@ -148,6 +182,14 @@ export function createResourceCrudPlugin(config: ResourceCrudPluginConfig) {
     .patch(`${prefix}/:resource/:id`, async ({
       params, body, set, authContext, request,
     }) => {
+      const requestContext = resourceRequestContext(
+        request,
+        authContext,
+        getTokenService,
+        config.tenancyMode === 'multi',
+        true,
+      );
+      set.headers['Idempotency-Key'] = requestContext.idempotencyKey!;
       const service = createService(config, getUserStore);
       if (!service) return respond(set, serviceUnavailable());
 
@@ -157,12 +199,7 @@ export function createResourceCrudPlugin(config: ResourceCrudPluginConfig) {
           params.resource,
           params.id,
           body,
-          resourceRequestContext(
-            request,
-            authContext,
-            getTokenService,
-            config.tenancyMode === 'multi',
-          ),
+          requestContext,
         )
       );
     }, {
@@ -170,6 +207,14 @@ export function createResourceCrudPlugin(config: ResourceCrudPluginConfig) {
       body: bodySchema,
     })
     .delete(`${prefix}/:resource/:id`, async ({ params, set, authContext, request }) => {
+      const requestContext = resourceRequestContext(
+        request,
+        authContext,
+        getTokenService,
+        config.tenancyMode === 'multi',
+        true,
+      );
+      set.headers['Idempotency-Key'] = requestContext.idempotencyKey!;
       const service = createService(config, getUserStore);
       if (!service) return respond(set, serviceUnavailable());
 
@@ -178,12 +223,7 @@ export function createResourceCrudPlugin(config: ResourceCrudPluginConfig) {
         await service.delete(
           params.resource,
           params.id,
-          resourceRequestContext(
-            request,
-            authContext,
-            getTokenService,
-            config.tenancyMode === 'multi',
-          ),
+          requestContext,
         )
       );
     }, {
@@ -196,7 +236,8 @@ function resourceRequestContext(
   authContext: AuthContext | null,
   getTokenService: () => TokenService | null,
   requireDurableAuthority: boolean,
-) {
+  includeIdempotencyKey = false,
+): ResourceCrudRequestContext {
   const token = readAuthBearerToken(request);
   const tokenService = getTokenService();
   // Bound web/native sessions have a synchronous, secret-free authority
@@ -218,6 +259,9 @@ function resourceRequestContext(
   const mustResolveAtCommit = Boolean(authContext) && requireDurableAuthority;
   return {
     authContext,
+    ...(includeIdempotencyKey
+      ? { idempotencyKey: normalizeRequestIdempotencyKey(request) }
+      : {}),
     revalidateAuthContext: async () => {
       const service = getTokenService();
       return token && service ? service.resolveAuthContext(token) : null;
@@ -248,9 +292,18 @@ function createService(
     userStore: getUserStore(),
     authorizationKernel: config.getAuthorizationKernel?.() ?? null,
     roleAssignments: config.getRoleAssignments?.() ?? null,
+    getTenantDatabaseClient: config.getTenantDatabaseClient,
+    observability: config.observability,
     defaultLimit: config.defaultLimit,
     maxLimit: config.maxLimit,
   });
+}
+
+function normalizeRequestIdempotencyKey(request: Request): string {
+  const supplied = request.headers.get('Idempotency-Key')?.trim();
+  if (!supplied) return `r_${randomUUID()}`;
+  if (IDEMPOTENCY_KEY_PATTERN.test(supplied)) return supplied;
+  return `h_${createHash('sha256').update(supplied, 'utf8').digest('hex')}`;
 }
 
 function respond(

@@ -144,6 +144,105 @@ describe('installAppStopBarrier', () => {
     ]);
   });
 
+  test('recovers only stale WebSocket accounting while preserving native stop hooks', async () => {
+    const events: string[] = [];
+    const stalled = new Promise<void>(() => {});
+    const poisonedTransport = {
+      pendingRequests: 0,
+      pendingWebSockets: 4,
+      stop(force?: boolean) {
+        events.push(`transport:${String(force)}`);
+        return stalled;
+      },
+      unref() {
+        events.push('transport:unref');
+      },
+    };
+    const app: {
+      server: null | {
+        pendingRequests?: number;
+        pendingWebSockets?: number;
+        stop(force?: boolean): unknown;
+        unref?(): unknown;
+      };
+      stop(force?: boolean): Promise<typeof app>;
+    } = {
+      server: poisonedTransport,
+      async stop(force?: boolean) {
+        events.push(`native:${String(force)}`);
+        const server = app.server;
+        if (server) {
+          await server.stop(force);
+          app.server = null;
+          events.push('hook');
+        }
+        return app;
+      },
+    };
+
+    installAppStopBarrier(
+      app,
+      async () => { events.push('cleanup'); },
+      {
+        transportStopTimeoutMs: 5,
+        onTransportStopStalled(status) {
+          events.push(`stalled:${status.pendingWebSockets}`);
+        },
+      },
+    );
+
+    await expect(withTimeout(app.stop(false))).resolves.toBe(app);
+    expect(events).toEqual([
+      'transport:true',
+      'stalled:4',
+      'transport:unref',
+      'cleanup',
+      'native:false',
+      'hook',
+    ]);
+    expect(app.server).toBeNull();
+  });
+
+  test('stops after a real server-initiated WebSocket close poisons Bun accounting', async () => {
+    let hooks = 0;
+    let cleanups = 0;
+    let stalls = 0;
+    const app = new Elysia()
+      .ws('/poison', {
+        open(socket) {
+          socket.close(4001, 'authority changed');
+        },
+        message() {},
+      })
+      .onStop(() => { hooks += 1; })
+      .listen(0);
+    const port = app.server?.port;
+    if (port === undefined) throw new Error('Test server is not listening');
+    const client = new WebSocket(`ws://localhost:${port}/poison`);
+    await withTimeout(new Promise<void>((resolve, reject) => {
+      client.addEventListener('close', () => resolve(), { once: true });
+      client.addEventListener('error', () => reject(new Error('WebSocket failed')), {
+        once: true,
+      });
+    }));
+
+    installAppStopBarrier(
+      app,
+      async () => { cleanups += 1; },
+      {
+        transportStopTimeoutMs: 25,
+        onTransportStopStalled() { stalls += 1; },
+      },
+    );
+
+    await expect(withTimeout(app.stop(true))).resolves.toBe(app);
+    expect(cleanups).toBe(1);
+    expect(hooks).toBe(1);
+    // Bun 1.3.14 takes the recovery path. A runtime containing the upstream
+    // fix is also valid and completes without reporting a stall.
+    expect(stalls === 0 || stalls === 1).toBe(true);
+  });
+
   test('stops deterministically with a live Sync WebSocket', async () => {
     const harness = await createSyncLifecycleHarness();
     const connection = await connectSync(harness.app);

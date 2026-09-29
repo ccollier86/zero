@@ -6,9 +6,10 @@ import { join } from 'node:path';
 import { createReactiveDB } from './reactive-db';
 import { deliverSyncChange } from './sync-change-delivery';
 import { handleSyncSubscribe } from './sync-subscribe-handler';
+import { clearSyncBackpressure } from './sync-wire-send';
 import type { ServerMessage, SyncSocketData } from './types';
 
-function socket(scope = 'scope-a') {
+function socket(scope = 'scope-a', sendStatuses: number[] = []) {
   const messages: ServerMessage[] = [];
   const closes: Array<[number | undefined, string | undefined]> = [];
   const data: SyncSocketData = {
@@ -21,7 +22,10 @@ function socket(scope = 'scope-a') {
   };
   const value = {
     data,
-    send(payload: string) { messages.push(JSON.parse(payload)); return payload.length; },
+    send(payload: string) {
+      messages.push(JSON.parse(payload));
+      return sendStatuses.shift() ?? payload.length;
+    },
     close(code?: number, reason?: string) { closes.push([code, reason]); },
     subscribe() {}, unsubscribe() {},
   } as unknown as ServerWebSocket<SyncSocketData>;
@@ -29,13 +33,13 @@ function socket(scope = 'scope-a') {
 }
 
 describe('Sync recovery protocol', () => {
-  test('foreign server epoch forces an authoritative replacement at equal seq', () => {
+  test('foreign server epoch forces an authoritative replacement at equal seq', async () => {
     const db = createReactiveDB({ mode: 'memory' });
     db.defineTable('todos', { id: 'text primary key', title: 'text' });
     db.insert('todos', { id: 'fresh', title: 'Canonical' });
     const ws = socket();
 
-    handleSyncSubscribe(ws.value, {
+    await handleSyncSubscribe(ws.value, {
       type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'],
       lastSeq: 1, epoch: 'previous-process', scope: 'scope-a',
     }, db);
@@ -51,12 +55,12 @@ describe('Sync recovery protocol', () => {
     db.dispose();
   });
 
-  test('changed authorization scope forces a purging replacement', () => {
+  test('changed authorization scope forces a purging replacement', async () => {
     const db = createReactiveDB({ mode: 'memory' });
     db.defineTable('todos', { id: 'text primary key' });
     const ws = socket('new-scope');
 
-    handleSyncSubscribe(ws.value, {
+    await handleSyncSubscribe(ws.value, {
       type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'],
       lastSeq: 0, epoch: db.syncEpoch, scope: 'old-scope',
     }, db);
@@ -88,7 +92,7 @@ describe('Sync recovery protocol', () => {
     }) as typeof reader.query;
 
     try {
-      handleSyncSubscribe(ws.value, {
+      await handleSyncSubscribe(ws.value, {
         type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'],
         lastSeq: 0, epoch: 'force-snapshot', scope: 'scope-a',
       }, reader);
@@ -130,7 +134,7 @@ describe('Sync recovery protocol', () => {
     }) as typeof reader.getChangesAfter;
 
     try {
-      handleSyncSubscribe(ws.value, {
+      await handleSyncSubscribe(ws.value, {
         type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'],
         lastSeq: 0, epoch: reader.syncEpoch, scope: 'scope-a',
       }, reader);
@@ -191,5 +195,108 @@ describe('Sync recovery protocol', () => {
     expect(checked).toBe(1);
     expect(ws.messages).toEqual([]);
     expect(ws.data.lastSeq).toBe(0);
+  });
+
+  test('defers live changes until a backpressured snapshot drains atomically', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    db.defineTable('todos', { id: 'text primary key', title: 'text' });
+    db.insert('todos', { id: 'item', title: 'Snapshot' });
+    const ws = socket('scope-a', [-1, 100]);
+
+    const pending = handleSyncSubscribe(ws.value, {
+      type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'],
+      lastSeq: 0, epoch: 'force-snapshot', scope: 'scope-a',
+    }, db);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ws.messages.map((message) => message.type)).toEqual(['sync.snapshot']);
+
+    deliverSyncChange([ws.value], {
+      seq: 2,
+      table: 'todos',
+      op: 'UPDATE',
+      rowId: 'item',
+      row: { id: 'item', title: 'After' },
+      previousRow: { id: 'item', title: 'Snapshot' },
+      ts: 2,
+    }, db.syncEpoch, 'other-connection');
+    expect(ws.messages.map((message) => message.type)).toEqual(['sync.snapshot']);
+
+    clearSyncBackpressure(ws.value);
+    await pending;
+    expect(ws.messages.map((message) => message.type)).toEqual([
+      'sync.snapshot', 'sync.change',
+    ]);
+    expect(ws.messages[1]).toMatchObject({
+      type: 'sync.change', seq: 2, prevSeq: 1, rowId: 'item',
+    });
+    expect(ws.data.lastSeq).toBe(2);
+    db.dispose();
+  });
+
+  test('does not flush a deferred change after read authority changes during drain', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    db.defineTable('todos', { id: 'text primary key', title: 'text' });
+    db.insert('todos', { id: 'item', title: 'Snapshot' });
+    const ws = socket('scope-a', [-1]);
+    let authorityCurrent = true;
+    const assertAuthority = () => {
+      if (!authorityCurrent) throw new Error('read authority changed');
+    };
+
+    const pending = handleSyncSubscribe(ws.value, {
+      type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'],
+      lastSeq: 0, epoch: 'force-snapshot', scope: 'scope-a',
+    }, db, undefined, undefined, assertAuthority);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    deliverSyncChange([ws.value], {
+      seq: 2,
+      table: 'todos',
+      op: 'UPDATE',
+      rowId: 'item',
+      row: { id: 'item', title: 'After' },
+      previousRow: { id: 'item', title: 'Snapshot' },
+      ts: 2,
+    }, db.syncEpoch, 'other-connection');
+    authorityCurrent = false;
+    clearSyncBackpressure(ws.value);
+
+    await expect(pending).rejects.toThrow('read authority changed');
+    expect(ws.messages.map((message) => message.type)).toEqual(['sync.snapshot']);
+    expect(ws.data.lastSeq).toBe(1);
+    db.dispose();
+  });
+
+  test('does not send snapshot chunks after read authority changes during drain', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    db.defineTable('todos', { id: 'text primary key', title: 'text' });
+    db.insert('todos', { id: 'one', title: 'x'.repeat(600_000) });
+    db.insert('todos', { id: 'two', title: 'y'.repeat(600_000) });
+    const ws = socket('scope-a', [-1]);
+    let authorityCurrent = true;
+    const assertAuthority = () => {
+      if (!authorityCurrent) throw new Error('read authority changed');
+    };
+
+    const pending = handleSyncSubscribe(ws.value, {
+      type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'],
+      lastSeq: 0, epoch: 'force-snapshot', scope: 'scope-a',
+    }, db, undefined, undefined, assertAuthority);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ws.messages.map((message) => message.type)).toEqual([
+      'sync.snapshot.begin',
+    ]);
+
+    authorityCurrent = false;
+    clearSyncBackpressure(ws.value);
+    await expect(pending).rejects.toThrow('read authority changed');
+    expect(ws.messages.map((message) => message.type)).toEqual([
+      'sync.snapshot.begin',
+    ]);
+    expect(ws.data.lastSeq).toBe(0);
+    db.dispose();
   });
 });

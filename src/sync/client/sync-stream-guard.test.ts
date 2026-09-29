@@ -21,6 +21,41 @@ describe('Sync stream continuity guard', () => {
     })).toBe(true);
   });
 
+  test('checks continuity against the addressed plane and rejects cross-plane tables', () => {
+    const tablePlanes = { platform_users: 'default', projects: 'tenant' } as const;
+    const { store } = createSyncStore({
+      platform_users: { _pk: 'id', id: 'string' },
+      projects: { _pk: 'id', id: 'string' },
+    }, { tableSyncPlanes: tablePlanes });
+    routeServerMessage(store, {
+      type: 'sync.snapshot', plane: 'default', tables: { platform_users: {} },
+      seq: 40, epoch: 'platform-epoch', scope: 'shared',
+      reset: 'preserve-pending',
+    });
+    routeServerMessage(store, {
+      type: 'sync.snapshot', plane: 'tenant', tables: { projects: {} },
+      seq: 4, epoch: 'tenant-epoch', scope: 'shared',
+      reset: 'preserve-pending',
+    });
+    const multiplexed = store.getSnapshot().context as SyncStoreContext;
+
+    expect(acceptSyncStreamMessage(multiplexed, {
+      type: 'sync.change', plane: 'tenant', seq: 5, prevSeq: 4,
+      epoch: 'tenant-epoch', scope: 'shared', table: 'projects', op: 'UPDATE',
+      rowId: 'p1', row: { id: 'p1' }, origin: '', ts: 1,
+    }, tablePlanes)).toBe(true);
+    expect(acceptSyncStreamMessage(multiplexed, {
+      type: 'sync.change', plane: 'tenant', seq: 41, prevSeq: 40,
+      epoch: 'platform-epoch', scope: 'shared', table: 'projects', op: 'UPDATE',
+      rowId: 'p1', row: { id: 'p1' }, origin: '', ts: 1,
+    }, tablePlanes)).toBe(false);
+    expect(acceptSyncStreamMessage(multiplexed, {
+      type: 'sync.change', plane: 'tenant', seq: 5, prevSeq: 4,
+      epoch: 'tenant-epoch', scope: 'shared', table: 'platform_users',
+      op: 'UPDATE', rowId: 'u1', row: { id: 'u1' }, origin: '', ts: 1,
+    }, tablePlanes)).toBe(false);
+  });
+
   test('rejects a missed projected change and a changed epoch', () => {
     expect(acceptSyncStreamMessage(context(), {
       type: 'sync.change', seq: 9, prevSeq: 8,

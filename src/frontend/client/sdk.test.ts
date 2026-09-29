@@ -50,6 +50,7 @@ class MockWebSocket {
         epoch?: string;
         scope?: string;
         snapshot?: string[];
+        cursors?: Record<string, unknown>;
       };
       if (message.type === 'sync.auth') {
         this.onmessage?.(new MessageEvent('message', {
@@ -63,7 +64,9 @@ class MockWebSocket {
           data: JSON.stringify({
             type: 'sync.snapshot',
             tables: Object.fromEntries(
-              (message.snapshot ?? []).map((table) => [table, {}]),
+              (message.snapshot ?? [])
+                .filter((table) => !(message.cursors?.tenant && table === 'todos'))
+                .map((table) => [table, {}]),
             ),
             seq: 0,
             epoch: message.epoch ?? 'test-epoch',
@@ -115,6 +118,70 @@ afterEach(() => {
 });
 
 describe('createClient auth configuration', () => {
+  test('expands the app table plane catalog with SDK-owned default tables', async () => {
+    const client = createClient({
+      url: 'http://localhost:3000',
+      tables,
+      tableSyncPlanes: { todos: 'tenant' },
+    });
+    await flushMicrotasks();
+
+    const socket = MockWebSocket.latest();
+    const subscribe = socket.sent
+      .map((item) => JSON.parse(item) as Record<string, unknown>)
+      .find((message) => message.type === 'sync.subscribe') as {
+        cursors: Record<string, unknown>;
+      };
+    expect(Object.keys(subscribe.cursors).sort()).toEqual(['default', 'tenant']);
+
+    socket.onmessage?.(new MessageEvent('message', {
+      data: JSON.stringify({
+        type: 'sync.snapshot',
+        plane: 'tenant',
+        tables: { todos: {} },
+        seq: 0,
+        epoch: 'tenant-epoch',
+        scope: 'test-scope',
+        reset: 'preserve-pending',
+      }),
+    }));
+    client.collection('todos').insert({ id: 'todo-1', title: 'Tenant row' });
+
+    const mutation = socket.sent
+      .map((item) => JSON.parse(item) as Record<string, unknown>)
+      .find((message) => message.type === 'sync.mutate');
+    expect(mutation).toMatchObject({
+      table: 'todos',
+      plane: 'tenant',
+      epoch: 'tenant-epoch',
+    });
+  });
+
+  test('rejects incomplete or unknown app table plane catalogs', () => {
+    expect(() => createClient({
+      url: 'http://localhost:3000',
+      tables,
+      tableSyncPlanes: {},
+      autoConnect: false,
+    })).toThrow('tableSyncPlanes is missing application table: todos');
+
+    expect(() => createClient({
+      url: 'http://localhost:3000',
+      tables,
+      tableSyncPlanes: { todos: 'default', unknown: 'tenant' },
+      autoConnect: false,
+    })).toThrow('tableSyncPlanes contains unknown table: unknown');
+
+    expect(() => createClient({
+      url: 'http://localhost:3000',
+      tables,
+      tableSyncPlanes: { todos: 'default', notifications: 'tenant' },
+      autoConnect: false,
+    })).toThrow(
+      'tableSyncPlanes cannot configure SDK-owned platform table: notifications',
+    );
+  });
+
   test('defaults auth to disabled and gives clear auth-action errors', async () => {
     const client = createClient({
       url: 'http://localhost:3000',

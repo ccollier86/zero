@@ -23,6 +23,7 @@ import type {
   ResourceClient,
   ResourceClientOptions,
   ResourceDeleteResult,
+  ResourceMutationOptions,
 } from './resource-client';
 import {
   normalizePage,
@@ -74,17 +75,24 @@ export interface ResourceRecordResult<T extends Row> {
   loading: boolean;
   error: Error | null;
   refresh: () => void;
-  update: (partial: Partial<T>) => Promise<T | null>;
-  remove: () => Promise<ResourceDeleteResult | null>;
+  update: (
+    partial: Partial<T>,
+    options?: ResourceMutationOptions,
+  ) => Promise<T | null>;
+  remove: (options?: ResourceMutationOptions) => Promise<ResourceDeleteResult | null>;
 }
 
 export interface ResourceActionsResult<T extends Row> {
   loading: boolean;
   error: Error | null;
   resetError: () => void;
-  create: (input: Partial<T>) => Promise<T>;
-  update: (id: string, input: Partial<T>) => Promise<T>;
-  remove: (id: string) => Promise<ResourceDeleteResult>;
+  create: (input: Partial<T>, options?: ResourceMutationOptions) => Promise<T>;
+  update: (
+    id: string,
+    input: Partial<T>,
+    options?: ResourceMutationOptions,
+  ) => Promise<T>;
+  remove: (id: string, options?: ResourceMutationOptions) => Promise<ResourceDeleteResult>;
 }
 
 type ResourceLoadTrigger = 'automatic' | 'manual';
@@ -453,7 +461,10 @@ export function useResourceRecord<T extends Row = Row>(
     return abort;
   }, [authorizationBoundary.key, authorizationBoundary.ready, id, runLoad]);
 
-  const update = useCallback(async (partial: Partial<T>) => {
+  const update = useCallback(async (
+    partial: Partial<T>,
+    requestOptions?: ResourceMutationOptions,
+  ) => {
     if (!resourceClient
       || !id
       || !boundaryReadyRef.current
@@ -464,15 +475,22 @@ export function useResourceRecord<T extends Row = Row>(
     const isCurrent = () => !controller.signal.aborted
       && boundaryReadyRef.current
       && boundaryKeyRef.current === requestBoundaryKey;
+    const combined = combineAbortSignals(controller.signal, requestOptions?.signal);
     return runResourceAction(resource, 'update', setLoading, setError, async () => {
-      const updated = await resourceClient.update(id, partial, { signal: controller.signal });
+      const updated = await resourceClient.update(id, partial, {
+        ...requestOptions,
+        signal: combined.signal,
+      });
       if (!isCurrent()) throw staleAuthorizationScopeError();
       setRow(updated);
       return updated;
-    }, isCurrent).finally(() => requestControllersRef.current.delete(controller));
+    }, isCurrent).finally(() => {
+      combined.dispose();
+      requestControllersRef.current.delete(controller);
+    });
   }, [callbackBoundaryKey, resourceClient, id, resource]);
 
-  const remove = useCallback(async () => {
+  const remove = useCallback(async (requestOptions?: ResourceMutationOptions) => {
     if (!resourceClient
       || !id
       || !boundaryReadyRef.current
@@ -483,12 +501,19 @@ export function useResourceRecord<T extends Row = Row>(
     const isCurrent = () => !controller.signal.aborted
       && boundaryReadyRef.current
       && boundaryKeyRef.current === requestBoundaryKey;
+    const combined = combineAbortSignals(controller.signal, requestOptions?.signal);
     return runResourceAction(resource, 'delete', setLoading, setError, async () => {
-      const deleted = await resourceClient.delete(id, { signal: controller.signal });
+      const deleted = await resourceClient.delete(id, {
+        ...requestOptions,
+        signal: combined.signal,
+      });
       if (!isCurrent()) throw staleAuthorizationScopeError();
       setRow(null);
       return deleted;
-    }, isCurrent).finally(() => requestControllersRef.current.delete(controller));
+    }, isCurrent).finally(() => {
+      combined.dispose();
+      requestControllersRef.current.delete(controller);
+    });
   }, [callbackBoundaryKey, resourceClient, id, resource]);
 
   const visible = authorizationBoundary.ready
@@ -565,28 +590,68 @@ export function useResourceActions<T extends Row = Row>(
     }
   }, [callbackBoundaryKey, resource, resourceClient]);
 
-  const create = useCallback(async (input: Partial<T>) => {
+  const create = useCallback(async (
+    input: Partial<T>,
+    requestOptions?: ResourceMutationOptions,
+  ) => {
     if (!resourceClient) {
       if (!client) throw new Error('Zero client is not available yet.');
       throw authorizationScopeUnavailableError();
     }
-    return runAction('create', (signal) => resourceClient.create(input, { signal }));
+    return runAction('create', async (signal) => {
+      const combined = combineAbortSignals(signal, requestOptions?.signal);
+      try {
+        return await resourceClient.create(input, {
+          ...requestOptions,
+          signal: combined.signal,
+        });
+      } finally {
+        combined.dispose();
+      }
+    });
   }, [client, resourceClient, runAction]);
 
-  const update = useCallback(async (id: string, input: Partial<T>) => {
+  const update = useCallback(async (
+    id: string,
+    input: Partial<T>,
+    requestOptions?: ResourceMutationOptions,
+  ) => {
     if (!resourceClient) {
       if (!client) throw new Error('Zero client is not available yet.');
       throw authorizationScopeUnavailableError();
     }
-    return runAction('update', (signal) => resourceClient.update(id, input, { signal }));
+    return runAction('update', async (signal) => {
+      const combined = combineAbortSignals(signal, requestOptions?.signal);
+      try {
+        return await resourceClient.update(id, input, {
+          ...requestOptions,
+          signal: combined.signal,
+        });
+      } finally {
+        combined.dispose();
+      }
+    });
   }, [client, resourceClient, runAction]);
 
-  const remove = useCallback(async (id: string) => {
+  const remove = useCallback(async (
+    id: string,
+    requestOptions?: ResourceMutationOptions,
+  ) => {
     if (!resourceClient) {
       if (!client) throw new Error('Zero client is not available yet.');
       throw authorizationScopeUnavailableError();
     }
-    return runAction('delete', (signal) => resourceClient.delete(id, { signal }));
+    return runAction('delete', async (signal) => {
+      const combined = combineAbortSignals(signal, requestOptions?.signal);
+      try {
+        return await resourceClient.delete(id, {
+          ...requestOptions,
+          signal: combined.signal,
+        });
+      } finally {
+        combined.dispose();
+      }
+    });
   }, [client, resourceClient, runAction]);
 
   const visible = authorizationBoundary.ready
@@ -629,6 +694,33 @@ async function runResourceAction<T>(
   } finally {
     if (isCurrent()) setLoading(false);
   }
+}
+
+function combineAbortSignals(
+  internal: AbortSignal,
+  external: AbortSignal | undefined,
+): { signal: AbortSignal; dispose: () => void } {
+  if (!external || external === internal) {
+    return { signal: internal, dispose: () => undefined };
+  }
+
+  const controller = new AbortController();
+  const abortFromInternal = () => controller.abort(internal.reason);
+  const abortFromExternal = () => controller.abort(external.reason);
+  if (internal.aborted) abortFromInternal();
+  else if (external.aborted) abortFromExternal();
+  else {
+    internal.addEventListener('abort', abortFromInternal, { once: true });
+    external.addEventListener('abort', abortFromExternal, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      internal.removeEventListener('abort', abortFromInternal);
+      external.removeEventListener('abort', abortFromExternal);
+    },
+  };
 }
 
 function authorizationScopeUnavailableError(): Error {

@@ -1,5 +1,6 @@
 export {
   DATABASE_ERROR_CODES,
+  DATABASE_CAPACITY_TYPES,
   DATABASE_ERROR_DETAILS_MAX_ENTRIES,
   DATABASE_ERROR_DETAIL_KEY_MAX_LENGTH,
   DATABASE_ERROR_DETAIL_STRING_MAX_LENGTH,
@@ -16,12 +17,28 @@ export {
 
 export type {
   DatabaseErrorCode,
+  DatabaseCapacityType,
   DatabaseErrorDetails,
   DatabaseErrorDetailValue,
   DatabaseErrorOptions,
   DatabaseOperationOutcome,
   SerializedDatabaseError,
 } from './database-error';
+
+export { classifyDatabaseHttpFailure } from './database-http-error';
+export type {
+  DatabaseHttpCapacityType,
+  DatabaseHttpConflictType,
+  DatabaseHttpFailureClassification,
+  DatabaseHttpFailureKind,
+  DatabaseHttpOperationKind,
+} from './database-http-error';
+
+export {
+  DATABASE_COORDINATOR_MAX_DATABASES,
+  DATABASE_EXECUTOR_SLOT_MAX,
+  DATABASE_OBSERVABILITY_COUNT_MAX,
+} from './database-capacity';
 
 export {
   DATABASE_ID_MAX_BYTES,
@@ -34,6 +51,11 @@ export {
   resolveDatabaseFile,
 } from './database-file';
 
+export {
+  createNamedDatabaseRef,
+  createTenantDatabaseRef,
+} from './database-binding-ref';
+
 export type {
   DatabaseId,
   DatabaseRef,
@@ -41,6 +63,28 @@ export type {
   PreparedDatabaseFile,
   ResolvedDatabaseFile,
 } from './database-file';
+
+export {
+  DATABASE_FILE_PLACEMENT_POLICY,
+  DATABASE_HOT_DEFAULT_DURABILITY,
+  DATABASE_HOT_DEFAULT_SNAPSHOT_INTERVAL_MS,
+  DATABASE_HOT_MAX_SNAPSHOT_INTERVAL_MS,
+  DATABASE_HOT_MAX_SNAPSHOT_TIMEOUT_MS,
+  DATABASE_HOT_MIN_SNAPSHOT_TIMEOUT_MS,
+  DATABASE_HOT_SHORTHAND_MAX_BYTES,
+  DATABASE_HOT_SHORTHAND_PLACEMENT_POLICY,
+  defaultDatabaseHotSnapshotTimeoutMs,
+  isDatabaseHotDurability,
+  isDatabasePlacement,
+} from './database-placement';
+export type {
+  DatabaseHotDurability,
+  DatabaseHotPlacementConfig,
+  DatabasePlacement,
+  DatabasePlacementPolicy,
+  DatabasePlacementSelector,
+  DatabasePlacementSelectorContext,
+} from './database-placement';
 
 export { DatabaseManager } from './database-manager';
 export type {
@@ -50,6 +94,7 @@ export type {
   DatabaseManagerState,
   MultipleDatabaseManagerOptions,
   TenantDatabaseBinding,
+  TenantDatabaseSyncBinding,
 } from './database-manager';
 
 export { AuthorityCommitCoordinator } from './authority-commit-coordinator';
@@ -74,11 +119,52 @@ export type {
   DatabaseCoordinatorEntryState,
   DatabaseCoordinatorLease,
   DatabaseCoordinatorOptions,
+  DatabaseCoordinatorRestartPolicy,
   DatabaseCoordinatorState,
   DatabaseExecutionOptions,
   DatabaseExecutorFactory,
   DatabaseExecutorFactoryContext,
+  DatabaseTenantSyncAcquireOptions,
 } from './database-coordinator';
+export {
+  normalizeDatabaseCoordinatorRestartPolicy,
+} from './database-restart-policy';
+export type {
+  NormalizedDatabaseCoordinatorRestartPolicy,
+} from './database-restart-policy';
+
+export {
+  DATABASE_TENANT_SYNC_MAX_SNAPSHOT_TABLES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_ROWS,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SESSIONS,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_BYTES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_BYTES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_NODES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_NODES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_ROWS,
+  DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_SOURCE_BYTES,
+  DATABASE_TENANT_SYNC_SNAPSHOT_TTL_MS,
+} from './database-tenant-sync-snapshot-protocol';
+
+export type {
+  DatabaseLogicalReceiptFingerprint,
+  DatabaseTrustedReceiptExecutionOptions,
+  DatabaseTrustedReceiptLookup,
+  DatabaseTrustedWriteExecutionOptions,
+  DatabaseTrustedWriteExecutor,
+} from './database-trusted-writer';
+export type {
+  DatabaseTenantSyncBinding,
+  DatabaseTenantSyncChangesWakeup,
+  DatabaseTenantSyncExecutionOptions,
+  DatabaseTenantSyncReplayResult,
+  DatabaseTenantSyncResetWakeup,
+  DatabaseTenantSyncSnapshotPage,
+  DatabaseTenantSyncSnapshotSession,
+  DatabaseTenantSyncUnavailableWakeup,
+  DatabaseTenantSyncWakeup,
+  DatabaseTenantSyncWakeupListener,
+} from './database-tenant-sync';
 
 export {
   DATABASE_REALM_FINGERPRINT_VERSION,
@@ -184,9 +270,18 @@ export type {
   DatabaseRuntimeRole,
 } from './database-runtime';
 
+export {
+  DATABASE_WRITER_MAX_RECEIPTS,
+  DATABASE_WRITER_MAX_RECEIPT_KEYS,
+  DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES,
+  DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES,
+} from './database-writer-engine';
+
 export type {
   DatabaseExecutor,
   DatabaseExecutorDiagnostics,
+  DatabaseExecutorEvent,
+  DatabaseExecutorEventListener,
   DatabaseExecutorExecuteOptions,
   DatabaseExecutorOperationKind,
   DatabaseExecutorRequest,
@@ -208,6 +303,7 @@ export type {
   DatabaseExecutorShutdownAckMessage,
   DatabaseExecutorShutdownMessage,
   DatabaseExecutorSuccessMessage,
+  DatabaseExecutorTelemetryMessage,
   SubprocessDatabaseExecutorCommand,
   SubprocessDatabaseExecutorEvent,
   SubprocessDatabaseExecutorOptions,

@@ -15,7 +15,10 @@ import type {
   DatabaseReadResult,
   DatabaseSerializableValue,
 } from '../../databases/database-operations';
-import { createRequestDatabaseClient } from './request-database-client';
+import {
+  createRequestDatabaseClient,
+  createResourceTenantDatabaseAccess,
+} from './request-database-client';
 
 describe('createRequestDatabaseClient', () => {
   test('returns null outside an enabled committed tenant-database scope', () => {
@@ -125,6 +128,36 @@ describe('createRequestDatabaseClient', () => {
       .toBe(harness.binds[0]!.options.assertCurrentReadAuthority!);
   });
 
+  test('rechecks authority after the actor result and immediately before delivery', async () => {
+    let current = true;
+    let checks = 0;
+    const harness = createManagerHarness({
+      tenantDatabasesEnabled: true,
+      invokeAuthority: true,
+      afterOperation() {
+        // Model revocation queued after the actor client's own post-read fence
+        // but before this request-facing await continuation resumes.
+        queueMicrotask(() => { current = false; });
+      },
+    });
+    const client = createRequestDatabaseClient({
+      manager: harness.manager,
+      scope: tenantScope('tenant-a'),
+      assertCurrentAuthoritySync() {
+        checks += 1;
+        if (!current) throw new Error('/private/revocation-detail');
+      },
+    })!;
+
+    await expect(client.get('todos', 'a')).rejects.toMatchObject({
+      code: 'DATABASE_AUTHORITY_CHANGED',
+      outcome: null,
+      retryable: false,
+    });
+    expect(checks).toBe(2);
+    expect(harness.binds[0]!.releaseCount).toBe(1);
+  });
+
   test('preserves invalid callback return values for manager/client runtime rejection', async () => {
     const harness = createManagerHarness({ tenantDatabasesEnabled: true });
     const invalidReturn = Promise.resolve(undefined);
@@ -136,7 +169,11 @@ describe('createRequestDatabaseClient', () => {
       ) as unknown as () => void,
     })!;
 
-    await client.get('todos', 'a');
+    await expect(client.get('todos', 'a')).rejects.toMatchObject({
+      code: 'DATABASE_CONFIG_INVALID',
+      outcome: null,
+      retryable: false,
+    });
     const returned: unknown = harness.binds[0]!.options.assertCurrentAuthoritySync();
     expect(returned).toBe(invalidReturn);
     expect(harness.binds[0]!.releaseCount).toBe(1);
@@ -156,6 +193,36 @@ describe('createRequestDatabaseClient', () => {
     await expect(client.get('todos', 'a')).rejects.toThrow('capacity');
     expect(harness.binds).toHaveLength(0);
   });
+
+  test('keeps one private Resource lease across reads and receipt lookup', async () => {
+    const harness = createManagerHarness({ tenantDatabasesEnabled: true });
+    const access = await createResourceTenantDatabaseAccess({
+      manager: harness.manager,
+      scope: tenantScope('tenant-resource'),
+      assertCurrentAuthoritySync() {},
+    });
+    expect(access).not.toBeNull();
+    expect(harness.binds).toHaveLength(1);
+
+    await access!.client.get('todos', 'a');
+    await access!.trustedWriter.findReceipt(
+      'resource:v2:test',
+      `sha256:${'a'.repeat(64)}`,
+    );
+    expect(harness.binds).toHaveLength(1);
+    expect(harness.binds[0]!.releaseCount).toBe(0);
+
+    access!.release();
+    access!.release();
+    expect(harness.binds[0]!.releaseCount).toBe(1);
+
+    const publicClient = createRequestDatabaseClient({
+      manager: harness.manager,
+      scope: tenantScope('tenant-resource'),
+      assertCurrentAuthoritySync() {},
+    })!;
+    expect('trustedWriter' in publicClient).toBeFalse();
+  });
 });
 
 type ClientMethod =
@@ -171,6 +238,7 @@ function createManagerHarness(options: {
   tenantDatabasesEnabled: boolean;
   failedMethod?: ClientMethod;
   invokeAuthority?: boolean;
+  afterOperation?: () => void;
   bindError?: Error;
 }) {
   const binds: Array<{
@@ -190,6 +258,7 @@ function createManagerHarness(options: {
         calls.push({ method, args });
         if (options.invokeAuthority) bindingOptions.assertCurrentReadAuthority?.();
         if (options.failedMethod === method) throw new Error(`failed:${method}`);
+        options.afterOperation?.();
         return method === 'get'
           || method === 'list'
           || method === 'find'
@@ -199,6 +268,10 @@ function createManagerHarness(options: {
       });
       return {
         client,
+        trustedWriter: {
+          async findReceipt() { return { status: 'miss' } as const; },
+          async executeWrite() { throw new Error('not expected'); },
+        },
         get released() { return record.releaseCount > 0; },
         release() { record.releaseCount += 1; },
         async [Symbol.asyncDispose]() { record.releaseCount += 1; },

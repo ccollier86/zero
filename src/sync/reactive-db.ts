@@ -8,7 +8,8 @@ import {
   type IdentityKey,
 } from './identity';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
+import { emitPlatformCode, emitPlatformCodeTo } from '../observability/sink';
+import type { PlatformObservabilityRuntime } from '../observability/types';
 import { createPlatformSQLiteService, type PlatformSQLiteService } from '../persistence';
 import type {
   ReactiveDBConfig,
@@ -418,13 +419,14 @@ export class ReactiveDB {
   private changeStmts: ChangeStatements;
   private validatedSchemaVersions: SQLiteSchemaVersions;
   private managedTableSchemaContracts = new Map<string, ManagedTableSchemaContract>();
-  private disposed = false;
+  private lifecycleState: 'active' | 'releasing' | 'released' | 'closing' | 'disposed' = 'active';
   private changeLogInvalid = false;
   private externalChangeDispatcher: ExternalChangeDispatcher | null = null;
   private readonly localDeliveryQueue: Change[] = [];
   private drainingLocalDeliveryQueue = false;
   private changeDeliveryDepth = 0;
   private activeTransactionChangeOrigin: string | null = null;
+  private readonly observability: PlatformObservabilityRuntime | null;
 
   // Transaction support: when true, changes are accumulated and emitted after commit
   private inTransaction = false;
@@ -443,6 +445,7 @@ export class ReactiveDB {
     this.ownsDatabase = runtime.ownsDatabase;
     this.clearChangesOnStart = runtime.clearChangesOnStart;
     this.ringBufferDepth = ringBufferDepth;
+    this.observability = config.observability ?? null;
 
     try {
       this.createChangesTable();
@@ -1503,7 +1506,7 @@ export class ReactiveDB {
     };
 
     const drain = () => {
-      if (stopped || this.disposed) return;
+      if (stopped || this.lifecycleState !== 'active') return;
       if (draining) {
         drainQueued = true;
         return;
@@ -1513,7 +1516,7 @@ export class ReactiveDB {
         do {
           drainQueued = false;
           drainOnce();
-        } while (drainQueued && !stopped && !this.disposed);
+        } while (drainQueued && !stopped && this.lifecycleState === 'active');
       } catch (error) {
         if (isTransientChangeLogReadError(error)) notifyError(error);
         else notifyInvalid(error);
@@ -1896,57 +1899,79 @@ export class ReactiveDB {
    * After disposal, all methods throw.
    */
   dispose(): void {
-    this.assertNotInSnapshotReader();
-    const rollbackOnlyError = this.transactionExecution.getStore()?.rollbackOnlyError;
-    if (rollbackOnlyError) {
-      throw createRollbackOnlyError(rollbackOnlyError);
+    if (this.lifecycleState === 'disposed') return;
+    if (this.lifecycleState === 'releasing' || this.lifecycleState === 'closing') {
+      throw new Error('ReactiveDB disposal is already in progress');
     }
-    if (this.disposed) return;
-    if (this.inTransaction) {
-      const error = new Error(
-        'ReactiveDB cannot be disposed during an active transaction',
-      );
-      this.markTransactionRollbackOnly(error);
+
+    if (this.lifecycleState === 'active') {
+      this.assertNotInSnapshotReader();
+      const rollbackOnlyError = this.transactionExecution.getStore()?.rollbackOnlyError;
+      if (rollbackOnlyError) {
+        throw createRollbackOnlyError(rollbackOnlyError);
+      }
+      if (this.inTransaction) {
+        const error = new Error(
+          'ReactiveDB cannot be disposed during an active transaction',
+        );
+        this.markTransactionRollbackOnly(error);
+        throw error;
+      }
+      if (this.changeDeliveryDepth > 0) {
+        throw new Error('ReactiveDB cannot be disposed during change delivery');
+      }
+
+      this.lifecycleState = 'releasing';
+      try {
+        this.externalChangeDispatcher?.stop();
+
+        // Finalize all table prepared statements exactly once. If any release
+        // step throws, the runtime remains sealed and a later dispose call may
+        // still close its owned SQLite handle without repeating this cleanup.
+        for (const def of this.tables.values()) {
+          finalizeTableStatements(def);
+        }
+
+        // Finalize change buffer statements
+        this.changeStmts.insert.finalize();
+        this.changeStmts.mainSchemaVersion.finalize();
+        this.changeStmts.tempSchemaVersion.finalize();
+        this.changeStmts.allocate.finalize();
+        this.changeStmts.current.finalize();
+        this.changeStmts.advancePrune.finalize();
+        this.changeStmts.prune.finalize();
+        this.changeStmts.unprunedThrough.finalize();
+        this.changeStmts.after.finalize();
+        this.changeStmts.oldest.finalize();
+
+        this.tables.clear();
+        this.managedTableSchemaContracts.clear();
+        this.listeners.length = 0;
+        this.localDeliveryQueue.length = 0;
+        this.drainingLocalDeliveryQueue = false;
+        this.activeTransactionChangeOrigin = null;
+        requestedLocalChangeOrigins.delete(this);
+        clearAllCommittedLocalChangeOrigins(this);
+      } finally {
+        this.lifecycleState = 'released';
+      }
+    }
+
+    // Keep `released` when the durability boundary fails. Application methods
+    // stay sealed, while a later dispose call retries only the underlying
+    // close and cannot double-finalize prepared statements.
+    this.lifecycleState = 'closing';
+    try {
+      if (this.ownsSQLiteService) {
+        this.sqlite?.close();
+      } else if (this.ownsDatabase) {
+        this.db.close();
+      }
+    } catch (error) {
+      this.lifecycleState = 'released';
       throw error;
     }
-    if (this.changeDeliveryDepth > 0) {
-      throw new Error('ReactiveDB cannot be disposed during change delivery');
-    }
-    this.disposed = true;
-
-    this.externalChangeDispatcher?.stop();
-
-    // Finalize all table prepared statements
-    for (const def of this.tables.values()) {
-      finalizeTableStatements(def);
-    }
-
-    // Finalize change buffer statements
-    this.changeStmts.insert.finalize();
-    this.changeStmts.mainSchemaVersion.finalize();
-    this.changeStmts.tempSchemaVersion.finalize();
-    this.changeStmts.allocate.finalize();
-    this.changeStmts.current.finalize();
-    this.changeStmts.advancePrune.finalize();
-    this.changeStmts.prune.finalize();
-    this.changeStmts.unprunedThrough.finalize();
-    this.changeStmts.after.finalize();
-    this.changeStmts.oldest.finalize();
-
-    this.tables.clear();
-    this.managedTableSchemaContracts.clear();
-    this.listeners.length = 0;
-    this.localDeliveryQueue.length = 0;
-    this.drainingLocalDeliveryQueue = false;
-    this.activeTransactionChangeOrigin = null;
-    requestedLocalChangeOrigins.delete(this);
-    clearAllCommittedLocalChangeOrigins(this);
-
-    if (this.ownsSQLiteService) {
-      this.sqlite?.close();
-    } else if (this.ownsDatabase) {
-      this.db.close();
-    }
+    this.lifecycleState = 'disposed';
   }
 
   // ─── Private ────────────────────────────────────────────────────────────
@@ -2822,16 +2847,11 @@ export class ReactiveDB {
             void Promise.resolve(result).catch(() => {});
             throw new Error('ReactiveDB onChange listeners must be synchronous');
           }
-        } catch (err) {
-          emitPlatformCode(OBS_CODES.SYNC_CHANGE_LISTENER_FAILED, {
-            error: err,
-            metadata: {
-              table: change.table,
-              op: change.op,
-              rowId: change.rowId,
-              seq: change.seq,
-            },
-          });
+        } catch {
+          const emit = this.observability
+            ? emitPlatformCodeTo.bind(null, this.observability)
+            : emitPlatformCode;
+          emit(OBS_CODES.SYNC_CHANGE_LISTENER_FAILED);
         }
       }
     } finally {
@@ -2869,7 +2889,7 @@ export class ReactiveDB {
     if (rollbackOnlyError) {
       throw createRollbackOnlyError(rollbackOnlyError);
     }
-    if (this.disposed) {
+    if (this.lifecycleState !== 'active') {
       throw new Error('ReactiveDB is disposed');
     }
   }
@@ -2931,7 +2951,9 @@ function createReactiveDBRuntime(config: ReactiveDBConfig): ReactiveDBRuntime {
     };
   }
 
-  const sqlite = createPlatformSQLiteService(config);
+  const sqlite = createPlatformSQLiteService(config, {
+    observability: config.observability ?? undefined,
+  });
   sqlite.start();
 
   return {

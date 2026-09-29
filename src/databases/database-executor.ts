@@ -25,6 +25,26 @@ export type DatabaseExecutorValue =
 /** Commit semantics used when classifying an interrupted request. */
 export type DatabaseExecutorOperationKind = 'read' | 'write';
 
+/**
+ * Closed, payload-free lifecycle signals emitted by an executor generation.
+ *
+ * These signals never carry tenant identity, paths, SQL, errors, or arbitrary
+ * strings. The coordinator may use them only for bounded durability timers
+ * and ordinary generation retirement.
+ */
+export type DatabaseExecutorEvent = Readonly<{
+  readonly type:
+    | 'hot-periodic-snapshot-started'
+    | 'hot-periodic-snapshot-finished'
+    | 'hot-periodic-durability-dirty'
+    | 'hot-periodic-durability-clean'
+    | 'hot-periodic-durability-failed';
+}>;
+
+export type DatabaseExecutorEventListener = (
+  event: DatabaseExecutorEvent,
+) => void;
+
 /** One serializable unit of database work. */
 export interface DatabaseExecutorRequest<
   Payload extends DatabaseExecutorValue = DatabaseExecutorValue,
@@ -72,6 +92,9 @@ export interface DatabaseExecutorDiagnostics {
 
 /** Common contract implemented by local, subprocess, or future remote actors. */
 export interface DatabaseExecutor extends AsyncDisposable {
+  /** Install the coordinator-owned listener before startup, when supported. */
+  setEventListener?(listener: DatabaseExecutorEventListener): void;
+
   start(): Promise<void>;
 
   execute<

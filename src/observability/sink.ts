@@ -20,7 +20,7 @@ import type {
   PlatformSink,
 } from './types';
 
-let sequence = 0;
+const runtimeSequences = new WeakMap<object, number>();
 let runtime: PlatformObservabilityRuntime = createRuntime({});
 
 /** Configure the active process-wide observability runtime. */
@@ -46,7 +46,9 @@ export function getPlatformEventStore(): PlatformEventStore | null {
 
 /** Replace the active sink while preserving the current store/config. */
 export function setPlatformSink(sink: PlatformSink): void {
+  const previous = runtime;
   runtime = { ...runtime, sink };
+  runtimeSequences.set(runtime, runtimeSequences.get(previous) ?? 0);
 }
 
 /** Emit a fully custom platform event. */
@@ -59,7 +61,9 @@ export function emitPlatformEventTo(
   target: PlatformObservabilityRuntime,
   input: PlatformEventInput,
 ): PlatformEvent {
-  const event = normalizeEvent(input);
+  const current = (runtimeSequences.get(target) ?? 0) + 1;
+  runtimeSequences.set(target, current);
+  const event = normalizeEvent(input, current);
 
   try {
     const result = target.sink.emit(event);
@@ -163,8 +167,10 @@ function createRuntime(config: ObservabilityConfig): PlatformObservabilityRuntim
   };
 }
 
-function normalizeEvent(input: PlatformEventInput): PlatformEvent {
-  const current = ++sequence;
+function normalizeEvent(
+  input: PlatformEventInput,
+  current: number,
+): PlatformEvent {
   return {
     id: `obs_${current}`,
     sequence: current,

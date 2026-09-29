@@ -1,4 +1,9 @@
-import type { Row, ClientTableDef, JsonValue } from '../../sync/types';
+import type {
+  Row,
+  ClientTableDef,
+  JsonValue,
+  SyncDataPlaneName,
+} from '../../sync/types';
 import type { PrimaryKeyOf } from '../../schema/infer';
 import { createSyncClient } from '../../sync/client/sync-client';
 import type { SyncClient } from '../../sync/client/sync-client';
@@ -102,7 +107,11 @@ import { ROOM_TABLES } from '../../rooms/types';
 import { WORKFLOW_TABLES } from '../../workflows/types';
 import { STORAGE_TABLES } from '../../storage/types';
 import { createCollection, type Collection } from './collection';
-import { createResourceClient, type ResourceClient, type ResourceClientOptions } from './resource-client';
+import {
+  createResourceClient,
+  type ResourceClient,
+  type ResourceClientOptions,
+} from './resource-client';
 
 /**
  * All platform-internal tables that hooks depend on.
@@ -152,8 +161,10 @@ export type {
   ResourceDeleteResult,
   ResourceListOptions,
   ResourceListResult,
+  ResourceMutationOptions,
   ResourceRowResult,
 } from './resource-client';
+export { ResourceMutationError } from './resource-client';
 
 export type {
   AuthApplicationAdministrationConfig,
@@ -293,6 +304,13 @@ export interface ClientConfig {
    * ```
    */
   tables?: Record<string, TableInput>;
+
+  /**
+   * Exact server-authored data plane for each configured application table.
+   * Framework-owned tables stay on the default plane automatically. Omit for
+   * the legacy single/default-database protocol.
+   */
+  tableSyncPlanes?: Readonly<Record<string, SyncDataPlaneName>>;
 
   /** Enable auth. Default: false, matching createApp(). */
   auth?: boolean;
@@ -733,6 +751,7 @@ export function createClient(config: ClientConfig): Client {
   const {
     url,
     tables: rawTables,
+    tableSyncPlanes,
     auth: authEnabled = false,
     authorizationRevalidationIntervalMs,
     stateSync = false,
@@ -762,6 +781,10 @@ export function createClient(config: ClientConfig): Client {
     ...PLATFORM_TABLES,
     ...appTables,
   };
+  const resolvedTableSyncPlanes = resolveSdkTableSyncPlanes(
+    appTables,
+    tableSyncPlanes,
+  );
 
   // ─── Auth ─────────────────────────────────────────────────────────
   // Authorization-scope lifecycle callbacks are installed into AuthClient
@@ -919,6 +942,9 @@ export function createClient(config: ClientConfig): Client {
   syncClient = createSyncClient({
     url: getWsUrl(),
     tables,
+    ...(resolvedTableSyncPlanes
+      ? { tableSyncPlanes: resolvedTableSyncPlanes }
+      : {}),
     getToken: currentAuthToken,
     stateSync,
     autoConnect,
@@ -1324,6 +1350,49 @@ export function createClient(config: ClientConfig): Client {
 
   _instance = client;
   return client;
+}
+
+/**
+ * Turn the app-only server catalog into the exact low-level Sync catalog.
+ * Platform tables are SDK-owned and therefore never burden app configuration.
+ */
+function resolveSdkTableSyncPlanes(
+  appTables: Readonly<Record<string, ClientTableDef>>,
+  configured: Readonly<Record<string, SyncDataPlaneName>> | undefined,
+): Readonly<Record<string, SyncDataPlaneName>> | undefined {
+  if (configured === undefined) return undefined;
+
+  const platform = Object.keys(configured)
+    .filter((table) => Object.hasOwn(PLATFORM_TABLES, table));
+  if (platform.length > 0) {
+    throw new Error(
+      `[client] tableSyncPlanes cannot configure SDK-owned platform table${platform.length === 1 ? '' : 's'}: ${platform.join(', ')}`,
+    );
+  }
+
+  const unknown = Object.keys(configured)
+    .filter((table) => !Object.hasOwn(appTables, table));
+  if (unknown.length > 0) {
+    throw new Error(
+      `[client] tableSyncPlanes contains unknown table${unknown.length === 1 ? '' : 's'}: ${unknown.join(', ')}`,
+    );
+  }
+
+  const missing = Object.keys(appTables)
+    .filter((table) => !Object.hasOwn(configured, table));
+  if (missing.length > 0) {
+    throw new Error(
+      `[client] tableSyncPlanes is missing application table${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}`,
+    );
+  }
+
+  const resolved = Object.fromEntries(
+    Object.keys(PLATFORM_TABLES).map((table) => [table, 'default' as const]),
+  ) as Record<string, SyncDataPlaneName>;
+  for (const [table, plane] of Object.entries(configured)) {
+    resolved[table] = plane;
+  }
+  return Object.freeze(resolved);
 }
 
 /**

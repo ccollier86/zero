@@ -181,6 +181,7 @@ describe('resource field access across managed transports', () => {
         registry: runtime.registry,
         authConfig: { userProperties: {} },
       });
+      expect(service.classifyManagedTableDataPlane('documents')).toBe('default');
       const access = await service.resolveTableAccess({
         tableNames: ['documents'],
         authContext: null,
@@ -191,7 +192,7 @@ describe('resource field access across managed transports', () => {
       )).toEqual({ id: 'doc-1', title: 'Visible title' });
 
       const snapshotSocket = createSocket(access.rowProjectors);
-      handleSyncSubscribe(snapshotSocket.value, {
+      await handleSyncSubscribe(snapshotSocket.value, {
         type: 'sync.subscribe',
         tables: ['documents'],
         snapshot: ['documents'],
@@ -214,7 +215,7 @@ describe('resource field access across managed transports', () => {
         secret: 'new-classified',
       })!;
       const catchupSocket = createSocket(access.rowProjectors);
-      handleSyncSubscribe(catchupSocket.value, {
+      await handleSyncSubscribe(catchupSocket.value, {
         type: 'sync.subscribe',
         tables: ['documents'],
         lastSeq: priorSeq,
@@ -271,7 +272,7 @@ describe('resource field access across managed transports', () => {
         rowId: 'doc-1',
         row: { secret: 'client-secret' },
         authContext: null,
-        loadRow: (tableName, rowId) => runtime.db.get(tableName, rowId),
+        loadRow: async (tableName, rowId) => runtime.db.get(tableName, rowId),
       });
       expect(deniedUpdate).toMatchObject({
         ok: false,

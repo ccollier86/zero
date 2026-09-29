@@ -33,10 +33,16 @@ import { createKvPlugin, type KvService } from '../../kv';
 import { createPdfPlugin } from '../../pdf';
 import type { AppConfig } from './types';
 import type { AuthBehaviorConfig } from '../../auth/types';
+import { trustedSystemServiceDataScope } from '../../auth/service-data-scope';
 import { resolveConfig } from './types';
 import { applyTableSyncResolution, resolveTableSyncModes } from './sync-mode-resolver';
 import { migrations } from '../../migrations';
-import { OBS_CODES, configureObservability, createObservabilityPlugin, emitPlatformCode } from '../../observability';
+import {
+  OBS_CODES,
+  configureObservability,
+  createObservabilityPlugin,
+  emitPlatformCodeTo,
+} from '../../observability';
 import { createVectorPlugin } from '../../vector';
 import { createPlatformTokenPlugin } from '../../tokens';
 import { createPlatformSQLiteService, type PlatformSQLiteService } from '../../persistence';
@@ -48,6 +54,10 @@ import {
   createDatabaseObservability,
   registerDatabaseAuthorityCommitGuard,
 } from '../../databases';
+import {
+  assertCanonicalDatabaseDirectoryIsolation,
+  resolveControlDatabasePaths,
+} from '../../databases/database-directory-isolation';
 import {
   isPolicyTrustedUserProperty,
   resolveAuthBehaviorConfig,
@@ -78,6 +88,13 @@ import {
   ZERO_RESOURCE_REGISTRY,
   ZERO_ROOM_SERVICE,
 } from '../../runtime/service-keys';
+import {
+  createRequestDatabaseClient,
+  createResourceTenantDatabaseAccess,
+} from './request-database-client';
+import { resolveTenantDatabaseResourceTopology } from './tenant-database-topology';
+import { createManagedTenantSyncDataPlane } from './tenant-sync-data-plane';
+import { resolveBrowserSyncTablePlanes } from './sync-client-topology';
 
 // ─── App Factory ───────────────────────────────────────────────────────────
 
@@ -131,6 +148,14 @@ function addPlatformSnapshotTables(snapshotTables: Set<string>): void {
  */
 export async function createApp(userConfig: AppConfig) {
   const config = resolveConfig(userConfig);
+  if (config.databaseTopology.mode === 'multiple') {
+    assertCanonicalDatabaseDirectoryIsolation({
+      rootDirectory: config.databaseTopology.rootDirectory,
+      outDir: config.outDir,
+      storageDir: config.storageDir,
+      controlDatabasePaths: resolveControlDatabasePaths(config.db),
+    });
+  }
   const runtime = new ZeroAppRuntime();
   const resourceAuthConfig = resolveAuthBehaviorConfig(
     config.auth === false ? {} : appAuthBehaviorConfig(config.auth),
@@ -147,7 +172,9 @@ export async function createApp(userConfig: AppConfig) {
   }
   const observabilityRuntime = configureObservability(config.observability);
   runtime.set(ZERO_OBSERVABILITY_RUNTIME, observabilityRuntime);
-  const sqlite = config.db.sqlite ?? createPlatformSQLiteService(config.db);
+  const sqlite = config.db.sqlite ?? createPlatformSQLiteService(config.db, {
+    observability: observabilityRuntime,
+  });
   const ownsSqlite = !config.db.sqlite;
   try {
     const emailRuntime = createEmailRuntime(config.email, config.app);
@@ -164,6 +191,7 @@ export async function createApp(userConfig: AppConfig) {
     const syncPolicy = combineSyncPolicies(platformSyncPolicy, config.syncPolicy);
     const loadedResources = await loadResourceDefinitions({
       resourcesDir: config.serverResourcesDir,
+      observability: observabilityRuntime,
     });
     const managedResourceTables = new Set(Object.keys(config.tables));
     const resourceRegistry = createResourceRegistry({
@@ -171,9 +199,26 @@ export async function createApp(userConfig: AppConfig) {
       tables: config.tables,
       authConfig: resourceAuthConfig,
       tenancyMode: resourceAuthConfig.tenancy.mode,
+      tenantIsolation: config.databaseTopology.mode === 'multiple'
+        ? config.databaseTopology.tenantIsolation
+        : 'shared-row',
       managedTables: managedResourceTables,
+      observability: observabilityRuntime,
     });
-    assertResourceExposureLoadingCompatibility(resourceRegistry, config);
+    const tenantDatabaseResourceTopology = config.databaseTopology.mode === 'multiple'
+      && config.databaseTopology.tenantIsolation === 'tenant-database'
+      ? resolveTenantDatabaseResourceTopology(
+          resourceRegistry,
+          config.databaseTopology.realm,
+        )
+      : null;
+    assertResourceExposureLoadingCompatibility(
+      resourceRegistry,
+      config,
+      tenantDatabaseResourceTopology
+        ? new Set(tenantDatabaseResourceTopology.tables)
+        : undefined,
+    );
     runtime.set(ZERO_RESOURCE_REGISTRY, resourceRegistry);
     const resourceRegistryRegistration = registerResourceRegistry(runtime, resourceRegistry);
     runtime.addCleanup(() => resourceRegistryRegistration.unregister());
@@ -206,26 +251,24 @@ export async function createApp(userConfig: AppConfig) {
         generatedDir: config.generatedDir,
       });
       clientEntry = bundle.publicPath;
-      emitPlatformCode(OBS_CODES.APP_CLIENT_BUNDLE_READY, {
+      emitPlatformCodeTo(observabilityRuntime, OBS_CODES.APP_CLIENT_BUNDLE_READY, {
         metadata: { publicPath: bundle.publicPath },
       });
-    } catch (err) {
+    } catch {
       // Client bundle is optional — SSR still works without hydration
-      emitPlatformCode(OBS_CODES.APP_CLIENT_BUNDLE_FAILED, {
-        error: err,
-        metadata: { outDir: config.outDir, appDir: config.appDir },
+      emitPlatformCodeTo(observabilityRuntime, OBS_CODES.APP_CLIENT_BUNDLE_FAILED, {
+        metadata: { stage: 'client-bundle' },
       });
     }
     try {
       const styles = await buildPlatformStyles(config.outDir, config.appDir);
       cssPath = styles.publicPath;
-      emitPlatformCode(OBS_CODES.APP_STYLES_READY, {
+      emitPlatformCodeTo(observabilityRuntime, OBS_CODES.APP_STYLES_READY, {
         metadata: { publicPath: styles.publicPath },
       });
-    } catch (err) {
-      emitPlatformCode(OBS_CODES.APP_STYLES_FAILED, {
-        error: err,
-        metadata: { outDir: config.outDir, appDir: config.appDir },
+    } catch {
+      emitPlatformCodeTo(observabilityRuntime, OBS_CODES.APP_STYLES_FAILED, {
+        metadata: { stage: 'style-bundle' },
       });
     }
 
@@ -241,6 +284,7 @@ export async function createApp(userConfig: AppConfig) {
       reactive: {
         clearChangesOnStart: config.db.clearChangesOnStart,
         ringBufferDepth: config.db.ringBufferDepth,
+        observability: observabilityRuntime,
       },
       migrations,
       migrate: shouldRunMigrations(sqlite, config.migrate),
@@ -270,14 +314,20 @@ export async function createApp(userConfig: AppConfig) {
           rootDirectory: multipleTopology.rootDirectory,
           realm: multipleTopology.realm,
           createExecutor: multipleTopology.createExecutor,
+          placement: multipleTopology.placement,
           sqlite: multipleTopology.sqlite,
           maxDatabases: multipleTopology.maxDatabases,
+          maxDatabaseFiles: multipleTopology.maxDatabaseFiles,
           maxBlockedDatabases: multipleTopology.maxBlockedDatabases,
+          maxTenantSyncDatabases: multipleTopology.maxTenantSyncDatabases,
+          maxTenantSyncBindingsPerDatabase:
+            multipleTopology.maxTenantSyncBindingsPerDatabase,
           readers: multipleTopology.readers,
           maxQueuedPerDatabase: multipleTopology.maxQueuedPerDatabase,
           maxQueuedTotal: multipleTopology.maxQueuedTotal,
           queueTimeoutMs: multipleTopology.queueTimeoutMs,
           operationTimeoutMs: multipleTopology.operationTimeoutMs,
+          restart: multipleTopology.restart,
           idleTimeoutMs: multipleTopology.idleTimeoutMs,
           sweepIntervalMs: multipleTopology.sweepIntervalMs,
           observability: createDatabaseObservability(observabilityRuntime),
@@ -307,6 +357,12 @@ export async function createApp(userConfig: AppConfig) {
       return openedDatabaseManager.close();
     });
     removeDefaultRuntimeCleanup();
+    const tenantDataPlane = tenantDatabaseResourceTopology
+      ? createManagedTenantSyncDataPlane({
+          manager: openedDatabaseManager,
+          tables: tenantDatabaseResourceTopology.syncCatalog,
+        })
+      : undefined;
 
     // ─── Assemble Elysia app ────────────────────────────────
     const app = new Elysia({ name: 'platform' });
@@ -342,6 +398,7 @@ export async function createApp(userConfig: AppConfig) {
             })
           : config.ephemeralPolicy,
         snapshotTables: config.snapshotTables,
+        tenantDataPlane,
         auth: config.auth !== false
           ? {
               required: config.syncAuth === 'required',
@@ -371,13 +428,36 @@ export async function createApp(userConfig: AppConfig) {
       syncPolicy,
       resourceRegistry,
       resourceAuthConfig,
+      tenantDatabaseTables: tenantDatabaseResourceTopology
+        ? new Set(tenantDatabaseResourceTopology.tables)
+        : undefined,
       emailRuntime,
       clientEntry,
       cssPath,
     });
-    const stopped = installAppStopBarrier(mounted, async () => {
-      await runtime.dispose();
-    });
+    const stopped = installAppStopBarrier(
+      mounted,
+      async () => {
+        await runtime.dispose();
+      },
+      {
+        onTransportStopStalled(status) {
+          emitPlatformCodeTo(
+            observabilityRuntime,
+            OBS_CODES.APP_LIFECYCLE_SLOW,
+            {
+              message: 'Native WebSocket shutdown accounting stalled after the listener closed; Zero is continuing managed teardown.',
+              metadata: {
+                stage: 'transport-stop',
+                runtime: 'bun',
+                pendingRequests: status.pendingRequests,
+                pendingWebSockets: status.pendingWebSockets,
+              },
+            },
+          );
+        },
+      },
+    );
     return installAppSignalLifecycle(stopped);
   } catch (error) {
     return cleanupFailedAppCreation({
@@ -435,13 +515,19 @@ async function cleanupFailedAppCreation({
 function assertResourceExposureLoadingCompatibility(
   registry: ReturnType<typeof createResourceRegistry>,
   config: ReturnType<typeof resolveConfig>,
+  tenantDatabaseTables?: ReadonlySet<string>,
 ): void {
   for (const resource of registry.list()) {
     if (resource.exposure.kind !== 'sync') continue;
     const mode = config.declaredSyncModes.get(resource.table)
       ?? config.syncDefaults.defaultMode;
     const tableDefault = config.syncDefaults.tables.get(resource.table);
-    const autoCanResolveLazy = (tableDefault?.action ?? config.syncDefaults.action) === 'lazy';
+    // Physical tenant tables have no authoritative default-database row count,
+    // so their `auto` mode is always resolved to lazy. Keep this startup fence
+    // aligned with resolveTenantDatabaseTableMode(): autoLazy.action only
+    // controls shared/default tables and cannot make physical auto full-sync.
+    const autoCanResolveLazy = tenantDatabaseTables?.has(resource.table)
+      || (tableDefault?.action ?? config.syncDefaults.action) === 'lazy';
     if (mode !== 'lazy' && !(mode === 'auto' && autoCanResolveLazy)) continue;
 
     throw new Error(
@@ -459,6 +545,7 @@ interface MountPlatformAppInput {
   syncPolicy: ReturnType<typeof combineSyncPolicies>;
   resourceRegistry: ReturnType<typeof createResourceRegistry>;
   resourceAuthConfig: ReturnType<typeof resolveAuthBehaviorConfig>;
+  tenantDatabaseTables?: ReadonlySet<string>;
   emailRuntime: ReturnType<typeof createEmailRuntime>;
   clientEntry?: string;
   cssPath?: string;
@@ -476,6 +563,7 @@ async function mountPlatformApp({
   syncPolicy,
   resourceRegistry,
   resourceAuthConfig,
+  tenantDatabaseTables,
   emailRuntime,
   clientEntry,
   cssPath,
@@ -484,6 +572,7 @@ async function mountPlatformApp({
   const getAppTokenService = () => runtime.get(ZERO_AUTH_TOKEN_SERVICE);
   const getAppAuthorizationKernel = () => runtime.get(ZERO_AUTHORIZATION_KERNEL);
   const getAppRoleAssignments = () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE);
+  const observabilityRuntime = runtime.require(ZERO_OBSERVABILITY_RUNTIME);
   const managedStartup: {
     auth: AuthRuntime | null;
     kv: KvService | null;
@@ -494,7 +583,15 @@ async function mountPlatformApp({
   app.use(createPlatformTokenPlugin({ db: syncDB, runtime }));
 
   app.onStart(() => {
-    const resolution = resolveTableSyncModes(config, syncDB);
+    const resolution = resolveTableSyncModes(
+      config,
+      syncDB,
+      undefined,
+      {
+        tenantDatabaseTables,
+        observability: runtime.get(ZERO_OBSERVABILITY_RUNTIME),
+      },
+    );
     applyTableSyncResolution(config, resolution);
     addPlatformSnapshotTables(config.snapshotTables);
   });
@@ -544,6 +641,7 @@ async function mountPlatformApp({
   // 2.5. Observability — default sink endpoint + global error reporting
   app.use(createObservabilityPlugin({
     config: config.observability,
+    runtime: observabilityRuntime,
     authEnabled: config.auth !== false,
   }));
 
@@ -698,10 +796,12 @@ async function mountPlatformApp({
         : undefined,
       getRoleAssignments: config.auth !== false ? getAppRoleAssignments : undefined,
       getDB: () => syncDB,
+      getDatabaseManager: () => runtime.get(ZERO_DATABASE_MANAGER),
       resourceRegistry,
       resourceAuthConfig,
       tenancyMode: resourceAuthConfig.tenancy.mode,
       managedTables: new Set(Object.keys(config.tables)),
+      observability: runtime.get(ZERO_OBSERVABILITY_RUNTIME),
     })
   );
 
@@ -720,6 +820,16 @@ async function mountPlatformApp({
           : undefined,
         getRoleAssignments: config.auth !== false ? getAppRoleAssignments : undefined,
         getDB: () => syncDB,
+        observability: runtime.get(ZERO_OBSERVABILITY_RUNTIME),
+        getTenantDatabaseClient: ({ scope, assertCurrentAuthoritySync }) =>
+          createResourceTenantDatabaseAccess({
+            manager: runtime.get(ZERO_DATABASE_MANAGER),
+            scope: trustedSystemServiceDataScope({
+              scopeKind: 'tenant',
+              tenantId: scope.tenantId,
+            }),
+            assertCurrentAuthoritySync,
+          }),
         ...config.resourceRoutes,
       })
     );
@@ -746,6 +856,7 @@ async function mountPlatformApp({
   // URL is derived from each request in the router plugin (not hardcoded)
   app.use(
     createRouterPlugin({
+      observability: observabilityRuntime,
       appDir: config.appDir,
       outDir: config.outDir,
       clientEntry,
@@ -756,6 +867,11 @@ async function mountPlatformApp({
         email: emailRuntime.enabled,
         stateSync: config.stateSync,
         tableSyncModes: config.resolvedSyncModes,
+        tableSyncPlanes: resolveBrowserSyncTablePlanes(
+          Object.keys(config.tables),
+          resourceRegistry,
+        ),
+        managedTableNames: Object.keys(config.tables).sort(),
         publicPaths: config.publicPaths,
         routeAuth: config.routeAuth,
         loginPath: config.loginPath,

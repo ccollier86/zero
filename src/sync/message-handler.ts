@@ -55,6 +55,9 @@ import {
   type SyncMutationReceiptStore,
 } from './sync-mutation-receipt-store';
 import { validateSyncMutation } from './sync-mutation-validation';
+import type { SyncTenantSocketBridge } from './sync-tenant-data-plane';
+import { handleTenantSyncMutation } from './sync-tenant-mutation';
+import type { PlatformObservabilityRuntime } from '../observability/types';
 
 /**
  * Plugin-local mutation metadata shared only by one sync transport and its
@@ -94,6 +97,9 @@ export async function routeMessage(
   tenancyMode: 'single' | 'multi' = 'single',
   revalidateMutationAuthority?: () => Promise<boolean>,
   validateMutationAuthorityAtCommit?: () => boolean,
+  tenantDataPlane?: SyncTenantSocketBridge,
+  observability?: PlatformObservabilityRuntime | null,
+  assertCurrentReadAuthority: () => void = () => undefined,
 ): Promise<void> {
   let msg: { type: string; [key: string]: unknown };
 
@@ -113,21 +119,85 @@ export async function routeMessage(
 
   switch (msg.type) {
     case 'sync.subscribe':
-      handleSyncSubscribe(ws, msg as unknown as SyncSubscribeMessage, db, snapshotTables);
+      if (tenantDataPlane?.ownsAnyTable(msg.tables)) {
+        const message = msg as unknown as SyncSubscribeMessage;
+        const requested = Array.isArray(message.tables) ? message.tables : [];
+        const actorTables = requested.filter(
+          (table): table is string => tenantDataPlane.ownsTable(table),
+        );
+        const defaultTables = requested.filter((table): table is string => (
+          typeof table === 'string'
+          && !tenantDataPlane.ownsTable(table)
+          && db.hasTable(table)
+        ));
+        const mixed = defaultTables.length > 0;
+        ws.data.syncMultiplexed = mixed;
+        if (mixed) {
+          await handleSyncSubscribe(
+            ws,
+            planeSubscribeMessage(message, 'default', defaultTables, mixed),
+            db,
+            snapshotTables,
+            observability,
+            assertCurrentReadAuthority,
+          );
+        } else {
+          ws.data.syncSubscribedTables.clear();
+          ws.data.rowFilteredSubscribedTables.clear();
+        }
+        await tenantDataPlane.subscribe(
+          planeSubscribeMessage(message, 'tenant', actorTables, mixed),
+        );
+      } else {
+        if (tenantDataPlane) await tenantDataPlane.clearSubscription();
+        ws.data.syncMultiplexed = false;
+        await handleSyncSubscribe(
+          ws,
+          msg as unknown as SyncSubscribeMessage,
+          db,
+          snapshotTables,
+          observability,
+          assertCurrentReadAuthority,
+        );
+      }
       break;
     case 'sync.mutate':
-      await handleMutate(
-        ws,
-        msg as unknown as SyncMutateMessage,
-        db,
-        policy,
-        resourcePolicy,
-        mutationReceipts,
-        mutationOrigin,
-        mutationValidators,
-        revalidateMutationAuthority,
-        validateMutationAuthorityAtCommit,
-      );
+      if (tenantDataPlane?.ownsTable(msg.table)) {
+        if (msg.plane !== undefined && msg.plane !== 'tenant') {
+          ws.close(1008, 'Sync mutation plane does not match its table');
+          break;
+        }
+        await handleTenantSyncMutation(
+          ws,
+          msg as unknown as SyncMutateMessage,
+          tenantDataPlane,
+          policy,
+          resourcePolicy,
+          mutationValidators,
+          revalidateMutationAuthority,
+          assertCurrentReadAuthority,
+          observability,
+        );
+      } else {
+        if (msg.plane !== undefined && msg.plane !== 'default') {
+          ws.close(1008, 'Sync mutation plane does not match its table');
+          break;
+        }
+        await handleMutate(
+          ws,
+          msg as unknown as SyncMutateMessage,
+          db,
+          policy,
+          resourcePolicy,
+          mutationReceipts,
+          mutationOrigin,
+          mutationValidators,
+          revalidateMutationAuthority,
+          validateMutationAuthorityAtCommit,
+          assertCurrentReadAuthority,
+          observability,
+        );
+      }
       break;
     case 'state.subscribe':
       if (stateManager) handleStateSubscribe(
@@ -243,6 +313,33 @@ export async function routeMessage(
   }
 }
 
+function planeSubscribeMessage(
+  message: SyncSubscribeMessage,
+  plane: 'default' | 'tenant',
+  tables: readonly string[],
+  mixed: boolean,
+): SyncSubscribeMessage {
+  const cursor = message.cursors?.[plane];
+  // Top-level cursor fields remain the default/single-plane compatibility
+  // contract. An old mixed client safely gets a fresh tenant baseline rather
+  // than applying its unrelated default cursor to the actor log.
+  const useLegacy = plane === 'default' || !mixed;
+  const lastSeq = cursor?.lastSeq ?? (useLegacy ? message.lastSeq : 0);
+  const epoch = cursor?.epoch ?? (useLegacy ? message.epoch : undefined);
+  const scope = cursor && Object.hasOwn(cursor, 'scope')
+    ? cursor.scope
+    : useLegacy ? message.scope : undefined;
+  const requestedSnapshot = new Set(message.snapshot ?? []);
+  return {
+    ...message,
+    tables: [...tables],
+    snapshot: tables.filter((table) => requestedSnapshot.has(table)),
+    lastSeq,
+    ...(epoch === undefined ? { epoch: undefined } : { epoch }),
+    ...(scope === undefined ? { scope: undefined } : { scope }),
+  };
+}
+
 const MAX_STATE_REF_LENGTH = 128;
 
 function isValidStateRef(value: unknown): value is string {
@@ -277,6 +374,8 @@ async function handleMutate(
   mutationValidators?: Readonly<Record<string, SyncTableMutationValidator>>,
   revalidateMutationAuthority?: () => Promise<boolean>,
   validateMutationAuthorityAtCommit?: () => boolean,
+  assertCurrentReadAuthority: () => void = () => undefined,
+  observability?: PlatformObservabilityRuntime | null,
 ): Promise<void> {
   const { ref, table, op, rowId, row } = msg;
 
@@ -284,6 +383,9 @@ async function handleMutate(
   if (!table || typeof table !== 'string') return;
   if (!op || !['INSERT', 'UPDATE', 'DELETE'].includes(op)) return;
   if (msg.epoch !== undefined && typeof msg.epoch !== 'string') return;
+  if (msg.plane !== undefined
+    && msg.plane !== 'default'
+    && msg.plane !== 'tenant') return;
   if (msg.attempt !== undefined
     && (!Number.isSafeInteger(msg.attempt) || msg.attempt < 1)) return;
 
@@ -301,7 +403,7 @@ async function handleMutate(
     return;
   }
   if (receipt?.status === 'hit') {
-    sendResolvedAck(ws, db, receipt.ack);
+    sendResolvedAck(ws, db, receipt.ack, assertCurrentReadAuthority);
     return;
   }
 
@@ -316,7 +418,7 @@ async function handleMutate(
     rowId,
     row,
     authContext: ws.data.authContext,
-  });
+  }, observability);
   if (!policyDecision.ok) {
     sendAck(ws, ref, false, null, policyDecision.reason ?? `Not allowed: ${table}`);
     return;
@@ -442,11 +544,31 @@ async function handleMutate(
         currentMutationOrigin = previousOrigin;
       }
     }
-    if (ack) sendResolvedAck(ws, db, ack);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Internal error';
-    sendAck(ws, ref, false, null, message);
+    if (ack) sendResolvedAck(ws, db, ack, assertCurrentReadAuthority);
+  } catch (error) {
+    sendAck(ws, ref, false, null, safeDefaultMutationError(error));
   }
+}
+
+/** Keep raw SQLite/extension errors out of the Sync wire contract. */
+function safeDefaultMutationError(error: unknown): string {
+  if (!(error instanceof Error)) return 'Mutation failed';
+  if (error.message === 'Authorization changed during mutation') {
+    return 'Authorization changed during mutation';
+  }
+  if (error.message === 'Mutation reference conflict') {
+    return 'Mutation reference conflict';
+  }
+  if (error.message.startsWith('Row not found: ')) return 'Row not found';
+  if (/^(?:createStrict|createScoped)\('[A-Za-z0-9_]+'\): primary key already exists$/u
+    .test(error.message)) {
+    return 'primary key already exists';
+  }
+  if (/^(?:updateIfCurrent|updateScoped|deleteIfCurrent|deleteScoped)\('[A-Za-z0-9_]+'\): row changed since authorization$/u
+    .test(error.message)) {
+    return 'row changed since authorization';
+  }
+  return 'Mutation failed';
 }
 
 function applyMutation(
@@ -500,24 +622,53 @@ function sendResolvedAck(
   ws: ServerWebSocket<SyncSocketData>,
   db: ReactiveDB,
   ack: SyncAckMessage,
+  assertCurrentReadAuthority: () => void = () => undefined,
 ): void {
   if (!ack.change) return void sendSyncWire(ws, ack);
-  const { table, rowId } = ack.change;
-  const row = db.get(table, rowId);
-  const readable = ws.data.allowedTables.has(table);
-  const matches = row
-    ? ws.data.resourceRowFilters.get(table)?.matches(row) ?? true
-    : false;
-  const projectedRow = row
-    ? ws.data.resourceRowProjectors?.get(table)?.project(row) ?? row
-    : null;
-  sendSyncWire(ws, {
-    ...ack,
-    seq: db.currentSeq,
-    change: readable && projectedRow && matches
-      ? { table, rowId, op: 'UPDATE', row: projectedRow }
-      : { table, rowId, op: 'DELETE', row: null },
-  });
+  try {
+    const { table, rowId } = ack.change;
+    const row = db.get(table, rowId);
+    const readable = ws.data.allowedTables.has(table);
+    const matches = readable && row
+      ? ws.data.resourceRowFilters.get(table)?.matches(row) ?? true
+      : false;
+    const projectedRow = matches && row
+      ? ws.data.resourceRowProjectors?.get(table)?.project(row) ?? row
+      : null;
+    // Filters/projectors are trusted extension code. Fence their row-bearing
+    // acknowledgement at the final synchronous edge, just like live delivery.
+    assertCurrentReadAuthority();
+    sendSyncWire(ws, {
+      ...ack,
+      ...(ws.data.syncMultiplexed ? { plane: 'default' as const } : {}),
+      seq: db.currentSeq,
+      change: projectedRow
+        ? { table, rowId, op: 'UPDATE', row: projectedRow }
+        : { table, rowId, op: 'DELETE', row: null },
+    });
+  } catch (error) {
+    // The managed assertion has already closed/reset the socket. The mutation
+    // is durable, so never fabricate a definitive negative acknowledgement.
+    if (isDatabaseAuthorityChanged(error)) return;
+    closeAfterCommittedAckFailure(ws);
+  }
+}
+
+function isDatabaseAuthorityChanged(error: unknown): boolean {
+  return Boolean(error
+    && typeof error === 'object'
+    && (error as { code?: unknown }).code === 'DATABASE_AUTHORITY_CHANGED');
+}
+
+function closeAfterCommittedAckFailure(
+  socket: ServerWebSocket<SyncSocketData>,
+): void {
+  try {
+    socket.close(1011, 'Sync acknowledgement projection failed');
+  } catch {
+    // The committed mutation remains recoverable through its receipt even if
+    // a custom socket adapter also fails while closing.
+  }
 }
 
 function sendAck(
@@ -528,6 +679,7 @@ function sendAck(
   error?: string
 ): void {
   const ack: SyncAckMessage = { type: 'sync.ack', ref, seq, ok };
+  if (ws.data.syncMultiplexed) ack.plane = 'default';
   if (error) ack.error = error;
   sendSyncWire(ws, ack);
 }

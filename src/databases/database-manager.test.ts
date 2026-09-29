@@ -6,11 +6,17 @@ import { fileURLToPath } from 'node:url';
 
 import { createPlatformSQLiteService } from '../persistence';
 import { AuthorityCommitCoordinator } from './authority-commit-coordinator';
+import {
+  createNamedDatabaseRef,
+  createTenantDatabaseRef,
+} from './database-binding-ref';
 import { DatabaseCoordinator } from './database-coordinator';
 import { DatabaseError } from './database-error';
+import { createDatabaseRef } from './database-file';
 import { DatabaseManager } from './database-manager';
 import { DatabaseRuntime } from './database-runtime';
 import { SubprocessDatabaseExecutor } from './subprocess-database-executor';
+import type { DatabaseTenantSyncBinding } from './database-tenant-sync';
 import { databaseActorFixtureRealm } from './test-fixtures/database-actor-realm';
 
 const CHILD_PATH = fileURLToPath(new URL(
@@ -70,7 +76,13 @@ describe('DatabaseManager', () => {
       assertCurrentAuthoritySync: () => undefined,
     });
     try {
-      expect(named.databaseRef).not.toBeUndefined();
+      expect(named.databaseRef).toBe(createNamedDatabaseRef('same-logical-value'));
+      expect(harness.coordinator.diagnostics().databases.map((entry) => entry.databaseRef))
+        .toContain(createTenantDatabaseRef('same-logical-value'));
+      expect(createNamedDatabaseRef('same-logical-value'))
+        .not.toBe(createTenantDatabaseRef('same-logical-value'));
+      expect(createTenantDatabaseRef('same-logical-value'))
+        .not.toBe(createDatabaseRef('same-logical-value'));
       expect(Reflect.ownKeys(tenant)).toEqual([]);
       expect(Reflect.ownKeys(tenant.client)).toEqual([]);
       expect(JSON.stringify(tenant)).toBe('{}');
@@ -114,11 +126,11 @@ describe('DatabaseManager', () => {
       await binding.client.mutate({
         type: 'create', table: 'todos', row: { id: 'a', title: 'Before' },
       }, { idempotencyKey: 'tenant:create:a' });
-      expect(checks).toBe(1);
+      expect(checks).toBe(2);
       expect(await binding.client.get('todos', 'a')).toMatchObject({
         value: { id: 'a', title: 'Before' },
       });
-      expect(checks).toBe(3);
+      expect(checks).toBe(4);
 
       current = false;
       const readFailure = await databaseError(
@@ -134,6 +146,46 @@ describe('DatabaseManager', () => {
     } finally {
       binding.release();
     }
+  }, 20_000);
+
+  test('rejects already-revoked tenant bindings before file or actor admission', async () => {
+    const harness = createMultipleManager(roots, { tenantDatabases: true });
+    managers.push(harness.manager);
+    harness.manager.start();
+
+    const error = await databaseError(() => harness.manager.bindTenant({
+      tenantId: 'tenant-must-not-be-created',
+      assertCurrentAuthoritySync() {
+        throw new Error('/private/revoked-tenant');
+      },
+    }));
+
+    expect(error).toMatchObject({
+      code: 'DATABASE_AUTHORITY_CHANGED',
+      retryable: false,
+      outcome: 'not-started',
+    });
+    expect(error.message).not.toContain('private');
+
+    const readError = await databaseError(() => harness.manager.bindTenantSync({
+      tenantId: 'read-revoked-tenant-must-not-be-created',
+      assertCurrentAuthoritySync: () => undefined,
+      assertCurrentReadAuthority() {
+        throw new Error('/private/read-revoked-tenant');
+      },
+    }));
+    expect(readError).toMatchObject({
+      code: 'DATABASE_AUTHORITY_CHANGED',
+      retryable: false,
+      outcome: 'not-started',
+    });
+    expect(readError.message).not.toContain('private');
+    expect(harness.coordinator.diagnostics()).toMatchObject({
+      databaseFiles: 0,
+      openDatabases: 0,
+      databases: [],
+      availableSlots: 2,
+    });
   }, 20_000);
 
   test('serializes an exclusive authority fence against tenant commits', async () => {
@@ -159,6 +211,162 @@ describe('DatabaseManager', () => {
       activeShared: 0,
     });
     binding.release();
+  }, 20_000);
+
+  test('exposes a narrow authority-fenced logical receipt writer', async () => {
+    const harness = createMultipleManager(roots, { tenantDatabases: true });
+    managers.push(harness.manager);
+    harness.manager.start();
+    let authorized = true;
+    const binding = await harness.manager.bindTenant({
+      tenantId: 'tenant-a',
+      assertCurrentAuthoritySync: () => {
+        if (!authorized) throw new Error('revoked');
+        return undefined;
+      },
+    });
+    const fingerprint = `sha256:${'e'.repeat(64)}` as const;
+    try {
+      expect(Reflect.ownKeys(binding.trustedWriter)).toEqual([]);
+      expect(await binding.trustedWriter.findReceipt(
+        'trusted:create:a',
+        fingerprint,
+      )).toEqual({ status: 'miss' });
+      const first = await binding.trustedWriter.executeWrite({
+        type: 'mutate',
+        idempotencyKey: 'trusted:create:a',
+        mutation: {
+          type: 'create', table: 'todos', row: { id: 'a', title: 'A' },
+        },
+      }, { logicalReceiptFingerprint: fingerprint });
+      expect(first).toMatchObject({
+        replayed: false,
+        value: {
+          mutation: {
+            row: { id: 'a', title: 'A' },
+            previousRow: null,
+          },
+        },
+      });
+      expect(await binding.trustedWriter.findReceipt(
+        'trusted:create:a',
+        fingerprint,
+      )).toMatchObject({
+        status: 'hit',
+        result: { replayed: true, value: first.value },
+      });
+      const replay = await binding.trustedWriter.executeWrite({
+        type: 'mutate',
+        idempotencyKey: 'trusted:create:a',
+        mutation: { type: 'delete', table: 'todos', id: 'a' },
+      }, { logicalReceiptFingerprint: fingerprint });
+      expect(replay.replayed).toBe(true);
+      expect(replay.value).toEqual(first.value);
+      expect(await binding.client.get('todos', 'a')).toMatchObject({
+        value: { id: 'a', title: 'A' },
+      });
+
+      authorized = false;
+      expect(await databaseCode(() => binding.trustedWriter.findReceipt(
+        'trusted:create:a',
+        fingerprint,
+      ))).toBe('DATABASE_AUTHORITY_CHANGED');
+    } finally {
+      binding.release();
+    }
+  }, 20_000);
+
+  test('binds tenant Sync to the same file with isolated authority-fenced leases', async () => {
+    const harness = createMultipleManager(roots, { tenantDatabases: true });
+    managers.push(harness.manager);
+    harness.manager.start();
+    let commitAuthorityCurrent = true;
+    let readAuthorityCurrent = true;
+    const authority = {
+      assertCurrentAuthoritySync: () => {
+        if (!commitAuthorityCurrent) throw new Error('private commit revocation');
+        return undefined;
+      },
+      assertCurrentReadAuthority: () => {
+        if (!readAuthorityCurrent) throw new Error('private read revocation');
+        return undefined;
+      },
+    } as const;
+    const tenantA = await harness.manager.bindTenant({
+      tenantId: 'tenant-a',
+      ...authority,
+    });
+    const syncA = await harness.manager.bindTenantSync({
+      tenantId: 'tenant-a',
+      ...authority,
+    });
+    const syncB = await harness.manager.bindTenantSync({
+      tenantId: 'tenant-b',
+      assertCurrentAuthoritySync: () => undefined,
+    });
+    try {
+      await tenantA.client.mutate({
+        type: 'create', table: 'todos', row: { id: 'shared', title: 'A' },
+      }, { idempotencyKey: 'tenant-a:create:shared' });
+      expect((await collectTenantSnapshot(syncA, ['todos'])).tables.todos).toEqual([
+        { id: 'shared', title: 'A' },
+      ]);
+      expect((await collectTenantSnapshot(syncB, ['todos'])).tables.todos).toEqual([]);
+
+      await syncA.client.mutate({
+        type: 'create', table: 'todos', row: { id: 'from-sync', title: 'A2' },
+      }, { idempotencyKey: 'tenant-a:create:from-sync' });
+      expect(await tenantA.client.get('todos', 'from-sync')).toMatchObject({
+        value: { id: 'from-sync', title: 'A2' },
+      });
+      await syncB.client.mutate({
+        type: 'create', table: 'todos', row: { id: 'shared', title: 'B' },
+      }, { idempotencyKey: 'tenant-b:create:shared' });
+      expect(await tenantA.client.get('todos', 'shared')).toMatchObject({
+        value: { id: 'shared', title: 'A' },
+      });
+      expect((await collectTenantSnapshot(syncB, ['todos'])).tables.todos).toEqual([
+        { id: 'shared', title: 'B' },
+      ]);
+
+      readAuthorityCurrent = false;
+      expect(await databaseCode(() => syncA.beginSnapshot([])))
+        .toBe('DATABASE_AUTHORITY_CHANGED');
+      expect(await databaseCode(() => syncA.client.get('todos', 'shared')))
+        .toBe('DATABASE_AUTHORITY_CHANGED');
+      // The optional read fence does not replace committed write authority.
+      await syncA.client.mutate({
+        type: 'create', table: 'todos', row: { id: 'write-only', title: 'A3' },
+      }, { idempotencyKey: 'tenant-a:create:write-only' });
+
+      commitAuthorityCurrent = false;
+      expect(await databaseCode(() => syncA.client.mutate({
+        type: 'create', table: 'todos', row: { id: 'revoked', title: 'No' },
+      }, { idempotencyKey: 'tenant-a:create:revoked' })))
+        .toBe('DATABASE_AUTHORITY_CHANGED');
+      expect(await databaseCode(() => syncA.trustedWriter.findReceipt(
+        'tenant-a:create:shared',
+        `sha256:${'f'.repeat(64)}`,
+      ))).toBe('DATABASE_AUTHORITY_CHANGED');
+
+      const beforeRelease = harness.coordinator.diagnostics().databases;
+      expect(beforeRelease.find((entry) => entry.databaseRef === syncA.databaseRef))
+        .toMatchObject({ leases: 2 });
+      expect(beforeRelease.find((entry) => entry.databaseRef === syncB.databaseRef))
+        .toMatchObject({ leases: 1 });
+      syncA.release();
+      expect(syncA.released).toBe(true);
+      expect(harness.coordinator.diagnostics().databases
+        .find((entry) => entry.databaseRef === syncA.databaseRef))
+        .toMatchObject({ leases: 1 });
+      expect(await databaseCode(() => syncA.beginSnapshot([]))).toBe('DATABASE_CLOSED');
+    } finally {
+      tenantA.release();
+      syncA.release();
+      syncB.release();
+    }
+    expect(harness.coordinator.diagnostics().databases
+      .every((entry) => entry.leases === 0)).toBe(true);
   }, 20_000);
 
   test('closes actors and the authority gate before disposing the default runtime', async () => {
@@ -229,6 +437,7 @@ function createCoordinator(
     rootDirectory,
     realm: databaseActorFixtureRealm,
     maxDatabases: 2,
+    maxTenantSyncDatabases: 2,
     sweepIntervalMs: false,
     operationTimeoutMs: 5_000,
     ...(authority ? { authorityCommitCoordinator: authority } : {}),
@@ -277,6 +486,30 @@ function readTodo(id: string) {
     id,
     consistency: { mode: 'snapshot' as const },
   };
+}
+
+async function collectTenantSnapshot(
+  binding: DatabaseTenantSyncBinding,
+  tables: readonly string[],
+) {
+  const session = await binding.beginSnapshot(tables);
+  const rowsByTable: Record<string, unknown[]> = Object.fromEntries(
+    tables.map((table) => [table, []]),
+  );
+  try {
+    let cursor = 0;
+    while (true) {
+      const page = await session.page(cursor);
+      for (const entry of page.rows) {
+        rowsByTable[tables[entry.tableIndex]!]!.push(entry.row);
+      }
+      if (page.nextCursor === null) break;
+      cursor = page.nextCursor;
+    }
+    return { tables: rowsByTable };
+  } finally {
+    await session.abort();
+  }
 }
 
 function createRoot(roots: string[]): string {

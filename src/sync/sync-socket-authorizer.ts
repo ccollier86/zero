@@ -2,7 +2,7 @@
 
 import type { ServerWebSocket } from 'bun';
 import type { ReactiveDB } from './reactive-db';
-import { resolveSyncAuthContext } from './sync-auth';
+import { resolveSyncAuthContext, sameSyncAuthContext } from './sync-auth';
 import type { SyncPolicy } from './sync-policy';
 import { resolveSyncSocketAccess } from './sync-socket-access';
 import { createSyncAuthorizationScope } from './sync-authorization-scope';
@@ -17,7 +17,9 @@ interface SocketAuthorizerOptions {
   db: ReactiveDB;
   policy: SyncPolicy;
   resourcePolicy?: SyncResourcePolicyAdapter;
+  additionalTables?: Iterable<string>;
   requireDurableAuthority?: boolean;
+  requireComparableReadAuthority?: boolean;
   onAuthorized: (
     socket: ServerWebSocket<SyncSocketData>,
     token?: string,
@@ -30,6 +32,10 @@ export function createSyncSocketAuthorizer(options: SocketAuthorizerOptions) {
     ServerWebSocket<SyncSocketData>,
     Promise<boolean>
   >();
+  const authorizationGeneration = new WeakMap<
+    ServerWebSocket<SyncSocketData>,
+    number
+  >();
 
   function authorize(
     socket: ServerWebSocket<SyncSocketData>,
@@ -39,8 +45,14 @@ export function createSyncSocketAuthorizer(options: SocketAuthorizerOptions) {
     const existing = pendingBySocket.get(socket);
     if (existing) return existing;
 
-    const pending = performAuthorization(socket, token)
-      .finally(() => pendingBySocket.delete(socket));
+    const generation = (authorizationGeneration.get(socket) ?? 0) + 1;
+    authorizationGeneration.set(socket, generation);
+    const pending = performAuthorization(socket, token, generation)
+      .finally(() => {
+        if (pendingBySocket.get(socket) === pending) {
+          pendingBySocket.delete(socket);
+        }
+      });
     pendingBySocket.set(socket, pending);
     return pending;
   }
@@ -48,8 +60,10 @@ export function createSyncSocketAuthorizer(options: SocketAuthorizerOptions) {
   async function performAuthorization(
     socket: ServerWebSocket<SyncSocketData>,
     token?: string,
+    generation?: number,
   ): Promise<boolean> {
     const auth = await resolveSyncAuthContext(token, options.auth);
+    if (authorizationGeneration.get(socket) !== generation) return false;
     if (!auth.ok) {
       socket.close(auth.closeCode, auth.reason);
       return false;
@@ -77,11 +91,58 @@ export function createSyncSocketAuthorizer(options: SocketAuthorizerOptions) {
     }
     try {
       const access = await resolveSyncSocketAccess(options, data.authContext);
-      options.auth?.getTokenVerifier()?.assertCurrentProfile?.();
+      if (authorizationGeneration.get(socket) !== generation) return false;
+      const verifier = options.auth?.getTokenVerifier();
+      verifier?.assertCurrentProfile?.();
+      if (data.authContext && data.authAuthorityReference) {
+        const current = verifier?.resolveAuthContextAuthority?.(
+          data.authAuthorityReference,
+        );
+        if (!current || !sameSyncAuthContext(current, data.authContext)) {
+          socket.close(4001, 'Auth context changed');
+          return false;
+        }
+      }
+
+      const readFingerprint = access.readAuthorityFingerprint;
+      const validateRead = options.resourcePolicy
+        ?.validateReadAuthorityAtDelivery;
+      const installsRowPolicy = access.rowFilters.size > 0
+        || access.rowProjectors.size > 0;
+      if ((options.requireComparableReadAuthority || installsRowPolicy)
+        && (readFingerprint === null || !validateRead)) {
+        socket.close(1011, 'Comparable Sync read authority unavailable');
+        return false;
+      }
+      if (readFingerprint !== null) {
+        let current = false;
+        try {
+          const result = validateRead?.call(
+            options.resourcePolicy,
+            data.authContext,
+            readFingerprint,
+          );
+          if (result
+            && typeof (result as unknown as PromiseLike<unknown>).then === 'function') {
+            void Promise.resolve(result).catch(() => undefined);
+            socket.close(1011, 'Sync read authority validation must be synchronous');
+            return false;
+          }
+          current = result === true;
+        } catch {
+          socket.close(1011, 'Sync read authority validation failed');
+          return false;
+        }
+        if (!current) {
+          socket.close(4001, 'Sync read authority changed');
+          return false;
+        }
+      }
       data.allowedTables = access.allowedTables;
       data.resourceRowFilters = access.rowFilters;
       data.resourceRowProjectors = access.rowProjectors;
       data.authorizationFingerprint = access.fingerprint;
+      data.readAuthorizationFingerprint = readFingerprint;
       data.authorizationScope = createSyncAuthorizationScope(
         data.authContext,
         access.fingerprint,
@@ -91,10 +152,19 @@ export function createSyncSocketAuthorizer(options: SocketAuthorizerOptions) {
       return false;
     }
 
+    if (authorizationGeneration.get(socket) !== generation) return false;
     data.authResolved = true;
     options.onAuthorized(socket, token);
     return true;
   }
 
-  return { authorize };
+  function cancel(socket: ServerWebSocket<SyncSocketData>): void {
+    authorizationGeneration.set(
+      socket,
+      (authorizationGeneration.get(socket) ?? 0) + 1,
+    );
+    pendingBySocket.delete(socket);
+  }
+
+  return { authorize, cancel };
 }

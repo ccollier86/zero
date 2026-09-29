@@ -51,7 +51,9 @@ process.on('message', (message: unknown) => {
     send({ ...session, type: 'shutdown-ack' });
     setTimeout(() => {
       process.disconnect?.();
-      process.exit(0);
+      // Let the disconnected child leave naturally after the IPC handle is
+      // closed. Exiting in the same callback can race Bun's parent-side
+      // `onDisconnect` delivery even though the process exits successfully.
     }, 10);
     return;
   }
@@ -154,6 +156,51 @@ function handleRequest(
       return;
     case 'exit':
       process.exit(17);
+    case 'hot-periodic-durability-failed':
+      send({
+        ...active,
+        type: 'telemetry',
+        signal: 'hot-periodic-durability-failed',
+      });
+      return;
+    case 'hot-periodic-snapshot-cycle':
+      send({
+        ...active,
+        type: 'telemetry',
+        signal: 'hot-periodic-snapshot-started',
+      });
+      send({
+        ...active,
+        type: 'telemetry',
+        signal: 'hot-periodic-snapshot-finished',
+      });
+      send({
+        ...active,
+        type: 'response',
+        requestId: request.requestId,
+        ok: true,
+        value: null,
+      });
+      return;
+    case 'hot-periodic-durability-cycle':
+      send({
+        ...active,
+        type: 'telemetry',
+        signal: 'hot-periodic-durability-dirty',
+      });
+      send({
+        ...active,
+        type: 'telemetry',
+        signal: 'hot-periodic-durability-clean',
+      });
+      send({
+        ...active,
+        type: 'response',
+        requestId: request.requestId,
+        ok: true,
+        value: null,
+      });
+      return;
     case 'exit-later': {
       const payload = asRecord(request.payload);
       const delayMs = typeof payload?.delayMs === 'number' ? payload.delayMs : 100;

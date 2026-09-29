@@ -133,6 +133,24 @@ All notable Zero Platform changes are tracked here.
   `hot`/`ephemeral` runtime replication, a cross-runtime ephemeral topic bus,
   application-owned caches, and raw SQL/custom response projection are not
   implied by those managed boundaries.
+- Added ReactiveDB Fabric, an opt-in actor-backed multi-database topology which
+  keeps Zero's control/auth database pinned while routing named or authenticated
+  physical-tenant application data into independently reactive SQLite files.
+  Fabric provides per-database FIFO writers, optional same-file WAL readers,
+  concurrent work across admitted files, bounded file/hot/hybrid placement,
+  strict root/file/logical identity and orphan-actor fencing, durable
+  idempotency receipts, bounded restart backoff, app-local structured
+  observability, and stable database/HTTP/Sync failure contracts.
+- Integrated physical tenant databases through generated Resource CRUD,
+  `/api/data`, request-local `zero.data`, and multiplexed ReactiveDB Sync. The
+  server derives routing only from live authenticated tenant authority;
+  snapshot pages materialize one exact durable head before contiguous replay,
+  authority is rechecked across asynchronous and commit boundaries, and file,
+  receipt, queue, binding, snapshot-session, payload, and transfer work all
+  have explicit limits. Added the declarative `databaseTopology`/actor-realm
+  surface, Doctor findings, package exports, deployment constraints, and the
+  full Fabric architecture and SDK documentation. This remains unreleased
+  child-branch work pending combined-app and supported deployment acceptance.
 - Added native desktop and mobile authentication through a registered public
   OpenID Connect Authorization Code + PKCE provider and the
   `@zero/framework/native` SDK. Native sessions use the existing Zero users,

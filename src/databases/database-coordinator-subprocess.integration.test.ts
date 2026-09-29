@@ -14,11 +14,16 @@ import {
   DatabaseCoordinator,
   type DatabaseCoordinatorLease,
 } from './database-coordinator';
+import { DatabaseError } from './database-error';
 import { SubprocessDatabaseExecutor } from './subprocess-database-executor';
 import { databaseActorFixtureRealm } from './test-fixtures/database-actor-realm';
 
 const CHILD_PATH = fileURLToPath(new URL(
   './test-fixtures/database-actor-child.ts',
+  import.meta.url,
+));
+const CRASH_PARENT_PATH = fileURLToPath(new URL(
+  './test-fixtures/database-coordinator-crash-parent.ts',
   import.meta.url,
 ));
 
@@ -161,6 +166,62 @@ describe('DatabaseCoordinator subprocess integration', () => {
     expect(existsSync(root)).toBe(false);
     expect(coordinator.diagnostics().state).toBe('closed');
   }, 20_000);
+
+  test('fences an orphan writer after parent crash until its transaction settles', async () => {
+    const root = realpathSync.native(
+      mkdtempSync(join(tmpdir(), 'zero-database-crash-fence-')),
+    );
+    const barriers = realpathSync.native(
+      mkdtempSync(join(tmpdir(), 'zero-database-crash-barrier-')),
+    );
+    const enteredPath = join(barriers, 'entered');
+    const releasePath = join(barriers, 'release');
+    const crashedParent = Bun.spawn({
+      cmd: [process.execPath, CRASH_PARENT_PATH, root, enteredPath, releasePath],
+      stdin: 'ignore',
+      stdout: 'ignore',
+      stderr: 'ignore',
+    });
+    let replacement: DatabaseCoordinator | null = null;
+    try {
+      await waitForFile(enteredPath);
+      crashedParent.kill('SIGKILL');
+      await crashedParent.exited;
+
+      replacement = createCoordinator(root);
+      const conflict = captureSynchronousDatabaseError(() => replacement!.start());
+      expect(conflict).toMatchObject({
+        code: 'DATABASE_CONFLICT',
+        retryable: true,
+        outcome: 'not-started',
+        details: {},
+      });
+      expect(`${conflict.message}\n${JSON.stringify(conflict)}`).not.toContain(root);
+      expect(`${conflict.message}\n${JSON.stringify(conflict)}`)
+        .not.toContain('tenant-crash-fence');
+
+      writeFileSync(releasePath, 'release', { flag: 'wx' });
+      await startAfterOrphanSettlement(replacement);
+      const lease = await replacement.acquire('tenant-crash-fence');
+      try {
+        expect(await lease.execute(readTodo('row'))).toEqual({
+          value: { id: 'row', title: 'Committed by orphan' },
+          sequence: { seq: 2 },
+        });
+      } finally {
+        lease.release();
+      }
+    } finally {
+      if (!existsSync(releasePath)) {
+        writeFileSync(releasePath, 'release', { flag: 'wx' });
+      }
+      crashedParent.kill('SIGKILL');
+      await crashedParent.exited.catch(() => undefined);
+      await replacement?.close().catch(() => undefined);
+      rmSync(root, { recursive: true, force: true });
+      rmSync(barriers, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
 
 function createCoordinator(rootDirectory: string): DatabaseCoordinator {
@@ -226,6 +287,35 @@ async function waitForFile(path: string): Promise<void> {
     if (Date.now() >= deadline) throw new Error('Actor did not enter test barrier.');
     await Bun.sleep(5);
   }
+}
+
+async function startAfterOrphanSettlement(
+  coordinator: DatabaseCoordinator,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (true) {
+    try {
+      coordinator.start();
+      return;
+    } catch (error) {
+      if (!(error instanceof DatabaseError)
+        || error.code !== 'DATABASE_CONFLICT'
+        || Date.now() >= deadline) {
+        throw error;
+      }
+      await Bun.sleep(10);
+    }
+  }
+}
+
+function captureSynchronousDatabaseError(operation: () => unknown): DatabaseError {
+  try {
+    operation();
+  } catch (error) {
+    expect(error).toBeInstanceOf(DatabaseError);
+    return error as DatabaseError;
+  }
+  throw new Error('Expected a DatabaseError.');
 }
 
 class IntegrationResources {

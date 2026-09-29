@@ -2,6 +2,7 @@ import type { PlatformSQLiteService } from '../persistence';
 import { Migrator, type Migration } from '../migrations';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import type { ReactiveDBConfig, TableSchema } from '../sync/types';
+import { DatabaseError } from './database-error';
 
 /** Stable purpose assigned to one physical database runtime. */
 export type DatabaseRuntimeRole = 'default' | 'named' | 'tenant';
@@ -9,7 +10,7 @@ export type DatabaseRuntimeRole = 'default' | 'named' | 'tenant';
 /** ReactiveDB settings that remain meaningful for an injected SQLite service. */
 export type DatabaseReactiveConfig = Pick<
   ReactiveDBConfig,
-  'clearChangesOnStart' | 'ringBufferDepth'
+  'clearChangesOnStart' | 'ringBufferDepth' | 'observability'
 >;
 
 /** Construction contract for exactly one physical SQLite/ReactiveDB runtime. */
@@ -30,6 +31,8 @@ export interface DatabaseRuntimeOptions {
   migrate?: boolean;
   /** Optional app tables to initialize before the runtime is published. */
   tables?: Readonly<Record<string, TableSchema>>;
+  /** Optional migration-log sink. Actor runtimes provide a silent local sink. */
+  migrationLog?: (...args: unknown[]) => void;
 }
 
 /** Cheap runtime state suitable for doctor output and lifecycle assertions. */
@@ -75,12 +78,20 @@ export class DatabaseRuntime {
   static open(options: DatabaseRuntimeOptions): DatabaseRuntime {
     assertDatabaseRuntimeOptions(options);
     let db: ReactiveDB | null = null;
+    let phase: DatabaseRuntimeStartupPhase = 'storage-limit';
 
     try {
+      const hotPageBudget = captureHotPageBudget(options.sqlite);
       if (options.migrate && options.sqlite.mode !== 'ephemeral') {
+        phase = 'migration';
         runRuntimeMigrations(options);
+        phase = 'storage-limit';
+        enforceHotPageBudget(options.sqlite, hotPageBudget);
+        phase = 'migration-durability';
+        establishMigrationDurability(options.sqlite);
       }
 
+      phase = 'reactive-schema';
       db = createReactiveDB({
         ...options.reactive,
         sqlite: options.sqlite,
@@ -89,10 +100,17 @@ export class DatabaseRuntime {
       for (const [table, schema] of Object.entries(options.tables ?? {})) {
         db.defineTable(table, schema);
       }
+      phase = 'storage-limit';
+      enforceHotPageBudget(options.sqlite, hotPageBudget);
 
       return new DatabaseRuntime(options, db);
     } catch (startupError) {
-      const failures: unknown[] = [startupError];
+      const classifiedError = classifyStartupError(
+        startupError,
+        phase,
+        options.sqlite.mode,
+      );
+      const failures: unknown[] = [classifiedError];
       if (db) {
         try {
           db.dispose();
@@ -101,16 +119,40 @@ export class DatabaseRuntime {
         }
       }
       if (options.ownsSQLite) {
-        try {
-          options.sqlite.close();
-        } catch (error) {
-          failures.push(error);
+        if (options.sqlite.abort) {
+          try {
+            options.sqlite.abort();
+          } catch (error) {
+            failures.push(error);
+          }
+        } else if (options.sqlite.mode === 'ephemeral') {
+          try {
+            options.sqlite.close();
+          } catch (error) {
+            failures.push(error);
+          }
+        } else {
+          // A compatibility implementation without the additive abort seam
+          // cannot safely close rejected durable startup state: close may
+          // publish a hot snapshot or checkpoint partially initialized work.
+          // Preserve the ambiguous owned authority for actor quarantine.
+          failures.push(new Error(
+            'Owned durable SQLite startup state cannot be discarded safely.',
+          ));
         }
       }
-      if (failures.length === 1) throw startupError;
-      throw new AggregateError(
-        failures,
-        `[databases] Database runtime "${options.id}" failed to open and cleanup also failed.`,
+      if (failures.length === 1) throw classifiedError;
+      throw new DatabaseError(
+        'DATABASE_EXECUTOR_FAILED',
+        'Database runtime startup cleanup failed.',
+        {
+          cause: new AggregateError(
+            failures,
+            'Database runtime startup and cleanup failed.',
+          ),
+          retryable: false,
+          outcome: 'unknown',
+        },
       );
     }
   }
@@ -140,7 +182,15 @@ export class DatabaseRuntime {
     }
 
     if (this.ownsSQLite && !this.sqliteClosed) {
-      this.sqlite.close();
+      try {
+        this.sqlite.close();
+      } catch (cause) {
+        throw new DatabaseError(
+          'DATABASE_EXECUTOR_FAILED',
+          'Database runtime cleanup failed.',
+          { cause, retryable: false, outcome: 'unknown' },
+        );
+      }
       this.sqliteClosed = true;
     }
 
@@ -159,25 +209,277 @@ export class DatabaseRuntime {
   }
 }
 
-function runRuntimeMigrations(options: DatabaseRuntimeOptions): void {
-  const migrator = new Migrator({
-    database: options.sqlite.raw,
-    dbPath: options.sqlite.snapshotPath ?? options.sqlite.path ?? ':memory:',
-    migrations: [...(options.migrations ?? [])],
-    applyPragmas: false,
-    createBackups: options.sqlite.mode !== 'ephemeral',
-  });
-  try {
-    migrator.run();
-  } finally {
-    migrator.dispose();
+type DatabaseRuntimeStartupPhase =
+  | 'storage-limit'
+  | 'migration'
+  | 'migration-durability'
+  | 'reactive-schema';
+
+function classifyStartupError(
+  error: unknown,
+  phase: DatabaseRuntimeStartupPhase,
+  storageMode: PlatformSQLiteService['mode'],
+): DatabaseError {
+  // Cleanup ambiguity must remain an unknown outcome, but DatabaseRuntime is a
+  // package-exported boundary and must not leak an untyped AggregateError.
+  if (error instanceof AggregateError) {
+    return new DatabaseError(
+      'DATABASE_EXECUTOR_FAILED',
+      'Database runtime startup cleanup failed.',
+      { cause: error, retryable: false, outcome: 'unknown' },
+    );
   }
-  options.sqlite.snapshot?.snapshotSync();
+  if (error instanceof DatabaseError && error.outcome === 'unknown') {
+    return error;
+  }
+  if (error instanceof DatabaseError && error.code === 'DATABASE_CONFIG_INVALID') {
+    return error;
+  }
+
+  if (storageMode === 'hot' && isSQLiteFull(error)) {
+    return hotRuntimeLimitExceeded(phase);
+  }
+
+  if (phase === 'storage-limit') {
+    return new DatabaseError(
+      'DATABASE_OPEN_FAILED',
+      'Database storage limits could not be established.',
+      {
+        cause: error,
+        retryable: true,
+        outcome: 'not-started',
+        details: { phase: 'configure' },
+      },
+    );
+  }
+
+  if (phase === 'migration') {
+    return new DatabaseError(
+      'DATABASE_MIGRATION_FAILED',
+      'Database migration failed.',
+      {
+        cause: error,
+        retryable: false,
+        outcome: 'not-started',
+        details: { phase: 'migration' },
+      },
+    );
+  }
+
+  if (phase === 'migration-durability') {
+    return new DatabaseError(
+      'DATABASE_OPEN_FAILED',
+      'Database migration durability could not be established.',
+      {
+        cause: error,
+        retryable: true,
+        outcome: 'not-started',
+        details: { phase: 'durability' },
+      },
+    );
+  }
+
+  return new DatabaseError(
+    'DATABASE_SCHEMA_MISMATCH',
+    'Database schema is incompatible with the configured runtime.',
+    {
+      cause: error,
+      retryable: false,
+      outcome: 'not-started',
+      details: { phase: 'reactive-schema' },
+    },
+  );
+}
+
+function runRuntimeMigrations(options: DatabaseRuntimeOptions): void {
+  let migrator: Migrator | null = null;
+  let migrationFailure: unknown | null = null;
+  try {
+    migrator = new Migrator({
+      database: options.sqlite.raw,
+      dbPath: options.sqlite.snapshotPath ?? options.sqlite.path ?? ':memory:',
+      migrations: [...(options.migrations ?? [])],
+      applyPragmas: false,
+      createBackups: options.sqlite.mode !== 'ephemeral',
+      ...(options.migrationLog === undefined
+        ? {}
+        : { log: options.migrationLog }),
+    });
+    migrator.run();
+  } catch (error) {
+    migrationFailure = error;
+  }
+
+  if (migrator) {
+    try {
+      migrator.dispose();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        migrationFailure === null
+          ? [cleanupError]
+          : [migrationFailure, cleanupError],
+        'Database migration cleanup failed.',
+      );
+    }
+  }
+
+  if (migrationFailure !== null) throw migrationFailure;
+}
+
+function establishMigrationDurability(sqlite: PlatformSQLiteService): void {
+  if (!sqlite.snapshot?.isEnabled) return;
+  const snapshot = sqlite.snapshot.snapshotSyncDetailed();
+  if (snapshot.status !== 'written') {
+    throw new Error(
+      'Database migrations could not establish their durability boundary.',
+      snapshot.status === 'failed' ? { cause: snapshot.error } : undefined,
+    );
+  }
+}
+
+interface HotPageBudget {
+  readonly maxBytes: number;
+}
+
+/** Capture the effective connection-local hot limit before app code can alter it. */
+function captureHotPageBudget(
+  sqlite: PlatformSQLiteService,
+): HotPageBudget | null {
+  if (sqlite.mode !== 'hot') return null;
+  const pageSize = readPositivePragmaInteger(sqlite, 'page_size');
+  const maxPages = readPositivePragmaInteger(sqlite, 'max_page_count');
+  const maxBytes = pageSize * maxPages;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < pageSize) {
+    throw new Error('SQLite reported an invalid hot page budget.');
+  }
+  return Object.freeze({ maxBytes });
+}
+
+/** Restore the captured byte budget after migrations and table initialization. */
+function enforceHotPageBudget(
+  sqlite: PlatformSQLiteService,
+  budget: HotPageBudget | null,
+): void {
+  if (budget === null) return;
+  const pageSize = readPositivePragmaInteger(sqlite, 'page_size');
+  const pageCount = readNonNegativePragmaInteger(sqlite, 'page_count');
+  const currentMaxPages = readPositivePragmaInteger(sqlite, 'max_page_count');
+  const budgetPages = Math.floor(budget.maxBytes / pageSize);
+  const targetPages = Math.min(currentMaxPages, budgetPages);
+  if (targetPages < 1 || pageCount > targetPages) {
+    throw hotRuntimeLimitExceeded('storage-limit');
+  }
+  const applied = readNonNegativePragmaInteger(
+    sqlite,
+    `max_page_count = ${targetPages}`,
+  );
+  if (applied < pageCount || applied > targetPages) {
+    throw hotRuntimeLimitExceeded('storage-limit');
+  }
+}
+
+function readPositivePragmaInteger(
+  sqlite: PlatformSQLiteService,
+  pragma: string,
+): number {
+  const value = readPragmaInteger(sqlite, pragma);
+  if (value <= 0) throw new Error('SQLite did not report a positive pragma value.');
+  return value;
+}
+
+function readNonNegativePragmaInteger(
+  sqlite: PlatformSQLiteService,
+  pragma: string,
+): number {
+  const value = readPragmaInteger(sqlite, pragma);
+  if (value < 0) throw new Error('SQLite did not report a non-negative pragma value.');
+  return value;
+}
+
+function readPragmaInteger(
+  sqlite: PlatformSQLiteService,
+  pragma: string,
+): number {
+  const row = sqlite.raw.query(`PRAGMA ${pragma}`).get() as
+    | Record<string, unknown>
+    | null;
+  const value = row ? Object.values(row)[0] : null;
+  if (!Number.isSafeInteger(value)) {
+    throw new Error('SQLite did not report a bounded pragma value.');
+  }
+  return value as number;
+}
+
+function hotRuntimeLimitExceeded(
+  phase: DatabaseRuntimeStartupPhase,
+): DatabaseError {
+  return new DatabaseError(
+    'DATABASE_CONFIG_INVALID',
+    'Hot SQLite database exceeds the configured memory limit.',
+    {
+      retryable: false,
+      outcome: 'not-started',
+      details: {
+        phase: phase === 'migration' ? 'migration' : 'runtime-schema',
+        reason: 'max-bytes',
+      },
+    },
+  );
+}
+
+function isSQLiteFull(error: unknown): boolean {
+  let cursor: unknown = error;
+  for (let depth = 0; cursor && depth < 6; depth += 1) {
+    if (safeErrorCode(cursor)?.startsWith('SQLITE_FULL') === true) return true;
+    cursor = safeErrorCause(cursor);
+  }
+  return false;
+}
+
+function safeErrorCode(error: unknown): string | null {
+  try {
+    if (!error || typeof error !== 'object') return null;
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'code');
+    return descriptor
+      && 'value' in descriptor
+      && typeof descriptor.value === 'string'
+      && /^SQLITE_[A-Z0-9_]{1,64}$/u.test(descriptor.value)
+      ? descriptor.value
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeErrorCause(error: unknown): unknown {
+  try {
+    if (!error || typeof error !== 'object') return null;
+    const descriptor = Object.getOwnPropertyDescriptor(error, 'cause');
+    return descriptor && 'value' in descriptor ? descriptor.value : null;
+  } catch {
+    return null;
+  }
 }
 
 function assertDatabaseRuntimeOptions(options: DatabaseRuntimeOptions): void {
   if (!options.id.trim()) {
-    throw new Error('[databases] Database runtime id must not be empty.');
+    throw invalidRuntimeConfig('Database runtime id must not be empty.');
+  }
+  if (options.role !== 'default'
+    && options.role !== 'named'
+    && options.role !== 'tenant') {
+    throw invalidRuntimeConfig('Database runtime role is invalid.');
+  }
+  if (options.reactive?.ringBufferDepth !== undefined
+    && (!Number.isSafeInteger(options.reactive.ringBufferDepth)
+      || options.reactive.ringBufferDepth < 1)) {
+    throw invalidRuntimeConfig(
+      'Database runtime ring-buffer depth must be a positive safe integer.',
+    );
+  }
+  if (options.migrationLog !== undefined
+    && typeof options.migrationLog !== 'function') {
+    throw invalidRuntimeConfig('Database runtime migration logger is invalid.');
   }
   if (options.sqlite.mode === 'ephemeral' && options.migrate) {
     // Preserve createApp's historical behavior: migrations are durable setup,
@@ -185,8 +487,16 @@ function assertDatabaseRuntimeOptions(options: DatabaseRuntimeOptions): void {
     return;
   }
   if (options.migrate && !options.migrations) {
-    throw new Error(
-      `[databases] Database runtime "${options.id}" enables migrations without a migration registry.`,
+    throw invalidRuntimeConfig(
+      'Database runtime migrations require a migration registry.',
     );
   }
+}
+
+function invalidRuntimeConfig(message: string): DatabaseError {
+  return new DatabaseError(
+    'DATABASE_CONFIG_INVALID',
+    message,
+    { retryable: false, outcome: 'not-started' },
+  );
 }

@@ -12,6 +12,9 @@ import { pathToFileURL } from 'node:url';
 import { describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 
+import { MemoryEventStore, OBS_CODES } from '../../observability';
+import { ZERO_OBSERVABILITY_RUNTIME } from '../../runtime/service-keys';
+import { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import { createSyncPlugin } from '../../sync';
 import {
   ServerRouteLoaderError,
@@ -219,9 +222,22 @@ describe('server route loader', () => {
       await mkdir(routesDir, { recursive: true });
       await writeFile(join(routesDir, 'bad.ts'), 'export default { nope: true };\n');
 
-      await expect(loadServerRoutePlugins({ routesDir })).rejects.toBeInstanceOf(
-        ServerRouteLoaderError
-      );
+      const events = new MemoryEventStore();
+      const runtime = new ZeroAppRuntime();
+      runtime.set(ZERO_OBSERVABILITY_RUNTIME, {
+        sink: events,
+        store: events,
+        config: { console: false, store: events },
+      });
+
+      await expect(loadServerRoutePlugins({ routesDir, runtime }))
+        .rejects.toBeInstanceOf(ServerRouteLoaderError);
+      const [event] = events.query({
+        code: OBS_CODES.ROUTER_SERVER_ROUTE_LOAD_FAILED.code,
+      }).events;
+      expect(event?.metadata).toEqual({ directoryKind: 'routes' });
+      expect(event?.error).toBeUndefined();
+      expect(JSON.stringify(event)).not.toContain(rootDir);
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

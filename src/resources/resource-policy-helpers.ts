@@ -7,7 +7,6 @@
  */
 
 import { OBS_CODES } from '../observability/codes';
-import { warnPlatform } from '../observability/sink';
 import {
   compileAccessRequirement,
   type AccessRequirement,
@@ -40,6 +39,7 @@ import {
   validateMetadataPolicy,
   validateResourcePolicy,
 } from './resource-policy-validation';
+import { warnResourcePolicy } from './resource-observability';
 
 /** Require an authenticated admin user for every action. */
 export function adminOnly(): ResourcePolicy {
@@ -366,15 +366,13 @@ export function customPolicy(
   return createResourcePolicy('custom', async (context) => {
     try {
       return await callback(context);
-    } catch (error) {
-      warnPlatform(OBS_CODES.RESOURCE_POLICY_EVALUATION_FAILED, {
-        error,
+    } catch {
+      warnResourcePolicy(context.resource, OBS_CODES.RESOURCE_POLICY_EVALUATION_FAILED, {
         metadata: {
           policy: name,
           table: context.resource.table,
           action: context.action,
         },
-        userId: context.user?.userId,
       });
       return denyResourcePolicyDecision('policy-error', 500, 'Resource policy callback failed');
     }

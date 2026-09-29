@@ -80,6 +80,19 @@ the roadmap. For this unreleased candidate:
   runtimes to share the same file-mode SQLite database. `hot`, `ephemeral`,
   separate-database, cross-host message fanout, and ephemeral-topic replication
   are not provided by this mechanism.
+- ReactiveDB Fabric is implemented on the unmerged multi-database child branch
+  as a separate topology from shared-file replica polling. It keeps the
+  default/control database pinned and routes named or physical-tenant
+  application Resources through bounded Bun subprocess actors with independent
+  writer lanes, optional file/WAL readers, bounded hot placement, synchronous
+  hybrid selection, durable receipts, exact tenant-Sync snapshot sessions,
+  immutable image binding, and parent-crash liveness fencing. It is not a
+  distributed database service: one app coordinator and its children own one
+  local Fabric root. Fleet lifecycle/migration tooling, operator-grade
+  backup/restore, online placement changes, and the supported package/OS matrix
+  remain outside this candidate boundary. Do not present Fabric as released
+  until the architecture document's gates, the checks below, and a combined
+  multi-tenant acceptance app pass.
 - Zero's managed routes, resources, Sync, and scoped services enforce their
   documented boundary. Deliberate raw SQL/database/service escape hatches are
   trusted server code outside that guarantee.
@@ -99,14 +112,17 @@ the roadmap. For this unreleased candidate:
   transfer, and upstream enterprise OIDC/SAML/SCIM are not part of the
   implemented release boundary. Registered resources now have an explicit
   server-owned client-exposure axis and optional field read/write/filter/sort
-  allow-lists, and multi-mode startup validates actual
+  allow-lists. Under shared-row isolation, multi-mode startup validates actual
   tenant-leading indexes, tenant-scoped business uniqueness, and composite
-  tenant consistency for foreign keys between registered tenant resources.
-  Tenant-per-database storage remains roadmap work.
+  tenant consistency for foreign keys between registered tenant Resources;
+  physical tenant isolation validates the actor realm instead.
+  Physical tenant storage is supplied only when the separate Fabric topology
+  is explicitly configured; multi-tenant auth by itself remains shared-row.
 
-Do not describe the four auth profiles as released merely because their code is
-present in this branch. They become the public boundary only after the auth
-implementation checklist, cross-surface suite, package smoke test, clean-clone
+Do not describe the four auth profiles or Fabric as released merely because
+their code is present in these branches. They become the public boundary only
+after the auth implementation checklist, Fabric architecture gates,
+cross-surface suite, combined acceptance app, package smoke test, clean-clone
 verification, license choice, and minimum-Bun decision all pass.
 
 ## First change-log fence upgrade
@@ -206,8 +222,9 @@ commands regenerate scaffold targets and are not updaters.
 ## Release Checklist
 
 1. Freeze the supported/preview/roadmap boundary above. Audit README, Start
-   Here, SDK/reference, auth, resource, Sync, and generated-app docs for the
-   same wording; examples must not rely on client filters as authorization.
+   Here, SDK/reference, auth, Fabric, resource, Sync, and generated-app docs for
+   the same wording; examples must not rely on client filters as authorization
+   or caller-provided tenant/database selectors as physical routing authority.
 2. Resolve the license and supported-Bun decisions in **Package State**, and
    update `CHANGELOG.md` with the release date and notable changes, including
    compatibility or migration requirements.
@@ -228,6 +245,15 @@ git diff --check
    Run browser/PDF installation checks in the disposable release environment;
    they may download runtime assets. Do not point release verification at a
    production app database or Storage root.
+
+   For a candidate containing Fabric, also run the focused actor protocol,
+   coordinator, file/root identity, liveness/orphan, subprocess, Resource CRUD,
+   DataQuery, tenant-Sync, observability, and Doctor suites on every supported
+   OS/filesystem combination. Exercise file, hot, and hybrid placement; at
+   least two tenant files writing concurrently; same-file WAL read/write;
+   receipt replay and permanent capacity; process crash/restart fencing; and
+   an authenticated combined app with two tenants whose rows and realtime
+   streams cannot cross.
 
 5. Commit the release:
 

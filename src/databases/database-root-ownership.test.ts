@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
 } from 'node:fs';
@@ -63,6 +64,21 @@ describe('database root ownership', () => {
     expect(second.released).toBe(false);
   });
 
+  test('fails closed when the owned root pathname is replaced', () => {
+    const root = createRoot();
+    const guard = acquire(root);
+    guard.assertCurrent();
+    const moved = `${root}-moved`;
+    renameSync(root, moved);
+    mkdirSync(root);
+
+    expect(captureError(() => guard.assertCurrent())).toMatchObject({
+      code: 'DATABASE_CONFLICT',
+      retryable: false,
+      outcome: 'not-started',
+    });
+  });
+
   test('canonicalizes ancestor aliases to one ownership boundary', () => {
     const base = createTemporaryDirectory();
     const realAncestor = join(base, 'real');
@@ -72,7 +88,8 @@ describe('database root ownership', () => {
     const aliasRoot = join(aliasAncestor, 'nested', 'databases');
     const canonicalRoot = join(realpathSync.native(realAncestor), 'nested', 'databases');
 
-    acquire(aliasRoot);
+    const guard = acquire(aliasRoot);
+    expect(guard.rootDirectory).toBe(canonicalRoot);
     expect(captureError(
       () => acquireDatabaseRootOwnership(canonicalRoot),
     ).code).toBe('DATABASE_CONFLICT');

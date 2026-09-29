@@ -225,7 +225,7 @@ describe('tenant resource Sync boundary', () => {
     })).toMatchObject({
       type: 'sync.ack',
       ok: false,
-      error: "createScoped('documents'): primary key already exists",
+      error: 'primary key already exists',
     });
     expect(db.get('documents', 'b-1')?.title).toBe('B one');
 

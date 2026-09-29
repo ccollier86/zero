@@ -60,10 +60,52 @@ sync, auth, email, storage, workflows, notifications, AI, vector storage,
 [PDF rendering](./pdf.md), and [platform tokens](./tokens.md) for one-time
 actions plus resumable public flows.
 
-Multi-database tenant isolation is active feature-branch work rather than a
+ReactiveDB Fabric—Zero's multi-database routing, isolation, actor, and
+lifecycle layer—is active feature-branch work rather than a
 released app contract. Its compatibility, subprocess execution, WAL reader,
-ReactiveDB/realtime, tenant-authority, and future hybrid-placement requirements
-are tracked in the [Multi-Database Architecture](./framework/multi-database-architecture.md).
+Resource CRUD, multiplexed ReactiveDB realtime, tenant-authority, and bounded
+hybrid-placement contracts are tracked in the
+[Multi-Database Architecture](./framework/multi-database-architecture.md).
+The declarative application surface is summarized in the
+[SDK reference](./sdk-reference.md#reactivedb-fabric-actor-backed-multi-database-tenancy).
+
+Fabric leaves the existing `db` as the pinned control/auth database and can
+route each selected tenant's application Resources to an isolated actor-owned
+database. `databaseTopology.placement` may be `'file'`, bounded `'hot'`
+(on-write durability and a 64 MiB logical-image limit), or an explicit hybrid
+policy selected synchronously from an opaque, pseudonymous `databaseRef`. The
+reference is deterministic and unkeyed: it is not a secret or authority token,
+and low-entropy source IDs can be guess-correlated. File placement can use a
+separate WAL reader actor; hot placement is writer-only and requires an
+explicit durability/loss contract. Keep the default `on-write` policy when an
+acknowledged mutation must survive actor/process failure; periodic mode can
+roll back uncovered acknowledgements within its configured window after it
+reopens the last durable image and resets tenant Sync. Placement remains pinned
+while an entry is active and may be reevaluated after clean eviction; there is
+no live promotion/demotion API.
+
+Fabric separately bounds active actors (`maxDatabases`), durable managed main
+files (`maxDatabaseFiles`), distinct databases pinned by tenant Sync
+(`maxTenantSyncDatabases`), and persistent Sync bindings per database
+(`maxTenantSyncBindingsPerDatabase`). New-file admission is hard and
+non-retryable `DATABASE_CAPACITY_EXHAUSTED` while existing files stay openable;
+transient slot/binding pressure remains retryable `DATABASE_BACKPRESSURE`. By
+default a topology with at least two actor slots keeps one distinct-database
+admission outside the persistent-Sync allowance. This is an admission reserve,
+not a fairness or cross-database wait queue; Doctor reports the effective
+reserve and warns when a one-slot or explicit all-Sync policy cannot provide
+it.
+
+Actor replacement is also bounded per database: delays begin at 10 ms, grow
+to 1 second, and enter a 5-second half-open cadence after five consecutive
+attempts unless `databaseTopology.restart` overrides those values. Recovery
+waiters keep their normal queue timeout and cancellation behavior, and
+releasing the last lease or stopping the app cancels a pending delay.
+
+The feature is not a distributed database service: one parent app coordinator
+and its child actors own a database root. Operator-grade fleet backup/restore,
+online placement migration, tenant suspension/deletion/export tooling, and the
+supported package/OS release matrix remain open gates.
 
 Create a new app with:
 
@@ -404,7 +446,9 @@ sync enforces registered resource policy too: unconstrained `list` policies can
 use the normal fast sync path, row-constrained `list` policies use
 per-connection row-filtered sync, and direct sync mutations evaluate resource
 create/update/delete policy server-side. Tenant resource realms add mandatory
-SQL/read and Sync row boundaries outside those discretionary policies.
+storage boundaries outside those discretionary policies: shared-row mode adds
+exact SQL/read and Sync predicates, while `tenant-database` mode binds the
+request/socket to one actor-owned physical file.
 `authorizationPolicy({ tenant: 'required', permission: 'records:read' })`
 reuses the exact route RBAC requirement and live application/tenant assignment
 for CRUD, `/api/data`, and Sync; no custom role adapter is required.
@@ -414,6 +458,19 @@ transports. Hidden columns remain available to server policy but never enter
 managed responses, Sync caches, filters, sorts, or client writes. Pass that
 same names-only object as `<CrudPage resourceFields={...}>` to keep generated
 table columns and forms aligned with the server boundary.
+Filtered/projected Sync is also fenced at delivery time. Its policy adapter
+must provide comparable live read authority; Zero rechecks after asynchronous
+work and immediately before snapshot chunks, live/deferred rows, and
+row-bearing mutation acknowledgements. A membership, role/property, or policy
+revision change closes and purges the stale scope rather than exposing a row
+authorized only when the subscription began.
+Physical-tenant baselines are exact under concurrent writes: the writer actor
+materializes one bounded immutable snapshot at head `H`, releases the SQLite
+transaction, streams retry-safe pages, accepts `H` only after the final staged
+frame drains, and then replays changes after `H`. Sessions are automatically
+aborted on completion, authority reset, binding release, recovery, and close;
+see [ReactiveDB and Realtime](./framework/multi-database-architecture.md#reactivedb-and-realtime)
+for limits and failure semantics.
 Platform doctor validates registered
 resource shape, missing owner columns, trusted metadata keys, auth-disabled
 protected resources, list-policy behavior for `/api/data` and sync, and
@@ -434,32 +491,54 @@ list/get/create/update/delete set; explicit `actions: []` enables none, and a
 per-action policy map cannot contain keys outside the declared action set. See
 [Resource Policy Core](./framework/resource-policy.md).
 
-For tenant resources, the discriminator must be a separate `NOT NULL` column.
-Zero checks both the declaration and the actual SQLite table at startup, stamps
-it from the live tenant session, rejects it in updates, and keeps it in the
-final SQL predicate. If an existing database is still nullable, add a migration
-before enabling multi-tenancy; Zero fails startup instead of guessing a repair.
-Managed tenant and resource-policy equality also requires the same SQLite
-storage class and `BINARY` value equality at read/write boundaries. Existing
-`COLLATE NOCASE` declarations remain usable, but they cannot make a case-only
-tenant or owner-id variant authorize. Caller `filter=` values keep normal
-SQLite query semantics and are ANDed with these stricter server predicates.
-All registered creates are non-replacing. Registered updates/deletes compare
-the policy-evaluated row snapshot in the final SQL write, and managed Zero auth
-rechecks durable session and trusted-property authority inside that same SQLite
-transaction. `/api/data` uses the equivalent transaction-bound authority check
-for its final resource query.
+In shared-row mode, a tenant resource's discriminator must be a separate `NOT
+NULL` column. Zero checks both the declaration and the actual SQLite table at
+startup, stamps it from the live tenant session, rejects it in updates, and
+keeps it in the final SQL predicate. If an existing database is still nullable,
+add a migration before enabling multi-tenancy; Zero fails startup instead of
+guessing a repair. In `tenant-database` mode, tenant resources normally omit
+that redundant column: the verified database capability is the isolation
+boundary, and the actor realm must exactly match the registered physical
+tenant resources. See
+[Multi-Database Architecture](./framework/multi-database-architecture.md#where-tenant-scope-lives).
+
+Generated create/update/delete calls are idempotent across both layouts. In
+physical mode the receipt commits beside the tenant effect; global/shared-row
+Resources commit an equivalent private receipt beside the default ReactiveDB
+effect. Exact retries replay the canonical effect only after current authority,
+policy, and field projection are rechecked. Each ledger retains 10,000 full
+results within a 64 MiB aggregate budget, then converts the oldest results to
+permanent compact tombstones. Those tombstones prevent re-execution and count
+toward a hard one-million-key per-database ceiling. At the ceiling, Zero rejects
+an unseen mutation before it starts while exact replay and expired-key lookup
+remain available. Monitor receipt key usage and plan database lifecycle before
+exhaustion.
+
+Managed shared-row tenant equality and Resource-policy equality require the
+same SQLite storage class and `BINARY` value equality at read/write boundaries.
+Existing `COLLATE NOCASE` declarations remain usable, but they cannot make a
+case-only tenant or owner-id variant authorize. Caller `filter=` values keep
+normal SQLite query semantics and are ANDed with these stricter server
+predicates. All registered creates are non-replacing. Registered
+updates/deletes compare the policy-evaluated row snapshot in the final write.
+Default/shared-row operations recheck durable session and trusted-property
+authority inside the same SQLite transaction; physical tenant operations fence
+that control-plane authority across actor acquisition, execution, and result
+delivery. `/api/data` follows the equivalent boundary for its selected storage
+plane.
 
 App-owned backend handlers receive a lazy `zero` service context. In
 single-tenant mode, canonical service names and their older aliases retain the
 existing behavior. In multi-tenant mode, `zero.access` and `zero.scope` carry
 the live server-owned authority; Storage, notifications, rooms, workflows,
-PDF-to-storage, and observability emission are request-scoped. Raw DB/SQL,
-auth stores/tokens, KV, vector, scheduler, and control-plane handles require an
-explicit `zero.unsafe.*` access so arbitrary backend code cannot silently claim
-tenant isolation. Prefer tenant-realm resources for normal app data and reserve
-`zero.unsafe` for reviewed privileged operations with an explicit tenant
-predicate.
+PDF-to-storage, and observability emission are request-scoped. A committed
+physical tenant scope also receives the promise-based `zero.data` capability;
+it has structured operations but no database/tenant selector or raw SQL. Raw
+default DB/SQL, auth stores/tokens, KV, vector, scheduler, and control-plane
+handles require explicit `zero.unsafe.*` access so arbitrary backend code
+cannot silently claim tenant isolation. Prefer tenant-realm resources and
+`zero.data` for normal app data, and reserve `zero.unsafe` for reviewed
+privileged operations with an explicit authority model.
 
 Inside those services, prefer the small standard method vocabulary:
 `create()`, `get()`, `list()`, `update()`, `delete()`, `run()`, `stop()`, and
@@ -522,7 +601,16 @@ email readiness, login/public route safety, storage/auth mismatch, migration
 startup policy, sync policy/index guidance, observability endpoint readiness,
 AI provider/alias readiness, vector index/storage safety, PDF browser/resource
 policy safety, and resource policy shape for generated CRUD, `/api/data`, and
-WebSocket sync. Warnings do not fail by default; use `--strict` in CI.
+WebSocket sync. In actor-backed mode it also reports active-database and
+durable-file capacity, disabled WAL readers, physical tenant boundaries,
+redundant managed `tenant_id` columns, unsafe database-root overlap, file/hot
+placement, hot image capacity, and periodic/final durability tradeoffs. In
+physical-tenant mode it additionally checks Sync actor-capacity reservation,
+bounded snapshot transport, and the finite full-result and permanent-key
+receipt lifecycle. Generated default/shared Resource mutations receive the
+same receipt-lifecycle guidance. Warnings do not fail by default; use
+`--strict` in CI. Doctor is advisory and read-only: it does not drop a
+discriminator, move rows, create tenant files, or change placement.
 
 Doctor also scans app-owned source code by default. It reports file and line
 locations when app code bypasses Zero's intended surfaces, including raw
@@ -602,8 +690,8 @@ Common variables:
 | Variable | Purpose |
 | --- | --- |
 | `PORT` | HTTP port. |
-| `DB_MODE` | SQLite runtime mode. Use `hot` for memory-first snapshot recovery, `file` for direct SQLite/WAL, or `ephemeral` for tests. |
-| `DB_PATH` | SQLite source path used by `hot` and `file` modes. |
+| `DB_MODE` | Default/control SQLite runtime mode. Use `hot` for memory-first snapshot recovery, `file` for direct SQLite/WAL, or `ephemeral` for tests. Fabric actor placement is configured separately under `databaseTopology.placement`. |
+| `DB_PATH` | Default/control SQLite source path used by `hot` and `file` modes; it is not a tenant database selector. |
 | `DB_SNAPSHOT_PATH` | Snapshot recovery path used by `hot` mode. |
 | `APP_NAME` | Display name used by system email. |
 | `APP_PUBLIC_URL` | Public origin for setup/reset links. |
@@ -714,12 +802,14 @@ capabilities. Registered resources now declare explicit server-owned client
 exposure and optional field allow-lists. Managed file-mode runtimes sharing one
 SQLite database relay tracked changes and auth/session invalidations without
 sticky socket ownership; hot/ephemeral or separate-database replicas require an
-external coordination layer. Multi-mode startup inspects actual SQLite metadata and requires a
-non-partial tenant-leading index, tenant-scoped business uniqueness, and the
-tenant pair inside foreign keys between registered tenant resources.
-Default `createApp()` installs
-framework-table and managed ephemeral-topic policy, while direct `createSyncPlugin()`
-composition needs explicit auth/policy. See [Releasing Zero](./releasing.md)
+external coordination layer. Under shared-row isolation, multi-mode startup
+inspects actual SQLite metadata and requires a non-partial tenant-leading
+index, tenant-scoped business uniqueness, and the tenant pair inside foreign
+keys between registered tenant Resources. Physical tenant isolation validates
+the actor realm instead.
+Default `createApp()` installs framework-table and managed ephemeral-topic
+policy, while direct `createSyncPlugin()` composition needs explicit
+auth/policy. See [Releasing Zero](./releasing.md)
 and the [auth implementation checklist](./auth/multi-tenant-auth-implementation-checklist.md)
 for the complete supported-versus-preview boundary.
 

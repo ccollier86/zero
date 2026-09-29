@@ -6,6 +6,22 @@ components, routing, auth, storage, sync, workflows, notifications, AI, vector
 storage, browser-grade PDF rendering, migrations, observability, and app-ready
 hooks so new apps do not start by rebuilding the same foundation.
 
+ReactiveDB Fabric is active, unreleased child-branch work that extends the
+existing pinned control database with bounded actor-owned application
+databases. Its tenant mode derives a pseudonymous database binding from trusted
+authorization scope, so tenant identity selects the database rather than a
+caller-provided path or a redundant `tenant_id` predicate. The deterministic,
+unkeyed binding reference is operational correlation metadata—not a secret or
+authorization token—and a low-entropy source ID can be guess-correlated.
+File/WAL placement supports independent writer processes across files and
+optional same-file reader actors; bounded hot placement and synchronous hybrid
+selection are also implemented. Resource CRUD, lazy data queries, and
+multiplexed realtime Sync
+use the selected database while preserving server-side policy and commit-time
+authority checks. See the
+[ReactiveDB Fabric architecture](./docs/framework/multi-database-architecture.md)
+for its exact contract and remaining release gates.
+
 Current development boundary: this unreleased tree implements all four auth
 profiles—`single/simple`, `single/advanced`, `multi/simple`, and
 `multi/advanced`—through one app-local authorization system. Multi-tenant
@@ -172,6 +188,10 @@ apps. Start with the
   route loading, middleware, resources, and create-app behavior.
 - [Framework Developer Surface](./docs/framework-developer-surface.md):
   canonical imports and app-owned extension examples.
+- [ReactiveDB Fabric](./docs/framework/multi-database-architecture.md):
+  unreleased multi-database topology, actor isolation, file/WAL and bounded
+  hot placement, tenant routing, realtime behavior, capacity, durability, and
+  operational boundaries.
 - [Auth System](./docs/auth/README.md): canonical auth index for installation
   bootstrap, all four tenancy/authorization profiles, declarative permissions,
   administration, onboarding, browser state, audit, and installed-app auth.

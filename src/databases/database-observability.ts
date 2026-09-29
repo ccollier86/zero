@@ -14,17 +14,27 @@ import type {
   PlatformObservabilityRuntime,
 } from '../observability/types';
 import {
+  DATABASE_CAPACITY_TYPES,
   normalizeDatabaseError,
+  type DatabaseCapacityType,
   type DatabaseErrorCode,
   type DatabaseOperationOutcome,
 } from './database-error';
 import { normalizeDatabaseRef, type DatabaseRef } from './database-file';
+import type {
+  DatabaseHotDurability,
+  DatabasePlacement,
+} from './database-placement';
+import {
+  DATABASE_EXECUTOR_SLOT_MAX,
+  DATABASE_OBSERVABILITY_COUNT_MAX,
+} from './database-capacity';
 
 /** Highest executor slot accepted in telemetry. */
-export const DATABASE_OBSERVABILITY_MAX_SLOT = 65_535;
+export const DATABASE_OBSERVABILITY_MAX_SLOT = DATABASE_EXECUTOR_SLOT_MAX;
 
 /** Highest generation, count, or configured limit accepted in telemetry. */
-export const DATABASE_OBSERVABILITY_MAX_COUNT = 2_147_483_647;
+export const DATABASE_OBSERVABILITY_MAX_COUNT = DATABASE_OBSERVABILITY_COUNT_MAX;
 
 /** Highest duration accepted in telemetry (seven days in milliseconds). */
 export const DATABASE_OBSERVABILITY_MAX_DURATION_MS = 604_800_000;
@@ -90,6 +100,8 @@ export const DATABASE_OPERATION_CLASSES = Object.freeze([
   'migration',
   'checkpoint',
   'replay',
+  'snapshot',
+  'receipt',
   'sync',
   'shutdown',
   'protocol',
@@ -100,6 +112,7 @@ export type DatabaseOperationClass =
 
 interface DatabaseActorEventContext {
   readonly databaseRef: DatabaseRef;
+  readonly placement?: DatabasePlacement;
   readonly role?: DatabaseExecutorRole;
   readonly slot?: number;
   readonly generation?: number;
@@ -107,6 +120,7 @@ interface DatabaseActorEventContext {
 
 interface DatabaseExecutorEventContext {
   readonly databaseRef?: DatabaseRef;
+  readonly placement?: DatabasePlacement;
   readonly role: DatabaseExecutorRole;
   readonly slot: number;
   readonly generation: number;
@@ -129,6 +143,9 @@ export type DatabaseObservabilityEvent =
       readonly writerLimit: number;
       readonly readerLimit: number;
       readonly runtimeLimit: number;
+      readonly fileLimit: number;
+      readonly syncDatabaseLimit: number;
+      readonly syncBindingLimit: number;
       readonly queueLimit: number;
     }
   | {
@@ -151,18 +168,6 @@ export type DatabaseObservabilityEvent =
       readonly type: 'coordinator-failed';
       readonly phase: DatabaseObservabilityPhase;
     } & DatabaseFailureEvent)
-  | ({
-      readonly type: 'executor-started';
-      readonly durationMs: number;
-    } & DatabaseExecutorEventContext)
-  | ({
-      readonly type: 'executor-ready';
-      readonly durationMs: number;
-    } & DatabaseExecutorEventContext)
-  | ({
-      readonly type: 'executor-exited';
-      readonly reason: DatabaseObservabilityReason;
-    } & DatabaseExecutorEventContext)
   | ({
       readonly type: 'executor-restarted';
       readonly reason: DatabaseObservabilityReason;
@@ -190,35 +195,21 @@ export type DatabaseObservabilityEvent =
       readonly reason: DatabaseObservabilityReason;
     } & DatabaseActorEventContext)
   | ({
-      readonly type: 'migration-started';
-    } & DatabaseActorEventContext)
-  | ({
-      readonly type: 'migration-completed';
-      readonly durationMs: number;
-      readonly migrationCount: number;
-    } & DatabaseActorEventContext)
-  | ({
-      readonly type: 'migration-failed';
-      readonly phase: DatabaseObservabilityPhase;
-      readonly durationMs: number;
-    } & DatabaseActorEventContext & DatabaseFailureEvent)
-  | ({
       readonly type: 'queue-saturated';
       readonly operation: DatabaseOperationClass;
       readonly queueDepth: number;
       readonly queueLimit: number;
     } & DatabaseActorEventContext)
   | ({
+      readonly type: 'capacity-exhausted';
+      readonly capacityType: DatabaseCapacityType;
+      readonly capacityLimit: number;
+    } & DatabaseActorEventContext)
+  | ({
       readonly type: 'queue-timeout';
       readonly operation: DatabaseOperationClass;
       readonly queueDepth: number;
       readonly durationMs: number;
-    } & DatabaseActorEventContext)
-  | ({
-      readonly type: 'operation-slow';
-      readonly operation: DatabaseOperationClass;
-      readonly durationMs: number;
-      readonly slowLimitMs: number;
     } & DatabaseActorEventContext)
   | ({
       readonly type: 'operation-failed';
@@ -236,53 +227,58 @@ export type DatabaseObservabilityEvent =
       readonly sequenceEnd: number;
     } & DatabaseActorEventContext)
   | ({
-      readonly type: 'replay-started';
-      readonly sequenceStart: number;
-      readonly sequenceEnd: number;
-    } & DatabaseActorEventContext)
-  | ({
-      readonly type: 'replay-completed';
-      readonly sequenceStart: number;
-      readonly sequenceEnd: number;
-      readonly durationMs: number;
-    } & DatabaseActorEventContext)
-  | ({
       readonly type: 'replay-failed';
       readonly sequenceStart: number;
       readonly sequenceEnd: number;
       readonly durationMs: number;
     } & DatabaseActorEventContext & DatabaseFailureEvent)
   | ({
+      readonly type: 'tenant-snapshot-failed';
+      readonly sequenceStart: number;
+      readonly sequenceEnd: number;
+      readonly durationMs: number;
+    } & DatabaseActorEventContext & DatabaseFailureEvent)
+  | ({
+      readonly type:
+        | 'hot-snapshot-started'
+        | 'hot-snapshot-finished'
+        | 'hot-durability-dirty'
+        | 'hot-durability-clean';
+      readonly placement: 'hot';
+      readonly durability: 'periodic';
+    } & DatabaseActorEventContext)
+  | ({
+      readonly type: 'hot-durability-failed';
+      readonly placement: 'hot';
+      readonly durability: 'periodic';
+    } & DatabaseActorEventContext & DatabaseFailureEvent)
+  | ({
+      readonly type: 'receipt-lookup-failed';
+      readonly durationMs: number;
+    } & DatabaseActorEventContext & DatabaseFailureEvent)
+  | ({
+      readonly type: 'receipt-expired';
+      readonly durationMs: number;
+    } & DatabaseActorEventContext & DatabaseFailureEvent)
+  | ({
+      readonly type: 'receipt-compacted';
+      readonly totalKeys: number;
+      readonly retainedResults: number;
+      readonly expiredTombstones: number;
+      readonly retainedResultBytes: number;
+      readonly keyLimit: number;
+      readonly prunedCount: number;
+      readonly prunedResultBytes: number;
+      readonly retainedLimit: number;
+      readonly retainedByteLimit: number;
+      readonly resultByteLimit: number;
+    } & DatabaseActorEventContext)
+  | ({
       readonly type: 'history-gap';
       readonly sequenceStart: number;
       readonly sequenceEnd: number;
       readonly reason: DatabaseObservabilityReason;
-    } & DatabaseActorEventContext)
-  | {
-      readonly type: 'shutdown-graceful-started';
-      readonly activeCount: number;
-      readonly queueDepth: number;
-    }
-  | {
-      readonly type: 'shutdown-graceful-completed';
-      readonly durationMs: number;
-    }
-  | ({
-      readonly type: 'shutdown-graceful-failed';
-      readonly phase: DatabaseObservabilityPhase;
-      readonly durationMs: number;
-    } & DatabaseFailureEvent)
-  | {
-      readonly type: 'shutdown-forced';
-      readonly reason: DatabaseObservabilityReason;
-      readonly activeCount: number;
-      readonly queueDepth: number;
-    }
-  | ({
-      readonly type: 'shutdown-forced-failed';
-      readonly reason: DatabaseObservabilityReason;
-      readonly durationMs: number;
-    } & DatabaseFailureEvent);
+    } & DatabaseActorEventContext);
 
 export type DatabaseObservabilityEventType =
   DatabaseObservabilityEvent['type'];
@@ -290,6 +286,8 @@ export type DatabaseObservabilityEventType =
 /** Exact metadata shape emitted by the database observability boundary. */
 export interface DatabaseObservabilityMetadata {
   readonly databaseRef?: DatabaseRef;
+  readonly placement?: DatabasePlacement;
+  readonly durability?: DatabaseHotDurability;
   readonly role?: DatabaseExecutorRole;
   readonly slot?: number;
   readonly generation?: number;
@@ -297,20 +295,33 @@ export interface DatabaseObservabilityMetadata {
   readonly reason?: DatabaseObservabilityReason;
   readonly operation?: DatabaseOperationClass;
   readonly durationMs?: number;
-  readonly slowLimitMs?: number;
   readonly writerCount?: number;
   readonly readerCount?: number;
   readonly runtimeCount?: number;
   readonly activeCount?: number;
-  readonly migrationCount?: number;
   readonly queueDepth?: number;
   readonly retryCount?: number;
   readonly writerLimit?: number;
   readonly readerLimit?: number;
   readonly runtimeLimit?: number;
+  readonly fileLimit?: number;
+  readonly syncDatabaseLimit?: number;
+  readonly syncBindingLimit?: number;
   readonly queueLimit?: number;
+  readonly capacityType?: DatabaseCapacityType;
+  readonly capacityLimit?: number;
   readonly sequenceStart?: number;
   readonly sequenceEnd?: number;
+  readonly totalKeys?: number;
+  readonly retainedResults?: number;
+  readonly expiredTombstones?: number;
+  readonly retainedResultBytes?: number;
+  readonly keyLimit?: number;
+  readonly prunedCount?: number;
+  readonly prunedResultBytes?: number;
+  readonly retainedLimit?: number;
+  readonly retainedByteLimit?: number;
+  readonly resultByteLimit?: number;
   readonly errorCode?: DatabaseErrorCode;
   readonly retryable?: boolean;
   readonly outcome?: DatabaseOperationOutcome | null;
@@ -336,9 +347,16 @@ const DATABASE_REASON_SET: ReadonlySet<DatabaseObservabilityReason> =
   new Set(DATABASE_OBSERVABILITY_REASONS);
 const DATABASE_OPERATION_CLASS_SET: ReadonlySet<DatabaseOperationClass> =
   new Set(DATABASE_OPERATION_CLASSES);
+const DATABASE_PLACEMENT_SET: ReadonlySet<DatabasePlacement> =
+  new Set(['file', 'hot']);
+const DATABASE_DURABILITY_SET: ReadonlySet<DatabaseHotDurability> =
+  new Set(['on-write', 'periodic', 'final']);
+const DATABASE_CAPACITY_TYPE_SET: ReadonlySet<DatabaseCapacityType> =
+  new Set(DATABASE_CAPACITY_TYPES);
 
 const ACTOR_CONTEXT_KEYS = [
   'databaseRef',
+  'placement',
   'role',
   'slot',
   'generation',
@@ -346,6 +364,7 @@ const ACTOR_CONTEXT_KEYS = [
 
 const EXECUTOR_CONTEXT_KEYS = [
   'databaseRef',
+  'placement',
   'role',
   'slot',
   'generation',
@@ -354,7 +373,15 @@ const EXECUTOR_CONTEXT_KEYS = [
 const EVENT_SPECS = Object.freeze({
   'coordinator-configured': eventSpec(
     OBS_CODES.DATABASE_COORDINATOR_CONFIGURED,
-    ['writerLimit', 'readerLimit', 'runtimeLimit', 'queueLimit'],
+    [
+      'writerLimit',
+      'readerLimit',
+      'runtimeLimit',
+      'fileLimit',
+      'syncDatabaseLimit',
+      'syncBindingLimit',
+      'queueLimit',
+    ],
   ),
   'coordinator-started': eventSpec(
     OBS_CODES.DATABASE_COORDINATOR_STARTED,
@@ -371,21 +398,6 @@ const EVENT_SPECS = Object.freeze({
   'coordinator-failed': failureSpec(
     OBS_CODES.DATABASE_COORDINATOR_FAILED,
     ['phase'],
-  ),
-  'executor-started': eventSpec(
-    OBS_CODES.DATABASE_EXECUTOR_STARTED,
-    [...EXECUTOR_CONTEXT_KEYS, 'durationMs'],
-    ['role', 'slot', 'generation', 'durationMs'],
-  ),
-  'executor-ready': eventSpec(
-    OBS_CODES.DATABASE_EXECUTOR_READY,
-    [...EXECUTOR_CONTEXT_KEYS, 'durationMs'],
-    ['role', 'slot', 'generation', 'durationMs'],
-  ),
-  'executor-exited': eventSpec(
-    OBS_CODES.DATABASE_EXECUTOR_EXITED,
-    [...EXECUTOR_CONTEXT_KEYS, 'reason'],
-    ['role', 'slot', 'generation', 'reason'],
   ),
   'executor-restarted': eventSpec(
     OBS_CODES.DATABASE_EXECUTOR_RESTARTED,
@@ -417,35 +429,20 @@ const EVENT_SPECS = Object.freeze({
     [...ACTOR_CONTEXT_KEYS, 'reason'],
     ['databaseRef', 'reason'],
   ),
-  'migration-started': eventSpec(
-    OBS_CODES.DATABASE_MIGRATION_STARTED,
-    ACTOR_CONTEXT_KEYS,
-    ['databaseRef'],
-  ),
-  'migration-completed': eventSpec(
-    OBS_CODES.DATABASE_MIGRATION_COMPLETED,
-    [...ACTOR_CONTEXT_KEYS, 'durationMs', 'migrationCount'],
-    ['databaseRef', 'durationMs', 'migrationCount'],
-  ),
-  'migration-failed': failureSpec(
-    OBS_CODES.DATABASE_MIGRATION_FAILED,
-    [...ACTOR_CONTEXT_KEYS, 'phase', 'durationMs'],
-    ['databaseRef', 'phase', 'durationMs'],
-  ),
   'queue-saturated': eventSpec(
     OBS_CODES.DATABASE_QUEUE_SATURATED,
     [...ACTOR_CONTEXT_KEYS, 'operation', 'queueDepth', 'queueLimit'],
     ['databaseRef', 'operation', 'queueDepth', 'queueLimit'],
   ),
+  'capacity-exhausted': eventSpec(
+    OBS_CODES.DATABASE_CAPACITY_EXHAUSTED,
+    [...ACTOR_CONTEXT_KEYS, 'capacityType', 'capacityLimit'],
+    ['databaseRef', 'capacityType', 'capacityLimit'],
+  ),
   'queue-timeout': eventSpec(
     OBS_CODES.DATABASE_QUEUE_TIMEOUT,
     [...ACTOR_CONTEXT_KEYS, 'operation', 'queueDepth', 'durationMs'],
     ['databaseRef', 'operation', 'queueDepth', 'durationMs'],
-  ),
-  'operation-slow': eventSpec(
-    OBS_CODES.DATABASE_OPERATION_SLOW,
-    [...ACTOR_CONTEXT_KEYS, 'operation', 'durationMs', 'slowLimitMs'],
-    ['databaseRef', 'operation', 'durationMs', 'slowLimitMs'],
   ),
   'operation-failed': failureSpec(
     OBS_CODES.DATABASE_OPERATION_FAILED,
@@ -462,45 +459,84 @@ const EVENT_SPECS = Object.freeze({
     [...ACTOR_CONTEXT_KEYS, 'sequenceStart', 'sequenceEnd'],
     ['databaseRef', 'sequenceStart', 'sequenceEnd'],
   ),
-  'replay-started': eventSpec(
-    OBS_CODES.DATABASE_REPLAY_STARTED,
-    [...ACTOR_CONTEXT_KEYS, 'sequenceStart', 'sequenceEnd'],
-    ['databaseRef', 'sequenceStart', 'sequenceEnd'],
-  ),
-  'replay-completed': eventSpec(
-    OBS_CODES.DATABASE_REPLAY_COMPLETED,
-    [...ACTOR_CONTEXT_KEYS, 'sequenceStart', 'sequenceEnd', 'durationMs'],
-    ['databaseRef', 'sequenceStart', 'sequenceEnd', 'durationMs'],
-  ),
   'replay-failed': failureSpec(
     OBS_CODES.DATABASE_REPLAY_FAILED,
     [...ACTOR_CONTEXT_KEYS, 'sequenceStart', 'sequenceEnd', 'durationMs'],
     ['databaseRef', 'sequenceStart', 'sequenceEnd', 'durationMs'],
   ),
+  'tenant-snapshot-failed': failureSpec(
+    OBS_CODES.DATABASE_TENANT_SNAPSHOT_FAILED,
+    [...ACTOR_CONTEXT_KEYS, 'sequenceStart', 'sequenceEnd', 'durationMs'],
+    ['databaseRef', 'sequenceStart', 'sequenceEnd', 'durationMs'],
+  ),
+  'hot-snapshot-started': eventSpec(
+    OBS_CODES.DATABASE_HOT_SNAPSHOT_STARTED,
+    [...ACTOR_CONTEXT_KEYS, 'durability'],
+    ['databaseRef', 'placement', 'role', 'slot', 'generation', 'durability'],
+  ),
+  'hot-snapshot-finished': eventSpec(
+    OBS_CODES.DATABASE_HOT_SNAPSHOT_FINISHED,
+    [...ACTOR_CONTEXT_KEYS, 'durability'],
+    ['databaseRef', 'placement', 'role', 'slot', 'generation', 'durability'],
+  ),
+  'hot-durability-dirty': eventSpec(
+    OBS_CODES.DATABASE_HOT_DURABILITY_DIRTY,
+    [...ACTOR_CONTEXT_KEYS, 'durability'],
+    ['databaseRef', 'placement', 'role', 'slot', 'generation', 'durability'],
+  ),
+  'hot-durability-clean': eventSpec(
+    OBS_CODES.DATABASE_HOT_DURABILITY_CLEAN,
+    [...ACTOR_CONTEXT_KEYS, 'durability'],
+    ['databaseRef', 'placement', 'role', 'slot', 'generation', 'durability'],
+  ),
+  'hot-durability-failed': failureSpec(
+    OBS_CODES.DATABASE_HOT_DURABILITY_FAILED,
+    [...ACTOR_CONTEXT_KEYS, 'durability'],
+    ['databaseRef', 'placement', 'role', 'slot', 'generation', 'durability'],
+  ),
+  'receipt-lookup-failed': failureSpec(
+    OBS_CODES.DATABASE_RECEIPT_LOOKUP_FAILED,
+    [...ACTOR_CONTEXT_KEYS, 'durationMs'],
+    ['databaseRef', 'durationMs'],
+  ),
+  'receipt-expired': failureSpec(
+    OBS_CODES.DATABASE_RECEIPT_EXPIRED,
+    [...ACTOR_CONTEXT_KEYS, 'durationMs'],
+    ['databaseRef', 'durationMs'],
+  ),
+  'receipt-compacted': eventSpec(
+    OBS_CODES.DATABASE_RECEIPT_COMPACTED,
+    [
+      ...ACTOR_CONTEXT_KEYS,
+      'totalKeys',
+      'retainedResults',
+      'expiredTombstones',
+      'retainedResultBytes',
+      'keyLimit',
+      'prunedCount',
+      'prunedResultBytes',
+      'retainedLimit',
+      'retainedByteLimit',
+      'resultByteLimit',
+    ],
+    [
+      'databaseRef',
+      'totalKeys',
+      'retainedResults',
+      'expiredTombstones',
+      'retainedResultBytes',
+      'keyLimit',
+      'prunedCount',
+      'prunedResultBytes',
+      'retainedLimit',
+      'retainedByteLimit',
+      'resultByteLimit',
+    ],
+  ),
   'history-gap': eventSpec(
     OBS_CODES.DATABASE_HISTORY_GAP,
     [...ACTOR_CONTEXT_KEYS, 'sequenceStart', 'sequenceEnd', 'reason'],
     ['databaseRef', 'sequenceStart', 'sequenceEnd', 'reason'],
-  ),
-  'shutdown-graceful-started': eventSpec(
-    OBS_CODES.DATABASE_SHUTDOWN_GRACEFUL_STARTED,
-    ['activeCount', 'queueDepth'],
-  ),
-  'shutdown-graceful-completed': eventSpec(
-    OBS_CODES.DATABASE_SHUTDOWN_GRACEFUL_COMPLETED,
-    ['durationMs'],
-  ),
-  'shutdown-graceful-failed': failureSpec(
-    OBS_CODES.DATABASE_SHUTDOWN_GRACEFUL_FAILED,
-    ['phase', 'durationMs'],
-  ),
-  'shutdown-forced': eventSpec(
-    OBS_CODES.DATABASE_SHUTDOWN_FORCED,
-    ['reason', 'activeCount', 'queueDepth'],
-  ),
-  'shutdown-forced-failed': failureSpec(
-    OBS_CODES.DATABASE_SHUTDOWN_FORCED_FAILED,
-    ['reason', 'durationMs'],
   ),
 } satisfies Record<DatabaseObservabilityEventType, DatabaseEventSpec>);
 
@@ -601,6 +637,16 @@ function prepareEvent(event: DatabaseObservabilityEvent): {
     metadata.outcome = error.outcome;
   }
 
+  if ((type === 'hot-snapshot-started'
+      || type === 'hot-snapshot-finished'
+      || type === 'hot-durability-dirty'
+      || type === 'hot-durability-clean'
+      || type === 'hot-durability-failed')
+    && (metadata.placement !== 'hot'
+      || metadata.durability !== 'periodic')) {
+    throw new TypeError('Invalid hot database durability observability event.');
+  }
+
   return Object.freeze({
     definition: spec.definition,
     metadata: Object.freeze(metadata) as DatabaseObservabilityMetadata,
@@ -626,16 +672,21 @@ function normalizeMetadataValue(
       return normalizeDatabaseRef(value as string);
     case 'role':
       return enumValue(value, DATABASE_EXECUTOR_ROLE_SET, 'executor role');
+    case 'placement':
+      return enumValue(value, DATABASE_PLACEMENT_SET, 'placement');
+    case 'durability':
+      return enumValue(value, DATABASE_DURABILITY_SET, 'durability');
     case 'phase':
       return enumValue(value, DATABASE_PHASE_SET, 'lifecycle phase');
     case 'reason':
       return enumValue(value, DATABASE_REASON_SET, 'lifecycle reason');
     case 'operation':
       return enumValue(value, DATABASE_OPERATION_CLASS_SET, 'operation class');
+    case 'capacityType':
+      return enumValue(value, DATABASE_CAPACITY_TYPE_SET, 'capacity type');
     case 'slot':
       return boundedInteger(value, 0, DATABASE_OBSERVABILITY_MAX_SLOT, 'executor slot');
     case 'durationMs':
-    case 'slowLimitMs':
       return boundedInteger(
         value,
         0,
@@ -653,13 +704,26 @@ function normalizeMetadataValue(
     case 'readerCount':
     case 'runtimeCount':
     case 'activeCount':
-    case 'migrationCount':
     case 'queueDepth':
     case 'retryCount':
     case 'writerLimit':
     case 'readerLimit':
     case 'runtimeLimit':
+    case 'fileLimit':
+    case 'syncDatabaseLimit':
+    case 'syncBindingLimit':
     case 'queueLimit':
+    case 'capacityLimit':
+    case 'totalKeys':
+    case 'retainedResults':
+    case 'expiredTombstones':
+    case 'retainedResultBytes':
+    case 'keyLimit':
+    case 'prunedCount':
+    case 'prunedResultBytes':
+    case 'retainedLimit':
+    case 'retainedByteLimit':
+    case 'resultByteLimit':
       return boundedInteger(
         value,
         0,

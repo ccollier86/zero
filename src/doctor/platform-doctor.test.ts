@@ -6,9 +6,17 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import {
+  DATABASE_HOT_SHORTHAND_MAX_BYTES,
+  createTenantDatabaseRef,
+  defineDatabaseRealm,
+} from '../databases';
 import { runPlatformDoctor } from './platform-doctor';
 import type { AppConfig } from '../frontend/server/types';
 import {
+  RESOURCE_DEFAULT_RECEIPT_MAX_KEYS,
+  RESOURCE_DEFAULT_RECEIPT_MAX_RETAINED_BYTES,
+  RESOURCE_DEFAULT_RECEIPT_RETAINED_LIMIT,
   adminOnly,
   allOf,
   anyOf,
@@ -67,7 +75,7 @@ describe('runPlatformDoctor', () => {
       resources: [
         defineResource({
           table: 'documents',
-          exposure: 'all',
+          exposure: 'http',
           realm: 'tenant',
           policy: adminOnly(),
         }),
@@ -79,6 +87,447 @@ describe('runPlatformDoctor', () => {
     expect(hasFinding(report, 'resource.resource-exposure-missing')).toBe(false);
     expect(hasFinding(report, 'resource.resource-managed-table-unclassified')).toBe(false);
     expect(hasFinding(report, 'resource.tenant_field.index_guidance')).toBe(true);
+  });
+
+  test('understands physical tenant isolation without requiring tenant_id rows', () => {
+    const tables = {
+      documents: {
+        document_id: 'text primary key',
+        title: 'text not null',
+      },
+    };
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      outDir: './dist',
+      tables,
+      auth: { tenancy: 'multi' },
+      email: false,
+      databaseTopology: {
+        mode: 'multiple',
+        rootDirectory: './data/tenant-databases',
+        realm: defineDatabaseRealm({
+          name: 'doctor-tenant-data',
+          version: '1',
+          tables,
+        }),
+        actors: {
+          launch: { kind: 'source', entrypoint: import.meta.path },
+        },
+        tenantIsolation: 'tenant-database',
+      },
+      resources: [
+        defineResource({
+          table: 'documents',
+          exposure: 'http',
+          realm: 'tenant',
+          policy: adminOnly(),
+        }),
+      ],
+    });
+
+    expect(hasFinding(report, 'config.invalid')).toBe(false);
+    expect(hasFinding(report, 'resource.resource-tenant-field-missing')).toBe(false);
+    expect(hasFinding(report, 'resource.tenant_field.index_guidance')).toBe(false);
+    expect(hasFinding(report, 'database.topology.multiple_enabled')).toBe(true);
+    expect(hasFinding(report, 'database.files.capacity_limit')).toBe(true);
+    expect(hasFinding(report, 'database.tenant_isolation.physical')).toBe(true);
+    expect(hasFinding(report, 'database.sync.actor_capacity_reserved')).toBe(true);
+    expect(hasFinding(report, 'database.sync.actor_capacity_unreserved')).toBe(false);
+    expect(hasFinding(report, 'database.sync.snapshot_transport_bounded')).toBe(true);
+    expect(hasFinding(report, 'database.receipts.full_result_budget')).toBe(true);
+    expect(hasFinding(report, 'database.receipts.permanent_key_capacity')).toBe(true);
+    expect(hasFinding(report, 'resource.receipts.default_full_result_budget')).toBe(false);
+    expect(hasFinding(report, 'resource.receipts.default_permanent_key_capacity')).toBe(false);
+    expect(hasFinding(report, 'resource.tenant_database.physical_boundary')).toBe(true);
+  });
+
+  test('reports the shared default Resource receipt lifecycle from exported bounds', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        notes: {
+          id: 'text primary key',
+          title: 'text not null',
+        },
+      },
+      auth: false,
+      email: false,
+      resources: [
+        defineResource({
+          table: 'notes',
+          exposure: 'http',
+          actions: ['create'],
+          policy: adminOnly(),
+        }),
+      ],
+    });
+
+    const retained = getFinding(report, 'resource.receipts.default_full_result_budget');
+    expect(retained?.severity).toBe('info');
+    expect(retained?.message).toContain(
+      RESOURCE_DEFAULT_RECEIPT_RETAINED_LIMIT.toLocaleString('en-US'),
+    );
+    expect(retained?.message).toContain(
+      `${RESOURCE_DEFAULT_RECEIPT_MAX_RETAINED_BYTES / (1024 * 1024)} MiB`,
+    );
+    expect(retained?.message).toContain(
+      `${RESOURCE_DEFAULT_RECEIPT_MAX_RETAINED_BYTES.toLocaleString('en-US')} bytes`,
+    );
+
+    const permanent = getFinding(
+      report,
+      'resource.receipts.default_permanent_key_capacity',
+    );
+    expect(permanent?.severity).toBe('warning');
+    expect(permanent?.message).toContain(
+      RESOURCE_DEFAULT_RECEIPT_MAX_KEYS.toLocaleString('en-US'),
+    );
+    expect(permanent?.hint).toContain('database.receipt.compacted');
+    expect(permanent?.hint).toContain('resource.receipt.capacity_exhausted');
+  });
+
+  test('keeps global mutations on the default receipt plane in physical tenant mode', () => {
+    const tables = {
+      documents: { id: 'text primary key' },
+      catalog: { id: 'text primary key' },
+    };
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      outDir: './dist',
+      tables,
+      auth: { tenancy: 'multi' },
+      email: false,
+      databaseTopology: {
+        mode: 'multiple',
+        rootDirectory: './data/global-receipt-doctor',
+        realm: defineDatabaseRealm({
+          name: 'doctor-global-receipt',
+          version: '1',
+          tables,
+        }),
+        actors: {
+          launch: { kind: 'source', entrypoint: import.meta.path },
+        },
+        tenantIsolation: 'tenant-database',
+      },
+      resources: [
+        defineResource({
+          table: 'documents',
+          exposure: 'http',
+          realm: 'tenant',
+          actions: ['list', 'get'],
+          policy: readOnly(),
+        }),
+        defineResource({
+          table: 'catalog',
+          exposure: 'http',
+          realm: 'global',
+          actions: ['create'],
+          policy: adminOnly(),
+        }),
+      ],
+    });
+
+    expect(hasFinding(report, 'resource.receipts.default_full_result_budget')).toBe(true);
+    expect(hasFinding(report, 'resource.receipts.default_permanent_key_capacity')).toBe(true);
+  });
+
+  test('does not claim a default receipt plane without a generated HTTP mutation', () => {
+    const base = {
+      db: { mode: ':memory:' as const },
+      tables: { notes: { id: 'text primary key' } },
+      auth: false as const,
+      email: false as const,
+    };
+    const readOnlyReport = runPlatformDoctor({
+      ...base,
+      resources: [defineResource({
+        table: 'notes',
+        exposure: 'http',
+        actions: ['list', 'get'],
+        policy: readOnly(),
+      })],
+    });
+    const internalReport = runPlatformDoctor({
+      ...base,
+      resources: [defineResource({
+        table: 'notes',
+        exposure: 'internal',
+        actions: ['create'],
+        policy: adminOnly(),
+      })],
+    });
+    const routesDisabledReport = runPlatformDoctor({
+      ...base,
+      resourceRoutes: false,
+      resources: [defineResource({
+        table: 'notes',
+        exposure: 'http',
+        actions: ['create'],
+        policy: adminOnly(),
+      })],
+    });
+
+    for (const report of [readOnlyReport, internalReport, routesDisabledReport]) {
+      expect(hasFinding(report, 'resource.receipts.default_full_result_budget')).toBe(false);
+      expect(hasFinding(report, 'resource.receipts.default_permanent_key_capacity')).toBe(false);
+    }
+  });
+
+  test('warns when persistent tenant Sync can pin every actor slot', () => {
+    const tables = { notes: { id: 'text primary key' } };
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables,
+      auth: { tenancy: 'multi' },
+      email: false,
+      databaseTopology: {
+        mode: 'multiple',
+        rootDirectory: './data/unreserved-sync-doctor',
+        realm: defineDatabaseRealm({
+          name: 'doctor-unreserved-sync',
+          version: '1',
+          tables,
+        }),
+        actors: {
+          launch: { kind: 'source', entrypoint: import.meta.path },
+        },
+        tenantIsolation: 'tenant-database',
+        maxDatabases: 2,
+        maxTenantSyncDatabases: 2,
+      },
+    });
+
+    expect(hasFinding(report, 'database.sync.actor_capacity_reserved')).toBe(false);
+    expect(hasFinding(report, 'database.sync.actor_capacity_unreserved')).toBe(true);
+    expect(getFinding(
+      report,
+      'database.sync.actor_capacity_unreserved',
+    )?.severity).toBe('warning');
+
+    const oneSlot = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables,
+      auth: { tenancy: 'multi' },
+      email: false,
+      databaseTopology: {
+        mode: 'multiple',
+        rootDirectory: './data/one-slot-sync-doctor',
+        realm: defineDatabaseRealm({
+          name: 'doctor-one-slot-sync',
+          version: '1',
+          tables,
+        }),
+        actors: {
+          launch: { kind: 'source', entrypoint: import.meta.path },
+        },
+        tenantIsolation: 'tenant-database',
+        maxDatabases: 1,
+      },
+    });
+    expect(getFinding(
+      oneSlot,
+      'database.sync.actor_capacity_unreserved',
+    )?.message).toContain('one-slot topology');
+  });
+
+  test('rejects a multi-database root mixed with build or object-storage files', () => {
+    const tables = { notes: { id: 'text primary key' } };
+    const topology = {
+      mode: 'multiple' as const,
+      rootDirectory: './build',
+      realm: defineDatabaseRealm({
+        name: 'doctor-root-safety',
+        version: '1',
+        tables,
+      }),
+      actors: {
+        launch: { kind: 'source' as const, entrypoint: import.meta.path },
+      },
+    };
+    const buildOverlap = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      outDir: './build/client',
+      tables,
+      auth: false,
+      databaseTopology: topology,
+    });
+    const storageReuse = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      outDir: './dist',
+      storageDir: './build',
+      tables,
+      auth: false,
+      databaseTopology: topology,
+    });
+    const storageTempOverlap = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      outDir: './dist',
+      storageDir: './.storage',
+      tables,
+      auth: false,
+      databaseTopology: {
+        ...topology,
+        rootDirectory: './.storage/tmp/tenant-databases',
+      },
+    });
+    const controlDatabaseOverlap = runPlatformDoctor({
+      db: { mode: 'file', path: './data/tenant-databases/control.db' },
+      outDir: './dist',
+      tables,
+      auth: false,
+      databaseTopology: {
+        ...topology,
+        rootDirectory: './data/tenant-databases',
+      },
+    });
+    const dedicatedStorageChild = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      outDir: './dist',
+      storageDir: './.storage',
+      tables,
+      auth: false,
+      databaseTopology: {
+        ...topology,
+        rootDirectory: './.storage/databases',
+      },
+    });
+
+    expect(hasFinding(buildOverlap, 'database.root.overlaps_build_output')).toBe(true);
+    expect(hasFinding(storageReuse, 'database.root.reuses_storage_directory')).toBe(true);
+    expect(hasFinding(storageTempOverlap, 'database.root.overlaps_storage_temp')).toBe(true);
+    expect(hasFinding(controlDatabaseOverlap, 'database.root.overlaps_control_database')).toBe(true);
+    expect(hasFinding(dedicatedStorageChild, 'database.root.reuses_storage_directory')).toBe(false);
+    expect(hasFinding(dedicatedStorageChild, 'database.root.overlaps_storage_temp')).toBe(false);
+    expect(hasFinding(dedicatedStorageChild, 'database.root.overlaps_storage_blobs')).toBe(false);
+  });
+
+  test('makes bounded hot placement, writer-only reads, and total image budget visible', () => {
+    const tables = { notes: { id: 'text primary key' } };
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables,
+      auth: false,
+      email: false,
+      databaseTopology: {
+        mode: 'multiple',
+        rootDirectory: './data/hot-doctor',
+        realm: defineDatabaseRealm({
+          name: 'doctor-hot-placement',
+          version: '1',
+          tables,
+        }),
+        actors: {
+          launch: { kind: 'source', entrypoint: import.meta.path },
+        },
+        placement: 'hot',
+        maxDatabases: 3,
+      },
+    });
+
+    expect(hasFinding(report, 'database.placement.hot_enabled')).toBe(true);
+    expect(hasFinding(report, 'database.hot.on_write_durability')).toBe(true);
+    expect(hasFinding(report, 'database.hot.readers_unavailable')).toBe(true);
+    expect(hasFinding(report, 'database.hot.capacity_upper_bound')).toBe(true);
+    expect(hasFinding(report, 'database.hot.periodic.accepted_loss_window')).toBe(false);
+    expect(hasFinding(report, 'database.hot.final.accepted_loss_window')).toBe(false);
+    const capacity = getFinding(report, 'database.hot.capacity_upper_bound');
+    expect(capacity?.message).toContain(
+      `${DATABASE_HOT_SHORTHAND_MAX_BYTES.toLocaleString('en-US')} bytes`,
+    );
+    expect(capacity?.message).toContain('201,326,592 bytes');
+  });
+
+  test('reports hybrid selection and warns about a periodic accepted-loss window', () => {
+    const tables = { notes: { id: 'text primary key' } };
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables,
+      auth: false,
+      email: false,
+      databaseTopology: {
+        mode: 'multiple',
+        rootDirectory: './data/hybrid-doctor',
+        realm: defineDatabaseRealm({
+          name: 'doctor-hybrid-placement',
+          version: '1',
+          tables,
+        }),
+        actors: {
+          launch: { kind: 'source', entrypoint: import.meta.path },
+        },
+        placement: {
+          default: 'file',
+          select: ({ databaseRef }) => databaseRef === createTenantDatabaseRef('hot-tenant')
+            ? 'hot'
+            : 'file',
+          hot: {
+            durability: 'periodic',
+            maxBytes: 10_000_000,
+            snapshotIntervalMs: 7_500,
+          },
+        },
+        maxDatabases: 2,
+      },
+    });
+
+    expect(hasFinding(report, 'database.placement.hybrid_enabled')).toBe(true);
+    expect(hasFinding(report, 'database.placement.hot_enabled')).toBe(false);
+    expect(hasFinding(report, 'database.hot.periodic.accepted_loss_window')).toBe(true);
+    expect(hasFinding(report, 'database.hot.final.accepted_loss_window')).toBe(false);
+    expect(getFinding(
+      report,
+      'database.hot.periodic.accepted_loss_window',
+    )?.message).toContain('7500ms');
+  });
+
+  test('warns strongly for final-only durability and stays quiet for file placement', () => {
+    const tables = { notes: { id: 'text primary key' } };
+    const realm = defineDatabaseRealm({
+      name: 'doctor-final-placement',
+      version: '1',
+      tables,
+    });
+    const topologyBase = {
+      mode: 'multiple' as const,
+      rootDirectory: './data/final-doctor',
+      realm,
+      actors: {
+        launch: { kind: 'source' as const, entrypoint: import.meta.path },
+      },
+    };
+    const finalReport = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables,
+      auth: false,
+      email: false,
+      databaseTopology: {
+        ...topologyBase,
+        placement: {
+          default: 'hot',
+          hot: { durability: 'final', maxBytes: 4_000_000 },
+        },
+      },
+    });
+    const fileReport = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables,
+      auth: false,
+      email: false,
+      databaseTopology: {
+        ...topologyBase,
+        placement: 'file',
+      },
+    });
+
+    expect(hasFinding(finalReport, 'database.hot.final.accepted_loss_window')).toBe(true);
+    expect(getFinding(
+      finalReport,
+      'database.hot.final.accepted_loss_window',
+    )?.severity).toBe('warning');
+    expect(hasFinding(fileReport, 'database.hot.readers_unavailable')).toBe(false);
+    expect(hasFinding(fileReport, 'database.hot.capacity_upper_bound')).toBe(false);
+    expect(hasFinding(fileReport, 'database.hot.final.accepted_loss_window')).toBe(false);
   });
 
   test('only treats a compound natural identity as tenant-leading when the realm field leads', () => {
@@ -804,4 +1253,11 @@ function hasFinding(
   code: string
 ): boolean {
   return report.findings.some((finding) => finding.code === code);
+}
+
+function getFinding(
+  report: ReturnType<typeof runPlatformDoctor>,
+  code: string,
+) {
+  return report.findings.find((finding) => finding.code === code);
 }
