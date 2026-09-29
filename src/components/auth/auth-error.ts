@@ -7,8 +7,7 @@
  */
 
 import { AuthClientError } from '../../frontend/client/auth-client';
-import { emitFrontendCode } from '../../frontend/client/observability';
-import { OBS_CODES } from '../../observability/codes';
+import { reportAuthClientActionFailure } from '../../frontend/client/auth-action-observability';
 
 /** Return the backend auth error code carried by an SDK error, if present. */
 export function getAuthErrorCode(error: unknown): string | null {
@@ -62,11 +61,5 @@ export function getAuthDisplayMessage(error: unknown, fallback: string): string 
 
 /** Emit an auth UI failure through Zero's frontend observability boundary. */
 export function reportAuthUiError(action: string, error: unknown): void {
-  emitFrontendCode(OBS_CODES.FRONTEND_AUTH_ACTION_FAILED, {
-    error,
-    metadata: {
-      action,
-      code: getAuthErrorCode(error),
-    },
-  });
+  reportAuthClientActionFailure(action, error);
 }

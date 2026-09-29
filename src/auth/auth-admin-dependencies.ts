@@ -19,10 +19,20 @@ import type { TokenService } from './token-service';
 import { AuthError, type AuthContext, type ResolvedAuthBehaviorConfig } from './types';
 import type { UserPropertyService } from './user-property-service';
 import type { UserStore } from './user-store';
+import type { AuthorizationKernel } from './authorization-kernel';
+import type { AuthorizationRoleService } from './authorization-role-service';
+import { emitPlatformCode } from '../observability/sink';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
+import {
+  createRequestAuthorizationAccess,
+  type RequestAuthorizationAccess,
+} from './authorization-access';
 
 export interface AuthAdminPluginConfig {
   getUserStore: () => UserStore | null;
   getTokenService: () => TokenService | null;
+  getAuthorizationKernel: () => AuthorizationKernel;
+  getAuthorizationRoleService: () => AuthorizationRoleService | null;
   getPropertyService: () => UserPropertyService | null;
   getActionTokenService: () => AuthActionTokenService | null;
   getAccountEmailService: () => AccountEmailService | null;
@@ -30,17 +40,26 @@ export interface AuthAdminPluginConfig {
   getMfaChallengeService?: () => MfaChallengeService | null;
   getEmailRuntime: () => EmailRuntime;
   getAuthConfig: () => ResolvedAuthBehaviorConfig;
+  /** Owning app emitter. Omitted only by standalone/legacy compositions. */
+  emitCode?: AuthPlatformCodeEmitter;
+}
+
+export function getAuthAdminEmitter(
+  config: AuthAdminPluginConfig,
+): AuthPlatformCodeEmitter {
+  return config.emitCode ?? emitPlatformCode;
 }
 
 export interface AdminServices {
   store: UserStore;
   propertyService: UserPropertyService;
   auth: AuthContext;
-}
-
-export interface AdminMutationServices extends AdminServices {
+  access: RequestAuthorizationAccess;
+  /** Final read fence for sensitive account projections. */
   assertCurrentAuthority: AssertAuthAdminMutationAuthority;
 }
+
+export type AdminMutationServices = AdminServices;
 
 /** Authenticate an admin request and return initialized route dependencies. */
 export async function requireAdminServices(
@@ -56,8 +75,34 @@ export async function requireAdminServices(
 
   const auth = await extractAuthContext(request, tokenService);
   if (!auth) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
-  if (auth.role !== 'admin') throw new AuthError('Forbidden', 'FORBIDDEN', 403);
-  return { store, propertyService, auth };
+  const kernel = config.getAuthorizationKernel();
+  const roles = config.getAuthorizationRoleService();
+  const access = createRequestAuthorizationAccess({
+    authContext: auth,
+    kernel,
+    propertyStore: store,
+    roleAssignments: roles,
+  });
+  if (kernel.tenancy.mode === 'single') {
+    if (auth.role !== 'admin') throw new AuthError('Forbidden', 'FORBIDDEN', 403);
+  } else {
+    access.requireApplicationAuthorization();
+    access.requirePermission('application.users:read');
+  }
+  return {
+    store,
+    propertyService,
+    auth,
+    access,
+    assertCurrentAuthority: captureAuthAdminMutationAuthority({
+      auth,
+      tokenService,
+      kernel,
+      store,
+      roles,
+      permission: 'application.users:read',
+    }),
+  };
 }
 
 /** Authenticate and capture the exact authority required by an admin write. */
@@ -68,11 +113,20 @@ export async function requireAdminMutationServices(
   const services = await requireAdminServices(config, request);
   const tokenService = config.getTokenService();
   if (!tokenService) throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
+  const kernel = config.getAuthorizationKernel();
+  const roles = config.getAuthorizationRoleService();
+  if (kernel.tenancy.mode === 'multi') {
+    services.access.requirePermission('application.users:manage');
+  }
   return {
     ...services,
     assertCurrentAuthority: captureAuthAdminMutationAuthority({
       auth: services.auth,
       tokenService,
+      kernel,
+      store: services.store,
+      roles,
+      permission: 'application.users:manage',
     }),
   };
 }

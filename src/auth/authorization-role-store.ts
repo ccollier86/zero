@@ -10,6 +10,10 @@ import type {
   AuthorizationRoleAssignmentRecord,
   AuthorizationRoleSet,
 } from './authorization-role-types';
+import {
+  createAuthStateInvariantError,
+  type AuthPlatformCodeEmitter,
+} from './auth-observability';
 
 interface AssignmentRow {
   assignment_id: string;
@@ -97,6 +101,7 @@ export class AuthorizationRoleStore {
     private readonly db: ReactiveDB,
     private readonly now: () => number = Date.now,
     private readonly createAssignmentId: () => string = () => `arole_${crypto.randomUUID()}`,
+    private readonly emitCode?: AuthPlatformCodeEmitter,
   ) {
     defineAuthorizationRoleTables(db);
     // Authority-revision AFTER triggers perform an additional write for each
@@ -373,7 +378,13 @@ export class AuthorizationRoleStore {
       createdAt,
     ) as AssignmentMutationRow | null;
     const assignment = this.getActiveApplicationAssignment(input.userId, input.roleKey);
-    if (!assignment) throw new Error('[auth] Application role assignment insert failed.');
+    if (!assignment) {
+      throw createAuthStateInvariantError(this.emitCode, {
+        component: 'authorization-role-store',
+        invariant: 'application-assignment-insert-missing',
+        message: '[auth] Application role assignment insert failed.',
+      });
+    }
     return { changed: inserted !== null, assignment };
   }
 
@@ -399,7 +410,13 @@ export class AuthorizationRoleStore {
       input.membershipId,
       input.roleKey,
     );
-    if (!assignment) throw new Error('[auth] Tenant role assignment insert failed.');
+    if (!assignment) {
+      throw createAuthStateInvariantError(this.emitCode, {
+        component: 'authorization-role-store',
+        invariant: 'tenant-assignment-insert-missing',
+        message: '[auth] Tenant role assignment insert failed.',
+      });
+    }
     return { changed: inserted !== null, assignment };
   }
 

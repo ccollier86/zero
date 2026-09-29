@@ -1,11 +1,11 @@
 /** Repair draft native-auth FKs and add bounded-storage support columns/indexes. */
 
 import type { Database } from 'bun:sqlite';
-import { repairNativeAuthSchema } from '../../auth/oidc/native-auth-schema-repair';
-import { createNativeAuthHardeningIndexStatements } from '../../auth/oidc/native-auth-schema-sql';
 import {
-  LEGACY_REGISTRATION_INTENT_TABLE_SQL,
-} from '../../auth/registration-intent-schema';
+  createNativeAuthHardeningIndexStatementsV006 as createNativeAuthIndexStatements,
+  LEGACY_REGISTRATION_INTENT_TABLE_SQL_V006 as REGISTRATION_INTENT_TABLE_SQL,
+  repairNativeAuthSchemaV006 as repairNativeAuthSchema,
+} from './006_native_auth_hardening_schema';
 import type { Migration } from '../migrator';
 
 export const migration: Migration = {
@@ -20,7 +20,7 @@ export const migration: Migration = {
       exec: (sql) => db.exec(sql),
       prepare: (sql) => ({ all: () => db.query(sql).all() }),
     });
-    db.run(LEGACY_REGISTRATION_INTENT_TABLE_SQL);
-    for (const statement of createNativeAuthHardeningIndexStatements()) db.run(statement);
+    db.run(REGISTRATION_INTENT_TABLE_SQL);
+    for (const statement of createNativeAuthIndexStatements()) db.run(statement);
   },
 };

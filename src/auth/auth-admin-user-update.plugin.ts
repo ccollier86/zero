@@ -2,11 +2,11 @@
 
 import { Elysia, t } from 'elysia';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
 import { assertAdminMayDeleteUser } from './admin-user-guards';
 import { AdminUserUpdateService } from './admin-user-update-service';
 import {
   requireAdminMutationServices,
+  getAuthAdminEmitter,
   type AuthAdminPluginConfig,
 } from './auth-admin-dependencies';
 import { AuthError } from './types';
@@ -26,6 +26,7 @@ import {
 
 /** Create administrator user update and deletion routes. */
 export function createAuthAdminUserUpdatePlugin(config: AuthAdminPluginConfig) {
+  const emitCode = getAuthAdminEmitter(config);
   const params = authUserIdParamsSchema;
   return new Elysia({ name: 'auth-admin-user-update' })
     .patch('/users/:userId', async ({ request, params, body }) => {
@@ -65,7 +66,7 @@ export function createAuthAdminUserUpdatePlugin(config: AuthAdminPluginConfig) {
       let actorUserId = '';
       try {
         store.transaction(() => {
-          const current = assertCurrentAuthority();
+          const current = assertCurrentAuthority({ targetUserId: params.userId });
           actorUserId = current.userId;
           const user = store.getUserById(params.userId);
           if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
@@ -98,7 +99,7 @@ export function createAuthAdminUserUpdatePlugin(config: AuthAdminPluginConfig) {
         }
         throw error;
       }
-      emitPlatformCode(OBS_CODES.AUTH_ADMIN_USER_DELETED, {
+      emitCode(OBS_CODES.AUTH_ADMIN_USER_DELETED, {
         userId: actorUserId,
         metadata: { deletedUserId: params.userId },
       });

@@ -46,7 +46,8 @@ const AUTHORITY_TABLES: readonly AuthorityTableTarget[] = [
   },
   {
     table: '_auth_tenants',
-    updateColumns: ['status', 'authorization_generation'],
+    updateColumns: ['kind', 'status', 'authorization_generation'],
+    updateTriggerVersion: 2,
   },
   {
     table: '_auth_tenant_memberships',
@@ -61,6 +62,10 @@ const AUTHORITY_TABLES: readonly AuthorityTableTarget[] = [
   {
     table: '_auth_installed_profile',
     updateColumns: ['version', 'generation', 'tenancy', 'authorization'],
+  },
+  {
+    table: '_auth_authorization_manifest',
+    updateColumns: ['version', 'registry_version', 'fingerprint', 'manifest_json'],
   },
   {
     table: '_auth_application_authorization_state',

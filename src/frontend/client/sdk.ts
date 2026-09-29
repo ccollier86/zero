@@ -36,6 +36,7 @@ import type {
   AuthApplicationUserStatus,
 } from './auth-application-administration-types';
 import type { AuthAuditSdkSurface } from './auth-audit-types';
+import type { AuthPlatformAdminSdkSurface } from './auth-platform-administration-types';
 import type {
   AuthAuthorizationSnapshot,
   AuthAuthorizationState,
@@ -152,6 +153,20 @@ export type {
   AuthTenantDomainReleaseResult,
   AuthTenantDomainRequestRole,
 } from './auth-domain-types';
+
+export type {
+  AuthPlatformAdministrationConfig,
+  AuthPlatformAdminSdkSurface,
+  AuthPlatformTenant,
+  AuthPlatformTenantCreateParams,
+  AuthPlatformTenantCreateResult,
+  AuthPlatformTenantListParams,
+  AuthPlatformMutableTenantStatus,
+  AuthPlatformTenantPage,
+  AuthPlatformTenantStatus,
+  AuthPlatformTenantUpdateParams,
+  AuthPlatformTenantUpdateResult,
+} from './auth-platform-administration-types';
 
 export type { Collection } from './collection';
 
@@ -348,6 +363,9 @@ export interface Client extends AuthAdminSdkSurface {
 
   /** Authorized durable auth/control-plane audit access. */
   readonly audit: AuthAuditSdkSurface;
+
+  /** Protected administration-organization and customer-tenant control plane. */
+  readonly platformAdmin: AuthPlatformAdminSdkSurface;
 
   // ─── Auth (top-level shortcuts) ──────────────────────────────────
 
@@ -1118,6 +1136,7 @@ export function createClient(config: ClientConfig): Client {
     get url() { return url; },
     get applicationAdmin() { return applicationAdmin; },
     get audit() { return requireAuthClient().audit; },
+    get platformAdmin() { return requireAuthClient().platformAdmin; },
     /** @internal */
     get auth() { return authClient; },
     get state() { return stateClient; },

@@ -1,10 +1,10 @@
 /** Atomic reset/setup token consumption and password replacement. */
 
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
 import type { AuthActionTokenService } from './action-token-service';
 import {
   requireAccountServices,
+  getAuthAccountEmitter,
   type AuthAccountPluginConfig,
 } from './auth-account-dependencies';
 import { toAuthUserResponse } from './auth-user-response';
@@ -50,7 +50,7 @@ export async function completePasswordAction(
   const user = store.getUserById(inspection.user.userId);
   if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
 
-  emitPlatformCode(OBS_CODES.AUTH_PASSWORD_RESET_COMPLETED, {
+  getAuthAccountEmitter(config)(OBS_CODES.AUTH_PASSWORD_RESET_COMPLETED, {
     userId: user.userId,
     metadata: { actionType: inspection.record.type },
   });

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { defineAuthTables } from '../auth-schema';
 import { createReactiveDB, type ReactiveDB } from '../../sync/reactive-db';
+import { OBS_CODES } from '../../observability/codes';
+import { emitPlatformCode } from '../../observability/sink';
 import {
   TENANT_OWNER_ROLE_KEY,
   TenantStore,
@@ -42,6 +44,8 @@ describe('tenancy persistence and control plane', () => {
       .toThrow('AUTH_PROFILE_CHANGED');
     expect(() => store.listActiveMembershipsForUser('owner-a'))
       .toThrow('AUTH_PROFILE_CHANGED');
+    expect(() => store.hasActiveAdministrationMembership('owner-a'))
+      .toThrow('AUTH_PROFILE_CHANGED');
     expect(() => store.bumpTenantAuthorizationGeneration(created.tenant.tenantId))
       .toThrow('AUTH_PROFILE_CHANGED');
     expect(() => store.createTenantWithOwner({
@@ -53,6 +57,38 @@ describe('tenancy persistence and control plane', () => {
       SELECT authorization_generation AS generation
       FROM _auth_tenants WHERE tenant_id = ?
     `).get(created.tenant.tenantId)).toEqual({ generation: 0 });
+  });
+
+  test('rejects an asynchronous direct-store profile fence before authority is used', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    databases.push(db);
+    db.exec('PRAGMA foreign_keys = ON');
+    defineAuthTables(db);
+    insertUser(db, 'async-profile-owner', 0);
+    const emitted: string[] = [];
+    const store = new TenantStore(db, {
+      assertCurrentProfile: (async () => {
+        throw new Error('private profile rejection');
+      }) as never,
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+
+    expect(() => store.createTenantWithOwner({
+      slug: 'must-not-commit',
+      name: 'Must Not Commit',
+      ownerUserId: 'async-profile-owner',
+    })).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Tenant runtime profile guard must be synchronous.',
+    }));
+    await Promise.resolve();
+
+    expect(db.prepare('SELECT COUNT(*) AS count FROM _auth_tenants').get())
+      .toEqual({ count: 0 });
+    expect(emitted).toEqual([OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code]);
   });
 
   test('keeps independent app-local stores isolated', () => {
@@ -126,6 +162,71 @@ describe('tenancy persistence and control plane', () => {
     expect(service.getTenantBySlug('rollback-check')).toBeNull();
   });
 
+  test('rejects async owner hooks and rolls tenant and role mutations back', () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    databases.push(db);
+    db.exec('PRAGMA foreign_keys = ON');
+    defineAuthTables(db);
+    insertUser(db, 'async-owner', 0);
+    insertUser(db, 'async-member', 1);
+    const emitted: string[] = [];
+    const ownerHookStore = new TenantStore(db, {
+      onOwnerCreated: async () => {},
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+
+    expect(() => ownerHookStore.createTenantWithOwner({
+      slug: 'async-owner-hook',
+      name: 'Async Owner Hook',
+      ownerUserId: 'async-owner',
+    })).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Tenant owner creation callback must be synchronous.',
+    }));
+    expect(db.prepare('SELECT COUNT(*) AS count FROM _auth_tenants').get())
+      .toEqual({ count: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS count FROM _auth_tenant_memberships').get())
+      .toEqual({ count: 0 });
+
+    const normal = new TenancyService(new TenantStore(db));
+    const created = normal.createTenant({
+      slug: 'owner-role-hook',
+      name: 'Owner Role Hook',
+      ownerUserId: 'async-owner',
+    });
+    const member = normal.addMembership({
+      tenantId: created.tenant.tenantId,
+      userId: 'async-member',
+      roleKey: 'member',
+      createdBy: 'async-owner',
+    });
+    const roleHook = new TenancyService(new TenantStore(db, {
+      onOwnerRoleChanged: async () => {},
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    }));
+
+    expect(() => roleHook.transferOwnership(
+      created.ownerMembership.membershipId,
+      member.membershipId,
+    )).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Tenant owner role callback must be synchronous.',
+    }));
+    expect(normal.getMembershipById(created.ownerMembership.membershipId)?.roleKey)
+      .toBe('owner');
+    expect(normal.getMembershipById(member.membershipId)?.roleKey).toBe('member');
+    expect(emitted).toEqual([
+      OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code,
+      OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code,
+    ]);
+  });
+
   test('isolates multi-membership state and generations across two tenants', () => {
     const { store, service } = createHarness('owner-a', 'owner-b', 'shared-user');
     const tenantA = service.createTenant({
@@ -190,6 +291,30 @@ describe('tenancy persistence and control plane', () => {
     expect(service.bumpTenantAuthorizationGeneration(tenantA.tenant.tenantId)
       .authorizationGeneration).toBe(3);
     expect(service.getTenant(tenantB.tenant.tenantId)?.authorizationGeneration).toBe(0);
+  });
+
+  test('checks live administration membership with one bounded lookup', () => {
+    const { service } = createHarness('owner-a', 'shared-user');
+    const administration = service.createTenant({
+      slug: 'administration',
+      name: 'Administration',
+      ownerUserId: 'owner-a',
+      kind: 'administration',
+    });
+    expect(service.hasActiveAdministrationMembership('shared-user')).toBe(false);
+    const membership = service.addMembership({
+      tenantId: administration.tenant.tenantId,
+      userId: 'shared-user',
+      roleKey: 'administrator',
+      createdBy: 'owner-a',
+    });
+    expect(service.hasActiveAdministrationMembership('shared-user')).toBe(true);
+    service.suspendMembership(membership.membershipId);
+    expect(service.hasActiveAdministrationMembership('shared-user')).toBe(false);
+    service.reactivateMembership(membership.membershipId);
+    expect(service.hasActiveAdministrationMembership('shared-user')).toBe(true);
+    service.removeMembership(membership.membershipId);
+    expect(service.hasActiveAdministrationMembership('shared-user')).toBe(false);
   });
 
   test('protects the last active owner across suspension and role changes', () => {

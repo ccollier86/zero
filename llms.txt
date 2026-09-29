@@ -63,8 +63,11 @@ Current unreleased-candidate boundary:
   unambiguous runtime exists.
 - Opt-in verified-company-domain request admission and the bounded append-only
   authorization/control-plane audit are implemented in this unreleased tree.
-  The protected Administration Organization/platform-tenant lifecycle,
-  break-glass support, tenant-custom roles, populated-app adoption tooling,
+  Multi-mode bootstrap also creates a protected Administration Organization;
+  strict browser SDK/hooks and packaged controls cover its people and the
+  capability-gated customer-organization directory/lifecycle. Break-glass
+  support, tenant-custom roles, broader populated-app discovery/migration
+  tooling beyond exact pre-024 administration reconciliation,
   domain autojoin/aliases/direct transfer, and upstream enterprise SSO remain
   separate future capabilities. File-mode runtimes sharing one SQLite database
   relay durable row and State Sync changes and poll durable auth authority so
@@ -109,6 +112,11 @@ publicly supported.
 - `docs/auth/README.md`: canonical auth subsystem map for bootstrap, all four
   profiles, permissions/RBAC, administration, onboarding, audit, browser
   state, and installed-app authentication.
+- `docs/auth/platform-administration.md`: exact protected Administration
+  Organization, application-permission, customer-directory, SDK/hook, and
+  packaged-control contract.
+- `docs/tokens.md`: generic action/resume tokens and the exact shared-
+  ReactiveDB transaction/post-commit telemetry contract used by auth actions.
 - `docs/auth/app-auth-sdk-guide.md`: selection and onboarding for web,
   TypeScript native, Rust/Tauri, Chrome, and other installed-app clients,
   including honest package release status.
@@ -852,8 +860,10 @@ are not access control and must not contain executable client-trusted policy.
 
 ## Auth
 
-The current tree keeps the existing global identity/platform-role model and
-adds independent tenancy and authorization axes:
+The current tree keeps the existing global identity/legacy-global-role model
+and adds independent tenancy and authorization axes. The legacy `admin` role
+does not supply advanced application permissions, and those permissions do not
+promote the legacy role:
 
 ```ts
 auth: {
@@ -869,6 +879,18 @@ assignments through the same kernel. User/session projections come from auth
 APIs; generic Sync does not expose the `users` table under default
 `createApp()` policy. Raw SQL and deliberate `zero.unsafe` use remain trusted
 application code outside Zero's tenant-isolation guarantee.
+
+When `authorization` is an object, its positive `registryVersion` defaults to
+`1`. Increment it before deploying any same-profile permission/role semantic
+change; labels and descriptions alone do not require a bump. Migration `027`
+persists a semantic fingerprint. Same-version drift, rollback, corrupt
+markers, and reintroducing a role key while retained live assignments still
+name it fail startup. A supported profile-axis transition may keep the version
+only when permission, role, and evaluator semantics are otherwise identical;
+combined profile-and-registry semantic changes require a bump. Successful
+registry changes are system-audited and stale
+runtimes fail closed until restarted. The public auth config exposes only the
+authorization mode, never this server-only manifest.
 
 Zero auth supports:
 
@@ -887,6 +909,8 @@ Zero auth supports:
 - durable application/tenant session persistence, refresh, selection, and switching
 - admin user management
 - single/advanced application access management
+- protected Administration Organization people/invitation management and
+  permission-gated customer-organization lifecycle
 - tenant member and role administration
 - exact-email invitations, invitation-bound registration, and retained join requests
 - sanitized browser authorization snapshots and permission/tenant/platform gates
@@ -894,6 +918,14 @@ Zero auth supports:
 - property-based backend policy
 - desktop/mobile/extension public clients using the same users and
   authorization policy
+
+In multi mode the browser authorization snapshot keeps the active membership
+in tenant `scope`. While the active tenant is the protected Administration
+Organization, additive `applicationScope` carries its application permissions.
+Permission helpers and `PermissionGate` inspect both projections;
+tenant-role/tenant-ID gates inspect only `scope`. The opaque snapshot revision
+covers both planes and the installed registry version. These are UI hints,
+never server authority.
 
 Common auth config:
 
@@ -956,6 +988,8 @@ Auth UI components:
 - `TenantInvitationForm`
 - `TenantOnboardingManagement`
 - `ApplicationAccessManagement`
+- `PlatformAdministrationManagement`
+- `PlatformTenantManagement`
 - `PermissionGate`
 - `TenantGate`
 - `PlatformAdminGate`
@@ -1121,6 +1155,20 @@ tokens. Use them for:
 
 Token validation should happen server-side. Resume tokens can point to draft
 records or form state records, but the token service should remain generic.
+
+Auth password/account actions layer `AuthActionTokenService` over the generic
+platform service. Both stores must use the exact same `ReactiveDB` instance,
+not merely the same file path or database configuration. `createApp()` mounts
+platform tokens before auth and injects the correct app-local service
+automatically. Direct plugin composition must pass that same service through
+`platformTokenService` or `getPlatformTokenService`; a mismatched transaction
+domain fails closed with `AUTH_STATE_INVARIANT_FAILED`.
+
+Action-token consumption joins the outer auth transaction. Platform and auth
+consumed-success observability is queued after the outermost commit, so a
+credential/account rollback preserves the token and emits no false success.
+Read `docs/tokens.md#auth-transaction-boundary` before directly composing the
+two plugins.
 
 ## Storage
 
@@ -1493,7 +1541,7 @@ Platform hooks:
 
 | Area | Hooks |
 | --- | --- |
-| Auth/session and access | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useAuthorization`, `useAuthorizationScopeBoundary`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher` |
+| Auth/session and access | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useAuthorization`, `useAuthorizationScopeBoundary`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `usePlatformAdministration`, `usePlatformTenants`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher` |
 | Live data | `useCollection`, `useLazyCollection`, `useDataPage`, `useRecord`, `useRecordByIdentity`, `useDataSelection` |
 | Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
 | Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveQuota` |
@@ -2021,6 +2069,9 @@ reference docs confirm the behavior is implemented.
 - [Application Access Administration](docs/auth/application-access-administration.md):
   single/advanced application roles, ownership, revisions, typed SDK/hook, and
   packaged control UI without tenant semantics.
+- [Platform Administration Organization](docs/auth/platform-administration.md):
+  multi-mode bootstrap administration scope, people/invitations,
+  customer-organization lifecycle, routes, permissions, SDK/hooks, and UI.
 - [Tenant Member Administration](docs/auth/tenant-member-administration.md):
   active-tenant member lifecycle, role assignments, ownership transfer,
   grant ceilings, SDK/hooks, and packaged UI.
@@ -2049,11 +2100,11 @@ reference docs confirm the behavior is implemented.
 - [Native auth integration recipes](examples/native-auth/README.md): narrow
   trusted JavaScript host bridges for desktop loopback and mobile browser
   sessions, including the Tauri sidecar boundary and broker IPC.
-- [User Store](docs/auth/user-store.md): user persistence model, user CRUD,
-  roles, lifecycle fields, password hashes, properties, and admin operations.
+- [User Store](docs/auth/user-store.md): stable identity facade, focused
+  credential/token/provisioning stores, user CRUD, lifecycle fields,
+  properties, and atomic password operations.
 - [Token Service](docs/auth/token-service.md): JWT access/refresh tokens,
-  rotation, JWKS, action tokens, refresh token storage, revocation, and replay
-  detection.
+  rotation, JWKS, refresh persistence, revocation, and replay detection.
 - [Admin User Management Plan](docs/auth/admin-user-management-plan.md): plan and
   coverage for admin user UI, creation, deletion/suspension, reset flows,
   properties, roles, and management organism expectations.

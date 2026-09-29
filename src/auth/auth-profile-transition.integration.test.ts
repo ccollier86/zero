@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createEmailRuntime } from '../email/runtime';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import { resolveAuthBehaviorConfig } from './auth-config';
+import { readInstalledAuthorizationManifest } from './auth-authorization-manifest';
 import { readInstalledAuthProfile } from './auth-profile-state';
 import { AuthRuntime } from './auth-runtime';
 
@@ -34,6 +35,7 @@ describe('auth runtime profile transitions', () => {
     const created = simple.getTenancyService()!.createTenant({
       slug: 'continuity', name: 'Continuity', ownerUserId: 'owner',
     });
+    simple.getTenancyService()!.adoptAdministrationTenant(created.tenant.tenantId);
     const manager = simple.getTenancyService()!.addMembership({
       tenantId: created.tenant.tenantId,
       userId: 'manager',
@@ -52,7 +54,12 @@ describe('auth runtime profile transitions', () => {
     });
     const beforeGeneration = manager.authorizationGeneration;
 
-    const advanced = runtime(db, 'multi', 'advanced');
+    const advanced = runtime(
+      db,
+      'multi',
+      'advanced',
+      created.tenant.tenantId,
+    );
     runtimes.push(advanced);
     await advanced.start();
     expect(readInstalledAuthProfile(db)).toMatchObject({
@@ -111,11 +118,17 @@ describe('auth runtime profile transitions', () => {
     const created = simple.getTenancyService()!.createTenant({
       slug: 'restart', name: 'Restart', ownerUserId: 'owner',
     });
+    simple.getTenancyService()!.adoptAdministrationTenant(created.tenant.tenantId);
     const member = simple.getTenancyService()!.addMembership({
       tenantId: created.tenant.tenantId,
       userId: 'member', roleKey: 'member', createdBy: 'owner',
     });
-    const advanced = runtime(db, 'multi', 'advanced');
+    const advanced = runtime(
+      db,
+      'multi',
+      'advanced',
+      created.tenant.tenantId,
+    );
     runtimes.push(advanced);
     await advanced.start();
     const baseline = snapshot(db);
@@ -124,7 +137,12 @@ describe('auth runtime profile transitions', () => {
     await simple.stop();
     runtimes.splice(runtimes.indexOf(simple), 1);
 
-    const restarted = runtime(db, 'multi', 'advanced');
+    const restarted = runtime(
+      db,
+      'multi',
+      'advanced',
+      created.tenant.tenantId,
+    );
     runtimes.push(restarted);
     await restarted.start();
     expect(snapshot(db)).toEqual(baseline);
@@ -145,7 +163,7 @@ describe('auth runtime profile transitions', () => {
     await simple.stop();
     runtimes.splice(runtimes.indexOf(simple), 1);
 
-    const blocked = runtime(db, 'single', 'advanced');
+    const blocked = runtime(db, 'single', 'advanced', undefined, 2);
     runtimes.push(blocked);
     await expect(blocked.start()).rejects.toThrow('ownerAdoption');
     expect(readInstalledAuthProfile(db)).toMatchObject({
@@ -160,6 +178,7 @@ describe('auth runtime profile transitions', () => {
         tenancy: 'single',
         authorization: {
           mode: 'advanced',
+          registryVersion: 2,
           ownerAdoption: { userId: 'platform-admin' },
         },
       }),
@@ -184,7 +203,7 @@ describe('auth runtime profile transitions', () => {
     const secondDb = createReactiveDB({ mode: path, busyTimeout: 10_000 });
     databases.push(firstDb, secondDb);
     const first = runtime(firstDb, 'single', 'simple');
-    const second = runtime(secondDb, 'multi', 'simple');
+    const second = runtime(secondDb, 'multi', 'simple', undefined, 2);
     runtimes.push(first, second);
 
     const [firstResult, secondResult] = await Promise.allSettled([
@@ -233,6 +252,36 @@ describe('auth runtime profile transitions', () => {
       readInstalledAuthProfile(firstDb),
     );
   });
+
+  test('requires an explicit registry version for same-profile authority changes', async () => {
+    const db = createDb();
+    const first = registryRuntime(db, 1, false);
+    runtimes.push(first);
+    await first.start();
+    const original = readInstalledAuthorizationManifest(db);
+    expect(original).toMatchObject({ registryVersion: 1 });
+
+    const drifted = registryRuntime(db, 1, true);
+    runtimes.push(drifted);
+    await expect(drifted.start()).rejects.toMatchObject({
+      code: 'AUTHORIZATION_REGISTRY_VERSION_REQUIRED',
+      status: 503,
+    });
+    expect(readInstalledAuthorizationManifest(db)).toEqual(original);
+    expect(first.getAuthorizationKernel().authorization.permissions)
+      .not.toHaveProperty('records:write');
+
+    const acknowledged = registryRuntime(db, 2, true);
+    runtimes.push(acknowledged);
+    await acknowledged.start();
+    expect(readInstalledAuthorizationManifest(db)).toMatchObject({ registryVersion: 2 });
+    expect(acknowledged.getAuthorizationKernel().authorization.permissions)
+      .toHaveProperty('records:write');
+    expect(() => first.getAuthorizationKernel()).toThrow(expect.objectContaining({
+      code: 'AUTH_PROFILE_CHANGED',
+      status: 503,
+    }));
+  });
 });
 
 function createDb(): ReactiveDB {
@@ -245,10 +294,19 @@ function runtime(
   db: ReactiveDB,
   tenancy: 'single' | 'multi',
   authorization: 'simple' | 'advanced',
+  adoptTenantId?: string,
+  registryVersion?: number,
 ): AuthRuntime {
   return new AuthRuntime(
     { db },
-    resolveAuthBehaviorConfig({ tenancy, authorization }),
+    resolveAuthBehaviorConfig({
+      tenancy: tenancy === 'multi' && adoptTenantId
+        ? { mode: 'multi', administration: { adoptTenantId } }
+        : tenancy,
+      authorization: registryVersion === undefined
+        ? authorization
+        : { mode: authorization, registryVersion },
+    }),
     dependencies(),
   );
 }
@@ -258,6 +316,35 @@ function dependencies() {
     getEmailRuntime: () => createEmailRuntime(false, {}),
     getPlatformTokenService: () => null,
   };
+}
+
+function registryRuntime(
+  db: ReactiveDB,
+  registryVersion: number,
+  includeWrite: boolean,
+): AuthRuntime {
+  return new AuthRuntime(
+    { db },
+    resolveAuthBehaviorConfig({
+      tenancy: 'single',
+      authorization: {
+        mode: 'advanced',
+        registryVersion,
+        permissions: {
+          'records:read': {},
+          ...(includeWrite ? { 'records:write': {} } : {}),
+        },
+        roles: {
+          reader: {
+            permissions: includeWrite
+              ? ['records:read', 'records:write']
+              : ['records:read'],
+          },
+        },
+      },
+    }),
+    dependencies(),
+  );
 }
 
 function insertUser(

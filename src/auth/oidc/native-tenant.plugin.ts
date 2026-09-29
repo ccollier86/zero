@@ -7,6 +7,10 @@ import { rejectNativeClientAuthorization } from './native-client-auth';
 import { readNativeForm, rejectClientSecret, requiredFormField } from './native-form';
 import { oauthJson } from './native-http';
 import type { NativeAuthHttpConfig } from './native-plugin-types';
+import {
+  emitUnexpectedNativeRequestFailure,
+  nativeRuntimeUnavailableError,
+} from './native-request-failure';
 import { NativeTokenError, nativeTokenErrorResponse } from './native-token-error';
 import { authAuditRequestFromRequest } from '../auth-audit-service';
 
@@ -24,6 +28,7 @@ async function listRequest(config: NativeAuthHttpConfig, request: Request): Prom
       clientId: requiredFormField(form, 'client_id'),
     }));
   } catch (error) {
+    emitUnexpectedNativeRequestFailure(config, 'tenant.list', error);
     return nativeTokenErrorResponse(asTokenError(error));
   }
 }
@@ -38,6 +43,7 @@ async function switchRequest(config: NativeAuthHttpConfig, request: Request): Pr
       auditRequest: authAuditRequestFromRequest(request),
     }));
   } catch (error) {
+    emitUnexpectedNativeRequestFailure(config, 'tenant.switch', error);
     return nativeTokenErrorResponse(asTokenError(error));
   }
 }
@@ -47,7 +53,7 @@ async function resolveRequest(config: NativeAuthHttpConfig, request: Request) {
   const form = await readNativeForm(request);
   rejectClientSecret(form);
   const service = config.getService();
-  if (!service) throw new NativeTokenError('invalid_request', 'Native auth is unavailable.', 503);
+  if (!service) throw nativeRuntimeUnavailableError();
   return { service, form };
 }
 
@@ -56,5 +62,20 @@ function asTokenError(error: unknown): NativeTokenError {
   if (error instanceof NativeAuthorizationError && error.code === 'unauthorized_client') {
     return new NativeTokenError('invalid_client', 'Unknown native client.');
   }
-  return new NativeTokenError('invalid_request', 'Tenant request was rejected.');
+  if (error instanceof NativeAuthorizationError && error.code === 'temporarily_unavailable') {
+    return new NativeTokenError(
+      'temporarily_unavailable',
+      'Native authentication is temporarily unavailable.',
+      error.status,
+    );
+  }
+  if (error instanceof NativeAuthorizationError
+    && error.code !== 'server_error') {
+    return new NativeTokenError('invalid_request', 'Tenant request was rejected.');
+  }
+  return new NativeTokenError(
+    'temporarily_unavailable',
+    'Native authentication is temporarily unavailable.',
+    503,
+  );
 }

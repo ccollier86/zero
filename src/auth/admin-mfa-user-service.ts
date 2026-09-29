@@ -10,14 +10,19 @@ import type { MfaChallengeService } from './mfa-challenge-service';
 import type { MfaService } from './mfa-service';
 import { AuthError } from './types';
 import type { AuthSecurityAuditContext, UserStore } from './user-store';
-import type { AssertAuthAdminMutationAuthority } from './auth-admin-mutation-authority';
+import {
+  invokeAuthAdminMutationAuthority,
+  type AssertAuthAdminMutationAuthority,
+} from './auth-admin-mutation-authority';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 
 export class AdminMfaUserService {
   constructor(
     private readonly store: UserStore,
     private readonly mfa: MfaChallengeService,
     private readonly readiness: MfaService,
-    private readonly emailOtpReady: boolean
+    private readonly emailOtpReady: boolean,
+    private readonly emitCode?: AuthPlatformCodeEmitter,
   ) {}
 
   /** Return public-safe enrollment state and the active requirement source. */
@@ -39,7 +44,7 @@ export class AdminMfaUserService {
   ) {
     this.assertAvailable();
     return this.store.transaction(() => {
-      const actorId = assertCurrentAuthority().userId;
+      const actorId = this.assertAuthority(assertCurrentAuthority, userId).userId;
       const user = this.requireUser(userId);
       const changed = !user.mfaRequired;
       if (changed) {
@@ -58,7 +63,7 @@ export class AdminMfaUserService {
     audit?: AuthSecurityAuditContext,
   ) {
     return this.store.transaction(() => {
-      const actorId = assertCurrentAuthority().userId;
+      const actorId = this.assertAuthority(assertCurrentAuthority, userId).userId;
       const user = this.requireUser(userId);
       const changed = user.mfaRequired;
       if (changed) {
@@ -83,7 +88,7 @@ export class AdminMfaUserService {
     audit?: AuthSecurityAuditContext,
   ) {
     return this.store.transaction(() => {
-      const actorId = assertCurrentAuthority().userId;
+      const actorId = this.assertAuthority(assertCurrentAuthority, userId).userId;
       const user = this.requireUser(userId);
       assertAdminMayResetMfa(actorId, user);
       const result = this.mfa.resetUserMfa(userId);
@@ -115,6 +120,17 @@ export class AdminMfaUserService {
       target: { type: 'user', id: userId },
       metadata,
     });
+  }
+
+  private assertAuthority(
+    assertion: AssertAuthAdminMutationAuthority,
+    targetUserId: string,
+  ) {
+    return invokeAuthAdminMutationAuthority(
+      assertion,
+      { targetUserId },
+      { component: 'admin-mfa-user-service', emitCode: this.emitCode },
+    );
   }
 
   private assertAvailable(): void {

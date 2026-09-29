@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 import { configureEmail, type EmailProvider } from '../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import {
   configureObservability,
   getObservabilityRuntime,
@@ -11,7 +12,7 @@ import { createReactiveDB } from '../sync/reactive-db';
 import { createAuthPlugin, getAuthEmailOutbox, getAuthStore } from './auth.plugin';
 import { installAuthStopBarrier } from './auth-stop-lifecycle';
 
-afterEach(() => configureEmail(false));
+afterEach(() => resetEmailCompatibilityRuntimeForTesting());
 
 test('standalone auth stop joins delivery before its caller disposes the database', async () => {
   const previousObservability = getObservabilityRuntime().config;

@@ -63,26 +63,38 @@ export function UserManagement({
     () => createUserManagementSchema(roleOptions, roleFieldLabel),
     [roleFieldLabel, roleOptions],
   );
-  const canUpdate = !controlled || Boolean(onUpdate);
+  const canManageSelectedLiveUser = config?.capabilities.canManageUsers === true
+    && (selectedUser?.role !== 'admin'
+      || config.capabilities.canManageGlobalAdmins === true);
+  const canUpdate = controlled ? Boolean(onUpdate) : canManageSelectedLiveUser;
   const editableFields = React.useMemo(() => getUserManagementEditableFields(config, {
     canUpdate,
     isSelf: selectedUser?.userId === currentUser?.userId,
-  }), [canUpdate, config, currentUser?.userId, selectedUser?.userId]);
+    enforceCapabilities: !controlled,
+  }), [canUpdate, config, controlled, currentUser?.userId, selectedUser?.userId]);
 
   const mutations = useUserManagementMutations({
     controlled,
     live,
     handlers: { onCreate, onUpdate, onDeleteProperty, onDelete },
   });
+  const createRoleOptions = React.useMemo(() => (
+    controlled || config?.capabilities.canManageGlobalAdmins === true
+      ? roleOptions
+      : roleOptions.filter((option) => option.value !== 'admin')
+  ), [config?.capabilities.canManageGlobalAdmins, controlled, roleOptions]);
   const openCreateDialog = useUserCreateDialog({
     config,
-    roleOptions,
+    roleOptions: createRoleOptions,
+    allowGlobalAdminRole: controlled
+      || config?.capabilities.canManageGlobalAdmins === true,
     createUser: mutations.createUser,
   });
   const mfaLoader = useStableMfaLoader(live.getMfaStatus);
   const mfa = useUserMfaStatus({
     user: selectedUser,
-    enabled: !controlled && config?.capabilities.mfa === true,
+    enabled: !controlled && canManageSelectedLiveUser
+      && config?.capabilities.mfa === true,
     revision: securityRevision,
     load: mfaLoader,
   });
@@ -98,8 +110,9 @@ export function UserManagement({
     deleteUser: mutations.deleteUser,
     onSecurityChanged: securityChanged,
   });
-  const creationDisabled = config === null || live.isLoading || !canCreateManagedUser(config);
-  const primaryAction = controlled && !onCreate ? undefined : {
+  const canCreate = controlled ? Boolean(onCreate) : canCreateManagedUser(config);
+  const creationDisabled = (!controlled && config === null) || live.isLoading || !canCreate;
+  const primaryAction = !canCreate ? undefined : {
     label: config?.registration.mode === 'disabled' ? 'Creation Disabled'
       : live.isLoading ? 'Loading' : 'Add User',
     disabled: creationDisabled,

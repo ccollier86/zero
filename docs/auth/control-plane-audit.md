@@ -2,7 +2,7 @@
 
 > Status: implemented in this unreleased candidate
 >
-> Last reviewed: 2026-09-28
+> Last reviewed: 2026-09-29
 
 Zero retains a bounded, append-only trail for security and authorization
 control-plane changes. This is not a general user-activity logger: it does not
@@ -44,7 +44,9 @@ Email/provider delivery and DNS resolution happen outside SQLite by necessity.
 Admin setup/reset delivery records separate prepared, provider-succeeded, and
 provider-failed facts, but never claims those external facts committed
 atomically with SQLite. Other provider/DNS attempts remain operational
-observability. The resulting local security-state transition—for example the
+observability under the
+[Auth Operational Failure Contract](../observability.md#auth-operational-failure-contract).
+The resulting local security-state transition—for example the
 password-change gate after successful setup delivery or the finalized domain
 verification result—is still written atomically with its own mutation.
 
@@ -81,9 +83,9 @@ The current trail records these successful local control-plane transitions:
 
 | Area | Action families |
 | --- | --- |
-| Installation and identity | `application.bootstrap-completed`, `identity.registered`, `identity.provisioned-by-admin`, `identity.provisioning-rolled-back` |
-| Application access | `application.roles-replaced`, `application.ownership-transferred`, `application.ownership-adopted`, `application.tenant-owner-roles-reconciled` |
-| Tenant lifecycle and authority | `tenant.created`, `tenant.member-added`, `tenant.member-updated`, `tenant.member-removed`, `tenant.ownership-transferred` |
+| Installation and identity | `application.bootstrap-completed`, `application.auth-profile-adopted`, `tenant.administration-adopted`, `identity.registered`, `identity.provisioned-by-admin`, `identity.provisioning-rolled-back` |
+| Application access | `application.roles-replaced`, `application.ownership-transferred`, `application.ownership-adopted`, `application.tenant-owner-roles-reconciled`, `application.authorization-registry-initialized`, `application.authorization-registry-updated` |
+| Tenant lifecycle and authority | `tenant.created`, `tenant.member-added`, `tenant.member-updated`, `tenant.member-removed`, `tenant.ownership-transferred`, `application.tenant-created`, `application.tenant-suspended`, `application.tenant-reactivated` |
 | Invitations and requests | `tenant.invitation-issued`, `tenant.invitation-revoked`, `tenant.invitation-accepted`, `tenant.join-request-submitted`, `tenant.join-request-approved`, `tenant.join-request-denied` |
 | Session scope and revocation | browser and native `session.scope-switched`, `session.tenant-selected`, `session.tenant-switched`, `session.revoked`, `session.user-scope-revoked`, and `account.sessions-revoked` |
 | Account security | password change/recovery/admin reset and forced-change gates; admin setup/reset delivery prepared/succeeded/failed; email verification; admin account update/status/delete; admin property writes; MFA enrollment, requirement, clear, and reset |
@@ -97,8 +99,8 @@ completed verification action with outcome `failed` and reason
 tenant history is retained as denied without deleting the identity.
 
 This inventory deliberately excludes generic application reads/writes,
-automatic read auditing, SSO, break-glass administration, the proposed future
-administration organization, public verified-domain mailbox proof/admission,
+automatic read auditing, SSO, break-glass administration, platform-directory
+reads, public verified-domain mailbox proof/admission,
 background domain reverification, and all other action-token/email delivery
 telemetry beyond the administrator setup/reset facts listed above. Those
 exclusions must not be represented to operators as covered activity.
@@ -112,14 +114,19 @@ transaction. Optional setup delivery then records each fact it actually knows;
 provider failure records a separate failed delivery and an atomic compensating
 identity rollback. Startup repair of legacy tenant-owner assignments records
 one application-scoped system reconciliation event, with a bounded count, in
-the same transaction as the repaired rows.
+the same transaction as the repaired rows. Initialization or an explicitly
+versioned semantic change to the resolved authorization registry records an
+application-scoped system event containing only the bounded old/new registry
+versions and fingerprints. The manifest and audit event commit in the startup
+transaction; unchanged restarts add no event.
 
 These guarantees apply to Zero's authorized route and coordinating-service
 surfaces. Raw `UserStore`, `TenantStore`/`TenancyService`, and role-store calls
 remain trusted server-side building blocks: they are not self-authorizing and
-must not be used as an application control plane. In particular, tenant
-suspend/reactivate exists only as a low-level persistence primitive today; no
-public platform-tenant lifecycle route claims durable actor attribution for it.
+must not be used as an application control plane. The protected platform
+tenant-lifecycle service records customer creation, suspension, and
+reactivation with durable application-scope actor attribution; direct
+low-level store calls do not.
 
 ## Authorized HTTP routes
 
@@ -128,9 +135,9 @@ parent-session authority, not only role/scope claims from an old access token.
 
 | Route | Authority |
 | --- | --- |
-| `GET /auth/audit/platform/events` | current global/platform `admin` |
-| `GET /auth/audit/platform/export` | current global/platform `admin` |
-| `POST /auth/audit/platform/prune` | current global/platform `admin` |
+| `GET /auth/audit/platform/events` | single mode: legacy global `admin`; multi mode: active Administration Organization plus `application.audit:read` |
+| `GET /auth/audit/platform/export` | single mode: legacy global `admin`; multi mode: active Administration Organization plus `application.audit:read` |
+| `POST /auth/audit/platform/prune` | single mode: legacy global `admin`; multi mode: active Administration Organization plus `application.audit:manage` |
 | `GET /auth/audit/tenant/events` | current active tenant plus `tenant.audit:read` |
 | `GET /auth/audit/tenant/export` | current active tenant plus `tenant.audit:read` |
 

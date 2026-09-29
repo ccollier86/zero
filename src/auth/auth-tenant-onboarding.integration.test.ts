@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Elysia, type AnyElysia } from 'elysia';
 import { configureEmail, MemoryEmailProvider } from '../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import type { AuthRuntime } from './auth-runtime';
 import { createAuthPlugin } from './auth.plugin';
@@ -26,7 +27,7 @@ afterEach(async () => {
     await harness.app.stop();
     harness.db.dispose();
   }
-  configureEmail(false);
+  resetEmailCompatibilityRuntimeForTesting();
 });
 
 async function start(
@@ -366,7 +367,7 @@ describe('multi-tenant onboarding and creation', () => {
     expect(tenantCount(harness.db)).toBe(1);
   }, 60_000);
 
-  test('platform-admin policy is live and supports continuation and refresh-family creation', async () => {
+  test('platform-admin policy requires live administration-organization authority', async () => {
     const harness = await start('platform-admin');
     const bootstrapAdmin = await bootstrap(harness, 'platform-owner');
 
@@ -374,7 +375,7 @@ describe('multi-tenant onboarding and creation', () => {
     expect(ordinary.body.onboarding.tenantCreation).toEqual({ allowed: false });
     expect(ordinary.body.accessToken).toBeUndefined();
 
-    const admin = await harness.runtime.getStore()!.createUser({
+    const legacyGlobalAdmin = await harness.runtime.getStore()!.createUser({
       username: 'second-admin',
       email: 'second-admin@example.test',
       password: 'password123',
@@ -382,15 +383,42 @@ describe('multi-tenant onboarding and creation', () => {
       emailVerifiedAt: Date.now(),
     });
     const login = await post(harness, '/auth/login', {
-      username: admin.username,
+      username: legacyGlobalAdmin.username,
       password: 'password123',
     });
-    expect(login.body.onboarding.tenantCreation.allowed).toBe(true);
+    expect(login.body.onboarding.tenantCreation.allowed).toBe(false);
     const fromContinuation = await post(harness, '/auth/tenants/create', {
-      continuation: continuation(login),
+      continuation: login.body.onboarding.continuation,
       name: 'Admin Continuation Workspace',
     });
-    expect(fromContinuation.status).toBe(200);
+    expect(fromContinuation).toMatchObject({
+      status: 403,
+      body: { code: 'TENANT_CREATION_FORBIDDEN' },
+    });
+
+    const administrationTenantId = bootstrapAdmin.body.activeTenant.tenantId as string;
+    harness.runtime.getTenancyService()!.addMembership({
+      tenantId: administrationTenantId,
+      userId: ordinary.body.user.userId,
+      roleKey: 'administrator',
+      createdBy: bootstrapAdmin.body.user.userId,
+    });
+    const operatorLogin = await post(harness, '/auth/login', {
+      username: ordinary.body.user.username,
+      password: 'password123',
+    });
+    expect(operatorLogin.body.activeTenant).toMatchObject({
+      tenantId: administrationTenantId,
+      kind: 'administration',
+    });
+    const fromApplicationAuthority = await post(harness, '/auth/tenants/create', {
+      refreshToken: operatorLogin.body.refreshToken,
+      name: 'Delegated Platform Workspace',
+    });
+    expect(fromApplicationAuthority).toMatchObject({
+      status: 200,
+      body: { activeTenant: { kind: 'organization', role: 'owner' } },
+    });
 
     const fromRefresh = await post(harness, '/auth/tenants/create', {
       refreshToken: bootstrapAdmin.body.refreshToken,

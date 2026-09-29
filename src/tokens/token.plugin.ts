@@ -9,14 +9,18 @@
 import { Elysia } from 'elysia';
 import type { ReactiveDB } from '../sync/reactive-db';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
+import { emitPlatformCode, emitPlatformCodeTo } from '../observability/sink';
 import type { PlatformTokenServiceConfig } from './token-types';
-import { PlatformTokenService } from './token-service';
+import {
+  PlatformTokenService,
+  type PlatformTokenCodeEmitter,
+} from './token-service';
 import { PlatformTokenStore, definePlatformTokenTables } from './token-store';
 import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
 import {
   ZERO_PLATFORM_TOKEN_SERVICE,
   ZERO_PLATFORM_TOKEN_STORE,
+  ZERO_OBSERVABILITY_RUNTIME,
 } from '../runtime/service-keys';
 import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 
@@ -54,10 +58,11 @@ export function getPlatformTokenStore(): PlatformTokenStore | null {
  * Useful for tests and advanced apps that need the service outside createApp.
  */
 export function configurePlatformTokens(config: PlatformTokenPluginConfig): PlatformTokenService {
+  const emitCode = createPlatformTokenCodeEmitter(config.runtime);
   resetPlatformTokens();
   definePlatformTokenTables(config.db);
   const store = new PlatformTokenStore(config.db);
-  const service = new PlatformTokenService(store, config);
+  const service = new PlatformTokenService(store, config, emitCode);
   manualStoreRegistration = tokenStoreProviders.register(manualOwner, () => store);
   manualServiceRegistration = tokenServiceProviders.register(manualOwner, () => service);
   return service;
@@ -73,6 +78,7 @@ export function resetPlatformTokens(): void {
 
 /** Create the Elysia plugin that exposes `platformTokens` to route context. */
 export function createPlatformTokenPlugin(config: PlatformTokenPluginConfig) {
+  const emitCode = createPlatformTokenCodeEmitter(config.runtime);
   const owner = {};
   let store: PlatformTokenStore | null = null;
   let service: PlatformTokenService | null = null;
@@ -85,13 +91,13 @@ export function createPlatformTokenPlugin(config: PlatformTokenPluginConfig) {
     .onStart(() => {
       definePlatformTokenTables(config.db);
       store = new PlatformTokenStore(config.db);
-      service = new PlatformTokenService(store, config);
+      service = new PlatformTokenService(store, config, emitCode);
       storeRegistration = tokenStoreProviders.register(owner, () => store);
       serviceRegistration = tokenServiceProviders.register(owner, () => service);
       config.runtime?.set(ZERO_PLATFORM_TOKEN_STORE, store);
       config.runtime?.set(ZERO_PLATFORM_TOKEN_SERVICE, service);
       config.onServiceCreated?.(service);
-      emitPlatformCode(OBS_CODES.TOKENS_STARTED);
+      emitCode(OBS_CODES.TOKENS_STARTED);
     })
     .onStop(() => {
       if (service) config.runtime?.clear(ZERO_PLATFORM_TOKEN_SERVICE, service);
@@ -102,9 +108,21 @@ export function createPlatformTokenPlugin(config: PlatformTokenPluginConfig) {
       storeRegistration = null;
       service = null;
       store = null;
-      emitPlatformCode(OBS_CODES.TOKENS_STOPPED);
+      emitCode(OBS_CODES.TOKENS_STOPPED);
     })
     .derive({ as: 'global' }, () => ({
       platformTokens: service,
     }));
+}
+
+function createPlatformTokenCodeEmitter(
+  runtime?: ZeroAppRuntime,
+): PlatformTokenCodeEmitter {
+  if (!runtime) return emitPlatformCode;
+  const observability = runtime.require(ZERO_OBSERVABILITY_RUNTIME);
+  return (definition, options) => emitPlatformCodeTo(
+    observability,
+    definition,
+    options,
+  );
 }

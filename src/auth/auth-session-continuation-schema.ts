@@ -15,9 +15,12 @@ export function defineAuthSessionContinuationTables(db: ReactiveDB): void {
       expires_at      INTEGER NOT NULL,
       consumed_at     INTEGER,
       created_at      INTEGER NOT NULL,
+      mfa_verified_at INTEGER
+                      CHECK (mfa_verified_at IS NULL OR mfa_verified_at >= 0),
       FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
     )
   `);
+  ensureAuthContinuationMfaAssuranceColumn(db);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_auth_session_continuations_user_purpose
     ON _auth_session_continuations(user_id, purpose, expires_at)
@@ -26,6 +29,20 @@ export function defineAuthSessionContinuationTables(db: ReactiveDB): void {
     CREATE INDEX IF NOT EXISTS idx_auth_session_continuations_cleanup
     ON _auth_session_continuations(expires_at, consumed_at)
   `);
+}
+
+/** Older identity continuations carry no MFA proof and therefore migrate as null. */
+export function ensureAuthContinuationMfaAssuranceColumn(db: ReactiveDB): void {
+  const columns = db.prepare('PRAGMA table_info(_auth_session_continuations)').all() as Array<{
+    name: string;
+  }>;
+  if (!columns.some((column) => column.name === 'mfa_verified_at')) {
+    db.exec(`
+      ALTER TABLE _auth_session_continuations
+      ADD COLUMN mfa_verified_at INTEGER
+        CHECK (mfa_verified_at IS NULL OR mfa_verified_at >= 0)
+    `);
+  }
 }
 
 /** Upgrade the original selection-only constraint without dropping live proofs. */
@@ -55,6 +72,8 @@ function migrateLegacyContinuationTable(db: ReactiveDB): void {
         expires_at      INTEGER NOT NULL,
         consumed_at     INTEGER,
         created_at      INTEGER NOT NULL,
+        mfa_verified_at INTEGER
+                        CHECK (mfa_verified_at IS NULL OR mfa_verified_at >= 0),
         FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
       )
     `);

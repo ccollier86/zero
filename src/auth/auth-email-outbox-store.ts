@@ -7,6 +7,10 @@ import type {
 } from './auth-email-outbox-types';
 import { prepareAuthEmailOutboxStatements } from './auth-email-outbox-store-sql';
 import { toAuthEmailOutboxJob, type AuthEmailOutboxRow } from './auth-email-outbox-row';
+import {
+  createAuthStateInvariantError,
+  type AuthPlatformCodeEmitter,
+} from './auth-observability';
 
 export type AuthEmailEnqueueResult = 'enqueued' | 'duplicate' | 'capacity';
 
@@ -18,6 +22,7 @@ export class AuthEmailOutboxStore {
     private readonly db: ReactiveDB,
     private readonly workerId: string,
     private readonly assertRuntimeProfileCurrent: () => void = () => {},
+    private readonly emitCode?: AuthPlatformCodeEmitter,
   ) {
     const columns = db.prepare('PRAGMA table_info(_auth_email_outbox)').all() as unknown as Array<{ name: string }>;
     this.invitationCapable = columns.some(
@@ -43,9 +48,13 @@ export class AuthEmailOutboxStore {
     identityKind: 'session' | 'continuation';
     identityContinuationId: string | null;
   }, now: number, requestWindowMs: number, maxActiveJobs: number,
-  maxStoredJobs: number): AuthEmailEnqueueResult {
+    maxStoredJobs: number): AuthEmailEnqueueResult {
     if (!this.domainCapable || !this.sql.insertDomainMailbox) {
-      throw new Error('[auth] Verified-domain email outbox schema is unavailable.');
+      throw createAuthStateInvariantError(this.emitCode, {
+        component: 'auth-email-outbox-store',
+        invariant: 'verified-domain-schema-unavailable',
+        message: '[auth] Verified-domain email outbox schema is unavailable.',
+      });
     }
     return this.db.transaction(() => {
       this.assertCurrentProfile();
@@ -84,7 +93,11 @@ export class AuthEmailOutboxStore {
   }, now: number, maxActiveJobs: number,
   maxStoredJobs: number): Exclude<AuthEmailEnqueueResult, 'duplicate'> {
     if (!this.invitationCapable || !this.sql.insertInvitation) {
-      throw new Error('[auth] Tenant invitation outbox schema is unavailable.');
+      throw createAuthStateInvariantError(this.emitCode, {
+        component: 'auth-email-outbox-store',
+        invariant: 'tenant-invitation-schema-unavailable',
+        message: '[auth] Tenant invitation outbox schema is unavailable.',
+      });
     }
     return this.db.transaction(() => {
       this.assertCurrentProfile();

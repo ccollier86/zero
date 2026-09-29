@@ -31,7 +31,11 @@ const multiConfig = {
     mode: 'multi',
     terminology: { singular: 'workspace', plural: 'workspaces' },
   },
-  capabilities: { setupEmail: false, mfa: false },
+  capabilities: {
+    setupEmail: false,
+    mfa: false,
+    canManageGlobalAdmins: true,
+  },
   accountEmails: { adminCreatedUser: false },
 } as unknown as AuthAdminConfig;
 

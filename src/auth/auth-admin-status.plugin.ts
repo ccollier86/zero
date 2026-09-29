@@ -2,7 +2,6 @@
 
 import { Elysia } from 'elysia';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
 import { assertAdminUserTransition } from './admin-user-guards';
 import {
   authAuditActorFromContext,
@@ -10,6 +9,7 @@ import {
 } from './auth-audit-service';
 import {
   requireAdminMutationServices,
+  getAuthAdminEmitter,
   type AuthAdminPluginConfig,
 } from './auth-admin-dependencies';
 import { authUserIdParamsSchema } from './auth-request-schema';
@@ -17,13 +17,14 @@ import { AuthError } from './types';
 
 /** Create administrator account-status and session routes. */
 export function createAuthAdminStatusPlugin(config: AuthAdminPluginConfig) {
+  const emitCode = getAuthAdminEmitter(config);
   const schema = { params: authUserIdParamsSchema };
   return new Elysia({ name: 'auth-admin-status' })
     .post('/users/:userId/suspend', async ({ request, params }) => {
       const { store, assertCurrentAuthority } = await requireAdminMutationServices(config, request);
       let actorUserId = '';
       const user = store.transaction(() => {
-        const auth = assertCurrentAuthority();
+        const auth = assertCurrentAuthority({ targetUserId: params.userId });
         actorUserId = auth.userId;
         const existing = store.getUserById(params.userId);
         if (!existing) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
@@ -47,7 +48,7 @@ export function createAuthAdminStatusPlugin(config: AuthAdminPluginConfig) {
         });
         return updated;
       });
-      emitPlatformCode(OBS_CODES.AUTH_ACCOUNT_SUSPENDED, {
+      emitCode(OBS_CODES.AUTH_ACCOUNT_SUSPENDED, {
         userId: actorUserId,
         metadata: { targetUserId: params.userId },
       });
@@ -57,7 +58,7 @@ export function createAuthAdminStatusPlugin(config: AuthAdminPluginConfig) {
       const { store, assertCurrentAuthority } = await requireAdminMutationServices(config, request);
       let actorUserId = '';
       const user = store.transaction(() => {
-        const auth = assertCurrentAuthority();
+        const auth = assertCurrentAuthority({ targetUserId: params.userId });
         actorUserId = auth.userId;
         const existing = store.getUserById(params.userId);
         if (!existing) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
@@ -74,7 +75,7 @@ export function createAuthAdminStatusPlugin(config: AuthAdminPluginConfig) {
         });
         return updated;
       });
-      emitPlatformCode(OBS_CODES.AUTH_ACCOUNT_REACTIVATED, {
+      emitCode(OBS_CODES.AUTH_ACCOUNT_REACTIVATED, {
         userId: actorUserId,
         metadata: { targetUserId: params.userId },
       });
@@ -83,7 +84,7 @@ export function createAuthAdminStatusPlugin(config: AuthAdminPluginConfig) {
     .post('/users/:userId/revoke-sessions', async ({ request, params }) => {
       const { store, assertCurrentAuthority } = await requireAdminMutationServices(config, request);
       store.transaction(() => {
-        const auth = assertCurrentAuthority();
+        const auth = assertCurrentAuthority({ targetUserId: params.userId });
         if (!store.getUserById(params.userId)) {
           throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
         }

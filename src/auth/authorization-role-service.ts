@@ -1,5 +1,8 @@
 import type { ReactiveDB } from '../sync/reactive-db';
-import type { AuthorizationKernel } from './authorization-kernel';
+import {
+  expandAuthorizationRolesForScope,
+  type AuthorizationKernel,
+} from './authorization-kernel';
 import { AuthorizationRoleStore } from './authorization-role-store';
 import {
   AuthorizationRoleAssignmentError,
@@ -10,17 +13,22 @@ import {
   type AuthorizationRoleSet,
   type ApplicationOwnershipTransferResult,
   type ExpandedAuthorizationRoleSet,
+  type RegistrationProvisioningAuthorityInput,
   type RemoveApplicationRoleInput,
   type RemoveTenantRoleInput,
-  type RegistrationProvisioningAuthorityInput,
   type ReplaceApplicationRolesInput,
   type RollbackProvisionalApplicationOwnerInput,
   type TransferApplicationOwnershipInput,
 } from './authorization-role-types';
 import type { TenancyService } from './tenancy/tenancy-service';
 import type { UserStore } from './user-store';
-import { canUserReceiveAuthTokens } from './auth-user-eligibility';
 import type { AuthAuditService } from './auth-audit-service';
+import { canUserReceiveAuthTokens } from './auth-user-eligibility';
+import {
+  isAdministrationOnlyRole,
+  isRoleAssignableToTenantKind,
+} from './authorization-registry';
+import { AuthorizationRoleProvisioningService } from './authorization-role-provisioning-service';
 
 /**
  * Headless app-local advanced RBAC control plane.
@@ -30,14 +38,25 @@ import type { AuthAuditService } from './auth-audit-service';
  * system roles, and owns generation invalidation with each assignment write.
  */
 export class AuthorizationRoleService {
+  private readonly provisioning: AuthorizationRoleProvisioningService;
+
   constructor(
     private readonly db: ReactiveDB,
     private readonly store: AuthorizationRoleStore,
     readonly kernel: AuthorizationKernel,
     private readonly users: UserStore,
     private readonly tenancy: TenancyService | null,
-    private readonly audit?: AuthAuditService,
-  ) {}
+    audit?: AuthAuditService,
+  ) {
+    this.provisioning = new AuthorizationRoleProvisioningService(
+      db,
+      store,
+      kernel,
+      users,
+      tenancy,
+      audit,
+    );
+  }
 
   resolveApplicationRoles(userId: string): AuthorizationRoleSet | null {
     if (!this.isProfile('single')) return null;
@@ -65,11 +84,26 @@ export class AuthorizationRoleService {
     userId: string;
   }): AuthorizationRoleSet | null {
     if (!this.isProfile('multi')) return null;
-    return this.store.getTenantRoleSet(
+    const tenant = this.tenancy?.getTenant(input.tenantId);
+    if (!tenant || tenant.status !== 'active') return null;
+    const set = this.store.getTenantRoleSet(
       input.tenantId,
       input.membershipId,
       input.userId,
     );
+    if (!set || tenant.kind === 'administration') return set;
+
+    // A role retained from an older configuration remains visible to the
+    // control plane for cleanup, but becomes inert if it is now protected as
+    // administration-only. This prevents future template changes from
+    // turning a historical customer assignment into platform authority.
+    const roles = set.roles.filter((roleKey) => (
+      !isAdministrationOnlyRole(this.kernel.authorization, roleKey)
+    ));
+    return Object.freeze({
+      ...set,
+      roles: Object.freeze(roles),
+    });
   }
 
   /** Retained live assignment keys for an application-control-plane projection. */
@@ -311,9 +345,9 @@ export class AuthorizationRoleService {
     authority: ExpandedAuthorizationRoleSet;
   } {
     this.requireProfile('multi');
-    this.requireAssignableRole(input.roleKey);
     this.requireUser(input.createdBy);
     const membership = this.requireActiveMembership(input.tenantId, input.membershipId);
+    this.requireAssignableTenantRole(input.roleKey, input.tenantId);
     return this.mutation(() => {
       const inserted = this.store.insertTenant({
         tenantId: input.tenantId,
@@ -384,7 +418,7 @@ export class AuthorizationRoleService {
         if (!this.kernel.authorization.roles[roleKey]) {
           if (currentSet.has(roleKey)) continue;
         }
-        this.requireAssignableRole(roleKey);
+        this.requireAssignableTenantRole(roleKey, input.tenantId);
       }
       const assignableCurrent = current.filter(
         (roleKey) => !this.kernel.authorization.roles[roleKey]?.system,
@@ -429,41 +463,14 @@ export class AuthorizationRoleService {
 
   /** Install the protected first application owner during single-mode bootstrap. */
   establishBootstrapOwner(userId: string, registrationId?: string): void {
-    if (!this.isProfile('single')) return;
-    if (registrationId) {
-      this.requireActiveUser(userId);
-      if (!this.store.hasPendingApplicationBootstrapReceipt(userId, registrationId)) {
-        throw new AuthorizationRoleAssignmentError(
-          'Application bootstrap owner is not bound to the active registration',
-          'AUTHORIZATION_OWNERSHIP_TARGET_INVALID',
-        );
-      }
-    } else {
-      this.requireTokenEligibleUser(userId);
-    }
-    this.mutation(() => {
-      const inserted = this.store.insertApplication({
-        userId,
-        roleKey: 'owner',
-        source: 'bootstrap',
-        sourceId: registrationId ?? 'installation-bootstrap',
-        createdBy: userId,
-      });
-      if (inserted.changed) this.store.bumpApplicationGeneration(userId);
-    });
+    this.provisioning.establishBootstrapOwner(userId, registrationId);
   }
 
   /** Verify the exact pending application-owner graph before registration finalizes. */
   hasProvisionalApplicationOwner(
     input: RollbackProvisionalApplicationOwnerInput,
   ): boolean {
-    if (!this.isProfile('single') || !input.userId || !input.registrationId) {
-      return false;
-    }
-    return this.store.hasProvisionalApplicationOwner(
-      input.userId,
-      input.registrationId,
-    );
+    return this.provisioning.hasProvisionalApplicationOwner(input);
   }
 
   /**
@@ -473,24 +480,7 @@ export class AuthorizationRoleService {
   hasProvisionalRegistrationAuthority(
     input: RegistrationProvisioningAuthorityInput,
   ): boolean {
-    if (!input.registrationId || !input.userId) return false;
-    if (this.isProfile('single')) {
-      if (input.tenantId !== null) return false;
-      return !input.isBootstrap
-        || this.store.hasProvisionalApplicationOwner(
-          input.userId,
-          input.registrationId,
-        );
-    }
-    if (this.isProfile('multi')) {
-      if (input.isBootstrap && input.tenantId === null) return false;
-      return input.tenantId === null || this.store.hasProvisionalTenantOwner({
-        registrationId: input.registrationId,
-        tenantId: input.tenantId,
-        userId: input.userId,
-      });
-    }
-    return false;
+    return this.provisioning.hasProvisionalRegistrationAuthority(input);
   }
 
   /**
@@ -502,23 +492,7 @@ export class AuthorizationRoleService {
   rollbackProvisionalApplicationOwner(
     input: RollbackProvisionalApplicationOwnerInput,
   ): boolean {
-    this.requireProfile('single');
-    if (!input.userId || !input.registrationId) return false;
-    return this.mutation(() => {
-      if (!this.store.hasPendingApplicationBootstrapReceipt(
-        input.userId,
-        input.registrationId,
-      )) return false;
-      const changed = this.store.deleteProvisionalApplicationOwner(
-        input.userId,
-        input.registrationId,
-      );
-      if (changed) this.store.bumpApplicationGeneration(input.userId);
-      if (changed) return true;
-      // Recovery is idempotent if the exact pending row was already removed.
-      // A mismatched live owner assignment remains a hard failure.
-      return !this.store.getRetainedApplicationRoleKeys(input.userId).includes('owner');
-    });
+    return this.provisioning.rollbackProvisionalApplicationOwner(input);
   }
 
   /**
@@ -529,59 +503,16 @@ export class AuthorizationRoleService {
     userId: string;
     changed: boolean;
   } {
-    this.requireProfile('single');
-    return this.mutation(() => {
-      const user = selector.userId
-        ? this.users.getUserById(selector.userId)
-        : selector.email
-          ? this.users.getUserByEmail(selector.email)
-          : null;
-      if (!user) {
-        throw new AuthorizationRoleAssignmentError(
-          'Configured application owner adoption target was not found or was ambiguous',
-          'AUTHORIZATION_SUBJECT_NOT_FOUND',
-        );
-      }
-      if (!canUserReceiveAuthTokens(user)) throw ownershipTargetInvalid();
-      if (this.store.hasRetainedApplicationRole('owner')) {
-        if (this.store.getRetainedApplicationRoleKeys(user.userId).includes('owner')) {
-          return { userId: user.userId, changed: false };
-        }
-        throw new AuthorizationRoleAssignmentError(
-          'Application owner adoption is only available while the installation is ownerless',
-          'AUTHORIZATION_OWNERSHIP_TARGET_INVALID',
-        );
-      }
-      const inserted = this.store.insertApplication({
-        userId: user.userId,
-        roleKey: 'owner',
-        source: 'migration',
-        sourceId: 'configured-owner-adoption',
-        createdBy: user.userId,
-      });
-      if (inserted.changed) {
-        this.store.bumpApplicationGeneration(user.userId);
-        this.audit?.append({
-          action: 'application.ownership-adopted',
-          outcome: 'succeeded',
-          scope: { kind: 'application' },
-          actor: { provenance: 'system' },
-          target: { type: 'user', id: user.userId },
-        });
-      }
-      return { userId: user.userId, changed: inserted.changed };
-    });
+    return this.provisioning.adoptApplicationOwner(selector);
   }
 
   hasActiveApplicationOwner(): boolean {
-    return this.isProfile('single')
-      && this.store.hasActiveApplicationRole('owner');
+    return this.provisioning.hasActiveApplicationOwner();
   }
 
   /** Retained owner rows include the deliberate pre-verification bootstrap window. */
   hasRetainedApplicationOwner(): boolean {
-    return this.isProfile('single')
-      && this.store.hasRetainedApplicationRole('owner');
+    return this.provisioning.hasRetainedApplicationOwner();
   }
 
   /**
@@ -589,8 +520,7 @@ export class AuthorizationRoleService {
    * consumed, and is the only accepted transitional ineligible-owner state.
    */
   hasPendingApplicationOwnerVerification(): boolean {
-    return this.isProfile('single')
-      && this.store.hasPendingApplicationOwnerVerification();
+    return this.provisioning.hasPendingApplicationOwnerVerification();
   }
 
   /** Install a protected tenant owner inside the caller's tenant transaction. */
@@ -601,20 +531,7 @@ export class AuthorizationRoleService {
     createdBy: string;
     createdAt: number;
   }): void {
-    if (!this.isProfile('multi')) return;
-    this.mutation(() => {
-      const user = this.requireUser(input.userId);
-      if (!canUserReceiveAuthTokens(user)
-        && !this.users.hasPendingRegistrationProvisioning(input.userId)) {
-        throw ownershipTargetInvalid();
-      }
-      this.store.insertTenant({
-        ...input,
-        roleKey: 'owner',
-        source: 'system',
-        sourceId: 'tenant-creation',
-      });
-    });
+    this.provisioning.establishTenantOwner(input);
   }
 
   /**
@@ -630,49 +547,11 @@ export class AuthorizationRoleService {
     roleKey: string;
     changedAt: number;
   }): void {
-    if (!this.isProfile('multi')) return;
-    this.mutation(() => {
-      if (input.roleKey === 'owner') {
-        this.store.insertTenant({
-          tenantId: input.tenantId,
-          membershipId: input.membershipId,
-          userId: input.userId,
-          roleKey: 'owner',
-          source: 'system',
-          sourceId: 'tenant-owner-role-transition',
-          createdBy: input.userId,
-          createdAt: input.changedAt,
-        });
-        return;
-      }
-      if (input.previousRoleKey === 'owner') {
-        this.store.revokeTenantSystemRole(
-          input.tenantId,
-          input.membershipId,
-          'owner',
-          input.userId,
-          input.changedAt,
-        );
-      }
-    });
+    this.provisioning.syncTenantOwnerRole(input);
   }
 
   reconcileProtectedTenantOwners(): number {
-    if (!this.isProfile('multi')) return 0;
-    return this.mutation(() => {
-      const repaired = this.store.reconcileProtectedTenantOwners();
-      if (repaired > 0) {
-        this.audit?.append({
-          action: 'application.tenant-owner-roles-reconciled',
-          outcome: 'succeeded',
-          scope: { kind: 'application' },
-          actor: { provenance: 'system' },
-          target: { type: 'tenant-owner-assignments' },
-          metadata: { count: repaired },
-        });
-      }
-      return repaired;
-    });
+    return this.provisioning.reconcileProtectedTenantOwners();
   }
 
   /**
@@ -688,84 +567,22 @@ export class AuthorizationRoleService {
     memberships: number;
     assignments: number;
   }> {
-    this.requireProfile('multi');
-    if (!this.tenancy) {
-      throw new Error('[auth] Multi-tenant role adoption requires tenancy services.');
-    }
-    const tenancy = this.tenancy;
-    return this.mutation(() => {
-      if (this.store.countTenantAssignmentHistory() > 0) {
-        throw new Error(
-          '[auth] Cannot adopt multi/simple membership roles because advanced '
-            + 'tenant assignment history already exists. Restore the last known '
-            + 'profile and inspect the authority graph before startup.',
-        );
-      }
-      const memberships = this.store.listRetainedSimpleMembershipRoles();
-      const invalid = memberships.filter((membership) => !membership.roleKey
-        || !this.kernel.authorization.roles[membership.roleKey]);
-      if (invalid.length > 0) {
-        const details = invalid.slice(0, 5).map((membership) =>
-          `${membership.membershipId}=${membership.roleKey ?? '<null>'}`,
-        ).join(', ');
-        throw new Error(
-          '[auth] Cannot upgrade multi/simple to multi/advanced because retained '
-            + `membership roles are undeclared or retired: ${details}. Restore `
-            + 'those exact role templates in auth.authorization.roles, start '
-            + 'the upgrade once, then change assignments through the advanced '
-            + 'role administration API.',
-        );
-      }
-
-      let assignments = 0;
-      for (const membership of memberships) {
-        const inserted = this.store.insertTenant({
-          tenantId: membership.tenantId,
-          membershipId: membership.membershipId,
-          userId: membership.userId,
-          roleKey: membership.roleKey!,
-          source: 'migration',
-          sourceId: 'multi-simple-profile-adoption-v1',
-          createdBy: null,
-        });
-        if (inserted.changed) assignments += 1;
-      }
-      // Every retained candidate may have a session minted under simple-mode
-      // semantics. Advance each authority generation exactly once with the profile transition,
-      // including owners and suspended memberships. Durable browser/native
-      // parents are atomically rebound to that exact new generation so a
-      // preserved effective role does not force a sign-in; incomplete native
-      // grants are cleared because they cannot be safely rebased.
-      for (const membership of memberships) {
-        const current = tenancy.bumpMembershipAuthorizationGeneration(
-          membership.membershipId,
-        );
-        this.store.rebindAdoptedMembershipSessions({
-          tenantId: membership.tenantId,
-          membershipId: membership.membershipId,
-          userId: membership.userId,
-          membershipAuthorizationGeneration: current.authorizationGeneration,
-        });
-      }
-      return Object.freeze({ memberships: memberships.length, assignments });
-    });
+    return this.provisioning.adoptSimpleTenantMembershipRoles();
   }
 
   private expand(set: AuthorizationRoleSet): ExpandedAuthorizationRoleSet {
     // A removed template makes its retained assignment inert. Keeping the key
     // visible lets the owner reconcile it without granting stale authority.
-    const templates = set.roles
-      .map((roleKey) => this.kernel.authorization.roles[roleKey])
-      .filter((template) => template !== undefined);
-    const allPermissions = templates.some((template) => template!.allPermissions);
-    const permissions = allPermissions
-      ? Object.keys(this.kernel.authorization.permissions).sort(compareKeys)
-      : [...new Set(templates.flatMap((template) => template!.permissions))].sort(compareKeys);
+    const expanded = expandAuthorizationRolesForScope(
+      this.kernel.authorization,
+      set.roles,
+      set.scopeKind,
+    );
     return Object.freeze({
       ...set,
       roles: Object.freeze([...set.roles]),
-      permissions: Object.freeze(permissions),
-      allPermissions,
+      permissions: expanded.permissions,
+      allPermissions: expanded.allPermissions,
     });
   }
 
@@ -791,6 +608,34 @@ export class AuthorizationRoleService {
       throw new AuthorizationRoleAssignmentError(
         `Authorization role requires a dedicated protected lifecycle: ${roleKey}`,
         'AUTHORIZATION_SYSTEM_ROLE_PROTECTED',
+      );
+    }
+    return role;
+  }
+
+  private requireAssignableTenantRole(roleKey: string, tenantId: string) {
+    const role = this.requireAssignableRole(roleKey);
+    const tenant = this.tenancy?.getTenant(tenantId);
+    if (!tenant) {
+      throw new AuthorizationRoleAssignmentError(
+        'Authorization subject does not belong to the requested tenant',
+        'AUTHORIZATION_SCOPE_MISMATCH',
+      );
+    }
+    if (!isRoleAssignableToTenantKind(
+      roleKey,
+      tenant.kind,
+      this.kernel.authorization,
+    )) {
+      if (tenant.kind === 'administration') {
+        throw new AuthorizationRoleAssignmentError(
+          `Administration organization memberships require an administration role: ${roleKey}`,
+          'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED',
+        );
+      }
+      throw new AuthorizationRoleAssignmentError(
+        `Authorization role requires the administration organization: ${roleKey}`,
+        'AUTHORIZATION_ADMINISTRATION_SCOPE_REQUIRED',
       );
     }
     return role;

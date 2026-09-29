@@ -118,6 +118,7 @@ export function createAuthMfaPlugin(config: AuthMfaPluginConfig) {
           const completion = await buildSessionCompletionResponse({
             user,
             tenantSessionService: tenantSessions,
+            mfaVerifiedAt: Date.now(),
           });
           const response = {
             ...completion,
@@ -165,6 +166,7 @@ export function createAuthMfaPlugin(config: AuthMfaPluginConfig) {
         const completion = await buildSessionCompletionResponse({
           user,
           tenantSessionService: tenantSessions,
+          mfaVerifiedAt: Date.now(),
         });
         const response = {
           ...completion,

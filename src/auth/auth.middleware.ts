@@ -9,6 +9,7 @@
 import { Elysia } from 'elysia';
 import { readAuthBearerToken } from './auth-bearer-token';
 import { extractAuthContext } from './auth-context';
+import { getPublicAuthErrorMessage } from './auth-error-response';
 import {
   createRequestAuthorizationAccess,
   type AuthorizationRoleAssignmentResolver,
@@ -168,7 +169,7 @@ export function createProtectedMultipartRequestGuard(
     } catch (error) {
       if (!(error instanceof AuthError)) throw error;
       context.set.status = error.status;
-      return { error: error.message, code: error.code };
+      return { error: getPublicAuthErrorMessage(error), code: error.code };
     }
 
     return undefined;

@@ -1,7 +1,6 @@
 /** Authorization-code verification and atomic native session creation. */
 
 import { OBS_CODES } from '../../observability/codes';
-import { emitPlatformCode } from '../../observability/sink';
 import { verifyPkceS256 } from '../native';
 import type { NativeCodeExchangeInput, NativeTokenResult } from './native-auth-service-types';
 import type { NativeServiceContext } from './native-service-context';
@@ -22,11 +21,15 @@ export async function exchangeNativeCode(
   const user = context.users.getUserById(code.userId);
   if (!user || !canReceiveTokens(user)) invalidGrant();
   if (context.users.getAuthGeneration(user.userId) !== code.authGeneration) invalidGrant();
+  if (context.requiresMfaAssurance(user.userId) && code.mfaVerifiedAt === null) {
+    invalidGrant();
+  }
   const authority = context.authority.resolve(user.userId, code);
   if (!authority) invalidGrant();
   const prepared = prepareNativeSession({
     userId: user.userId, clientId: code.clientId, scope: code.scope,
     authGeneration: code.authGeneration, ttlMs: context.config.refreshTtlMs,
+    mfaVerifiedAt: code.mfaVerifiedAt,
     authority: authority.snapshot,
   });
   const [accessToken, idToken] = await Promise.all([
@@ -45,11 +48,13 @@ export async function exchangeNativeCode(
     () => {
       const live = context.authority.resolve(user.userId, code);
       return context.users.getAuthGeneration(user.userId) === code.authGeneration
+        && (!context.requiresMfaAssurance(user.userId)
+          || code.mfaVerifiedAt !== null)
         && Boolean(live && sameNativeAuthority(authority.snapshot, live.snapshot));
     },
   );
   if (!committed) invalidGrant();
-  emitPlatformCode(OBS_CODES.AUTH_NATIVE_CODE_EXCHANGED, {
+  context.emitCode(OBS_CODES.AUTH_NATIVE_CODE_EXCHANGED, {
     userId: user.userId,
     metadata: { clientId: code.clientId, familyId: prepared.session.familyId },
   });

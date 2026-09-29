@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
 const EXPECTED_MIGRATION_VERSIONS = Array.from(
-  { length: 23 },
+  { length: 27 },
   (_, index) => String(index + 1).padStart(3, '0'),
 );
 
@@ -96,6 +96,9 @@ describe('package distribution', () => {
       expect(packagedFiles).not.toContain('package/Cargo.lock');
       expect(packagedFiles.some((file) => file.startsWith('package/crates/'))).toBe(false);
       expect(packagedFiles.some((file) => file.startsWith('package/sdk/'))).toBe(false);
+      expect(packagedFiles.some((file) =>
+        file.startsWith('package/examples/fabric-tenancy/')
+      )).toBe(false);
       expect(packagedFiles).not.toContain('package/docs/auth/rust-tauri-auth-sdk.md');
 
       await spawnChecked(['tar', '-xzf', tarball, '-C', extractDir]);
@@ -114,6 +117,9 @@ describe('package distribution', () => {
       expect(frameworkPackageJson.files).not.toContain('.');
       expect(frameworkPackageJson.files).not.toContain('sdk');
       expect(frameworkPackageJson.files.some((file) => file.startsWith('sdk/'))).toBe(false);
+      expect(frameworkPackageJson.files.some((file) =>
+        file.startsWith('examples/fabric-tenancy')
+      )).toBe(false);
       expect(Object.keys(frameworkPackageJson.imports).length).toBeGreaterThan(0);
       expect(Object.values(frameworkPackageJson.imports).every((target) =>
         /^\.\/src\/.+\.tsx?$/.test(target)
@@ -227,14 +233,41 @@ async function buildInstalledNativeRecipes(appDir: string): Promise<void> {
 async function writePackageRuntimeSmoke(appDir: string): Promise<void> {
   const source = `import { createApp } from '@zero/framework/server';
 import type {
+  AuthAdministrationTenantConfig,
+  AuthPermissionScope,
+} from '@zero/framework/server';
+import type {
+  AuthAuthorizationScopeLifecycle,
+  AuthClientOptions,
   AuthPasswordUpdatedResult,
+  AuthPlatformAdminSdkSurface,
+  AuthPlatformTenantPage,
   Client,
   LoginFormProps,
   PlatformUserManagementProps,
+  UsePlatformAdministrationResult,
+  UsePlatformTenantsResult,
 } from '@zero/framework/react';
+import type {
+  AssertAuthApplicationMutationAuthority,
+  AssertAuthTenantMutationAuthority,
+  AtomicRegistrationPolicy,
+  AuthPlatformCodeEmitter,
+  AuthSecurityAuditContext,
+  AuthTenantInvitationDeliveryMode,
+  AuthTenantInvitationEmailTemplate,
+  AuthTenantInvitationEmailTemplateContext,
+  CreateUserInput,
+  IssuedPageSession,
+  UserListOptions,
+  UserStoreOptions,
+  WebRefreshProof,
+} from '@zero/framework/auth';
 import { createZeroNativeAuth, type ZeroNativeAuthOptions } from '@zero/framework/native';
 import type {
   ApplicationAccessManagementProps,
+  PlatformAdministrationManagementProps,
+  PlatformTenantManagementProps,
   TenantMemberManagementProps,
 } from '@zero/framework/components/auth';
 import config from './zero.config';
@@ -242,9 +275,42 @@ import config from './zero.config';
 type PackagedAuthUiContract =
   ApplicationAccessManagementProps
   | LoginFormProps
+  | PlatformAdministrationManagementProps
+  | PlatformTenantManagementProps
   | PlatformUserManagementProps
   | TenantMemberManagementProps;
 void (null as PackagedAuthUiContract | null);
+
+type PackagedAuthExtensionContract =
+  | AuthAdministrationTenantConfig
+  | AuthAuthorizationScopeLifecycle
+  | AuthClientOptions
+  | AuthPermissionScope
+  | AuthPlatformAdminSdkSurface
+  | AuthPlatformTenantPage
+  | AssertAuthApplicationMutationAuthority
+  | AssertAuthTenantMutationAuthority
+  | AtomicRegistrationPolicy
+  | AuthPlatformCodeEmitter
+  | AuthSecurityAuditContext
+  | AuthTenantInvitationDeliveryMode
+  | AuthTenantInvitationEmailTemplate
+  | AuthTenantInvitationEmailTemplateContext
+  | CreateUserInput
+  | IssuedPageSession
+  | UserListOptions
+  | UserStoreOptions
+  | UsePlatformAdministrationResult
+  | UsePlatformTenantsResult
+  | WebRefreshProof;
+void (null as PackagedAuthExtensionContract | null);
+
+function assertPackagedPlatformContract(client: Client) {
+  const admin: AuthPlatformAdminSdkSurface = client.platformAdmin;
+  const tenants: Promise<AuthPlatformTenantPage> = admin.listTenants({ limit: 25 });
+  return tenants;
+}
+void assertPackagedPlatformContract;
 
 const legacyLoginFormProps: LoginFormProps = { showRememberMe: true };
 void legacyLoginFormProps;
@@ -415,6 +481,72 @@ async function smokeCleanMigrations(root: string): Promise<void> {
       installedProfileTriggerCount.count === 3,
       'migration 023 installed-profile authority triggers are missing',
     );
+
+    const tenantColumns = migrator.database.query(
+      'PRAGMA table_info(_auth_tenants)'
+    ).all() as Array<{ name: string }>;
+    assert(
+      tenantColumns.some((column) => column.name === 'kind'),
+      'migration 024 tenant-kind discriminator is missing',
+    );
+    const administrationIndex = migrator.database.query(
+      "SELECT name FROM sqlite_master WHERE type = 'index' " +
+      "AND name = 'idx_auth_tenants_administration'"
+    ).get() as { name?: string } | null;
+    assert(
+      administrationIndex?.name === 'idx_auth_tenants_administration',
+      'migration 024 administration uniqueness index is missing',
+    );
+
+    for (const table of [
+      '_auth_sessions',
+      '_auth_session_continuations',
+      '_auth_native_codes',
+      '_auth_native_sessions',
+    ]) {
+      const columns = migrator.database.query('PRAGMA table_info(' + table + ')')
+        .all() as Array<{ name: string }>;
+      assert(
+        columns.some((column) => column.name === 'mfa_verified_at'),
+        'migration 025 MFA assurance column is missing from ' + table,
+      );
+    }
+
+    const invitationColumns = migrator.database.query(
+      'PRAGMA table_info(_auth_tenant_invitations)'
+    ).all() as Array<{ name: string }>;
+    const invitationColumnNames = new Set(
+      invitationColumns.map((column) => column.name),
+    );
+    for (const name of ['grant_snapshot_json', 'grant_snapshot_fingerprint']) {
+      assert(
+        invitationColumnNames.has(name),
+        'migration 026 invitation grant column is missing: ' + name,
+      );
+    }
+
+    const manifestColumns = migrator.database.query(
+      'PRAGMA table_info(_auth_authorization_manifest)'
+    ).all() as Array<{ name: string }>;
+    const manifestColumnNames = new Set(manifestColumns.map((column) => column.name));
+    for (const name of [
+      'singleton', 'version', 'registry_version', 'fingerprint',
+      'manifest_json', 'updated_at',
+    ]) {
+      assert(
+        manifestColumnNames.has(name),
+        'migration 027 authorization-manifest column is missing: ' + name,
+      );
+    }
+    const manifestTriggerCount = migrator.database.query(
+      "SELECT COUNT(*) AS count FROM sqlite_master " +
+      "WHERE type = 'trigger' " +
+      "AND name LIKE 'trg_zero_authority__auth_authorization_manifest_%'"
+    ).get() as { count: number };
+    assert(
+      manifestTriggerCount.count === 3,
+      'migration 027 authorization-manifest authority triggers are missing',
+    );
   } finally {
     migrator.dispose();
   }
@@ -514,6 +646,10 @@ async function smokeAuthProfile(root: string, profile: AuthProfile): Promise<voi
         profileName + ' bootstrap workspace is missing',
       );
       assert(registration.body.tenant?.role === 'owner', profileName + ' tenant owner is missing');
+      assert(
+        registration.body.tenant?.kind === 'administration',
+        profileName + ' bootstrap tenant is not the administration organization',
+      );
     } else {
       assert(registration.body.tenant === undefined, profileName + ' returned an unexpected tenant');
     }
@@ -619,6 +755,15 @@ function assertPersistedProfile(
       membershipCount === (profile.tenancy === 'multi' ? 1 : 0),
       profileName + ' persisted an unexpected membership count',
     );
+    if (profile.tenancy === 'multi') {
+      const administrationTenant = verifier.database.query(
+        "SELECT kind FROM _auth_tenants WHERE kind = 'administration'"
+      ).get() as { kind?: string } | null;
+      assert(
+        administrationTenant?.kind === 'administration',
+        profileName + ' did not persist its protected administration organization',
+      );
+    }
     const installedProfile = verifier.database.query(\`
       SELECT version, generation, tenancy, authorization
       FROM _auth_installed_profile
@@ -638,6 +783,23 @@ function assertPersistedProfile(
       installedProfile?.tenancy === profile.tenancy
         && installedProfile?.authorization === profile.authorization,
       profileName + ' persisted the wrong installed auth profile',
+    );
+    const authorizationManifest = verifier.database.query(\`
+      SELECT version, registry_version, fingerprint, manifest_json
+      FROM _auth_authorization_manifest
+      WHERE singleton = 1
+    \`).get() as {
+      version: number;
+      registry_version: number;
+      fingerprint: string;
+      manifest_json: string;
+    } | null;
+    assert(
+      authorizationManifest?.version === 1
+        && authorizationManifest.registry_version === 1
+        && authorizationManifest.fingerprint.length === 64
+        && authorizationManifest.manifest_json.length > 0,
+      profileName + ' authorization registry manifest was not persisted',
     );
     const applicationOwnerCount = Number((verifier.database.query(\`
       SELECT COUNT(*) AS count FROM _auth_application_role_assignments
@@ -709,6 +871,15 @@ async function assertAuthorization(
   }
   if (tenancy === 'multi') {
     assert(typeof response.body.scope?.tenantId === 'string', 'active tenant scope is missing');
+    assert(
+      response.body.applicationScope?.kind === 'application',
+      'administration application scope is missing',
+    );
+    assert(
+      response.body.applicationScope?.roles?.includes('owner') === true
+        && response.body.applicationScope?.allPermissions === true,
+      'administration application owner authority is missing',
+    );
   }
   return response.body;
 }

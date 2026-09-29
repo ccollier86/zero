@@ -16,7 +16,12 @@ import type { AuthContext, AuthTenancyMode } from '../auth/types';
 import type { AuthorizationKernel } from '../auth/authorization-kernel';
 import type { AuthorizationRoleAssignmentResolver } from '../auth/authorization-access';
 import type { UserStore } from '../auth/user-store';
-import type { PlatformObservabilityRuntime } from '../observability/types';
+import type {
+  PlatformCodeDefinition,
+  PlatformCodeEmitOptions,
+  PlatformEvent,
+  PlatformObservabilityRuntime,
+} from '../observability/types';
 import type { ReactiveDB, TableSchema } from '../sync';
 import { getSyncDB } from '../sync';
 import {
@@ -58,6 +63,11 @@ export interface ResourceCrudPluginConfig extends ResourceCrudRoutesConfig {
   getTenantDatabaseClient?: ResourceTenantDatabaseClientProvider;
   /** App-local observability runtime. Standalone plugins may omit it. */
   observability?: PlatformObservabilityRuntime | null;
+  /** App-local observability emitter retained for standalone composition. */
+  emitCode?: (
+    definition: PlatformCodeDefinition,
+    options?: PlatformCodeEmitOptions,
+  ) => PlatformEvent;
 }
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -294,6 +304,7 @@ function createService(
     roleAssignments: config.getRoleAssignments?.() ?? null,
     getTenantDatabaseClient: config.getTenantDatabaseClient,
     observability: config.observability,
+    emitCode: config.emitCode,
     defaultLimit: config.defaultLimit,
     maxLimit: config.maxLimit,
   });

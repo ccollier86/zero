@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { configureEmail, EmailError, type EmailProvider } from '../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import { configureObservability, getObservabilityRuntime, MemoryEventStore } from '../observability';
 import { activeTokens, fixture, terminalRecipient, user } from './auth-email-outbox-test-support';
 
-afterEach(() => configureEmail(false));
+afterEach(() => resetEmailCompatibilityRuntimeForTesting());
 
 describe('AuthEmailOutbox failure handling', () => {
   test('dead-letters deterministic provider 4xx with a stable safe code', async () => {

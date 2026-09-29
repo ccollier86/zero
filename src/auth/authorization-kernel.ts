@@ -108,7 +108,14 @@ export interface AuthorizationScopeSnapshot {
 export interface AuthorizationSubjectSnapshot {
   readonly platformRole: string;
   readonly properties?: Readonly<Record<string, string>>;
+  /** Active application or tenant scope selected by the session. */
   readonly authorization?: AuthorizationScopeSnapshot | null;
+  /**
+   * Platform control-plane scope projected only from a live membership in the
+   * protected administration organization. In single mode this aliases the
+   * active application scope.
+   */
+  readonly applicationAuthorization?: AuthorizationScopeSnapshot | null;
 }
 
 export interface SingleSimpleScopeInput {
@@ -208,6 +215,11 @@ export function validateAuthorizationRegistry(
   if (!isPlainRecord(config.permissions) || !isPlainRecord(config.roles)) {
     throw configError('Authorization permissions and roles must be objects.');
   }
+  if (!Number.isSafeInteger(config.registryVersion)
+    || config.registryVersion < 1
+    || config.registryVersion > 2_147_483_647) {
+    throw configError('Authorization registryVersion must be a positive 32-bit integer.');
+  }
   if (Object.keys(config.permissions).length > 512 || Object.keys(config.roles).length > 128) {
     throw configError('Authorization permission or role registry exceeds its static limit.');
   }
@@ -223,6 +235,9 @@ export function validateAuthorizationRegistry(
     if (permission.description !== undefined
       && !isBoundedDisplayText(permission.description, 500)) {
       throw configError(`Authorization description for "${key}" is invalid.`);
+    }
+    if (permission.scope !== 'application' && permission.scope !== 'tenant') {
+      throw configError(`Authorization permission "${key}" has an invalid scope.`);
     }
   }
 
@@ -445,15 +460,17 @@ export class AuthorizationKernel {
     assertNonEmptyString(input.platformRole, 'Single/simple platformRole');
     const role = input.scopeRole ?? input.platformRole;
     assertNonEmptyString(role, 'Single/simple scopeRole');
-    const template = this.authorization.roles[role];
-    const permissions = template?.allPermissions
-      ? Object.keys(this.authorization.permissions).sort(compareKeys)
-      : [...(template?.permissions ?? [])].sort(compareKeys);
-    const allPermissions = template?.allPermissions ?? false;
+    const expanded = expandAuthorizationRolesForScope(
+      this.authorization,
+      [role],
+      'application',
+    );
     const scopeId = input.scopeId ?? 'application';
     assertNonEmptyString(scopeId, 'Single/simple scopeId');
     const revision = input.revision
-      ?? `single/simple:${role}:${allPermissions ? 'all' : permissions.join(',')}`;
+      ?? `single/simple:${role}:${expanded.allPermissions
+        ? 'all'
+        : expanded.permissions.join(',')}`;
 
     return freezeScope({
       tenancy: 'single',
@@ -461,8 +478,8 @@ export class AuthorizationKernel {
       scopeKind: 'application',
       scopeId,
       roles: [role],
-      permissions,
-      ...(allPermissions ? { allPermissions: true } : {}),
+      permissions: expanded.permissions,
+      ...(expanded.allPermissions ? { allPermissions: true } : {}),
       revision,
     });
   }
@@ -490,38 +507,79 @@ export class AuthorizationKernel {
       return denied(compiled, subject.authorization ?? null, 'property');
     }
 
-    const scope = subject.authorization ?? null;
-    const needsScope = compiled.tenant
-      || compiled.scopeRoleGroups.length > 0
-      || compiled.allPermissions.length > 0
-      || compiled.anyPermissionGroups.length > 0;
-    if (!scope) {
-      return needsScope
-        ? denied(compiled, null, 'scope-required')
-        : allowed(compiled, null);
+    const activeScope = subject.authorization ?? null;
+    const suppliedApplicationScope = subject.applicationAuthorization ?? null;
+    if (activeScope && !this.isValidScopeSnapshot(activeScope)) {
+      return denied(compiled, activeScope, 'scope-invalid');
     }
-    if (!this.isValidScopeSnapshot(scope)) {
-      return denied(compiled, scope, 'scope-invalid');
+    if (suppliedApplicationScope
+      && suppliedApplicationScope !== activeScope
+      && !this.isValidScopeSnapshot(suppliedApplicationScope)) {
+      return denied(compiled, suppliedApplicationScope, 'scope-invalid');
     }
-    if (compiled.tenant && scope.scopeKind !== 'tenant') {
-      return denied(compiled, scope, 'tenant-required');
+
+    const tenantScope = activeScope?.scopeKind === 'tenant' ? activeScope : null;
+    const applicationScope = activeScope?.scopeKind === 'application'
+      ? activeScope
+      : suppliedApplicationScope?.scopeKind === 'application'
+        ? suppliedApplicationScope
+        : null;
+    const resultScope = activeScope ?? applicationScope;
+
+    if (compiled.tenant && !tenantScope) {
+      return denied(compiled, resultScope, activeScope ? 'tenant-required' : 'scope-required');
     }
-    if (!matchesRoleGroups(scope.roles, compiled.scopeRoleGroups)) {
-      return denied(compiled, scope, 'scope-role');
+    if (compiled.scopeRoleGroups.length > 0 && !activeScope) {
+      return denied(compiled, null, 'scope-required');
     }
-    if (!scope.allPermissions) {
-      const permissions = new Set(scope.permissions);
-      if (!compiled.allPermissions.every((permission) => permissions.has(permission))) {
-        return denied(compiled, scope, 'permission');
+    if (activeScope && !matchesRoleGroups(activeScope.roles, compiled.scopeRoleGroups)) {
+      return denied(compiled, activeScope, 'scope-role');
+    }
+
+    const permissionScope = (permission: PermissionKey): AuthorizationScopeSnapshot | null => (
+      this.authorization.permissions[permission]?.scope === 'application'
+        ? applicationScope
+        : tenantScope
+    );
+    const hasPermission = (permission: PermissionKey): boolean => {
+      const scope = permissionScope(permission);
+      return Boolean(scope && (scope.allPermissions || scope.permissions.includes(permission)));
+    };
+    for (const permission of compiled.allPermissions) {
+      if (!permissionScope(permission)) {
+        return denied(compiled, resultScope, 'scope-required');
       }
-      if (!compiled.anyPermissionGroups.every(
-        (group) => group.some((permission) => permissions.has(permission)),
-      )) {
-        return denied(compiled, scope, 'permission');
+      if (!hasPermission(permission)) {
+        return denied(compiled, resultScope, 'permission');
+      }
+    }
+    for (const group of compiled.anyPermissionGroups) {
+      if (!group.some((permission) => permissionScope(permission))) {
+        return denied(compiled, resultScope, 'scope-required');
+      }
+      if (!group.some(hasPermission)) {
+        return denied(compiled, resultScope, 'permission');
       }
     }
 
-    return allowed(compiled, scope);
+    const permissionKeys = [
+      ...compiled.allPermissions,
+      ...compiled.anyPermissionGroups.flat(),
+    ];
+    const hasApplicationPermission = permissionKeys.some((permission) => (
+      this.authorization.permissions[permission]?.scope === 'application'
+    ));
+    const hasTenantPermission = permissionKeys.some((permission) => (
+      this.authorization.permissions[permission]?.scope === 'tenant'
+    ));
+    const decisionScope = !compiled.tenant
+      && compiled.scopeRoleGroups.length === 0
+      && hasApplicationPermission
+      && !hasTenantPermission
+      ? applicationScope
+      : resultScope;
+
+    return allowed(compiled, decisionScope);
   }
 
   /** Evaluate and throw the stable AuthError contract when access is denied. */
@@ -537,12 +595,15 @@ export class AuthorizationKernel {
   /** Validate a live scope supplied by a future persistence/session adapter. */
   isValidScopeSnapshot(scope: AuthorizationScopeSnapshot): boolean {
     if (scope.tenancy !== this.tenancy.mode || scope.mode !== this.authorization.mode) return false;
+    if (scope.scopeKind !== 'application' && scope.scopeKind !== 'tenant') return false;
     if (!isNonEmptyString(scope.scopeId) || !isNonEmptyString(scope.revision)) return false;
-    if (scope.scopeKind !== (scope.tenancy === 'multi' ? 'tenant' : 'application')) return false;
-    if (scope.tenancy === 'multi') {
+    if (scope.tenancy === 'single' && scope.scopeKind !== 'application') return false;
+    if (scope.scopeKind === 'tenant') {
+      if (scope.tenancy !== 'multi') return false;
       if (!isNonEmptyString(scope.tenantId) || !isNonEmptyString(scope.membershipId)) return false;
       if (scope.scopeId !== scope.tenantId) return false;
-    } else if (scope.tenantId !== undefined || scope.membershipId !== undefined) {
+    } else if (scope.tenantId !== undefined || scope.membershipId !== undefined
+      || (scope.tenancy === 'multi' && scope.scopeId !== 'application')) {
       return false;
     }
     if (!isUniqueStringArray(scope.roles) || !isUniqueStringArray(scope.permissions)) return false;
@@ -570,8 +631,11 @@ export class AuthorizationKernel {
       const expectedAllPermissions = templates.some((template) => template.allPermissions);
       if (Boolean(scope.allPermissions) !== expectedAllPermissions) return false;
       const expectedPermissions = expectedAllPermissions
-        ? [...declaredPermissions].sort(compareKeys)
-        : uniqueSorted(templates.flatMap((template) => template.permissions));
+        ? authorizationPermissionKeysForScope(this.authorization, scope.scopeKind)
+        : uniqueSorted(templates.flatMap((template) => template.permissions)
+          .filter((permission) => (
+            this.authorization.permissions[permission]?.scope === scope.scopeKind
+          )));
       if (!sameStringSet(scope.permissions, expectedPermissions)) return false;
     } else if (scope.allPermissions) {
       return false;
@@ -584,6 +648,49 @@ export function createAuthorizationKernel(
   config: AuthorizationKernelConfig | NormalizedAuthBehaviorConfig,
 ): AuthorizationKernel {
   return new AuthorizationKernel(config);
+}
+
+/** Stable permission ceiling for one application or tenant projection. */
+export function authorizationPermissionKeysForScope(
+  config: ResolvedAuthAuthorizationConfig,
+  scopeKind: AuthorizationScopeKind,
+): PermissionKey[] {
+  return Object.values(config.permissions)
+    .filter((permission) => permission.scope === scopeKind)
+    .map((permission) => permission.key)
+    .sort(compareKeys);
+}
+
+/**
+ * Expand declared roles inside exactly one authority realm.
+ *
+ * This scope filter is the hard boundary that keeps a customer-organization
+ * owner from inheriting application-control-plane permissions through
+ * `allPermissions`. The same role set may be projected into application scope
+ * only after the caller proves an active administration-organization session.
+ */
+export function expandAuthorizationRolesForScope(
+  config: ResolvedAuthAuthorizationConfig,
+  roles: readonly string[],
+  scopeKind: AuthorizationScopeKind,
+): Readonly<{
+  roles: readonly string[];
+  permissions: readonly PermissionKey[];
+  allPermissions: boolean;
+}> {
+  const declaredRoles = uniqueSorted(roles)
+    .filter((role) => Object.hasOwn(config.roles, role));
+  const templates = declaredRoles.map((role) => config.roles[role]!);
+  const allPermissions = templates.some((template) => template.allPermissions);
+  const permissions = allPermissions
+    ? authorizationPermissionKeysForScope(config, scopeKind)
+    : uniqueSorted(templates.flatMap((template) => template.permissions)
+      .filter((permission) => config.permissions[permission]?.scope === scopeKind));
+  return Object.freeze({
+    roles: Object.freeze(declaredRoles),
+    permissions: Object.freeze(permissions),
+    allPermissions,
+  });
 }
 
 function freezeAuthorizationConfig(
@@ -602,7 +709,12 @@ function freezeAuthorizationConfig(
         permissions: Object.freeze([...role.permissions]),
       })]),
   ));
-  return Object.freeze({ mode: config.mode, permissions, roles });
+  return Object.freeze({
+    mode: config.mode,
+    registryVersion: config.registryVersion,
+    permissions,
+    roles,
+  });
 }
 
 function mutableEmpty() {

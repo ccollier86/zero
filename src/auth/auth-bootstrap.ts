@@ -8,6 +8,7 @@ import {
   type ResolvedAuthBehaviorConfig,
   type ResolvedAuthBootstrapConfig,
 } from './types';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 
 /** Current bootstrap config, including a safe fallback for legacy test doubles. */
 export function getBootstrapConfig(
@@ -32,13 +33,14 @@ export function isBootstrapAvailable(
  */
 export function assertBootstrapAuthorized(
   config: ResolvedAuthBehaviorConfig,
-  presentedSecret: string | undefined
+  presentedSecret: string | undefined,
+  emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
 ): void {
   const bootstrap = getBootstrapConfig(config);
   if (bootstrap.mode === 'public') return;
 
   if (bootstrap.mode === 'disabled' || !bootstrap.secret) {
-    emitBootstrapRejected(bootstrap.mode, 'unavailable');
+    emitBootstrapRejected(bootstrap.mode, 'unavailable', emitCode);
     throw new AuthError(
       'Administrator bootstrap is unavailable',
       'BOOTSTRAP_UNAVAILABLE',
@@ -47,7 +49,7 @@ export function assertBootstrapAuthorized(
   }
 
   if (!presentedSecret || !secretsEqual(bootstrap.secret, presentedSecret)) {
-    emitBootstrapRejected(bootstrap.mode, 'authorization_failed');
+    emitBootstrapRejected(bootstrap.mode, 'authorization_failed', emitCode);
     throw new AuthError(
       'Administrator bootstrap authorization failed',
       'BOOTSTRAP_AUTHORIZATION_FAILED',
@@ -63,10 +65,11 @@ export function assertBootstrapAuthorized(
 export function assertBootstrapRequest(
   config: ResolvedAuthBehaviorConfig,
   bootstrapRequired: boolean,
-  presentedSecret: string | undefined
+  presentedSecret: string | undefined,
+  emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
 ): void {
   if (bootstrapRequired) {
-    assertBootstrapAuthorized(config, presentedSecret);
+    assertBootstrapAuthorized(config, presentedSecret, emitCode);
     return;
   }
   if (presentedSecret !== undefined) {
@@ -124,9 +127,10 @@ function secretsEqual(expected: string, presented: string): boolean {
 
 function emitBootstrapRejected(
   mode: ResolvedAuthBootstrapConfig['mode'],
-  reason: 'unavailable' | 'authorization_failed'
+  reason: 'unavailable' | 'authorization_failed',
+  emitCode: AuthPlatformCodeEmitter,
 ): void {
-  emitPlatformCode(OBS_CODES.AUTH_BOOTSTRAP_REJECTED, {
+  emitCode(OBS_CODES.AUTH_BOOTSTRAP_REJECTED, {
     metadata: { mode, reason },
   });
 }

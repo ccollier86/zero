@@ -90,7 +90,8 @@ export function isEmailDeliveryReady(
 
 export function createEmailRuntime(
   input: EmailConfig | boolean | false | undefined,
-  app: AppIdentityConfig
+  app: AppIdentityConfig,
+  emitCode: typeof emitPlatformCode = emitPlatformCode,
 ): EmailRuntime {
   if (input === false || input === undefined) {
     const provider = new NoopEmailProvider();
@@ -99,7 +100,7 @@ export function createEmailRuntime(
       app,
       config: input,
       provider,
-      service: new EmailService(provider, {}),
+      service: new EmailService(provider, {}, emitCode),
     };
   }
 
@@ -109,14 +110,14 @@ export function createEmailRuntime(
     from: firstNonEmpty(configured.from) ?? firstNonEmpty(Bun.env.EMAIL_FROM),
     replyTo: firstNonEmpty(configured.replyTo) ?? firstNonEmpty(Bun.env.EMAIL_REPLY_TO),
   };
-  const provider = resolveProvider(config);
+  const provider = resolveProvider(config, emitCode);
 
   return {
     enabled: provider.name !== 'noop',
     app,
     config,
     provider,
-    service: new EmailService(provider, config),
+    service: new EmailService(provider, config, emitCode),
   };
 }
 
@@ -127,12 +128,27 @@ export function registerEmailRuntime(owner: object, runtime: EmailRuntime): {
   return emailRuntimeProviders.register(owner, () => runtime);
 }
 
+/**
+ * Remove only the manually configured legacy runtime.
+ *
+ * @internal Test isolation helper. This deliberately is not exported from the
+ * public email barrel: `configureEmail(false)` remains a real disabled legacy
+ * configuration rather than acquiring surprising reset semantics.
+ */
+export function resetEmailCompatibilityRuntimeForTesting(): void {
+  manualRegistration?.unregister();
+  manualRegistration = null;
+}
+
 function firstNonEmpty(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
 }
 
-function resolveProvider(config: EmailConfig): EmailProvider {
+function resolveProvider(
+  config: EmailConfig,
+  emitCode: typeof emitPlatformCode,
+): EmailProvider {
   const provider = config.provider ?? 'resend';
   if (typeof provider === 'object') return provider;
 
@@ -140,7 +156,7 @@ function resolveProvider(config: EmailConfig): EmailProvider {
     case 'resend':
       return new ResendEmailProvider(config.resend);
     case 'console':
-      return new ConsoleEmailProvider();
+      return new ConsoleEmailProvider(emitCode);
     case 'memory':
       return new MemoryEmailProvider();
     case 'noop':

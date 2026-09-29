@@ -359,6 +359,12 @@ search, role/status filters, create, update, promote, suspend, activate,
 delete, session revoke, direct reset when enabled, setup email, password reset
 email, and configured user-property editing.
 
+Those controls are actor-capability gated. `application.users:read` may render
+a read-only identity directory; writes require the projected user-management
+capability, and creating/promoting/demoting or mutating a global-admin target
+requires the separate global-admin management capability. The packaged create
+form cannot submit an `admin` role when that capability is absent.
+
 In multi-tenant mode the packaged organism deliberately omits hard delete and
 uses suspend/activate as the identity lifecycle. Organization membership,
 invitation, join-request, and creation attribution are retained history; a
@@ -423,6 +429,37 @@ protected ownership moves only through `transferOwnership()`. The React hook
 tracks loaded revisions for you.
 See [Application Access Administration](../auth/application-access-administration.md)
 for response shapes, errors, and owner lifecycle guarantees.
+
+### Platform Administration Organization
+
+In `multi/simple` and `multi/advanced`, bootstrap creates a protected
+Administration Organization. After switching the durable session into that
+scope, use the namespaced SDK:
+
+```ts
+const config = await client.platformAdmin.getConfig();
+const page = await client.platformAdmin.listTenants({
+  status: 'active',
+  search: 'practice',
+  limit: 25,
+});
+
+if (config.capabilities.canCreateTenants) {
+  await client.platformAdmin.createTenant({
+    name: 'Northside Practice',
+    ownerEmail: 'owner@northside.example',
+  });
+}
+```
+
+Use `usePlatformAdministration()` for protected-organization people,
+invitations, roles, and ownership. Use `usePlatformTenants()` for the customer
+directory, lifecycle, creation, and capability-gated read-only member detail.
+`<PlatformAdministrationManagement />` and `<PlatformTenantManagement />`
+provide the packaged controls. Customer member mutation deliberately requires
+switching to that customer scope and using `TenantMemberManagement`; active
+administration scope never implies customer data access. See
+[Platform Administration Organization](../auth/platform-administration.md).
 
 ### User Property Gates
 
@@ -1358,6 +1395,7 @@ interface AuthUser {
 
 interface AuthTenantSummary {
   tenantId: string;
+  kind: 'administration' | 'organization';
   slug: string;
   name: string;
   role: string | null;
@@ -1436,6 +1474,7 @@ type AuthCompletionResult =
 
 interface AuthRegistrationTenant {
   tenantId: string;
+  kind: 'administration' | 'organization';
   membershipId: string;
   slug: string;
   name: string;
@@ -1838,6 +1877,13 @@ auth, router). `__PLATFORM_CONFIG__` no longer carries `tables`; it carries
 runtime server settings such as `auth`, `stateSync`, and resolved
 `tableSyncModes` so omitted provider props and auto-lazy decisions match the
 backend.
+
+The live `client.authorization` projection is also scope-aware. In multi mode
+`scope` is the active membership; an Administration Organization session may
+add `applicationScope` for application-control-plane permissions. Permission
+helpers check both, tenant gates check only `scope`, and the opaque revision
+changes when either authority plane or the installed registry version changes.
+See [Browser Authorization Snapshot and Gates](../auth/browser-authorization.md).
 
 ### Hook organization
 
@@ -2708,16 +2754,20 @@ options. `stateSync: true` requires auth. Omitted capability values resolve to
 normalize. In this unreleased tree, `multi` installs tenant/membership
 persistence, browser and native tenant sessions, creation/onboarding,
 registered-resource and managed-service isolation, invitations/join requests,
-and packaged tenant controls. `advanced` installs the validated static
+the protected Administration Organization, the customer-organization
+directory/lifecycle, and packaged tenant/platform controls. `advanced` installs the validated static
 registry, durable application/tenant assignments, live kernel expansion, and
 packaged role administration. Doctor blocks concrete unsafe configuration and
 unclassified boundaries; the release checklist still governs production
 readiness rather than blanket-disabling either profile.
 
-The candidate does not include protected Administration Organization/platform-
-tenant lifecycle UI, upstream enterprise SSO, break-glass, tenant-custom roles,
-populated-app adoption tooling, or verified-domain autojoin/aliases/direct
-transfer. Registered resources now declare explicit server-owned client
+The candidate does not include upstream enterprise SSO, break-glass,
+tenant-custom roles, broader populated-app discovery/migration tooling beyond
+exact pre-024 administration reconciliation, or verified-domain
+autojoin/aliases/direct transfer. The Administration Organization and bounded
+customer-organization lifecycle are documented in
+[Platform Administration Organization](../auth/platform-administration.md).
+Registered resources now declare explicit server-owned client
 exposure and optional field-level allow-lists across CRUD, `/api/data`, Sync,
 caches, and packaged forms. Managed file-mode runtimes sharing one SQLite
 database relay tracked Sync changes and auth/session invalidations. Multi-mode startup

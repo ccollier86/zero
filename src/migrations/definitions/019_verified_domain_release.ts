@@ -1,9 +1,9 @@
 /** Preserve domain history while allowing an explicitly released name to be reclaimed. */
 
 import type { Database } from 'bun:sqlite';
-import { defineVerifiedDomainReleaseTables } from '../../auth/verified-domain-schema';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import type { Migration } from '../types';
+import { defineVerifiedDomainReleaseTables } from './017_verified_domain_schema';
 
 export const migration: Migration = {
   version: '019',

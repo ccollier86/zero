@@ -4,11 +4,21 @@ import type { PlatformObservabilityRuntime } from '../observability/types';
 import type { SyncPolicy } from './sync-policy';
 import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 import type {
+  PlatformCodeDefinition,
+  PlatformCodeEmitOptions,
+} from '../observability/types';
+import type {
   EphemeralErrorMessage,
   EphemeralTopicPolicy,
 } from './ephemeral-policy';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
+
+/** App-bound observability boundary used by ReactiveDB callback reporting. */
+export type ReactiveDBPlatformCodeEmitter = (
+  definition: PlatformCodeDefinition,
+  options?: PlatformCodeEmitOptions,
+) => unknown;
 
 /**
  * ReactiveDB configuration.
@@ -51,6 +61,13 @@ export interface ReactiveDBConfig extends SQLiteStorageConfig {
 
   /** Ring buffer depth for reconnect replay. Default: 1000 */
   ringBufferDepth?: number;
+
+  /**
+   * App-local platform-code emitter. Managed composition roots should inject
+   * their observability runtime; direct construction retains the historical
+   * process-wide emitter when this is omitted.
+   */
+  emitCode?: ReactiveDBPlatformCodeEmitter;
 }
 
 // ─── Schema ─────────────────────────────────────────────────────────────────
@@ -393,10 +410,14 @@ export interface SyncAuthContext {
   scope?: readonly string[];
   /** Durable authority fields are optional for standalone/legacy verifiers. */
   sessionId?: string;
+  /** Server-resolved durable MFA assurance for this session family. */
+  mfaVerifiedAt?: number;
   sessionGeneration?: number;
   sessionScopeKind?: 'application' | 'tenant';
   sessionScopeId?: string;
   tenantId?: string;
+  /** Server-resolved tenant purpose; never accepted from socket input. */
+  tenantKind?: 'organization' | 'administration';
   membershipId?: string;
   tenantRole?: string | null;
   tenantAuthorizationGeneration?: number;
@@ -413,12 +434,14 @@ export interface SyncAuthContextAuthorityReference {
   readonly authGeneration: number;
   readonly sessionKind: 'web' | 'native';
   readonly sessionId: string;
+  readonly mfaVerifiedAt: number | null;
   readonly sessionGeneration: number | null;
   readonly clientId: string | null;
   readonly identityScopes: readonly string[];
   readonly sessionScopeKind: 'application' | 'tenant';
   readonly sessionScopeId: string;
   readonly tenantId: string | null;
+  readonly tenantKind: 'organization' | 'administration' | null;
   readonly membershipId: string | null;
   readonly tenantRole: string | null;
   readonly tenantAuthorizationGeneration: number | null;

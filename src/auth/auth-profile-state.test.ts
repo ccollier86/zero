@@ -199,6 +199,26 @@ describe('installed auth profile state', () => {
     expect(count(db, '_auth_audit_events')).toBe(auditCount);
     expect(readAuthAuthorityRevision(db)).toBe(revision);
   });
+
+  test('rejects an async beforeCommit and rolls its writes and marker back', () => {
+    const db = createDb();
+    db.exec('CREATE TABLE profile_callback_probe (value TEXT PRIMARY KEY)');
+
+    expect(() => reconcileInstalledAuthProfile({
+      db,
+      requested: { tenancy: 'single', authorization: 'simple' },
+      beforeCommit: (async () => {
+        db.prepare('INSERT INTO profile_callback_probe (value) VALUES (?)').run('unsafe');
+        return { memberships: 1 };
+      }) as never,
+    })).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Profile transition beforeCommit must be synchronous.',
+    }));
+
+    expect(readInstalledAuthProfile(db)).toBeNull();
+    expect(count(db, 'profile_callback_probe')).toBe(0);
+  });
 });
 
 function createDb(): ReactiveDB {

@@ -1,5 +1,6 @@
 import type { PermissionKey } from './types';
 import type { TenantMembershipStatus } from './tenancy/tenancy-types';
+import type { TenantKind } from './tenancy/tenancy-types';
 
 /** Public-safe member identity. Global account security fields are omitted. */
 export interface AuthTenantMemberIdentity {
@@ -47,6 +48,8 @@ export interface AuthTenantRoleDescriptor {
   allPermissions: boolean;
   system: boolean;
   assignable: boolean;
+  /** Role may be assigned only inside the protected administration organization. */
+  administrationOnly: boolean;
   /** Actor-specific grant ceiling, never a statement about target authority. */
   grantable: boolean;
 }
@@ -57,6 +60,7 @@ export interface AuthTenantAdministrationConfig {
   terminology: { singular: string; plural: string };
   tenant: {
     tenantId: string;
+    kind: TenantKind;
     slug: string;
     name: string;
   };

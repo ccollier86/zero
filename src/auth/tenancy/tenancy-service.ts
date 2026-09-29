@@ -44,6 +44,20 @@ export class TenancyService {
     return this.store.getTenantBySlug(slug);
   }
 
+  /** Return the sole protected administration organization, when provisioned. */
+  getAdministrationTenant(): TenantRecord | null {
+    return this.store.getAdministrationTenant();
+  }
+
+  countTenants(): number {
+    return this.store.countTenants();
+  }
+
+  /** One-way exact adoption used only by installed-profile reconciliation. */
+  adoptAdministrationTenant(tenantId: string): TenantRecord {
+    return this.store.adoptAdministrationTenant(tenantId);
+  }
+
   getMembership(tenantId: string, userId: string): TenantMembershipRecord | null {
     return this.store.getMembership(tenantId, userId);
   }
@@ -54,6 +68,11 @@ export class TenancyService {
 
   listActiveMembershipsForUser(userId: string): TenantMembershipRecord[] {
     return this.store.listActiveMembershipsForUser(userId);
+  }
+
+  /** Whether the identity currently belongs to the live administration organization. */
+  hasActiveAdministrationMembership(userId: string): boolean {
+    return this.store.hasActiveAdministrationMembership(userId);
   }
 
   /** Return validated active membership and tenant pairs for session/onboarding choices. */

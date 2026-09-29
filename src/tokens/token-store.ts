@@ -181,6 +181,21 @@ export class PlatformTokenStore {
     };
   }
 
+  /** Opaque identity for the exact ReactiveDB transaction domain. */
+  getTransactionDomain(): object {
+    return this.db.getTransactionDomain();
+  }
+
+  /** Coordinate token work with callers already inside the same transaction. */
+  transaction<T>(operation: () => T): T {
+    return this.db.transaction(operation);
+  }
+
+  /** Publish a best-effort notification only after the outer transaction commits. */
+  afterCommit(callback: () => unknown): void {
+    this.db.afterCommit(callback);
+  }
+
   /** Store a hashed consume-once action token. */
   storeActionToken(params: {
     tokenId: string;

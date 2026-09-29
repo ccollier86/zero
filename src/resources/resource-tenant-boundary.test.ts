@@ -363,7 +363,10 @@ describe('tenant resource CRUD boundary', () => {
     expect(created).toMatchObject({
       ok: false,
       status: 500,
-      body: { code: 'resource-mutation-failed' },
+      body: {
+        code: 'resource-mutation-failed',
+        error: 'Resource mutation failed',
+      },
     });
     expect(db.get('documents', 'escape-create')).toBeNull();
 
@@ -384,7 +387,10 @@ describe('tenant resource CRUD boundary', () => {
     expect(updated).toMatchObject({
       ok: false,
       status: 500,
-      body: { code: 'resource-mutation-failed' },
+      body: {
+        code: 'resource-mutation-failed',
+        error: 'Resource mutation failed',
+      },
     });
     expect(db.get('documents', 'escape-update')).toEqual({
       id: 'escape-update', tenant_id: 'tenant-a', title: 'Original',
@@ -408,7 +414,10 @@ describe('tenant resource CRUD boundary', () => {
     expect(deleted).toMatchObject({
       ok: false,
       status: 500,
-      body: { code: 'resource-mutation-failed' },
+      body: {
+        code: 'resource-mutation-failed',
+        error: 'Resource mutation failed',
+      },
     });
     expect(db.get('documents', 'escape-delete')).toEqual({
       id: 'escape-delete', tenant_id: 'tenant-a', title: 'Original',

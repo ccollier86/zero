@@ -18,6 +18,7 @@ import {
   type PlatformObservabilityRuntime,
 } from '../observability';
 import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
+import { ZERO_OBSERVABILITY_RUNTIME } from '../runtime/service-keys';
 import { routeMessage } from './message-handler';
 import { createReactiveDB } from './reactive-db';
 import { createSyncPlugin } from './sync.plugin';
@@ -570,6 +571,11 @@ describe('actor-backed tenant Sync bridge', () => {
   test('keeps every physical tenant table out of the default database and only exposes Sync tables', async () => {
     const db = createReactiveDB({ mode: 'memory' });
     const runtime = new ZeroAppRuntime('tenant-sync-topology-test');
+    runtime.set(ZERO_OBSERVABILITY_RUNTIME, {
+      sink: { emit() {} },
+      store: null,
+      config: { enabled: false },
+    });
     const exposure = new Map([
       ['todos', 'sync'],
       ['http_records', 'http'],

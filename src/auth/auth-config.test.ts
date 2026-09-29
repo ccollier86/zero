@@ -29,6 +29,7 @@ describe('resolveAuthBehaviorConfig', () => {
     });
     expect(defaults.authorization).toEqual({
       mode: 'simple',
+      registryVersion: 1,
       permissions: {},
       roles: {},
     });
@@ -45,6 +46,7 @@ describe('resolveAuthBehaviorConfig', () => {
     });
     expect(existing.authorization).toEqual({
       mode: 'simple',
+      registryVersion: 1,
       permissions: {},
       roles: {},
     });
@@ -163,6 +165,7 @@ describe('resolveAuthBehaviorConfig', () => {
       if (tenancy === 'single' && authorization === 'simple') {
         expect(resolved.authorization).toEqual({
           mode: 'simple',
+          registryVersion: 1,
           permissions: {},
           roles: {},
         });
@@ -175,15 +178,43 @@ describe('resolveAuthBehaviorConfig', () => {
           'access-manager',
           'owner',
         ]);
+        expect(resolved.authorization.permissions['application.users:manage'])
+          .toBeUndefined();
+        expect(resolved.authorization.permissions['application.tenants:manage'])
+          .toBeUndefined();
       } else {
         expect(Object.keys(resolved.authorization.permissions)).toContain('tenant:read');
         expect(Object.keys(resolved.authorization.permissions)).toContain('tenant.roles:manage');
+        expect(resolved.authorization.permissions['application.users:manage']?.scope)
+          .toBe('application');
+        expect(resolved.authorization.permissions['application.audit:read']?.scope)
+          .toBe('application');
+        expect(resolved.authorization.roles.administrator?.permissions)
+          .toEqual(expect.arrayContaining([
+            'application.audit:read',
+            'application.audit:manage',
+          ]));
+        expect(resolved.authorization.roles['access-manager']?.permissions)
+          .not.toContain('application.audit:read');
         expect(Object.keys(resolved.authorization.roles)).toEqual([
+          'access-manager',
+          'administrator',
           'manager',
           'member',
           'owner',
         ]);
       }
+    }
+  });
+
+  test('normalizes and validates an explicit authorization registry version', () => {
+    expect(resolveAuthBehaviorConfig({
+      authorization: { mode: 'advanced', registryVersion: 7 },
+    }).authorization.registryVersion).toBe(7);
+    for (const registryVersion of [0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER]) {
+      expect(() => resolveAuthBehaviorConfig({
+        authorization: { mode: 'advanced', registryVersion },
+      })).toThrow('Authorization registryVersion must be an integer between 1');
     }
   });
 

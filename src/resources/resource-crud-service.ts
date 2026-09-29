@@ -13,6 +13,12 @@ import type {
   ResourceCrudResult,
   ResourceCrudServiceOptions,
 } from './resource-crud-contracts';
+import type {
+  PlatformCodeDefinition,
+  PlatformCodeEmitOptions,
+  PlatformEvent,
+  PlatformObservabilityRuntime,
+} from '../observability/types';
 import { ResourceCrudFailureMapper } from './resource-crud-failures';
 import { ResourceCrudPolicyService } from './resource-crud-policy';
 import { ResourceDefaultCrudEngine } from './resource-default-crud-engine';
@@ -47,7 +53,9 @@ export class ResourceCrudService {
   private readonly tenantEngine: ResourceTenantCrudEngine;
 
   constructor(private readonly options: ResourceCrudServiceOptions) {
-    const failures = new ResourceCrudFailureMapper(options.observability);
+    const failures = new ResourceCrudFailureMapper(
+      resolveResourceObservability(options),
+    );
     const authority = new ResourcePolicyAuthorityService({
       userStore: options.userStore,
       authorizationKernel: options.authorizationKernel,
@@ -202,4 +210,51 @@ export class ResourceCrudService {
     }
     return resource;
   }
+}
+
+function resolveResourceObservability(
+  options: ResourceCrudServiceOptions,
+): PlatformObservabilityRuntime | null | undefined {
+  if (options.observability) return options.observability;
+  if (!options.emitCode) return options.observability;
+
+  const emitCode = options.emitCode;
+  return {
+    sink: {
+      emit(event) {
+        emitCode(platformDefinitionFromEvent(event), platformOptionsFromEvent(event));
+      },
+    },
+    store: null,
+    config: {
+      enabled: true,
+      console: false,
+      store: false,
+      endpoint: false,
+    },
+  };
+}
+
+function platformDefinitionFromEvent(event: PlatformEvent): PlatformCodeDefinition {
+  return {
+    code: event.code,
+    prefix: event.prefix,
+    category: event.category,
+    level: event.level,
+    message: event.message,
+  };
+}
+
+function platformOptionsFromEvent(event: PlatformEvent): PlatformCodeEmitOptions {
+  return {
+    source: event.source,
+    level: event.level,
+    category: event.category,
+    message: event.message,
+    ...(event.metadata ? { metadata: event.metadata } : {}),
+    ...(event.error === undefined ? {} : { error: event.error }),
+    ...(event.requestId ? { requestId: event.requestId } : {}),
+    ...(event.userId ? { userId: event.userId } : {}),
+    ...(event.traceId ? { traceId: event.traceId } : {}),
+  };
 }

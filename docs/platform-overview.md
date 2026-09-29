@@ -139,6 +139,9 @@ before configuring it.
   `multi/simple`, and `multi/advanced` through one authorization kernel
 - **Multi-tenant sessions and controls:** tenant selection/switching, member
   administration, invitations/join requests, and request-only verified domains
+- **Platform administration:** protected Administration Organization,
+  capability-gated people/invitations, customer-organization directory and
+  lifecycle, plus read-only customer-member drill-in
 - **Advanced RBAC:** app-declared permissions and static role templates with
   durable application/tenant assignments and packaged administration UI
 - **Control-plane audit:** bounded append-only authorization/security events,
@@ -147,6 +150,9 @@ before configuring it.
 - **Platform tokens:** generic one-time action tokens plus resumable public-flow tokens
 - **React integration:** `useAuth()` returns full state + actions in one call
 - **Top-level SDK access:** `client.login()`, `client.logout()`, `client.user` — no namespace required
+
+See [Platform Administration Organization](./auth/platform-administration.md)
+for the multi-mode bootstrap and operator control-plane contract.
 
 ```tsx
 // React hook

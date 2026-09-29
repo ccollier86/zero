@@ -1,10 +1,16 @@
 import type { ReactiveDB } from '../sync/reactive-db';
 import type { AuthAuditService } from './auth-audit-service';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 import type {
   AuthAuthorizationMode,
   AuthTenancyMode,
 } from './types';
 import { AuthError } from './types';
+import {
+  InstalledAuthorizationManifestGuard,
+  type InstalledAuthorizationManifest,
+} from './auth-authorization-manifest';
 
 export const AUTH_INSTALLED_PROFILE_TABLE = '_auth_installed_profile';
 
@@ -70,6 +76,7 @@ export function reconcileInstalledAuthProfile(input: {
   };
   legacySimpleRoleAdoption?: boolean;
   audit?: AuthAuditService;
+  emitCode?: AuthPlatformCodeEmitter;
   beforeCommit: (plan: AuthProfileTransitionPlan) =>
     AuthProfileTransitionEvidence | void;
 }): AuthProfileTransitionPlan {
@@ -111,7 +118,15 @@ export function reconcileInstalledAuthProfile(input: {
       );
     }
 
-    const evidence = input.beforeCommit(plan) ?? {};
+    const evidence = invokeSynchronousAuthCallback(
+      () => input.beforeCommit(plan),
+      {
+        component: 'auth-profile-state',
+        invariant: 'profile-before-commit-async',
+        message: '[auth] Profile transition beforeCommit must be synchronous.',
+        emitCode: input.emitCode,
+      },
+    ) ?? {};
     appendTransitionAudit(input.audit, plan, evidence);
     // Marker CAS is deliberately last. Any adoption/readiness/audit failure
     // leaves both the marker and all authority rows unchanged.
@@ -129,16 +144,21 @@ export function readInstalledAuthProfile(
 /** Cheap durable fence used by request/token boundaries after startup. */
 export class InstalledAuthProfileGuard {
   private readonly read;
+  private readonly authorizationManifest: InstalledAuthorizationManifestGuard | null;
 
   constructor(
     db: ReactiveDB,
     private readonly expected: InstalledAuthProfile,
+    expectedAuthorizationManifest?: InstalledAuthorizationManifest,
   ) {
     this.read = db.prepare(`
       SELECT version, generation, tenancy, authorization
       FROM ${AUTH_INSTALLED_PROFILE_TABLE}
       WHERE singleton = 1
     `);
+    this.authorizationManifest = expectedAuthorizationManifest
+      ? new InstalledAuthorizationManifestGuard(db, expectedAuthorizationManifest)
+      : null;
   }
 
   isCurrent(): boolean {
@@ -151,7 +171,8 @@ export class InstalledAuthProfileGuard {
     return row?.version === 1
       && Number(row.generation) === this.expected.generation
       && row.tenancy === this.expected.tenancy
-      && row.authorization === this.expected.authorization;
+      && row.authorization === this.expected.authorization
+      && (this.authorizationManifest?.isCurrent() ?? true);
   }
 
   assertCurrent(): void {

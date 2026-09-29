@@ -3,6 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { OBS_CODES } from '../observability/codes';
+import { emitPlatformCode } from '../observability/sink';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import { resolveAuthBehaviorConfig } from './auth-config';
 import { AuthEmailOutboxDelivery } from './auth-email-outbox-delivery';
@@ -22,6 +24,7 @@ import { TenantStore } from './tenancy/tenant-store';
 import { UserPropertyService } from './user-property-service';
 import { UserStore } from './user-store';
 import { AuthError } from './types';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 import { VerifiedDomainOnboardingService } from './verified-domain-service';
 import { VERIFIED_DOMAIN_RELEASE_QUARANTINE_MS } from './verified-domain-service';
 
@@ -74,10 +77,12 @@ describe('verified-domain onboarding service', () => {
       tenant.tenant.tenantId,
     )).toEqual({ count: 1 });
 
-    const workerState = harness.domains as unknown as {
-      runWorkerPass(): void;
-      stopped: boolean;
-      timer: ReturnType<typeof setInterval> | null;
+    const { dns: workerState } = harness.domains as unknown as {
+      dns: {
+        runWorkerPass(): void;
+        stopped: boolean;
+        timer: ReturnType<typeof setInterval> | null;
+      };
     };
     workerState.runWorkerPass();
     await Promise.resolve();
@@ -175,6 +180,18 @@ describe('verified-domain onboarding service', () => {
       identityKind: 'session',
       identityContinuationId: null,
     });
+
+    const asyncFalse = (async () => false) as unknown as () => boolean;
+    expect(() => harness.domains.admit({
+      continuation: completed.continuation,
+      identity: identity!,
+      consumeIdentity: asyncFalse,
+    })).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Verified-domain identity consumption must be synchronous.',
+    }));
+    expect(harness.domains.inspectAdmissionIdentity(completed.continuation)).toEqual(identity);
+    expect(rowCount(harness.db, '_auth_tenant_join_requests')).toBe(0);
 
     const admitted = harness.domains.admit({
       continuation: completed.continuation,
@@ -979,6 +996,51 @@ describe('verified-domain onboarding service', () => {
     )).toEqual({ released_by: null });
   });
 
+  test('fails closed and emits the standard auth invariant when release provenance diverges', async () => {
+    const events: Array<{
+      code: string;
+      metadata: Record<string, unknown> | undefined;
+    }> = [];
+    const emitCode: AuthPlatformCodeEmitter = (definition, options) => {
+      events.push({ code: definition.code, metadata: options?.metadata });
+      return emitPlatformCode(definition, options);
+    };
+    const harness = await createAdmittedHarness({ emitCode });
+    harness.db.exec(`
+      CREATE TEMP TRIGGER force_domain_release_snapshot_mismatch
+      BEFORE UPDATE OF status ON _auth_tenant_join_requests
+      WHEN OLD.status = 'pending' AND NEW.status = 'cancelled'
+      BEGIN
+        SELECT RAISE(IGNORE);
+      END
+    `);
+
+    expect(() => harness.domains.releaseClaim({
+      tenantId: harness.tenant.tenant.tenantId,
+      claimId: harness.claim.claimId,
+      expectedRevision: harness.claim.revision,
+      expectedPolicyRevision: harness.claim.policy.revision,
+      confirmDomain: harness.claim.domain,
+      assertCurrentAuthority: harness.assertCurrentAuthority,
+    })).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      status: 500,
+      message: '[auth] Domain release provenance snapshot invariant failed.',
+    }));
+    expect(events).toContainEqual({
+      code: OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code,
+      metadata: {
+        component: 'verified-domain-onboarding-service',
+        invariant: 'release-provenance-snapshot-count',
+      },
+    });
+    expect(harness.domains.listClaims(harness.tenant.tenant.tenantId)).toHaveLength(1);
+    expect(harness.db.prepare(`SELECT status FROM _auth_tenant_join_requests
+      WHERE join_request_id = ?`).get(harness.admitted.request.joinRequestId))
+      .toEqual({ status: 'pending' });
+    expect(rowCount(harness.db, '_auth_released_domain_join_provenance')).toBe(0);
+  });
+
   test('quarantines a released domain across tenants for exactly seven days', async () => {
     const harness = await createHarness();
     const firstOwner = await createUser(harness, 'quarantine-owner-one', 'one@platform.com');
@@ -1194,7 +1256,12 @@ interface Harness {
   lastTxtName: string | null;
 }
 
-async function createHarness(options: { maxClaimsPerTenant?: number } = {}): Promise<Harness> {
+interface HarnessOptions {
+  maxClaimsPerTenant?: number;
+  emitCode?: AuthPlatformCodeEmitter;
+}
+
+async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   const db = createReactiveDB({ mode: 'memory' });
   active.push(db);
   defineAuthTables(db);
@@ -1256,12 +1323,13 @@ async function createHarness(options: { maxClaimsPerTenant?: number } = {}): Pro
     'application_test',
     () => now.value,
     audit,
+    options.emitCode,
   );
   return Object.assign(harness, { users, tenancy, onboarding, domains, audit });
 }
 
-async function createAdmittedHarness() {
-  const harness = await createHarness();
+async function createAdmittedHarness(options: HarnessOptions = {}) {
+  const harness = await createHarness(options);
   const owner = await createUser(harness, 'cleanup-owner', 'owner@platform.com');
   const applicant = await createUser(harness, 'cleanup-applicant', 'person@acme.com');
   const tenant = harness.tenancy.createTenant({

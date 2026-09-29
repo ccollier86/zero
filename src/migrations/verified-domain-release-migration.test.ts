@@ -4,8 +4,6 @@ import { describe, expect, test } from 'bun:test';
 import { defineAuthTables } from '../auth/auth-schema';
 import { defineAuthTenantOnboardingTables } from '../auth/auth-tenant-onboarding-schema';
 import { defineTenancyTables } from '../auth/tenancy/tenancy-schema';
-import { TenantStore } from '../auth/tenancy/tenant-store';
-import { TenancyService } from '../auth/tenancy/tenancy-service';
 import {
   defineVerifiedDomainReleaseTables,
   defineVerifiedDomainTables,
@@ -38,8 +36,6 @@ describe('migration 019 verified-domain release', () => {
       // The migration created the physical schema; register the same tables
       // with ReactiveDB before using the typed stores to seed real FK rows.
       defineAuthTables(seeded);
-      defineTenancyTables(seeded);
-      defineAuthTenantOnboardingTables(seeded);
       const users = new UserStore(seeded);
       const owner = await users.createUser({
         username: 'migration-release-owner',
@@ -57,14 +53,21 @@ describe('migration 019 verified-domain release', () => {
         status: 'active',
         emailVerifiedAt: 1,
       });
-      const tenant = new TenancyService(new TenantStore(seeded)).createTenant({
-        name: 'Migration Release',
-        slug: 'migration-release',
-        ownerUserId: owner.userId,
-      });
+      const tenantId = 'tenant-migration-release';
+      const membershipId = 'membership-migration-release-owner';
+      migrated.query(`INSERT INTO _auth_tenants (
+        tenant_id, slug, name, status, authorization_generation,
+        created_by, created_at, updated_at
+      ) VALUES (?, 'migration-release', 'Migration Release', 'active', 0, ?, 1, 1)`)
+        .run(tenantId, owner.userId);
+      migrated.query(`INSERT INTO _auth_tenant_memberships (
+        membership_id, tenant_id, user_id, status, role_key,
+        authorization_generation, joined_at, created_at, updated_at, created_by
+      ) VALUES (?, ?, ?, 'active', 'owner', 0, 1, 1, 1, ?)`)
+        .run(membershipId, tenantId, owner.userId, owner.userId);
       seedClaimGraph(migrated, {
-        tenantId: tenant.tenant.tenantId,
-        membershipId: tenant.ownerMembership.membershipId,
+        tenantId,
+        membershipId,
         ownerId: owner.userId,
         applicantId: applicant.userId,
       });
@@ -73,7 +76,7 @@ describe('migration 019 verified-domain release', () => {
       expect(migrated.query(`SELECT claim_id, tenant_id, domain, released_at,
         released_by, quarantine_until FROM _auth_tenant_domain_claims`).get()).toEqual({
         claim_id: 'claim-existing',
-        tenant_id: tenant.tenant.tenantId,
+        tenant_id: tenantId,
         domain: 'acme.com',
         released_at: null,
         released_by: null,
@@ -99,7 +102,7 @@ describe('migration 019 verified-domain release', () => {
       });
       expect(migrated.query(`SELECT membership_id, claim_id, domain
         FROM _auth_tenant_membership_provenance`).get()).toEqual({
-        membership_id: tenant.ownerMembership.membershipId,
+        membership_id: membershipId,
         claim_id: 'claim-existing',
         domain: 'acme.com',
       });

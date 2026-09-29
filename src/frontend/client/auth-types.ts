@@ -38,6 +38,7 @@ export interface RegisterParams {
 /** Organization created alongside a multi-tenant self-registration. */
 export interface AuthRegistrationTenant {
   tenantId: string;
+  kind: 'administration' | 'organization';
   membershipId: string;
   slug: string;
   name: string;
@@ -67,6 +68,7 @@ export interface AuthMfaChallenge {
 /** Public-safe active-tenant projection. */
 export interface AuthTenantSummary {
   tenantId: string;
+  kind: 'administration' | 'organization';
   slug: string;
   name: string;
   role: string | null;
@@ -155,6 +157,8 @@ export interface AuthTenantRoleDescriptor {
   key: string;
   label: string;
   description?: string;
+  /** Role is valid only inside the protected administration organization. */
+  administrationOnly: boolean;
   permissions: string[];
   allPermissions: boolean;
   system: boolean;
@@ -166,7 +170,12 @@ export interface AuthTenantAdministrationConfig {
   tenancy: 'multi';
   authorization: 'simple' | 'advanced';
   terminology: { singular: string; plural: string };
-  tenant: { tenantId: string; slug: string; name: string };
+  tenant: {
+    tenantId: string;
+    kind: 'administration' | 'organization';
+    slug: string;
+    name: string;
+  };
   actor: {
     membershipId: string;
     roles: string[];
@@ -268,7 +277,11 @@ export type AuthTenantInvitationInspection =
   | { available: false }
   | {
       available: true;
-      tenant: { name: string; slug: string };
+      tenant: {
+        name: string;
+        slug: string;
+        kind: 'administration' | 'organization';
+      };
       emailHint: string;
       expiresAt: number;
       account: 'sign-in' | 'create';
@@ -294,6 +307,7 @@ export type AuthTenantInvitationAcceptanceResult =
         membershipId: string;
         name: string;
         slug: string;
+        kind: 'administration' | 'organization';
       };
     })
   | (AuthCompletionResult & {

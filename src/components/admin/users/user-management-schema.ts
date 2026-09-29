@@ -54,9 +54,11 @@ export const userManagementEditableFields = [
 /** Resolve fields that are safe to expose for the selected user and auth policy. */
 export function getUserManagementEditableFields(
   config: AuthAdminConfig | null,
-  options: { isSelf?: boolean; canUpdate?: boolean } = {},
+  options: { isSelf?: boolean; canUpdate?: boolean; enforceCapabilities?: boolean } = {},
 ): string[] {
-  if (options.canUpdate === false) return [];
+  if (options.canUpdate === false
+    || (options.enforceCapabilities !== false
+      && config?.capabilities.canManageUsers !== true)) return [];
 
   const fields = userManagementEditableFields.filter((fieldName) => {
     if (fieldName === 'role') return Boolean(config?.capabilities.promoteAdmins) && !options.isSelf;

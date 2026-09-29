@@ -15,14 +15,19 @@ import type {
   CreatedAuthActionToken,
 } from './action-token-service';
 import { assertAdminMayForcePasswordChange } from './admin-user-guards';
-import type { AssertAuthAdminMutationAuthority } from './auth-admin-mutation-authority';
+import {
+  invokeAuthAdminMutationAuthority,
+  type AssertAuthAdminMutationAuthority,
+} from './auth-admin-mutation-authority';
 import { discardUndeliveredActionToken } from './auth-action-token-delivery';
+import { classifyAuthEmailFailure } from './auth-email-outbox-failure-classification';
 import { AuthError, type AuthActionTokenType, type UserRecord } from './types';
 import type { UserStore } from './user-store';
 import type {
   AuthAuditOutcome,
   AuthAuditRequestContext,
 } from './auth-audit-types';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 
 type DeliveryKind = 'setup' | 'reset';
 
@@ -30,7 +35,8 @@ export class AdminLifecycleEmailService {
   constructor(
     private readonly store: UserStore,
     private readonly actionTokens: AuthActionTokenService,
-    private readonly accountEmail: AccountEmailService
+    private readonly accountEmail: AccountEmailService,
+    private readonly emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
   ) {}
 
   /** Send account setup instructions, then require a password change. */
@@ -68,7 +74,7 @@ export class AdminLifecycleEmailService {
     kind: DeliveryKind,
     auditRequest?: AuthAuditRequestContext,
   ): Promise<void> {
-    const initialActor = assertCurrentAuthority();
+    const initialActor = this.assertAuthority(assertCurrentAuthority, userId);
     this.requireEligibleTarget(userId, initialActor.userId);
     this.accountEmail.assertReady();
 
@@ -82,7 +88,7 @@ export class AdminLifecycleEmailService {
     } = {};
     try {
       this.store.transaction(() => {
-        prepared.actorId = assertCurrentAuthority().userId;
+        prepared.actorId = this.assertAuthority(assertCurrentAuthority, userId).userId;
         prepared.user = this.requireEligibleTarget(userId, prepared.actorId);
         prepared.created = this.actionTokens.create({
           userId,
@@ -132,19 +138,27 @@ export class AdminLifecycleEmailService {
         { 'cleanup-succeeded': cleanupSucceeded },
         'delivery-failed',
       );
-      if (kind === 'reset') {
-        emitPlatformCode(OBS_CODES.AUTH_ADMIN_PASSWORD_RESET_DELIVERY_FAILED, {
+      const failure = classifyAuthEmailFailure(error);
+      this.emitCode(
+        kind === 'setup'
+          ? OBS_CODES.AUTH_ADMIN_SETUP_DELIVERY_FAILED
+          : OBS_CODES.AUTH_ADMIN_PASSWORD_RESET_DELIVERY_FAILED,
+        {
           userId: actorId,
-          error,
-          metadata: { targetUserId: userId, cleanupSucceeded },
-        });
-      }
+          metadata: {
+            targetUserId: userId,
+            cleanupSucceeded,
+            code: failure.code,
+            retryable: failure.retryable,
+          },
+        },
+      );
       throw error;
     }
 
     try {
       this.store.transaction(() => {
-        actorId = assertCurrentAuthority().userId;
+        actorId = this.assertAuthority(assertCurrentAuthority, userId).userId;
         this.requireEligibleTarget(userId, actorId);
         this.recordDelivery(
           'account.security-delivery-succeeded',
@@ -177,6 +191,17 @@ export class AdminLifecycleEmailService {
     }
     assertAdminMayForcePasswordChange(this.store, actorId, user);
     return user;
+  }
+
+  private assertAuthority(
+    assertion: AssertAuthAdminMutationAuthority,
+    targetUserId: string,
+  ) {
+    return invokeAuthAdminMutationAuthority(
+      assertion,
+      { targetUserId },
+      { component: 'admin-lifecycle-email-service', emitCode: this.emitCode },
+    );
   }
 
   private recordDelivery(

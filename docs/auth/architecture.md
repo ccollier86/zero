@@ -173,8 +173,11 @@ notifications and inspect/delete them, and room managers may delete peer-owned
 rooms. Ordinary workflow ownership, notification audience/receipt actions, and
 room creator/member operations keep their narrower self-service semantics.
 
-Global `users.role=admin` is platform control-plane authority, not tenant
-data-plane authority, and never supplies any of those permissions in `multi`.
+Global `users.role=admin` is the legacy global-administrator boundary, not
+tenant data-plane or advanced application-permission authority, and never
+supplies any of those permissions in `multi`. Administration Organization
+application permissions likewise do not promote the identity's global role;
+global-admin role mutation requires both boundaries where the route says so.
 The same rule is shared by HTTP routes, request-scoped `zero.*` service
 facades, and framework Sync row filters. `single` retains historical global
 admin compatibility. Advanced role audiences always use the complete live
@@ -294,35 +297,61 @@ server extensions, unsafe methods, and WebSocket sync remain Bearer-only.
 
 ### User Store (`user-store.ts`)
 
-SQLite operations on auth tables. Statements are prepared once in the store,
-following the same reuse principle as ReactiveDB and
-`src/persistence/statement-cache.ts`.
+Stable facade for SQLite-backed identity operations. It prepares the
+user/property/config statements it owns and coordinates focused internal
+stores, each of which prepares and reuses its own statements. This keeps the
+public `UserStore` API compatible without making one file own every auth
+persistence concern.
 
 **Owns:**
 - User CRUD (create, read, update, delete)
-- Credential management (hash storage, password verification)
 - User properties KV (set, get, delete, list)
-- Refresh token storage (insert, lookup by hash or session ID, revoke)
 - Auth config storage (keypair persistence)
+- Transaction/profile fencing and orchestration across its collaborators
+
+**Coordinates:**
+- `UserIdentityStore` for user identity CRUD, listing, and counts
+- `UserPropertyConfigStore` for user properties and internal auth config KV
+- `UserCredentialStore` for password hashes, compare-and-swap changes,
+  password gates, revocation, and security audit coupling
+- `UserTokenStore` for refresh tokens, replay/revocation, and legacy auth
+  action tokens
+- `RegistrationProvisioningStore` for receipt leases, finalization, crash
+  recovery, and exact rollback
+- `AuthGenerationStore` for durable per-user security generations
 
 **Does not own:**
 - Password hashing algorithm choice (uses `Bun.password` — the runtime decides Argon2id params)
 - JWT logic (that's TokenService)
 - Reactivity (that's ReactiveDB — UserStore writes through `db.insert()`/`db.update()`)
+- Generic platform action/resume persistence (that's `PlatformTokenStore`)
+
+Across auth persistence, any authority or lifecycle callback deliberately run
+inside a managed database transaction is synchronous-only. A Promise-like
+return has any later rejection consumed, fails closed with
+`AUTH_STATE_INVARIANT_FAILED`, and rolls back that transaction; asynchronous
+work must not escape the authority/commit fence.
 
 ### Token Service (`token-service.ts`)
 
-JWT signing, verification, keypair management, refresh rotation.
+Stable token and live-authority facade. It composes focused collaborators
+instead of owning cryptography, signing-key establishment, and every browser
+session-family transition in one file.
 
 **Owns:**
-- ECDSA P-256 keypair lifecycle (generate, persist, load)
-- Access token signing and verification via `jose`
-- Refresh token generation, hashing, rotation
-- Dedicated page-session JWT issuance and live refresh-session validation
-- JWKS public key export
+- Live user, browser/native session, tenant, and profile-fence resolution
+- Public issuance/verification/rotation/replacement methods and JWKS facade
+
+**Coordinates:**
+- `auth-signing-keys.ts` for atomic ECDSA P-256 key establishment/import
+- `AuthTokenCodec` for strict JWT/JWKS cryptographic encoding and verification
+- `AuthWebSessionTokenService` for refresh-family, page-session, replacement,
+  rotation, and logout orchestration
+- `AuthSessionService` and the stable `UserStore` facade for durable authority
 
 **Does not own:**
-- Token storage (refresh tokens stored via UserStore → `_refresh_tokens` table)
+- Token storage (refresh tokens use the stable `UserStore` facade, delegated
+  internally to `UserTokenStore` and `_refresh_tokens`)
 - User data (reads user claims from UserStore at signing time)
 - HTTP transport (the plugin's routes call TokenService methods)
 
@@ -361,6 +390,7 @@ export function createAuthPlugin(config: AuthPluginConfig) {
     .use(createAuthAuthorizationPlugin({ /* runtime getters */ }))
     .use(createAuthAuditPlugin({ /* durable control-plane audit */ }))
     .use(createAuthApplicationAdministrationPlugin({ /* single/advanced */ }))
+    .use(createAuthPlatformAdministrationPlugin({ /* protected admin org */ }))
     .use(createAuthTenantAdministrationPlugin({ /* multi */ }))
     .use(createAuthTenantOnboardingPlugin({ /* multi */ }))
     .use(createAuthVerifiedDomainPlugin({ /* multi, when configured */ }))
@@ -372,6 +402,13 @@ The production composition root also registers and unregisters the runtime's
 legacy no-argument getter compatibility provider. New request handling remains
 bound to the app-local `runtime` shown above rather than a process-global
 singleton.
+
+Managed composition likewise creates the Auth code emitter from that app's
+observability runtime and passes it through lifecycle, request, native, email,
+and background services. Direct standalone composition without a runtime keeps
+the intentional process-wide compatibility emitter. The response redaction,
+stable failure codes, and private-safe metadata contract is documented in
+[Auth Operational Failure Contract](../observability.md#auth-operational-failure-contract).
 
 ### Plugin Config
 
@@ -423,8 +460,8 @@ Client                    Auth Plugin               UserStore           TokenSer
   │                           │                         │  Bun.password.hash │
   │                           │                         │  lock + recheck    │
   │                           │                         │  db.insert(users)  │
-  │                           │                         │  db.exec(_creds)   │
-  │                           │                         │  multi: tenant +   │
+  │                           │                         │  credential store  │
+  │                           │                         │  multi: admin org +│
   │                           │                         │  owner membership  │
   │                           │                         │  provisional       │
   │                           │                         │  receipt           │
@@ -457,10 +494,12 @@ Client                    Auth Plugin               UserStore           TokenSer
 In `multi` mode, `organizationName` is required for first-administrator
 bootstrap and optional for later registrations; `organizationSlug` is optional
 and otherwise derived on the server. During bootstrap, the user has
-global/platform role `admin` and the new membership has tenant role `owner`.
-The initial `createRegistrationUser()` transaction covers credentials, tenant,
-membership, advanced role rows, any claimed native-registration continuation,
-and a receipt in `_auth_registration_provisioning`. Session/token or
+global/platform role `admin`; the protected tenant has
+`kind: 'administration'`, and its membership has tenant role `owner`. Later
+created organizations have `kind: 'organization'`. The initial
+`createRegistrationUser()` transaction covers credentials, the Administration
+Organization, membership, advanced role rows, any claimed native-registration
+continuation, and a receipt in `_auth_registration_provisioning`. Session/token or
 verification-email provisioning then runs outside the SQLite transaction. A
 second transaction either finalizes the receipt and bootstrap marker or removes
 the complete receipt-bound graph. Platform action tokens and native bindings
@@ -723,8 +762,8 @@ Both plugins define tables on the same database, but each plugin owns its own ta
 | `_credentials` | Auth plugin | Internal | None — password hashes stay server-side |
 | `_refresh_tokens` | Auth plugin | Internal | None — token hashes are sensitive |
 | `_auth_action_tokens` | Auth plugin | Internal | None — legacy reset/setup token hashes are sensitive |
-| `_auth_tenants` | Multi-mode auth runtime | Internal/control plane | None — no public tenant API or generic Sync access |
-| `_auth_tenant_memberships` | Multi-mode auth runtime | Internal/control plane | None — no public membership API or generic Sync access |
+| `_auth_tenants` | Multi-mode auth runtime | Internal/control plane | Purpose-built authenticated tenant/platform APIs only; no generic Sync access |
+| `_auth_tenant_memberships` | Multi-mode auth runtime | Internal/control plane | Purpose-built authenticated member/onboarding/platform APIs only; no generic Sync access |
 | `_zero_action_tokens` | Platform token plugin | Internal | None — generic action-token hashes are sensitive |
 | `_zero_resume_tokens` | Platform token plugin | Internal | None — generic resume-token hashes are sensitive |
 | `_auth_config` | Auth plugin | Internal | None — signing keys are sensitive |
@@ -787,8 +826,13 @@ import {
   createSyncPlugin,
   type ReactiveDB,
 } from '@zero/framework/sync';
+import {
+  createPlatformTokenPlugin,
+  type PlatformTokenService,
+} from '@zero/framework/tokens';
 
 let db!: ReactiveDB;
+let platformTokens: PlatformTokenService | null = null;
 const sync = createSyncPlugin({
   db: { mode: 'memory' },
   onDatabaseCreated(created) { db = created; },
@@ -805,18 +849,28 @@ const sync = createSyncPlugin({
     writeProtectedTables: ['users'],
   }),
 });
+const tokenPlugin = createPlatformTokenPlugin({
+  db,
+  onServiceCreated(service) { platformTokens = service; },
+});
 
 const app = installAuthStopBarrier(new Elysia()
   // 1. Sync owns the shared ReactiveDB and WebSocket transport.
   .use(sync)
 
-  // 2. Auth defines its tables in that same database and provides /auth/*.
-  .use(createAuthPlugin({ db }))
+  // 2. Platform tokens use that exact database/transaction domain.
+  .use(tokenPlugin)
 
-  // 3. Middleware verifies JWTs and resolves live authContext per request.
+  // 3. Auth uses the same DB and the app-local platform-token service.
+  .use(createAuthPlugin({
+    db,
+    getPlatformTokenService: () => platformTokens,
+  }))
+
+  // 4. Middleware verifies JWTs and resolves live authContext per request.
   .use(createAuthMiddleware(getTokenService))
 
-  // 4. App routes — can use both authContext and syncDB
+  // 5. App routes — can use both authContext and syncDB
   .get('/api/todos', ({ authContext, syncDB }) => { ... }));
 
 app.listen(3000);
@@ -825,12 +879,14 @@ app.listen(3000);
 **Why this order:**
 1. `createSyncPlugin()` constructs the one ReactiveDB during composition; its
    `onDatabaseCreated` callback makes that instance available to auth
-2. Auth mounts on the captured database and initializes its services at start
-3. Auth middleware comes after auth and resolves `getTokenService()` lazily
-4. Direct Sync composition must explicitly require bearer auth and protect
+2. Platform tokens mount on that exact instance before auth starts
+3. Auth mounts on the captured database and lazily receives that app-local
+   token service; a different transaction domain fails startup
+4. Auth middleware comes after auth and resolves `getTokenService()` lazily
+5. Direct Sync composition must explicitly require bearer auth and protect
    auth-owned tables; `createApp()` installs its broader platform policy
    automatically
-5. App routes come last — they consume derived context from both plugins
+6. App routes come last — they consume derived context from both plugins
 
 ### Shared DB injection
 
@@ -839,6 +895,7 @@ Capture the instance it creates and pass that exact object to auth:
 
 ```ts
 let db!: ReactiveDB;
+let platformTokens: PlatformTokenService | null = null;
 const sync = createSyncPlugin({
   db: { mode: 'memory' },
   onDatabaseCreated(created) { db = created; },
@@ -849,20 +906,38 @@ const sync = createSyncPlugin({
     writeProtectedTables: ['users'],
   }),
 });
+const tokenPlugin = createPlatformTokenPlugin({
+  db,
+  onServiceCreated(service) { platformTokens = service; },
+});
 
 const app = installAuthStopBarrier(new Elysia()
   .use(sync)
-  .use(createAuthPlugin({ db }))
+  .use(tokenPlugin)
+  .use(createAuthPlugin({
+    db,
+    getPlatformTokenService: () => platformTokens,
+  }))
   .use(createAuthMiddleware(getTokenService)));
 
 app.listen(3000);
 ```
 
-Sync creates and owns the ReactiveDB; auth receives that same instance. Do not
-create a separate ReactiveDB for auth, and do not pass a ReactiveDB object as
-`createSyncPlugin({ db })`: that property is database configuration. For most
-apps, prefer `createApp()`, which performs this composition and installs the
-complete platform policy automatically.
+Sync creates and owns the ReactiveDB; platform tokens and auth receive that
+same instance. Do not create a separate ReactiveDB for either service, and do
+not pass a ReactiveDB object as `createSyncPlugin({ db })`: that property is
+database configuration. The action-token integration compares an opaque
+transaction-domain identity, not paths or configuration, and throws
+`AUTH_STATE_INVARIANT_FAILED` if direct composition crosses databases.
+
+Shared action-token consumption and the corresponding credential/account
+transition nest into one outer transaction. Their consumed-success events are
+queued after commit; rollback discards both state and success telemetry. See
+[Platform Tokens: Auth Transaction Boundary](../tokens.md#auth-transaction-boundary).
+
+For most apps, prefer `createApp()`, which performs this composition, wires the
+app-local token service automatically, and installs the complete platform
+policy.
 
 For standalone composition, apply `installAuthStopBarrier()` to the finished
 root app. It makes `await app.stop()` join auth email delivery before Sync
@@ -941,8 +1016,16 @@ tracker is not; its separate requirements remain deferred in
 
 ```
 src/auth/
-├── user-store.ts           # SQLite operations: users, properties, credentials, refresh tokens, legacy action tokens
-├── token-service.ts        # JWT signing/verification, keypair mgmt, refresh rotation
+├── user-store.ts           # Stable identity facade: users, properties, config, collaborator orchestration
+├── user-identity-store.ts  # User identity CRUD/list/count persistence
+├── user-property-config-store.ts # User properties and internal auth config KV
+├── user-credential-store.ts # Password hashes and atomic password/security transitions
+├── user-token-store.ts     # Refresh replay/revocation and legacy auth action-token persistence
+├── registration-provisioning-store.ts # Receipt leases, finalize/recovery, exact compensation
+├── token-service.ts        # Stable token and live-authority facade
+├── auth-signing-keys.ts    # Atomic ES256 key establishment/import
+├── auth-token-codec.ts     # Strict JWT/JWKS cryptographic codec
+├── auth-web-session-token-service.ts # Browser refresh/page-session lifecycle
 ├── action-token-service.ts # Auth wrapper over generic platform action tokens
 ├── account-email-service.ts # Auth lifecycle email delivery through platform email
 ├── auth.plugin.ts          # Composition root — lifecycle, derive, subplugin mounting
@@ -954,8 +1037,11 @@ src/auth/
 ├── auth-user-properties.plugin.ts # Current-user property routes
 ├── auth-admin.plugin.ts    # Admin user-management routes
 ├── auth-application-administration*.ts # Single/advanced role administration
+├── auth-platform-administration*.ts # Protected admin-org and customer-tenant control plane
 ├── auth-tenant-administration*.ts # Active-tenant member/role administration
-├── auth-tenant-onboarding*.ts # Invitations and retained join requests
+├── auth-tenant-onboarding*.ts # Onboarding routes/config/codec/role policy
+├── auth-tenant-invitation-service.ts # Invitation lifecycle
+├── auth-tenant-join-request-{service,store,projection}.ts # Retained join requests
 ├── auth-verified-domain.plugin.ts / verified-domain-*.ts # Exact-domain request admission
 ├── auth-account.plugin.ts  # Forgot/reset/setup routes
 ├── auth-mfa.plugin.ts      # MFA setup/challenge routes
@@ -964,9 +1050,10 @@ src/auth/
 ├── auth.middleware.ts      # Elysia middleware — resolves authContext + guards
 ├── auth-config.ts          # Auth config normalization
 ├── authorization-kernel.ts # Pure requirement compiler/evaluator
-├── authorization-role-*.ts # Static role templates and durable assignments
+├── authorization-role-*.ts # Static roles, durable assignments, and provisioning/reconciliation
 ├── auth-bootstrap.ts       # Setup authorization + public-safe capability mapping
 ├── auth-context.ts         # Shared Authorization header extraction
+├── auth-synchronous-callback.ts # Fail-closed guard for transaction-bound callbacks
 ├── tenancy/                # Tenant/membership schema, store, service, types
 ├── user-property-service.ts # Configured property validation/defaults
 ├── types.ts                # AuthContext, UserRecord, token/config/error types

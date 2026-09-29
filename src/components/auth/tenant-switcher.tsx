@@ -79,6 +79,11 @@ export function TenantSwitcher({
           {tenants.map((item) => (
             <SelectItem key={item.tenantId} value={item.tenantId}>
               <span>{item.name}</span>
+              {item.kind === 'administration' && (
+                <span className="ml-2 text-xs font-medium text-primary">
+                  Platform administration
+                </span>
+              )}
               {item.role && (
                 <span className="ml-2 text-xs text-muted-foreground">{item.role}</span>
               )}

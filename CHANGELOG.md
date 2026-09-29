@@ -17,14 +17,16 @@ All notable Zero Platform changes are tracked here.
 - Added explicit auth capability axes for `tenancy: 'single' | 'multi'` and
   `authorization: 'simple' | 'advanced'`. Existing/omitted configuration
   normalizes to `single/simple`; all four profiles now resolve through the same
-  app-local authorization kernel while preserving the existing global
-  `users.role` contract for platform administration.
+  app-local authorization kernel. The existing global `users.role` remains a
+  legacy compatibility boundary for declared global-admin routes and global-
+  role mutation; it is distinct in both directions from advanced application
+  permissions and never grants customer-tenant data access.
 - Added durable multi-tenant browser sessions, explicit tenant selection and
   refresh-family-backed switching, transactional tenant creation, protected
   owner invariants, live membership/tenant generation validation, and
   tenant-aware native sessions. Registration can atomically provision the
-  first organization during installation bootstrap or return an identity-only
-  onboarding continuation after bootstrap.
+  protected Administration Organization during installation bootstrap or
+  return an identity-only onboarding continuation after bootstrap.
 - Added static declarative permissions and simple/advanced scoped roles with
   retained assignment history, protected ownership transfer, optimistic role
   revisions, live grant-ceiling checks, and inert cleanup of retired role
@@ -35,6 +37,15 @@ All notable Zero Platform changes are tracked here.
   invitation-bound account creation, retained join requests, typed tenant
   administration clients/hooks, and packaged member, invitation, onboarding,
   creation, selection, and switching controls.
+- Added one protected Administration Organization for each multi-tenant app,
+  created atomically at bootstrap and visibly distinguished from customer
+  organizations by the required tenant `kind`. The bounded `/auth/platform`
+  control plane, `client.platformAdmin`, scope-fenced hooks, and capability-
+  driven packaged controls now manage its members, invitations, roles, and
+  ownership; browse/create/suspend/reactivate customer organizations; and
+  inspect safe customer-member projections without accepting an administration
+  tenant ID from the browser. Customer membership mutation still requires
+  switching into that customer scope.
 - Added opt-in verified-company-domain request onboarding with exact DNS and
   current-mailbox proof, non-enumerating discovery, retained fixed-role join
   requests, packaged administration/onboarding controls, and an owner-only
@@ -53,6 +64,10 @@ All notable Zero Platform changes are tracked here.
   and app-subtree/overlay replacement so UI state cannot be reused across
   accounts or tenants. Apps with their own caches can consume the public,
   credential-free `useAuthorizationScopeBoundary()` key and readiness state.
+  Administration sessions also receive a separate additive
+  `applicationScope` projection for live application-control-plane permissions;
+  permission helpers inspect both projections, while tenant gates remain bound
+  only to the active tenant scope.
 - Added `authorizationPolicy()` for server-only resource declarations. Managed
   CRUD, lazy `/api/data`, and WebSocket Sync now evaluate the same structured
   access requirement and live application/tenant RBAC scope used by route
@@ -88,6 +103,15 @@ All notable Zero Platform changes are tracked here.
   ambiguous legacy or reverse/tenancy-axis reinterpretation, blocks transitions
   around pending registration provisioning, and fences stale runtimes and Sync
   authority through the shared revision clock.
+- Added migrations `024` through `027` for the protected Administration
+  Organization, server-owned MFA assurance, invitation grant snapshots, and
+  the durable authorization-registry manifest. Legacy or missing MFA assurance
+  steps up under the configured policy; pre-snapshot pending invitations must
+  be reissued and current grants may narrow but never widen; and permission,
+  role, profile, and evaluator semantics are fingerprinted behind monotonic
+  `auth.authorization.registryVersion`. Same-version drift, rollback, corrupt
+  manifests, and retained-assignment role reactivation fail startup, registry
+  changes are system-audited, and stale runtimes fail closed.
 - Hardened the durable Sync log as an exact, versioned compatibility boundary:
   storage classes, collations, indexes, triggers, and affected-row counts are
   validated; application/log writes remain atomic; history gaps reset policy
@@ -124,11 +148,13 @@ All notable Zero Platform changes are tracked here.
   onboarding, verified domains, upstream SSO, Elysia integration, packaged
   control UI, installed clients, and the server-only schema-adjacent table-
   security direction.
-- Documented the candidate boundary explicitly: protected Administration
-  Organization/platform-tenant lifecycle UI, upstream enterprise SSO,
-  break-glass, tenant-custom roles, populated-app adoption tooling, verified-
-  domain autojoin/aliases/direct transfer, and distributed coordination for
-  separate-database/cross-host replicas remain deferred. Shared-file row
+- Documented the candidate boundary explicitly: the protected Administration
+  Organization and bounded platform tenant lifecycle UI are implemented;
+  upstream enterprise SSO, break-glass, tenant-custom roles, broader
+  populated-app discovery/migration tooling beyond exact pre-024
+  administration reconciliation, verified-domain autojoin/aliases/direct transfer, and
+  distributed coordination for separate-database/cross-host replicas remain
+  deferred. Shared-file row
   fanout/auth invalidation and managed resource field policy are implemented;
   `hot`/`ephemeral` runtime replication, a cross-runtime ephemeral topic bus,
   application-owned caches, and raw SQL/custom response projection are not

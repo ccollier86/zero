@@ -34,6 +34,10 @@ import { migration as m020 } from './definitions/020_auth_authority_revision';
 import { migration as m021 } from './definitions/021_verified_domain_request_provenance';
 import { migration as m022 } from './definitions/022_auth_request_admission_flows';
 import { migration as m023 } from './definitions/023_auth_installed_profile';
+import { migration as m024 } from './definitions/024_administration_tenant';
+import { migration as m025 } from './definitions/025_auth_mfa_assurance';
+import { migration as m026 } from './definitions/026_tenant_invitation_grant_snapshot';
+import { migration as m027 } from './definitions/027_authorization_registry_manifest';
 
 export {
   createMigrationRegistry,
@@ -93,4 +97,8 @@ export const migrations: Migration[] = [
   m021,
   m022,
   m023,
+  m024,
+  m025,
+  m026,
+  m027,
 ];

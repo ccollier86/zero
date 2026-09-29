@@ -47,38 +47,15 @@ export function parseAuthAuthorizationSnapshot(value: unknown): AuthAuthorizatio
     throw invalidSnapshot();
   }
 
-  let scope: AuthAuthorizationSnapshot['scope'] = null;
-  if (value.scope !== null) {
-    if (!isRecord(value.scope)
-      || (value.scope.kind !== 'application' && value.scope.kind !== 'tenant')
-      || !isNonEmptyString(value.scope.scopeId)
-      || !isStringArray(value.scope.roles)
-      || !isStringArray(value.scope.permissions)
-      || typeof value.scope.allPermissions !== 'boolean'
-      || !isNonEmptyString(value.scope.revision)
-      || (value.scope.tenantId !== undefined && !isNonEmptyString(value.scope.tenantId))
-      || (value.scope.membershipId !== undefined
-        && !isNonEmptyString(value.scope.membershipId))) {
-      throw invalidSnapshot();
-    }
-    if ((value.scope.kind === 'tenant') !== (profile.tenancy === 'multi')
-      || (value.scope.kind === 'tenant'
-        && (!value.scope.tenantId || !value.scope.membershipId
-          || value.scope.scopeId !== value.scope.tenantId))
-      || (value.scope.kind === 'application'
-        && (value.scope.tenantId !== undefined || value.scope.membershipId !== undefined))) {
-      throw invalidSnapshot();
-    }
-    scope = Object.freeze({
-      kind: value.scope.kind,
-      scopeId: value.scope.scopeId,
-      roles: Object.freeze([...value.scope.roles]),
-      permissions: Object.freeze([...value.scope.permissions]),
-      allPermissions: value.scope.allPermissions,
-      revision: value.scope.revision,
-      ...(value.scope.tenantId ? { tenantId: value.scope.tenantId } : {}),
-      ...(value.scope.membershipId ? { membershipId: value.scope.membershipId } : {}),
-    });
+  const scope = parseScope(value.scope, profile.tenancy, false);
+  const applicationScope = value.applicationScope === undefined
+    ? undefined
+    : parseScope(value.applicationScope, profile.tenancy, true);
+  if (applicationScope
+    && (profile.tenancy !== 'multi'
+      || scope?.kind !== 'tenant'
+      || applicationScope.scopeId !== 'application')) {
+    throw invalidSnapshot();
   }
 
   return Object.freeze({
@@ -92,11 +69,49 @@ export function parseAuthAuthorizationSnapshot(value: unknown): AuthAuthorizatio
       authorization: profile.authorization,
     }),
     scope,
+    ...(applicationScope !== undefined ? { applicationScope } : {}),
     revision: value.revision,
   });
 }
 
-function isRecord(value: unknown): value is Record<string, any> {
+function parseScope(
+  value: unknown,
+  tenancy: 'single' | 'multi',
+  applicationOnly: boolean,
+): AuthAuthorizationSnapshot['scope'] {
+  if (value === null) return null;
+  if (!isRecord(value)
+    || (value.kind !== 'application' && value.kind !== 'tenant')
+    || !isNonEmptyString(value.scopeId)
+    || !isBoundedKeyArray(value.roles, 128, ROLE_KEY_PATTERN, 64)
+    || !isBoundedKeyArray(value.permissions, 512, PERMISSION_KEY_PATTERN, 128)
+    || typeof value.allPermissions !== 'boolean'
+    || !isNonEmptyString(value.revision)
+    || (value.tenantId !== undefined && !isNonEmptyString(value.tenantId))
+    || (value.membershipId !== undefined && !isNonEmptyString(value.membershipId))) {
+    throw invalidSnapshot();
+  }
+  if ((applicationOnly && value.kind !== 'application')
+    || (!applicationOnly && (value.kind === 'tenant') !== (tenancy === 'multi'))
+    || (value.kind === 'tenant'
+      && (!value.tenantId || !value.membershipId || value.scopeId !== value.tenantId))
+    || (value.kind === 'application'
+      && (value.tenantId !== undefined || value.membershipId !== undefined))) {
+    throw invalidSnapshot();
+  }
+  return Object.freeze({
+    kind: value.kind,
+    scopeId: value.scopeId,
+    roles: Object.freeze([...value.roles]),
+    permissions: Object.freeze([...value.permissions]),
+    allPermissions: value.allPermissions,
+    revision: value.revision,
+    ...(value.tenantId ? { tenantId: value.tenantId } : {}),
+    ...(value.membershipId ? { membershipId: value.membershipId } : {}),
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
@@ -104,8 +119,23 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(isNonEmptyString);
+const ROLE_KEY_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
+const PERMISSION_KEY_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*(?::[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*)+$/;
+
+function isBoundedKeyArray(
+  value: unknown,
+  maxItems: number,
+  pattern: RegExp,
+  maxLength: number,
+): value is string[] {
+  if (!Array.isArray(value) || value.length > maxItems) return false;
+  const unique = new Set<string>();
+  for (const key of value) {
+    if (typeof key !== 'string' || key.length < 1 || key.length > maxLength
+      || !pattern.test(key) || unique.has(key)) return false;
+    unique.add(key);
+  }
+  return true;
 }
 
 function invalidSnapshot(): Error {

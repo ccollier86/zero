@@ -41,6 +41,7 @@ import {
   OBS_CODES,
   configureObservability,
   createObservabilityPlugin,
+  emitPlatformCode,
   emitPlatformCodeTo,
 } from '../../observability';
 import { createVectorPlugin } from '../../vector';
@@ -88,10 +89,7 @@ import {
   ZERO_RESOURCE_REGISTRY,
   ZERO_ROOM_SERVICE,
 } from '../../runtime/service-keys';
-import {
-  createRequestDatabaseClient,
-  createResourceTenantDatabaseAccess,
-} from './request-database-client';
+import { createResourceTenantDatabaseAccess } from './request-database-client';
 import { resolveTenantDatabaseResourceTopology } from './tenant-database-topology';
 import { createManagedTenantSyncDataPlane } from './tenant-sync-data-plane';
 import { resolveBrowserSyncTablePlanes } from './sync-client-topology';
@@ -172,12 +170,14 @@ export async function createApp(userConfig: AppConfig) {
   }
   const observabilityRuntime = configureObservability(config.observability);
   runtime.set(ZERO_OBSERVABILITY_RUNTIME, observabilityRuntime);
+  const emitCode: typeof emitPlatformCode = (definition, options) =>
+    emitPlatformCodeTo(observabilityRuntime, definition, options);
   const sqlite = config.db.sqlite ?? createPlatformSQLiteService(config.db, {
     observability: observabilityRuntime,
   });
   const ownsSqlite = !config.db.sqlite;
   try {
-    const emailRuntime = createEmailRuntime(config.email, config.app);
+    const emailRuntime = createEmailRuntime(config.email, config.app, emitCode);
     runtime.set(ZERO_EMAIL_RUNTIME, emailRuntime);
     const emailRuntimeRegistration = registerEmailRuntime(runtime, emailRuntime);
     runtime.addCleanup(() => emailRuntimeRegistration.unregister());
@@ -251,23 +251,23 @@ export async function createApp(userConfig: AppConfig) {
         generatedDir: config.generatedDir,
       });
       clientEntry = bundle.publicPath;
-      emitPlatformCodeTo(observabilityRuntime, OBS_CODES.APP_CLIENT_BUNDLE_READY, {
+      emitCode(OBS_CODES.APP_CLIENT_BUNDLE_READY, {
         metadata: { publicPath: bundle.publicPath },
       });
     } catch {
       // Client bundle is optional — SSR still works without hydration
-      emitPlatformCodeTo(observabilityRuntime, OBS_CODES.APP_CLIENT_BUNDLE_FAILED, {
+      emitCode(OBS_CODES.APP_CLIENT_BUNDLE_FAILED, {
         metadata: { stage: 'client-bundle' },
       });
     }
     try {
       const styles = await buildPlatformStyles(config.outDir, config.appDir);
       cssPath = styles.publicPath;
-      emitPlatformCodeTo(observabilityRuntime, OBS_CODES.APP_STYLES_READY, {
+      emitCode(OBS_CODES.APP_STYLES_READY, {
         metadata: { publicPath: styles.publicPath },
       });
     } catch {
-      emitPlatformCodeTo(observabilityRuntime, OBS_CODES.APP_STYLES_FAILED, {
+      emitCode(OBS_CODES.APP_STYLES_FAILED, {
         metadata: { stage: 'style-bundle' },
       });
     }
@@ -830,6 +830,11 @@ async function mountPlatformApp({
             }),
             assertCurrentAuthoritySync,
           }),
+        emitCode: (definition, options) => emitPlatformCodeTo(
+          runtime.require(ZERO_OBSERVABILITY_RUNTIME),
+          definition,
+          options,
+        ),
         ...config.resourceRoutes,
       })
     );

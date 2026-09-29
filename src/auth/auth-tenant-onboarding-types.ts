@@ -1,4 +1,4 @@
-import type { TenantMembershipStatus } from './tenancy/tenancy-types';
+import type { TenantKind, TenantMembershipStatus } from './tenancy/tenancy-types';
 import type {
   AuthEmailTemplateResult,
   ResolvedAuthEmailBranding,
@@ -71,7 +71,7 @@ export interface AuthVerifiedDomainOnboardingConfig {
 export interface AuthTenantInvitationEmailTemplateContext {
   branding: ResolvedAuthEmailBranding;
   recipient: string;
-  tenant: { tenantId: string; name: string; slug: string };
+  tenant: { tenantId: string; name: string; slug: string; kind: TenantKind };
   invitation: {
     invitationId: string;
     roles: readonly string[];
@@ -178,6 +178,10 @@ export interface AuthTenantInvitationRecord {
   tenantId: string;
   email: string;
   roleKeys: readonly string[];
+  /** Immutable issuance-time authority ceiling; never serialized publicly. */
+  grantSnapshotJson: string | null;
+  /** Integrity fingerprint for the canonical grant snapshot. */
+  grantSnapshotFingerprint: string | null;
   status: AuthTenantInvitationStatus;
   issuedBy: string;
   acceptedByUserId: string | null;
@@ -213,7 +217,7 @@ export interface AuthTenantInvitationDelivery {
   recipient: string;
   roles: readonly string[];
   expiresAt: number;
-  tenant: { tenantId: string; name: string; slug: string };
+  tenant: { tenantId: string; name: string; slug: string; kind: TenantKind };
 }
 
 /** Non-enumerating public invitation inspection result. */
@@ -221,7 +225,7 @@ export type AuthTenantInvitationInspection =
   | { available: false }
   | {
       available: true;
-      tenant: { name: string; slug: string };
+      tenant: { name: string; slug: string; kind: TenantKind };
       emailHint: string;
       expiresAt: number;
       account: 'sign-in' | 'create';
@@ -312,6 +316,12 @@ export interface AuthTenantJoinRequestPage {
 }
 
 export interface AuthTenantRoleGrantCeiling {
-  allPermissions: boolean;
-  permissions: readonly string[];
+  tenant: {
+    allPermissions?: boolean;
+    permissions: readonly string[];
+  };
+  application?: {
+    allPermissions?: boolean;
+    permissions: readonly string[];
+  } | null;
 }

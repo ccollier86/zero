@@ -17,6 +17,7 @@ import {
   getAuthStore,
   getTokenService,
 } from '../../auth/auth.plugin';
+import { getPublicAuthErrorMessage } from '../../auth/auth-error-response';
 import type { RequestAuthorizationAccess } from '../../auth/authorization-access';
 import {
   compileAccessRequirement,
@@ -584,7 +585,7 @@ function applyAuthErrorHandler(app: AnyElysia): AnyElysia {
     if (error instanceof AuthError) {
       set.status = error.status;
       return {
-        error: error.message,
+        error: getPublicAuthErrorMessage(error),
         code: error.code,
       };
     }

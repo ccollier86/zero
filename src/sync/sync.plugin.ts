@@ -40,12 +40,16 @@ import {
 } from './sync-wire-send';
 import { SyncMutationReceiptStore } from './sync-mutation-receipt-store';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode, emitPlatformCodeTo } from '../observability/sink';
+import {
+  emitPlatformCode,
+  emitPlatformCodeTo,
+} from '../observability/sink';
 import {
   clearPlatformSQLiteService,
   setPlatformSQLiteService,
 } from '../persistence';
 import type {
+  ReactiveDBPlatformCodeEmitter,
   SyncPluginConfig,
   SyncSocketData,
 } from './types';
@@ -130,16 +134,39 @@ export function getEphemeralManager(): EphemeralStateManager | null {
 export function createSyncPlugin(config: SyncPluginConfig) {
   assertMultiTenantResourceClassification(config);
   assertTenantDataPlaneConfiguration(config);
-  const observability = config.runtime?.get(ZERO_OBSERVABILITY_RUNTIME) ?? null;
-  const emitSyncCode = (
+  const observability = config.runtime?.require(ZERO_OBSERVABILITY_RUNTIME)
+    ?? config.db.observability
+    ?? null;
+  const emitCode: ReactiveDBPlatformCodeEmitter = observability
+    ? (definition, options) => emitPlatformCodeTo(
+      observability,
+      definition,
+      options,
+    )
+    : config.db.emitCode ?? emitPlatformCode;
+  const reportSyncCode = (
     definition: PlatformCodeDefinition,
-    options: PlatformCodeEmitOptions = {},
-  ) => observability
-    ? emitPlatformCodeTo(observability, definition, options)
-    : emitPlatformCode(definition, options);
+    options?: PlatformCodeEmitOptions,
+  ): void => {
+    try {
+      const outcome = emitCode(definition, options);
+      if (isPromiseLike(outcome)) {
+        void Promise.resolve(outcome).catch(() => {});
+      }
+    } catch {
+      // Observability is best-effort and cannot disrupt Sync lifecycle work.
+    }
+  };
   let connectionCounter = 0;
   const policy = config.policy ?? allowAllSyncPolicy;
-  const databaseRuntime = resolveSyncDatabase(config);
+  const databaseRuntime = resolveSyncDatabase({
+    ...config,
+    db: {
+      ...config.db,
+      observability,
+      emitCode,
+    },
+  });
   const db = databaseRuntime.db;
   const cleanupOnCompositionFailure: Array<() => void> = [];
   if (databaseRuntime.owned) {
@@ -253,17 +280,20 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     if (sqlite) attempt(() => clearPlatformSQLiteService(sqlite));
     if (databaseRuntime.owned) attempt(() => db.dispose());
     if (startEventEmitted) {
-      attempt(() => emitSyncCode(OBS_CODES.SYNC_STOPPED, {
+      attempt(() => reportSyncCode(OBS_CODES.SYNC_STOPPED, {
         metadata: { databaseMode },
       }));
     }
     return failures;
   };
 
-  const invalidateSyncRuntime = (definition: PlatformCodeDefinition): void => {
+  const invalidateSyncRuntime = (
+    definition: PlatformCodeDefinition,
+    error?: unknown,
+  ): void => {
     if (runtime.replicaLogInvalid) return;
     runtime.replicaLogInvalid = true;
-    emitSyncCode(definition);
+    reportSyncCode(definition, error === undefined ? undefined : { error });
     const sockets = [...openSockets];
     try {
       socketAuth.invalidateAll(1012, 'Sync replica history invalid');
@@ -415,7 +445,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
               socketAuth.validateCurrentAuthority,
             );
           } catch (error) {
-            invalidateSyncRuntime(OBS_CODES.SYNC_POLICY_STATE_FAILED);
+            invalidateSyncRuntime(OBS_CODES.SYNC_POLICY_STATE_FAILED, error);
           }
         });
 
@@ -439,7 +469,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
           runtime.unsubscribeExternalChanges = db.startExternalChangePolling({
             intervalMs: replicaPolling.intervalMs,
             onGap: (gap) => {
-              emitSyncCode(OBS_CODES.SYNC_REPLICA_HISTORY_GAP, {
+              reportSyncCode(OBS_CODES.SYNC_REPLICA_HISTORY_GAP, {
                 metadata: { ...gap },
               });
               if (config.resourcePolicy?.observeChange
@@ -460,18 +490,18 @@ export function createSyncPlugin(config: SyncPluginConfig) {
               }
               socketAuth.invalidateAll(1012, 'Sync replica history gap');
             },
-            onInvalid: () => {
-              invalidateSyncRuntime(OBS_CODES.SYNC_REPLICA_POLL_FAILED);
+            onInvalid: (error) => {
+              invalidateSyncRuntime(OBS_CODES.SYNC_REPLICA_POLL_FAILED, error);
             },
-            onError: () => {
-              emitSyncCode(OBS_CODES.SYNC_REPLICA_POLL_FAILED);
+            onError: (error) => {
+              reportSyncCode(OBS_CODES.SYNC_REPLICA_POLL_FAILED, { error });
             },
           });
         }
         socketAuth.start();
 
         if (config.auth?.required && config.auth.modeDefaulted) {
-          emitSyncCode(OBS_CODES.SYNC_AUTH_REQUIRED_DEFAULTED, {
+          reportSyncCode(OBS_CODES.SYNC_AUTH_REQUIRED_DEFAULTED, {
             level: 'warn',
             metadata: {
               hint: "Set syncAuth: 'public' only when anonymous sync is deliberate.",
@@ -479,7 +509,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
           });
         }
 
-        emitSyncCode(OBS_CODES.SYNC_STARTED, {
+        reportSyncCode(OBS_CODES.SYNC_STARTED, {
           metadata: {
             databaseMode,
             tables: Object.keys(config.tables),
@@ -495,8 +525,9 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         try {
           const stopping = lifecycle.server?.stop(true);
           if (isPromiseLike(stopping)) {
-            void Promise.resolve(stopping).catch(() => {
-              emitSyncCode(OBS_CODES.SYNC_REPLICA_POLL_FAILED, {
+            void Promise.resolve(stopping).catch((stopError) => {
+              reportSyncCode(OBS_CODES.SYNC_REPLICA_POLL_FAILED, {
+                error: stopError,
                 metadata: { stage: 'startup-cleanup' },
               });
             });
@@ -638,7 +669,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         });
         if (!admission.accepted) {
           if (admission.reason === 'capacity') {
-            emitSyncCode(OBS_CODES.SYNC_INGRESS_ADMISSION_REJECTED, {
+            reportSyncCode(OBS_CODES.SYNC_INGRESS_ADMISSION_REJECTED, {
               metadata: { reason: 'capacity' },
             });
           }
@@ -893,9 +924,19 @@ function scheduleSocketTermination(socket: ServerWebSocket<SyncSocketData>): voi
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
-  return Boolean(value)
-    && (typeof value === 'object' || typeof value === 'function')
-    && typeof (value as { then?: unknown }).then === 'function';
+  if (value === null
+    || (typeof value !== 'object' && typeof value !== 'function')) {
+    return false;
+  }
+
+  try {
+    return typeof (value as { then?: unknown }).then === 'function';
+  } catch (cause) {
+    throw new Error(
+      'Sync synchronous callback thenable inspection failed',
+      { cause },
+    );
+  }
 }
 
 function raiseLifecycleCleanupFailures(

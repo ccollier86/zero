@@ -4,6 +4,8 @@ import { AuthEmailDeliveryFailure } from './auth-email-outbox-delivery-types';
 import type { AuthEmailOutboxDelivery } from './auth-email-outbox-delivery';
 import type { AuthEmailOutboxStore } from './auth-email-outbox-store';
 import type { AuthEmailOutboxJob, AuthEmailOutboxOptions } from './auth-email-outbox-types';
+import { emitPlatformCode } from '../observability/sink';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 
 export class AuthEmailOutboxProcessor {
   private readonly active = new Set<AbortController>();
@@ -11,7 +13,8 @@ export class AuthEmailOutboxProcessor {
     private readonly store: AuthEmailOutboxStore,
     private readonly delivery: AuthEmailOutboxDelivery,
     private readonly options: AuthEmailOutboxOptions,
-    private readonly clock: () => number
+    private readonly clock: () => number,
+    private readonly emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
   ) {}
 
   async process(job: AuthEmailOutboxJob): Promise<void> {
@@ -35,8 +38,11 @@ export class AuthEmailOutboxProcessor {
     try {
       const outcome = await this.delivery.deliver(job, controller.signal);
       if (!this.store.complete(job, outcome.status, this.clock())) return;
-      if (outcome.status === 'delivered') emitAuthEmailDelivered(job, outcome.userId);
-      else emitAuthEmailSuppressed(job, outcome.reason ?? 'policy', outcome.userId);
+      if (outcome.status === 'delivered') {
+        emitAuthEmailDelivered(job, outcome.userId, this.emitCode);
+      } else {
+        emitAuthEmailSuppressed(job, outcome.reason ?? 'policy', outcome.userId, this.emitCode);
+      }
     } catch (error) {
       const failure = error instanceof AuthEmailDeliveryFailure
         ? error
@@ -60,7 +66,7 @@ export class AuthEmailOutboxProcessor {
         cleanupSucceeded: failure.cleanupSucceeded,
         retry,
         userId: failure.userId,
-      });
+      }, this.emitCode);
     } finally {
       this.active.delete(controller);
       clearTimeout(timeout); clearInterval(heartbeat);

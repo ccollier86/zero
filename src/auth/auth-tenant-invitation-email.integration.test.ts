@@ -7,6 +7,7 @@ import {
   type EmailProvider,
   type EmailSendResult,
 } from '../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import type { AuthRuntime } from './auth-runtime';
 import { createAuthPlugin } from './auth.plugin';
@@ -33,7 +34,7 @@ afterEach(async () => {
     await harness.app.stop();
     harness.db.dispose();
   }
-  configureEmail(false);
+  resetEmailCompatibilityRuntimeForTesting();
 });
 
 describe('tenant invitation durable email delivery', () => {
@@ -43,6 +44,7 @@ describe('tenant invitation durable email delivery', () => {
 
     const issued = await request(harness, 'POST', '/auth/tenant/invitations', {
       email: 'invited@example.test',
+      roles: ['administrator'],
     }, harness.ownerToken);
     expect(issued).toMatchObject({
       status: 200,
@@ -82,7 +84,9 @@ describe('tenant invitation durable email delivery', () => {
     expect(await harness.runtime.getAuthEmailOutbox()!.processDue()).toBe(1);
     expect(provider.messages).toHaveLength(1);
     const message = provider.messages[0]!.message;
-    expect(message.subject).toBe('Custom invitation for Owner organization');
+    expect(message.subject).toBe(
+      'Custom administration invitation for Owner organization',
+    );
     expect(message.text).toContain(
       'https://zero.example/join-us?token=zinv_',
     );
@@ -107,6 +111,7 @@ describe('tenant invitation durable email delivery', () => {
     const harness = await start(provider, {});
     const issued = await request(harness, 'POST', '/auth/tenant/invitations', {
       email: 'unreachable@example.test',
+      roles: ['administrator'],
     }, harness.ownerToken);
     expect(issued).toMatchObject({
       status: 500,
@@ -121,6 +126,7 @@ describe('tenant invitation durable email delivery', () => {
     const harness = await start(provider, { publicUrl: 'https://zero.example' });
     const issued = await request(harness, 'POST', '/auth/tenant/invitations', {
       email: 'retry@example.test',
+      roles: ['administrator'],
     }, harness.ownerToken);
     expect(issued.status).toBe(200);
 
@@ -152,6 +158,7 @@ describe('tenant invitation durable email delivery', () => {
     const harness = await start(provider, { publicUrl: 'https://zero.example' });
     const revokedIssue = await request(harness, 'POST', '/auth/tenant/invitations', {
       email: 'revoked@example.test',
+      roles: ['administrator'],
     }, harness.ownerToken);
     expect((await request(
       harness,
@@ -175,6 +182,7 @@ describe('tenant invitation durable email delivery', () => {
 
     const failedIssue = await request(harness, 'POST', '/auth/tenant/invitations', {
       email: 'rejected@example.test',
+      roles: ['administrator'],
     }, harness.ownerToken);
     expect(failedIssue.status).toBe(200);
     outbox.start(false);
@@ -245,7 +253,7 @@ async function start(
               landingPath: '/join-us',
               encryptionKey: ENCRYPTION_KEY,
               template: (context) => ({
-                subject: `Custom invitation for ${context.tenant.name}`,
+                subject: `Custom ${context.tenant.kind} invitation for ${context.tenant.name}`,
                 text: context.actionUrl,
               }),
             },

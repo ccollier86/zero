@@ -36,15 +36,17 @@ export function normalizeTenantCreateFields(
 export function canUserCreateTenant(
   authConfig: ResolvedAuthBehaviorConfig,
   user: Pick<UserRecord, 'role' | 'status'>,
+  platformTenantManager = false,
 ): boolean {
   if (authConfig.tenancy?.mode !== 'multi' || user.status !== 'active') return false;
   const mode = authConfig.tenancy.creation.mode;
-  return mode === 'authenticated' || (mode === 'platform-admin' && user.role === 'admin');
+  return mode === 'authenticated' || (mode === 'platform-admin' && platformTenantManager);
 }
 
 export function requireUserCanCreateTenant(
   authConfig: ResolvedAuthBehaviorConfig,
   user: Pick<UserRecord, 'role' | 'status'>,
+  platformTenantManager = false,
 ): void {
   if (authConfig.tenancy?.mode !== 'multi') {
     throw new AuthError(
@@ -60,7 +62,7 @@ export function requireUserCanCreateTenant(
       403,
     );
   }
-  if (!canUserCreateTenant(authConfig, user)) {
+  if (!canUserCreateTenant(authConfig, user, platformTenantManager)) {
     throw new AuthError(
       'Organization creation requires a platform administrator',
       'TENANT_CREATION_FORBIDDEN',
@@ -93,6 +95,7 @@ export function mapTenantCreationError(error: unknown): Error {
 export function toTenantSummary(created: TenantCreationResult): AuthTenantSummary {
   return {
     tenantId: created.tenant.tenantId,
+    kind: created.tenant.kind,
     slug: created.tenant.slug,
     name: created.tenant.name,
     role: created.ownerMembership.roleKey,

@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { resolveAuthBehaviorConfig } from './auth-config';
+import { createAuthAuthorizationSnapshot } from './auth-authorization-snapshot';
 import {
   createAuthorizationSubjectSnapshot,
   createRequestAuthorizationAccess,
 } from './authorization-access';
 import { createAuthorizationKernel } from './authorization-kernel';
 import { AuthError, type AuthContext } from './types';
+import { OBS_CODES } from '../observability/codes';
+import { emitPlatformCode } from '../observability/sink';
 
 const permissions = {
   'documents:read': { label: 'Read documents' },
@@ -33,6 +36,99 @@ function createKernel(
 }
 
 describe('request authorization access', () => {
+  test('projects administration-organization application authority without broadening legacy admin', () => {
+    for (const mode of ['simple', 'advanced'] as const) {
+      const kernel = createKernel('multi', mode);
+      const roleAssignments = mode === 'advanced' ? {
+        resolveApplicationRoles: () => null,
+        resolveTenantRoles: ({ tenantId, membershipId, userId }: {
+          tenantId: string;
+          membershipId: string;
+          userId: string;
+        }) => ({
+          scopeKind: 'tenant' as const,
+          scopeId: tenantId,
+          tenantId,
+          membershipId,
+          userId,
+          roles: ['owner'],
+          revision: 'tenant-assignment-1',
+        }),
+      } : null;
+      const context = (tenantKind: 'organization' | 'administration'): AuthContext => ({
+        userId: `u_${mode}_${tenantKind}`,
+        email: `${mode}-${tenantKind}@example.test`,
+        role: 'user',
+        sessionScopeKind: 'tenant',
+        sessionScopeId: `ten_${tenantKind}`,
+        tenantId: `ten_${tenantKind}`,
+        tenantKind,
+        membershipId: `tmem_${tenantKind}`,
+        tenantRole: 'owner',
+        tenantAuthorizationGeneration: 2,
+        membershipAuthorizationGeneration: 3,
+      });
+
+      const customer = createRequestAuthorizationAccess({
+        kernel,
+        authContext: context('organization'),
+        roleAssignments,
+      });
+      expect(customer.requirePermission('documents:read').scopeKind).toBe('tenant');
+      expect(customer.applicationAuthorization).toBeNull();
+      expect(() => customer.requirePermission('application.users:read'))
+        .toThrow(expect.objectContaining({ code: 'FORBIDDEN' }));
+
+      const administration = createRequestAuthorizationAccess({
+        kernel,
+        authContext: context('administration'),
+        roleAssignments,
+      });
+      expect(administration.applicationAuthorization).toMatchObject({
+        scopeKind: 'application',
+        roles: ['owner'],
+        allPermissions: true,
+      });
+      expect(administration.requirePermission('application.users:manage').scopeKind)
+        .toBe('application');
+      expect(createAuthAuthorizationSnapshot(
+        context('administration'),
+        kernel,
+        administration,
+      )).toMatchObject({
+        scope: { kind: 'tenant', tenantId: 'ten_administration' },
+        applicationScope: {
+          kind: 'application',
+          permissions: expect.arrayContaining(['application.users:manage']),
+        },
+      });
+      expect(() => administration.requirePlatformAdmin())
+        .toThrow(expect.objectContaining({ code: 'FORBIDDEN' }));
+    }
+  });
+
+  test('makes administration-only simple roles inert in customer organizations', () => {
+    const kernel = createKernel('multi', 'simple');
+    const access = createRequestAuthorizationAccess({
+      kernel,
+      authContext: {
+        userId: 'u_customer_admin_role',
+        email: 'customer-admin-role@example.test',
+        role: 'user',
+        sessionScopeKind: 'tenant',
+        sessionScopeId: 'ten_customer',
+        tenantId: 'ten_customer',
+        tenantKind: 'organization',
+        membershipId: 'tmem_customer',
+        tenantRole: 'administrator',
+        tenantAuthorizationGeneration: 1,
+        membershipAuthorizationGeneration: 1,
+      },
+    });
+    expect(access.authorization).toBeNull();
+    expect(access.applicationAuthorization).toBeNull();
+  });
+
   test('fences every cached authority accessor after the runtime profile changes', () => {
     const kernel = createKernel('multi');
     const authContext: AuthContext = {
@@ -430,5 +526,83 @@ describe('request authorization access', () => {
         code: 'AUTH_POLICY_UNAVAILABLE',
         status: 503,
       }));
+  });
+
+  test('rejects an asynchronous public profile fence before granting access', async () => {
+    const emitted: string[] = [];
+    const access = createRequestAuthorizationAccess({
+      kernel: null,
+      authContext: {
+        userId: 'u_async_profile',
+        email: 'async-profile@example.test',
+        role: 'admin',
+      },
+      assertCurrentProfile: (async () => {
+        throw new Error('private profile rejection');
+      }) as never,
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+
+    expect(() => access.requirePlatformAdmin()).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      status: 500,
+      message: '[auth] Request authorization profile guard must be synchronous.',
+    }));
+    await Promise.resolve();
+
+    expect(emitted).toEqual([OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code]);
+  });
+
+  test('rejects asynchronous structural property and role resolvers', async () => {
+    const emitted: string[] = [];
+    const emitCode = (definition: Parameters<typeof emitPlatformCode>[0],
+      options: Parameters<typeof emitPlatformCode>[1]) => {
+      emitted.push(definition.code);
+      return emitPlatformCode(definition, options);
+    };
+    const authContext: AuthContext = {
+      userId: 'u_async_resolver',
+      email: 'async-resolver@example.test',
+      role: 'clinician',
+      sessionScopeKind: 'application',
+      sessionScopeId: 'application',
+    };
+    const propertyAccess = createRequestAuthorizationAccess({
+      kernel: createKernel('single'),
+      authContext,
+      propertyStore: {
+        getProperties: (async () => ({ department: 'clinical' })) as never,
+      },
+      emitCode,
+    });
+    expect(() => propertyAccess.authorize({
+      properties: { department: 'clinical' },
+    })).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Authorization property resolution must be synchronous.',
+    }));
+
+    const roleAccess = createRequestAuthorizationAccess({
+      kernel: createKernel('single', 'advanced'),
+      authContext,
+      roleAssignments: {
+        resolveApplicationRoles: (async () => null) as never,
+        resolveTenantRoles: () => null,
+      },
+      emitCode,
+    });
+    expect(() => roleAccess.requireAuthorizationScope()).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Application role resolution must be synchronous.',
+    }));
+    await Promise.resolve();
+
+    expect(emitted).toEqual([
+      OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code,
+      OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code,
+    ]);
   });
 });

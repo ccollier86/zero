@@ -133,6 +133,32 @@ describe('public auth request admission', () => {
     db.dispose();
   });
 
+  test('rejects and consumes an asynchronous deployment source resolver', async () => {
+    const db = createDatabase();
+    const service = new AuthRequestAdmissionService(
+      db,
+      resolveAuthRequestAdmissionConfig({
+        sourceKey: (async () => {
+          throw new Error('private resolver rejection');
+        }) as never,
+      }),
+    );
+
+    expect(() => admitAuthRequest({
+      service,
+      request: new Request('https://zero.test/auth/login'),
+      flow: 'login',
+      subject: 'user@example.test',
+    })).toThrow(expect.objectContaining({
+      code: 'AUTH_ADMISSION_UNAVAILABLE',
+      status: 503,
+    }));
+    await Promise.resolve();
+
+    expect(countRows(db)).toBe(0);
+    db.dispose();
+  });
+
   test('rejects ambiguous proxy and malformed flow configuration', () => {
     expect(() => resolveAuthRequestAdmissionConfig({
       forwardedForHeader: 'x-real-ip',

@@ -26,7 +26,7 @@ src/
   resources/               <- Declarative Resource registry, policy, CRUD, field access, realms
   sync/                    <- Core engine: ReactiveDB + WebSocket sync + state sync + ephemeral KV
   sync/client/             <- Client-side sync: stores, clients, React hooks
-  auth/                    <- Authentication: JWT, user store, middleware
+  auth/                    <- Authentication: identity facade, focused stores, sessions, tenancy, RBAC, middleware
   auth/native/             <- Native public-client config, redirect, PKCE, and admission policy
   auth/oidc/               <- Native OIDC routes, request/code/session stores, and rotation
   native/                  <- Platform-neutral TypeScript native auth SDK and broker
@@ -65,7 +65,11 @@ src/
 **Server files:**
 | File | Purpose |
 |------|---------|
-| `src/sync/reactive-db.ts` | ReactiveDB class — wraps bun:sqlite with onChange, ring buffer, transactions |
+| `src/sync/reactive-db.ts` | Stable ReactiveDB facade — managed CRUD, transactions/snapshots, change delivery, lifecycle |
+| `src/sync/reactive-db-table-contract.ts` | Registered-table schema, identity, scope, and exact-row invariants |
+| `src/sync/reactive-db-change-log.ts` | Durable sequence/log adoption, recording, pruning, and format fences |
+| `src/sync/reactive-db-change-codec.ts` | Strict durable change/history serialization and validation |
+| `src/sync/reactive-db-external-poller.ts` | Ordered cross-runtime SQLite change polling and gap handling |
 | `src/sync/types.ts` | All type definitions — schemas, wire protocol, client types |
 | `src/sync/sync.plugin.ts` | Elysia plugin — lifecycle, WS endpoint `/sync`, pub/sub wiring |
 | `src/sync/sync-plugin-config.ts` | Sync composition validation, database resolution, tenant-plane classification, and authority prerequisites |
@@ -197,15 +201,28 @@ control surfaces.
 | `src/auth/authorization-kernel.ts` | Pure shared access-requirement compiler, merge, validation, and evaluator |
 | `src/auth/authorization-access.ts` | Live request access facade and authorization subject hydration |
 | `src/auth/authorization-role-service.ts` | Application/tenant assignments, role expansion, protected owners, revisions, and ownership transfer |
+| `src/auth/authorization-role-provisioning-service.ts` | Registration bootstrap, provisional authority, adoption, reconciliation, and session rebinding |
 | `src/auth/auth-authorization.plugin.ts` | Sanitized live browser authorization snapshot route |
 | `src/auth/auth-audit-service.ts`, `src/auth/auth-audit.plugin.ts` | Bounded append-only authorization/control-plane audit and authorized query/export/retention routes |
 | `src/auth/auth-application-administration.plugin.ts` | Single/advanced application user and role-assignment administration |
 | `src/auth/auth-tenant-administration.plugin.ts` | Active-tenant member, role, status, and ownership administration |
+| `src/auth/auth-platform-administration.plugin.ts` | Active protected Administration Organization people/invitations and capability-gated customer-tenant directory/lifecycle |
 | `src/auth/auth-tenant-onboarding.plugin.ts` | Hashed invitations and retained join-request issue/accept/review routes |
+| `src/auth/auth-tenant-invitation-service.ts` | Invitation issue, inspection, acceptance, and delivery lifecycle |
+| `src/auth/auth-tenant-join-request-service.ts`, `auth-tenant-join-request-store.ts`, `auth-tenant-join-request-projection.ts` | Join-request orchestration, durable concurrency-fenced rows, and public-safe projections |
 | `src/auth/auth-verified-domain.plugin.ts` | Opt-in exact-domain DNS/mailbox proof, fixed-role request admission, and owner release lifecycle |
 | `src/auth/auth-user-properties.plugin.ts` | Current-user configurable property routes |
 | `src/auth/auth.middleware.ts` | `createAuthMiddleware()` — resolve-based, provides `requireAuth/requireAdmin` |
 | `src/auth/page-session.ts` | HttpOnly page-cookie issue/resolve/revoke helpers; safe SSR pages only |
+| `src/auth/user-store.ts` | Stable identity facade for users/properties/config plus focused-store orchestration |
+| `src/auth/user-identity-store.ts` | User identity CRUD, lookup, listing, and counts |
+| `src/auth/user-property-config-store.ts` | User properties and internal auth configuration KV |
+| `src/auth/user-credential-store.ts` | Password hashes, compare-and-swap updates, gates, revocation, and audit coupling |
+| `src/auth/user-token-store.ts` | Refresh-token rotation/replay/revocation plus legacy auth action tokens |
+| `src/auth/registration-provisioning-store.ts` | Provisional-registration receipt leases, finalization, recovery, and exact compensation |
+| `src/auth/token-service.ts` | Stable token and live-authority facade |
+| `src/auth/auth-signing-keys.ts`, `auth-token-codec.ts`, `auth-web-session-token-service.ts` | Atomic signing-key establishment, strict JWT/JWKS codec, and browser session-family lifecycle |
+| `src/auth/auth-synchronous-callback.ts` | Shared fail-closed guard for authority/lifecycle callbacks that must remain inside a transaction |
 | `src/auth/auth-admin.plugin.ts` | Admin user-management routes and capability/config response |
 | `src/auth/auth-mfa.plugin.ts` | MFA setup/challenge routes |
 | `src/auth/auth-mfa-response.ts` | Session-vs-MFA completion helper |
@@ -232,14 +249,21 @@ control surfaces.
 | `src/frontend/client/authorization-scope-hooks.ts` | Credential-free opaque account/tenant cache boundary for Zero-owned and app-owned hooks |
 | `src/frontend/client/application-administration-hooks.ts` | Single/advanced application-access administration hook |
 | `src/frontend/client/tenant-administration-hooks.ts` | Tenant switch, member, invitation, and join-request administration hooks |
+| `src/frontend/client/platform-administration-hooks.ts` | Protected Administration Organization member/invitation state and mutations |
+| `src/frontend/client/platform-tenant-directory-hooks.ts` | Customer-organization directory/lifecycle and read-only member drill-in |
 | `src/components/auth/authorization-gates.tsx` | Presentation-only permission, tenant, and platform-admin gates; server remains authoritative |
 | `src/components/auth/application-access-management.tsx` | Packaged single/advanced application access control |
 | `src/components/auth/tenant-*.tsx` | Packaged tenant selection, switching, creation, member, invitation, and join-request controls |
+| `src/components/auth/platform-administration-management.tsx` | Packaged protected-organization people, role, ownership, and invitation controls |
+| `src/components/auth/platform-tenant-management.tsx` | Packaged customer-organization directory, lifecycle, creation, and read-only member detail |
 
 **Key auth patterns:**
 
-- `users.role` remains platform authority. Application and tenant assignments
-  are separate scopes and expand through the same authorization kernel.
+- `users.role` remains the legacy global identity/security boundary.
+  Application and tenant assignments are separate scopes expanded through the
+  same authorization kernel. In `multi`, platform application authority comes
+  from a live protected Administration Organization session; neither side
+  silently promotes the other.
 - Browser, page, and native credentials resolve live durable authority. Tenant
   selection replaces the session rather than trusting a tenant header.
 - Normal request handlers receive an authorization-bound `access` facade and
@@ -315,7 +339,7 @@ verification, invites, password lifecycle, and long public continuation flows.
 **Files:**
 | File | Purpose |
 |------|---------|
-| `src/tokens/token.plugin.ts` | Elysia lifecycle + `getPlatformTokenService()` singleton |
+| `src/tokens/token.plugin.ts` | Elysia lifecycle, app-local runtime registration, and legacy unambiguous `getPlatformTokenService()` compatibility getter |
 | `src/tokens/token-service.ts` | Action/resume token business rules |
 | `src/tokens/token-store.ts` | SQLite persistence for `_zero_action_tokens` and `_zero_resume_tokens` |
 | `src/tokens/token-types.ts` | Public token contracts and errors |
@@ -324,7 +348,11 @@ verification, invites, password lifecycle, and long public continuation flows.
 
 **Key pattern:** Raw tokens are returned once and never stored. Action tokens
 are consume-once. Resume tokens are reusable until expiry, revocation, or
-rotation.
+rotation. Auth-integrated action tokens must share the exact ReactiveDB
+transaction domain with `UserStore`; `createApp()` wires this automatically and
+direct composition fails closed on a mismatch. Consumed-success observability
+is queued after the outer commit, so rollback preserves the token and emits no
+false success. See [Platform Tokens](./tokens.md#auth-transaction-boundary).
 
 ---
 

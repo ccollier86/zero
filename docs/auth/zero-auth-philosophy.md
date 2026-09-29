@@ -8,12 +8,14 @@
 > scoped role assignments, invitations/join requests, control-plane clients,
 > and packaged UI. Omitted values remain `single/simple`. Installation
 > bootstrap transactionally provisions the first application owner in
-> `single/advanced`, or the first organization, protected tenant owner,
-> tenant-bound session, and platform administrator in `multi`.
+> `single/advanced`, or the protected Administration Organization, its owner,
+> a tenant-bound session, and platform administrator in `multi`.
 > Opt-in verified-company-domain request admission and the bounded append-only
 > authorization/control-plane audit are implemented in this candidate. The
-> protected Administration Organization/platform-tenant lifecycle,
-> break-glass support, tenant-custom roles, populated-app adoption tooling, domain
+> protected Administration Organization, its SDK/hooks/UI, and the bounded
+> customer-tenant directory/lifecycle are implemented. Break-glass support,
+> tenant-custom roles, broader populated-app discovery/migration tooling beyond
+> exact pre-024 administration reconciliation, domain
 > autojoin/aliases/direct transfer, and upstream enterprise SSO remain separate
 > future capabilities. Shared-file runtime replicas now receive durable Sync
 > changes and auth/session invalidations, and resource field allow-lists are
@@ -56,7 +58,9 @@ refresh, or reproduce authorization in every transport.
    `simple` or `advanced`. Authentication being disabled remains a separate existing state.
 4. **Preserve compatibility deliberately.** Existing auth configuration normalizes to
    `single/simple`. Existing global `role`, `admin`, `auth: 'admin'`, `adminOnly()`, and
-   `requireAdmin()` meanings never become tenant-scoped.
+   `requireAdmin()` meanings never become tenant-scoped. They preserve a legacy
+   global-administrator boundary, not the application-permission authority projected by
+   an advanced role or Administration Organization membership; neither implies the other.
 5. **Make the server authoritative.** A header, URL slug, host, email suffix, JWT claim, or
    UI selection may identify a candidate; none grants tenant authority. Authority comes
    from live server state and a validated session binding.
@@ -137,6 +141,13 @@ Defaults and compatibility rules:
   restarts do not churn authority. A populated app may move from simple to
   advanced only through the profile-specific adoption ceremony below;
   reverse and tenancy-axis reinterpretation fail closed.
+- The resolved static authorization registry has a separate monotonic
+  `registryVersion` and durable semantic fingerprint. Same-profile permission
+  or role semantic changes require an explicit version bump; presentation-only
+  label/description changes do not. Same-version drift, version rollback, or
+  corrupt durable state fails startup before new authority is published. A
+  framework-owned evaluator-version marker also makes authorization-engine
+  semantic changes participate in this fence.
 
 Normal evolution is additive:
 
@@ -148,8 +159,9 @@ single/simple -> single/advanced
 ```
 
 Moving right is profile-specific rather than a generic role copy. For
-`single/simple -> single/advanced`, global `users.role` remains platform
-authority and is not projected. An existing installation names one exact
+`single/simple -> single/advanced`, global `users.role` remains the legacy
+global-administrator boundary and is not projected as application-permission
+authority. An existing installation names one exact
 application owner through `ownerAdoption`; every other identity remains
 unassigned until that owner grants access. For
 `multi/simple -> multi/advanced`, Zero validates and transactionally adopts the
@@ -169,6 +181,20 @@ verified the database's provenance. Pending registration provisioning blocks a
 profile change until the installed profile finishes or recovers it. The marker,
 adopted assignments, authority/session generations, shared authority revision,
 and system-provenance audit event are one SQLite transaction.
+
+Migration `027` persists `_auth_authorization_manifest`. A supported
+installed-profile transition acknowledges only its tenancy/authorization-axis
+change at the current version when permission, role, and evaluator semantics
+are otherwise identical. If that rollout also changes permission keys/scopes,
+role keys/permissions/`allPermissions`/system semantics, or evaluator
+semantics, operators must increment `auth.authorization.registryVersion`.
+Registry initialization and updates are durably system-audited. Existing
+runtimes reject the changed shared authority revision with
+`AUTH_PROFILE_CHANGED` until restarted. A
+reintroduced role key cannot reclaim retained live assignments: startup uses
+`AUTHORIZATION_ROLE_REACTIVATION_BLOCKED` until those assignments are removed
+or replaced while the role remains retired, after which the role can be
+deployed and granted deliberately.
 
 ## Authority model
 
@@ -324,8 +350,9 @@ The implemented domain mode is request-to-join only. Before mailbox proof,
 discovery does not reveal whether a private tenant exists. A future auto-join
 design would require explicit application and tenant opt-in, a fixed
 non-system least-privilege role, and the same SSO and proof rules; it is not a
-current capability. Background reverification and proof-loss automation are
-likewise future work and must never silently delete existing memberships.
+current capability. Background DNS reverification and the bounded
+`verified` → `grace` → `lost` claim lifecycle are implemented. Losing proof
+stops new domain admission, but never silently deletes existing memberships.
 
 ## SSO philosophy
 
@@ -348,35 +375,35 @@ Zero's product model keeps three visibly separate control surfaces:
 - tenant membership, invitations, domains, roles, and audit controls; and
 - platform identity, recovery, and control-plane operations.
 
-The current candidate packages the implemented portions of those surfaces:
-global identity management, single/advanced application access, active-tenant
-member/onboarding/domain/audit controls, and current-user continuation and
-switching UI. Tenant SSO controls, a protected Administration Organization,
-and the platform tenant-directory/lifecycle console remain future work.
+The current candidate packages global identity management, single/advanced
+application access, active-tenant member/onboarding/domain/audit controls,
+current-user continuation and switching UI, protected Administration
+Organization people/invitations, and a bounded customer-tenant
+directory/lifecycle console. Tenant SSO controls remain future work.
 
 Tenant controls operate on the active server-validated tenant rather than trusting an
 arbitrary tenant ID from the browser. Tenant administrators cannot reset global passwords,
 change global email/MFA, suspend global identities, or delete accounts. Platform operators
 do not silently inherit tenant data access.
 
-If a multi-tenant app later enables team-managed platform administration, it should model
-that team as one protected, server-created Administration Organization and reuse the same
-role-assignment, invitation, grant-ceiling, revision, and ownership machinery. That
-organization is a distinct platform scope—not a discoverable customer tenant—and its
-roles may grant explicit platform permissions without granting tenant data access. The
-current implementation deliberately preserves this seam without mounting a second RBAC
-system or exposing the single/advanced `/auth/application` API in multi mode.
+In multi mode, team-managed platform administration is one protected,
+server-created Administration Organization that reuses the ordinary
+role-assignment, invitation, grant-ceiling, revision, ownership, and audit
+machinery. It is a distinct platform scope—not a discoverable customer
+tenant—and its administration-only roles may grant explicit
+`application.*` permissions without granting customer data access. This avoids
+a second RBAC system and does not expose the single/advanced
+`/auth/application` API in multi mode.
 
-That future addition changes the multi-mode bootstrap binding deliberately: the one
-bootstrap organization becomes protected platform kind, while ordinary organizations are
-customer kind. Platform kind must be excluded from customer discovery, membership lists,
-tenant switching, domain admission, customer invitations, and every tenant data realm.
-Its final owner cannot be deleted or converted; only the exact still-pending bootstrap
-receipt may compensate a failed creation. This is an additive discriminator and control
-surface over the existing RBAC machinery, not permission magic attached to an ordinary
-customer tenant. Until that discriminator and surface exist, the current bootstrap tenant
-continues to be the initial customer organization and documentation must not call it an
-Administration Organization.
+The bootstrap organization has `kind: 'administration'`; later ordinary
+organizations have `kind: 'organization'`. The administration kind is excluded
+from the customer directory and lifecycle targets, domain admission, and every
+customer data realm. Its final owner cannot be deleted or converted; only the
+exact still-pending bootstrap receipt may compensate a failed creation. The
+browser never supplies its tenant ID to platform routes: authority comes from
+the live active administration membership. See
+[Platform Administration Organization](./platform-administration.md) for the
+exact permission, SDK, hook, route, and packaged-control contracts.
 
 Packaged React organisms may be self-wired or controlled and live behind narrow exports.
 Applications own their routes, layout, terminology, and branding. Tauri/mobile and Chrome
@@ -396,3 +423,9 @@ the server enforcement path, all relevant transports, revocation behavior, migra
 Doctor checks, compatibility fixtures, and adversarial tests are complete. The
 [implementation checklist](./multi-tenant-auth-implementation-checklist.md) is the release
 gate.
+
+Authorization-registry deployments are migrations of authority even when no
+application table changes. Review the semantic diff, increment
+`registryVersion`, coordinate runtimes, and retain the system audit record. A
+rollback must use a new higher registry version with intentionally restored
+semantics; lowering the installed version is rejected.

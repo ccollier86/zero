@@ -78,6 +78,10 @@ export {
   isAuthTenantOnboardingRequiredResult,
   isAuthTenantSelectionRequiredResult,
 } from './client/auth-client';
+export type {
+  AuthAuthorizationScopeLifecycle,
+  AuthClientOptions,
+} from './client/auth-client';
 
 export type {
   AuthAuditActorProvenance,
@@ -188,6 +192,19 @@ export type {
   AuthUser,
   RegisterParams,
 } from './client/auth-client';
+export type {
+  AuthPlatformAdministrationConfig,
+  AuthPlatformAdminSdkSurface,
+  AuthPlatformMutableTenantStatus,
+  AuthPlatformTenant,
+  AuthPlatformTenantCreateParams,
+  AuthPlatformTenantCreateResult,
+  AuthPlatformTenantListParams,
+  AuthPlatformTenantPage,
+  AuthPlatformTenantStatus,
+  AuthPlatformTenantUpdateParams,
+  AuthPlatformTenantUpdateResult,
+} from './client/auth-client';
 
 // ─── React: Providers ────────────────────────────────────────────────────
 export { AppProvider } from './client/app-provider';
@@ -252,6 +269,8 @@ export {
   useHasAnyPermission,
   useHasPermission,
   useTenantMembers,
+  usePlatformAdministration,
+  usePlatformTenants,
   useTenantDomainAdministration,
   useDomainOnboarding,
   useTenantOnboardingAdministration,
@@ -282,6 +301,10 @@ export type {
   UseAuthAuditResult,
   UseTenantMembersOptions,
   UseTenantMembersResult,
+  UsePlatformAdministrationOptions,
+  UsePlatformAdministrationResult,
+  UsePlatformTenantsOptions,
+  UsePlatformTenantsResult,
   UseTenantDomainAdministrationOptions,
   UseTenantDomainAdministrationResult,
   UseDomainOnboardingOptions,
@@ -720,7 +743,8 @@ export {
   LoginForm, RegisterForm, ForgotPasswordForm, OTPVerification,
   PasswordActionForm, EmailVerificationForm, ChangePasswordForm, UserPropertiesForm,
   AuthFlowContinuation, TenantCreationForm, TenantSelectionForm,
-  ApplicationAccessManagement, TenantSwitcher, TenantMemberManagement, TenantOnboardingManagement,
+  ApplicationAccessManagement, PlatformAdministrationManagement, PlatformTenantManagement,
+  TenantSwitcher, TenantMemberManagement, TenantOnboardingManagement,
   TenantDomainManagement, DomainOnboarding, ControlPlaneAuditViewer,
   TenantInvitationForm, TenantJoinRequestForm,
   PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup,
@@ -736,6 +760,7 @@ export type {
   AuthFlowContinuationProps, AuthFlowContinuationResult, TenantCreationFormProps,
   TenantSelectionFormProps,
   ApplicationAccessManagementProps,
+  PlatformAdministrationManagementProps, PlatformTenantManagementProps,
   TenantSwitcherProps, TenantMemberManagementProps, TenantOnboardingManagementProps,
   TenantDomainManagementProps, DomainOnboardingProps,
   ControlPlaneAuditViewerProps,

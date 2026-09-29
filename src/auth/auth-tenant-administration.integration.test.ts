@@ -37,17 +37,42 @@ describe('active-tenant member administration', () => {
 
     const config = await request(harness, 'GET', '/auth/tenant/config', undefined, alpha.accessToken);
     expect(config.status).toBe(200);
-    expect(config.body.tenant).toMatchObject({ tenantId: alpha.tenant.tenantId });
+    expect(config.body.tenant).toMatchObject({
+      tenantId: alpha.tenant.tenantId,
+      kind: 'administration',
+    });
     expect(config.body.capabilities).toMatchObject({
       canManageMembers: true,
       canTransferOwnership: true,
     });
+    expect(config.body.roles.find((role: any) => role.key === 'access-manager'))
+      .toMatchObject({
+        administrationOnly: true,
+        assignable: true,
+        grantable: true,
+      });
+
+    const customerConfig = await request(
+      harness,
+      'GET',
+      '/auth/tenant/config',
+      undefined,
+      beta.accessToken,
+    );
+    expect(customerConfig.body.tenant.kind).toBe('organization');
+    expect(customerConfig.body.roles.find((role: any) => role.key === 'administrator'))
+      .toMatchObject({
+        administrationOnly: true,
+        assignable: false,
+        grantable: false,
+      });
 
     // Unknown input cannot select another tenant. Elysia strips the undeclared
     // field and the live alpha bearer remains the only scope source.
     const confusedDeputy = await request(harness, 'POST', '/auth/tenant/members', {
       email: beta.user.email,
       tenantId: beta.tenant.tenantId,
+      roles: ['administrator'],
     }, alpha.accessToken);
     expect(confusedDeputy.status).toBe(200);
     expect(confusedDeputy.body.member.identity.userId).toBe(beta.user.userId);
@@ -59,7 +84,7 @@ describe('active-tenant member administration', () => {
     expect(added.body.member).toMatchObject({
       identity: { userId: beta.user.userId, email: beta.user.email },
       status: 'active',
-      roles: ['member'],
+      roles: ['administrator'],
     });
     expect(added.body.member.roleRevision).toBeString();
     expect(added.body.member.identity).not.toHaveProperty('role');
@@ -68,11 +93,11 @@ describe('active-tenant member administration', () => {
 
     const managerAdded = await request(harness, 'POST', '/auth/tenant/members', {
       email: gamma.user.email,
-      roles: ['manager'],
+      roles: ['access-manager'],
     }, alpha.accessToken);
     expect(managerAdded).toMatchObject({
       status: 200,
-      body: { member: { roles: ['manager'] } },
+      body: { member: { roles: ['access-manager'] } },
     });
     expect(harness.runtime.getAuditService()!.listTenant(alpha.tenant.tenantId, {
       action: 'tenant.member-added',
@@ -176,7 +201,10 @@ describe('active-tenant member administration', () => {
     expect(transfer.body).toMatchObject({
       actorSessionInvalidated: true,
       owner: { membershipId: added.body.member.membershipId, roles: ['owner'] },
-      previousOwner: { membershipId: alpha.tenant.membershipId, roles: ['member'] },
+      previousOwner: {
+        membershipId: alpha.tenant.membershipId,
+        roles: ['administrator'],
+      },
     });
 
     // Both browser and native authority resolve against the bumped membership
@@ -233,12 +261,13 @@ describe('active-tenant member administration', () => {
 
     const added = await request(harness, 'POST', '/auth/tenant/members', {
       email: 'history-member@example.test',
+      roles: ['administrator'],
     }, owner.accessToken);
     expect(added.status).toBe(200);
     expect(added.body.member).toMatchObject({
       identity: { userId },
       status: 'active',
-      roles: ['member'],
+      roles: ['administrator'],
     });
 
     const rejected = await request(
@@ -300,6 +329,7 @@ describe('active-tenant member administration', () => {
         },
       },
     });
+    await register(harness, 'advanced-bootstrap');
     const owner = await register(harness, 'advanced-owner');
     const managerIdentity = await register(harness, 'advanced-manager');
     const memberIdentity = await register(harness, 'advanced-member');
@@ -437,6 +467,7 @@ describe('active-tenant member administration', () => {
         editor: { label: 'Editor', permissions: ['records:read'] },
       },
     });
+    await register(harness, 'revision-bootstrap');
     const owner = await register(harness, 'revision-owner');
     const managerIdentity = await register(harness, 'revision-manager');
     const targetIdentity = await register(harness, 'revision-target');
@@ -581,6 +612,7 @@ describe('active-tenant member administration', () => {
         },
       },
     });
+    await register(harness, 'race-bootstrap');
     const owner = await register(harness, 'race-owner');
     const managerIdentity = await register(harness, 'race-manager');
     const target = await register(harness, 'race-target');
@@ -682,6 +714,80 @@ describe('active-tenant member administration', () => {
       owner.tenant.membershipId,
     )).toMatchObject({ status: 'active', roleKey: 'owner' });
   }, 60_000);
+
+  test('lets delegated administration roles manage ordinary users without crossing the global-admin ceiling', async () => {
+    const harness = await start('simple');
+    const owner = await register(harness, 'platform-owner');
+    const delegate = await register(harness, 'delegated-operator');
+
+    const membership = await request(harness, 'POST', '/auth/tenant/members', {
+      email: delegate.user.email,
+      roles: ['administrator'],
+    }, owner.accessToken);
+    expect(membership).toMatchObject({
+      status: 200,
+      body: { member: { roles: ['administrator'] } },
+    });
+
+    const administrationSession = await switchTenant(
+      harness,
+      delegate.refreshToken,
+      owner.tenant.tenantId,
+    );
+    expect((await request(
+      harness,
+      'GET',
+      '/auth/admin/users',
+      undefined,
+      administrationSession.accessToken,
+    )).status).toBe(200);
+
+    const created = await request(harness, 'POST', '/auth/admin/users', {
+      username: 'ordinary-managed-user',
+      email: 'ordinary-managed-user@example.test',
+      password: 'password123',
+    }, administrationSession.accessToken);
+    expect(created).toMatchObject({
+      status: 200,
+      body: { user: { role: 'user' } },
+    });
+
+    const globalEscalation = await request(harness, 'POST', '/auth/admin/users', {
+      username: 'forbidden-global-admin',
+      email: 'forbidden-global-admin@example.test',
+      password: 'password123',
+      role: 'admin',
+    }, administrationSession.accessToken);
+    expect(globalEscalation).toMatchObject({
+      status: 403,
+      body: { code: 'GLOBAL_ADMIN_AUTHORITY_REQUIRED' },
+    });
+
+    const globalAdminMutation = await request(
+      harness,
+      'PATCH',
+      `/auth/admin/users/${owner.user.userId}`,
+      { firstName: 'Forbidden' },
+      administrationSession.accessToken,
+    );
+    expect(globalAdminMutation).toMatchObject({
+      status: 403,
+      body: { code: 'GLOBAL_ADMIN_AUTHORITY_REQUIRED' },
+    });
+
+    const customerSession = await switchTenant(
+      harness,
+      administrationSession.refreshToken,
+      delegate.tenant.tenantId,
+    );
+    expect((await request(
+      harness,
+      'GET',
+      '/auth/admin/users',
+      undefined,
+      customerSession.accessToken,
+    )).status).toBe(403);
+  }, 60_000);
 });
 
 async function start(
@@ -724,6 +830,7 @@ async function register(harness: Harness, key: string): Promise<Session> {
     password: 'password123',
     organizationName: `${key} organization`,
   });
+
   expect(response.status).toBe(200);
   return {
     user: response.body.user,

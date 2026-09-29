@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 
 import { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
+import { ZERO_OBSERVABILITY_RUNTIME } from '../../runtime/service-keys';
 import { createSyncPlugin } from '../../sync/sync.plugin';
 import { installAppStopBarrier } from './app-stop-lifecycle';
 
@@ -263,6 +264,11 @@ describe('installAppStopBarrier', () => {
 
 async function createSyncLifecycleHarness() {
   const runtime = new ZeroAppRuntime('app-stop-lifecycle-test');
+  runtime.set(ZERO_OBSERVABILITY_RUNTIME, {
+    sink: { emit() {} },
+    store: null,
+    config: { enabled: false },
+  });
   const app = new Elysia()
     .use(createSyncPlugin({
       runtime,

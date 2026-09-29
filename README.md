@@ -29,9 +29,12 @@ sessions, registered resources, Sync, scoped built-in services, tenant
 administration, invitations/join requests, browser authorization state, and
 packaged controls are present, including opt-in verified-company-domain
 request onboarding and the bounded authorization/control-plane audit.
-Protected Administration Organization/platform-tenant lifecycle UI, upstream
-enterprise SSO, break-glass, tenant-custom roles, populated-app adoption
-tooling, and domain
+Multi-mode bootstrap now creates a protected Administration Organization, and
+the browser SDK, hooks, and packaged controls cover its people plus the
+capability-gated customer-organization directory and lifecycle. Upstream
+enterprise SSO, break-glass, tenant-custom roles, broader populated-app
+discovery/migration tooling beyond the exact documented pre-024 administration
+reconciliation, and domain
 autojoin/aliases/direct transfer remain explicitly deferred. Registered
 resources now declare explicit server-owned client exposure and optional
 field-level read/write/filter/sort allow-lists. File-mode runtimes sharing one
@@ -49,6 +52,8 @@ unreleased until the release checklist and package verification pass. See
 [Releasing Zero](./docs/releasing.md) and the
 [auth implementation checklist](./docs/auth/multi-tenant-auth-implementation-checklist.md)
 for the supported-versus-preview boundary.
+The exact Administration Organization contract is documented in
+[Platform Administration Organization](./docs/auth/platform-administration.md).
 
 ## Create A Local App
 

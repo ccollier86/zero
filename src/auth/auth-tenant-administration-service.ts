@@ -11,7 +11,6 @@ import {
   type AuthTenantMemberMutationResult,
   type AuthTenantMemberPage,
   type AuthTenantOwnershipTransferResult,
-  type TenantRoleGrantCeiling,
 } from './auth-tenant-administration-types';
 import type {
   AssertAuthTenantMutationAuthority,
@@ -28,6 +27,16 @@ import {
   type TenantMembershipRecord,
   type TenantMembershipStatus,
 } from './tenancy/tenancy-types';
+import {
+  isAdministrationOnlyRole,
+  isRoleAssignableToTenantKind,
+} from './authorization-registry';
+import {
+  canGrantAuthorizationRole,
+  roleGrantCeilingFromAuthority,
+} from './authorization-role-grant';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 
 interface MemberRow {
   membership_id: string;
@@ -71,6 +80,7 @@ export class AuthTenantAdministrationService {
     private readonly tenancy: TenancyService,
     private readonly roles: AuthorizationRoleService | null,
     private readonly audit: AuthAuditService,
+    private readonly emitCode?: AuthPlatformCodeEmitter,
   ) {
     this.lockTenant = db.prepare(
       'UPDATE _auth_tenants SET updated_at = updated_at WHERE tenant_id = ?',
@@ -81,6 +91,8 @@ export class AuthTenantAdministrationService {
     tenantId: string;
     membershipId: string;
     scope: AuthorizationScopeSnapshot;
+    applicationScope?: AuthorizationScopeSnapshot | null;
+    assertCurrentAuthority?: AssertAuthTenantMutationAuthority;
   }): AuthTenantAdministrationConfig {
     this.users.assertCurrentProfile();
     if (input.scope.scopeKind !== 'tenant'
@@ -99,29 +111,48 @@ export class AuthTenantAdministrationService {
       input.scope.allPermissions === true || permissionSet.has(permission)
     );
     const canManageRoles = can('tenant.roles:manage');
-    const ceiling: TenantRoleGrantCeiling = {
-      allPermissions: input.scope.allPermissions === true,
-      permissions,
-    };
+    const ceiling = roleGrantCeilingFromAuthority({
+      scope: input.scope,
+      applicationScope: input.applicationScope,
+    });
     const roleDescriptors = Object.values(this.kernel.authorization.roles)
       .sort((left, right) => compareKeys(left.key, right.key))
-      .map((role) => Object.freeze({
-        key: role.key,
-        label: role.label,
-        ...(role.description ? { description: role.description } : {}),
-        permissions: Object.freeze([...role.permissions]),
-        allPermissions: role.allPermissions,
-        system: role.system,
-        assignable: !role.system,
-        grantable: !role.system && canManageRoles && this.canGrantRole(ceiling, role.key),
-      }));
+      .map((role) => {
+        const administrationOnly = isAdministrationOnlyRole(
+          this.kernel.authorization,
+          role.key,
+        );
+        const assignable = !role.system
+          && isRoleAssignableToTenantKind(
+            role.key,
+            tenant.kind,
+            this.kernel.authorization,
+          );
+        return Object.freeze({
+          key: role.key,
+          label: role.label,
+          ...(role.description ? { description: role.description } : {}),
+          permissions: Object.freeze([...role.permissions]),
+          allPermissions: role.allPermissions,
+          system: role.system,
+          assignable,
+          administrationOnly,
+          grantable: assignable && canManageRoles && canGrantAuthorizationRole({
+            kernel: this.kernel,
+            tenantKind: tenant.kind,
+            role,
+            ceiling,
+          }),
+        });
+      });
 
-    return Object.freeze({
+    const result = Object.freeze({
       tenancy: 'multi',
       authorization: this.kernel.authorization.mode,
       terminology: this.kernel.tenancy.terminology,
       tenant: Object.freeze({
         tenantId: tenant.tenantId,
+        kind: tenant.kind,
         slug: tenant.slug,
         name: tenant.name,
       }),
@@ -139,15 +170,21 @@ export class AuthTenantAdministrationService {
         canTransferOwnership: input.scope.roles.includes(TENANT_OWNER_ROLE_KEY),
         canReadInvitations: can('tenant.invitations:read'),
         canManageInvitations: can('tenant.invitations:manage'),
-        canReviewJoinRequests: can('tenant.join-requests:review'),
+        canReviewJoinRequests: tenant.kind === 'organization'
+          && can('tenant.join-requests:review'),
       }),
       roles: Object.freeze(roleDescriptors),
     });
+    if (input.assertCurrentAuthority) {
+      this.invokeAuthority(input.assertCurrentAuthority, []);
+    }
+    return result;
   }
 
   listMembers(
     tenantId: string,
     input: AuthTenantMemberListInput = {},
+    assertCurrentAuthority?: AssertAuthTenantMutationAuthority,
   ): AuthTenantMemberPage {
     this.users.assertCurrentProfile();
     this.requireActiveTenant(tenantId);
@@ -195,7 +232,7 @@ export class AuthTenantAdministrationService {
     const selected = hasMore ? rows.slice(0, limit) : rows;
     const members = selected.map((row) => this.mapMember(row));
     const last = selected.at(-1);
-    return {
+    const result = {
       members,
       page: {
         limit,
@@ -206,6 +243,10 @@ export class AuthTenantAdministrationService {
           : null,
       },
     };
+    if (assertCurrentAuthority) {
+      this.invokeAuthority(assertCurrentAuthority, ['tenant.members:read']);
+    }
+    return result;
   }
 
   addMember(input: {
@@ -231,9 +272,9 @@ export class AuthTenantAdministrationService {
             ? ['tenant.members:manage']
             : ['tenant.members:manage', 'tenant.roles:manage'],
         );
-        const roleKeys = this.normalizeDesiredRoleKeys(input.roleKeys, []);
+        const roleKeys = this.normalizeDesiredRoleKeys(input.tenantId, input.roleKeys, []);
         for (const roleKey of roleKeys) {
-          if (!this.canGrantRole(authority.scope, roleKey)) {
+          if (!this.canGrantRole(input.tenantId, authority, roleKey)) {
             throw roleEscalationForbidden();
           }
         }
@@ -255,7 +296,7 @@ export class AuthTenantAdministrationService {
         const created = this.tenancy.addMembership({
           tenantId: input.tenantId,
           userId: user.userId,
-          roleKey: 'member',
+          roleKey: roleKeys[0]!,
           createdBy: authority.auth.userId,
         });
         if (this.kernel.authorization.mode === 'advanced') {
@@ -471,9 +512,15 @@ export class AuthTenantAdministrationService {
         );
         if (actor.roleKey !== TENANT_OWNER_ROLE_KEY) throw forbidden();
         this.requireTenantMembership(input.tenantId, input.targetMembershipId);
+        const tenant = this.tenancy.getTenant(input.tenantId);
+        if (!tenant) throw memberNotFound();
+        const demotedRoleKey = tenant.kind === 'administration'
+          ? 'administrator'
+          : 'member';
         const result = this.tenancy.transferOwnership(
           actor.membershipId,
           input.targetMembershipId,
+          demotedRoleKey,
         );
         if (this.kernel.authorization.mode === 'advanced') {
           // The protected owner assignment follows the store marker through
@@ -482,7 +529,7 @@ export class AuthTenantAdministrationService {
           this.requireAdvancedRoles().assignTenantRole({
             tenantId: input.tenantId,
             membershipId: result.previousOwnerMembership.membershipId,
-            roleKey: 'member',
+            roleKey: demotedRoleKey,
             createdBy: authority.auth.userId,
             sourceId: 'tenant-ownership-transfer',
           });
@@ -537,6 +584,7 @@ export class AuthTenantAdministrationService {
       throw roleRevisionConflict();
     }
     const roleKeys = this.normalizeDesiredRoleKeys(
+      input.tenantId,
       input.roleKeys,
       currentAuthority.roles,
     );
@@ -570,7 +618,7 @@ export class AuthTenantAdministrationService {
         if (actor.roleKey !== TENANT_OWNER_ROLE_KEY) throw roleEscalationForbidden();
         continue;
       }
-      if (!this.canGrantRole(input.authority.scope, roleKey)) {
+      if (!this.canGrantRole(input.tenantId, input.authority, roleKey)) {
         throw roleEscalationForbidden();
       }
     }
@@ -581,6 +629,7 @@ export class AuthTenantAdministrationService {
   }
 
   private normalizeDesiredRoleKeys(
+    tenantId: string,
     input: readonly string[],
     current: readonly string[],
   ): readonly string[] {
@@ -591,6 +640,11 @@ export class AuthTenantAdministrationService {
     const keys = [...new Set(input.map((value) => value.trim()).filter(Boolean))]
       .sort(compareKeys);
     const currentSet = new Set(current);
+    const tenant = this.tenancy.getTenant(tenantId);
+    if (!tenant) throw memberNotFound();
+    if (tenant.kind === 'administration' && keys.length < 1) {
+      throw administrationRoleRequired();
+    }
     for (const roleKey of keys) {
       const role = this.kernel.authorization.roles[roleKey];
       if (!role) {
@@ -604,20 +658,34 @@ export class AuthTenantAdministrationService {
       if (role.system || roleKey === TENANT_OWNER_ROLE_KEY) {
         throw protectedOwnerLifecycle();
       }
+      if (!isRoleAssignableToTenantKind(
+        roleKey,
+        tenant.kind,
+        this.kernel.authorization,
+      )) {
+        throw tenant.kind === 'administration'
+          ? administrationRoleRequired(roleKey)
+          : administrationRoleScopeRequired(roleKey);
+      }
     }
     return Object.freeze(keys);
   }
 
   private canGrantRole(
-    ceiling: Pick<AuthorizationScopeSnapshot, 'allPermissions' | 'permissions'>,
+    tenantId: string,
+    authority: Pick<AuthTenantMutationAuthority, 'scope' | 'applicationScope'>,
     roleKey: string,
   ): boolean {
     const role = this.kernel.authorization.roles[roleKey];
     if (!role || role.system) return false;
-    if (ceiling.allPermissions) return true;
-    if (role.allPermissions) return false;
-    const permissions = new Set(ceiling.permissions);
-    return role.permissions.every((permission) => permissions.has(permission));
+    const tenant = this.tenancy.getTenant(tenantId);
+    if (!tenant) return false;
+    return canGrantAuthorizationRole({
+      kernel: this.kernel,
+      tenantKind: tenant.kind,
+      role,
+      ceiling: roleGrantCeilingFromAuthority(authority),
+    });
   }
 
   private getMember(tenantId: string, membershipId: string): AuthTenantMember {
@@ -685,7 +753,7 @@ export class AuthTenantAdministrationService {
     assertCurrentAuthority: AssertAuthTenantMutationAuthority,
     permissions: readonly PermissionKey[],
   ): AuthTenantMutationAuthority {
-    const authority = assertCurrentAuthority(permissions);
+    const authority = this.invokeAuthority(assertCurrentAuthority, permissions);
     if (authority.scope.tenantId !== tenantId) throw forbidden();
     this.requireActorMembership(
       tenantId,
@@ -693,6 +761,21 @@ export class AuthTenantAdministrationService {
       authority.auth.userId,
     );
     return authority;
+  }
+
+  private invokeAuthority(
+    assertion: AssertAuthTenantMutationAuthority,
+    permissions: readonly PermissionKey[],
+  ): AuthTenantMutationAuthority {
+    return invokeSynchronousAuthCallback(
+      () => assertion(permissions),
+      {
+        component: 'auth-tenant-administration-service',
+        invariant: 'authority-callback-async',
+        message: '[auth] Tenant administration authority callback must be synchronous.',
+        emitCode: this.emitCode,
+      },
+    );
   }
 
   private requireTenantMembership(
@@ -764,7 +847,8 @@ function decodeCursor(value: string | undefined): MemberCursor | null {
     const membershipId = Reflect.get(parsed, 'membershipId');
     if (!Number.isSafeInteger(joinedAt) || joinedAt < 0
       || typeof membershipId !== 'string' || membershipId.length < 1
-      || membershipId.length > 200) throw invalidCursor();
+      || membershipId.length > 200
+      || !/^[A-Za-z0-9_-]+$/.test(membershipId)) throw invalidCursor();
     return { joinedAt, membershipId };
   } catch (error) {
     if (error instanceof AuthError) throw error;
@@ -807,6 +891,24 @@ function mapAdministrationError(error: unknown): Error {
     return new AuthError(error.message, error.code, status);
   }
   return error instanceof Error ? error : new Error('Tenant administration failed');
+}
+
+function administrationRoleScopeRequired(roleKey: string): AuthError {
+  return new AuthError(
+    `Role requires the administration organization: ${roleKey}`,
+    'AUTHORIZATION_ADMINISTRATION_SCOPE_REQUIRED',
+    422,
+  );
+}
+
+function administrationRoleRequired(roleKey?: string): AuthError {
+  return new AuthError(
+    roleKey
+      ? `Role is not assignable to the administration organization: ${roleKey}`
+      : 'Administration organization members require a platform administration role',
+    'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED',
+    422,
+  );
 }
 
 function invalidCursor(): AuthError {

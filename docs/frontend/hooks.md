@@ -185,7 +185,7 @@ Platform hooks require `AppProvider` or `ClientProvider` in the browser. They ar
 | Area | Hooks |
 |------|-------|
 | Client | `useClient`, `useClientMaybe`, `useIsServer` |
-| Auth | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useAuthorization`, `useAuthorizationScopeBoundary`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher`, `useTenantAppShellWorkspaces` |
+| Auth | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useAuthorization`, `useAuthorizationScopeBoundary`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `usePlatformAdministration`, `usePlatformTenants`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher`, `useTenantAppShellWorkspaces` |
 | Reactive data | `useCollection`, `useLazyCollection`, `useDataPage`, `useRow`, `useRecord`, `useRecordByIdentity`, `useQuery`, `useStatus` |
 | Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
 | Data UI state | `useDataSelection` |
@@ -205,6 +205,13 @@ aliases. Use `useDataPage` for paged `/api/data` screens, `useRecord` /
 workflow UI, `useResourceList` for generated resource CRUD screens, and
 `useNotifications` for notification lists and counts.
 
+The new Auth control-plane hooks share one caught-failure reporter. Current
+loads and mutations emit `FRONTEND_AUTH_ACTION_FAILED` with only the bounded
+action family and safe machine code before exposing their normal hook error
+state; stale work rejected by a scope-generation fence is not reported as a
+current failure. See
+[Auth Operational Failure Contract](../observability.md#auth-operational-failure-contract).
+
 ### Current authorization hints
 
 `useAuthorization()` observes the sanitized live `GET /auth/authorization`
@@ -212,6 +219,13 @@ projection. `useHasPermission`, `useHasAllPermissions`, and
 `useHasAnyPermission` provide fail-closed UI checks over the same projection.
 They return false before a current identity/scope snapshot exists and after a
 load error or revocation. These hooks never replace backend authorization.
+
+In multi mode `scope` remains the active tenant/membership projection. While
+that tenant is the protected Administration Organization, the response may
+also carry a separate `applicationScope`. Permission hooks check both
+permission arrays; tenant-role/tenant-identity UI remains bound only to
+`scope`. The opaque revision changes with either scope and with the installed
+registry version.
 
 ```tsx
 const authz = useAuthorization();
@@ -262,6 +276,36 @@ Role descriptors include actor-specific `grantable` flags, while
 These fields drive UI only; the server re-resolves live authority inside each
 mutation transaction. See
 [Application Access Administration](../auth/application-access-administration.md).
+
+### Platform administration
+
+`usePlatformAdministration(options?)` is the protected Administration
+Organization's headless people/invitation/ownership surface.
+`usePlatformTenants(options?)` is the customer-organization directory,
+lifecycle, creation, and read-only member-detail surface. Both require a live
+active `kind: 'administration'` scope, load only reads allowed by the
+server-projected capabilities, and synchronously mask old data across an
+account or tenant switch.
+
+```tsx
+const administrators = usePlatformAdministration({
+  memberSearch,
+  memberStatus: 'active',
+});
+
+const organizations = usePlatformTenants({
+  search,
+  selectedTenantId,
+  memberStatus: 'active',
+});
+```
+
+The directory exposes `canCreateTenants` separately from
+`canManageTenants`, and `canReadTenantMembers` separately from
+`canReadTenants`; callers must not infer the combined permission requirements.
+Customer-member mutation remains on `useTenantMembers()` after a real session
+switch into that organization. See
+[Platform Administration Organization](../auth/platform-administration.md).
 
 ### Control-plane audit
 

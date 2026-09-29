@@ -5,6 +5,7 @@ import type { AuthTenantJoinRequest } from '../../frontend/client/auth-types';
 import {
   assignedRolesAboveGrantCeiling,
   projectTenantMemberRoleChoices,
+  rolesForTenantKind,
   TenantMemberManagement,
   tenantConfirmationAnnouncement,
 } from './tenant-member-management';
@@ -15,7 +16,13 @@ import {
   resolveInvitationDeliveryMode,
   tenantOnboardingConfirmationAnnouncement,
   TenantOnboardingManagement,
+  TenantOnboardingTenantKindNotice,
 } from './tenant-onboarding-management';
+import {
+  ManualInvitationToken,
+  TenantInvitationComposer,
+  TenantInvitationList,
+} from './tenant-onboarding-invitations';
 import {
   parseTenantSwitcherHandoff,
   runTenantSwitch,
@@ -243,6 +250,78 @@ describe('packaged tenant administration components', () => {
       .toEqual(['member', 'manager', 'billing']);
   });
 
+  test('offers roles only inside the active customer or administration kind', () => {
+    const customer = tenantRole('member', true);
+    const administrator = {
+      ...tenantRole('administrator', true),
+      administrationOnly: true,
+    };
+
+    expect(rolesForTenantKind([customer, administrator], 'organization')
+      .map((role) => role.key)).toEqual(['member']);
+    expect(rolesForTenantKind([customer, administrator], 'administration')
+      .map((role) => role.key)).toEqual(['administrator']);
+  });
+
+  test('renders protected-scope onboarding exclusions only for administration', () => {
+    const administration = renderToStaticMarkup(createElement(
+      TenantOnboardingTenantKindNotice,
+      { kind: 'administration' },
+    ));
+    const customer = renderToStaticMarkup(createElement(
+      TenantOnboardingTenantKindNotice,
+      { kind: 'organization' },
+    ));
+
+    expect(administration).toContain('supports invitations only');
+    expect(administration).toContain('join requests');
+    expect(administration).toContain('verified-domain onboarding');
+    expect(administration).toContain('PlatformAdministrationManagement');
+    expect(customer).toBe('');
+  });
+
+  test('keeps invitation controls labelled, keyboard-native, responsive, and pending-safe', () => {
+    const composer = renderToStaticMarkup(createElement(TenantInvitationComposer, {
+      email: 'ada@example.test',
+      mode: 'manual',
+      emailDelivery: true,
+      manualDelivery: true,
+      busy: true,
+      canChooseRoles: true,
+      roles: [tenantRole('member', true)],
+      selectedRoles: ['member'],
+      simple: true,
+      tenantSingular: 'workspace',
+      onEmailChange() {}, onModeChange() {}, onRolesChange() {}, onSubmit() {},
+    }));
+    const token = renderToStaticMarkup(createElement(ManualInvitationToken, {
+      token: 'one-time-secret', headingId: 'manual-token', onCopy() {}, onDismiss() {},
+    }));
+    const list = renderToStaticMarkup(createElement(TenantInvitationList, {
+      headingId: 'invitations', headingRef: null,
+      invitations: [{
+        invitationId: 'invite-1', email: 'ada@example.test', roles: ['member'],
+        status: 'pending', expiresAt: 5_000, createdAt: 1, updatedAt: 1,
+        acceptedAt: null, revokedAt: null,
+      }],
+      roleLabels: new Map([['member', 'Member']]), canManage: true, busy: false,
+      hasMore: true, isLoadingMore: true, onLoadMore() {}, onRevoke() {},
+    }));
+
+    expect(composer).toContain('aria-label="Invitation email"');
+    expect(composer).toContain('aria-label="Invitation delivery"');
+    expect(composer).toContain('type="submit"');
+    expect(composer).toContain('disabled=""');
+    expect(composer).toContain('sm:grid-cols-');
+    expect(token).toContain('aria-labelledby="manual-token"');
+    expect(token).toContain('aria-label="One-time invitation token"');
+    expect(token).toContain('readOnly=""');
+    expect(list).toContain('tabindex="-1"');
+    expect(list).toContain('aria-haspopup="dialog"');
+    expect(list).toContain('sm:flex-row');
+    expect(list).toContain('Loading…');
+  });
+
   test('bounds persisted tenant-switch UI handoffs', () => {
     const handoff = {
       phase: 'succeeded' as const,
@@ -297,6 +376,7 @@ function tenantRole(key: string, grantable: boolean) {
   return {
     key,
     label: key,
+    administrationOnly: false,
     permissions: [],
     allPermissions: false,
     system: false,

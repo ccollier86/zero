@@ -14,6 +14,8 @@ import {
   NativeSessionAccessStore,
   type NativeFamilyAccess,
 } from './native-session-access-store';
+import type { AuthPlatformCodeEmitter } from '../auth-observability';
+import { invokeSynchronousAuthCallback } from '../auth-synchronous-callback';
 
 export type NativeRotationResult = 'rotated' | 'reused' | 'throttled' | 'exhausted';
 
@@ -26,16 +28,20 @@ export class NativeSessionStore {
   private readonly policy: NativeSessionPolicyStore;
   private assertRuntimeProfileCurrent: () => void = () => {};
 
-  constructor(private readonly db: ReactiveDB, options: NativeSessionStoreOptions | number = {}) {
+  constructor(
+    private readonly db: ReactiveDB,
+    options: NativeSessionStoreOptions | number = {},
+    private readonly emitCode?: AuthPlatformCodeEmitter,
+  ) {
     const resolved = typeof options === 'number' ? { cleanupBatchSize: options } : options;
     this.policy = new NativeSessionPolicyStore(db, resolved);
     this.access = new NativeSessionAccessStore(db, () => this.policy.now());
     this.insertStatement = db.prepare(`INSERT INTO _auth_native_sessions
       (token_id, family_id, user_id, client_id, token_hash, scope,
-       auth_generation, scope_kind, scope_id, tenant_id, membership_id,
+       auth_generation, mfa_verified_at, scope_kind, scope_id, tenant_id, membership_id,
        tenant_authorization_generation, membership_authorization_generation,
        expires_at, created_at, rotation_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     this.getByHash = db.prepare('SELECT * FROM _auth_native_sessions WHERE token_hash = ?');
     this.consumeStatement = db.prepare(`UPDATE _auth_native_sessions
       SET consumed_at = ?, replaced_by = ?
@@ -51,7 +57,12 @@ export class NativeSessionStore {
   }
 
   assertCurrentProfile(): void {
-    this.assertRuntimeProfileCurrent();
+    invokeSynchronousAuthCallback(this.assertRuntimeProfileCurrent, {
+      component: 'native-session-store',
+      invariant: 'runtime-profile-guard-async',
+      message: '[auth] Native session runtime profile guard must be synchronous.',
+      emitCode: this.emitCode,
+    });
   }
 
   get(rawToken: string): NativeSessionRecord | null {
@@ -67,8 +78,18 @@ export class NativeSessionStore {
   ): boolean {
     return this.db.transaction(() => {
       this.assertCurrentProfile();
-      if (!admit()) return false;
-      if (!consumeCode()) return false;
+      const admitted = this.invokeBooleanCallback(
+        admit,
+        'initial-admission-async',
+        '[auth] Native session admission must be synchronous.',
+      );
+      if (!admitted) return false;
+      const consumed = this.invokeBooleanCallback(
+        consumeCode,
+        'authorization-code-consumer-async',
+        '[auth] Native authorization code consumption must be synchronous.',
+      );
+      if (!consumed) return false;
       this.policy.prepareInitial(session.userId, session.clientId);
       this.insert(session);
       return true;
@@ -87,7 +108,11 @@ export class NativeSessionStore {
   ): NativeRotationResult {
     return this.db.transaction(() => {
       this.assertCurrentProfile();
-      if (!admit()) {
+      if (!this.invokeBooleanCallback(
+        admit,
+        'rotation-admission-async',
+        '[auth] Native session rotation admission must be synchronous.',
+      )) {
         this.policy.revokeFamily(current.familyId);
         return 'reused';
       }
@@ -113,7 +138,14 @@ export class NativeSessionStore {
     return this.db.transaction(() => {
       this.assertCurrentProfile();
       const deleted = this.policy.revokeFamily(familyId);
-      if (deleted > 0) afterRevoke?.(deleted);
+      if (deleted > 0 && afterRevoke) {
+        invokeSynchronousAuthCallback(() => afterRevoke(deleted), {
+          component: 'native-session-store',
+          invariant: 'family-revoked-callback-async',
+          message: '[auth] Native session revocation callback must be synchronous.',
+          emitCode: this.emitCode,
+        });
+      }
       return deleted;
     });
   }
@@ -147,12 +179,24 @@ export class NativeSessionStore {
         clientId: current.clientId,
         authGeneration: current.authGeneration,
       });
-      if (!active || active.tokenId !== current.tokenId || !admit()) return false;
+      if (!active || active.tokenId !== current.tokenId) return false;
+      if (!this.invokeBooleanCallback(
+        admit,
+        'switch-admission-async',
+        '[auth] Native session switch admission must be synchronous.',
+      )) return false;
       const now = this.policy.now();
       if (this.revokeFamilyStatement.all(now, current.familyId).length < 1) return false;
       this.policy.prepareInitial(replacement.userId, replacement.clientId);
       this.insert(replacement);
-      afterSwitch?.();
+      if (afterSwitch) {
+        invokeSynchronousAuthCallback(afterSwitch, {
+          component: 'native-session-store',
+          invariant: 'family-switched-callback-async',
+          message: '[auth] Native session switch callback must be synchronous.',
+          emitCode: this.emitCode,
+        });
+      }
       return true;
     });
   }
@@ -164,10 +208,24 @@ export class NativeSessionStore {
     });
   }
 
+  private invokeBooleanCallback(
+    callback: () => boolean,
+    invariant: string,
+    message: string,
+  ): boolean {
+    return invokeSynchronousAuthCallback(callback, {
+      component: 'native-session-store',
+      invariant,
+      message,
+      emitCode: this.emitCode,
+    });
+  }
+
   private insert(session: PreparedNativeSession): void {
     this.insertStatement.run(
       session.tokenId, session.familyId, session.userId, session.clientId,
       session.tokenHash, session.scope, session.authGeneration,
+      session.mfaVerifiedAt,
       session.scopeKind ?? 'application', session.scopeId ?? 'application',
       session.tenantId ?? null, session.membershipId ?? null,
       session.tenantAuthorizationGeneration ?? null,

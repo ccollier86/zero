@@ -170,6 +170,15 @@ audit event, and the marker compare-and-swap. An exact restart does not update
 the row. See [Platform Configuration](./platform-configuration.md#installed-auth-profile-and-mode-upgrades)
 for supported transitions and the one-time legacy multi/simple assertion.
 
+Migrations `024` through `027` add the Administration Organization
+discriminator/reconciliation, persisted MFA assurance, invitation grant
+snapshots, and the versioned authorization-registry manifest. These are
+security boundaries rather than application schema conveniences: follow the
+[Administration Organization adoption procedure](./auth/platform-administration.md#adopting-the-administration-organization-on-a-pre-024-installation),
+[invitation upgrade rules](./auth/tenant-invitations-and-join-requests.md#persistence-and-upgrade),
+and [authorization registry deployment contract](./platform-configuration.md#authorization-registry-and-static-roles)
+instead of editing their private rows directly.
+
 ## Schema Module Shape
 
 Doctor and plan need a module that exports declared tables. These shapes are
@@ -251,6 +260,35 @@ rollback is pending for the next forward run. Doctor reports the most recent
 failure without misclassifying that durable state. Successfully recorded
 migration code remains immutable even after rollback: restore its original
 checksum and add a new version instead of editing it before reapplying.
+
+That immutability includes transitive behavior. A numbered migration must not
+call a mutable runtime schema installer, repair helper, trigger registry, or SQL
+constant whose meaning can evolve with the current application. Keep the exact
+historical SQL in the migration itself or in a version-named module beside the
+migration, and put every later schema or trigger change in a new numbered
+migration. Chain-parity tests should prove both that the new version is the
+first migration to introduce its fields and that a full upgrade converges on
+the same schema and trigger contract as a fresh runtime database.
+
+For a migration that has already been committed, keep the exported migration
+metadata and `up()`/`down()` function bodies byte-stable as well. The durable
+ledger hashes those function strings. A safe extraction therefore aliases a
+version-named frozen helper back to the historical symbol name without
+rewriting the function body. Two independent test guards protect this contract:
+
+- `migration-checksum-compatibility.test.ts` pins the canonical exported
+  migration checksums for `001`–`027`, covering metadata plus the serialized
+  `up()`/`down()` function bodies stored in the ledger contract.
+- `migration-definition-immutability.test.ts` rejects value imports from
+  mutable runtime implementations; pins normalized full-source SHA-256 hashes
+  for every numbered definition and every version-local helper; asserts the
+  exact discovered definition set; and verifies that the registry order is
+  `001` through `027`. The full-definition and helper hashes are necessary
+  because `migration.up.toString()` cannot see module-local constants or an
+  imported helper's body.
+
+When either guard changes, restore the frozen definition and add a new numbered
+migration. Do not update an expected hash merely to make an old version pass.
 
 `_migrations` remains synchronized for older tooling: successful forward events
 upsert its version row, successful rollbacks remove that row, and startup imports

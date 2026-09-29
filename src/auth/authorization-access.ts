@@ -9,6 +9,7 @@
 
 import {
   compileAccessRequirement,
+  expandAuthorizationRolesForScope,
   isCompiledAccessRequirement,
   mergeAccessRequirements,
   type AccessRequirement,
@@ -19,6 +20,9 @@ import {
 } from './authorization-kernel';
 import { AuthError, type AuthContext, type PermissionKey } from './types';
 import type { AuthorizationRoleSet } from './authorization-role-types';
+import { isAdministrationOnlyRole } from './authorization-registry';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 
 /** Narrow property-store contract needed by request authorization. */
 export interface AuthorizationPropertyStore {
@@ -48,16 +52,26 @@ export interface RequestAuthorizationAccess {
   readonly context: AuthContext | null;
   /** Current valid application/tenant scope, if this profile can project one. */
   readonly authorization: AuthorizationScopeSnapshot | null;
+  /** Live application authority; multi mode exposes it only in the administration organization. */
+  readonly applicationAuthorization: AuthorizationScopeSnapshot | null;
   /** Enforce any shared Zero access declaration. */
   authorize(
     requirement: AccessRequirement | CompiledAccessRequirement,
   ): AuthorizationScopeSnapshot | null;
   /** Require a current authenticated identity. */
   requireUser(): AuthContext;
-  /** Require the existing global/platform administrator role. */
+  /**
+   * Require the legacy global `users.role === 'admin'` authority in every
+   * profile. Packaged multi-tenant control planes use explicit application
+   * permissions instead; tenant roles never satisfy `access: 'admin'`.
+   */
   requirePlatformAdmin(): AuthContext;
   /** Require a valid application or tenant authorization scope. */
   requireAuthorizationScope(): AuthorizationScopeSnapshot;
+  /** Require a live application control-plane scope. */
+  requireApplicationAuthorization(): AuthorizationScopeSnapshot & {
+    readonly scopeKind: 'application';
+  };
   /** Require a valid tenant-bound session scope. */
   requireTenant(): TenantAuthorizationScope;
   /** Test one statically declared permission without throwing for denial. */
@@ -77,6 +91,8 @@ export interface CreateRequestAuthorizationAccessOptions {
   roleAssignments?: AuthorizationRoleAssignmentResolver | null;
   /** Recheck the owning runtime before consuming this cached authority facade. */
   assertCurrentProfile?: () => void;
+  /** App-local observability boundary for an invalid asynchronous profile fence. */
+  emitCode?: AuthPlatformCodeEmitter;
 }
 
 /** Build one immutable facade/snapshot for one already-hydrated request. */
@@ -84,7 +100,15 @@ export function createRequestAuthorizationAccess(
   options: CreateRequestAuthorizationAccessOptions,
 ): RequestAuthorizationAccess {
   const { authContext, kernel } = options;
-  const assertCurrentProfile = options.assertCurrentProfile ?? (() => {});
+  const profileGuard = options.assertCurrentProfile;
+  const assertCurrentProfile = profileGuard
+    ? () => invokeSynchronousAuthCallback(profileGuard, {
+        component: 'request-authorization-access',
+        invariant: 'runtime-profile-guard-async',
+        message: '[auth] Request authorization profile guard must be synchronous.',
+        emitCode: options.emitCode,
+      })
+    : () => {};
   let baseSubject: AuthorizationSubjectSnapshot | null | undefined;
   let propertySubject: AuthorizationSubjectSnapshot | null | undefined;
   const resolveSubject = (
@@ -97,11 +121,20 @@ export function createRequestAuthorizationAccess(
         propertySubject = null;
         return null;
       }
+      const properties = options.propertyStore
+        ? invokeSynchronousAuthCallback(
+          () => options.propertyStore!.getProperties(authContext.userId),
+          {
+            component: 'request-authorization-access',
+            invariant: 'property-resolver-async',
+            message: '[auth] Authorization property resolution must be synchronous.',
+            emitCode: options.emitCode,
+          },
+        )
+        : {};
       propertySubject = Object.freeze({
         ...base,
-        properties: Object.freeze({
-          ...(options.propertyStore?.getProperties(authContext.userId) ?? {}),
-        }),
+        properties: Object.freeze({ ...properties }),
       });
       return propertySubject;
     }
@@ -116,12 +149,16 @@ export function createRequestAuthorizationAccess(
       authContext,
       {},
       options.roleAssignments,
+      options.emitCode,
     );
     return baseSubject;
   };
 
   const resolveAuthorization = (): AuthorizationScopeSnapshot | null => (
     resolveSubject()?.authorization ?? null
+  );
+  const resolveApplicationAuthorization = (): AuthorizationScopeSnapshot | null => (
+    resolveSubject()?.applicationAuthorization ?? null
   );
   const requireCurrentUser = (): AuthContext => {
     if (!authContext) throw unauthorized();
@@ -160,6 +197,10 @@ export function createRequestAuthorizationAccess(
       assertCurrentProfile();
       return resolveAuthorization();
     },
+    get applicationAuthorization() {
+      assertCurrentProfile();
+      return resolveApplicationAuthorization();
+    },
     authorize(requirement) {
       assertCurrentProfile();
       return authorizeRequirement(requirement);
@@ -180,6 +221,13 @@ export function createRequestAuthorizationAccess(
       const authorization = resolveAuthorization();
       if (!authorization) throw forbidden();
       return authorization;
+    },
+    requireApplicationAuthorization() {
+      assertCurrentProfile();
+      requireCurrentUser();
+      const authorization = resolveApplicationAuthorization();
+      if (!authorization || authorization.scopeKind !== 'application') throw forbidden();
+      return authorization as AuthorizationScopeSnapshot & { scopeKind: 'application' };
     },
     requireTenant() {
       assertCurrentProfile();
@@ -225,16 +273,37 @@ export function createAuthorizationSubjectSnapshot(
   authContext: AuthContext,
   properties: Readonly<Record<string, string>> = {},
   roleAssignments?: AuthorizationRoleAssignmentResolver | null,
+  emitCode?: AuthPlatformCodeEmitter,
 ): AuthorizationSubjectSnapshot {
-  const candidate = projectAuthorizationScope(kernel, authContext, roleAssignments);
+  const candidate = projectAuthorizationScope(
+    kernel,
+    authContext,
+    roleAssignments,
+    emitCode,
+  );
   const authorization = candidate && kernel.isValidScopeSnapshot(candidate)
     ? candidate
+    : null;
+  const applicationCandidate = authorization?.scopeKind === 'application'
+    ? authorization
+    : authorization?.scopeKind === 'tenant'
+      ? projectAdministrationApplicationScope(
+        kernel,
+        authContext,
+        roleAssignments,
+        emitCode,
+      )
+      : null;
+  const applicationAuthorization = applicationCandidate
+    && kernel.isValidScopeSnapshot(applicationCandidate)
+    ? applicationCandidate
     : null;
 
   return Object.freeze({
     platformRole: authContext.role,
     properties: Object.freeze({ ...properties }),
     authorization,
+    applicationAuthorization,
   });
 }
 
@@ -242,6 +311,7 @@ function projectAuthorizationScope(
   kernel: AuthorizationKernel,
   auth: AuthContext,
   roleAssignments?: AuthorizationRoleAssignmentResolver | null,
+  emitCode?: AuthPlatformCodeEmitter,
 ): AuthorizationScopeSnapshot | null {
   if (kernel.tenancy.mode === 'single') {
     if (kernel.authorization.mode === 'simple') {
@@ -253,7 +323,11 @@ function projectAuthorizationScope(
       });
     }
 
-    const assignment = roleAssignments?.resolveApplicationRoles(auth.userId) ?? null;
+    const assignment = resolveApplicationRoleAssignment(
+      roleAssignments,
+      auth.userId,
+      emitCode,
+    );
     if (!assignment) return null;
     return expandAdvancedScope(kernel, assignment, {
       tenancy: 'single',
@@ -280,12 +354,19 @@ function projectAuthorizationScope(
     return null;
   }
 
+  // These framework roles are control-plane roles. A retained simple-mode
+  // assignment in an ordinary customer organization is invalid authority,
+  // even though its tenant-only permission subset would otherwise look safe.
+  if (auth.tenantKind !== 'administration'
+    && auth.tenantRole
+    && isAdministrationOnlyRole(kernel.authorization, auth.tenantRole)) return null;
+
   if (kernel.authorization.mode === 'advanced') {
-    const assignment = roleAssignments?.resolveTenantRoles({
+    const assignment = resolveTenantRoleAssignment(roleAssignments, {
       tenantId: auth.tenantId,
       membershipId: auth.membershipId,
       userId: auth.userId,
-    }) ?? null;
+    }, emitCode);
     if (!assignment) return null;
     return expandAdvancedScope(kernel, assignment, {
       tenancy: 'multi',
@@ -302,11 +383,11 @@ function projectAuthorizationScope(
   }
 
   if (!auth.tenantRole) return null;
-  const template = kernel.authorization.roles[auth.tenantRole];
-  const allPermissions = template?.allPermissions ?? false;
-  const permissions = allPermissions
-    ? Object.keys(kernel.authorization.permissions).sort(compareKeys)
-    : [...(template?.permissions ?? [])].sort(compareKeys);
+  const expanded = expandAuthorizationRolesForScope(
+    kernel.authorization,
+    [auth.tenantRole],
+    'tenant',
+  );
 
   return freezeScope({
     tenancy: 'multi',
@@ -316,10 +397,97 @@ function projectAuthorizationScope(
     tenantId: auth.tenantId,
     membershipId: auth.membershipId,
     roles: [auth.tenantRole],
-    permissions,
-    ...(allPermissions ? { allPermissions: true } : {}),
+    permissions: expanded.permissions,
+    ...(expanded.allPermissions ? { allPermissions: true } : {}),
     revision: tenantRevision(auth, `simple:${auth.tenantRole}`),
   });
+}
+
+/**
+ * Project platform authority only while the same live session is bound to the
+ * protected administration organization. `tenantKind` is server-derived by
+ * the durable web/native session resolver; it is never accepted from request
+ * input or an unverified token claim.
+ */
+function projectAdministrationApplicationScope(
+  kernel: AuthorizationKernel,
+  auth: AuthContext,
+  roleAssignments?: AuthorizationRoleAssignmentResolver | null,
+  emitCode?: AuthPlatformCodeEmitter,
+): AuthorizationScopeSnapshot | null {
+  if (kernel.tenancy.mode !== 'multi'
+    || auth.tenantKind !== 'administration'
+    || auth.sessionScopeKind !== 'tenant'
+    || !auth.tenantId
+    || auth.sessionScopeId !== auth.tenantId
+    || !auth.membershipId) return null;
+
+  if (kernel.authorization.mode === 'advanced') {
+    const assignment = resolveTenantRoleAssignment(roleAssignments, {
+      tenantId: auth.tenantId,
+      membershipId: auth.membershipId,
+      userId: auth.userId,
+    }, emitCode);
+    if (!assignment) return null;
+    return expandAdvancedScope(kernel, assignment, {
+      tenancy: 'multi',
+      mode: 'advanced',
+      scopeKind: 'application',
+      scopeId: 'application',
+      revision: tenantRevision(auth, `administration:${assignment.revision}`),
+    });
+  }
+
+  if (!auth.tenantRole) return null;
+  const expanded = expandAuthorizationRolesForScope(
+    kernel.authorization,
+    [auth.tenantRole],
+    'application',
+  );
+  return freezeScope({
+    tenancy: 'multi',
+    mode: 'simple',
+    scopeKind: 'application',
+    scopeId: 'application',
+    roles: [auth.tenantRole],
+    permissions: expanded.permissions,
+    ...(expanded.allPermissions ? { allPermissions: true } : {}),
+    revision: tenantRevision(auth, `administration:simple:${auth.tenantRole}`),
+  });
+}
+
+function resolveApplicationRoleAssignment(
+  resolver: AuthorizationRoleAssignmentResolver | null | undefined,
+  userId: string,
+  emitCode?: AuthPlatformCodeEmitter,
+): AuthorizationRoleSet | null {
+  if (!resolver) return null;
+  return invokeSynchronousAuthCallback(
+    () => resolver.resolveApplicationRoles(userId),
+    {
+      component: 'request-authorization-access',
+      invariant: 'application-role-resolver-async',
+      message: '[auth] Application role resolution must be synchronous.',
+      emitCode,
+    },
+  );
+}
+
+function resolveTenantRoleAssignment(
+  resolver: AuthorizationRoleAssignmentResolver | null | undefined,
+  input: Parameters<AuthorizationRoleAssignmentResolver['resolveTenantRoles']>[0],
+  emitCode?: AuthPlatformCodeEmitter,
+): AuthorizationRoleSet | null {
+  if (!resolver) return null;
+  return invokeSynchronousAuthCallback(
+    () => resolver.resolveTenantRoles(input),
+    {
+      component: 'request-authorization-access',
+      invariant: 'tenant-role-resolver-async',
+      message: '[auth] Tenant role resolution must be synchronous.',
+      emitCode,
+    },
+  );
 }
 
 function expandAdvancedScope(
@@ -332,20 +500,16 @@ function expandAdvancedScope(
   // control plane. They are not live authority, though: keep the assignment
   // revision below, but project only currently declared roles into the
   // request snapshot and permission expansion.
-  const roles = [...(assignment?.roles ?? [])]
-    .filter((roleKey) => Object.hasOwn(kernel.authorization.roles, roleKey))
-    .sort(compareKeys);
-  const templates = roles.map((role) => kernel.authorization.roles[role]);
-  const allPermissions = templates.some((template) => template?.allPermissions === true);
-  const permissions = allPermissions
-    ? Object.keys(kernel.authorization.permissions).sort(compareKeys)
-    : [...new Set(templates.flatMap((template) => template?.permissions ?? []))]
-      .sort(compareKeys);
+  const expanded = expandAuthorizationRolesForScope(
+    kernel.authorization,
+    assignment?.roles ?? [],
+    base.scopeKind,
+  );
   return freezeScope({
     ...base,
-    roles,
-    permissions,
-    ...(allPermissions ? { allPermissions: true } : {}),
+    roles: expanded.roles,
+    permissions: expanded.permissions,
+    ...(expanded.allPermissions ? { allPermissions: true } : {}),
   });
 }
 

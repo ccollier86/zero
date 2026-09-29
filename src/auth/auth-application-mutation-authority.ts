@@ -37,7 +37,7 @@ export function captureAuthApplicationMutationAuthority(input: {
   tokenService: TokenService;
   kernel: AuthorizationKernel;
   store: UserStore;
-  roles: AuthorizationRoleService;
+  roles: AuthorizationRoleService | null;
 }): AssertAuthApplicationMutationAuthority {
   const reference = input.tokenService.captureAuthContextAuthority(input.auth);
   if (!reference) throw staleApplicationAuthority();
@@ -59,8 +59,7 @@ export function captureAuthApplicationMutationAuthority(input: {
       propertyStore: input.store,
       roleAssignments: input.roles,
     });
-    const scope = access.requireAuthorizationScope();
-    if (scope.scopeKind !== 'application') throw staleApplicationAuthority();
+    const scope = access.requireApplicationAuthorization();
     for (const permission of requiredPermissions) {
       access.requirePermission(permission);
     }

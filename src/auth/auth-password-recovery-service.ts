@@ -1,8 +1,8 @@
 /** Public password-reset request policy and delivery. */
 
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
 import {
+  getAuthAccountEmitter,
   requireAuthEmailOutbox,
   type AuthAccountPluginConfig,
 } from './auth-account-dependencies';
@@ -26,7 +26,7 @@ export function requestPasswordReset(
       nativeContinuation: input.nativeContinuation,
     });
   } catch {
-    emitPlatformCode(OBS_CODES.AUTH_EMAIL_OUTBOX_DEAD, {
+    getAuthAccountEmitter(config)(OBS_CODES.AUTH_EMAIL_OUTBOX_DEAD, {
       metadata: { kind: 'password_reset', code: 'EMAIL_OUTBOX_ENQUEUE_FAILED' },
     });
   }

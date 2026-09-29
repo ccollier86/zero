@@ -13,20 +13,11 @@ export function admitAuthRequest(input: {
   subject?: string | null;
 }): void {
   if (!input.service || !input.service.config.enabled) return;
-  let source: unknown;
-  try {
-    source = input.service.config.sourceKey({
-      request: input.request,
-      flow: input.flow,
-      peerAddress: input.peerAddress,
-    });
-  } catch {
-    throw new AuthError(
-      'Authentication request admission is temporarily unavailable',
-      'AUTH_ADMISSION_UNAVAILABLE',
-      503,
-    );
-  }
+  const source: unknown = input.service.resolveSource({
+    request: input.request,
+    flow: input.flow,
+    peerAddress: input.peerAddress,
+  });
   if (source !== null && source !== undefined && typeof source !== 'string') {
     throw new AuthError(
       'Authentication request admission is temporarily unavailable',

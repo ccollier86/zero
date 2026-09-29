@@ -13,14 +13,19 @@ import type { EmailMessage, EmailProvider, EmailSendResult } from './types';
 export class ConsoleEmailProvider implements EmailProvider {
   readonly name = 'console';
 
+  constructor(
+    private readonly emitCode: typeof emitPlatformCode = emitPlatformCode,
+  ) {}
+
   /** Emit a sanitized preview event and return a successful send result. */
   async send(message: EmailMessage): Promise<EmailSendResult> {
     const accepted = normalizeRecipients(message.to);
-    emitPlatformCode(OBS_CODES.EMAIL_CONSOLE_PREVIEW, {
+    this.emitCode(OBS_CODES.EMAIL_CONSOLE_PREVIEW, {
       metadata: {
-        to: accepted,
-        from: message.from,
-        subject: message.subject,
+        recipientCount: accepted.length,
+        hasSender: Boolean(message.from),
+        hasText: Boolean(message.text),
+        hasHtml: Boolean(message.html),
       },
     });
 

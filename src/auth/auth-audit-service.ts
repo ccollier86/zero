@@ -17,6 +17,8 @@ import type {
   AuthAuditRequestContext,
   ResolvedAuthAuditConfig,
 } from './auth-audit-types';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 
 interface AuditRow {
   event_id: string;
@@ -69,6 +71,7 @@ export class AuthAuditService {
   constructor(
     private readonly db: ReactiveDB,
     private readonly config: ResolvedAuthAuditConfig,
+    private readonly emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
   ) {
     this.insert = db.prepare(`
       INSERT INTO _auth_audit_events (
@@ -228,8 +231,18 @@ export class AuthAuditService {
     actor: AuthAuditActor;
     request?: AuthAuditRequestContext;
     now?: number;
+    /** Revalidate operator authority after BEGIN IMMEDIATE and before delete. */
+    assertCurrentAuthority?: () => unknown;
   }): Readonly<{ deleted: number; hasMore: boolean }> {
     return this.db.transaction(() => {
+      if (input.assertCurrentAuthority) {
+        invokeSynchronousAuthCallback(input.assertCurrentAuthority, {
+          component: 'auth-audit',
+          invariant: 'prune-authority-async',
+          message: '[auth] Audit retention authority revalidation must be synchronous.',
+          emitCode: this.emitCode,
+        });
+      }
       // Keep the operator transaction bounded to one configured batch. The
       // caller may repeat while hasMore is true; the background worker owns
       // multi-transaction backlog draining.
@@ -255,7 +268,7 @@ export class AuthAuditService {
     try {
       const result = this.pruneBacklog();
       if (result.deleted > 0) {
-        emitPlatformCode(OBS_CODES.AUTH_AUDIT_PRUNED, {
+        this.emitCode(OBS_CODES.AUTH_AUDIT_PRUNED, {
           metadata: { deleted: result.deleted, continuation: result.hasMore },
         });
       }
@@ -267,7 +280,7 @@ export class AuthAuditService {
         this.retentionContinuation.unref?.();
       }
     } catch (error) {
-      emitPlatformCode(OBS_CODES.AUTH_AUDIT_PRUNE_FAILED, { error });
+      this.emitCode(OBS_CODES.AUTH_AUDIT_PRUNE_FAILED, { error });
     }
   }
 

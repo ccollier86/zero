@@ -9,11 +9,15 @@ import type {
   WebSessionBinding,
 } from './auth-session-types';
 import type { TenancyService } from './tenancy/tenancy-service';
+import type { TenantKind } from './tenancy/tenancy-types';
 import type { AuthAuditService } from './auth-audit-service';
 import type {
   AuthAuditActorProvenance,
   AuthAuditRequestContext,
 } from './auth-audit-types';
+import { normalizeMfaVerifiedAt } from './mfa-assurance';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 
 const PERSISTENCE_ROLLBACK = new Error('auth-session-persistence-rollback');
 
@@ -23,17 +27,30 @@ const PERSISTENCE_ROLLBACK = new Error('auth-session-persistence-rollback');
  */
 export class AuthSessionService {
   private runtimeProfileGuard: (() => void) | null = null;
+  private mfaAssuranceValidator: (session: AuthSessionRecord) => boolean = () => true;
+  private rejectLegacyWithoutMfaAssurance = false;
 
   constructor(
     readonly store: AuthSessionStore,
     private readonly tenancyMode: AuthTenancyMode,
     private readonly tenancy: TenancyService | null,
     private readonly audit?: AuthAuditService,
+    private readonly emitCode?: AuthPlatformCodeEmitter,
   ) {}
 
   /** Fence cached/direct service consumers to the committed profile generation. */
   setRuntimeProfileGuard(guard: () => void): void {
     this.runtimeProfileGuard = guard;
+  }
+
+  /** Install the live MFA policy used at issuance, refresh, and request resolution. */
+  setMfaAssuranceValidator(
+    validator: (session: AuthSessionRecord) => boolean,
+    options: { rejectLegacyWithoutAssurance?: boolean } = {},
+  ): void {
+    this.mfaAssuranceValidator = validator;
+    this.rejectLegacyWithoutMfaAssurance =
+      options.rejectLegacyWithoutAssurance === true;
   }
 
   /** Prepare a signed-token snapshot; persistence happens atomically later. */
@@ -53,6 +70,7 @@ export class AuthSessionService {
       ...scope,
       provenance: 'local',
       authenticatedAt: input.authenticatedAt ?? now,
+      mfaVerifiedAt: normalizeMfaVerifiedAt(input.mfaVerifiedAt, now),
       createdAt: now,
       lastSeenAt: now,
       expiresAt: input.expiresAt,
@@ -72,14 +90,22 @@ export class AuthSessionService {
   ): boolean {
     try {
       return this.transaction(() => {
-        if (!admit()) throw PERSISTENCE_ROLLBACK;
+        if (!this.invokeBooleanCallback(
+          admit,
+          'web-session-admission-async',
+          '[auth] Web session admission must be synchronous.',
+        )) throw PERSISTENCE_ROLLBACK;
         // Admission may atomically insert a newly prepared tenant/membership.
         // Validate only after those writes exist, before any session is stored.
         if (!this.isCurrentAuthority(prepared, prepared.generation)) {
           throw PERSISTENCE_ROLLBACK;
         }
         this.store.insert(prepared);
-        if (!persistRefresh()) throw PERSISTENCE_ROLLBACK;
+        if (!this.invokeBooleanCallback(
+          persistRefresh,
+          'refresh-persistence-async',
+          '[auth] Refresh persistence callback must be synchronous.',
+        )) throw PERSISTENCE_ROLLBACK;
         return true;
       });
     } catch (error) {
@@ -152,6 +178,7 @@ export class AuthSessionService {
       userId: input.userId,
       expiresAt: input.expiresAt,
       authenticatedAt: input.createdAt,
+      mfaVerifiedAt: null,
     });
     try {
       return this.transaction(() => {
@@ -187,7 +214,11 @@ export class AuthSessionService {
         return null;
       }
       const authority = this.resolveCurrentAuthority(session, input.generation);
-      return authority ? { session, tenantRole: authority.tenantRole } : null;
+      return authority ? {
+        session,
+        tenantKind: authority.tenantKind,
+        tenantRole: authority.tenantRole,
+      } : null;
     });
   }
 
@@ -204,7 +235,12 @@ export class AuthSessionService {
       const authority = this.resolveWebSessionAuthority(input);
       if (!authority) return null;
       const { session } = authority;
-      const value = operation(session);
+      const value = invokeSynchronousAuthCallback(() => operation(session), {
+        component: 'auth-session-service',
+        invariant: 'active-session-operation-async',
+        message: '[auth] Active web session operation must be synchronous.',
+        emitCode: this.emitCode,
+      });
       this.store.touch(
         session.sessionId,
         session.userId,
@@ -282,7 +318,7 @@ export class AuthSessionService {
    */
   allowsLegacyUnboundWebAccess(): boolean {
     this.assertCurrentProfile();
-    return this.tenancyMode === 'single';
+    return this.tenancyMode === 'single' && !this.rejectLegacyWithoutMfaAssurance;
   }
 
   private transaction<T>(operation: () => T): T {
@@ -294,8 +330,27 @@ export class AuthSessionService {
     });
   }
 
+  private invokeBooleanCallback(
+    callback: () => boolean,
+    invariant: string,
+    message: string,
+  ): boolean {
+    return invokeSynchronousAuthCallback(callback, {
+      component: 'auth-session-service',
+      invariant,
+      message,
+      emitCode: this.emitCode,
+    });
+  }
+
   private assertCurrentProfile(): void {
-    this.runtimeProfileGuard?.();
+    if (!this.runtimeProfileGuard) return;
+    invokeSynchronousAuthCallback(this.runtimeProfileGuard, {
+      component: 'auth-session-service',
+      invariant: 'runtime-profile-guard-async',
+      message: '[auth] Session runtime profile guard must be synchronous.',
+      emitCode: this.emitCode,
+    });
   }
 
   private resolveIssuanceScope(
@@ -407,9 +462,14 @@ export class AuthSessionService {
   private resolveCurrentAuthority(
     session: AuthSessionRecord,
     expectedGeneration: number | undefined,
-  ): { tenantRole: string | null } | null {
+  ): { tenantKind: TenantKind | null; tenantRole: string | null } | null {
     if (session.kind !== 'web' || session.status !== 'active') return null;
     if (session.expiresAt <= Date.now()) return null;
+    if (!this.invokeBooleanCallback(
+      () => this.mfaAssuranceValidator(session),
+      'mfa-assurance-validator-async',
+      '[auth] MFA assurance validation must be synchronous.',
+    )) return null;
     if (expectedGeneration !== undefined && session.generation !== expectedGeneration) {
       return null;
     }
@@ -418,7 +478,7 @@ export class AuthSessionService {
         && session.scopeId === 'application'
         && session.tenantId === null
         && session.membershipId === null
-        ? { tenantRole: null }
+        ? { tenantKind: null, tenantRole: null }
         : null;
     }
     if (!this.tenancy
@@ -440,7 +500,7 @@ export class AuthSessionService {
       && tenant.authorizationGeneration === session.tenantAuthorizationGeneration
       && membership.authorizationGeneration
         === session.membershipAuthorizationGeneration
-    ) ? { tenantRole: membership.roleKey } : null;
+    ) ? { tenantKind: tenant.kind, tenantRole: membership.roleKey } : null;
   }
 }
 

@@ -5,8 +5,13 @@ import {
   ZERO_RUNTIME_AMBIGUOUS,
 } from '../runtime/compatibility-provider-registry';
 import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
-import { ZERO_SQLITE_SERVICE, ZERO_SYNC_DB } from '../runtime/service-keys';
+import {
+  ZERO_OBSERVABILITY_RUNTIME,
+  ZERO_SQLITE_SERVICE,
+  ZERO_SYNC_DB,
+} from '../runtime/service-keys';
 import { getPlatformSQLiteService } from '../persistence';
+import { MemoryEventStore, OBS_CODES } from '../observability';
 import { createReactiveDB, type ReactiveDB } from './reactive-db';
 import { createSyncPlugin, getSyncDB } from './sync.plugin';
 import { allowLegacyEphemeralTopicPolicy } from './ephemeral-policy';
@@ -40,6 +45,144 @@ afterEach(async () => {
 });
 
 describe('sync plugin runtime isolation', () => {
+  test('fails managed composition when the app-local observability runtime is absent', () => {
+    const runtime = new ZeroAppRuntime('sync-observability-missing');
+
+    expect(() => createSyncPlugin({
+      runtime,
+      db: { mode: 'memory' },
+      tables: {},
+    })).toThrow('Observability runtime is unavailable');
+
+    expect(runtime.get(ZERO_SYNC_DB)).toBeNull();
+    expect(runtime.get(ZERO_SQLITE_SERVICE)).toBeNull();
+  });
+
+  test('routes ReactiveDB callback failures only to the owning managed runtime', async () => {
+    const runtimeA = new ZeroAppRuntime('sync-observability-a');
+    const runtimeB = new ZeroAppRuntime('sync-observability-b');
+    const eventsA = new MemoryEventStore({ maxEvents: 20 });
+    const eventsB = new MemoryEventStore({ maxEvents: 20 });
+    runtimeA.set(ZERO_OBSERVABILITY_RUNTIME, {
+      sink: eventsA,
+      store: eventsA,
+      config: { console: false },
+    });
+    runtimeB.set(ZERO_OBSERVABILITY_RUNTIME, {
+      sink: eventsB,
+      store: eventsB,
+      config: { console: false },
+    });
+    let dbA: ReactiveDB | null = null;
+    let dbB: ReactiveDB | null = null;
+
+    createSyncPlugin({
+      runtime: runtimeA,
+      db: { mode: 'memory' },
+      tables: { items: { id: 'text primary key' } },
+      onDatabaseCreated(db) { dbA = db; },
+    });
+    createSyncPlugin({
+      runtime: runtimeB,
+      db: { mode: 'memory' },
+      tables: { items: { id: 'text primary key' } },
+      onDatabaseCreated(db) { dbB = db; },
+    });
+
+    try {
+      dbA!.onChange(() => {
+        throw new Error('app A listener failed');
+      });
+      dbA!.insert('items', { id: 'a' });
+
+      expect(eventsA.query({
+        code: OBS_CODES.SYNC_CHANGE_LISTENER_FAILED.code,
+      }).events).toHaveLength(1);
+      expect(eventsB.query({
+        code: OBS_CODES.SYNC_CHANGE_LISTENER_FAILED.code,
+      }).events).toHaveLength(0);
+
+      dbB!.transaction(() => {
+        dbB!.afterCommit(() => {
+          throw new Error('app B post-commit callback failed');
+        });
+      });
+      expect(eventsA.query({
+        code: OBS_CODES.SYNC_POST_COMMIT_NOTIFICATION_FAILED.code,
+      }).events).toHaveLength(0);
+      expect(eventsB.query({
+        code: OBS_CODES.SYNC_POST_COMMIT_NOTIFICATION_FAILED.code,
+      }).events).toHaveLength(1);
+    } finally {
+      await runtimeB.dispose();
+      await runtimeA.dispose();
+    }
+  });
+
+  test('routes Sync lifecycle events only to the owning managed runtime', async () => {
+    const runtimeA = new ZeroAppRuntime('sync-lifecycle-a');
+    const runtimeB = new ZeroAppRuntime('sync-lifecycle-b');
+    const eventsA = new MemoryEventStore({ maxEvents: 20 });
+    const eventsB = new MemoryEventStore({ maxEvents: 20 });
+    runtimeA.set(ZERO_OBSERVABILITY_RUNTIME, {
+      sink: eventsA,
+      store: eventsA,
+      config: { console: false },
+    });
+    runtimeB.set(ZERO_OBSERVABILITY_RUNTIME, {
+      sink: eventsB,
+      store: eventsB,
+      config: { console: false },
+    });
+    const appA = new Elysia({ name: 'sync-observability-app-a' }).use(
+      createSyncPlugin({
+        runtime: runtimeA,
+        db: { mode: 'memory' },
+        tables: { app_a_items: { id: 'text primary key' } },
+      }),
+    );
+    const appB = new Elysia({ name: 'sync-observability-app-b' }).use(
+      createSyncPlugin({
+        runtime: runtimeB,
+        db: { mode: 'memory' },
+        tables: { app_b_items: { id: 'text primary key' } },
+      }),
+    );
+    let appAStarted = false;
+    let appBStarted = false;
+
+    try {
+      appA.listen(0);
+      appAStarted = true;
+      appB.listen(0);
+      appBStarted = true;
+
+      const startedA = eventsA.query({ code: OBS_CODES.SYNC_STARTED.code }).events;
+      const startedB = eventsB.query({ code: OBS_CODES.SYNC_STARTED.code }).events;
+      expect(startedA).toHaveLength(1);
+      expect(startedA[0]?.metadata).toMatchObject({ tables: ['app_a_items'] });
+      expect(startedB).toHaveLength(1);
+      expect(startedB[0]?.metadata).toMatchObject({ tables: ['app_b_items'] });
+
+      await appA.stop(true);
+      appAStarted = false;
+      expect(eventsA.query({ code: OBS_CODES.SYNC_STOPPED.code }).events)
+        .toHaveLength(1);
+      expect(eventsB.query({ code: OBS_CODES.SYNC_STOPPED.code }).events)
+        .toHaveLength(0);
+
+      await appB.stop(true);
+      appBStarted = false;
+      expect(eventsB.query({ code: OBS_CODES.SYNC_STOPPED.code }).events)
+        .toHaveLength(1);
+    } finally {
+      if (appBStarted) await appB.stop(true);
+      if (appAStarted) await appA.stop(true);
+      await runtimeB.dispose();
+      await runtimeA.dispose();
+    }
+  });
+
   test('legacy compatibility semantics are fail-closed for 0, 1, and multiple providers', () => {
     const registry = new CompatibilityProviderRegistry<{ id: string }>('Sync runtime');
     const runtimeA = { id: 'a' };
@@ -63,7 +206,7 @@ describe('sync plugin runtime isolation', () => {
   });
 
   test('rolls back every owned registration when plugin composition fails', () => {
-    const runtime = new ZeroAppRuntime('failed-sync-composition');
+    const runtime = createNoopObservedRuntime('failed-sync-composition');
     let capturedDB: ReactiveDB | null = null;
 
     expect(() => createSyncPlugin({
@@ -134,7 +277,7 @@ describe('sync plugin runtime isolation', () => {
   });
 
   test('tears down every partial lifecycle stage when onStart fails', () => {
-    const runtime = new ZeroAppRuntime('failed-sync-start');
+    const runtime = createNoopObservedRuntime('failed-sync-start');
     let capturedDB: ReactiveDB | null = null;
     const plugin = createSyncPlugin({
       db: { mode: 'memory' },
@@ -469,6 +612,16 @@ describe('sync plugin runtime isolation', () => {
     });
   });
 });
+
+function createNoopObservedRuntime(id: string): ZeroAppRuntime {
+  const runtime = new ZeroAppRuntime(id);
+  runtime.set(ZERO_OBSERVABILITY_RUNTIME, {
+    sink: { emit() {} },
+    store: null,
+    config: { enabled: false },
+  });
+  return runtime;
+}
 
 function createIsolatedPlugin(onDatabaseCreated: (db: ReactiveDB) => void) {
   const verifier: SyncTokenVerifier = {

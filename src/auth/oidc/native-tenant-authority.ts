@@ -3,6 +3,7 @@
 import type { AuthContext, AuthTenancyMode } from '../types';
 import type { TenancyService } from '../tenancy/tenancy-service';
 import type { ActiveTenantMembership } from '../tenancy/tenancy-types';
+import type { TenantKind } from '../tenancy/tenancy-types';
 
 export interface NativeAuthoritySnapshot {
   scopeKind: 'application' | 'tenant';
@@ -15,6 +16,7 @@ export interface NativeAuthoritySnapshot {
 
 export interface NativeActiveTenant {
   tenantId: string;
+  kind: TenantKind;
   slug: string;
   name: string;
   role: string | null;
@@ -22,6 +24,7 @@ export interface NativeActiveTenant {
 
 export interface ResolvedNativeAuthority {
   snapshot: NativeAuthoritySnapshot;
+  tenantKind: TenantKind | null;
   tenantRole: string | null;
   activeTenant: NativeActiveTenant | null;
 }
@@ -90,7 +93,7 @@ export class NativeTenantAuthorityService {
     if (!snapshot) return null;
     if (snapshot.scopeKind === 'application') {
       return this.mode === 'single'
-        ? { snapshot, tenantRole: null, activeTenant: null }
+        ? { snapshot, tenantKind: null, tenantRole: null, activeTenant: null }
         : null;
     }
     if (this.mode !== 'multi' || !this.tenancy) return null;
@@ -108,6 +111,7 @@ export class NativeTenantAuthorityService {
     }
     return {
       snapshot,
+      tenantKind: tenant.kind,
       tenantRole: membership.roleKey,
       activeTenant: tenantSummary({ tenant, membership }),
     };
@@ -135,6 +139,7 @@ export class NativeTenantAuthorityService {
     };
     return {
       snapshot,
+      tenantKind: tenant.kind,
       tenantRole: membership.roleKey,
       activeTenant: tenantSummary({ tenant, membership }),
     };
@@ -200,6 +205,7 @@ function applicationAuthority(): NativeAuthoritySnapshot {
 function tenantSummary(active: ActiveTenantMembership): NativeActiveTenant {
   return {
     tenantId: active.tenant.tenantId,
+    kind: active.tenant.kind,
     slug: active.tenant.slug,
     name: active.tenant.name,
     role: active.membership.roleKey,

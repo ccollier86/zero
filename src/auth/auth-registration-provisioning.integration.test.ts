@@ -366,6 +366,7 @@ async function createProvisionalMultiBootstrap(
       slug: `${key}-organization`,
       ownerUserId: user.userId,
       createdBy: user.userId,
+      kind: 'administration',
     });
     return { tenantId: created.tenant.tenantId };
   }, { provisional: true });

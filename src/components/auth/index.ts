@@ -34,6 +34,14 @@ export {
   type ApplicationAccessManagementProps,
 } from './application-access-management';
 export {
+  PlatformAdministrationManagement,
+  type PlatformAdministrationManagementProps,
+} from './platform-administration-management';
+export {
+  PlatformTenantManagement,
+  type PlatformTenantManagementProps,
+} from './platform-tenant-management';
+export {
   TenantMemberManagement,
   type TenantMemberManagementProps,
 } from './tenant-member-management';

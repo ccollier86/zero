@@ -7,10 +7,10 @@
 
 import { Elysia } from 'elysia';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
 import { AdminEmailVerificationService } from './admin-email-verification-service';
 import {
   requireAdminMutationServices,
+  getAuthAdminEmitter,
   type AuthAdminPluginConfig,
 } from './auth-admin-dependencies';
 import { authUserIdParamsSchema } from './auth-request-schema';
@@ -22,6 +22,7 @@ import {
 
 /** Create admin verification routes mounted below `/auth/admin`. */
 export function createAuthAdminEmailVerificationPlugin(config: AuthAdminPluginConfig) {
+  const emitCode = getAuthAdminEmitter(config);
   const schema = { params: authUserIdParamsSchema };
   return new Elysia({ name: 'auth-admin-email-verification' })
     .post('/users/:userId/send-verification-email', async ({ request, params }) => {
@@ -31,7 +32,7 @@ export function createAuthAdminEmailVerificationPlugin(config: AuthAdminPluginCo
         assertCurrentAuthority,
       } = await services(config, request);
       await service.send(params.userId, assertCurrentAuthority);
-      emitPlatformCode(OBS_CODES.AUTH_ADMIN_EMAIL_VERIFICATION_SENT, {
+      emitCode(OBS_CODES.AUTH_ADMIN_EMAIL_VERIFICATION_SENT, {
         userId: actorId,
         metadata: { targetUserId: params.userId },
       });
@@ -48,7 +49,7 @@ export function createAuthAdminEmailVerificationPlugin(config: AuthAdminPluginCo
         actor: authAuditActorFromContext(auth),
         request: authAuditRequestFromRequest(request),
       });
-      emitPlatformCode(OBS_CODES.AUTH_ADMIN_EMAIL_VERIFIED, {
+      emitCode(OBS_CODES.AUTH_ADMIN_EMAIL_VERIFIED, {
         userId: actorId,
         metadata: { targetUserId: params.userId },
       });
@@ -69,6 +70,12 @@ async function services(config: AuthAdminPluginConfig, request: Request) {
     actorId: auth.userId,
     auth,
     assertCurrentAuthority,
-    service: new AdminEmailVerificationService(store, tokens, email, config.getAuthConfig()),
+    service: new AdminEmailVerificationService(
+      store,
+      tokens,
+      email,
+      config.getAuthConfig(),
+      getAuthAdminEmitter(config),
+    ),
   };
 }

@@ -1,9 +1,11 @@
 /** Fence verified-domain evidence to the exact retained join-request revision. */
 
 import type { Database } from 'bun:sqlite';
-import { ensureVerifiedDomainJoinRequestProvenanceBinding } from '../../auth/verified-domain-schema';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import type { Migration } from '../types';
+import {
+  ensureVerifiedDomainJoinRequestProvenanceBinding,
+} from './017_verified_domain_schema';
 
 export const migration: Migration = {
   version: '021',

@@ -487,7 +487,8 @@ and the browser contract.
 - no alias, wildcard, or parent/child-domain matching;
 - no claim transfer workflow (release and quarantine are supported);
 - no trusted upstream SSO-domain shortcut; and
-- no Administration Organization coupling.
+- no Administration Organization coupling: protected administration tenants
+  cannot own domain claims or participate in join-request/domain admission.
 
 Use public registration for the simple coworker flow: after the identity is
 created, a user with no active membership receives the tenant-onboarding

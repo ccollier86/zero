@@ -3,8 +3,8 @@ import { Database } from 'bun:sqlite';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { configureObservability, MemoryEventStore, OBS_CODES } from '../observability';
 import { createPlatformSQLiteService } from '../persistence';
-import { MemoryEventStore } from '../observability';
 import type { PlatformObservabilityRuntime } from '../observability/types';
 import {
   createReactiveDB,
@@ -14,8 +14,11 @@ import {
 import type { Change, ChangeDeliveryMetadata } from './types';
 
 let db: ReactiveDB;
+let observabilityEvents: MemoryEventStore;
 
 beforeEach(() => {
+  observabilityEvents = new MemoryEventStore();
+  configureObservability({ console: false, store: observabilityEvents });
   db = createReactiveDB({ mode: 'memory' });
   db.defineTable('todos', {
     id: 'text primary key',
@@ -1235,6 +1238,202 @@ describe('transactions', () => {
     remove();
   });
 
+  test('exposes one opaque transaction domain per ReactiveDB instance', () => {
+    const sameDomain = db.getTransactionDomain();
+    expect(db.getTransactionDomain()).toBe(sameDomain);
+
+    const other = createReactiveDB({ mode: 'memory' });
+    try {
+      expect(other.getTransactionDomain()).not.toBe(sameDomain);
+    } finally {
+      other.dispose();
+    }
+  });
+
+  test('requires an active transaction to register an afterCommit callback', () => {
+    expect(() => db.afterCommit(() => {})).toThrow(
+      'afterCommit callbacks require an active transaction',
+    );
+  });
+
+  test('runs afterCommit callbacks once in registration order after state resets', () => {
+    const order: string[] = [];
+
+    db.transaction(() => {
+      db.insert('todos', { id: '1', title: 'Committed', done: 0 });
+      db.afterCommit(() => {
+        expect(db.queryOne('todos', '1')).not.toBeNull();
+        order.push('outer-first');
+        db.transaction(() => {
+          db.afterCommit(() => order.push('reentrant'));
+        });
+      });
+      db.transaction(() => {
+        db.afterCommit(() => order.push('nested'));
+      });
+      db.afterCommit(() => order.push('outer-last'));
+
+      expect(order).toEqual([]);
+    });
+
+    expect(order).toEqual([
+      'outer-first',
+      'reentrant',
+      'nested',
+      'outer-last',
+    ]);
+  });
+
+  test('delivers committed changes before running afterCommit callbacks', () => {
+    const order: string[] = [];
+    db.onChange((change) => order.push(`change:${change.rowId}`));
+
+    db.transaction(() => {
+      db.insert('todos', { id: '1', title: 'First', done: 0 });
+      db.insert('todos', { id: '2', title: 'Second', done: 0 });
+      db.afterCommit(() => {
+        order.push('after-commit');
+        db.insert('todos', { id: '3', title: 'Reentrant', done: 0 });
+      });
+    });
+
+    expect(order).toEqual([
+      'change:1',
+      'change:2',
+      'after-commit',
+      'change:3',
+    ]);
+  });
+
+  test('discards afterCommit callbacks on rollback and rollback-only failure', () => {
+    const callbacks: string[] = [];
+
+    expect(() => db.transaction(() => {
+      db.afterCommit(() => callbacks.push('rollback'));
+      throw new Error('abort transaction');
+    })).toThrow('abort transaction');
+
+    expect(() => db.transaction(() => {
+      db.afterCommit(() => callbacks.push('rollback-only'));
+      try {
+        db.transaction(() => {
+          throw new Error('poison nested transaction');
+        });
+      } catch {
+        // Swallowing a nested failure cannot un-poison the outer transaction.
+      }
+    })).toThrow('transaction is rollback-only');
+
+    expect(callbacks).toEqual([]);
+  });
+
+  test('isolates afterCommit failures and consumes async callback rejections', async () => {
+    const callbacks: string[] = [];
+
+    db.transaction(() => {
+      db.insert('todos', { id: '1', title: 'Committed', done: 0 });
+      db.afterCommit(() => {
+        callbacks.push('throws');
+        throw new Error('post-commit failure');
+      });
+      db.afterCommit(async () => {
+        callbacks.push('async-start');
+        await Promise.resolve();
+        callbacks.push('async-finish');
+        throw new Error('async post-commit rejection');
+      });
+      db.afterCommit(() => callbacks.push('last'));
+    });
+
+    await Promise.resolve();
+    expect(db.queryOne('todos', '1')).not.toBeNull();
+    expect(callbacks).toEqual([
+      'throws',
+      'async-start',
+      'last',
+      'async-finish',
+    ]);
+    expect(observabilityEvents.query({
+      code: OBS_CODES.SYNC_POST_COMMIT_NOTIFICATION_FAILED.code,
+    }).events).toHaveLength(2);
+    expect(observabilityEvents.query({
+      code: OBS_CODES.SYNC_CHANGE_LISTENER_FAILED.code,
+    }).events).toHaveLength(0);
+  });
+
+  test('rolls back when synchronous transaction-result inspection is hostile', () => {
+    const hostileResult = Object.defineProperty({}, 'then', {
+      get() {
+        throw new Error('hostile then getter');
+      },
+    });
+
+    expect(() => db.transaction(() => {
+      db.insert('todos', { id: 'hostile', title: 'Rollback', done: 0 });
+      return hostileResult;
+    })).toThrow('ReactiveDB synchronous callback thenable inspection failed');
+
+    expect(db.queryOne('todos', 'hostile')).toBeNull();
+    expect(db.currentSeq).toBe(0);
+  });
+
+  test('isolates injected emitters for listener and post-commit contract failures', () => {
+    const firstCodes: string[] = [];
+    const secondCodes: string[] = [];
+    const hostileResult = () => Object.defineProperty({}, 'then', {
+      get() {
+        throw new Error('hostile then getter');
+      },
+    });
+    const first = createReactiveDB({
+      mode: 'memory',
+      emitCode(definition) {
+        firstCodes.push(definition.code);
+        throw new Error('injected observability sink failed');
+      },
+    });
+    const second = createReactiveDB({
+      mode: 'memory',
+      emitCode(definition) {
+        secondCodes.push(definition.code);
+      },
+    });
+
+    try {
+      first.defineTable('items', { id: 'text primary key' });
+      second.defineTable('items', { id: 'text primary key' });
+      let laterListenerRan = false;
+      first.onChange(() => hostileResult());
+      first.onChange(() => { laterListenerRan = true; });
+      first.insert('items', { id: 'first' });
+
+      let laterCallbackRan = false;
+      second.transaction(() => {
+        second.insert('items', { id: 'second' });
+        second.afterCommit(() => hostileResult());
+        second.afterCommit(() => { laterCallbackRan = true; });
+      });
+
+      expect(laterListenerRan).toBe(true);
+      expect(laterCallbackRan).toBe(true);
+      expect(firstCodes).toEqual([
+        OBS_CODES.SYNC_CHANGE_LISTENER_FAILED.code,
+      ]);
+      expect(secondCodes).toEqual([
+        OBS_CODES.SYNC_POST_COMMIT_NOTIFICATION_FAILED.code,
+      ]);
+      expect(observabilityEvents.query({
+        code: OBS_CODES.SYNC_CHANGE_LISTENER_FAILED.code,
+      }).events).toHaveLength(0);
+      expect(observabilityEvents.query({
+        code: OBS_CODES.SYNC_POST_COMMIT_NOTIFICATION_FAILED.code,
+      }).events).toHaveLength(0);
+    } finally {
+      first.dispose();
+      second.dispose();
+    }
+  });
+
   test('all writes in a transaction are atomic', () => {
     db.transaction(() => {
       db.insert('todos', { id: '1', title: 'First', done: 0 });
@@ -1406,6 +1605,26 @@ describe('transactions', () => {
     expect(rawAccessError).toContain('transactions must be synchronous');
     expect(db.query('todos')).toEqual([]);
     expect(db.currentSeq).toBe(0);
+  });
+
+  test('poisons detached async continuations after a synchronous rollback', async () => {
+    let releaseContinuation!: () => void;
+    const continuationGate = new Promise<void>((resolve) => {
+      releaseContinuation = resolve;
+    });
+    let continuation!: Promise<void>;
+
+    expect(() => db.transaction(() => {
+      continuation = (async () => {
+        await continuationGate;
+        db.insert('todos', { id: 'detached', title: 'Must not commit', done: 0 });
+      })();
+      throw new Error('abort outer transaction');
+    })).toThrow('abort outer transaction');
+
+    releaseContinuation();
+    await expect(continuation).rejects.toThrow('transaction is rollback-only');
+    expect(db.queryOne('todos', 'detached')).toBeNull();
   });
 
   test('cannot commit when a nested async-transaction error is swallowed', async () => {

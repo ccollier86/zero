@@ -8,8 +8,11 @@ import type { ReactiveDB } from '../sync/reactive-db';
 import { AuthError } from './types';
 import type {
   AuthRequestAdmissionFlow,
+  AuthRequestSourceContext,
   ResolvedAuthRequestAdmissionConfig,
 } from './auth-request-admission-types';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 
 interface CountRow { count: number }
 interface ConfigRow { value: string }
@@ -30,6 +33,7 @@ export class AuthRequestAdmissionService {
     private readonly db: ReactiveDB,
     readonly config: ResolvedAuthRequestAdmissionConfig,
     private readonly now: () => number = Date.now,
+    private readonly emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
   ) {
     this.hashKey = loadOrCreateHashKey(db);
     this.maximumWindowMs = Math.max(
@@ -89,13 +93,34 @@ export class AuthRequestAdmissionService {
       });
     } catch (error) {
       if (error !== ADMISSION_ROLLBACK) throw error;
-      emitPlatformCode(OBS_CODES.AUTH_REQUEST_ADMISSION_REJECTED, {
+      this.emitCode(OBS_CODES.AUTH_REQUEST_ADMISSION_REJECTED, {
         metadata: { flow: input.flow },
       });
       throw new AuthError(
         'Too many authentication requests. Try again shortly.',
         'AUTH_RATE_LIMITED',
         429,
+      );
+    }
+  }
+
+  /** Resolve one deployment-owned source key without permitting Promise escape. */
+  resolveSource(context: AuthRequestSourceContext): string | null | undefined {
+    try {
+      return invokeSynchronousAuthCallback(
+        () => this.config.sourceKey(context),
+        {
+          component: 'auth-request-admission-service',
+          invariant: 'source-key-resolver-async',
+          message: '[auth] Request admission source resolver must be synchronous.',
+          emitCode: this.emitCode,
+        },
+      );
+    } catch {
+      throw new AuthError(
+        'Authentication request admission is temporarily unavailable',
+        'AUTH_ADMISSION_UNAVAILABLE',
+        503,
       );
     }
   }

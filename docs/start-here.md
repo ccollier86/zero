@@ -35,6 +35,9 @@ and packaged access controls, use the [Auth System](./auth/README.md) as the
 canonical subsystem index. It routes to the focused configuration, RBAC,
 onboarding, audit, browser, and installed-app guides without duplicating their
 contracts here.
+For one-time action tokens, resumable public flows, and the exact shared-
+ReactiveDB transaction contract used by auth password/account actions, read
+[Platform Tokens](./tokens.md#auth-transaction-boundary).
 For styling decisions, read [Frontend Design Tokens](./frontend/design-tokens.md):
 Zero now has a quiet core app lane for dashboards and a richer public/frontend
 lane for docs, marketing, blogs, landing pages, and public flows.
@@ -794,9 +797,12 @@ Current development boundary: this unreleased tree implements `single/simple`,
 `single/advanced`, `multi/simple`, and `multi/advanced`, including scoped
 resources, Sync, managed services, tenant onboarding/control surfaces, and
 browser authorization state, including opt-in verified-company-domain request
-onboarding and the bounded durable authorization/control-plane audit. The
-optional protected Administration Organization/platform-tenant lifecycle,
-break-glass support, tenant-custom roles, populated-app adoption tooling, domain
+onboarding and the bounded durable authorization/control-plane audit. Multi
+mode also includes the protected Administration Organization, its membership
+and invitation controls, and the capability-gated customer-organization
+directory/lifecycle. Break-glass support, tenant-custom roles, populated-app
+discovery/migration tooling beyond the exact documented pre-024 Administration
+Organization reconciliation, domain
 autojoin/aliases/direct transfer, and upstream enterprise SSO remain future
 capabilities. Registered resources now declare explicit server-owned client
 exposure and optional field allow-lists. Managed file-mode runtimes sharing one
@@ -812,6 +818,9 @@ policy, while direct `createSyncPlugin()` composition needs explicit
 auth/policy. See [Releasing Zero](./releasing.md)
 and the [auth implementation checklist](./auth/multi-tenant-auth-implementation-checklist.md)
 for the complete supported-versus-preview boundary.
+See [Platform Administration Organization](./auth/platform-administration.md)
+for the multi-mode bootstrap, exact pre-024 adoption procedure, SDK, hooks,
+routes, and packaged operator UI.
 
 ## Frontend Hook Library
 
@@ -823,7 +832,7 @@ Platform-specific hooks include:
 
 | Area | Hooks |
 | --- | --- |
-| Auth/session and access | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useAuthorization`, `useAuthorizationScopeBoundary`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `useAuthAudit`, `useTenantSwitcher`, `useTenantAppShellWorkspaces`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding` |
+| Auth/session and access | `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useAuthorization`, `useAuthorizationScopeBoundary`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `usePlatformAdministration`, `usePlatformTenants`, `useAuthAudit`, `useTenantSwitcher`, `useTenantAppShellWorkspaces`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding` |
 | Live data | `useCollection`, `useLazyCollection`, `useDataPage`, `useRecord`, `useRecordByIdentity`, `useDataSelection` |
 | Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
 | Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveQuota` |

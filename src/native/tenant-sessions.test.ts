@@ -9,10 +9,12 @@ import { testMetadata } from './test-provider';
 import { listNativeTenants, switchNativeTenant } from './token-endpoint';
 
 const tenantA = {
-  tenantId: 'tenant-a', slug: 'tenant-a', name: 'Tenant A', role: 'owner',
+  tenantId: 'tenant-a', kind: 'administration' as const,
+  slug: 'tenant-a', name: 'Tenant A', role: 'owner',
 };
 const tenantB = {
-  tenantId: 'tenant-b', slug: 'tenant-b', name: 'Tenant B', role: 'member',
+  tenantId: 'tenant-b', kind: 'organization' as const,
+  slug: 'tenant-b', name: 'Tenant B', role: 'member',
 };
 
 describe('native tenant-session SDK', () => {

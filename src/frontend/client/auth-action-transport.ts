@@ -1,6 +1,7 @@
 /** Transport for email verification and password action-token flows. */
 
 import { createAuthClientError } from './auth-errors';
+import { parseAuthCompletionResult } from './auth-completion-parser';
 import type { AuthAuthenticationAttempt } from './auth-authentication-attempt';
 import type { AuthActionTokenInfo, AuthCompletionResult } from './auth-types';
 
@@ -77,8 +78,16 @@ export class AuthActionTransport {
         this.options.failAuthentication(error.message, attempt);
         throw error;
       }
-      const result = await response.json() as AuthCompletionResult;
-      attempt.assertCurrent();
+      let result: AuthCompletionResult;
+      try {
+        const responseBody = await response.json();
+        attempt.assertCurrent();
+        result = parseAuthCompletionResult(responseBody);
+      } catch (error) {
+        attempt.assertCurrent();
+        this.options.failAuthentication('Invalid authentication response', attempt);
+        throw error;
+      }
       return this.options.completeAuthentication(result, attempt);
     } finally {
       attempt.dispose();

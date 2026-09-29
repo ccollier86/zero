@@ -8,6 +8,7 @@ import { createAuthMiddleware } from '../auth.middleware';
 import type { AuthRuntime } from '../auth-runtime';
 import { createAuthPlugin } from '../auth.plugin';
 import { derivePkceS256Challenge } from '../native';
+import { generateTotpCode } from '../mfa-totp';
 import { PAGE_SESSION_COOKIE_NAME } from '../page-session';
 
 const CLIENT_ID = 'com.example.native-tenant';
@@ -200,9 +201,110 @@ describe('tenant-bound native sessions', () => {
     expect(listed.status).toBe(200);
     expect(listed.body).toEqual({ activeTenantId: null, tenants: [] });
   }, 60_000);
+
+  test('carries verified MFA assurance into native families and invalidates unassured families live', async () => {
+    const harness = await start('multi', { mfaPolicy: 'admin-required' });
+
+    const bootstrap = await json(harness, '/auth/register', {
+      username: 'native-assurance-admin',
+      email: 'native-assurance-admin@example.test',
+      password: 'password123',
+      organizationName: 'Native Administration',
+    });
+    expect(bootstrap.body.mfaSetupRequired).toBe(true);
+    const bootstrapSetup = await json(harness, '/auth/mfa/setup', {
+      setupToken: bootstrap.body.mfaSetupToken,
+      method: 'totp',
+    });
+    const bootstrapVerified = await json(harness, '/auth/mfa/setup/verify', {
+      verificationToken: bootstrapSetup.body.verificationToken,
+      code: generateTotpCode({ secret: bootstrapSetup.body.totp.secret }),
+    });
+    expect(bootstrapVerified.body.activeTenant.kind).toBe('administration');
+
+    const customer = await json(harness, '/auth/register', {
+      username: 'native-assurance-customer',
+      email: 'native-assurance-customer@example.test',
+      password: 'password123',
+      organizationName: 'Native Customer',
+    });
+    const unassuredNative = await authorizeAndExchange(
+      harness,
+      pageCookie(customer.headers),
+    );
+    expect(unassuredNative.status).toBe(200);
+    expect(await nativeContext(harness, unassuredNative.body.access_token)).toMatchObject({
+      userId: customer.body.user.userId,
+      tenantKind: 'organization',
+    });
+
+    harness.runtime.getTenancyService()!.addMembership({
+      tenantId: bootstrap.body.tenant.tenantId,
+      userId: customer.body.user.userId,
+      roleKey: 'administrator',
+      createdBy: bootstrap.body.user.userId,
+    });
+    expect(await nativeContext(harness, unassuredNative.body.access_token))
+      .toEqual({ anonymous: true });
+    const rejectedRefresh = await oauthToken(harness, {
+      grant_type: 'refresh_token',
+      refresh_token: unassuredNative.body.refresh_token,
+      client_id: CLIENT_ID,
+    });
+    expect(rejectedRefresh.status).toBe(400);
+    expect(rejectedRefresh.body.error).toBe('invalid_grant');
+
+    const login = await json(harness, '/auth/login', {
+      username: 'native-assurance-customer',
+      password: 'password123',
+    });
+    expect(login.body.mfaSetupRequired).toBe(true);
+    const setup = await json(harness, '/auth/mfa/setup', {
+      setupToken: login.body.mfaSetupToken,
+      method: 'totp',
+    });
+    const verified = await json(harness, '/auth/mfa/setup/verify', {
+      verificationToken: setup.body.verificationToken,
+      code: generateTotpCode({ secret: setup.body.totp.secret }),
+    });
+    expect(verified.body.tenantSelectionRequired).toBe(true);
+    const selected = await json(harness, '/auth/tenants/select', {
+      continuation: verified.body.tenantSelection.continuation,
+      tenantId: bootstrap.body.tenant.tenantId,
+    });
+    const assuredNative = await authorizeAndExchange(
+      harness,
+      pageCookie(selected.headers),
+    );
+    expect(assuredNative.status).toBe(200);
+    const assuredContext = await nativeContext(harness, assuredNative.body.access_token);
+    expect(assuredContext).toMatchObject({
+      userId: customer.body.user.userId,
+      tenantKind: 'administration',
+      mfaVerifiedAt: expect.any(Number),
+    });
+    const assuredFamily = String(decodeJwt(assuredNative.body.access_token).sid);
+    expect(harness.db.prepare(`SELECT mfa_verified_at FROM _auth_native_sessions
+      WHERE family_id = ? AND consumed_at IS NULL`).get(assuredFamily)).toEqual({
+      mfa_verified_at: assuredContext.mfaVerifiedAt,
+    });
+
+    const rotated = await oauthToken(harness, {
+      grant_type: 'refresh_token',
+      refresh_token: assuredNative.body.refresh_token,
+      client_id: CLIENT_ID,
+    });
+    expect(rotated.status).toBe(200);
+    expect(await nativeContext(harness, rotated.body.access_token)).toMatchObject({
+      mfaVerifiedAt: assuredContext.mfaVerifiedAt,
+    });
+  }, 60_000);
 });
 
-async function start(mode: 'single' | 'multi'): Promise<Harness> {
+async function start(
+  mode: 'single' | 'multi',
+  options: { mfaPolicy?: 'required' | 'admin-required' } = {},
+): Promise<Harness> {
   const port = await availablePort();
   const url = `http://127.0.0.1:${port}`;
   const issuer = `${url}/auth`;
@@ -214,6 +316,17 @@ async function start(mode: 'single' | 'multi'): Promise<Harness> {
       tenancy: mode,
       bootstrap: 'public',
       registration: { mode: 'public' },
+      ...(options.mfaPolicy ? {
+        mfa: {
+          enabled: true,
+          policy: options.mfaPolicy,
+          methods: ['totp' as const],
+          totp: {
+            issuer: 'Native Tenant Tests',
+            encryptionKey: 'native-tenant-test-encryption-key',
+          },
+        },
+      } : {}),
       nativeIssuer: issuer,
       nativeAudience: url,
       nativeApps: { clients: [

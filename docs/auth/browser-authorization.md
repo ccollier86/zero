@@ -2,7 +2,7 @@
 
 > Status: implemented in this unreleased candidate
 >
-> Last reviewed: 2026-09-28
+> Last reviewed: 2026-09-29
 
 Zero exposes one narrow, live browser projection for rendering permission-aware
 UI. It is a convenience surface, not an authorization boundary. Routes,
@@ -40,11 +40,19 @@ OAuth `no-store` policy.
   },
   "scope": {
     "kind": "tenant",
-    "scopeId": "ten_123",
-    "tenantId": "ten_123",
-    "membershipId": "tmem_123",
-    "roles": ["clinician"],
-    "permissions": ["patients:read"],
+    "scopeId": "ten_admin",
+    "tenantId": "ten_admin",
+    "membershipId": "tmem_admin",
+    "roles": ["administrator"],
+    "permissions": ["tenant:read"],
+    "allPermissions": false,
+    "revision": "..."
+  },
+  "applicationScope": {
+    "kind": "application",
+    "scopeId": "application",
+    "roles": ["administrator"],
+    "permissions": ["application.users:read"],
     "allPermissions": false,
     "revision": "..."
   },
@@ -57,12 +65,24 @@ tokens, session IDs, native client IDs, authentication/security generations,
 password/MFA state, and every other credential or policy input. `revision` is
 an opaque equality marker, not a credential or optimistic-write token.
 
-`identity.platformRole` is the existing global application/platform role.
+`identity.platformRole` is the existing legacy global role. It is not an
+advanced application-role assignment and does not supply `applicationScope`.
 `scope.roles` and `scope.permissions` are application roles in single-tenant
-mode or active-tenant membership roles in multi-tenant mode. A platform
-administrator does not implicitly receive tenant permissions. The proposed
-multi-tenant “administration organization” is a separate future design and is
-not simulated by this endpoint.
+mode or the active membership's tenant permissions in multi-tenant mode.
+`applicationScope` is an additive, nullable projection. In multi mode Zero
+populates it only while the active session is bound to the protected
+Administration Organization, and only with the membership's live application
+authority. Older compatible servers may omit the field. A platform
+administrator does not implicitly receive customer-tenant permissions. The
+Administration Organization's session summary carries
+`kind: 'administration'`; its application authority still does not imply
+customer data access. See
+[Platform Administration Organization](./platform-administration.md).
+
+The top-level opaque `revision` covers the tenant/application scope revisions
+and installed authorization-registry version. A change to either authority
+plane invalidates the UI hint even if the active tenant ID is unchanged. The
+registry version itself remains server-only.
 
 ## Vanilla client
 
@@ -153,6 +173,13 @@ error, logout, or revocation. The scope includes every declared key currently
 covered by an all-permissions role; `allPermissions: true` never makes an
 unknown or misspelled browser key pass.
 
+Permission helpers evaluate the union of `scope.permissions` and
+`applicationScope.permissions`. This lets administration-scope navigation use
+`application.users:*`, `application.tenants:*`, `application.roles:*`, and
+`application.audit:*` hints without flattening those capabilities into the
+active tenant scope. Tenant identity/role helpers continue to inspect only
+`scope`; an application permission can never satisfy `TenantGate`.
+
 ### App-owned cache isolation
 
 Zero-owned hooks and transports already participate in the browser
@@ -222,10 +249,13 @@ import {
 </PlatformAdminGate>
 ```
 
-`PermissionGate` checks current scope permissions. `TenantGate` requires a live
-tenant scope and can optionally narrow by tenant ID or any current tenant role.
-`PlatformAdminGate` checks only the global `admin` role; it is intentionally not
-an alias for tenant ownership or tenant administration.
+`PermissionGate` checks both the active scope and optional administration
+`applicationScope` permissions. `TenantGate` requires a live tenant scope and
+can optionally narrow by tenant ID or any current tenant role; it never reads
+`applicationScope`.
+`PlatformAdminGate` checks only the legacy global `admin` role; it is
+intentionally not an alias for tenant ownership, tenant administration, or
+Administration Organization application permissions.
 
 `loadingFallback` is used only when no current-boundary snapshot exists.
 `fallback` is used for unauthenticated, disabled, denied, error, and revoked

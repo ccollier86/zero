@@ -8,6 +8,7 @@ import {
   type EmailProvider,
   type EmailSendResult,
 } from '../../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../../email/runtime';
 import { createReactiveDB } from '../../sync/reactive-db';
 import { createAuthMiddleware } from '../auth.middleware';
 import { createAuthPlugin, getAuthEmailOutbox, getTokenService } from '../auth.plugin';
@@ -116,7 +117,7 @@ describe('native registration continuation', () => {
     } finally {
       await app.stop();
       db.dispose();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -169,7 +170,7 @@ describe('native registration continuation', () => {
     } finally {
       await app.stop();
       db.dispose();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -365,7 +366,7 @@ describe('native registration continuation', () => {
     } finally {
       await app.stop();
       db.dispose();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   }, 60_000);
 });

@@ -1,6 +1,16 @@
 # Token Service
 
-JWT signing, verification, keypair management, refresh token rotation. One external dependency: `jose`.
+The stable `TokenService` facade coordinates JWT signing and verification,
+keypair establishment, durable browser-session families, refresh rotation, and
+live request authority. Focused internal collaborators own each narrower
+concern. The only external cryptography dependency is `jose`.
+
+| Module | Responsibility |
+|---|---|
+| `token-service.ts` | Stable public facade, live user/native/session authority, profile fences, and collaborator composition |
+| `auth-signing-keys.ts` | Atomic ES256 key establishment/import across concurrent file-backed replicas |
+| `auth-token-codec.ts` | JWT/JWKS encoding, signature verification, and strict public claim projection |
+| `auth-web-session-token-service.ts` | Browser refresh-family, page-cookie, rotation, replacement, and logout orchestration |
 
 ## Overview
 
@@ -56,46 +66,25 @@ Process start
 ```
 
 ```ts
-class TokenService {
-  private privateKey: CryptoKey;
-  private publicKey: CryptoKey;
-  private keyId: string;
-
-  static async create(config: TokenServiceConfig): Promise<TokenService> {
-    // 1. Try env var
-    const envKey = process.env[AUTH_DEFAULTS.signingKeyEnvKey];
-    if (envKey) {
-      return TokenService.fromEnvKey(envKey, config);
-    }
-
-    // 2. Try database (_auth_config is an internal table — use raw SQL, not ReactiveDB methods)
-    const getConfigStmt = config.db.prepare('SELECT value FROM _auth_config WHERE key = ?');
-    const stored = getConfigStmt.get('signing_key_private') as { value: string } | null;
-    if (stored) {
-      const jwk = JSON.parse(stored.value);
-      const kid = (getConfigStmt.get('signing_key_id') as { value: string }).value;
-      return TokenService.fromJWK(jwk, kid, config);
-    }
-
-    // 3. Generate fresh keypair
-    const { privateKey, publicKey } = await crypto.subtle.generateKey(
-      { name: 'ECDSA', namedCurve: 'P-256' },
-      true,  // extractable — needed for JWK export
-      ['sign', 'verify'],
-    );
-
-    const kid = crypto.randomUUID();
-    const jwk = await crypto.subtle.exportKey('jwk', privateKey);
-
-    // Persist for next startup (_auth_config is internal — raw SQL)
-    const setConfigStmt = config.db.prepare('INSERT OR REPLACE INTO _auth_config (key, value) VALUES (?, ?)');
-    setConfigStmt.run('signing_key_private', JSON.stringify(jwk));
-    setConfigStmt.run('signing_key_id', kid);
-
-    return new TokenService(privateKey, publicKey, kid, config);
-  }
-}
+const keys = await loadOrCreateAuthSigningKeys(config);
+return new TokenService(
+  keys.privateKey,
+  keys.publicKey,
+  keys.publicKeyJWK,
+  keys.keyId,
+  null, // AuthRuntime wires UserStore immediately after construction.
+  config,
+);
 ```
+
+`TokenService` delegates key loading to `loadOrCreateAuthSigningKeys()`. Key
+generation happens outside the SQLite lock. Establishment then uses the same
+`ReactiveDB` transaction domain and a `BEGIN IMMEDIATE` writer transaction to
+re-read the durable pair before inserting it. If two replicas start against a
+new file at the same time, one persists the private JWK and `kid`; every loser
+imports that exact winner instead of retaining a process-local key. The two
+configuration rows commit atomically, and a partial legacy pair is repaired
+without replacing the half that is already durable.
 
 **Key persistence:** The private key is stored as a JWK in the `_auth_config` table. On restart, the same key is loaded — existing access tokens remain valid. If the database is wiped (`:memory:` mode restart), a new key is generated and all tokens are implicitly invalidated.
 
@@ -149,27 +138,23 @@ active membership. Zero does not accept a client-selected tenant header.
 **What's NOT in the token:**
 - `password_hash` — obviously never
 - `properties` — too variable, too large; fetch from `/auth/me` if needed
-- `permissions` — derived from `role` at the application level, not embedded
+- `permissions` — derived from the live application/tenant authorization
+  scope and assignment revision, not trusted from JWT claims
 
 ### Verification
 
 ```ts
-async verifyAccessToken(token: string): Promise<AccessTokenPayload | null> {
-  try {
-    const { payload } = await jwtVerify(token, this.publicKey, {
-      algorithms: ['ES256'],
-      issuer: 'auth',
-    });
-    return {
-      sub: payload.sub!,
-      email: payload.email as string,
-      role: payload.role as string,
-    };
-  } catch {
-    return null;  // Expired, invalid signature, wrong algorithm, etc.
-  }
-}
+const payload = await codec.verifyBrowserAccessToken(token);
+// `null` means the verified JWT still failed Zero's required browser-claim
+// shape; signature/expiry/issuer failures are normalized by the facade.
+if (!payload) return null;
 ```
+
+`AuthTokenCodec` does not cast arbitrary JWT claims into a trusted TypeScript
+shape. A browser token must contain non-empty string `sub`, `email`, and `role`
+claims before the facade can continue to live user/session resolution.
+Transition and page credentials apply their corresponding required-claim
+checks and fail closed as well.
 
 `verifyAccessToken()` is deliberately cryptographic-only: the public key
 verifies the signature and `jose` checks claims such as `exp` and `iss`.
@@ -186,20 +171,22 @@ Code that verifies a JWT offline through JWKS can validate its signature and
 expiry, but cannot observe Zero's live user/session revocation state. Protected
 Zero routes and Sync use live resolution rather than offline verification.
 
-**Error handling:** Verification never throws to callers. All failure modes
-(`JWTExpired`, `JWTClaimValidationFailed`, `JWSSignatureVerificationFailed`)
-are caught and returned as `null`. Live-resolution failures likewise produce
-no authenticated context, and protected routes reject the request.
+**Error handling:** Credential failures such as expiry, claim validation, an
+unknown signature, or the wrong algorithm return `null`. Internal Zero
+authority failures are different: `AuthError` is deliberately rethrown, so a
+stale installed-profile fence or `AUTH_STATE_INVARIANT_FAILED` condition cannot
+be mistaken for an ordinary anonymous request. `resolveAuthContext()` also
+fails closed when no `UserStore` has been wired. Direct low-level consumers of
+`TokenService.create()` must call `setUserStore()` before using live request
+resolution; `createAuthPlugin()` and `createApp()` do this automatically.
 
 ### Token Anatomy
 
-```
-eyJhbGciOiJFUzI1NiIsImtpZCI6IjU1MGUxNGYyLTRjZjQtNDYzZi05ZTY1LTJmMjIzNGE3YjRlNCJ9
-.eyJzdWIiOiJ1XzEyMzQ1Njc4IiwiZW1haWwiOiJhbGljZUBleGFtcGxlLmNvbSIsInJvbGUiOiJ1c2VyIiwiaWF0IjoxNzA5NTAwMDAwLCJleHAiOjE3MDk1MDA5MDAsImlzcyI6ImF1dGgifQ
-.MEUCIHlXcGLJ... (64 bytes — ES256 signature)
-```
-
-Three parts: header (alg + kid) . payload (claims) . signature. Total ~300 bytes — small enough for `Authorization` header on every request.
+An access credential has the standard three-part form
+`base64url(header).base64url(payload).base64url(signature)`. The protected
+header carries `alg: ES256` and `kid`; the payload carries the identity,
+security generation, and session-family binding described above. Exact length
+depends on whether the credential is web- or native-scoped.
 
 ## Page Session
 
@@ -263,11 +250,10 @@ Login / Register
 ### Hash Storage
 
 ```ts
-private hashToken(token: string): string {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(token);
-  const hashBuffer = new Bun.CryptoHasher('sha256').update(data).digest();
-  return Buffer.from(hashBuffer).toString('hex');
+export function hashToken(rawToken: string): string {
+  const hasher = new Bun.CryptoHasher('sha256');
+  hasher.update(rawToken);
+  return hasher.digest('hex');
 }
 ```
 
@@ -477,16 +463,26 @@ getJWKS(): { keys: JWK[] } {
 
 ```ts
 interface TokenServiceConfig {
-  /** Shared ReactiveDB — token service uses prepared statements on _auth_config and _refresh_tokens directly */
+  /** Shared ReactiveDB transaction domain. */
   db: ReactiveDB;
-
-  /** Access token TTL in jose duration format (default: '15m') */
   accessTokenTTL?: string;
-
-  /** Refresh token TTL in jose duration format (default: '7d') */
   refreshTokenTTL?: string;
+  nativeIssuer?: string;
+  nativeAudience?: string;
+
+  /** Durable browser-session authority; direct use defaults to single mode. */
+  authSessionService?: AuthSessionService;
+
+  /** App-local invariant telemetry boundary. */
+  emitCode?: AuthPlatformCodeEmitter;
 }
 ```
+
+`nativeIssuer` and `nativeAudience` must be supplied together for native OIDC
+access verification. Managed `createApp()` composition supplies the durable
+session service and app-local emitter. Direct composition may omit them for a
+single-tenant browser-only service, but it still must wire the `UserStore`
+before attempting `resolveAuthContext()`.
 
 **TTL defaults:**
 - Access: `15m` — short enough to limit exposure, long enough to avoid constant refreshes

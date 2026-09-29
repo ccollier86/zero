@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Elysia } from 'elysia';
 import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
+import { ZERO_OBSERVABILITY_RUNTIME } from '../runtime/service-keys';
 import { allowLegacyEphemeralTopicPolicy } from './ephemeral-policy';
 import { createSyncPlugin } from './sync.plugin';
 import type { ReactiveDB } from './reactive-db';
@@ -424,6 +425,11 @@ function createDurableStateApp(
 ): TestApp {
   let syncDatabase: ReactiveDB | null = null;
   const runtime = new ZeroAppRuntime(`state-sync-authority-${crypto.randomUUID()}`);
+  runtime.set(ZERO_OBSERVABILITY_RUNTIME, {
+    sink: { emit() {} },
+    store: null,
+    config: { enabled: false },
+  });
   const app = new Elysia()
     .use(createSyncPlugin({
       runtime,
@@ -504,12 +510,14 @@ function createDurableAuthorityHarness(): {
         authGeneration: 0,
         sessionKind: context.sessionKind,
         sessionId: context.sessionId,
+        mfaVerifiedAt: context.mfaVerifiedAt ?? null,
         sessionGeneration: context.sessionGeneration ?? null,
         clientId: context.clientId ?? null,
         identityScopes: context.scope ?? [],
         sessionScopeKind: context.sessionScopeKind,
         sessionScopeId: context.sessionScopeId,
         tenantId: context.tenantId ?? null,
+        tenantKind: context.tenantKind ?? null,
         membershipId: context.membershipId ?? null,
         tenantRole: context.tenantRole ?? null,
         tenantAuthorizationGeneration: context.tenantAuthorizationGeneration ?? null,

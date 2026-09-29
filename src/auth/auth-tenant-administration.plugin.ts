@@ -69,6 +69,8 @@ export function createAuthTenantAdministrationPlugin(
         tenantId: actor.scope.tenantId,
         membershipId: actor.scope.membershipId,
         scope: actor.scope,
+        applicationScope: actor.access.applicationAuthorization,
+        assertCurrentAuthority: actor.assertCurrentAuthority,
       });
     })
     .get('/members', async ({ request, query, set }) => {
@@ -80,7 +82,7 @@ export function createAuthTenantAdministrationPlugin(
         cursor: query.cursor,
         search: query.search,
         status: query.status,
-      });
+      }, actor.assertCurrentAuthority);
     }, {
       query: t.Object({
         limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100 })),

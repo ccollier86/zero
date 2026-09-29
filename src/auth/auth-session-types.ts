@@ -1,5 +1,7 @@
 /** Durable parent-session types shared by browser access, refresh, and page auth. */
 
+import type { TenantKind } from './tenancy/tenancy-types';
+
 export type AuthSessionKind = 'web';
 export type AuthSessionStatus = 'active' | 'revoked';
 export type AuthSessionScopeKind = 'application' | 'tenant';
@@ -38,6 +40,8 @@ export interface AuthSessionRecord {
   membershipAuthorizationGeneration: number | null;
   provenance: AuthSessionProvenance;
   authenticatedAt: number;
+  /** Set only after Zero verifies an MFA challenge or enrollment ceremony. */
+  mfaVerifiedAt: number | null;
   createdAt: number;
   lastSeenAt: number;
   expiresAt: number;
@@ -50,6 +54,7 @@ export interface PrepareWebSessionInput {
   expiresAt: number;
   binding?: WebSessionBinding | PreparedWebSessionBinding;
   authenticatedAt?: number;
+  mfaVerifiedAt?: number | null;
 }
 
 export interface ResolveWebSessionInput {
@@ -60,10 +65,13 @@ export interface ResolveWebSessionInput {
 
 export interface WebSessionIssueOptions {
   binding?: WebSessionBinding | PreparedWebSessionBinding;
+  /** Trusted assurance produced by the server-side MFA verification boundary. */
+  mfaVerifiedAt?: number | null;
 }
 
 /** One parent plus authorization data read in the same SQLite transaction. */
 export interface ResolvedWebSessionAuthority {
   session: AuthSessionRecord;
+  tenantKind: TenantKind | null;
   tenantRole: string | null;
 }

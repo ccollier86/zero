@@ -135,6 +135,7 @@ describe('database authority commit guard', () => {
         membershipAuthorizationGeneration: null,
         provenance: 'local' as const,
         authenticatedAt: now,
+        mfaVerifiedAt: null,
         createdAt: now,
         lastSeenAt: now,
         expiresAt: now + 60_000,

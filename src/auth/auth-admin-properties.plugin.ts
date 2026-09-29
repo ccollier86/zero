@@ -33,7 +33,7 @@ export function createAuthAdminPropertiesPlugin(config: AuthAdminPluginConfig) {
         assertCurrentAuthority,
       } = await requireAdminMutationServices(config, request);
       store.transaction(() => {
-        const auth = assertCurrentAuthority();
+        const auth = assertCurrentAuthority({ targetUserId: params.userId });
         assertUser(store.getUserById(params.userId));
         const value = propertyService.validateWrite(params.key, body.value, 'admin');
         const invalidatesAuthority = propertyService.isPolicyTrusted(params.key)
@@ -58,7 +58,7 @@ export function createAuthAdminPropertiesPlugin(config: AuthAdminPluginConfig) {
         assertCurrentAuthority,
       } = await requireAdminMutationServices(config, request);
       store.transaction(() => {
-        const auth = assertCurrentAuthority();
+        const auth = assertCurrentAuthority({ targetUserId: params.userId });
         assertUser(store.getUserById(params.userId));
         const properties = propertyService.validateWrites(body.properties, 'admin');
         const invalidatesAuthority = Object.entries(properties).some(([key, value]) =>
@@ -81,7 +81,7 @@ export function createAuthAdminPropertiesPlugin(config: AuthAdminPluginConfig) {
         assertCurrentAuthority,
       } = await requireAdminMutationServices(config, request);
       store.transaction(() => {
-        const auth = assertCurrentAuthority();
+        const auth = assertCurrentAuthority({ targetUserId: params.userId });
         assertUser(store.getUserById(params.userId));
         const invalidatesAuthority = propertyService.isPolicyTrusted(params.key)
           && store.getProperty(params.userId, params.key) !== null;

@@ -27,6 +27,7 @@ import {
 } from './auth-tenant-creation';
 import { AuthError } from './types';
 import type { AuthAuditRequestContext } from './auth-audit-types';
+import { createAuthStateInvariantError } from './auth-observability';
 
 export interface RegistrationInput {
   username: string;
@@ -49,6 +50,7 @@ export async function registerUser(
   auditRequest?: AuthAuditRequestContext,
 ) {
   const services = requireSessionServices(config);
+  const emitCode = config.emitCode ?? emitPlatformCode;
   const authConfig = config.getAuthConfig();
   const nativeAuthorization = config.getNativeAuthorizationService();
   const nativeContinuation = requireRegistrationContinuation(
@@ -80,7 +82,8 @@ export async function registerUser(
   assertBootstrapRequest(
     authConfig,
     services.store.isBootstrapRequired(),
-    input.bootstrapSecret
+    input.bootstrapSecret,
+    emitCode,
   );
   let tenantCreation: TenantCreationResult | null = null;
   const { user, policy, provisioning } = await services.store.createRegistrationUser({
@@ -91,6 +94,7 @@ export async function registerUser(
     isBootstrap, accountEmail: services.accountEmail, authConfig,
     mfaEnrollment: input.mfaEnrollment,
     bootstrapSecret: input.bootstrapSecret,
+    emitCode,
   }), (created, resolvedPolicy) => {
     claimRegistrationContinuation(nativeAuthorization, nativeContinuation, created.userId);
     // Persist the deliberate pre-verification owner state in the same
@@ -115,13 +119,18 @@ export async function registerUser(
           slug: organization.slug,
           ownerUserId: created.userId,
           createdBy: created.userId,
+          kind: resolvedPolicy.isBootstrap ? 'administration' : 'organization',
         });
         if (resolvedPolicy.requireEmailVerification
           && !services.registrationIntents.bindProvisionedTenant(
             created.userId,
             tenantCreation.tenant.tenantId,
           )) {
-          throw new Error('[auth] Failed to bind registration intent to its tenant.');
+          throw createAuthStateInvariantError(emitCode, {
+            component: 'registration-service',
+            invariant: 'registration-intent-tenant-binding-missing',
+            message: '[auth] Failed to bind registration intent to its tenant.',
+          });
         }
         return { tenantId: tenantCreation.tenant.tenantId };
       } catch (error) {
@@ -131,7 +140,11 @@ export async function registerUser(
     return undefined;
   }, { provisional: true, auditRequest });
   if (!provisioning) {
-    throw new Error('[auth] Registration provisioning receipt was not created.');
+    throw createAuthStateInvariantError(emitCode, {
+      component: 'registration-service',
+      invariant: 'registration-provisioning-receipt-missing',
+      message: '[auth] Registration provisioning receipt was not created.',
+    });
   }
 
   let completion: Awaited<ReturnType<typeof buildAuthCompletionResponse>> | null = null;
@@ -166,7 +179,7 @@ export async function registerUser(
       });
     } catch (rollbackError) {
       if (policy.requireEmailVerification) {
-        emitPlatformCode(OBS_CODES.AUTH_EMAIL_VERIFICATION_DELIVERY_FAILED, {
+        emitCode(OBS_CODES.AUTH_EMAIL_VERIFICATION_DELIVERY_FAILED, {
           userId: user.userId,
           metadata: {
             source: 'registration',
@@ -178,7 +191,7 @@ export async function registerUser(
       throw rollbackError;
     }
     if (policy.requireEmailVerification) {
-      emitPlatformCode(OBS_CODES.AUTH_EMAIL_VERIFICATION_DELIVERY_FAILED, {
+      emitCode(OBS_CODES.AUTH_EMAIL_VERIFICATION_DELIVERY_FAILED, {
         userId: user.userId,
         metadata: { source: 'registration', ...rollback },
       });
@@ -187,13 +200,13 @@ export async function registerUser(
   }
 
   if (policy.requireEmailVerification) {
-    emitPlatformCode(OBS_CODES.AUTH_EMAIL_VERIFICATION_SENT, {
+    emitCode(OBS_CODES.AUTH_EMAIL_VERIFICATION_SENT, {
       userId: user.userId,
       metadata: { source: 'registration' },
     });
   }
   if (policy.isBootstrap) {
-    emitPlatformCode(OBS_CODES.AUTH_FIRST_ADMIN_BOOTSTRAPPED, { userId: user.userId });
+    emitCode(OBS_CODES.AUTH_FIRST_ADMIN_BOOTSTRAPPED, { userId: user.userId });
   }
   const tenant = tenantCreation ? toRegistrationTenant(tenantCreation) : undefined;
   if (policy.requireEmailVerification) {
@@ -203,7 +216,11 @@ export async function registerUser(
     };
   }
   if (!completion) {
-    throw new Error('[auth] Registration completion response is unavailable.');
+    throw createAuthStateInvariantError(emitCode, {
+      component: 'registration-service',
+      invariant: 'registration-completion-missing',
+      message: '[auth] Registration completion response is unavailable.',
+    });
   }
   return { ...completion, ...(tenant ? { tenant } : {}) };
 }

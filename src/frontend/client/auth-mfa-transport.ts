@@ -1,6 +1,11 @@
 /** Transport for current-user MFA enrollment and challenge flows. */
 
 import { createAuthClientError } from './auth-errors';
+import {
+  parseAuthMfaChallenge,
+  parseAuthMfaCompletionResult,
+  parseAuthMfaMethod,
+} from './auth-completion-parser';
 import type { AuthAuthenticationAttempt } from './auth-authentication-attempt';
 import type {
   AuthCompletionResult,
@@ -32,10 +37,7 @@ export class AuthMfaTransport {
     );
     if (!response.ok) throw await responseError(response, 'Auth request failed');
     const text = await response.text();
-    const result = (text ? JSON.parse(text) : undefined) as {
-      methods: AuthMfaMethod[];
-      required: boolean;
-    };
+    const result = parseMfaMethodList(text ? JSON.parse(text) : undefined);
     this.options.assertResponseCurrent(response);
     return result;
   }
@@ -50,7 +52,7 @@ export class AuthMfaTransport {
       jsonRequest(params),
     );
     if (!response.ok) throw await responseError(response, 'Failed to start MFA setup');
-    const result = await response.json() as AuthMfaSetupStartResult;
+    const result = parseMfaSetupStart(await response.json());
     this.options.assertResponseCurrent(response);
     return result;
   }
@@ -70,12 +72,17 @@ export class AuthMfaTransport {
 
       const data = await response.json();
       attempt.assertCurrent();
-      return data && typeof data === 'object' && 'user' in data
-        ? await this.options.completeAuthentication(
-          data as AuthCompletionResult,
+      if (hasOwn(data, 'user')) {
+        const completion = parseAuthMfaCompletionResult(data);
+        if (!('accessToken' in completion)
+          && !('tenantSelectionRequired' in completion)
+          && !('tenantOnboardingRequired' in completion)) throw invalidMfaResponse();
+        return await this.options.completeAuthentication(
+          completion,
           attempt,
-        ) as AuthMfaSetupVerifyResult
-        : data;
+        ) as AuthMfaSetupVerifyResult;
+      }
+      return parseMfaSetupManagementResult(data);
     } finally {
       attempt.dispose();
     }
@@ -98,8 +105,16 @@ export class AuthMfaTransport {
         this.options.failAuthentication(error.message, attempt);
         throw error;
       }
-      const result = await response.json() as AuthCompletionResult;
-      attempt.assertCurrent();
+      let result: AuthCompletionResult;
+      try {
+        const body = await response.json();
+        attempt.assertCurrent();
+        result = parseAuthMfaCompletionResult(body);
+      } catch (error) {
+        attempt.assertCurrent();
+        this.options.failAuthentication('Invalid MFA response', attempt);
+        throw error;
+      }
       return this.options.completeAuthentication(result, attempt);
     } finally {
       attempt.dispose();
@@ -118,4 +133,109 @@ function jsonRequest(body: unknown): RequestInit {
 async function responseError(response: Response, fallback: string) {
   const body = await response.json().catch(() => null);
   return createAuthClientError(response, body, fallback);
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function parseMfaMethodList(
+  value: unknown,
+): { methods: AuthMfaMethod[]; required: boolean } {
+  const result = exact(value, ['methods', 'required']);
+  if (!Array.isArray(result.methods) || typeof result.required !== 'boolean') {
+    throw invalidMfaResponse();
+  }
+  const methods = result.methods.map(parseAuthMfaMethod);
+  if (new Set(methods.map((method) => method.methodId)).size !== methods.length) {
+    throw invalidMfaResponse();
+  }
+  return Object.freeze({
+    methods: Object.freeze(methods) as AuthMfaMethod[],
+    required: result.required,
+  });
+}
+
+function parseMfaSetupStart(value: unknown): AuthMfaSetupStartResult {
+  const result = allowed(
+    value,
+    ['setupRequired', 'method', 'challenge', 'totp', 'verificationToken'],
+    ['setupRequired', 'method', 'verificationToken'],
+  );
+  if (typeof result.setupRequired !== 'boolean') throw invalidMfaResponse();
+  return Object.freeze({
+    setupRequired: result.setupRequired,
+    method: parseAuthMfaMethod(result.method),
+    ...(Object.hasOwn(result, 'challenge')
+      ? { challenge: parseAuthMfaChallenge(result.challenge) }
+      : {}),
+    ...(Object.hasOwn(result, 'totp') ? { totp: parseTotp(result.totp) } : {}),
+    verificationToken: text(result.verificationToken, 16_384),
+  });
+}
+
+function parseMfaSetupManagementResult(value: unknown): AuthMfaSetupVerifyResult {
+  const result = exact(value, ['ok', 'method', 'methods']);
+  if (result.ok !== true || !Array.isArray(result.methods)) throw invalidMfaResponse();
+  const method = parseAuthMfaMethod(result.method);
+  const methods = result.methods.map(parseAuthMfaMethod);
+  if (new Set(methods.map((entry) => entry.methodId)).size !== methods.length
+    || !methods.some((entry) => entry.methodId === method.methodId)) {
+    throw invalidMfaResponse();
+  }
+  return Object.freeze({
+    ok: true,
+    method,
+    methods: Object.freeze(methods) as AuthMfaMethod[],
+  });
+}
+
+function parseTotp(value: unknown): NonNullable<AuthMfaSetupStartResult['totp']> {
+  const result = exact(value, ['secret', 'otpauthUrl', 'issuer', 'accountName']);
+  return Object.freeze({
+    secret: text(result.secret, 4096),
+    otpauthUrl: text(result.otpauthUrl, 16_384),
+    issuer: text(result.issuer, 200),
+    accountName: text(result.accountName, 320),
+  });
+}
+
+function hasOwn(value: unknown, key: string): boolean {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
+    && Object.hasOwn(value, key));
+}
+
+function exact(value: unknown, keys: readonly string[]): UnknownRecord {
+  const result = record(value);
+  if (Object.keys(result).length !== keys.length
+    || keys.some((key) => !Object.hasOwn(result, key))) throw invalidMfaResponse();
+  return result;
+}
+
+function allowed(
+  value: unknown,
+  keys: readonly string[],
+  required: readonly string[],
+): UnknownRecord {
+  const result = record(value);
+  const accepted = new Set(keys);
+  if (Object.keys(result).some((key) => !accepted.has(key))
+    || required.some((key) => !Object.hasOwn(result, key))) throw invalidMfaResponse();
+  return result;
+}
+
+function record(value: unknown): UnknownRecord {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw invalidMfaResponse();
+  }
+  return value as UnknownRecord;
+}
+
+function text(value: unknown, maximum: number): string {
+  if (typeof value !== 'string' || value.length < 1 || value.length > maximum) {
+    throw invalidMfaResponse();
+  }
+  return value;
+}
+
+function invalidMfaResponse(): Error {
+  return new Error('[client] Zero returned an invalid MFA response.');
 }

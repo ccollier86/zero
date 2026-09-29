@@ -24,6 +24,8 @@ export interface AuthAuthorizationSnapshot {
     readonly authorization: 'simple' | 'advanced';
   };
   readonly scope: AuthAuthorizationScopeSnapshot | null;
+  /** Application permissions projected from the protected administration organization. */
+  readonly applicationScope?: AuthAuthorizationScopeSnapshot | null;
   /** Opaque equality marker; never use this value as authorization proof. */
   readonly revision: string;
 }
@@ -48,11 +50,12 @@ export function hasAuthorizationPermission(
   snapshot: AuthAuthorizationSnapshot | null,
   permission: string,
 ): boolean {
-  if (!snapshot?.scope || !permission) return false;
+  if (!snapshot || !permission) return false;
   // Even an all-permissions role only covers keys declared by the application.
   // The server projects that registry into `permissions`; unknown/typo keys fail
   // closed instead of being treated as capabilities.
-  return snapshot.scope.permissions.includes(permission);
+  return snapshot.scope?.permissions.includes(permission) === true
+    || snapshot.applicationScope?.permissions.includes(permission) === true;
 }
 
 export function hasEveryAuthorizationPermission(

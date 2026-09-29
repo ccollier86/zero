@@ -12,7 +12,12 @@ import type { AuthorizationRoleAssignmentResolver } from '../auth/authorization-
 import type { UserStore } from '../auth/user-store';
 import type { AsyncDatabaseClient } from '../databases/database-operations';
 import type { DatabaseTrustedWriteExecutor } from '../databases/database-trusted-writer';
-import type { PlatformObservabilityRuntime } from '../observability/types';
+import type {
+  PlatformCodeDefinition,
+  PlatformCodeEmitOptions,
+  PlatformEvent,
+  PlatformObservabilityRuntime,
+} from '../observability/types';
 import type { ReactiveDB, TableSchema } from '../sync';
 import type { ResourcePolicyAuthConfig } from './resource-policy-types';
 import type { ResourceRegistry } from './resource-registry';
@@ -65,6 +70,11 @@ export interface ResourceCrudServiceOptions {
   getTenantDatabaseClient?: ResourceTenantDatabaseClientProvider;
   /** App-local sink. Standalone service construction may omit it. */
   observability?: PlatformObservabilityRuntime | null;
+  /** App-local emitter compatibility seam for standalone service composition. */
+  emitCode?: (
+    definition: PlatformCodeDefinition,
+    options?: PlatformCodeEmitOptions,
+  ) => PlatformEvent;
   defaultLimit?: number;
   maxLimit?: number;
 }

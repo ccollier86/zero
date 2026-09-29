@@ -786,7 +786,12 @@ mutation.
 
 ```
 src/sync/
-├── reactive-db.ts                  # SQLite tables, transactions, sequencing, changes
+├── reactive-db.ts                  # Stable CRUD/transaction/snapshot/delivery facade
+├── reactive-db-table-contract.ts   # Registered schema, identity, scope, exact-row rules
+├── reactive-db-change-log.ts       # Durable sequence/log adoption, writes, and pruning
+├── reactive-db-change-codec.ts     # Strict change/history serialization and validation
+├── reactive-db-external-poller.ts  # Ordered cross-runtime polling and gap handling
+├── reactive-db-synchronous-boundary.ts # Hostile/async callback-result guard
 ├── sync.plugin.ts                  # Elysia lifecycle, derive, and /sync WebSocket
 ├── message-handler.ts              # Top-level protocol dispatch
 ├── sync-policy.ts                  # Table read/mutation policy

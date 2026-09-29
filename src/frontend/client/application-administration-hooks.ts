@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { reportAuthClientActionFailure } from './auth-action-observability';
 import { AuthClientError } from './auth-errors';
 import type {
   AuthApplicationAdministrationConfig,
@@ -332,6 +333,7 @@ function mergeUsers(
 }
 
 function errorMessage(cause: unknown): string {
+  reportAuthClientActionFailure('applicationAdministration', cause);
   return cause instanceof Error ? cause.message : 'Application access request failed';
 }
 

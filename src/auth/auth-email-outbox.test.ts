@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { configureEmail, MemoryEmailProvider, type EmailMessage,
   type EmailProvider } from '../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import { activeTokens, emailToken, fixture, terminalRecipient, user } from './auth-email-outbox-test-support';
 
-afterEach(() => configureEmail(false));
+afterEach(() => resetEmailCompatibilityRuntimeForTesting());
 
 describe('AuthEmailOutbox delivery', () => {
   test('defers lookup, token creation, and provider work until the worker runs', async () => {

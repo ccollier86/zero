@@ -1,6 +1,7 @@
 import { Elysia, t } from 'elysia';
 import { SchedulerService } from './scheduler-service';
 import { AuthError } from '../auth/types';
+import { getPublicAuthErrorMessage } from '../auth/auth-error-response';
 import { createAuthMiddleware } from '../auth/auth.middleware';
 import { getTokenService } from '../auth/auth.plugin';
 import type { SchedulerPluginConfig } from './types';
@@ -110,7 +111,7 @@ export function createSchedulerPlugin(
     .onError(({ error, set }) => {
       if (error instanceof AuthError) {
         set.status = error.status;
-        return { error: error.message, code: error.code };
+        return { error: getPublicAuthErrorMessage(error), code: error.code };
       }
     })
 

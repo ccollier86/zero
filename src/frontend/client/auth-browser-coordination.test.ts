@@ -709,7 +709,13 @@ function authUser() {
 }
 
 function tenant(tenantId: string) {
-  return { tenantId, slug: tenantId, name: tenantId, role: 'owner' };
+  return {
+    tenantId,
+    kind: 'organization' as const,
+    slug: tenantId.replaceAll('_', '-'),
+    name: tenantId,
+    role: 'owner',
+  };
 }
 
 function idFactory(): () => string {

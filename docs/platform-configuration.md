@@ -341,12 +341,14 @@ omitting them still resolves to `single/simple`.
 | --- | --- | --- | --- |
 | `single` | `simple` | Existing global user/admin runtime plus compatibility kernel scope | Supported current runtime |
 | `single` | `advanced` | Validated registry, durable additive application assignments, protected owner, live HTTP/Sync expansion, `/auth/application`, typed SDK/hook, and packaged access UI | Implemented in this unreleased tree; final cross-cutting release verification remains |
-| `multi` | `simple` | Tenant/membership persistence, bound browser/native sessions, selection/switching, tenant creation, registered-resource and managed-service isolation, invitations/join requests, opt-in verified-domain requests, durable control-plane audit, and packaged tenant controls | Implemented in this unreleased tree; adoption tooling and final release gates remain |
-| `multi` | `advanced` | Multi/simple foundation plus durable additive membership assignments, protected owners, live permission expansion, optimistic role revisions, permission-aware tenant UI, and authorized tenant audit review | Implemented in this unreleased tree; the same remaining multi release gates apply |
+| `multi` | `simple` | Protected Administration Organization bootstrap, tenant/membership persistence, bound browser/native sessions, selection/switching, customer-tenant creation/directory/lifecycle, registered-resource and managed-service isolation, invitations/join requests, opt-in verified-domain requests, durable control-plane audit, and packaged tenant/platform controls | Implemented in this unreleased tree; exact pre-024 administration-tenant reconciliation is available, while final release gates remain |
+| `multi` | `advanced` | Multi/simple foundation plus durable additive membership assignments, administration-only application roles, protected owners, live permission expansion, optimistic role revisions, permission-aware tenant/platform UI, and authorized audit review | Implemented in this unreleased tree; the same remaining multi release gates apply |
 
-No mode selection implies a protected Administration Organization/platform-
-tenant lifecycle UI, upstream enterprise SSO, break-glass, tenant-custom roles,
-populated-app adoption tooling, or verified-domain
+Multi-mode selection includes the protected Administration Organization and
+bounded customer-organization lifecycle described in
+[Platform Administration Organization](./auth/platform-administration.md).
+No mode selection implies upstream enterprise SSO, break-glass,
+tenant-custom roles, general populated-app discovery/migration tooling, or verified-domain
 autojoin/aliases/direct transfer. Registered
 resources now declare explicit server-owned client exposure and optional field
 allow-lists. Managed file-mode runtimes sharing one SQLite database automatically
@@ -373,6 +375,8 @@ const auth = defineAuthConfig({
   },
   authorization: {
     mode: 'advanced',
+    // Bump before deploying a role/permission semantic change.
+    registryVersion: 1,
     permissions: {
       'patients:read': {
         label: 'View patients',
@@ -390,6 +394,38 @@ const auth = defineAuthConfig({
   },
 });
 ```
+
+### Administration Organization adoption
+
+Fresh multi-tenant installations omit `tenancy.administration`: bootstrap
+creates the protected Administration Organization atomically. A database that
+already contained multi-tenant data before migration `024` may instead need a
+one-time exact selector when its audit history cannot prove one unique bootstrap
+tenant:
+
+```ts
+const auth = defineAuthConfig({
+  tenancy: {
+    mode: 'multi',
+    administration: {
+      adoptTenantId: 'ten_exact_internal_id',
+    },
+  },
+});
+```
+
+`adoptTenantId` accepts one non-empty internal tenant ID of at most 256
+characters. It is a server-only startup reconciliation input, not browser
+authority. Zero fails startup if the ID is unknown, inactive, differs from an
+existing Administration Organization, or is omitted on a populated installation
+with no protected administration tenant. Supplying it on an empty installation
+also fails because there is no exact row to adopt. Adoption is atomic and
+audited. After success, the exact setting may remain as an idempotent assertion
+or be removed; the persisted tenant kind remains protected. This narrow path
+does not enable a tenancy-axis profile change or automatically choose among
+customer organizations. Follow the backup and verification procedure in
+[Platform Administration Organization](./auth/platform-administration.md#adopting-the-administration-organization-on-a-pre-024-installation)
+and [Releasing Zero](./releasing.md#pre-024-administration-organization-adoption).
 
 ### Authorization/control-plane audit retention
 
@@ -416,6 +452,8 @@ the explicit, audited prune route. See
 for event bounds, atomicity, routes, SDK/UI, and exclusions. This trail is not
 general user-activity logging and does not make compliance/WORM claims.
 
+### Authorization registry and static roles
+
 Permission keys are canonical lowercase namespaces such as `patients:read`;
 role keys are stable lowercase identifiers such as `clinician`. Resolution
 sorts and freezes the registry, rejects unknown fields and duplicate or
@@ -434,22 +472,57 @@ The framework-owned registry is fixed by profile:
 | --- | --- |
 | `single/simple` | None; this is the compatibility profile with the existing global `user`/`admin` role behavior. |
 | `single/advanced` | `application.roles:read`, `application.roles:manage` |
-| `multi/simple` or `multi/advanced` | `tenant:read`, `tenant:manage`, `tenant.members:read`, `tenant.members:manage`, `tenant.roles:read`, `tenant.roles:manage`, `tenant.invitations:read`, `tenant.invitations:manage`, `tenant.domains:read`, `tenant.domains:verify`, `tenant.domains:release`, `tenant.onboarding:manage`, `tenant.join-requests:review`, `tenant.audit:read`, `workflows:manage`, `notifications:manage`, `rooms:manage` |
+| `multi/simple` or `multi/advanced` | `tenant:read`, `tenant:manage`, `tenant.members:read`, `tenant.members:manage`, `tenant.roles:read`, `tenant.roles:manage`, `tenant.invitations:read`, `tenant.invitations:manage`, `tenant.domains:read`, `tenant.domains:verify`, `tenant.domains:release`, `tenant.onboarding:manage`, `tenant.join-requests:review`, `tenant.audit:read`, `workflows:manage`, `notifications:manage`, `rooms:manage`, plus administration-scope `application.roles:read/manage`, `application.audit:read/manage`, `application.users:read/manage`, and `application.tenants:read/manage` |
 
 The framework roles are equally deterministic. `single/advanced` adds
 `access-manager` with both `application.roles:*` permissions and a protected
 `owner` with `allPermissions`. Both multi-tenant profiles add `member`,
-`manager`, and the protected `owner`. `member` can read the active tenant,
+`manager`, administration-only `administrator` and `access-manager`, and the
+protected `owner`. Any custom role with an explicit `application.*` permission
+is also administration-only. `member` can read the active tenant,
 members, and role metadata. `manager` adds member administration, invitation
 read/manage, domain read/verify, onboarding management, and join-request
 review. It deliberately does not receive tenant settings management, role
 management, domain release, security-audit read, or the three built-in service
-management permissions. `owner` receives the complete resolved registry.
+management permissions. `owner` receives every permission available to its
+live scope: a customer owner remains tenant-only, while the protected
+Administration Organization owner can receive application permissions.
 
 Apps may reference framework permission keys in their own role templates but
 cannot redefine their labels or semantics. App permissions extend the
 registry; they do not replace it. The dedicated ownership lifecycle is the
 only way to move the protected `owner` role.
+
+`authorization.registryVersion` is a positive 32-bit integer and defaults to
+`1`. Migration `027` persists that version and a canonical, secret-free
+semantic fingerprint in `_auth_authorization_manifest`. Permission keys and
+scopes; role keys, permission sets, `allPermissions`, and `system`; and the
+resolved tenancy/authorization modes are semantic. Zero also fingerprints its
+internal authorization-evaluator version so a framework semantics change
+cannot masquerade as the same registry. Labels and descriptions are
+presentation only and do not require an app registry bump.
+
+Increment `registryVersion` before deploying any same-profile semantic change.
+Reusing a version with a different fingerprint or rolling back below the
+installed version fails startup with
+`AUTHORIZATION_REGISTRY_VERSION_REQUIRED`; an invalid/corrupt marker fails
+with `AUTHORIZATION_REGISTRY_INVALID`. A supported installed-profile
+transition may acknowledge only its tenancy/authorization-axis change at the
+current version when permission, role, and evaluator semantics are otherwise
+identical. A rollout that changes both a profile axis and registry/evaluator
+semantics must also increment `registryVersion`.
+Successful initialization and updates are recorded as system-provenance,
+application-scope `application.authorization-registry-initialized` or
+`application.authorization-registry-updated` audit events. Other live runtimes
+observe the shared authority revision and fail closed with
+`AUTH_PROFILE_CHANGED` until restarted on the installed configuration.
+
+Do not reuse a retired role key while retained live assignments still name it.
+Even with a version bump, startup fails with
+`AUTHORIZATION_ROLE_REACTIVATION_BLOCKED`; remove or replace those retained
+assignments while the key is retired, deploy the new version, and grant the
+reintroduced role deliberately. This prevents an apparently harmless config
+change from silently restoring old authority.
 
 Advanced assignments are retained as source-aware history rows. Multiple
 static roles add their permissions; `allPermissions` expands to the complete
@@ -546,8 +619,9 @@ The completed transition writes one system-provenance
 `application.auth-profile-adopted` audit event in the same transaction; Zero
 does not invent a human actor for framework adoption.
 
-Only `authorization.mode` is exposed by public auth config. Labels,
-descriptions, role templates, and the permission registry remain server-only.
+Only `authorization.mode` is exposed by public auth config. The registry
+version, fingerprint, labels, descriptions, role templates, and permission
+registry remain server-only.
 Authenticated `/auth/admin/config` includes the resolved registry and an
 `assignable` flag for mode-aware administration surfaces; assignment records
 and source history are not anonymously enumerable.
@@ -562,9 +636,10 @@ resolved shared-row predicate or physical database boundary cannot be
 forgotten.
 
 In `multi` mode, installation bootstrap always requires a tenant name and
-atomically persists the user, credential, first tenant, protected owner
-membership, global/platform-admin role, and bootstrap completion marker. That
-bootstrap invariant is independent of the later `tenancy.creation.mode`.
+atomically persists the user, credential, protected Administration
+Organization, protected owner membership, global/platform-admin role, and
+bootstrap completion marker. That bootstrap invariant is independent of the
+later `tenancy.creation.mode`.
 
 After bootstrap, identity registration and tenant creation are separate. An
 ordinary `/auth/register` may omit `organizationName`; Zero then returns an

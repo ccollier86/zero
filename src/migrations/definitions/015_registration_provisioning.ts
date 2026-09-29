@@ -1,11 +1,15 @@
 /** Add crash-safe registration provisioning and exact owner rollback guards. */
 
 import type { Database } from 'bun:sqlite';
-import { defineAuthorizationRoleTables } from '../../auth/authorization-role-schema';
-import { defineRegistrationProvisioningTable } from '../../auth/registration-provisioning-schema';
-import { defineRegistrationIntentTable } from '../../auth/registration-intent-schema';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import type { Migration } from '../types';
+import {
+  defineAuthorizationRoleTablesV011 as defineAuthorizationRoleTables,
+} from './011_advanced_authorization_schema';
+import {
+  defineRegistrationIntentTableV015 as defineRegistrationIntentTable,
+  defineRegistrationProvisioningTableV015 as defineRegistrationProvisioningTable,
+} from './015_registration_provisioning_schema';
 
 export const migration: Migration = {
   version: '015',

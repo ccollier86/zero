@@ -2,6 +2,23 @@ import { describe, expect, test } from 'bun:test';
 import { AuthTenantAdministrationTransport } from './auth-tenant-administration-transport';
 
 describe('AuthTenantAdministrationTransport', () => {
+  test('strictly validates the active-tenant config before publishing capabilities', async () => {
+    const canonical = createTransport(async () => Response.json(tenantConfig()));
+    await expect(canonical.getConfig()).resolves.toMatchObject({
+      tenancy: 'multi',
+      tenant: { kind: 'organization' },
+      capabilities: { canManageMembers: true },
+    });
+
+    const malformed = createTransport(async () => Response.json({
+      ...tenantConfig(),
+      capabilities: { ...tenantConfig().capabilities, canManageMembers: 'yes' },
+    }));
+    await expect(malformed.getConfig()).rejects.toThrow(
+      'invalid tenant-administration response',
+    );
+  });
+
   test('uses only active-tenant routes and bounded list query fields', async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const transport = createTransport(async (url, init) => {
@@ -31,7 +48,7 @@ describe('AuthTenantAdministrationTransport', () => {
     const transport = createTransport(async (url, init) => {
       requests.push({ url, init });
       return Response.json({
-        member: member('tmem/a'),
+        member: member('tmem_a'),
         actorSessionInvalidated: requests.length === 2,
       });
     }, () => { expirations += 1; });
@@ -67,7 +84,7 @@ describe('AuthTenantAdministrationTransport', () => {
     const transport = new AuthTenantAdministrationTransport({
       baseUrl: 'https://zero.test',
       authenticatedFetch: async () => Response.json({
-        member: member('tmem/self'),
+        member: member('tmem_self'),
         actorSessionInvalidated: true,
       }),
       createResponseError: () => new Error('unexpected response error'),
@@ -104,6 +121,19 @@ describe('AuthTenantAdministrationTransport', () => {
     await expect(transport.transferOwnership('tmem_target')).rejects.toBe(normalized);
     expect(expirations).toBe(0);
   });
+
+  test('rejects malformed mutation receipts before local session invalidation', async () => {
+    let expirations = 0;
+    const transport = createTransport(async () => Response.json({
+      member: member('tmem/self'),
+      actorSessionInvalidated: 'yes',
+    }), () => { expirations += 1; });
+
+    await expect(transport.removeMember('tmem/self')).rejects.toThrow(
+      'invalid tenant-administration response',
+    );
+    expect(expirations).toBe(0);
+  });
 });
 
 function createTransport(
@@ -134,5 +164,31 @@ function member(membershipId: string) {
     roleRevision: `tenant:t_a:${membershipId}:1`,
     joinedAt: 1,
     updatedAt: 1,
+  };
+}
+
+function tenantConfig() {
+  return {
+    tenancy: 'multi',
+    authorization: 'advanced',
+    terminology: { singular: 'organization', plural: 'organizations' },
+    tenant: {
+      tenantId: 'tenant_a', kind: 'organization', slug: 'tenant-a', name: 'Tenant A',
+    },
+    actor: {
+      membershipId: 'tmem_actor', roles: ['owner'],
+      permissions: ['tenant.members:manage'], allPermissions: false,
+    },
+    capabilities: {
+      canReadMembers: true, canManageMembers: true,
+      canReadRoles: true, canManageRoles: true,
+      canTransferOwnership: true, canReadInvitations: true,
+      canManageInvitations: true, canReviewJoinRequests: true,
+    },
+    roles: [{
+      key: 'member', label: 'Member', permissions: ['tenant.members:read'],
+      allPermissions: false, system: false, assignable: true,
+      administrationOnly: false, grantable: true,
+    }],
   };
 }

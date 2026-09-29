@@ -77,7 +77,10 @@ export function createAuthVerifiedDomainPlugin(
           },
         },
         requestRoles: actor.service.requestRoles,
-        claims: actor.service.listClaims(actor.scope.tenantId),
+        claims: actor.service.listClaims(
+          actor.scope.tenantId,
+          actor.assertCurrentAuthority,
+        ),
       };
     })
     .post('/tenant/domains', async ({ request, body }) => {

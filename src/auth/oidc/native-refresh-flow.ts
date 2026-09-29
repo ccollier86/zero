@@ -1,7 +1,6 @@
 /** Native refresh-family rotation, replay handling, and revocation. */
 
 import { OBS_CODES } from '../../observability/codes';
-import { emitPlatformCode } from '../../observability/sink';
 import type { NativeRefreshInput, NativeTokenResult } from './native-auth-service-types';
 import { tokenResult } from './native-code-exchange';
 import type { NativeServiceContext } from './native-service-context';
@@ -19,7 +18,7 @@ export async function rotateNativeRefresh(
   if (!current || current.clientId !== input.clientId) invalidGrant();
   if (current.consumedAt !== null || current.revokedAt !== null) {
     context.sessions.revokeFamily(current.familyId);
-    emitPlatformCode(OBS_CODES.AUTH_NATIVE_REFRESH_REUSE, {
+    context.emitCode(OBS_CODES.AUTH_NATIVE_REFRESH_REUSE, {
       userId: current.userId,
       metadata: { clientId: current.clientId, familyId: current.familyId },
     });
@@ -33,6 +32,9 @@ export async function rotateNativeRefresh(
   }
   const user = context.users.getUserById(current.userId);
   if (!user || !canReceiveTokens(user)) terminalInvalidGrant(context, current.familyId);
+  if (context.requiresMfaAssurance(user.userId) && current.mfaVerifiedAt === null) {
+    terminalInvalidGrant(context, current.familyId);
+  }
   if (context.users.getAuthGeneration(user.userId) !== current.authGeneration) {
     terminalInvalidGrant(context, current.familyId);
   }
@@ -51,6 +53,7 @@ export async function rotateNativeRefresh(
   const prepared = prepareNativeSession({
     userId: current.userId, clientId: current.clientId, scope: current.scope,
     authGeneration: current.authGeneration, ttlMs: context.config.refreshTtlMs,
+    mfaVerifiedAt: current.mfaVerifiedAt,
     familyId: current.familyId, expiresAt: current.expiresAt,
     rotationCount: current.rotationCount + 1,
     authority: authority.snapshot,
@@ -72,6 +75,8 @@ export async function rotateNativeRefresh(
   const rotated = context.sessions.rotate(current, prepared.session, () => {
     const live = context.authority.resolve(user.userId, current);
     return context.users.getAuthGeneration(user.userId) === current.authGeneration
+      && (!context.requiresMfaAssurance(user.userId)
+        || current.mfaVerifiedAt !== null)
       && Boolean(live && sameNativeAuthority(authority.snapshot, live.snapshot));
   });
   if (rotated === 'throttled') {
@@ -80,7 +85,7 @@ export async function rotateNativeRefresh(
     );
   }
   if (rotated !== 'rotated') invalidGrant();
-  emitPlatformCode(OBS_CODES.AUTH_NATIVE_REFRESH_ROTATED, {
+  context.emitCode(OBS_CODES.AUTH_NATIVE_REFRESH_ROTATED, {
     userId: current.userId,
     metadata: { clientId: current.clientId, familyId: current.familyId },
   });
@@ -128,7 +133,7 @@ export function revokeNativeSession(
       metadata: { count: deleted },
     });
   });
-  emitPlatformCode(OBS_CODES.AUTH_NATIVE_SESSION_REVOKED, {
+  context.emitCode(OBS_CODES.AUTH_NATIVE_SESSION_REVOKED, {
     userId: session.userId,
     metadata: { clientId, familyId: session.familyId },
   });

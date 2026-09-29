@@ -6,18 +6,24 @@
  */
 
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
 import {
   assertAdminUserTransition,
   type AdminUserEligibilityTransition,
 } from './admin-user-guards';
-import { assertMfaRequirementAvailable, type AuthAdminPluginConfig } from './auth-admin-dependencies';
+import {
+  assertMfaRequirementAvailable,
+  getAuthAdminEmitter,
+  type AuthAdminPluginConfig,
+} from './auth-admin-dependencies';
 import { hasAuthenticationBoundaryChange } from './auth-user-security-state';
 import { AuthError, type UserStatus } from './types';
 import type { UserPropertyService } from './user-property-service';
 import type { AuthSecurityAuditContext, UserStore } from './user-store';
 import { canonicalizeEmail } from './auth-email-identity';
-import type { AssertAuthAdminMutationAuthority } from './auth-admin-mutation-authority';
+import {
+  invokeAuthAdminMutationAuthority,
+  type AssertAuthAdminMutationAuthority,
+} from './auth-admin-mutation-authority';
 
 export interface AdminUpdateUserInput {
   username?: string;
@@ -46,7 +52,17 @@ export class AdminUserUpdateService {
     audit?: AuthSecurityAuditContext,
   ) {
     return this.store.transaction(() => {
-      const authority = assertCurrentAuthority();
+      const authority = invokeAuthAdminMutationAuthority(
+        assertCurrentAuthority,
+        {
+          targetUserId: userId,
+          ...(input.role !== undefined ? { requestedPlatformRole: input.role } : {}),
+        },
+        {
+          component: 'admin-user-update-service',
+          emitCode: getAuthAdminEmitter(this.config),
+        },
+      );
       return this.updateLocked(userId, input, authority.userId, audit);
     });
   }
@@ -109,7 +125,7 @@ export class AdminUserUpdateService {
     }
 
     const user = this.store.getUserById(userId)!;
-    emitPlatformCode(OBS_CODES.AUTH_ADMIN_USER_UPDATED, {
+    getAuthAdminEmitter(this.config)(OBS_CODES.AUTH_ADMIN_USER_UPDATED, {
       userId: actorId,
       metadata: { updatedUserId: userId },
     });

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { hashToken } from '../../tokens/token-utils';
+import { emitPlatformCode } from '../../observability/sink';
 import { createReactiveDB } from '../../sync/reactive-db';
 import { defineAuthTables } from '../auth-schema';
 import { resolveNativeAuthConfig } from '../native';
@@ -26,6 +27,7 @@ function prepared(raw: string, familyId: string, createdAt: number, rotationCoun
   const session: PreparedNativeSession = {
     tokenId: `id-${raw}`, familyId, userId: 'user', clientId: 'desktop',
     tokenHash: hashToken(raw), scope: 'openid', authGeneration: 0,
+    mfaVerifiedAt: null,
     expiresAt: createdAt + 1_000_000, createdAt, rotationCount,
     consumedAt: null, revokedAt: null, replacedBy: null,
   };
@@ -33,6 +35,19 @@ function prepared(raw: string, familyId: string, createdAt: number, rotationCoun
 }
 
 describe('NativeSessionStore refresh-family bounds', () => {
+  test('rejects an async runtime profile guard', () => {
+    const { db, store } = setup({});
+    try {
+      store.setRuntimeProfileGuard(async () => {});
+      expect(() => store.assertCurrentProfile()).toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        message: '[auth] Native session runtime profile guard must be synchronous.',
+      }));
+    } finally {
+      db.dispose();
+    }
+  });
+
   test('throttles rotation without consuming the current token and preserves replay revocation', () => {
     let now = 10_000;
     const { db, store } = setup({ now: () => now, minRotationIntervalMs: 30_000 });
@@ -97,6 +112,34 @@ describe('NativeSessionStore refresh-family bounds', () => {
     }
   });
 
+  test('rejects newly required unassured families and preserves verified assurance on rotation', async () => {
+    const now = Date.now();
+    const { db, store } = setup({ now: () => now, minRotationIntervalMs: 0 });
+    const state = { generation: 0, user: activeUser() as UserRecord | null };
+    const context = flowContext(store, state);
+    context.requiresMfaAssurance = () => true;
+    try {
+      store.consumeCodeAndInsert(
+        () => true,
+        prepared('unassured', 'family-unassured', now),
+      );
+      await expect(rotateNativeRefresh(context, {
+        refreshToken: 'unassured', clientId: 'desktop',
+      })).rejects.toMatchObject({ code: 'invalid_grant' });
+      expect(store.get('unassured')).toBeNull();
+
+      const assured = prepared('assured', 'family-assured', now);
+      assured.mfaVerifiedAt = 12_345;
+      store.consumeCodeAndInsert(() => true, assured);
+      const rotated = await rotateNativeRefresh(context, {
+        refreshToken: 'assured', clientId: 'desktop',
+      });
+      expect(store.get(rotated.refresh_token)?.mfaVerifiedAt).toBe(12_345);
+    } finally {
+      db.dispose();
+    }
+  });
+
   test('caps rotations and active families while keeping storage bounded under stress', () => {
     let now = 20_000;
     const { db, store } = setup({
@@ -155,6 +198,60 @@ describe('NativeSessionStore refresh-family bounds', () => {
       db.dispose();
     }
   });
+
+  test('rejects Promise callbacks instead of treating them as native authority', () => {
+    const now = 40_000;
+    const { db, store } = setup({ now: () => now, minRotationIntervalMs: 0 });
+    const asyncTrue = (async () => true) as unknown as () => boolean;
+    const asyncFalse = (async () => false) as unknown as () => boolean;
+    try {
+      expect(() => store.consumeCodeAndInsert(
+        asyncTrue,
+        prepared('async-consume', 'async-consume-family', now),
+      )).toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        message: '[auth] Native authorization code consumption must be synchronous.',
+      }));
+      expect(store.get('async-consume')).toBeNull();
+
+      expect(store.consumeCodeAndInsert(
+        () => true,
+        prepared('async-current', 'async-family', now),
+      )).toBe(true);
+      const current = store.get('async-current')!;
+      expect(() => store.rotate(
+        current,
+        prepared('async-rotated', 'async-family', now + 1, 1),
+        asyncFalse,
+      )).toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        message: '[auth] Native session rotation admission must be synchronous.',
+      }));
+      expect(store.get('async-current')?.revokedAt).toBeNull();
+      expect(store.get('async-rotated')).toBeNull();
+
+      expect(() => store.revokeFamily('async-family', async () => {}))
+        .toThrow(expect.objectContaining({
+          code: 'AUTH_STATE_INVARIANT_FAILED',
+          message: '[auth] Native session revocation callback must be synchronous.',
+        }));
+      expect(store.get('async-current')?.revokedAt).toBeNull();
+
+      expect(() => store.switchFamily(
+        current,
+        prepared('async-switched', 'async-next-family', now + 2),
+        () => true,
+        async () => {},
+      )).toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        message: '[auth] Native session switch callback must be synchronous.',
+      }));
+      expect(store.get('async-current')?.revokedAt).toBeNull();
+      expect(store.get('async-switched')).toBeNull();
+    } finally {
+      db.dispose();
+    }
+  });
 });
 
 function activeUser(): UserRecord {
@@ -189,5 +286,7 @@ function flowContext(
       getAccessTokenTTLSeconds: () => 300,
     } as unknown as TokenService,
     authority: new NativeTenantAuthorityService('single', null),
+    requiresMfaAssurance: () => false,
+    emitCode: emitPlatformCode,
   };
 }

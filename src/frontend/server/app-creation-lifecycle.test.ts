@@ -11,6 +11,49 @@ import { createApp } from './app-factory';
 import type { AppConfig } from './types';
 
 describe.serial('createApp composition lifecycle', () => {
+  test('keeps concurrent bundle and style events bound to their owning app', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'zero-create-app-observability-'));
+    const eventsA = new MemoryEventStore();
+    const eventsB = new MemoryEventStore();
+    let appA: Awaited<ReturnType<typeof createApp>> | null = null;
+    let appB: Awaited<ReturnType<typeof createApp>> | null = null;
+
+    try {
+      const rootA = join(root, 'alpha');
+      const rootB = join(root, 'beta');
+      await Promise.all([
+        mkdir(join(rootA, 'app'), { recursive: true }),
+        mkdir(join(rootB, 'app'), { recursive: true }),
+      ]);
+      [appA, appB] = await Promise.all([
+        createApp(config(rootA, {
+          app: { name: 'Alpha' },
+          observability: { console: false, store: eventsA },
+        })),
+        createApp(config(rootB, {
+          app: { name: 'Beta' },
+          observability: { console: false, store: eventsB },
+        })),
+      ]);
+
+      expect(bundleOutcomeCount(eventsA)).toBe(1);
+      expect(styleOutcomeCount(eventsA)).toBe(1);
+      expect(bundleOutcomeCount(eventsB)).toBe(1);
+      expect(styleOutcomeCount(eventsB)).toBe(1);
+
+      appA.listen(0);
+      appB.listen(0);
+      await appB.stop();
+      appB = null;
+      await appA.stop();
+      appA = null;
+    } finally {
+      if (appB) await appB.stop();
+      if (appA) await appA.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   test('releases owned resources and compatibility providers after early failure', async () => {
     const root = await mkdtemp(join(tmpdir(), 'zero-create-app-failure-'));
     const events = new MemoryEventStore();
@@ -78,6 +121,16 @@ describe.serial('createApp composition lifecycle', () => {
     }
   }, 30_000);
 });
+
+function bundleOutcomeCount(events: MemoryEventStore): number {
+  return events.query({ code: OBS_CODES.APP_CLIENT_BUNDLE_READY.code }).count
+    + events.query({ code: OBS_CODES.APP_CLIENT_BUNDLE_FAILED.code }).count;
+}
+
+function styleOutcomeCount(events: MemoryEventStore): number {
+  return events.query({ code: OBS_CODES.APP_STYLES_READY.code }).count
+    + events.query({ code: OBS_CODES.APP_STYLES_FAILED.code }).count;
+}
 
 function config(root: string, overrides: Partial<AppConfig>): AppConfig {
   return {

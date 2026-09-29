@@ -288,12 +288,18 @@ export function defineTenancyTables(
       created_at                  INTEGER NOT NULL,
       updated_at                  INTEGER NOT NULL,
       suspended_at                INTEGER,
+      kind                        TEXT NOT NULL DEFAULT 'organization'
+                                  CHECK (kind IN ('organization', 'administration')),
       FOREIGN KEY (created_by) REFERENCES users(user_id) ON DELETE RESTRICT
     )
   `);
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_tenants_slug
     ON _auth_tenants(slug COLLATE NOCASE)
+  `);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_tenants_administration
+    ON _auth_tenants(kind) WHERE kind = 'administration'
   `);
 
   db.exec(`
@@ -326,6 +332,46 @@ export function defineTenancyTables(
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_auth_tenant_memberships_user_status
     ON _auth_tenant_memberships(user_id, status, tenant_id)
+  `);
+
+  // The administration boundary is one-way and must stay online. An exact
+  // organization may be promoted only while none exists; afterward even raw
+  // SQL cannot repurpose, suspend, archive, or delete that authority scope.
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_auth_administration_tenant_kind_immutable
+    BEFORE UPDATE OF kind ON _auth_tenants
+    WHEN OLD.kind = 'administration'
+      OR NEW.kind != 'administration'
+      OR EXISTS (
+        SELECT 1 FROM _auth_tenants existing
+        WHERE existing.kind = 'administration'
+          AND existing.tenant_id != OLD.tenant_id
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'AUTH_ADMINISTRATION_TENANT_PROTECTED');
+    END
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_auth_administration_tenant_active
+    BEFORE UPDATE OF status ON _auth_tenants
+    WHEN OLD.kind = 'administration' AND NEW.status != 'active'
+    BEGIN
+      SELECT RAISE(ABORT, 'AUTH_ADMINISTRATION_TENANT_PROTECTED');
+    END
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_auth_administration_tenant_no_delete
+    BEFORE DELETE ON _auth_tenants
+    WHEN OLD.kind = 'administration'
+      AND NOT EXISTS (
+        SELECT 1 FROM _auth_registration_provisioning provisioning
+        WHERE provisioning.tenant_id = OLD.tenant_id
+          AND provisioning.user_id = OLD.created_by
+          AND provisioning.is_bootstrap = 1
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'AUTH_ADMINISTRATION_TENANT_PROTECTED');
+    END
   `);
 
   // Raw SQL and every lifecycle adapter share the full token-eligibility

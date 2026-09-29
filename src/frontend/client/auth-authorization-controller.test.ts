@@ -203,7 +203,13 @@ function session(
       createdAt: 1,
       updatedAt: null,
     },
-    activeTenant: tenantId ? { tenantId, slug: tenantId, name: tenantId, role: 'member' } : null,
+    activeTenant: tenantId ? {
+      tenantId,
+      kind: 'organization',
+      slug: tenantId,
+      name: tenantId,
+      role: 'member',
+    } : null,
     accessToken,
     isLoading: false,
     transition: {

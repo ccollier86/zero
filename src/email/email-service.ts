@@ -16,7 +16,8 @@ import type { EmailConfig, EmailMessage, EmailProvider, EmailSendResult } from '
 export class EmailService {
   constructor(
     private readonly provider: EmailProvider,
-    private readonly config: EmailConfig = {}
+    private readonly config: EmailConfig = {},
+    private readonly emitCode: typeof emitPlatformCode = emitPlatformCode,
   ) {}
 
   /**
@@ -34,7 +35,7 @@ export class EmailService {
 
     validateMessage(resolved);
 
-    emitPlatformCode(OBS_CODES.EMAIL_SEND_REQUESTED, {
+    this.emitCode(OBS_CODES.EMAIL_SEND_REQUESTED, {
       metadata: {
         provider: this.provider.name,
         toCount: normalizeRecipients(resolved.to).length,
@@ -43,7 +44,7 @@ export class EmailService {
 
     try {
       const result = await this.provider.send(resolved);
-      emitPlatformCode(OBS_CODES.EMAIL_SENT, {
+      this.emitCode(OBS_CODES.EMAIL_SENT, {
         metadata: {
           provider: result.provider,
           id: result.id,
@@ -54,7 +55,7 @@ export class EmailService {
       return result;
     } catch (error) {
       const deliveryError = normalizeProviderError(error);
-      emitPlatformCode(OBS_CODES.EMAIL_SEND_FAILED, {
+      this.emitCode(OBS_CODES.EMAIL_SEND_FAILED, {
         metadata: {
           provider: this.provider.name,
           code: safeEmailFailureCode(deliveryError),

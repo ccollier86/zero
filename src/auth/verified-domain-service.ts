@@ -1,6 +1,5 @@
 /** Transport-neutral exact verified-domain request-onboarding control plane. */
 
-import { timingSafeEqual } from 'node:crypto';
 import type { Statement } from 'bun:sqlite';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
@@ -15,13 +14,15 @@ import type { AuthSessionContinuationRecord } from './auth-session-continuation-
 import { AuthError, type UserRecord } from './types';
 import type { TenancyService } from './tenancy/tenancy-service';
 import type { UserStore } from './user-store';
-import { canonicalizeEmail } from './auth-email-identity';
 import {
   canonicalizeVerifiedDomain,
-  verifiedDomainFromEmail,
   VerifiedDomainNameError,
 } from './verified-domain-name';
-import { resolveBoundedTxt } from './verified-domain-dns';
+import {
+  VERIFIED_DOMAIN_DNS_RECORD_PREFIX,
+  VERIFIED_DOMAIN_REVERIFY_BATCH,
+  VerifiedDomainDnsCoordinator,
+} from './verified-domain-dns-coordinator';
 import {
   defineVerifiedDomainReleaseTables,
   defineVerifiedDomainTables,
@@ -31,79 +32,30 @@ import {
   type AuthAuditService,
 } from './auth-audit-service';
 import type { AuthAuditRequestContext } from './auth-audit-types';
+import { isAdministrationOnlyRole } from './authorization-registry';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
+import { cleanupVerifiedDomainEvidence } from './verified-domain-evidence-cleanup';
+import { VerifiedDomainAdmissionService } from './verified-domain-admission-service';
+import type {
+  AuthDomainOnboardingCompletion,
+  AuthTenantDomainChallengeResult,
+  AuthTenantDomainClaimProjection,
+  AuthTenantDomainClaimStatus,
+  AuthTenantDomainReleaseResult,
+  DomainAdmissionIdentityBinding,
+  DomainMailboxJobBinding,
+} from './verified-domain-contracts';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 
-export type AuthTenantDomainClaimStatus = 'pending' | 'verified' | 'grace' | 'lost';
-
-export interface AuthTenantDomainClaimProjection {
-  claimId: string;
-  domain: string;
-  status: AuthTenantDomainClaimStatus;
-  proofMethod: 'dns-txt';
-  verifiedAt: number | null;
-  lastCheckedAt: number | null;
-  nextCheckAt: number | null;
-  validUntil: number | null;
-  challengeExpiresAt: number | null;
-  policy: {
-    enabled: boolean;
-    admission: 'request-to-join';
-    requestRoleKey: string | null;
-    revision: string;
-  };
-  revision: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface AuthTenantDomainChallengeResult {
-  claim: AuthTenantDomainClaimProjection;
-  challenge: {
-    recordType: 'TXT';
-    name: string;
-    value: string;
-    expiresAt: number;
-  };
-}
-
-export interface AuthTenantDomainReleaseResult {
-  release: {
-    claimId: string;
-    domain: string;
-    releasedAt: number;
-    quarantineUntil: number;
-  };
-}
-
-export type AuthDomainOnboardingCompletion =
-  | {
-      option: { action: 'request-to-join'; tenant: { name: string; slug: string } };
-      continuation: string;
-      expiresAt: number;
-    }
-  | {
-      option: {
-        action: 'request-pending';
-        tenant: { name: string; slug: string };
-        request: { joinRequestId: string; status: 'pending'; createdAt: number };
-      };
-    }
-  | { option: { action: 'unavailable' } };
-
-export interface DomainMailboxJobBinding {
-  userId: string;
-  email: string;
-  emailGeneration: number;
-  authGeneration: number;
-  identityKind: 'session' | 'continuation';
-  identityContinuationId: string | null;
-}
-
-export interface DomainAdmissionIdentityBinding {
-  userId: string;
-  authGeneration: number;
-  identityKind: 'session' | 'continuation';
-  identityContinuationId: string | null;
-}
+export type {
+  AuthDomainOnboardingCompletion,
+  AuthTenantDomainChallengeResult,
+  AuthTenantDomainClaimProjection,
+  AuthTenantDomainClaimStatus,
+  AuthTenantDomainReleaseResult,
+  DomainAdmissionIdentityBinding,
+  DomainMailboxJobBinding,
+} from './verified-domain-contracts';
 
 interface ClaimRow {
   claim_id: string;
@@ -134,70 +86,19 @@ interface ClaimPolicyRow {
   policy_revision: number;
 }
 
-interface MailboxTokenRow {
-  token_id: string;
-  outbox_job_id: string;
-  application_id: string;
-  user_id: string;
-  email: string;
-  email_generation: number;
-  auth_generation: number;
-  identity_kind: 'session' | 'continuation';
-  identity_continuation_id: string | null;
-  expires_at: number;
-  consumed_at: number | null;
-}
-
-interface TransactionRow {
-  transaction_id: string;
-  application_id: string;
-  user_id: string;
-  email: string;
-  email_generation: number;
-  auth_generation: number;
-  identity_kind: 'session' | 'continuation';
-  identity_continuation_id: string | null;
-  mailbox_proof_id: string;
-  domain: string;
-  claim_id: string;
-  claim_revision: number;
-  policy_revision: number;
-  tenant_id: string;
-  request_role_key: string;
-  expires_at: number;
-  consumed_at: number | null;
-}
-
-interface JoinRequestRow {
-  join_request_id: string;
-  status: 'pending' | 'approved' | 'denied' | 'cancelled';
-  request_revision: number;
-  created_at: number;
-  reviewed_at: number | null;
-}
-
 const CLAIM_REVISION_PREFIX = 'vdc_';
 const POLICY_REVISION_PREFIX = 'vdp_';
-const DNS_RECORD_PREFIX = '_zero-domain-verification';
 const DNS_VALUE_PREFIX = 'zero-domain-verification=';
-const MAILBOX_TOKEN_PREFIX = 'zdmp_';
-const ADMISSION_TOKEN_PREFIX = 'zdoa_';
-const REVERIFY_BATCH = 8;
 const CLEANUP_BATCH = 100;
-const MAX_MAILBOX_TOKENS_PER_JOB = 16;
-const WORKER_POLL_MS = 60_000;
 export const VERIFIED_DOMAIN_RELEASE_QUARANTINE_MS = 7 * 86_400_000;
 
 export class VerifiedDomainOnboardingService {
   readonly config: ResolvedAuthTenantOnboardingConfig['verifiedDomains'];
   readonly applicationId: string;
-  private readonly workerId = `vdw_${crypto.randomUUID()}`;
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private running: Promise<number> | null = null;
-  private stopped = false;
   private readonly getClaim: Statement;
   private readonly getClaimByDomain: Statement;
-  private readonly getTransactionByHash: Statement;
+  private readonly dns: VerifiedDomainDnsCoordinator;
+  private readonly admission: VerifiedDomainAdmissionService;
 
   constructor(
     private readonly db: ReactiveDB,
@@ -208,6 +109,7 @@ export class VerifiedDomainOnboardingService {
     applicationId: string,
     private readonly now: () => number = Date.now,
     private readonly auditService?: AuthAuditService,
+    private readonly emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
   ) {
     this.config = config;
     this.applicationId = applicationId;
@@ -218,27 +120,47 @@ export class VerifiedDomainOnboardingService {
       WHERE tenant_id = ? AND claim_id = ? AND released_at IS NULL`);
     this.getClaimByDomain = db.prepare(`SELECT * FROM _auth_tenant_domain_claims
       WHERE domain = ? AND released_at IS NULL`);
-    this.getTransactionByHash = db.prepare(`
-      SELECT * FROM _auth_domain_onboarding_transactions
-      WHERE application_id = ? AND token_hash = ?
-    `);
+    this.dns = new VerifiedDomainDnsCoordinator({
+      db,
+      config,
+      users,
+      now,
+      auditService,
+      emitCode,
+      cleanupExpiredEvidence: () => this.cleanupExpiredEvidence(),
+      reconcileClaimStatuses: (tenantId) => this.reconcileClaimStatuses(tenantId),
+      requireClaim: (tenantId, claimId) => this.requireClaim(tenantId, claimId),
+      requireProjectedClaim: (tenantId, claimId) => (
+        this.requireProjectedClaim(tenantId, claimId)
+      ),
+      lockTenant: (tenantId) => this.lockTenant(tenantId),
+      requireAuthority: (tenantId, assertion) => (
+        this.requireAuthority(tenantId, assertion, ['tenant.domains:verify'])
+      ),
+    });
+    this.admission = new VerifiedDomainAdmissionService({
+      db,
+      config,
+      users,
+      tenancy,
+      applicationId,
+      now,
+      emitCode,
+      reconcileClaimStatuses: (tenantId) => this.reconcileClaimStatuses(tenantId),
+      requireClaim: (tenantId, claimId) => this.requireClaim(tenantId, claimId),
+      getPolicy: (claimId) => this.getPolicy(claimId),
+      requireConfiguredRole: (key) => this.requireConfiguredRole(key),
+      isConfiguredRoleSafe: (key) => this.isConfiguredRoleSafe(key),
+      requireActiveTenant: (tenantId) => this.requireActiveTenant(tenantId),
+    });
   }
 
   start(): void {
-    this.users.assertCurrentProfile();
-    if (this.timer || this.stopped) return;
-    this.cleanupExpiredEvidence();
-    if (!this.config.enabled) return;
-    this.timer = setInterval(() => this.runWorkerPass(), WORKER_POLL_MS);
-    this.timer.unref?.();
-    this.runWorkerPass();
+    this.dns.start();
   }
 
   async stop(): Promise<void> {
-    this.stopped = true;
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-    await this.running?.catch(() => undefined);
+    await this.dns.stop();
   }
 
   get requestRoles() {
@@ -253,11 +175,14 @@ export class VerifiedDomainOnboardingService {
     }));
   }
 
-  listClaims(tenantId: string): readonly AuthTenantDomainClaimProjection[] {
+  listClaims(
+    tenantId: string,
+    assertCurrentAuthority?: AssertAuthTenantMutationAuthority,
+  ): readonly AuthTenantDomainClaimProjection[] {
     this.users.assertCurrentProfile();
     this.requireEnabled();
     this.requireActiveTenant(tenantId);
-    this.reconcileClaimStatuses();
+    this.reconcileClaimStatuses(tenantId);
     const rows = this.db.prepare(`
       SELECT claim.*, policy.enabled, policy.admission,
         policy.request_role_key, policy.revision AS policy_revision
@@ -266,7 +191,11 @@ export class VerifiedDomainOnboardingService {
       WHERE claim.tenant_id = ? AND claim.released_at IS NULL
       ORDER BY claim.created_at ASC, claim.claim_id ASC
     `).all(tenantId) as Array<ClaimRow & ClaimPolicyRow>;
-    return Object.freeze(rows.map(projectClaim));
+    const claims = Object.freeze(rows.map(projectClaim));
+    if (assertCurrentAuthority) {
+      this.invokeAuthority(assertCurrentAuthority, ['tenant.domains:read']);
+    }
+    return claims;
   }
 
   createClaim(input: {
@@ -304,7 +233,8 @@ export class VerifiedDomainOnboardingService {
           throw domainUnavailable();
         }
         const retained = this.db.prepare(`SELECT COUNT(*) AS count
-          FROM _auth_tenant_domain_claims WHERE tenant_id = ?`).get(
+          FROM _auth_tenant_domain_claims
+          WHERE tenant_id = ? AND released_at IS NULL`).get(
           input.tenantId,
         ) as { count: number };
         if (retained.count >= this.config.maxClaimsPerTenant) {
@@ -351,7 +281,7 @@ export class VerifiedDomainOnboardingService {
       if (isUniqueConstraint(error)) throw domainUnavailable();
       throw error;
     }
-    emitPlatformCode(OBS_CODES.AUTH_DOMAIN_CLAIM_CREATED, {
+    this.emitCode(OBS_CODES.AUTH_DOMAIN_CLAIM_CREATED, {
       userId: undefined,
       metadata: { claimId, tenantId: input.tenantId },
     });
@@ -415,7 +345,7 @@ export class VerifiedDomainOnboardingService {
         target: { type: 'tenant-domain-claim', id: input.claimId },
       });
     });
-    emitPlatformCode(OBS_CODES.AUTH_DOMAIN_CHALLENGE_ISSUED, {
+    this.emitCode(OBS_CODES.AUTH_DOMAIN_CHALLENGE_ISSUED, {
       metadata: { claimId: input.claimId, tenantId: input.tenantId },
     });
     return {
@@ -431,40 +361,7 @@ export class VerifiedDomainOnboardingService {
     assertCurrentAuthority: AssertAuthTenantMutationAuthority;
     auditRequest?: AuthAuditRequestContext;
   }): Promise<AuthTenantDomainClaimProjection> {
-    this.users.assertCurrentProfile();
-    this.requireEnabled();
-    const lease = this.acquireManualLease(input);
-    let answers: readonly string[];
-    try {
-      answers = await this.resolveAnswers(lease.domain);
-    } catch {
-      this.releaseUnavailableLease({
-        tenantId: input.tenantId,
-        claimId: input.claimId,
-        revision: lease.revision,
-        leaseOwner: lease.leaseOwner,
-        scheduleRetry: false,
-      });
-      emitPlatformCode(OBS_CODES.AUTH_DOMAIN_DNS_UNAVAILABLE, {
-        metadata: { claimId: input.claimId, tenantId: input.tenantId },
-      });
-      throw dnsUnavailable();
-    }
-    const matched = answers.some((answer) => digestMatches(lease.digest, answer));
-    const claim = this.finalizeLease({
-      tenantId: input.tenantId,
-      claimId: input.claimId,
-      leaseOwner: lease.leaseOwner,
-      expectedRevision: lease.revision,
-      matched,
-      assertCurrentAuthority: input.assertCurrentAuthority,
-      auditRequest: input.auditRequest,
-    });
-    emitPlatformCode(
-      matched ? OBS_CODES.AUTH_DOMAIN_VERIFIED : OBS_CODES.AUTH_DOMAIN_VERIFICATION_FAILED,
-      { metadata: { claimId: input.claimId, tenantId: input.tenantId } },
-    );
-    return claim;
+    return this.dns.verifyClaim(input);
   }
 
   updatePolicy(input: {
@@ -526,7 +423,7 @@ export class VerifiedDomainOnboardingService {
         metadata: { enabled: input.enabled },
       });
     });
-    emitPlatformCode(OBS_CODES.AUTH_DOMAIN_POLICY_UPDATED, {
+    this.emitCode(OBS_CODES.AUTH_DOMAIN_POLICY_UPDATED, {
       metadata: { claimId: input.claimId, tenantId: input.tenantId },
     });
     return this.requireProjectedClaim(input.tenantId, input.claimId);
@@ -645,7 +542,10 @@ export class VerifiedDomainOnboardingService {
         claim.claim_id,
       ).changes;
       if (cancelledRequests !== snapshottedRequests) {
-        throw new Error('[auth] Domain release provenance snapshot invariant failed.');
+        throw this.stateInvariant(
+          'release-provenance-snapshot-count',
+          '[auth] Domain release provenance snapshot invariant failed.',
+        );
       }
 
       const released = this.db.prepare(`
@@ -691,7 +591,7 @@ export class VerifiedDomainOnboardingService {
         }),
       });
     });
-    emitPlatformCode(OBS_CODES.AUTH_DOMAIN_CLAIM_RELEASED, {
+    this.emitCode(OBS_CODES.AUTH_DOMAIN_CLAIM_RELEASED, {
       metadata: {
         claimId: result.release.claimId,
         tenantId: input.tenantId,
@@ -707,31 +607,7 @@ export class VerifiedDomainOnboardingService {
     identityKind: 'session' | 'continuation';
     identityContinuation?: AuthSessionContinuationRecord | null;
   }): DomainMailboxJobBinding | null {
-    this.users.assertCurrentProfile();
-    if (!this.config.enabled) return null;
-    const user = this.users.getUserById(input.userId);
-    if (!isEligibleUser(user)) return null;
-    try {
-      verifiedDomainFromEmail(user.email, this.config.sharedMailboxDomains);
-    } catch (error) {
-      if (error instanceof VerifiedDomainNameError) return null;
-      throw error;
-    }
-    const continuation = input.identityContinuation ?? null;
-    if (input.identityKind === 'continuation'
-      && (!continuation || continuation.userId !== user.userId
-        || continuation.applicationId !== this.applicationId
-        || continuation.authGeneration !== this.users.getAuthGeneration(user.userId))) {
-      return null;
-    }
-    return {
-      userId: user.userId,
-      email: canonicalizeEmail(user.email),
-      emailGeneration: this.users.getEmailGeneration(user.userId),
-      authGeneration: this.users.getAuthGeneration(user.userId),
-      identityKind: input.identityKind,
-      identityContinuationId: continuation?.continuationId ?? null,
-    };
+    return this.admission.prepareMailboxRequest(input);
   }
 
   /** Create one digest-only mailbox token immediately before outbox delivery. */
@@ -740,196 +616,20 @@ export class VerifiedDomainOnboardingService {
     rawToken: string;
     expiresAt: number;
   } | null {
-    this.users.assertCurrentProfile();
-    if (!this.config.enabled) return null;
-    const user = this.users.getUserById(input.userId);
-    if (!isEligibleUser(user)
-      || canonicalizeEmail(user.email) !== input.email
-      || this.users.getEmailGeneration(user.userId) !== input.emailGeneration
-      || this.users.getAuthGeneration(user.userId) !== input.authGeneration) return null;
-    if (input.identityKind === 'continuation'
-      && !this.isContinuationLive(input.identityContinuationId, input)) return null;
-    const rawToken = `${MAILBOX_TOKEN_PREFIX}${createOpaqueToken(32)}`;
-    const now = this.now();
-    const expiresAt = now + this.config.mailboxLinkTTLms;
-    const inserted = this.db.transaction(() => {
-      this.users.assertCurrentProfile();
-      const consumed = this.db.prepare(`SELECT 1
-        FROM _auth_domain_mailbox_tokens
-        WHERE outbox_job_id = ? AND consumed_at IS NOT NULL AND expires_at > ?
-        LIMIT 1`).get(input.jobId, now);
-      if (consumed) return false;
-      this.db.prepare(`DELETE FROM _auth_domain_mailbox_tokens
-        WHERE outbox_job_id = ? AND expires_at <= ?`).run(input.jobId, now);
-      const live = this.db.prepare(`SELECT COUNT(*) AS count
-        FROM _auth_domain_mailbox_tokens
-        WHERE outbox_job_id = ? AND consumed_at IS NULL AND expires_at > ?`).get(
-        input.jobId,
-        now,
-      ) as { count: number };
-      if (live.count >= MAX_MAILBOX_TOKENS_PER_JOB) return false;
-      this.db.prepare(`
-        INSERT INTO _auth_domain_mailbox_tokens (
-          token_id, application_id, user_id, email, email_generation,
-          auth_generation, identity_kind, identity_continuation_id,
-          token_hash, outbox_job_id, expires_at, consumed_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
-      `).run(
-        `dmt_${crypto.randomUUID()}`,
-        this.applicationId,
-        user.userId,
-        canonicalizeEmail(user.email),
-        input.emailGeneration,
-        input.authGeneration,
-        input.identityKind,
-        input.identityContinuationId,
-        hashToken(rawToken),
-        input.jobId,
-        expiresAt,
-        now,
-      );
-      return true;
-    });
-    if (!inserted) return null;
-    return { user, rawToken, expiresAt };
+    return this.admission.createMailboxDelivery(input);
   }
 
   discardMailboxDelivery(rawToken: string): boolean {
-    this.users.assertCurrentProfile();
-    return this.db.transaction(() => {
-      this.users.assertCurrentProfile();
-      return this.db.prepare(`DELETE FROM _auth_domain_mailbox_tokens
-        WHERE token_hash = ? AND consumed_at IS NULL`).run(hashToken(rawToken)).changes === 1;
-    });
+    return this.admission.discardMailboxDelivery(rawToken);
   }
 
   /** Consume mailbox possession and reveal no tenant until that succeeds. */
   completeMailboxProof(rawToken: string): AuthDomainOnboardingCompletion {
-    this.users.assertCurrentProfile();
-    if (!this.config.enabled || !rawToken.startsWith(MAILBOX_TOKEN_PREFIX)) {
-      return unavailable();
-    }
-    const now = this.now();
-    return this.db.transaction(() => {
-      this.users.assertCurrentProfile();
-      this.reconcileClaimStatuses();
-      const token = this.db.prepare(`SELECT * FROM _auth_domain_mailbox_tokens
-        WHERE application_id = ? AND token_hash = ?`).get(
-        this.applicationId,
-        hashToken(rawToken),
-      ) as MailboxTokenRow | null;
-      if (!token || token.consumed_at !== null || token.expires_at <= now) {
-        return unavailable();
-      }
-      if (this.db.prepare(`UPDATE _auth_domain_mailbox_tokens SET consumed_at = ?
-        WHERE outbox_job_id = ? AND consumed_at IS NULL`).run(
-        now,
-        token.outbox_job_id,
-      ).changes < 1) return unavailable();
-      const user = this.users.getUserById(token.user_id);
-      if (!isEligibleUser(user)
-        || canonicalizeEmail(user.email) !== token.email
-        || this.users.getEmailGeneration(user.userId) !== token.email_generation
-        || this.users.getAuthGeneration(user.userId) !== token.auth_generation
-        || (token.identity_kind === 'continuation'
-          && !this.isContinuationLive(token.identity_continuation_id, {
-            userId: token.user_id,
-            authGeneration: token.auth_generation,
-          }))) return unavailable();
-      let domain: string;
-      try {
-        domain = verifiedDomainFromEmail(user.email, this.config.sharedMailboxDomains);
-      } catch {
-        return unavailable();
-      }
-      const proofId = this.users.recordEmailLinkMailboxProof({
-        applicationId: this.applicationId,
-        userId: user.userId,
-        email: user.email,
-        emailGeneration: token.email_generation,
-        provedAt: now,
-        expiresAt: now + this.config.mailboxProofMaxAgeMs,
-      });
-      if (!proofId) return unavailable();
-      const eligible = this.resolveEligibleClaim(domain, user.userId, now);
-      if (!eligible) return unavailable();
-      const tenant = this.tenancy.getTenant(eligible.claim.tenant_id)!;
-      const pending = this.getJoinRequest(tenant.tenantId, user.userId);
-      if (pending?.status === 'pending') {
-        return {
-          option: {
-            action: 'request-pending',
-            tenant: { name: tenant.name, slug: tenant.slug },
-            request: {
-              joinRequestId: pending.join_request_id,
-              status: 'pending',
-              createdAt: pending.created_at,
-            },
-          },
-        };
-      }
-      if (pending && !this.canRetryJoinRequest(pending, now)) return unavailable();
-      const continuation = `${ADMISSION_TOKEN_PREFIX}${createOpaqueToken(32)}`;
-      const expiresAt = Math.min(
-        now + this.config.admissionTTLms,
-        now + this.config.mailboxProofMaxAgeMs,
-      );
-      this.db.prepare(`
-        INSERT INTO _auth_domain_onboarding_transactions (
-          transaction_id, application_id, user_id, email, email_generation,
-          auth_generation, identity_kind, identity_continuation_id,
-          mailbox_proof_id, domain, claim_id, claim_revision, policy_revision,
-          tenant_id, request_role_key, token_hash, expires_at, consumed_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
-      `).run(
-        `dot_${crypto.randomUUID()}`,
-        this.applicationId,
-        user.userId,
-        canonicalizeEmail(user.email),
-        token.email_generation,
-        token.auth_generation,
-        token.identity_kind,
-        token.identity_continuation_id,
-        proofId,
-        domain,
-        eligible.claim.claim_id,
-        eligible.claim.revision,
-        eligible.policy.policy_revision,
-        tenant.tenantId,
-        eligible.policy.request_role_key,
-        hashToken(continuation),
-        expiresAt,
-        now,
-      );
-      emitPlatformCode(OBS_CODES.AUTH_DOMAIN_MAILBOX_PROVED, {
-        userId: user.userId,
-        metadata: { claimId: eligible.claim.claim_id },
-      });
-      return {
-        option: {
-          action: 'request-to-join',
-          tenant: { name: tenant.name, slug: tenant.slug },
-        },
-        continuation,
-        expiresAt,
-      };
-    });
+    return this.admission.completeMailboxProof(rawToken);
   }
 
   inspectAdmissionIdentity(raw: string): DomainAdmissionIdentityBinding | null {
-    this.users.assertCurrentProfile();
-    if (!raw.startsWith(ADMISSION_TOKEN_PREFIX)) return null;
-    const row = this.getTransactionByHash.get(
-      this.applicationId,
-      hashToken(raw),
-    ) as TransactionRow | null;
-    if (!row || row.consumed_at !== null || row.expires_at <= this.now()) return null;
-    return {
-      userId: row.user_id,
-      authGeneration: row.auth_generation,
-      identityKind: row.identity_kind,
-      identityContinuationId: row.identity_continuation_id,
-    };
+    return this.admission.inspectAdmissionIdentity(raw);
   }
 
   admit(input: {
@@ -944,183 +644,10 @@ export class VerifiedDomainOnboardingService {
       tenant: { name: string; slug: string };
     };
   } {
-    this.users.assertCurrentProfile();
-    this.requireEnabled();
-    const now = this.now();
-    return this.db.transaction(() => {
-      this.users.assertCurrentProfile();
-      this.reconcileClaimStatuses();
-      const transaction = this.getTransactionByHash.get(
-        this.applicationId,
-        hashToken(input.continuation),
-      ) as TransactionRow | null;
-      if (!transaction || transaction.consumed_at !== null
-        || transaction.expires_at <= now
-        || !sameIdentityBinding(transaction, input.identity)) {
-        throw invalidAdmission();
-      }
-      const user = this.users.getUserById(transaction.user_id);
-      if (!isEligibleUser(user)
-        || canonicalizeEmail(user.email) !== transaction.email
-        || this.users.getEmailGeneration(user.userId) !== transaction.email_generation
-        || this.users.getAuthGeneration(user.userId) !== transaction.auth_generation) {
-        throw invalidAdmission();
-      }
-      const proof = this.db.prepare(`SELECT * FROM _auth_mailbox_proofs
-        WHERE proof_id = ? AND application_id = ? AND user_id = ?
-          AND email = ? AND email_generation = ? AND source = 'email-link'
-          AND revoked_at IS NULL AND expires_at > ? AND proved_at > ?`).get(
-        transaction.mailbox_proof_id,
-        this.applicationId,
-        user.userId,
-        transaction.email,
-        transaction.email_generation,
-        now,
-        now - this.config.mailboxProofMaxAgeMs,
-      );
-      if (!proof) throw invalidAdmission();
-      const claim = this.requireClaim(transaction.tenant_id, transaction.claim_id);
-      const policy = this.getPolicy(transaction.claim_id);
-      if (claim.domain !== transaction.domain
-        || claim.revision !== transaction.claim_revision
-        || !isClaimAdmissionEligible(claim, now, this.config.gracePeriodMs)
-        || policy.policy_revision !== transaction.policy_revision
-        || !policy.enabled
-        || policy.request_role_key !== transaction.request_role_key
-        || !this.config.allowedRequestRoles.includes(transaction.request_role_key)) {
-        throw invalidAdmission();
-      }
-      this.requireConfiguredRole(transaction.request_role_key);
-      const tenant = this.requireActiveTenant(transaction.tenant_id);
-      if (this.hasPendingInvitation(tenant.tenantId, user.email, now)
-        || this.tenancy.getMembership(tenant.tenantId, user.userId)
-        || this.hasAdmissionBlock(tenant.tenantId, user.userId)) {
-        throw domainAdmissionBlocked();
-      }
-      const existing = this.getJoinRequest(tenant.tenantId, user.userId);
-      if (existing && existing.status !== 'pending'
-        && !this.canRetryJoinRequest(existing, now)) throw domainAdmissionBlocked();
-      if (input.consumeIdentity && !input.consumeIdentity()) throw invalidAdmission();
-      if (this.db.prepare(`UPDATE _auth_domain_onboarding_transactions
-        SET consumed_at = ? WHERE transaction_id = ? AND consumed_at IS NULL
-          AND expires_at > ?`).run(
-        now,
-        transaction.transaction_id,
-        now,
-      ).changes !== 1) throw invalidAdmission();
-
-      let request = existing;
-      if (!request) {
-        const joinRequestId = `tjoin_${crypto.randomUUID()}`;
-        this.db.prepare(`
-          INSERT INTO _auth_tenant_join_requests (
-            join_request_id, tenant_id, user_id, email, status,
-            request_revision, requested_at, created_at, updated_at,
-            reviewed_at, reviewed_by, last_decision, approved_membership_id
-          ) VALUES (?, ?, ?, ?, 'pending', 1, ?, ?, ?, NULL, NULL, NULL, NULL)
-        `).run(
-          joinRequestId,
-          tenant.tenantId,
-          user.userId,
-          canonicalizeEmail(user.email),
-          now,
-          now,
-          now,
-        );
-        request = this.getJoinRequest(tenant.tenantId, user.userId)!;
-      } else if (request.status !== 'pending') {
-        const changed = this.db.prepare(`
-          UPDATE _auth_tenant_join_requests
-          SET status = 'pending', request_revision = request_revision + 1,
-              requested_at = ?, updated_at = ?, reviewed_at = NULL,
-              reviewed_by = NULL, approved_membership_id = NULL
-          WHERE join_request_id = ? AND tenant_id = ? AND user_id = ?
-            AND status IN ('denied', 'cancelled')
-            AND request_revision = ?
-        `).run(
-          now,
-          now,
-          request.join_request_id,
-          tenant.tenantId,
-          user.userId,
-          request.request_revision,
-        );
-        if (changed.changes !== 1) throw domainAdmissionBlocked();
-        request = this.getJoinRequest(tenant.tenantId, user.userId)!;
-      } else {
-        // A domain proof changes the server-owned approval policy. Advance the
-        // revision even when a generic request won the race after proof issue,
-        // so a reviewer can never decide against the stale policy projection.
-        const changed = this.db.prepare(`
-          UPDATE _auth_tenant_join_requests
-          SET request_revision = request_revision + 1,
-              requested_at = ?, updated_at = ?, reviewed_at = NULL,
-              reviewed_by = NULL, approved_membership_id = NULL
-          WHERE join_request_id = ? AND tenant_id = ? AND user_id = ?
-            AND status = 'pending' AND request_revision = ?
-        `).run(
-          now,
-          now,
-          request.join_request_id,
-          tenant.tenantId,
-          user.userId,
-          request.request_revision,
-        );
-        if (changed.changes !== 1) throw domainAdmissionBlocked();
-        request = this.getJoinRequest(tenant.tenantId, user.userId)!;
-      }
-      this.db.prepare(`
-        INSERT INTO _auth_domain_join_request_provenance (
-          join_request_id, tenant_id, user_id, claim_id, domain,
-          request_role_key, mailbox_proof_id, blocked_until, created_at, updated_at,
-          source, request_revision
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 'verified-domain', ?)
-        ON CONFLICT(join_request_id) DO UPDATE SET
-          claim_id = excluded.claim_id,
-          domain = excluded.domain,
-          request_role_key = excluded.request_role_key,
-          mailbox_proof_id = excluded.mailbox_proof_id,
-          blocked_until = NULL,
-          updated_at = excluded.updated_at,
-          source = excluded.source,
-          request_revision = excluded.request_revision
-      `).run(
-        request.join_request_id,
-        tenant.tenantId,
-        user.userId,
-        claim.claim_id,
-        claim.domain,
-        transaction.request_role_key,
-        transaction.mailbox_proof_id,
-        now,
-        now,
-        request.request_revision,
-      );
-      emitPlatformCode(OBS_CODES.AUTH_DOMAIN_JOIN_REQUESTED, {
-        userId: user.userId,
-        metadata: { claimId: claim.claim_id, tenantId: tenant.tenantId },
-      });
-      return {
-        request: {
-          joinRequestId: request.join_request_id,
-          status: 'pending',
-          createdAt: request.created_at,
-          tenant: { name: tenant.name, slug: tenant.slug },
-        },
-      };
-    });
+    return this.admission.admit(input);
   }
-
-  async processDueReverification(limit = REVERIFY_BATCH): Promise<number> {
-    this.users.assertCurrentProfile();
-    this.cleanupExpiredEvidence();
-    if (!this.config.enabled || this.stopped) return 0;
-    if (this.running) return this.running;
-    const run = this.processDueReverificationInner(limit).finally(() => {
-      if (this.running === run) this.running = null;
-    });
-    this.running = run;
-    return run;
+  async processDueReverification(limit = VERIFIED_DOMAIN_REVERIFY_BATCH): Promise<number> {
+    return this.dns.processDueReverification(limit);
   }
 
   /** Bounded deletion of short-lived PII/proof evidence; provenance is retained. */
@@ -1130,376 +657,49 @@ export class VerifiedDomainOnboardingService {
     mailboxProofs: number;
   } {
     this.users.assertCurrentProfile();
-    const requested = Number.isSafeInteger(limit) ? limit : CLEANUP_BATCH;
-    const bounded = Math.max(1, Math.min(requested, 1_000));
-    const now = this.now();
-    return this.db.transaction(() => {
-      this.users.assertCurrentProfile();
-      const transactions = this.db.prepare(`
-        DELETE FROM _auth_domain_onboarding_transactions
-        WHERE transaction_id IN (
-          SELECT transaction_id FROM _auth_domain_onboarding_transactions
-          WHERE expires_at <= ? OR consumed_at IS NOT NULL
-          ORDER BY COALESCE(consumed_at, expires_at) ASC, transaction_id ASC
-          LIMIT ?
-        )
-        RETURNING transaction_id
-      `).all(now, bounded).length;
-      const mailboxTokens = this.db.prepare(`
-        DELETE FROM _auth_domain_mailbox_tokens
-        WHERE token_id IN (
-          SELECT token_id FROM _auth_domain_mailbox_tokens
-          WHERE expires_at <= ? OR (
-            consumed_at IS NOT NULL AND NOT EXISTS (
-              SELECT 1 FROM _auth_email_outbox outbox
-              WHERE outbox.job_id = _auth_domain_mailbox_tokens.outbox_job_id
-                AND outbox.status IN ('pending', 'processing')
-            )
-          )
-          ORDER BY COALESCE(consumed_at, expires_at) ASC, token_id ASC
-          LIMIT ?
-        )
-        RETURNING token_id
-      `).all(now, bounded).length;
-      const mailboxProofs = this.db.prepare(`
-        DELETE FROM _auth_mailbox_proofs
-        WHERE proof_id IN (
-          SELECT proof_id FROM _auth_mailbox_proofs
-          WHERE expires_at <= ? OR revoked_at IS NOT NULL
-          ORDER BY COALESCE(revoked_at, expires_at) ASC, proof_id ASC
-          LIMIT ?
-        )
-        RETURNING proof_id
-      `).all(now, bounded).length;
-      return { mailboxTokens, transactions, mailboxProofs };
+    return cleanupVerifiedDomainEvidence({
+      db: this.db,
+      now: this.now(),
+      limit,
+      assertCurrentProfile: () => this.users.assertCurrentProfile(),
     });
   }
 
-  private async processDueReverificationInner(limit: number): Promise<number> {
-    this.reconcileClaimStatuses();
-    let processed = 0;
-    for (let index = 0; index < Math.max(0, Math.min(limit, 100)); index += 1) {
-      const lease = this.acquireDueLease();
-      if (!lease) break;
-      let answers: readonly string[];
-      try {
-        answers = await this.resolveAnswers(lease.domain);
-      } catch {
-        this.releaseUnavailableLease({
-          ...lease,
-          scheduleRetry: true,
-        });
-        emitPlatformCode(OBS_CODES.AUTH_DOMAIN_DNS_UNAVAILABLE, {
-          metadata: { claimId: lease.claimId, tenantId: lease.tenantId },
-        });
-        processed += 1;
-        continue;
-      }
-      const matched = answers.some((answer) => digestMatches(lease.digest, answer));
-      this.finalizeSystemLease(lease, matched);
-      processed += 1;
-    }
-    return processed;
-  }
-
-  private runWorkerPass(): void {
-    void this.processDueReverification().catch((error: unknown) => {
-      if (error instanceof AuthError && error.code === 'AUTH_PROFILE_CHANGED') {
-        this.stopped = true;
-        if (this.timer) clearInterval(this.timer);
-        this.timer = null;
-      }
-      emitPlatformCode(OBS_CODES.AUTH_DOMAIN_WORKER_FAILED, {
-        metadata: {
-          error: error instanceof Error ? error.name : 'UnknownError',
-        },
-      });
-    });
-  }
-
-  private acquireManualLease(input: {
-    tenantId: string;
-    claimId: string;
-    expectedRevision: string;
-    assertCurrentAuthority: AssertAuthTenantMutationAuthority;
-  }): { domain: string; digest: string; revision: number; leaseOwner: string } {
-    const now = this.now();
-    return this.db.transaction(() => {
-      this.users.assertCurrentProfile();
-      this.lockTenant(input.tenantId);
-      this.requireAuthority(
-        input.tenantId,
-        input.assertCurrentAuthority,
-        ['tenant.domains:verify'],
-      );
-      const claim = this.requireClaim(input.tenantId, input.claimId);
-      this.assertClaimRevision(claim, input.expectedRevision);
-      const digest = claim.challenge_digest ?? claim.verification_digest;
-      if (!digest || (claim.challenge_digest && claim.challenge_expires_at! <= now)) {
-        throw new AuthError(
-          'DNS challenge is unavailable or expired',
-          'AUTH_DOMAIN_CHALLENGE_EXPIRED',
-          409,
-        );
-      }
-      if (claim.last_checked_at !== null
-        && now - claim.last_checked_at < this.config.dnsCheckCooldownMs) {
-        throw rateLimited();
-      }
-      const leaseOwner = `vdl_${crypto.randomUUID()}`;
-      const changed = this.db.prepare(`
-        UPDATE _auth_tenant_domain_claims
-        SET lease_owner = ?, lease_expires_at = ?
-        WHERE tenant_id = ? AND claim_id = ? AND revision = ?
-          AND released_at IS NULL
-          AND (lease_owner IS NULL OR lease_expires_at <= ?)
-      `).run(
-        leaseOwner,
-        now + this.config.dnsTimeoutMs + 5_000,
-        input.tenantId,
-        input.claimId,
-        claim.revision,
-        now,
-      );
-      if (changed.changes !== 1) throw rateLimited();
-      return { domain: claim.domain, digest, revision: claim.revision, leaseOwner };
-    });
-  }
-
-  private finalizeLease(input: {
-    tenantId: string;
-    claimId: string;
-    leaseOwner: string;
-    expectedRevision: number;
-    matched: boolean;
-    assertCurrentAuthority: AssertAuthTenantMutationAuthority;
-    auditRequest?: AuthAuditRequestContext;
-  }): AuthTenantDomainClaimProjection {
-    const now = this.now();
-    this.db.transaction(() => {
-      this.users.assertCurrentProfile();
-      this.lockTenant(input.tenantId);
-      const authority = this.requireAuthority(
-        input.tenantId,
-        input.assertCurrentAuthority,
-        ['tenant.domains:verify'],
-      );
-      const claim = this.requireClaim(input.tenantId, input.claimId);
-      if (claim.revision !== input.expectedRevision
-        || claim.lease_owner !== input.leaseOwner) throw claimRevisionConflict();
-      this.persistVerificationResult(claim, input.leaseOwner, input.matched, now);
-      this.auditService?.append({
-        action: 'tenant.domain-verification-completed',
-        outcome: input.matched ? 'succeeded' : 'failed',
-        ...(input.matched ? {} : { reason: 'proof-mismatch' }),
-        scope: { kind: 'tenant', tenantId: input.tenantId },
-        actor: authAuditActorFromContext(authority.auth),
-        request: input.auditRequest,
-        target: { type: 'tenant-domain-claim', id: input.claimId },
-      });
-    });
-    return this.requireProjectedClaim(input.tenantId, input.claimId);
-  }
-
-  private acquireDueLease(): null | {
-    tenantId: string;
-    claimId: string;
-    domain: string;
-    digest: string;
-    revision: number;
-    leaseOwner: string;
-  } {
-    const now = this.now();
-    return this.db.transaction(() => {
-      this.users.assertCurrentProfile();
-      const claim = this.db.prepare(`
-        SELECT * FROM _auth_tenant_domain_claims claim
-        WHERE claim.released_at IS NULL
-          AND claim.status IN ('verified', 'grace', 'lost')
-          AND claim.verification_digest IS NOT NULL
-          AND claim.next_check_at IS NOT NULL AND claim.next_check_at <= ?
-          AND (claim.lease_owner IS NULL OR claim.lease_expires_at <= ?)
-          AND EXISTS (SELECT 1 FROM _auth_tenants tenant
-            WHERE tenant.tenant_id = claim.tenant_id AND tenant.status = 'active')
-        ORDER BY claim.next_check_at ASC, claim.claim_id ASC
-        LIMIT 1
-      `).get(now, now) as ClaimRow | null;
-      if (!claim?.verification_digest) return null;
-      const changed = this.db.prepare(`
-        UPDATE _auth_tenant_domain_claims
-        SET lease_owner = ?, lease_expires_at = ?
-        WHERE claim_id = ? AND revision = ? AND released_at IS NULL
-          AND (lease_owner IS NULL OR lease_expires_at <= ?)
-      `).run(
-        this.workerId,
-        now + this.config.dnsTimeoutMs + 5_000,
-        claim.claim_id,
-        claim.revision,
-        now,
-      );
-      if (changed.changes !== 1) return null;
-      return {
-        tenantId: claim.tenant_id,
-        claimId: claim.claim_id,
-        domain: claim.domain,
-        digest: claim.verification_digest,
-        revision: claim.revision,
-        leaseOwner: this.workerId,
-      };
-    });
-  }
-
-  private finalizeSystemLease(
-    lease: {
-      tenantId: string;
-      claimId: string;
-      revision: number;
-      leaseOwner: string;
-    },
-    matched: boolean,
-  ): void {
-    const now = this.now();
-    this.db.transaction(() => {
-      this.users.assertCurrentProfile();
-      const claim = this.requireClaim(lease.tenantId, lease.claimId);
-      if (claim.revision !== lease.revision || claim.lease_owner !== lease.leaseOwner) return;
-      this.persistVerificationResult(claim, lease.leaseOwner, matched, now);
-    });
-    emitPlatformCode(
-      matched ? OBS_CODES.AUTH_DOMAIN_REVERIFIED : OBS_CODES.AUTH_DOMAIN_REVERIFICATION_FAILED,
-      { metadata: { claimId: lease.claimId, tenantId: lease.tenantId } },
-    );
-  }
-
-  private releaseUnavailableLease(input: {
-    tenantId: string;
-    claimId: string;
-    revision: number;
-    leaseOwner: string;
-    scheduleRetry: boolean;
-  }): void {
-    const now = this.now();
-    this.db.transaction(() => {
-      this.users.assertCurrentProfile();
-      this.db.prepare(`
-        UPDATE _auth_tenant_domain_claims
-        SET lease_owner = NULL, lease_expires_at = NULL,
-            next_check_at = CASE WHEN ? = 1 THEN ? ELSE next_check_at END
-        WHERE tenant_id = ? AND claim_id = ? AND revision = ?
-          AND lease_owner = ? AND released_at IS NULL
-      `).run(
-        input.scheduleRetry ? 1 : 0,
-        now + this.config.reverifyRetryIntervalMs,
-        input.tenantId,
-        input.claimId,
-        input.revision,
-        input.leaseOwner,
-      );
-    });
-  }
-
-  private persistVerificationResult(
-    claim: ClaimRow,
-    leaseOwner: string,
-    matched: boolean,
-    now: number,
-  ): void {
-    if (matched) {
-      const digest = claim.challenge_digest ?? claim.verification_digest;
-      const changed = this.db.prepare(`
-        UPDATE _auth_tenant_domain_claims
-        SET status = 'verified', verification_digest = ?,
-            challenge_digest = NULL, challenge_expires_at = NULL,
-            verified_at = COALESCE(verified_at, ?), last_checked_at = ?,
-            next_check_at = ?, valid_until = ?, revision = revision + 1,
-            lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
-        WHERE claim_id = ? AND revision = ? AND lease_owner = ?
-          AND released_at IS NULL
-      `).run(
-        digest,
-        now,
-        now,
-        now + this.config.reverifyIntervalMs,
-        now + this.config.reverifyIntervalMs,
-        now,
-        claim.claim_id,
-        claim.revision,
-        leaseOwner,
-      );
-      if (changed.changes !== 1) throw claimRevisionConflict();
-      return;
-    }
-    const status = failedClaimStatus(claim, now, this.config.gracePeriodMs);
-    const changed = this.db.prepare(`
-      UPDATE _auth_tenant_domain_claims
-      SET status = ?, last_checked_at = ?, next_check_at = ?,
-          revision = revision + 1, lease_owner = NULL, lease_expires_at = NULL,
-          updated_at = ?
-      WHERE claim_id = ? AND revision = ? AND lease_owner = ?
-        AND released_at IS NULL
-    `).run(
-      status,
-      now,
-      now + this.config.reverifyRetryIntervalMs,
-      now,
-      claim.claim_id,
-      claim.revision,
-      leaseOwner,
-    );
-    if (changed.changes !== 1) throw claimRevisionConflict();
-  }
-
-  private resolveEligibleClaim(domain: string, userId: string, now: number): null | {
-    claim: ClaimRow;
-    policy: ClaimPolicyRow;
-  } {
-    const row = this.db.prepare(`
-      SELECT claim.*, policy.enabled, policy.admission,
-        policy.request_role_key, policy.revision AS policy_revision
-      FROM _auth_tenant_domain_claims claim
-      INNER JOIN _auth_tenant_domain_policies policy ON policy.claim_id = claim.claim_id
-      INNER JOIN _auth_tenants tenant ON tenant.tenant_id = claim.tenant_id
-      WHERE claim.domain = ? AND claim.released_at IS NULL
-        AND tenant.status = 'active'
-        AND policy.enabled = 1 AND policy.admission = 'request-to-join'
-    `).get(domain) as (ClaimRow & ClaimPolicyRow) | null;
-    if (!row || !row.request_role_key
-      || !isClaimAdmissionEligible(row, now, this.config.gracePeriodMs)
-      || !this.config.allowedRequestRoles.includes(row.request_role_key)
-      || !this.isConfiguredRoleSafe(row.request_role_key)
-      || this.tenancy.getMembership(row.tenant_id, userId)
-      || this.hasAdmissionBlock(row.tenant_id, userId)
-      || this.hasPendingInvitation(row.tenant_id, this.users.getUserById(userId)?.email ?? '', now)) {
-      return null;
-    }
-    return { claim: row, policy: row };
-  }
-
-  private async resolveAnswers(domain: string): Promise<readonly string[]> {
-    return resolveBoundedTxt(`${DNS_RECORD_PREFIX}.${domain}`, {
-      resolveTxt: this.config.resolveTxt,
-      timeoutMs: this.config.dnsTimeoutMs,
-      maxAnswers: this.config.maxTxtAnswers,
-      maxBytes: this.config.maxTxtBytes,
-    });
-  }
-
-  private reconcileClaimStatuses(): void {
+  private reconcileClaimStatuses(tenantId?: string): void {
     const now = this.now();
     this.db.transaction(() => {
       this.users.assertCurrentProfile();
       this.db.prepare(`
         UPDATE _auth_tenant_domain_claims
         SET status = 'grace', revision = revision + 1, updated_at = ?
-        WHERE released_at IS NULL AND status = 'verified'
-          AND valid_until IS NOT NULL AND valid_until <= ?
-      `).run(now, now);
+        WHERE claim_id IN (
+          SELECT claim_id FROM _auth_tenant_domain_claims
+          WHERE released_at IS NULL AND status = 'verified'
+            AND valid_until IS NOT NULL AND valid_until <= ?
+            AND (? IS NULL OR tenant_id = ?)
+          ORDER BY valid_until ASC, claim_id ASC
+          LIMIT ?
+        )
+      `).run(now, now, tenantId ?? null, tenantId ?? null, CLEANUP_BATCH);
       this.db.prepare(`
         UPDATE _auth_tenant_domain_claims
         SET status = 'lost', revision = revision + 1, updated_at = ?
-        WHERE released_at IS NULL AND status = 'grace'
-          AND valid_until IS NOT NULL AND valid_until + ? <= ?
-      `).run(now, this.config.gracePeriodMs, now);
+        WHERE claim_id IN (
+          SELECT claim_id FROM _auth_tenant_domain_claims
+          WHERE released_at IS NULL AND status = 'grace'
+            AND valid_until IS NOT NULL AND valid_until + ? <= ?
+            AND (? IS NULL OR tenant_id = ?)
+          ORDER BY valid_until ASC, claim_id ASC
+          LIMIT ?
+        )
+      `).run(
+        now,
+        this.config.gracePeriodMs,
+        now,
+        tenantId ?? null,
+        tenantId ?? null,
+        CLEANUP_BATCH,
+      );
     });
   }
 
@@ -1507,7 +707,7 @@ export class VerifiedDomainOnboardingService {
     tenantId: string,
     claimId: string,
   ): AuthTenantDomainClaimProjection {
-    this.reconcileClaimStatuses();
+    this.reconcileClaimStatuses(tenantId);
     const row = this.db.prepare(`
       SELECT claim.*, policy.enabled, policy.admission,
         policy.request_role_key, policy.revision AS policy_revision
@@ -1534,74 +734,42 @@ export class VerifiedDomainOnboardingService {
     return row;
   }
 
-  private getJoinRequest(tenantId: string, userId: string): JoinRequestRow | null {
-    return this.db.prepare(`SELECT join_request_id, status, request_revision,
-        created_at, reviewed_at
-      FROM _auth_tenant_join_requests WHERE tenant_id = ? AND user_id = ?`).get(
-      tenantId,
-      userId,
-    ) as JoinRequestRow | null;
-  }
-
-  private canRetryJoinRequest(request: JoinRequestRow, now: number): boolean {
-    if (request.status === 'pending') return true;
-    if (request.status === 'approved') return false;
-    const provenance = this.db.prepare(`SELECT blocked_until, source, request_revision
-      FROM _auth_domain_join_request_provenance WHERE join_request_id = ?`).get(
-      request.join_request_id,
-    ) as {
-      blocked_until: number | null;
-      source: 'verified-domain' | 'legacy-unbound';
-      request_revision: number | null;
-    } | null;
-    const provenanceMayBeCurrent = provenance
-      && (provenance.request_revision === null
-        || provenance.request_revision === request.request_revision);
-    const blockedUntil = (provenanceMayBeCurrent ? provenance.blocked_until : null)
-      ?? ((request.reviewed_at ?? request.created_at) + this.config.deniedRetryCooldownMs);
-    return blockedUntil <= now;
-  }
-
-  private hasPendingInvitation(tenantId: string, email: string, now: number): boolean {
-    return Boolean(this.db.prepare(`SELECT 1 FROM _auth_tenant_invitations
-      WHERE tenant_id = ? AND email = ? COLLATE NOCASE AND status = 'pending'
-        AND expires_at > ? LIMIT 1`).get(tenantId, canonicalizeEmail(email), now));
-  }
-
-  private hasAdmissionBlock(tenantId: string, userId: string): boolean {
-    return Boolean(this.db.prepare(`SELECT 1 FROM _auth_tenant_admission_blocks
-      WHERE tenant_id = ? AND user_id = ? AND unblocked_at IS NULL LIMIT 1`).get(
-      tenantId,
-      userId,
-    ));
-  }
-
-  private isContinuationLive(
-    continuationId: string | null,
-    expected: { userId: string; authGeneration: number },
-  ): boolean {
-    if (!continuationId) return false;
-    return Boolean(this.db.prepare(`SELECT 1 FROM _auth_session_continuations
-      WHERE continuation_id = ? AND application_id = ? AND user_id = ?
-        AND purpose = 'tenant_onboarding' AND auth_generation = ?
-        AND consumed_at IS NULL AND expires_at > ?`).get(
-      continuationId,
-      this.applicationId,
-      expected.userId,
-      expected.authGeneration,
-      this.now(),
-    ));
-  }
-
   private requireAuthority(
     tenantId: string,
     assertion: AssertAuthTenantMutationAuthority,
     permissions: readonly import('./types').PermissionKey[],
   ) {
-    const authority = assertion(permissions);
+    const authority = this.invokeAuthority(assertion, permissions);
     if (authority.scope.tenantId !== tenantId) throw forbidden();
     this.requireActiveTenant(tenantId);
     return authority;
+  }
+
+  private invokeAuthority(
+    assertion: AssertAuthTenantMutationAuthority,
+    permissions: readonly import('./types').PermissionKey[],
+  ) {
+    return invokeSynchronousAuthCallback(
+      () => assertion(permissions),
+      {
+        component: 'verified-domain-onboarding-service',
+        invariant: 'authority-callback-async',
+        message: '[auth] Verified-domain authority callback must be synchronous.',
+        emitCode: this.emitCode,
+      },
+    );
+  }
+
+  private stateInvariant(invariant: string, message: string): AuthError {
+    const error = new AuthError(message, 'AUTH_STATE_INVARIANT_FAILED', 500);
+    this.emitCode(OBS_CODES.AUTH_STATE_INVARIANT_FAILED, {
+      error,
+      metadata: {
+        component: 'verified-domain-onboarding-service',
+        invariant,
+      },
+    });
+    return error;
   }
 
   private lockTenant(tenantId: string): void {
@@ -1613,7 +781,9 @@ export class VerifiedDomainOnboardingService {
 
   private requireActiveTenant(tenantId: string) {
     const tenant = this.tenancy.getTenant(tenantId);
-    if (!tenant || tenant.status !== 'active') throw forbidden();
+    if (!tenant || tenant.status !== 'active' || tenant.kind !== 'organization') {
+      throw forbidden();
+    }
     return tenant;
   }
 
@@ -1624,7 +794,11 @@ export class VerifiedDomainOnboardingService {
 
   private isConfiguredRoleSafe(key: string): boolean {
     const role = this.kernel.authorization.roles[key];
-    return Boolean(role && !role.system && !role.allPermissions && key !== 'owner');
+    return Boolean(role
+      && !role.system
+      && !role.allPermissions
+      && key !== 'owner'
+      && !isAdministrationOnlyRole(this.kernel.authorization, key));
   }
 
   private requireConfiguredRole(key: string): string {
@@ -1699,55 +873,11 @@ function createDnsChallenge(domain: string, ttlMs: number, now: number) {
     expiresAt,
     public: Object.freeze({
       recordType: 'TXT' as const,
-      name: `${DNS_RECORD_PREFIX}.${domain}`,
+      name: `${VERIFIED_DOMAIN_DNS_RECORD_PREFIX}.${domain}`,
       value,
       expiresAt,
     }),
   };
-}
-
-function digestMatches(expected: string, answer: string): boolean {
-  const actual = hashToken(answer.trim());
-  const left = Buffer.from(expected, 'hex');
-  const right = Buffer.from(actual, 'hex');
-  return left.length === right.length && timingSafeEqual(left, right);
-}
-
-function failedClaimStatus(
-  claim: ClaimRow,
-  now: number,
-  gracePeriodMs: number,
-): AuthTenantDomainClaimStatus {
-  if (!claim.verified_at || !claim.valid_until) return 'pending';
-  return now < claim.valid_until
-    ? 'verified'
-    : now < claim.valid_until + gracePeriodMs ? 'grace' : 'lost';
-}
-
-function isClaimAdmissionEligible(
-  claim: ClaimRow,
-  now: number,
-  gracePeriodMs: number,
-): boolean {
-  if (claim.released_at !== null) return false;
-  if (!claim.verification_digest || !claim.valid_until) return false;
-  if (claim.status === 'verified') return now < claim.valid_until;
-  return claim.status === 'grace' && now < claim.valid_until + gracePeriodMs;
-}
-
-function sameIdentityBinding(
-  row: TransactionRow,
-  identity: DomainAdmissionIdentityBinding,
-): boolean {
-  return row.user_id === identity.userId
-    && row.auth_generation === identity.authGeneration
-    && row.identity_kind === identity.identityKind
-    && row.identity_continuation_id === identity.identityContinuationId;
-}
-
-function isEligibleUser(user: UserRecord | null): user is UserRecord {
-  return Boolean(user && user.status === 'active' && !user.passwordChangeRequired
-    && (!user.emailVerificationRequired || user.emailVerifiedAt !== null));
 }
 
 function claimRevision(revision: number): string {
@@ -1756,10 +886,6 @@ function claimRevision(revision: number): string {
 
 function policyRevision(revision: number): string {
   return `${POLICY_REVISION_PREFIX}${revision.toString(36)}`;
-}
-
-function unavailable(): AuthDomainOnboardingCompletion {
-  return Object.freeze({ option: Object.freeze({ action: 'unavailable' as const }) });
 }
 
 function claimNotFound(): AuthError {
@@ -1791,30 +917,6 @@ function releaseConfirmationMismatch(): AuthError {
     'Type the exact domain to confirm release',
     'AUTH_DOMAIN_RELEASE_CONFIRMATION_MISMATCH',
     422,
-  );
-}
-
-function dnsUnavailable(): AuthError {
-  return new AuthError(
-    'DNS TXT verification is temporarily unavailable',
-    'AUTH_DOMAIN_DNS_UNAVAILABLE',
-    503,
-  );
-}
-
-function invalidAdmission(): AuthError {
-  return new AuthError(
-    'Domain onboarding proof is invalid or expired',
-    'AUTH_DOMAIN_ONBOARDING_PROOF_INVALID',
-    400,
-  );
-}
-
-function domainAdmissionBlocked(): AuthError {
-  return new AuthError(
-    'Domain onboarding is unavailable for this identity',
-    'AUTH_DOMAIN_ADMISSION_BLOCKED',
-    409,
   );
 }
 

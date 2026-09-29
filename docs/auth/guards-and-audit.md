@@ -302,8 +302,10 @@ HTTP route guards do not automatically authorize every other transport:
 - resources and `/api/data` evaluate their registered resource policies;
 - page-session cookies authenticate only matched safe `GET`/`HEAD` page
   requests, not APIs, mutations, raw plugins, or Sync;
-- current `role` and `requireAdmin()` checks remain global/platform concepts in
-  every auth profile; they never become tenant membership authority.
+- current `role` and `requireAdmin()` checks remain legacy
+  global-administrator concepts in every auth profile; they neither become
+  tenant membership authority nor stand in for Administration Organization
+  application permissions.
 
 For Sync, use a `SyncPolicy` or the resource-policy integration. Do not treat an
 HTTP `requireAuth()` call, a room ID, or a client-side filter as permission to

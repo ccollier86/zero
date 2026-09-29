@@ -41,6 +41,12 @@ import {
 import { AuthMfaTransport } from './auth-mfa-transport';
 import { AuthPropertyTransport } from './auth-property-transport';
 import {
+  composeAuthorizationScopeSignal,
+  guardResponseAuthorizationScope,
+} from './auth-response-scope';
+import { AuthPlatformAdministrationTransport } from './auth-platform-administration-transport';
+import type { AuthPlatformAdminSdkSurface } from './auth-platform-administration-types';
+import {
   AuthSessionController,
   AuthSessionSynchronizationError,
 } from './auth-session';
@@ -151,6 +157,19 @@ export type {
   AuthApplicationUserStatus,
 } from './auth-application-administration-types';
 export type {
+  AuthPlatformAdministrationConfig,
+  AuthPlatformAdminSdkSurface,
+  AuthPlatformTenant,
+  AuthPlatformTenantCreateParams,
+  AuthPlatformTenantCreateResult,
+  AuthPlatformTenantListParams,
+  AuthPlatformMutableTenantStatus,
+  AuthPlatformTenantPage,
+  AuthPlatformTenantStatus,
+  AuthPlatformTenantUpdateParams,
+  AuthPlatformTenantUpdateResult,
+} from './auth-platform-administration-types';
+export type {
   AuthAuditActorProvenance,
   AuthAuditEvent,
   AuthAuditExport,
@@ -260,210 +279,6 @@ type AuthenticatedTransportResult = { status: number };
 
 const authenticatedResponseScopeAssertions = new WeakMap<Response, () => void>();
 
-const RESPONSE_BODY_READ_METHODS = new Set<PropertyKey>([
-  'arrayBuffer',
-  'blob',
-  'bytes',
-  'formData',
-  'json',
-  'text',
-]);
-
-interface GuardedResponseMetadata {
-  readonly ok: boolean;
-  readonly redirected: boolean;
-  readonly status: number;
-  readonly statusText: string;
-  readonly type: ResponseType;
-  readonly url: string;
-}
-
-/**
- * Keep a fetch Response usable as a Response while refusing to surface body
- * bytes after the browser has crossed an authorization-scope boundary.
- *
- * Fetch resolves when headers arrive, not when the body has finished. Merely
- * checking the epoch around `await fetch()` therefore leaves a window where a
- * previous tenant's body can complete after a tenant switch. The guarded
- * stream checks immediately before and after every source read, and the proxy
- * checks public Response access plus body-reader completion.
- */
-function guardResponseAuthorizationScope(
-  response: Response,
-  assertCurrent: () => void,
-): Response {
-  assertCurrent();
-
-  const metadata: GuardedResponseMetadata = {
-    ok: response.ok,
-    redirected: response.redirected,
-    status: response.status,
-    statusText: response.statusText,
-    type: response.type,
-    url: response.url,
-  };
-
-  if (!response.body) {
-    return proxyGuardedResponse(response, metadata, assertCurrent);
-  }
-
-  const guardedBody = createAuthorizationScopeGuardedStream(
-    response.body,
-    assertCurrent,
-  );
-  // The Response constructor rejects opaque status 0. Preserve it through the
-  // proxy metadata while using a valid internal status for body consumption.
-  const internalStatus = response.status >= 200 && response.status <= 599
-    ? response.status
-    : 200;
-  const guardedResponse = new Response(guardedBody, {
-    headers: response.headers,
-    status: internalStatus,
-    statusText: internalStatus === response.status ? response.statusText : undefined,
-  });
-  return proxyGuardedResponse(guardedResponse, metadata, assertCurrent);
-}
-
-interface ComposedAbortSignal {
-  readonly signal: AbortSignal;
-  dispose(): void;
-}
-
-/**
- * Couple a caller-owned abort signal to the authorization-scope signal without
- * retaining either listener after the network attempt settles.
- */
-function composeAuthorizationScopeSignal(
-  callerSignal: AbortSignal | null | undefined,
-  authorizationScopeSignal: AbortSignal,
-): ComposedAbortSignal {
-  if (!callerSignal || callerSignal === authorizationScopeSignal) {
-    return { signal: authorizationScopeSignal, dispose: () => {} };
-  }
-
-  const controller = new AbortController();
-  const abortFrom = (signal: AbortSignal) => {
-    if (!controller.signal.aborted) controller.abort(signal.reason);
-  };
-  const abortFromCaller = () => abortFrom(callerSignal);
-  const abortFromScope = () => abortFrom(authorizationScopeSignal);
-
-  if (callerSignal.aborted) abortFrom(callerSignal);
-  else callerSignal.addEventListener('abort', abortFromCaller, { once: true });
-
-  if (authorizationScopeSignal.aborted) abortFrom(authorizationScopeSignal);
-  else authorizationScopeSignal.addEventListener('abort', abortFromScope, { once: true });
-
-  return {
-    signal: controller.signal,
-    dispose() {
-      callerSignal.removeEventListener('abort', abortFromCaller);
-      authorizationScopeSignal.removeEventListener('abort', abortFromScope);
-    },
-  };
-}
-
-function createAuthorizationScopeGuardedStream(
-  source: ReadableStream<Uint8Array>,
-  assertCurrent: () => void,
-): ReadableStream<Uint8Array> {
-  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-  let finished = false;
-
-  const releaseReader = () => {
-    if (!reader) return;
-    try {
-      reader.releaseLock();
-    } catch {
-      // A cancelled/errored stream may already have released its lock.
-    }
-    reader = null;
-  };
-
-  const cancelSource = async (reason: unknown) => {
-    if (!reader) reader = source.getReader();
-    try {
-      await reader.cancel(reason);
-    } finally {
-      releaseReader();
-    }
-  };
-
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      if (finished) return;
-      try {
-        assertCurrent();
-        if (!reader) reader = source.getReader();
-        const chunk = await reader.read();
-        assertCurrent();
-        if (chunk.done) {
-          finished = true;
-          releaseReader();
-          controller.close();
-          return;
-        }
-        controller.enqueue(chunk.value);
-      } catch (error) {
-        finished = true;
-        try {
-          await cancelSource(error);
-        } catch {
-          // Preserve the authorization-boundary error, not cancellation noise.
-        }
-        controller.error(error);
-      }
-    },
-    async cancel(reason) {
-      if (finished) return;
-      finished = true;
-      await cancelSource(reason);
-    },
-  });
-}
-
-function proxyGuardedResponse(
-  response: Response,
-  metadata: GuardedResponseMetadata,
-  assertCurrent: () => void,
-): Response {
-  return new Proxy(response, {
-    get(target, property) {
-      assertCurrent();
-
-      if (property === 'url'
-        || property === 'redirected'
-        || property === 'type'
-        || property === 'status'
-        || property === 'statusText'
-        || property === 'ok') {
-        return metadata[property];
-      }
-
-      if (property === 'clone') {
-        return () => {
-          assertCurrent();
-          return proxyGuardedResponse(target.clone(), metadata, assertCurrent);
-        };
-      }
-
-      const value = Reflect.get(target, property, target);
-      if (typeof value !== 'function') return value;
-
-      if (RESPONSE_BODY_READ_METHODS.has(property)) {
-        return async (...args: unknown[]) => {
-          assertCurrent();
-          const result = await Reflect.apply(value, target, args);
-          assertCurrent();
-          return result;
-        };
-      }
-
-      return value.bind(target);
-    },
-  });
-}
-
 /**
  * Manages browser authentication state and delegates route families to focused
  * transports. Access tokens remain in memory; refresh tokens are persisted and
@@ -475,6 +290,8 @@ export class AuthClient {
   readonly applicationAdmin: AuthApplicationAdminSdkSurface;
   /** Authorized durable auth/control-plane audit access. */
   readonly audit: AuthAuditSdkSurface;
+  /** Protected administration-organization and customer-tenant control plane. */
+  readonly platformAdmin: AuthPlatformAdminSdkSurface;
   private readonly session: AuthSessionController;
   private readonly authorizationController: AuthAuthorizationController;
   private readonly account: AuthAccountTransport;
@@ -598,6 +415,16 @@ export class AuthClient {
       abortScopeTransition: () => this.session.abortScopeTransition(),
     });
     this.tenantAdministration = new AuthTenantAdministrationTransport({
+      baseUrl,
+      authenticatedFetch: (url, init) => this.fetchWithAuth(url, init),
+      createResponseError: createAuthClientError,
+      assertResponseCurrent: (response) => this.assertAuthenticatedResponseCurrent(response),
+      expireSession: (response) => {
+        this.assertAuthenticatedResponseCurrent(response);
+        this.session.expireSession();
+      },
+    });
+    this.platformAdmin = new AuthPlatformAdministrationTransport({
       baseUrl,
       authenticatedFetch: (url, init) => this.fetchWithAuth(url, init),
       createResponseError: createAuthClientError,

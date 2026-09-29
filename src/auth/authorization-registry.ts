@@ -4,7 +4,56 @@ import type {
   AuthRoleTemplateConfig,
   AuthTenantTerminologyConfig,
   AuthTenancyMode,
+  ResolvedAuthAuthorizationConfig,
 } from './types';
+import type { TenantKind } from './tenancy/tenancy-types';
+
+/**
+ * Built-in roles whose application-scope permissions are meaningful only
+ * inside the one protected administration organization.
+ *
+ * Keep this list centralized: assignment services, onboarding adapters, and
+ * packaged control-plane UI must all enforce the same boundary.
+ */
+export const ADMINISTRATION_TENANT_ROLE_KEYS = Object.freeze([
+  'administrator',
+  'access-manager',
+] as const);
+
+const ADMINISTRATION_TENANT_ROLES = new Set<string>(
+  ADMINISTRATION_TENANT_ROLE_KEYS,
+);
+
+export function isAdministrationTenantRoleKey(roleKey: string): boolean {
+  return ADMINISTRATION_TENANT_ROLES.has(roleKey);
+}
+
+/**
+ * Whether a role template can ever project explicit application authority.
+ * `allPermissions` is intentionally scope-relative, so customer owners remain
+ * valid and receive only the tenant permission ceiling.
+ */
+export function isAdministrationOnlyRole(
+  authorization: ResolvedAuthAuthorizationConfig,
+  roleKey: string,
+): boolean {
+  if (isAdministrationTenantRoleKey(roleKey)) return true;
+  const role = authorization.roles[roleKey];
+  return Boolean(role?.permissions.some((permission) => (
+    authorization.permissions[permission]?.scope === 'application'
+  )));
+}
+
+export function isRoleAssignableToTenantKind(
+  roleKey: string,
+  kind: TenantKind,
+  authorization?: ResolvedAuthAuthorizationConfig,
+): boolean {
+  const administrationOnly = authorization
+    ? isAdministrationOnlyRole(authorization, roleKey)
+    : isAdministrationTenantRoleKey(roleKey);
+  return kind === 'administration' ? administrationOnly : !administrationOnly;
+}
 
 /**
  * Framework-owned permissions that Zero's packaged tenant control plane uses.
@@ -17,10 +66,46 @@ export const FRAMEWORK_APPLICATION_AUTHORIZATION_PERMISSIONS = Object.freeze({
   'application.roles:read': Object.freeze({
     label: 'View application access',
     description: 'View application role templates and user assignments.',
+    scope: 'application',
   }),
   'application.roles:manage': Object.freeze({
     label: 'Manage application access',
     description: 'Change assignable application role assignments.',
+    scope: 'application',
+  }),
+} satisfies Record<string, AuthPermissionConfig>);
+
+/** Multi-tenant platform control-plane permissions projected by the admin org. */
+export const FRAMEWORK_PLATFORM_ADMINISTRATION_PERMISSIONS = Object.freeze({
+  'application.audit:read': Object.freeze({
+    label: 'View application security audit',
+    description: 'View and export application-wide control-plane audit events.',
+    scope: 'application',
+  }),
+  'application.audit:manage': Object.freeze({
+    label: 'Manage application security audit',
+    description: 'Manage application-wide control-plane audit retention.',
+    scope: 'application',
+  }),
+  'application.users:read': Object.freeze({
+    label: 'View application users',
+    description: 'View safe account and access state across the application.',
+    scope: 'application',
+  }),
+  'application.users:manage': Object.freeze({
+    label: 'Manage application users',
+    description: 'Create and administer accounts across the application.',
+    scope: 'application',
+  }),
+  'application.tenants:read': Object.freeze({
+    label: 'View application organizations',
+    description: 'View the application-wide organization directory and lifecycle state.',
+    scope: 'application',
+  }),
+  'application.tenants:manage': Object.freeze({
+    label: 'Manage application organizations',
+    description: 'Administer organization lifecycle across the application.',
+    scope: 'application',
   }),
 } satisfies Record<string, AuthPermissionConfig>);
 
@@ -28,70 +113,87 @@ export const FRAMEWORK_TENANT_AUTHORIZATION_PERMISSIONS = Object.freeze({
   'tenant:read': Object.freeze({
     label: 'View organization',
     description: 'View the active organization and its safe settings.',
+    scope: 'tenant',
   }),
   'tenant:manage': Object.freeze({
     label: 'Manage organization',
     description: 'Change the active organization settings.',
+    scope: 'tenant',
   }),
   'tenant.members:read': Object.freeze({
     label: 'View members',
     description: 'View safe member profiles in the active organization.',
+    scope: 'tenant',
   }),
   'tenant.members:manage': Object.freeze({
     label: 'Manage members',
     description: 'Add, suspend, reactivate, and remove organization members.',
+    scope: 'tenant',
   }),
   'tenant.roles:read': Object.freeze({
     label: 'View roles',
     description: 'View configured organization role templates and assignments.',
+    scope: 'tenant',
   }),
   'tenant.roles:manage': Object.freeze({
     label: 'Manage roles',
     description: 'Change assignable organization role assignments.',
+    scope: 'tenant',
   }),
   'tenant.invitations:read': Object.freeze({
     label: 'View invitations',
     description: 'View invitations issued by the active organization.',
+    scope: 'tenant',
   }),
   'tenant.invitations:manage': Object.freeze({
     label: 'Manage invitations',
     description: 'Issue and revoke invitations for the active organization.',
+    scope: 'tenant',
   }),
   'tenant.domains:read': Object.freeze({
     label: 'View organization domains',
     description: 'View safe domain-claim state for the active organization.',
+    scope: 'tenant',
   }),
   'tenant.domains:verify': Object.freeze({
     label: 'Verify organization domains',
     description: 'Create and verify exact organization domain claims.',
+    scope: 'tenant',
   }),
   'tenant.domains:release': Object.freeze({
     label: 'Release organization domains',
     description: 'Release an exact domain claim into the protected quarantine lifecycle.',
+    scope: 'tenant',
   }),
   'tenant.onboarding:manage': Object.freeze({
     label: 'Manage onboarding',
     description: 'Configure bounded organization onboarding behavior.',
+    scope: 'tenant',
   }),
   'tenant.join-requests:review': Object.freeze({
     label: 'Review join requests',
     description: 'Approve or deny organization join requests.',
+    scope: 'tenant',
   }),
   'tenant.audit:read': Object.freeze({
     label: 'View organization security audit',
     description: 'View and export control-plane audit events for the active organization.',
+    scope: 'tenant',
   }),
   'workflows:manage': Object.freeze({
     label: 'Manage workflows',
     description: 'View and control every workflow in the active organization.',
+    scope: 'tenant',
   }),
   'notifications:manage': Object.freeze({
     label: 'Manage notifications',
     description: 'Send, audit, and remove notifications in the active organization.',
+    scope: 'tenant',
   }),
   'rooms:manage': Object.freeze({
     label: 'Manage rooms',
     description: 'Remove any room in the active organization.',
+    scope: 'tenant',
   }),
 } satisfies Record<string, AuthPermissionConfig>);
 
@@ -110,6 +212,29 @@ const TENANT_MANAGER_PERMISSIONS = Object.freeze([
   'tenant.domains:verify',
   'tenant.onboarding:manage',
   'tenant.join-requests:review',
+]);
+
+const APPLICATION_MANAGER_PERMISSIONS = Object.freeze([
+  'application.roles:read',
+  'application.roles:manage',
+  'application.audit:read',
+  'application.audit:manage',
+  'application.users:read',
+  'application.users:manage',
+  'application.tenants:read',
+  'application.tenants:manage',
+]);
+
+const ADMINISTRATION_TENANT_ACCESS_MANAGER_PERMISSIONS = Object.freeze([
+  'tenant:read',
+  'tenant.members:read',
+  'tenant.members:manage',
+  'tenant.roles:read',
+  'tenant.roles:manage',
+  'tenant.invitations:read',
+  'tenant.invitations:manage',
+  'application.roles:read',
+  'application.roles:manage',
 ]);
 
 /**
@@ -145,6 +270,20 @@ export const FRAMEWORK_TENANT_AUTHORIZATION_ROLES = Object.freeze({
     description: 'Manages members and ordinary onboarding without ownership authority.',
     permissions: TENANT_MANAGER_PERMISSIONS,
   }),
+  administrator: Object.freeze({
+    label: 'Administrator',
+    description: 'Administration-organization operator with bounded platform authority.',
+    permissions: Object.freeze([
+      ...TENANT_MANAGER_PERMISSIONS,
+      'tenant.roles:manage',
+      ...APPLICATION_MANAGER_PERMISSIONS,
+    ]),
+  }),
+  'access-manager': Object.freeze({
+    label: 'Access manager',
+    description: 'Administration-organization operator for delegated application access.',
+    permissions: ADMINISTRATION_TENANT_ACCESS_MANAGER_PERMISSIONS,
+  }),
   owner: Object.freeze({
     label: 'Owner',
     description: 'Protected organization owner with every declared permission.',
@@ -178,9 +317,10 @@ export function mergeAuthorizationPermissionConfigs(
 /**
  * Merge framework roles with app templates.
  *
- * For compatibility, apps may repeat a framework role to customize only its
- * label/description or to restate the exact protected semantics. Any attempt
- * to widen or narrow the built-in permissions/system flags is rejected.
+ * Framework role names provide secure defaults. Apps may declaratively
+ * customize non-system templates (including their permission sets), while a
+ * protected system role may only customize display metadata or restate its
+ * exact permissions/system semantics.
  */
 export function mergeAuthorizationRoleConfigs(
   application: Record<string, AuthRoleTemplateConfig> | undefined,
@@ -215,10 +355,14 @@ function frameworkPermissions(
   terminology?: AuthTenantTerminologyConfig,
 ): Readonly<Record<string, AuthPermissionConfig>> {
   if (tenancy === 'multi') {
-    return localizeFrameworkDefinitions(
-      FRAMEWORK_TENANT_AUTHORIZATION_PERMISSIONS,
-      terminology,
-    );
+    return Object.freeze({
+      ...FRAMEWORK_APPLICATION_AUTHORIZATION_PERMISSIONS,
+      ...FRAMEWORK_PLATFORM_ADMINISTRATION_PERMISSIONS,
+      ...localizeFrameworkDefinitions(
+        FRAMEWORK_TENANT_AUTHORIZATION_PERMISSIONS,
+        terminology,
+      ),
+    });
   }
   return mode === 'advanced'
     ? FRAMEWORK_APPLICATION_AUTHORIZATION_PERMISSIONS

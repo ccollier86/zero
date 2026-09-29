@@ -1,7 +1,9 @@
 /** Add the durable, privacy-safe auth email delivery outbox. */
 
 import type { Database } from 'bun:sqlite';
-import { createAuthEmailOutboxSchema } from '../../auth/auth-email-outbox-schema';
+import {
+  createAuthEmailOutboxSchemaV007 as createAuthEmailOutboxSchema,
+} from './007_auth_email_outbox_schema';
 import type { Migration } from '../migrator';
 
 export const migration: Migration = {

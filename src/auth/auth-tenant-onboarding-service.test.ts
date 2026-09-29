@@ -8,17 +8,19 @@ import { AuthTenantOnboardingService } from './auth-tenant-onboarding-service';
 import { AuthAuditService } from './auth-audit-service';
 import { resolveAuthAuditConfig } from './auth-audit-config';
 import { createAuthorizationKernel } from './authorization-kernel';
+import type { AuthorizationKernel } from './authorization-kernel';
 import { TenancyService } from './tenancy/tenancy-service';
 import { defineTenancyTables } from './tenancy/tenancy-schema';
 import { TenantStore } from './tenancy/tenant-store';
 import { UserPropertyService } from './user-property-service';
 import { UserStore } from './user-store';
-import { AuthError } from './types';
+import { AuthError, type AuthAuthorizationConfig } from './types';
 
 interface Harness {
   db: ReactiveDB;
   users: UserStore;
   tenancy: TenancyService;
+  kernel: AuthorizationKernel;
   service: AuthTenantOnboardingService;
   now: { value: number };
 }
@@ -97,7 +99,7 @@ describe('tenant invitation onboarding service', () => {
     expect(JSON.parse(stored.role_keys_json)).toEqual(['member']);
     expect(harness.service.inspectInvitation(created.token)).toMatchObject({
       available: true,
-      tenant: { name: 'Alpha Clinic', slug: 'alpha-clinic' },
+      tenant: { name: 'Alpha Clinic', slug: 'alpha-clinic', kind: 'organization' },
       account: 'sign-in',
     });
 
@@ -116,6 +118,93 @@ describe('tenant invitation onboarding service', () => {
       invited.userId,
     )).toThrow('Invitation is unavailable');
     expect(harness.service.inspectInvitation(created.token)).toEqual({ available: false });
+  });
+
+  test('rolls invitation persistence back when afterPersist yields', async () => {
+    const harness = await createHarness();
+    const owner = await user(harness, 'async-invitation-owner');
+    const tenant = harness.tenancy.createTenant({
+      name: 'Async Invitation Tenant',
+      slug: 'async-invitation-tenant',
+      ownerUserId: owner.userId,
+    });
+    harness.db.exec(`CREATE TABLE invitation_outbox_probe (
+      invitation_id TEXT PRIMARY KEY
+    )`);
+
+    expect(() => harness.service.issueInvitation({
+      tenantId: tenant.tenant.tenantId,
+      email: 'async-invited@example.test',
+      assertCurrentAuthority: authority(
+        owner.userId,
+        tenant.ownerMembership.membershipId,
+        tenant.tenant.tenantId,
+      ),
+      afterPersist: async ({ invitationId }) => {
+        harness.db.prepare(
+          'INSERT INTO invitation_outbox_probe (invitation_id) VALUES (?)',
+        ).run(invitationId);
+      },
+    })).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      status: 500,
+      message: '[auth] Tenant invitation afterPersist must be synchronous.',
+    }));
+
+    expect(harness.db.prepare(`SELECT COUNT(*) AS count
+      FROM _auth_tenant_invitations`).get()).toEqual({ count: 0 });
+    expect(harness.db.prepare('SELECT COUNT(*) AS count FROM invitation_outbox_probe').get())
+      .toEqual({ count: 0 });
+    expect(harness.service.listInvitations({
+      tenantId: tenant.tenant.tenantId,
+    }).invitations).toEqual([]);
+  });
+
+  test('rejects Promise identity proofs before invitation or join-request admission', async () => {
+    const harness = await createHarness();
+    const owner = await user(harness, 'async-proof-owner');
+    const applicant = await user(harness, 'async-proof-applicant');
+    const tenant = harness.tenancy.createTenant({
+      name: 'Async Proof Tenant',
+      slug: 'async-proof-tenant',
+      ownerUserId: owner.userId,
+    });
+    const invitation = harness.service.issueInvitation({
+      tenantId: tenant.tenant.tenantId,
+      email: applicant.email,
+      assertCurrentAuthority: authority(
+        owner.userId,
+        tenant.ownerMembership.membershipId,
+        tenant.tenant.tenantId,
+      ),
+    });
+    const asyncFalse = (async () => false) as unknown as () => boolean;
+
+    expect(() => harness.service.acceptInvitationForUser(
+      invitation.token,
+      applicant.userId,
+      asyncFalse,
+    )).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Invitation identity proof admission must be synchronous.',
+    }));
+    expect(harness.tenancy.getMembership(tenant.tenant.tenantId, applicant.userId)).toBeNull();
+    expect(harness.service.inspectInvitation(invitation.token)).toMatchObject({
+      available: true,
+    });
+
+    expect(() => harness.service.submitJoinRequest({
+      userId: applicant.userId,
+      tenantSlug: tenant.tenant.slug,
+      admitIdentityProof: asyncFalse,
+    })).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Join request identity proof admission must be synchronous.',
+    }));
+    expect(harness.service.listJoinRequests({
+      tenantId: tenant.tenant.tenantId,
+      status: 'pending',
+    }).requests).toEqual([]);
   });
 
   test('keeps invalid, expired, revoked, mismatched, and protected-role grants fail closed', async () => {
@@ -141,6 +230,30 @@ describe('tenant invitation onboarding service', () => {
       assertCurrentAuthority: authority(owner.userId, tenant.ownerMembership.membershipId,
         tenant.tenant.tenantId),
     })).toThrow('Protected roles');
+
+    expectAuthError(() => harness.service.issueInvitation({
+      tenantId: tenant.tenant.tenantId,
+      email: invited.email,
+      roleKeys: ['administrator'],
+      assertCurrentAuthority: authority(owner.userId, tenant.ownerMembership.membershipId,
+        tenant.tenant.tenantId),
+    }), 'AUTHORIZATION_ADMINISTRATION_SCOPE_REQUIRED', 422);
+
+    const persistedGrant = issue();
+    // Model an invitation persisted before tenant-kind role restrictions existed.
+    // Current schema guards prevent this direct mutation, but acceptance must
+    // remain fail-closed across upgrades and authorization-registry changes.
+    harness.db.exec('DROP TRIGGER trg_auth_tenant_invitation_binding_immutable');
+    harness.db.prepare(`
+      UPDATE _auth_tenant_invitations
+      SET role_keys_json = ?
+      WHERE invitation_id = ?
+    `).run(JSON.stringify(['access-manager']), persistedGrant.invitation.invitationId);
+    expectAuthError(() => harness.service.acceptInvitationForUser(
+      persistedGrant.token,
+      invited.userId,
+    ), 'TENANT_INVITATION_UNAVAILABLE', 400);
+    expect(harness.tenancy.getMembership(tenant.tenant.tenantId, invited.userId)).toBeNull();
 
     const mismatch = issue();
     expect(() => harness.service.acceptInvitationForUser(
@@ -223,6 +336,76 @@ describe('tenant invitation onboarding service', () => {
     expect(harness.tenancy.getMembership(tenant.tenant.tenantId, collision.userId)).toBeNull();
   });
 
+  test('freezes invitation authority while permitting a later narrowing', async () => {
+    const harness = await createHarness();
+    const owner = await user(harness, 'snapshot-owner');
+    const widenedTarget = await user(harness, 'snapshot-widened');
+    const narrowedTarget = await user(harness, 'snapshot-narrowed');
+    const legacyTarget = await user(harness, 'snapshot-legacy');
+    const tenant = harness.tenancy.createTenant({
+      name: 'Snapshot', slug: 'snapshot', ownerUserId: owner.userId,
+    });
+    const assertCurrentAuthority = authority(
+      owner.userId,
+      tenant.ownerMembership.membershipId,
+      tenant.tenant.tenantId,
+    );
+    const basePermissions = harness.kernel.authorization.roles.member!.permissions;
+    const issueWith = (service: AuthTenantOnboardingService, email: string) => (
+      service.issueInvitation({
+        tenantId: tenant.tenant.tenantId,
+        email,
+        assertCurrentAuthority,
+      })
+    );
+
+    const baseGrant = issueWith(harness.service, widenedTarget.email);
+    const persisted = harness.db.prepare(`
+      SELECT grant_snapshot_json, grant_snapshot_fingerprint
+      FROM _auth_tenant_invitations WHERE invitation_id = ?
+    `).get(baseGrant.invitation.invitationId) as {
+      grant_snapshot_json: string | null;
+      grant_snapshot_fingerprint: string | null;
+    };
+    expect(persisted.grant_snapshot_json).toContain('tenantPermissions');
+    expect(persisted.grant_snapshot_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+
+    const expanded = restartOnboarding(harness, {
+      mode: 'simple',
+      permissions: { 'records:write': { scope: 'tenant' } },
+      roles: {
+        member: { permissions: [...basePermissions, 'records:write'] },
+      },
+    });
+    expect(expanded.inspectInvitation(baseGrant.token)).toEqual({ available: false });
+    expectAuthError(() => expanded.acceptInvitationForUser(
+      baseGrant.token,
+      widenedTarget.userId,
+    ), 'TENANT_INVITATION_UNAVAILABLE', 400);
+
+    const expandedGrant = issueWith(expanded, narrowedTarget.email);
+    expect(harness.service.inspectInvitation(expandedGrant.token)).toMatchObject({
+      available: true,
+    });
+    expect(harness.service.acceptInvitationForUser(
+      expandedGrant.token,
+      narrowedTarget.userId,
+    ).membership.userId).toBe(narrowedTarget.userId);
+
+    const legacyGrant = issueWith(harness.service, legacyTarget.email);
+    harness.db.exec('DROP TRIGGER trg_auth_tenant_invitation_binding_immutable');
+    harness.db.prepare(`
+      UPDATE _auth_tenant_invitations
+      SET grant_snapshot_json = NULL, grant_snapshot_fingerprint = NULL
+      WHERE invitation_id = ?
+    `).run(legacyGrant.invitation.invitationId);
+    expect(harness.service.inspectInvitation(legacyGrant.token)).toEqual({ available: false });
+    expectAuthError(() => harness.service.acceptInvitationForUser(
+      legacyGrant.token,
+      legacyTarget.userId,
+    ), 'TENANT_INVITATION_UNAVAILABLE', 400);
+  });
+
   test('retains idempotent join requests and scopes review by the active tenant', async () => {
     const harness = await createHarness();
     const alphaOwner = await user(harness, 'alpha-owner');
@@ -301,6 +484,51 @@ describe('tenant invitation onboarding service', () => {
       assertCurrentAuthority: authority(alphaOwner.userId, alpha.ownerMembership.membershipId,
         alpha.tenant.tenantId),
     })).toEqual(approved);
+  });
+
+  test('fails all retained join-request operations closed after administration adoption', async () => {
+    const harness = await createHarness();
+    const owner = await user(harness, 'admin-boundary-owner');
+    const applicant = await user(harness, 'admin-boundary-applicant');
+    const created = harness.tenancy.createTenant({
+      name: 'Future Administration',
+      slug: 'future-administration',
+      ownerUserId: owner.userId,
+    });
+    harness.service.submitJoinRequest({
+      userId: applicant.userId,
+      tenantSlug: created.tenant.slug,
+    });
+    const pending = harness.service.listJoinRequests({
+      tenantId: created.tenant.tenantId,
+      status: 'pending',
+    }).requests[0]!;
+    harness.tenancy.adoptAdministrationTenant(created.tenant.tenantId);
+    const assertCurrentAuthority = authority(
+      owner.userId,
+      created.ownerMembership.membershipId,
+      created.tenant.tenantId,
+    );
+
+    expectAuthError(() => harness.service.listJoinRequests({
+      tenantId: created.tenant.tenantId,
+      status: 'pending',
+    }), 'FORBIDDEN', 403);
+    expectAuthError(() => harness.service.approveJoinRequest({
+      tenantId: created.tenant.tenantId,
+      joinRequestId: pending.joinRequestId,
+      expectedRequestRevision: pending.requestRevision,
+      assertCurrentAuthority,
+    }), 'FORBIDDEN', 403);
+    expectAuthError(() => harness.service.denyJoinRequest({
+      tenantId: created.tenant.tenantId,
+      joinRequestId: pending.joinRequestId,
+      expectedRequestRevision: pending.requestRevision,
+      assertCurrentAuthority,
+    }), 'FORBIDDEN', 403);
+    expect(harness.db.prepare(`
+      SELECT status FROM _auth_tenant_join_requests WHERE join_request_id = ?
+    `).get(pending.joinRequestId)).toEqual({ status: 'pending' });
   });
 
   test('rejects stale approve and deny decisions after a request reopens', async () => {
@@ -474,6 +702,7 @@ async function createHarness(): Promise<Harness> {
     db,
     users,
     tenancy,
+    kernel,
     now,
     service: new AuthTenantOnboardingService(
       db,
@@ -487,6 +716,34 @@ async function createHarness(): Promise<Harness> {
       () => now.value,
     ),
   };
+}
+
+function restartOnboarding(
+  harness: Harness,
+  authorization: AuthAuthorizationConfig,
+): AuthTenantOnboardingService {
+  const auth = resolveAuthBehaviorConfig({
+    tenancy: 'multi',
+    authorization,
+    bootstrap: 'public',
+    registration: { mode: 'disabled' },
+  });
+  const kernel = createAuthorizationKernel({
+    tenancy: auth.tenancy,
+    authorization: auth.authorization,
+    userProperties: auth.userProperties,
+  });
+  return new AuthTenantOnboardingService(
+    harness.db,
+    resolveAuthTenantOnboardingConfig(undefined),
+    kernel,
+    harness.users,
+    new UserPropertyService(auth),
+    harness.tenancy,
+    null,
+    new AuthAuditService(harness.db, resolveAuthAuditConfig(undefined)),
+    () => harness.now.value,
+  );
 }
 
 async function user(harness: Harness, key: string) {
@@ -520,4 +777,17 @@ function authority(userId: string, membershipId: string, tenantId: string) {
       revision: 'test',
     },
   });
+}
+
+function expectAuthError(
+  operation: () => unknown,
+  code: string,
+  status: number,
+): void {
+  try {
+    operation();
+    throw new Error(`Expected ${code}`);
+  } catch (error) {
+    expect(error).toMatchObject({ code, status });
+  }
 }

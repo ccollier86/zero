@@ -22,6 +22,13 @@ import { AuthError, type ResolvedAuthBehaviorConfig, type UserRecord } from './t
 import type { UserStore } from './user-store';
 import { AuthAuditService } from './auth-audit-service';
 import type { AuthAuditRequestContext } from './auth-audit-types';
+import type { AuthorizationKernel } from './authorization-kernel';
+import type { AuthorizationRoleService } from './authorization-role-service';
+import { createRequestAuthorizationAccess } from './authorization-access';
+import {
+  captureAuthApplicationMutationAuthority,
+  type AssertAuthApplicationMutationAuthority,
+} from './auth-application-mutation-authority';
 
 export const TENANT_SELECTION_CONTINUATION_TTL_MS = 5 * 60_000;
 export const TENANT_ONBOARDING_CONTINUATION_TTL_MS = 10 * 60_000;
@@ -38,12 +45,15 @@ export class AuthTenantSessionService {
     private readonly users: UserStore,
     private readonly tokens: TokenService,
     private readonly audit: AuthAuditService,
+    private readonly kernel: AuthorizationKernel,
+    private readonly roles: AuthorizationRoleService | null,
   ) {}
 
   /** Finish password/email/MFA authentication without bypassing tenant choice. */
   async complete(
     user: UserRecord,
     explicitBinding?: WebSessionBinding,
+    mfaVerifiedAt: number | null = null,
   ): Promise<AuthTenantSessionCompletion> {
     if (this.tenancyMode === 'single') {
       if (explicitBinding) {
@@ -53,7 +63,10 @@ export class AuthTenantSessionService {
           403,
         );
       }
-      return { kind: 'session', tokens: await this.tokens.issueTokenPair(user) };
+      return {
+        kind: 'session',
+        tokens: await this.tokens.issueTokenPair(user, { mfaVerifiedAt }),
+      };
     }
 
     const tenancy = this.requireTenancy();
@@ -61,19 +74,25 @@ export class AuthTenantSessionService {
       const active = this.requireActiveBinding(user.userId, explicitBinding);
       return {
         kind: 'session',
-        tokens: await this.tokens.issueTokenPair(user, { binding: explicitBinding }),
+        tokens: await this.tokens.issueTokenPair(user, {
+          binding: explicitBinding,
+          mfaVerifiedAt,
+        }),
         tenant: toTenantSummary(active),
       };
     }
 
     const memberships = tenancy.listActiveTenantMembershipsForUser(user.userId);
-    if (memberships.length === 0) return this.createOnboardingCompletion(user);
+    if (memberships.length === 0) {
+      return this.createOnboardingCompletion(user, mfaVerifiedAt);
+    }
     if (memberships.length === 1) {
       const active = memberships[0]!;
       return {
         kind: 'session',
         tokens: await this.tokens.issueTokenPair(user, {
           binding: toBinding(active),
+          mfaVerifiedAt,
         }),
         tenant: toTenantSummary(active),
       };
@@ -83,6 +102,7 @@ export class AuthTenantSessionService {
       userId: user.userId,
       purpose: 'tenant_selection',
       authGeneration: this.users.getAuthGeneration(user.userId),
+      mfaVerifiedAt,
       ttlMs: TENANT_SELECTION_CONTINUATION_TTL_MS,
     });
     return {
@@ -118,7 +138,10 @@ export class AuthTenantSessionService {
     const active = this.requireActiveTenantForUser(user.userId, tenantId);
     const tokens = await this.tokens.issueTokenPairAfterAdmission(
       user,
-      { binding: toBinding(active) },
+      {
+        binding: toBinding(active),
+        mfaVerifiedAt: record.mfaVerifiedAt,
+      },
       () => {
         if (!this.continuations.consumeInspected(
           record,
@@ -252,11 +275,15 @@ export class AuthTenantSessionService {
    * condition for issuing it: invitations and join requests also need a safe
    * post-login/post-MFA identity proof when creation is disabled.
    */
-  createOnboardingCompletion(user: UserRecord): TenantOnboardingCompletion {
+  createOnboardingCompletion(
+    user: UserRecord,
+    mfaVerifiedAt: number | null = null,
+  ): TenantOnboardingCompletion {
     const created = this.continuations.create({
       userId: user.userId,
       purpose: 'tenant_onboarding',
       authGeneration: this.users.getAuthGeneration(user.userId),
+      mfaVerifiedAt,
       ttlMs: TENANT_ONBOARDING_CONTINUATION_TTL_MS,
     });
     if (!canUserCreateTenant(this.authConfig, user)) {
@@ -296,7 +323,10 @@ export class AuthTenantSessionService {
     if (!user || this.users.getAuthGeneration(user.userId) !== record.authGeneration) {
       throw invalidOnboardingContinuation();
     }
-    requireUserCanCreateTenant(this.authConfig, user);
+    // A pre-session identity continuation has no live administration
+    // membership. `platform-admin` creation therefore cannot be bootstrapped
+    // from this proof; only the initial system bootstrap bypasses the policy.
+    requireUserCanCreateTenant(this.authConfig, user, false);
     const tenancy = this.requireTenancy();
     const prepared = tenancy.prepareTenant({
       ...fields,
@@ -314,13 +344,14 @@ export class AuthTenantSessionService {
             tenantAuthorizationGeneration: 0,
             membershipAuthorizationGeneration: 0,
           },
+          mfaVerifiedAt: record.mfaVerifiedAt,
         },
         () => {
           const current = this.users.getUserById(user.userId);
           if (!current || this.users.getAuthGeneration(user.userId) !== record.authGeneration) {
             return false;
           }
-          requireUserCanCreateTenant(this.authConfig, current);
+          requireUserCanCreateTenant(this.authConfig, current, false);
           if (!this.continuations.consumeInspected(
             record,
             'tenant_onboarding',
@@ -354,7 +385,14 @@ export class AuthTenantSessionService {
   ) {
     const proof = this.tokens.resolveWebRefreshProof(rawRefreshToken);
     if (!proof) throw invalidRefreshProof();
-    requireUserCanCreateTenant(this.authConfig, proof.user);
+    const assertPlatformAuthority = this.capturePlatformTenantCreationAuthority(
+      rawRefreshToken,
+    );
+    requireUserCanCreateTenant(
+      this.authConfig,
+      proof.user,
+      assertPlatformAuthority !== null,
+    );
     const tenancy = this.requireTenancy();
     const prepared = tenancy.prepareTenant({
       ...fields,
@@ -374,7 +412,14 @@ export class AuthTenantSessionService {
         () => {
           const current = this.users.getUserById(proof.user.userId);
           if (!current) return false;
-          requireUserCanCreateTenant(this.authConfig, current);
+          if (assertPlatformAuthority) {
+            assertPlatformAuthority(['application.tenants:manage']);
+          }
+          requireUserCanCreateTenant(
+            this.authConfig,
+            current,
+            assertPlatformAuthority !== null,
+          );
           created = tenancy.persistPreparedTenant(prepared);
           this.audit.append({
             action: 'tenant.created',
@@ -407,6 +452,29 @@ export class AuthTenantSessionService {
 
   private get tenancyMode() {
     return this.authConfig.tenancy?.mode ?? 'single';
+  }
+
+  private capturePlatformTenantCreationAuthority(
+    rawRefreshToken: string,
+  ): AssertAuthApplicationMutationAuthority | null {
+    if (this.authConfig.tenancy?.creation.mode !== 'platform-admin') return null;
+    const auth = this.tokens.resolveWebRefreshAuthContext(rawRefreshToken);
+    if (!auth) throw invalidRefreshProof();
+    const access = createRequestAuthorizationAccess({
+      authContext: auth,
+      kernel: this.kernel,
+      propertyStore: this.users,
+      roleAssignments: this.roles,
+    });
+    access.requireApplicationAuthorization();
+    access.requirePermission('application.tenants:manage');
+    return captureAuthApplicationMutationAuthority({
+      auth,
+      tokenService: this.tokens,
+      kernel: this.kernel,
+      store: this.users,
+      roles: this.roles,
+    });
   }
 
   private requireActiveBinding(
@@ -460,6 +528,7 @@ function toBinding(active: ActiveTenantMembership): WebSessionBinding {
 function toTenantSummary(active: ActiveTenantMembership): AuthTenantSummary {
   return {
     tenantId: active.tenant.tenantId,
+    kind: active.tenant.kind,
     slug: active.tenant.slug,
     name: active.tenant.name,
     role: active.membership.roleKey,

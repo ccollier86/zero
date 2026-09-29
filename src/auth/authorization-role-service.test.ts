@@ -109,6 +109,7 @@ describe('advanced authorization role runtime', () => {
       config,
       null,
       createEmailRuntime(false, {}),
+      { canManageUsers: true, canManageGlobalAdmins: true },
     );
     if (!('permissions' in response.authorization)
       || !response.authorization.permissions
@@ -540,6 +541,121 @@ describe('advanced authorization role runtime', () => {
     )).toThrow('AUTH_TENANT_OWNER_ASSIGNMENT_MISMATCH');
   });
 
+  test('keeps administration-only roles inert and unassignable in customer tenants', () => {
+    const harness = createHarness('multi');
+    const tenancy = harness.tenancy!;
+    insertUser(harness.db, 'u_customer_owner', 0);
+    insertUser(harness.db, 'u_admin_owner', 1);
+    insertUser(harness.db, 'u_subject', 2);
+    const customer = tenancy.createTenant({
+      slug: 'customer',
+      name: 'Customer',
+      ownerUserId: 'u_customer_owner',
+    });
+    const administration = tenancy.createTenant({
+      slug: 'administration',
+      name: 'Administration',
+      ownerUserId: 'u_admin_owner',
+      kind: 'administration',
+    });
+    const customerMember = tenancy.addMembership({
+      tenantId: customer.tenant.tenantId,
+      userId: 'u_subject',
+      roleKey: 'member',
+      createdBy: 'u_customer_owner',
+    });
+    const adminMember = tenancy.addMembership({
+      tenantId: administration.tenant.tenantId,
+      userId: 'u_subject',
+      roleKey: 'member',
+      createdBy: 'u_admin_owner',
+    });
+
+    expectRoleError(() => harness.roles.assignTenantRole({
+      tenantId: customer.tenant.tenantId,
+      membershipId: customerMember.membershipId,
+      roleKey: 'administrator',
+      createdBy: 'u_customer_owner',
+    }), 'AUTHORIZATION_ADMINISTRATION_SCOPE_REQUIRED');
+    expectRoleError(() => harness.roles.replaceTenantRoles({
+      tenantId: customer.tenant.tenantId,
+      membershipId: customerMember.membershipId,
+      roleKeys: ['access-manager'],
+      changedBy: 'u_customer_owner',
+    }), 'AUTHORIZATION_ADMINISTRATION_SCOPE_REQUIRED');
+    expectRoleError(() => harness.roles.assignTenantRole({
+      tenantId: customer.tenant.tenantId,
+      membershipId: customerMember.membershipId,
+      roleKey: 'platform-reader',
+      createdBy: 'u_customer_owner',
+    }), 'AUTHORIZATION_ADMINISTRATION_SCOPE_REQUIRED');
+
+    // Simulate a retained pre-upgrade assignment. It remains visible for
+    // cleanup but cannot contribute live customer authority.
+    harness.store.insertTenant({
+      tenantId: customer.tenant.tenantId,
+      membershipId: customerMember.membershipId,
+      userId: 'u_subject',
+      roleKey: 'administrator',
+      source: 'migration',
+      sourceId: 'legacy-test',
+      createdBy: 'u_customer_owner',
+    });
+    expect(harness.roles.getRetainedTenantRoleKeys({
+      tenantId: customer.tenant.tenantId,
+      membershipId: customerMember.membershipId,
+      userId: 'u_subject',
+    })).toContain('administrator');
+    expect(harness.roles.resolveTenantRoles({
+      tenantId: customer.tenant.tenantId,
+      membershipId: customerMember.membershipId,
+      userId: 'u_subject',
+    })?.roles).not.toContain('administrator');
+    harness.store.insertTenant({
+      tenantId: customer.tenant.tenantId,
+      membershipId: customerMember.membershipId,
+      userId: 'u_subject',
+      roleKey: 'platform-reader',
+      source: 'migration',
+      sourceId: 'legacy-custom-application-role-test',
+      createdBy: 'u_customer_owner',
+    });
+    expect(harness.roles.getRetainedTenantRoleKeys({
+      tenantId: customer.tenant.tenantId,
+      membershipId: customerMember.membershipId,
+      userId: 'u_subject',
+    })).toContain('platform-reader');
+    expect(harness.roles.resolveTenantRoles({
+      tenantId: customer.tenant.tenantId,
+      membershipId: customerMember.membershipId,
+      userId: 'u_subject',
+    })?.roles).not.toContain('platform-reader');
+
+    expectRoleError(() => harness.roles.assignTenantRole({
+      tenantId: administration.tenant.tenantId,
+      membershipId: adminMember.membershipId,
+      roleKey: 'member',
+      createdBy: 'u_admin_owner',
+    }), 'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED');
+
+    expect(harness.roles.assignTenantRole({
+      tenantId: administration.tenant.tenantId,
+      membershipId: adminMember.membershipId,
+      roleKey: 'access-manager',
+      createdBy: 'u_admin_owner',
+    }).authority.permissions).toEqual(expect.arrayContaining([
+      'tenant.members:manage',
+      'tenant.roles:manage',
+      'tenant.invitations:manage',
+    ]));
+    expect(harness.roles.assignTenantRole({
+      tenantId: administration.tenant.tenantId,
+      membershipId: adminMember.membershipId,
+      roleKey: 'platform-reader',
+      createdBy: 'u_admin_owner',
+    }).authority.roles).toContain('platform-reader');
+  });
+
   test('audits legacy tenant-owner role repair in the repair transaction', () => {
     const db = createReactiveDB({ mode: 'memory' });
     databases.push(db);
@@ -758,6 +874,7 @@ function createHarness(tenancyMode: 'single' | 'multi'): Harness {
           }
         : {
             auditor: { permissions: ['documents:read'] },
+            'platform-reader': { permissions: ['application.users:read'] },
           },
     },
   }));

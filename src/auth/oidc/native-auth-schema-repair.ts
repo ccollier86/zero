@@ -53,6 +53,22 @@ export function ensureNativeTenantAuthorityColumns(db: NativeSchemaDatabase): vo
   }
 }
 
+/** Add durable MFA assurance without granting it to any pre-existing family. */
+export function ensureNativeMfaAssuranceColumns(db: NativeSchemaDatabase): void {
+  ensureColumn(
+    db,
+    '_auth_native_codes',
+    'mfa_verified_at',
+    'INTEGER CHECK (mfa_verified_at IS NULL OR mfa_verified_at >= 0)',
+  );
+  ensureColumn(
+    db,
+    '_auth_native_sessions',
+    'mfa_verified_at',
+    'INTEGER CHECK (mfa_verified_at IS NULL OR mfa_verified_at >= 0)',
+  );
+}
+
 function ensureSessionRotationCount(db: NativeSchemaDatabase): void {
   if (!hasColumn(db, '_auth_native_sessions', 'rotation_count')) {
     db.exec('ALTER TABLE _auth_native_sessions ADD COLUMN rotation_count INTEGER NOT NULL DEFAULT 0');

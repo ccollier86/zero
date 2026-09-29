@@ -9,6 +9,7 @@ import {
   readAuthAuthorityRevision,
 } from './auth-authority-revision';
 import { defineAuthTables } from './auth-schema';
+import { defineTenancyTables } from './tenancy/tenancy-schema';
 
 describe('durable auth authority revision', () => {
   test('reports an uninstalled clock without swallowing unrelated SQLite failures', () => {
@@ -151,6 +152,7 @@ describe('durable auth authority revision', () => {
     const db = createReactiveDB({ mode: 'memory' });
     try {
       defineAuthTables(db);
+      defineTenancyTables(db);
       installAuthAuthorityRevision(db);
       const now = Date.now();
       db.prepare(`
@@ -187,6 +189,19 @@ describe('durable auth authority revision', () => {
         WHERE token_id = 'native-session'
       `).run();
       expect(readAuthAuthorityRevision(db)).toBe(baseline + 2);
+
+      db.prepare(`
+        INSERT INTO _auth_tenants (
+          tenant_id, slug, name, created_by, created_at, updated_at
+        ) VALUES ('administration-candidate', 'administration-candidate',
+          'Administration candidate', 'session-user', ?, ?)
+      `).run(now, now);
+      const beforeKindChange = readAuthAuthorityRevision(db)!;
+      db.prepare(`
+        UPDATE _auth_tenants SET kind = 'administration'
+        WHERE tenant_id = 'administration-candidate'
+      `).run();
+      expect(readAuthAuthorityRevision(db)).toBe(beforeKindChange + 1);
     } finally {
       db.dispose();
     }

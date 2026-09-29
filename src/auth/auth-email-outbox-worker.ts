@@ -1,5 +1,6 @@
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 import type { AuthEmailOutboxStore } from './auth-email-outbox-store';
 import type { AuthEmailOutboxOptions } from './auth-email-outbox-types';
 import { AuthError } from './types';
@@ -16,7 +17,9 @@ export class AuthEmailOutboxWorker {
       abortAll?(): void;
     },
     private readonly options: AuthEmailOutboxOptions,
-    private readonly clock: () => number) {}
+    private readonly clock: () => number,
+    private readonly emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
+  ) {}
 
   start(automatic = true): void {
     try {
@@ -31,7 +34,7 @@ export class AuthEmailOutboxWorker {
     const recovered = this.store.recoverExpired(now);
     this.store.cleanup(now - this.options.terminalRetentionMs);
     this.nextCleanupAt = now + cleanupCadence(this.options.terminalRetentionMs);
-    if (recovered > 0) emitPlatformCode(OBS_CODES.AUTH_EMAIL_OUTBOX_RECOVERED, {
+    if (recovered > 0) this.emitCode(OBS_CODES.AUTH_EMAIL_OUTBOX_RECOVERED, {
       metadata: { count: recovered },
     });
     if (automatic) this.schedule(0);
@@ -72,7 +75,7 @@ export class AuthEmailOutboxWorker {
     this.processor.abortAll?.();
     if (this.running) {
       await this.running.catch(() => {
-        emitPlatformCode(OBS_CODES.AUTH_EMAIL_OUTBOX_WORKER_FAILED, {
+        this.emitCode(OBS_CODES.AUTH_EMAIL_OUTBOX_WORKER_FAILED, {
           metadata: { stage: 'shutdown_join' },
         });
       });
@@ -104,7 +107,7 @@ export class AuthEmailOutboxWorker {
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.processDue().catch(() => {
-        emitPlatformCode(OBS_CODES.AUTH_EMAIL_OUTBOX_WORKER_FAILED, {
+        this.emitCode(OBS_CODES.AUTH_EMAIL_OUTBOX_WORKER_FAILED, {
           metadata: { stage: 'process_due' },
         });
       }).finally(() => {

@@ -31,6 +31,9 @@ export function defineAuthSessionTables(db: ReactiveDB): void {
       expires_at                         INTEGER NOT NULL,
       revoked_at                         INTEGER,
       revocation_reason                  TEXT,
+      mfa_verified_at                    INTEGER
+                                         CHECK (mfa_verified_at IS NULL
+                                           OR mfa_verified_at >= 0),
       FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
       CHECK (
         (scope_kind = 'application'
@@ -49,6 +52,7 @@ export function defineAuthSessionTables(db: ReactiveDB): void {
       )
     )
   `);
+  ensureAuthSessionMfaAssuranceColumn(db);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_status
     ON _auth_sessions(user_id, status, expires_at)
@@ -62,6 +66,20 @@ export function defineAuthSessionTables(db: ReactiveDB): void {
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_refresh_tokens'",
   ).get() as { name: string } | null;
   if (refreshTable) ensureRefreshSessionColumn(db);
+}
+
+/** Existing sessions predate durable assurance and intentionally migrate as unverified. */
+export function ensureAuthSessionMfaAssuranceColumn(db: ReactiveDB): void {
+  const columns = db.prepare('PRAGMA table_info(_auth_sessions)').all() as Array<{
+    name: string;
+  }>;
+  if (!columns.some((column) => column.name === 'mfa_verified_at')) {
+    db.exec(`
+      ALTER TABLE _auth_sessions
+      ADD COLUMN mfa_verified_at INTEGER
+        CHECK (mfa_verified_at IS NULL OR mfa_verified_at >= 0)
+    `);
+  }
 }
 
 /** Add the nullable migration link after old installations already have refresh rows. */

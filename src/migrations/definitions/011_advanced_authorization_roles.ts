@@ -1,10 +1,14 @@
-/** Add durable advanced-role assignments, revisions, and owner lifecycle guards. */
+/** Add the frozen v011 advanced-role assignments and owner guards. */
 
 import type { Database } from 'bun:sqlite';
-import { defineAuthorizationRoleTables } from '../../auth/authorization-role-schema';
-import { defineTenancyTables } from '../../auth/tenancy/tenancy-schema';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import type { Migration } from '../types';
+import {
+  defineAuthTenancyTablesV009 as defineTenancyTables,
+} from './009_auth_tenancy_schema';
+import {
+  defineAuthorizationRoleTablesV011 as defineAuthorizationRoleTables,
+} from './011_advanced_authorization_schema';
 
 export const migration: Migration = {
   version: '011',

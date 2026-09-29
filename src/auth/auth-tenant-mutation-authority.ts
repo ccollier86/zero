@@ -18,6 +18,10 @@ export interface AuthTenantMutationAuthority {
     readonly tenantId: string;
     readonly membershipId: string;
   };
+  /** Present only for a live protected administration-organization session. */
+  readonly applicationScope?: (AuthorizationScopeSnapshot & {
+    readonly scopeKind: 'application';
+  }) | null;
 }
 
 /**
@@ -61,10 +65,17 @@ export function captureAuthTenantMutationAuthority(input: {
       roleAssignments: input.roles,
     });
     const scope = access.requireTenant();
+    const applicationScope = access.applicationAuthorization;
     for (const permission of requiredPermissions) {
       access.requirePermission(permission);
     }
-    return Object.freeze({ auth: current, scope });
+    return Object.freeze({
+      auth: current,
+      scope,
+      applicationScope: applicationScope?.scopeKind === 'application'
+        ? applicationScope as AuthorizationScopeSnapshot & { scopeKind: 'application' }
+        : null,
+    });
   };
 }
 

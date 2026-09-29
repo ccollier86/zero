@@ -1,7 +1,6 @@
 /** Refresh-proof tenant discovery and atomic native-family switching. */
 
 import { OBS_CODES } from '../../observability/codes';
-import { emitPlatformCode } from '../../observability/sink';
 import type {
   NativeTenantListInput,
   NativeTenantListResult,
@@ -42,6 +41,7 @@ export async function switchNativeTenant(
     clientId: proof.session.clientId,
     scope: proof.session.scope,
     authGeneration: proof.session.authGeneration,
+    mfaVerifiedAt: proof.session.mfaVerifiedAt,
     ttlMs: context.config.refreshTtlMs,
     expiresAt: proof.session.expiresAt,
     authority: target.snapshot,
@@ -67,6 +67,8 @@ export async function switchNativeTenant(
     () => {
       if (context.users.getAuthGeneration(proof.user.userId)
         !== proof.session.authGeneration) return false;
+      if (context.requiresMfaAssurance(proof.user.userId)
+        && proof.session.mfaVerifiedAt === null) return false;
       const source = context.authority.resolve(proof.user.userId, proof.session);
       const liveTarget = context.authority.resolveTenant(proof.user.userId, input.tenantId);
       return Boolean(
@@ -96,7 +98,7 @@ export async function switchNativeTenant(
     },
   );
   if (!switched) invalidGrant();
-  emitPlatformCode(OBS_CODES.AUTH_NATIVE_TENANT_SWITCHED, {
+  context.emitCode(OBS_CODES.AUTH_NATIVE_TENANT_SWITCHED, {
     userId: proof.user.userId,
     metadata: {
       clientId: proof.session.clientId,
@@ -137,6 +139,10 @@ function resolveNativeRefreshProof(
   const user = context.users.getUserById(session.userId);
   if (!user || !canReceiveTokens(user)
     || context.users.getAuthGeneration(session.userId) !== session.authGeneration) {
+    context.sessions.revokeFamily(session.familyId);
+    invalidGrant();
+  }
+  if (context.requiresMfaAssurance(user.userId) && session.mfaVerifiedAt === null) {
     context.sessions.revokeFamily(session.familyId);
     invalidGrant();
   }

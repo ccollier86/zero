@@ -118,6 +118,8 @@ function makeConfig(
       allowAdminMarkEmailVerified: false,
     },
     capabilities: {
+      canManageUsers: true,
+      canManageGlobalAdmins: true,
       manualPasswordReset: true,
       setupEmail: true,
       passwordResetEmail: true,

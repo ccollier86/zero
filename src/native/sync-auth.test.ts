@@ -93,7 +93,7 @@ function authenticated(subject: string, tenantId?: string): NativeAuthState {
     status: 'authenticated', error: null,
     identity: { iss: 'https://zero.example/auth', sub: subject, aud: 'desktop', exp: 1, iat: 1 },
     activeTenant: tenantId
-      ? { tenantId, slug: tenantId, name: tenantId, role: 'member' }
+      ? { tenantId, slug: tenantId, name: tenantId, kind: 'organization', role: 'member' }
       : null,
   };
 }

@@ -13,6 +13,7 @@ import {
   type EmailProvider,
   type EmailSendResult,
 } from '../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import { createReactiveDB } from '../sync/reactive-db';
 import { createPlatformTokenPlugin } from '../tokens';
 import { getActionTokenService } from './auth-runtime';
@@ -37,7 +38,7 @@ class FlakyEmailProvider implements EmailProvider {
 }
 
 afterEach(() => {
-  configureEmail(false);
+  resetEmailCompatibilityRuntimeForTesting();
 });
 
 describe('Auth email delivery hardening', () => {
