@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { resolveSyncAuthContext } from './sync-auth';
-import type { SyncTokenVerifier } from './types';
+import { resolveSyncAuthContext, sameSyncAuthContext } from './sync-auth';
+import type { SyncAuthContext, SyncTokenVerifier } from './types';
 
 function createVerifier(): SyncTokenVerifier {
   return {
@@ -217,5 +217,45 @@ describe('resolveSyncAuthContext', () => {
         role: 'admin',
       },
     });
+  });
+});
+
+describe('sameSyncAuthContext', () => {
+  const context: SyncAuthContext = {
+    userId: 'user-1',
+    email: 'user@test.local',
+    role: 'user',
+    authGeneration: 4,
+    clientId: 'browser',
+    sessionKind: 'web',
+    scope: ['openid', 'profile'],
+    sessionId: 'session-1',
+    sessionGeneration: 2,
+    mfaVerifiedAt: 1_700_000_000_000,
+    sessionScopeKind: 'tenant',
+    sessionScopeId: 'tenant-1',
+    tenantId: 'tenant-1',
+    tenantKind: 'organization',
+    membershipId: 'membership-1',
+    tenantRole: 'member',
+    tenantAuthorizationGeneration: 3,
+    membershipAuthorizationGeneration: 5,
+    authorizationAssignmentRevision: 'revision-1',
+  };
+
+  test('compares every Guardian security-boundary field', () => {
+    expect(sameSyncAuthContext(context, { ...context })).toBe(true);
+    expect(sameSyncAuthContext(context, {
+      ...context,
+      authGeneration: context.authGeneration! + 1,
+    })).toBe(false);
+    expect(sameSyncAuthContext(context, {
+      ...context,
+      mfaVerifiedAt: context.mfaVerifiedAt! + 1,
+    })).toBe(false);
+    expect(sameSyncAuthContext(context, {
+      ...context,
+      tenantKind: 'administration',
+    })).toBe(false);
   });
 });

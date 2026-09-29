@@ -808,6 +808,125 @@ describe('Auth Plugin — Change Password', () => {
     expect(data.code).toBe('INVALID_PASSWORD');
   });
 
+  test('does not let an in-flight password change clear a newer administrator gate', async () => {
+    const local = await startAuthApp();
+    try {
+      const registered = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'password-change-admin-gate',
+        email: 'password-change-admin-gate@test.com',
+        password: 'oldpassword1',
+      });
+      expect(registered.status).toBe(200);
+
+      const store = local.runtime.getStore()!;
+      const credentials = (store as unknown as {
+        credentials: { hashPassword: (password: string) => Promise<string> };
+      }).credentials;
+      const hashPassword = credentials.hashPassword.bind(credentials);
+      let markHashStarted!: () => void;
+      let releaseHash!: () => void;
+      const hashStarted = new Promise<void>((resolve) => { markHashStarted = resolve; });
+      const hashGate = new Promise<void>((resolve) => { releaseHash = resolve; });
+      credentials.hashPassword = async (password) => {
+        markHashStarted();
+        await hashGate;
+        return hashPassword(password);
+      };
+
+      let changed: JsonResponse;
+      try {
+        const pending = requestJson(local.url, 'POST', '/auth/change-password', {
+          currentPassword: 'oldpassword1',
+          newPassword: 'stale-new-password1',
+        }, registered.data.accessToken);
+        await hashStarted;
+        expect(store.requirePasswordChange(registered.data.user.userId)).toBe(true);
+        releaseHash();
+        changed = await pending;
+      } finally {
+        credentials.hashPassword = hashPassword;
+        releaseHash?.();
+      }
+
+      expect(changed!).toMatchObject({
+        status: 409,
+        data: { code: 'AUTH_STATE_CHANGED' },
+      });
+      expect(changed!.data.accessToken).toBeUndefined();
+      expect(changed!.data.refreshToken).toBeUndefined();
+      expect(await store.verifyPassword(
+        registered.data.user.userId,
+        'oldpassword1',
+      )).toBe(true);
+      expect(await store.verifyPassword(
+        registered.data.user.userId,
+        'stale-new-password1',
+      )).toBe(false);
+      expect(store.getUserById(registered.data.user.userId)).toMatchObject({
+        passwordChangeRequired: true,
+      });
+    } finally {
+      await local.stop();
+    }
+  }, 60_000);
+
+  test('does not issue a replacement session after a post-change credential reset', async () => {
+    const local = await startAuthApp();
+    try {
+      const registered = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'password-generation-handoff',
+        email: 'password-generation-handoff@test.com',
+        password: 'oldpassword1',
+      });
+      expect(registered.status).toBe(200);
+
+      const tokenService = local.runtime.getTokenService()!;
+      const store = local.runtime.getStore()!;
+      const issueTokenPair = tokenService.issueTokenPair.bind(tokenService);
+      let intercepted = false;
+      (tokenService as any).issueTokenPair = async (
+        ...args: Parameters<typeof issueTokenPair>
+      ) => {
+        intercepted = true;
+        await store.resetPassword(
+          registered.data.user.userId,
+          'replacement-password1',
+        );
+        return issueTokenPair(...args);
+      };
+
+      let changed: JsonResponse;
+      try {
+        changed = await requestJson(local.url, 'POST', '/auth/change-password', {
+          currentPassword: 'oldpassword1',
+          newPassword: 'changed-password1',
+        }, registered.data.accessToken);
+      } finally {
+        (tokenService as any).issueTokenPair = issueTokenPair;
+      }
+      expect(intercepted).toBe(true);
+      expect(changed!).toMatchObject({
+        status: 409,
+        data: { code: 'AUTH_STATE_CHANGED' },
+      });
+      expect(changed!.data.accessToken).toBeUndefined();
+      expect(changed!.data.refreshToken).toBeUndefined();
+
+      const superseded = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'password-generation-handoff',
+        password: 'changed-password1',
+      });
+      expect(superseded.status).toBe(401);
+      const current = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'password-generation-handoff',
+        password: 'replacement-password1',
+      });
+      expect(current.status).toBe(200);
+    } finally {
+      await local.stop();
+    }
+  });
+
   test('POST /auth/change-password requires auth', async () => {
     const { status } = await post('/auth/change-password', {
       currentPassword: 'old',
@@ -1222,6 +1341,80 @@ describe('Auth Plugin — MFA Flows', () => {
       expect(verifiedChallenge.data.refreshToken).toBeDefined();
       expect(verifiedChallenge.data.user.username).toBe('mfa-owner');
       expectActivePageSession(verifiedChallenge);
+    } finally {
+      await local.stop();
+    }
+  });
+
+  test('profile enrollment can be activated only by its exact originating session', async () => {
+    const local = await startAuthApp({
+      mfa: {
+        enabled: true,
+        policy: 'optional',
+        methods: ['totp'],
+        totp: {
+          issuer: 'Zero Tests',
+          encryptionKey: 'profile-session-boundary-key',
+        },
+      },
+    });
+
+    try {
+      const original = await requestJson(local.url, 'POST', '/auth/register', {
+        username: 'profile-mfa-user',
+        email: 'profile-mfa-user@test.com',
+        password: 'password123',
+      });
+      expect(original.status).toBe(200);
+      expect(original.data.accessToken).toBeString();
+
+      const otherSession = await requestJson(local.url, 'POST', '/auth/login', {
+        username: 'profile-mfa-user',
+        password: 'password123',
+      });
+      expect(otherSession.status).toBe(200);
+      expect(otherSession.data.accessToken).toBeString();
+
+      const setup = await requestJson(
+        local.url,
+        'POST',
+        '/auth/mfa/setup',
+        { method: 'totp' },
+        original.data.accessToken,
+      );
+      expect(setup.status).toBe(200);
+      expect(setup.data.setupRequired).toBe(false);
+      const code = generateTotpCode({ secret: setup.data.totp.secret });
+
+      const wrongSession = await requestJson(
+        local.url,
+        'POST',
+        '/auth/mfa/setup/verify',
+        { verificationToken: setup.data.verificationToken, code },
+        otherSession.data.accessToken,
+      );
+      expect(wrongSession.status).toBe(409);
+      expect(wrongSession.data.code).toBe('AUTH_STATE_CHANGED');
+
+      const missingSession = await requestJson(
+        local.url,
+        'POST',
+        '/auth/mfa/setup/verify',
+        { verificationToken: setup.data.verificationToken, code },
+      );
+      expect(missingSession.status).toBe(409);
+      expect(missingSession.data.code).toBe('AUTH_STATE_CHANGED');
+
+      const verified = await requestJson(
+        local.url,
+        'POST',
+        '/auth/mfa/setup/verify',
+        { verificationToken: setup.data.verificationToken, code },
+        original.data.accessToken,
+      );
+      expect(verified.status).toBe(200);
+      expect(verified.data.ok).toBe(true);
+      expect(verified.data.method.status).toBe('active');
     } finally {
       await local.stop();
     }

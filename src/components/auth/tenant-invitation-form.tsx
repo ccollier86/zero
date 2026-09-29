@@ -20,12 +20,16 @@ import {
   isAuthFlowContinuationResult,
 } from './auth-continuation';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
+import { useLocalReturnToHref } from './use-local-return-to-href';
+import { AuthConfigLoadState } from './auth-config-load-state';
+import { reportAuthClientActionFailure } from '../../frontend/client/auth-action-observability';
 
 export interface TenantInvitationFormProps {
   /** Exact `zinv_...` token read from the app-owned invitation landing route. */
   token: string;
   /** Post-login/MFA onboarding proof when no Bearer session exists yet. */
   continuation?: string;
+  /** Host-owned override; omitted values return from `/login` to this local page. */
   signInHref?: string;
   onSuccess?: (result: AuthTenantInvitationAcceptanceResult) => void;
   className?: string;
@@ -47,13 +51,14 @@ export function TenantInvitationForm(props: TenantInvitationFormProps) {
 function TenantInvitationFormScope({
   token,
   continuation,
-  signInHref = '/login',
+  signInHref,
   onSuccess,
   className,
 }: TenantInvitationFormProps) {
   const client = useClientMaybe() as InternalClient | null;
   const authClient = client?.auth ?? null;
   const auth = useAuth();
+  const resolvedSignInHref = useLocalReturnToHref(signInHref);
   const authConfig = useAuthConfig();
   const term = authConfig.config?.tenancy?.terminology?.singular ?? 'organization';
   const [inspection, setInspection] = React.useState<AuthTenantInvitationInspection | null>(null);
@@ -101,6 +106,7 @@ function TenantInvitationFormScope({
     void authClient.inspectTenantInvitation(token).then((result) => {
       if (current) setInspection(result);
     }).catch((cause) => {
+      reportAuthClientActionFailure('inspectTenantInvitation', cause, { codeOnly: true });
       if (current) setError(getAuthDisplayMessage(cause, 'Invitation is unavailable'));
     }).finally(() => {
       if (current) setLoading(false);
@@ -171,6 +177,11 @@ function TenantInvitationFormScope({
           title="Invitation accepted"
           description={accepted.successDescription}
         />
+        <AuthConfigLoadState
+          state={authConfig}
+          loadingMessage="Loading organization terminology…"
+          unavailableMessage="Organization terminology could not be loaded."
+        />
       </div>
     );
   }
@@ -200,6 +211,11 @@ function TenantInvitationFormScope({
       <AuthHeader
         title={presentation.title}
         description={`This invitation is for ${inspection.emailHint}.`}
+      />
+      <AuthConfigLoadState
+        state={authConfig}
+        loadingMessage="Loading organization terminology…"
+        unavailableMessage="Organization terminology could not be loaded. You can still accept this invitation."
       />
       <TenantInvitationScopeNotice kind={inspection.tenant.kind} />
       {error && (
@@ -258,7 +274,7 @@ function TenantInvitationFormScope({
         </Button>
       ) : (
         <Button asChild className="w-full">
-          <a href={signInHref}>Sign in as the invited account</a>
+          <a href={resolvedSignInHref}>Sign in as the invited account</a>
         </Button>
       )}
     </div>

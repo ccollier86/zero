@@ -98,6 +98,46 @@ describe('registration provisioning transaction', () => {
     expect(completedBootstrapCount(harness.db)).toBe(1);
   }, 60_000);
 
+  test('does not carry a stale registration generation into session issuance', async () => {
+    const harness = await start({
+      tenancy: 'single',
+      authorization: { mode: 'simple' },
+      bootstrap: 'public',
+      registration: { mode: 'public' },
+    });
+    const service = harness.runtime.getTokenService()!;
+    const store = harness.runtime.getStore()!;
+    const issueTokenPair = service.issueTokenPair.bind(service);
+    let intercepted = false;
+    (service as any).issueTokenPair = async (
+      ...args: Parameters<typeof issueTokenPair>
+    ) => {
+      intercepted = true;
+      await store.resetPassword(args[0].userId, 'replacement-password1');
+      return issueTokenPair(...args);
+    };
+
+    let failed: Awaited<ReturnType<typeof register>>;
+    try {
+      failed = await register(harness, 'registration-generation-race');
+    } finally {
+      (service as any).issueTokenPair = issueTokenPair;
+    }
+    expect(intercepted).toBe(true);
+    expect(failed!).toMatchObject({
+      status: 409,
+      body: { code: 'AUTH_STATE_CHANGED' },
+    });
+    expect(count(harness.db, 'users')).toBe(0);
+    expect(count(harness.db, '_auth_sessions')).toBe(0);
+    expect(count(harness.db, '_refresh_tokens')).toBe(0);
+    expect(count(harness.db, '_auth_registration_provisioning')).toBe(0);
+    expect(completedBootstrapCount(harness.db)).toBe(0);
+
+    const retried = await register(harness, 'registration-generation-race');
+    expect(retried.status).toBe(200);
+  }, 60_000);
+
   test('rejects direct first-user creation in multi mode and requires the organization path', async () => {
     const harness = await start({
       tenancy: 'multi',
@@ -234,6 +274,84 @@ describe('registration provisioning transaction', () => {
       },
     });
     expect(completedBootstrapCount(recoveryDb)).toBe(1);
+  }, 60_000);
+
+  test('preserves an adopted administrator-created user during expired-receipt recovery', async () => {
+    const harness = await start({
+      tenancy: 'single',
+      authorization: { mode: 'simple' },
+      bootstrap: 'public',
+      registration: { mode: 'admin-only' },
+    });
+    const bootstrap = await register(harness, 'admin-recovery-owner');
+    expect(bootstrap.status).toBe(200);
+    const ownerId = String(bootstrap.body.user.userId);
+    const store = harness.runtime.getStore()!;
+    const provisional = await store.createAdminProvisionedUser({
+      username: 'admin-recovery-target',
+      email: 'admin-recovery-target@example.test',
+      password: 'temporary-password1',
+      role: 'user',
+    }, {
+      actor: { userId: ownerId, provenance: 'authenticated-request' },
+      setupRequested: true,
+    }, () => {});
+
+    harness.db.exec(`
+      CREATE TABLE app_user_links (
+        link_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE CASCADE
+      )
+    `);
+    harness.db.prepare(`
+      INSERT INTO app_user_links (link_id, user_id) VALUES (?, ?)
+    `).run('adopted-user-link', provisional.user.userId);
+    harness.db.prepare(`
+      UPDATE _auth_admin_user_provisioning
+      SET lease_expires_at = ?
+      WHERE provisioning_id = ?
+    `).run(Date.now() - 1, provisional.provisioning.provisioningId);
+
+    expect(store.hasPendingRegistrationProvisioning(provisional.user.userId)).toBe(false);
+    expect(store.recoverPendingAdminUserProvisioning()).toBe(1);
+    expect(store.getUserById(provisional.user.userId)).not.toBeNull();
+    expect(count(harness.db, 'app_user_links')).toBe(1);
+    expect(count(harness.db, '_auth_admin_user_provisioning')).toBe(0);
+    expect(() => store.rollbackAdminUserProvisioning(provisional.provisioning))
+      .toThrow('invalid or stale');
+  }, 60_000);
+
+  test('removes an untouched administrator-created user during expired-receipt recovery', async () => {
+    const harness = await start({
+      tenancy: 'single',
+      authorization: { mode: 'simple' },
+      bootstrap: 'public',
+      registration: { mode: 'admin-only' },
+    });
+    const bootstrap = await register(harness, 'admin-cleanup-owner');
+    expect(bootstrap.status).toBe(200);
+    const ownerId = String(bootstrap.body.user.userId);
+    const store = harness.runtime.getStore()!;
+    const provisional = await store.createAdminProvisionedUser({
+      username: 'admin-cleanup-target',
+      email: 'admin-cleanup-target@example.test',
+      password: 'temporary-password1',
+      role: 'user',
+    }, {
+      actor: { userId: ownerId, provenance: 'authenticated-request' },
+      setupRequested: true,
+    }, () => {});
+    harness.db.prepare(`
+      UPDATE _auth_admin_user_provisioning
+      SET lease_expires_at = ?
+      WHERE provisioning_id = ?
+    `).run(Date.now() - 1, provisional.provisioning.provisioningId);
+
+    expect(store.hasPendingRegistrationProvisioning(provisional.user.userId)).toBe(false);
+    expect(store.recoverPendingAdminUserProvisioning()).toBe(1);
+    expect(store.getUserById(provisional.user.userId)).toBeNull();
+    expect(count(harness.db, '_auth_admin_user_provisioning')).toBe(0);
   }, 60_000);
 
   test('refuses to finalize a single/advanced receipt after provisional owner loss', async () => {

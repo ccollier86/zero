@@ -12,6 +12,7 @@ import {
   isPolicyTrustedUserProperty,
   resolveAuthBehaviorConfig,
 } from './auth-config';
+import type { AuthEmailTemplate } from './auth-email-templates';
 import type {
   AuthAuthorizationMode,
   AuthBehaviorConfig,
@@ -144,6 +145,75 @@ describe('resolveAuthBehaviorConfig', () => {
       tenancy: { mode: objectTenancy },
       authorization: { mode: objectAuthorization },
     });
+  });
+
+  test('preserves helper identity and established normalization reference boundaries', () => {
+    const values = ['clinical', 'operations'];
+    const template: AuthEmailTemplate = (context) => ({
+      subject: context.defaultSubject,
+      text: context.defaultText,
+    });
+    const input = defineAuthConfig({
+      tenancy: 'multi',
+      authorization: 'advanced',
+      branding: { appName: 'Zero' },
+      emails: { emailOtp: template },
+      userProperties: {
+        department: { type: 'enum', values },
+      },
+    });
+
+    expect(defineAuthConfig(input)).toBe(input);
+
+    const resolved = resolveAuthBehaviorConfig(input);
+    expect(Object.isFrozen(resolved)).toBe(false);
+    expect(Object.isFrozen(resolved.tenancy)).toBe(true);
+    expect(Object.isFrozen(resolved.tenancy.terminology)).toBe(true);
+    expect(Object.isFrozen(resolved.tenancy.creation)).toBe(true);
+    expect(Object.isFrozen(resolved.authorization)).toBe(true);
+    expect(Object.isFrozen(resolved.authorization.permissions)).toBe(true);
+    expect(Object.isFrozen(resolved.authorization.roles)).toBe(true);
+    expect(Object.isFrozen(resolved.authorization.roles.member)).toBe(true);
+    expect(Object.isFrozen(resolved.authorization.roles.member?.permissions)).toBe(true);
+    expect(Object.isFrozen(resolved.branding)).toBe(false);
+    expect(Object.isFrozen(resolved.emails)).toBe(false);
+    expect(Object.isFrozen(resolved.userProperties)).toBe(false);
+    expect(resolved.branding).not.toBe(input.branding);
+    expect(resolved.emails.emailOtp).toBe(template);
+    expect(resolved.userProperties.department?.values).toBe(values);
+  });
+
+  test('preserves validation precedence across configuration concerns', () => {
+    expect(() => resolveAuthBehaviorConfig({
+      tenancy: 'invalid' as never,
+      authorization: 'invalid' as never,
+      bootstrap: 'invalid' as never,
+    })).toThrow('Unsupported tenancy mode: "invalid"');
+
+    expect(() => resolveAuthBehaviorConfig({
+      tenancy: 'multi',
+      authorization: 'invalid' as never,
+      bootstrap: 'invalid' as never,
+    })).toThrow('Unsupported authorization mode: "invalid"');
+
+    expect(() => resolveAuthBehaviorConfig({
+      tenancy: {
+        mode: 'multi',
+        onboarding: {
+          verifiedDomains: {
+            enabled: true,
+            allowedRequestRoles: ['missing'],
+            defaultRequestRole: 'missing',
+          },
+        },
+      },
+      bootstrap: 'invalid' as never,
+    })).toThrow('Verified-domain request role is not declared: "missing"');
+
+    expect(() => resolveAuthBehaviorConfig({
+      bootstrap: 'invalid' as never,
+      registration: { mode: 'invalid' as never },
+    })).toThrow('Unsupported bootstrap mode: "invalid"');
   });
 
   test('normalizes all four tenancy/authorization profiles deterministically', () => {
@@ -496,6 +566,46 @@ describe('resolveAuthBehaviorConfig', () => {
       defaultRequestRole: 'manager',
       maxClaimsPerTenant: 20,
     });
+  });
+
+  test('rejects non-organization verified-domain roles while onboarding is disabled', () => {
+    expect(() => resolveAuthBehaviorConfig({
+      tenancy: {
+        mode: 'multi',
+        onboarding: {
+          verifiedDomains: {
+            enabled: false,
+            allowedRequestRoles: ['administrator'],
+            defaultRequestRole: 'administrator',
+          },
+        },
+      },
+      authorization: 'advanced',
+    })).toThrow('must be assignable to organization tenants: "administrator"');
+
+    expect(() => resolveAuthBehaviorConfig({
+      tenancy: {
+        mode: 'multi',
+        onboarding: {
+          verifiedDomains: {
+            enabled: false,
+            allowedRequestRoles: ['application-auditor'],
+            defaultRequestRole: 'application-auditor',
+          },
+        },
+      },
+      authorization: {
+        mode: 'advanced',
+        permissions: {
+          'application.reports:read': { scope: 'application' },
+        },
+        roles: {
+          'application-auditor': {
+            permissions: ['application.reports:read'],
+          },
+        },
+      },
+    })).toThrow('must be assignable to organization tenants: "application-auditor"');
   });
 
   test('normalizes a validated permission registry and static role templates', () => {

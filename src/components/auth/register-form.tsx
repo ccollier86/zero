@@ -47,6 +47,7 @@ import {
   useNativeAuthRoute,
   useNativeLoginHint,
 } from './use-native-auth-route';
+import { AuthConfigLoadState } from './auth-config-load-state';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -203,7 +204,11 @@ function RegisterForm({
   }
 
   if (configUnavailable) {
-    return <>{unavailable ?? <RegistrationConfigUnavailable loginHref={continuedLoginHref} showLoginLink={showLoginLink} />}</>;
+    return <>{unavailable ?? <RegistrationConfigUnavailable
+      authConfig={authConfig}
+      loginHref={continuedLoginHref}
+      showLoginLink={showLoginLink}
+    />}</>;
   }
 
   if (registrationClosed) {
@@ -539,15 +544,22 @@ function RegistrationPolicyLoading() {
 }
 
 function RegistrationConfigUnavailable({
+  authConfig,
   loginHref,
   showLoginLink,
 }: {
+  authConfig: ReturnType<typeof useAuthConfig>;
   loginHref: string;
   showLoginLink: boolean;
 }) {
   return (
     <div className="space-y-3">
-      <AuthHeader title="Registration unavailable" description="Registration settings could not be loaded." />
+      <AuthHeader title="Registration unavailable" />
+      <AuthConfigLoadState
+        state={authConfig}
+        loadingMessage="Loading registration settings…"
+        unavailableMessage="Registration settings could not be loaded."
+      />
       {showLoginLink && (
         <p className="text-center text-xs text-muted-foreground">
           Already have an account?{' '}

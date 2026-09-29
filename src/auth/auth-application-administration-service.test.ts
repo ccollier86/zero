@@ -112,6 +112,27 @@ describe('single-application access administration service', () => {
       () => harness.service.listUsers('owner', { cursor: 'broken' }),
       'APPLICATION_USER_PAGE_INVALID',
     );
+    for (const cursor of [null, false, 0, {}, [], Symbol('cursor')]) {
+      expectAuthError(
+        () => harness.service.listUsers('owner', { cursor } as never),
+        'APPLICATION_USER_PAGE_INVALID',
+      );
+    }
+    for (const status of [
+      null,
+      false,
+      0,
+      '',
+      'removed',
+      {},
+      [],
+      Symbol('status'),
+    ]) {
+      expectAuthError(
+        () => harness.service.listUsers('owner', { status } as never),
+        'APPLICATION_USER_PAGE_INVALID',
+      );
+    }
   });
 
   test('enforces a live grant ceiling, preserves system roles, and invalidates self changes', () => {
@@ -182,6 +203,113 @@ describe('single-application access administration service', () => {
     });
     expect(self.actorAuthorizationChanged).toBe(true);
     expectAuthError(() => harness.service.getConfig('manager'), 'FORBIDDEN');
+  });
+
+  test('rejects malformed role sets without mutating or accidentally clearing grants', () => {
+    const harness = createHarness();
+    insertUser(harness.db, 'owner', 1);
+    insertUser(harness.db, 'subject', 2);
+    harness.roles.establishBootstrapOwner('owner');
+    harness.roles.replaceApplicationRoles({
+      userId: 'subject',
+      roleKeys: ['reader'],
+      changedBy: 'owner',
+    });
+    const revision = applicationRevision(harness, 'subject');
+    const sparse = new Array(2) as string[];
+    sparse[0] = 'reader';
+    const malformed: unknown[] = [
+      undefined,
+      null,
+      false,
+      'reader',
+      {},
+      sparse,
+      [''],
+      ['   '],
+      ['reader', 7],
+      ['reader', 'reader'],
+      ['reader', ' reader '],
+      ['Not-A-Role'],
+      ['role with spaces'],
+      ['a'.repeat(65)],
+      Array.from({ length: 129 }, (_, index) => `role-${index}`),
+    ];
+
+    for (const roleKeys of malformed) {
+      expectApplicationRoleSelectionInvalid(() => replaceUserRoles(harness, {
+        actorUserId: 'owner',
+        userId: 'subject',
+        roleKeys: roleKeys as readonly string[],
+        expectedRevision: revision,
+      }));
+      expect(harness.roles.getRetainedApplicationRoleSet('subject')).toMatchObject({
+        roles: ['reader'],
+        revision,
+      });
+    }
+
+    // A literal empty array remains the one unambiguous role-clear operation.
+    expect(replaceUserRoles(harness, {
+      actorUserId: 'owner',
+      userId: 'subject',
+      roleKeys: [],
+      expectedRevision: revision,
+    }).user.roles).toEqual([]);
+  });
+
+  test('detaches role-mutation input before invoking live authority', () => {
+    const harness = createHarness();
+    insertUser(harness.db, 'owner', 1);
+    insertUser(harness.db, 'subject', 2);
+    insertUser(harness.db, 'decoy', 3);
+    harness.roles.establishBootstrapOwner('owner');
+    harness.roles.replaceApplicationRoles({
+      userId: 'subject',
+      roleKeys: ['reader'],
+      changedBy: 'owner',
+    });
+    harness.roles.replaceApplicationRoles({
+      userId: 'decoy',
+      roleKeys: ['viewer'],
+      changedBy: 'owner',
+    });
+    const authority = testApplicationAuthority(harness, 'owner');
+    const selectedRoles = ['reader'];
+    const auditRequest = { requestId: 'request-before-authority' };
+    const input: Parameters<
+      AuthApplicationAdministrationService['replaceUserRoles']
+    >[0] = {
+      actorUserId: 'owner',
+      userId: 'subject',
+      roleKeys: selectedRoles,
+      expectedRevision: applicationRevision(harness, 'subject'),
+      auditRequest,
+      assertCurrentAuthority: (permissions) => {
+        input.actorUserId = 'decoy';
+        input.userId = 'decoy';
+        input.expectedRevision = applicationRevision(harness, 'decoy');
+        selectedRoles.splice(0, selectedRoles.length, 'editor');
+        auditRequest.requestId = 'request-after-authority';
+        return authority(permissions);
+      },
+    };
+
+    const result = harness.service.replaceUserRoles(input);
+
+    expect(result.user).toMatchObject({
+      identity: { userId: 'subject' },
+      roles: ['reader'],
+    });
+    expect(harness.roles.getRetainedApplicationRoleKeys('decoy')).toEqual(['viewer']);
+    expect(harness.db.prepare(`
+      SELECT request_id, target_id FROM _auth_audit_events
+      WHERE action = 'application.roles-replaced'
+      ORDER BY occurred_at DESC LIMIT 1
+    `).get()).toEqual({
+      request_id: 'request-before-authority',
+      target_id: 'subject',
+    });
   });
 
   test('rejects stale whole-set writes and lets only an owner retire orphaned roles', () => {
@@ -310,6 +438,42 @@ describe('single-application access administration service', () => {
     expect(harness.roles.resolveApplicationRoles('target')!.revision).not.toBe(targetBefore);
     expectAuthError(() => harness.service.getConfig('owner'), 'FORBIDDEN');
     expect(harness.service.getConfig('target').capabilities.canTransferOwnership).toBe(true);
+  });
+
+  test('detaches ownership target and audit input before invoking live authority', () => {
+    const harness = createHarness();
+    insertUser(harness.db, 'owner', 1);
+    insertUser(harness.db, 'target', 2);
+    insertUser(harness.db, 'decoy', 3);
+    harness.roles.establishBootstrapOwner('owner');
+    const authority = testApplicationAuthority(harness, 'owner');
+    const auditRequest = { correlationId: 'correlation-before-authority' };
+    const input: Parameters<
+      AuthApplicationAdministrationService['transferOwnership']
+    >[0] = {
+      actorUserId: 'owner',
+      targetUserId: 'target',
+      auditRequest,
+      assertCurrentAuthority: (permissions) => {
+        input.actorUserId = 'decoy';
+        input.targetUserId = 'decoy';
+        auditRequest.correlationId = 'correlation-after-authority';
+        return authority(permissions);
+      },
+    };
+
+    const result = harness.service.transferOwnership(input);
+
+    expect(result.owner.identity.userId).toBe('target');
+    expect(harness.roles.getRetainedApplicationRoleKeys('decoy')).toEqual([]);
+    expect(harness.db.prepare(`
+      SELECT correlation_id, target_id FROM _auth_audit_events
+      WHERE action = 'application.ownership-transferred'
+      ORDER BY occurred_at DESC LIMIT 1
+    `).get()).toEqual({
+      correlation_id: 'correlation-before-authority',
+      target_id: 'target',
+    });
   });
 
   test('rolls back the target owner grant when revoking the prior owner fails', () => {
@@ -477,6 +641,20 @@ function expectAuthError(operation: () => unknown, code: string): void {
   } catch (error) {
     expect(error).toBeInstanceOf(AuthError);
     expect((error as AuthError).code).toBe(code);
+  }
+}
+
+function expectApplicationRoleSelectionInvalid(operation: () => unknown): void {
+  try {
+    operation();
+    throw new Error('Expected application role selection to be rejected');
+  } catch (error) {
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error).toMatchObject({
+      code: 'APPLICATION_ROLE_SELECTION_INVALID',
+      message: 'Application role selection is invalid',
+      status: 422,
+    });
   }
 }
 

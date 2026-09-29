@@ -212,6 +212,14 @@ state; stale work rejected by a scope-generation fence is not reported as a
 current failure. See
 [Auth Operational Failure Contract](../observability.md#auth-operational-failure-contract).
 
+Public auth config has deliberately different reactive and imperative failure
+contracts. `useAuthConfig()` exposes `unknown`/`loading`/`ready`/`error` state,
+and its `reload()` is nonthrowing so components render or retry from that
+snapshot. `useAuth().getConfig()` forces the same client-scoped, fenced refresh
+for imperative code, but rejects the original current transport, server, or
+validation failure after publishing safe error state. Superseded imperative
+refreshes reject with `AbortError`; neither path can publish a stale response.
+
 ### Current authorization hints
 
 `useAuthorization()` observes the sanitized live `GET /auth/authorization`
@@ -300,6 +308,30 @@ const organizations = usePlatformTenants({
 });
 ```
 
+Platform people, invitation, and configuration requests are independent
+slices. New UI should use the precise fields instead of treating one failed
+request as a failure of the whole screen:
+
+| Slice | State | Retry |
+|---|---|---|
+| protected config | `isLoadingConfig`, `configError` | `reloadConfig()` |
+| administration members | `isLoadingMembers`, `isMutatingMembers`, `membersError` | `reloadMembers()` |
+| public invitation policy | `invitationPolicyStatus`, `invitationsEnabled`, `invitationConfigError` | `reloadInvitations()` also retries failed public config |
+| administration invitations | `isLoadingInvitations`, `isMutatingInvitations`, `invitationsError` | `reloadInvitations()` |
+
+`isLoading`, `isMutating`, `error`, and `reload()` remain compatibility
+aggregates. A member transport failure does not erase a successfully loaded
+invitation page; a public-config failure disables only invitation transports
+and leaves authorized member management usable. `invitationsEnabled` is
+`null` while public policy is unresolved, `false` when disabled or failed
+closed, and `true` only after policy explicitly enables the feature.
+Paging is also separate: member state uses `memberPage`,
+`isLoadingMoreMembers`, and `loadMoreMembers()`, while invitation state uses
+`invitationPage`, `isLoadingMoreInvitations`, and `loadMoreInvitations()`.
+`reload()` fans out to the protected config, member, and invitation slices;
+the narrower retry methods do not turn a sibling failure into a screen-wide
+failure.
+
 The directory exposes `canCreateTenants` separately from
 `canManageTenants`, and `canReadTenantMembers` separately from
 `canReadTenants`; callers must not infer the combined permission requirements.
@@ -351,16 +383,39 @@ tenant. Account replacement in the same tenant, tenant switching, pagination,
 and mutation completion are generation-fenced so stale rows or errors cannot
 land in the replacement scope.
 
-`useTenantOnboardingAdministration()` loads the active tenant's invitation and
-retained join-request pages according to the capabilities returned by
-`getTenantAdministrationConfig()`. It exposes issue/revoke/approve/deny
-mutations and never accepts a tenant ID. Each join request includes a
+`useTenantOnboardingAdministration()` coordinates separate active-tenant
+protected-config, invitation, and retained join-request slices according to the
+capabilities returned by `getTenantAdministrationConfig()`. Protected config
+loads independently of the public feature switches; list, pagination,
+mutation, error, and retry state remain separate. It exposes
+issue/revoke/approve/deny mutations and never accepts a tenant ID. Each join
+request includes a
 reviewer-safe approval policy: fixed/default modes leave role selection on the
 server, while selectable mode contains only live grantable role keys and
 labels, its default selection, and its maximum selection count. Consumers must
 still treat the approval mutation as authoritative because an intervening
 session, role, property, or policy change can invalidate that projection. See
 [Tenant Invitations and Join Requests](../auth/tenant-invitations-and-join-requests.md).
+
+Invitations and join requests also have independent state. Use
+`isLoadingConfig`, `isConfigPermissionDenied`, `configError`, and
+`reloadConfig()` for the protected tenant-administration configuration. Use
+`isLoadingInvitations`, `isMutatingInvitations`, `invitationsError`, and
+`reloadInvitations()` for the invitation panel; use `isLoadingJoinRequests`,
+`isMutatingJoinRequests`, `joinRequestsError`, and `reloadJoinRequests()` for
+review. `isInvitationsPermissionDenied` and
+`isJoinRequestsPermissionDenied` distinguish an authorized-feature denial
+from a transport failure. `authConfigStatus`, `authConfigError`,
+`invitationsEnabled`, and `joinRequestsEnabled` expose public-policy
+resolution without guessing. A disabled feature performs no corresponding
+transport, while failure to load public policy fails that capability closed.
+The aggregate state fields remain for compatibility. Paging remains separate
+through `isLoadingMoreInvitations`/`loadMoreInvitations()` and
+`isLoadingMoreJoinRequests`/`loadMoreJoinRequests()`. The shared `config`
+projection can be null while that protected read is loading, denied, failed,
+or fenced by a scope transition. It still loads when both public features are
+disabled; it must not be interpreted as one aggregate request for all three
+slices.
 
 `useTenantDomainAdministration()` is the headless active-tenant surface for
 request-only verified-company-domain onboarding. It loads server-derived actor

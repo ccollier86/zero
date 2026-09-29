@@ -25,6 +25,8 @@ export async function buildAuthCompletionResponse(params: {
   sessionBinding?: WebSessionBinding;
   /** Trusted durable assurance re-resolved from a live server-side proof. */
   mfaVerifiedAt?: number | null;
+  /** Security generation proven by the password or transition ceremony. */
+  expectedAuthGeneration: number;
 }) {
   const { user, tokenService, authConfig, mfaChallengeService } = params;
   const mfaVerifiedAt = normalizeMfaVerifiedAt(params.mfaVerifiedAt);
@@ -35,15 +37,25 @@ export async function buildAuthCompletionResponse(params: {
       const started = await mfaChallengeService.startLoginChallenge({
         user,
         method: activeMethod,
+        expectedAuthGeneration: params.expectedAuthGeneration,
       });
-      const challengeToken = await tokenService.signTransitionToken(user, {
-        purpose: 'mfa_challenge',
-        ttl: authConfig.mfa.challengeTTL,
-        methodId: started.method.methodId,
-        methodType: started.method.type,
-        challengeId: started.challenge?.challengeId || undefined,
-        flow: 'auth',
-      });
+      let challengeToken: string;
+      try {
+        challengeToken = await tokenService.signTransitionToken(user, {
+          purpose: 'mfa_challenge',
+          ttl: authConfig.mfa.challengeTTL,
+          methodId: started.method.methodId,
+          methodType: started.method.type,
+          challengeId: started.challenge?.challengeId || undefined,
+          flow: 'auth',
+          expectedAuthGeneration: params.expectedAuthGeneration,
+        });
+      } catch (error) {
+        if (started.rollbackReceipt) {
+          mfaChallengeService.rollbackLoginChallenge(started.rollbackReceipt);
+        }
+        throw error;
+      }
 
       return {
         user: toAuthUserResponse(user),
@@ -61,6 +73,7 @@ export async function buildAuthCompletionResponse(params: {
         purpose: 'mfa_setup',
         ttl: authConfig.mfa.challengeTTL,
         flow: 'auth',
+        expectedAuthGeneration: params.expectedAuthGeneration,
       });
 
       return {
@@ -80,6 +93,7 @@ export async function buildAuthCompletionResponse(params: {
     tenantSessionService: params.tenantSessionService,
     sessionBinding: params.sessionBinding,
     mfaVerifiedAt,
+    expectedAuthGeneration: params.expectedAuthGeneration,
   });
 }
 
@@ -90,11 +104,14 @@ export async function buildSessionCompletionResponse(params: {
   sessionBinding?: WebSessionBinding;
   /** Durable proof produced only by a successfully verified MFA ceremony. */
   mfaVerifiedAt?: number | null;
+  /** Security generation proven by the ceremony which reached this boundary. */
+  expectedAuthGeneration: number;
 }) {
   const completion = await params.tenantSessionService.complete(
     params.user,
     params.sessionBinding,
     params.mfaVerifiedAt ?? null,
+    params.expectedAuthGeneration,
   );
   const user = toAuthUserResponse(params.user);
   if (completion.kind === 'session') {

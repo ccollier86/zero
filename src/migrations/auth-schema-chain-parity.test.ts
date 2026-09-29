@@ -15,9 +15,11 @@ const PARITY_TABLES = [
   '_auth_native_codes',
   '_auth_native_sessions',
   '_auth_tenant_invitations',
+  '_auth_registration_provisioning',
+  '_auth_admin_user_provisioning',
 ] as const;
 
-test('001 through 027 introduce auth columns once and match fresh runtime schema', () => {
+test('001 through 028 introduce auth columns once and match fresh runtime schema', () => {
   const migratedDb = new Database(':memory:');
   const runtimeDb = new Database(':memory:');
   const runtime = createReactiveDB({ database: runtimeDb });
@@ -40,6 +42,7 @@ test('001 through 027 introduce auth columns once and match fresh runtime schema
     ]) expect(columnNames(migratedDb, table)).not.toContain('mfa_verified_at');
     expect(columnNames(migratedDb, '_auth_tenant_invitations'))
       .not.toContain('grant_snapshot_json');
+    expect(tableExists(migratedDb, '_auth_admin_user_provisioning')).toBe(false);
 
     expect(migrator.run('024')).toEqual(['024']);
     expect(columnNames(migratedDb, '_auth_tenants').at(-1)).toBe('kind');
@@ -56,6 +59,20 @@ test('001 through 027 introduce auth columns once and match fresh runtime schema
       'grant_snapshot_fingerprint',
     ]);
     expect(migrator.run('027')).toEqual(['027']);
+    expect(tableExists(migratedDb, '_auth_admin_user_provisioning')).toBe(false);
+    expect(migrator.run('028')).toEqual(['028']);
+    expect(columnNames(migratedDb, '_auth_admin_user_provisioning')).toEqual([
+      'provisioning_id',
+      'user_id',
+      'user_fingerprint',
+      'auth_generation',
+      'setup_token_id',
+      'lease_owner_hash',
+      'lease_expires_at',
+      'created_at',
+    ]);
+    expect(columnNames(migratedDb, '_auth_registration_provisioning'))
+      .not.toContain('provisioning_kind');
 
     defineAuthTables(runtime);
     defineTenancyTables(runtime);
@@ -78,6 +95,11 @@ test('001 through 027 introduce auth columns once and match fresh runtime schema
 function columnNames(db: Database, table: string): string[] {
   return (db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
     .map((column) => column.name);
+}
+
+function tableExists(db: Database, table: string): boolean {
+  return Boolean(db.query(`SELECT 1 FROM sqlite_master
+    WHERE type = 'table' AND name = ?`).get(table));
 }
 
 function tableShape(db: Database, table: string) {

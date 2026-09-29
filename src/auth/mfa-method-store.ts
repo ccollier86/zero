@@ -96,13 +96,13 @@ export class MfaMethodStore {
       ),
       disableOtherActive: db.prepare(
         `UPDATE _auth_mfa_methods
-         SET status = 'disabled', disabled_at = ?
+         SET status = 'disabled', disabled_at = ?, is_primary = 0
          WHERE user_id = ? AND method_id != ? AND status = 'active'`
       ),
       activateMethod: db.prepare(
         `UPDATE _auth_mfa_methods
          SET status = 'active', verified_at = ?, disabled_at = NULL, is_primary = ?
-         WHERE method_id = ?`
+         WHERE method_id = ? AND status = 'pending'`
       ),
       preferMethod: db.prepare(
         `UPDATE _auth_mfa_methods
@@ -195,22 +195,27 @@ export class MfaMethodStore {
     options: ActivateMfaMethodOptions = {}
   ): AuthMfaMethodRecord | null {
     const existing = this.getMethod(methodId);
-    if (!existing) return null;
+    if (!existing || existing.status !== 'pending') return null;
 
     const verifiedAt = options.verifiedAt ?? Date.now();
     const makePrimary = options.makePrimary ?? true;
+    let transitioned = false;
 
     this.db.transaction(() => {
+      const result = this.stmts.activateMethod.run(verifiedAt, 0, methodId);
+      if (result.changes === 0) return;
+
       if (options.singleActive) {
         this.stmts.disableOtherActive.run(verifiedAt, existing.userId, methodId);
       }
       if (makePrimary) {
         this.stmts.clearPrimary.run(existing.userId);
+        this.stmts.preferMethod.run(methodId, existing.userId);
       }
-      this.stmts.activateMethod.run(verifiedAt, makePrimary ? 1 : 0, methodId);
+      transitioned = true;
     });
 
-    return this.getMethod(methodId);
+    return transitioned ? this.getMethod(methodId) : null;
   }
 
   /** Make an active method the user's preferred MFA challenge method. */

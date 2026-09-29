@@ -42,7 +42,7 @@ export async function authorizeNativePost(
     }
 
     if (decision === 'deny') {
-      const denied = service.deny(rawRequestId);
+      const denied = service.deny(rawRequestId, auth);
       if (!denied) fail('invalid_request', 'Authorization request expired.');
       return nativeRedirect(appendAuthorizationResult(denied.redirectUri, {
         error: 'access_denied', state: denied.state, iss: config.issuer,

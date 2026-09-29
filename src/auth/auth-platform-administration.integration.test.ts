@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Elysia, type AnyElysia } from 'elysia';
+import { MemoryEventStore, OBS_CODES } from '../observability';
+import { ZERO_OBSERVABILITY_RUNTIME } from '../runtime/service-keys';
+import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
+import { captureAuthApplicationMutationAuthority } from './auth-application-mutation-authority';
 import type { AuthRuntime } from './auth-runtime';
 import { createAuthPlugin } from './auth.plugin';
 
 interface Harness {
   app: AnyElysia;
+  appRuntime: ZeroAppRuntime;
   db: ReactiveDB;
+  events: MemoryEventStore;
   runtime: AuthRuntime;
   url: string;
 }
@@ -23,6 +29,7 @@ const active: Harness[] = [];
 afterEach(async () => {
   for (const harness of active.splice(0).reverse()) {
     await harness.app.stop();
+    await harness.appRuntime.dispose();
     harness.db.dispose();
   }
 });
@@ -219,9 +226,42 @@ describe('protected platform administration', () => {
     const delegate = await register(harness, 'platform-ceiling-delegate');
     const target = await register(harness, 'platform-ceiling-target');
 
-    expect((await request(harness, 'POST', '/auth/platform/members', {
+    expect(await request(harness, 'POST', '/auth/platform/members', {
       email: delegate.user.email,
-    }, owner.accessToken)).status).toBe(422);
+    }, owner.accessToken)).toMatchObject({
+      status: 422,
+      body: { code: 'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED' },
+    });
+    expect(await request(harness, 'POST', '/auth/platform/members', {
+      email: delegate.user.email,
+      roles: [],
+    }, owner.accessToken)).toMatchObject({
+      status: 422,
+      body: { code: 'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED' },
+    });
+    expect(await request(harness, 'POST', '/auth/platform/members', {
+      email: delegate.user.email,
+      roles: [42],
+    }, owner.accessToken)).toMatchObject({
+      status: 422,
+      body: { code: 'AUTH_VALIDATION_FAILED' },
+    });
+
+    const tenantAdministration = harness.runtime.getTenantAdministrationService()!;
+    for (const roleKeys of [undefined, []] as const) {
+      const authorityReached = new Error('Missing administration roles reached authority');
+      let requestedPermissions: readonly string[] | undefined;
+      expect(() => tenantAdministration.addMember({
+        tenantId: owner.tenant.tenantId,
+        email: delegate.user.email,
+        roleKeys,
+        assertCurrentAuthority: (permissions) => {
+          requestedPermissions = permissions;
+          throw authorityReached;
+        },
+      })).toThrow(authorityReached);
+      expect(requestedPermissions).toEqual(['tenant.members:manage']);
+    }
     expect(await request(harness, 'POST', '/auth/platform/members', {
       email: delegate.user.email,
       roles: ['member'],
@@ -369,13 +409,109 @@ describe('protected platform administration', () => {
     expect(harness.runtime.getTenancyService()!.getTenant(customer.tenant.tenantId))
       .toMatchObject({ status: 'active', authorizationGeneration: 0 });
   }, 60_000);
+
+  test('publishes tenant lifecycle success only after the outermost commit', async () => {
+    const harness = await start();
+    const owner = await register(harness, 'platform-event-owner');
+    const customer = await register(harness, 'platform-event-customer');
+    const service = harness.runtime.getPlatformTenantAdministrationService()!;
+    const assertCurrentAuthority = await applicationAuthority(harness, owner.accessToken);
+    const rollback = new Error('rollback platform tenant mutation');
+
+    harness.events.clear();
+    expect(() => harness.db.transaction(() => {
+      service.createTenant({
+        administrationTenantId: owner.tenant.tenantId,
+        name: 'Rolled back customer',
+        slug: 'rolled-back-customer',
+        ownerEmail: customer.user.email,
+        assertCurrentAuthority,
+      });
+      throw rollback;
+    })).toThrow(rollback);
+    expect(harness.runtime.getTenancyService()!.getTenantBySlug('rolled-back-customer'))
+      .toBeNull();
+    expect(harness.events.query({ code: OBS_CODES.AUTH_TENANT_CREATED.code }).events)
+      .toHaveLength(0);
+
+    const created = harness.db.transaction(() => service.createTenant({
+      administrationTenantId: owner.tenant.tenantId,
+      name: 'Committed customer',
+      slug: 'committed-customer',
+      ownerEmail: customer.user.email,
+      assertCurrentAuthority,
+    }));
+    expect(harness.events.query({ code: OBS_CODES.AUTH_TENANT_CREATED.code }).events)
+      .toEqual([expect.objectContaining({
+        metadata: {
+          tenantId: created.tenant.tenantId,
+          kind: 'organization',
+        },
+      })]);
+
+    harness.events.clear();
+    expect(() => harness.db.transaction(() => {
+      service.updateTenant({
+        administrationTenantId: owner.tenant.tenantId,
+        tenantId: created.tenant.tenantId,
+        status: 'suspended',
+        expectedAuthorizationGeneration: created.tenant.authorizationGeneration,
+        assertCurrentAuthority,
+      });
+      throw rollback;
+    })).toThrow(rollback);
+    expect(harness.runtime.getTenancyService()!.getTenant(created.tenant.tenantId))
+      .toMatchObject({ status: 'active' });
+    expect(harness.events.query({ code: OBS_CODES.AUTH_TENANT_SUSPENDED.code }).events)
+      .toHaveLength(0);
+
+    const mutableUpdate: Parameters<typeof service.updateTenant>[0] = {
+      administrationTenantId: owner.tenant.tenantId,
+      tenantId: created.tenant.tenantId,
+      status: 'suspended',
+      expectedAuthorizationGeneration: created.tenant.authorizationGeneration,
+      assertCurrentAuthority,
+    };
+    mutableUpdate.assertCurrentAuthority = (permissions) => {
+      mutableUpdate.administrationTenantId = 'tenant_callback_mutation';
+      mutableUpdate.tenantId = customer.tenant.tenantId;
+      mutableUpdate.status = 'active';
+      mutableUpdate.expectedAuthorizationGeneration = 999;
+      return assertCurrentAuthority(permissions);
+    };
+    const updated = harness.db.transaction(() => service.updateTenant(mutableUpdate));
+    expect(updated.tenant.status).toBe('suspended');
+    expect(harness.runtime.getTenancyService()!.getTenant(customer.tenant.tenantId))
+      .toMatchObject({ status: 'active' });
+    expect(harness.events.query({ code: OBS_CODES.AUTH_TENANT_SUSPENDED.code }).events)
+      .toEqual([expect.objectContaining({
+        metadata: { tenantId: created.tenant.tenantId },
+      })]);
+    service.updateTenant({
+      administrationTenantId: owner.tenant.tenantId,
+      tenantId: created.tenant.tenantId,
+      status: 'suspended',
+      expectedAuthorizationGeneration: created.tenant.authorizationGeneration,
+      assertCurrentAuthority,
+    });
+    expect(harness.events.query({ code: OBS_CODES.AUTH_TENANT_SUSPENDED.code }).events)
+      .toHaveLength(1);
+  }, 60_000);
 });
 
 async function start(): Promise<Harness> {
   const db = createReactiveDB({ mode: 'memory' });
+  const appRuntime = new ZeroAppRuntime(`platform-administration-${crypto.randomUUID()}`);
+  const events = new MemoryEventStore({ maxEvents: 100 });
+  appRuntime.set(ZERO_OBSERVABILITY_RUNTIME, {
+    sink: events,
+    store: events,
+    config: { console: false },
+  });
   let runtime: AuthRuntime | null = null;
   const app = new Elysia().use(createAuthPlugin({
     db,
+    runtime: appRuntime,
     tenancy: 'multi',
     authorization: 'simple',
     bootstrap: 'public',
@@ -389,7 +525,9 @@ async function start(): Promise<Harness> {
   if (!createdRuntime) throw new Error('Auth runtime was not created');
   const harness = {
     app,
+    appRuntime,
     db,
+    events,
     runtime: createdRuntime,
     url: `http://localhost:${app.server!.port}`,
   };
@@ -400,6 +538,19 @@ async function start(): Promise<Harness> {
     await Bun.sleep(5);
   }
   return harness;
+}
+
+async function applicationAuthority(harness: Harness, accessToken: string) {
+  const tokens = harness.runtime.getTokenService()!;
+  const auth = await tokens.resolveAuthContext(accessToken);
+  if (!auth) throw new Error('Expected a current application auth context');
+  return captureAuthApplicationMutationAuthority({
+    auth,
+    tokenService: tokens,
+    kernel: harness.runtime.getAuthorizationKernel(),
+    store: harness.runtime.getStore()!,
+    roles: harness.runtime.getAuthorizationRoleService(),
+  });
 }
 
 async function register(harness: Harness, key: string): Promise<Session> {

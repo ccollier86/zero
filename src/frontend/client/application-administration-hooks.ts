@@ -208,8 +208,12 @@ export function useApplicationAccess(
   const visiblePage = actorSnapshotCurrent ? visible.page : null;
 
   const reload = React.useCallback(() => {
+    if (authConfig.config === null && authConfig.error !== null) {
+      void authConfig.reload();
+      return;
+    }
     if (isCurrentScope()) setRevision((value) => value + 1);
-  }, [isCurrentScope]);
+  }, [authConfig.config, authConfig.error, authConfig.reload, isCurrentScope]);
   const loadMore = React.useCallback(async () => {
     if (!applicationAdmin || !actorSnapshotCurrent || !isCurrentScope()
       || !visiblePage?.nextCursor || isLoadingMore) return;
@@ -294,10 +298,14 @@ export function useApplicationAccess(
     config: visibleConfig,
     users: visibleUsers,
     page: visiblePage,
-    isLoading: authConfig.isLoading || (enabled && !actorSnapshotCurrent) || isLoading,
+    isLoading: (authConfig.config === null && authConfig.isLoading)
+      || (enabled && !actorSnapshotCurrent)
+      || isLoading,
     isLoadingMore: actorSnapshotCurrent && isLoadingMore,
     isMutating: actorSnapshotCurrent && mutatingActorUserId === actorUserId,
-    error: actorSnapshotCurrent ? visible.error : null,
+    error: authConfig.config === null
+      ? authConfig.error
+      : actorSnapshotCurrent ? visible.error : null,
     reload,
     loadMore,
     replaceUserRoles: React.useCallback(async (userId, roles) => {

@@ -67,6 +67,12 @@ export interface WebSessionIssueOptions {
   binding?: WebSessionBinding | PreparedWebSessionBinding;
   /** Trusted assurance produced by the server-side MFA verification boundary. */
   mfaVerifiedAt?: number | null;
+  /**
+   * Security generation proven by an authentication ceremony. Required for
+   * credential-derived issuance; optional only for compatible trusted server
+   * issuance which did not verify an earlier credential.
+   */
+  expectedAuthGeneration?: number;
 }
 
 /** One parent plus authorization data read in the same SQLite transaction. */

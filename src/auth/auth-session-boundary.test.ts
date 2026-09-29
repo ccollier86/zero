@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { SignJWT } from 'jose';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
+import { loadOrCreateAuthSigningKeys } from './auth-signing-keys';
 import { defineAuthTables } from './auth-schema';
 import { defineAuthSessionTables } from './auth-session-schema';
 import { AuthSessionService } from './auth-session-service';
@@ -104,6 +106,7 @@ describe('durable browser session boundary', () => {
       userId: singleUser.userId,
       email: singleUser.email,
       role: singleUser.role,
+      authGeneration: 0,
     });
 
     const multi = await createHarness('multi');
@@ -126,6 +129,9 @@ describe('durable browser session boundary', () => {
   test('adopts live legacy single-mode refresh and existing page credentials atomically', async () => {
     const app = await createHarness('single');
     const user = await createUser(app, 'legacy-user');
+    // Prove that a missing legacy claim is not being treated as generation 0.
+    app.users.revokeAllUserTokens(user.userId);
+    expect(app.users.getAuthGeneration(user.userId)).toBe(1);
     const rawRefresh = crypto.randomUUID();
     app.users.storeRefreshToken(
       'legacy-refresh',
@@ -133,9 +139,21 @@ describe('durable browser session boundary', () => {
       hashToken(rawRefresh),
       Date.now() + 86_400_000,
     );
+    const keys = await loadOrCreateAuthSigningKeys({ db: app.db });
+    const legacyPageToken = await new SignJWT({ sid: 'legacy-refresh' })
+      .setProtectedHeader({ alg: 'ES256', kid: keys.keyId })
+      .setSubject(user.userId)
+      .setIssuedAt()
+      .setExpirationTime('1h')
+      .setIssuer('auth-page-session')
+      .sign(keys.privateKey);
 
-    const page = await app.tokens.issuePageSessionToken(rawRefresh);
-    expect(page).not.toBeNull();
+    await expect(app.tokens.resolvePageSessionToken(legacyPageToken)).resolves.toMatchObject({
+      userId: user.userId,
+      authGeneration: 1,
+      sessionKind: 'web',
+      sessionScopeKind: 'application',
+    });
     const adopted = app.users.getRefreshTokenById('legacy-refresh');
     expect(adopted?.sessionId).toStartWith('ses_');
     expect(app.sessions.store.getById(adopted!.sessionId!)).toMatchObject({
@@ -145,27 +163,9 @@ describe('durable browser session boundary', () => {
       provenance: 'local',
     });
 
-    // Simulate an already-issued pre-migration page JWT. Its format still
-    // references the refresh row, so deleting the adopted parent/nulling the
-    // link must be recoverable on the next page resolution.
-    app.db.prepare('UPDATE _refresh_tokens SET session_id = NULL WHERE token_id = ?')
-      .run('legacy-refresh');
-    app.db.prepare('DELETE FROM _auth_sessions WHERE session_id = ?')
-      .run(adopted!.sessionId!);
-    expect(app.users.getRefreshTokenById('legacy-refresh')?.sessionId).toBeNull();
-    await expect(app.tokens.resolvePageSessionToken(page!.token)).resolves.toMatchObject({
-      userId: user.userId,
-      sessionKind: 'web',
-      sessionScopeKind: 'application',
-    });
-    expect(app.users.getRefreshTokenById('legacy-refresh')?.sessionId).toStartWith('ses_');
-
-    const rotated = await app.tokens.rotateRefreshToken(rawRefresh);
-    expect(rotated).not.toBeNull();
-    await expect(app.tokens.resolveAuthContext(rotated!.accessToken)).resolves.toMatchObject({
-      userId: user.userId,
-      sessionScopeKind: 'application',
-    });
+    app.users.revokeAllUserTokens(user.userId);
+    expect(app.users.getRefreshTokenById('legacy-refresh')?.revokedAt).toBeNumber();
+    await expect(app.tokens.resolvePageSessionToken(legacyPageToken)).resolves.toBeNull();
   });
 
   test('does not adopt an unbound legacy refresh row in multi-tenant mode', async () => {

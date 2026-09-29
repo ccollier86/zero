@@ -11,6 +11,10 @@ import type { AuthContext } from '../types';
 import type { NativeServiceContext } from './native-service-context';
 import { authorizationClient, canReceiveTokens } from './native-service-policy';
 import { resolveNativeRequestSource } from './native-request-source';
+import {
+  captureNativePageAuthorityProof,
+  isNativePageAuthorityProofCurrent,
+} from './native-page-authority-proof';
 
 export function startNativeAuthorization(
   context: NativeServiceContext,
@@ -59,11 +63,12 @@ export function approveNativeRequest(
   const userId = auth.userId;
   const user = context.users.getUserById(userId);
   if (!user || !canReceiveTokens(user)) return null;
-  const authority = context.authority.capturePageAuthority(auth);
-  if (!authority) return null;
+  const proof = captureNativePageAuthorityProof(context, auth);
+  if (!proof) return null;
   const issued = context.codes.issue(
-    rawRequestId, userId, context.users.getAuthGeneration(userId),
-    authority, context.config.codeTtlMs, auth.mfaVerifiedAt ?? null,
+    rawRequestId, userId, proof.reference.authGeneration,
+    proof.authority, context.config.codeTtlMs, auth.mfaVerifiedAt ?? null,
+    () => isNativePageAuthorityProofCurrent(context, proof),
   );
   if (issued) context.emitCode(OBS_CODES.AUTH_NATIVE_AUTHORIZATION_APPROVED, {
     userId, metadata: { clientId: issued.request.clientId },
@@ -71,8 +76,19 @@ export function approveNativeRequest(
   return issued;
 }
 
-export function denyNativeRequest(context: NativeServiceContext, rawRequestId: string) {
-  const denied = context.requests.consumeTerminal(rawRequestId);
+export function denyNativeRequest(
+  context: NativeServiceContext,
+  rawRequestId: string,
+  auth: AuthContext,
+) {
+  const proof = captureNativePageAuthorityProof(context, auth);
+  if (!proof) return null;
+  const denied = context.requests.consumeTerminalForAuthority(
+    rawRequestId,
+    auth.userId,
+    proof.authority,
+    () => isNativePageAuthorityProofCurrent(context, proof),
+  );
   if (denied) context.emitCode(OBS_CODES.AUTH_NATIVE_AUTHORIZATION_DENIED, {
     metadata: { clientId: denied.clientId },
   });

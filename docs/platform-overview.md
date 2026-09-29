@@ -187,18 +187,25 @@ console.log(client.isAuthenticated); // true
 | `<QRCode>` | Token-aware QR primitive used for authenticator setup |
 | `<PasswordInput>` | Password field with show/hide toggle |
 | `<PasswordStrength>` | Real-time password strength indicator |
-| `<SocialLoginGroup>` | Google, GitHub, Microsoft, Apple OAuth buttons |
+| `<SocialLoginGroup>` | Caller-wired provider buttons; Zero supplies presentation, not social OAuth integration |
 | `<AuthLayout>` | Tokenized centered auth page shell with logo/image slot, static backgrounds, responsive form card, and shared full-card entrance motion |
 | `<SignedIn>` / `<SignedOut>` | Auth-state visibility gates |
 | `<PropertyGate>` / `<HasFlag>` | UI-only visibility gates based on current-user properties |
 | `<Gate allow={['admin']}>` / `<AdminGate>` | Role-based conditional rendering |
-| `<PermissionGate>` / `<TenantGate>` / `<PlatformAdminGate>` | Browser-safe visibility gates over the live authorization snapshot; server enforcement is still required |
+| `<PermissionGate>` / `<TenantGate>` / `<AdministrationScopeGate>` / `<PlatformAdminGate>` | Browser-safe visibility gates over the live authorization snapshot; server enforcement is still required |
 | `<AuthFlowContinuation>` | Shared account-gate, tenant-selection/creation, invitation, and onboarding continuation |
 | `<TenantSwitcher>` / `<TenantSelectionForm>` / `<TenantCreationForm>` | Refresh-proof-backed tenant scope selection and creation controls |
 | `<TenantMemberManagement>` / `<TenantOnboardingManagement>` | Active-tenant member, role, invitation, and join-request administration |
 | `<TenantDomainManagement>` / `<DomainOnboarding>` | Exact-domain claim administration and request-to-join onboarding |
 | `<ApplicationAccessManagement>` | `single/advanced` application role administration |
 | `<ControlPlaneAuditViewer>` | Authorized bounded tenant/platform control-plane audit view and export |
+
+`SocialLoginGroup` renders caller-provided labels, icons, and click handlers.
+Provider redirects, callbacks, account linking, and Google/GitHub/Microsoft/Apple
+OAuth integration are not built in. `AdministrationScopeGate` requires the
+active protected Administration Organization, while `PlatformAdminGate`
+checks the separate legacy global identity-admin role; neither implies the
+other.
 
 Zero-owned hooks and the app subtree are fenced across account/tenant
 replacement. App-owned caches can key or purge on the opaque,

@@ -28,8 +28,25 @@ import type {
   AuthAuditRequestContext,
 } from './auth-audit-types';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
+import { captureAuthAuditRequestContext } from './auth-audit-service';
+import { createAuthStateInvariantError } from './auth-observability';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 
 type DeliveryKind = 'setup' | 'reset';
+
+/** Internal transaction hooks used only while provisioning a brand-new user. */
+interface AdminLifecycleProvisioningHooks {
+  /** Runs in the same transaction that creates the exact setup token. */
+  onTokenPrepared?: (created: CreatedAuthActionToken) => void;
+  /** Runs immediately before the provider is called. */
+  onDeliveryAttempted?: () => void;
+  /** Runs after the provider accepted the message and before state commit. */
+  onDeliveryAccepted?: () => void;
+  /** Runs in the final transaction before the password gate is written. */
+  onBeforeCommit?: () => void;
+  /** Runs after the password gate is written, in that same transaction. */
+  onCommitted?: () => void;
+}
 
 export class AdminLifecycleEmailService {
   constructor(
@@ -44,8 +61,15 @@ export class AdminLifecycleEmailService {
     userId: string,
     assertCurrentAuthority: AssertAuthAdminMutationAuthority,
     auditRequest?: AuthAuditRequestContext,
+    provisioningHooks?: AdminLifecycleProvisioningHooks,
   ): Promise<void> {
-    return this.deliver(userId, assertCurrentAuthority, 'setup', auditRequest);
+    return this.deliver(
+      userId,
+      assertCurrentAuthority,
+      'setup',
+      auditRequest,
+      provisioningHooks,
+    );
   }
 
   /** Send admin password-reset instructions, then require a password change. */
@@ -62,9 +86,17 @@ export class AdminLifecycleEmailService {
     assertCurrentAuthority: AssertAuthAdminMutationAuthority,
     kind: DeliveryKind,
     auditRequest?: AuthAuditRequestContext,
+    provisioningHooks?: AdminLifecycleProvisioningHooks,
   ): Promise<void> {
+    const request = captureAuthAuditRequestContext(auditRequest);
     return serializeAdminLifecycleDelivery(this.store, userId, () =>
-      this.deliverOnce(userId, assertCurrentAuthority, kind, auditRequest)
+      this.deliverOnce(
+        userId,
+        assertCurrentAuthority,
+        kind,
+        request,
+        provisioningHooks,
+      )
     );
   }
 
@@ -73,6 +105,7 @@ export class AdminLifecycleEmailService {
     assertCurrentAuthority: AssertAuthAdminMutationAuthority,
     kind: DeliveryKind,
     auditRequest?: AuthAuditRequestContext,
+    provisioningHooks?: AdminLifecycleProvisioningHooks,
   ): Promise<void> {
     const initialActor = this.assertAuthority(assertCurrentAuthority, userId);
     this.requireEligibleTarget(userId, initialActor.userId);
@@ -98,6 +131,11 @@ export class AdminLifecycleEmailService {
           skipCooldown: true,
           afterSecurityTransition: true,
         });
+        this.invokeProvisioningHook(
+          provisioningHooks?.onTokenPrepared,
+          'token-prepared',
+          prepared.created,
+        );
         this.recordDelivery(
           'account.security-delivery-prepared',
           'succeeded',
@@ -114,10 +152,24 @@ export class AdminLifecycleEmailService {
       throw error;
     }
     if (!prepared.actorId || !prepared.created || !prepared.user) {
-      throw new Error('[auth] Admin lifecycle delivery preparation did not complete.');
+      throw createAuthStateInvariantError(this.emitCode, {
+        component: 'admin-lifecycle-email-service',
+        invariant: 'delivery-preparation-incomplete',
+        message: '[auth] Admin lifecycle delivery preparation did not complete.',
+      });
     }
     let { actorId } = prepared;
     const { created, user } = prepared;
+
+    try {
+      this.invokeProvisioningHook(
+        provisioningHooks?.onDeliveryAttempted,
+        'delivery-attempted',
+      );
+    } catch (error) {
+      discardUndeliveredActionToken(this.actionTokens, created.rawToken);
+      throw error;
+    }
 
     try {
       const input = { user, rawToken: created.rawToken, token: created.record };
@@ -157,9 +209,17 @@ export class AdminLifecycleEmailService {
     }
 
     try {
+      this.invokeProvisioningHook(
+        provisioningHooks?.onDeliveryAccepted,
+        'delivery-accepted',
+      );
       this.store.transaction(() => {
         actorId = this.assertAuthority(assertCurrentAuthority, userId).userId;
         this.requireEligibleTarget(userId, actorId);
+        this.invokeProvisioningHook(
+          provisioningHooks?.onBeforeCommit,
+          'before-state-commit',
+        );
         this.recordDelivery(
           'account.security-delivery-succeeded',
           'succeeded',
@@ -174,6 +234,10 @@ export class AdminLifecycleEmailService {
         })) {
           throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
         }
+        this.invokeProvisioningHook(
+          provisioningHooks?.onCommitted,
+          'state-committed',
+        );
       });
     } catch (error) {
       // Delivery cannot be undone, but invalidating the link prevents an
@@ -181,6 +245,20 @@ export class AdminLifecycleEmailService {
       discardUndeliveredActionToken(this.actionTokens, created.rawToken);
       throw error;
     }
+  }
+
+  private invokeProvisioningHook<Args extends readonly unknown[]>(
+    hook: ((...args: Args) => unknown) | undefined,
+    phase: string,
+    ...args: Args
+  ): void {
+    if (!hook) return;
+    invokeSynchronousAuthCallback(() => hook(...args), {
+      component: 'admin-lifecycle-email-service',
+      invariant: `provisioning-hook-${phase}-async`,
+      message: '[auth] Administrator provisioning hooks must be synchronous.',
+      emitCode: this.emitCode,
+    });
   }
 
   private requireEligibleTarget(userId: string, actorId: string) {

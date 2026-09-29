@@ -20,6 +20,7 @@ import { TenantSelectionForm, tenantSelectionFlowKey } from './tenant-selection-
 import { TenantCreationForm } from './tenant-creation-form';
 import { DomainOnboarding } from './domain-onboarding';
 import { useAuthConfig } from '../../frontend/client/auth-hooks';
+import { AuthConfigLoadState } from './auth-config-load-state';
 
 export type TenantOnboardingOption = 'create' | 'verified-domain';
 
@@ -52,7 +53,8 @@ function AuthFlowContinuationScope({
   const [onboardingOption, setOnboardingOption] = React.useState<
     TenantOnboardingOption | null
   >(null);
-  const { config, isLoading: configLoading } = useAuthConfig();
+  const authConfig = useAuthConfig();
+  const { config } = authConfig;
 
   function handleMfaComplete(next: AuthCompletionResult) {
     if (isAuthFlowContinuationResult(next)) {
@@ -75,14 +77,6 @@ function AuthFlowContinuationScope({
     );
   }
 
-  if (configLoading) {
-    return (
-      <p role="status" aria-live="polite" className={cn('text-sm text-muted-foreground', className)}>
-        Loading access options…
-      </p>
-    );
-  }
-
   if (isTenantSelectionRequiredResult(current)) {
     return (
       <TenantSelectionForm
@@ -92,6 +86,24 @@ function AuthFlowContinuationScope({
         className={className}
         terminology={config?.tenancy?.terminology}
       />
+    );
+  }
+
+  if (!config) {
+    return (
+      <div className={cn('space-y-3', className)}>
+        <AuthConfigLoadState
+          state={authConfig}
+          loadingMessage="Loading access options…"
+          unavailableMessage="Access options could not be loaded."
+          showUnknown
+        />
+        {onBack && (
+          <Button type="button" variant="ghost" className="w-full" onClick={onBack}>
+            Back to sign in
+          </Button>
+        )}
+      </div>
     );
   }
 

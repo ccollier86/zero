@@ -7,8 +7,10 @@ import {
   type EmailProvider,
   type EmailSendResult,
 } from '../email';
+import { OBS_CODES } from '../observability/codes';
 import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 import type { AuthRuntime } from './auth-runtime';
 import { createAuthPlugin } from './auth.plugin';
 import { AuthTenantInvitationEnvelope } from './auth-tenant-invitation-envelope';
@@ -119,6 +121,66 @@ describe('tenant invitation durable email delivery', () => {
     });
     expect(count(harness.db, '_auth_tenant_invitations')).toBe(0);
     expect(count(harness.db, '_auth_email_outbox')).toBe(0);
+  }, 60_000);
+
+  test('publishes invitation queue success and wakes its worker only after outer commit', async () => {
+    const provider = new MemoryEmailProvider();
+    const harness = await start(provider, { publicUrl: 'https://zero.example' });
+    const outbox = harness.runtime.getAuthEmailOutbox()!;
+    const internals = outbox as unknown as {
+      emitCode: AuthPlatformCodeEmitter;
+      worker: { wake(): void };
+    };
+    const originalEmitCode = internals.emitCode;
+    const originalWake = internals.worker.wake.bind(internals.worker);
+    const onboarding = harness.runtime.getTenantOnboardingService()!;
+    const originalIssue = onboarding.issueInvitation.bind(onboarding);
+    const invitationService = onboarding as unknown as {
+      issueInvitation: typeof originalIssue;
+    };
+    const emittedCodes: string[] = [];
+    let wakes = 0;
+    internals.emitCode = (definition, options) => {
+      emittedCodes.push(definition.code);
+      return originalEmitCode(definition, options);
+    };
+    internals.worker.wake = () => { wakes += 1; };
+
+    try {
+      invitationService.issueInvitation = (input) => harness.db.transaction(() => {
+        originalIssue(input);
+        throw new Error('rollback after invitation enqueue');
+      });
+
+      const rolledBack = await request(harness, 'POST', '/auth/tenant/invitations', {
+        email: 'rolled-back@example.test',
+        roles: ['administrator'],
+      }, harness.ownerToken);
+      expect(rolledBack.status).toBe(500);
+      expect(count(harness.db, '_auth_tenant_invitations')).toBe(0);
+      expect(count(harness.db, '_auth_email_outbox')).toBe(0);
+      expect(emittedCodes.filter(
+        (code) => code === OBS_CODES.AUTH_EMAIL_OUTBOX_ENQUEUED.code,
+      )).toHaveLength(0);
+      expect(wakes).toBe(0);
+
+      invitationService.issueInvitation = originalIssue;
+      const committed = await request(harness, 'POST', '/auth/tenant/invitations', {
+        email: 'committed@example.test',
+        roles: ['administrator'],
+      }, harness.ownerToken);
+      expect(committed.status).toBe(200);
+      expect(count(harness.db, '_auth_tenant_invitations')).toBe(1);
+      expect(count(harness.db, '_auth_email_outbox')).toBe(1);
+      expect(emittedCodes.filter(
+        (code) => code === OBS_CODES.AUTH_EMAIL_OUTBOX_ENQUEUED.code,
+      )).toHaveLength(1);
+      expect(wakes).toBe(1);
+    } finally {
+      invitationService.issueInvitation = originalIssue;
+      internals.emitCode = originalEmitCode;
+      internals.worker.wake = originalWake;
+    }
   }, 60_000);
 
   test('retries with one stable provider idempotency key and no duplicate delivery', async () => {

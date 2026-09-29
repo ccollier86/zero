@@ -53,6 +53,18 @@ test('a released main database through 007 upgrades through the current chain', 
         .toContain('mfa_verified_at');
       expect(columnNames(database, '_auth_tenant_invitations'))
         .toContain('grant_snapshot_fingerprint');
+      expect(columnNames(database, '_auth_registration_provisioning'))
+        .not.toContain('provisioning_kind');
+      expect(columnNames(database, '_auth_admin_user_provisioning')).toEqual([
+        'provisioning_id',
+        'user_id',
+        'user_fingerprint',
+        'auth_generation',
+        'setup_token_id',
+        'lease_owner_hash',
+        'lease_expires_at',
+        'created_at',
+      ]);
     } finally {
       current.dispose();
     }

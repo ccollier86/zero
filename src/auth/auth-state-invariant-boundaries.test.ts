@@ -13,7 +13,8 @@ import { resolveAuthBehaviorConfig } from './auth-config';
 import { AuthEmailOutbox } from './auth-email-outbox';
 import { AuthEmailOutboxStore } from './auth-email-outbox-store';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
-import { registerUser } from './auth-registration-service';
+import { registerUser, type RegistrationInput } from './auth-registration-service';
+import type { AuthAuditRequestContext } from './auth-audit-types';
 import type { AuthSessionPluginConfig } from './auth-session-dependencies';
 import { AuthSessionContinuationStore } from './auth-session-continuation-store';
 import { createInvitationGrantSnapshot } from './auth-tenant-invitation-grant';
@@ -34,6 +35,142 @@ afterEach(() => {
 });
 
 describe('auth request-path invariant boundaries', () => {
+  test('registration rejects malformed bootstrap organization names with a stable error', async () => {
+    const config = {
+      getUserStore: () => ({
+        isBootstrapRequired: () => true,
+        createRegistrationUser: () => {
+          throw new Error('Malformed organization name reached identity creation');
+        },
+      }),
+      getTokenService: () => ({}),
+      getPropertyService: () => ({ getDefaultProperties: () => ({}) }),
+      getActionTokenService: () => ({}),
+      getAccountEmailService: () => ({}),
+      getMfaService: () => null,
+      getMfaChallengeService: () => null,
+      getNativeAuthorizationService: () => null,
+      getRegistrationIntentStore: () => ({}),
+      getAuthTenantSessionService: () => ({}),
+      getEmailRuntime: () => ({}),
+      getAuthConfig: () => resolveAuthBehaviorConfig({
+        tenancy: 'multi',
+        registration: { mode: 'public' },
+      }),
+    } as unknown as AuthSessionPluginConfig;
+
+    for (const organizationName of [null, false, 7, {}, Symbol('name')]) {
+      await expect(registerUser(config, {
+        username: 'boundary-user',
+        email: 'boundary-user@example.test',
+        password: 'not-created',
+        organizationName: organizationName as never,
+      })).rejects.toMatchObject({
+        name: 'AuthError',
+        code: 'TENANT_NAME_REQUIRED',
+        status: 422,
+      } satisfies Partial<AuthError>);
+    }
+  });
+
+  test('registration captures request and audit input before password hashing yields', async () => {
+    let releaseCreate!: () => void;
+    let markCreateStarted!: () => void;
+    const createStarted = new Promise<void>((resolve) => {
+      markCreateStarted = resolve;
+    });
+    const createGate = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    let captured: {
+      params: Record<string, unknown>;
+      policy: { requestedMfaSetup: boolean };
+      auditRequest?: AuthAuditRequestContext;
+    } | null = null;
+    const user = testUser('captured-registration-user');
+    const config = {
+      getUserStore: () => ({
+        isBootstrapRequired: () => false,
+        createRegistrationUser: async (
+          params: Record<string, unknown>,
+          resolvePolicy: (isBootstrap: boolean) => {
+            role: 'admin' | 'user';
+            requireEmailVerification: boolean;
+            mfaRequired: boolean;
+            requestedMfaSetup: boolean;
+          },
+          _afterInsert: unknown,
+          options: { auditRequest?: AuthAuditRequestContext },
+        ) => {
+          markCreateStarted();
+          await createGate;
+          const policy = resolvePolicy(false);
+          captured = { params, policy, auditRequest: options.auditRequest };
+          return { user, policy, provisioning: null };
+        },
+      }),
+      getTokenService: () => ({}),
+      getPropertyService: () => ({ getDefaultProperties: () => ({}) }),
+      getActionTokenService: () => ({}),
+      getAccountEmailService: () => ({}),
+      getMfaService: () => null,
+      getMfaChallengeService: () => null,
+      getNativeAuthorizationService: () => null,
+      getRegistrationIntentStore: () => ({}),
+      getAuthTenantSessionService: () => ({}),
+      getEmailRuntime: () => ({}),
+      getAuthConfig: () => resolveAuthBehaviorConfig({
+        registration: { mode: 'public' },
+        account: { requireEmailVerification: false },
+        mfa: { enabled: true, policy: 'optional' },
+      }),
+    } as unknown as AuthSessionPluginConfig;
+    const input: RegistrationInput = {
+      username: 'captured-registration-user',
+      email: 'captured-registration-user@example.test',
+      password: 'original-password',
+      firstName: 'Original',
+      lastName: 'Registration',
+      mfaEnrollment: false,
+    };
+    const auditRequest = {
+      requestId: 'original-registration-request',
+      correlationId: 'original-registration-correlation',
+    };
+
+    const pending = registerUser(config, input, auditRequest);
+    await createStarted;
+    input.username = 'mutated-registration-user';
+    input.email = 'mutated-registration-user@example.test';
+    input.password = 'mutated-password';
+    input.firstName = 'Mutated';
+    input.lastName = 'Caller';
+    input.mfaEnrollment = true;
+    input.bootstrapSecret = 'mutated-bootstrap-secret';
+    auditRequest.requestId = 'mutated-registration-request';
+    auditRequest.correlationId = 'mutated-registration-correlation';
+    releaseCreate();
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      status: 500,
+    });
+    expect(captured).toMatchObject({
+      params: {
+        username: 'captured-registration-user',
+        email: 'captured-registration-user@example.test',
+        password: 'original-password',
+        firstName: 'Original',
+        lastName: 'Registration',
+      },
+      policy: { requestedMfaSetup: false },
+      auditRequest: {
+        requestId: 'original-registration-request',
+        correlationId: 'original-registration-correlation',
+      },
+    });
+  });
+
   test('registration reports a missing provisional receipt through its injected emitter', async () => {
     const capture = createCapture();
     const user = testUser('registration-private-user');

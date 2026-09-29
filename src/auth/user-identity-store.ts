@@ -126,7 +126,7 @@ export class UserIdentityStore {
   requireCanonicalEmail(email: string): string {
     const canonical = canonicalizeEmail(email);
     if (!isValidEmail(canonical)) {
-      throw new AuthError('Invalid email address', 'INVALID_EMAIL', 400);
+      throw new AuthError('Invalid email address', 'INVALID_EMAIL', 422);
     }
     return canonical;
   }

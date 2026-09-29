@@ -1,11 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import type {
-  AuthTenantInvitation,
-  AuthTenantJoinRequest,
-} from '../../frontend/client/auth-types';
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
+import { useAuthorizationScopeBoundary } from '../../frontend/client/authorization-scope-hooks';
 import { useTenantOnboardingAdministration } from '../../frontend/client/tenant-administration-hooks';
 import { Button } from '#zero/components/ui/button';
 import {
@@ -15,15 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from '#zero/components/ui/card';
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '#zero/components/animate-ui/components/radix/alert-dialog';
+import { AlertDialog } from '#zero/components/animate-ui/components/radix/alert-dialog';
 import { cn } from '#zero/lib/utils';
 import { createAuthRoleLabelMap } from './auth-role-presentation';
 import { writeAuthClipboardText } from './auth-clipboard';
@@ -35,12 +24,36 @@ import {
   TenantInvitationComposer,
   TenantInvitationList,
 } from './tenant-onboarding-invitations';
+import {
+  OnboardingConfirmationDialog,
+  onboardingConfirmationKey,
+  canSubmitTenantInvitation,
+  resolveInvitationDeliveryMode,
+  resolveTenantOnboardingSectionPhase,
+  tenantOnboardingManagementBoundaryKey,
+  tenantOnboardingConfirmationAnnouncement,
+  TenantOnboardingSectionStatus,
+  TenantOnboardingTenantKindNotice,
+  type OnboardingConfirmation,
+} from './tenant-onboarding-management-parts';
 
 export {
   filterJoinRequestApprovalRoles,
   JoinRequestRow,
   joinRequestApprovalParams,
 } from './tenant-join-request-row';
+export {
+  onboardingConfirmationKey,
+  canSubmitTenantInvitation,
+  resolveInvitationDeliveryMode,
+  resolveTenantOnboardingSectionPhase,
+  tenantOnboardingManagementBoundaryKey,
+  tenantOnboardingConfirmationAnnouncement,
+  TenantOnboardingSectionStatus,
+  TenantOnboardingTenantKindNotice,
+  type OnboardingConfirmation,
+  type TenantOnboardingSectionPhase,
+} from './tenant-onboarding-management-parts';
 
 export interface TenantOnboardingManagementProps {
   className?: string;
@@ -49,19 +62,17 @@ export interface TenantOnboardingManagementProps {
   description?: string;
 }
 
-export type OnboardingConfirmation =
-  | { action: 'revoke-invitation'; invitation: AuthTenantInvitation }
-  | { action: 'deny-join-request'; request: AuthTenantJoinRequest };
-
 /** Accessible active-tenant invitation and join-request control surface. */
 export function TenantOnboardingManagement(
   props: TenantOnboardingManagementProps,
 ) {
   const auth = useAuth();
-  const boundary = JSON.stringify([
+  const authorizationBoundary = useAuthorizationScopeBoundary();
+  const boundary = tenantOnboardingManagementBoundaryKey(
+    authorizationBoundary.key,
     auth.user?.userId ?? null,
     auth.activeTenant?.tenantId ?? null,
-  ]);
+  );
   return (
     <TenantOnboardingManagementScope
       key={boundary}
@@ -116,13 +127,17 @@ function TenantOnboardingManagementScope({
     availableModes,
   );
   const [manualToken, setManualToken] = React.useState<string | null>(null);
+  const [manualTokenError, setManualTokenError] = React.useState<string | null>(null);
   const [inviteRoles, setInviteRoles] = React.useState<string[]>([]);
   const [confirmation, setConfirmation] = React.useState<OnboardingConfirmation | null>(null);
   const [focusAfterMutation, setFocusAfterMutation] = React.useState<{
     target: 'invitations' | 'join-requests';
     sawLoading: boolean;
   } | null>(null);
-  const [localError, setLocalError] = React.useState<string | null>(null);
+  const [invitationLocalError, setInvitationLocalError] =
+    React.useState<string | null>(null);
+  const [joinRequestLocalError, setJoinRequestLocalError] =
+    React.useState<string | null>(null);
   const [announcement, setAnnouncement] = React.useState('');
   const sectionId = React.useId();
   const manualInvitationHeadingId = `${sectionId}-manual-invitation`;
@@ -142,10 +157,15 @@ function TenantOnboardingManagementScope({
 
   async function issue(event: React.FormEvent) {
     event.preventDefault();
-    if (!email.trim() || (administrationScope && inviteRoles.length === 0)) return;
+    if (!canSubmitTenantInvitation(
+      email,
+      canChooseInvitationRoles,
+      inviteRoles,
+    )) return;
     const invitedEmail = email.trim();
-    setLocalError(null);
+    setInvitationLocalError(null);
     setManualToken(null);
+    setManualTokenError(null);
     setAnnouncement('');
     try {
       const result = await onboarding.issueInvitation({
@@ -157,19 +177,38 @@ function TenantOnboardingManagementScope({
       if ('token' in result) setManualToken(result.token);
       setAnnouncement(`Created invitation for ${invitedEmail}`);
     } catch (cause) {
-      setLocalError(errorMessage(cause, tenantSingular));
+      setInvitationLocalError(errorMessage(cause, tenantSingular));
     }
   }
 
-  async function mutate(operation: () => Promise<unknown>, success: string): Promise<boolean> {
-    setLocalError(null);
+  async function mutateInvitation(
+    operation: () => Promise<unknown>,
+    success: string,
+  ): Promise<boolean> {
+    setInvitationLocalError(null);
     setAnnouncement('');
     try {
       await operation();
       setAnnouncement(success);
       return true;
     } catch (cause) {
-      setLocalError(errorMessage(cause, tenantSingular));
+      setInvitationLocalError(errorMessage(cause, tenantSingular));
+      return false;
+    }
+  }
+
+  async function mutateJoinRequest(
+    operation: () => Promise<unknown>,
+    success: string,
+  ): Promise<boolean> {
+    setJoinRequestLocalError(null);
+    setAnnouncement('');
+    try {
+      await operation();
+      setAnnouncement(success);
+      return true;
+    } catch (cause) {
+      setJoinRequestLocalError(errorMessage(cause, tenantSingular));
       return false;
     }
   }
@@ -178,11 +217,11 @@ function TenantOnboardingManagementScope({
     if (!confirmation) return;
     const pending = confirmation;
     const succeeded = pending.action === 'revoke-invitation'
-      ? await mutate(
+      ? await mutateInvitation(
           () => onboarding.revokeInvitation(pending.invitation.invitationId),
           tenantOnboardingConfirmationAnnouncement(pending),
         )
-      : await mutate(
+      : await mutateJoinRequest(
           () => onboarding.denyJoinRequest(
             pending.request.joinRequestId,
             { expectedRequestRevision: pending.request.requestRevision },
@@ -202,13 +241,13 @@ function TenantOnboardingManagementScope({
 
   async function copyManualInvitationToken() {
     if (!manualToken) return;
-    setLocalError(null);
+    setManualTokenError(null);
     setAnnouncement('');
     try {
       await writeAuthClipboardText(manualToken);
       setAnnouncement('Copied one-time invitation token');
     } catch (cause) {
-      setLocalError(errorMessage(cause, tenantSingular));
+      setManualTokenError(errorMessage(cause, tenantSingular));
     }
   }
 
@@ -223,10 +262,45 @@ function TenantOnboardingManagementScope({
   const canChooseInvitationRoles =
     capabilities?.canManageRoles === true && invitationRoleChoices.length > 0;
   const canIssueInvitations = capabilities?.canManageInvitations === true
+    && onboarding.invitationsEnabled === true
     && availableModes.length > 0
     && (!administrationScope || canChooseInvitationRoles);
   const canReviewJoinRequests = !administrationScope
+    && onboarding.joinRequestsEnabled === true
     && capabilities?.canReviewJoinRequests === true;
+
+  const invitationPhase = resolveTenantOnboardingSectionPhase({
+    authConfigStatus: onboarding.authConfigStatus,
+    featureEnabled: onboarding.invitationsEnabled,
+    isLoading: onboarding.isLoadingInvitations,
+    isTenantConfigLoading: onboarding.isLoadingConfig,
+    hasTenantConfig: onboarding.config !== null,
+    tenantConfigError: onboarding.configError,
+    isTenantConfigPermissionDenied: onboarding.isConfigPermissionDenied,
+    isPermissionDenied: onboarding.isInvitationsPermissionDenied,
+    error: confirmation?.action === 'revoke-invitation'
+      ? null
+      : invitationLocalError ?? onboarding.invitationsError,
+  });
+  const joinRequestPhase = administrationScope
+    ? 'disabled'
+    : resolveTenantOnboardingSectionPhase({
+        authConfigStatus: onboarding.authConfigStatus,
+        featureEnabled: onboarding.joinRequestsEnabled,
+        isLoading: onboarding.isLoadingJoinRequests,
+        isTenantConfigLoading: onboarding.isLoadingConfig,
+        hasTenantConfig: onboarding.config !== null,
+        tenantConfigError: onboarding.configError,
+        isTenantConfigPermissionDenied: onboarding.isConfigPermissionDenied,
+        isPermissionDenied: onboarding.isJoinRequestsPermissionDenied,
+        error: confirmation?.action === 'deny-join-request'
+          ? null
+          : joinRequestLocalError ?? onboarding.joinRequestsError,
+      });
+  const effectiveJoinRequestPhase = joinRequestPhase === 'ready'
+    && !canReviewJoinRequests
+    ? 'permission-denied'
+    : joinRequestPhase;
 
   React.useEffect(() => {
     if (!canChooseInvitationRoles) {
@@ -255,18 +329,25 @@ function TenantOnboardingManagementScope({
 
   React.useEffect(() => {
     if (!focusAfterMutation) return;
-    if (onboarding.isLoading && !focusAfterMutation.sawLoading) {
+    const targetLoading = focusAfterMutation.target === 'invitations'
+      ? onboarding.isLoadingInvitations
+      : onboarding.isLoadingJoinRequests;
+    if (targetLoading && !focusAfterMutation.sawLoading) {
       setFocusAfterMutation((current) => current && ({ ...current, sawLoading: true }));
       return;
     }
-    if (!onboarding.isLoading && focusAfterMutation.sawLoading) {
+    if (!targetLoading && focusAfterMutation.sawLoading) {
       const target = focusAfterMutation.target === 'invitations'
         ? invitationsHeadingRef.current
         : joinRequestsHeadingRef.current;
       target?.focus();
       setFocusAfterMutation(null);
     }
-  }, [focusAfterMutation, onboarding.isLoading]);
+  }, [
+    focusAfterMutation,
+    onboarding.isLoadingInvitations,
+    onboarding.isLoadingJoinRequests,
+  ]);
 
   return (
     <div className={cn('grid gap-6', className)}>
@@ -279,67 +360,29 @@ function TenantOnboardingManagementScope({
             <CardTitle>{resolvedTitle}</CardTitle>
             <CardDescription>{resolvedDescription}</CardDescription>
           </div>
-          {canIssueInvitations && (
-            <TenantInvitationComposer
-              email={email}
-              mode={effectiveMode}
-              emailDelivery={delivery?.email === true}
-              manualDelivery={delivery?.manual === true}
-              busy={onboarding.isMutating}
-              canChooseRoles={canChooseInvitationRoles}
-              roles={invitationRoleChoices}
-              selectedRoles={inviteRoles}
-              simple={simpleMode}
-              tenantSingular={tenantSingular}
-              onEmailChange={setEmail}
-              onModeChange={setMode}
-              onRolesChange={setInviteRoles}
-              onSubmit={issue}
-            />
-          )}
-          {capabilities?.canManageInvitations && administrationScope
-            && !canChooseInvitationRoles && (
-            <p className="text-sm text-muted-foreground" role="status">
-              Inviting a platform administrator requires authority to grant at
-              least one administration role.
-            </p>
-          )}
         </CardHeader>
         <CardContent className="space-y-6 pt-5">
           <TenantOnboardingTenantKindNotice kind={tenantKind} />
-          {!confirmation && (onboarding.error || localError) && (
-            <div
-              role="alert"
-              className="flex flex-col gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between"
-            >
-              <span className="min-w-0">{localError ?? onboarding.error}</span>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={onboarding.isLoading || onboarding.isMutating}
-                onClick={() => {
-                  setLocalError(null);
-                  onboarding.reload();
-                }}
-              >
-                Retry
-              </Button>
-            </div>
-          )}
 
           <AlertDialog
             open={confirmation !== null}
             onOpenChange={(open) => {
-              if (!open && !onboarding.isMutating) setConfirmation(null);
+              const confirmationBusy = confirmation?.action === 'revoke-invitation'
+                ? onboarding.isMutatingInvitations
+                : onboarding.isMutatingJoinRequests;
+              if (!open && !confirmationBusy) setConfirmation(null);
             }}
           >
             {confirmation && (
               <OnboardingConfirmationDialog
                 key={onboardingConfirmationKey(confirmation)}
                 confirmation={confirmation}
-                busy={onboarding.isMutating}
-                error={localError}
+                busy={confirmation.action === 'revoke-invitation'
+                  ? onboarding.isMutatingInvitations
+                  : onboarding.isMutatingJoinRequests}
+                error={confirmation.action === 'revoke-invitation'
+                  ? invitationLocalError
+                  : joinRequestLocalError}
                 onConfirm={() => void confirmOnboardingAction()}
                 onCloseAutoFocus={(event) => {
                   event.preventDefault();
@@ -356,55 +399,93 @@ function TenantOnboardingManagementScope({
             )}
           </AlertDialog>
 
-          {manualToken && (
-            <ManualInvitationToken
-              token={manualToken}
-              headingId={manualInvitationHeadingId}
-              onCopy={() => void copyManualInvitationToken()}
-              onDismiss={() => setManualToken(null)}
-            />
-          )}
-
-          {onboarding.isLoading ? (
-            <div
-              role="status"
-              aria-live="polite"
-              className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground"
-            >
-              Loading onboarding controls…
-            </div>
-          ) : !onboarding.config ? (
+          {tenantKind === null ? (
             <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
               {capitalize(tenantSingular)} onboarding controls require signing
               in with active {tenantSingular} access.
             </div>
-          ) : !capabilities?.canReadInvitations && !canReviewJoinRequests ? (
-            <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-              Invitation history and join-request review are not available for
-              your current role.
-            </div>
           ) : (
             <>
-              {capabilities?.canReadInvitations && (
-                <TenantInvitationList
+              {manualToken && (
+                <ManualInvitationToken
+                  token={manualToken}
+                  headingId={manualInvitationHeadingId}
+                  copyError={manualTokenError}
+                  onCopy={() => void copyManualInvitationToken()}
+                  onDismiss={() => {
+                    setManualToken(null);
+                    setManualTokenError(null);
+                  }}
+                />
+              )}
+              {invitationPhase === 'ready' ? (
+                <div className="space-y-4">
+                  {canIssueInvitations && (
+                    <TenantInvitationComposer
+                      email={email}
+                      mode={effectiveMode}
+                      emailDelivery={delivery?.email === true}
+                      manualDelivery={delivery?.manual === true}
+                      busy={onboarding.isMutatingInvitations}
+                      canChooseRoles={canChooseInvitationRoles}
+                      roles={invitationRoleChoices}
+                      selectedRoles={inviteRoles}
+                      simple={simpleMode}
+                      tenantSingular={tenantSingular}
+                      onEmailChange={setEmail}
+                      onModeChange={setMode}
+                      onRolesChange={setInviteRoles}
+                      onSubmit={issue}
+                    />
+                  )}
+                  {capabilities?.canManageInvitations && administrationScope
+                    && !canChooseInvitationRoles && (
+                    <p className="text-sm text-muted-foreground" role="status">
+                      Inviting a platform administrator requires authority to
+                      grant at least one administration role.
+                    </p>
+                  )}
+                  <TenantInvitationList
+                    headingId={invitationsHeadingId}
+                    headingRef={invitationsHeadingRef}
+                    invitations={onboarding.invitations}
+                    roleLabels={roleLabels}
+                    canManage={capabilities?.canManageInvitations === true}
+                    busy={onboarding.isMutatingInvitations}
+                    hasMore={onboarding.invitationPage?.hasMore === true}
+                    isLoadingMore={onboarding.isLoadingMoreInvitations}
+                    onLoadMore={() => void onboarding.loadMoreInvitations()}
+                    onRevoke={(invitation, trigger) => {
+                      confirmationTriggerRef.current = trigger;
+                      setInvitationLocalError(null);
+                      setConfirmation({ action: 'revoke-invitation', invitation });
+                    }}
+                  />
+                </div>
+              ) : (
+                <TenantOnboardingSectionStatus
                   headingId={invitationsHeadingId}
                   headingRef={invitationsHeadingRef}
-                  invitations={onboarding.invitations}
-                  roleLabels={roleLabels}
-                  canManage={capabilities.canManageInvitations}
-                  busy={onboarding.isMutating}
-                  hasMore={onboarding.invitationPage?.hasMore === true}
-                  isLoadingMore={onboarding.isLoadingMoreInvitations}
-                  onLoadMore={() => void onboarding.loadMoreInvitations()}
-                  onRevoke={(invitation, trigger) => {
-                    confirmationTriggerRef.current = trigger;
-                    setLocalError(null);
-                    setConfirmation({ action: 'revoke-invitation', invitation });
+                  title="Invitations"
+                  phase={invitationPhase}
+                  loadingPolicyMessage="Loading invitation policy…"
+                  loadingMessage="Loading invitations…"
+                  configErrorMessage="Invitation policy could not be loaded."
+                  tenantConfigErrorMessage="Tenant onboarding access could not be loaded."
+                  disabledMessage="Invitations are disabled by application policy."
+                  permissionDeniedMessage="Invitation history is not available for your current role."
+                  transportError={invitationLocalError ?? onboarding.invitationsError}
+                  busy={onboarding.isLoadingConfig
+                    || onboarding.isLoadingInvitations
+                    || onboarding.isMutatingInvitations}
+                  onRetry={() => {
+                    setInvitationLocalError(null);
+                    onboarding.reloadInvitations();
                   }}
                 />
               )}
 
-              {canReviewJoinRequests && (
+              {effectiveJoinRequestPhase === 'ready' ? (
                 <section aria-labelledby={joinRequestsHeadingId}>
                   <h3
                     ref={joinRequestsHeadingRef}
@@ -424,10 +505,10 @@ function TenantOnboardingManagementScope({
                         <JoinRequestRow
                           key={`${request.joinRequestId}:${request.requestRevision}`}
                           request={request}
-                          busy={onboarding.isMutating}
+                          busy={onboarding.isMutatingJoinRequests}
                           tenantSingular={tenantSingular}
                           onApprove={(params) =>
-                            mutate(
+                            mutateJoinRequest(
                               () =>
                                 onboarding.approveJoinRequest(
                                   request.joinRequestId,
@@ -438,7 +519,7 @@ function TenantOnboardingManagementScope({
                           }
                           onDeny={(trigger) => {
                             confirmationTriggerRef.current = trigger;
-                            setLocalError(null);
+                            setJoinRequestLocalError(null);
                             setConfirmation({ action: 'deny-join-request', request });
                           }}
                         />
@@ -460,6 +541,29 @@ function TenantOnboardingManagementScope({
                     </Button>
                   )}
                 </section>
+              ) : (
+                <TenantOnboardingSectionStatus
+                  headingId={joinRequestsHeadingId}
+                  headingRef={joinRequestsHeadingRef}
+                  title="Join requests"
+                  phase={effectiveJoinRequestPhase}
+                  loadingPolicyMessage="Loading join-request policy…"
+                  loadingMessage="Loading join requests…"
+                  configErrorMessage="Join-request policy could not be loaded."
+                  tenantConfigErrorMessage="Tenant onboarding access could not be loaded."
+                  disabledMessage={administrationScope
+                    ? 'Join requests are unavailable in the protected administration scope.'
+                    : 'Join requests are disabled by application policy.'}
+                  permissionDeniedMessage="Join-request review is not available for your current role."
+                  transportError={joinRequestLocalError ?? onboarding.joinRequestsError}
+                  busy={onboarding.isLoadingConfig
+                    || onboarding.isLoadingJoinRequests
+                    || onboarding.isMutatingJoinRequests}
+                  onRetry={() => {
+                    setJoinRequestLocalError(null);
+                    onboarding.reloadJoinRequests();
+                  }}
+                />
               )}
             </>
           )}
@@ -479,100 +583,6 @@ function TenantOnboardingManagementScope({
   );
 }
 
-/** Makes the protected-scope exclusions explicit in the generic onboarding UI. */
-export function TenantOnboardingTenantKindNotice({
-  kind,
-}: { kind: 'administration' | 'organization' | null }) {
-  if (kind !== 'administration') return null;
-  return (
-    <p className="rounded-md border border-border/70 bg-muted/25 p-3 text-sm text-muted-foreground" role="note">
-      Platform administration supports invitations only. Customer join
-      requests and verified-domain onboarding are unavailable in this
-      protected scope. Use PlatformAdministrationManagement for the full
-      administrator membership and ownership controls.
-    </p>
-  );
-}
-
-function OnboardingConfirmationDialog({
-  confirmation,
-  busy,
-  error,
-  onConfirm,
-  onCloseAutoFocus,
-}: {
-  confirmation: OnboardingConfirmation;
-  busy: boolean;
-  error: string | null;
-  onConfirm(): void;
-  onCloseAutoFocus: React.ComponentProps<typeof AlertDialogContent>['onCloseAutoFocus'];
-}) {
-  const invitation = confirmation.action === 'revoke-invitation';
-  const subject = invitation
-    ? confirmation.invitation.email
-    : confirmation.request.applicant.email;
-  return (
-    <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus}>
-      <AlertDialogHeader>
-        <AlertDialogTitle>
-          {invitation ? 'Revoke invitation?' : 'Deny access request?'}
-        </AlertDialogTitle>
-        <AlertDialogDescription>
-          {invitation
-            ? `${subject} will no longer be able to use this invitation.`
-            : `${subject} will not receive access from this request. The decision is retained in the onboarding history.`}
-        </AlertDialogDescription>
-      </AlertDialogHeader>
-      {error && (
-        <div
-          role="alert"
-          className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-        >
-          {error}
-        </div>
-      )}
-      <AlertDialogFooter>
-        <AlertDialogCancel asChild>
-          <Button type="button" size="sm" variant="outline" disabled={busy}>
-            Cancel
-          </Button>
-        </AlertDialogCancel>
-        <Button
-          type="button"
-          size="sm"
-          variant="destructive"
-          disabled={busy}
-          onClick={onConfirm}
-        >
-          {busy
-            ? invitation ? 'Revoking…' : 'Denying…'
-            : invitation ? 'Revoke invitation' : 'Deny request'}
-        </Button>
-      </AlertDialogFooter>
-    </AlertDialogContent>
-  );
-}
-
-/** @internal Stable dialog identity for retained onboarding decisions. */
-export function onboardingConfirmationKey(
-  confirmation: OnboardingConfirmation,
-): string {
-  return confirmation.action === 'revoke-invitation'
-    ? `${confirmation.action}:${confirmation.invitation.invitationId}`
-    : `${confirmation.action}:${confirmation.request.joinRequestId}:${confirmation.request.requestRevision}`;
-}
-
-/** @internal Specific live-region copy for confirmed onboarding decisions. */
-export function tenantOnboardingConfirmationAnnouncement(
-  confirmation: OnboardingConfirmation,
-): string {
-  return confirmation.action === 'revoke-invitation'
-    ? `Revoked invitation for ${confirmation.invitation.email}`
-    : `Denied request from ${confirmation.request.applicant.email}`;
-}
-
-/** @internal Reviewer-safe request row exposed for focused component tests. */
-
 function errorMessage(cause: unknown, tenantSingular: string): string {
   return cause instanceof Error
     ? cause.message
@@ -581,15 +591,4 @@ function errorMessage(cause: unknown, tenantSingular: string): string {
 
 function capitalize(value: string): string {
   return value.length === 0 ? value : value[0]!.toUpperCase() + value.slice(1);
-}
-
-/** @internal Keep the first submission inside the loaded delivery policy. */
-export function resolveInvitationDeliveryMode(
-  current: 'email' | 'manual',
-  configuredDefault: 'email' | 'manual',
-  available: readonly ('email' | 'manual')[],
-): 'email' | 'manual' {
-  if (available.includes(current)) return current;
-  if (available.includes(configuredDefault)) return configuredDefault;
-  return available[0] ?? current;
 }

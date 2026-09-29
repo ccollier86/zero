@@ -407,6 +407,8 @@ export interface SyncAuthContext {
   userId: string;
   email: string;
   role: string;
+  /** Managed Zero contexts always populate this exact security generation. */
+  authGeneration?: number;
   /** Present when authority belongs to a registered native public client. */
   clientId?: string;
   /** Browser access remains web; native access is explicitly attributed. */

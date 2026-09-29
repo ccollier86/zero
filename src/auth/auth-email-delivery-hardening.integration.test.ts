@@ -264,6 +264,74 @@ describe('Auth email delivery hardening', () => {
     }
   });
 
+  test('admin setup failure preserves an account changed while delivery is in flight', async () => {
+    const provider = configureFlakyEmail();
+    const local = await startAuthApp({
+      registration: { mode: 'admin-only' },
+      accountEmails: { adminCreatedUser: true },
+    });
+
+    let releaseDelivery!: () => void;
+    try {
+      const admin = await registerAdmin(local.url, 'setup-adopted-owner');
+      let markDeliveryStarted!: () => void;
+      const deliveryStarted = new Promise<void>((resolve) => {
+        markDeliveryStarted = resolve;
+      });
+      const deliveryGate = new Promise<void>((resolve) => {
+        releaseDelivery = resolve;
+      });
+      provider.send = async () => {
+        markDeliveryStarted();
+        await deliveryGate;
+        throw new Error('Simulated delayed setup delivery failure');
+      };
+
+      const pending = requestJson(
+        local.url,
+        'POST',
+        '/auth/admin/users',
+        {
+          username: 'setup-adopted-worker',
+          email: 'setup-adopted-worker@test.com',
+          sendSetupEmail: true,
+        },
+        admin.data.accessToken,
+      );
+      await deliveryStarted;
+      const created = local.db.prepare(`
+        SELECT user_id FROM users WHERE email = ?
+      `).get('setup-adopted-worker@test.com') as { user_id: string } | null;
+      expect(created).not.toBeNull();
+
+      const adopted = await requestJson(
+        local.url,
+        'PATCH',
+        `/auth/admin/users/${created!.user_id}`,
+        { firstName: 'Preserved' },
+        admin.data.accessToken,
+      );
+      expect(adopted.status).toBe(200);
+      releaseDelivery();
+
+      const failed = await pending;
+      expect(failed.status).toBe(502);
+      expect(local.db.prepare(`
+        SELECT first_name FROM users WHERE user_id = ?
+      `).get(created!.user_id)).toEqual({ first_name: 'Preserved' });
+      expect(countTableRows(local.db, '_auth_registration_provisioning')).toBe(0);
+      expect(countTableRows(local.db, '_auth_action_tokens')).toBe(0);
+      expect(countAuditEvents(
+        local.db,
+        'identity.provisioning-rolled-back',
+        'succeeded',
+      )).toBe(0);
+    } finally {
+      releaseDelivery?.();
+      await local.stop();
+    }
+  });
+
   test('failed verification resend discards its token and retries durably', async () => {
     const provider = configureFlakyEmail();
     const local = await startAuthApp({

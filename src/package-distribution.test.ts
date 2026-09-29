@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
 const EXPECTED_MIGRATION_VERSIONS = Array.from(
-  { length: 27 },
+  { length: 28 },
   (_, index) => String(index + 1).padStart(3, '0'),
 );
 
@@ -240,14 +240,28 @@ import type {
   AuthAuthorizationScopeLifecycle,
   AuthClientOptions,
   AuthPasswordUpdatedResult,
+  AuthPlatformAddMemberParams,
   AuthPlatformAdminSdkSurface,
+  AuthPlatformIssueInvitationParams,
+  AuthPlatformRoleSelection,
   AuthPlatformTenantPage,
+  AuthPlatformUpdateMemberInput,
+  AuthPlatformUpdateMemberParams,
   Client,
   LoginFormProps,
   PlatformUserManagementProps,
+  UsePlatformAdministrationOptions,
   UsePlatformAdministrationResult,
   UsePlatformTenantsResult,
+  UseTenantOnboardingAdministrationOptions,
+  UseTenantOnboardingAdministrationResult,
 } from '@zero/framework/react';
+import type {
+  UsePlatformAdministrationOptions as UsePlatformAdministrationOptionsSubpath,
+  UsePlatformAdministrationResult as UsePlatformAdministrationResultSubpath,
+  UseTenantOnboardingAdministrationOptions as UseTenantOnboardingAdministrationOptionsSubpath,
+  UseTenantOnboardingAdministrationResult as UseTenantOnboardingAdministrationResultSubpath,
+} from '@zero/framework/react/hooks';
 import type {
   AssertAuthApplicationMutationAuthority,
   AssertAuthTenantMutationAuthority,
@@ -286,8 +300,13 @@ type PackagedAuthExtensionContract =
   | AuthAuthorizationScopeLifecycle
   | AuthClientOptions
   | AuthPermissionScope
+  | AuthPlatformAddMemberParams
   | AuthPlatformAdminSdkSurface
+  | AuthPlatformIssueInvitationParams
+  | AuthPlatformRoleSelection
   | AuthPlatformTenantPage
+  | AuthPlatformUpdateMemberInput
+  | AuthPlatformUpdateMemberParams
   | AssertAuthApplicationMutationAuthority
   | AssertAuthTenantMutationAuthority
   | AtomicRegistrationPolicy
@@ -300,13 +319,124 @@ type PackagedAuthExtensionContract =
   | IssuedPageSession
   | UserListOptions
   | UserStoreOptions
+  | UsePlatformAdministrationOptions
   | UsePlatformAdministrationResult
+  | UsePlatformAdministrationOptionsSubpath
+  | UsePlatformAdministrationResultSubpath
   | UsePlatformTenantsResult
+  | UseTenantOnboardingAdministrationOptions
+  | UseTenantOnboardingAdministrationResult
+  | UseTenantOnboardingAdministrationOptionsSubpath
+  | UseTenantOnboardingAdministrationResultSubpath
   | WebRefreshProof;
 void (null as PackagedAuthExtensionContract | null);
 
+function assertPackagedAdministrationHookContracts(
+  platform: UsePlatformAdministrationResult,
+  onboarding: UseTenantOnboardingAdministrationResult,
+) {
+  const platformPolicyStatus: 'unresolved' | 'enabled' | 'disabled' | 'error' =
+    platform.invitationPolicyStatus;
+  const platformInvitationsEnabled: boolean | null = platform.invitationsEnabled;
+  const onboardingAuthConfigStatus: 'unknown' | 'loading' | 'ready' | 'error' =
+    onboarding.authConfigStatus;
+  const onboardingInvitationsEnabled: boolean | null = onboarding.invitationsEnabled;
+  const onboardingJoinRequestsEnabled: boolean | null = onboarding.joinRequestsEnabled;
+
+  platform.reloadConfig();
+  platform.reloadMembers();
+  platform.reloadInvitations();
+  platform.reload();
+  void platform.isAvailable;
+  void platform.isLoading;
+  void platform.isMutating;
+  void platform.error;
+  void platform.isLoadingConfig;
+  void platform.config;
+  void platform.configError;
+  void platform.isLoadingMembers;
+  void platform.isMutatingMembers;
+  void platform.membersError;
+  void platform.members;
+  void platform.memberPage;
+  void platform.isLoadingMoreMembers;
+  void platform.loadMoreMembers();
+  void platform.isLoadingInvitations;
+  void platform.isMutatingInvitations;
+  void platform.invitationsError;
+  void platform.invitations;
+  void platform.invitationPage;
+  void platform.isLoadingMoreInvitations;
+  void platform.loadMoreInvitations();
+  void platform.invitationConfigError;
+  void platform.invitationDelivery;
+
+  onboarding.reloadConfig();
+  onboarding.reloadInvitations();
+  onboarding.reloadJoinRequests();
+  onboarding.reload();
+  void onboarding.isLoading;
+  void onboarding.isMutating;
+  void onboarding.error;
+  void onboarding.isLoadingConfig;
+  void onboarding.isConfigPermissionDenied;
+  void onboarding.configError;
+  void onboarding.config;
+  void onboarding.isLoadingInvitations;
+  void onboarding.isLoadingJoinRequests;
+  void onboarding.isMutatingInvitations;
+  void onboarding.isMutatingJoinRequests;
+  void onboarding.isInvitationsPermissionDenied;
+  void onboarding.isJoinRequestsPermissionDenied;
+  void onboarding.invitationsError;
+  void onboarding.joinRequestsError;
+  void onboarding.invitations;
+  void onboarding.joinRequests;
+  void onboarding.invitationPage;
+  void onboarding.joinRequestPage;
+  void onboarding.isLoadingMoreInvitations;
+  void onboarding.isLoadingMoreJoinRequests;
+  void onboarding.loadMoreInvitations();
+  void onboarding.loadMoreJoinRequests();
+  void onboarding.authConfigError;
+
+  return {
+    platformPolicyStatus,
+    platformInvitationsEnabled,
+    onboardingAuthConfigStatus,
+    onboardingInvitationsEnabled,
+    onboardingJoinRequestsEnabled,
+  };
+}
+void assertPackagedAdministrationHookContracts;
+
 function assertPackagedPlatformContract(client: Client) {
   const admin: AuthPlatformAdminSdkSurface = client.platformAdmin;
+  const member: AuthPlatformAddMemberParams = {
+    email: 'operator@example.test',
+    roles: ['administrator'],
+  };
+  void admin.addMember(member);
+  // @ts-expect-error Platform administration members require explicit roles.
+  void admin.addMember({ email: 'operator@example.test' });
+  // @ts-expect-error Platform administration roles cannot be empty.
+  void admin.addMember({ email: 'operator@example.test', roles: [] });
+  void admin.updateMember('member-1', {
+    roles: ['administrator'],
+    expectedRoleRevision: 'tenant:1',
+  });
+  // @ts-expect-error Direct role replacement requires a current revision fence.
+  void admin.updateMember('member-1', { roles: ['administrator'] });
+  // @ts-expect-error Platform administration role replacement cannot be empty.
+  void admin.updateMember('member-1', { roles: [] });
+  void admin.issueInvitation({
+    email: 'invited@example.test',
+    roles: ['administrator'],
+  });
+  // @ts-expect-error Platform administration invitations require roles.
+  void admin.issueInvitation({ email: 'invited@example.test' });
+  // @ts-expect-error Platform administration invitation roles cannot be empty.
+  void admin.issueInvitation({ email: 'invited@example.test', roles: [] });
   const tenants: Promise<AuthPlatformTenantPage> = admin.listTenants({ limit: 25 });
   return tenants;
 }

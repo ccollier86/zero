@@ -237,6 +237,67 @@ describe('multi-tenant onboarding and creation', () => {
     expect(continuation(verified)).toBeString();
   }, 60_000);
 
+  test('does not carry an email-verification receipt across a later password reset', async () => {
+    const provider = new MemoryEmailProvider();
+    configureEmail({ from: 'Zero <zero@example.test>', provider }, {
+      name: 'Zero', publicUrl: 'http://localhost',
+    });
+    const harness = await start('authenticated', true);
+    await bootstrap(harness, 'verification-generation-bootstrap');
+
+    const registered = await post(
+      harness,
+      '/auth/register',
+      registration('verification-generation-race'),
+    );
+    const message = provider.messages.find(({ message }) =>
+      String(message.to).includes('verification-generation-race@example.test'));
+    expect(message).toBeDefined();
+    const token = firstUrl(message!.message.text).searchParams.get('token');
+    expect(token).toBeString();
+
+    const sessions = harness.runtime.getAuthTenantSessionService()!;
+    const store = harness.runtime.getStore()!;
+    const complete = sessions.complete.bind(sessions);
+    let intercepted = false;
+    (sessions as any).complete = async (...args: Parameters<typeof complete>) => {
+      intercepted = true;
+      await store.resetPassword(
+        registered.body.user.userId,
+        'replacement-password1',
+      );
+      return complete(...args);
+    };
+    let verified: JsonResult;
+    try {
+      verified = await post(harness, '/auth/verify-email', { token });
+    } finally {
+      (sessions as any).complete = complete;
+    }
+
+    expect(intercepted).toBe(true);
+    expect(verified!).toMatchObject({
+      status: 409,
+      body: { code: 'AUTH_STATE_CHANGED' },
+    });
+    expect(verified!.body.accessToken).toBeUndefined();
+    expect(verified!.body.refreshToken).toBeUndefined();
+    expect(store.getUserById(registered.body.user.userId)).toMatchObject({
+      emailVerificationRequired: false,
+    });
+    expect((harness.db.prepare(`
+      SELECT COUNT(*) AS count FROM _auth_session_continuations
+      WHERE user_id = ? AND purpose = 'tenant_onboarding'
+    `).get(registered.body.user.userId) as { count: number }).count).toBe(0);
+
+    const currentLogin = await post(harness, '/auth/login', {
+      username: 'verification-generation-race',
+      password: 'replacement-password1',
+    });
+    expect(currentLogin.status).toBe(200);
+    expect(currentLogin.body.tenantOnboardingRequired).toBe(true);
+  }, 60_000);
+
   test('rolls back tenant, owner, continuation consumption, and session on failure and concurrent loss', async () => {
     const harness = await start();
     await bootstrap(harness);

@@ -51,6 +51,7 @@ interface RegistrationProvisioningRow {
 
 interface RegistrationProvisioningDependencies {
   mutation: <T>(operation: () => T) => T;
+  afterCommit: (callback: () => unknown) => void;
   assertCurrentProfile: () => void;
   getConfig: (key: string) => string | null;
   setConfig: (key: string, value: string) => void;
@@ -362,14 +363,16 @@ export class RegistrationProvisioningStore {
           && row.lease_expires_at > Date.now();
         if (leaseIsLive) return false;
         this.rollbackRow(row);
+        this.dependencies.afterCommit(() => {
+          this.dependencies.emitCode?.(
+            OBS_CODES.AUTH_REGISTRATION_PROVISIONING_RECOVERED,
+            { metadata: { bootstrap: row.is_bootstrap === 1 } },
+          );
+        });
         return true;
       });
       if (changed) {
         recovered++;
-        this.dependencies.emitCode?.(
-          OBS_CODES.AUTH_REGISTRATION_PROVISIONING_RECOVERED,
-          { metadata: { bootstrap: candidate.is_bootstrap === 1 } },
-        );
       }
     }
     return recovered;

@@ -108,6 +108,7 @@ export function sameSyncAuthContext(
   return left.userId === right.userId
     && left.email === right.email
     && left.role === right.role
+    && left.authGeneration === right.authGeneration
     && left.clientId === right.clientId
     && left.sessionKind === right.sessionKind
     && JSON.stringify([...(left.scope ?? [])].sort())
@@ -116,7 +117,9 @@ export function sameSyncAuthContext(
     && left.sessionGeneration === right.sessionGeneration
     && left.sessionScopeKind === right.sessionScopeKind
     && left.sessionScopeId === right.sessionScopeId
+    && left.mfaVerifiedAt === right.mfaVerifiedAt
     && left.tenantId === right.tenantId
+    && left.tenantKind === right.tenantKind
     && left.membershipId === right.membershipId
     && left.tenantRole === right.tenantRole
     && left.tenantAuthorizationGeneration === right.tenantAuthorizationGeneration

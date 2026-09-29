@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createReactiveDB, ReactiveDB } from '../sync/reactive-db';
+import { hashToken } from '../tokens/token-utils';
 import { UserStore } from './user-store';
 import { TokenService } from './token-service';
 import { AUTH_DEFAULTS, AuthError, type UserRecord } from './types';
@@ -315,6 +316,94 @@ describe('TokenService — Access Tokens', () => {
       const token = await signStoredTestToken(claims, 'auth-transition');
       expect(await tokenService.verifyTransitionToken(token, 'mfa_setup')).toBeNull();
     }
+
+    for (const claims of [
+      {
+        sub: user.userId,
+        email: user.email,
+        role: user.role,
+        purpose: 'mfa_setup',
+        authGeneration: store.getAuthGeneration(user.userId),
+        flow: 'profile',
+      },
+      {
+        sub: user.userId,
+        email: user.email,
+        role: user.role,
+        purpose: 'mfa_setup',
+        authGeneration: store.getAuthGeneration(user.userId),
+        flow: 'auth',
+        profileAuthorityFingerprint: 'a'.repeat(64),
+      },
+      {
+        sub: user.userId,
+        email: user.email,
+        role: user.role,
+        purpose: 'mfa_challenge',
+        authGeneration: store.getAuthGeneration(user.userId),
+        flow: 'profile',
+        profileAuthorityFingerprint: 'a'.repeat(64),
+      },
+    ] satisfies JWTPayload[]) {
+      const token = await signStoredTestToken(claims, 'auth-transition');
+      expect(await tokenService.verifyTransitionToken(
+        token,
+        claims.purpose as 'mfa_setup' | 'mfa_challenge',
+      )).toBeNull();
+    }
+  });
+
+  test('profile transition tokens bind only the exact live originating authority', async () => {
+    const user = await store.createUser({
+      username: 'profile-transition-user',
+      email: 'profile-transition-user@example.test',
+      password: 'password123',
+    });
+    const generation = store.getAuthGeneration(user.userId);
+    const session = await tokenService.issueTokenPair(user, {
+      expectedAuthGeneration: generation,
+    });
+    const context = await tokenService.resolveAuthContext(session.accessToken);
+    expect(context).not.toBeNull();
+    const authority = tokenService.captureAuthContextAuthority(context!);
+    expect(authority).not.toBeNull();
+
+    const token = await tokenService.signTransitionToken(user, {
+      purpose: 'mfa_setup',
+      ttl: '5m',
+      flow: 'profile',
+      expectedAuthGeneration: generation,
+      profileAuthority: authority!,
+    });
+    const payload = await tokenService.verifyTransitionToken(token, 'mfa_setup');
+    expect(payload).toMatchObject({
+      sub: user.userId,
+      flow: 'profile',
+      authGeneration: generation,
+    });
+    expect(payload?.profileAuthorityFingerprint).toMatch(/^[a-f0-9]{64}$/);
+
+    await expect(tokenService.signTransitionToken(user, {
+      purpose: 'mfa_setup',
+      ttl: '5m',
+      flow: 'profile',
+      expectedAuthGeneration: generation,
+    })).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      status: 500,
+    });
+
+    expect(tokenService.revokeRefreshTokenByRaw(session.refreshToken)).toBe(true);
+    await expect(tokenService.signTransitionToken(user, {
+      purpose: 'mfa_setup',
+      ttl: '5m',
+      flow: 'profile',
+      expectedAuthGeneration: generation,
+      profileAuthority: authority!,
+    })).rejects.toMatchObject({
+      code: 'AUTH_STATE_CHANGED',
+      status: 409,
+    });
   });
 
   test('verifyAccessToken returns null for token signed with different key', async () => {
@@ -470,6 +559,51 @@ describe('TokenService — Token Pair', () => {
     expect(sessions.count).toBe(0);
   });
 
+  test('detaches caller-owned user state before browser token signing yields', async () => {
+    const signAccessToken = tokenService.signAccessToken.bind(tokenService);
+    let releaseSigner: (() => void) | undefined;
+    let signingFinished: (() => void) | undefined;
+    let signingSubject: UserRecord | undefined;
+    const signed = new Promise<void>((resolve) => { signingFinished = resolve; });
+    const resume = new Promise<void>((resolve) => { releaseSigner = resolve; });
+    tokenService.signAccessToken = async (subject, generation, session) => {
+      signingSubject = subject as UserRecord;
+      const accessToken = await signAccessToken(subject, generation, session);
+      signingFinished!();
+      await resume;
+      return accessToken;
+    };
+    const callerUser: UserRecord = {
+      ...user,
+      properties: { ...user.properties, boundary: 'original' },
+    };
+
+    try {
+      const issuance = tokenService.issueTokenPair(callerUser);
+      await signed;
+      callerUser.email = 'mutated-during-signing@example.test';
+      callerUser.role = 'mutated-during-signing';
+      callerUser.userId = 'mutated-during-signing';
+      callerUser.properties.boundary = 'mutated-during-signing';
+      releaseSigner!();
+
+      const pair = await issuance;
+      await expect(tokenService.verifyAccessToken(pair.accessToken)).resolves.toMatchObject({
+        sub: user.userId,
+        email: user.email,
+        role: user.role,
+      });
+      expect(store.getRefreshTokenByHash(hashToken(pair.refreshToken))).toMatchObject({
+        userId: user.userId,
+        revokedAt: null,
+      });
+      expect(signingSubject?.properties.boundary).toBe('original');
+    } finally {
+      releaseSigner?.();
+      tokenService.signAccessToken = signAccessToken;
+    }
+  });
+
   test('issueTokenPair throws if UserStore not wired', async () => {
     const unwired = await TokenService.create({ db });
     // Don't call setUserStore
@@ -507,6 +641,58 @@ describe('TokenService — Refresh Rotation', () => {
     expect(rotated!.refreshToken).toBeDefined();
     // New refresh token should be different
     expect(rotated!.refreshToken).not.toBe(original.refreshToken);
+  });
+
+  test('detaches resolved user state before refresh signing yields', async () => {
+    const original = await tokenService.issueTokenPair(user);
+    const resolvedUser: UserRecord = {
+      ...user,
+      properties: { ...user.properties, boundary: 'original' },
+    };
+    const getUserById = store.getUserById.bind(store);
+    store.getUserById = (userId) => userId === user.userId
+      ? resolvedUser
+      : getUserById(userId);
+    const signAccessToken = tokenService.signAccessToken.bind(tokenService);
+    let releaseSigner: (() => void) | undefined;
+    let signingFinished: (() => void) | undefined;
+    let signingSubject: UserRecord | undefined;
+    const signed = new Promise<void>((resolve) => { signingFinished = resolve; });
+    const resume = new Promise<void>((resolve) => { releaseSigner = resolve; });
+    tokenService.signAccessToken = async (subject, generation, session) => {
+      signingSubject = subject as UserRecord;
+      const accessToken = await signAccessToken(subject, generation, session);
+      signingFinished!();
+      await resume;
+      return accessToken;
+    };
+
+    try {
+      const rotation = tokenService.rotateRefreshToken(original.refreshToken);
+      await signed;
+      resolvedUser.userId = 'mutated-refresh-user';
+      resolvedUser.email = 'mutated-refresh-user@example.test';
+      resolvedUser.role = 'mutated-refresh-role';
+      resolvedUser.properties.boundary = 'mutated-refresh-user';
+      releaseSigner!();
+
+      const rotated = await rotation;
+      expect(rotated).not.toBeNull();
+      await expect(tokenService.verifyAccessToken(rotated!.accessToken)).resolves.toMatchObject({
+        sub: user.userId,
+        email: user.email,
+        role: user.role,
+      });
+      expect(store.getRefreshTokenByHash(hashToken(rotated!.refreshToken))).toMatchObject({
+        userId: user.userId,
+        revokedAt: null,
+      });
+      expect(signingSubject?.properties.boundary).toBe('original');
+    } finally {
+      releaseSigner?.();
+      tokenService.signAccessToken = signAccessToken;
+      store.getUserById = getUserById;
+    }
   });
 
   test('rotateRefreshToken revokes the old token', async () => {

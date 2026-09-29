@@ -42,6 +42,10 @@ const rolesSchema = t.Array(roleKeySchema, {
   maxItems: 32,
   uniqueItems: true,
 });
+const platformMemberRolesSchema = t.Array(roleKeySchema, {
+  maxItems: 32,
+  uniqueItems: true,
+});
 const emailSchema = t.String({
   minLength: 1,
   maxLength: EMAIL_MAX_LENGTH,
@@ -133,7 +137,7 @@ export function createAuthPlatformAdministrationPlugin(
     .post('/members', async ({ request, body }) => {
       const actor = await requirePlatformActor(config, request);
       actor.access.requirePermission('tenant.members:manage');
-      const roles = body.roles;
+      const roles = requireAdministrationMemberRoles(body.roles);
       actor.access.requirePermission('tenant.roles:manage');
       return actor.tenantAdministration.addMember({
         tenantId: actor.tenantScope.tenantId,
@@ -145,7 +149,9 @@ export function createAuthPlatformAdministrationPlugin(
     }, {
       body: t.Object({
         email: emailSchema,
-        roles: rolesSchema,
+        // Missing/empty role selections are structurally valid JSON but fail
+        // the administration semantic contract with its stable domain code.
+        roles: t.Optional(platformMemberRolesSchema),
       }, { additionalProperties: false }),
     })
     .patch('/members/:membershipId', async ({ request, params, body }) => {
@@ -403,6 +409,19 @@ export function createAuthPlatformAdministrationPlugin(
       params: t.Object({ tenantId: idSchema }, { additionalProperties: false }),
       query: memberListSchema(),
     });
+}
+
+function requireAdministrationMemberRoles(
+  roles: readonly string[] | undefined,
+): readonly string[] {
+  if (roles === undefined || roles.length === 0) {
+    throw new AuthError(
+      'Administration organization members require a platform administration role',
+      'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED',
+      422,
+    );
+  }
+  return roles;
 }
 
 async function requirePlatformActor(

@@ -155,8 +155,11 @@ export type {
 } from './auth-domain-types';
 
 export type {
+  AuthPlatformAddMemberParams,
   AuthPlatformAdministrationConfig,
   AuthPlatformAdminSdkSurface,
+  AuthPlatformIssueInvitationParams,
+  AuthPlatformRoleSelection,
   AuthPlatformTenant,
   AuthPlatformTenantCreateParams,
   AuthPlatformTenantCreateResult,
@@ -166,6 +169,8 @@ export type {
   AuthPlatformTenantStatus,
   AuthPlatformTenantUpdateParams,
   AuthPlatformTenantUpdateResult,
+  AuthPlatformUpdateMemberInput,
+  AuthPlatformUpdateMemberParams,
 } from './auth-platform-administration-types';
 
 export type { Collection } from './collection';

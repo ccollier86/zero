@@ -201,6 +201,59 @@ describe('AuthAuditService', () => {
       action: 'audit.retention-pruned',
     }));
   });
+
+  test('detaches retention cutoff and audit attribution before authority revalidation', () => {
+    const now = 200_000_000;
+    const old = service.append({
+      action: 'tenant.member-added',
+      outcome: 'succeeded',
+      scope: { kind: 'tenant', tenantId: 'tenant-a' },
+      actor: { provenance: 'system' },
+      occurredAt: 1,
+    });
+    const recent = service.append({
+      action: 'tenant.member-added',
+      outcome: 'succeeded',
+      scope: { kind: 'tenant', tenantId: 'tenant-a' },
+      actor: { provenance: 'system' },
+      occurredAt: now,
+    });
+    const actor = {
+      userId: 'original-admin',
+      provenance: 'authenticated-request' as const,
+    };
+    const request = { requestId: 'original-request' };
+    const input: Parameters<AuthAuditService['pruneBacklogAudited']>[0] = {
+      actor,
+      request,
+      now,
+    };
+    input.assertCurrentAuthority = () => {
+      input.now = 1_000_000_000;
+      actor.userId = 'mutated-admin';
+      request.requestId = 'mutated-request';
+    };
+
+    expect(service.pruneBacklogAudited(input)).toEqual({ deleted: 1, hasMore: false });
+    const events = service.listPlatform().events;
+    expect(events.some((event) => event.eventId === old.eventId)).toBe(false);
+    expect(events.some((event) => event.eventId === recent.eventId)).toBe(true);
+    expect(events.find((event) => event.action === 'audit.retention-pruned')).toMatchObject({
+      actorUserId: 'original-admin',
+      requestId: 'original-request',
+      metadata: { deleted: 1, 'has-more': false },
+    });
+  });
+
+  test('validates the captured retention cutoff before invoking authority', () => {
+    let authorityCalls = 0;
+    expect(() => service.pruneBacklogAudited({
+      actor: { userId: 'admin-a', provenance: 'authenticated-request' },
+      now: Number.MAX_SAFE_INTEGER,
+      assertCurrentAuthority: () => { authorityCalls += 1; },
+    })).toThrow('Invalid audit retention time');
+    expect(authorityCalls).toBe(0);
+  });
 });
 
 function countEvents(sqlite: Database): number {

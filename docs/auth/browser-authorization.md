@@ -226,6 +226,7 @@ Import visibility gates from the browser-safe auth component entry:
 
 ```tsx
 import {
+  AdministrationScopeGate,
   PermissionGate,
   PlatformAdminGate,
   TenantGate,
@@ -244,8 +245,12 @@ import {
   <TenantSettingsLink />
 </TenantGate>
 
+<AdministrationScopeGate fallback={null}>
+  <AdministrationOperationsLink />
+</AdministrationScopeGate>
+
 <PlatformAdminGate fallback={null}>
-  <PlatformOperationsLink />
+  <GlobalIdentityOperationsLink />
 </PlatformAdminGate>
 ```
 
@@ -253,7 +258,10 @@ import {
 `applicationScope` permissions. `TenantGate` requires a live tenant scope and
 can optionally narrow by tenant ID or any current tenant role; it never reads
 `applicationScope`.
-`PlatformAdminGate` checks only the legacy global `admin` role; it is
+`TenantGate` also accepts `tenantKind="organization" | "administration"`.
+`AdministrationScopeGate` is the explicit shorthand for the protected
+Administration Organization; it does not grant global identity administration.
+`PlatformAdminGate` checks only the legacy global `admin` identity role; it is
 intentionally not an alias for tenant ownership, tenant administration, or
 Administration Organization application permissions.
 
@@ -279,11 +287,12 @@ remounts a non-hydrated app under the committed scope, and reloads hydrated
 routes so server loaders and page-session policy rerun for the replacement
 scope.
 
-`useTenantMembers`, `useTenantOnboardingAdministration`, and
-`useTenantSwitcher` key their cached results by both account ID and active
-tenant ID. They mask old results during account replacement—even if both
-accounts use the same tenant—and during tenant switches. Initial loads,
-pagination, mutations, switch completion, and errors carry a monotonic boundary
+`useTenantMembers`, `useTenantOnboardingAdministration`,
+`usePlatformAdministration`, and `useTenantSwitcher` key their cached results
+by both account ID and active tenant ID. They mask old results during account
+replacement—even if both accounts use the same tenant—and during tenant
+switches. Independently loaded administration slices, pagination, mutations,
+switch completion, and errors carry a monotonic boundary
 generation, so late work from the previous account or tenant cannot update the
 new UI. Packaged tenant-management blocks are also remounted at that boundary,
 clearing local selections, confirmations, errors, and one-time invitation

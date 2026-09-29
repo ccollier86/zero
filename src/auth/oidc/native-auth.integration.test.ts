@@ -6,6 +6,7 @@ import { createReactiveDB, type ReactiveDB } from '../../sync/reactive-db';
 import { resolveSyncAuthContext } from '../../sync/sync-auth';
 import { createAuthMiddleware } from '../auth.middleware';
 import { createAuthPlugin, getAuthStore, getTokenService } from '../auth.plugin';
+import { getNativeAuthorizationService } from '../auth-runtime';
 import { derivePkceS256Challenge } from '../native';
 
 const CLIENT_ID = 'com.example.zeroapp';
@@ -373,6 +374,88 @@ describe('native OpenID Connect provider', () => {
     expect(response.headers.get('cache-control')).toBe('no-store');
   });
 
+  test('revalidates page authority inside native claim, approval, and denial commits', async () => {
+    const service = getNativeAuthorizationService()!;
+
+    const claimUser = await registerNativeUser('native-claim-generation-fence');
+    const anonymousStart = await beginAuthorization();
+    const loginLocation = new URL(anonymousStart.headers.get('location')!, baseUrl);
+    const resume = loginLocation.searchParams.get('redirect')!;
+    const claimRequestId = new URL(resume, baseUrl).searchParams.get('request_id')!;
+    const originalClaim = service.claimContinuationForAuth.bind(service);
+    service.claimContinuationForAuth = (value, auth) => withNativeAuthorityReset(
+      claimUser.userId,
+      () => originalClaim(value, auth),
+    );
+    let claimResponse: Response;
+    try {
+      claimResponse = await fetch(
+        `${issuer}/oauth/authorize?request_id=${encodeURIComponent(claimRequestId)}`,
+        { redirect: 'manual', headers: { Cookie: claimUser.cookie } },
+      );
+    } finally {
+      service.claimContinuationForAuth = originalClaim;
+    }
+    expect(new URL(claimResponse!.headers.get('location')!).searchParams.get('error'))
+      .toBe('access_denied');
+    expect(service.getRequest(claimRequestId)).toMatchObject({
+      boundUserId: null,
+      consumedAt: null,
+    });
+
+    const approvalUser = await registerNativeUser('native-approval-generation-fence');
+    const approvalPage = await beginAuthorization({ cookie: approvalUser.cookie });
+    const approvalRequestId = hiddenValue(await approvalPage.text(), 'request_id');
+    const codesBefore = nativeCodeCount();
+    const originalApprove = service.approve.bind(service);
+    service.approve = (requestId, auth) => withNativeAuthorityReset(
+      approvalUser.userId,
+      () => originalApprove(requestId, auth),
+    );
+    let approvalResponse: Response;
+    try {
+      approvalResponse = await submitAuthorization(
+        approvalRequestId,
+        approvalUser.cookie,
+        'approve',
+      );
+    } finally {
+      service.approve = originalApprove;
+    }
+    expect(new URL(approvalResponse!.headers.get('location')!).searchParams.get('error'))
+      .toBe('access_denied');
+    expect(nativeCodeCount()).toBe(codesBefore);
+    expect(service.getRequest(approvalRequestId)).toMatchObject({
+      boundUserId: approvalUser.userId,
+      consumedAt: null,
+    });
+
+    const denialUser = await registerNativeUser('native-denial-generation-fence');
+    const denialPage = await beginAuthorization({ cookie: denialUser.cookie });
+    const denialRequestId = hiddenValue(await denialPage.text(), 'request_id');
+    const originalDeny = service.deny.bind(service);
+    service.deny = (requestId, auth) => withNativeAuthorityReset(
+      denialUser.userId,
+      () => originalDeny(requestId, auth),
+    );
+    let denialResponse: Response;
+    try {
+      denialResponse = await submitAuthorization(
+        denialRequestId,
+        denialUser.cookie,
+        'deny',
+      );
+    } finally {
+      service.deny = originalDeny;
+    }
+    expect(new URL(denialResponse!.headers.get('location')!).searchParams.get('error'))
+      .toBe('invalid_request');
+    expect(service.getRequest(denialRequestId)).toMatchObject({
+      boundUserId: denialUser.userId,
+      consumedAt: null,
+    });
+  });
+
   test('enforces public-client HTTP semantics across token and revocation errors', async () => {
     const acceptedMediaType = await fetch(`${issuer}/oauth/token`, {
       method: 'POST',
@@ -589,6 +672,31 @@ async function withGenerationBump<T>(userId: string, action: () => Promise<T>): 
   } finally {
     tokens.signNativeAccessToken = original;
   }
+}
+
+function withNativeAuthorityReset<T>(userId: string, action: () => T): T {
+  const tokens = getTokenService()!;
+  const store = getAuthStore()!;
+  const original = tokens.resolveAuthContextAuthority.bind(tokens);
+  let resolutions = 0;
+  tokens.resolveAuthContextAuthority = (reference) => {
+    resolutions += 1;
+    if (resolutions === 2) store.revokeAllUserTokens(userId);
+    return original(reference);
+  };
+  try {
+    const result = action();
+    expect(resolutions).toBe(2);
+    return result;
+  } finally {
+    tokens.resolveAuthContextAuthority = original;
+  }
+}
+
+function nativeCodeCount(): number {
+  return (db.prepare('SELECT COUNT(*) AS count FROM _auth_native_codes').get() as {
+    count: number;
+  }).count;
 }
 
 async function token(fields: Record<string, string>) {

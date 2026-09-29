@@ -137,9 +137,13 @@ roles.
 
 Every newly added or invited non-owner administration member must receive only
 explicit administration-only roles; these flows never fall back to the customer
-`member` role. Generic role replacement applies the same tenant-kind policy. A
-missing/empty/invalid set fails with
-`AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED`. The protected `owner` role is
+`member` role. Generic role replacement applies the same tenant-kind policy.
+For member creation, a missing or empty role set fails with
+`AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED`; a declared customer-only role
+uses the same code. An undeclared role fails with
+`AUTHORIZATION_ROLE_UNDECLARED`, while the protected `owner` or another system
+role fails with `TENANT_OWNER_ROLE_PROTECTED`. Malformed JSON values remain
+`AUTH_VALIDATION_FAILED`. The protected `owner` role is
 handled only by bootstrap and the dedicated ownership lifecycle: ownership
 transfer demotes the former owner to `administrator`, invalidates that actor's
 current session, and promotes the target atomically. Retained legacy
@@ -183,13 +187,29 @@ organization and uses the ordinary active-tenant APIs and
 `TenantMemberManagement`. This keeps customer mutations on the same tenant
 authority boundary as the rest of the data plane.
 
+Directory and member reads validate the request shape and then revalidate live
+application authority before customer-tenant discovery or SQL projection. A
+revoked caller therefore receives the same authority failure for existing and
+missing customer IDs, without an unauthorized existence probe.
+
 Tenant directory reads represent `active`, `suspended`, and terminal
 `archived` rows. Lifecycle mutation accepts only `active` or `suspended`.
+Direct/headless tenant and member list calls reject invalid filters with
+`PLATFORM_TENANT_PAGE_INVALID` (`422`) before authority or persistence work.
+On HTTP routes, values rejected by the Elysia query schema (for example an
+unknown status enum or malformed numeric field) use the namespace-wide
+`AUTH_VALIDATION_FAILED` contract; semantic values that pass that schema but
+fail service validation, such as an invalid opaque cursor, retain
+`PLATFORM_TENANT_PAGE_INVALID`. A headless lifecycle value outside the two
+mutable statuses fails with `PLATFORM_TENANT_STATUS_INVALID` (`422`) before
+authority or persistence work.
 Every list cursor, identifier, role, permission, page, and response object is
 strictly parsed and bounded by the browser transport; unknown or malformed
 server fields fail closed. Lifecycle writes use
 `expectedAuthorizationGeneration`, and a generation conflict reloads the
-directory before the user retries.
+directory before the user retries. Tenant-created/suspended/reactivated success
+events publish only after the outermost ReactiveDB transaction commits;
+rollbacks and idempotent lifecycle retries emit no false or duplicate success.
 
 ## Browser SDK
 
@@ -222,8 +242,15 @@ The namespace also provides `listMembers`, `addMember`, `updateMember`,
 `removeMember`, `transferOwnership`, `listInvitations`, `issueInvitation`,
 `revokeInvitation`, and read-only `listTenantMembers`. Exact request and result
 types are exported from `@zero/framework/react`, including
-`AuthPlatformAdministrationConfig`, `AuthPlatformTenant`, and
-`AuthPlatformAdminSdkSurface`.
+`AuthPlatformAdministrationConfig`, `AuthPlatformRoleSelection`,
+`AuthPlatformAddMemberParams`, `AuthPlatformUpdateMemberParams`,
+`AuthPlatformUpdateMemberInput`, `AuthPlatformIssueInvitationParams`,
+`AuthPlatformTenant`, and `AuthPlatformAdminSdkSurface`. Platform add,
+role-replacement, and invitation requests use a non-empty role tuple; direct
+role replacement also requires `expectedRoleRevision`. The administration
+hook accepts `AuthPlatformUpdateMemberInput` and injects that revision from its
+fenced member view. Ordinary tenant `addTenantMember` keeps `roles` optional so
+omission can select `member`.
 
 The platform config is intentionally capability-driven. In particular,
 `canManageTenants` controls suspend/reactivate, while `canCreateTenants`
@@ -267,9 +294,48 @@ creation, and capability-gated read-only member drill-in. Both hooks clear old
 scope data synchronously, ignore late completions, suppress mutation results
 after a foreign scope transition, and expose pending/error/reload state.
 
-`isAvailable` means the current session is in an administration tenant; it is
-not proof of any particular permission. The returned config capabilities
-decide which reads and mutations are attempted.
+The administration hook does not collapse unrelated work into one request.
+Its protected config, member directory, public invitation policy, and
+invitation directory are independently generation-fenced. Use:
+
+- `isLoadingConfig`, `configError`, and `reloadConfig()` for protected config;
+- `isLoadingMembers`, `isMutatingMembers`, `membersError`, and
+  `reloadMembers()` for people and ownership;
+- `invitationPolicyStatus`, nullable `invitationsEnabled`,
+  `invitationDelivery`, and `invitationConfigError` for public policy; and
+- `isLoadingInvitations`, `isMutatingInvitations`, `invitationsError`, and
+  `reloadInvitations()` for invitations.
+
+The older `isLoading`, `isMutating`, `error`, and `reload()` values are
+aggregate compatibility fields. A member failure does not clear invitation
+data, and an invitation failure does not disable member controls. If public
+auth config is unresolved, invitation availability is `null`; if policy is
+disabled or config failed, it is `false` and no invitation request is sent.
+Retrying invitations also retries a failed public-config load. Server
+capabilities and mutation authorization remain authoritative regardless of UI
+state.
+
+The remaining result fields stay slice-specific as well:
+
+| Concern | Data and paging | Mutation methods |
+|---|---|---|
+| protected configuration | `config`, `isLoadingConfig`, `configError`, `reloadConfig()` | none |
+| administration members | `members`, `memberPage`, `isLoadingMembers`, `isLoadingMoreMembers`, `membersError`, `loadMoreMembers()`, `reloadMembers()` | `addMember()`, `updateMember()`, `removeMember()`, `transferOwnership()`; `isMutatingMembers` covers only these writes |
+| invitation policy | `invitationPolicyStatus`, `invitationsEnabled`, `invitationDelivery`, `invitationConfigError` | none |
+| administration invitations | `invitations`, `invitationPage`, `isLoadingInvitations`, `isLoadingMoreInvitations`, `invitationsError`, `loadMoreInvitations()`, `reloadInvitations()` | `issueInvitation()`, `revokeInvitation()`; `isMutatingInvitations` covers only these writes |
+
+`invitationPolicyStatus` is `unresolved`, `enabled`, `disabled`, or `error`.
+The nullable `invitationsEnabled` distinguishes unresolved policy (`null`)
+from an explicitly enabled feature (`true`) and disabled or failed-closed
+policy (`false`). `isAvailable` only means the current session is in an
+Administration Organization. It does not imply that protected config loaded
+or that the actor has a member, invitation, or ownership capability.
+
+For backward compatibility, the aggregate booleans are logical ORs of the
+corresponding slice states, aggregate `error` exposes the first current config,
+member, invitation-policy, or invitation error, and `reload()` asks all three
+protected slices to reload. Prefer the exact slice fields for new UI so one
+failure cannot replace an unrelated panel with a screen-wide error.
 
 ## Packaged React controls
 

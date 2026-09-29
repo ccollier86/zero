@@ -18,13 +18,17 @@ import {
 } from './types';
 import type { UserStore } from './user-store';
 import type { AuthAuditRequestContext } from './auth-audit-types';
-import { AuthAuditService } from './auth-audit-service';
+import {
+  AuthAuditService,
+  captureAuthAuditRequestContext,
+} from './auth-audit-service';
 import {
   staleApplicationAuthority,
   type AssertAuthApplicationMutationAuthority,
 } from './auth-application-mutation-authority';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
 import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
+import { normalizeAuthRoleSelection } from './auth-role-selection';
 
 interface ApplicationUserRow {
   user_id: string;
@@ -112,6 +116,7 @@ export class AuthApplicationAdministrationService {
     actorUserId: string,
     input: AuthApplicationUserListInput = {},
   ): AuthApplicationUserPage {
+    const status = normalizeApplicationUserPageStatus(input.status);
     return this.db.transaction(() => {
       this.users.assertCurrentProfile();
       this.requireActorPermission(actorUserId, 'application.roles:read');
@@ -120,16 +125,9 @@ export class AuthApplicationAdministrationService {
       const search = normalizeSearch(input.search);
       const clauses: string[] = [];
       const args: Array<string | number> = [];
-      if (input.status) {
-        if (input.status !== 'active' && input.status !== 'suspended') {
-          throw new AuthError(
-            'Application user status filter is invalid',
-            'APPLICATION_USER_PAGE_INVALID',
-            422,
-          );
-        }
+      if (status !== undefined) {
         clauses.push('identity.status = ?');
-        args.push(input.status);
+        args.push(status);
       }
       if (search) {
         clauses.push(`(
@@ -184,15 +182,25 @@ export class AuthApplicationAdministrationService {
     roleKeys: readonly string[];
     expectedRevision: string;
   }): AuthApplicationRoleMutationResult {
+    const actorUserIdInput = input.actorUserId;
+    const targetUserId = input.userId;
+    const expectedRevision = input.expectedRevision;
+    const roleKeys = normalizeAuthRoleSelection(input.roleKeys, {
+      minimum: 0,
+      maximum: MAX_ROLE_SELECTION,
+      invalid: invalidRoles,
+    });
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
     return this.db.transaction(() => {
       this.users.assertCurrentProfile();
       // This live authority read and the assignment writes below share one
       // SQLite transaction. A stale request snapshot can never win the race.
       const authority = this.invokeAuthority(
-        input.assertCurrentAuthority,
+        assertCurrentAuthority,
         ['application.roles:manage'],
       );
-      if (authority.auth.userId !== input.actorUserId) {
+      if (authority.auth.userId !== actorUserIdInput) {
         throw staleApplicationAuthority();
       }
       const actorUserId = authority.auth.userId;
@@ -200,13 +208,13 @@ export class AuthApplicationAdministrationService {
         actorUserId,
         'application.roles:manage',
       );
-      const target = this.requireUser(input.userId);
-      const currentAuthority = this.roles.getRetainedApplicationRoleSet(input.userId);
-      if (input.expectedRevision !== currentAuthority.revision) {
+      const target = this.requireUser(targetUserId);
+      const currentAuthority = this.roles.getRetainedApplicationRoleSet(targetUserId);
+      if (expectedRevision !== currentAuthority.revision) {
         throw revisionConflict();
       }
       const current = currentAuthority.roles;
-      const desired = this.normalizeDesiredRoles(input.roleKeys, current);
+      const desired = this.normalizeDesiredRoles(roleKeys, current);
       const currentAssignable = current.filter((roleKey) => (
         this.kernel.authorization.roles[roleKey]?.system !== true
       ));
@@ -222,12 +230,12 @@ export class AuthApplicationAdministrationService {
           outcome: 'succeeded',
           scope: { kind: 'application' },
           actor: auditActor(actorUserId, authority.auth),
-          request: input.auditRequest,
-          target: { type: 'user', id: input.userId },
+          request: auditRequest,
+          target: { type: 'user', id: targetUserId },
           metadata: { changed: false, 'role-count': desired.length },
         });
         return Object.freeze({
-          user: this.getUser(input.userId),
+          user: this.getUser(targetUserId),
           actorAuthorizationChanged: false,
         });
       }
@@ -250,7 +258,7 @@ export class AuthApplicationAdministrationService {
 
       const beforeRevision = this.roles.resolveApplicationRoles(actorUserId)?.revision;
       this.roles.replaceApplicationRoles({
-        userId: input.userId,
+        userId: targetUserId,
         roleKeys: desired,
         changedBy: actorUserId,
       });
@@ -260,14 +268,14 @@ export class AuthApplicationAdministrationService {
         outcome: 'succeeded',
         scope: { kind: 'application' },
         actor: auditActor(actorUserId, authority.auth),
-        request: input.auditRequest,
-        target: { type: 'user', id: input.userId },
+        request: auditRequest,
+        target: { type: 'user', id: targetUserId },
         metadata: { changed: true, 'role-count': desired.length },
       });
       return Object.freeze({
-        user: this.getUser(input.userId),
+        user: this.getUser(targetUserId),
         actorAuthorizationChanged:
-          actorUserId === input.userId && beforeRevision !== afterRevision,
+          actorUserId === targetUserId && beforeRevision !== afterRevision,
       });
     });
   }
@@ -278,13 +286,17 @@ export class AuthApplicationAdministrationService {
     auditRequest?: AuthAuditRequestContext;
     targetUserId: string;
   }): AuthApplicationOwnershipTransferResult {
+    const actorUserIdInput = input.actorUserId;
+    const targetUserId = input.targetUserId;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
     return this.db.transaction(() => {
       this.users.assertCurrentProfile();
       const authority = this.invokeAuthority(
-        input.assertCurrentAuthority,
+        assertCurrentAuthority,
         ['application.roles:manage'],
       );
-      if (authority.auth.userId !== input.actorUserId) {
+      if (authority.auth.userId !== actorUserIdInput) {
         throw staleApplicationAuthority();
       }
       const actorUserId = authority.auth.userId;
@@ -293,11 +305,11 @@ export class AuthApplicationAdministrationService {
         'application.roles:manage',
       );
       if (!actor.roles.includes(OWNER_ROLE)) throw forbidden();
-      this.requireUser(input.targetUserId);
+      this.requireUser(targetUserId);
       try {
         this.roles.transferApplicationOwnership({
           ownerUserId: actorUserId,
-          targetUserId: input.targetUserId,
+          targetUserId,
           changedBy: actorUserId,
         });
       } catch (error) {
@@ -308,11 +320,11 @@ export class AuthApplicationAdministrationService {
         outcome: 'succeeded',
         scope: { kind: 'application' },
         actor: auditActor(actorUserId, authority.auth),
-        request: input.auditRequest,
-        target: { type: 'user', id: input.targetUserId },
+        request: auditRequest,
+        target: { type: 'user', id: targetUserId },
       });
       return Object.freeze({
-        owner: this.getUser(input.targetUserId),
+        owner: this.getUser(targetUserId),
         previousOwner: this.getUser(actorUserId),
         actorAuthorizationChanged: true as const,
       });
@@ -344,10 +356,11 @@ export class AuthApplicationAdministrationService {
     input: readonly string[],
     current: readonly string[],
   ): readonly string[] {
-    if (!Array.isArray(input) || input.length > MAX_ROLE_SELECTION
-      || input.some((value) => typeof value !== 'string')) throw invalidRoles();
-    const desired = [...new Set(input.map((value) => value.trim()).filter(Boolean))]
-      .sort(compareKeys);
+    const desired = normalizeAuthRoleSelection(input, {
+      minimum: 0,
+      maximum: MAX_ROLE_SELECTION,
+      invalid: invalidRoles,
+    });
     const currentSet = new Set(current);
     for (const roleKey of desired) {
       const role = this.kernel.authorization.roles[roleKey];
@@ -463,6 +476,18 @@ function normalizeSearch(value: string | undefined): string {
   return normalized;
 }
 
+function normalizeApplicationUserPageStatus(
+  value: unknown,
+): Extract<UserStatus, 'active' | 'suspended'> | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'active' || value === 'suspended') return value;
+  throw new AuthError(
+    'Application user status filter is invalid',
+    'APPLICATION_USER_PAGE_INVALID',
+    422,
+  );
+}
+
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }
@@ -471,9 +496,11 @@ function encodeCursor(cursor: ApplicationUserCursor): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
 }
 
-function decodeCursor(value: string | undefined): ApplicationUserCursor | null {
-  if (!value) return null;
-  if (value.length > MAX_CURSOR_LENGTH) throw invalidCursor();
+function decodeCursor(value: unknown): ApplicationUserCursor | null {
+  if (value === undefined || value === '') return null;
+  if (typeof value !== 'string' || value.length > MAX_CURSOR_LENGTH) {
+    throw invalidCursor();
+  }
   try {
     const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as unknown;
     if (!parsed || typeof parsed !== 'object') throw invalidCursor();

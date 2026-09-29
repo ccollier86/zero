@@ -4,6 +4,7 @@ import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import { resolveAuthBehaviorConfig } from './auth-config';
 import { defineAuthTables } from './auth-schema';
 import { resolveAuthTenantOnboardingConfig } from './auth-tenant-onboarding-config';
+import { AuthTenantJoinRequestStore } from './auth-tenant-join-request-store';
 import { AuthTenantOnboardingService } from './auth-tenant-onboarding-service';
 import { AuthAuditService } from './auth-audit-service';
 import { resolveAuthAuditConfig } from './auth-audit-config';
@@ -222,6 +223,16 @@ describe('tenant invitation onboarding service', () => {
       assertCurrentAuthority: authority(owner.userId, tenant.ownerMembership.membershipId,
         tenant.tenant.tenantId),
     });
+
+    for (const email of [null, {}, Symbol('email')]) {
+      expectAuthError(() => harness.service.issueInvitation({
+        tenantId: tenant.tenant.tenantId,
+        email: email as never,
+        assertCurrentAuthority: () => {
+          throw new Error('Invalid invitation email reached authority');
+        },
+      }), 'INVALID_EMAIL', 422);
+    }
 
     expect(() => harness.service.issueInvitation({
       tenantId: tenant.tenant.tenantId,
@@ -486,6 +497,38 @@ describe('tenant invitation onboarding service', () => {
     })).toEqual(approved);
   });
 
+  test('hides invalid join slugs without suppressing tenant lookup failures', async () => {
+    const harness = await createHarness();
+    const applicant = await user(harness, 'lookup-fence-applicant');
+
+    expect(harness.service.submitJoinRequest({
+      userId: applicant.userId,
+      tenantSlug: '!!!',
+    })).toEqual({ submitted: true });
+
+    const lookupFailure = new AuthError(
+      'Tenant lookup is unavailable',
+      'AUTH_POLICY_UNAVAILABLE',
+      503,
+    );
+    const originalLookup = harness.tenancy.getTenantBySlug.bind(harness.tenancy);
+    harness.tenancy.getTenantBySlug = () => {
+      throw lookupFailure;
+    };
+    let thrown: unknown;
+    try {
+      harness.service.submitJoinRequest({
+        userId: applicant.userId,
+        tenantSlug: 'valid-looking-slug',
+      });
+    } catch (error) {
+      thrown = error;
+    } finally {
+      harness.tenancy.getTenantBySlug = originalLookup;
+    }
+    expect(thrown).toBe(lookupFailure);
+  });
+
   test('fails all retained join-request operations closed after administration adoption', async () => {
     const harness = await createHarness();
     const owner = await user(harness, 'admin-boundary-owner');
@@ -676,6 +719,181 @@ describe('tenant invitation onboarding service', () => {
       tenantId: tenant.tenant.tenantId,
       status: 'pending',
     }).requests).toHaveLength(1);
+  });
+
+  test('checks invitation-list authority before expiring durable invitations', async () => {
+    const harness = await createHarness();
+    const owner = await user(harness, 'list-fence-owner');
+    const tenant = harness.tenancy.createTenant({
+      name: 'List Fence', slug: 'list-fence', ownerUserId: owner.userId,
+    });
+    const otherTenant = harness.tenancy.createTenant({
+      name: 'Other List Fence', slug: 'other-list-fence', ownerUserId: owner.userId,
+    });
+    const invitation = harness.service.issueInvitation({
+      tenantId: tenant.tenant.tenantId,
+      email: 'list-fence-invited@example.test',
+      assertCurrentAuthority: authority(
+        owner.userId,
+        tenant.ownerMembership.membershipId,
+        tenant.tenant.tenantId,
+      ),
+    });
+    const otherInvitation = harness.service.issueInvitation({
+      tenantId: otherTenant.tenant.tenantId,
+      email: 'other-list-fence-invited@example.test',
+      assertCurrentAuthority: authority(
+        owner.userId,
+        otherTenant.ownerMembership.membershipId,
+        otherTenant.tenant.tenantId,
+      ),
+    });
+    harness.db.prepare(`
+      UPDATE _auth_tenant_invitations SET expires_at = ?
+      WHERE invitation_id IN (?, ?)
+    `).run(
+      harness.now.value - 1,
+      invitation.invitation.invitationId,
+      otherInvitation.invitation.invitationId,
+    );
+
+    expect(() => harness.service.listInvitations({
+      tenantId: tenant.tenant.tenantId,
+      assertCurrentAuthority: () => {
+        throw new AuthError(
+          'Authorization changed before the operation could commit',
+          'AUTHORIZATION_CHANGED',
+          409,
+        );
+      },
+    })).toThrow(expect.objectContaining({
+      code: 'AUTHORIZATION_CHANGED',
+      status: 409,
+    }));
+    expect(harness.db.prepare(`
+      SELECT status FROM _auth_tenant_invitations WHERE invitation_id = ?
+    `).get(invitation.invitation.invitationId)).toEqual({ status: 'pending' });
+
+    harness.service.listInvitations({
+      tenantId: tenant.tenant.tenantId,
+      assertCurrentAuthority: authority(
+        owner.userId,
+        tenant.ownerMembership.membershipId,
+        tenant.tenant.tenantId,
+      ),
+    });
+    expect(harness.db.prepare(`
+      SELECT invitation_id, status FROM _auth_tenant_invitations
+      WHERE invitation_id IN (?, ?) ORDER BY invitation_id
+    `).all(
+      invitation.invitation.invitationId,
+      otherInvitation.invitation.invitationId,
+    )).toEqual([
+      {
+        invitation_id: invitation.invitation.invitationId,
+        status: 'expired',
+      },
+      {
+        invitation_id: otherInvitation.invitation.invitationId,
+        status: 'pending',
+      },
+    ].sort((left, right) => left.invitation_id.localeCompare(right.invitation_id)));
+  });
+
+  test('rejects malformed onboarding pages before mutation or authority checks', async () => {
+    const harness = await createHarness();
+    const owner = await user(harness, 'status-filter-owner');
+    const tenant = harness.tenancy.createTenant({
+      name: 'Status Filter',
+      slug: 'status-filter',
+      ownerUserId: owner.userId,
+    });
+    const invitation = harness.service.issueInvitation({
+      tenantId: tenant.tenant.tenantId,
+      email: 'status-filter-invited@example.test',
+      assertCurrentAuthority: authority(
+        owner.userId,
+        tenant.ownerMembership.membershipId,
+        tenant.tenant.tenantId,
+      ),
+    });
+    harness.db.prepare(`
+      UPDATE _auth_tenant_invitations SET expires_at = ? WHERE invitation_id = ?
+    `).run(harness.now.value, invitation.invitation.invitationId);
+
+    let authorityCalls = 0;
+    const assertCurrentAuthority = () => {
+      authorityCalls += 1;
+      throw new Error('Invalid status reached the authority callback');
+    };
+    const invalidStatuses = [
+      null,
+      false,
+      0,
+      '',
+      'unknown',
+      {},
+      [],
+      Symbol('status'),
+    ];
+    for (const status of invalidStatuses) {
+      expectAuthError(() => harness.service.listInvitations({
+        tenantId: tenant.tenant.tenantId,
+        status: status as never,
+        assertCurrentAuthority,
+      }), 'TENANT_ONBOARDING_PAGE_INVALID', 422);
+      expectAuthError(() => harness.service.listJoinRequests({
+        tenantId: tenant.tenant.tenantId,
+        status: status as never,
+        assertCurrentAuthority,
+      }), 'TENANT_ONBOARDING_PAGE_INVALID', 422);
+    }
+    for (const limit of [null, false, 0, -1, 101, 1.5, {}, [], Symbol('limit')]) {
+      expectAuthError(() => harness.service.listInvitations({
+        tenantId: tenant.tenant.tenantId,
+        limit: limit as never,
+        assertCurrentAuthority,
+      }), 'TENANT_ONBOARDING_PAGE_INVALID', 422);
+      expectAuthError(() => harness.service.listJoinRequests({
+        tenantId: tenant.tenant.tenantId,
+        limit: limit as never,
+        assertCurrentAuthority,
+      }), 'TENANT_ONBOARDING_PAGE_INVALID', 422);
+    }
+    for (const cursor of [
+      null,
+      false,
+      0,
+      'not-a-cursor',
+      {},
+      [],
+      Symbol('cursor'),
+    ]) {
+      expectAuthError(() => harness.service.listInvitations({
+        tenantId: tenant.tenant.tenantId,
+        cursor: cursor as never,
+        assertCurrentAuthority,
+      }), 'TENANT_ONBOARDING_PAGE_INVALID', 422);
+      expectAuthError(() => harness.service.listJoinRequests({
+        tenantId: tenant.tenant.tenantId,
+        cursor: cursor as never,
+        assertCurrentAuthority,
+      }), 'TENANT_ONBOARDING_PAGE_INVALID', 422);
+    }
+    expect(authorityCalls).toBe(0);
+    expect(harness.db.prepare(`
+      SELECT status FROM _auth_tenant_invitations WHERE invitation_id = ?
+    `).get(invitation.invitation.invitationId)).toEqual({ status: 'pending' });
+
+    const store = new AuthTenantJoinRequestStore(harness.db, () => harness.now.value);
+    for (const status of invalidStatuses) {
+      expectAuthError(() => store.listProjectionRows({
+        tenantId: tenant.tenant.tenantId,
+        status: status as never,
+        cursor: null,
+        limit: 50,
+      }), 'TENANT_ONBOARDING_PAGE_INVALID', 422);
+    }
   });
 });
 

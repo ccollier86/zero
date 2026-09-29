@@ -13,13 +13,21 @@ export async function loginUser(
   input: { username: string; password: string }
 ) {
   const services = requireSessionServices(config);
+  if (typeof input.username !== 'string' || typeof input.password !== 'string') {
+    throw invalidCredentials();
+  }
   let user = isEmailLoginIdentifier(input.username)
     ? services.store.getUserByEmail(input.username)
     : services.store.getUserByUsername(input.username);
   if (!user) throw invalidCredentials();
 
-  const valid = await services.store.verifyPassword(user.userId, input.password);
-  if (!valid) throw invalidCredentials();
+  const proof = await services.store.verifyPasswordForAuthentication(
+    user.userId,
+    input.password,
+  );
+  if (!proof) throw invalidCredentials();
+  user = services.store.getUserById(proof.userId)!;
+  if (!user) throw invalidCredentials();
   if (user.status === 'suspended') {
     throw new AuthError('Account is suspended', 'ACCOUNT_SUSPENDED', 403);
   }
@@ -40,6 +48,7 @@ export async function loginUser(
     authConfig: config.getAuthConfig(),
     mfaChallengeService: services.mfaChallengeService,
     tenantSessionService: services.tenantSessions,
+    expectedAuthGeneration: proof.authGeneration,
   });
 }
 

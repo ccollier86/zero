@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { Elysia, type AnyElysia } from 'elysia';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import type { AuthRuntime } from './auth-runtime';
+import { captureAuthTenantMutationAuthority } from './auth-tenant-mutation-authority';
 import { createAuthPlugin } from './auth.plugin';
 import type { AuthAuthorizationConfig } from './types';
 
@@ -29,6 +30,262 @@ afterEach(async () => {
 });
 
 describe('active-tenant member administration', () => {
+  test('keeps create role cardinality explicit across simple and advanced modes', async () => {
+    const simple = await start('simple');
+    await register(simple, 'simple-role-bootstrap');
+    const simpleOwner = await register(simple, 'simple-role-owner');
+    const defaultSubject = await register(simple, 'simple-role-default');
+    const serviceDefaultSubject = await register(simple, 'simple-role-service-default');
+    const emptySubject = await register(simple, 'simple-role-empty');
+    const multipleSubject = await register(simple, 'simple-role-multiple');
+    const mutableSubject = await register(simple, 'simple-role-mutable');
+    const tenantAdministration = simple.runtime.getTenantAdministrationService()!;
+    const simpleAuthority = await tenantAuthority(simple, simpleOwner.accessToken);
+
+    const defaulted = await request(simple, 'POST', '/auth/tenant/members', {
+      email: defaultSubject.user.email,
+    }, simpleOwner.accessToken);
+    expect(defaulted).toMatchObject({
+      status: 200,
+      body: { member: { roles: ['member'] } },
+    });
+    const serviceDefaulted = tenantAdministration.addMember({
+      tenantId: simpleOwner.tenant.tenantId,
+      email: serviceDefaultSubject.user.email,
+      assertCurrentAuthority: await tenantAuthority(simple, simpleOwner.accessToken),
+    });
+    expect(serviceDefaulted.member.roles).toEqual(['member']);
+    const missingTenantAuthority = new Error('Missing tenant reached live authority');
+    expect(() => tenantAdministration.addMember({
+      tenantId: 'tenant_missing',
+      email: serviceDefaultSubject.user.email,
+      roleKeys: ['member'],
+      assertCurrentAuthority: () => {
+        throw missingTenantAuthority;
+      },
+    })).toThrow(missingTenantAuthority);
+
+    const mutableCreateRoles = ['member'];
+    let createPermissions: readonly string[] | undefined;
+    const mutableCreateInput: Parameters<typeof tenantAdministration.addMember>[0] = {
+      tenantId: simpleOwner.tenant.tenantId,
+      email: mutableSubject.user.email,
+      roleKeys: mutableCreateRoles,
+      assertCurrentAuthority: simpleAuthority,
+    };
+    mutableCreateInput.assertCurrentAuthority = (permissions) => {
+      createPermissions = permissions;
+      mutableCreateRoles[0] = 'manager';
+      mutableCreateInput.tenantId = 'tenant_callback_mutation';
+      return simpleAuthority(permissions);
+    };
+    const mutableCreated = tenantAdministration.addMember(mutableCreateInput);
+    expect(createPermissions).toEqual(['tenant.members:manage']);
+    expect(mutableCreated.member).toMatchObject({
+      identity: { userId: mutableSubject.user.userId },
+      roles: ['member'],
+    });
+
+    const mutableUpdateRoles = ['member'];
+    let roleUpdatePermissions: readonly string[] | undefined;
+    const mutableRoleUpdate: Parameters<typeof tenantAdministration.updateMember>[0] = {
+      tenantId: simpleOwner.tenant.tenantId,
+      membershipId: mutableCreated.member.membershipId,
+      roleKeys: mutableUpdateRoles,
+      expectedRoleRevision: mutableCreated.member.roleRevision,
+      assertCurrentAuthority: simpleAuthority,
+    };
+    mutableRoleUpdate.assertCurrentAuthority = (permissions) => {
+      roleUpdatePermissions = permissions;
+      mutableUpdateRoles[0] = 'manager';
+      mutableRoleUpdate.expectedRoleRevision = 'mutated-revision';
+      return simpleAuthority(permissions);
+    };
+    const unchangedRole = tenantAdministration.updateMember(mutableRoleUpdate);
+    expect(roleUpdatePermissions).toEqual([
+      'tenant.members:manage',
+      'tenant.roles:manage',
+    ]);
+    expect(unchangedRole.member.roles).toEqual(['member']);
+
+    let statusUpdatePermissions: readonly string[] | undefined;
+    const mutableStatusUpdate: Parameters<typeof tenantAdministration.updateMember>[0] = {
+      tenantId: simpleOwner.tenant.tenantId,
+      membershipId: mutableCreated.member.membershipId,
+      status: 'suspended',
+      assertCurrentAuthority: simpleAuthority,
+    };
+    mutableStatusUpdate.assertCurrentAuthority = (permissions) => {
+      statusUpdatePermissions = permissions;
+      mutableStatusUpdate.membershipId = defaulted.body.member.membershipId;
+      mutableStatusUpdate.roleKeys = ['manager'];
+      return simpleAuthority(permissions);
+    };
+    const suspendedSnapshotTarget = tenantAdministration.updateMember(mutableStatusUpdate);
+    expect(statusUpdatePermissions).toEqual(['tenant.members:manage']);
+    expect(suspendedSnapshotTarget.member).toMatchObject({
+      membershipId: mutableCreated.member.membershipId,
+      status: 'suspended',
+      roles: ['member'],
+    });
+    expect(simple.runtime.getTenancyService()!.getMembershipById(
+      defaulted.body.member.membershipId,
+    )).toMatchObject({ status: 'active', roleKey: 'member' });
+
+    const emptySimpleUpdate = await request(
+      simple,
+      'PATCH',
+      `/auth/tenant/members/${defaulted.body.member.membershipId}`,
+      {
+        roles: [],
+        expectedRoleRevision: defaulted.body.member.roleRevision,
+      },
+      simpleOwner.accessToken,
+    );
+    expect(emptySimpleUpdate).toMatchObject({
+      status: 422,
+      body: { code: 'TENANT_ROLE_SELECTION_INVALID' },
+    });
+    expect(simple.runtime.getTenancyService()!.getMembershipById(
+      defaulted.body.member.membershipId,
+    )).toMatchObject({ roleKey: 'member', status: 'active' });
+
+    const emptySimple = await request(simple, 'POST', '/auth/tenant/members', {
+      email: emptySubject.user.email,
+      roles: [],
+    }, simpleOwner.accessToken);
+    expect(emptySimple).toMatchObject({
+      status: 422,
+      body: { code: 'TENANT_ROLE_SELECTION_INVALID' },
+    });
+    expect(simple.runtime.getTenancyService()!.getMembership(
+      simpleOwner.tenant.tenantId,
+      emptySubject.user.userId,
+    )).toBeNull();
+    let emptyCustomerPermissions: readonly string[] | undefined;
+    try {
+      tenantAdministration.addMember({
+        tenantId: simpleOwner.tenant.tenantId,
+        email: emptySubject.user.email,
+        roleKeys: [],
+        assertCurrentAuthority: (permissions) => {
+          emptyCustomerPermissions = permissions;
+          return simpleAuthority(permissions);
+        },
+      });
+      throw new Error('Expected the headless service to reject an empty role selection');
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: 'TENANT_ROLE_SELECTION_INVALID',
+        status: 422,
+      });
+    }
+    expect(emptyCustomerPermissions).toEqual(['tenant.members:manage']);
+
+    const multipleSimple = await request(simple, 'POST', '/auth/tenant/members', {
+      email: multipleSubject.user.email,
+      roles: ['member', 'manager'],
+    }, simpleOwner.accessToken);
+    expect(multipleSimple).toMatchObject({
+      status: 422,
+      body: { code: 'TENANT_ROLE_SELECTION_INVALID' },
+    });
+    expect(simple.runtime.getTenancyService()!.getMembership(
+      simpleOwner.tenant.tenantId,
+      multipleSubject.user.userId,
+    )).toBeNull();
+
+    const advanced = await start({ mode: 'advanced' });
+    const administrationOwner = await register(advanced, 'advanced-role-bootstrap');
+    const organizationOwner = await register(advanced, 'advanced-role-owner');
+    const multipleAdvancedSubject = await register(advanced, 'advanced-role-multiple');
+    const emptyAdvancedSubject = await register(advanced, 'advanced-role-empty');
+    const administrationSubject = await register(advanced, 'advanced-role-administration');
+
+    const emptyAdvanced = await request(advanced, 'POST', '/auth/tenant/members', {
+      email: emptyAdvancedSubject.user.email,
+      roles: [],
+    }, organizationOwner.accessToken);
+    expect(emptyAdvanced).toMatchObject({
+      status: 422,
+      body: { code: 'TENANT_ROLE_SELECTION_INVALID' },
+    });
+
+    const multipleAdvanced = await request(advanced, 'POST', '/auth/tenant/members', {
+      email: multipleAdvancedSubject.user.email,
+      roles: ['manager', 'member'],
+    }, organizationOwner.accessToken);
+    expect(multipleAdvanced).toMatchObject({
+      status: 200,
+      body: { member: { roles: ['manager', 'member'] } },
+    });
+    const advancedAuthority = await tenantAuthority(
+      advanced,
+      organizationOwner.accessToken,
+    );
+    for (const malformed of [
+      ['   '],
+      new Array<string>(1),
+      ['member', 'member'],
+    ]) {
+      expect(() => advanced.runtime.getTenantAdministrationService()!.updateMember({
+        tenantId: organizationOwner.tenant.tenantId,
+        membershipId: multipleAdvanced.body.member.membershipId,
+        roleKeys: malformed,
+        expectedRoleRevision: multipleAdvanced.body.member.roleRevision,
+        assertCurrentAuthority: advancedAuthority,
+      })).toThrow(expect.objectContaining({
+        code: 'TENANT_ROLE_SELECTION_INVALID',
+        status: 422,
+      }));
+    }
+    expect(advanced.runtime.getTenantAdministrationService()!.listMembers(
+      organizationOwner.tenant.tenantId,
+    ).members.find((member) => (
+      member.membershipId === multipleAdvanced.body.member.membershipId
+    ))?.roles).toEqual(['manager', 'member']);
+    const unassigned = await request(
+      advanced,
+      'PATCH',
+      `/auth/tenant/members/${multipleAdvanced.body.member.membershipId}`,
+      {
+        roles: [],
+        expectedRoleRevision: multipleAdvanced.body.member.roleRevision,
+      },
+      organizationOwner.accessToken,
+    );
+    expect(unassigned).toMatchObject({
+      status: 200,
+      body: { member: { roles: [] } },
+    });
+
+    const administrationMember = await request(
+      advanced,
+      'POST',
+      '/auth/tenant/members',
+      {
+        email: administrationSubject.user.email,
+        roles: ['administrator'],
+      },
+      administrationOwner.accessToken,
+    );
+    expect(administrationMember.status).toBe(200);
+    const emptyAdministration = await request(
+      advanced,
+      'PATCH',
+      `/auth/tenant/members/${administrationMember.body.member.membershipId}`,
+      {
+        roles: [],
+        expectedRoleRevision: administrationMember.body.member.roleRevision,
+      },
+      administrationOwner.accessToken,
+    );
+    expect(emptyAdministration).toMatchObject({
+      status: 422,
+      body: { code: 'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED' },
+    });
+  }, 60_000);
+
   test('derives tenant scope, isolates opaque membership ids, and transfers ownership safely', async () => {
     const harness = await start('simple');
     const alpha = await register(harness, 'alpha');
@@ -66,6 +323,30 @@ describe('active-tenant member administration', () => {
         assignable: false,
         grantable: false,
       });
+
+    // Role projection must reuse the already-resolved tenant and grant
+    // ceiling. Adding roles must not add one SQLite tenant lookup per role.
+    const administration = harness.runtime.getTenantAdministrationService()!;
+    const tenancy = harness.runtime.getTenancyService()!;
+    const assertAuthority = await tenantAuthority(harness, alpha.accessToken);
+    const authority = assertAuthority([]);
+    const originalGetTenant = tenancy.getTenant.bind(tenancy);
+    let tenantReads = 0;
+    tenancy.getTenant = (tenantId: string) => {
+      tenantReads += 1;
+      return originalGetTenant(tenantId);
+    };
+    try {
+      administration.getConfig({
+        tenantId: alpha.tenant.tenantId,
+        membershipId: alpha.tenant.membershipId,
+        scope: authority.scope,
+        applicationScope: authority.applicationScope,
+      });
+    } finally {
+      tenancy.getTenant = originalGetTenant;
+    }
+    expect(tenantReads).toBe(1);
 
     // Unknown input cannot select another tenant. Elysia strips the undeclared
     // field and the live alpha bearer remains the only scope source.
@@ -854,6 +1135,19 @@ async function switchTenant(
     accessToken: response.body.accessToken,
     refreshToken: response.body.refreshToken,
   };
+}
+
+async function tenantAuthority(harness: Harness, accessToken: string) {
+  const tokens = harness.runtime.getTokenService()!;
+  const auth = await tokens.resolveAuthContext(accessToken);
+  if (!auth) throw new Error('Expected a current auth context');
+  return captureAuthTenantMutationAuthority({
+    auth,
+    tokenService: tokens,
+    kernel: harness.runtime.getAuthorizationKernel(),
+    store: harness.runtime.getStore()!,
+    roles: harness.runtime.getAuthorizationRoleService(),
+  });
 }
 
 async function request(

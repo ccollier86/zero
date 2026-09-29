@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  AdministrationScopeGate,
   PermissionGate,
   PlatformAdminGate,
   TenantGate,
@@ -16,6 +17,10 @@ describe('authorization gates', () => {
         children: 'secret',
       }),
       createElement(TenantGate, { fallback: 'denied', children: 'secret' }),
+      createElement(AdministrationScopeGate, {
+        fallback: 'denied',
+        children: 'secret',
+      }),
       createElement(PlatformAdminGate, { fallback: 'denied', children: 'secret' }),
     ]) {
       const markup = renderToStaticMarkup(element);

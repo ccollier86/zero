@@ -645,7 +645,11 @@ describe('platform SQLite persistence', () => {
         path: dbPath,
         snapshotPath: dbPath,
         snapshotEnabled: false,
-        busyTimeout: 2_000,
+        // This test intentionally launches multiple processes at once. Give
+        // the lock owner enough wall-clock budget to resume even when the
+        // complete test suite is saturating the CI worker; the assertion is
+        // about serialization correctness, not a two-second scheduler SLA.
+        busyTimeout: 10_000,
       }));
       const row = db.query('SELECT name FROM items LIMIT 1').get();
       if (row?.name !== 'shared-source') throw new Error('Hot source row was not restored.');
@@ -693,7 +697,7 @@ describe('platform SQLite persistence', () => {
       }
       await Promise.all(openers.map((opener) => opener.exited));
     }
-  }, 15_000);
+  }, 30_000);
 
   it('persists file-mode rows through SQLite WAL/file recovery', async () => {
     const dir = await createTestDir();

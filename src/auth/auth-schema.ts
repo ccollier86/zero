@@ -17,6 +17,7 @@ import {
 } from './oidc/native-auth-schema-sql';
 import { defineRegistrationIntentTable } from './registration-intent-schema';
 import { defineRegistrationProvisioningTable } from './registration-provisioning-schema';
+import { defineAdminUserProvisioningTable } from './admin-user-provisioning-schema';
 import { createAuthEmailOutboxSchema } from './auth-email-outbox-schema';
 import { defineCurrentAuthRequestAdmissionTables } from './auth-request-admission-schema';
 import {
@@ -216,6 +217,7 @@ export function defineAuthTables(db: ReactiveDB): void {
 
   defineRegistrationIntentTable(db);
   defineRegistrationProvisioningTable(db);
+  defineAdminUserProvisioningTable(db);
   createAuthEmailOutboxSchema((sql) => db.exec(sql));
 
   for (const statement of createNativeAuthTableStatements()) db.exec(statement);

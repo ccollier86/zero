@@ -25,7 +25,10 @@ export class AuthPropertyTransport {
 
   async getProperty(key: string): Promise<string | null> {
     const response = await this.options.authenticatedFetch(this.propertyUrl(key));
-    if (response.status === 404) return null;
+    if (response.status === 404) {
+      this.options.removeProperty(response, key);
+      return null;
+    }
     if (!response.ok) throw await responseError(response, 'Failed to get property');
 
     const data = await response.json();

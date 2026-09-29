@@ -12,6 +12,15 @@ const input = {
   prompt: null, ttlMs: 120_000,
 };
 
+const applicationAuthority = {
+  scopeKind: 'application' as const,
+  scopeId: 'application',
+  tenantId: null,
+  membershipId: null,
+  tenantAuthorizationGeneration: null,
+  membershipAuthorizationGeneration: null,
+};
+
 function setup(options: NativeRequestStoreOptions) {
   const db = createReactiveDB({ mode: 'memory' });
   defineAuthTables(db);
@@ -34,6 +43,63 @@ describe('NativeRequestStore admission', () => {
         code: 'AUTH_STATE_INVARIANT_FAILED',
         message: '[auth] Native code runtime profile guard must be synchronous.',
       }));
+    } finally {
+      db.dispose();
+    }
+  });
+
+  test('rejects async authority admissions without claiming, denying, or issuing', () => {
+    const now = Date.now();
+    const { db, store } = setup({ now: () => now });
+    try {
+      db.prepare(`INSERT INTO users
+        (user_id, username, email, role, status, password_change_required,
+         email_verification_required, mfa_required, created_at)
+        VALUES ('u_one', 'u_one', 'u_one@example.test', 'user', 'active', 0, 0, 0, ?)`)
+        .run(now);
+      const asyncAdmission = (() => Promise.resolve(true)) as unknown as () => boolean;
+
+      const unclaimed = store.create({ ...input, prompt: null });
+      expect(() => store.claimForAuthority(
+        unclaimed.rawRequestId,
+        'u_one',
+        applicationAuthority,
+        asyncAdmission,
+      )).toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+      }));
+      expect(store.get(unclaimed.rawRequestId)?.boundUserId).toBeNull();
+
+      expect(store.claimForAuthority(
+        unclaimed.rawRequestId,
+        'u_one',
+        applicationAuthority,
+      )).toBe(true);
+      expect(() => store.consumeTerminalForAuthority(
+        unclaimed.rawRequestId,
+        'u_one',
+        applicationAuthority,
+        asyncAdmission,
+      )).toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+      }));
+      expect(store.get(unclaimed.rawRequestId)?.consumedAt).toBeNull();
+
+      const codes = new NativeCodeStore(db);
+      expect(() => codes.issue(
+        unclaimed.rawRequestId,
+        'u_one',
+        0,
+        applicationAuthority,
+        100,
+        null,
+        asyncAdmission,
+      )).toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+      }));
+      expect(store.get(unclaimed.rawRequestId)?.consumedAt).toBeNull();
+      expect(db.prepare('SELECT COUNT(*) AS count FROM _auth_native_codes').get())
+        .toEqual({ count: 0 });
     } finally {
       db.dispose();
     }

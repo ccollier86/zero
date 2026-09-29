@@ -9,7 +9,10 @@ import {
   type AssertAuthApplicationMutationAuthority,
   type AuthApplicationMutationAuthority,
 } from './auth-application-mutation-authority';
-import { authAuditActorFromContext } from './auth-audit-service';
+import {
+  authAuditActorFromContext,
+  captureAuthAuditRequestContext,
+} from './auth-audit-service';
 import type { AuthAuditService } from './auth-audit-service';
 import type { AuthAuditRequestContext } from './auth-audit-types';
 import { canonicalizeEmail, isValidEmail } from './auth-email-identity';
@@ -79,8 +82,8 @@ const MAX_CURSOR_LENGTH = 512;
  *
  * The caller must derive the administration tenant from a live bearer. Every
  * write re-resolves application authority after the SQLite lock and before the
- * first domain mutation. Reads perform a final live revalidation only after
- * their safe projection has been materialized.
+ * first domain mutation. Reads validate query shape first, then require live
+ * application authority before resolving targets or materializing projections.
  */
 export class AuthPlatformTenantAdministrationService {
   constructor(
@@ -98,17 +101,24 @@ export class AuthPlatformTenantAdministrationService {
     query?: AuthPlatformTenantListInput;
     assertCurrentAuthority: AssertAuthApplicationMutationAuthority;
   }): AuthPlatformTenantPage {
-    this.users.assertCurrentProfile();
-    this.requireAdministrationTenant(input.administrationTenantId);
+    const administrationTenantId = input.administrationTenantId;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
     const query = input.query ?? {};
     const limit = normalizeLimit(query.limit, 'tenant');
     const cursor = decodeTenantCursor(query.cursor);
     const search = normalizeSearch(query.search, 'tenant');
+    const status = normalizeTenantPageStatus(query.status);
+    this.users.assertCurrentProfile();
+    this.requireApplicationAuthority(
+      administrationTenantId,
+      assertCurrentAuthority,
+      ['application.tenants:read'],
+    );
     const clauses = ["tenant.kind = 'organization'"];
     const args: Array<string | number> = [];
-    if (query.status) {
+    if (status) {
       clauses.push('tenant.status = ?');
-      args.push(query.status);
+      args.push(status);
     }
     if (search) {
       clauses.push(`(
@@ -144,11 +154,6 @@ export class AuthPlatformTenantAdministrationService {
     const selected = hasMore ? rows.slice(0, limit) : rows;
     const tenants = selected.map(mapTenantDirectoryRow);
     const last = selected.at(-1);
-    this.requireApplicationAuthority(
-      input.administrationTenantId,
-      input.assertCurrentAuthority,
-      ['application.tenants:read'],
-    );
     return Object.freeze({
       tenants: Object.freeze(tenants),
       page: Object.freeze({
@@ -170,6 +175,9 @@ export class AuthPlatformTenantAdministrationService {
     assertCurrentAuthority: AssertAuthApplicationMutationAuthority;
     auditRequest?: AuthAuditRequestContext;
   }): AuthPlatformTenantCreateResult {
+    const administrationTenantId = input.administrationTenantId;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
     const fields = normalizeTenantCreateFields(input.name, input.slug);
     const email = canonicalizeEmail(input.ownerEmail);
     if (!isValidEmail(email)) {
@@ -178,10 +186,10 @@ export class AuthPlatformTenantAdministrationService {
     try {
       const result = this.db.transaction(() => {
         this.users.assertCurrentProfile();
-        this.lockTenant(input.administrationTenantId);
+        this.lockTenant(administrationTenantId);
         const authority = this.requireApplicationAuthority(
-          input.administrationTenantId,
-          input.assertCurrentAuthority,
+          administrationTenantId,
+          assertCurrentAuthority,
           ['application.tenants:manage', 'application.users:read'],
         );
         const owner = this.users.getUserByEmail(email);
@@ -203,20 +211,21 @@ export class AuthPlatformTenantAdministrationService {
           outcome: 'succeeded',
           scope: { kind: 'application' },
           actor: authAuditActorFromContext(authority.auth),
-          request: input.auditRequest,
+          request: auditRequest,
           target: { type: 'tenant', id: created.tenant.tenantId },
           metadata: { kind: 'organization' },
         });
+        const tenantId = created.tenant.tenantId;
+        const kind = created.tenant.kind;
+        this.db.afterCommit(() => this.emitCode(OBS_CODES.AUTH_TENANT_CREATED, {
+          metadata: { tenantId, kind },
+        }));
         return created;
       });
-      const response = Object.freeze({
+      return Object.freeze({
         tenant: this.projectTenant(result.tenant.tenantId),
         owner: this.getMember(result.tenant.tenantId, result.ownerMembership.membershipId),
       });
-      this.emitCode(OBS_CODES.AUTH_TENANT_CREATED, {
-        metadata: { tenantId: result.tenant.tenantId, kind: 'organization' },
-      });
-      return response;
     } catch (error) {
       if (error instanceof AuthError) throw error;
       throw mapTenantCreationError(error);
@@ -231,8 +240,14 @@ export class AuthPlatformTenantAdministrationService {
     assertCurrentAuthority: AssertAuthApplicationMutationAuthority;
     auditRequest?: AuthAuditRequestContext;
   }): AuthPlatformTenantUpdateResult {
-    if (!Number.isSafeInteger(input.expectedAuthorizationGeneration)
-      || input.expectedAuthorizationGeneration < 0) {
+    const administrationTenantId = input.administrationTenantId;
+    const tenantId = input.tenantId;
+    const expectedAuthorizationGeneration = input.expectedAuthorizationGeneration;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
+    const status = normalizeTenantUpdateStatus(input.status);
+    if (!Number.isSafeInteger(expectedAuthorizationGeneration)
+      || expectedAuthorizationGeneration < 0) {
       throw new AuthError(
         'Tenant authorization generation is invalid',
         'TENANT_AUTHORIZATION_GENERATION_INVALID',
@@ -240,50 +255,48 @@ export class AuthPlatformTenantAdministrationService {
       );
     }
     try {
-      const changed = this.db.transaction(() => {
+      this.db.transaction(() => {
         this.users.assertCurrentProfile();
-        this.lockTenant(input.tenantId);
+        this.lockTenant(tenantId);
         const authority = this.requireApplicationAuthority(
-          input.administrationTenantId,
-          input.assertCurrentAuthority,
+          administrationTenantId,
+          assertCurrentAuthority,
           ['application.tenants:manage'],
         );
-        const current = this.requireCustomerTenant(input.tenantId);
+        const current = this.requireCustomerTenant(tenantId);
         // A completed retry is idempotent even if it carries the generation
         // observed before the original successful transition.
-        if (current.status === input.status) return false;
-        if (current.authorizationGeneration !== input.expectedAuthorizationGeneration) {
+        if (current.status === status) return;
+        if (current.authorizationGeneration !== expectedAuthorizationGeneration) {
           throw new AuthError(
             'Tenant lifecycle changed after this view was loaded; reload and try again',
             'TENANT_AUTHORIZATION_GENERATION_CONFLICT',
             409,
           );
         }
-        const updated = input.status === 'active'
-          ? this.tenancy.reactivateTenant(input.tenantId)
-          : this.tenancy.suspendTenant(input.tenantId);
+        const updated = status === 'active'
+          ? this.tenancy.reactivateTenant(tenantId)
+          : this.tenancy.suspendTenant(tenantId);
         this.audit.append({
-          action: input.status === 'active'
+          action: status === 'active'
             ? 'application.tenant-reactivated'
             : 'application.tenant-suspended',
           outcome: 'succeeded',
           scope: { kind: 'application' },
           actor: authAuditActorFromContext(authority.auth),
-          request: input.auditRequest,
+          request: auditRequest,
           target: { type: 'tenant', id: updated.tenantId },
           metadata: { status: updated.status },
         });
-        return true;
+        const updatedTenantId = updated.tenantId;
+        const eventCode = updated.status === 'active'
+          ? OBS_CODES.AUTH_TENANT_REACTIVATED
+          : OBS_CODES.AUTH_TENANT_SUSPENDED;
+        this.db.afterCommit(() => this.emitCode(eventCode, {
+          metadata: { tenantId: updatedTenantId },
+        }));
       });
-      const tenant = this.projectTenant(input.tenantId);
-      if (changed) {
-        this.emitCode(
-          input.status === 'active'
-            ? OBS_CODES.AUTH_TENANT_REACTIVATED
-            : OBS_CODES.AUTH_TENANT_SUSPENDED,
-          { metadata: { tenantId: input.tenantId } },
-        );
-      }
+      const tenant = this.projectTenant(tenantId);
       return Object.freeze({ tenant });
     } catch (error) {
       throw mapPlatformTenancyError(error);
@@ -296,18 +309,26 @@ export class AuthPlatformTenantAdministrationService {
     query?: AuthTenantMemberListInput;
     assertCurrentAuthority: AssertAuthApplicationMutationAuthority;
   }): AuthTenantMemberPage {
-    this.users.assertCurrentProfile();
-    this.requireAdministrationTenant(input.administrationTenantId);
-    this.requireCustomerTenant(input.tenantId);
+    const administrationTenantId = input.administrationTenantId;
+    const tenantId = input.tenantId;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
     const query = input.query ?? {};
     const limit = normalizeLimit(query.limit, 'member');
     const cursor = decodeMemberCursor(query.cursor);
     const search = normalizeSearch(query.search, 'member');
+    const status = normalizeMemberPageStatus(query.status);
+    this.users.assertCurrentProfile();
+    this.requireApplicationAuthority(
+      administrationTenantId,
+      assertCurrentAuthority,
+      ['application.tenants:read', 'application.users:read'],
+    );
+    this.requireCustomerTenant(tenantId);
     const clauses = ['membership.tenant_id = ?'];
-    const args: Array<string | number> = [input.tenantId];
-    if (query.status) {
+    const args: Array<string | number> = [tenantId];
+    if (status) {
       clauses.push('membership.status = ?');
-      args.push(query.status);
+      args.push(status);
     }
     if (search) {
       clauses.push(`(
@@ -343,11 +364,6 @@ export class AuthPlatformTenantAdministrationService {
     const selected = hasMore ? rows.slice(0, limit) : rows;
     const members = selected.map((row) => this.mapMember(row));
     const last = selected.at(-1);
-    this.requireApplicationAuthority(
-      input.administrationTenantId,
-      input.assertCurrentAuthority,
-      ['application.tenants:read', 'application.users:read'],
-    );
     return Object.freeze({
       members,
       page: Object.freeze({
@@ -503,8 +519,15 @@ function normalizeLimit(value: number | undefined, subject: string): number {
   return value;
 }
 
-function normalizeSearch(value: string | undefined, subject: string): string {
+function normalizeSearch(value: unknown, subject: string): string {
   if (value === undefined) return '';
+  if (typeof value !== 'string') {
+    throw new AuthError(
+      `${capitalize(subject)} search is invalid`,
+      'PLATFORM_TENANT_PAGE_INVALID',
+      422,
+    );
+  }
   const search = value.normalize('NFKC').trim().toLocaleLowerCase('en-US');
   if (search.length > MAX_SEARCH_LENGTH) {
     throw new AuthError(
@@ -516,7 +539,44 @@ function normalizeSearch(value: string | undefined, subject: string): string {
   return search;
 }
 
-function decodeTenantCursor(value: string | undefined): TenantCursor | null {
+function normalizeTenantPageStatus(value: unknown): TenantStatus | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'active' || value === 'suspended' || value === 'archived') {
+    return value;
+  }
+  throw new AuthError(
+    'Tenant status filter is invalid',
+    'PLATFORM_TENANT_PAGE_INVALID',
+    422,
+  );
+}
+
+function normalizeTenantUpdateStatus(
+  value: unknown,
+): Extract<TenantStatus, 'active' | 'suspended'> {
+  if (value === 'active' || value === 'suspended') return value;
+  throw new AuthError(
+    'Tenant status must be active or suspended',
+    'PLATFORM_TENANT_STATUS_INVALID',
+    422,
+  );
+}
+
+function normalizeMemberPageStatus(
+  value: unknown,
+): TenantMembershipStatus | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'active' || value === 'suspended' || value === 'removed') {
+    return value;
+  }
+  throw new AuthError(
+    'Member status filter is invalid',
+    'PLATFORM_TENANT_PAGE_INVALID',
+    422,
+  );
+}
+
+function decodeTenantCursor(value: unknown): TenantCursor | null {
   const parsed = decodeCursor(value);
   if (!parsed) return null;
   const createdAt = Reflect.get(parsed, 'createdAt');
@@ -526,7 +586,7 @@ function decodeTenantCursor(value: string | undefined): TenantCursor | null {
   return { createdAt, tenantId };
 }
 
-function decodeMemberCursor(value: string | undefined): MemberCursor | null {
+function decodeMemberCursor(value: unknown): MemberCursor | null {
   const parsed = decodeCursor(value);
   if (!parsed) return null;
   const joinedAt = Reflect.get(parsed, 'joinedAt');
@@ -536,9 +596,11 @@ function decodeMemberCursor(value: string | undefined): MemberCursor | null {
   return { joinedAt, membershipId };
 }
 
-function decodeCursor(value: string | undefined): object | null {
-  if (!value) return null;
-  if (value.length > MAX_CURSOR_LENGTH) throw invalidCursor();
+function decodeCursor(value: unknown): object | null {
+  if (value === undefined || value === '') return null;
+  if (typeof value !== 'string' || value.length > MAX_CURSOR_LENGTH) {
+    throw invalidCursor();
+  }
   try {
     const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw invalidCursor();

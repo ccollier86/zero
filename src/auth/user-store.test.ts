@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createReactiveDB, ReactiveDB } from '../sync/reactive-db';
-import { UserStore } from './user-store';
+import { UserStore, type AuthSecurityAuditContext } from './user-store';
 import { defineAuthTables } from './auth-schema';
 import { AuthError } from './types';
 import { AuthActionTokenService } from './action-token-service';
@@ -104,6 +104,43 @@ beforeEach(() => {
 afterEach(() => {
   db.dispose();
 });
+
+function pauseCredentialHash(target: UserStore): {
+  started: Promise<void>;
+  release(): void;
+} {
+  let markStarted!: () => void;
+  let releaseHash!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    releaseHash = resolve;
+  });
+  const credentials = (target as unknown as {
+    credentials: { hashPassword: (password: string) => Promise<string> };
+  }).credentials;
+  const hashPassword = credentials.hashPassword.bind(credentials);
+  credentials.hashPassword = async (password) => {
+    markStarted();
+    await gate;
+    return hashPassword(password);
+  };
+  return { started, release: releaseHash };
+}
+
+function createAuditRecordingStore(): {
+  store: UserStore;
+  events: unknown[];
+} {
+  const events: unknown[] = [];
+  const observedStore = new UserStore(db, {
+    auditService: {
+      append: (event: unknown) => { events.push(event); },
+    } as never,
+  });
+  return { store: observedStore, events };
+}
 
 // ─── User CRUD ────────────────────────────────────────────────────────────
 
@@ -350,6 +387,23 @@ describe('UserStore — User CRUD', () => {
     expect(store.countUsersByRole('user')).toBe(5);
   });
 
+  test('registration returns the exact committed authentication generation', async () => {
+    const registered = await store.createRegistrationUser({
+      username: 'generation-receipt',
+      email: 'generation-receipt@example.com',
+      password: 'password123',
+    }, () => ({
+      role: 'admin' as const,
+      requireEmailVerification: false,
+      mfaRequired: false,
+    }));
+
+    expect(registered.authGeneration).toBe(0);
+    store.revokeAllUserTokens(registered.user.userId);
+    expect(store.getAuthGeneration(registered.user.userId)).toBe(1);
+    expect(registered.authGeneration).toBe(0);
+  });
+
   test('atomic registration admission closes after the bootstrap winner', async () => {
     const attempts = await Promise.allSettled(Array.from({ length: 6 }, (_, index) =>
       store.createRegistrationUser({
@@ -412,6 +466,110 @@ describe('UserStore — User CRUD', () => {
       OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code,
       OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code,
     ]);
+  });
+
+  test('captures direct createUser input before password hashing yields', async () => {
+    let releaseHash!: () => void;
+    let markHashStarted!: () => void;
+    const hashStarted = new Promise<void>((resolve) => {
+      markHashStarted = resolve;
+    });
+    const hashGate = new Promise<void>((resolve) => {
+      releaseHash = resolve;
+    });
+    const credentials = (store as unknown as {
+      credentials: { hashPassword: (password: string) => Promise<string> };
+    }).credentials;
+    const hashPassword = credentials.hashPassword.bind(credentials);
+    credentials.hashPassword = async (password) => {
+      markHashStarted();
+      await hashGate;
+      return hashPassword(password);
+    };
+    const properties = { department: 'original' };
+    const input = {
+      username: 'captured-direct-user',
+      email: 'captured-direct-user@example.com',
+      password: 'original-password',
+      firstName: 'Original',
+      lastName: 'Identity',
+      properties,
+    };
+
+    const pending = store.createUser(input);
+    await hashStarted;
+    input.username = 'mutated-direct-user';
+    input.email = 'mutated-direct-user@example.com';
+    input.password = 'mutated-password';
+    input.firstName = 'Mutated';
+    input.lastName = 'Caller';
+    properties.department = 'mutated';
+    releaseHash();
+
+    const user = await pending;
+    expect(user).toMatchObject({
+      username: 'captured-direct-user',
+      email: 'captured-direct-user@example.com',
+      firstName: 'Original',
+      lastName: 'Identity',
+      properties: { department: 'original' },
+    });
+    expect(await store.verifyPassword(user.userId, 'original-password')).toBe(true);
+    expect(await store.verifyPassword(user.userId, 'mutated-password')).toBe(false);
+  });
+
+  test('captures registration identity fields before password hashing yields', async () => {
+    let releaseHash!: () => void;
+    let markHashStarted!: () => void;
+    const hashStarted = new Promise<void>((resolve) => {
+      markHashStarted = resolve;
+    });
+    const hashGate = new Promise<void>((resolve) => {
+      releaseHash = resolve;
+    });
+    const credentials = (store as unknown as {
+      credentials: { hashPassword: (password: string) => Promise<string> };
+    }).credentials;
+    const hashPassword = credentials.hashPassword.bind(credentials);
+    credentials.hashPassword = async (password) => {
+      markHashStarted();
+      await hashGate;
+      return hashPassword(password);
+    };
+    const properties = { department: 'registration-original' };
+    const input = {
+      username: 'captured-registration-user',
+      email: 'captured-registration-user@example.com',
+      password: 'original-password',
+      firstName: 'Registration',
+      lastName: 'Original',
+      properties,
+    };
+
+    const pending = store.createRegistrationUser(input, () => ({
+      role: 'admin' as const,
+      requireEmailVerification: false,
+      mfaRequired: false,
+    }));
+    await hashStarted;
+    input.username = 'mutated-registration-user';
+    input.email = 'mutated-registration-user@example.com';
+    input.password = 'mutated-password';
+    input.firstName = 'Mutated';
+    input.lastName = 'Caller';
+    properties.department = 'registration-mutated';
+    releaseHash();
+
+    const { user } = await pending;
+    expect(user).toMatchObject({
+      username: 'captured-registration-user',
+      email: 'captured-registration-user@example.com',
+      firstName: 'Registration',
+      lastName: 'Original',
+      properties: { department: 'registration-original' },
+    });
+    expect(await store.verifyPassword(user.userId, 'original-password')).toBe(true);
+    expect(await store.verifyPassword(user.userId, 'mutated-password')).toBe(false);
   });
 
   test('createUser stores lifecycle status and password-change flag', async () => {
@@ -945,6 +1103,45 @@ describe('UserStore — Password', () => {
     expect(await store.verifyPassword('u_nope', 'anything')).toBe(false);
   });
 
+  test('rejects a stale password verification after a concurrent reset commits', async () => {
+    const user = await store.createUser({
+      username: 'verification-reset-race',
+      email: 'verification-reset-race@example.com',
+      password: 'oldpassword1',
+    });
+    const credentials = (store as unknown as {
+      credentials: {
+        verifyPasswordHash(password: string, passwordHash: string): Promise<boolean>;
+      };
+    }).credentials;
+    const originalVerify = credentials.verifyPasswordHash.bind(credentials);
+    let markVerificationStarted!: () => void;
+    let releaseVerification!: () => void;
+    const verificationStarted = new Promise<void>((resolve) => {
+      markVerificationStarted = resolve;
+    });
+    const verificationGate = new Promise<void>((resolve) => {
+      releaseVerification = resolve;
+    });
+    credentials.verifyPasswordHash = async (password, passwordHash) => {
+      markVerificationStarted();
+      await verificationGate;
+      return originalVerify(password, passwordHash);
+    };
+
+    const staleVerification = store.verifyPassword(user.userId, 'oldpassword1');
+    try {
+      await verificationStarted;
+      expect(await store.resetPassword(user.userId, 'newpassword1')).toBe(true);
+      releaseVerification();
+      await expect(staleVerification).resolves.toBe(false);
+    } finally {
+      releaseVerification();
+      credentials.verifyPasswordHash = originalVerify;
+    }
+    await expect(store.verifyPassword(user.userId, 'newpassword1')).resolves.toBe(true);
+  });
+
   test('updatePassword changes password and revokes tokens', async () => {
     const user = await store.createUser({
       username: 'alice',
@@ -997,6 +1194,53 @@ describe('UserStore — Password', () => {
     ).toBe(false);
   });
 
+  test('captures update-password audit context before password hashing yields', async () => {
+    const { store: observedStore, events } = createAuditRecordingStore();
+    const user = await observedStore.createUser({
+      username: 'captured-password-update',
+      email: 'captured-password-update@example.com',
+      password: 'oldpassword1',
+    });
+    const audit: AuthSecurityAuditContext = {
+      actor: {
+        userId: 'original-actor',
+        membershipId: 'original-membership',
+        provenance: 'authenticated-request',
+      },
+      request: {
+        requestId: 'original-request',
+        correlationId: 'original-correlation',
+      },
+    };
+    const hash = pauseCredentialHash(observedStore);
+
+    const pending = observedStore.updatePassword(
+      user.userId,
+      'oldpassword1',
+      'newpassword1',
+      audit,
+    );
+    await hash.started;
+    audit.actor.userId = 'mutated-actor';
+    audit.actor.membershipId = 'mutated-membership';
+    audit.request!.requestId = 'mutated-request';
+    audit.request!.correlationId = 'mutated-correlation';
+    hash.release();
+
+    expect(await pending).toBe(true);
+    expect(events).toContainEqual(expect.objectContaining({
+      action: 'account.password-changed',
+      actor: expect.objectContaining({
+        userId: 'original-actor',
+        membershipId: 'original-membership',
+      }),
+      request: expect.objectContaining({
+        requestId: 'original-request',
+        correlationId: 'original-correlation',
+      }),
+    }));
+  });
+
   test('concurrent password changes compare-and-swap the verified credential', async () => {
     const user = await store.createUser({
       username: 'password-race',
@@ -1030,6 +1274,55 @@ describe('UserStore — Password', () => {
     expect(await store.verifyPassword(user.userId, 'oldpassword1')).toBe(false);
     expect(await store.verifyPassword(user.userId, 'newpassword1')).toBe(true);
     expect(store.getRefreshTokenByHash('reset_hash')!.revokedAt).not.toBeNull();
+  });
+
+  test('captures reset controls and audit context before password hashing yields', async () => {
+    const { store: observedStore, events } = createAuditRecordingStore();
+    const user = await observedStore.createUser({
+      username: 'captured-password-reset',
+      email: 'captured-password-reset@example.com',
+      password: 'oldpassword1',
+      passwordChangeRequired: false,
+    });
+    const audit: AuthSecurityAuditContext = {
+      actor: { userId: 'original-admin', provenance: 'authenticated-request' },
+      request: { requestId: 'original-reset-request' },
+    };
+    let originalCallbackCalls = 0;
+    let replacementCallbackCalls = 0;
+    const options: {
+      passwordChangeRequired?: boolean;
+      beforeCommit?: () => void;
+      audit?: AuthSecurityAuditContext;
+    } = {
+      passwordChangeRequired: true,
+      beforeCommit: () => { originalCallbackCalls += 1; },
+      audit,
+    };
+    const hash = pauseCredentialHash(observedStore);
+
+    const pending = observedStore.resetPassword(user.userId, 'newpassword1', options);
+    await hash.started;
+    options.passwordChangeRequired = false;
+    options.beforeCommit = () => { replacementCallbackCalls += 1; };
+    options.beforeCommit = undefined;
+    options.audit = {
+      actor: { userId: 'replacement-admin', provenance: 'system' },
+      request: { requestId: 'replacement-reset-request' },
+    };
+    audit.actor.userId = 'mutated-original-admin';
+    audit.request!.requestId = 'mutated-original-reset-request';
+    hash.release();
+
+    expect(await pending).toBe(true);
+    expect(originalCallbackCalls).toBe(1);
+    expect(replacementCallbackCalls).toBe(0);
+    expect(observedStore.getUserById(user.userId)?.passwordChangeRequired).toBe(true);
+    expect(events).toContainEqual(expect.objectContaining({
+      action: 'account.password-reset-by-admin',
+      actor: expect.objectContaining({ userId: 'original-admin' }),
+      request: expect.objectContaining({ requestId: 'original-reset-request' }),
+    }));
   });
 
   test('resetPassword rolls back credential, gate, and session changes on revocation failure', async () => {
@@ -1166,6 +1459,41 @@ describe('UserStore — Password', () => {
     expect(store.getUserById(user.userId)?.passwordChangeRequired).toBe(false);
     expect(store.getRefreshTokenByHash('forced_recovery_hash')?.revokedAt).not.toBeNull();
     expect(store.getAuthGeneration(user.userId)).toBe(1);
+  });
+
+  test('captures password-action audit context before password hashing yields', async () => {
+    const { store: observedStore, events } = createAuditRecordingStore();
+    const user = await observedStore.createUser({
+      username: 'captured-password-action',
+      email: 'captured-password-action@example.com',
+      password: 'oldpassword1',
+      passwordChangeRequired: true,
+    });
+    const audit: AuthSecurityAuditContext = {
+      actor: { userId: 'original-recovery-actor', provenance: 'account-recovery' },
+      request: { requestId: 'original-recovery-request' },
+    };
+    let consumed = false;
+    const hash = pauseCredentialHash(observedStore);
+
+    const pending = observedStore.completePasswordAction(
+      user.userId,
+      'newpassword1',
+      () => { consumed = true; },
+      audit,
+    );
+    await hash.started;
+    audit.actor.userId = 'mutated-recovery-actor';
+    audit.request!.requestId = 'mutated-recovery-request';
+    hash.release();
+
+    expect(await pending).toBe(true);
+    expect(consumed).toBe(true);
+    expect(events).toContainEqual(expect.objectContaining({
+      action: 'account.password-recovered',
+      actor: expect.objectContaining({ userId: 'original-recovery-actor' }),
+      request: expect.objectContaining({ requestId: 'original-recovery-request' }),
+    }));
   });
 
   test('completePasswordAction rejects an async token consumer and rolls back consumption', async () => {
@@ -1513,6 +1841,29 @@ describe('UserStore — Password', () => {
     expect(store.getRefreshTokenByHash('pre-verification-hash')?.revokedAt).not.toBeNull();
     expect(() => actionTokens.inspect(sibling.rawToken, ['email_verification']))
       .toThrow('Action token is invalid');
+  });
+
+  test('email verification returns its exact post-revocation authentication generation', async () => {
+    const user = await store.createUser({
+      username: 'verification-generation-receipt',
+      email: 'verification-generation-receipt@example.com',
+      password: 'password123',
+      emailVerifiedAt: null,
+      emailVerificationRequired: true,
+    });
+
+    const receipt = store.completeEmailVerificationForAuthentication(
+      user.userId,
+      () => {},
+    );
+    expect(receipt).toMatchObject({
+      user: { userId: user.userId, emailVerificationRequired: false },
+      authGeneration: 1,
+    });
+
+    store.revokeAllUserTokens(user.userId);
+    expect(store.getAuthGeneration(user.userId)).toBe(2);
+    expect(receipt?.authGeneration).toBe(1);
   });
 
   test('resetPassword returns false for missing user', async () => {

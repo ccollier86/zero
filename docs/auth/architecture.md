@@ -220,6 +220,7 @@ interface AuthContext {
   userId: string;
   email: string;
   role: string; // platform/global role
+  authGeneration?: number;
   sessionId?: string;
   sessionKind?: 'web' | 'native';
   sessionScopeKind?: 'application' | 'tenant';
@@ -230,6 +231,9 @@ interface AuthContext {
   authorizationAssignmentRevision?: string;
 }
 ```
+
+Managed Guardian middleware always resolves `authGeneration`; optionality is
+kept only for standalone or manually constructed context compatibility.
 
 **Key design:** The middleware **does not throw while resolving identity**. It resolves `authContext: AuthContext | null` for unauthenticated requests and provides `requireAuth()` / `requireAdmin()` helpers for routes that need enforcement:
 

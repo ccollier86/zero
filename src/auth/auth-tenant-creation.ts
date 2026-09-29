@@ -16,16 +16,21 @@ export interface NormalizedTenantCreateFields {
 
 /** Canonical request shaping shared by registration and tenant creation. */
 export function normalizeTenantCreateFields(
-  nameInput: string | undefined,
-  slugInput: string | undefined,
+  nameInput: unknown,
+  slugInput: unknown,
 ): NormalizedTenantCreateFields {
-  const name = nameInput?.trim();
+  const name = typeof nameInput === 'string' ? nameInput.trim() : '';
   if (!name) {
     throw new AuthError('Organization name is required', 'TENANT_NAME_REQUIRED', 422);
   }
-  const slug = slugInput === undefined
-    ? slugifyTenantName(name) || createOpaqueTenantSlug()
-    : slugInput.trim();
+  let slug: string;
+  if (slugInput === undefined) {
+    slug = slugifyTenantName(name) || createOpaqueTenantSlug();
+  } else if (typeof slugInput === 'string') {
+    slug = slugInput.trim();
+  } else {
+    throw new AuthError('Organization slug is required', 'TENANT_SLUG_REQUIRED', 422);
+  }
   if (!slug) {
     throw new AuthError('Organization slug is required', 'TENANT_SLUG_REQUIRED', 422);
   }

@@ -7,6 +7,7 @@ import {
   type AuthorizationRoleGrantCeiling,
 } from './authorization-role-grant';
 import type { AuthTenantRoleGrantCeiling } from './auth-tenant-onboarding-types';
+import { normalizeAuthRoleSelection } from './auth-role-selection';
 import type { TenantKind } from './tenancy/tenancy-types';
 import { AuthError } from './types';
 
@@ -14,21 +15,11 @@ export const AUTH_TENANT_MAX_ROLE_COUNT = 32;
 
 export function normalizeAuthTenantOnboardingRoleKeys(input: {
   kernel: AuthorizationKernel;
-  roleKeys: readonly string[];
+  roleKeys: unknown;
   tenantKind: TenantKind;
   ceiling?: AuthTenantRoleGrantCeiling | AuthorizationRoleGrantCeiling;
 }): readonly string[] {
-  if (!Array.isArray(input.roleKeys)
-    || input.roleKeys.length < 1
-    || input.roleKeys.length > AUTH_TENANT_MAX_ROLE_COUNT) {
-    throw invalidRoleSelection();
-  }
-  const keys = [...new Set(input.roleKeys.map((key) => (
-    typeof key === 'string' ? key.trim() : ''
-  )).filter(Boolean))].sort(compareKeys);
-  if (keys.length < 1 || keys.length > AUTH_TENANT_MAX_ROLE_COUNT) {
-    throw invalidRoleSelection();
-  }
+  const keys = snapshotAuthTenantOnboardingRoleKeys(input.roleKeys);
   if (input.kernel.authorization.mode === 'simple' && keys.length !== 1) {
     throw invalidRoleSelection();
   }
@@ -73,6 +64,15 @@ export function normalizeAuthTenantOnboardingRoleKeys(input: {
   return Object.freeze(keys);
 }
 
+/** Capture one caller-owned selection before invoking mutable authority seams. */
+export function snapshotAuthTenantOnboardingRoleKeys(input: unknown): readonly string[] {
+  return normalizeAuthRoleSelection(input, {
+    minimum: 1,
+    maximum: AUTH_TENANT_MAX_ROLE_COUNT,
+    invalid: invalidRoleSelection,
+  });
+}
+
 export function isDefaultTenantMemberRole(roles: readonly string[]): boolean {
   return roles.length === 1 && roles[0] === 'member';
 }
@@ -99,8 +99,4 @@ function administrationRoleRequired(roleKey: string): AuthError {
     'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED',
     422,
   );
-}
-
-function compareKeys(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }

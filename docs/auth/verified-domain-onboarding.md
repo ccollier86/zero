@@ -51,7 +51,12 @@ The server remains authoritative for every consequential decision:
 
 Before mailbox proof, both a successful and ineligible `/start` look exactly
 the same: `{ accepted: true }`. UI must use generic language and must not reveal
-whether a domain, tenant, or onboarding policy exists.
+whether a domain, tenant, or onboarding policy exists. After request admission,
+an expected invalid/expired continuation or ineligible identity remains silent.
+Unexpected identity-service, runtime-readiness, and mailbox-queue failures keep
+the same public response and emit `AUTH_DOMAIN_START_FAILED` through the owning
+app's private event `error` channel; the cause is never copied into the response
+or event metadata.
 
 ## Configuration and public capability
 
@@ -73,10 +78,13 @@ auth: {
 }
 ```
 
-Every allowed role must be declared in the active authorization profile and
-must be a bounded, non-system role. `owner`, `allPermissions` roles, system
-roles, and undeclared roles fail configuration resolution. The role is fixed
-in the tenant policy; neither the applicant nor `/admit` can override it.
+Every allowed role must be declared in the active authorization profile,
+assignable to a customer organization, and bounded/non-system. `owner`,
+administration-only or application-scope roles, `allPermissions` roles, system
+roles, and undeclared roles fail configuration resolution. These invariants are
+validated even while verified-domain onboarding is disabled, so enabling the
+feature later cannot activate a dormant invalid policy. The role is fixed in
+the tenant policy; neither the applicant nor `/admit` can override it.
 
 The remaining controls have conservative defaults:
 
@@ -367,7 +375,11 @@ proof failure; timeout, SERVFAIL, malformed/bounds-exceeding responses, and
 other resolver failures release the lease and return
 `AUTH_DOMAIN_DNS_UNAVAILABLE` without consuming the claim revision, challenge
 rotation cooldown, or normal mismatch transition. The background worker uses
-the same lease and schedules an unavailable lookup for retry.
+the same lease and schedules an unavailable lookup for retry. The resolver
+wrapper retains the original lookup failure as its internal `cause`, and the
+app-local DNS/worker event receives that failure through its private `error`
+channel. Public Auth responses remain generic, and bounded event metadata does
+not contain resolver/provider text.
 
 A successful proof is rechecked after `reverifyInterval`. A later mismatch
 moves a claim through `grace` and then `lost`; only a currently verified or
@@ -396,6 +408,15 @@ admission block in one transaction. A denied, suspended, removed, or otherwise
 retained subject cannot replay mailbox proof to silently re-enter. Reviewer
 approval uses the existing tenant role-grant ceiling and records domain
 membership provenance.
+
+Claim creation, challenge issuance, policy update, claim release, manual DNS
+verification, mailbox proof, retained join request, and background
+reverification success/failure events are registered on the outermost
+ReactiveDB commit. A surrounding transaction rollback therefore persists
+neither the state transition nor a misleading success event. Post-commit
+notification failure cannot turn an already committed verification into a
+false request failure. A stale reverification lease that finalizes no row emits
+no result event and does not count as processed work.
 
 Expired/consumed mailbox tokens, proofs, and admission transactions are
 deleted in bounded startup/worker batches. Join-request and membership

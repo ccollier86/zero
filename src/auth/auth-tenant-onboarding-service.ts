@@ -121,8 +121,15 @@ export class AuthTenantOnboardingService {
     userId: string,
     admitIdentityProof?: () => boolean,
     auditContext?: { actor?: AuthAuditActor; request?: AuthAuditRequestContext },
+    expectedAuthGeneration?: number,
   ): AcceptedTenantInvitation {
-    return this.invitations.accept(rawToken, userId, admitIdentityProof, auditContext);
+    return this.invitations.accept(
+      rawToken,
+      userId,
+      admitIdentityProof,
+      auditContext,
+      expectedAuthGeneration,
+    );
   }
 
   createInvitationAccount(

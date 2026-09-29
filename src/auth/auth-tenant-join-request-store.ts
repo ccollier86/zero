@@ -2,6 +2,7 @@ import type { Statement } from 'bun:sqlite';
 import type { ReactiveDB } from '../sync/reactive-db';
 import {
   mapJoinRequest,
+  normalizeJoinRequestPageStatus,
   type JoinRequestRow,
 } from './auth-tenant-onboarding-codec';
 import type {
@@ -211,11 +212,12 @@ export class AuthTenantJoinRequestStore {
     cursor: JoinRequestCursor | null;
     limit: number;
   }): AuthTenantJoinRequestProjectionRow[] {
+    const status = normalizeJoinRequestPageStatus(input.status);
     const clauses = ['request.tenant_id = ?'];
     const args: Array<string | number> = [input.tenantId];
-    if (input.status) {
+    if (status !== undefined) {
       clauses.push('request.status = ?');
-      args.push(input.status);
+      args.push(status);
     }
     if (input.cursor) {
       clauses.push(`(

@@ -1085,6 +1085,41 @@ describe('AuthClient token lifecycle', () => {
     }
   });
 
+  it('carries the originating session when profile MFA setup is verified', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    mockFetch((url, init) => {
+      requests.push({ url, init });
+      if (url.endsWith('/auth/login')) {
+        return Response.json({
+          user: authUser(),
+          accessToken: 'profile-session-access',
+          refreshToken: 'profile-session-refresh',
+        });
+      }
+      if (url.endsWith('/auth/mfa/setup/verify')) {
+        return Response.json({
+          ok: true,
+          method: mfaMethod(),
+          methods: [mfaMethod()],
+        });
+      }
+      return Response.json({ error: 'Unexpected request' }, { status: 500 });
+    });
+
+    const client = new AuthClient('http://zero.test');
+    await client.login('ada', 'password');
+    const result = await client.verifyMfaSetup({
+      verificationToken: 'profile-verification-token',
+      code: '123456',
+    });
+
+    expect(requests[1]!.url).toBe('http://zero.test/auth/mfa/setup/verify');
+    expect(new Headers(requests[1]!.init?.headers).get('Authorization'))
+      .toBe('Bearer profile-session-access');
+    expect(result).toMatchObject({ ok: true, method: { methodId: 'mfa-1' } });
+    expect(client.accessToken).toBe('profile-session-access');
+  });
+
   it('persists a session after MFA challenge verification succeeds', async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     mockFetch((url, init) => {

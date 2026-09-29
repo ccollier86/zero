@@ -3,7 +3,12 @@
 import type { Statement } from 'bun:sqlite';
 import type { ReactiveDB } from '../sync/reactive-db';
 import { hashToken } from '../tokens/token-utils';
-import { AuthAuditService, authAuditActorFromContext } from './auth-audit-service';
+import {
+  AuthAuditService,
+  authAuditActorFromContext,
+  captureAuthAuditActor,
+  captureAuthAuditRequestContext,
+} from './auth-audit-service';
 import type { AuthAuditActor, AuthAuditRequestContext } from './auth-audit-types';
 import { canonicalizeEmail, isValidEmail } from './auth-email-identity';
 import {
@@ -22,12 +27,14 @@ import {
   mapInvitation,
   maskEmail,
   normalizeLimit,
+  normalizeInvitationPageStatus,
   toInvitation,
   type InvitationRow,
 } from './auth-tenant-onboarding-codec';
 import {
   isDefaultTenantMemberRole,
   normalizeAuthTenantOnboardingRoleKeys,
+  snapshotAuthTenantOnboardingRoleKeys,
 } from './auth-tenant-onboarding-role-policy';
 import type {
   AuthTenantInvitation,
@@ -52,12 +59,16 @@ import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 
 export interface AcceptedTenantInvitation {
   user: UserRecord;
+  /** Security generation committed by the invitation-admission transaction. */
+  authGeneration: number;
   membership: TenantMembershipRecord;
   tenant: { tenantId: string; name: string; slug: string; kind: TenantKind };
 }
 
 export interface PendingTenantInvitationAccount {
   user: UserRecord;
+  /** Security generation committed by invitation-bound account creation. */
+  authGeneration: number;
   invitationAcceptancePending: true;
 }
 
@@ -68,6 +79,7 @@ export interface PendingTenantInvitationAccount {
 export class AuthTenantInvitationService {
   private readonly stmts: {
     expireInvitations: Statement;
+    expireTenantInvitations: Statement;
     getInvitationByHash: Statement;
     getInvitationById: Statement;
     getInvitationByDeliveryId: Statement;
@@ -97,6 +109,16 @@ export class AuthTenantInvitationService {
         WHERE invitation_id IN (
           SELECT invitation_id FROM _auth_tenant_invitations
           WHERE status = 'pending' AND expires_at <= ?
+          ORDER BY expires_at ASC, invitation_id ASC
+          LIMIT 100
+        )
+      `),
+      expireTenantInvitations: db.prepare(`
+        UPDATE _auth_tenant_invitations
+        SET status = 'expired', updated_at = ?
+        WHERE invitation_id IN (
+          SELECT invitation_id FROM _auth_tenant_invitations
+          WHERE tenant_id = ? AND status = 'pending' AND expires_at <= ?
           ORDER BY expires_at ASC, invitation_id ASC
           LIMIT 100
         )
@@ -156,12 +178,20 @@ export class AuthTenantInvitationService {
   }): AuthTenantInvitationCreated {
     this.users.assertCurrentProfile();
     this.requireEnabled();
+    const tenantId = input.tenantId;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
+    const afterPersist = input.afterPersist;
     const email = canonicalizeEmail(input.email);
     if (!isValidEmail(email)) {
       throw new AuthError('Invalid email address', 'INVALID_EMAIL', 422);
     }
-    const requestedRoleKeys = input.roleKeys ?? ['member'];
-    const ttlMs = input.ttlMs ?? this.config.invitations.defaultTTLms;
+    const inputRoleKeys: unknown = input.roleKeys;
+    const requestedRoleKeys = snapshotAuthTenantOnboardingRoleKeys(
+      inputRoleKeys === undefined ? ['member'] : inputRoleKeys,
+    );
+    const inputTtlMs = input.ttlMs;
+    const ttlMs = inputTtlMs ?? this.config.invitations.defaultTTLms;
     if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0
       || ttlMs > this.config.invitations.maxTTLms) {
       throw new AuthError(
@@ -175,15 +205,15 @@ export class AuthTenantInvitationService {
     const now = this.now();
     this.db.transaction(() => {
       this.users.assertCurrentProfile();
-      this.stmts.lockTenant.run(input.tenantId);
+      this.stmts.lockTenant.run(tenantId);
       const authority = this.requireMutationAuthority(
-        input.tenantId,
-        input.assertCurrentAuthority,
+        tenantId,
+        assertCurrentAuthority,
         isDefaultTenantMemberRole(requestedRoleKeys)
           ? ['tenant.invitations:manage']
           : ['tenant.invitations:manage', 'tenant.roles:manage'],
       );
-      const tenant = this.requireActiveTenant(input.tenantId);
+      const tenant = this.requireActiveTenant(tenantId);
       const roleKeys = normalizeAuthTenantOnboardingRoleKeys({
         kernel: this.kernel,
         roleKeys: requestedRoleKeys,
@@ -196,7 +226,7 @@ export class AuthTenantInvitationService {
         roleKeys,
       }, this.emitCode);
       const existingUser = this.users.getUserByEmail(email);
-      if (existingUser && this.tenancy.getMembership(input.tenantId, existingUser.userId)) {
+      if (existingUser && this.tenancy.getMembership(tenantId, existingUser.userId)) {
         throw new AuthError(
           'That identity already has a retained tenant membership',
           'TENANT_MEMBERSHIP_EXISTS',
@@ -204,10 +234,10 @@ export class AuthTenantInvitationService {
         );
       }
       this.expirePending(now);
-      this.stmts.revokePendingForEmail.run(now, now, input.tenantId, email);
+      this.stmts.revokePendingForEmail.run(now, now, tenantId, email);
       this.stmts.insertInvitation.run(
         invitationId,
-        input.tenantId,
+        tenantId,
         email,
         hashToken(rawToken),
         JSON.stringify(roleKeys),
@@ -218,9 +248,9 @@ export class AuthTenantInvitationService {
         now,
         now,
       );
-      if (input.afterPersist) {
+      if (afterPersist) {
         invokeSynchronousAuthCallback(
-          () => input.afterPersist!({ invitationId, recipient: email, rawToken }),
+          () => afterPersist({ invitationId, recipient: email, rawToken }),
           {
             component: 'tenant-invitations',
             invariant: 'after-persist-async',
@@ -232,15 +262,15 @@ export class AuthTenantInvitationService {
       this.audit.append({
         action: 'tenant.invitation-issued',
         outcome: 'succeeded',
-        scope: { kind: 'tenant', tenantId: input.tenantId },
+        scope: { kind: 'tenant', tenantId },
         actor: authAuditActorFromContext(authority.auth),
-        request: input.auditRequest,
+        request: auditRequest,
         target: { type: 'tenant-invitation', id: invitationId },
         metadata: { 'role-count': roleKeys.length },
       });
     });
     return {
-      invitation: toInvitation(this.requireInvitation(input.tenantId, invitationId)),
+      invitation: toInvitation(this.requireInvitation(tenantId, invitationId)),
       token: rawToken,
     };
   }
@@ -284,17 +314,23 @@ export class AuthTenantInvitationService {
     cursor?: string;
     assertCurrentAuthority?: AssertAuthTenantMutationAuthority;
   }): { invitations: AuthTenantInvitation[]; page: AuthTenantJoinRequestPage['page'] } {
-    this.users.assertCurrentProfile();
-    this.requireEnabled();
-    this.requireActiveTenant(input.tenantId);
-    this.expirePending(this.now());
+    const tenantId = input.tenantId;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const status = normalizeInvitationPageStatus(input.status);
     const limit = normalizeLimit(input.limit);
     const cursor = decodeCursor(input.cursor);
+    this.users.assertCurrentProfile();
+    this.requireEnabled();
+    if (assertCurrentAuthority) {
+      this.invokeAuthority(assertCurrentAuthority, ['tenant.invitations:read']);
+    }
+    this.requireActiveTenant(tenantId);
+    this.expirePendingForTenant(tenantId, this.now());
     const clauses = ['tenant_id = ?'];
-    const args: Array<string | number> = [input.tenantId];
-    if (input.status) {
+    const args: Array<string | number> = [tenantId];
+    if (status !== undefined) {
       clauses.push('status = ?');
-      args.push(input.status);
+      args.push(status);
     }
     if (cursor) {
       clauses.push('(created_at > ? OR (created_at = ? AND invitation_id > ?))');
@@ -320,9 +356,6 @@ export class AuthTenantInvitationService {
           : null,
       },
     };
-    if (input.assertCurrentAuthority) {
-      this.invokeAuthority(input.assertCurrentAuthority, ['tenant.invitations:read']);
-    }
     return result;
   }
 
@@ -334,31 +367,35 @@ export class AuthTenantInvitationService {
   }): AuthTenantInvitation {
     this.users.assertCurrentProfile();
     this.requireEnabled();
+    const tenantId = input.tenantId;
+    const invitationId = input.invitationId;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
     const now = this.now();
     return this.db.transaction(() => {
       this.users.assertCurrentProfile();
-      this.stmts.lockTenant.run(input.tenantId);
+      this.stmts.lockTenant.run(tenantId);
       const authority = this.requireMutationAuthority(
-        input.tenantId,
-        input.assertCurrentAuthority,
+        tenantId,
+        assertCurrentAuthority,
         ['tenant.invitations:manage'],
       );
       this.expirePending(now);
-      const current = this.requireInvitation(input.tenantId, input.invitationId);
+      const current = this.requireInvitation(tenantId, invitationId);
       if (current.status === 'revoked') return toInvitation(current);
       if (current.status !== 'pending') throw invitationConflict();
       if (this.stmts.revokeInvitation.run(
-        now, now, input.tenantId, input.invitationId,
+        now, now, tenantId, invitationId,
       ).changes !== 1) throw invitationConflict();
       this.audit.append({
         action: 'tenant.invitation-revoked',
         outcome: 'succeeded',
-        scope: { kind: 'tenant', tenantId: input.tenantId },
+        scope: { kind: 'tenant', tenantId },
         actor: authAuditActorFromContext(authority.auth),
-        request: input.auditRequest,
-        target: { type: 'tenant-invitation', id: input.invitationId },
+        request: auditRequest,
+        target: { type: 'tenant-invitation', id: invitationId },
       });
-      return toInvitation(this.requireInvitation(input.tenantId, input.invitationId));
+      return toInvitation(this.requireInvitation(tenantId, invitationId));
     });
   }
 
@@ -386,14 +423,22 @@ export class AuthTenantInvitationService {
       actor?: AuthAuditActor;
       request?: AuthAuditRequestContext;
     },
+    expectedAuthGeneration?: number,
   ): AcceptedTenantInvitation {
     this.users.assertCurrentProfile();
     this.requireEnabled();
+    const auditActor = captureAuthAuditActor(auditContext?.actor);
+    const auditRequest = captureAuthAuditRequestContext(auditContext?.request);
     return this.db.transaction(() => {
       this.users.assertCurrentProfile();
       const user = this.requireEligibleUser(userId);
       const invitation = this.requireUsable(rawToken);
       if (canonicalizeEmail(user.email) !== invitation.email) throw invitationUnavailable();
+      const authGeneration = this.users.getAuthGeneration(user.userId);
+      if (expectedAuthGeneration !== undefined
+        && authGeneration !== expectedAuthGeneration) {
+        throw authenticationStateChanged();
+      }
       const tenant = this.requireActiveTenant(invitation.tenantId);
       this.stmts.lockTenant.run(tenant.tenantId);
       const now = this.now();
@@ -430,16 +475,17 @@ export class AuthTenantInvitationService {
         action: 'tenant.invitation-accepted',
         outcome: 'succeeded',
         scope: { kind: 'tenant', tenantId: tenant.tenantId },
-        actor: auditContext?.actor ?? {
+        actor: auditActor ?? {
           userId: current.userId,
           provenance: 'registration',
         },
-        request: auditContext?.request,
+        request: auditRequest,
         target: { type: 'tenant-membership', id: membership.membershipId },
         metadata: { 'invitation-id': invitation.invitationId },
       });
       return {
         user: this.users.getUserById(current.userId)!,
+        authGeneration: expectedAuthGeneration ?? authGeneration,
         membership,
         tenant: {
           tenantId: tenant.tenantId,
@@ -472,43 +518,53 @@ export class AuthTenantInvitationService {
         403,
       );
     }
-    const invitation = this.requireUsable(input.token);
+    const token = input.token;
+    const username = input.username;
     const email = canonicalizeEmail(input.email);
+    const password = input.password;
+    const firstName = input.firstName;
+    const lastName = input.lastName;
+    const mfaRequired = input.mfaRequired;
+    const properties = Object.freeze({ ...input.properties });
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
+    const deferAcceptance = input.deferAcceptance === true;
+    const invitation = this.requireUsable(token);
     if (email !== invitation.email || !isValidEmail(email)) throw invitationUnavailable();
     if (this.users.getUserByEmail(email)) throw invitationAccountAuthRequired();
 
     const result: { accepted: AcceptedTenantInvitation | null } = { accepted: null };
     try {
       const created = await this.users.createRegistrationUser({
-        username: input.username,
+        username,
         email,
-        password: input.password,
-        firstName: input.firstName,
-        lastName: input.lastName,
-        properties: input.properties,
+        password,
+        firstName,
+        lastName,
+        properties,
       }, (isBootstrap) => {
         if (isBootstrap) throw invitationUnavailable();
         return {
           role: 'user' as const,
           requireEmailVerification: false,
-          mfaRequired: input.mfaRequired,
+          mfaRequired,
         };
       }, (user) => {
-        if (input.deferAcceptance) {
-          const current = this.requireUsable(input.token);
+        if (deferAcceptance) {
+          const current = this.requireUsable(token);
           if (current.email !== canonicalizeEmail(user.email)) {
             throw invitationUnavailable();
           }
           return;
         }
-        result.accepted = this.accept(input.token, user.userId, undefined, {
+        result.accepted = this.accept(token, user.userId, undefined, {
           actor: { userId: user.userId, provenance: 'registration' },
-          request: input.auditRequest,
+          request: auditRequest,
         });
-      }, { auditRequest: input.auditRequest });
-      if (input.deferAcceptance) {
+      }, { auditRequest });
+      if (deferAcceptance) {
         return {
           user: this.users.getUserById(created.user.userId)!,
+          authGeneration: created.authGeneration,
           invitationAcceptancePending: true,
         };
       }
@@ -571,6 +627,13 @@ export class AuthTenantInvitationService {
     this.db.transaction(() => {
       this.users.assertCurrentProfile();
       this.stmts.expireInvitations.run(now, now);
+    });
+  }
+
+  private expirePendingForTenant(tenantId: string, now: number): void {
+    this.db.transaction(() => {
+      this.users.assertCurrentProfile();
+      this.stmts.expireTenantInvitations.run(now, tenantId, now);
     });
   }
 
@@ -696,6 +759,14 @@ function invitationAccountAuthRequired(): AuthError {
   return new AuthError(
     'The invitation email belongs to an existing account; authenticate that account to continue',
     'TENANT_INVITATION_ACCOUNT_AUTH_REQUIRED',
+    409,
+  );
+}
+
+function authenticationStateChanged(): AuthError {
+  return new AuthError(
+    'Authentication state changed; sign in again',
+    'AUTH_STATE_CHANGED',
     409,
   );
 }

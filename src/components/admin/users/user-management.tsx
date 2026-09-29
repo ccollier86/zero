@@ -58,7 +58,9 @@ export function UserManagement({
     () => normalizeRoleOptions(users, roleOptionsProp, config?.tenancy?.mode ?? 'single'),
     [config?.tenancy?.mode, roleOptionsProp, users],
   );
-  const roleFieldLabel = config?.tenancy?.mode === 'multi' ? 'Platform role' : 'Role';
+  const roleFieldLabel = config?.tenancy?.mode === 'multi'
+    ? 'Global identity role'
+    : 'Role';
   const schema = React.useMemo(
     () => createUserManagementSchema(roleOptions, roleFieldLabel),
     [roleFieldLabel, roleOptions],

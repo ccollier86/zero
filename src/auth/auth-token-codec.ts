@@ -31,11 +31,14 @@ export interface TransitionTokenClaims {
   methodType?: AuthTransitionTokenPayload['methodType'];
   challengeId?: string;
   flow?: AuthTransitionTokenPayload['flow'];
+  profileAuthorityFingerprint?: string;
 }
 
 export interface PageSessionClaims {
   readonly tokenId: string;
   readonly userId: string;
+  /** Null only for a verified page cookie issued before this claim existed. */
+  readonly authGeneration: number | null;
 }
 
 /**
@@ -145,6 +148,7 @@ export class AuthTokenCodec {
       methodType: input.claims.methodType,
       challengeId: input.claims.challengeId,
       flow: input.claims.flow,
+      profileAuthorityFingerprint: input.claims.profileAuthorityFingerprint,
     })
       .setProtectedHeader({ alg: 'ES256', kid: this.keys.keyId })
       .setIssuedAt()
@@ -164,9 +168,13 @@ export class AuthTokenCodec {
   async signPageSessionToken(input: {
     tokenId: string;
     userId: string;
+    authGeneration: number;
     expiresAtSeconds: number;
   }): Promise<string> {
-    return new SignJWT({ sid: input.tokenId })
+    return new SignJWT({
+      sid: input.tokenId,
+      authGeneration: input.authGeneration,
+    })
       .setProtectedHeader({ alg: 'ES256', kid: this.keys.keyId })
       .setSubject(input.userId)
       .setIssuedAt()
@@ -183,7 +191,15 @@ export class AuthTokenCodec {
     });
     const tokenId = typeof payload.sid === 'string' ? payload.sid : null;
     const userId = typeof payload.sub === 'string' ? payload.sub : null;
-    return tokenId && userId ? { tokenId, userId } : null;
+    const authGeneration = payload.authGeneration === undefined
+      ? null
+      : readOptionalGeneration(payload.authGeneration);
+    if (authGeneration === undefined) return null;
+    return tokenId && userId ? {
+      tokenId,
+      userId,
+      authGeneration,
+    } : null;
   }
 
   /** Re-verify issuance time for the narrow unbound-browser migration window. */

@@ -193,9 +193,12 @@ export type {
   RegisterParams,
 } from './client/auth-client';
 export type {
+  AuthPlatformAddMemberParams,
   AuthPlatformAdministrationConfig,
   AuthPlatformAdminSdkSurface,
+  AuthPlatformIssueInvitationParams,
   AuthPlatformMutableTenantStatus,
+  AuthPlatformRoleSelection,
   AuthPlatformTenant,
   AuthPlatformTenantCreateParams,
   AuthPlatformTenantCreateResult,
@@ -204,6 +207,8 @@ export type {
   AuthPlatformTenantStatus,
   AuthPlatformTenantUpdateParams,
   AuthPlatformTenantUpdateResult,
+  AuthPlatformUpdateMemberInput,
+  AuthPlatformUpdateMemberParams,
 } from './client/auth-client';
 
 // ─── React: Providers ────────────────────────────────────────────────────
@@ -293,6 +298,7 @@ export type {
   AuthorizationScopeBoundary,
   UseAuthorizationResult,
   AuthConfigState,
+  AuthConfigStatus,
   UseUserPropertyOptions,
   UseUserPropertyResult,
   UseApplicationAccessOptions,
@@ -749,7 +755,8 @@ export {
   TenantInvitationForm, TenantJoinRequestForm,
   PasswordInput, PasswordStrength, OTPInput, SocialLoginGroup,
   AuthLayout, AuthHeader,
-  AdminGate, Gate, HasFlag, HasProperty, PermissionGate, PlatformAdminGate,
+  AdminGate, AdministrationScopeGate, Gate, HasFlag, HasProperty,
+  PermissionGate, PlatformAdminGate,
   PropertyGate, SignedIn, SignedOut, TenantGate,
   useGate, useNativeAuthContinuation, useNativeAuthRoute, useNativeLoginHint,
   usePropertyGate,
@@ -766,7 +773,8 @@ export type {
   ControlPlaneAuditViewerProps,
   TenantInvitationFormProps, TenantJoinRequestFormProps,
   OTPVerificationProps, SocialProvider,
-  AuthVisibilityGateProps, GateProps, HasFlagProps, PermissionGateProps,
+  AdministrationScopeGateProps, AuthVisibilityGateProps, GateProps,
+  HasFlagProps, PermissionGateProps,
   PlatformAdminGateProps, PropertyGateProps, PropertyGateValue, TenantGateProps,
 } from '../components/auth';
 

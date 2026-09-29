@@ -315,9 +315,7 @@ export class AuthSessionController {
   ): Promise<T> {
     // Constructor restoration may already be rotating the stored proof. Wait
     // rather than knowingly issuing one unauthenticated request first.
-    if (!this.accessToken && this.context.refreshToken && this.restorePromise) {
-      await this.restorePromise;
-    }
+    await this.waitForActiveRestore();
 
     const requestRevision = this.credentialRevision;
     const requestToken = this.accessToken;
@@ -351,9 +349,21 @@ export class AuthSessionController {
     });
   }
 
+  /**
+   * Wait only for constructor-started credential restoration when it is the
+   * reason a stored session has no access token yet. Optional transports use
+   * this barrier without turning an anonymous browser into an auth-required
+   * request or starting a new refresh of their own.
+   */
+  async waitForActiveRestore(): Promise<void> {
+    const restore = this.restorePromise;
+    if (!this.accessToken && this.context.refreshToken && restore) await restore;
+  }
+
   /** Attach the current bearer token when present, without requiring one. */
   async fetchWithOptionalAuth(url: string, init?: RequestInit): Promise<Response> {
     const requestUrl = resolveAuthRequestUrl(this.baseUrl, url);
+    await this.waitForActiveRestore();
     const headers = new Headers(init?.headers);
     if (this.accessToken && !headers.has('Authorization')) {
       headers.set('Authorization', `Bearer ${this.accessToken}`);

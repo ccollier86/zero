@@ -12,8 +12,69 @@ import {
   parsePlatformTenantUpdate,
 } from './auth-platform-administration-parser';
 import { AuthPlatformAdministrationTransport } from './auth-platform-administration-transport';
+import type {
+  AuthPlatformAddMemberParams,
+  AuthPlatformIssueInvitationParams,
+  AuthPlatformUpdateMemberInput,
+  AuthPlatformUpdateMemberParams,
+} from './auth-platform-administration-types';
+import type { AuthTenantAddMemberParams } from './auth-types';
+
+const platformMemberInput: AuthPlatformAddMemberParams = {
+  email: 'operator@example.test',
+  roles: ['administrator'],
+};
+const ordinaryTenantMemberInput: AuthTenantAddMemberParams = {
+  email: 'member@example.test',
+};
+// @ts-expect-error Administration membership never defaults to a customer role.
+const missingPlatformRoles: AuthPlatformAddMemberParams = { email: 'invalid@example.test' };
+const emptyPlatformRoles: AuthPlatformAddMemberParams = {
+  email: 'invalid@example.test',
+  // @ts-expect-error An explicit empty platform role set is never valid.
+  roles: [],
+};
+// @ts-expect-error A platform member update must change status or provide roles.
+const emptyPlatformUpdate: AuthPlatformUpdateMemberParams = {};
+// @ts-expect-error Platform role replacement cannot clear all administration roles.
+const clearedPlatformRoles: AuthPlatformUpdateMemberParams = { roles: [] };
+// @ts-expect-error Direct role replacement requires a current revision fence.
+const missingPlatformRoleRevision: AuthPlatformUpdateMemberParams = {
+  roles: ['administrator'],
+};
+// @ts-expect-error Status plus roles still requires a current revision fence.
+const missingCombinedRoleRevision: AuthPlatformUpdateMemberParams = {
+  status: 'active',
+  roles: ['administrator'],
+};
+const hookRoleUpdate: AuthPlatformUpdateMemberInput = {
+  roles: ['administrator'],
+};
+// @ts-expect-error Platform invitations always require an explicit role set.
+const missingInvitationRoles: AuthPlatformIssueInvitationParams = {
+  email: 'invalid@example.test',
+};
+const emptyInvitationRoles: AuthPlatformIssueInvitationParams = {
+  email: 'invalid@example.test',
+  // @ts-expect-error Platform invitation roles cannot be empty.
+  roles: [],
+};
 
 describe('platform administration transport', () => {
+  test('keeps platform roles required while ordinary tenant roles remain optional', () => {
+    expect(platformMemberInput.roles).toEqual(['administrator']);
+    expect(ordinaryTenantMemberInput.roles).toBeUndefined();
+    expect(missingPlatformRoles.roles).toBeUndefined();
+    expect([...emptyPlatformRoles.roles]).toEqual([]);
+    expect(emptyPlatformUpdate as unknown).toEqual({});
+    expect([...(clearedPlatformRoles.roles ?? [])]).toEqual([]);
+    expect(missingPlatformRoleRevision.roles).toEqual(['administrator']);
+    expect(missingCombinedRoleRevision.roles).toEqual(['administrator']);
+    expect(hookRoleUpdate.roles).toEqual(['administrator']);
+    expect(missingInvitationRoles.roles).toBeUndefined();
+    expect([...emptyInvitationRoles.roles]).toEqual([]);
+  });
+
   test('derives administration scope on the server and encodes only target IDs', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const transport = new AuthPlatformAdministrationTransport({

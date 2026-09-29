@@ -159,6 +159,42 @@ describe('installed auth profile state', () => {
     expect(count(db, '_auth_audit_events')).toBe(0);
   });
 
+  test.each([
+    ['live', Date.now() + 60_000],
+    ['expired', Date.now() - 60_000],
+  ] as const)(
+    'blocks %s administrator-user provisioning before transition mutation',
+    (_name, leaseExpiry) => {
+      const db = createDb();
+      const seeded = seedTenant(db, 'member');
+      reconcile(db, 'multi', 'simple');
+      db.prepare(`
+        INSERT INTO _auth_admin_user_provisioning (
+          provisioning_id, user_id, user_fingerprint, auth_generation,
+          setup_token_id, lease_owner_hash, lease_expires_at, created_at
+        ) VALUES ('pending-admin-profile-transition', ?, 'fingerprint', 0,
+          NULL, ?, ?, ?)
+      `).run(
+        seeded.userId,
+        'b'.repeat(64),
+        leaseExpiry,
+        Date.now() - 120_000,
+      );
+      let callbackRan = false;
+      expect(() => reconcileInstalledAuthProfile({
+        db,
+        requested: { tenancy: 'multi', authorization: 'advanced' },
+        beforeCommit: () => { callbackRan = true; },
+      })).toThrow('administrator-user provisioning receipt is pending');
+      expect(callbackRan).toBe(false);
+      expect(readInstalledAuthProfile(db)).toMatchObject({
+        generation: 1, tenancy: 'multi', authorization: 'simple',
+      });
+      expect(count(db, '_auth_tenant_membership_roles')).toBe(0);
+      expect(count(db, '_auth_audit_events')).toBe(0);
+    },
+  );
+
   test('commits adoption evidence, system audit, marker, and authority revision atomically', () => {
     const db = createDb();
     seedTenant(db, 'member');

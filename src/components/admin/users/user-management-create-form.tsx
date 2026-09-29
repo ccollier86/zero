@@ -176,7 +176,7 @@ export function UserManagementCreateForm({
         {allowGlobalAdminRole ? (
           <div className="space-y-2">
             <Label htmlFor="zero-admin-create-role">
-              {multiTenant ? 'Platform role' : 'Role'}
+              {multiTenant ? 'Global identity role' : 'Role'}
             </Label>
             <Select
               value={state.role}
@@ -196,7 +196,7 @@ export function UserManagementCreateForm({
             </Select>
             {multiTenant && (
               <p className="text-xs text-muted-foreground">
-                Platform roles govern installation-wide administration. {capitalize(tenantSingular)} access is managed separately.
+                Global identity roles govern installation-wide account administration. {capitalize(tenantSingular)} access is managed separately.
               </p>
             )}
           </div>

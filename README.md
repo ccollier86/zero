@@ -6,6 +6,11 @@ components, routing, auth, storage, sync, workflows, notifications, AI, vector
 storage, browser-grade PDF rendering, migrations, observability, and app-ready
 hooks so new apps do not start by rebuilding the same foundation.
 
+Zero's integrated identity, session, tenancy, and authorization subsystem is
+called **Guardian**. This is a documentation/product name; its established
+`auth.*` configuration, `/auth/*` routes, and `@zero/framework/auth` API remain
+unchanged.
+
 ReactiveDB Fabric is active, unreleased child-branch work that extends the
 existing pinned control database with bounded actor-owned application
 databases. Its tenant mode derives a pseudonymous database binding from trusted
@@ -22,7 +27,7 @@ authority checks. See the
 [ReactiveDB Fabric architecture](./docs/framework/multi-database-architecture.md)
 for its exact contract and remaining release gates.
 
-Current development boundary: this unreleased tree implements all four auth
+Current development boundary: Guardian implements all four auth
 profiles—`single/simple`, `single/advanced`, `multi/simple`, and
 `multi/advanced`—through one app-local authorization system. Multi-tenant
 sessions, registered resources, Sync, scoped built-in services, tenant

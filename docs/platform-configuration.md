@@ -711,9 +711,12 @@ tenancy: {
 }
 ```
 
-Allowed request roles must be declared, bounded, and non-system. Enabling the
-feature requires operational email delivery plus `app.publicUrl`; Doctor fails
-the half-enabled configuration and public auth config withholds the capability.
+Allowed request roles must be declared, bounded, non-system, and assignable to
+a customer organization. Administration-only and application-scope roles are
+rejected during config resolution even when the feature is currently disabled.
+Enabling the feature requires operational email delivery plus `app.publicUrl`;
+Doctor fails the half-enabled configuration and public auth config withholds
+the capability.
 It proves exact DNS control and current mailbox possession before retaining a
 fixed-role join request; it does not auto-join or create an identity when
 registration is disabled. Protected owners can retire a claim without deleting

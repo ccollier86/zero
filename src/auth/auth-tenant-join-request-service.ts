@@ -6,7 +6,12 @@ import type {
 import type { AuthorizationRoleService } from './authorization-role-service';
 import { canonicalizeEmail } from './auth-email-identity';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
-import { AuthAuditService, authAuditActorFromContext } from './auth-audit-service';
+import {
+  AuthAuditService,
+  authAuditActorFromContext,
+  captureAuthAuditActor,
+  captureAuthAuditRequestContext,
+} from './auth-audit-service';
 import type { AuthAuditActor, AuthAuditRequestContext } from './auth-audit-types';
 import {
   canSubmitGenericJoinRequest,
@@ -21,8 +26,12 @@ import {
   decodeCursor,
   encodeCursor,
   normalizeLimit,
+  normalizeJoinRequestPageStatus,
 } from './auth-tenant-onboarding-codec';
-import { normalizeAuthTenantOnboardingRoleKeys } from './auth-tenant-onboarding-role-policy';
+import {
+  normalizeAuthTenantOnboardingRoleKeys,
+  snapshotAuthTenantOnboardingRoleKeys,
+} from './auth-tenant-onboarding-role-policy';
 import type {
   AuthTenantJoinRequest,
   AuthTenantJoinRequestPage,
@@ -33,7 +42,7 @@ import type {
 import { roleGrantCeilingFromAuthority } from './authorization-role-grant';
 import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 import type { TenancyService } from './tenancy/tenancy-service';
-import type { TenantMembershipRecord } from './tenancy/tenancy-types';
+import { TenancyError, type TenantMembershipRecord } from './tenancy/tenancy-types';
 import { AuthError, type PermissionKey, type UserRecord } from './types';
 import type { UserStore } from './user-store';
 
@@ -71,6 +80,9 @@ export class AuthTenantJoinRequestService {
   }): { submitted: true } {
     this.users.assertCurrentProfile();
     this.requireEnabled();
+    const admitIdentityProof = input.admitIdentityProof;
+    const auditActor = captureAuthAuditActor(input.auditActor);
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
     const user = this.requireJoinRequestEligibleUser(input.userId);
     const tenant = safelyResolveTenant(this.tenancy, input.tenantSlug);
     if (!tenant || tenant.status !== 'active' || tenant.kind !== 'organization') {
@@ -80,8 +92,8 @@ export class AuthTenantJoinRequestService {
     this.db.transaction(() => {
       this.users.assertCurrentProfile();
       this.store.lockTenant(tenant.tenantId);
-      if (input.admitIdentityProof && !invokeSynchronousAuthCallback(
-        input.admitIdentityProof,
+      if (admitIdentityProof && !invokeSynchronousAuthCallback(
+        admitIdentityProof,
         {
           component: 'tenant-onboarding',
           invariant: 'join-request-identity-proof-async',
@@ -112,11 +124,11 @@ export class AuthTenantJoinRequestService {
           action: 'tenant.join-request-submitted',
           outcome: 'succeeded',
           scope: { kind: 'tenant', tenantId: tenant.tenantId },
-          actor: input.auditActor ?? {
+          actor: auditActor ?? {
             userId: user.userId,
             provenance: 'authenticated-request',
           },
-          request: input.auditRequest,
+          request: auditRequest,
           target: { type: 'tenant-join-request', id: joinRequestId },
         });
         return;
@@ -157,11 +169,11 @@ export class AuthTenantJoinRequestService {
         action: 'tenant.join-request-submitted',
         outcome: 'succeeded',
         scope: { kind: 'tenant', tenantId: tenant.tenantId },
-        actor: input.auditActor ?? {
+        actor: auditActor ?? {
           userId: user.userId,
           provenance: 'authenticated-request',
         },
-        request: input.auditRequest,
+        request: auditRequest,
         target: { type: 'tenant-join-request', id: current.joinRequestId },
         metadata: { reopened: true },
       });
@@ -178,14 +190,15 @@ export class AuthTenantJoinRequestService {
     approvalApplicationScope?: AuthorizationScopeSnapshot | null;
     assertCurrentAuthority?: AssertAuthTenantMutationAuthority;
   }): AuthTenantJoinRequestPage {
+    const status = normalizeJoinRequestPageStatus(input.status);
+    const limit = normalizeLimit(input.limit);
+    const cursor = decodeCursor(input.cursor);
     this.users.assertCurrentProfile();
     this.requireEnabled();
     this.requireActiveOrganizationTenant(input.tenantId);
-    const limit = normalizeLimit(input.limit);
-    const cursor = decodeCursor(input.cursor);
     const rows = this.store.listProjectionRows({
       tenantId: input.tenantId,
-      status: input.status,
+      status,
       cursor,
       limit,
     });
@@ -225,19 +238,29 @@ export class AuthTenantJoinRequestService {
   }): AuthTenantJoinRequest {
     this.users.assertCurrentProfile();
     this.requireEnabled();
+    const tenantId = input.tenantId;
+    const joinRequestId = input.joinRequestId;
+    const expectedRequestRevision = input.expectedRequestRevision;
+    const reactivateMembership = input.reactivateMembership;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
+    const inputRoleKeys: unknown = input.roleKeys;
+    const suppliedRoleKeys = inputRoleKeys === undefined
+      ? undefined
+      : snapshotAuthTenantOnboardingRoleKeys(inputRoleKeys);
     return this.db.transaction(() => {
       this.users.assertCurrentProfile();
-      this.store.lockTenant(input.tenantId);
+      this.store.lockTenant(tenantId);
       const authority = this.requireMutationAuthority(
-        input.tenantId,
-        input.assertCurrentAuthority,
+        tenantId,
+        assertCurrentAuthority,
         ['tenant.join-requests:review'],
       );
-      const tenant = this.requireActiveOrganizationTenant(input.tenantId);
-      const request = this.requireJoinRequest(input.tenantId, input.joinRequestId);
-      this.assertExpectedRequestRevision(request, input.expectedRequestRevision);
+      const tenant = this.requireActiveOrganizationTenant(tenantId);
+      const request = this.requireJoinRequest(tenantId, joinRequestId);
+      this.assertExpectedRequestRevision(request, expectedRequestRevision);
       const anyDomainProvenance = this.store.getAnyDomainProvenance(
-        input.tenantId,
+        tenantId,
         request.joinRequestId,
       );
       if (anyDomainProvenance?.source === 'legacy-unbound'
@@ -246,25 +269,27 @@ export class AuthTenantJoinRequestService {
         throw joinRequestProvenanceUnbound();
       }
       const domainProvenance = this.store.getVerifiedDomainProvenance(
-        input.tenantId,
+        tenantId,
         request.joinRequestId,
         request.requestRevision,
       );
       if (domainProvenance && domainProvenance.blocked_until !== null
         && domainProvenance.blocked_until > this.now()) throw joinRequestBlocked();
       const approvalPolicy = this.getProjection(
-        input.tenantId,
-        input.joinRequestId,
+        tenantId,
+        joinRequestId,
         authority.scope,
         authority.applicationScope,
       ).approvalPolicy;
       if (!approvalPolicy.canApprove) throw forbidden();
-      if (input.roleKeys !== undefined
+      if (suppliedRoleKeys !== undefined
         && approvalPolicy.roleSelection.mode !== 'selectable') {
         throw serverOwnedJoinRequestRoles(approvalPolicy.roleSelection.mode);
       }
       const requestedRoleKeys = approvalPolicy.roleSelection.mode === 'selectable'
-        ? input.roleKeys ?? approvalPolicy.roleSelection.defaultRoleKeys
+        ? suppliedRoleKeys === undefined
+          ? approvalPolicy.roleSelection.defaultRoleKeys
+          : suppliedRoleKeys
         : approvalPolicy.roleSelection.roles.map((role) => role.key);
       const roleKeys = normalizeAuthTenantOnboardingRoleKeys({
         kernel: this.kernel,
@@ -281,25 +306,25 @@ export class AuthTenantJoinRequestService {
           );
         }
         return this.getProjection(
-          input.tenantId,
-          input.joinRequestId,
+          tenantId,
+          joinRequestId,
           authority.scope,
           authority.applicationScope,
         );
       }
       if (request.status !== 'pending') throw joinRequestConflict();
       const user = this.requireEligibleUser(request.userId);
-      let membership = this.tenancy.getMembership(input.tenantId, user.userId);
+      let membership = this.tenancy.getMembership(tenantId, user.userId);
       if (!membership) {
         membership = this.tenancy.addMembership({
-          tenantId: input.tenantId,
+          tenantId,
           userId: user.userId,
           roleKey: roleKeys[0]!,
           createdBy: authority.auth.userId,
         });
         if (this.kernel.authorization.mode === 'advanced') {
           this.requireAdvancedRoles().replaceTenantRoles({
-            tenantId: input.tenantId,
+            tenantId,
             membershipId: membership.membershipId,
             roleKeys,
             changedBy: authority.auth.userId,
@@ -307,7 +332,7 @@ export class AuthTenantJoinRequestService {
           membership = this.tenancy.getMembershipById(membership.membershipId)!;
         }
       } else if (membership.status !== 'active') {
-        if (input.reactivateMembership !== true) {
+        if (reactivateMembership !== true) {
           throw new AuthError(
             'Explicit retained-membership reactivation is required',
             'TENANT_JOIN_REACTIVATION_REQUIRED',
@@ -319,7 +344,7 @@ export class AuthTenantJoinRequestService {
       const now = this.now();
       if (this.store.approve({
         request,
-        expectedRequestRevision: input.expectedRequestRevision,
+        expectedRequestRevision,
         reviewedBy: authority.auth.userId,
         membershipId: membership.membershipId,
         now,
@@ -334,9 +359,9 @@ export class AuthTenantJoinRequestService {
       this.audit.append({
         action: 'tenant.join-request-approved',
         outcome: 'succeeded',
-        scope: { kind: 'tenant', tenantId: input.tenantId },
+        scope: { kind: 'tenant', tenantId },
         actor: authAuditActorFromContext(authority.auth),
-        request: input.auditRequest,
+        request: auditRequest,
         target: { type: 'tenant-join-request', id: request.joinRequestId },
         metadata: {
           'membership-id': membership.membershipId,
@@ -344,8 +369,8 @@ export class AuthTenantJoinRequestService {
         },
       });
       return this.getProjection(
-        input.tenantId,
-        input.joinRequestId,
+        tenantId,
+        joinRequestId,
         authority.scope,
         authority.applicationScope,
       );
@@ -361,21 +386,26 @@ export class AuthTenantJoinRequestService {
   }): AuthTenantJoinRequest {
     this.users.assertCurrentProfile();
     this.requireEnabled();
+    const tenantId = input.tenantId;
+    const joinRequestId = input.joinRequestId;
+    const expectedRequestRevision = input.expectedRequestRevision;
+    const assertCurrentAuthority = input.assertCurrentAuthority;
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
     return this.db.transaction(() => {
       this.users.assertCurrentProfile();
-      this.store.lockTenant(input.tenantId);
+      this.store.lockTenant(tenantId);
       const authority = this.requireMutationAuthority(
-        input.tenantId,
-        input.assertCurrentAuthority,
+        tenantId,
+        assertCurrentAuthority,
         ['tenant.join-requests:review'],
       );
-      this.requireActiveOrganizationTenant(input.tenantId);
-      const request = this.requireJoinRequest(input.tenantId, input.joinRequestId);
-      this.assertExpectedRequestRevision(request, input.expectedRequestRevision);
+      this.requireActiveOrganizationTenant(tenantId);
+      const request = this.requireJoinRequest(tenantId, joinRequestId);
+      this.assertExpectedRequestRevision(request, expectedRequestRevision);
       if (request.status === 'denied') {
         return this.getProjection(
-          input.tenantId,
-          input.joinRequestId,
+          tenantId,
+          joinRequestId,
           authority.scope,
           authority.applicationScope,
         );
@@ -384,27 +414,27 @@ export class AuthTenantJoinRequestService {
       const now = this.now();
       if (this.store.deny({
         request,
-        expectedRequestRevision: input.expectedRequestRevision,
+        expectedRequestRevision,
         reviewedBy: authority.auth.userId,
         now,
       }) !== 1) throw joinRequestConflict();
       this.store.blockVerifiedDomainProvenance({
         request,
-        expectedRequestRevision: input.expectedRequestRevision,
+        expectedRequestRevision,
         blockedUntil: now + this.config.verifiedDomains.deniedRetryCooldownMs,
         now,
       });
       this.audit.append({
         action: 'tenant.join-request-denied',
         outcome: 'succeeded',
-        scope: { kind: 'tenant', tenantId: input.tenantId },
+        scope: { kind: 'tenant', tenantId },
         actor: authAuditActorFromContext(authority.auth),
-        request: input.auditRequest,
+        request: auditRequest,
         target: { type: 'tenant-join-request', id: request.joinRequestId },
       });
       return this.getProjection(
-        input.tenantId,
-        input.joinRequestId,
+        tenantId,
+        joinRequestId,
         authority.scope,
         authority.applicationScope,
       );
@@ -552,8 +582,11 @@ export class AuthTenantJoinRequestService {
 function safelyResolveTenant(tenancy: TenancyService, slug: string) {
   try {
     return tenancy.getTenantBySlug(slug);
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof TenancyError && error.code === 'TENANT_INVALID_SLUG') {
+      return null;
+    }
+    throw error;
   }
 }
 

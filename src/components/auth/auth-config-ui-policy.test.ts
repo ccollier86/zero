@@ -73,6 +73,7 @@ describe('auth config UI policy', () => {
 
 function makeState(partial: Partial<AuthConfigState>): AuthConfigState {
   return {
+    status: 'unknown',
     config: null,
     isLoading: false,
     error: null,

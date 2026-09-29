@@ -9,6 +9,12 @@ import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 import type { AuthSessionContinuationRecord } from './auth-session-continuation-store';
 import type { ResolvedAuthTenantOnboardingConfig } from './auth-tenant-onboarding-types';
 import { canonicalizeEmail } from './auth-email-identity';
+import {
+  captureAuthAuditActor,
+  captureAuthAuditRequestContext,
+  type AuthAuditService,
+} from './auth-audit-service';
+import type { AuthAuditActor, AuthAuditRequestContext } from './auth-audit-types';
 import type { TenancyService } from './tenancy/tenancy-service';
 import { AuthError, type UserRecord } from './types';
 import type { UserStore } from './user-store';
@@ -100,6 +106,7 @@ interface VerifiedDomainAdmissionDependencies {
   applicationId: string;
   now: () => number;
   emitCode: AuthPlatformCodeEmitter;
+  audit?: AuthAuditService;
   reconcileClaimStatuses: (tenantId?: string) => void;
   requireClaim: (tenantId: string, claimId: string) => AdmissionClaimRow;
   getPolicy: (claimId: string) => AdmissionPolicyRow;
@@ -125,6 +132,7 @@ export class VerifiedDomainAdmissionService {
   /** Resolve a live identity to a secret-free durable email-job binding. */
   prepareMailboxRequest(input: {
     userId: string;
+    expectedAuthGeneration: number;
     identityKind: 'session' | 'continuation';
     identityContinuation?: AuthSessionContinuationRecord | null;
   }): DomainMailboxJobBinding | null {
@@ -133,6 +141,8 @@ export class VerifiedDomainAdmissionService {
     if (!config.enabled) return null;
     const user = users.getUserById(input.userId);
     if (!isEligibleUser(user)) return null;
+    const authGeneration = users.getAuthGeneration(user.userId);
+    if (authGeneration !== input.expectedAuthGeneration) return null;
     try {
       verifiedDomainFromEmail(user.email, config.sharedMailboxDomains);
     } catch (error) {
@@ -143,14 +153,14 @@ export class VerifiedDomainAdmissionService {
     if (input.identityKind === 'continuation'
       && (!continuation || continuation.userId !== user.userId
         || continuation.applicationId !== applicationId
-        || continuation.authGeneration !== users.getAuthGeneration(user.userId))) {
+        || continuation.authGeneration !== authGeneration)) {
       return null;
     }
     return {
       userId: user.userId,
       email: canonicalizeEmail(user.email),
       emailGeneration: users.getEmailGeneration(user.userId),
-      authGeneration: users.getAuthGeneration(user.userId),
+      authGeneration,
       identityKind: input.identityKind,
       identityContinuationId: continuation?.continuationId ?? null,
     };
@@ -262,8 +272,9 @@ export class VerifiedDomainAdmissionService {
       let domain: string;
       try {
         domain = verifiedDomainFromEmail(user.email, config.sharedMailboxDomains);
-      } catch {
-        return unavailable();
+      } catch (error) {
+        if (error instanceof VerifiedDomainNameError) return unavailable();
+        throw error;
       }
       const proofId = users.recordEmailLinkMailboxProof({
         applicationId,
@@ -324,10 +335,13 @@ export class VerifiedDomainAdmissionService {
         expiresAt,
         now,
       );
-      this.dependencies.emitCode(OBS_CODES.AUTH_DOMAIN_MAILBOX_PROVED, {
-        userId: user.userId,
-        metadata: { claimId: eligible.claim.claim_id },
-      });
+      db.afterCommit(() => this.dependencies.emitCode(
+        OBS_CODES.AUTH_DOMAIN_MAILBOX_PROVED,
+        {
+          userId: user.userId,
+          metadata: { claimId: eligible.claim.claim_id },
+        },
+      ));
       return {
         option: {
           action: 'request-to-join',
@@ -361,6 +375,8 @@ export class VerifiedDomainAdmissionService {
     continuation: string;
     identity: DomainAdmissionIdentityBinding;
     consumeIdentity?: () => boolean;
+    auditActor?: AuthAuditActor;
+    auditRequest?: AuthAuditRequestContext;
   }): {
     request: {
       joinRequestId: string;
@@ -373,6 +389,11 @@ export class VerifiedDomainAdmissionService {
     users.assertCurrentProfile();
     this.requireEnabled();
     const now = this.dependencies.now();
+    const auditActor = captureAuthAuditActor(input.auditActor) ?? Object.freeze({
+      userId: input.identity.userId,
+      provenance: 'authenticated-request' as const,
+    });
+    const auditRequest = captureAuthAuditRequestContext(input.auditRequest);
     return db.transaction(() => {
       users.assertCurrentProfile();
       this.dependencies.reconcileClaimStatuses();
@@ -429,6 +450,7 @@ export class VerifiedDomainAdmissionService {
       const existing = this.getJoinRequest(tenant.tenantId, user.userId);
       if (existing && existing.status !== 'pending'
         && !this.canRetryJoinRequest(existing, now)) throw domainAdmissionBlocked();
+      const reopened = existing !== null && existing.status !== 'pending';
       if (input.consumeIdentity && !invokeSynchronousAuthCallback(
         input.consumeIdentity,
         {
@@ -532,10 +554,28 @@ export class VerifiedDomainAdmissionService {
         now,
         request.request_revision,
       );
-      this.dependencies.emitCode(OBS_CODES.AUTH_DOMAIN_JOIN_REQUESTED, {
-        userId: user.userId,
-        metadata: { claimId: claim.claim_id, tenantId: tenant.tenantId },
+      this.dependencies.audit?.append({
+        action: 'tenant.join-request-submitted',
+        outcome: 'succeeded',
+        scope: { kind: 'tenant', tenantId: tenant.tenantId },
+        actor: auditActor,
+        request: auditRequest,
+        target: {
+          type: 'tenant-join-request',
+          id: request.join_request_id,
+        },
+        metadata: {
+          'verified-domain': true,
+          reopened,
+        },
       });
+      db.afterCommit(() => this.dependencies.emitCode(
+        OBS_CODES.AUTH_DOMAIN_JOIN_REQUESTED,
+        {
+          userId: user.userId,
+          metadata: { claimId: claim.claim_id, tenantId: tenant.tenantId },
+        },
+      ));
       return {
         request: {
           joinRequestId: request.join_request_id,

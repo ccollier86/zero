@@ -38,6 +38,7 @@ import { migration as m024 } from './definitions/024_administration_tenant';
 import { migration as m025 } from './definitions/025_auth_mfa_assurance';
 import { migration as m026 } from './definitions/026_tenant_invitation_grant_snapshot';
 import { migration as m027 } from './definitions/027_authorization_registry_manifest';
+import { migration as m028 } from './definitions/028_admin_user_provisioning_receipts';
 
 export {
   createMigrationRegistry,
@@ -101,4 +102,5 @@ export const migrations: Migration[] = [
   m025,
   m026,
   m027,
+  m028,
 ];

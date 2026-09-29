@@ -157,8 +157,11 @@ export type {
   AuthApplicationUserStatus,
 } from './auth-application-administration-types';
 export type {
+  AuthPlatformAddMemberParams,
   AuthPlatformAdministrationConfig,
   AuthPlatformAdminSdkSurface,
+  AuthPlatformIssueInvitationParams,
+  AuthPlatformRoleSelection,
   AuthPlatformTenant,
   AuthPlatformTenantCreateParams,
   AuthPlatformTenantCreateResult,
@@ -168,6 +171,8 @@ export type {
   AuthPlatformTenantStatus,
   AuthPlatformTenantUpdateParams,
   AuthPlatformTenantUpdateResult,
+  AuthPlatformUpdateMemberInput,
+  AuthPlatformUpdateMemberParams,
 } from './auth-platform-administration-types';
 export type {
   AuthAuditActorProvenance,
@@ -567,8 +572,8 @@ export class AuthClient {
     return this.account.register(params);
   }
 
-  getConfig(): Promise<AuthPublicConfig> {
-    return this.account.getConfig();
+  getConfig(signal?: AbortSignal): Promise<AuthPublicConfig> {
+    return this.account.getConfig(signal);
   }
 
   forgotPassword(email: string, nativeContinuation?: string): Promise<void> {
@@ -930,6 +935,10 @@ export class AuthClient {
 
   async fetchWithOptionalAuth(url: string, init?: RequestInit): Promise<Response> {
     const requestUrl = resolveAuthRequestUrl(this.baseUrl, url);
+    // A stored refresh proof means this browser is restoring an authenticated
+    // scope. Do not race that one active restore and silently downgrade an
+    // optional-auth request to anonymous.
+    await this.session.waitForActiveRestore();
     const attempt = this.beginAuthorizationScopeAttempt();
     const composed = composeAuthorizationScopeSignal(init?.signal, attempt.signal);
 

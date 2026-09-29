@@ -295,13 +295,13 @@ version-named frozen helper back to the historical symbol name without
 rewriting the function body. Two independent test guards protect this contract:
 
 - `migration-checksum-compatibility.test.ts` pins the canonical exported
-  migration checksums for `001`–`027`, covering metadata plus the serialized
+  migration checksums for `001`–`028`, covering metadata plus the serialized
   `up()`/`down()` function bodies stored in the ledger contract.
 - `migration-definition-immutability.test.ts` rejects value imports from
   mutable runtime implementations; pins normalized full-source SHA-256 hashes
   for every numbered definition and every version-local helper; asserts the
   exact discovered definition set; and verifies that the registry order is
-  `001` through `027`. The full-definition and helper hashes are necessary
+  `001` through `028`. The full-definition and helper hashes are necessary
   because `migration.up.toString()` cannot see module-local constants or an
   imported helper's body.
 

@@ -1,6 +1,10 @@
 /** Helpers for provisional administrator-created account state. */
 
-import type { AuthSecurityAuditContext, UserStore } from './user-store';
+import type {
+  AdminUserProvisioningReceipt,
+  AuthSecurityAuditContext,
+  UserStore,
+} from './user-store';
 
 /** Create an unknown, high-entropy credential for email-driven setup. */
 export function createTemporaryPassword(): string {
@@ -9,28 +13,37 @@ export function createTemporaryPassword(): string {
   return Buffer.from(bytes).toString('base64url');
 }
 
-/** Remove an account whose initial setup instructions were not delivered. */
+export type AdminUserProvisioningRollbackReason =
+  | 'setup-delivery-failed'
+  | 'provisioning-failed';
+
+/** Reconcile an account whose administrator-created setup did not commit. */
 export function rollbackProvisionedUser(
   store: UserStore,
-  userId: string,
+  receipt: AdminUserProvisioningReceipt,
   audit?: AuthSecurityAuditContext,
+  reason: AdminUserProvisioningRollbackReason = 'setup-delivery-failed',
 ): boolean {
   try {
     return store.transaction(() => {
-      if (!store.getUserById(userId)) return true;
-      if (!store.deleteUser(userId)) return false;
+      const cleanupSucceeded = store.rollbackAdminUserProvisioning(receipt);
       if (audit) {
         store.appendControlPlaneAudit({
-          action: 'identity.provisioning-rolled-back',
+          action: cleanupSucceeded
+            ? 'identity.provisioning-rolled-back'
+            : 'identity.provisioning-reconciled',
           outcome: 'succeeded',
-          reason: 'setup-delivery-failed',
+          reason: cleanupSucceeded
+            ? reason
+            : 'newer-state-preserved',
           scope: { kind: 'application' },
           actor: audit.actor,
           request: audit.request,
-          target: { type: 'user', id: userId },
+          target: { type: 'user', id: receipt.userId },
+          metadata: { 'cleanup-succeeded': cleanupSucceeded },
         });
       }
-      return true;
+      return cleanupSucceeded;
     });
   } catch {
     return false;

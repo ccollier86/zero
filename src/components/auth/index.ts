@@ -101,9 +101,11 @@ export {
   type PropertyGateValue,
 } from './gate';
 export {
+  AdministrationScopeGate,
   PermissionGate,
   PlatformAdminGate,
   TenantGate,
+  type AdministrationScopeGateProps,
   type PermissionGateProps,
   type PlatformAdminGateProps,
   type TenantGateProps,

@@ -5,7 +5,8 @@ import type {
   AuthTenantMember,
   AuthTenantMembershipStatus,
 } from '../../frontend/client/auth-types';
-import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
+import { useAuthorizationScopeBoundary } from '../../frontend/client/authorization-scope-hooks';
+import { useAuth } from '../../frontend/client/auth-hooks';
 import {
   usePlatformAdministration,
   type UsePlatformAdministrationResult,
@@ -30,7 +31,10 @@ import {
 import { cn } from '#zero/lib/utils';
 import { authRoleLabel, createAuthRoleLabelMap } from './auth-role-presentation';
 import { PlatformAdministrationInvitations } from './platform-administration-invitations';
-import { platformAssignableRoles } from './platform-administration-role-policy';
+import {
+  platformAssignableRoles,
+  platformRoleSelection,
+} from './platform-administration-role-policy';
 import { TenantRolePicker } from './tenant-role-picker';
 
 type MemberAction = 'suspend' | 'remove' | 'transfer';
@@ -52,7 +56,9 @@ export function PlatformAdministrationManagement(
   props: PlatformAdministrationManagementProps,
 ) {
   const auth = useAuth();
+  const authorizationBoundary = useAuthorizationScopeBoundary();
   const boundary = JSON.stringify([
+    authorizationBoundary.key,
     auth.user?.userId ?? null,
     auth.activeTenant?.tenantId ?? null,
     auth.activeTenant?.kind ?? null,
@@ -68,7 +74,6 @@ function PlatformAdministrationScope({
   onActorSessionInvalidated,
 }: PlatformAdministrationManagementProps) {
   const auth = useAuth();
-  const publicConfig = useAuthConfig().config;
   const [searchInput, setSearchInput] = React.useState('');
   const [search, setSearch] = React.useState('');
   const [status, setStatus] = React.useState<AuthTenantMembershipStatus | 'all'>('all');
@@ -81,7 +86,8 @@ function PlatformAdministrationScope({
     invitationStatus: 'pending',
   });
   const [announcement, setAnnouncement] = React.useState('');
-  const [localError, setLocalError] = React.useState<string | null>(null);
+  const memberFiltersAvailable = administration.config?.capabilities.canReadMembers === true
+    && !administration.configError;
 
   React.useEffect(() => {
     const timeout = setTimeout(() => setSearch(searchInput.trim()), 250);
@@ -105,12 +111,13 @@ function PlatformAdministrationScope({
     );
   }
 
-  const error = localError ?? administration.error;
   return (
-    <div className={cn('grid gap-6', className)} aria-busy={
-      administration.isLoading || administration.isMutating
-    }>
-      <Card className="overflow-hidden">
+    <div className={cn('grid gap-6', className)}>
+      <Card className="overflow-hidden" aria-busy={
+        administration.isLoadingConfig
+        || administration.isLoadingMembers
+        || administration.isMutatingMembers
+      }>
         <CardHeader className="gap-3 border-b border-border/70">
           <div>
             <CardTitle>{title}</CardTitle>
@@ -124,23 +131,7 @@ function PlatformAdministrationScope({
           )}
         </CardHeader>
         <CardContent className="space-y-4 pt-5">
-          {error && (
-            <div role="alert" className="flex flex-col gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
-              <span>{error}</span>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={administration.isLoading || administration.isMutating}
-                onClick={() => {
-                  setLocalError(null);
-                  administration.reload();
-                }}
-              >
-                Retry
-              </Button>
-            </div>
-          )}
+          {memberFiltersAvailable && (
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Input
               type="search"
@@ -148,9 +139,13 @@ function PlatformAdministrationScope({
               onChange={(event) => setSearchInput(event.target.value)}
               aria-label="Search platform administrators"
               placeholder="Search administrators"
-              disabled={administration.isLoading}
+              disabled={administration.isLoadingConfig || administration.isLoadingMembers}
             />
-            <Select value={status} onValueChange={(value) => setStatus(value as typeof status)}>
+            <Select
+              value={status}
+              disabled={administration.isLoadingConfig || administration.isLoadingMembers}
+              onValueChange={(value) => setStatus(value as typeof status)}
+            >
               <SelectTrigger className="sm:w-44" aria-label="Administration membership status">
                 <SelectValue />
               </SelectTrigger>
@@ -162,10 +157,10 @@ function PlatformAdministrationScope({
               </SelectContent>
             </Select>
           </div>
+          )}
 
           <PlatformAdministrationMembers
             administration={administration}
-            onError={setLocalError}
             onAnnounce={setAnnouncement}
             onActorSessionInvalidated={onActorSessionInvalidated}
           />
@@ -174,8 +169,7 @@ function PlatformAdministrationScope({
 
       <PlatformAdministrationInvitations
         administration={administration}
-        delivery={publicConfig?.tenancy?.onboarding?.invitations.delivery}
-        onError={setLocalError}
+        delivery={administration.invitationDelivery ?? undefined}
         onAnnounce={setAnnouncement}
       />
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
@@ -190,12 +184,12 @@ function PlatformAdministrationScope({
 
 export function PlatformAdministrationMembers({
   administration,
-  onError,
+  onError = () => {},
   onAnnounce,
   onActorSessionInvalidated,
 }: {
   administration: UsePlatformAdministrationResult;
-  onError(value: string | null): void;
+  onError?(value: string | null): void;
   onAnnounce(value: string): void;
   onActorSessionInvalidated?: () => void;
 }) {
@@ -214,8 +208,12 @@ export function PlatformAdministrationMembers({
     member: AuthTenantMember;
   } | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
+  const [localError, setLocalError] = React.useState<string | null>(null);
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const headingRef = React.useRef<HTMLHeadingElement | null>(null);
+  const id = React.useId();
+  const membersHeadingId = `${id}-members`;
+  const rolePanelId = (membershipId: string) => `${id}-roles-${membershipId}`;
 
   const editedMember = administration.members.find((member) => (
     member.membershipId === editing
@@ -236,6 +234,7 @@ export function PlatformAdministrationMembers({
 
   async function run(operation: () => Promise<unknown>, success: string): Promise<boolean> {
     onError(null);
+    setLocalError(null);
     setActionError(null);
     onAnnounce('');
     try {
@@ -245,6 +244,7 @@ export function PlatformAdministrationMembers({
     } catch (cause) {
       const error = message(cause);
       setActionError(error);
+      setLocalError(error);
       onError(error);
       return false;
     }
@@ -253,17 +253,20 @@ export function PlatformAdministrationMembers({
   async function addMember(event: React.FormEvent) {
     event.preventDefault();
     const nextEmail = email.trim();
-    if (!nextEmail) return;
+    const roles = platformRoleSelection(addRoles);
+    if (!nextEmail || !roles) return;
     if (await run(
-      () => administration.addMember({ email: nextEmail, roles: addRoles }),
+      () => administration.addMember({ email: nextEmail, roles }),
       `Added ${nextEmail} to platform administration`,
     )) setEmail('');
   }
 
   async function saveRoles() {
     if (!editedMember) return;
+    const roles = platformRoleSelection(draftRoles);
+    if (!roles) return;
     const result = await run(
-      () => administration.updateMember(editedMember.membershipId, { roles: draftRoles }),
+      () => administration.updateMember(editedMember.membershipId, { roles }),
       `Updated platform roles for ${memberName(editedMember)}`,
     );
     if (result && editedMember.membershipId === actorMembershipId) {
@@ -290,7 +293,21 @@ export function PlatformAdministrationMembers({
     }
   }
 
-  if (administration.isLoading) {
+  const isMutating = administration.isMutatingMembers;
+
+  if (administration.isLoadingConfig) {
+    return <p role="status" aria-live="polite" className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">Loading platform administration settings…</p>;
+  }
+  if (administration.configError) {
+    return (
+      <SliceError
+        error={administration.configError}
+        disabled={administration.isLoadingConfig}
+        onRetry={administration.reloadConfig}
+      />
+    );
+  }
+  if (administration.isLoadingMembers) {
     return <p role="status" aria-live="polite" className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">Loading platform administrators…</p>;
   }
   if (!administration.config) {
@@ -301,15 +318,27 @@ export function PlatformAdministrationMembers({
   }
 
   return (
-    <section aria-labelledby="zero-platform-administration-members">
+    <section aria-labelledby={membersHeadingId}>
       <h3
         ref={headingRef}
-        id="zero-platform-administration-members"
+        id={membersHeadingId}
         tabIndex={-1}
         className="text-sm font-semibold"
       >
         Administration members
       </h3>
+      {(confirmation === null && (localError ?? administration.membersError)) && (
+        <div className="mt-3">
+          <SliceError
+            error={(localError ?? administration.membersError)!}
+            disabled={administration.isLoadingMembers || isMutating}
+            onRetry={() => {
+              setLocalError(null);
+              administration.reloadMembers();
+            }}
+          />
+        </div>
+      )}
       {capabilities.canManageMembers && (
         <form className="mt-3 space-y-3 rounded-md border border-border/70 p-3" onSubmit={addMember}>
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -320,11 +349,11 @@ export function PlatformAdministrationMembers({
               aria-label="Existing administrator account email"
               placeholder="Existing account email"
               autoComplete="email"
-              disabled={administration.isMutating}
+              disabled={isMutating}
               required
             />
             <Button type="submit" disabled={
-              administration.isMutating || !email.trim() || addRoles.length === 0
+              isMutating || !email.trim() || addRoles.length === 0
             }>
               Add administrator
             </Button>
@@ -334,9 +363,9 @@ export function PlatformAdministrationMembers({
               roles={assignableRoles}
               selected={addRoles}
               simple={simpleMode}
-              disabled={administration.isMutating}
-              legend="Initial platform roles"
-              selectLabel="New administrator roles"
+              disabled={isMutating}
+              legend="Initial administration roles"
+              selectLabel="Administration roles for new administrator"
               actionContext="for new administrator"
               onChange={setAddRoles}
             />
@@ -347,7 +376,7 @@ export function PlatformAdministrationMembers({
       <AlertDialog
         open={confirmation !== null}
         onOpenChange={(open) => {
-          if (!open && !administration.isMutating) {
+          if (!open && !isMutating) {
             setConfirmation(null);
             setActionError(null);
           }
@@ -375,21 +404,22 @@ export function PlatformAdministrationMembers({
             )}
             <AlertDialogFooter>
               <AlertDialogCancel asChild>
-                <Button type="button" variant="outline" disabled={administration.isMutating}>Cancel</Button>
+                <Button type="button" variant="outline" disabled={isMutating}>Cancel</Button>
               </AlertDialogCancel>
               <Button
                 type="button"
                 variant={confirmation.action === 'transfer' ? 'default' : 'destructive'}
-                disabled={administration.isMutating}
+                disabled={isMutating}
                 onClick={() => void confirmAction()}
               >
-                {administration.isMutating ? 'Updating…' : memberActionTitle(confirmation.action)}
+                {isMutating ? 'Updating…' : memberActionTitle(confirmation.action)}
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         )}
       </AlertDialog>
 
+      {(!administration.membersError || administration.members.length > 0) && (
       <div className="mt-3 divide-y divide-border/70 rounded-md border border-border/80">
         {administration.members.length === 0 ? (
           <p className="p-6 text-sm text-muted-foreground">No administration members match this view.</p>
@@ -414,34 +444,34 @@ export function PlatformAdministrationMembers({
                       type="button"
                       size="xs"
                       variant="outline"
-                      disabled={administration.isMutating}
+                      disabled={isMutating}
                       aria-expanded={editing === member.membershipId}
-                      aria-controls={`platform-roles-${member.membershipId}`}
+                      aria-controls={rolePanelId(member.membershipId)}
                       onClick={() => setEditing((current) => current === member.membershipId ? null : member.membershipId)}
                     >Roles</Button>
                   )}
                   {capabilities.canManageMembers && member.status === 'active' && !owner && (
-                    <Button type="button" size="xs" variant="outline" aria-haspopup="dialog" disabled={administration.isMutating} onClick={(event) => {
+                    <Button type="button" size="xs" variant="outline" aria-haspopup="dialog" disabled={isMutating} onClick={(event) => {
                       triggerRef.current = event.currentTarget;
                       setActionError(null);
                       setConfirmation({ action: 'suspend', member });
                     }}>Suspend</Button>
                   )}
                   {capabilities.canManageMembers && member.status === 'suspended' && (
-                    <Button type="button" size="xs" variant="outline" disabled={administration.isMutating} onClick={() => void run(
+                    <Button type="button" size="xs" variant="outline" disabled={isMutating} onClick={() => void run(
                       () => administration.updateMember(member.membershipId, { status: 'active' }),
                       `Reactivated ${memberName(member)}`,
                     )}>Reactivate</Button>
                   )}
                   {capabilities.canManageMembers && member.status !== 'removed' && !owner && (
-                    <Button type="button" size="xs" variant="destructive" aria-haspopup="dialog" disabled={administration.isMutating} onClick={(event) => {
+                    <Button type="button" size="xs" variant="destructive" aria-haspopup="dialog" disabled={isMutating} onClick={(event) => {
                       triggerRef.current = event.currentTarget;
                       setActionError(null);
                       setConfirmation({ action: 'remove', member });
                     }}>Remove</Button>
                   )}
                   {capabilities.canTransferOwnership && !actor && member.status === 'active' && (
-                    <Button type="button" size="xs" variant="outline" aria-haspopup="dialog" disabled={administration.isMutating} onClick={(event) => {
+                    <Button type="button" size="xs" variant="outline" aria-haspopup="dialog" disabled={isMutating} onClick={(event) => {
                       triggerRef.current = event.currentTarget;
                       setActionError(null);
                       setConfirmation({ action: 'transfer', member });
@@ -450,28 +480,28 @@ export function PlatformAdministrationMembers({
                 </div>
               </div>
               {editing === member.membershipId && canEditRoles && (
-                <div id={`platform-roles-${member.membershipId}`} className="mt-3 rounded-md border bg-muted/20 p-3">
+                <div id={rolePanelId(member.membershipId)} className="mt-3 rounded-md border bg-muted/20 p-3">
                   {simpleMode ? (
                     <TenantRolePicker
                       roles={assignableRoles}
                       selected={draftRoles.slice(0, 1)}
                       simple
-                      disabled={administration.isMutating}
-                      legend={`Platform role for ${memberName(member)}`}
-                      selectLabel={`Platform role for ${memberName(member)}`}
+                      disabled={isMutating}
+                      legend={`Administration role for ${memberName(member)}`}
+                      selectLabel={`Administration role for ${memberName(member)}`}
                       actionContext={`for ${memberName(member)}`}
                       onChange={setDraftRoles}
                     />
                   ) : (
                     <fieldset className="grid gap-2 sm:grid-cols-2">
-                      <legend className="mb-2 text-xs font-medium">Platform roles for {memberName(member)}</legend>
+                      <legend className="mb-2 text-xs font-medium">Administration roles for {memberName(member)}</legend>
                       {assignableRoles.map((role) => {
                         const checked = draftRoles.includes(role.key);
                         return (
                           <label key={role.key} className="flex items-start gap-2 rounded-md border bg-background p-3 text-sm">
                             <Checkbox
                               checked={checked}
-                              disabled={administration.isMutating || !role.grantable}
+                              disabled={isMutating || !role.grantable}
                               aria-label={`${checked ? 'Remove' : 'Assign'} ${role.label}`}
                               onCheckedChange={(value) => setDraftRoles((current) => value
                                 ? [...new Set([...current, role.key])]
@@ -484,7 +514,7 @@ export function PlatformAdministrationMembers({
                     </fieldset>
                   )}
                   <Button type="button" size="sm" className="mt-3" disabled={
-                    administration.isMutating
+                    isMutating
                     || draftRoles.length === 0
                     || (simpleMode && draftRoles.length !== 1)
                     || sameRoles(member.roles.filter((role) => role !== 'owner'), draftRoles)
@@ -495,12 +525,36 @@ export function PlatformAdministrationMembers({
           );
         })}
       </div>
-      {administration.memberPage?.hasMore && (
+      )}
+      {(!administration.membersError || administration.members.length > 0)
+        && administration.memberPage?.hasMore && (
         <Button type="button" className="mt-3" variant="outline" disabled={administration.isLoadingMoreMembers} onClick={() => void administration.loadMoreMembers()}>
           {administration.isLoadingMoreMembers ? 'Loading…' : 'Load more administrators'}
         </Button>
       )}
     </section>
+  );
+}
+
+function SliceError({
+  error,
+  disabled,
+  onRetry,
+}: {
+  error: string;
+  disabled: boolean;
+  onRetry(): void;
+}) {
+  return (
+    <div
+      role="alert"
+      className="flex flex-col gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between"
+    >
+      <span>{error}</span>
+      <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
   );
 }
 

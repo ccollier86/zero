@@ -461,6 +461,32 @@ switching to that customer scope and using `TenantMemberManagement`; active
 administration scope never implies customer data access. See
 [Platform Administration Organization](../auth/platform-administration.md).
 
+For custom administration UI, prefer the hook's independent config, member,
+and invitation state (`isLoadingConfig`/`configError`,
+`isLoadingMembers`/`membersError`, and
+`isLoadingInvitations`/`invitationsError`) plus their matching reload methods.
+The public invitation policy has an explicit unresolved state through
+`invitationPolicyStatus` and nullable `invitationsEnabled`; no invitation
+transport runs until policy resolves enabled. Aggregate loading, mutation,
+error, and reload fields remain for compatibility.
+Member and invitation paging are independent as well:
+`memberPage`/`isLoadingMoreMembers`/`loadMoreMembers()` and
+`invitationPage`/`isLoadingMoreInvitations`/`loadMoreInvitations()`.
+
+For active-tenant invitation and customer join-request controls,
+`useTenantOnboardingAdministration()` composes three independently fenced
+slices. Protected tenant configuration uses `config`, `isLoadingConfig`,
+`isConfigPermissionDenied`, `configError`, and `reloadConfig()` and continues
+to load even when both public onboarding features are disabled. Invitations
+and join requests each expose their own loading, loading-more, mutation,
+permission-denied, error, reload, and paging fields. Public capability state is
+separate again: `authConfigStatus`/`authConfigError` report the shared public
+config read, while nullable `invitationsEnabled` and `joinRequestsEnabled`
+distinguish unresolved policy from enabled and failed-closed/disabled policy.
+The older aggregate fields remain compatible, but custom panels should use
+the exact slice fields. See
+[Tenant Invitations and Join Requests](../auth/tenant-invitations-and-join-requests.md).
+
 ### User Property Gates
 
 Current-user properties are included in `user.properties`. The frontend barrel
@@ -2274,7 +2300,10 @@ interface AuthActions {
   /** Log in with username/email and password. Returns a session or MFA continuation. */
   login(username: string, password: string): Promise<AuthCompletionResult | null>;
 
-  /** Load public auth config for policy-aware UI. */
+  /**
+   * Force a public-auth-config refresh for imperative code.
+   * Rejects the original current transport, server, or validation failure.
+   */
   getConfig(): Promise<AuthPublicConfig | null>;
 
   /** Request a password reset email. Does not reveal account existence. */
@@ -2351,6 +2380,73 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   return <main>{children}</main>;
 }
 ```
+
+### useAuthConfig
+
+`useAuthConfig()` is the reactive, fail-closed form of the public auth-config
+read. Every consumer attached to the same concrete auth client shares one
+client-scoped controller, immutable snapshot, and ordinary in-flight request.
+Different clients never share config or requests.
+
+```tsx
+function RegistrationEntry() {
+  const authConfig = useAuthConfig();
+
+  if (authConfig.config === null && authConfig.error !== null) {
+    return (
+      <button type="button" onClick={() => { void authConfig.reload(); }}>
+        Retry registration settings
+      </button>
+    );
+  }
+
+  if (authConfig.config === null && authConfig.isLoading) {
+    return <p>Loading registration settings…</p>;
+  }
+
+  return authConfig.canRegister ? <RegisterLink /> : null;
+}
+```
+
+```ts
+interface AuthConfigState {
+  status: 'unknown' | 'loading' | 'ready' | 'error';
+  config: AuthPublicConfig | null;
+  isLoading: boolean;
+  error: string | null;
+  canRegister: boolean;
+  bootstrapRequired: boolean;
+  reload(): Promise<void>;
+}
+```
+
+The states have these meanings:
+
+- `unknown`: no usable client snapshot exists yet, including SSR and the
+  instant after invalidation. Capability checks remain false.
+- `loading`: a request is active. An initial load has `config: null`; a forced
+  reload may retain the previous immutable config while the replacement is in
+  flight.
+- `ready`: `config` is the current immutable public snapshot and `error` is
+  null.
+- `error`: the latest read failed or auth is disabled. `config` is null and
+  `error` contains a browser-safe message, so capability-dependent UI must not
+  treat the feature as merely disabled.
+
+`reload()` forces a live read, aborts and fences any superseded request, and
+publishes the result to every consumer of that client. Load failures are
+reported through frontend auth observability and reflected in state rather
+than thrown by `reload()`; callers should render or retry from the published
+snapshot. The imperative `useAuth().getConfig()` action performs the same
+shared, fenced refresh but preserves the action contract: a successful current
+request returns the immutable config, while its original current transport,
+server, or response-validation failure rejects to the caller after the safe
+error snapshot is published. Superseded imperative refreshes reject with an
+`AbortError` and cannot publish stale config. A successful
+`useAuth().register()` invalidates the shared snapshot before starting a
+best-effort reload, so first-admin bootstrap completion cannot leave
+registration policy cached. Public config remains a UI capability hint; server
+policy is authoritative for every operation.
 
 ### useCurrentUser
 

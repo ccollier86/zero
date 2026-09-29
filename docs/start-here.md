@@ -31,7 +31,7 @@ and data organisms, start with the
 [Component Inventory](./frontend/component-inventory.md).
 For web/server authentication, installation bootstrap, single- or multi-tenant
 operation, simple or advanced authorization, tenant/application administration,
-and packaged access controls, use the [Auth System](./auth/README.md) as the
+and packaged access controls, use [Guardian](./auth/README.md) as the
 canonical subsystem index. It routes to the focused configuration, RBAC,
 onboarding, audit, browser, and installed-app guides without duplicating their
 contracts here.
@@ -59,7 +59,7 @@ modal manager together. See [LaunchBoard](./frontend/launchboard.md) before
 building dashboard/work-queue style apps.
 
 Core backend primitives include ReactiveDB, generated resources, WebSocket
-sync, auth, email, storage, workflows, notifications, AI, vector storage,
+sync, Guardian auth/authorization, email, storage, workflows, notifications, AI, vector storage,
 [PDF rendering](./pdf.md), and [platform tokens](./tokens.md) for one-time
 actions plus resumable public flows.
 

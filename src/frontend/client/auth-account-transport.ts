@@ -41,8 +41,8 @@ export class AuthAccountTransport {
     return this.authenticate('/auth/register', params, 'Registration failed');
   }
 
-  async getConfig(): Promise<AuthPublicConfig> {
-    const response = await fetch(`${this.options.baseUrl}/auth/config`);
+  async getConfig(signal?: AbortSignal): Promise<AuthPublicConfig> {
+    const response = await fetch(`${this.options.baseUrl}/auth/config`, { signal });
     if (!response.ok) {
       throw await responseError(response, 'Failed to load auth config');
     }

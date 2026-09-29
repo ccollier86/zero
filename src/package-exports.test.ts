@@ -578,6 +578,7 @@ export const serverSymbols = {
 
 const clientSmokeSource = `
 import {
+  AdministrationScopeGate as AdministrationScopeGateSubpath,
   ApplicationAccessManagement as ApplicationAccessManagementSubpath,
   AuthFlowContinuation as AuthFlowContinuationSubpath,
   ControlPlaneAuditViewer as ControlPlaneAuditViewerSubpath,
@@ -635,6 +636,7 @@ import { ModalManager } from '@zero/framework/modals';
 import { AppProvider } from '@zero/framework/react/app-provider';
 import {
   useApplicationAccess as useApplicationAccessSubpath,
+  useAuthConfig as useAuthConfigSubpath,
   useAuthAudit as useAuthAuditSubpath,
   useAuthorizationScopeBoundary as useAuthorizationScopeBoundarySubpath,
   useAuthorization as useAuthorizationSubpath,
@@ -646,10 +648,18 @@ import {
   useDomainOnboarding as useDomainOnboardingSubpath,
   useTenantDomainAdministration as useTenantDomainAdministrationSubpath,
   useTenantMembers as useTenantMembersSubpath,
+  useTenantOnboardingAdministration as useTenantOnboardingAdministrationSubpath,
   useTenantAppShellWorkspaces as useTenantAppShellWorkspacesSubpath,
   useTenantSwitcher as useTenantSwitcherSubpath,
 } from '@zero/framework/react/hooks';
+import type {
+  UsePlatformAdministrationOptions as UsePlatformAdministrationOptionsSubpath,
+  UsePlatformAdministrationResult as UsePlatformAdministrationResultSubpath,
+  UseTenantOnboardingAdministrationOptions as UseTenantOnboardingAdministrationOptionsSubpath,
+  UseTenantOnboardingAdministrationResult as UseTenantOnboardingAdministrationResultSubpath,
+} from '@zero/framework/react/hooks';
 import {
+  AdministrationScopeGate,
   ApplicationAccessManagement,
   AuthFlowContinuation,
   ControlPlaneAuditViewer,
@@ -692,6 +702,7 @@ import {
   TypewriterEffect,
   useCollection,
   useApplicationAccess,
+  useAuthConfig,
   useAuthAudit,
   useDomainOnboarding,
   useAuthorization,
@@ -704,6 +715,7 @@ import {
   useResourceList,
   useTenantDomainAdministration,
   useTenantMembers,
+  useTenantOnboardingAdministration,
   useTenantAppShellWorkspaces,
   useTenantSwitcher,
   TenantCreationForm,
@@ -720,14 +732,22 @@ import { createIdentityId } from '@zero/framework/sync/identity';
 	import type { ComponentProps } from 'react';
 import type { ToasterProps } from '@zero/framework/react';
 import type {
+  AdministrationScopeGateProps,
   ApplicationAccessManagementProps,
   AuthApplicationAdminSdkSurface,
   AuthAuditEvent,
   AuthAuditSdkSurface,
+  AuthPlatformAddMemberParams,
   AuthPlatformAdminSdkSurface,
+  AuthPlatformIssueInvitationParams,
+  AuthPlatformRoleSelection,
   AuthPlatformTenantPage,
+  AuthPlatformUpdateMemberInput,
+  AuthPlatformUpdateMemberParams,
   ControlPlaneAuditViewerProps,
   AuthAuthorizationState,
+  AuthConfigState,
+  AuthConfigStatus,
   AuthorizationScopeBoundary,
   AuthDomainOnboardingCompletion,
   AuthTenantDomainAdministration,
@@ -744,15 +764,26 @@ import type {
   TenantSelectionFormProps,
   TenantSwitcherProps,
   UseTenantAppShellWorkspacesOptions,
+  UsePlatformAdministrationOptions,
   UsePlatformAdministrationResult,
   UsePlatformTenantsResult,
+  UseTenantOnboardingAdministrationOptions,
+  UseTenantOnboardingAdministrationResult,
 } from '@zero/framework/react';
 
 	const row: Row = {};
 	const toasterProps: ToasterProps = {};
+	const administrationScopeGateProps = {} as AdministrationScopeGateProps;
+	const authConfigState = {} as AuthConfigState;
+	const authConfigStatus = 'ready' as AuthConfigStatus;
 	const applicationAccessProps: ApplicationAccessManagementProps = {};
 	const applicationAdmin = {} as AuthApplicationAdminSdkSurface;
 	const platformAdmin = {} as AuthPlatformAdminSdkSurface;
+	const platformAddMember = {} as AuthPlatformAddMemberParams;
+	const platformIssueInvitation = {} as AuthPlatformIssueInvitationParams;
+	const platformRoleSelection = {} as AuthPlatformRoleSelection;
+	const platformUpdateMemberInput = {} as AuthPlatformUpdateMemberInput;
+	const platformUpdateMember = {} as AuthPlatformUpdateMemberParams;
 	const platformTenantPage = {} as AuthPlatformTenantPage;
 	const auditEvent = {} as AuthAuditEvent;
 	const auditSdk = {} as AuthAuditSdkSurface;
@@ -783,7 +814,14 @@ import type {
 	const tenantAppShellOptions = {} as UseTenantAppShellWorkspacesOptions;
 	const tenantAppShellWorkspaces = {} as AppShellWorkspaceConfig;
 	const platformAdministrationResult = {} as UsePlatformAdministrationResult;
+	const platformAdministrationOptions = {} as UsePlatformAdministrationOptions;
 	const platformTenantsResult = {} as UsePlatformTenantsResult;
+	const tenantOnboardingAdministrationOptions = {} as UseTenantOnboardingAdministrationOptions;
+	const tenantOnboardingAdministrationResult = {} as UseTenantOnboardingAdministrationResult;
+	const platformAdministrationOptionsSubpath = {} as UsePlatformAdministrationOptionsSubpath;
+	const platformAdministrationResultSubpath = {} as UsePlatformAdministrationResultSubpath;
+	const tenantOnboardingAdministrationOptionsSubpath = {} as UseTenantOnboardingAdministrationOptionsSubpath;
+	const tenantOnboardingAdministrationResultSubpath = {} as UseTenantOnboardingAdministrationResultSubpath;
 	const clientPlatformAdmin = {} as Client['platformAdmin'];
 	type MasterDetailProps = ComponentProps<typeof MasterDetailView>;
 	const masterDetailLazySource: MasterDetailProps['source'] = {
@@ -793,6 +831,8 @@ import type {
 	};
 
 export const clientSymbols = {
+  AdministrationScopeGate,
+  AdministrationScopeGateSubpath,
   ApplicationAccessManagement,
   ApplicationAccessManagementSubpath,
   AuthFlowContinuation,
@@ -902,6 +942,8 @@ export const clientSymbols = {
   useCollection,
   useApplicationAccess,
   useApplicationAccessSubpath,
+  useAuthConfig,
+  useAuthConfigSubpath,
   useAuthAudit,
   useAuthAuditSubpath,
   useDomainOnboarding,
@@ -925,6 +967,8 @@ export const clientSymbols = {
   useTenantDomainAdministrationSubpath,
   useTenantMembers,
   useTenantMembersSubpath,
+  useTenantOnboardingAdministration,
+  useTenantOnboardingAdministrationSubpath,
   useTenantAppShellWorkspaces,
   useTenantAppShellWorkspacesSubpath,
   useTenantSwitcher,
@@ -935,12 +979,27 @@ export const clientSymbols = {
   projectKanbanMove,
   row,
   toasterProps,
+  administrationScopeGateProps,
+  authConfigState,
+  authConfigStatus,
   applicationAccessProps,
   applicationAdmin,
   platformAdmin,
+  platformAddMember,
+  platformIssueInvitation,
+  platformRoleSelection,
+  platformUpdateMemberInput,
+  platformUpdateMember,
   platformTenantPage,
   platformAdministrationResult,
+  platformAdministrationOptions,
+  platformAdministrationOptionsSubpath,
+  platformAdministrationResultSubpath,
   platformTenantsResult,
+  tenantOnboardingAdministrationResult,
+  tenantOnboardingAdministrationOptions,
+  tenantOnboardingAdministrationOptionsSubpath,
+  tenantOnboardingAdministrationResultSubpath,
   clientPlatformAdmin,
   auditEvent,
   auditSdk,

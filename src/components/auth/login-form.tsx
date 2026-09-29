@@ -43,6 +43,7 @@ import {
   isAuthFlowContinuationResult,
 } from './auth-continuation';
 import { useNativeAuthRoute, useNativeLoginHint } from './use-native-auth-route';
+import { AuthConfigLoadState } from './auth-config-load-state';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -154,6 +155,12 @@ function LoginForm({
       aria-busy={isLoading}
     >
       <AuthHeader title="Sign in" description="Enter your credentials to continue" />
+
+      <AuthConfigLoadState
+        state={authConfig}
+        loadingMessage="Loading account options…"
+        unavailableMessage="Account registration and recovery options could not be loaded. You can still sign in."
+      />
 
       <div className="space-y-4">
         <div className="space-y-1.5">

@@ -48,6 +48,12 @@ import type {
   RegisterParams,
 } from './auth-client';
 import { createAuthDisabledError } from './auth-client';
+import {
+  getAuthConfigController,
+  type AuthConfigClient,
+  type AuthConfigSnapshot,
+  type AuthConfigStatus,
+} from './auth-config-controller';
 import { shouldUseSsrFallback, useClientMaybe } from './client-context';
 import {
   isAuthorizationScopeCallbackCurrent,
@@ -86,6 +92,7 @@ export type {
   AuthUser,
   RegisterParams,
 };
+export type { AuthConfigStatus } from './auth-config-controller';
 
 export interface AuthState {
   user: AuthUser | null;
@@ -253,7 +260,12 @@ export function useAuth(): AuthState & AuthActions {
 
   const register = useCallback(
     async (params: RegisterParams) => {
-      if (authClient) return runScopeChangingAction(() => authClient.register(params));
+      if (authClient) {
+        return runRegistrationWithConfigRefresh(
+          authClient,
+          () => runScopeChangingAction(() => authClient.register(params)),
+        );
+      }
       else if (authDisabled) throw createAuthDisabledError();
       return null;
     },
@@ -270,7 +282,7 @@ export function useAuth(): AuthState & AuthActions {
 
   const getConfig = useCallback(
     async () => {
-      if (authClient) return authClient.getConfig();
+      if (authClient) return getAuthConfigController(authClient).refreshOrThrow();
       if (authDisabled) throw createAuthDisabledError();
       return null;
     },
@@ -522,7 +534,23 @@ export function useAuth(): AuthState & AuthActions {
   };
 }
 
+/** @internal Keep successful registration and bootstrap UI policy coherent. */
+export async function runRegistrationWithConfigRefresh<T>(
+  authClient: AuthConfigClient,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const result = await operation();
+  const configController = getAuthConfigController(authClient);
+  configController.invalidate();
+  // Registration can complete first-admin bootstrap and therefore change
+  // public registration policy. Reload best-effort without turning a
+  // successful account mutation into a client-visible failure.
+  void configController.ensureCurrent();
+  return result;
+}
+
 export interface AuthConfigState {
+  status: AuthConfigStatus;
   config: AuthPublicConfig | null;
   isLoading: boolean;
   error: string | null;
@@ -541,36 +569,30 @@ export function useAuthConfig(): AuthConfigState {
   const client = useClientMaybe() as InternalClient | null;
   const authClient = client?.auth ?? null;
   const authDisabled = client !== null && authClient === null;
-  const [config, setConfig] = useState<AuthPublicConfig | null>(null);
-  const [isLoading, setIsLoading] = useState(() => authClient !== null);
-  const [error, setError] = useState<string | null>(null);
+  const controller = authClient ? getAuthConfigController(authClient) : null;
+
+  const subscribe = useCallback(
+    (callback: () => void) => controller?.subscribe(callback) ?? NOOP_UNSUB,
+    [controller],
+  );
+  const getSnapshot = useCallback(
+    () => controller?.getSnapshot()
+      ?? (authDisabled ? AUTH_DISABLED_CONFIG_SNAPSHOT : SSR_AUTH_CONFIG_SNAPSHOT),
+    [authDisabled, controller],
+  );
+  const state = useSyncExternalStore(subscribe, getSnapshot, () => SSR_AUTH_CONFIG_SNAPSHOT);
 
   const reload = useCallback(async () => {
-    if (!authClient) {
-      setConfig(null);
-      setIsLoading(false);
-      setError(authDisabled ? createAuthDisabledError().message : null);
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-    try {
-      setConfig(await authClient.getConfig());
-    } catch (err) {
-      setConfig(null);
-      setError(err instanceof Error ? err.message : 'Failed to load auth config');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [authClient, authDisabled]);
+    if (controller) await controller.refresh();
+  }, [controller]);
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    if (controller) void controller.ensureCurrent();
+  }, [controller]);
 
   if (shouldUseSsrFallback(client, 'useAuthConfig')) {
     return {
+      status: 'unknown',
       config: null,
       isLoading: false,
       error: null,
@@ -580,10 +602,12 @@ export function useAuthConfig(): AuthConfigState {
     };
   }
 
+  const config = state.config;
   return {
+    status: state.status,
     config,
-    isLoading,
-    error,
+    isLoading: state.status === 'unknown' || state.status === 'loading',
+    error: state.error,
     canRegister:
       config?.registration.registrationEnabled
       ?? config?.registration.publicRegistrationEnabled
@@ -592,6 +616,18 @@ export function useAuthConfig(): AuthConfigState {
     reload,
   };
 }
+
+const SSR_AUTH_CONFIG_SNAPSHOT: AuthConfigSnapshot = Object.freeze({
+  status: 'unknown',
+  config: null,
+  error: null,
+});
+
+const AUTH_DISABLED_CONFIG_SNAPSHOT: AuthConfigSnapshot = Object.freeze({
+  status: 'error',
+  config: null,
+  error: createAuthDisabledError().message,
+});
 
 /**
  * Return the current authenticated user, or null when logged out/loading.

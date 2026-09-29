@@ -211,8 +211,11 @@ emitFrontendCode(FRONTEND_OBS_CODES.FRONTEND_RENDER_ERROR, {
 });
 ```
 
-`ErrorBoundary`, hydration failures, and notification receipt failures already
-emit through this frontend boundary.
+`ErrorBoundary`, hydration failures, notification receipt failures, public auth
+configuration loads, and packaged auth control-plane actions already emit
+through this frontend boundary. Auth action events carry stable action/error
+codes; proof-bearing and identity-sensitive flows use code-only reporting so
+request values cannot be copied into the event.
 
 ## Auth Operational Failure Contract
 
@@ -226,8 +229,22 @@ postconditions, and external delivery failures.
 | `AUTH_START_FAILED` | The one shared Auth startup promise rejected. Request admission awaits that same promise, and the plugin contains the failed runtime by stopping it, unregistering compatibility state, and closing a standalone listener when present. Metadata is limited to the plugin identity; cleanup/listener failures use the normal app lifecycle failure event. |
 | `AUTH_STATE_INVARIANT_FAILED` | An internal state, wiring, transaction-callback, or mutation-postcondition check failed closed. Request-path services use the owning app's emitter and bounded `component` / `invariant` metadata; identifiers, submitted values, and credentials are not metadata. The operation throws `AuthError` with the same machine code and rolls back when it is inside a transaction. |
 | `AUTH_NATIVE_REQUEST_FAILED` | A native authorize, token, revoke, tenant-list, or tenant-switch boundary hid an unexpected internal or unavailable-runtime failure behind a protocol-safe OAuth response. Expected OAuth/OIDC rejections—including `NativeAuthorizationError` and `NativeTokenError` outcomes—do not create this operational error. Only the bounded operation name is emitted; the provider/database error, form body, and tokens are omitted. |
-| `AUTH_ADMIN_EMAIL_VERIFICATION_DELIVERY_FAILED`, `AUTH_ADMIN_SETUP_DELIVERY_FAILED`, `AUTH_ADMIN_PASSWORD_RESET_DELIVERY_FAILED` | Administrator-triggered verification, setup, and reset delivery failed. Events attribute the actor and target IDs and include cleanup success plus a stable failure classification and retryability; recipient/provider text and the original error are omitted. `AUTH_ADMIN_USER_SETUP_DELIVERY_FAILED` separately records whether compensating removal of a newly provisioned user succeeded. |
+| `AUTH_DOMAIN_START_FAILED` | An admitted verified-domain `/start` request encountered an unexpected identity-service, runtime-readiness, or mailbox-queue failure. The public response remains `{ accepted: true }` to prevent enumeration. Expected invalid/expired continuations and ineligible identities remain silently suppressed. An unexpected private cause is retained only in the app-local event `error` channel; response data and metadata do not contain it. |
+| `AUTH_DOMAIN_DNS_UNAVAILABLE`, `AUTH_DOMAIN_WORKER_FAILED` | A bounded DNS lookup was unavailable or the reverification worker failed. Resolver wrappers retain the original lookup as an internal cause and pass it through the event `error` channel for operators. Public Auth errors stay generic, while metadata is limited to bounded claim/tenant identifiers or the worker error class. |
+| `AUTH_ADMIN_EMAIL_VERIFICATION_DELIVERY_FAILED`, `AUTH_ADMIN_SETUP_DELIVERY_FAILED`, `AUTH_ADMIN_PASSWORD_RESET_DELIVERY_FAILED` | Administrator-triggered verification, setup, and reset delivery failed. Events attribute the actor and target IDs and include cleanup success plus a stable failure classification and retryability; recipient/provider text and the original error are omitted. `AUTH_ADMIN_USER_SETUP_DELIVERY_FAILED` separately records whether compensating removal of a newly provisioned user succeeded after the provider attempt failed. |
+| `AUTH_ADMIN_USER_PROVISIONING_FAILED` | Administrator-created-user setup failed outside provider delivery, such as receipt renewal, exact token binding, or the final password-gate transaction. Metadata identifies the stable `phase` and whether exact-state compensation removed the untouched account. |
+| `AUTH_ADMIN_USER_PROVISIONING_RECOVERED` | Startup reconciled an expired administrator-created-user receipt. `cleanupSucceeded` says whether the exact untouched provisional identity was removed; `false` means newer identity or authority state was preserved and only the stale marker was retired. |
+| `AUTH_MFA_EMAIL_DELIVERY_FAILED` | An MFA setup/login OTP could not be delivered. Safe metadata contains only the bounded `source` (`setup` or `login`) and `cleanupSucceeded`; the user ID uses the event's dedicated field. Exact rollback receipts consume the unfinished OTP and, for setup, disable only the still-pending method. A receipt mismatch separately emits `AUTH_STATE_INVARIANT_FAILED`. |
 | `FRONTEND_AUTH_ACTION_FAILED` | A current-scope load or mutation in the application-access, Administration Organization, customer-organization, tenant-member, tenant-onboarding, or tenant-switcher hooks failed. One shared reporter emits the bounded action family and safe machine code; response details are not copied into metadata. |
+
+Transaction-coupled Auth success signals run only after the outermost
+ReactiveDB commit. Account-link, verified-domain mailbox-proof, and
+tenant-invitation outbox enqueue success signals and worker wakes, plus
+verified-domain proof and retained-request success events, do not run when a
+surrounding transaction rolls back. Duplicate/capacity suppression describes
+the attempted request immediately, never emits the durable-enqueued code, and
+never wakes the worker. This keeps operational accounting and worker activity
+aligned with durable state.
 
 Auth HTTP boundaries preserve actionable messages for expected 4xx
 `AuthError`s. For a 5xx `AuthError`, the `/auth` namespace, Auth middleware,
@@ -284,6 +301,7 @@ The first implementation routes these platform paths through the sink:
 - router layout-config import failures
 - frontend ErrorBoundary and hydration failures
 - frontend auth session redirects
+- frontend public-auth-config retrieval and auth control-plane action failures
 - frontend notification receipt failures
 - frontend storage management action failures
 - migrator library logs

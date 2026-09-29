@@ -58,7 +58,7 @@ describe('global-role presentation', () => {
   test('uses an explicit platform-role label in generated forms and detail headers', () => {
     const schema = createUserManagementSchema(
       normalizeRoleOptions([user], undefined, 'multi'),
-      'Platform role',
+      'Global identity role',
     );
     const header = renderToStaticMarkup(createElement(UserDetailHeader, {
       user,
@@ -70,9 +70,9 @@ describe('global-role presentation', () => {
       onSubmit: async () => {},
     }));
 
-    expect(schema.fields.get('role')?.label).toBe('Platform role');
+    expect(schema.fields.get('role')?.label).toBe('Global identity role');
     expect(header).toContain('Platform administrator');
-    expect(createForm).toContain('Platform role');
+    expect(createForm).toContain('Global identity role');
     expect(createForm).toContain('Workspace access is managed separately.');
   });
 });

@@ -284,10 +284,6 @@ function ApplicationAccessManagementScope({
           <div role="status" aria-live="polite" className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
             Loading application access…
           </div>
-        ) : !access.isAvailable ? (
-          <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-            Application access controls require the advanced single-application authorization profile.
-          </div>
         ) : access.isDenied ? (
           <div role="alert" className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
             You do not have permission to view application access.
@@ -304,6 +300,10 @@ function ApplicationAccessManagementScope({
             >
               Retry
             </Button>
+          </div>
+        ) : !access.isAvailable ? (
+          <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+            Application access controls require the advanced single-application authorization profile.
           </div>
         ) : !access.config ? (
           <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
