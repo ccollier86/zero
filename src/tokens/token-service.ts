@@ -27,6 +27,9 @@ import { PLATFORM_TOKEN_DEFAULTS, PlatformTokenError } from './token-types';
 import { PlatformTokenStore, type StoredPlatformActionTokenRecord, type StoredPlatformResumeTokenRecord } from './token-store';
 import { createOpaqueToken, hashToken, parseTokenTTL } from './token-utils';
 
+/** Stable emission boundary for standalone or app-bound platform token services. */
+export type PlatformTokenCodeEmitter = typeof emitPlatformCode;
+
 /** Framework-neutral service for generic platform action and resume tokens. */
 export class PlatformTokenService {
   private readonly actionTokenTTL: string;
@@ -35,11 +38,17 @@ export class PlatformTokenService {
 
   constructor(
     private readonly store: PlatformTokenStore,
-    config: PlatformTokenServiceConfig = {}
+    config: PlatformTokenServiceConfig = {},
+    private readonly emitCode: PlatformTokenCodeEmitter = emitPlatformCode,
   ) {
     this.actionTokenTTL = config.actionTokenTTL ?? PLATFORM_TOKEN_DEFAULTS.actionTokenTTL;
     this.resumeTokenTTL = config.resumeTokenTTL ?? PLATFORM_TOKEN_DEFAULTS.resumeTokenTTL;
     this.actionTokenCooldown = config.actionTokenCooldown ?? PLATFORM_TOKEN_DEFAULTS.actionTokenCooldown;
+  }
+
+  /** Opaque identity used to prove shared transaction ownership. */
+  getTransactionDomain(): object {
+    return this.store.getTransactionDomain();
   }
 
   /**
@@ -82,7 +91,7 @@ export class PlatformTokenService {
       metadata,
     });
 
-    emitPlatformCode(OBS_CODES.TOKENS_ACTION_CREATED, {
+    this.emitCode(OBS_CODES.TOKENS_ACTION_CREATED, {
       userId: subject?.type === 'user' ? subject.id : undefined,
       metadata: {
         tokenId: stored.tokenId,
@@ -119,23 +128,30 @@ export class PlatformTokenService {
     rawToken: string,
     options: PlatformActionTokenLookupOptions = {}
   ): PlatformActionTokenRecord {
-    const stored = this.requireValidActionToken(rawToken, options);
-    const consumed = this.store.consumeActionToken(stored.tokenId);
-    if (!consumed) {
-      emitTokenRejected('action', stored, 'consumed');
-      throw new PlatformTokenError('Action token has already been used', 'TOKEN_CONSUMED', 400);
-    }
+    return this.store.transaction(() => {
+      const stored = this.requireValidActionToken(rawToken, options);
+      const consumedAt = Date.now();
+      const consumed = this.store.consumeActionToken(stored.tokenId, consumedAt);
+      if (!consumed) {
+        emitTokenRejected(this.emitCode, 'action', stored, 'consumed');
+        throw new PlatformTokenError(
+          'Action token has already been used',
+          'TOKEN_CONSUMED',
+          400,
+        );
+      }
 
-    emitPlatformCode(OBS_CODES.TOKENS_ACTION_CONSUMED, {
-      userId: stored.subject?.type === 'user' ? stored.subject.id : undefined,
-      metadata: {
-        tokenId: stored.tokenId,
-        purpose: stored.purpose,
-        scope: stored.scope ?? undefined,
-      },
+      this.store.afterCommit(() => this.emitCode(OBS_CODES.TOKENS_ACTION_CONSUMED, {
+        userId: stored.subject?.type === 'user' ? stored.subject.id : undefined,
+        metadata: {
+          tokenId: stored.tokenId,
+          purpose: stored.purpose,
+          scope: stored.scope ?? undefined,
+        },
+      }));
+
+      return publicActionRecord({ ...stored, consumedAt });
     });
-
-    return publicActionRecord({ ...stored, consumedAt: Date.now() });
   }
 
   /** Revoke an action token by raw token value without consuming its meaning. */
@@ -184,7 +200,7 @@ export class PlatformTokenService {
       metadata: options.metadata ?? {},
     });
 
-    emitPlatformCode(OBS_CODES.TOKENS_RESUME_CREATED, {
+    this.emitCode(OBS_CODES.TOKENS_RESUME_CREATED, {
       userId: subject?.type === 'user' ? subject.id : undefined,
       metadata: {
         tokenId: stored.tokenId,
@@ -214,7 +230,7 @@ export class PlatformTokenService {
       ? stored
       : this.store.touchResumeToken(stored.tokenId, tokenHash) ?? stored;
 
-    emitPlatformCode(OBS_CODES.TOKENS_RESUME_VERIFIED, {
+    this.emitCode(OBS_CODES.TOKENS_RESUME_VERIFIED, {
       userId: touched.subject?.type === 'user' ? touched.subject.id : undefined,
       metadata: {
         tokenId: touched.tokenId,
@@ -257,11 +273,11 @@ export class PlatformTokenService {
     });
 
     if (!replacement) {
-      emitTokenRejected('resume', stored, 'revoked');
+      emitTokenRejected(this.emitCode, 'resume', stored, 'revoked');
       throw new PlatformTokenError('Resume token has been revoked', 'TOKEN_REVOKED', 400);
     }
 
-    emitPlatformCode(OBS_CODES.TOKENS_RESUME_ROTATED, {
+    this.emitCode(OBS_CODES.TOKENS_RESUME_ROTATED, {
       userId: replacement.subject?.type === 'user' ? replacement.subject.id : undefined,
       metadata: {
         tokenId: replacement.tokenId,
@@ -281,7 +297,7 @@ export class PlatformTokenService {
     if (!stored) return false;
     const revoked = this.store.revokeResumeToken(stored.tokenId);
     if (revoked) {
-      emitPlatformCode(OBS_CODES.TOKENS_RESUME_REVOKED, {
+      this.emitCode(OBS_CODES.TOKENS_RESUME_REVOKED, {
         userId: stored.subject?.type === 'user' ? stored.subject.id : undefined,
         metadata: {
           tokenId: stored.tokenId,
@@ -304,7 +320,7 @@ export class PlatformTokenService {
     const normalizedTokenId = normalizeRequiredValue(tokenId, 'resume token id');
     const revoked = this.store.revokeResumeToken(normalizedTokenId);
     if (revoked) {
-      emitPlatformCode(OBS_CODES.TOKENS_RESUME_REVOKED, {
+      this.emitCode(OBS_CODES.TOKENS_RESUME_REVOKED, {
         metadata: { tokenId: normalizedTokenId },
       });
     }
@@ -322,29 +338,29 @@ export class PlatformTokenService {
   ): StoredPlatformActionTokenRecord {
     const stored = this.store.getActionTokenByHash(hashToken(rawToken));
     if (!stored) {
-      emitPlatformCode(OBS_CODES.TOKENS_ACTION_REJECTED, {
+      this.emitCode(OBS_CODES.TOKENS_ACTION_REJECTED, {
         metadata: { reason: 'missing' },
       });
       throw new PlatformTokenError('Action token is invalid', 'TOKEN_INVALID', 400);
     }
 
     if (options.purposes && !options.purposes.includes(stored.purpose)) {
-      emitTokenRejected('action', stored, 'purpose');
+      emitTokenRejected(this.emitCode, 'action', stored, 'purpose');
       throw new PlatformTokenError('Action token is invalid', 'TOKEN_INVALID', 400);
     }
 
     if (options.scope !== undefined && stored.scope !== normalizeOptionalValue(options.scope)) {
-      emitTokenRejected('action', stored, 'scope');
+      emitTokenRejected(this.emitCode, 'action', stored, 'scope');
       throw new PlatformTokenError('Action token is invalid', 'TOKEN_INVALID', 400);
     }
 
     if (stored.consumedAt !== null) {
-      emitTokenRejected('action', stored, 'consumed');
+      emitTokenRejected(this.emitCode, 'action', stored, 'consumed');
       throw new PlatformTokenError('Action token has already been used', 'TOKEN_CONSUMED', 400);
     }
 
     if (stored.expiresAt < Date.now()) {
-      emitTokenRejected('action', stored, 'expired');
+      emitTokenRejected(this.emitCode, 'action', stored, 'expired');
       throw new PlatformTokenError('Action token has expired', 'TOKEN_EXPIRED', 400);
     }
 
@@ -357,29 +373,29 @@ export class PlatformTokenService {
   ): StoredPlatformResumeTokenRecord {
     const stored = this.store.getResumeTokenByHash(tokenHash);
     if (!stored) {
-      emitPlatformCode(OBS_CODES.TOKENS_RESUME_REJECTED, {
+      this.emitCode(OBS_CODES.TOKENS_RESUME_REJECTED, {
         metadata: { reason: 'missing' },
       });
       throw new PlatformTokenError('Resume token is invalid', 'TOKEN_INVALID', 400);
     }
 
     if (options.flow !== undefined && stored.flow !== normalizeRequiredValue(options.flow, 'flow')) {
-      emitTokenRejected('resume', stored, 'flow');
+      emitTokenRejected(this.emitCode, 'resume', stored, 'flow');
       throw new PlatformTokenError('Resume token is invalid', 'TOKEN_INVALID', 400);
     }
 
     if (options.resource !== undefined && !sameResource(stored.resource, normalizeResource(options.resource))) {
-      emitTokenRejected('resume', stored, 'resource');
+      emitTokenRejected(this.emitCode, 'resume', stored, 'resource');
       throw new PlatformTokenError('Resume token is invalid', 'TOKEN_INVALID', 400);
     }
 
     if (stored.revokedAt !== null) {
-      emitTokenRejected('resume', stored, 'revoked');
+      emitTokenRejected(this.emitCode, 'resume', stored, 'revoked');
       throw new PlatformTokenError('Resume token has been revoked', 'TOKEN_REVOKED', 400);
     }
 
     if (stored.expiresAt < Date.now()) {
-      emitTokenRejected('resume', stored, 'expired');
+      emitTokenRejected(this.emitCode, 'resume', stored, 'expired');
       throw new PlatformTokenError('Resume token has expired', 'TOKEN_EXPIRED', 400);
     }
 
@@ -405,7 +421,7 @@ export class PlatformTokenService {
     });
     if (recent === 0) return;
 
-    emitPlatformCode(OBS_CODES.TOKENS_ACTION_REJECTED, {
+    this.emitCode(OBS_CODES.TOKENS_ACTION_REJECTED, {
       userId: params.subject?.type === 'user' ? params.subject.id : undefined,
       metadata: {
         purpose: params.purpose,
@@ -483,12 +499,13 @@ function sameResource(
 }
 
 function emitTokenRejected(
+  emitCode: PlatformTokenCodeEmitter,
   family: 'action' | 'resume',
   record: StoredPlatformActionTokenRecord | StoredPlatformResumeTokenRecord,
   reason: string
 ): void {
   const isAction = family === 'action';
-  emitPlatformCode(isAction ? OBS_CODES.TOKENS_ACTION_REJECTED : OBS_CODES.TOKENS_RESUME_REJECTED, {
+  emitCode(isAction ? OBS_CODES.TOKENS_ACTION_REJECTED : OBS_CODES.TOKENS_RESUME_REJECTED, {
     userId: record.subject?.type === 'user' ? record.subject.id : undefined,
     metadata: {
       tokenId: record.tokenId,

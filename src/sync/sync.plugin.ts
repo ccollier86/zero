@@ -37,12 +37,16 @@ import { deliverSyncChange } from './sync-change-delivery';
 import { clearSyncBackpressure, sendSyncWire } from './sync-wire-send';
 import { SyncMutationReceiptStore } from './sync-mutation-receipt-store';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode, warnPlatform } from '../observability/sink';
+import {
+  emitPlatformCode,
+  emitPlatformCodeTo,
+} from '../observability/sink';
 import {
   clearPlatformSQLiteService,
   setPlatformSQLiteService,
 } from '../persistence';
 import type {
+  ReactiveDBPlatformCodeEmitter,
   SyncAuthConfig,
   SyncAuthContext,
   SyncPluginConfig,
@@ -51,8 +55,15 @@ import type {
 import { SYNC_TABLE_MUTATION_VALIDATOR } from './types';
 import { SYNC_OUTGOING_BACKPRESSURE_LIMIT } from './types';
 import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
-import { ZERO_SQLITE_SERVICE, ZERO_SYNC_DB } from '../runtime/service-keys';
-import type { PlatformCodeDefinition } from '../observability/types';
+import {
+  ZERO_OBSERVABILITY_RUNTIME,
+  ZERO_SQLITE_SERVICE,
+  ZERO_SYNC_DB,
+} from '../runtime/service-keys';
+import type {
+  PlatformCodeDefinition,
+  PlatformCodeEmitOptions,
+} from '../observability/types';
 
 interface SyncRuntime {
   db: ReactiveDB;
@@ -103,7 +114,31 @@ export function createSyncPlugin(config: SyncPluginConfig) {
   assertMultiTenantResourceClassification(config);
   let connectionCounter = 0;
   const policy = config.policy ?? allowAllSyncPolicy;
-  const db = createReactiveDB(config.db);
+  const observabilityRuntime = config.runtime?.require(ZERO_OBSERVABILITY_RUNTIME);
+  const emitCode: ReactiveDBPlatformCodeEmitter = observabilityRuntime
+    ? (definition, options) => emitPlatformCodeTo(
+      observabilityRuntime,
+      definition,
+      options,
+    )
+    : config.db.emitCode ?? emitPlatformCode;
+  const reportSyncCode = (
+    definition: PlatformCodeDefinition,
+    options?: PlatformCodeEmitOptions,
+  ): void => {
+    try {
+      const outcome = emitCode(definition, options);
+      if (isPromiseLike(outcome)) {
+        void Promise.resolve(outcome).catch(() => {});
+      }
+    } catch {
+      // Observability is best-effort and cannot disrupt Sync lifecycle work.
+    }
+  };
+  const db = createReactiveDB({
+    ...config.db,
+    emitCode,
+  });
   const cleanupOnCompositionFailure: Array<() => void> = [() => db.dispose()];
 
   try {
@@ -192,7 +227,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     if (sqlite) attempt(() => clearPlatformSQLiteService(sqlite));
     attempt(() => db.dispose());
     if (startEventEmitted) {
-      attempt(() => emitPlatformCode(OBS_CODES.SYNC_STOPPED, {
+      attempt(() => reportSyncCode(OBS_CODES.SYNC_STOPPED, {
         metadata: { db: databaseDescription },
       }));
     }
@@ -205,7 +240,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
   ): void => {
     if (runtime.replicaLogInvalid) return;
     runtime.replicaLogInvalid = true;
-    emitPlatformCode(definition, { error });
+    reportSyncCode(definition, { error });
     const sockets = [...openSockets];
     try {
       socketAuth.invalidateAll(1012, 'Sync replica history invalid');
@@ -322,6 +357,13 @@ export function createSyncPlugin(config: SyncPluginConfig) {
               );
             }
             if (change.table === 'room_members') {
+              // Room membership is live read authority, not just row data.
+              // Re-evaluate every authenticated socket even when it did not
+              // subscribe to room_members; row filters observe the revision
+              // synchronously while this full policy refresh completes.
+              void socketAuth.revalidateAll().catch(() => {
+                socketAuth.invalidateAll(1011, 'Sync authority revalidation failed');
+              });
               void runtime.ephemeralChannel?.revalidateAll();
             }
             // Row filters/projectors are authorization code. Any exception must
@@ -360,7 +402,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
           runtime.unsubscribeExternalChanges = db.startExternalChangePolling({
             intervalMs: replicaPolling.intervalMs,
             onGap: (gap) => {
-              emitPlatformCode(OBS_CODES.SYNC_REPLICA_HISTORY_GAP, {
+              reportSyncCode(OBS_CODES.SYNC_REPLICA_HISTORY_GAP, {
                 metadata: { ...gap },
               });
               if (config.resourcePolicy?.observeChange
@@ -385,21 +427,21 @@ export function createSyncPlugin(config: SyncPluginConfig) {
               invalidateSyncRuntime(error, OBS_CODES.SYNC_REPLICA_POLL_FAILED);
             },
             onError: (error) => {
-              emitPlatformCode(OBS_CODES.SYNC_REPLICA_POLL_FAILED, { error });
+              reportSyncCode(OBS_CODES.SYNC_REPLICA_POLL_FAILED, { error });
             },
           });
         }
         socketAuth.start();
 
         if (config.auth?.required && config.auth.modeDefaulted) {
-          warnPlatform(OBS_CODES.SYNC_AUTH_REQUIRED_DEFAULTED, {
+          reportSyncCode(OBS_CODES.SYNC_AUTH_REQUIRED_DEFAULTED, {
             metadata: {
               hint: "Set syncAuth: 'public' only when anonymous sync is deliberate.",
             },
           });
         }
 
-        emitPlatformCode(OBS_CODES.SYNC_STARTED, {
+        reportSyncCode(OBS_CODES.SYNC_STARTED, {
           metadata: {
             db: databaseDescription,
             tables: Object.keys(config.tables),
@@ -416,7 +458,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
           const stopping = lifecycle.server?.stop(true);
           if (isPromiseLike(stopping)) {
             void Promise.resolve(stopping).catch((stopError) => {
-              emitPlatformCode(OBS_CODES.SYNC_REPLICA_POLL_FAILED, {
+              reportSyncCode(OBS_CODES.SYNC_REPLICA_POLL_FAILED, {
                 error: stopError,
               });
             });
@@ -659,9 +701,19 @@ function scheduleSocketTermination(socket: ServerWebSocket<SyncSocketData>): voi
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
-  return Boolean(value)
-    && (typeof value === 'object' || typeof value === 'function')
-    && typeof (value as { then?: unknown }).then === 'function';
+  if (value === null
+    || (typeof value !== 'object' && typeof value !== 'function')) {
+    return false;
+  }
+
+  try {
+    return typeof (value as { then?: unknown }).then === 'function';
+  } catch (cause) {
+    throw new Error(
+      'Sync synchronous callback thenable inspection failed',
+      { cause },
+    );
+  }
 }
 
 function raiseLifecycleCleanupFailures(

@@ -300,15 +300,15 @@ function RegisterForm({
     >
       <AuthHeader
         title={authConfig.bootstrapRequired
-          ? isMultiTenant ? `Create your ${tenantTerm}` : 'Create first admin'
+          ? isMultiTenant ? 'Set up platform administration' : 'Create first admin'
           : 'Create account'}
         description={authConfig.bootstrapRequired
-          ? bootstrapSecretRequired
+            ? bootstrapSecretRequired
             ? isMultiTenant
-              ? `Enter the operator setup key to create the first administrator and ${tenantTerm}.`
+              ? `Enter the operator setup key to create the first administrator and protected administration ${tenantTerm}.`
               : 'Enter the operator setup key to create the first administrator.'
             : isMultiTenant
-              ? `The first account becomes the app administrator and ${tenantTerm} owner.`
+              ? `The first account becomes the platform owner of the protected administration ${tenantTerm}.`
               : 'The first account becomes the app administrator.'
           : isMultiTenant
             ? `Create your identity, then create a new ${tenantTerm} or join an existing one.`
@@ -337,11 +337,13 @@ function RegisterForm({
         {shouldCreateTenant && (
           <div className="space-y-1.5">
             <Label htmlFor="reg-organization" className="text-sm font-medium">
-              {capitalize(tenantTerm)} name
+              {requiresBootstrapTenant
+                ? `Administration ${tenantTerm} name`
+                : `${capitalize(tenantTerm)} name`}
             </Label>
             <Input
               id="reg-organization"
-              placeholder="Acme, Inc."
+              placeholder={requiresBootstrapTenant ? 'Platform administration' : 'Acme, Inc.'}
               autoComplete="organization"
               required={requiresBootstrapTenant || legacyRequiresTenant || createTenantOnRegistration}
               value={form.organizationName}
@@ -500,7 +502,7 @@ function RegisterForm({
           </>
         ) : (
           authConfig.bootstrapRequired
-            ? isMultiTenant ? `Create ${tenantTerm}` : 'Create administrator'
+            ? isMultiTenant ? 'Create platform administration' : 'Create administrator'
             : shouldCreateTenant ? `Create account and ${tenantTerm}` : 'Create account'
         )}
       </Button>

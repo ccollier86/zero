@@ -37,6 +37,16 @@ describe('TenantSelectionForm flow reset key', () => {
     expect(markup).toContain('aria-label="Practices"');
     expect(markup).not.toContain('organization');
   });
+
+  test('labels the protected administration scope instead of presenting it as a customer', () => {
+    const result = selection('continuation-1', ['tenant-admin', 'tenant-1'], ['tenant-admin']);
+    const markup = renderToStaticMarkup(createElement(TenantSelectionForm, {
+      result,
+    }));
+
+    expect(markup).toContain('Platform administration');
+    expect(markup).toContain('tenant-1 · member');
+  });
 });
 
 describe('auth card radio keyboard navigation', () => {
@@ -55,7 +65,11 @@ describe('auth card radio keyboard navigation', () => {
   });
 });
 
-function selection(continuation: string, tenantIds: string[]) {
+function selection(
+  continuation: string,
+  tenantIds: string[],
+  administrationIds: string[] = [],
+) {
   return {
     user: {
       userId: 'user-1',
@@ -79,6 +93,9 @@ function selection(continuation: string, tenantIds: string[]) {
       expiresAt: Date.now() + 60_000,
       tenants: tenantIds.map((tenantId) => ({
         tenantId,
+        kind: administrationIds.includes(tenantId)
+          ? 'administration' as const
+          : 'organization' as const,
         slug: tenantId,
         name: tenantId,
         role: 'member',

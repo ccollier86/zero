@@ -637,6 +637,13 @@ claims); unknown/private JWT claims are discarded before persistence or broker
 IPC, and identity is not a substitute for fresh server authorization. Failures are `NativeAuthError` values with safe
 `code`, `message`, and optional `status` fields.
 
+`NativeTenantSummary` is the exact safe display projection
+`{ tenantId, kind, slug, name, role }`. The required server-derived `kind` is
+`'administration'` for the protected platform control plane and
+`'organization'` for customer scope. Clients use it to keep navigation and
+customer-only workflows in the correct realm; server authorization remains
+authoritative.
+
 #### Platform adapter contracts
 
 ```ts
@@ -769,6 +776,20 @@ function LoginPage() {
 | `useAuthConfig()` | `AuthConfigState` | Public registration/bootstrap config for auth UI |
 | `useCurrentUser()` | `AuthUser \| null` | Just the user object |
 | `useRequireAuth(redirectTo?)` | `AuthUser \| null` | Redirects to `/login` if not authenticated |
+| `useUserProperty(key, options?)` | `UseUserPropertyResult<T>` | One configured current-user property plus its mutation state |
+| `useAuthorization()` | `UseAuthorizationResult` | Active tenant and application authorization snapshots, plus permission checks |
+| `useHasPermission(permission)` | `boolean` | Checks one permission across the active tenant and additive application scopes |
+| `useHasAllPermissions(permissions)` | `boolean` | Checks every permission across the active tenant and additive application scopes |
+| `useHasAnyPermission(permissions)` | `boolean` | Checks for any permission across the active tenant and additive application scopes |
+| `useAuthorizationScopeBoundary()` | `AuthorizationScopeBoundary` | Stable boundary key for discarding work from a previous identity or tenant scope |
+| `useApplicationAccess(options?)` | `UseApplicationAccessResult` | Single/advanced application-role assignments and ownership actions |
+| `useAuthAudit(options)` | `UseAuthAuditResult` | Paginated control-plane audit access for the active authority |
+| `usePlatformAdministration(options?)` | `UsePlatformAdministrationResult` | Administration Organization members, invitations, roles, and ownership actions |
+| `usePlatformTenants(options?)` | `UsePlatformTenantsResult` | Customer-organization directory, lifecycle actions, and safe member drill-in |
+| `useTenantMembers(options?)` | `UseTenantMembersResult` | Active-organization member administration |
+| `useTenantOnboardingAdministration(options?)` | `UseTenantOnboardingAdministrationResult` | Active-organization invitations and retained join requests |
+| `useTenantSwitcher()` | `UseTenantSwitcherResult` | Tenant list, switching state, and session-transition fencing |
+| `useTenantAppShellWorkspaces(options?)` | `AppShellWorkspaceConfig \| undefined` | Tenant choices projected for the packaged app shell |
 | `useTenantDomainAdministration(options?)` | tenant domain administration state/actions | Active-tenant exact-domain claims and fixed-role request policy |
 | `useDomainOnboarding(options?)` | mailbox-proof/request state/actions | Generic-before-proof request-to-join flow |
 
@@ -855,6 +876,7 @@ interface RegisterParams {
 
 interface AuthRegistrationTenant {
   tenantId: string;
+  kind: 'administration' | 'organization';
   membershipId: string;
   slug: string;
   name: string;
@@ -869,9 +891,11 @@ type AuthRegistrationResult = AuthCompletionResult & {
 When public auth config reports `tenancy.mode: 'multi'`, the initial bootstrap
 requires `organizationName`; `organizationSlug` remains optional. The server
 derives a slug when omitted and atomically creates the user, credential, first
-organization, protected `owner` membership, global/platform `admin` role, and
-durable bootstrap marker. This invariant applies even if the configured later
-creation policy is `platform-admin` or `disabled`.
+protected `kind: 'administration'` organization, protected `owner`
+membership, global/platform `admin` role, and durable bootstrap marker. Later
+customer organizations use `kind: 'organization'`. This invariant applies
+even if the configured later creation policy is `platform-admin` or
+`disabled`.
 
 After bootstrap, `organizationName` is optional. Omitting it registers only the
 identity and, after any email/MFA gate, returns `tenantOnboardingRequired` with
@@ -940,6 +964,33 @@ The same API is available through `useApplicationAccess()` and the packaged
 global platform role or account-security state. See
 [Application Access Administration](./auth/application-access-administration.md).
 
+For either multi profile, switch the live session into the protected
+Administration Organization before using the platform namespace:
+
+```ts
+const config = await client.platformAdmin.getConfig();
+const tenants = await client.platformAdmin.listTenants({
+  status: 'active',
+  search: 'acme',
+  limit: 25,
+});
+
+if (config.capabilities.canCreateTenants) {
+  await client.platformAdmin.createTenant({
+    name: 'Acme Health',
+    ownerEmail: 'owner@acme.example',
+  });
+}
+```
+
+`client.platformAdmin` also manages administration members/invitations and
+ownership, suspends/reactivates customer organizations with generation
+fencing, and exposes capability-gated read-only customer-member drill-in. It
+never accepts the administration tenant ID. React consumers can use
+`usePlatformAdministration()`, `usePlatformTenants()`,
+`PlatformAdministrationManagement`, and `PlatformTenantManagement`. See
+[Platform Administration Organization](./auth/platform-administration.md).
+
 ### Vanilla JS auth
 
 ```ts
@@ -963,6 +1014,7 @@ console.log(client.isAuthenticated); // boolean
 // Sanitized live UI hint; server routes remain authoritative.
 const authorization = await client.getAuthorization();
 console.log(authorization?.scope?.permissions ?? []);
+console.log(authorization?.applicationScope?.permissions ?? []);
 await client.refreshAuthorization();
 
 // Additional auth operations
@@ -973,6 +1025,13 @@ const theme = await client.getProperty('theme');
 await client.refresh();
 ```
 
+In multi mode, `authorization.scope` remains the active tenant/membership
+projection. An Administration Organization session additionally projects its
+application permissions through additive `applicationScope`. The exported
+permission helpers and `PermissionGate` check both planes; `TenantGate` checks
+only the active tenant scope. The opaque top-level revision covers both scope
+revisions and the installed authorization-registry version.
+
 The capability fields are additive for mixed-version compatibility; absence
 means `single/simple`. All four profiles normalize. Public tenancy config also
 contains safe `terminology` and `creation.mode` values. `multi` enables current
@@ -980,9 +1039,12 @@ tenant/membership persistence, bound browser sessions, selection/switching,
 creation/onboarding, and registered-resource isolation. `advanced` enables a
 validated server-only permission/role registry and pure authorization kernel;
 durable application/tenant assignments and their packaged administration
-surfaces are implemented. Upstream enterprise SSO and the proposed dedicated
-multi-tenant Administration Organization/platform-lifecycle UI remain separate
-future work, as do break-glass, tenant-custom roles, populated-app adoption tooling, and
+surfaces are implemented. Multi mode also includes the protected
+Administration Organization plus the `client.platformAdmin` namespace,
+platform hooks, and packaged customer-organization lifecycle UI. Upstream
+enterprise SSO remains separate future work, as do break-glass,
+tenant-custom roles, broader populated-app discovery/migration tooling beyond
+exact pre-024 administration reconciliation, and
 verified-domain autojoin/aliases/direct transfer. The resource registry now
 has independent server-owned client-exposure and field-access axes. Managed
 file-mode runtimes sharing one SQLite database relay tracked Sync changes and
@@ -995,6 +1057,9 @@ The live browser authorization projection, imperative subscription APIs, React
 permission hooks, credential-free `useAuthorizationScopeBoundary()` cache key,
 and packaged `PermissionGate`, `TenantGate`, and `PlatformAdminGate` are documented in
 [Browser Authorization Snapshot and Gates](./auth/browser-authorization.md).
+See [Platform Administration Organization](./auth/platform-administration.md)
+for the exact `client.platformAdmin`, `usePlatformAdministration`,
+`usePlatformTenants`, and packaged-control contracts.
 
 Property gates are exported from the frontend barrel for UI-only visibility:
 
@@ -2863,6 +2928,7 @@ const auth = defineAuthConfig({
   tenancy: 'multi',
   authorization: {
     mode: 'advanced',
+    registryVersion: 1,
     permissions: {
       'records:read': { label: 'Read records' },
       'records:write': { label: 'Edit records' },
@@ -2878,10 +2944,18 @@ const auth = defineAuthConfig({
 Permission keys must be lowercase namespaced keys; role keys are lowercase
 stable identifiers. Unknown fields, invalid keys, duplicate role-permission
 references, undeclared permissions, and `allPermissions` mixed with explicit
-permissions are rejected during normalization. Public `/auth/config` exposes
-only safe capability data: the tenancy and authorization modes plus configured
-tenant terminology and creation mode. It never exposes the permission registry,
-role templates, or other server-only policy internals.
+permissions are rejected during normalization. `registryVersion` defaults to
+`1` and must increase before a same-profile change to permission/role
+semantics. Migration `027` persists its semantic fingerprint; same-version
+drift or rollback fails startup with
+`AUTHORIZATION_REGISTRY_VERSION_REQUIRED`, and a retired role key cannot
+silently reactivate retained assignments. Label/description-only changes do
+not require a bump. Public `/auth/config` exposes only safe capability data:
+the tenancy and authorization modes plus configured tenant terminology and
+creation mode. It never exposes the registry version/fingerprint, permission
+registry, role templates, or other server-only policy internals. See
+[Platform Configuration](./platform-configuration.md#installed-auth-profile-and-mode-upgrades)
+for deployment and stale-runtime behavior.
 
 `createAuthorizationKernel(resolvedAuth)` returns the transport-neutral policy
 engine. Its primary methods are `compile(requirement, parent?)`,
@@ -3393,16 +3467,16 @@ barrel for the exact installed-version surface.
 `createClient`, `getClient`, `AuthClient`, `isAuthEmailVerificationRequiredResult`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
 
 ### React Components
-`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `LoginForm`, `RegisterForm`, `ForgotPasswordForm`, `PasswordActionForm`, `ChangePasswordForm`, `EmailVerificationForm`, `UserPropertiesForm`, `AuthFlowContinuation`, `TenantSelectionForm`, `TenantCreationForm`, `TenantSwitcher`, `ApplicationAccessManagement`, `TenantMemberManagement`, `TenantOnboardingManagement`, `TenantDomainManagement`, `DomainOnboarding`, `TenantInvitationForm`, `TenantJoinRequestForm`, `ControlPlaneAuditViewer`, `PermissionGate`, `TenantGate`, `PlatformAdminGate`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `KanbanBoard`, `KanbanTaskCard`, `PlatformUserManagement`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
+`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `LoginForm`, `RegisterForm`, `ForgotPasswordForm`, `PasswordActionForm`, `ChangePasswordForm`, `EmailVerificationForm`, `UserPropertiesForm`, `AuthFlowContinuation`, `TenantSelectionForm`, `TenantCreationForm`, `TenantSwitcher`, `ApplicationAccessManagement`, `PlatformAdministrationManagement`, `PlatformTenantManagement`, `TenantMemberManagement`, `TenantOnboardingManagement`, `TenantDomainManagement`, `DomainOnboarding`, `TenantInvitationForm`, `TenantJoinRequestForm`, `ControlPlaneAuditViewer`, `PermissionGate`, `TenantGate`, `PlatformAdminGate`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `KanbanBoard`, `KanbanTaskCard`, `PlatformUserManagement`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
 
 ### React Hooks
-`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `isAuthorizationScopeCallbackCurrent`, `useAuthorizationScopeBoundary`, `useAuthorization`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher`, `useTenantAppShellWorkspaces`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
+`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `isAuthorizationScopeCallbackCurrent`, `useAuthorizationScopeBoundary`, `useAuthorization`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `usePlatformAdministration`, `usePlatformTenants`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher`, `useTenantAppShellWorkspaces`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
 
 ### Constants
 `STORAGE_TABLES`, `zeroAnimatedIconNames`, `zeroAnimatedIcons`
 
 ### Types
-`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `AuthCompletionResult`, `AuthRegistrationResult`, `AuthRegistrationTenant`, `AuthEmailVerificationRequiredResult`, `RegisterParams`, `LoginFormProps`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `PlatformUserManagementProps`, `UserManagementProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `AuthorizationScopeBoundary`, `UseAuthorizationResult`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `UseApplicationAccessOptions`, `UseApplicationAccessResult`, `UseAuthAuditOptions`, `UseAuthAuditResult`, `UseTenantMembersOptions`, `UseTenantMembersResult`, `UseTenantOnboardingAdministrationOptions`, `UseTenantOnboardingAdministrationResult`, `UseTenantDomainAdministrationOptions`, `UseTenantDomainAdministrationResult`, `UseDomainOnboardingOptions`, `UseDomainOnboardingResult`, `UseTenantSwitcherResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `InferInsert`, `InsertInput`, `PrimaryKeyOf`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
+`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `AuthCompletionResult`, `AuthRegistrationResult`, `AuthRegistrationTenant`, `AuthPlatformAdministrationConfig`, `AuthPlatformAdminSdkSurface`, `AuthPlatformTenant`, `AuthPlatformTenantPage`, `AuthEmailVerificationRequiredResult`, `RegisterParams`, `LoginFormProps`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `PlatformUserManagementProps`, `PlatformAdministrationManagementProps`, `PlatformTenantManagementProps`, `UserManagementProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `AuthorizationScopeBoundary`, `UseAuthorizationResult`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `UseApplicationAccessOptions`, `UseApplicationAccessResult`, `UsePlatformAdministrationOptions`, `UsePlatformAdministrationResult`, `UsePlatformTenantsOptions`, `UsePlatformTenantsResult`, `UseAuthAuditOptions`, `UseAuthAuditResult`, `UseTenantMembersOptions`, `UseTenantMembersResult`, `UseTenantOnboardingAdministrationOptions`, `UseTenantOnboardingAdministrationResult`, `UseTenantDomainAdministrationOptions`, `UseTenantDomainAdministrationResult`, `UseDomainOnboardingOptions`, `UseDomainOnboardingResult`, `UseTenantSwitcherResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `InferInsert`, `InsertInput`, `PrimaryKeyOf`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
 
 `StorageUploadGrantResource` is a server/storage contract rather than a React
 barrel export. Import it from `@zero/framework/storage` or

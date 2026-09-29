@@ -74,6 +74,105 @@ const action = zero.tokens.inspectActionToken(token, {
 Inspection does not consume the token; `consumeActionToken()` is still required
 for the final action.
 
+## Auth Transaction Boundary
+
+Auth password setup, reset, and verification flows use
+`AuthActionTokenService` as a compatibility layer over
+`PlatformTokenService`. When those services are paired, their stores must use
+the **exact same `ReactiveDB` instance**. A matching SQLite filename, database
+configuration, or independently opened connection is not sufficient: the
+services must share one managed transaction domain.
+
+That identity requirement prevents this failure mode:
+
+1. a platform action token is marked consumed in database/transaction A;
+2. the credential or account transition later fails in transaction B; and
+3. the user loses a valid one-time token even though the requested auth change
+   rolled back.
+
+With one transaction domain, auth opens the outer transaction, platform-token
+consumption joins it, and the token plus credential/account transition either
+commit or roll back together. Construction fails closed with
+`AUTH_STATE_INVARIANT_FAILED` and app-local invariant observability when an
+`AuthActionTokenService` receives a platform-token service from another
+ReactiveDB.
+
+`createApp()` handles this automatically: it mounts platform tokens on the
+Sync-owned ReactiveDB before auth and injects that app-local service into the
+auth runtime. No application configuration is required.
+
+Advanced direct plugin composition must preserve the same wiring explicitly:
+
+```ts
+import { Elysia } from 'elysia';
+import {
+  createAuthMiddleware,
+  createAuthPlugin,
+  getTokenService,
+  installAuthStopBarrier,
+} from '@zero/framework/auth';
+import {
+  createPlatformTokenPlugin,
+  type PlatformTokenService,
+} from '@zero/framework/tokens';
+import {
+  createDefaultSyncPolicy,
+  createSyncPlugin,
+  type ReactiveDB,
+} from '@zero/framework/sync';
+
+let db!: ReactiveDB;
+let platformTokens: PlatformTokenService | null = null;
+
+const sync = createSyncPlugin({
+  db: { mode: 'file', path: './app.db' },
+  tables: {},
+  onDatabaseCreated(created) {
+    db = created;
+  },
+  auth: { required: true, getTokenVerifier: getTokenService },
+  policy: createDefaultSyncPolicy({
+    readProtectedTables: ['users'],
+    writeProtectedTables: ['users'],
+  }),
+});
+
+const app = installAuthStopBarrier(new Elysia()
+  .use(sync)
+  .use(createPlatformTokenPlugin({
+    db,
+    onServiceCreated(service) {
+      platformTokens = service;
+    },
+  }))
+  .use(createAuthPlugin({
+    db,
+    getPlatformTokenService: () => platformTokens,
+  }))
+  .use(createAuthMiddleware(getTokenService)));
+```
+
+This preserves the standalone auth stop barrier and a minimal protected Sync
+policy. See [Auth Architecture: Composition](./auth/architecture.md#composition)
+before adding application tables or routes.
+
+### Commit-accurate success telemetry
+
+`PlatformTokenService.consumeActionToken()` always runs in a managed
+ReactiveDB transaction. Its `TOKENS_ACTION_CONSUMED` notification is queued
+with `afterCommit()`, so it is emitted only after the outermost transaction
+commits. The auth wrapper queues `AUTH_ACTION_TOKEN_CONSUMED` on the same
+boundary. A rollback discards both success notifications along with token
+consumption; it cannot leave operator telemetry claiming that a failed auth
+transition succeeded. Managed `createApp()` composition sends token and auth
+events to that app's observability runtime; standalone construction retains
+the global sink as a compatibility fallback.
+
+Post-commit callbacks are synchronous, best-effort notifications. They run in
+registration order after committed change delivery. A callback failure cannot
+undo the commit or prevent later callbacks and is reported through
+`SYNC_POST_COMMIT_NOTIFICATION_FAILED`.
+
 ## Resume Tokens
 
 Resume tokens are long-lived, reusable continuation tokens. Use them when a
@@ -207,4 +306,8 @@ row only keeps safe pointers and form state.
 Auth password setup/reset still uses `/auth/action-token/:token`,
 `/auth/reset-password`, and `/auth/setup-password`. Internally those flows now
 delegate to the generic action-token service while preserving the existing auth
-API and frontend components.
+API and frontend components. The stable `UserStore` facade retains legacy
+`_auth_action_tokens` support so links issued before platform-token adoption
+can still be inspected and consumed. Normal `createApp()` composition writes
+new links to `_zero_action_tokens`; a direct auth composition that explicitly
+selects `platformTokenService: null` keeps the legacy store by design.

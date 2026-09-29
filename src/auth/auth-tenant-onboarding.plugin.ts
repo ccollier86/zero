@@ -9,7 +9,6 @@ import { extractAuthContext } from './auth-context';
 import { canonicalEmailSchema } from './auth-email-schema';
 import {
   buildAuthCompletionResponse,
-  buildSessionCompletionResponse,
 } from './auth-mfa-response';
 import type { MfaChallengeService } from './mfa-challenge-service';
 import { admitAuthRequest } from './auth-request-admission';
@@ -91,6 +90,8 @@ interface TenantActor {
 
 interface IdentityProof {
   userId: string;
+  /** Live server-derived assurance from the admitted bearer/continuation. */
+  mfaVerifiedAt: number | null;
   consume?: () => boolean;
   auditActor: AuthAuditActor;
 }
@@ -126,9 +127,15 @@ export function createAuthTenantOnboardingPlugin(
       const authConfig = config.getAuthConfig();
       let accepted;
       let requestedMfaSetup = false;
+      let acceptedMfaVerifiedAt: number | null = null;
 
       if ('username' in body) {
         requestedMfaSetup = Boolean(body.mfaEnrollment) && authConfig.mfa.enabled;
+        const inspection = service.inspectInvitation(body.token);
+        const administrationMfaSetup = authConfig.mfa.enabled
+          && authConfig.mfa.policy === 'admin-required'
+          && inspection.available
+          && inspection.tenant.kind === 'administration';
         const account = await service.createInvitationAccount({
           token: body.token,
           username: body.username,
@@ -139,7 +146,9 @@ export function createAuthTenantOnboardingPlugin(
           mfaRequired: requiresUserMfa(authConfig),
           properties: requireProperties(config).getDefaultProperties(),
           auditRequest: authAuditRequestFromRequest(request),
-          deferAcceptance: requiresUserMfa(authConfig) || requestedMfaSetup,
+          deferAcceptance: requiresUserMfa(authConfig)
+            || requestedMfaSetup
+            || administrationMfaSetup,
         });
         if ('invitationAcceptancePending' in account) {
           const completion = await buildAuthCompletionResponse({
@@ -148,7 +157,7 @@ export function createAuthTenantOnboardingPlugin(
             authConfig,
             mfaChallengeService: config.getMfaChallengeService(),
             tenantSessionService: tenantSessions,
-            requestedMfaSetup,
+            requestedMfaSetup: requestedMfaSetup || administrationMfaSetup,
           });
           const pending = {
             ...completion,
@@ -166,6 +175,7 @@ export function createAuthTenantOnboardingPlugin(
         accepted = account;
       } else {
         const identity = await resolveIdentityProof(config, request, body);
+        acceptedMfaVerifiedAt = identity.mfaVerifiedAt;
         accepted = service.acceptInvitationForUser(
           body.token,
           identity.userId,
@@ -177,14 +187,16 @@ export function createAuthTenantOnboardingPlugin(
         );
       }
 
-      // Every path reaching acceptance has already cleared its required MFA
-      // and account gates: a newly-created account returned early above when
-      // setup was required, while an existing identity supplied a live bearer
-      // or post-auth continuation. Re-running the MFA decision here would
-      // challenge a just-verified user a second time after membership changed.
-      const response = await buildSessionCompletionResponse({
+      // Membership acceptance can create application authority. Re-enter the
+      // complete MFA decision after that write so admin-required policy sees
+      // the live administration-organization role before any session is minted.
+      const response = await buildAuthCompletionResponse({
         user: accepted.user,
+        tokenService: requireTokenService(config),
+        authConfig,
+        mfaChallengeService: config.getMfaChallengeService(),
         tenantSessionService: tenantSessions,
+        mfaVerifiedAt: acceptedMfaVerifiedAt,
         sessionBinding: {
           tenantId: accepted.tenant.tenantId,
           membershipId: accepted.membership.membershipId,
@@ -261,6 +273,7 @@ export function createAuthTenantOnboardingPlugin(
         status: query.status,
         limit: query.limit,
         cursor: query.cursor,
+        assertCurrentAuthority: actor.assertCurrentAuthority,
       });
     }, {
       query: t.Object({
@@ -388,6 +401,8 @@ export function createAuthTenantOnboardingPlugin(
         limit: query.limit,
         cursor: query.cursor,
         approvalScope: actor.scope,
+        approvalApplicationScope: actor.access.applicationAuthorization,
+        assertCurrentAuthority: actor.assertCurrentAuthority,
       });
     }, {
       query: t.Object({
@@ -496,6 +511,7 @@ async function resolveIdentityProof(
     if (!auth) throw unauthorized();
     return {
       userId: auth.userId,
+      mfaVerifiedAt: auth.mfaVerifiedAt ?? null,
       consume: captureAuthSessionIdentityProof(auth, tokenService),
       auditActor: authAuditActorFromContext(auth),
     };
@@ -522,6 +538,7 @@ async function resolveJoinRequestIdentity(
     if (!auth) throw unauthorized();
     return {
       userId: auth.userId,
+      mfaVerifiedAt: auth.mfaVerifiedAt ?? null,
       consume: captureAuthSessionIdentityProof(auth, tokenService),
       auditActor: authAuditActorFromContext(auth),
     };
@@ -561,6 +578,7 @@ function resolveOnboardingContinuation(
   }
   return {
     userId: user.userId,
+    mfaVerifiedAt: record.mfaVerifiedAt,
     auditActor: { userId: user.userId, provenance: 'authenticated-request' },
     consume: () => sessions.continuations.consumeInspected(
       record,

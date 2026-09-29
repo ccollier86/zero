@@ -299,6 +299,25 @@ describe('AuthClient authorization surface', () => {
 });
 
 describe('AuthClient token lifecycle', () => {
+  it('fails closed and leaves loading state after a malformed successful login response', async () => {
+    mockFetch(() => Response.json({
+      user: authUser(),
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      unexpectedAuthority: 'platform-admin',
+    }));
+
+    const client = new AuthClient('http://zero.test');
+    await expect(client.login('ada', 'password')).rejects.toThrow(
+      'invalid authentication completion response',
+    );
+
+    expect(client.isAuthenticated).toBe(false);
+    expect(client.isLoading).toBe(false);
+    expect(client.error).toBe('Invalid authentication response');
+    expect(client.accessToken).toBeNull();
+  });
+
   it('does not let an older login completion overwrite a newer authentication scope', async () => {
     let resolveOlderLogin!: (response: Response) => void;
     const olderLoginResponse = new Promise<Response>((resolve) => {
@@ -411,6 +430,8 @@ describe('AuthClient token lifecycle', () => {
           tenantOnboardingRequired: true,
           onboarding: {
             reason: 'no_active_tenant_membership',
+            continuation: 'onboarding-proof',
+            expiresAt: Date.now() + 60_000,
             tenantCreation: {
               allowed: true,
               continuation: 'onboarding-proof',
@@ -971,6 +992,7 @@ describe('AuthClient token lifecycle', () => {
         refreshToken: 'bootstrap-refresh',
         tenant: {
           tenantId: 'ten_acme',
+          kind: 'administration',
           membershipId: 'tmem_owner',
           slug: 'acme-health',
           name: 'Acme Health',
@@ -997,6 +1019,7 @@ describe('AuthClient token lifecycle', () => {
     });
     expect(result.tenant).toEqual({
       tenantId: 'ten_acme',
+      kind: 'administration',
       membershipId: 'tmem_owner',
       slug: 'acme-health',
       name: 'Acme Health',
@@ -1071,6 +1094,7 @@ describe('AuthClient token lifecycle', () => {
           user: authUser(),
           accessToken: 'access-mfa',
           refreshToken: 'refresh-mfa',
+          method: mfaMethod(),
         });
       }
 
@@ -1465,9 +1489,23 @@ function authUser() {
   };
 }
 
+function mfaMethod() {
+  return {
+    methodId: 'mfa-1',
+    type: 'totp',
+    label: 'Authenticator',
+    status: 'active',
+    isPrimary: true,
+    createdAt: 1,
+    verifiedAt: 1,
+    lastUsedAt: null,
+  };
+}
+
 function tenantSummary(tenantId: string, role: string) {
   return {
     tenantId,
+    kind: 'organization' as const,
     slug: tenantId.replace('ten_', ''),
     name: `Tenant ${tenantId}`,
     role,

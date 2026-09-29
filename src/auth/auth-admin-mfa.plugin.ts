@@ -7,10 +7,10 @@
 
 import { Elysia } from 'elysia';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
 import { AdminMfaUserService } from './admin-mfa-user-service';
 import {
   requireAdminMfaService,
+  getAuthAdminEmitter,
   requireAdminMutationServices,
   requireAdminServices,
   type AuthAdminPluginConfig,
@@ -29,8 +29,10 @@ export function createAuthAdminMfaPlugin(config: AuthAdminPluginConfig) {
   return new Elysia({ name: 'auth-admin-mfa' })
     .get('/users/:userId/mfa', async ({ request, params, set }) => {
       applyAuthPrivateNoStore(set);
-      const { service } = await services(config, request);
-      return service.getStatus(params.userId);
+      const { service, assertCurrentAuthority } = await services(config, request);
+      const status = service.getStatus(params.userId);
+      assertCurrentAuthority();
+      return status;
     }, params)
     .post('/users/:userId/mfa/require', async ({ request, params }) => {
       const {
@@ -43,7 +45,7 @@ export function createAuthAdminMfaPlugin(config: AuthAdminPluginConfig) {
         actor: authAuditActorFromContext(auth),
         request: authAuditRequestFromRequest(request),
       });
-      emit(OBS_CODES.AUTH_ADMIN_MFA_REQUIRED, actorId, params.userId);
+      emit(config, OBS_CODES.AUTH_ADMIN_MFA_REQUIRED, actorId, params.userId);
       return { user };
     }, params)
     .post('/users/:userId/mfa/clear-requirement', async ({ request, params }) => {
@@ -57,7 +59,7 @@ export function createAuthAdminMfaPlugin(config: AuthAdminPluginConfig) {
         actor: authAuditActorFromContext(auth),
         request: authAuditRequestFromRequest(request),
       });
-      emit(OBS_CODES.AUTH_ADMIN_MFA_CLEARED, actorId, params.userId);
+      emit(config, OBS_CODES.AUTH_ADMIN_MFA_CLEARED, actorId, params.userId);
       return { user };
     }, params)
     .post('/users/:userId/mfa/reset', async ({ request, params }) => {
@@ -71,7 +73,7 @@ export function createAuthAdminMfaPlugin(config: AuthAdminPluginConfig) {
         actor: authAuditActorFromContext(auth),
         request: authAuditRequestFromRequest(request),
       });
-      emitPlatformCode(OBS_CODES.AUTH_ADMIN_MFA_RESET, {
+      getAuthAdminEmitter(config)(OBS_CODES.AUTH_ADMIN_MFA_RESET, {
         userId: actorId,
         metadata: { targetUserId: params.userId, ...result },
       });
@@ -80,17 +82,19 @@ export function createAuthAdminMfaPlugin(config: AuthAdminPluginConfig) {
 }
 
 async function services(config: AuthAdminPluginConfig, request: Request) {
-  const { store, auth } = await requireAdminServices(config, request);
+  const { store, auth, assertCurrentAuthority } = await requireAdminServices(config, request);
   const readiness = config.getMfaService?.();
   if (!readiness) throw new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
   return {
     actorId: auth.userId,
     auth,
+    assertCurrentAuthority,
     service: new AdminMfaUserService(
       store,
       requireAdminMfaService(config),
       readiness,
-      config.getEmailRuntime().enabled
+      config.getEmailRuntime().enabled,
+      getAuthAdminEmitter(config),
     ),
   };
 }
@@ -111,11 +115,13 @@ async function mutationServices(config: AuthAdminPluginConfig, request: Request)
       store,
       requireAdminMfaService(config),
       readiness,
-      config.getEmailRuntime().enabled
+      config.getEmailRuntime().enabled,
+      getAuthAdminEmitter(config),
     ),
   };
 }
 
-function emit(code: typeof OBS_CODES.AUTH_ADMIN_MFA_REQUIRED, actorId: string, target: string) {
-  emitPlatformCode(code, { userId: actorId, metadata: { targetUserId: target } });
+function emit(config: AuthAdminPluginConfig, code: typeof OBS_CODES.AUTH_ADMIN_MFA_REQUIRED,
+  actorId: string, target: string) {
+  getAuthAdminEmitter(config)(code, { userId: actorId, metadata: { targetUserId: target } });
 }

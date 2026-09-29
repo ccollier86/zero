@@ -16,6 +16,7 @@ export type {
   CreateTenantMembershipInput,
   CreateTenantWithOwnerInput,
   TenantCreationResult,
+  TenantKind,
   TenantMembershipRecord,
   TenantMembershipStatus,
   TenantOwnershipTransferResult,

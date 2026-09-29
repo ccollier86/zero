@@ -1,6 +1,11 @@
 /** Transport for login, registration, public config, and account operations. */
 
 import { createAuthClientError } from './auth-errors';
+import {
+  parseAuthCompletionResult,
+  parseAuthRefreshResponse,
+  parseAuthRegistrationResult,
+} from './auth-completion-parser';
 import type { AuthAuthenticationAttempt } from './auth-authentication-attempt';
 import type {
   AuthCompletionResult,
@@ -71,7 +76,7 @@ export class AuthAccountTransport {
       throw await responseError(response, 'Failed to change password');
     }
 
-    const data = await response.json();
+    const data = parseAuthRefreshResponse(await response.json());
     await this.options.updateTokens(data.accessToken, data.refreshToken, response);
   }
 
@@ -93,8 +98,18 @@ export class AuthAccountTransport {
         this.options.failAuthentication(error.message, attempt);
         throw error;
       }
-      const result = await response.json() as AuthCompletionResult;
-      attempt.assertCurrent();
+      let result: AuthCompletionResult;
+      try {
+        const bodyValue = await response.json();
+        attempt.assertCurrent();
+        result = path === '/auth/register'
+          ? parseAuthRegistrationResult(bodyValue)
+          : parseAuthCompletionResult(bodyValue);
+      } catch (error) {
+        attempt.assertCurrent();
+        this.options.failAuthentication('Invalid authentication response', attempt);
+        throw error;
+      }
       return this.options.completeAuthentication(result, attempt) as Promise<TResult>;
     } finally {
       attempt.dispose();

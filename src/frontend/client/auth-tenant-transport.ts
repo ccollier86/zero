@@ -1,6 +1,10 @@
 /** Browser transport for tenant selection and refresh-family-backed switching. */
 
 import { AuthClientError, createAuthClientError } from './auth-errors';
+import {
+  parseAuthSessionResult,
+  parseAuthTenantListResult,
+} from './auth-completion-parser';
 import type {
   AuthSessionResult,
   AuthSessionTransitionOperation,
@@ -43,7 +47,9 @@ export class AuthTenantTransport {
         if (!response.ok) {
           throw await responseError(response, 'Failed to select tenant');
         }
-        const result = this.options.commitScopeAuthentication(await response.json());
+        const result = this.options.commitScopeAuthentication(
+          parseAuthSessionResult(await response.json()),
+        );
         committed = true;
         await this.options.completeScopeTransition();
         return result;
@@ -77,7 +83,7 @@ export class AuthTenantTransport {
           expireRejectedSession = response.status === 401;
           throw await responseError(response, 'Failed to load tenants');
         }
-        return response.json();
+        return parseAuthTenantListResult(await response.json());
       });
     } catch (error) {
       // Session expiry takes the same credential lock, so perform it only
@@ -130,7 +136,9 @@ export class AuthTenantTransport {
             expireRejectedSession = !params.continuation && response.status === 401;
             throw await responseError(response, 'Failed to create tenant');
           }
-          const result = this.options.commitScopeAuthentication(await response.json());
+          const result = this.options.commitScopeAuthentication(
+            parseAuthSessionResult(await response.json()),
+          );
           committed = true;
           await this.options.completeScopeTransition();
           return result;
@@ -180,7 +188,9 @@ export class AuthTenantTransport {
             expireRejectedSession = response.status === 401;
             throw await responseError(response, 'Failed to switch tenant');
           }
-          const result = this.options.commitScopeAuthentication(await response.json());
+          const result = this.options.commitScopeAuthentication(
+            parseAuthSessionResult(await response.json()),
+          );
           committed = true;
           await this.options.completeScopeTransition();
           return result;

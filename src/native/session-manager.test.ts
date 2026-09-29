@@ -8,8 +8,14 @@ import { NativeVaultStore } from './vault-store';
 
 const issuer = 'https://zero.test/auth';
 const clientId = 'native-test';
-const tenantA = { tenantId: 'tenant-a', slug: 'tenant-a', name: 'Tenant A', role: 'owner' };
-const tenantB = { tenantId: 'tenant-b', slug: 'tenant-b', name: 'Tenant B', role: 'member' };
+const tenantA = {
+  tenantId: 'tenant-a', kind: 'administration' as const,
+  slug: 'tenant-a', name: 'Tenant A', role: 'owner',
+};
+const tenantB = {
+  tenantId: 'tenant-b', kind: 'organization' as const,
+  slug: 'tenant-b', name: 'Tenant B', role: 'member',
+};
 
 describe('NativeSessionManager refresh-proof serialization', () => {
   test('a refresh waits for a tenant list that already owns the proof', async () => {

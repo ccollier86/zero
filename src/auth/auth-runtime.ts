@@ -1,16 +1,14 @@
 /**
- * App-local Auth service lifetime plus safe legacy compatibility getters.
+ * App-local Auth service lifetime and service composition.
  *
  * Every `createAuthPlugin()` owns one AuthRuntime. Route plugins close over
- * that instance; the no-argument exports at the bottom are compatibility
- * adapters and deliberately reject ambiguous multi-app use.
+ * that instance. Legacy no-argument adapters live in
+ * `auth-runtime-compatibility.ts`.
  */
 
 import type { EmailRuntime } from '../email';
 import { getEmailRuntime as getLegacyEmailRuntime } from '../email';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
-import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
 import {
   ZERO_AUTH_AUDIT_SERVICE,
   ZERO_AUTH_STORE,
@@ -39,6 +37,7 @@ import { AuthSessionContinuationStore } from './auth-session-continuation-store'
 import { AuthTenantSessionService } from './auth-tenant-session-service';
 import { AuthApplicationAdministrationService } from './auth-application-administration-service';
 import { AuthTenantAdministrationService } from './auth-tenant-administration-service';
+import { AuthPlatformTenantAdministrationService } from './auth-platform-tenant-administration-service';
 import { AuthTenantOnboardingService } from './auth-tenant-onboarding-service';
 import { resolveAuthTenantOnboardingConfig } from './auth-tenant-onboarding-config';
 import { VerifiedDomainOnboardingService } from './verified-domain-service';
@@ -48,12 +47,17 @@ import {
   InstalledAuthProfileGuard,
   reconcileInstalledAuthProfile,
 } from './auth-profile-state';
+import {
+  reconcileAuthorizationManifest,
+  type AuthorizationManifestTransition,
+} from './auth-authorization-manifest';
 import { createAuthorizationKernel, type AuthorizationKernel } from './authorization-kernel';
 import { AuthorizationRoleService } from './authorization-role-service';
 import { AuthorizationRoleStore } from './authorization-role-store';
 import { shouldStartAuthEmailOutbox } from './auth-email-outbox-readiness';
 import { defineAuthTables } from './auth-schema';
 import { MfaChallengeService } from './mfa-challenge-service';
+import { createAdministrationMemberResolver } from './auth-administration-membership';
 import { MfaChallengeStore } from './mfa-challenge-store';
 import { MfaMethodStore } from './mfa-method-store';
 import { MfaService } from './mfa-service';
@@ -68,9 +72,44 @@ import { RegistrationIntentStore } from './registration-intent-store';
 import { TokenService } from './token-service';
 import { TenancyService } from './tenancy/tenancy-service';
 import { TenantStore } from './tenancy/tenant-store';
-import type { AuthPluginConfig, ResolvedAuthBehaviorConfig } from './types';
+import { reconcileAdministrationTenant } from './tenancy/administration-tenant-reconciliation';
+import {
+  AuthError,
+  type AuthPluginConfig,
+  type ResolvedAuthBehaviorConfig,
+} from './types';
 import { UserPropertyService } from './user-property-service';
 import { UserStore } from './user-store';
+import {
+  createAuthPlatformCodeEmitter,
+  type AuthPlatformCodeEmitter,
+} from './auth-observability';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
+import {
+  getAuthCompatibilityRuntime,
+  registerAuthRuntimeCompatibility,
+} from './auth-runtime-compatibility';
+
+export {
+  getAccountEmailService,
+  getActionTokenService,
+  getAuthAuditService,
+  getAuthEmailOutbox,
+  getAuthRuntimeContext,
+  getAuthSessionService,
+  getAuthStore,
+  getAuthorizationKernel,
+  getAuthorizationRoleService,
+  getMfaChallengeService,
+  getMfaMethodStore,
+  getMfaService,
+  getNativeAuthorizationService,
+  getPropertyService,
+  getRegistrationIntentStore,
+  getTokenService,
+  getVerifiedDomainOnboardingService,
+  registerAuthRuntimeCompatibility,
+} from './auth-runtime-compatibility';
 
 export interface AuthRuntimeDependencies {
   /** Optional managed app-local service/lifecycle container. */
@@ -97,6 +136,8 @@ export class AuthRuntime {
   private authTenantSessionService: AuthTenantSessionService | null = null;
   private applicationAdministrationService: AuthApplicationAdministrationService | null = null;
   private tenantAdministrationService: AuthTenantAdministrationService | null = null;
+  private platformTenantAdministrationService:
+    AuthPlatformTenantAdministrationService | null = null;
   private tenantOnboardingService: AuthTenantOnboardingService | null = null;
   private verifiedDomainOnboardingService: VerifiedDomainOnboardingService | null = null;
   private tenancyService: TenancyService | null = null;
@@ -113,12 +154,14 @@ export class AuthRuntime {
   private readonly authorizationKernel: AuthorizationKernel;
   private authorizationRoleService: AuthorizationRoleService | null = null;
   private installedProfileGuard: InstalledAuthProfileGuard | null = null;
+  private readonly emitCode: AuthPlatformCodeEmitter;
 
   constructor(
     private readonly config: AuthPluginConfig,
     private readonly authConfig: ResolvedAuthBehaviorConfig,
     private readonly dependencies: AuthRuntimeDependencies,
   ) {
+    this.emitCode = createAuthPlatformCodeEmitter(dependencies.runtime);
     this.authorizationKernel = createAuthorizationKernel({
       tenancy: authConfig.tenancy ?? {
         mode: 'single',
@@ -127,6 +170,7 @@ export class AuthRuntime {
       },
       authorization: authConfig.authorization ?? {
         mode: 'simple',
+        registryVersion: 1,
         permissions: {},
         roles: {},
       },
@@ -218,6 +262,9 @@ export class AuthRuntime {
   getTenantAdministrationService(): AuthTenantAdministrationService | null {
     return this.withCurrentProfile(this.tenantAdministrationService);
   }
+  getPlatformTenantAdministrationService(): AuthPlatformTenantAdministrationService | null {
+    return this.withCurrentProfile(this.platformTenantAdministrationService);
+  }
   getTenantOnboardingService(): AuthTenantOnboardingService | null {
     return this.withCurrentProfile(this.tenantOnboardingService);
   }
@@ -266,7 +313,7 @@ export class AuthRuntime {
   getAuthEmailOutbox(): AuthEmailOutbox | null {
     return this.withCurrentProfile(this.authEmailOutbox);
   }
-  getEmailRuntime(): EmailRuntime { return this.dependencies.getEmailRuntime(); }
+  getEmailRuntime(): EmailRuntime { return this.resolveEmailRuntime(); }
 
   /** Values exposed through Elysia derive for advanced server code. */
   getContext() {
@@ -279,6 +326,7 @@ export class AuthRuntime {
       authTenantSessionService: this.authTenantSessionService,
       applicationAdministrationService: this.applicationAdministrationService,
       tenantAdministrationService: this.tenantAdministrationService,
+      platformTenantAdministrationService: this.platformTenantAdministrationService,
       tenantOnboardingService: this.tenantOnboardingService,
       verifiedDomainOnboardingService: this.verifiedDomainOnboardingService,
       authorizationKernel: this.authorizationKernel,
@@ -296,16 +344,23 @@ export class AuthRuntime {
       this.config.db.exec('PRAGMA foreign_keys = ON');
       defineAuthTables(this.config.db);
 
-      this.auditService = new AuthAuditService(this.config.db, this.authConfig.audit);
+      this.auditService = new AuthAuditService(
+        this.config.db,
+        this.authConfig.audit,
+        this.emitCode,
+      );
 
       this.userStore = new UserStore(this.config.db, {
         tenancyMode: this.authConfig.tenancy?.mode ?? 'single',
         auditService: this.auditService,
+        emitCode: this.emitCode,
       });
       this.requestAdmissionService = new AuthRequestAdmissionService(
         this.config.db,
         this.authConfig.requestAdmission
           ?? resolveAuthRequestAdmissionConfig(),
+        Date.now,
+        this.emitCode,
       );
       let advancedRoles: AuthorizationRoleService | null = null;
       if (this.authConfig.tenancy?.mode === 'multi') {
@@ -313,12 +368,18 @@ export class AuthRuntime {
           assertCurrentProfile: () => this.installedProfileGuard?.assertCurrent(),
           onOwnerCreated: (input) => advancedRoles?.establishTenantOwner(input),
           onOwnerRoleChanged: (input) => advancedRoles?.syncTenantOwnerRole(input),
+          emitCode: this.emitCode,
         }));
       }
       if (this.authConfig.authorization?.mode === 'advanced') {
         advancedRoles = new AuthorizationRoleService(
           this.config.db,
-          new AuthorizationRoleStore(this.config.db),
+          new AuthorizationRoleStore(
+            this.config.db,
+            Date.now,
+            undefined,
+            this.emitCode,
+          ),
           this.authorizationKernel,
           this.userStore,
           this.tenancyService,
@@ -337,18 +398,55 @@ export class AuthRuntime {
         tenancy: this.authorizationKernel.tenancy.mode,
         authorization: this.authorizationKernel.authorization.mode,
       } as const;
+      let adoptedAdministrationTenantId: string | null = null;
+      let authorizationManifest: AuthorizationManifestTransition | null = null;
       const profile = reconcileInstalledAuthProfile({
         db: this.config.db,
         requested: requestedProfile,
         legacySimpleRoleAdoption:
           this.authConfig.authorization?.legacySimpleRoleAdoption === true,
         audit: this.auditService,
+        emitCode: this.emitCode,
         beforeCommit: (plan) => {
+          try {
+            authorizationManifest = reconcileAuthorizationManifest({
+              db: this.config.db,
+              authorization: this.authorizationKernel.authorization,
+              tenancy: this.authorizationKernel.tenancy.mode,
+              audit: this.auditService ?? undefined,
+              allowProfileAxisChange: plan.kind !== 'unchanged'
+                && plan.kind !== 'initialized',
+            });
+          } catch (error) {
+            if (error instanceof AuthError) {
+              this.emitCode(OBS_CODES.AUTH_AUTHORIZATION_REGISTRY_REJECTED, {
+                metadata: { reasonCode: error.code },
+                error,
+              });
+            }
+            throw error;
+          }
           // A process may have stopped after committing provisional identity/
           // owner state but before returning a completed registration. Recover
           // only under the same startup transaction as profile validation.
           this.userStore!.recoverPendingRegistrationProvisioning();
           this.userStore!.reconcileBootstrapState();
+
+          if (this.tenancyService) {
+            const hadAdministrationTenant = Boolean(
+              this.tenancyService.getAdministrationTenant(),
+            );
+            const administrationTenant = reconcileAdministrationTenant({
+              tenancy: this.tenancyService,
+              adoptTenantId:
+                this.authConfig.tenancy?.administration?.adoptTenantId,
+              audit: this.auditService ?? undefined,
+              emitCode: this.emitCode,
+            });
+            if (!hadAdministrationTenant && administrationTenant) {
+              adoptedAdministrationTenantId = administrationTenant.tenantId;
+            }
+          }
 
           const evidence = plan.kind === 'simple-to-advanced'
             && plan.requested.tenancy === 'multi'
@@ -385,7 +483,26 @@ export class AuthRuntime {
       this.installedProfileGuard = new InstalledAuthProfileGuard(
         this.config.db,
         profile.committed,
+        authorizationManifest!.committed,
       );
+      if (authorizationManifest!.kind !== 'unchanged') {
+        this.emitCode(
+          authorizationManifest!.kind === 'initialized'
+            ? OBS_CODES.AUTH_AUTHORIZATION_REGISTRY_INITIALIZED
+            : OBS_CODES.AUTH_AUTHORIZATION_REGISTRY_UPDATED,
+          {
+            metadata: {
+              registryVersion: authorizationManifest!.committed.registryVersion,
+              fingerprint: authorizationManifest!.committed.fingerprint,
+            },
+          },
+        );
+      }
+      if (adoptedAdministrationTenantId) {
+        this.emitCode(OBS_CODES.AUTH_ADMINISTRATION_TENANT_ADOPTED, {
+          metadata: { tenantId: adoptedAdministrationTenantId },
+        });
+      }
       this.userStore.setRuntimeProfileGuard(() => {
         this.installedProfileGuard!.assertCurrent();
       });
@@ -394,6 +511,7 @@ export class AuthRuntime {
         this.authConfig.tenancy?.mode ?? 'single',
         this.tenancyService,
         this.auditService,
+        this.emitCode,
       );
       this.authSessionService.setRuntimeProfileGuard(() => {
         this.installedProfileGuard!.assertCurrent();
@@ -403,21 +521,39 @@ export class AuthRuntime {
         this.userStore,
         this.authConfig.accountEmails.actionTokenTTL,
         this.authConfig.accountEmails.requestCooldown,
-        this.dependencies.getPlatformTokenService(),
+        this.resolvePlatformTokenService(),
+        this.emitCode,
       );
       this.accountEmailService = new AccountEmailService(
-        this.dependencies.getEmailRuntime,
+        () => this.resolveEmailRuntime(),
         this.authConfig,
       );
       this.mfaMethodStore = new MfaMethodStore(this.config.db);
       this.mfaService = new MfaService(this.authConfig);
       this.mfaChallengeStore = new MfaChallengeStore(this.config.db);
+      const isAdministrationMember = createAdministrationMemberResolver(
+        this.tenancyService,
+      );
       this.mfaChallengeService = new MfaChallengeService(
         this.authConfig,
         this.mfaMethodStore,
         this.mfaChallengeStore,
         this.accountEmailService,
         this.auditService,
+        isAdministrationMember,
+        this.emitCode,
+      );
+      const requiresMfaAssurance = (userId: string): boolean => {
+        const current = this.userStore!.getUserById(userId);
+        return !current || this.mfaChallengeService!.isMfaRequiredForUser(current);
+      };
+      this.authSessionService.setMfaAssuranceValidator(
+        (session) => !requiresMfaAssurance(session.userId)
+          || session.mfaVerifiedAt !== null,
+        {
+          rejectLegacyWithoutAssurance: this.authConfig.mfa.enabled
+            && this.authConfig.mfa.policy !== 'optional',
+        },
       );
       this.registrationIntentStore = new RegistrationIntentStore(this.config.db);
 
@@ -429,6 +565,7 @@ export class AuthRuntime {
         nativeIssuer: nativeRuntime?.issuer,
         nativeAudience: nativeRuntime?.audience,
         authSessionService: this.authSessionService,
+        emitCode: this.emitCode,
       });
       // Another process may have completed a different pristine correction
       // while key material was importing. Do not finish a stale startup.
@@ -452,12 +589,16 @@ export class AuthRuntime {
         });
       }
       this.authTenantSessionService = new AuthTenantSessionService(
-        new AuthSessionContinuationStore(this.config.db),
+        new AuthSessionContinuationStore(this.config.db, {
+          emitCode: this.emitCode,
+        }),
         this.authConfig,
         this.tenancyService,
         this.userStore,
         this.tokenService,
         this.auditService,
+        this.authorizationKernel,
+        this.authorizationRoleService,
       );
       if (this.authorizationRoleService
         && this.authorizationKernel.tenancy.mode === 'single') {
@@ -467,6 +608,7 @@ export class AuthRuntime {
           this.userStore,
           this.authorizationRoleService,
           this.auditService,
+          this.emitCode,
         );
       }
       if (this.tenancyService) {
@@ -477,7 +619,18 @@ export class AuthRuntime {
           this.tenancyService,
           this.authorizationRoleService,
           this.auditService,
+          this.emitCode,
         );
+        this.platformTenantAdministrationService =
+          new AuthPlatformTenantAdministrationService(
+            this.config.db,
+            this.authorizationKernel,
+            this.userStore,
+            this.tenancyService,
+            this.authorizationRoleService,
+            this.auditService,
+            this.emitCode,
+          );
         this.tenantOnboardingService = new AuthTenantOnboardingService(
           this.config.db,
           this.authConfig.tenancy?.onboarding
@@ -488,6 +641,8 @@ export class AuthRuntime {
           this.tenancyService,
           this.authorizationRoleService,
           this.auditService,
+          Date.now,
+          this.emitCode,
         );
         this.verifiedDomainOnboardingService = new VerifiedDomainOnboardingService(
           this.config.db,
@@ -499,6 +654,7 @@ export class AuthRuntime {
           this.authTenantSessionService.continuations.applicationId,
           Date.now,
           this.auditService,
+          this.emitCode,
         );
       }
 
@@ -506,6 +662,7 @@ export class AuthRuntime {
         const nativeSessions = new NativeSessionStore(
           this.config.db,
           this.authConfig.nativeApps.refreshRotation,
+          this.emitCode,
         );
         const nativeAuthority = new NativeTenantAuthorityService(
           this.authConfig.tenancy?.mode ?? 'single',
@@ -516,22 +673,26 @@ export class AuthRuntime {
             this.authConfig.nativeApps,
             nativeSessions,
             nativeAuthority,
+            requiresMfaAssurance,
           ),
         );
         this.nativeAuthorizationService = new NativeAuthorizationService(
           { native: this.authConfig.nativeApps, ...nativeRuntime },
           new NativeRequestStore(this.config.db, {
             limits: this.authConfig.nativeApps.requestAdmission,
-          }),
+          }, this.emitCode),
           new NativeCodeStore(
             this.config.db,
             this.authConfig.nativeApps.requestAdmission.cleanupBatchSize,
+            this.emitCode,
           ),
           nativeSessions,
           this.userStore,
           this.tokenService,
           nativeAuthority,
           this.auditService,
+          requiresMfaAssurance,
+          this.emitCode,
         );
       }
 
@@ -544,6 +705,7 @@ export class AuthRuntime {
         getNative: () => this.nativeAuthorizationService,
         getTenantOnboarding: () => this.tenantOnboardingService,
         getVerifiedDomainOnboarding: () => this.verifiedDomainOnboardingService,
+        emitCode: this.emitCode,
       }, {
         requestWindowMs: parseTokenTTL(
           this.authConfig.accountEmails.requestCooldown,
@@ -561,7 +723,7 @@ export class AuthRuntime {
       this.auditService.start();
 
       this.installRuntimeServices();
-      emitPlatformCode(OBS_CODES.AUTH_STARTED, {
+      this.emitCode(OBS_CODES.AUTH_STARTED, {
         metadata: { tablesDefined: true, keypairInitialized: true },
       });
     } catch (error) {
@@ -615,6 +777,7 @@ export class AuthRuntime {
       this.authTenantSessionService = null;
       this.applicationAdministrationService = null;
       this.tenantAdministrationService = null;
+      this.platformTenantAdministrationService = null;
       this.tenantOnboardingService = null;
       this.verifiedDomainOnboardingService = null;
       this.tenancyService = null;
@@ -630,7 +793,7 @@ export class AuthRuntime {
       this.nativeAuthorizationService = null;
       this.registrationIntentStore = null;
       this.authEmailOutbox = null;
-      if (emitStopped) emitPlatformCode(OBS_CODES.AUTH_STOPPED);
+      if (emitStopped) this.emitCode(OBS_CODES.AUTH_STOPPED);
     }
     if (failure) throw failure;
   }
@@ -686,6 +849,7 @@ export class AuthRuntime {
       || this.authTenantSessionService
       || this.applicationAdministrationService
       || this.tenantAdministrationService
+      || this.platformTenantAdministrationService
       || this.tenantOnboardingService
       || this.verifiedDomainOnboardingService
       || this.tenancyService || this.authorizationRoleService || this.propertyService
@@ -699,6 +863,24 @@ export class AuthRuntime {
   private withCurrentProfile<T>(value: T): T {
     this.installedProfileGuard?.assertCurrent();
     return value;
+  }
+
+  private resolveEmailRuntime(): EmailRuntime {
+    return invokeSynchronousAuthCallback(this.dependencies.getEmailRuntime, {
+      component: 'auth-runtime',
+      invariant: 'email-runtime-resolver-async',
+      message: '[auth] Email runtime resolver must be synchronous.',
+      emitCode: this.emitCode,
+    });
+  }
+
+  private resolvePlatformTokenService(): PlatformTokenService | null {
+    return invokeSynchronousAuthCallback(this.dependencies.getPlatformTokenService, {
+      component: 'auth-runtime',
+      invariant: 'platform-token-service-resolver-async',
+      message: '[auth] Platform token service resolver must be synchronous.',
+      emitCode: this.emitCode,
+    });
   }
 }
 
@@ -714,15 +896,8 @@ export function createAuthRuntime(
   });
 }
 
-const authRuntimeProviders = new CompatibilityProviderRegistry<AuthRuntime>('Auth runtime');
-
-/** Register an app runtime for legacy no-argument getter compatibility. */
-export function registerAuthRuntimeCompatibility(owner: object, runtime: AuthRuntime) {
-  return authRuntimeProviders.register(owner, () => runtime);
-}
-
 let manualRuntime: AuthRuntime | null = null;
-let manualRegistration: ReturnType<typeof authRuntimeProviders.register> | null = null;
+let manualRegistration: ReturnType<typeof registerAuthRuntimeCompatibility> | null = null;
 const manualOwner = {};
 
 /** Legacy direct initializer. Prefer `createAuthRuntime()` or `createAuthPlugin()`. */
@@ -733,7 +908,7 @@ export async function startAuthRuntime(
   if (manualRuntime) await manualRuntime.stop();
   manualRegistration?.unregister();
   manualRuntime = createAuthRuntime(config, authConfig);
-  manualRegistration = authRuntimeProviders.register(manualOwner, () => manualRuntime);
+  manualRegistration = registerAuthRuntimeCompatibility(manualOwner, manualRuntime);
   try {
     await manualRuntime.start();
   } catch (error) {
@@ -746,7 +921,7 @@ export async function startAuthRuntime(
 
 /** Stop the only unambiguous legacy Auth runtime. */
 export async function stopAuthRuntime(): Promise<void> {
-  const runtime = authRuntimeProviders.get();
+  const runtime = getAuthCompatibilityRuntime();
   if (!runtime) return;
   await runtime.stop();
   if (runtime === manualRuntime) {
@@ -754,75 +929,6 @@ export async function stopAuthRuntime(): Promise<void> {
     manualRegistration = null;
     manualRuntime = null;
   }
-}
-
-/** Runtime values exposed through Elysia derive for legacy callers. */
-export function getAuthRuntimeContext() {
-  return authRuntimeProviders.get()?.getContext() ?? emptyAuthRuntimeContext();
-}
-
-export function getAuthStore(): UserStore | null {
-  return authRuntimeProviders.get()?.getStore() ?? null;
-}
-
-export function getAuthAuditService(): AuthAuditService | null {
-  return authRuntimeProviders.get()?.getAuditService() ?? null;
-}
-
-export function getTokenService(): TokenService | null {
-  return authRuntimeProviders.get()?.getTokenService() ?? null;
-}
-
-export function getAuthSessionService(): AuthSessionService | null {
-  return authRuntimeProviders.get()?.getAuthSessionService() ?? null;
-}
-
-export function getAuthorizationKernel(): AuthorizationKernel | null {
-  return authRuntimeProviders.get()?.getAuthorizationKernel() ?? null;
-}
-
-export function getAuthorizationRoleService(): AuthorizationRoleService | null {
-  return authRuntimeProviders.get()?.getAuthorizationRoleService() ?? null;
-}
-
-export function getPropertyService(): UserPropertyService | null {
-  return authRuntimeProviders.get()?.getPropertyService() ?? null;
-}
-
-export function getActionTokenService(): AuthActionTokenService | null {
-  return authRuntimeProviders.get()?.getActionTokenService() ?? null;
-}
-
-export function getAccountEmailService(): AccountEmailService | null {
-  return authRuntimeProviders.get()?.getAccountEmailService() ?? null;
-}
-
-export function getMfaMethodStore(): MfaMethodStore | null {
-  return authRuntimeProviders.get()?.getMfaMethodStore() ?? null;
-}
-
-export function getMfaService(): MfaService | null {
-  return authRuntimeProviders.get()?.getMfaService() ?? null;
-}
-
-export function getMfaChallengeService(): MfaChallengeService | null {
-  return authRuntimeProviders.get()?.getMfaChallengeService() ?? null;
-}
-
-export function getNativeAuthorizationService(): NativeAuthorizationService | null {
-  return authRuntimeProviders.get()?.getNativeAuthorizationService() ?? null;
-}
-
-export function getRegistrationIntentStore(): RegistrationIntentStore | null {
-  return authRuntimeProviders.get()?.getRegistrationIntentStore() ?? null;
-}
-
-export function getAuthEmailOutbox(): AuthEmailOutbox | null {
-  return authRuntimeProviders.get()?.getAuthEmailOutbox() ?? null;
-}
-
-export function getVerifiedDomainOnboardingService(): VerifiedDomainOnboardingService | null {
-  return authRuntimeProviders.get()?.getVerifiedDomainOnboardingService() ?? null;
 }
 
 function resolveEmailRuntimeGetter(config: AuthPluginConfig): () => EmailRuntime {
@@ -841,23 +947,4 @@ function resolvePlatformTokenServiceGetter(
   if (config.getPlatformTokenService) return config.getPlatformTokenService;
   if (config.runtime) return () => config.runtime!.get(ZERO_PLATFORM_TOKEN_SERVICE);
   return getLegacyPlatformTokenService;
-}
-
-function emptyAuthRuntimeContext() {
-  return {
-    authStore: null,
-    authAuditService: null,
-    tokenService: null,
-    authSessionService: null,
-    authTenantSessionService: null,
-    tenantAdministrationService: null,
-    tenantOnboardingService: null,
-    verifiedDomainOnboardingService: null,
-    authorizationKernel: null,
-    tenancyService: null,
-    mfaMethodStore: null,
-    mfaService: null,
-    mfaChallengeService: null,
-    nativeAuthorizationService: null,
-  };
 }

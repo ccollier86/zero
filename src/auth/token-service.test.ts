@@ -1,5 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { calculateJwkThumbprint } from 'jose';
+import { calculateJwkThumbprint, importJWK, SignJWT, type JWTPayload } from 'jose';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createReactiveDB, ReactiveDB } from '../sync/reactive-db';
 import { UserStore } from './user-store';
 import { TokenService } from './token-service';
@@ -77,6 +80,21 @@ function setupAuthTables(db: ReactiveDB): void {
   `);
 }
 
+async function signStoredTestToken(
+  payload: JWTPayload,
+  issuer: 'auth' | 'auth-transition',
+): Promise<string> {
+  const privateJwk = JSON.parse(store.getConfig('signing_key_private')!);
+  const keyId = store.getConfig('signing_key_id')!;
+  const privateKey = await importJWK(privateJwk, 'ES256');
+  return new SignJWT(payload)
+    .setProtectedHeader({ alg: 'ES256', kid: keyId })
+    .setIssuer(issuer)
+    .setIssuedAt()
+    .setExpirationTime('5m')
+    .sign(privateKey);
+}
+
 beforeEach(async () => {
   db = createReactiveDB({ mode: 'memory' });
   setupAuthTables(db);
@@ -128,6 +146,46 @@ describe('TokenService — Keypair', () => {
     expect(jwks2.keys[0].kid).toBe(
       store.getConfig('signing_key_id') ?? undefined
     );
+  });
+
+  test('concurrent replicas atomically converge on one file-backed keypair', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'zero-auth-signing-key-race-'));
+    const path = join(directory, 'shared.sqlite');
+    const firstDb = createReactiveDB({ mode: path, busyTimeout: 10_000 });
+    const secondDb = createReactiveDB({ mode: path, busyTimeout: 10_000 });
+    const envKey = AUTH_DEFAULTS.signingKeyEnvKey;
+    const previous = process.env[envKey];
+
+    try {
+      delete process.env[envKey];
+      setupAuthTables(firstDb);
+      setupAuthTables(secondDb);
+
+      const [first, second] = await Promise.all([
+        TokenService.create({ db: firstDb }),
+        TokenService.create({ db: secondDb }),
+      ]);
+      const firstJwk = first.getJWKS().keys[0]!;
+      const secondJwk = second.getJWKS().keys[0]!;
+      const persistedPrivate = firstDb.prepare(
+        "SELECT value FROM _auth_config WHERE key = 'signing_key_private'",
+      ).get() as { value: string };
+      const persistedId = firstDb.prepare(
+        "SELECT value FROM _auth_config WHERE key = 'signing_key_id'",
+      ).get() as { value: string };
+      const persistedJwk = JSON.parse(persistedPrivate.value);
+
+      expect(secondJwk).toEqual(firstJwk);
+      expect(firstJwk.kid).toBe(persistedId.value);
+      expect(firstJwk.x).toBe(persistedJwk.x);
+      expect(firstJwk.y).toBe(persistedJwk.y);
+    } finally {
+      if (previous === undefined) delete process.env[envKey];
+      else process.env[envKey] = previous;
+      secondDb.dispose();
+      firstDb.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   test('env JWK without kid derives one stable across replicas', async () => {
@@ -223,6 +281,42 @@ describe('TokenService — Access Tokens', () => {
     expect(await tokenService.verifyAccessToken('')).toBeNull();
   });
 
+  test('signed browser and transition tokens with malformed identity claims fail closed', async () => {
+    const malformedBrowserClaims: JWTPayload[] = [
+      { sub: 'u_claims', role: 'user', authGeneration: 0 },
+      { sub: 'u_claims', email: 'claims@example.test', role: 7, authGeneration: 0 },
+      { email: 'claims@example.test', role: 'user', authGeneration: 0 },
+    ];
+    for (const claims of malformedBrowserClaims) {
+      const token = await signStoredTestToken(claims, 'auth');
+      expect(await tokenService.verifyAccessToken(token)).toBeNull();
+    }
+
+    const user = await store.createUser({
+      username: 'transition-claims',
+      email: 'transition-claims@example.test',
+      password: 'password123',
+    });
+    for (const claims of [
+      {
+        sub: user.userId,
+        role: user.role,
+        purpose: 'mfa_setup',
+        authGeneration: store.getAuthGeneration(user.userId),
+      },
+      {
+        sub: user.userId,
+        email: user.email,
+        role: 7,
+        purpose: 'mfa_setup',
+        authGeneration: store.getAuthGeneration(user.userId),
+      },
+    ] satisfies JWTPayload[]) {
+      const token = await signStoredTestToken(claims, 'auth-transition');
+      expect(await tokenService.verifyTransitionToken(token, 'mfa_setup')).toBeNull();
+    }
+  });
+
   test('verifyAccessToken returns null for token signed with different key', async () => {
     // Create a second token service with a fresh DB (different keypair)
     const db2 = createReactiveDB({ mode: 'memory' });
@@ -239,6 +333,39 @@ describe('TokenService — Access Tokens', () => {
     expect(await tokenService.verifyAccessToken(token)).toBeNull();
 
     db2.dispose();
+  });
+
+  test('rejects an asynchronous native session authority validator', async () => {
+    const user = await store.createUser({
+      username: 'native-validator-user',
+      email: 'native-validator-user@example.test',
+      password: 'password123',
+    });
+    const native = await TokenService.create({
+      db,
+      nativeIssuer: 'https://identity.example.test/auth',
+      nativeAudience: 'https://api.example.test',
+    });
+    native.setUserStore(store);
+    native.setNativeSessionValidator({
+      isActive: () => true,
+      resolveAuthority: (async () => {
+        throw new Error('private native validator rejection');
+      }) as never,
+    });
+    const token = await native.signNativeAccessToken(
+      user,
+      'desktop-app',
+      'openid profile',
+      store.getAuthGeneration(user.userId),
+      'native-family',
+    );
+
+    await expect(native.resolveAuthContext(token)).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Native session authority resolution must be synchronous.',
+    });
+    await Promise.resolve();
   });
 });
 
@@ -284,6 +411,27 @@ describe('TokenService — Token Pair', () => {
     expect(record!.revokedAt).toBeNull();
   });
 
+  test('refresh-context hydration preserves the public proof-resolution seam', async () => {
+    const pair = await tokenService.issueTokenPair(user);
+    const resolveProof = tokenService.resolveWebRefreshProof.bind(tokenService);
+    let resolutions = 0;
+    tokenService.resolveWebRefreshProof = (rawToken) => {
+      resolutions += 1;
+      return resolveProof(rawToken);
+    };
+
+    try {
+      expect(tokenService.resolveWebRefreshAuthContext(pair.refreshToken)).toMatchObject({
+        userId: user.userId,
+        sessionKind: 'web',
+        sessionScopeKind: 'application',
+      });
+      expect(resolutions).toBe(1);
+    } finally {
+      tokenService.resolveWebRefreshProof = resolveProof;
+    }
+  });
+
   test('revocation during signing cannot leave an issued browser session', async () => {
     const signAccessToken = tokenService.signAccessToken.bind(tokenService);
     let releaseSigner: (() => void) | undefined;
@@ -326,12 +474,12 @@ describe('TokenService — Token Pair', () => {
     const unwired = await TokenService.create({ db });
     // Don't call setUserStore
 
-    try {
-      await unwired.issueTokenPair(user);
-      expect(true).toBe(false);
-    } catch (err) {
-      expect((err as Error).message).toContain('UserStore not wired');
-    }
+    await expect(unwired.issueTokenPair(user)).rejects.toMatchObject({
+      name: 'AuthError',
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      status: 500,
+      message: '[auth] Browser token persistence is unavailable.',
+    } satisfies Partial<AuthError>);
   });
 });
 

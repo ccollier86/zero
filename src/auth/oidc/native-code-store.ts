@@ -11,6 +11,9 @@ import {
   NATIVE_STORE_CLEANUP_BATCH_SIZE,
   requireCleanupBatchSize,
 } from './native-storage-policy';
+import { normalizeMfaVerifiedAt } from '../mfa-assurance';
+import type { AuthPlatformCodeEmitter } from '../auth-observability';
+import { invokeSynchronousAuthCallback } from '../auth-synchronous-callback';
 
 export class NativeCodeStore {
   private readonly getRequest: Statement;
@@ -25,6 +28,7 @@ export class NativeCodeStore {
   constructor(
     private readonly db: ReactiveDB,
     cleanupBatchSize = NATIVE_STORE_CLEANUP_BATCH_SIZE,
+    private readonly emitCode?: AuthPlatformCodeEmitter,
   ) {
     this.cleanupBatchSize = requireCleanupBatchSize(cleanupBatchSize);
     this.getRequest = db.prepare('SELECT * FROM _auth_native_requests WHERE request_hash = ?');
@@ -42,8 +46,8 @@ export class NativeCodeStore {
       (code_id, code_hash, request_id, user_id, client_id, redirect_uri, scope,
        nonce, code_challenge, auth_generation, scope_kind, scope_id, tenant_id,
        membership_id, tenant_authorization_generation,
-       membership_authorization_generation, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+       membership_authorization_generation, mfa_verified_at, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     this.getCode = db.prepare('SELECT * FROM _auth_native_codes WHERE code_hash = ?');
     this.consumeCode = db.prepare(
       'UPDATE _auth_native_codes SET consumed_at = ? WHERE code_id = ? AND consumed_at IS NULL AND expires_at > ?'
@@ -58,7 +62,12 @@ export class NativeCodeStore {
   }
 
   assertCurrentProfile(): void {
-    this.assertRuntimeProfileCurrent();
+    invokeSynchronousAuthCallback(this.assertRuntimeProfileCurrent, {
+      component: 'native-code-store',
+      invariant: 'runtime-profile-guard-async',
+      message: '[auth] Native code runtime profile guard must be synchronous.',
+      emitCode: this.emitCode,
+    });
   }
 
   issue(
@@ -67,6 +76,7 @@ export class NativeCodeStore {
     authGeneration: number,
     authorityOrTtl: NativeAuthoritySnapshot | number,
     explicitTtlMs?: number,
+    mfaVerifiedAt: number | null = null,
   ) {
     const legacyApplicationIssue = typeof authorityOrTtl === 'number';
     const authority = legacyApplicationIssue
@@ -75,6 +85,7 @@ export class NativeCodeStore {
     const ttlMs = legacyApplicationIssue
       ? authorityOrTtl
       : explicitTtlMs!;
+    const assurance = normalizeMfaVerifiedAt(mfaVerifiedAt);
     return this.db.transaction(() => {
       this.assertCurrentProfile();
       this.cleanupExpired();
@@ -108,7 +119,8 @@ export class NativeCodeStore {
         request.redirectUri, request.scope, request.nonce, request.codeChallenge,
         authGeneration, authority.scopeKind, authority.scopeId, authority.tenantId,
         authority.membershipId, authority.tenantAuthorizationGeneration,
-        authority.membershipAuthorizationGeneration, createdAt, createdAt + ttlMs,
+        authority.membershipAuthorizationGeneration, assurance,
+        createdAt, createdAt + ttlMs,
       );
       return { rawCode, request };
     });

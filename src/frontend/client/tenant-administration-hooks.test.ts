@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   TenantAdministrationBoundaryFence,
+  canLoadTenantJoinRequests,
   isTenantAdministrationScopeStable,
   tenantAdministrationBoundaryKey,
 } from './tenant-administration-hooks';
@@ -71,6 +72,12 @@ describe('tenant administration hook boundary fencing', () => {
     retained();
 
     expect(dispatches).toBe(0);
+  });
+
+  test('never loads customer join requests in the protected administration scope', () => {
+    expect(canLoadTenantJoinRequests(true, 'administration')).toBe(false);
+    expect(canLoadTenantJoinRequests(true, 'organization')).toBe(true);
+    expect(canLoadTenantJoinRequests(false, 'organization')).toBe(false);
   });
 });
 

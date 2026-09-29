@@ -150,7 +150,8 @@ function TenantSelectionFlow({
           >
             <span className="block text-sm font-semibold">{tenant.name}</span>
             <span className="mt-1 block text-xs text-muted-foreground">
-              {tenant.slug}{tenant.role ? ` · ${tenant.role}` : ''}
+              {tenant.kind === 'administration' ? 'Platform administration' : tenant.slug}
+              {tenant.role ? ` · ${tenant.role}` : ''}
             </span>
           </button>
         ))}

@@ -41,6 +41,16 @@ export type {
   UseTenantSwitcherResult,
 } from './tenant-administration-hooks';
 export {
+  usePlatformAdministration,
+  usePlatformTenants,
+} from './platform-administration-hooks';
+export type {
+  UsePlatformAdministrationOptions,
+  UsePlatformAdministrationResult,
+  UsePlatformTenantsOptions,
+  UsePlatformTenantsResult,
+} from './platform-administration-hooks';
+export {
   useTenantAppShellWorkspaces,
 } from './tenant-switch-presentation';
 export type {

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createServer } from 'node:net';
 import { Elysia } from 'elysia';
 import { configureEmail, MemoryEmailProvider } from '../../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../../email/runtime';
 import { createReactiveDB } from '../../sync/reactive-db';
 import { createAuthMiddleware } from '../auth.middleware';
 import { createAuthPlugin, getAuthEmailOutbox, getTokenService } from '../auth.plugin';
@@ -81,7 +82,7 @@ describe('native password recovery continuation', () => {
     } finally {
       await app.stop();
       db.dispose();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 });

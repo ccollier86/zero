@@ -2,6 +2,7 @@ import { Elysia, t } from 'elysia';
 import { RoomOwnerCannotLeaveError, RoomService } from './room-service';
 import type { ReactiveDB } from '../sync/reactive-db';
 import { AuthError } from '../auth/types';
+import { getPublicAuthErrorMessage } from '../auth/auth-error-response';
 import type { AuthContext } from '../auth/types';
 import type { RoomRecord } from './types';
 import {
@@ -166,7 +167,7 @@ export function createRoomPlugin(config: RoomPluginConfig) {
       }
       if (error instanceof AuthError) {
         set.status = error.status;
-        return { error: error.message, code: error.code };
+        return { error: getPublicAuthErrorMessage(error), code: error.code };
       }
     })
 

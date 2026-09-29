@@ -351,7 +351,11 @@ persisting connection IDs in SQLite.
 caught and reported by `ReactiveDB.emitChange()` in `src/sync/reactive-db.ts`;
 it does not propagate to the writer or prevent subsequent listeners from being
 called. The write has already committed to SQLite, so a broken listener cannot
-roll it back.
+roll it back. Managed `createApp()`/`createSyncPlugin()` runtimes route these
+codes through that app's own observability runtime, so two Zero apps in one
+process cannot capture each other's callback failures. A direct standalone
+`createReactiveDB()` retains the historical process-wide emitter unless the
+caller supplies `emitCode` explicitly.
 
 ### Ring Buffer (`_changes` table)
 
@@ -602,6 +606,12 @@ interface ReactiveDBConfig {
 
   /** Ring buffer depth for reconnect replay (default: 1000) */
   ringBufferDepth?: number;
+
+  /**
+   * App-local platform-code emitter. Managed composition injects this;
+   * standalone construction falls back to the process-wide emitter.
+   */
+  emitCode?: ReactiveDBPlatformCodeEmitter;
 }
 ```
 

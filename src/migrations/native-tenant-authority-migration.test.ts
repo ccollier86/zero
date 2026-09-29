@@ -1,6 +1,5 @@
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
-import { createNativeAuthTables } from '../auth/oidc/native-auth-schema-sql';
 import { migrations } from './index';
 import { Migrator } from './migrator';
 
@@ -19,9 +18,8 @@ const AUTHORITY_COLUMNS = [
   'membership_authorization_generation',
 ] as const;
 
-test('migration 010 adds native tenant authority without rewriting live grants', () => {
+test('migration 010 freezes native tenant authority without rewriting live grants', () => {
   const migratedDb = new Database(':memory:');
-  const runtimeDb = new Database(':memory:');
   const migrator = new Migrator({
     database: migratedDb,
     dbPath: ':memory:',
@@ -39,10 +37,22 @@ test('migration 010 adds native tenant authority without rewriting live grants',
     seedLegacyNativeFamily(migratedDb);
 
     expect(migrator.run('010')).toEqual(['010']);
-    for (const statement of createNativeAuthTables()) runtimeDb.run(statement);
-    for (const table of TABLES) {
-      expect(tableShape(migratedDb, table)).toEqual(tableShape(runtimeDb, table));
-    }
+    expect(columnNames(migratedDb, '_auth_native_requests')).toEqual([
+      'request_id', 'request_hash', 'client_id', 'redirect_uri', 'scope',
+      'state', 'nonce', 'code_challenge', 'prompt', 'bound_user_id',
+      'source_hash', 'created_at', 'expires_at', 'consumed_at',
+      ...AUTHORITY_COLUMNS,
+    ]);
+    expect(columnNames(migratedDb, '_auth_native_codes')).toEqual([
+      'code_id', 'code_hash', 'request_id', 'user_id', 'client_id',
+      'redirect_uri', 'scope', 'nonce', 'code_challenge', 'auth_generation',
+      'created_at', 'expires_at', 'consumed_at', ...AUTHORITY_COLUMNS,
+    ]);
+    expect(columnNames(migratedDb, '_auth_native_sessions')).toEqual([
+      'token_id', 'family_id', 'user_id', 'client_id', 'token_hash', 'scope',
+      'auth_generation', 'expires_at', 'created_at', 'consumed_at', 'revoked_at',
+      'replaced_by', 'rotation_count', ...AUTHORITY_COLUMNS,
+    ]);
     expect(migratedDb.query(`
       SELECT request_id, bound_user_id, scope_kind, tenant_id
       FROM _auth_native_requests WHERE request_id = 'request'
@@ -67,13 +77,17 @@ test('migration 010 adds native tenant authority without rewriting live grants',
     });
 
     // Compatibility startup or an operator retry must remain harmless.
+    const frozenShapes = Object.fromEntries(TABLES.map((table) => [
+      table,
+      tableShape(migratedDb, table),
+    ]));
     migrations.find((migration) => migration.version === '010')!.up(migratedDb);
-    expect(tableShape(migratedDb, '_auth_native_sessions'))
-      .toEqual(tableShape(runtimeDb, '_auth_native_sessions'));
+    for (const table of TABLES) {
+      expect(tableShape(migratedDb, table)).toEqual(frozenShapes[table]);
+    }
   } finally {
     migrator.dispose();
     migratedDb.close();
-    runtimeDb.close();
   }
 });
 

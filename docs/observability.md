@@ -161,6 +161,23 @@ const app = await createApp({
 });
 ```
 
+## Runtime Ownership
+
+`createApp()` stores the resolved observability runtime on that app's
+`ZeroAppRuntime`. Managed Auth and its email, native-auth, request, and worker
+paths receive an emitter bound to that exact runtime. Starting another app in
+the same process, or later changing the process default, cannot redirect those
+events into the other app's sink or store. Managed composition fails when its
+required observability service is missing instead of silently falling back to
+another runtime.
+
+The no-target `configureObservability()` and `emitPlatformCode()` APIs remain
+an intentional process-wide compatibility boundary for manually composed or
+standalone services. Direct Auth/email constructors that omit an injected
+emitter use that boundary too. A process hosting more than one manually
+composed app must inject an app-bound emitter; the compatibility default is not
+an app-discovery or isolation mechanism.
+
 ## Emitting Backend Events
 
 Use stable codes from `OBS_CODES`.
@@ -196,6 +213,38 @@ emitFrontendCode(FRONTEND_OBS_CODES.FRONTEND_RENDER_ERROR, {
 
 `ErrorBoundary`, hydration failures, and notification receipt failures already
 emit through this frontend boundary.
+
+## Auth Operational Failure Contract
+
+Auth keeps operational events separate from its durable
+[control-plane audit](./auth/control-plane-audit.md). The audit proves bounded
+security-state transitions; the events below report runtime health, rejected
+postconditions, and external delivery failures.
+
+| Event | Meaning and safe fields |
+| --- | --- |
+| `AUTH_START_FAILED` | The one shared Auth startup promise rejected. Request admission awaits that same promise, and the plugin contains the failed runtime by stopping it, unregistering compatibility state, and closing a standalone listener when present. Metadata is limited to the plugin identity; cleanup/listener failures use the normal app lifecycle failure event. |
+| `AUTH_STATE_INVARIANT_FAILED` | An internal state, wiring, transaction-callback, or mutation-postcondition check failed closed. Request-path services use the owning app's emitter and bounded `component` / `invariant` metadata; identifiers, submitted values, and credentials are not metadata. The operation throws `AuthError` with the same machine code and rolls back when it is inside a transaction. |
+| `AUTH_NATIVE_REQUEST_FAILED` | A native authorize, token, revoke, tenant-list, or tenant-switch boundary hid an unexpected internal or unavailable-runtime failure behind a protocol-safe OAuth response. Expected OAuth/OIDC rejections—including `NativeAuthorizationError` and `NativeTokenError` outcomes—do not create this operational error. Only the bounded operation name is emitted; the provider/database error, form body, and tokens are omitted. |
+| `AUTH_ADMIN_EMAIL_VERIFICATION_DELIVERY_FAILED`, `AUTH_ADMIN_SETUP_DELIVERY_FAILED`, `AUTH_ADMIN_PASSWORD_RESET_DELIVERY_FAILED` | Administrator-triggered verification, setup, and reset delivery failed. Events attribute the actor and target IDs and include cleanup success plus a stable failure classification and retryability; recipient/provider text and the original error are omitted. `AUTH_ADMIN_USER_SETUP_DELIVERY_FAILED` separately records whether compensating removal of a newly provisioned user succeeded. |
+| `FRONTEND_AUTH_ACTION_FAILED` | A current-scope load or mutation in the application-access, Administration Organization, customer-organization, tenant-member, tenant-onboarding, or tenant-switcher hooks failed. One shared reporter emits the bounded action family and safe machine code; response details are not copied into metadata. |
+
+Auth HTTP boundaries preserve actionable messages for expected 4xx
+`AuthError`s. For a 5xx `AuthError`, the `/auth` namespace, Auth middleware,
+and the Notifications, Storage, Scheduler, and Rooms plugins preserve its HTTP
+status and machine-readable `code` but replace the client message with
+`Authentication service unavailable`. Unexpected non-Auth errors at the Auth
+namespace become the generic `AUTH_INTERNAL_ERROR` response. Operators use the
+app-local event stream for diagnosis; private server diagnostics are not
+reflected into the response.
+
+The development `ConsoleEmailProvider` also emits rather than printing a
+message preview. `EMAIL_CONSOLE_PREVIEW` contains recipient count and Boolean
+sender/text/HTML presence only. It never includes addresses, sender, subject,
+text, or HTML, and managed email runtimes emit it to their owning app.
+
+See [Auth System](./auth/README.md) for account/delivery behavior and
+[Native App Auth](./auth/native-app-auth.md) for the public-client protocol.
 
 ## Trace
 

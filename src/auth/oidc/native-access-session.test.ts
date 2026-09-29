@@ -91,6 +91,36 @@ describe('native access-session validation', () => {
       db.dispose();
     }
   });
+
+  test('requires durable MFA assurance when live policy crosses that boundary', () => {
+    const { db, store } = setup();
+    try {
+      store.consumeCodeAndInsert(() => true, session('plain', 'family-a', 20_000));
+      store.consumeCodeAndInsert(
+        () => true,
+        session('assured', 'family-b', 20_000, 9_000),
+      );
+      let required = true;
+      const validator = createNativeAccessSessionValidator(
+        config(true),
+        store,
+        undefined,
+        () => required,
+      );
+      expect(validator.isActive({
+        sessionId: 'family-a', userId: 'user', clientId: 'desktop', authGeneration: 2,
+      })).toBe(false);
+      expect(validator.isActive({
+        sessionId: 'family-b', userId: 'user', clientId: 'desktop', authGeneration: 2,
+      })).toBe(true);
+      required = false;
+      expect(validator.isActive({
+        sessionId: 'family-a', userId: 'user', clientId: 'desktop', authGeneration: 2,
+      })).toBe(true);
+    } finally {
+      db.dispose();
+    }
+  });
 });
 
 function setup() {
@@ -103,10 +133,16 @@ function setup() {
   return { db, store: new NativeSessionStore(db, { now: () => 10_000 }) };
 }
 
-function session(raw: string, familyId: string, expiresAt: number): PreparedNativeSession {
+function session(
+  raw: string,
+  familyId: string,
+  expiresAt: number,
+  mfaVerifiedAt: number | null = null,
+): PreparedNativeSession {
   return {
     tokenId: raw, tokenHash: hashToken(raw), familyId, userId: 'user', clientId: 'desktop',
     scope: 'openid', authGeneration: 2, expiresAt, createdAt: 1, rotationCount: 0,
+    mfaVerifiedAt,
     consumedAt: null, revokedAt: null, replacedBy: null,
   };
 }

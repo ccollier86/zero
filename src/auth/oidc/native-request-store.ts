@@ -15,6 +15,8 @@ import {
 import { toAuthorizationRequest } from './native-row-mappers';
 import { NativeRequestBindingStore } from './native-request-binding-store';
 import { hashNativeRequestSource } from './native-request-source-hash';
+import type { AuthPlatformCodeEmitter } from '../auth-observability';
+import { invokeSynchronousAuthCallback } from '../auth-synchronous-callback';
 
 export class NativeRequestStore {
   private readonly insert: Statement;
@@ -24,7 +26,11 @@ export class NativeRequestStore {
   private readonly bindings: NativeRequestBindingStore;
   private assertRuntimeProfileCurrent: () => void = () => {};
 
-  constructor(private readonly db: ReactiveDB, options: NativeRequestStoreOptions = {}) {
+  constructor(
+    private readonly db: ReactiveDB,
+    options: NativeRequestStoreOptions = {},
+    private readonly emitCode?: AuthPlatformCodeEmitter,
+  ) {
     this.insert = db.prepare(`INSERT INTO _auth_native_requests
       (request_id, request_hash, client_id, redirect_uri, scope, state, nonce,
        code_challenge, prompt, source_hash, created_at, expires_at)
@@ -43,7 +49,12 @@ export class NativeRequestStore {
   }
 
   assertCurrentProfile(): void {
-    this.assertRuntimeProfileCurrent();
+    invokeSynchronousAuthCallback(this.assertRuntimeProfileCurrent, {
+      component: 'native-request-store',
+      invariant: 'runtime-profile-guard-async',
+      message: '[auth] Native request runtime profile guard must be synchronous.',
+      emitCode: this.emitCode,
+    });
   }
 
   create(input: Omit<NativeAuthorizationRequestRecord,

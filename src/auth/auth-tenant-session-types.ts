@@ -1,8 +1,10 @@
 import type { TokenPair } from './types';
+import type { TenantKind } from './tenancy/tenancy-types';
 
 /** Public-safe tenant projection used by selection and switching UI. */
 export interface AuthTenantSummary {
   tenantId: string;
+  kind: TenantKind;
   slug: string;
   name: string;
   role: string | null;

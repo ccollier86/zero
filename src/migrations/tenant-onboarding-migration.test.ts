@@ -1,10 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 
-import { defineAuthTables } from '../auth/auth-schema';
-import { defineAuthTenantOnboardingTables } from '../auth/auth-tenant-onboarding-schema';
-import { defineTenancyTables } from '../auth/tenancy/tenancy-schema';
-import { createReactiveDB } from '../sync/reactive-db';
 import { migrations } from './index';
 import { Migrator } from './migrator';
 
@@ -14,10 +10,8 @@ const TABLES = [
   '_auth_email_outbox',
 ] as const;
 
-test('migration 013 matches the runtime tenant-onboarding schema and is idempotent', () => {
+test('migration 013 freezes the historical tenant-onboarding schema and is idempotent', () => {
   const migratedDb = new Database(':memory:');
-  const runtimeDb = new Database(':memory:');
-  const runtime = createReactiveDB({ database: runtimeDb });
   const migrator = new Migrator({
     database: migratedDb,
     dbPath: ':memory:',
@@ -28,28 +22,30 @@ test('migration 013 matches the runtime tenant-onboarding schema and is idempote
 
   try {
     migratedDb.exec('PRAGMA foreign_keys = ON');
-    runtimeDb.exec('PRAGMA foreign_keys = ON');
     expect(migrator.run('013')).toContain('013');
 
-    defineAuthTables(runtime);
-    defineTenancyTables(runtime);
-    defineAuthTenantOnboardingTables(runtime);
+    expect(columnNames(migratedDb, '_auth_tenant_invitations')).toEqual([
+      'invitation_id', 'tenant_id', 'email', 'token_hash', 'role_keys_json',
+      'status', 'issued_by', 'accepted_by_user_id', 'expires_at', 'created_at',
+      'updated_at', 'accepted_at', 'revoked_at',
+    ]);
+    expect(JSON.stringify(triggerShape(migratedDb)))
+      .not.toContain('grant_snapshot');
 
-    for (const table of TABLES) {
-      expect(tableShape(migratedDb, table)).toEqual(tableShape(runtimeDb, table));
-    }
-    expect(triggerShape(migratedDb)).toEqual(triggerShape(runtimeDb));
-
+    const frozenShapes = Object.fromEntries(TABLES.map((table) => [
+      table,
+      tableShape(migratedDb, table),
+    ]));
+    const frozenTriggers = triggerShape(migratedDb);
     const migration = migrations.find((entry) => entry.version === '013')!;
     migration.up(migratedDb);
     migration.up(migratedDb);
     for (const table of TABLES) {
-      expect(tableShape(migratedDb, table)).toEqual(tableShape(runtimeDb, table));
+      expect(tableShape(migratedDb, table)).toEqual(frozenShapes[table]);
     }
+    expect(triggerShape(migratedDb)).toEqual(frozenTriggers);
   } finally {
-    runtime.dispose();
     migrator.dispose();
-    runtimeDb.close();
     migratedDb.close();
   }
 });
@@ -104,6 +100,11 @@ function tableShape(db: Database, table: string) {
       columns: db.query(`PRAGMA index_info(${index.name})`).all(),
     })).sort((left, right) => left.name.localeCompare(right.name)),
   };
+}
+
+function columnNames(db: Database, table: string): string[] {
+  return (db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
+    .map((column) => column.name);
 }
 
 function triggerShape(db: Database) {

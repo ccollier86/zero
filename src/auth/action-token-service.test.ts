@@ -6,9 +6,19 @@
  */
 
 import { beforeEach, afterEach, describe, expect, test } from 'bun:test';
-import { configureObservability } from '../observability';
+import {
+  configureObservability,
+  emitPlatformCode,
+  MemoryEventStore,
+  OBS_CODES,
+} from '../observability';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
-import { configurePlatformTokens, resetPlatformTokens, type PlatformTokenService } from '../tokens';
+import {
+  configurePlatformTokens,
+  PlatformTokenService,
+  PlatformTokenStore,
+  resetPlatformTokens,
+} from '../tokens';
 import { UserStore } from './user-store';
 import { AuthActionTokenService } from './action-token-service';
 import { discardUndeliveredActionToken } from './auth-action-token-delivery';
@@ -18,9 +28,11 @@ let db: ReactiveDB;
 let store: UserStore;
 let service: AuthActionTokenService;
 let platformTokens: PlatformTokenService;
+let events: MemoryEventStore;
 
 beforeEach(() => {
-  configureObservability({ console: false });
+  events = new MemoryEventStore();
+  configureObservability({ console: false, store: events });
   db = createReactiveDB({ mode: 'memory' });
   setupAuthTables(db);
   platformTokens = configurePlatformTokens({ db });
@@ -67,7 +79,94 @@ describe('AuthActionTokenService', () => {
 
     const consumed = service.consume(created.rawToken, ['account_setup']);
     expect(consumed.record.tokenId).toBe(created.record.tokenId);
+    expect(events.query({ code: OBS_CODES.TOKENS_ACTION_CONSUMED.code }).events)
+      .toHaveLength(1);
+    expect(events.query({ code: OBS_CODES.AUTH_ACTION_TOKEN_CONSUMED.code }).events)
+      .toHaveLength(1);
     expect(() => service.consume(created.rawToken, ['account_setup'])).toThrow(AuthError);
+  });
+
+  test('rejects a platform token service from another transaction domain', () => {
+    const otherDb = createReactiveDB({ mode: 'memory' });
+    const otherPlatformTokens = new PlatformTokenService(new PlatformTokenStore(otherDb));
+    const emitted: string[] = [];
+
+    try {
+      expect(() => new AuthActionTokenService(
+        store,
+        '1h',
+        '5m',
+        otherPlatformTokens,
+        (definition, options) => {
+          emitted.push(definition.code);
+          return emitPlatformCode(definition, options);
+        },
+      )).toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        status: 500,
+      }));
+      expect(emitted).toEqual([OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code]);
+      expect(events.query({ code: OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code }).events[0])
+        .toMatchObject({
+          metadata: {
+            component: 'action-tokens',
+            invariant: 'platform-token-transaction-domain-mismatch',
+          },
+        });
+    } finally {
+      otherDb.dispose();
+    }
+  });
+
+  test('rolls back platform consumption without publishing success telemetry', async () => {
+    const user = await store.createUser({
+      username: 'rollback-platform-token',
+      email: 'rollback-platform-token@example.com',
+      password: 'password123',
+    });
+    const created = service.create({
+      userId: user.userId,
+      type: 'password_reset',
+    });
+
+    expect(() => store.transaction(() => {
+      service.consume(created.rawToken, ['password_reset']);
+      throw new Error('rollback after consume');
+    })).toThrow('rollback after consume');
+
+    expect(service.inspect(created.rawToken, ['password_reset']).record.tokenId)
+      .toBe(created.record.tokenId);
+    expect(events.query({ code: OBS_CODES.TOKENS_ACTION_CONSUMED.code }).events)
+      .toHaveLength(0);
+    expect(events.query({ code: OBS_CODES.AUTH_ACTION_TOKEN_CONSUMED.code }).events)
+      .toHaveLength(0);
+  });
+
+  test('defers legacy consumption telemetry through the outer transaction', async () => {
+    const legacy = new AuthActionTokenService(store, '1h', '5m', null);
+    const user = await store.createUser({
+      username: 'rollback-legacy-token',
+      email: 'rollback-legacy-token@example.com',
+      password: 'password123',
+    });
+    const created = legacy.create({
+      userId: user.userId,
+      type: 'password_reset',
+    });
+
+    expect(() => store.transaction(() => {
+      legacy.consume(created.rawToken, ['password_reset']);
+      throw new Error('rollback legacy consume');
+    })).toThrow('rollback legacy consume');
+
+    expect(legacy.inspect(created.rawToken, ['password_reset']).record.tokenId)
+      .toBe(created.record.tokenId);
+    expect(events.query({ code: OBS_CODES.AUTH_ACTION_TOKEN_CONSUMED.code }).events)
+      .toHaveLength(0);
+
+    legacy.consume(created.rawToken, ['password_reset']);
+    expect(events.query({ code: OBS_CODES.AUTH_ACTION_TOKEN_CONSUMED.code }).events)
+      .toHaveLength(1);
   });
 
   test('email identity change invalidates platform and legacy action tokens', async () => {

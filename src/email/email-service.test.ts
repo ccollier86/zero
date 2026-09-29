@@ -1,14 +1,21 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { configureObservability } from '../observability';
+import {
+  configureObservability,
+  emitPlatformCodeTo,
+  MemoryEventStore,
+  OBS_CODES,
+} from '../observability';
 import { EmailError } from './email-error';
 import { EmailService } from './email-service';
 import { MemoryEmailProvider } from './memory-email-provider';
 import { ResendEmailProvider } from './resend-email-provider';
 import {
   configureEmail,
+  createEmailRuntime,
   getEmailRuntime,
   getEmailService,
   isEmailDeliveryReady,
+  resetEmailCompatibilityRuntimeForTesting,
 } from './runtime';
 import type { EmailProvider } from './types';
 
@@ -16,7 +23,7 @@ const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  configureEmail(false);
+  resetEmailCompatibilityRuntimeForTesting();
 });
 
 describe('EmailService', () => {
@@ -71,9 +78,78 @@ describe('EmailService', () => {
     expect(error.message).toBe('Email provider request failed');
     expect(error.message).not.toContain('user@example.com');
   });
+
+  test('keeps managed email events bound to the owning app runtime', async () => {
+    const eventsA = new MemoryEventStore();
+    const eventsB = new MemoryEventStore();
+    const observabilityA = {
+      sink: eventsA,
+      store: eventsA,
+      config: { console: false },
+    };
+    const observabilityB = {
+      sink: eventsB,
+      store: eventsB,
+      config: { console: false },
+    };
+    const runtimeA = createEmailRuntime({
+      provider: 'console',
+      from: 'alpha@example.test',
+    }, { name: 'Alpha' }, (definition, options) =>
+      emitPlatformCodeTo(observabilityA, definition, options));
+    const runtimeB = createEmailRuntime({
+      provider: 'console',
+      from: 'beta@example.test',
+    }, { name: 'Beta' }, (definition, options) =>
+      emitPlatformCodeTo(observabilityB, definition, options));
+
+    // A later app may replace the compatibility sink. Managed runtimes must
+    // retain their exact app-local boundary instead of following that global.
+    configureObservability({ console: false, store: eventsB });
+    await runtimeA.service.send({
+      to: 'user@example.test',
+      subject: 'Alpha notice',
+      text: 'Hello',
+    });
+
+    expect(eventsA.query({ code: OBS_CODES.EMAIL_SEND_REQUESTED.code }).count).toBe(1);
+    expect(eventsA.query({ code: OBS_CODES.EMAIL_SENT.code }).count).toBe(1);
+    const previewA = eventsA.query({ code: OBS_CODES.EMAIL_CONSOLE_PREVIEW.code });
+    expect(previewA.count).toBe(1);
+    expect(previewA.events[0]?.metadata).toEqual({
+      recipientCount: 1,
+      hasSender: true,
+      hasText: true,
+      hasHtml: false,
+    });
+    expect(JSON.stringify(previewA)).not.toContain('user@example.test');
+    expect(JSON.stringify(previewA)).not.toContain('alpha@example.test');
+    expect(JSON.stringify(previewA)).not.toContain('Alpha notice');
+    expect(eventsB.query({ code: OBS_CODES.EMAIL_SEND_REQUESTED.code }).count).toBe(0);
+    expect(eventsB.query({ code: OBS_CODES.EMAIL_SENT.code }).count).toBe(0);
+    expect(eventsB.query({ code: OBS_CODES.EMAIL_CONSOLE_PREVIEW.code }).count).toBe(0);
+
+    await runtimeB.service.send({
+      to: 'user@example.test',
+      subject: 'Beta notice',
+      text: 'Hello',
+    });
+    expect(eventsB.query({ code: OBS_CODES.EMAIL_SEND_REQUESTED.code }).count).toBe(1);
+    expect(eventsB.query({ code: OBS_CODES.EMAIL_SENT.code }).count).toBe(1);
+    expect(eventsB.query({ code: OBS_CODES.EMAIL_CONSOLE_PREVIEW.code }).count).toBe(1);
+  });
 });
 
 describe('configureEmail', () => {
+  test('keeps disabled configuration distinct from compatibility reset', () => {
+    configureEmail(false, { name: 'Manually disabled' });
+    expect(getEmailRuntime().app.name).toBe('Manually disabled');
+
+    resetEmailCompatibilityRuntimeForTesting();
+    expect(getEmailRuntime().enabled).toBe(false);
+    expect(getEmailRuntime().app.name).toBeUndefined();
+  });
+
   test('defaults to disabled noop provider', () => {
     const runtime = configureEmail(undefined, { name: 'Zero' });
 

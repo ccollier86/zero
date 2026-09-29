@@ -7,7 +7,11 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
-import { configureObservability } from '../observability';
+import {
+  configureObservability,
+  getPlatformEventStore,
+  OBS_CODES,
+} from '../observability';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import { PlatformTokenError } from './token-types';
 import { PlatformTokenService } from './token-service';
@@ -65,6 +69,12 @@ describe('PlatformTokenService action tokens', () => {
       purposes: ['invite.accept'],
     });
     expect(consumed.consumedAt).toBeNumber();
+    expect(getPlatformEventStore()?.query({
+      code: OBS_CODES.TOKENS_ACTION_CREATED.code,
+    }).events).toHaveLength(1);
+    expect(getPlatformEventStore()?.query({
+      code: OBS_CODES.TOKENS_ACTION_CONSUMED.code,
+    }).events).toHaveLength(1);
     expect(() => service.consumeActionToken(created.rawToken, {
       purposes: ['invite.accept'],
     })).toThrow(PlatformTokenError);

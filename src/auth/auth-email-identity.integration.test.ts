@@ -3,6 +3,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 import { configureEmail, MemoryEmailProvider } from '../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import { createReactiveDB } from '../sync/reactive-db';
 import { createAuthPlugin, getAuthEmailOutbox } from './auth.plugin';
 
@@ -137,7 +138,7 @@ describe('Auth Plugin — Canonical Email Identity', () => {
       expect(provider.messages[0].message.to).toBe('updated.worker@example.com');
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 

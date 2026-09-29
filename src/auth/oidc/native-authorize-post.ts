@@ -9,7 +9,9 @@ import {
 } from './native-authorize-helpers';
 import { requiredFormField, readNativeForm } from './native-form';
 import { appendAuthorizationResult, nativeRedirect } from './native-http';
+import type { NativeAuthorizationService } from './native-authorization-service';
 import type { NativeAuthHttpConfig } from './native-plugin-types';
+import { emitUnexpectedNativeRequestFailure } from './native-request-failure';
 
 export async function authorizeNativePost(
   config: NativeAuthHttpConfig,
@@ -18,9 +20,10 @@ export async function authorizeNativePost(
   if (request.headers.get('origin') !== new URL(config.issuer).origin) {
     return authorizationProblem('Authorization confirmation was rejected.');
   }
-  const service = requireNativeService(config);
+  let service: NativeAuthorizationService | null = null;
   let rawRequestId: string | null = null;
   try {
+    service = requireNativeService(config);
     const form = await readNativeForm(request);
     rawRequestId = requiredFormField(form, 'request_id');
     const decision = requiredFormField(form, 'decision');
@@ -52,9 +55,10 @@ export async function authorizeNativePost(
       code: issued.rawCode, state: issued.request.state, iss: config.issuer,
     }));
   } catch (error) {
+    emitUnexpectedNativeRequestFailure(config, 'authorize.post', error);
     return nativeAuthorizationFailure(
       config.issuer, error,
-      service.getErrorTarget(new URL(request.url), rawRequestId),
+      service?.getErrorTarget(new URL(request.url), rawRequestId) ?? null,
     );
   }
 }

@@ -290,7 +290,10 @@ export function projectTenantAppShellWorkspaces(
     items: tenant.tenants.map((item) => ({
       id: item.tenantId,
       name: item.name,
-      subtitle: options.itemSubtitle?.(item) ?? item.role ?? undefined,
+      subtitle: options.itemSubtitle?.(item)
+        ?? (item.kind === 'administration'
+          ? `Platform administration${item.role ? ` · ${item.role}` : ''}`
+          : item.role ?? undefined),
     })),
     activeActions: options.activeActions,
     onCreate: options.onCreate,

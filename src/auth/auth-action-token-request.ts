@@ -2,6 +2,7 @@
 
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 import type { AuthActionTokenService } from './action-token-service';
 import { AuthError } from './types';
 
@@ -25,9 +26,10 @@ export type PasswordResetSuppressionReason =
 
 export function emitPasswordResetSuppressed(
   reason: PasswordResetSuppressionReason,
-  userId?: string
+  userId?: string,
+  emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
 ): void {
-  emitPlatformCode(OBS_CODES.AUTH_PASSWORD_RESET_SUPPRESSED, {
+  emitCode(OBS_CODES.AUTH_PASSWORD_RESET_SUPPRESSED, {
     userId,
     metadata: { reason },
   });

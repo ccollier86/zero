@@ -12,6 +12,7 @@ import type { ResolvedAuthBehaviorConfig, UserRecord } from './types';
 import { toAuthUserResponse } from './auth-user-response';
 import type { WebSessionBinding } from './auth-session-types';
 import type { AuthTenantSessionService } from './auth-tenant-session-service';
+import { normalizeMfaVerifiedAt } from './mfa-assurance';
 
 /** Build the response returned when an auth flow reaches session issuance. */
 export async function buildAuthCompletionResponse(params: {
@@ -22,10 +23,13 @@ export async function buildAuthCompletionResponse(params: {
   tenantSessionService: AuthTenantSessionService;
   requestedMfaSetup?: boolean;
   sessionBinding?: WebSessionBinding;
+  /** Trusted durable assurance re-resolved from a live server-side proof. */
+  mfaVerifiedAt?: number | null;
 }) {
   const { user, tokenService, authConfig, mfaChallengeService } = params;
+  const mfaVerifiedAt = normalizeMfaVerifiedAt(params.mfaVerifiedAt);
 
-  if (authConfig.mfa.enabled && mfaChallengeService) {
+  if (mfaVerifiedAt === null && authConfig.mfa.enabled && mfaChallengeService) {
     const activeMethod = mfaChallengeService.getActiveChallengeMethod(user.userId);
     if (activeMethod) {
       const started = await mfaChallengeService.startLoginChallenge({
@@ -75,6 +79,7 @@ export async function buildAuthCompletionResponse(params: {
     user,
     tenantSessionService: params.tenantSessionService,
     sessionBinding: params.sessionBinding,
+    mfaVerifiedAt,
   });
 }
 
@@ -83,10 +88,13 @@ export async function buildSessionCompletionResponse(params: {
   user: UserRecord;
   tenantSessionService: AuthTenantSessionService;
   sessionBinding?: WebSessionBinding;
+  /** Durable proof produced only by a successfully verified MFA ceremony. */
+  mfaVerifiedAt?: number | null;
 }) {
   const completion = await params.tenantSessionService.complete(
     params.user,
     params.sessionBinding,
+    params.mfaVerifiedAt ?? null,
   );
   const user = toAuthUserResponse(params.user);
   if (completion.kind === 'session') {

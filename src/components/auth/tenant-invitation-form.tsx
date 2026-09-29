@@ -61,7 +61,10 @@ function TenantInvitationFormScope({
   const [submitting, setSubmitting] = React.useState(false);
   const [finalizing, setFinalizing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [success, setSuccess] = React.useState(false);
+  const [acceptedTenant, setAcceptedTenant] = React.useState<
+    Extract<AuthTenantInvitationAcceptanceResult, { invitationAccepted: true }>['acceptedTenant']
+    | null
+  >(null);
   const [flow, setFlow] = React.useState<AuthFlowContinuationResult | null>(null);
   const [form, setForm] = React.useState({
     email: '',
@@ -89,6 +92,7 @@ function TenantInvitationFormScope({
     let current = true;
     setLoading(true);
     setError(null);
+    setInspection(null);
     if (!authClient || !token) {
       setInspection({ available: false });
       setLoading(false);
@@ -112,7 +116,7 @@ function TenantInvitationFormScope({
       const result = await authClient.acceptTenantInvitation(params);
       if (!mounted.current) return;
       if ('invitationAccepted' in result && result.invitationAccepted) {
-        setSuccess(true);
+        setAcceptedTenant(result.acceptedTenant);
         setFlow(null);
         onSuccess?.(result);
         return;
@@ -155,12 +159,17 @@ function TenantInvitationFormScope({
   }
 
   if (loading) return status('Checking invitation…', className);
-  if (success) {
+  if (acceptedTenant) {
+    const accepted = tenantInvitationPresentation(
+      acceptedTenant.kind,
+      acceptedTenant.name,
+      term,
+    );
     return (
       <div className={cn('space-y-4', className)} role="status" aria-live="polite">
         <AuthHeader
           title="Invitation accepted"
-          description={`Your ${term} session is ready.`}
+          description={accepted.successDescription}
         />
       </div>
     );
@@ -178,15 +187,21 @@ function TenantInvitationFormScope({
   }
 
   const canAcceptExisting = auth.isAuthenticated || Boolean(continuation);
+  const presentation = tenantInvitationPresentation(
+    inspection.tenant.kind,
+    inspection.tenant.name,
+    term,
+  );
   return (
     <div
       className={cn('space-y-4', className)}
       aria-busy={submitting || finalizing}
     >
       <AuthHeader
-        title={`Join ${inspection.tenant.name}`}
+        title={presentation.title}
         description={`This invitation is for ${inspection.emailHint}.`}
       />
+      <TenantInvitationScopeNotice kind={inspection.tenant.kind} />
       {error && (
         <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           {error}
@@ -232,14 +247,14 @@ function TenantInvitationFormScope({
               onChange={(event) => setForm((value) => ({ ...value, password: event.target.value }))} />
           </Field>
           <Button type="submit" className="w-full" disabled={submitting}>
-            {submitting ? 'Creating account…' : `Create account and join ${term}`}
+            {submitting ? 'Creating account…' : `Create account and join ${presentation.actionTerm}`}
           </Button>
         </form>
       ) : canAcceptExisting ? (
-        <Button className="w-full" disabled={submitting} onClick={() => {
+        <Button type="button" className="w-full" disabled={submitting} onClick={() => {
           void accept(auth.isAuthenticated ? { token } : { token, continuation });
         }}>
-          {submitting ? 'Accepting…' : `Accept and join ${term}`}
+          {submitting ? 'Accepting…' : `Accept and join ${presentation.actionTerm}`}
         </Button>
       ) : (
         <Button asChild className="w-full">
@@ -258,6 +273,37 @@ export function tenantInvitationFlowKey(
   // Do not include the signed-in user here: invitation acceptance may itself
   // establish that user session before the completion callback runs.
   return JSON.stringify([token, continuation ?? null]);
+}
+
+/** @internal Server-derived kind copy shared by invitation states and tests. */
+export function tenantInvitationPresentation(
+  kind: 'administration' | 'organization',
+  tenantName: string,
+  customerTerm: string,
+) {
+  if (kind === 'administration') return {
+    title: 'Join Platform administration',
+    actionTerm: 'Platform administration',
+    successDescription: 'Your Platform administration session is ready.',
+  } as const;
+  return {
+    title: `Join ${tenantName}`,
+    actionTerm: customerTerm,
+    successDescription: `Your ${customerTerm} session is ready.`,
+  } as const;
+}
+
+/** Distinguishes a protected-scope invite before the user authenticates. */
+export function TenantInvitationScopeNotice({
+  kind,
+}: { kind: 'administration' | 'organization' }) {
+  if (kind !== 'administration') return null;
+  return (
+    <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm" role="note">
+      This protected-scope invitation grants platform administration access,
+      not customer data access. Platform-administrator MFA policy applies.
+    </p>
+  );
 }
 
 function Field({

@@ -182,6 +182,40 @@ describe('early multipart authentication', () => {
     expect(handlerRuns).toBe(0);
   });
 
+  test('does not expose internal auth diagnostics from the early guard', async () => {
+    const tokens = fakeTokenService(
+      async () => ({
+        userId: 'u_1',
+        email: 'person@example.test',
+        role: 'user',
+      }),
+      () => {
+        throw new AuthError(
+          'Invariant failed for person@example.test with private-token',
+          'AUTH_STATE_INVARIANT_FAILED',
+          500,
+        );
+      },
+    );
+    const set: { status?: number | string } = {};
+    const guard = createProtectedMultipartRequestGuard(() => tokens, {
+      method: 'POST', path: '/private-upload',
+    });
+
+    const result = await guard({
+      request: multipartRequest('/private-upload', 'valid'),
+      set,
+    });
+
+    expect(set.status).toBe(500);
+    expect(result).toEqual({
+      error: 'Authentication service unavailable',
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+    });
+    expect(JSON.stringify(result)).not.toContain('private-token');
+    expect(JSON.stringify(result)).not.toContain('person@example.test');
+  });
+
   test('the raw structured multipart guard rejects before parsing', async () => {
     let parserRuns = 0;
     let handlerRuns = 0;

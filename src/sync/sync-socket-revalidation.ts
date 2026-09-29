@@ -211,6 +211,7 @@ export function createSyncSocketRevalidation(options: Options) {
     dispose,
     invalidateAll,
     revalidate,
+    revalidateAll,
     start,
     startAuthorityPolling,
     validateCurrentAuthority,
@@ -247,10 +248,12 @@ function sameAuthContext(left: NonNullable<SyncSocketData['authContext']>, right
     && JSON.stringify([...(left.scope ?? [])].sort())
       === JSON.stringify([...(right.scope ?? [])].sort())
     && left.sessionId === right.sessionId
+    && left.mfaVerifiedAt === right.mfaVerifiedAt
     && left.sessionGeneration === right.sessionGeneration
     && left.sessionScopeKind === right.sessionScopeKind
     && left.sessionScopeId === right.sessionScopeId
     && left.tenantId === right.tenantId
+    && left.tenantKind === right.tenantKind
     && left.membershipId === right.membershipId
     && left.tenantRole === right.tenantRole
     && left.tenantAuthorizationGeneration === right.tenantAuthorizationGeneration

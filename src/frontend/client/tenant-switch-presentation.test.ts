@@ -9,15 +9,24 @@ import {
 
 const alpha: AuthTenantSummary = {
   tenantId: 'tenant-a',
+  kind: 'organization',
   slug: 'alpha',
   name: 'Alpha',
   role: 'owner',
 };
 const beta: AuthTenantSummary = {
   tenantId: 'tenant-b',
+  kind: 'organization',
   slug: 'beta',
   name: 'Beta',
   role: 'member',
+};
+const administration: AuthTenantSummary = {
+  tenantId: 'tenant-admin',
+  kind: 'administration',
+  slug: 'platform-administration',
+  name: 'Platform administration',
+  role: 'owner',
 };
 
 describe('tenant AppShell workspace projection', () => {
@@ -90,6 +99,22 @@ describe('tenant AppShell workspace projection', () => {
       announcement: 'Switched to Beta',
       focusRevision: 2,
     });
+  });
+
+  test('visibly distinguishes protected administration scope from customer organizations', () => {
+    const workspaces = projectTenantAppShellWorkspaces(tenantPresentation({
+      tenants: [administration, alpha],
+      activeTenant: administration,
+    }), { hideWhenSingle: false });
+
+    expect(workspaces?.items).toEqual([
+      {
+        id: 'tenant-admin',
+        name: 'Platform administration',
+        subtitle: 'Platform administration · owner',
+      },
+      { id: 'tenant-a', name: 'Alpha', subtitle: 'owner' },
+    ]);
   });
 });
 

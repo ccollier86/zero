@@ -3,6 +3,7 @@ import { Elysia } from 'elysia';
 import { EmailService } from '../email/email-service';
 import { MemoryEmailProvider } from '../email/memory-email-provider';
 import type { EmailRuntime } from '../email/types';
+import { MemoryEventStore, OBS_CODES } from '../observability';
 import { ZERO_RUNTIME_AMBIGUOUS } from '../runtime/compatibility-provider-registry';
 import {
   ZERO_AUTH_STORE,
@@ -10,6 +11,7 @@ import {
   ZERO_AUTH_SESSION_SERVICE,
   ZERO_AUTH_TOKEN_SERVICE,
   ZERO_EMAIL_RUNTIME,
+  ZERO_OBSERVABILITY_RUNTIME,
   ZERO_PLATFORM_TOKEN_SERVICE,
 } from '../runtime/service-keys';
 import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
@@ -30,6 +32,7 @@ interface RunningAuthApp {
   db: ReactiveDB;
   runtime: ZeroAppRuntime;
   email: MemoryEmailProvider;
+  events: MemoryEventStore;
   url: string;
 }
 
@@ -90,6 +93,12 @@ describe('Auth plugin runtime isolation', () => {
     expect(appB.email.messages).toHaveLength(0);
     expect(platformActionTokenCount(appA.db)).toBe(1);
     expect(platformActionTokenCount(appB.db)).toBe(0);
+    expect(appA.events.query({
+      code: OBS_CODES.AUTH_EMAIL_VERIFICATION_SENT.code,
+    }).events).toHaveLength(1);
+    expect(appB.events.query({
+      code: OBS_CODES.AUTH_EMAIL_VERIFICATION_SENT.code,
+    }).events).toHaveLength(0);
 
     const userB = await register(appB, 'user-b');
     expect(userB.status).toBe(200);
@@ -98,8 +107,31 @@ describe('Auth plugin runtime isolation', () => {
     expect(appB.email.messages).toHaveLength(1);
     expect(platformActionTokenCount(appA.db)).toBe(1);
     expect(platformActionTokenCount(appB.db)).toBe(1);
+    expect(appA.events.query({
+      code: OBS_CODES.AUTH_EMAIL_VERIFICATION_SENT.code,
+    }).events).toHaveLength(1);
+    expect(appB.events.query({
+      code: OBS_CODES.AUTH_EMAIL_VERIFICATION_SENT.code,
+    }).events).toHaveLength(1);
+
+    const passwordResetA = await request(appA, 'POST', '/auth/forgot-password', {
+      email: 'user-a@example.test',
+    });
+    expect(passwordResetA.status).toBe(200);
+    expect(appA.events.query({
+      code: OBS_CODES.AUTH_EMAIL_OUTBOX_ENQUEUED.code,
+    }).events).toHaveLength(1);
+    expect(appB.events.query({
+      code: OBS_CODES.AUTH_EMAIL_OUTBOX_ENQUEUED.code,
+    }).events).toHaveLength(0);
     expect(appA.email.messages[0]!.message.to).toBe('user-a@example.test');
     expect(appB.email.messages[0]!.message.to).toBe('user-b@example.test');
+    expect(appA.events.query({
+      code: OBS_CODES.AUTH_FIRST_ADMIN_BOOTSTRAPPED.code,
+    }).events).toHaveLength(1);
+    expect(appB.events.query({
+      code: OBS_CODES.AUTH_FIRST_ADMIN_BOOTSTRAPPED.code,
+    }).events).toHaveLength(1);
 
     const pairA = await tokensA.issueTokenPair(storeA.getUserByUsername('admin-a')!);
     const ownSession = await request(appA, 'GET', '/auth/me', undefined, pairA.accessToken);
@@ -146,6 +178,12 @@ async function startAuthApp(id: string): Promise<RunningAuthApp> {
     service: new EmailService(email, { from: `${id}@example.test` }),
   };
   const runtime = new ZeroAppRuntime(id);
+  const events = new MemoryEventStore({ maxEvents: 100 });
+  runtime.set(ZERO_OBSERVABILITY_RUNTIME, {
+    sink: events,
+    store: events,
+    config: { console: false },
+  });
   runtime.set(ZERO_EMAIL_RUNTIME, emailRuntime);
   runtime.set(ZERO_PLATFORM_TOKEN_SERVICE, platformTokens);
 
@@ -162,6 +200,7 @@ async function startAuthApp(id: string): Promise<RunningAuthApp> {
     db,
     runtime,
     email,
+    events,
     url: `http://localhost:${app.server!.port}`,
   };
   running.push(instance);

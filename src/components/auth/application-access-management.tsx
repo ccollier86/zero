@@ -16,10 +16,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '#zero/components/animate-ui/components/radix/alert-dialog';
-import { Badge } from '#zero/components/ui/badge';
 import { Button } from '#zero/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '#zero/components/ui/card';
-import { Checkbox } from '#zero/components/ui/checkbox';
 import { Input } from '#zero/components/ui/input';
 import {
   Select,
@@ -29,7 +27,12 @@ import {
   SelectValue,
 } from '#zero/components/ui/select';
 import { cn } from '#zero/lib/utils';
-import { authRoleLabel, createAuthRoleLabelMap } from './auth-role-presentation';
+import { createAuthRoleLabelMap } from './auth-role-presentation';
+import {
+  ApplicationRoleEditor,
+  ApplicationUserRow,
+  applicationUserName,
+} from './application-access-management-parts';
 
 export interface ApplicationAccessManagementProps {
   className?: string;
@@ -112,7 +115,7 @@ function ApplicationAccessManagementScope({
   async function saveRoles() {
     if (!selectedUser || !actorUserId) return;
     const mutationActorUserId = actorUserId;
-    const changedUserName = userName(selectedUser);
+    const changedUserName = applicationUserName(selectedUser);
     setLocalError(null);
     setAnnouncement('');
     let actorAuthorizationChanged = false;
@@ -141,7 +144,7 @@ function ApplicationAccessManagementScope({
   async function confirmTransfer() {
     if (!transferTarget || !actorUserId) return;
     const mutationActorUserId = actorUserId;
-    const nextOwnerName = userName(transferTarget);
+    const nextOwnerName = applicationUserName(transferTarget);
     setLocalError(null);
     setAnnouncement('');
     let actorAuthorizationChanged = false;
@@ -168,13 +171,6 @@ function ApplicationAccessManagementScope({
   const configuredRoles = access.config?.roles ?? [];
   const roleLabels = createAuthRoleLabelMap(configuredRoles);
   const roles = configuredRoles.filter((role) => role.assignable);
-  const declaredRoleKeys = new Set(roles.map((role) => role.key));
-  const retiredRoles = selectedUser?.roles.filter((role) => (
-    role !== 'owner' && !declaredRoleKeys.has(role)
-  )) ?? [];
-  const retiredRolesRequireOwner = retiredRoles.length > 0
-    && capabilities?.canTransferOwnership !== true;
-
   React.useEffect(() => {
     setSelected(null);
     setTransferTarget(null);
@@ -253,7 +249,7 @@ function ApplicationAccessManagementScope({
               <AlertDialogHeader>
                 <AlertDialogTitle>Transfer application ownership?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  {userName(transferTarget)} will become the owner. Your application
+                  {applicationUserName(transferTarget)} will become the owner. Your application
                   authorization will refresh after the transfer.
                 </AlertDialogDescription>
               </AlertDialogHeader>
@@ -348,110 +344,17 @@ function ApplicationAccessManagementScope({
         )}
 
         {!access.isLoading && selectedUser && capabilities?.canManageRoles && (
-          <section id={rolePanelId} aria-labelledby={`${rolePanelId}-heading`} className="rounded-md border border-border/80 bg-muted/20 p-4">
-            <h3 id={`${rolePanelId}-heading`} className="text-sm font-semibold">
-              Roles for {userName(selectedUser)}
-            </h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Select roles within your authority ceiling. Existing higher-authority roles
-              remain visible but locked.
-            </p>
-            {selectedUser.roles.includes('owner') && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                Ownership is protected and can move only through the transfer action.
-              </p>
-            )}
-            {retiredRolesRequireOwner && (
-              <p role="status" className="mt-2 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-muted-foreground">
-                This user has a retired role. An application owner must remove it before
-                other role changes can be saved.
-              </p>
-            )}
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {roles.map((role) => {
-                const checked = draftRoles.includes(role.key);
-                const disabled = access.isMutating
-                  || !role.grantable
-                  || retiredRolesRequireOwner
-                  || (selectedUser.status !== 'active' && !checked);
-                return (
-                  <label
-                    key={role.key}
-                    className={cn(
-                      'flex items-start gap-2 rounded-md border bg-background p-3 text-sm',
-                      disabled && 'opacity-65',
-                    )}
-                  >
-                    <Checkbox
-                      checked={checked}
-                      disabled={disabled}
-                      onCheckedChange={(value) => setDraftRoles((current) => (
-                        value
-                          ? [...new Set([...current, role.key])]
-                          : current.filter((item) => item !== role.key)
-                      ))}
-                      aria-label={`${checked ? 'Remove' : 'Assign'} ${role.label}`}
-                    />
-                    <span>
-                      <span className="block font-medium">
-                        {role.label}{!role.grantable && checked ? ' (locked)' : ''}
-                      </span>
-                      {role.description && (
-                        <span className="mt-0.5 block text-xs text-muted-foreground">
-                          {role.description}
-                        </span>
-                      )}
-                    </span>
-                  </label>
-                );
-              })}
-              {retiredRoles.map((roleKey) => {
-                const checked = draftRoles.includes(roleKey);
-                const disabled = access.isMutating
-                  || capabilities?.canTransferOwnership !== true;
-                return (
-                  <label
-                    key={roleKey}
-                    className={cn(
-                      'flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-sm',
-                      disabled && 'opacity-65',
-                    )}
-                  >
-                    <Checkbox
-                      checked={checked}
-                      disabled={disabled}
-                      onCheckedChange={(value) => setDraftRoles((current) => (
-                        value
-                          ? [...new Set([...current, roleKey])]
-                          : current.filter((item) => item !== roleKey)
-                      ))}
-                      aria-label={`${checked ? 'Remove' : 'Retain'} retired role ${roleKey}`}
-                    />
-                    <span>
-                      <span className="block font-medium">{roleKey} (retired)</span>
-                      <span className="mt-0.5 block text-xs text-muted-foreground">
-                        This role is no longer declared and grants no permissions.
-                        {disabled ? ' Only an application owner can remove it.' : ''}
-                      </span>
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-            {roles.length === 0 && retiredRoles.length === 0 && (
-              <p className="mt-3 text-xs text-muted-foreground">
-                No assignable application roles are configured.
-              </p>
-            )}
-            <Button
-              className="mt-3"
-              size="sm"
-              onClick={() => void saveRoles()}
-              disabled={access.isMutating || !roleSelectionChanged}
-            >
-              {access.isMutating ? 'Saving…' : 'Save roles'}
-            </Button>
-          </section>
+          <ApplicationRoleEditor
+            user={selectedUser}
+            roles={roles}
+            draftRoles={draftRoles}
+            busy={access.isMutating}
+            canTransferOwnership={capabilities.canTransferOwnership}
+            roleSelectionChanged={roleSelectionChanged}
+            rolePanelId={rolePanelId}
+            onChange={setDraftRoles}
+            onSave={() => void saveRoles()}
+          />
         )}
 
         {access.page?.hasMore && (
@@ -472,94 +375,6 @@ function ApplicationAccessManagementScope({
       </CardContent>
     </Card>
   );
-}
-
-function ApplicationUserRow({
-  user,
-  actorUserId,
-  selected,
-  canManageRoles,
-  canTransferOwnership,
-  busy,
-  rolePanelId,
-  roleLabels,
-  onSelect,
-  onTransfer,
-}: {
-  user: AuthApplicationUser;
-  actorUserId?: string;
-  selected: boolean;
-  canManageRoles?: boolean;
-  canTransferOwnership?: boolean;
-  busy: boolean;
-  rolePanelId: string;
-  roleLabels: ReadonlyMap<string, string>;
-  onSelect(): void;
-  onTransfer(trigger: HTMLButtonElement): void;
-}) {
-  const isActor = user.identity.userId === actorUserId;
-  const isOwner = user.roles.includes('owner');
-  const canSelectRoles = canManageRoles === true;
-  return (
-    <div className={cn('p-4', selected && 'bg-accent/35')}>
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <button
-          type="button"
-          className="min-w-0 text-left disabled:cursor-default"
-          onClick={onSelect}
-          aria-expanded={canSelectRoles ? selected : undefined}
-          aria-controls={canSelectRoles ? rolePanelId : undefined}
-          aria-label={canSelectRoles
-            ? `${selected ? 'Hide' : 'Manage'} roles for ${userName(user)}`
-            : undefined}
-          disabled={!canSelectRoles || busy}
-        >
-          <span className="block truncate text-sm font-semibold">
-            {userName(user)} {isActor && <span className="font-normal text-muted-foreground">(you)</span>}
-          </span>
-          <span className="block truncate text-xs text-muted-foreground">{user.identity.email}</span>
-        </button>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={user.status === 'active' ? 'secondary' : 'warning'}>
-            {user.status}
-          </Badge>
-          {user.roles.map((role) => (
-            <Badge key={role} variant="outline">{authRoleLabel(role, roleLabels)}</Badge>
-          ))}
-          {canManageRoles && (
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              onClick={onSelect}
-              disabled={busy}
-              aria-expanded={selected}
-              aria-controls={rolePanelId}
-              aria-label={`${selected ? 'Hide' : 'Manage'} roles for ${userName(user)}`}
-            >
-              Roles
-            </Button>
-          )}
-          {canTransferOwnership && !isActor && !isOwner && user.status === 'active' && (
-            <Button
-              type="button"
-              size="xs"
-              onClick={(event) => onTransfer(event.currentTarget)}
-              disabled={busy}
-              aria-haspopup="dialog"
-            >
-              Transfer ownership
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function userName(user: AuthApplicationUser): string {
-  const full = [user.identity.firstName, user.identity.lastName].filter(Boolean).join(' ');
-  return full || user.identity.username;
 }
 
 function errorMessage(cause: unknown): string {

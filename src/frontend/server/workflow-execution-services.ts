@@ -117,11 +117,13 @@ function createActorExecutionAccess(
     platformRole: authority.identity.platformRole,
     properties: Object.freeze({ ...authority.userProperties }),
     authorization: scope,
+    applicationAuthorization: scope.scopeKind === 'application' ? scope : null,
   });
 
   const access: RequestAuthorizationAccess = {
     context,
     authorization: scope,
+    applicationAuthorization: scope.scopeKind === 'application' ? scope : null,
     authorize(requirement) {
       return kernel.authorize(requirement, subject);
     },
@@ -134,6 +136,10 @@ function createActorExecutionAccess(
     },
     requireAuthorizationScope() {
       return scope;
+    },
+    requireApplicationAuthorization() {
+      if (scope.scopeKind !== 'application') throw forbidden();
+      return scope as AuthorizationScopeSnapshot & { readonly scopeKind: 'application' };
     },
     requireTenant() {
       if (scope.scopeKind !== 'tenant' || !scope.tenantId || !scope.membershipId) {
@@ -196,12 +202,14 @@ function createSystemExecutionAccess(
   const access: RequestAuthorizationAccess = {
     context: null,
     authorization: null,
+    applicationAuthorization: null,
     authorize(requirement) {
       return kernel.authorize(requirement, null);
     },
     requireUser() { throw unauthorizedSystem(); },
     requirePlatformAdmin() { throw unauthorizedSystem(); },
     requireAuthorizationScope() { throw unauthorizedSystem(); },
+    requireApplicationAuthorization() { throw unauthorizedSystem(); },
     requireTenant() { throw unauthorizedSystem(); },
     hasPermission() { return false; },
     requirePermission() { throw unauthorizedSystem(); },

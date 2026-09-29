@@ -18,7 +18,9 @@ import type {
   AuthAuthorizationConfig,
   AuthAuthorizationMode,
   AuthAuthorizationOwnerAdoptionConfig,
+  AuthAdministrationTenantConfig,
   AuthPermissionConfig,
+  AuthPermissionScope,
   AuthRegistrationConfig,
   AuthRoleTemplateConfig,
   AuthBehaviorConfig,
@@ -88,8 +90,16 @@ const VALID_AUTHORIZATION_MODES = new Set<AuthAuthorizationMode>([
   'advanced',
 ]);
 
+const VALID_PERMISSION_SCOPES = new Set<AuthPermissionScope>([
+  'application',
+  'tenant',
+]);
+
+const MAX_TENANT_ID_LENGTH = 256;
+
 const MAX_PERMISSION_COUNT = 512;
 const MAX_ROLE_COUNT = 128;
+const MAX_AUTHORIZATION_REGISTRY_VERSION = 2_147_483_647;
 const MAX_AUTH_LABEL_LENGTH = 120;
 const MAX_AUTH_DESCRIPTION_LENGTH = 500;
 
@@ -302,7 +312,7 @@ function normalizeTenancy(
   if (typeof config !== 'string' && config !== undefined) {
     assertOnlyKeys(
       config,
-      ['mode', 'terminology', 'creation', 'onboarding'],
+      ['mode', 'terminology', 'creation', 'onboarding', 'administration'],
       'Tenancy config',
     );
   }
@@ -310,10 +320,15 @@ function normalizeTenancy(
   const terminologyInput = typeof config === 'string' ? undefined : config?.terminology;
   const creationInput = typeof config === 'string' ? undefined : config?.creation;
   const onboardingInput = typeof config === 'string' ? undefined : config?.onboarding;
+  const administrationInput = typeof config === 'string'
+    ? undefined
+    : config?.administration;
   if (mode === 'single' && (terminologyInput !== undefined
-    || creationInput !== undefined || onboardingInput !== undefined)) {
+    || creationInput !== undefined || onboardingInput !== undefined
+    || administrationInput !== undefined)) {
     throw new Error(
-      '[auth] Tenancy terminology, creation, and onboarding policy require tenancy mode "multi".'
+      '[auth] Tenancy terminology, creation, onboarding, and administration policy '
+        + 'require tenancy mode "multi".'
     );
   }
 
@@ -325,6 +340,7 @@ function normalizeTenancy(
     assertPlainRecord(creationInput, 'Tenant creation config');
     assertOnlyKeys(creationInput, ['mode'], 'Tenant creation config');
   }
+  const administration = normalizeAdministrationTenant(administrationInput);
 
   const creationMode = (creationInput?.mode
     ?? (mode === 'multi' ? 'authenticated' : 'disabled')) as AuthTenantCreationMode;
@@ -353,7 +369,29 @@ function normalizeTenancy(
     ...(mode === 'multi'
       ? { onboarding: resolveAuthTenantOnboardingConfig(onboardingInput) }
       : {}),
+    ...(mode === 'multi' && administration
+      ? { administration }
+      : {}),
   });
+}
+
+function normalizeAdministrationTenant(
+  input: AuthAdministrationTenantConfig | undefined,
+): Readonly<AuthAdministrationTenantConfig> | null {
+  if (input === undefined) return null;
+  assertPlainRecord(input, 'Administration tenant config');
+  assertOnlyKeys(input, ['adoptTenantId'], 'Administration tenant config');
+  if (input.adoptTenantId === undefined) return Object.freeze({});
+  if (typeof input.adoptTenantId !== 'string') {
+    throw new Error('[auth] Administration adoptTenantId must be a string.');
+  }
+  const adoptTenantId = input.adoptTenantId.trim();
+  if (!adoptTenantId || adoptTenantId.length > MAX_TENANT_ID_LENGTH) {
+    throw new Error(
+      `[auth] Administration adoptTenantId must contain 1-${MAX_TENANT_ID_LENGTH} characters.`,
+    );
+  }
+  return Object.freeze({ adoptTenantId });
 }
 
 function normalizeTenantTerm(
@@ -399,10 +437,21 @@ function normalizeAuthorization(
   if (typeof config !== 'string' && config !== undefined) {
     assertOnlyKeys(
       config,
-      ['mode', 'permissions', 'roles', 'ownerAdoption', 'legacySimpleRoleAdoption'],
+      [
+        'mode',
+        'registryVersion',
+        'permissions',
+        'roles',
+        'ownerAdoption',
+        'legacySimpleRoleAdoption',
+      ],
       'Authorization config',
     );
   }
+
+  const registryVersion = normalizeAuthorizationRegistryVersion(
+    typeof config === 'string' ? undefined : config?.registryVersion,
+  );
 
   const applicationPermissions = typeof config === 'string'
     ? undefined
@@ -427,6 +476,7 @@ function normalizeAuthorization(
       mode,
       tenancy.terminology,
     ),
+    tenancyMode === 'multi' ? 'tenant' : 'application',
   );
   const roles = normalizeRoleTemplates(
     mergeAuthorizationRoleConfigs(
@@ -438,11 +488,11 @@ function normalizeAuthorization(
     permissions,
   );
 
-  // Keep the long-standing single/simple resolved shape byte-for-byte stable.
   // The adoption selector is an upgrade-only input, so omit it entirely when
   // it is not configured instead of publishing a new `null` field everywhere.
   const resolved: ResolvedAuthAuthorizationConfig = Object.freeze({
     mode,
+    registryVersion,
     permissions,
     roles,
     ...(ownerAdoption ? { ownerAdoption } : {}),
@@ -450,6 +500,18 @@ function normalizeAuthorization(
   });
   validateAuthorizationRegistry(resolved);
   return resolved;
+}
+
+function normalizeAuthorizationRegistryVersion(value: number | undefined): number {
+  if (value === undefined) return 1;
+  if (!Number.isSafeInteger(value)
+    || value < 1
+    || value > MAX_AUTHORIZATION_REGISTRY_VERSION) {
+    throw new Error(
+      `[auth] Authorization registryVersion must be an integer between 1 and ${MAX_AUTHORIZATION_REGISTRY_VERSION}.`,
+    );
+  }
+  return value;
 }
 
 function normalizeLegacySimpleRoleAdoption(
@@ -511,6 +573,7 @@ function normalizeOwnerAdoption(
 
 function normalizePermissions(
   input: Record<string, AuthPermissionConfig> | undefined,
+  defaultScope: AuthPermissionScope,
 ): Readonly<Record<string, ResolvedAuthPermissionConfig>> {
   if (input === undefined) return Object.freeze({});
   assertPlainRecord(input, 'Authorization permissions');
@@ -525,11 +588,22 @@ function normalizePermissions(
   for (const [key, definition] of entries) {
     validatePermissionKey(key);
     assertPlainRecord(definition, `Authorization permission "${key}"`);
-    assertOnlyKeys(definition, ['label', 'description'], `Authorization permission "${key}"`);
+    assertOnlyKeys(
+      definition,
+      ['label', 'description', 'scope'],
+      `Authorization permission "${key}"`,
+    );
+    const scope = definition.scope ?? defaultScope;
+    if (!VALID_PERMISSION_SCOPES.has(scope)) {
+      throw new Error(
+        `[auth] Authorization permission "${key}" scope must be "application" or "tenant".`,
+      );
+    }
     normalized[key] = Object.freeze({
       key,
       label: normalizeDisplayText(definition.label, key, 'label', key),
       ...normalizeOptionalDescription(definition.description, `permission "${key}"`),
+      scope,
     });
   }
   return Object.freeze(normalized);

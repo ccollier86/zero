@@ -271,8 +271,11 @@ export class AccountEmailService {
       expiresAt: params.delivery.expiresAt,
     });
     const template = onboarding.invitations.delivery.email.template;
-    const rendered = template
-      ? this.assertRenderedEmail(await template({
+    let rendered = defaults;
+    if (template) {
+      let custom: AuthEmailTemplateResult;
+      try {
+        custom = await template({
           branding,
           recipient: params.delivery.recipient,
           tenant: params.delivery.tenant,
@@ -285,8 +288,12 @@ export class AccountEmailService {
           defaultSubject: defaults.subject,
           defaultText: defaults.text,
           defaultHtml: defaults.html ?? '',
-        }), 'tenantInvitation')
-      : defaults;
+        });
+      } catch {
+        throw authEmailTemplateFailure('tenantInvitation');
+      }
+      rendered = this.assertRenderedEmail(custom, 'tenantInvitation');
+    }
 
     const result = await runtime.service.send({
       to: params.delivery.recipient,
@@ -355,18 +362,23 @@ export class AccountEmailService {
 
     if (!template) return defaults;
 
-    const rendered = await template({
-      key,
-      branding: input.branding,
-      user: input.user,
-      actionUrl: input.actionUrl,
-      expiresAt: input.expiresAt,
-      tokenType: typeof metadata.tokenType === 'string' ? metadata.tokenType : undefined,
-      defaultSubject: defaults.subject,
-      defaultText: defaults.text,
-      defaultHtml: defaults.html ?? '',
-      metadata,
-    } satisfies AuthEmailTemplateContext);
+    let rendered: AuthEmailTemplateResult;
+    try {
+      rendered = await template({
+        key,
+        branding: input.branding,
+        user: input.user,
+        actionUrl: input.actionUrl,
+        expiresAt: input.expiresAt,
+        tokenType: typeof metadata.tokenType === 'string' ? metadata.tokenType : undefined,
+        defaultSubject: defaults.subject,
+        defaultText: defaults.text,
+        defaultHtml: defaults.html ?? '',
+        metadata,
+      } satisfies AuthEmailTemplateContext);
+    } catch {
+      throw authEmailTemplateFailure(key);
+    }
 
     return this.assertRenderedEmail(rendered, key);
   }
@@ -429,6 +441,16 @@ export class AccountEmailService {
     if (continuation) url.searchParams.set('redirect', continuation);
     return url.toString();
   }
+}
+
+function authEmailTemplateFailure(
+  key: AuthEmailTemplateKey | 'tenantInvitation',
+): AuthError {
+  return new AuthError(
+    `Auth email template "${key}" failed`,
+    'AUTH_EMAIL_TEMPLATE_INVALID',
+    500,
+  );
 }
 
 function renderDefaultTemplate(

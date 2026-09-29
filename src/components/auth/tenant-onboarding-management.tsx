@@ -4,11 +4,9 @@ import * as React from 'react';
 import type {
   AuthTenantInvitation,
   AuthTenantJoinRequest,
-  AuthTenantReviewJoinRequestParams,
 } from '../../frontend/client/auth-types';
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
 import { useTenantOnboardingAdministration } from '../../frontend/client/tenant-administration-hooks';
-import { Badge } from '#zero/components/ui/badge';
 import { Button } from '#zero/components/ui/button';
 import {
   Card,
@@ -17,7 +15,6 @@ import {
   CardHeader,
   CardTitle,
 } from '#zero/components/ui/card';
-import { Input } from '#zero/components/ui/input';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -27,21 +24,23 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '#zero/components/animate-ui/components/radix/alert-dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '#zero/components/ui/select';
 import { cn } from '#zero/lib/utils';
-import {
-  authRoleLabel,
-  createAuthRoleLabelMap,
-} from './auth-role-presentation';
+import { createAuthRoleLabelMap } from './auth-role-presentation';
 import { writeAuthClipboardText } from './auth-clipboard';
 import { TenantDomainManagement } from './tenant-domain-management';
-import { TenantRolePicker } from './tenant-role-picker';
+import { JoinRequestRow } from './tenant-join-request-row';
+import { rolesForTenantKind } from './tenant-role-scope';
+import {
+  ManualInvitationToken,
+  TenantInvitationComposer,
+  TenantInvitationList,
+} from './tenant-onboarding-invitations';
+
+export {
+  filterJoinRequestApprovalRoles,
+  JoinRequestRow,
+  joinRequestApprovalParams,
+} from './tenant-join-request-row';
 
 export interface TenantOnboardingManagementProps {
   className?: string;
@@ -63,7 +62,13 @@ export function TenantOnboardingManagement(
     auth.user?.userId ?? null,
     auth.activeTenant?.tenantId ?? null,
   ]);
-  return <TenantOnboardingManagementScope key={boundary} {...props} />;
+  return (
+    <TenantOnboardingManagementScope
+      key={boundary}
+      {...props}
+      tenantKind={auth.activeTenant?.kind ?? null}
+    />
+  );
 }
 
 function TenantOnboardingManagementScope({
@@ -71,17 +76,27 @@ function TenantOnboardingManagementScope({
   pageSize = 50,
   title,
   description,
-}: TenantOnboardingManagementProps) {
+  tenantKind,
+}: TenantOnboardingManagementProps & {
+  tenantKind: 'administration' | 'organization' | null;
+}) {
   const boundedPageSize = Number.isFinite(pageSize)
     ? Math.min(100, Math.max(1, Math.trunc(pageSize)))
     : 50;
   const publicConfig = useAuthConfig().config;
-  const tenantSingular =
+  const configuredTenantSingular =
     publicConfig?.tenancy?.terminology?.singular ?? 'organization';
-  const resolvedTitle = title ?? `${capitalize(tenantSingular)} onboarding`;
+  const administrationScope = tenantKind === 'administration';
+  const tenantSingular = administrationScope
+    ? 'platform administration'
+    : configuredTenantSingular;
+  const resolvedTitle = title ?? (administrationScope
+    ? 'Platform administrator invitations'
+    : `${capitalize(tenantSingular)} onboarding`);
   const resolvedDescription =
-    description ??
-    `Invite people and review retained requests to join this ${tenantSingular}.`;
+    description ?? (administrationScope
+      ? 'Invite people into the protected administration organization.'
+      : `Invite people and review retained requests to join this ${tenantSingular}.`);
   const onboarding = useTenantOnboardingAdministration({
     limit: boundedPageSize,
   });
@@ -127,7 +142,7 @@ function TenantOnboardingManagementScope({
 
   async function issue(event: React.FormEvent) {
     event.preventDefault();
-    if (!email.trim()) return;
+    if (!email.trim() || (administrationScope && inviteRoles.length === 0)) return;
     const invitedEmail = email.trim();
     setLocalError(null);
     setManualToken(null);
@@ -199,13 +214,19 @@ function TenantOnboardingManagementScope({
 
   const capabilities = onboarding.config?.capabilities;
   const simpleMode = onboarding.config?.authorization === 'simple';
-  const roleLabels = createAuthRoleLabelMap(onboarding.config?.roles ?? []);
-  const invitationRoleChoices = (onboarding.config?.roles ?? []).filter(
+  const scopedRoles = rolesForTenantKind(onboarding.config?.roles ?? [], tenantKind);
+  const roleLabels = createAuthRoleLabelMap(scopedRoles);
+  const invitationRoleChoices = scopedRoles.filter(
     (role) =>
       role.assignable && role.grantable && !role.system && role.key !== 'owner',
   );
   const canChooseInvitationRoles =
     capabilities?.canManageRoles === true && invitationRoleChoices.length > 0;
+  const canIssueInvitations = capabilities?.canManageInvitations === true
+    && availableModes.length > 0
+    && (!administrationScope || canChooseInvitationRoles);
+  const canReviewJoinRequests = !administrationScope
+    && capabilities?.canReviewJoinRequests === true;
 
   React.useEffect(() => {
     if (!canChooseInvitationRoles) {
@@ -258,64 +279,34 @@ function TenantOnboardingManagementScope({
             <CardTitle>{resolvedTitle}</CardTitle>
             <CardDescription>{resolvedDescription}</CardDescription>
           </div>
-          {capabilities?.canManageInvitations && availableModes.length > 0 && (
-            <form className="space-y-3" onSubmit={issue}>
-              <div className="grid gap-2 sm:grid-cols-[1fr_10rem_auto]">
-                <Input
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="person@example.com"
-                  aria-label="Invitation email"
-                  autoComplete="email"
-                  disabled={onboarding.isMutating}
-                  required
-                />
-                <Select
-                  value={effectiveMode}
-                  onValueChange={(value) => setMode(value as typeof mode)}
-                  disabled={onboarding.isMutating}
-                >
-                  <SelectTrigger aria-label="Invitation delivery">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {delivery?.email && (
-                      <SelectItem value="email">Send email</SelectItem>
-                    )}
-                    {delivery?.manual && (
-                      <SelectItem value="manual">Copy token</SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="submit"
-                  disabled={
-                    onboarding.isMutating ||
-                    !email.trim() ||
-                    (canChooseInvitationRoles && inviteRoles.length === 0)
-                  }
-                >
-                  Invite
-                </Button>
-              </div>
-              {canChooseInvitationRoles && (
-                <TenantRolePicker
-                  roles={invitationRoleChoices}
-                  selected={inviteRoles}
-                  simple={simpleMode}
-                  disabled={onboarding.isMutating}
-                  legend="Roles granted when accepted"
-                  selectLabel={`Invitation ${tenantSingular} role`}
-                  selectPlaceholder={`Choose ${tenantSingular} role`}
-                  actionContext="on invitation"
-                  onChange={setInviteRoles}
-                />
-              )}
-            </form>
+          {canIssueInvitations && (
+            <TenantInvitationComposer
+              email={email}
+              mode={effectiveMode}
+              emailDelivery={delivery?.email === true}
+              manualDelivery={delivery?.manual === true}
+              busy={onboarding.isMutating}
+              canChooseRoles={canChooseInvitationRoles}
+              roles={invitationRoleChoices}
+              selectedRoles={inviteRoles}
+              simple={simpleMode}
+              tenantSingular={tenantSingular}
+              onEmailChange={setEmail}
+              onModeChange={setMode}
+              onRolesChange={setInviteRoles}
+              onSubmit={issue}
+            />
+          )}
+          {capabilities?.canManageInvitations && administrationScope
+            && !canChooseInvitationRoles && (
+            <p className="text-sm text-muted-foreground" role="status">
+              Inviting a platform administrator requires authority to grant at
+              least one administration role.
+            </p>
           )}
         </CardHeader>
         <CardContent className="space-y-6 pt-5">
+          <TenantOnboardingTenantKindNotice kind={tenantKind} />
           {!confirmation && (onboarding.error || localError) && (
             <div
               role="alert"
@@ -366,41 +357,12 @@ function TenantOnboardingManagementScope({
           </AlertDialog>
 
           {manualToken && (
-            <section
-              aria-labelledby={manualInvitationHeadingId}
-              className="rounded-md border border-warning/40 bg-warning/10 p-4 text-warning-foreground dark:border-warning/50 dark:bg-warning/15 dark:text-warning"
-            >
-              <h3 id={manualInvitationHeadingId} className="font-semibold">
-                Copy this one-time invitation token now
-              </h3>
-              <p className="mt-1 text-sm">
-                Zero will not show this token again. Share it only with the
-                intended recipient.
-              </p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
-                <Input
-                  readOnly
-                  value={manualToken}
-                  aria-label="One-time invitation token"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    void copyManualInvitationToken();
-                  }}
-                >
-                  Copy
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setManualToken(null)}
-                >
-                  Dismiss
-                </Button>
-              </div>
-            </section>
+            <ManualInvitationToken
+              token={manualToken}
+              headingId={manualInvitationHeadingId}
+              onCopy={() => void copyManualInvitationToken()}
+              onDismiss={() => setManualToken(null)}
+            />
           )}
 
           {onboarding.isLoading ? (
@@ -416,8 +378,7 @@ function TenantOnboardingManagementScope({
               {capitalize(tenantSingular)} onboarding controls require signing
               in with active {tenantSingular} access.
             </div>
-          ) : !capabilities?.canReadInvitations &&
-            !capabilities?.canReviewJoinRequests ? (
+          ) : !capabilities?.canReadInvitations && !canReviewJoinRequests ? (
             <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
               Invitation history and join-request review are not available for
               your current role.
@@ -425,85 +386,25 @@ function TenantOnboardingManagementScope({
           ) : (
             <>
               {capabilities?.canReadInvitations && (
-                <section aria-labelledby={invitationsHeadingId}>
-                  <h3
-                    ref={invitationsHeadingRef}
-                    id={invitationsHeadingId}
-                    tabIndex={-1}
-                    className="text-sm font-semibold"
-                  >
-                    Invitations
-                  </h3>
-                  <div className="mt-3 divide-y rounded-md border">
-                    {onboarding.invitations.length === 0 ? (
-                      <p className="p-4 text-sm text-muted-foreground">
-                        No invitations yet.
-                      </p>
-                    ) : (
-                      onboarding.invitations.map((invitation) => (
-                        <div
-                          key={invitation.invitationId}
-                          className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium">
-                              {invitation.email}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              Expires{' '}
-                              {new Date(invitation.expiresAt).toLocaleString()}
-                            </p>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge variant="outline">{invitation.status}</Badge>
-                            {invitation.roles.map((role) => (
-                              <Badge key={role} variant="outline">
-                                {authRoleLabel(role, roleLabels)}
-                              </Badge>
-                            ))}
-                            {capabilities.canManageInvitations &&
-                              invitation.status === 'pending' && (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={onboarding.isMutating}
-                                  aria-haspopup="dialog"
-                                  onClick={(event) => {
-                                    confirmationTriggerRef.current = event.currentTarget;
-                                    setLocalError(null);
-                                    setConfirmation({
-                                      action: 'revoke-invitation',
-                                      invitation,
-                                    });
-                                  }}
-                                >
-                                  Revoke
-                                </Button>
-                              )}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  {onboarding.invitationPage?.hasMore && (
-                    <Button
-                      type="button"
-                      className="mt-3"
-                      size="sm"
-                      variant="outline"
-                      disabled={onboarding.isLoadingMoreInvitations}
-                      onClick={() => void onboarding.loadMoreInvitations()}
-                    >
-                      {onboarding.isLoadingMoreInvitations
-                        ? 'Loading…'
-                        : 'Load more invitations'}
-                    </Button>
-                  )}
-                </section>
+                <TenantInvitationList
+                  headingId={invitationsHeadingId}
+                  headingRef={invitationsHeadingRef}
+                  invitations={onboarding.invitations}
+                  roleLabels={roleLabels}
+                  canManage={capabilities.canManageInvitations}
+                  busy={onboarding.isMutating}
+                  hasMore={onboarding.invitationPage?.hasMore === true}
+                  isLoadingMore={onboarding.isLoadingMoreInvitations}
+                  onLoadMore={() => void onboarding.loadMoreInvitations()}
+                  onRevoke={(invitation, trigger) => {
+                    confirmationTriggerRef.current = trigger;
+                    setLocalError(null);
+                    setConfirmation({ action: 'revoke-invitation', invitation });
+                  }}
+                />
               )}
 
-              {capabilities?.canReviewJoinRequests && (
+              {canReviewJoinRequests && (
                 <section aria-labelledby={joinRequestsHeadingId}>
                   <h3
                     ref={joinRequestsHeadingRef}
@@ -573,8 +474,23 @@ function TenantOnboardingManagementScope({
           </p>
         </CardContent>
       </Card>
-      <TenantDomainManagement />
+      {!administrationScope && <TenantDomainManagement />}
     </div>
+  );
+}
+
+/** Makes the protected-scope exclusions explicit in the generic onboarding UI. */
+export function TenantOnboardingTenantKindNotice({
+  kind,
+}: { kind: 'administration' | 'organization' | null }) {
+  if (kind !== 'administration') return null;
+  return (
+    <p className="rounded-md border border-border/70 bg-muted/25 p-3 text-sm text-muted-foreground" role="note">
+      Platform administration supports invitations only. Customer join
+      requests and verified-domain onboarding are unavailable in this
+      protected scope. Use PlatformAdministrationManagement for the full
+      administrator membership and ownership controls.
+    </p>
   );
 }
 
@@ -656,193 +572,6 @@ export function tenantOnboardingConfirmationAnnouncement(
 }
 
 /** @internal Reviewer-safe request row exposed for focused component tests. */
-export function JoinRequestRow({
-  request,
-  busy,
-  tenantSingular,
-  onApprove,
-  onDeny,
-}: {
-  request: AuthTenantJoinRequest;
-  busy: boolean;
-  tenantSingular: string;
-  onApprove(params: AuthTenantReviewJoinRequestParams): Promise<unknown>;
-  onDeny(trigger: HTMLButtonElement): void;
-}) {
-  const selection = request.approvalPolicy.roleSelection;
-  const selectable = selection.mode === 'selectable';
-  const selectionRoles = selectable ? selection.roles : [];
-  const defaultRoleKeys = selectable ? selection.defaultRoleKeys : [];
-  const policyKey = selectable
-    ? JSON.stringify([
-        selection.roles.map((role) => role.key),
-        selection.defaultRoleKeys,
-        selection.maxRoleCount,
-      ])
-    : selection.mode;
-  const [selectedRoles, setSelectedRoles] = React.useState<string[]>(
-    selectable ? [...defaultRoleKeys] : [],
-  );
-
-  React.useEffect(() => {
-    if (!selectable) {
-      setSelectedRoles([]);
-      return;
-    }
-    const allowed = new Set(selectionRoles.map((role) => role.key));
-    setSelectedRoles((current) => {
-      const retained = [...new Set(current)].filter((role) =>
-        allowed.has(role),
-      );
-      return retained.length > 0
-        ? retained.slice(0, selection.maxRoleCount)
-        : defaultRoleKeys
-            .filter((role) => allowed.has(role))
-            .slice(0, selection.maxRoleCount);
-    });
-  }, [policyKey]);
-
-  const safeSelectedRoles = selectable
-    ? filterJoinRequestApprovalRoles(request.approvalPolicy, selectedRoles)
-    : [];
-  const canApprove =
-    request.approvalPolicy.canApprove &&
-    (!selectable || safeSelectedRoles.length > 0);
-  const applicantName =
-    request.applicant.firstName || request.applicant.lastName
-      ? [request.applicant.firstName, request.applicant.lastName]
-          .filter(Boolean)
-          .join(' ')
-      : request.applicant.username;
-  const approvalLabel =
-    selection.mode === 'fixed' ? 'Fixed access' : 'Default access';
-
-  function approve() {
-    if (!canApprove) return;
-    void onApprove(
-      joinRequestApprovalParams(
-        request.approvalPolicy,
-        safeSelectedRoles,
-        request.reactivationRequired,
-        request.requestRevision,
-      ),
-    );
-  }
-
-  return (
-    <div className="p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{applicantName}</p>
-          <p className="truncate text-xs text-muted-foreground">
-            {request.applicant.email}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline">{request.status}</Badge>
-          {!selectable && selection.roles.length > 0 && (
-            <span className="text-xs text-muted-foreground">
-              {approvalLabel}:{' '}
-              {selection.roles.map((role) => role.label).join(', ')}
-            </span>
-          )}
-          {request.status === 'pending' && !selectable && (
-            <>
-              <Button
-                type="button"
-                size="sm"
-                disabled={busy || !canApprove}
-                onClick={approve}
-              >
-                {request.reactivationRequired ? 'Re-admit' : 'Approve'}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                aria-haspopup="dialog"
-                onClick={(event) => onDeny(event.currentTarget)}
-              >
-                Deny
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {request.status === 'pending' && selectable && (
-        <div className="mt-4 space-y-3 rounded-md border border-border/70 bg-muted/20 p-3">
-          <TenantRolePicker
-            roles={selectionRoles}
-            selected={safeSelectedRoles}
-            simple={false}
-            maxSelected={selection.maxRoleCount}
-            disabled={busy || !request.approvalPolicy.canApprove}
-            legend={`Roles granted to ${applicantName}`}
-            selectLabel={`${capitalize(tenantSingular)} roles for ${applicantName}`}
-            actionContext={`to ${applicantName}`}
-            onChange={setSelectedRoles}
-          />
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              type="button"
-              size="sm"
-              disabled={busy || !canApprove}
-              onClick={approve}
-            >
-              {request.reactivationRequired ? 'Re-admit' : 'Approve'}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              aria-haspopup="dialog"
-              onClick={(event) => onDeny(event.currentTarget)}
-            >
-              Deny
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {request.status === 'pending' && !request.approvalPolicy.canApprove && (
-        <p className="mt-3 text-xs text-muted-foreground">
-          Your current role can review this request but cannot grant its
-          required {tenantSingular} access.
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** @internal Drop stale or injected keys before an approval mutation. */
-export function filterJoinRequestApprovalRoles(
-  policy: AuthTenantJoinRequest['approvalPolicy'],
-  selectedRoles: readonly string[],
-): string[] {
-  if (policy.roleSelection.mode !== 'selectable') return [];
-  const allowed = new Set(policy.roleSelection.roles.map((role) => role.key));
-  return [...new Set(selectedRoles)]
-    .filter((role) => allowed.has(role))
-    .slice(0, policy.roleSelection.maxRoleCount);
-}
-
-/** @internal Omit roles for server-fixed/default approval contracts. */
-export function joinRequestApprovalParams(
-  policy: AuthTenantJoinRequest['approvalPolicy'],
-  selectedRoles: readonly string[],
-  reactivateMembership: boolean,
-  expectedRequestRevision: number,
-): AuthTenantReviewJoinRequestParams {
-  const roles = filterJoinRequestApprovalRoles(policy, selectedRoles);
-  return {
-    expectedRequestRevision,
-    ...(policy.roleSelection.mode === 'selectable' ? { roles } : {}),
-    ...(reactivateMembership ? { reactivateMembership: true } : {}),
-  };
-}
 
 function errorMessage(cause: unknown, tenantSingular: string): string {
   return cause instanceof Error

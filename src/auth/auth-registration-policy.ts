@@ -5,6 +5,7 @@ import { emitPlatformCode } from '../observability/sink';
 import { assertBootstrapRequest } from './auth-bootstrap';
 import type { AccountEmailService } from './account-email-service';
 import { AuthError, type ResolvedAuthBehaviorConfig } from './types';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 
 export interface RegistrationPolicy {
   isBootstrap: boolean;
@@ -20,11 +21,13 @@ export function resolveRegistrationPolicy(params: {
   authConfig: ResolvedAuthBehaviorConfig;
   mfaEnrollment?: boolean;
   bootstrapSecret?: string;
+  emitCode?: AuthPlatformCodeEmitter;
 }): RegistrationPolicy {
   const { isBootstrap, accountEmail, authConfig } = params;
-  assertBootstrapRequest(authConfig, isBootstrap, params.bootstrapSecret);
+  const emitCode = params.emitCode ?? emitPlatformCode;
+  assertBootstrapRequest(authConfig, isBootstrap, params.bootstrapSecret, emitCode);
   if (!isBootstrap && authConfig.registration.mode !== 'public') {
-    emitPlatformCode(OBS_CODES.AUTH_REGISTRATION_DISABLED, {
+    emitCode(OBS_CODES.AUTH_REGISTRATION_DISABLED, {
       metadata: { mode: authConfig.registration.mode },
     });
     throw new AuthError('Registration disabled', 'REGISTRATION_DISABLED', 403);

@@ -6,7 +6,6 @@ import {
   parseNativeAuthorizationRequest,
 } from '../native';
 import { OBS_CODES } from '../../observability/codes';
-import { emitPlatformCode } from '../../observability/sink';
 import type { NativeAuthorizationRequestRecord } from './native-auth-records';
 import type { AuthContext } from '../types';
 import type { NativeServiceContext } from './native-service-context';
@@ -33,10 +32,11 @@ export function startNativeAuthorization(
     codeChallenge: parsed.codeChallenge, prompt: nativePrompt(url.searchParams),
     sourceKey: resolveNativeRequestSource(
       context.config.native.requestAdmission, request, parsed.clientId, peerAddress,
+      context.emitCode,
     ),
     ttlMs: context.config.requestTtlMs,
   });
-  emitPlatformCode(OBS_CODES.AUTH_NATIVE_AUTHORIZATION_REQUESTED, {
+  context.emitCode(OBS_CODES.AUTH_NATIVE_AUTHORIZATION_REQUESTED, {
     metadata: {
       clientId: parsed.clientId,
       redirectKind: classifyNativeRedirectUri(parsed.redirectUri),
@@ -63,9 +63,9 @@ export function approveNativeRequest(
   if (!authority) return null;
   const issued = context.codes.issue(
     rawRequestId, userId, context.users.getAuthGeneration(userId),
-    authority, context.config.codeTtlMs,
+    authority, context.config.codeTtlMs, auth.mfaVerifiedAt ?? null,
   );
-  if (issued) emitPlatformCode(OBS_CODES.AUTH_NATIVE_AUTHORIZATION_APPROVED, {
+  if (issued) context.emitCode(OBS_CODES.AUTH_NATIVE_AUTHORIZATION_APPROVED, {
     userId, metadata: { clientId: issued.request.clientId },
   });
   return issued;
@@ -73,7 +73,7 @@ export function approveNativeRequest(
 
 export function denyNativeRequest(context: NativeServiceContext, rawRequestId: string) {
   const denied = context.requests.consumeTerminal(rawRequestId);
-  if (denied) emitPlatformCode(OBS_CODES.AUTH_NATIVE_AUTHORIZATION_DENIED, {
+  if (denied) context.emitCode(OBS_CODES.AUTH_NATIVE_AUTHORIZATION_DENIED, {
     metadata: { clientId: denied.clientId },
   });
   return denied;

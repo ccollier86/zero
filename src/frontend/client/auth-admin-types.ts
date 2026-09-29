@@ -57,6 +57,10 @@ export interface AuthAdminConfig {
     emailOtpReady: boolean;
   };
   capabilities: {
+    /** Actor may mutate ordinary application identities. */
+    canManageUsers: boolean;
+    /** Actor may create, promote, demote, or mutate global administrators. */
+    canManageGlobalAdmins: boolean;
     manualPasswordReset: boolean;
     setupEmail: boolean;
     passwordResetEmail: boolean;

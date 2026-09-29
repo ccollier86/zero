@@ -17,6 +17,7 @@ interface AuthSessionRow {
   membership_authorization_generation: number | null;
   provenance: string;
   authenticated_at: number;
+  mfa_verified_at: number | null;
   created_at: number;
   last_seen_at: number;
   expires_at: number;
@@ -41,8 +42,9 @@ export class AuthSessionStore {
         session_id, user_id, kind, status, generation, scope_kind, scope_id,
         tenant_id, membership_id, tenant_authorization_generation,
         membership_authorization_generation, provenance, authenticated_at,
-        created_at, last_seen_at, expires_at, revoked_at, revocation_reason
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        mfa_verified_at, created_at, last_seen_at, expires_at, revoked_at,
+        revocation_reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     this.getSession = db.prepare(
       'SELECT * FROM _auth_sessions WHERE session_id = ?',
@@ -101,6 +103,7 @@ export class AuthSessionStore {
       record.membershipAuthorizationGeneration,
       record.provenance,
       record.authenticatedAt,
+      record.mfaVerifiedAt,
       record.createdAt,
       record.lastSeenAt,
       record.expiresAt,
@@ -177,6 +180,7 @@ function mapSession(row: AuthSessionRow): AuthSessionRecord {
     membershipAuthorizationGeneration: row.membership_authorization_generation,
     provenance: row.provenance as AuthSessionRecord['provenance'],
     authenticatedAt: row.authenticated_at,
+    mfaVerifiedAt: row.mfa_verified_at,
     createdAt: row.created_at,
     lastSeenAt: row.last_seen_at,
     expiresAt: row.expires_at,

@@ -3,12 +3,14 @@
 import { createOpaqueToken, hashToken } from '../../tokens/token-utils';
 import type { PreparedNativeSession } from './native-auth-records';
 import type { NativeAuthoritySnapshot } from './native-tenant-authority';
+import { normalizeMfaVerifiedAt } from '../mfa-assurance';
 
 export function prepareNativeSession(input: {
   userId: string;
   clientId: string;
   scope: string;
   authGeneration: number;
+  mfaVerifiedAt?: number | null;
   ttlMs: number;
   expiresAt?: number;
   familyId?: string;
@@ -28,6 +30,7 @@ export function prepareNativeSession(input: {
       tokenHash: hashToken(rawRefreshToken),
       scope: input.scope,
       authGeneration: input.authGeneration,
+      mfaVerifiedAt: normalizeMfaVerifiedAt(input.mfaVerifiedAt, now),
       scopeKind: (input.authority ?? APPLICATION_AUTHORITY).scopeKind,
       scopeId: (input.authority ?? APPLICATION_AUTHORITY).scopeId,
       tenantId: (input.authority ?? APPLICATION_AUTHORITY).tenantId,

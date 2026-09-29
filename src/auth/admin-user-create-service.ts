@@ -6,14 +6,20 @@
  */
 
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
 import { AdminLifecycleEmailService } from './admin-lifecycle-email-service';
-import { assertMfaRequirementAvailable, type AuthAdminPluginConfig } from './auth-admin-dependencies';
+import {
+  assertMfaRequirementAvailable,
+  getAuthAdminEmitter,
+  type AuthAdminPluginConfig,
+} from './auth-admin-dependencies';
 import { createTemporaryPassword, rollbackProvisionedUser } from './admin-user-provisioning';
 import { AuthError } from './types';
 import type { UserPropertyService } from './user-property-service';
 import type { AuthSecurityAuditContext, UserStore } from './user-store';
-import type { AssertAuthAdminMutationAuthority } from './auth-admin-mutation-authority';
+import {
+  invokeAuthAdminMutationAuthority,
+  type AssertAuthAdminMutationAuthority,
+} from './auth-admin-mutation-authority';
 
 export interface AdminCreateUserInput {
   username: string;
@@ -41,10 +47,17 @@ export class AdminUserCreateService {
     assertCurrentAuthority: AssertAuthAdminMutationAuthority,
     audit?: AuthSecurityAuditContext,
   ) {
-    const actorId = assertCurrentAuthority().userId;
+    const emitCode = getAuthAdminEmitter(this.config);
+    const mutationBoundary = { requestedPlatformRole: input.role ?? 'user' } as const;
+    const assertAuthority = () => invokeAuthAdminMutationAuthority(
+      assertCurrentAuthority,
+      mutationBoundary,
+      { component: 'admin-user-create-service', emitCode },
+    );
+    const actorId = assertAuthority().userId;
     const authConfig = this.config.getAuthConfig();
     if (authConfig.registration.mode === 'disabled') {
-      emitPlatformCode(OBS_CODES.AUTH_REGISTRATION_DISABLED, {
+      getAuthAdminEmitter(this.config)(OBS_CODES.AUTH_REGISTRATION_DISABLED, {
         userId: actorId,
         metadata: { route: '/auth/admin/users' },
       });
@@ -84,12 +97,17 @@ export class AdminUserCreateService {
       request: audit?.request,
       setupRequested: sendSetup,
     }, () => {
-      assertCurrentAuthority();
+      assertAuthority();
     });
 
     if (sendSetup) {
       try {
-        await new AdminLifecycleEmailService(this.store, tokens!, email!)
+        await new AdminLifecycleEmailService(
+          this.store,
+          tokens!,
+          email!,
+          getAuthAdminEmitter(this.config),
+        )
           .sendSetup(user.userId, assertCurrentAuthority, audit?.request);
       } catch (error) {
         const cleanupSucceeded = rollbackProvisionedUser(
@@ -99,7 +117,7 @@ export class AdminUserCreateService {
             actor: { userId: actorId, provenance: 'authenticated-request' },
           },
         );
-        emitPlatformCode(OBS_CODES.AUTH_ADMIN_USER_SETUP_DELIVERY_FAILED, {
+        getAuthAdminEmitter(this.config)(OBS_CODES.AUTH_ADMIN_USER_SETUP_DELIVERY_FAILED, {
           userId: actorId,
           metadata: {
             targetUserId: user.userId,
@@ -110,7 +128,7 @@ export class AdminUserCreateService {
         throw error;
       }
     }
-    emitPlatformCode(OBS_CODES.AUTH_ADMIN_USER_CREATED, {
+    getAuthAdminEmitter(this.config)(OBS_CODES.AUTH_ADMIN_USER_CREATED, {
       userId: actorId,
       metadata: { createdUserId: user.userId, role: user.role, setupEmailSent: sendSetup },
     });

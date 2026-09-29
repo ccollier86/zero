@@ -1,0 +1,240 @@
+import { describe, expect, test } from 'bun:test';
+import {
+  parsePlatformAdministrationConfig,
+  parsePlatformInvitationIssue,
+  parsePlatformInvitationPage,
+  parsePlatformInvitationReceipt,
+  parsePlatformMemberMutation,
+  parsePlatformMemberPage,
+  parsePlatformOwnershipTransfer,
+  parsePlatformTenantCreate,
+  parsePlatformTenantPage,
+  parsePlatformTenantUpdate,
+} from './auth-platform-administration-parser';
+import { AuthPlatformAdministrationTransport } from './auth-platform-administration-transport';
+
+describe('platform administration transport', () => {
+  test('derives administration scope on the server and encodes only target IDs', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const transport = new AuthPlatformAdministrationTransport({
+      baseUrl: 'https://zero.test',
+      authenticatedFetch: async (url, init) => {
+        calls.push({ url, init });
+        if (url.includes('/tenants/customer%2Fone/members')) return Response.json(memberPage());
+        if (url.includes('/members/member%2Fone')) return Response.json(memberMutation());
+        return Response.json({ error: 'unexpected' }, { status: 500 });
+      },
+      createResponseError: (_response, _body, fallback) => new Error(fallback),
+      assertResponseCurrent() {},
+      expireSession() {},
+    });
+
+    await transport.listTenantMembers('customer/one', { search: 'ada', limit: 25 });
+    await transport.updateMember('member/one', {
+      roles: ['administrator'],
+      expectedRoleRevision: 'tenant:1',
+    });
+
+    expect(calls[0]!.url).toBe(
+      'https://zero.test/auth/platform/tenants/customer%2Fone/members?search=ada&limit=25',
+    );
+    expect(calls[0]!.url).not.toContain('administrationTenantId');
+    expect(calls[1]!.url).toBe('https://zero.test/auth/platform/members/member%2Fone');
+    expect(new Headers(calls[1]!.init?.headers).get('content-type')).toBe('application/json');
+  });
+
+  test('expires the local session only after a current self-invalidating receipt', async () => {
+    const events: string[] = [];
+    const transport = new AuthPlatformAdministrationTransport({
+      baseUrl: 'https://zero.test',
+      authenticatedFetch: async () => Response.json({
+        ...memberMutation(), actorSessionInvalidated: true,
+      }),
+      createResponseError: (_response, _body, fallback) => new Error(fallback),
+      assertResponseCurrent() { events.push('current'); },
+      expireSession() { events.push('expire'); },
+    });
+
+    await transport.removeMember('member-1');
+    expect(events).toEqual(['current', 'current', 'expire']);
+  });
+});
+
+describe('platform administration response boundary', () => {
+  test('accepts and freezes every canonical response contract', () => {
+    const config = parsePlatformAdministrationConfig(platformConfig());
+    expect(config.administration.kind).toBe('administration');
+    expect(Object.isFrozen(config)).toBe(true);
+    expect(parsePlatformMemberPage(memberPage()).members).toHaveLength(1);
+    expect(parsePlatformMemberMutation(memberMutation()).member.membershipId).toBe('member-1');
+    expect(parsePlatformOwnershipTransfer(ownershipTransfer()).actorSessionInvalidated).toBe(true);
+    expect(parsePlatformInvitationPage(invitationPage()).invitations).toHaveLength(1);
+    expect(parsePlatformInvitationIssue({
+      invitation: invitation(), delivery: { mode: 'manual' }, token: 'one-time-token',
+    })).toMatchObject({ delivery: { mode: 'manual' }, token: 'one-time-token' });
+    expect(parsePlatformInvitationIssue({
+      invitation: invitation(), delivery: { mode: 'email', status: 'queued' },
+    })).toMatchObject({ delivery: { mode: 'email', status: 'queued' } });
+    expect(parsePlatformInvitationReceipt({ invitation: invitation() }).invitation.status)
+      .toBe('pending');
+    expect(parsePlatformTenantPage(tenantPage('archived')).tenants[0]!.status)
+      .toBe('archived');
+    expect(parsePlatformTenantCreate({ tenant: tenant(), owner: member() }).owner.roles)
+      .toEqual(['owner']);
+    expect(parsePlatformTenantUpdate({ tenant: tenant('suspended') }).tenant.status)
+      .toBe('suspended');
+  });
+
+  test('rejects unknown fields, wrong kinds, invalid page invariants, and oversized arrays', () => {
+    expectInvalid(() => parsePlatformAdministrationConfig({ ...platformConfig(), secret: 'no' }));
+    expectInvalid(() => parsePlatformAdministrationConfig({
+      ...platformConfig(),
+      administration: { ...platformConfig().administration, tenantId: 'invalid:id' },
+    }));
+    expectInvalid(() => parsePlatformAdministrationConfig({
+      ...platformConfig(),
+      roles: [{ ...role(), permissions: ['Application.*'] }],
+    }));
+    expectInvalid(() => parsePlatformAdministrationConfig({
+      ...platformConfig(),
+      administration: { ...platformConfig().administration, kind: 'organization' },
+    }));
+    expectInvalid(() => parsePlatformMemberPage({
+      ...memberPage(), page: { ...memberPage().page, count: 0 },
+    }));
+    expectInvalid(() => parsePlatformMemberPage({
+      ...memberPage(),
+      page: { ...memberPage().page, hasMore: true, nextCursor: 'x'.repeat(513) },
+    }));
+    expectInvalid(() => parsePlatformMemberPage({
+      members: Array.from({ length: 101 }, () => member()),
+      page: { limit: 100, count: 100, hasMore: false, nextCursor: null },
+    }));
+    expectInvalid(() => parsePlatformMemberMutation({
+      ...memberMutation(), actorSessionInvalidated: 'yes',
+    }));
+    expectInvalid(() => parsePlatformMemberMutation({
+      ...memberMutation(), member: { ...member(), roles: ['invalid:role'] },
+    }));
+    expectInvalid(() => parsePlatformOwnershipTransfer({
+      ...ownershipTransfer(), actorSessionInvalidated: false,
+    }));
+    expectInvalid(() => parsePlatformInvitationPage({
+      ...invitationPage(),
+      invitations: [{ ...invitation(), email: 'not-an-email' }],
+    }));
+    expectInvalid(() => parsePlatformInvitationPage({
+      ...invitationPage(),
+      invitations: [{ ...invitation(), email: 'Grace@Example.Test' }],
+    }));
+    expectInvalid(() => parsePlatformInvitationIssue({
+      invitation: invitation(), delivery: { mode: 'manual' }, token: 'token', extra: true,
+    }));
+    expectInvalid(() => parsePlatformInvitationReceipt({
+      invitation: { ...invitation(), roles: ['member', 'member'] },
+    }));
+    expectInvalid(() => parsePlatformTenantPage({
+      ...tenantPage(), tenants: [{ ...tenant(), kind: 'administration' }],
+    }));
+    expectInvalid(() => parsePlatformTenantPage({
+      ...tenantPage(), tenants: [{ ...tenant(), activeMemberCount: 3, memberCount: 2 }],
+    }));
+    expectInvalid(() => parsePlatformTenantCreate({
+      tenant: tenant(), owner: member(), unexpected: true,
+    }));
+    expectInvalid(() => parsePlatformTenantUpdate({
+      tenant: { ...tenant(), status: 'deleted' },
+    }));
+  });
+});
+
+function expectInvalid(operation: () => unknown): void {
+  expect(operation).toThrow('invalid platform-administration response');
+}
+
+function platformConfig() {
+  return {
+    authorization: 'advanced',
+    administration: {
+      tenantId: 'tenant-admin', kind: 'administration', slug: 'administration',
+      name: 'Platform administration', membershipId: 'member-1',
+    },
+    capabilities: {
+      canReadMembers: true, canManageMembers: true,
+      canReadInvitations: true, canManageInvitations: true,
+      canReadTenants: true, canReadTenantMembers: true,
+      canManageTenants: true, canCreateTenants: true, canTransferOwnership: true,
+    },
+    roles: [role()],
+  };
+}
+
+function role() {
+  return {
+    key: 'administrator', label: 'Administrator', description: 'Platform operator',
+    administrationOnly: true, permissions: ['application.tenants:manage'],
+    allPermissions: false, system: true, assignable: true, grantable: true,
+  };
+}
+
+function member() {
+  return {
+    membershipId: 'member-1',
+    identity: {
+      userId: 'user-1', username: 'ada', email: 'ada@example.test',
+      firstName: 'Ada', lastName: 'Lovelace',
+    },
+    status: 'active', roles: ['owner'], roleRevision: 'tenant:1',
+    joinedAt: 1, updatedAt: 2,
+  };
+}
+
+function memberPage() {
+  return {
+    members: [member()],
+    page: { limit: 25, count: 1, hasMore: false, nextCursor: null },
+  };
+}
+
+function memberMutation() {
+  return { member: member(), actorSessionInvalidated: false };
+}
+
+function ownershipTransfer() {
+  return {
+    owner: { ...member(), membershipId: 'member-2' },
+    previousOwner: member(),
+    actorSessionInvalidated: true,
+  };
+}
+
+function invitation() {
+  return {
+    invitationId: 'invitation-1', email: 'grace@example.test', roles: ['administrator'],
+    status: 'pending', expiresAt: 50, createdAt: 1, updatedAt: 2,
+    acceptedAt: null, revokedAt: null,
+  };
+}
+
+function invitationPage() {
+  return {
+    invitations: [invitation()],
+    page: { limit: 25, count: 1, hasMore: false, nextCursor: null },
+  };
+}
+
+function tenant(status: 'active' | 'suspended' | 'archived' = 'active') {
+  return {
+    tenantId: 'tenant-customer', kind: 'organization', slug: 'customer',
+    name: 'Customer', status, authorizationGeneration: 4,
+    createdAt: 1, updatedAt: 2, suspendedAt: status === 'suspended' ? 2 : null,
+    memberCount: 2, activeMemberCount: status === 'active' ? 2 : 0,
+  };
+}
+
+function tenantPage(status: 'active' | 'suspended' | 'archived' = 'active') {
+  return {
+    tenants: [tenant(status)],
+    page: { limit: 25, count: 1, hasMore: false, nextCursor: null },
+  };
+}

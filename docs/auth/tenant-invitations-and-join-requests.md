@@ -162,7 +162,9 @@ Issuance and delivery have one consistent failure model:
 1. Zero validates the active tenant, caller permissions, role grant ceiling,
    exact canonical email, TTL, delivery mode, email readiness, and public URL.
 2. It creates a random 32-byte `zinv_...` bearer. The invitation row receives
-   only its SHA-256 hash.
+   only its SHA-256 hash. It also freezes the assigned roles' concrete tenant
+   and application permission sets as an issuance-time grant snapshot;
+   `allPermissions` is expanded rather than stored as an open-ended wildcard.
 3. For email delivery, Zero encrypts the bearer in memory and inserts the
    invitation plus outbox job in one SQLite transaction. Queue capacity or
    envelope failure rolls back both rows.
@@ -185,7 +187,9 @@ that single response and is never available from list/detail APIs afterward.
 Application templates receive safe tenant/invitation metadata plus
 `actionUrl`, `defaultSubject`, `defaultText`, and `defaultHtml`. The action URL
 is the only template field containing the bearer token. Templates and email
-providers must not log it.
+providers must not log it. Tenant metadata includes the server-derived
+`kind: 'administration' | 'organization'` discriminator so a template can
+label protected platform access without inferring it from names or slugs.
 
 ## Identity, MFA, and Account Gates
 
@@ -202,6 +206,14 @@ The accept API has no existing-account password mode. Supplying a password by
 itself cannot consume an invite or create membership, including for identities
 that require MFA.
 
+Inspection and acceptance re-resolve the current roles and require their
+effective permissions to remain a subset of the issuance-time snapshot.
+Narrowing is safe; a missing/corrupt snapshot, a missing or retired role, or
+any tenant/application permission widening returns the same non-enumerating
+`TENANT_INVITATION_UNAVAILABLE` response. Migration `026` deliberately leaves
+pre-migration pending invitations without a fabricated snapshot, so an
+authorized administrator must revoke/reissue them.
+
 For invitation-bound account creation, the invite substitutes for ordinary
 email verification but does not bypass MFA. When required MFA—or explicitly
 requested optional enrollment—is pending, Zero commits only the exact-email
@@ -211,6 +223,21 @@ completion returns a ten-minute `onboarding.continuation` even when tenant
 creation is disabled. Resubmit the original invitation token with that proof;
 Zero atomically consumes both proof and invitation, creates the bounded
 membership, and issues the tenant-bound session. A retry can win only once.
+
+Every Administration Organization member is covered by the
+platform-administrator MFA requirement. An administration invitation never
+bypasses that requirement, even for an otherwise ordinary global identity.
+The packaged invitation form uses the server-derived tenant `kind` to warn
+that the invitation grants protected platform access rather than customer data
+access.
+
+Migration `025` stores verified MFA assurance on browser sessions and
+continuations, native authorization codes, and native refresh-session
+families. Legacy rows remain null and never become assured merely because the
+schema was upgraded. Under
+`required` or `admin-required` policy they re-enter the normal setup/challenge
+flow; a protected administration invitation remains pending until that flow
+completes, then acceptance resumes with the bounded onboarding proof.
 
 Every fully authenticated zero-membership completion now includes:
 
@@ -238,8 +265,8 @@ request-admission service:
 
 | Method and route | Proof | Behavior |
 | --- | --- | --- |
-| `POST /auth/invitations/inspect` | invitation token | Returns a generic unavailable result or safe tenant name/slug, masked email, expiry, and sign-in/create hint |
-| `POST /auth/invitations/accept` | completed Bearer, onboarding continuation, or exact-email account creation | Atomically consumes the one-time invite and admits the bounded membership |
+| `POST /auth/invitations/inspect` | invitation token | Returns a generic unavailable result or safe tenant name/slug/kind, masked email, expiry, and sign-in/create hint |
+| `POST /auth/invitations/accept` | completed Bearer, onboarding continuation, or exact-email account creation | Atomically consumes the one-time invite and admits the bounded membership; `acceptedTenant` includes server-derived kind |
 | `POST /auth/tenant-join-requests` | completed Bearer or onboarding continuation | Always returns the same accepted shape; a guessed/missing tenant slug is not disclosed |
 
 Active-tenant administration routes derive the tenant exclusively from the
@@ -451,6 +478,10 @@ registry in both simple and advanced authorization modes:
   subject to commit-time revalidation.
 - Stored invitation roles are revalidated at acceptance, so removed or newly
   protected role definitions fail closed.
+- Administration Organization invitations require at least one explicit
+  administration-only role. Customer-only roles are never offered or accepted;
+  retained legacy assignments may be displayed for diagnosis but are not new
+  assignment choices.
 
 UI filtering is only a convenience; every constraint is repeated at the
 Elysia plugin/service boundary and inside the serialized transition.
@@ -476,6 +507,7 @@ Applications should branch on `code`, not error text. Important codes include:
 | `TENANT_JOIN_REQUEST_ROLE_SERVER_OWNED` | A client sent `roles` for an ordinary/default request whose role is selected by the server |
 | `TENANT_OWNER_ROLE_PROTECTED` | Onboarding attempted to grant protected owner/system authority |
 | `TENANT_ROLE_ESCALATION_FORBIDDEN` | Requested role exceeds the acting member's grant ceiling |
+| `AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED` | Administration membership/invitation omitted roles or selected no valid administration-only role |
 | `AUTHORIZATION_CHANGED` | Actor session, scope, roles, or authority-bearing properties changed before the mutation could commit; reload before retrying |
 | `TENANT_INVITATION_EMAIL_UNAVAILABLE` | Runtime email/outbox service is unavailable |
 | `TENANT_INVITATION_EMAIL_CAPACITY` | Durable queue could not accept the job; issuance was rolled back |
@@ -504,6 +536,16 @@ indexes, and makes fresh and upgraded databases accept exactly `bootstrap`,
 `domain-onboarding`. Current runtime schema creation uses the same six-flow
 contract. Tenant-only public onboarding routes are not mounted in single mode,
 so they return Zero's stable concealed-route response before admission work.
+
+Migration `025` persists verified MFA assurance on browser sessions and
+continuations, native authorization codes, and native refresh-session
+families. Existing rows remain unassured; an upgrade never infers MFA
+assurance from legacy session state.
+
+Migration `026` adds the immutable issuance-time role/permission grant snapshot
+used when an invitation is accepted. Existing pending invitations deliberately
+receive no fabricated snapshot and therefore fail closed; revoke and reissue
+them after the upgrade when they should remain usable.
 
 Before upgrading a durable installation, take a consistent database backup and
 retain the external invitation KEK separately. After deployment, test manual

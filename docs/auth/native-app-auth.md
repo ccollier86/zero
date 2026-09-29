@@ -320,7 +320,7 @@ The public TypeScript surface is intentionally small:
 | `createNativeAuthBrokerClient(options)` | Revision-ordered proxy over host-owned IPC; call `dispose()` when its window/root is destroyed |
 | `initialize()` | Discovers the provider, reads the vault, and immediately rotates a stored refresh session before authenticating |
 | `signIn()` / `signUp()` | Persists pending PKCE state, opens the system browser, waits for the armed callback, validates tokens, and commits the replacement session |
-| `state.activeTenant` | Safe current tenant projection (`tenantId`, `slug`, `name`, `role`); never a credential or permission decision |
+| `state.activeTenant` | Safe current tenant projection (`tenantId`, `kind`, `slug`, `name`, `role`); never a credential or permission decision |
 | `listTenants()` | Lists live tenant choices with the credential owner's refresh proof; no refresh token crosses the SDK/broker boundary |
 | `switchTenant(tenantId)` | Replaces the native family with a server-validated tenant-bound family and returns the new state |
 | `getUser()` | Returns the allowlisted standard OIDC identity projection, never arbitrary/private ID-token claims or server authorization policy |
@@ -335,6 +335,13 @@ bodies and tokens are not copied into those errors. Treat a rejected
 `initialize()` or refresh according to the resulting auth state rather than
 assuming the prior identity is usable: only `status === 'authenticated'` is an
 authenticated session.
+
+The server makes the same distinction at its OAuth boundary. Expected
+protocol rejections remain protocol responses and do not generate operational
+failure noise. An unexpected internal or unavailable-runtime failure emits
+`AUTH_NATIVE_REQUEST_FAILED` with only the operation name, while the caller
+still receives the safe OAuth response. See
+[Auth Operational Failure Contract](../observability.md#auth-operational-failure-contract).
 
 ### Native tenant sessions
 
@@ -361,8 +368,12 @@ old local proof rather than continuing with ambiguous authority; the caller
 must authenticate or restore from known current state.
 
 The SDK exposes only `activeTenant` and `TenantList`/`NativeTenantListResult`
-safe projections. Permissions are still resolved live by Zero and are not
-embedded in those display objects. The Rust Tauri plugin provides
+safe projections. Each summary carries the required server-derived
+`kind: 'administration' | 'organization'` boundary. Use it to label protected
+platform scope and to keep customer-only navigation/data flows out of the
+Administration Organization; it is not itself authorization. Permissions are
+still resolved live by Zero and are not embedded in those display objects. The
+Rust Tauri plugin provides
 `list_tenants` and `switch_tenant` commands from the Rust credential owner, so
 the Svelte/webview layer never receives a refresh token.
 

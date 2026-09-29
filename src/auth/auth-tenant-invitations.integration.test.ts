@@ -64,7 +64,11 @@ describe('tenant invitation and join-request HTTP ceremonies', () => {
       status: 200,
       body: {
         available: true,
-        tenant: { name: 'Owner organization', slug: 'owner-organization' },
+        tenant: {
+          name: 'Owner organization',
+          slug: 'owner-organization',
+          kind: 'organization',
+        },
         account: 'create',
       },
     });
@@ -83,6 +87,7 @@ describe('tenant invitation and join-request HTTP ceremonies', () => {
       acceptedTenant: {
         tenantId: harness.owner.tenant.tenantId,
         name: 'Owner organization',
+        kind: 'organization',
       },
     });
     expect(accepted.body.accessToken).toBeString();
@@ -267,6 +272,71 @@ describe('tenant invitation and join-request HTTP ceremonies', () => {
     expect(replay).toMatchObject({
       status: 400,
       body: { code: 'TENANT_ONBOARDING_PROOF_INVALID' },
+    });
+  }, 60_000);
+
+  test('requires MFA before an administration-organization invitation grants authority', async () => {
+    const harness = await startRequiredMfa({
+      policy: 'admin-required',
+      tenantKind: 'administration',
+    });
+    const issued = harness.runtime.getTenantOnboardingService()!.issueInvitation({
+      tenantId: harness.owner.tenant.tenantId,
+      email: 'platform-operator@example.test',
+      roleKeys: ['administrator'],
+      assertCurrentAuthority: await ownerMutationAuthority(harness),
+    });
+    const pending = await request(harness, 'POST', '/auth/invitations/accept', {
+      token: issued.token,
+      username: 'platform-operator',
+      email: 'platform-operator@example.test',
+      password: 'password123',
+    });
+    expect(pending).toMatchObject({
+      status: 200,
+      body: { invitationAcceptancePending: true, mfaSetupRequired: true },
+    });
+    const operator = harness.runtime.getStore()!.getUserByEmail(
+      'platform-operator@example.test',
+    )!;
+    expect(harness.runtime.getTenancyService()!.getMembership(
+      harness.owner.tenant.tenantId,
+      operator.userId,
+    )).toBeNull();
+
+    const setup = await request(harness, 'POST', '/auth/mfa/setup', {
+      setupToken: pending.body.mfaSetupToken,
+      method: 'totp',
+    });
+    const verified = await request(harness, 'POST', '/auth/mfa/setup/verify', {
+      verificationToken: setup.body.verificationToken,
+      code: generateTotpCode({ secret: setup.body.totp.secret }),
+    });
+    expect(verified.body.onboarding.continuation).toStartWith('zct_');
+
+    const accepted = await request(harness, 'POST', '/auth/invitations/accept', {
+      token: issued.token,
+      continuation: verified.body.onboarding.continuation,
+    });
+    expect(accepted).toMatchObject({
+      status: 200,
+      body: {
+        invitationAccepted: true,
+        activeTenant: {
+          tenantId: harness.owner.tenant.tenantId,
+          kind: 'administration',
+          role: 'administrator',
+        },
+        acceptedTenant: { kind: 'administration' },
+      },
+    });
+    expect(accepted.body.accessToken).toBeString();
+    await expect(harness.runtime.getTokenService()!.resolveAuthContext(
+      accepted.body.accessToken,
+    )).resolves.toMatchObject({
+      userId: operator.userId,
+      tenantKind: 'administration',
+      mfaVerifiedAt: expect.any(Number),
     });
   }, 60_000);
 
@@ -582,6 +652,18 @@ describe('tenant invitation and join-request HTTP ceremonies', () => {
           { key: 'reviewer', label: 'Join reviewer' },
         ],
       },
+    });
+
+    const administrationRole = await request(
+      harness,
+      'POST',
+      `/auth/tenant/join-requests/${pending.joinRequestId}/approve`,
+      { expectedRequestRevision: pending.requestRevision, roles: ['administrator'] },
+      harness.owner.accessToken,
+    );
+    expect(administrationRole).toMatchObject({
+      status: 422,
+      body: { code: 'AUTHORIZATION_ADMINISTRATION_SCOPE_REQUIRED' },
     });
 
     const escalation = await request(
@@ -911,27 +993,55 @@ async function start(
     username: 'owner',
     email: 'owner@example.test',
     password: 'password123',
-    organizationName: 'Owner organization',
+    organizationName: 'Platform administration',
   });
   if (bootstrap.status !== 200) {
     throw new Error(`Bootstrap failed: ${JSON.stringify(bootstrap.body)}`);
+  }
+  const customer = await request(partial, 'POST', '/auth/tenants/create', {
+    name: 'Owner organization',
+    slug: 'owner-organization',
+    refreshToken: bootstrap.body.refreshToken,
+  });
+  if (customer.status !== 200) {
+    throw new Error(`Customer organization setup failed: ${JSON.stringify(customer.body)}`);
   }
   const harness: Harness = {
     ...partial,
     owner: {
       user: bootstrap.body.user,
-      tenant: bootstrap.body.tenant,
-      accessToken: bootstrap.body.accessToken,
-      refreshToken: bootstrap.body.refreshToken,
+      tenant: {
+        tenantId: customer.body.activeTenant.tenantId,
+        membershipId: harnessMembershipId(
+          createdRuntime,
+          customer.body.activeTenant.tenantId,
+          bootstrap.body.user.userId,
+        ),
+        slug: customer.body.activeTenant.slug,
+      },
+      accessToken: customer.body.accessToken,
+      refreshToken: customer.body.refreshToken,
     },
   };
   active.push(harness);
   return harness;
 }
 
+function harnessMembershipId(
+  runtime: AuthRuntime,
+  tenantId: string,
+  userId: string,
+): string {
+  const membership = runtime.getTenancyService()!.getMembership(tenantId, userId);
+  if (!membership) throw new Error('Customer owner membership was not created');
+  return membership.membershipId;
+}
+
 async function ownerMutationAuthority(harness: Harness) {
   if (!harness.owner.accessToken) {
     const { user, tenant } = harness.owner;
+    const tenantKind = harness.runtime.getTenancyService()!
+      .getTenant(tenant.tenantId)?.kind;
     return () => ({
       auth: { userId: user.userId, email: user.email, role: 'admin' },
       scope: {
@@ -946,6 +1056,18 @@ async function ownerMutationAuthority(harness: Harness) {
         allPermissions: true,
         revision: 'test',
       },
+      ...(tenantKind === 'administration' ? {
+        applicationScope: {
+          tenancy: 'multi' as const,
+          mode: 'simple' as const,
+          scopeKind: 'application' as const,
+          scopeId: 'application',
+          roles: ['owner'],
+          permissions: [],
+          allPermissions: true,
+          revision: 'test-application',
+        },
+      } : {}),
     });
   }
   const tokenService = harness.runtime.getTokenService()!;
@@ -960,7 +1082,10 @@ async function ownerMutationAuthority(harness: Harness) {
   });
 }
 
-async function startRequiredMfa(): Promise<Harness> {
+async function startRequiredMfa(options: {
+  policy?: 'required' | 'admin-required';
+  tenantKind?: 'organization' | 'administration';
+} = {}): Promise<Harness> {
   const db = createReactiveDB({ mode: 'memory' });
   let runtime: AuthRuntime | null = null;
   const app = new Elysia().use(createAuthPlugin({
@@ -978,7 +1103,7 @@ async function startRequiredMfa(): Promise<Harness> {
     registration: { mode: 'disabled' },
     mfa: {
       enabled: true,
-      policy: 'required',
+      policy: options.policy ?? 'required',
       methods: ['totp'],
       totp: { encryptionKey: 'tenant-invitation-mfa-test-key' },
     },
@@ -1008,6 +1133,7 @@ async function startRequiredMfa(): Promise<Harness> {
       name: 'MFA organization',
       slug: 'mfa-organization',
       ownerUserId: owner.userId,
+      kind: options.tenantKind ?? 'organization',
     });
     return { tenantId: created.tenant.tenantId };
   }, { provisional: true });

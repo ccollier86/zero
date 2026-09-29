@@ -15,12 +15,20 @@ import type { MfaService } from './mfa-service';
 import type { ResolvedAuthBehaviorConfig } from './types';
 import type { UserStore } from './user-store';
 
+export interface AuthAdminActorCapabilities {
+  /** May mutate ordinary application accounts through the packaged admin API. */
+  canManageUsers: boolean;
+  /** May create, promote, demote, or mutate legacy global administrators. */
+  canManageGlobalAdmins: boolean;
+}
+
 /** Build `/auth/admin/config` without exposing secrets. */
 export function buildAdminConfigResponse(
   store: UserStore,
   config: ResolvedAuthBehaviorConfig,
   mfaService: MfaService | null,
   emailRuntime: EmailRuntime,
+  actor: AuthAdminActorCapabilities,
 ) {
   const userCount = store.countUsers();
   const bootstrapRequired = store.isBootstrapRequired();
@@ -116,15 +124,21 @@ export function buildAdminConfigResponse(
     },
     mfa,
     capabilities: {
-      manualPasswordReset: config.accountEmails.manualPasswordReset,
-      setupEmail: accountEmailReady,
-      passwordResetEmail: config.accountEmails.passwordReset && accountEmailReady,
-      emailVerification: config.account.requireEmailVerification && accountEmailReady,
-      adminMarkEmailVerified: config.account.allowAdminMarkEmailVerified,
-      mfa: Boolean(mfa?.enabled && mfa.ready),
-      suspendUsers: true,
-      promoteAdmins: true,
-      userProperties: true,
+      canManageUsers: actor.canManageUsers,
+      canManageGlobalAdmins: actor.canManageGlobalAdmins,
+      manualPasswordReset:
+        actor.canManageUsers && config.accountEmails.manualPasswordReset,
+      setupEmail: actor.canManageUsers && accountEmailReady,
+      passwordResetEmail:
+        actor.canManageUsers && config.accountEmails.passwordReset && accountEmailReady,
+      emailVerification:
+        actor.canManageUsers && config.account.requireEmailVerification && accountEmailReady,
+      adminMarkEmailVerified:
+        actor.canManageUsers && config.account.allowAdminMarkEmailVerified,
+      mfa: actor.canManageUsers && Boolean(mfa?.enabled && mfa.ready),
+      suspendUsers: actor.canManageUsers,
+      promoteAdmins: actor.canManageUsers && actor.canManageGlobalAdmins,
+      userProperties: actor.canManageUsers,
     },
     userProperties: config.userProperties,
     strictUserProperties: config.strictUserProperties,

@@ -21,17 +21,32 @@ export function createAuthAdminQueryPlugin(config: AuthAdminPluginConfig) {
   return new Elysia({ name: 'auth-admin-query' })
     .get('/config', async ({ request, set }) => {
       applyAuthPrivateNoStore(set);
-      const { store } = await requireAdminServices(config, request);
-      return buildAdminConfigResponse(
+      const {
         store,
-        config.getAuthConfig(),
+        auth,
+        access,
+        assertCurrentAuthority,
+      } = await requireAdminServices(config, request);
+      const authConfig = config.getAuthConfig();
+      const canManageUsers = (authConfig.tenancy?.mode ?? 'single') === 'single'
+        ? auth.role === 'admin'
+        : access.hasPermission('application.users:manage');
+      const response = buildAdminConfigResponse(
+        store,
+        authConfig,
         config.getMfaService?.() ?? null,
         config.getEmailRuntime(),
+        {
+          canManageUsers,
+          canManageGlobalAdmins: canManageUsers && auth.role === 'admin',
+        },
       );
+      assertCurrentAuthority();
+      return response;
     })
     .get('/users', async ({ request, query, set }) => {
       applyAuthPrivateNoStore(set);
-      const { store } = await requireAdminServices(config, request);
+      const { store, assertCurrentAuthority } = await requireAdminServices(config, request);
       const options = normalizeUserListQuery(query);
       const users = store.listUsers(options);
       const total = store.countUsers({
@@ -40,6 +55,7 @@ export function createAuthAdminQueryPlugin(config: AuthAdminPluginConfig) {
         status: options.status,
       });
       const hasMore = options.offset + users.length < total;
+      assertCurrentAuthority();
       return {
         users,
         page: {
@@ -62,9 +78,10 @@ export function createAuthAdminQueryPlugin(config: AuthAdminPluginConfig) {
     })
     .get('/users/:userId', async ({ request, params, set }) => {
       applyAuthPrivateNoStore(set);
-      const { store } = await requireAdminServices(config, request);
+      const { store, assertCurrentAuthority } = await requireAdminServices(config, request);
       const user = store.getUserById(params.userId);
       if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
+      assertCurrentAuthority();
       return { user };
     }, {
       params: authUserIdParamsSchema,

@@ -18,6 +18,8 @@ import type {
 } from './auth-email-templates';
 import type { NativeAuthConfig, ResolvedNativeAuthConfig } from './native/types';
 import type { AuthAuditConfig, ResolvedAuthAuditConfig } from './auth-audit-types';
+import type { TenantKind } from './tenancy/tenancy-types';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 
 // ─── Auth Context ──────────────────────────────────────────────────────────
 
@@ -38,6 +40,8 @@ export interface AuthContext {
   scope?: readonly string[];
   /** Opaque durable parent-session or native refresh-family id. */
   sessionId?: string;
+  /** Server-resolved durable MFA assurance for this exact session family. */
+  mfaVerifiedAt?: number;
   /** Durable parent generation carried by browser access credentials. */
   sessionGeneration?: number;
   /** Live server-validated authorization scope for this browser session. */
@@ -46,6 +50,8 @@ export interface AuthContext {
   /** Present only after a live tenant and membership generation check. */
   tenantId?: string;
   membershipId?: string;
+  /** Live purpose of the active tenant; never accepted from bearer claims. */
+  tenantKind?: TenantKind;
   tenantRole?: string | null;
   tenantAuthorizationGeneration?: number;
   membershipAuthorizationGeneration?: number;
@@ -69,6 +75,7 @@ export interface AuthContextAuthorityReference {
   readonly authGeneration: number;
   readonly sessionKind: 'web' | 'native';
   readonly sessionId: string;
+  readonly mfaVerifiedAt: number | null;
   readonly sessionGeneration: number | null;
   readonly clientId: string | null;
   readonly identityScopes: readonly string[];
@@ -76,6 +83,7 @@ export interface AuthContextAuthorityReference {
   readonly sessionScopeId: string;
   readonly tenantId: string | null;
   readonly membershipId: string | null;
+  readonly tenantKind: TenantKind | null;
   readonly tenantRole: string | null;
   readonly tenantAuthorizationGeneration: number | null;
   readonly membershipAuthorizationGeneration: number | null;
@@ -295,6 +303,12 @@ export interface AuthTenantCreationConfig {
   mode?: AuthTenantCreationMode;
 }
 
+/** Explicit one-time adoption of an existing tenant as platform administration. */
+export interface AuthAdministrationTenantConfig {
+  /** Exact internal tenant id. Slugs are deliberately not accepted as adoption authority. */
+  adoptTenantId?: string;
+}
+
 /** Developer-authored tenancy capability selection. */
 export interface AuthTenancyOptions {
   /** Tenancy capability mode. Default: 'single'. */
@@ -305,6 +319,8 @@ export interface AuthTenancyOptions {
   creation?: AuthTenantCreationConfig;
   /** Invitation and join-request onboarding. Available only in multi mode. */
   onboarding?: AuthTenantOnboardingConfig;
+  /** Protected administration-organization bootstrap/adoption policy. */
+  administration?: AuthAdministrationTenantConfig;
 }
 
 /** Compact or extensible tenancy capability configuration. */
@@ -317,6 +333,8 @@ export interface ResolvedAuthTenancyConfig {
   readonly creation: Readonly<Required<AuthTenantCreationConfig>>;
   /** Present only in multi-tenant mode. */
   readonly onboarding?: ResolvedAuthTenantOnboardingConfig;
+  /** Present only in multi-tenant mode when exact adoption is configured. */
+  readonly administration?: Readonly<AuthAdministrationTenantConfig>;
 }
 
 /** Whether authorization uses current simple roles or advanced RBAC. */
@@ -325,12 +343,21 @@ export type AuthAuthorizationMode = 'simple' | 'advanced';
 /** Stable, application-declared capability key such as `patients:read`. */
 export type PermissionKey = string;
 
+/** Data/control-plane authority realm in which a permission can be exercised. */
+export type AuthPermissionScope = 'application' | 'tenant';
+
 /** Developer-authored metadata for one statically declared permission. */
 export interface AuthPermissionConfig {
   /** Human-readable control-plane label. Defaults to the permission key. */
   label?: string;
   /** Optional bounded help text for future administrative UI. */
   description?: string;
+  /**
+   * Permission realm. Defaults to `application` in single mode and `tenant`
+   * in multi mode. Application permissions in multi mode are usable only
+   * through a live administration-organization membership.
+   */
+  scope?: AuthPermissionScope;
 }
 
 /** Deterministically normalized permission metadata. */
@@ -338,6 +365,7 @@ export interface ResolvedAuthPermissionConfig {
   readonly key: PermissionKey;
   readonly label: string;
   readonly description?: string;
+  readonly scope: AuthPermissionScope;
 }
 
 /** Static role template expanded inside the current authorization scope. */
@@ -376,6 +404,11 @@ export interface AuthAuthorizationOwnerAdoptionConfig {
 export interface AuthAuthorizationOptions {
   /** Authorization capability mode. Default: 'simple'. */
   mode?: AuthAuthorizationMode;
+  /**
+   * Monotonic version for role/permission semantics. Default: 1.
+   * Increment this before deploying any semantic registry change.
+   */
+  registryVersion?: number;
   /** Canonical application/framework permission registry. */
   permissions?: Record<PermissionKey, AuthPermissionConfig>;
   /** Static application role templates. */
@@ -401,6 +434,7 @@ export type AuthAuthorizationConfig =
 /** Normalized authorization capability selection. */
 export interface ResolvedAuthAuthorizationConfig {
   readonly mode: AuthAuthorizationMode;
+  readonly registryVersion: number;
   readonly permissions: Readonly<Record<PermissionKey, ResolvedAuthPermissionConfig>>;
   readonly roles: Readonly<Record<string, ResolvedAuthRoleTemplateConfig>>;
   readonly ownerAdoption?: Readonly<AuthAuthorizationOwnerAdoptionConfig> | null;
@@ -699,6 +733,9 @@ export interface TokenServiceConfig {
 
   /** App-local durable browser-session authority. Defaults to single mode. */
   authSessionService?: AuthSessionService;
+
+  /** App-local observability boundary for transaction invariant failures. */
+  emitCode?: AuthPlatformCodeEmitter;
 }
 
 // ─── Error ─────────────────────────────────────────────────────────────────

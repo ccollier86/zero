@@ -17,6 +17,7 @@ import type { UserRoleOption } from './user-management-types';
 export function useUserCreateDialog(params: {
   config: AuthAdminConfig | null;
   roleOptions: readonly UserRoleOption[];
+  allowGlobalAdminRole: boolean;
   createUser: (input: AuthAdminCreateUserParams) => Promise<void>;
 }) {
   return React.useCallback(() => {
@@ -27,6 +28,7 @@ export function useUserCreateDialog(params: {
         <UserManagementCreateForm
           config={params.config}
           roleOptions={params.roleOptions}
+          allowGlobalAdminRole={params.allowGlobalAdminRole}
           onSubmit={async (input) => {
             await params.createUser(input);
             modals.closeLast();
@@ -34,5 +36,10 @@ export function useUserCreateDialog(params: {
         />
       ),
     });
-  }, [params.config, params.createUser, params.roleOptions]);
+  }, [
+    params.allowGlobalAdminRole,
+    params.config,
+    params.createUser,
+    params.roleOptions,
+  ]);
 }

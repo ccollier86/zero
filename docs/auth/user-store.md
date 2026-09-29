@@ -1,15 +1,21 @@
 # User Store
 
-SQLite operations for auth data. Statements are prepared once during store
-construction and reused per call, matching the current ReactiveDB/persistence
-statement-reuse pattern.
+`UserStore` is the stable application-facing facade for SQLite-backed auth
+identity. It coordinates focused internal stores for user rows, properties,
+auth config, password credentials, refresh/legacy action tokens, and
+provisional registration receipts. This extraction is an
+implementation boundary, not an application API change: existing
+`UserStore` methods remain the supported facade.
+
+Every store prepares its own statements once during construction and reuses
+them per call, matching the ReactiveDB/persistence statement-reuse pattern.
 
 ## Core SQLite Schema
 
 These excerpts cover the identity, credential, refresh, and configuration
-tables closest to `UserStore` and `TokenService`. Focused auth services define
-additional private session, MFA, tenancy, onboarding, authorization, and audit
-tables in their corresponding schema modules.
+tables exposed through the `UserStore` facade and `TokenService`. Focused auth
+services define additional private session, MFA, tenancy, onboarding,
+authorization, and audit tables in their corresponding schema modules.
 
 ### Auth/Core Tables
 
@@ -110,56 +116,24 @@ legacy compatibility table for previously issued auth links.
 
 ## Prepared Statements
 
-All statements prepared in the constructor, stored in a map, reused per call:
+Statement ownership follows the data responsibility rather than accumulating
+inside one class:
 
-```ts
-class UserStore {
-  private stmts: {
-    // Users (private auth table — ReactiveDB provides change tracking)
-    getUserById: Statement;
-    getUserByUsername: Statement;
-    getUserByEmail: Statement;
-    listUsers: Statement;
+| Store | Statement/data responsibility |
+| --- | --- |
+| `UserStore` | Stable public methods, transaction/profile fences, creation/deletion ordering, bootstrap, audit, and collaborator orchestration |
+| `UserIdentityStore` | `users` identity CRUD, canonical lookup, list/count, email generation/mailbox proof, and row projection |
+| `UserPropertyConfigStore` | Composite-key `user_properties` and internal `_auth_config` KV |
+| `UserCredentialStore` | `_credentials`, password hash compare-and-swap, password gates, session revocation, and password audit coupling |
+| `UserTokenStore` | `_refresh_tokens`, legacy `_auth_action_tokens`, rotation/replay handling, revocation, and cleanup |
+| `RegistrationProvisioningStore` | `_auth_registration_provisioning` receipts, leases, finalization, crash recovery, and exact compensation |
+| `AuthGenerationStore` | Per-user security generations used to invalidate stale credentials |
+| `PlatformTokenStore` | Generic `_zero_action_tokens` and `_zero_resume_tokens`; this lives under `src/tokens`, not in `UserStore` |
 
-    // Credentials (internal table — direct db.exec, no reactivity needed)
-    insertCredential: Statement;
-    getCredential: Statement;
-    updateCredential: Statement;
-
-    // Properties (user metadata projection — direct SQL because composite PK)
-    setProperty: Statement;
-    getProperty: Statement;
-    getProperties: Statement;
-    deleteProperty: Statement;
-
-    // Refresh tokens (internal table — direct db.exec)
-    insertRefreshToken: Statement;
-    getRefreshTokenByHash: Statement;
-    revokeRefreshToken: Statement;
-    revokeAllUserTokens: Statement;
-    deleteExpiredTokens: Statement;
-
-    // Action tokens (internal table — direct db.exec)
-    insertActionToken: Statement;
-    getActionTokenByHash: Statement;
-    consumeActionToken: Statement;
-    deleteExpiredActionTokens: Statement;
-
-    // Auth config (internal table — direct db.exec)
-    getConfig: Statement;
-    setConfig: Statement;
-  };
-
-  constructor(db: ReactiveDB) {
-    // Prepare all statements once
-    this.stmts = {
-      getUserById: db.prepare('SELECT * FROM users WHERE user_id = ?'),
-      getUserByUsername: db.prepare('SELECT * FROM users WHERE username = ?'),
-      // ... all others
-    };
-  }
-}
-```
+The focused stores are internal collaborators and are not exported as a second
+application API. Callers continue using
+`UserStore.createUser()`, `verifyPassword()`, `resetPassword()`, refresh-token
+methods, and legacy action-token methods instead of reaching into those stores.
 
 **Why two paths:**
 - Private `users` table writes go through `db.insert()` / `db.update()` /
@@ -169,9 +143,16 @@ class UserStore {
   composite primary key. Arbitrary or user-editable keys are not trusted; only
   live-registry keys marked `useInPolicies` and not user-editable may feed
   policy. These writes do not currently emit ReactiveDB change events.
-- Internal tables (`_credentials`, `_refresh_tokens`, `_auth_config`) — writes
-  use prepared statements directly (`stmt.run(...)`) and have no client Sync
+- Internal tables (`_credentials`, `_refresh_tokens`, `_auth_action_tokens`,
+  `_auth_config`, and registration receipts) use prepared statements directly
+  inside the shared ReactiveDB transaction domain and have no client Sync
   surface.
+
+**Transaction callback contract:** Authority and lifecycle callbacks invoked
+inside a `UserStore` transaction are synchronous-only. If one returns a
+Promise or other thenable, Zero consumes any later rejection, throws
+`AUTH_STATE_INVARIANT_FAILED`, and rolls back the enclosing transaction rather
+than letting work escape the commit boundary.
 
 ## Operations
 
@@ -211,20 +192,25 @@ async createUser(params: {
 3. Wrap in `db.transaction()`:
    - `db.insert('users', { user_id, username, email, first_name, last_name, role, created_at })` — emits a server-side change; client delivery remains policy-controlled
    - lifecycle fields default to `status = 'active'` and `password_change_required = 0` unless provided
-   - `this.stmts.insertCredential.run(user_id, passwordHash)` — internal, no broadcast
+   - ask `UserCredentialStore` to insert the hash into `_credentials` — internal, no broadcast
    - configured initial properties are inserted into `user_properties` when provided
 4. Return `UserRecord` (no password_hash)
 
-**Transaction ensures atomicity** — if credential insert fails, the user row is rolled back. Since this runs inside `db.transaction()`, the `users` change event is deferred until commit (see [ReactiveDB transactions](../realtime-sync/realtime-sync/reactive-db.md#transactions)).
+**Transaction ensures atomicity** — if credential insert fails, the user row
+is rolled back. Nested collaborator operations reuse the same ReactiveDB
+transaction. The `users` change event is deferred until commit (see
+[ReactiveDB transactions](../realtime-sync/realtime-sync/reactive-db.md#transactions)).
 
 `createUser()` remains a compatible trusted provisioning primitive after an
 installation has completed, and remains the single-mode bootstrap primitive.
 It deliberately cannot elect the first user in `multi` mode: while multi-mode
 bootstrap is open it fails with
-`409 MULTI_TENANT_BOOTSTRAP_ORGANIZATION_REQUIRED`. Use the registration/domain
-path that creates the first organization and owner membership in the same
-transaction. This prevents programmatic callers from closing bootstrap with a
-tenantless administrator.
+`409 MULTI_TENANT_BOOTSTRAP_ORGANIZATION_REQUIRED`. Use the public registration
+path that creates the protected Administration Organization and owner
+membership in the same transaction. Invitation-bound account creation rejects
+installation bootstrap, and verified-domain admission does not replace the
+installation bootstrap flow. This prevents programmatic callers from closing
+bootstrap with a tenantless administrator.
 
 ### getUserById / getUserByUsername / getUserByEmail
 
@@ -267,7 +253,8 @@ election and commits the new identity with an exact
 `_auth_registration_provisioning` receipt. An optional newly created tenant is
 bound to that receipt in the same transaction. In single/advanced mode the
 bootstrap application-owner assignment records the receipt ID as its source;
-in multi/advanced mode the receipt binds the exact tenant and owner identity.
+in multi mode the receipt binds the exact tenant and owner identity, including
+the advanced assignment when advanced authorization is enabled.
 
 When registration requires email verification, `_auth_registration_intents`
 is written inside that same identity/owner transaction. It is the narrow bridge
@@ -364,15 +351,11 @@ not an ordinary administrator deletion.
 async verifyPassword(userId: string, password: string): Promise<boolean>
 ```
 
-```ts
-async verifyPassword(userId: string, password: string): Promise<boolean> {
-  const cred = this.stmts.getCredential.get(userId);
-  if (!cred) return false;
-  return Bun.password.verify(password, cred.password_hash);
-}
-```
-
-`Bun.password.verify()` handles Argon2id verification automatically — detects the algorithm from the hash prefix. Returns `true`/`false`, never throws for wrong passwords.
+The facade delegates the lookup and verification to `UserCredentialStore`.
+`Bun.password.verify()` detects Argon2id parameters from the stored hash and
+returns `true`/`false`; an incorrect password is not an exception. The runtime
+profile fence is checked before and after the asynchronous verification so a
+profile change cannot authorize a stale in-flight result.
 
 ### updatePassword
 
@@ -381,20 +364,59 @@ async updatePassword(userId: string, currentPassword: string, newPassword: strin
 ```
 
 **Steps:**
-1. Verify current password via `verifyPassword()`
-2. If valid: `await Bun.password.hash(newPassword)`, `this.stmts.updateCredential.run(newHash, userId)`
-3. Revoke all refresh tokens for user (force re-login on all devices)
-4. Return success boolean
+1. Read the current credential and verify the supplied password.
+2. Hash the replacement with `Bun.password.hash()`.
+3. Inside one transaction, compare-and-swap the exact hash that was verified,
+   clear the password-change gate, revoke the user's sessions/tokens, and
+   append the security audit event.
+4. Return `false` if the credential changed concurrently; otherwise return
+   `true` after commit.
+
+The compare-and-swap prevents two concurrent updates that verified the same
+old password from both committing.
 
 ### resetPassword
 
 ```ts
-async resetPassword(userId: string, newPassword: string): Promise<boolean>
+async resetPassword(
+  userId: string,
+  newPassword: string,
+  options?: {
+    passwordChangeRequired?: boolean;
+    audit?: AuthSecurityAuditContext;
+    beforeCommit?: () => void;
+  },
+): Promise<boolean>
 ```
 
 Admin reset flow. It does not require the current password, but it does verify
-the user exists. On success it hashes the new password and revokes all refresh
-tokens so existing sessions must re-authenticate.
+the user exists. On success it replaces the hash, applies the requested
+password-change gate, revokes sessions/tokens, and appends the audit event in
+one transaction. If the user is deleted while hashing, the method returns
+`false`. If the user still exists but its required credential row is missing,
+the store fails closed with `AUTH_STATE_INVARIANT_FAILED` instead of reporting
+an ordinary not-found result.
+
+Password-action consumption and optional `beforeCommit` callbacks follow the
+synchronous transaction-callback contract above.
+
+### completePasswordAction
+
+```ts
+async completePasswordAction(
+  userId: string,
+  newPassword: string,
+  consumeActionToken: () => void,
+  auditContext?: AuthSecurityAuditContext,
+): Promise<boolean>
+```
+
+This is the commit boundary for reset/setup links. Password hashing finishes
+before the transaction starts. The synchronous token consumer then joins the
+same transaction as the credential replacement, account-gate clear,
+session/token revocation, and audit append. A later failure rolls everything
+back, including generic platform-token consumption when both services share
+the required transaction domain.
 
 ### Properties KV
 
@@ -436,27 +458,26 @@ revokeAllUserTokens(userId: string): void
 deleteExpiredTokens(): number
 ```
 
-All operate on `_refresh_tokens` (internal table) — use prepared statements directly, no ReactiveDB change emission.
+These compatibility methods delegate to `UserTokenStore`, which owns the
+prepared statements for `_refresh_tokens`. They remain synchronous facade
+methods and do not expose the internal store. Writes run in the shared
+ReactiveDB transaction domain but do not produce a client Sync stream.
 
-**`getRefreshTokenByHash` returns ALL matching rows, including revoked tokens.** The query is `SELECT * FROM _refresh_tokens WHERE token_hash = ?` with no `WHERE revoked_at IS NULL` filter. Callers (TokenService) check `revoked_at` and `expires_at` in application code after the query returns. This is deliberate — replay detection needs to see revoked tokens. If a revoked token is reused, TokenService revokes ALL tokens for that user (family rotation). Filtering out revoked rows at the SQL level would make replay attacks invisible.
+**`getRefreshTokenByHash` can return a matching revoked row.** The query does
+not add `WHERE revoked_at IS NULL`; `TokenService` checks `revokedAt` and
+`expiresAt` after lookup. This is deliberate: replay detection must see a
+consumed token. Reuse advances the user's security generation and revokes the
+backing session/token family. Filtering revoked rows at SQL lookup time would
+turn replay into an indistinguishable unknown token.
 
 ```ts
-getRefreshTokenByHash(tokenHash: string): RefreshTokenRecord | null {
-  // Returns the token record even if revoked — caller handles revocation logic
-  const row = this.stmts.getRefreshTokenByHash.get(tokenHash);
-  if (!row) return null;
-  return {
-    tokenId: row.token_id,
-    userId: row.user_id,
-    tokenHash: row.token_hash,
-    expiresAt: row.expires_at,
-    createdAt: row.created_at,
-    revokedAt: row.revoked_at,  // may be non-null — caller checks
-  } as RefreshTokenRecord;
+const record = store.getRefreshTokenByHash(tokenHash);
+if (record?.revokedAt != null) {
+  // TokenService treats reuse as replay; it is not a normal valid lookup.
 }
 ```
 
-### legacy auth action tokens
+### Legacy Auth Action Tokens
 
 ```ts
 storeActionToken(params): AuthActionTokenRecord
@@ -466,20 +487,21 @@ countRecentActionTokens(params): number
 deleteExpiredActionTokens(): number
 ```
 
-These methods operate on `_auth_action_tokens` for legacy compatibility and
-never store raw reset/setup tokens. Current reset/setup flows use
+These facade methods delegate to `UserTokenStore`, which operates on
+`_auth_action_tokens` for legacy compatibility and never stores raw
+reset/setup tokens. Normal `createApp()` reset/setup flows use
 `PlatformTokenService` and `_zero_action_tokens`; `AuthActionTokenService`
 wraps the platform service while falling back to this legacy table for old
-outstanding links.
+outstanding links. Advanced direct composition may explicitly select a null
+platform-token service to keep the legacy storage path.
 
-`deleteExpiredTokens()` is a cleanup operation — called periodically (cron or on refresh) to purge expired/revoked tokens:
+The platform-token store is separate from `UserTokenStore`, but the two must
+share the exact same ReactiveDB transaction domain when composed together. See
+[Platform Tokens: Auth Transaction Boundary](../tokens.md#auth-transaction-boundary).
 
-```ts
-deleteExpiredTokens(): number {
-  const result = this.stmts.deleteExpiredTokens.run(Date.now());
-  return result.changes;  // Number of deleted rows
-}
-```
+`deleteExpiredTokens()` delegates cleanup to `UserTokenStore`, removes expired
+or old revoked refresh rows, asks the attached session store to remove expired
+parent sessions, and returns the number of deleted refresh rows.
 
 ### Auth Config Operations
 
@@ -612,12 +634,14 @@ interface AuthActionTokenRecord {
 
 | Scenario | Behavior |
 |----------|----------|
-| Duplicate username | SQLite UNIQUE constraint error → catch, throw `AppError('Username taken', 'DUPLICATE_USERNAME', 409)` |
-| Duplicate email | SQLite UNIQUE constraint error → catch, throw `AppError('Email taken', 'DUPLICATE_EMAIL', 409)` |
+| Duplicate username | Throws `AuthError('Username taken', 'DUPLICATE_USERNAME', 409)` after the transaction-local identity recheck |
+| Duplicate email | Throws `AuthError('Email taken', 'DUPLICATE_EMAIL', 409)` after canonical-email conflict checks |
 | User not found (read) | Returns `null` — caller decides if this is an error |
 | User not found (update/delete) | Returns `null`/`false` — no change emitted |
 | Invalid password (verify) | Returns `false` — caller decides the error message |
+| Existing user is missing a required credential during reset/recovery | Emits the auth invariant observability code and throws `AUTH_STATE_INVARIANT_FAILED` — never masquerades as not found |
+| Transaction-bound authority/lifecycle callback returns a Promise-like value | Consumes any later rejection and throws `AUTH_STATE_INVARIANT_FAILED`; the enclosing transaction rolls back |
 | Expired refresh token | `getRefreshTokenByHash()` returns the record; TokenService checks `expires_at` in code and returns `null` if expired |
-| Revoked refresh token | `getRefreshTokenByHash()` returns the record even if revoked; TokenService checks `revoked_at` in code — if non-null, revokes ALL tokens for that user (replay detection) |
+| Revoked refresh token | `getRefreshTokenByHash()` returns the record even if revoked; TokenService treats reuse as replay, advances security state, and revokes the backing session/token family |
 | Foreign key violation | SQLite enforces — attempting to insert a credential for non-existent user throws |
 | Database disposed | ReactiveDB throws `Error('ReactiveDB is disposed')` — same as all other operations |

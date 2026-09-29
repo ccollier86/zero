@@ -22,6 +22,7 @@ import type {
   PermissionLevel,
 } from './types';
 import { AuthError } from '../auth/types';
+import { getPublicAuthErrorMessage } from '../auth/auth-error-response';
 import type { RequestAuthorizationAccess } from '../auth/authorization-access';
 import { readAuthBearerToken } from '../auth/auth-bearer-token';
 import { authContextAuthorityFingerprint } from '../auth/auth-context-authority';
@@ -262,7 +263,7 @@ export function createStoragePlugin(config: StoragePluginConfig) {
 
       if (error instanceof AuthError) {
         set.status = error.status;
-        return { error: error.message, code: error.code };
+        return { error: getPublicAuthErrorMessage(error), code: error.code };
       }
     })
 

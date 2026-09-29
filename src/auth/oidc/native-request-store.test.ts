@@ -19,6 +19,26 @@ function setup(options: NativeRequestStoreOptions) {
 }
 
 describe('NativeRequestStore admission', () => {
+  test('rejects async request and code runtime profile guards', () => {
+    const { db, store } = setup({});
+    const codes = new NativeCodeStore(db);
+    try {
+      store.setRuntimeProfileGuard(async () => {});
+      expect(() => store.assertCurrentProfile()).toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        message: '[auth] Native request runtime profile guard must be synchronous.',
+      }));
+
+      codes.setRuntimeProfileGuard(async () => {});
+      expect(() => codes.assertCurrentProfile()).toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        message: '[auth] Native code runtime profile guard must be synchronous.',
+      }));
+    } finally {
+      db.dispose();
+    }
+  });
+
   test('fences cached request and code stores after a profile change', () => {
     const now = Date.now();
     const { db, store } = setup({ now: () => now });

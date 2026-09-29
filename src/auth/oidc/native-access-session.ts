@@ -26,6 +26,7 @@ export function createNativeAccessSessionValidator(
   config: ResolvedNativeAuthConfig,
   sessions: NativeSessionStore,
   authority: NativeTenantAuthorityService = new NativeTenantAuthorityService('single', null),
+  requiresMfaAssurance: (userId: string) => boolean = () => false,
 ): NativeAccessSessionValidator {
   const enabledClients = new Set(config.clients.map((client) => client.clientId));
   return {
@@ -41,6 +42,9 @@ export function createNativeAccessSessionValidator(
           authGeneration: claims.authGeneration,
       });
       if (!session) return null;
+      if (requiresMfaAssurance(claims.userId) && session.mfaVerifiedAt === null) {
+        return null;
+      }
       const resolved = authority.resolve(claims.userId, session);
       return resolved ? { ...resolved, session } : null;
     },

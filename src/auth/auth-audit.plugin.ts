@@ -14,6 +14,8 @@ import type { TokenService } from './token-service';
 import { AuthError } from './types';
 import type { UserStore } from './user-store';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
+import { captureAuthAdminMutationAuthority } from './auth-admin-mutation-authority';
+import { captureAuthTenantMutationAuthority } from './auth-tenant-mutation-authority';
 
 export interface AuthAuditPluginConfig {
   getService: () => AuthAuditService | null;
@@ -42,8 +44,10 @@ export function createAuthAuditPlugin(config: AuthAuditPluginConfig) {
   return new Elysia({ name: 'auth-control-plane-audit', prefix: '/audit' })
     .get('/platform/events', async ({ request, query, set }) => {
       applyAuthPrivateNoStore(set);
-      const { service } = await requirePlatformAudit(config, request);
-      return service.listPlatform(query);
+      const { service, assertCurrentAuthority } = await requirePlatformAudit(config, request);
+      const page = service.listPlatform(query);
+      assertCurrentAuthority();
+      return page;
     }, {
       query: t.Object({
         ...filterSchema,
@@ -52,10 +56,11 @@ export function createAuthAuditPlugin(config: AuthAuditPluginConfig) {
     })
     .get('/platform/export', async ({ request, query, set }) => {
       applyAuthPrivateNoStore(set);
-      const { service, auth } = await requirePlatformAudit(
+      const { service, auth, assertCurrentAuthority } = await requirePlatformAudit(
         config, request, 'audit.exported',
       );
       const exported = service.exportPlatform(query);
+      assertCurrentAuthority();
       service.append({
         action: 'audit.exported',
         outcome: 'succeeded',
@@ -73,18 +78,24 @@ export function createAuthAuditPlugin(config: AuthAuditPluginConfig) {
       }, { additionalProperties: false }),
     })
     .post('/platform/prune', async ({ request }) => {
-      const { service, auth } = await requirePlatformAudit(
-        config, request, 'audit.retention-pruned',
+      const { service, auth, assertCurrentAuthority } = await requirePlatformAudit(
+        config, request, 'audit.retention-pruned', 'manage',
       );
       return service.pruneBacklogAudited({
         actor: authAuditActorFromContext(auth),
         request: authAuditRequestFromRequest(request),
+        assertCurrentAuthority,
       });
     })
     .get('/tenant/events', async ({ request, query, set }) => {
       applyAuthPrivateNoStore(set);
-      const { service, tenantId } = await requireTenantAudit(config, request);
-      return service.listTenant(tenantId, query);
+      const { service, tenantId, assertCurrentAuthority } = await requireTenantAudit(
+        config,
+        request,
+      );
+      const page = service.listTenant(tenantId, query);
+      assertCurrentAuthority(['tenant.audit:read']);
+      return page;
     }, {
       query: t.Object({
         ...filterSchema,
@@ -93,10 +104,16 @@ export function createAuthAuditPlugin(config: AuthAuditPluginConfig) {
     })
     .get('/tenant/export', async ({ request, query, set }) => {
       applyAuthPrivateNoStore(set);
-      const { service, tenantId, auth } = await requireTenantAudit(
+      const {
+        service,
+        tenantId,
+        auth,
+        assertCurrentAuthority,
+      } = await requireTenantAudit(
         config, request, 'audit.exported',
       );
       const exported = service.exportTenant(tenantId, query);
+      assertCurrentAuthority(['tenant.audit:read']);
       service.append({
         action: 'audit.exported',
         outcome: 'succeeded',
@@ -119,13 +136,51 @@ async function requirePlatformAudit(
   config: AuthAuditPluginConfig,
   request: Request,
   deniedAction?: string,
+  authority: 'read' | 'manage' = 'read',
 ) {
   const runtime = await requireBase(config, request);
-  if (runtime.auth.role !== 'admin') {
-    if (deniedAction) recordDenied(runtime.service, runtime.auth, request, deniedAction);
-    throw forbidden();
+  const kernel = config.getAuthorizationKernel();
+  const roles = config.getAuthorizationRoleService();
+  const access = createRequestAuthorizationAccess({
+    authContext: runtime.auth,
+    kernel,
+    propertyStore: runtime.store,
+    roleAssignments: roles,
+  });
+  try {
+    if (kernel.tenancy.mode === 'single') {
+      if (runtime.auth.role !== 'admin') throw forbidden();
+    } else {
+      access.requireApplicationAuthorization();
+      access.requirePermission(authority === 'manage'
+        ? 'application.audit:manage'
+        : 'application.audit:read');
+    }
+  } catch (error) {
+    if (deniedAction) {
+      recordDenied(
+        runtime.service,
+        runtime.auth,
+        request,
+        deniedAction,
+        { kind: 'application' },
+      );
+    }
+    throw error;
   }
-  return runtime;
+  return {
+    ...runtime,
+    assertCurrentAuthority: captureAuthAdminMutationAuthority({
+      auth: runtime.auth,
+      tokenService: runtime.tokens,
+      kernel,
+      store: runtime.store,
+      roles,
+      permission: authority === 'manage'
+        ? 'application.audit:manage'
+        : 'application.audit:read',
+    }),
+  };
 }
 
 async function requireTenantAudit(
@@ -143,9 +198,29 @@ async function requireTenantAudit(
     });
     const scope = access.requireTenant();
     access.requirePermission('tenant.audit:read');
-    return { ...runtime, tenantId: scope.tenantId };
+    return {
+      ...runtime,
+      tenantId: scope.tenantId,
+      assertCurrentAuthority: captureAuthTenantMutationAuthority({
+        auth: runtime.auth,
+        tokenService: runtime.tokens,
+        kernel: config.getAuthorizationKernel(),
+        store: runtime.store,
+        roles: config.getAuthorizationRoleService(),
+      }),
+    };
   } catch (error) {
-    if (deniedAction) recordDenied(runtime.service, runtime.auth, request, deniedAction);
+    if (deniedAction) {
+      recordDenied(
+        runtime.service,
+        runtime.auth,
+        request,
+        deniedAction,
+        runtime.auth.tenantId
+          ? { kind: 'tenant', tenantId: runtime.auth.tenantId }
+          : { kind: 'application' },
+      );
+    }
     throw error;
   }
 }
@@ -159,7 +234,7 @@ async function requireBase(config: AuthAuditPluginConfig, request: Request) {
   }
   const auth = await extractAuthContext(request, tokens);
   if (!auth) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
-  return { service, store, auth };
+  return { service, store, tokens, auth };
 }
 
 function forbidden(): AuthError {
@@ -171,15 +246,13 @@ function recordDenied(
   auth: Awaited<ReturnType<typeof requireBase>>['auth'],
   request: Request,
   action: string,
+  scope: { kind: 'application' } | { kind: 'tenant'; tenantId: string },
 ): void {
-  const tenantId = auth.tenantId;
   service.append({
     action,
     outcome: 'denied',
     reason: 'authorization-denied',
-    scope: tenantId
-      ? { kind: 'tenant', tenantId }
-      : { kind: 'application' },
+    scope,
     actor: authAuditActorFromContext(auth),
     request: authAuditRequestFromRequest(request),
     target: { type: 'audit-events' },

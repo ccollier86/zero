@@ -20,8 +20,11 @@
 > [implementation checklist](./multi-tenant-auth-implementation-checklist.md)
 > for current delivery status. Opt-in request-only verified-domain admission
 > and the bounded append-only authorization/control-plane audit are now
-> implemented. A protected Administration Organization/platform-tenant
-> lifecycle, break-glass, tenant-custom roles, populated-app adoption tooling, domain
+> implemented. The protected Administration Organization and bounded
+> customer-organization lifecycle are also implemented; see the current
+> [platform administration contract](./platform-administration.md).
+> Break-glass, tenant-custom roles, broader populated-app discovery/migration
+> tooling beyond exact pre-024 administration reconciliation, domain
 > autojoin/aliases/direct transfer, and upstream enterprise SSO remain separate
 > future work. Shared-file replicas now use durable Sync fanout and migration
 > `020` auth/session invalidation; separate-database/cross-host coordination and
@@ -164,8 +167,10 @@ not by the historical tense used in later audit sections.
   canonical email at a particular email generation, including the proof source.
 - **Verified domain claim**: a tenant's current proof of control over one exact DNS domain
   plus its constrained discovery/admission policy; it is not itself a membership.
-- **Platform role**: the existing global `users.role` value. The built-in `admin` meaning
-  is platform-wide and remains separate from tenant administration.
+- **Legacy global role**: the existing global `users.role` value. The built-in `admin`
+  meaning remains the compatibility boundary for declared global-admin routes and for
+  changing that legacy role. It is separate from both tenant administration and live
+  application-permission authority; neither implies the other.
 - **Application role**: a named role evaluated inside the current authorization scope. In
   `single` it is assigned to the user/application relationship; in `multi` it is assigned
   through a membership and may be called a tenant role in product copy.
@@ -540,8 +545,9 @@ ambiguous authorization model.
 9. Tenant roles never imply the existing platform-admin role.
 10. Platform administration does not silently imply tenant data access. Any support or
     break-glass access is explicit, time-bound, and audited.
-11. Existing `admin`, `requireAdmin()`, `adminOnly()`, and `role` checks remain global/
-    platform checks and can never be satisfied merely by tenant authority.
+11. Existing `admin`, `requireAdmin()`, `adminOnly()`, and `role` checks remain legacy
+    global-administrator checks and can never be satisfied by tenant or application-role
+    authority. Conversely, the legacy role does not satisfy application permissions.
 12. Unknown table security/realm classification fails closed in `multi` mode.
 13. Permission and membership changes invalidate or revalidate HTTP, page, native, and
     Sync authorization promptly.
@@ -646,12 +652,23 @@ Recommended semantics:
 - deny and thrown-policy results fail closed;
 - tenant-custom roles can be added later without changing the membership model.
 
-Role-template and permission-registry deployment changes need an explicit reconciliation
-plan. The implemented assignment services make a retained role absent from the current
-registry inert, expose it as retired, prevent new grants, and let an owner remove it with
-the same optimistic revision contract. Startup/Doctor drift reporting and explicit bulk
-rename/migration tooling remain follow-up work; registry changes must never silently grant
-authority.
+Role-template and permission-registry deployments are explicitly reconciled.
+Migration `027` persists a canonical semantic fingerprint and positive
+`authorization.registryVersion`; same-profile authority changes require a
+monotonic bump, while label/description-only changes do not. Same-version drift
+and version rollback fail startup, successful changes advance shared authority
+and write system audit events, and stale runtimes fail closed. The manifest
+may acknowledge a supported installed-profile axis transition at the
+current version only when permission, role, and evaluator semantics are
+otherwise identical; a combined profile-and-registry semantic rollout still
+requires a version bump. Assignment services make a retained role absent from
+the current registry inert, expose it
+as retired, prevent new grants, and let an owner remove it with the same
+optimistic revision contract. Reintroducing that role key is blocked while
+retained live assignments remain, so operators must remove/replace them first
+and then grant the newly deployed role deliberately. Explicit bulk
+rename/reassignment tooling and a dedicated Doctor report remain follow-up
+work; registry changes never silently grant authority.
 
 If tenant-specific ABAC attributes are added later, they belong to a membership-attribute
 store, not global `user_properties`. Any attribute used in authorization must be writable
@@ -1867,8 +1884,8 @@ Creation and initial owner membership must be one transaction. A tenant cannot e
 an active owner unless it is explicitly in a provisioning state.
 
 **Implemented foundation:** `auth.tenancy` now resolves immutable terminology and the
-three creation modes above. Initial multi-tenant bootstrap always creates its first tenant
-and protected owner atomically, independent of the later policy. Ordinary registration may
+three creation modes above. Initial multi-tenant bootstrap always creates the protected
+Administration Organization and owner atomically, independent of the later policy. Ordinary registration may
 create only an identity; eligible zero-membership completion returns a hashed-at-rest,
 expiring, application-bound, single-use onboarding continuation and no application
 credential. `POST /auth/tenants/create` derives user, actor, and owner from that proof or a
@@ -2368,8 +2385,9 @@ The upgrade must correct rather than amplify current ambiguity:
 - `UserManagement` is global identity/platform administration. It exposes password, email,
   MFA, global role/status, and deletion actions and therefore cannot become tenant member
   management;
-- `AdminGate`, `adminOnly()`, `requireAdmin()`, and existing `matcher.role` mean
-  global/platform authority and retain that meaning;
+- `AdminGate`, `adminOnly()`, `requireAdmin()`, and existing `matcher.role` retain their
+  legacy global-administrator meaning; they neither consume nor supply advanced
+  application-permission authority;
 - `PropertyGate` remains a presentation convenience, not an RBAC primitive;
 - the generic AppShell workspace switcher may display tenants but currently has no atomic
   authorization switch state and must not choose the first item as authority;
@@ -2457,14 +2475,16 @@ await client.listTenantMembers(params);
 await client.issueTenantInvitation(params);
 ```
 
-The earlier namespaced `client.tenancy`, `client.onboarding`, `client.tenantAdmin`, and
-`client.platformAdmin` sketch was not implemented and is not a public API. Browser hooks and
-gates currently include:
+The earlier namespaced `client.tenancy`, `client.onboarding`, and
+`client.tenantAdmin` sketch was not implemented. The narrower
+`client.platformAdmin` namespace is now public for protected administration
+scope and the customer-tenant directory. Browser hooks and gates currently include:
 
 - `useAuthorization()` and `useAuthorizationScopeBoundary()`;
 - `useTenantSwitcher()` and `useTenantMembers()`;
 - `useTenantOnboardingAdministration()` and `useTenantDomainAdministration()`;
 - `useDomainOnboarding()` and `useApplicationAccess()`;
+- `usePlatformAdministration()` and `usePlatformTenants()`;
 - `useHasPermission()`, `useHasAllPermissions()`, and `useHasAnyPermission()`;
 - `PlatformAdminGate`, `TenantGate`, and `PermissionGate`.
 
@@ -2614,8 +2634,11 @@ global `UserManagement` mutation model.
 Keep global control-plane authority visibly separate:
 
 - retain `UserManagement` and add the clearer alias `PlatformUserManagement`;
-- add `PlatformTenantManagement` for tenant lifecycle, member counts, domain/SSO health,
-  and control-plane operations without tenant application data;
+- use the implemented `PlatformTenantManagement` for bounded tenant lifecycle,
+  member counts, read-only member drill-in, and control-plane operations
+  without tenant application data;
+- use `PlatformAdministrationManagement` for protected-organization people,
+  invitations, roles, and ownership;
 - add `PlatformIdentityManagement` for global identity lifecycle plus read-only membership
   summaries;
 - include bootstrap/readiness, cross-tenant control-plane audit, and platform-owned SSO
@@ -2956,8 +2979,11 @@ await client.listTenantMembers(params);
 await client.issueTenantInvitation(params);
 ```
 
-The unimplemented `client.tenancy`, `client.onboarding`, `client.tenantAdmin`, and
-`client.platformAdmin` namespace sketch is not part of the public contract.
+The unimplemented `client.tenancy`, `client.onboarding`, and
+`client.tenantAdmin` namespace sketch is not part of the public contract. The
+implemented `client.platformAdmin` namespace is intentionally narrower and is
+documented in
+[Platform Administration Organization](./platform-administration.md).
 
 Desktop, mobile, and browser-extension auth use the same server membership/session model.
 Their platform-specific callback and secure-storage code remains separate, but no client
@@ -3010,7 +3036,8 @@ without exposing PKCE material, tokens, or tenant-existence probes to a presenta
   `AccessRequirement` has a pure monotonic compiler/evaluator with stable errors.
   Transport/compiler adapters for each current declaration surface remain open.
 - Freeze the compatibility rule that `role`, `admin`, `adminOnly()`, and `requireAdmin()`
-  remain global/platform concepts.
+  remain legacy global-administrator concepts, distinct in both directions from advanced
+  application permissions.
 - Add a reusable multi-tenant adversarial test harness with two tenants and overlapping
   roles/data identifiers.
 - Add Doctor table-security diagnostics in warning-only mode in `single` and blocking mode
@@ -3332,7 +3359,7 @@ tenant admin, ordinary member, non-member, suspended member, and platform admini
 | Initial tenant roles | app-defined owner/admin/member templates |
 | Initial role source | app config; DB stores membership-to-role-key assignments |
 | Permission semantics | explicit additive permissions plus resource constraints |
-| Legacy `admin`/`role` | always global/platform; never silently tenant-scoped |
+| Legacy `admin`/`role` | always a distinct global compatibility boundary; never silently tenant- or application-permission-scoped |
 | Framework integration | one per-app runtime/kernel, one request resolver, one access evaluator |
 | Elysia app style | named feature plugins, request `resolve`, declarative macros/Zero DSL, plain services |
 | Table security | separate realm, client exposure, and mutation/policy axes |
@@ -3363,7 +3390,8 @@ This unreleased branch now carries the durable tenant/session/assignment
 boundary through managed routes, resources, Sync, framework services, browser
 switching, native sessions, and packaged application/tenant controls. The
 authoritative checklist still gates release evidence and deliberately leaves
-the Administration Organization/platform-tenant lifecycle, upstream SSO,
-break-glass, tenant-custom roles, populated-app adoption tooling, and domain autojoin/aliases/direct
+upstream SSO, break-glass, tenant-custom roles, broader populated-app
+discovery/migration tooling beyond exact pre-024 administration reconciliation,
+and domain autojoin/aliases/direct
 transfer for separately designed work. The independent Rust/Tauri and Chrome
 packages remain private `0.0.0` previews.

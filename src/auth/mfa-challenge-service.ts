@@ -27,6 +27,8 @@ import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import type { AuthAuditService } from './auth-audit-service';
 import type { AuthAuditActor, AuthAuditRequestContext } from './auth-audit-types';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 
 /** Public MFA method metadata returned by account routes. */
 export interface PublicMfaMethod {
@@ -68,6 +70,9 @@ export interface MfaLoginChallengeStart {
 
 export type MfaRequirementSource = 'user' | 'global' | 'admin-role' | 'none';
 
+type MfaPolicyUser = Pick<UserRecord, 'role' | 'mfaRequired'>
+  & Partial<Pick<UserRecord, 'userId'>>;
+
 /** Coordinates MFA setup/challenge behavior. */
 export class MfaChallengeService {
   private readonly challengeTTLMs: number;
@@ -79,6 +84,8 @@ export class MfaChallengeService {
     private readonly challengeStore: MfaChallengeStore,
     private readonly accountEmail: AccountEmailService,
     private readonly auditService?: AuthAuditService,
+    private readonly isAdministrationMember: (userId: string) => boolean = () => false,
+    private readonly emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
   ) {
     this.challengeTTLMs = parseDurationToMs(config.mfa.challengeTTL);
     this.challengeCooldownMs = parseDurationToMs(config.mfa.challengeCooldown);
@@ -90,21 +97,40 @@ export class MfaChallengeService {
   }
 
   /** Whether global/app policy requires this user to enroll MFA. */
-  isMfaRequiredForUser(user: Pick<UserRecord, 'role' | 'mfaRequired'>): boolean {
+  isMfaRequiredForUser(user: MfaPolicyUser): boolean {
     if (!this.config.mfa.enabled) return false;
     if (user.mfaRequired) return true;
     if (this.config.mfa.policy === 'required') return true;
-    if (this.config.mfa.policy === 'admin-required') return user.role === 'admin';
+    if (this.config.mfa.policy === 'admin-required') {
+      return user.role === 'admin'
+        || Boolean(user.userId && this.resolveAdministrationMembership(user.userId));
+    }
     return false;
   }
 
   /** Explain which policy source currently requires MFA for a user. */
-  getMfaRequirement(user: Pick<UserRecord, 'role' | 'mfaRequired'>): MfaRequirementSource {
+  getMfaRequirement(user: MfaPolicyUser): MfaRequirementSource {
     if (!this.config.mfa.enabled) return 'none';
     if (user.mfaRequired) return 'user';
     if (this.config.mfa.policy === 'required') return 'global';
-    if (this.config.mfa.policy === 'admin-required' && user.role === 'admin') return 'admin-role';
+    if (this.config.mfa.policy === 'admin-required'
+      && (user.role === 'admin'
+        || Boolean(user.userId && this.resolveAdministrationMembership(user.userId)))) {
+      return 'admin-role';
+    }
     return 'none';
+  }
+
+  private resolveAdministrationMembership(userId: string): boolean {
+    return invokeSynchronousAuthCallback(
+      () => this.isAdministrationMember(userId),
+      {
+        component: 'mfa-challenge-service',
+        invariant: 'administration-membership-resolver-async',
+        message: '[auth] MFA administration membership resolution must be synchronous.',
+        emitCode: this.emitCode,
+      },
+    );
   }
 
   /** Delete enrolled methods and invalidate unfinished challenges for an admin reset. */
@@ -341,7 +367,7 @@ export class MfaChallengeService {
       });
     } catch (error) {
       const cleanupSucceeded = this.challengeStore.consumeChallenge(challenge.challengeId);
-      emitPlatformCode(OBS_CODES.AUTH_MFA_EMAIL_DELIVERY_FAILED, {
+      this.emitCode(OBS_CODES.AUTH_MFA_EMAIL_DELIVERY_FAILED, {
         userId: params.user.userId,
         metadata: { source: params.purpose, cleanupSucceeded },
       });

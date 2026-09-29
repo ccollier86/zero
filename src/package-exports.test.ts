@@ -54,27 +54,43 @@ async function buildSmokeEntry(fileName: string, source: string, target: 'bun' |
 const serverSmokeSource = `
 import { AIService } from '@zero/framework/ai';
 import {
+  ADMINISTRATION_TENANT_ROLE_KEYS,
   AuthApplicationAdministrationService,
   AuthAuditService,
+  AuthPlatformTenantAdministrationService,
   AuthTenantAdministrationService,
   AuthorizationKernel,
+  FRAMEWORK_PLATFORM_ADMINISTRATION_PERMISSIONS,
+  captureAuthApplicationMutationAuthority,
+  captureAuthTenantMutationAuthority,
   compileAccessRequirement,
   createAuthAuthorizationSnapshot,
   createAuthPlugin,
   createAuthorizationKernel,
   getAuthAuditService,
   installAuthStopBarrier,
+  isAdministrationOnlyRole,
+  isAdministrationTenantRoleKey,
   isPolicyTrustedUserProperty,
+  isRoleAssignableToTenantKind,
   type NativeAuthorizationSourceResolver as AuthNativeSourceResolver,
 } from '@zero/framework/auth';
 import type {
   AccessRequirement,
+  AuthAdministrationTenantConfig,
   AuthApplicationAdministrationConfig,
   AuthAuditEvent,
   AuthAuditQuery,
   AuthAuthorizationConfig,
   AuthAuthorizationSnapshot,
   AuthAuthorizationMode,
+  AuthPermissionScope,
+  AuthPlatformTenantPage,
+  AssertAuthApplicationMutationAuthority,
+  AssertAuthTenantMutationAuthority,
+  AtomicRegistrationPolicy,
+  AuthPlatformCodeEmitter,
+  AuthSecurityAuditContext,
   NormalizedAuthBehaviorConfig,
   PermissionKey,
   AuthTenancyConfig,
@@ -82,6 +98,17 @@ import type {
   ResolvedAuthAuthorizationConfig,
   ResolvedAuthTenancyConfig,
   AuthTenantAdministrationConfig,
+  AuthTenantInvitationDeliveryMode,
+  AuthTenantInvitationEmailTemplate,
+  AuthTenantInvitationEmailTemplateContext,
+  AuthApplicationMutationAuthority,
+  AuthTenantMutationAuthority,
+  CreateUserInput,
+  IssuedPageSession,
+  TenantKind,
+  UserListOptions,
+  UserStoreOptions,
+  WebRefreshProof,
 } from '@zero/framework/auth';
 import { runPlatformDoctor, runUsageAudit } from '@zero/framework/doctor';
 import { EmailService } from '@zero/framework/email';
@@ -133,7 +160,9 @@ import {
   verifyUploadGrantToken,
 } from '@zero/framework/server';
 import type {
+  AuthAdministrationTenantConfig as ServerAuthAdministrationTenantConfig,
   AuthAuthorizationOwnerAdoptionConfig,
+  AuthPermissionScope as ServerAuthPermissionScope,
   AuthTenantCreationConfig,
   AuthTenantCreationMode,
   AuthTenantTerminologyConfig,
@@ -156,6 +185,8 @@ const policyPropertyRegistry: ZeroPolicyUserPropertyRegistry = {
 };
 const authNativeSourceResolver: AuthNativeSourceResolver = () => 'trusted-edge';
 const authTenancy: AuthTenancyConfig = { mode: 'single' };
+const authAdministration: AuthAdministrationTenantConfig = {};
+const serverAuthAdministration: ServerAuthAdministrationTenantConfig = {};
 const authTenancyMode: AuthTenancyMode = 'single';
 const authAuthorization: AuthAuthorizationConfig = { mode: 'simple' };
 const authAuthorizationMode: AuthAuthorizationMode = 'simple';
@@ -188,6 +219,10 @@ const resolvedAuthAuthorization: ResolvedAuthAuthorizationConfig = {
 const normalizedAuth = {} as NormalizedAuthBehaviorConfig;
 const accessRequirement: AccessRequirement = { permission: 'patients:read' };
 const permissionKey: PermissionKey = 'patients:read';
+const permissionScope: AuthPermissionScope = 'tenant';
+const serverPermissionScope: ServerAuthPermissionScope = 'tenant';
+const tenantKind: TenantKind = 'organization';
+const platformTenantPage = {} as AuthPlatformTenantPage;
 const applicationAdministrationConfig = {} as AuthApplicationAdministrationConfig;
 const tenantAdministrationConfig = {} as AuthTenantAdministrationConfig;
 const authAuditEvent = {} as AuthAuditEvent;
@@ -228,9 +263,14 @@ export const serverSymbols = {
   AIService,
   AuthApplicationAdministrationService,
   AuthAuditService,
+  AuthPlatformTenantAdministrationService,
   AuthTenantAdministrationService,
+  ADMINISTRATION_TENANT_ROLE_KEYS,
   AuthorizationKernel,
+  FRAMEWORK_PLATFORM_ADMINISTRATION_PERMISSIONS,
   accessRequirement,
+  authAdministration,
+  serverAuthAdministration,
   authNativeSourceResolver,
   authTenancy,
   authTenancyMode,
@@ -241,6 +281,8 @@ export const serverSymbols = {
   authTenantCreationMode,
   authTenantTerminology,
   createApp,
+  captureAuthApplicationMutationAuthority,
+  captureAuthTenantMutationAuthority,
   createAuthAuthorizationSnapshot,
   createAuthPlugin,
   createAuthorizationKernel,
@@ -249,7 +291,10 @@ export const serverSymbols = {
   compiledAccessRequirement,
   installAuthStopBarrier,
   installServerAuthStopBarrier,
+  isAdministrationOnlyRole,
+  isAdministrationTenantRoleKey,
   isPolicyTrustedUserProperty,
+  isRoleAssignableToTenantKind,
   adminOnly,
   createKvPlugin,
   createKvPluginSubpath,
@@ -295,6 +340,10 @@ export const serverSymbols = {
   normalizedAuth,
   policyPropertyRegistry,
   permissionKey,
+  permissionScope,
+  serverPermissionScope,
+  platformTenantPage,
+  tenantKind,
   applicationAdministrationConfig,
   tenantAdministrationConfig,
   authAuditEvent,
@@ -333,6 +382,8 @@ import {
   MFAEnrollmentForm,
   PermissionGate as PermissionGateSubpath,
   PlatformAdminGate as PlatformAdminGateSubpath,
+  PlatformAdministrationManagement as PlatformAdministrationManagementSubpath,
+  PlatformTenantManagement as PlatformTenantManagementSubpath,
   TenantCreationForm as TenantCreationFormSubpath,
   TenantInvitationForm,
   TenantGate as TenantGateSubpath,
@@ -385,6 +436,8 @@ import {
   useAuthorization as useAuthorizationSubpath,
   useCollection as useCollectionSubpath,
   useHasPermission as useHasPermissionSubpath,
+  usePlatformAdministration as usePlatformAdministrationSubpath,
+  usePlatformTenants as usePlatformTenantsSubpath,
   useResourceList as useResourceListSubpath,
   useDomainOnboarding as useDomainOnboardingSubpath,
   useTenantDomainAdministration as useTenantDomainAdministrationSubpath,
@@ -418,6 +471,8 @@ import {
   Hero,
   hasAuthorizationPermission,
   KanbanBoard,
+  PlatformAdministrationManagement,
+  PlatformTenantManagement,
   PlatformUserManagement,
   PermissionGate,
   PlatformAdminGate,
@@ -439,6 +494,8 @@ import {
   isAuthorizationScopeCallbackCurrent,
   useAuthorizationScopeBoundary,
   useHasPermission,
+  usePlatformAdministration,
+  usePlatformTenants,
   useNativeAuthContinuation,
   useResourceList,
   useTenantDomainAdministration,
@@ -463,6 +520,8 @@ import type {
   AuthApplicationAdminSdkSurface,
   AuthAuditEvent,
   AuthAuditSdkSurface,
+  AuthPlatformAdminSdkSurface,
+  AuthPlatformTenantPage,
   ControlPlaneAuditViewerProps,
   AuthAuthorizationState,
   AuthorizationScopeBoundary,
@@ -473,18 +532,24 @@ import type {
 	  AppShellWorkspaceConfig,
 	  Client,
 	  LoginFormProps,
-	  PlatformUserManagementProps,
+  PlatformUserManagementProps,
+  PlatformAdministrationManagementProps,
+  PlatformTenantManagementProps,
 	  TenantCreationFormProps,
   TenantMemberManagementProps,
   TenantSelectionFormProps,
   TenantSwitcherProps,
   UseTenantAppShellWorkspacesOptions,
+  UsePlatformAdministrationResult,
+  UsePlatformTenantsResult,
 } from '@zero/framework/react';
 
 	const row: Row = {};
 	const toasterProps: ToasterProps = {};
 	const applicationAccessProps: ApplicationAccessManagementProps = {};
 	const applicationAdmin = {} as AuthApplicationAdminSdkSurface;
+	const platformAdmin = {} as AuthPlatformAdminSdkSurface;
+	const platformTenantPage = {} as AuthPlatformTenantPage;
 	const auditEvent = {} as AuthAuditEvent;
 	const auditSdk = {} as AuthAuditSdkSurface;
 	const auditViewerProps: ControlPlaneAuditViewerProps = { scope: 'tenant' };
@@ -504,13 +569,18 @@ import type {
 		const createTenant = {} as Client['createTenant'];
 		const switchTenant = {} as Client['switchTenant'];
 		const legacyLoginFormProps: LoginFormProps = { showRememberMe: true };
-		const platformUserManagementProps = {} as PlatformUserManagementProps;
-		const tenantCreationFormProps = {} as TenantCreationFormProps;
+	const platformUserManagementProps = {} as PlatformUserManagementProps;
+	const platformAdministrationManagementProps = {} as PlatformAdministrationManagementProps;
+	const platformTenantManagementProps = {} as PlatformTenantManagementProps;
+	const tenantCreationFormProps = {} as TenantCreationFormProps;
 	const tenantMemberManagementProps = {} as TenantMemberManagementProps;
 	const tenantSelectionFormProps = {} as TenantSelectionFormProps;
 	const tenantSwitcherProps = {} as TenantSwitcherProps;
 	const tenantAppShellOptions = {} as UseTenantAppShellWorkspacesOptions;
 	const tenantAppShellWorkspaces = {} as AppShellWorkspaceConfig;
+	const platformAdministrationResult = {} as UsePlatformAdministrationResult;
+	const platformTenantsResult = {} as UsePlatformTenantsResult;
+	const clientPlatformAdmin = {} as Client['platformAdmin'];
 	type MasterDetailProps = ComponentProps<typeof MasterDetailView>;
 	const masterDetailLazySource: MasterDetailProps['source'] = {
 	  type: 'lazy',
@@ -565,8 +635,14 @@ export const clientSymbols = {
   hasAuthorizationPermission,
   KanbanBoard,
   KanbanBoardSubpath,
+	  PlatformAdministrationManagement,
+	  PlatformAdministrationManagementSubpath,
+	  PlatformTenantManagement,
+	  PlatformTenantManagementSubpath,
 	  PlatformUserManagement,
 	  legacyLoginFormProps,
+	  platformAdministrationManagementProps,
+	  platformTenantManagementProps,
 	  platformUserManagementProps,
   PermissionGate,
   PermissionGateSubpath,
@@ -635,6 +711,10 @@ export const clientSymbols = {
   useNativeAuthContinuation,
   useHasPermission,
   useHasPermissionSubpath,
+	  usePlatformAdministration,
+	  usePlatformAdministrationSubpath,
+	  usePlatformTenants,
+	  usePlatformTenantsSubpath,
   useResourceList,
   useResourceListSubpath,
   useTenantDomainAdministration,
@@ -653,6 +733,11 @@ export const clientSymbols = {
   toasterProps,
   applicationAccessProps,
   applicationAdmin,
+  platformAdmin,
+  platformTenantPage,
+  platformAdministrationResult,
+  platformTenantsResult,
+  clientPlatformAdmin,
   auditEvent,
   auditSdk,
   auditViewerProps,

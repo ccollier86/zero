@@ -10,18 +10,21 @@ import {
   singleQueryValue,
 } from './native-authorize-helpers';
 import { appendAuthorizationResult, nativeRedirect } from './native-http';
+import type { NativeAuthorizationService } from './native-authorization-service';
 import type { NativeAuthHttpConfig } from './native-plugin-types';
+import { emitUnexpectedNativeRequestFailure } from './native-request-failure';
 
 export async function authorizeNativeGet(
   config: NativeAuthHttpConfig,
   request: Request,
   peerAddress?: string | null,
 ): Promise<Response> {
-  const service = requireNativeService(config);
   const url = new URL(request.url);
+  let service: NativeAuthorizationService | null = null;
   let rawRequestId = singleQueryValue(url.searchParams, 'request_id');
   const loginHint = singleQueryValue(url.searchParams, 'login_hint');
   try {
+    service = requireNativeService(config);
     if (!rawRequestId) rawRequestId = service.start(url, request, peerAddress).rawRequestId;
     const pending = service.getRequest(rawRequestId);
     if (!pending) fail('invalid_request', 'Authorization request expired or was already used.');
@@ -62,8 +65,11 @@ export async function authorizeNativeGet(
       userEmail: auth.email,
     });
   } catch (error) {
+    emitUnexpectedNativeRequestFailure(config, 'authorize.get', error);
     return nativeAuthorizationFailure(
-      config.issuer, error, service.getErrorTarget(url, rawRequestId)
+      config.issuer,
+      error,
+      service?.getErrorTarget(url, rawRequestId) ?? null,
     );
   }
 }

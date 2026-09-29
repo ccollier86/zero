@@ -93,9 +93,21 @@ the roadmap. For this unreleased candidate:
   makes the durable public-auth admission enum match all six runtime flows
   while preserving existing pseudonymous accounting rows. Migration `023`
   persists the installed auth profile/generation and transactionally adopts
-  supported simple-to-advanced authority while fencing stale runtimes. Protected
-  Administration Organization/platform-tenant lifecycle UI, break-glass,
-  tenant-custom roles, populated-app adoption tooling, verified-domain autojoin/aliases/direct
+  supported simple-to-advanced authority while fencing stale runtimes.
+  Migration `024` adds the protected Administration Organization/customer
+  discriminator and reconciliation. Migration `025` persists verified MFA
+  assurance without treating legacy sessions as assured. Migration `026`
+  freezes invitation issuance-time grant ceilings; existing pending invites
+  without a snapshot must be reissued. Migration `027` persists the explicit
+  authorization-registry version and semantic fingerprint. Same-profile
+  permission/role semantic changes require a monotonic `registryVersion` bump;
+  labels/descriptions do not. Same-version drift, rollback, corrupt markers,
+  and retained-assignment role reactivation fail closed. Registry
+  initialization/updates are system-audited and stale runtimes reject the new
+  authority revision until restarted. The platform lifecycle UI is implemented;
+  break-glass, tenant-custom roles, broader populated-app discovery/migration
+  tooling beyond exact pre-024 administration reconciliation,
+  verified-domain autojoin/aliases/direct
   transfer, and upstream enterprise OIDC/SAML/SCIM are not part of the
   implemented release boundary. Registered resources now have an explicit
   server-owned client-exposure axis and optional field read/write/filter/sort
@@ -108,6 +120,37 @@ Do not describe the four auth profiles as released merely because their code is
 present in this branch. They become the public boundary only after the auth
 implementation checklist, cross-surface suite, package smoke test, clean-clone
 verification, license choice, and minimum-Bun decision all pass.
+
+### Pre-024 Administration Organization adoption
+
+For an existing multi-tenant database that has no protected administration
+tenant after migration `024`, treat exact adoption as a reviewed data migration:
+
+1. Stop all app runtimes and create a verified database backup.
+2. Inspect the retained tenants, owner memberships, account eligibility, and
+   audit provenance. Select the exact active tenant that is intended to operate
+   the application; never choose from slug or creation order alone.
+3. Set
+   `auth.tenancy.administration.adoptTenantId = 'ten_exact_internal_id'` on every
+   runtime using the database, then run the migration plan and start one
+   candidate runtime.
+4. Confirm startup emitted `ZERO_AUTH_ADMINISTRATION_TENANT_ADOPTED`, the audit
+   trail contains `tenant.administration-adopted`, the selected row has
+   `kind = 'administration'`, exactly one such row exists, and its owner can
+   enter the packaged platform controls with the required MFA assurance.
+5. Review every retained non-owner membership and deliberately assign an
+   administration-only role where access is intended. Customer-only retained
+   roles do not gain application authority.
+6. Start the remaining runtimes on the identical auth/authorization registry.
+   Keeping the exact selector is an idempotent assertion; removing it after the
+   verified rollout is safe because the protected kind is durable.
+
+Unknown, inactive, mismatched, absent, or ambiguous targets must leave startup
+failed. Do not work around that failure with direct SQL. Restore the backup or
+correct the exact selector. This procedure is only for a pre-024 populated
+`multi` installation; it is not a supported `single`-to-`multi` conversion.
+See [Platform Administration Organization](./auth/platform-administration.md#adopting-the-administration-organization-on-a-pre-024-installation)
+for the runtime contract.
 
 ## First change-log fence upgrade
 
@@ -211,6 +254,16 @@ commands regenerate scaffold targets and are not updaters.
 2. Resolve the license and supported-Bun decisions in **Package State**, and
    update `CHANGELOG.md` with the release date and notable changes, including
    compatibility or migration requirements.
+   For an authorization-registry semantic change, review the manifest diff,
+   increment `auth.authorization.registryVersion`, verify retired-role
+   assignments were explicitly removed/replaced, and plan a coordinated
+   runtime restart. Never roll the version backward.
+   Framework maintainers must also increment
+   `AUTHORIZATION_EVALUATOR_VERSION` whenever evaluator or grant semantics
+   change without an otherwise fingerprinted registry-shape change. Call that
+   compatibility fence out in release notes: installed apps acknowledge it by
+   deploying a higher `auth.authorization.registryVersion`; mixed framework
+   semantics then fail closed instead of sharing one apparent manifest.
 3. Run the update smoke test above against a disposable generated app.
 4. Run verification from the candidate checkout:
 

@@ -53,6 +53,7 @@ const AUTH_CODES_SQL = `CREATE TABLE IF NOT EXISTS _auth_native_codes (
   scope_kind TEXT, scope_id TEXT, tenant_id TEXT, membership_id TEXT,
   tenant_authorization_generation INTEGER,
   membership_authorization_generation INTEGER,
+  mfa_verified_at INTEGER CHECK (mfa_verified_at IS NULL OR mfa_verified_at >= 0),
   FOREIGN KEY (request_id) REFERENCES _auth_native_requests(request_id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 )`;
@@ -66,6 +67,7 @@ const NATIVE_SESSIONS_SQL = `CREATE TABLE IF NOT EXISTS _auth_native_sessions (
   scope_kind TEXT, scope_id TEXT, tenant_id TEXT, membership_id TEXT,
   tenant_authorization_generation INTEGER,
   membership_authorization_generation INTEGER,
+  mfa_verified_at INTEGER CHECK (mfa_verified_at IS NULL OR mfa_verified_at >= 0),
   FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
 )`;
 

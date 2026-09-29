@@ -10,10 +10,10 @@
 import { Elysia } from 'elysia';
 import { EmailError } from '../email/email-error';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
 import { getSafeRequestPath } from '../observability/safe-request-path';
 import { createAuthAccountPlugin } from './auth-account.plugin';
 import { createAuthAdminPlugin } from './auth-admin.plugin';
+import { getPublicAuthErrorMessage } from './auth-error-response';
 import { createAuthApplicationAdministrationPlugin } from './auth-application-administration.plugin';
 import { createAuthAuthorizationPlugin } from './auth-authorization.plugin';
 import { createAuthAuditPlugin } from './auth-audit.plugin';
@@ -26,9 +26,12 @@ import {
 import { createAuthSessionPlugin } from './auth-session.plugin';
 import { createAuthUserPropertiesPlugin } from './auth-user-properties.plugin';
 import { createAuthTenantAdministrationPlugin } from './auth-tenant-administration.plugin';
+import { createAuthPlatformAdministrationPlugin } from './auth-platform-administration.plugin';
 import { createAuthTenantOnboardingPlugin } from './auth-tenant-onboarding.plugin';
 import { createAuthVerifiedDomainPlugin } from './auth-verified-domain.plugin';
 import { emitAuthRequestValidationRejected } from './auth-request-validation';
+import { createAuthPlatformCodeEmitter } from './auth-observability';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
 import {
   AuthError,
@@ -57,7 +60,18 @@ export function createAuthPlugin(config: AuthPluginConfig) {
   const authConfig = resolveAuthBehaviorConfig(authBehaviorConfig(config));
   const nativeRuntime = resolveNativeRuntimeConfig(config, authConfig);
   const runtime = createAuthRuntime(config, authConfig);
-  config.onRuntimeCreated?.(runtime);
+  const emitCode = createAuthPlatformCodeEmitter(config.runtime);
+  if (config.onRuntimeCreated) {
+    invokeSynchronousAuthCallback(
+      () => config.onRuntimeCreated!(runtime),
+      {
+        component: 'auth-plugin',
+        invariant: 'runtime-created-callback-async',
+        message: '[auth] onRuntimeCreated callback must be synchronous.',
+        emitCode,
+      },
+    );
+  }
   const compatibilityOwner = {};
   const compatibilityRegistration = registerAuthRuntimeCompatibility(
     compatibilityOwner,
@@ -95,6 +109,9 @@ export function createAuthPlugin(config: AuthPluginConfig) {
     runtime.getApplicationAdministrationService()
   );
   const getTenantAdministrationService = () => runtime.getTenantAdministrationService();
+  const getPlatformTenantAdministrationService = () => (
+    runtime.getPlatformTenantAdministrationService()
+  );
   const getTenantOnboardingService = () => runtime.getTenantOnboardingService();
   const getVerifiedDomainOnboardingService = () => (
     runtime.getVerifiedDomainOnboardingService()
@@ -115,10 +132,14 @@ export function createAuthPlugin(config: AuthPluginConfig) {
   return new Elysia({ name: 'auth', prefix: '/auth' })
     .onStart((lifecycle) => {
       void ensureStarted().catch(async (startupError) => {
+        emitCode(OBS_CODES.AUTH_START_FAILED, {
+          error: startupError,
+          metadata: { plugin: 'auth' },
+        });
         try {
           await runtime.stop();
         } catch (cleanupError) {
-          emitPlatformCode(OBS_CODES.APP_LIFECYCLE_FAILED, {
+          emitCode(OBS_CODES.APP_LIFECYCLE_FAILED, {
             error: new AggregateError(
               [startupError, cleanupError],
               '[auth] Startup and cleanup both failed.',
@@ -131,7 +152,7 @@ export function createAuthPlugin(config: AuthPluginConfig) {
         try {
           await lifecycle.server?.stop(true);
         } catch (transportError) {
-          emitPlatformCode(OBS_CODES.APP_LIFECYCLE_FAILED, {
+          emitCode(OBS_CODES.APP_LIFECYCLE_FAILED, {
             error: new AggregateError(
               [startupError, transportError],
               '[auth] Startup failed and the listener could not be stopped.',
@@ -160,20 +181,34 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       }
     })
     .derive({ as: 'global' }, () => runtime.getContext())
-    .onError(({ code, error, request, set }) => {
+    .onError({ as: 'global' }, ({ code, error, request, set }) => {
+      // Elysia invokes request hooks before plugin-local error handlers. Keep
+      // the auth namespace on one public-safe boundary without changing error
+      // handling for the rest of the host application.
+      if (!isAuthNamespaceRequest(request)) return undefined;
       if (error instanceof AuthError) {
         if (error.code === 'AUTH_VALIDATION_FAILED') {
-          emitAuthRequestValidationRejected(request);
+          emitAuthRequestValidationRejected(request, emitCode);
+        }
+        if (error.status >= 500) {
+          emitCode(OBS_CODES.APP_REQUEST_FAILED, {
+            metadata: {
+              method: request.method,
+              path: getSafeRequestPath(request),
+              status: error.status,
+              authCode: error.code,
+            },
+          });
         }
         set.status = error.status;
         return {
-          error: error.message,
+          error: getPublicAuthErrorMessage(error),
           code: error.code,
         };
       }
       if (code === 'VALIDATION') {
         set.status = 422;
-        emitAuthRequestValidationRejected(request);
+        emitAuthRequestValidationRejected(request, emitCode);
         return {
           error: 'Invalid auth request',
           code: 'AUTH_VALIDATION_FAILED',
@@ -204,7 +239,7 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       }
 
       set.status = 500;
-      emitPlatformCode(OBS_CODES.APP_REQUEST_FAILED, {
+      emitCode(OBS_CODES.APP_REQUEST_FAILED, {
         error,
         metadata: {
           method: request.method,
@@ -232,6 +267,7 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       getRequestAdmissionService,
       getEmailRuntime,
       getAuthConfig: () => authConfig,
+      emitCode,
     }))
     .use(createAuthAccountPlugin({
       getUserStore,
@@ -244,6 +280,7 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       getRegistrationIntentStore,
       getAuthConfig: () => authConfig,
       getAuthTenantSessionService,
+      emitCode,
     }))
     .use(createAuthMfaPlugin({
       getUserStore,
@@ -255,6 +292,8 @@ export function createAuthPlugin(config: AuthPluginConfig) {
     .use(createAuthAdminPlugin({
       getUserStore,
       getTokenService,
+      getAuthorizationKernel,
+      getAuthorizationRoleService,
       getPropertyService,
       getActionTokenService,
       getAccountEmailService,
@@ -262,11 +301,13 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       getMfaChallengeService,
       getEmailRuntime,
       getAuthConfig: () => authConfig,
+      emitCode,
     }))
     .use(createAuthUserPropertiesPlugin({
       getUserStore,
       getTokenService,
       getPropertyService,
+      emitCode,
     }))
     .use(createAuthAuthorizationPlugin({
       getUserStore,
@@ -300,6 +341,20 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       getTenantAdministrationService,
     }))
     .use(authConfig.tenancy?.mode === 'multi'
+      ? createAuthPlatformAdministrationPlugin({
+          getUserStore,
+          getTokenService,
+          getTenancyService,
+          getAuthorizationKernel,
+          getAuthorizationRoleService,
+          getTenantAdministrationService,
+          getTenantOnboardingService,
+          getPlatformTenantAdministrationService,
+          getAccountEmailService,
+          getAuthEmailOutbox,
+        })
+      : new Elysia({ name: 'auth-platform-administration-disabled' }))
+    .use(authConfig.tenancy?.mode === 'multi'
       ? createAuthTenantOnboardingPlugin({
           getService: getTenantOnboardingService,
           getUserStore,
@@ -331,6 +386,7 @@ export function createAuthPlugin(config: AuthPluginConfig) {
     .use(nativeRuntime
       ? createNativeAuthPlugin({
           ...nativeRuntime,
+          emitCode,
           getService: getNativeAuthorizationService,
           getTokenService,
           getUserStore,

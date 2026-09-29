@@ -1,9 +1,13 @@
 // ─── Server: ReactiveDB ────────────────────────────────────────────────────
 export { ReactiveDB, createReactiveDB } from './reactive-db';
-export type { ReactiveDBRowScope } from './reactive-db';
+export type {
+  ExternalChangePollingOptions,
+  ReactiveDBRowScope,
+} from './reactive-db';
 export { SYNC_TABLE_MUTATION_VALIDATOR } from './types';
 export type {
   ReactiveDBConfig,
+  ReactiveDBPlatformCodeEmitter,
   TableSchema,
   Row,
   SyncMode,

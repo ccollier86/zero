@@ -149,11 +149,13 @@ function parseTenantSummary(value: unknown): NativeTenantSummary | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const tenant = value as Record<string, unknown>;
   if (typeof tenant.tenantId !== 'string' || !tenant.tenantId || tenant.tenantId.length > 200
+    || (tenant.kind !== 'administration' && tenant.kind !== 'organization')
     || typeof tenant.slug !== 'string' || !tenant.slug || tenant.slug.length > 200
     || typeof tenant.name !== 'string' || !tenant.name || tenant.name.length > 500
     || (tenant.role !== null && typeof tenant.role !== 'string')) return null;
   return {
     tenantId: tenant.tenantId,
+    kind: tenant.kind,
     slug: tenant.slug,
     name: tenant.name,
     role: tenant.role as string | null,

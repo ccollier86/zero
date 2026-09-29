@@ -12,7 +12,12 @@ import type { UserStore } from '../auth/user-store';
 import type { AuthorizationKernel } from '../auth/authorization-kernel';
 import type { AuthorizationRoleAssignmentResolver } from '../auth/authorization-access';
 import { OBS_CODES } from '../observability/codes';
-import { errorPlatform } from '../observability/sink';
+import { emitPlatformCode } from '../observability/sink';
+import type {
+  PlatformCodeDefinition,
+  PlatformCodeEmitOptions,
+  PlatformEvent,
+} from '../observability/types';
 import type { ReactiveDB, Row, TableSchema } from '../sync';
 import {
   createResourcePolicyAuthorization,
@@ -76,6 +81,11 @@ export interface ResourceCrudServiceOptions {
   userStore?: UserStore | null;
   authorizationKernel?: AuthorizationKernel | null;
   roleAssignments?: AuthorizationRoleAssignmentResolver | null;
+  /** App-bound emitter supplied by managed createApp composition. */
+  emitCode?: (
+    definition: PlatformCodeDefinition,
+    options?: PlatformCodeEmitOptions,
+  ) => PlatformEvent;
   defaultLimit?: number;
   maxLimit?: number;
 }
@@ -535,7 +545,7 @@ export class ResourceCrudService {
       return resourceRowChangedFailure();
     }
 
-    errorPlatform(OBS_CODES.RESOURCE_CRUD_FAILED, {
+    this.emitCode(OBS_CODES.RESOURCE_CRUD_FAILED, {
       error,
       metadata: {
         resource: resource.name,
@@ -544,8 +554,17 @@ export class ResourceCrudService {
       },
     });
 
-    const status = isLikelyClientMutationError(message) ? 400 : 500;
-    return failure(status, message, status === 400 ? 'invalid-resource-input' : 'resource-mutation-failed');
+    if (isLikelyClientMutationError(message)) {
+      return failure(
+        400,
+        safeClientMutationMessage(message),
+        'invalid-resource-input',
+      );
+    }
+    // The full exception is retained above in app observability. SQLite,
+    // trigger, policy-adapter, and extension messages can contain schema or
+    // application secrets and must never cross the HTTP boundary.
+    return failure(500, 'Resource mutation failed', 'resource-mutation-failed');
   }
 
   private handleQueryError(
@@ -553,7 +572,7 @@ export class ResourceCrudService {
     resource: RegisteredResourceDefinition,
     action: ResourceAction
   ): ResourceCrudFailure {
-    errorPlatform(OBS_CODES.RESOURCE_CRUD_FAILED, {
+    this.emitCode(OBS_CODES.RESOURCE_CRUD_FAILED, {
       error,
       metadata: {
         resource: resource.name,
@@ -563,6 +582,13 @@ export class ResourceCrudService {
     });
 
     return failure(500, 'Resource query failed', 'resource-query-failed');
+  }
+
+  private emitCode(
+    definition: PlatformCodeDefinition,
+    options?: PlatformCodeEmitOptions,
+  ): PlatformEvent {
+    return (this.options.emitCode ?? emitPlatformCode)(definition, options);
   }
 }
 
@@ -665,6 +691,16 @@ function isLikelyClientMutationError(message: string): boolean {
     message.includes('NOT NULL constraint') ||
     message.includes('CHECK constraint') ||
     message.includes('FOREIGN KEY constraint');
+}
+
+function safeClientMutationMessage(message: string): string {
+  if (message.includes('missing primary key')) {
+    return 'Resource primary key is required';
+  }
+  if (message.includes('identity')) {
+    return 'Resource identity is invalid';
+  }
+  return 'Resource input violates a database constraint';
 }
 
 function toDBScope(scope: ResourceTenantScope): { field: string; value: string } {

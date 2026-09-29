@@ -3,6 +3,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 import { configureEmail, MemoryEmailProvider } from '../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import { createReactiveDB } from '../sync/reactive-db';
 import { createAuthMiddleware } from './auth.middleware';
 import { createAuthPlugin, getTokenService } from './auth.plugin';
@@ -184,7 +185,7 @@ describe('admin password-change requirement recovery', () => {
       expect(compatibleClear.data.user.passwordChangeRequired).toBe(false);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 });

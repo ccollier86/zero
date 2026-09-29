@@ -57,6 +57,8 @@ export function defineAuthTenantOnboardingTables(db: ReactiveDB): void {
       updated_at          INTEGER NOT NULL,
       accepted_at         INTEGER,
       revoked_at          INTEGER,
+      grant_snapshot_json TEXT,
+      grant_snapshot_fingerprint TEXT,
       FOREIGN KEY (tenant_id) REFERENCES _auth_tenants(tenant_id) ON DELETE CASCADE,
       FOREIGN KEY (issued_by) REFERENCES users(user_id) ON DELETE RESTRICT,
       FOREIGN KEY (accepted_by_user_id) REFERENCES users(user_id) ON DELETE RESTRICT
@@ -66,6 +68,8 @@ export function defineAuthTenantOnboardingTables(db: ReactiveDB): void {
     CREATE INDEX IF NOT EXISTS idx_auth_tenant_invitations_tenant_status
     ON _auth_tenant_invitations(tenant_id, status, created_at, invitation_id)
   `);
+
+  ensureTenantInvitationGrantSnapshotColumns(db);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_auth_tenant_invitations_tenant_email
     ON _auth_tenant_invitations(tenant_id, email COLLATE NOCASE, status)
@@ -112,14 +116,7 @@ export function defineAuthTenantOnboardingTables(db: ReactiveDB): void {
 
   // The bearer binding and applicant identity are immutable even to future
   // direct-SQL adapters. Lifecycle columns remain service-owned.
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS trg_auth_tenant_invitation_binding_immutable
-    BEFORE UPDATE OF tenant_id, email, token_hash, role_keys_json, issued_by
-    ON _auth_tenant_invitations
-    BEGIN
-      SELECT RAISE(ABORT, 'AUTH_TENANT_INVITATION_BINDING_IMMUTABLE');
-    END
-  `);
+  defineTenantInvitationBindingTrigger(db);
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS trg_auth_tenant_join_request_binding_immutable
     BEFORE UPDATE OF tenant_id, user_id, email
@@ -130,6 +127,35 @@ export function defineAuthTenantOnboardingTables(db: ReactiveDB): void {
   `);
 
   ensureTenantInvitationOutboxSupport(db);
+}
+
+/** Add the fail-closed issuance grant ceiling to legacy invitation tables. */
+export function ensureTenantInvitationGrantSnapshotColumns(db: ReactiveDB): void {
+  const columns = db.prepare('PRAGMA table_info(_auth_tenant_invitations)')
+    .all() as unknown as Array<{ name: string }>;
+  if (columns.length === 0) return;
+  const names = new Set(columns.map((column) => column.name));
+  if (!names.has('grant_snapshot_json')) {
+    db.exec('ALTER TABLE _auth_tenant_invitations ADD COLUMN grant_snapshot_json TEXT');
+  }
+  if (!names.has('grant_snapshot_fingerprint')) {
+    db.exec(`ALTER TABLE _auth_tenant_invitations
+      ADD COLUMN grant_snapshot_fingerprint TEXT`);
+  }
+  db.exec('DROP TRIGGER IF EXISTS trg_auth_tenant_invitation_binding_immutable');
+  defineTenantInvitationBindingTrigger(db);
+}
+
+function defineTenantInvitationBindingTrigger(db: ReactiveDB): void {
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_auth_tenant_invitation_binding_immutable
+    BEFORE UPDATE OF tenant_id, email, token_hash, role_keys_json,
+      grant_snapshot_json, grant_snapshot_fingerprint, issued_by
+    ON _auth_tenant_invitations
+    BEGIN
+      SELECT RAISE(ABORT, 'AUTH_TENANT_INVITATION_BINDING_IMMUTABLE');
+    END
+  `);
 }
 
 /**

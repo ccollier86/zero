@@ -164,6 +164,7 @@ describe('AccessRequirement compilation', () => {
       .toThrow('references undeclared permission "patients:delete"');
     expect(() => validateAuthorizationRegistry({
       mode: 'advanced',
+      registryVersion: 1,
       permissions: {},
       roles: {
         owner: {
@@ -322,6 +323,21 @@ describe('AuthorizationKernel scope synthesis and evaluation', () => {
     expect(multi.evaluate(
       { tenant: 'required' },
       subject({ authorization: { ...tenantScope, membershipId: undefined } }),
+    )).toMatchObject({ allowed: false, reason: 'scope-invalid' });
+
+    const unknownScopeKind = {
+      ...scope({
+        tenancy: 'multi',
+        scopeId: 'application',
+        roles: [],
+        permissions: [],
+      }),
+      scopeKind: 'workspace',
+    } as unknown as AuthorizationScopeSnapshot;
+    expect(multi.isValidScopeSnapshot(unknownScopeKind)).toBe(false);
+    expect(multi.evaluate(
+      'required',
+      subject({ authorization: unknownScopeKind }),
     )).toMatchObject({ allowed: false, reason: 'scope-invalid' });
   });
 

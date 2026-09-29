@@ -171,6 +171,36 @@ describe('AuthAuditService', () => {
     });
     expect(service.listPlatform().events.some((event) => event.occurredAt < 10)).toBe(true);
   });
+
+  test('rejects a thenable authority recheck before retention can commit', () => {
+    for (let index = 0; index < 3; index += 1) {
+      service.append({
+        action: 'tenant.member-added',
+        outcome: 'succeeded',
+        scope: { kind: 'tenant', tenantId: 'tenant-a' },
+        actor: { provenance: 'system' },
+        occurredAt: index + 1,
+      });
+    }
+    const before = service.listPlatform().events.map((event) => event.eventId);
+
+    expect(() => service.pruneBacklogAudited({
+      actor: { userId: 'admin-a', provenance: 'authenticated-request' },
+      now: 200_000_000,
+      assertCurrentAuthority: () => ({
+        then(resolve: (value: void) => void) { resolve(); },
+      }),
+    })).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      status: 500,
+      message: '[auth] Audit retention authority revalidation must be synchronous.',
+    }));
+
+    expect(service.listPlatform().events.map((event) => event.eventId)).toEqual(before);
+    expect(service.listPlatform().events).not.toContainEqual(expect.objectContaining({
+      action: 'audit.retention-pruned',
+    }));
+  });
 });
 
 function countEvents(sqlite: Database): number {

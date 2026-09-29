@@ -46,6 +46,7 @@ function config(overrides: Partial<AuthAdminConfig['capabilities']> = {}): AuthA
     },
     mfa: { enabled: false, ready: false },
     capabilities: {
+      canManageUsers: true, canManageGlobalAdmins: true,
       setupEmail: true, manualPasswordReset: true, passwordResetEmail: true,
       emailVerification: true, adminMarkEmailVerified: true, mfa: true,
       suspendUsers: true, promoteAdmins: true, userProperties: true, ...overrides,
@@ -65,6 +66,45 @@ describe('admin user UI policy', () => {
     disabled.registration.mode = 'disabled';
     expect(canCreateManagedUser(disabled)).toBe(false);
     expect(canCreateManagedUser(config())).toBe(true);
+  });
+
+  test('makes an application.users:read-only surface entirely non-mutating', () => {
+    const readOnly = config({
+      canManageUsers: false,
+      canManageGlobalAdmins: false,
+      setupEmail: false,
+      manualPasswordReset: false,
+      passwordResetEmail: false,
+      emailVerification: false,
+      adminMarkEmailVerified: false,
+      mfa: false,
+      suspendUsers: false,
+      promoteAdmins: false,
+      userProperties: false,
+    });
+    const policy = resolveUserManagementActionPolicy({
+      user, config: readOnly, mfaStatus, currentUserId: 'reader',
+      controlled: false, controlledDelete: false,
+    });
+
+    expect(canCreateManagedUser(readOnly)).toBe(false);
+    expect(getUserManagementEditableFields(readOnly)).toEqual([]);
+    expect(Object.values(policy).every((allowed) => !allowed)).toBe(true);
+  });
+
+  test('cannot mutate a global administrator without global-admin authority', () => {
+    const ordinaryManager = config({ canManageGlobalAdmins: false, promoteAdmins: false });
+    const policy = resolveUserManagementActionPolicy({
+      user: { ...user, role: 'admin' },
+      config: ordinaryManager,
+      mfaStatus,
+      currentUserId: 'manager',
+      controlled: false,
+      controlledDelete: false,
+    });
+
+    expect(Object.values(policy).every((allowed) => !allowed)).toBe(true);
+    expect(getUserManagementEditableFields(ordinaryManager)).not.toContain('role');
   });
 
   test('hides every destructive action for the current user', () => {
@@ -136,6 +176,36 @@ describe('admin user UI policy', () => {
 
     expect(markup).toContain('Send account setup email');
     expect(markup).not.toContain('Require password change');
+  });
+
+  test('create form hides global-role choice without global-admin authority', () => {
+    const markup = renderToStaticMarkup(createElement(UserManagementCreateForm, {
+      config: config({ canManageGlobalAdmins: false, promoteAdmins: false }),
+      roleOptions: [
+        { value: 'admin', label: 'Administrator' },
+        { value: 'user', label: 'User' },
+      ],
+      onSubmit: async () => {},
+    }));
+
+    expect(markup).not.toContain('id="zero-admin-create-role"');
+    expect(markup).toContain('standard user role');
+    expect(markup).toContain('requires separate authority');
+  });
+
+  test('controlled create surfaces may supply their own global-role authority', () => {
+    const markup = renderToStaticMarkup(createElement(UserManagementCreateForm, {
+      config: config({ canManageGlobalAdmins: false, promoteAdmins: false }),
+      roleOptions: [
+        { value: 'admin', label: 'Operations administrator' },
+        { value: 'user', label: 'User' },
+      ],
+      allowGlobalAdminRole: true,
+      onSubmit: async () => {},
+    }));
+
+    expect(markup).toContain('id="zero-admin-create-role"');
+    expect(markup).not.toContain('requires separate authority');
   });
 
   test('offers password-gate recovery only for another currently gated user', () => {

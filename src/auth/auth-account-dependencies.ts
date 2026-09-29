@@ -10,6 +10,8 @@ import type { TokenService } from './token-service';
 import { AuthError, type ResolvedAuthBehaviorConfig } from './types';
 import type { UserStore } from './user-store';
 import type { AuthTenantSessionService } from './auth-tenant-session-service';
+import { emitPlatformCode } from '../observability/sink';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 
 export interface AuthAccountPluginConfig {
   getUserStore: () => UserStore | null;
@@ -22,6 +24,14 @@ export interface AuthAccountPluginConfig {
   getRegistrationIntentStore: () => RegistrationIntentStore | null;
   getAuthConfig: () => ResolvedAuthBehaviorConfig;
   getAuthTenantSessionService: () => AuthTenantSessionService | null;
+  /** Owning app emitter. Omitted only by standalone/legacy compositions. */
+  emitCode?: AuthPlatformCodeEmitter;
+}
+
+export function getAuthAccountEmitter(
+  config: AuthAccountPluginConfig,
+): AuthPlatformCodeEmitter {
+  return config.emitCode ?? emitPlatformCode;
 }
 
 export function requireAuthEmailOutbox(config: AuthAccountPluginConfig): AuthEmailOutbox {

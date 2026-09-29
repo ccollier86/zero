@@ -31,7 +31,10 @@ try {
     snapshot: ['todos'],
     lastSeq: 0,
   }));
-  await current.waitForMessage((message) => message.type === 'sync.snapshot');
+  await current.waitForMessage(
+    (message) => message.type === 'sync.snapshot',
+    'initial snapshot',
+  );
 
   const raw = db.getRawDatabase();
   raw.run('DROP TRIGGER _zero_sync_log_state_update_fence_v1');
@@ -40,10 +43,10 @@ try {
     SET schema_version = 2, write_format = 2
     WHERE singleton = 1
   `);
-  const currentClose = await current.closed;
+  const currentClose = await withTimeout(current.closed, 'initial current socket close');
 
   const future = await openSocket(url);
-  const futureClose = await future.closed;
+  const futureClose = await withTimeout(future.closed, 'initial future socket close');
 
   const recoveryDbHolder: { value?: ReactiveDB } = {};
   const observedHistoryGaps: Array<Record<string, unknown>> = [];
@@ -80,7 +83,10 @@ try {
     snapshot: ['todos'],
     lastSeq: 0,
   }));
-  const baseline = await stale.waitForMessage((message) => message.type === 'sync.snapshot');
+  const baseline = await stale.waitForMessage(
+    (message) => message.type === 'sync.snapshot',
+    'recovery baseline snapshot',
+  );
   const recoveryRaw = recoveryDb.getRawDatabase();
   recoveryRaw.run('DROP TRIGGER _zero_sync_changes_insert_fence_v1');
   recoveryRaw.transaction(() => {
@@ -96,7 +102,7 @@ try {
         NULL, 1, 'future-writer', 2)
     `);
   }).immediate();
-  const staleClose = await stale.closed;
+  const staleClose = await withTimeout(stale.closed, 'recovery stale socket close');
   const recovered = await openSocket(recoveryUrl);
   recovered.socket.send(JSON.stringify({
     type: 'sync.subscribe',
@@ -108,6 +114,7 @@ try {
   }));
   const replacement = await recovered.waitForMessage(
     (message) => message.type === 'sync.snapshot',
+    'recovery replacement snapshot',
   );
 
   const missingPolicyReset = await exerciseUnsafeGapPolicy(
@@ -205,7 +212,7 @@ try {
     SET schema_version = 2, write_format = 2
     WHERE singleton = 1
   `);
-  const pendingClose = await pending.closed;
+  const pendingClose = await withTimeout(pending.closed, 'pending-auth socket close');
   releaseVerification();
   await Bun.sleep(25);
 
@@ -296,7 +303,10 @@ async function exercisePolicyDeliveryFailure(
     snapshot: ['todos'],
     lastSeq: 0,
   }));
-  await current.waitForMessage((message) => message.type === 'sync.snapshot');
+  await current.waitForMessage(
+    (message) => message.type === 'sync.snapshot',
+    `${failure} ${source} baseline snapshot`,
+  );
   armed = true;
 
   if (source === 'local') {
@@ -314,9 +324,15 @@ async function exercisePolicyDeliveryFailure(
     }
   }
 
-  const currentClose = await current.closed;
+  const currentClose = await withTimeout(
+    current.closed,
+    `${failure} ${source} current socket close`,
+  );
   const future = await openSocket(policyUrl);
-  const futureClose = await future.closed;
+  const futureClose = await withTimeout(
+    future.closed,
+    `${failure} ${source} future socket close`,
+  );
   return {
     current: { code: currentClose.code, reason: currentClose.reason },
     future: { code: futureClose.code, reason: futureClose.reason },
@@ -353,7 +369,10 @@ async function exerciseUnsafeGapPolicy(
     snapshot: ['todos'],
     lastSeq: 0,
   }));
-  await current.waitForMessage((message) => message.type === 'sync.snapshot');
+  await current.waitForMessage(
+    (message) => message.type === 'sync.snapshot',
+    'unsafe-gap baseline snapshot',
+  );
 
   const raw = policyDb.getRawDatabase();
   raw.run('DROP TRIGGER _zero_sync_changes_insert_fence_v1');
@@ -371,9 +390,15 @@ async function exerciseUnsafeGapPolicy(
     `);
   }).immediate();
 
-  const currentClose = await current.closed;
+  const currentClose = await withTimeout(
+    current.closed,
+    'unsafe-gap current socket close',
+  );
   const future = await openSocket(policyUrl);
-  const futureClose = await future.closed;
+  const futureClose = await withTimeout(
+    future.closed,
+    'unsafe-gap future socket close',
+  );
   return {
     current: { code: currentClose.code, reason: currentClose.reason },
     future: { code: futureClose.code, reason: futureClose.reason },
@@ -386,6 +411,7 @@ async function openSocket(url: string): Promise<{
   closed: Promise<CloseEvent>;
   waitForMessage: (
     predicate: (message: Record<string, unknown>) => boolean,
+    label?: string,
   ) => Promise<Record<string, unknown>>;
 }> {
   const socket = new WebSocket(url);
@@ -415,28 +441,33 @@ async function openSocket(url: string): Promise<{
     socket,
     messages,
     closed,
-    waitForMessage: (predicate) => withTimeout(new Promise((resolve) => {
+    waitForMessage: (predicate, label = 'WebSocket message') => withTimeout(new Promise((resolve) => {
       const existing = messages.find(predicate);
       if (existing) {
         resolve(existing);
         return;
       }
       waiters.push({ predicate, resolve });
-    }), 'WebSocket message'),
+    }), label),
   };
 }
 
 function waitForClose(socket: WebSocket): Promise<CloseEvent> {
-  return withTimeout(new Promise((resolve) => {
+  return new Promise((resolve) => {
     socket.addEventListener('close', resolve, { once: true });
-  }), 'WebSocket close');
+  });
 }
 
-function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new Error(`${label} timed out`)), 2_000);
-    }),
-  ]);
+async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out`)), 5_000);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

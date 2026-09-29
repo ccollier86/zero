@@ -1,6 +1,9 @@
 /** Lifecycle state for one tenant control-plane record. */
 export type TenantStatus = 'active' | 'suspended' | 'archived';
 
+/** Durable purpose of one tenant isolation boundary. */
+export type TenantKind = 'organization' | 'administration';
+
 /** Lifecycle state for the retained relationship between a user and tenant. */
 export type TenantMembershipStatus = 'active' | 'suspended' | 'removed';
 
@@ -10,6 +13,8 @@ export const TENANT_OWNER_ROLE_KEY = 'owner' as const;
 /** Internal tenant record exposed only through the server-side tenancy module. */
 export interface TenantRecord {
   tenantId: string;
+  /** Administration is the one protected platform-control organization. */
+  kind: TenantKind;
   slug: string;
   name: string;
   status: TenantStatus;
@@ -49,6 +54,8 @@ export interface CreateTenantWithOwnerInput {
   ownerUserId: string;
   /** Defaults to the initial owner's user ID. */
   createdBy?: string;
+  /** Server-owned. Public tenant-creation inputs never expose this field. */
+  kind?: TenantKind;
 }
 
 export interface CreateTenantMembershipInput {
@@ -73,6 +80,7 @@ export interface TenantOwnershipTransferResult {
 export interface PreparedTenantCreation {
   tenantId: string;
   membershipId: string;
+  kind: TenantKind;
   slug: string;
   name: string;
   ownerUserId: string;
@@ -86,6 +94,9 @@ export type TenancyErrorCode =
   | 'TENANT_INVALID_ROLE'
   | 'TENANT_NOT_FOUND'
   | 'TENANT_NOT_ACTIVE'
+  | 'TENANT_ADMINISTRATION_REQUIRED'
+  | 'TENANT_ADMINISTRATION_EXISTS'
+  | 'TENANT_ADMINISTRATION_PROTECTED'
   | 'TENANT_STATUS_CONFLICT'
   | 'TENANT_SLUG_TAKEN'
   | 'TENANT_USER_NOT_FOUND'

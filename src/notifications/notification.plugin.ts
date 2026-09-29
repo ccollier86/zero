@@ -10,6 +10,7 @@ import { Elysia, t } from 'elysia';
 import { NotificationService } from './notification-service';
 import type { ReactiveDB } from '../sync/reactive-db';
 import { AuthError } from '../auth/types';
+import { getPublicAuthErrorMessage } from '../auth/auth-error-response';
 import {
   createAuthMiddleware,
   type AuthMiddlewareAuthorizationOptions,
@@ -213,7 +214,7 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
     .onError(({ error, set }) => {
       if (error instanceof AuthError) {
         set.status = error.status;
-        return { error: error.message, code: error.code };
+        return { error: getPublicAuthErrorMessage(error), code: error.code };
       }
     })
 

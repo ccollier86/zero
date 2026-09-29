@@ -9,6 +9,12 @@ import type {
   AuthTenantOwnershipTransferResult,
   AuthTenantUpdateMemberParams,
 } from './auth-types';
+import {
+  parseTenantAdministrationConfig,
+  parseTenantMemberMutation,
+  parseTenantMemberPage,
+  parseTenantOwnershipTransfer,
+} from './auth-tenant-administration-parser';
 
 export interface AuthTenantAdministrationTransportOptions {
   baseUrl: string;
@@ -22,8 +28,9 @@ export class AuthTenantAdministrationTransport {
   constructor(private readonly options: AuthTenantAdministrationTransportOptions) {}
 
   async getConfig(): Promise<AuthTenantAdministrationConfig> {
-    const request = await this.request<AuthTenantAdministrationConfig>(
+    const request = await this.request(
       '/auth/tenant/config', undefined, 'Failed to load tenant access',
+      parseTenantAdministrationConfig,
     );
     this.options.assertResponseCurrent(request.response);
     return request.result;
@@ -39,10 +46,11 @@ export class AuthTenantAdministrationTransport {
       }
     }
     const suffix = query.size ? `?${query}` : '';
-    const request = await this.request<AuthTenantMemberPage>(
+    const request = await this.request(
       `/auth/tenant/members${suffix}`,
       undefined,
       'Failed to load tenant members',
+      parseTenantMemberPage,
     );
     this.options.assertResponseCurrent(request.response);
     return request.result;
@@ -53,6 +61,7 @@ export class AuthTenantAdministrationTransport {
       '/auth/tenant/members',
       jsonRequest('POST', params),
       'Failed to add tenant member',
+      parseTenantMemberMutation,
     );
   }
 
@@ -64,6 +73,7 @@ export class AuthTenantAdministrationTransport {
       this.memberPath(membershipId),
       jsonRequest('PATCH', params),
       'Failed to update tenant member',
+      parseTenantMemberMutation,
     );
   }
 
@@ -72,6 +82,7 @@ export class AuthTenantAdministrationTransport {
       this.memberPath(membershipId),
       { method: 'DELETE' },
       'Failed to remove tenant member',
+      parseTenantMemberMutation,
     );
   }
 
@@ -80,6 +91,7 @@ export class AuthTenantAdministrationTransport {
       '/auth/tenant/ownership/transfer',
       jsonRequest('POST', { membershipId }),
       'Failed to transfer tenant ownership',
+      parseTenantOwnershipTransfer,
     );
   }
 
@@ -91,8 +103,9 @@ export class AuthTenantAdministrationTransport {
     path: string,
     init: RequestInit,
     fallback: string,
+    parse: (value: unknown) => T,
   ): Promise<T> {
-    const { result, response } = await this.request<T>(path, init, fallback);
+    const { result, response } = await this.request(path, init, fallback, parse);
     this.options.assertResponseCurrent(response);
     if (result.actorSessionInvalidated) {
       // The response was proven current immediately before the mutation's
@@ -109,17 +122,18 @@ export class AuthTenantAdministrationTransport {
     path: string,
     init: RequestInit | undefined,
     fallback: string,
+    parse: (value: unknown) => T,
   ): Promise<{ result: T; response: Response }> {
     const response = await this.options.authenticatedFetch(
       `${this.options.baseUrl}${path}`,
-      init,
+      { ...init, cache: 'no-store' },
     );
     const body = await response.json().catch(() => null);
     if (!response.ok) {
       throw this.options.createResponseError(response, body, fallback);
     }
     this.options.assertResponseCurrent(response);
-    return { result: body as T, response };
+    return { result: parse(body), response };
   }
 }
 

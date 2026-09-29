@@ -37,8 +37,9 @@ Deferred from this global account-management surface:
 2. MFA recovery-code generation, display, and verification.
 3. Per-device/session inventory and individual-session revocation.
 4. Administrator impersonation and bulk user actions.
-5. Protected platform-tenant lifecycle controls and tenant-custom roles;
-   current app/tenant RBAC and resource field policy live on separate surfaces.
+5. Tenant-custom runtime roles. Protected Administration Organization and
+   customer-organization lifecycle controls, current app/tenant RBAC, and
+   resource field policy now live on separate surfaces.
 6. Avatar storage integration.
 
 ## Goal

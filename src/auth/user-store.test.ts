@@ -9,6 +9,8 @@ import { AuthError } from './types';
 import { AuthActionTokenService } from './action-token-service';
 import { PlatformTokenService } from '../tokens/token-service';
 import { PlatformTokenStore } from '../tokens/token-store';
+import { OBS_CODES } from '../observability/codes';
+import { emitPlatformCode } from '../observability/sink';
 
 // ─── Test Setup ───────────────────────────────────────────────────────────
 
@@ -216,6 +218,118 @@ describe('UserStore — User CRUD', () => {
     expect(user.role).toBe('admin');
   });
 
+  test('createUser rejects an async beforeInsert and rolls the identity back', async () => {
+    const emitted: string[] = [];
+    const observedStore = new UserStore(db, {
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+
+    await expect(observedStore.createUser({
+      username: 'async-before-insert',
+      email: 'async-before-insert@example.com',
+      password: 'password123',
+    }, undefined, async () => {})).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      status: 500,
+      message: '[auth] User creation beforeInsert must be synchronous.',
+    });
+
+    expect(observedStore.getUserByUsername('async-before-insert')).toBeNull();
+    expect(emitted).toEqual([OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code]);
+  });
+
+  test('rejects an asynchronous authorization bootstrapper and rolls identity back', async () => {
+    const emitted: string[] = [];
+    const observedStore = new UserStore(db, {
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+    observedStore.setAuthorizationBootstrapper({
+      establishBootstrapOwner: (async () => {
+        throw new Error('private bootstrap rejection');
+      }) as never,
+    });
+
+    await expect(observedStore.createUser({
+      username: 'async-bootstrap-owner',
+      email: 'async-bootstrap-owner@example.com',
+      password: 'password123',
+    })).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Authorization bootstrap owner callback must be synchronous.',
+    });
+    await Promise.resolve();
+
+    expect(observedStore.countUsers()).toBe(0);
+    expect(observedStore.isBootstrapRequired()).toBe(true);
+    expect(emitted).toEqual([OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code]);
+  });
+
+  test('rejects asynchronous provisional authority checks and cleanup atomically', async () => {
+    const emitted: string[] = [];
+    const observedStore = new UserStore(db, {
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+    const policy = {
+      role: 'admin' as const,
+      requireEmailVerification: false,
+      mfaRequired: false,
+    };
+    observedStore.setAuthorizationBootstrapper({
+      establishBootstrapOwner() {},
+      hasProvisionalRegistrationAuthority: (async () => true) as never,
+      rollbackProvisionalApplicationOwner: () => true,
+    });
+    const first = await observedStore.createRegistrationUser({
+      username: 'async-provisional-check',
+      email: 'async-provisional-check@example.com',
+      password: 'password123',
+    }, () => policy, undefined, { provisional: true });
+    expect(first.provisioning).not.toBeNull();
+
+    expect(() => observedStore.finalizeRegistrationProvisioning(first.provisioning!))
+      .toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        message: '[auth] Provisional authorization check must be synchronous.',
+      }));
+    await Promise.resolve();
+    expect(observedStore.hasPendingRegistrationProvisioning(first.user.userId)).toBe(true);
+
+    observedStore.setAuthorizationBootstrapper({
+      establishBootstrapOwner() {},
+      hasProvisionalRegistrationAuthority: () => true,
+      rollbackProvisionalApplicationOwner: (async () => true) as never,
+    });
+    expect(() => observedStore.rollbackRegistrationProvisioning(first.provisioning!))
+      .toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        message: '[auth] Provisional authorization rollback must be synchronous.',
+      }));
+    await Promise.resolve();
+    expect(observedStore.getUserById(first.user.userId)).not.toBeNull();
+    expect(observedStore.hasPendingRegistrationProvisioning(first.user.userId)).toBe(true);
+
+    observedStore.setAuthorizationBootstrapper({
+      establishBootstrapOwner() {},
+      hasProvisionalRegistrationAuthority: () => true,
+      rollbackProvisionalApplicationOwner: () => true,
+    });
+    expect(observedStore.rollbackRegistrationProvisioning(first.provisioning!)).toBe(true);
+    expect(observedStore.getUserById(first.user.userId)).toBeNull();
+    expect(emitted).toEqual([
+      OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code,
+      OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code,
+    ]);
+  });
+
   test('concurrent registrations elect exactly one bootstrap administrator', async () => {
     const created = await Promise.all(Array.from({ length: 6 }, (_, index) =>
       store.createRegistrationUser({
@@ -258,6 +372,46 @@ describe('UserStore — User CRUD', () => {
     expect(attempts.filter(({ status }) => status === 'rejected')).toHaveLength(5);
     expect(store.countUsers()).toBe(1);
     expect(store.countUsersByRole('admin')).toBe(1);
+  });
+
+  test('registration rejects thenable policy and afterInsert callbacks atomically', async () => {
+    const emitted: string[] = [];
+    const observedStore = new UserStore(db, {
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+    const policy = {
+      role: 'user' as const,
+      requireEmailVerification: false,
+      mfaRequired: false,
+    };
+
+    await expect(observedStore.createRegistrationUser({
+      username: 'thenable-policy',
+      email: 'thenable-policy@example.com',
+      password: 'password123',
+    }, (() => ({
+      then(resolve: (value: typeof policy) => void) { resolve(policy); },
+    })) as never)).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Registration policy resolution must be synchronous.',
+    });
+    await expect(observedStore.createRegistrationUser({
+      username: 'async-registration-hook',
+      email: 'async-registration-hook@example.com',
+      password: 'password123',
+    }, () => policy, (async () => {}) as never)).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Registration afterInsert must be synchronous.',
+    });
+
+    expect(observedStore.countUsers()).toBe(0);
+    expect(emitted).toEqual([
+      OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code,
+      OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code,
+    ]);
   });
 
   test('createUser stores lifecycle status and password-change flag', async () => {
@@ -797,6 +951,14 @@ describe('UserStore — Password', () => {
       email: 'alice@example.com',
       password: 'oldpassword1',
     });
+    const parentRevocations: Array<{ userId: string; reason: string }> = [];
+    store.setAuthSessionRevoker({
+      revoke: () => false,
+      revokeAllForUser: (userId, reason) => {
+        parentRevocations.push({ userId, reason });
+        return 1;
+      },
+    });
 
     // Store a refresh token first
     store.storeRefreshToken('tok_1', user.userId, 'hash1', Date.now() + 86400000);
@@ -817,6 +979,10 @@ describe('UserStore — Password', () => {
     const token = store.getRefreshTokenByHash('hash1');
     expect(token).not.toBeNull();
     expect(token!.revokedAt).not.toBeNull();
+    expect(parentRevocations).toEqual([{
+      userId: user.userId,
+      reason: 'security-state-changed',
+    }]);
   });
 
   test('updatePassword returns false for wrong current password', async () => {
@@ -831,6 +997,27 @@ describe('UserStore — Password', () => {
     ).toBe(false);
   });
 
+  test('concurrent password changes compare-and-swap the verified credential', async () => {
+    const user = await store.createUser({
+      username: 'password-race',
+      email: 'password-race@example.com',
+      password: 'oldpassword1',
+    });
+
+    const outcomes = await Promise.all([
+      store.updatePassword(user.userId, 'oldpassword1', 'winner-password-a'),
+      store.updatePassword(user.userId, 'oldpassword1', 'winner-password-b'),
+    ]);
+
+    expect(outcomes.filter(Boolean)).toHaveLength(1);
+    expect(await store.verifyPassword(user.userId, 'oldpassword1')).toBe(false);
+    const accepted = await Promise.all([
+      store.verifyPassword(user.userId, 'winner-password-a'),
+      store.verifyPassword(user.userId, 'winner-password-b'),
+    ]);
+    expect(accepted.filter(Boolean)).toHaveLength(1);
+  });
+
   test('resetPassword changes password and revokes tokens without current password', async () => {
     const user = await store.createUser({
       username: 'resetme',
@@ -843,6 +1030,280 @@ describe('UserStore — Password', () => {
     expect(await store.verifyPassword(user.userId, 'oldpassword1')).toBe(false);
     expect(await store.verifyPassword(user.userId, 'newpassword1')).toBe(true);
     expect(store.getRefreshTokenByHash('reset_hash')!.revokedAt).not.toBeNull();
+  });
+
+  test('resetPassword rolls back credential, gate, and session changes on revocation failure', async () => {
+    const user = await store.createUser({
+      username: 'atomic-admin-reset',
+      email: 'atomic-admin-reset@example.com',
+      password: 'oldpassword1',
+      passwordChangeRequired: true,
+    });
+    store.storeRefreshToken(
+      'tok_atomic_admin_reset',
+      user.userId,
+      'atomic_admin_reset_hash',
+      Date.now() + 86_400_000,
+    );
+    db.exec(`
+      CREATE TRIGGER fail_password_reset_generation_bump
+      BEFORE INSERT ON _auth_user_generations
+      BEGIN
+        SELECT RAISE(ABORT, 'password reset generation write failed');
+      END
+    `);
+
+    await expect(store.resetPassword(user.userId, 'newpassword1')).rejects
+      .toThrow('password reset generation write failed');
+
+    expect(await store.verifyPassword(user.userId, 'oldpassword1')).toBe(true);
+    expect(await store.verifyPassword(user.userId, 'newpassword1')).toBe(false);
+    expect(store.getUserById(user.userId)?.passwordChangeRequired).toBe(true);
+    expect(store.getRefreshTokenByHash('atomic_admin_reset_hash')?.revokedAt).toBeNull();
+    expect(store.getAuthGeneration(user.userId)).toBe(0);
+  });
+
+  test('resetPassword rejects an async authority callback before credential commit', async () => {
+    const emitted: string[] = [];
+    const observedStore = new UserStore(db, {
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+    const user = await store.createUser({
+      username: 'async-admin-reset-authority',
+      email: 'async-admin-reset-authority@example.com',
+      password: 'oldpassword1',
+      passwordChangeRequired: true,
+    });
+    observedStore.storeRefreshToken(
+      'tok_async_admin_reset',
+      user.userId,
+      'async_admin_reset_hash',
+      Date.now() + 86_400_000,
+    );
+
+    await expect(observedStore.resetPassword(user.userId, 'newpassword1', {
+      beforeCommit: async () => {},
+    })).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      status: 500,
+      message: '[auth] Password reset beforeCommit must be synchronous.',
+    });
+
+    expect(await observedStore.verifyPassword(user.userId, 'oldpassword1')).toBe(true);
+    expect(await observedStore.verifyPassword(user.userId, 'newpassword1')).toBe(false);
+    expect(observedStore.getUserById(user.userId)?.passwordChangeRequired).toBe(true);
+    expect(observedStore.getRefreshTokenByHash('async_admin_reset_hash')?.revokedAt)
+      .toBeNull();
+    expect(observedStore.getAuthGeneration(user.userId)).toBe(0);
+    expect(emitted).toEqual([OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code]);
+  });
+
+  test('resetPassword reports a retained identity without a credential as an invariant', async () => {
+    const emitted: string[] = [];
+    const observedStore = new UserStore(db, {
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+    const user = await store.createUser({
+      username: 'missing-admin-reset-credential',
+      email: 'missing-admin-reset-credential@example.com',
+      password: 'oldpassword1',
+      passwordChangeRequired: true,
+    });
+    observedStore.storeRefreshToken(
+      'tok_missing_admin_credential',
+      user.userId,
+      'missing_admin_credential_hash',
+      Date.now() + 86_400_000,
+    );
+    db.prepare('DELETE FROM _credentials WHERE user_id = ?').run(user.userId);
+
+    await expect(observedStore.resetPassword(user.userId, 'newpassword1', {
+      beforeCommit: () => {
+        observedStore.setProperty(user.userId, 'reset-probe', 'must-roll-back');
+      },
+    })).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      status: 500,
+      message: '[auth] Password reset credential is unavailable.',
+    });
+
+    expect(observedStore.getUserById(user.userId)?.passwordChangeRequired).toBe(true);
+    expect(observedStore.getProperty(user.userId, 'reset-probe')).toBeNull();
+    expect(observedStore.getRefreshTokenByHash('missing_admin_credential_hash')?.revokedAt)
+      .toBeNull();
+    expect(observedStore.getAuthGeneration(user.userId)).toBe(0);
+    expect(emitted).toEqual([OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code]);
+  });
+
+  test('completePasswordAction clears the forced gate and replaces the credential', async () => {
+    const user = await store.createUser({
+      username: 'forced-recovery',
+      email: 'forced-recovery@example.com',
+      password: 'oldpassword1',
+      passwordChangeRequired: true,
+    });
+    store.storeRefreshToken(
+      'tok_forced_recovery',
+      user.userId,
+      'forced_recovery_hash',
+      Date.now() + 86_400_000,
+    );
+    let consumed = false;
+
+    expect(await store.completePasswordAction(user.userId, 'newpassword1', () => {
+      consumed = true;
+    })).toBe(true);
+
+    expect(consumed).toBe(true);
+    expect(await store.verifyPassword(user.userId, 'oldpassword1')).toBe(false);
+    expect(await store.verifyPassword(user.userId, 'newpassword1')).toBe(true);
+    expect(store.getUserById(user.userId)?.passwordChangeRequired).toBe(false);
+    expect(store.getRefreshTokenByHash('forced_recovery_hash')?.revokedAt).not.toBeNull();
+    expect(store.getAuthGeneration(user.userId)).toBe(1);
+  });
+
+  test('completePasswordAction rejects an async token consumer and rolls back consumption', async () => {
+    const emitted: string[] = [];
+    const observedStore = new UserStore(db, {
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+    const user = await store.createUser({
+      username: 'async-recovery-consumer',
+      email: 'async-recovery-consumer@example.com',
+      password: 'oldpassword1',
+      passwordChangeRequired: true,
+    });
+    const platformTokens = new PlatformTokenService(new PlatformTokenStore(db), {
+      actionTokenCooldown: false,
+    });
+    const actionTokens = new AuthActionTokenService(
+      observedStore,
+      '1h',
+      '5m',
+      platformTokens,
+    );
+    const created = actionTokens.create({
+      userId: user.userId,
+      type: 'password_reset',
+    });
+
+    await expect(observedStore.completePasswordAction(
+      user.userId,
+      'newpassword1',
+      async () => {
+        actionTokens.consume(created.rawToken, ['password_reset']);
+      },
+    )).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      status: 500,
+      message: '[auth] Password recovery token consumption must be synchronous.',
+    });
+
+    expect(actionTokens.inspect(created.rawToken, ['password_reset']).record.tokenId)
+      .toBe(created.record.tokenId);
+    expect(await observedStore.verifyPassword(user.userId, 'oldpassword1')).toBe(true);
+    expect(await observedStore.verifyPassword(user.userId, 'newpassword1')).toBe(false);
+    expect(observedStore.getUserById(user.userId)?.passwordChangeRequired).toBe(true);
+    expect(observedStore.getAuthGeneration(user.userId)).toBe(0);
+    expect(emitted).toEqual([OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code]);
+  });
+
+  test('completePasswordAction poisons an awaited token-consumer continuation', async () => {
+    const user = await store.createUser({
+      username: 'delayed-recovery-consumer',
+      email: 'delayed-recovery-consumer@example.com',
+      password: 'oldpassword1',
+      passwordChangeRequired: true,
+    });
+    const platformTokens = new PlatformTokenService(new PlatformTokenStore(db), {
+      actionTokenCooldown: false,
+    });
+    const actionTokens = new AuthActionTokenService(store, '1h', '5m', platformTokens);
+    const created = actionTokens.create({
+      userId: user.userId,
+      type: 'password_reset',
+    });
+    let releaseContinuation!: () => void;
+    const continuationGate = new Promise<void>((resolve) => {
+      releaseContinuation = resolve;
+    });
+    let finishContinuation!: () => void;
+    const continuationFinished = new Promise<void>((resolve) => {
+      finishContinuation = resolve;
+    });
+    let continuationError: unknown;
+
+    await expect(store.completePasswordAction(
+      user.userId,
+      'newpassword1',
+      async () => {
+        await continuationGate;
+        try {
+          actionTokens.consume(created.rawToken, ['password_reset']);
+        } catch (error) {
+          continuationError = error;
+        } finally {
+          finishContinuation();
+        }
+      },
+    )).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      status: 500,
+    });
+
+    releaseContinuation();
+    await continuationFinished;
+    expect(continuationError).toBeInstanceOf(Error);
+    expect((continuationError as Error).message).toContain('transaction is rollback-only');
+    expect(actionTokens.inspect(created.rawToken, ['password_reset']).record.tokenId)
+      .toBe(created.record.tokenId);
+    expect(await store.verifyPassword(user.userId, 'oldpassword1')).toBe(true);
+    expect(await store.verifyPassword(user.userId, 'newpassword1')).toBe(false);
+  });
+
+  test('an in-flight profile change fences password replacement before commit', async () => {
+    const user = await store.createUser({
+      username: 'profile-fenced-password',
+      email: 'profile-fenced-password@example.com',
+      password: 'oldpassword1',
+    });
+    store.storeRefreshToken(
+      'tok_profile_fenced_password',
+      user.userId,
+      'profile_fenced_password_hash',
+      Date.now() + 86_400_000,
+    );
+    let profileChecks = 0;
+    store.setRuntimeProfileGuard(() => {
+      profileChecks += 1;
+      if (profileChecks < 3) return;
+      throw new AuthError(
+        'This runtime auth profile is stale',
+        'AUTH_PROFILE_CHANGED',
+        503,
+      );
+    });
+
+    await expect(store.updatePassword(
+      user.userId,
+      'oldpassword1',
+      'newpassword1',
+    )).rejects.toMatchObject({ code: 'AUTH_PROFILE_CHANGED', status: 503 });
+
+    store.setRuntimeProfileGuard(() => {});
+    expect(await store.verifyPassword(user.userId, 'oldpassword1')).toBe(true);
+    expect(await store.verifyPassword(user.userId, 'newpassword1')).toBe(false);
+    expect(store.getRefreshTokenByHash('profile_fenced_password_hash')?.revokedAt).toBeNull();
+    expect(store.getAuthGeneration(user.userId)).toBe(0);
   });
 
   test('password action storage failure does not consume the recovery token', async () => {
@@ -883,6 +1344,41 @@ describe('UserStore — Password', () => {
     expect(await store.verifyPassword(user.userId, 'newpassword1')).toBe(false);
   });
 
+  test('password recovery fails closed and preserves its token when the credential is missing', async () => {
+    const emitted: string[] = [];
+    const observedStore = new UserStore(db, {
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+    const user = await store.createUser({
+      username: 'missing-credential-reset',
+      email: 'missing-credential-reset@example.com',
+      password: 'oldpassword1',
+    });
+    const platformTokens = new PlatformTokenService(new PlatformTokenStore(db), {
+      actionTokenCooldown: false,
+    });
+    const actionTokens = new AuthActionTokenService(observedStore, '1h', '5m', platformTokens);
+    const created = actionTokens.create({
+      userId: user.userId,
+      type: 'password_reset',
+    });
+    db.prepare('DELETE FROM _credentials WHERE user_id = ?').run(user.userId);
+
+    await expect(observedStore.completePasswordAction(user.userId, 'newpassword1', () => {
+      actionTokens.consume(created.rawToken, ['password_reset']);
+    })).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      status: 500,
+      message: '[auth] Password recovery credential is unavailable.',
+    });
+    expect(actionTokens.inspect(created.rawToken, ['password_reset']).record.tokenId)
+      .toBe(created.record.tokenId);
+    expect(emitted).toEqual([OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code]);
+  });
+
   test('verification storage failure does not consume the email link', async () => {
     const user = await store.createUser({
       username: 'atomic-verification',
@@ -914,6 +1410,76 @@ describe('UserStore — Password', () => {
       .toBe(created.record.tokenId);
     expect(store.getUserById(user.userId)?.emailVerifiedAt).toBeNull();
     expect(store.getUserById(user.userId)?.emailVerificationRequired).toBe(true);
+  });
+
+  test('verification rejects async token and completion callbacks with full rollback', async () => {
+    const emitted: string[] = [];
+    const observedStore = new UserStore(db, {
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+    const platformTokens = new PlatformTokenService(new PlatformTokenStore(db), {
+      actionTokenCooldown: false,
+    });
+    const actionTokens = new AuthActionTokenService(
+      observedStore,
+      '1h',
+      '0s',
+      platformTokens,
+    );
+    const first = await observedStore.createUser({
+      username: 'async-verification-consumer',
+      email: 'async-verification-consumer@example.com',
+      password: 'password123',
+      emailVerifiedAt: null,
+      emailVerificationRequired: true,
+    });
+    const firstToken = actionTokens.create({
+      userId: first.userId,
+      type: 'email_verification',
+      skipCooldown: true,
+    });
+
+    expect(() => observedStore.completeEmailVerification(first.userId, async () => {
+      actionTokens.consume(firstToken.rawToken, ['email_verification']);
+    })).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Email verification token consumption must be synchronous.',
+    }));
+    expect(actionTokens.inspect(firstToken.rawToken, ['email_verification']).record.tokenId)
+      .toBe(firstToken.record.tokenId);
+    expect(observedStore.getUserById(first.userId)?.emailVerifiedAt).toBeNull();
+
+    const second = await observedStore.createUser({
+      username: 'async-verification-after',
+      email: 'async-verification-after@example.com',
+      password: 'password123',
+      emailVerifiedAt: null,
+      emailVerificationRequired: true,
+    });
+    const secondToken = actionTokens.create({
+      userId: second.userId,
+      type: 'email_verification',
+      skipCooldown: true,
+    });
+    expect(() => observedStore.completeEmailVerification(
+      second.userId,
+      () => actionTokens.consume(secondToken.rawToken, ['email_verification']),
+      Date.now(),
+      async () => {},
+    )).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Email verification afterVerify must be synchronous.',
+    }));
+    expect(actionTokens.inspect(secondToken.rawToken, ['email_verification']).record.tokenId)
+      .toBe(secondToken.record.tokenId);
+    expect(observedStore.getUserById(second.userId)?.emailVerifiedAt).toBeNull();
+    expect(emitted).toEqual([
+      OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code,
+      OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code,
+    ]);
   });
 
   test('verification invalidates sibling links and existing sessions', async () => {
@@ -1132,6 +1698,37 @@ describe('UserStore — Refresh Tokens', () => {
     expect(store.getRefreshTokenByHash('h1')!.revokedAt).not.toBeNull();
     expect(store.getRefreshTokenByHash('h2')!.revokedAt).not.toBeNull();
     expect(store.getRefreshTokenByHash('h3')!.revokedAt).not.toBeNull();
+  });
+
+  test('rejects an asynchronous session revoker and rolls token invalidation back', async () => {
+    const emitted: string[] = [];
+    const observedStore = new UserStore(db, {
+      emitCode: (definition, options) => {
+        emitted.push(definition.code);
+        return emitPlatformCode(definition, options);
+      },
+    });
+    observedStore.storeRefreshToken(
+      'tok_async_revoker',
+      userId,
+      'async-revoker-hash',
+      Date.now() + 86_400_000,
+    );
+    observedStore.setAuthSessionRevoker({
+      revoke: () => true,
+      revokeAllForUser: (async () => 1) as never,
+    });
+
+    expect(() => observedStore.revokeAllUserTokens(userId))
+      .toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        message: '[auth] User session revocation callback must be synchronous.',
+      }));
+    await Promise.resolve();
+
+    expect(observedStore.getRefreshTokenByHash('async-revoker-hash')?.revokedAt).toBeNull();
+    expect(observedStore.getAuthGeneration(userId)).toBe(0);
+    expect(emitted).toEqual([OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code]);
   });
 
   test('deleteExpiredTokens removes expired and revoked tokens', () => {

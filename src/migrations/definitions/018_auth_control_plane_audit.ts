@@ -1,9 +1,9 @@
 /** Add durable append-only authorization/control-plane audit storage. */
 
 import type { Database } from 'bun:sqlite';
-import { defineAuthAuditTables } from '../../auth/auth-audit-schema';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import type { Migration } from '../types';
+import { defineAuthAuditTables } from './018_auth_control_plane_audit_schema';
 
 export const migration: Migration = {
   version: '018',

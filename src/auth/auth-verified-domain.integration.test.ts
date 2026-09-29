@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { Elysia, type AnyElysia } from 'elysia';
 
 import { configureEmail, MemoryEmailProvider } from '../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import type { AuthRuntime } from './auth-runtime';
 import { createAuthPlugin } from './auth.plugin';
@@ -22,7 +23,7 @@ afterEach(async () => {
     await harness.app.stop();
     harness.db.dispose();
   }
-  configureEmail(false);
+  resetEmailCompatibilityRuntimeForTesting();
 });
 
 describe('verified-domain Elysia integration', () => {
@@ -32,10 +33,44 @@ describe('verified-domain Elysia integration', () => {
       username: 'owner',
       email: 'owner@platform.com',
       password: 'password123',
-      organizationName: 'Acme',
+      organizationName: 'Platform Administration',
     });
     expect(owner.status).toBe(200);
-    const accessToken = String(owner.body.accessToken);
+    const administrationAccessToken = String(owner.body.accessToken);
+
+    // Company-domain onboarding belongs to customer data scopes. The
+    // protected administration organization cannot turn an email domain into
+    // implicit platform access.
+    const protectedDomains = await json(
+      harness,
+      'GET',
+      '/auth/tenant/domains',
+      undefined,
+      administrationAccessToken,
+    );
+    expect(protectedDomains.status).toBe(403);
+
+    const customerOwner = await harness.runtime.getStore()!.createUser({
+      username: 'acme-owner',
+      email: 'owner@acme-owner.test',
+      password: 'password123',
+    });
+    const customer = harness.runtime.getTenancyService()!.createTenant({
+      name: 'Acme',
+      slug: 'acme',
+      ownerUserId: customerOwner.userId,
+      createdBy: owner.body.user.userId,
+    });
+    const customerTokens = await harness.runtime.getTokenService()!.issueTokenPair(
+      customerOwner,
+      {
+        binding: {
+          tenantId: customer.tenant.tenantId,
+          membershipId: customer.ownerMembership.membershipId,
+        },
+      },
+    );
+    const accessToken = customerTokens.accessToken;
 
     const publicConfig = await json(harness, 'GET', '/auth/config');
     expect(publicConfig.body.tenancy.onboarding.verifiedDomains).toEqual({

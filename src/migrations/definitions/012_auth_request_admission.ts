@@ -1,9 +1,9 @@
 /** Add durable, pseudonymous public-auth admission accounting. */
 
 import type { Database } from 'bun:sqlite';
-import { defineAuthRequestAdmissionTables } from '../../auth/auth-request-admission-schema';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import type { Migration } from '../types';
+import { defineAuthRequestAdmissionTables } from './012_auth_request_admission_schema';
 
 export const migration: Migration = {
   version: '012',

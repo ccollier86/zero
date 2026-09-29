@@ -4,7 +4,7 @@
 > candidate; final release verification and the open gates below are not yet
 > complete**
 >
-> Last reviewed: 2026-09-28
+> Last reviewed: 2026-09-29
 >
 > Scope: Zero core auth, Elysia integration, sessions, RBAC, data isolation,
 > Sync, managed services, onboarding, packaged control UI, installed clients,
@@ -29,8 +29,11 @@ for silent behavior.
 - [x] Keep `auth: true` and existing auth objects compatible as
   `single/simple`; independently normalize `tenancy` and `authorization`.
 - [x] Preserve global `users.role`, `admin`, `adminOnly()`, and
-  `requireAdmin()` as application/platform authority, separate from tenant
-  membership roles and permissions.
+  `requireAdmin()` as the legacy global-administrator boundary for compatible
+  routes and global-role mutation. Keep that boundary distinct from live
+  application-permission authority projected by an advanced application role
+  or Administration Organization membership: neither grants the other, and
+  neither grants customer-tenant data access.
 - [x] Install one app-local `AuthRuntime` and one `AuthorizationKernel`; make
   ambiguous legacy no-argument service access fail instead of selecting a
   random live app.
@@ -66,9 +69,10 @@ for silent behavior.
   continuations, membership list/select, and refresh-family-backed switching.
 - [x] Make switching replace the session atomically, rotate/consume refresh
   authority, reject replay/concurrent exchange, and invalidate the old scope.
-- [x] Transactionally bootstrap a fresh multi-mode installation with the first
-  organization, protected owner membership, advanced owner assignment when
-  applicable, tenant-bound session, and global platform administrator.
+- [x] Transactionally bootstrap a fresh multi-mode installation with one
+  protected `kind: 'administration'` organization, owner membership,
+  applicable assignment, tenant-bound session, and global platform
+  administrator; create customer organizations only afterward.
 - [x] Keep ordinary post-bootstrap identity registration independent from
   tenant creation and tenant admission.
 - [x] Implement the validated permission registry, app-declared static role
@@ -108,6 +112,26 @@ for silent behavior.
   preserve multi/simple retained roles and live browser/native session families
   during simple-to-advanced adoption, fail atomically on invalid roles or
   pending provisioning, and reject reverse/tenancy-axis reinterpretation.
+- [x] Install append-only migration `024`, persist the administration/customer
+  tenant-kind discriminator, reconcile the protected bootstrap organization,
+  and exclude it from customer discovery, lifecycle, domains, and data-plane
+  use.
+- [x] Install append-only migration `025` and persist server-owned MFA
+  assurance across browser sessions and continuations, native authorization
+  codes, and native refresh-session families. Leave legacy rows unassured
+  rather than inventing proof, and require the normal setup/challenge step when
+  live policy requires assurance.
+- [x] Install append-only migration `026` and freeze each newly issued tenant
+  invitation's effective tenant/application permission ceiling. Fail old
+  snapshot-less pending invitations, corrupt/missing snapshots, retired roles,
+  and later authority widening closed behind the non-enumerating invitation
+  contract; allow only narrowing.
+- [x] Install append-only migration `027` and the matching current-runtime
+  `_auth_authorization_manifest` singleton. Fingerprint server-only
+  permission/role semantics plus the framework evaluator version, require a
+  monotonic explicit registry version for same-profile changes, reject
+  rollback/corruption/implicit retained-role reactivation, system-audit
+  changes, and fence stale runtimes through the shared authority revision.
 - [x] Bound the built-in multi-runtime contract to runtimes sharing one local
   file-mode SQLite database, and document that separate databases, cross-host
   transports, application-owned caches, and RAM-only topic delivery require a
@@ -206,8 +230,17 @@ for silent behavior.
   `TenantSwitcher`, the shared `useTenantAppShellWorkspaces` adapter,
   member/role management, invitation/join review, domain
   administration/onboarding, application access, and audit viewer components.
+- [x] Ship the protected Administration Organization and customer-tenant
+  control plane end to end: bounded routes, strict browser parser/SDK, stale
+  scope fencing, `usePlatformAdministration`, `usePlatformTenants`,
+  capability-driven people/invitation/lifecycle UI, and read-only customer
+  member drill-in.
 - [x] Hide advanced role controls in simple mode and keep global identity
   management separate from tenant membership controls.
+- [x] Exercise packaged platform controls with automated render/policy checks
+  for simple/advanced role cardinality, labels/descriptions, alerts/live
+  regions, busy/disabled states, focus restoration hooks, empty/loading/error
+  states, and responsive-safe markup.
 - [ ] Complete real-browser keyboard, focus, screen-reader/live-region,
   reduced-motion, responsive/touch, and tenant-switch state-leak acceptance for
   the full packaged control surface.
@@ -237,19 +270,19 @@ applicable item below is complete.
 - [x] Finish the resource index/constraint contract above with actual SQLite
   startup validation, static Doctor guidance, focused unsafe/safe index,
   uniqueness, and foreign-key evidence, and matching public documentation.
-- [x] Run the focused auth, RBAC, domain, audit, resource, Sync, built-in
+- [ ] Run the focused auth, RBAC, domain, audit, resource, Sync, built-in
   service, workflow, browser-boundary, component, migration, and runtime
   isolation suites from the frozen final tree.
-- [x] Run `bun run typecheck`, `bun run build`, `bun run test:package`, the full
+- [ ] Run `bun run typecheck`, `bun run build`, `bun run test:package`, the full
   `bun run test --timeout 120000`, `bun audit`, and `git diff --check` from that
   same tree.
-- [x] Audit the documentation against the final public SDK/auth contracts and
+- [ ] Audit the documentation against the final public SDK/auth contracts and
   run deterministic local-link, GitHub-style anchor, and code-fence checks from
   that same tree.
-- [x] Pack and install the frozen candidate outside the repository; migrate a fresh
+- [ ] Pack and install the frozen candidate outside the repository; migrate a fresh
   package-mode database through the latest numbered migration and smoke all
   four auth profiles. The installed-tarball smoke must apply migrations `001`
-  through `023` to fresh file databases, verify the complete six-flow public
+  through `027` to fresh file databases, verify the complete six-flow public
   auth-admission schema and installed-profile authority triggers, then boot and
   bootstrap every
   `single|multi` by `simple|advanced` combination, verify its live
@@ -263,14 +296,11 @@ applicable item below is complete.
   supported/preview/deferred wording across README, Start Here, SDK/reference,
   auth, resource, Sync, and generated-app docs.
 
-The final 2026-09-28 working-tree pass recorded 2,006 tests with 12,600
-assertions across 334 files and a 46-test/2,019-assertion package gate. The
-outside-tree archive migrated fresh file databases through migration `023`,
-booted and bootstrapped all four profiles, reopened them, and the final docs,
-typecheck, build, dependency audit, and diff-integrity checks passed. These
-results satisfy the checked working-tree gates above; they do not substitute
-for the still-unchecked license/minimum-Bun decisions, clean-checkout proof,
-disposable-app updater smoke, or maintainer release sign-off.
+The earlier 2026-09-28 working-tree pass predated the Administration
+Organization and migrations `024` through `027`. Its aggregate counts remain
+historical
+evidence only; the focused and aggregate release gates above must be rerun from
+the frozen final tree.
 
 ## Deliberately deferred capabilities
 
@@ -283,13 +313,6 @@ CRUD, `/api/data`, Sync, caches, and packaged form/export projections. Direct
 SQL, unregistered tables, custom endpoints, and application-owned exports stay
 trusted application code and must apply their own projection and write rules.
 
-- [ ] **Protected Administration Organization and platform-tenant lifecycle
-  UI.** Today the bootstrap identity keeps the existing global platform-admin
-  role and the first tenant is an ordinary customer/application organization.
-  A future administration organization should reuse the same RBAC engine,
-  assignment history, invitations, ownership, ceilings, and revisions behind
-  a protected scope discriminator; it must not be an ordinary discoverable
-  tenant.
 - [ ] **Upstream enterprise SSO.** Tenant-bound enterprise OIDC, then optional
   SAML/SCIM and group mapping, remain separate from Zero's implemented native
   OIDC provider for installed apps.
@@ -302,9 +325,11 @@ trusted application code and must apply their own projection and write rules.
   Separate databases, cross-host messaging, `hot`/`ephemeral` runtime state,
   application-owned caches, and a cross-runtime ephemeral/presence topic bus
   still need an explicit external coordination contract.
-- [ ] **Existing populated-app adoption tooling.** Fresh multi-mode installs
-  are supported by the candidate; existing production data needs an explicit
-  backup/dry-run/backfill/validation/cutover workflow before enabling multi.
+- [ ] **General populated-app adoption tooling.** Fresh multi-mode installs and
+  the exact pre-024 Administration Organization reconciliation path are
+  supported by the candidate; existing production data still needs an explicit
+  backup/dry-run/backfill/validation/cutover workflow before enabling multi or
+  changing the tenancy axis.
 - [ ] **Verified-domain autojoin, aliases/wildcards/subdomain inheritance, and
   direct transfer.** Current admission is exact-domain request-to-join; release
   plus quarantine and a new proof is not transfer.

@@ -1,6 +1,7 @@
 import { Elysia } from 'elysia';
 import { expect, test } from 'bun:test';
 import { configureEmail, type EmailMessage, type EmailProvider, type EmailSendResult } from '../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import { createReactiveDB } from '../sync/reactive-db';
 import { createAuthPlugin, getAuthEmailOutbox } from './auth.plugin';
 
@@ -65,7 +66,7 @@ test('forgot-password returns generically without awaiting provider delivery', a
     const capacity = await post(url, '/auth/forgot-password', { email: 'capacity@test.com' });
     expect(capacity).toEqual(reset);
   } finally {
-    await app.stop(); db.dispose(); configureEmail(false);
+    await app.stop(); db.dispose(); resetEmailCompatibilityRuntimeForTesting();
   }
 });
 

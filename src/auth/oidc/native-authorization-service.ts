@@ -32,6 +32,8 @@ import { NativeTenantAuthorityService } from './native-tenant-authority';
 import { listNativeTenants, switchNativeTenant } from './native-tenant-sessions';
 import type { AuthAuditService } from '../auth-audit-service';
 import type { AuthAuditRequestContext } from '../auth-audit-types';
+import { emitPlatformCode } from '../../observability/sink';
+import type { AuthPlatformCodeEmitter } from '../auth-observability';
 
 export class NativeAuthorizationService {
   private readonly context: NativeServiceContext;
@@ -44,8 +46,21 @@ export class NativeAuthorizationService {
     tokens: TokenService,
     authority: NativeTenantAuthorityService = new NativeTenantAuthorityService('single', null),
     audit?: AuthAuditService,
+    requiresMfaAssurance: (userId: string) => boolean = () => false,
+    emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
   ) {
-    this.context = { config, requests, codes, sessions, users, tokens, authority, audit };
+    this.context = {
+      config,
+      requests,
+      codes,
+      sessions,
+      users,
+      tokens,
+      authority,
+      audit,
+      requiresMfaAssurance,
+      emitCode,
+    };
     const assertCurrentProfile = () => tokens.assertCurrentProfile();
     requests.setRuntimeProfileGuard(assertCurrentProfile);
     codes.setRuntimeProfileGuard(assertCurrentProfile);

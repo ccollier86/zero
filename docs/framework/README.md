@@ -84,6 +84,9 @@ Zero.
 - [Auth System](../auth/README.md): canonical feature index for auth profiles,
   declarative permissions and RBAC, tenant/application administration,
   onboarding, browser authorization state, and installed-app authentication.
+- [Platform Administration Organization](../auth/platform-administration.md):
+  protected multi-mode operator scope, customer-organization directory,
+  permissions, routes, SDK/hooks, and packaged controls.
 - [API Standardization Plan](./api-standardization-plan.md): historical phased plan for
   Zero-native backend extensions, middleware matchers, resources, actions,
   frontend parity, generators, and documentation standardization.

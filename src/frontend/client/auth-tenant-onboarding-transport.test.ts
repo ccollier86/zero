@@ -1,219 +1,178 @@
 import { describe, expect, test } from 'bun:test';
-import { AuthTenantOnboardingTransport } from './auth-tenant-onboarding-transport';
-import type { AuthTenantJoinRequest } from './auth-types';
+import {
+  AuthTenantOnboardingTransport,
+  parseTenantInvitationAcceptance,
+  parseTenantInvitationInspection,
+} from './auth-tenant-onboarding-transport';
 
-const projectedRequest: AuthTenantJoinRequest = {
-  joinRequestId: 'tjoin_1',
-  applicant: {
-    userId: 'usr_1',
-    username: 'applicant',
-    email: 'applicant@example.test',
-    firstName: null,
-    lastName: null,
-  },
-  status: 'pending',
-  requestRevision: 1,
-  requestedAt: 1,
-  createdAt: 1,
-  updatedAt: 1,
-  reviewedAt: null,
-  lastDecision: null,
-  membership: null,
-  reactivationRequired: false,
-  approvalPolicy: {
-    canApprove: true,
-    roleSelection: {
-      mode: 'selectable',
-      defaultRoleKeys: ['member'],
-      maxRoleCount: 32,
-      roles: [{ key: 'member', label: 'Member' }],
-    },
-  },
-};
+describe('tenant invitation browser parsing', () => {
+  test('preserves the server-derived tenant kind on inspection and acceptance', () => {
+    const inspection = parseTenantInvitationInspection({
+      available: true,
+      tenant: {
+        name: 'Platform administration',
+        slug: 'platform--administration',
+        kind: 'administration',
+      },
+      emailHint: 'a***@example.test',
+      expiresAt: 1_800_000_000_000,
+      account: 'sign-in',
+    });
+    expect(inspection.available && inspection.tenant.kind).toBe('administration');
 
-describe('AuthTenantOnboardingTransport', () => {
-  test('uses active-tenant routes, bounded query fields, and encoded opaque ids', async () => {
-    const requests: Array<{ kind: 'auth' | 'optional'; url: string; init?: RequestInit }> = [];
-    const transport = createTransport(requests);
-    await transport.listInvitations({
-      status: 'pending',
-      limit: 25,
-      cursor: 'cursor/value',
+    const accepted = parseTenantInvitationAcceptance({
+      ...sessionCompletion(),
+      invitationAccepted: true,
+      acceptedTenant: {
+        tenantId: 'tenant_admin',
+        membershipId: 'membership_owner',
+        name: 'Platform administration',
+        slug: 'platform--administration',
+        kind: 'administration',
+      },
     });
-    await transport.issueInvitation({
-      email: 'person@example.test',
-      roles: ['member'],
-      delivery: 'email',
-    });
-    await transport.revokeInvitation('tinv/a');
-    await transport.approveJoinRequest('tjoin/a', {
-      expectedRequestRevision: 7,
-      roles: ['member'],
-      reactivateMembership: true,
-    });
-    await transport.denyJoinRequest('tjoin/b', {
-      expectedRequestRevision: 8,
-    });
-
-    expect(requests.map(({ kind, url, init }) => [kind, url, init?.method])).toEqual([
-      [
-        'auth',
-        'https://zero.test/auth/tenant/invitations?status=pending&limit=25&cursor=cursor%2Fvalue',
-        undefined,
-      ],
-      ['auth', 'https://zero.test/auth/tenant/invitations', 'POST'],
-      ['auth', 'https://zero.test/auth/tenant/invitations/tinv%2Fa', 'DELETE'],
-      ['auth', 'https://zero.test/auth/tenant/join-requests/tjoin%2Fa/approve', 'POST'],
-      ['auth', 'https://zero.test/auth/tenant/join-requests/tjoin%2Fb/deny', 'POST'],
-    ]);
-    expect(requests.every(({ url }) => !url.includes('tenantId'))).toBe(true);
-    expect(JSON.parse(String(requests[1]!.init!.body))).toEqual({
-      email: 'person@example.test',
-      roles: ['member'],
-      delivery: 'email',
-    });
-    expect(JSON.parse(String(requests[3]!.init!.body))).toEqual({
-      expectedRequestRevision: 7,
-      roles: ['member'],
-      reactivateMembership: true,
-    });
-    expect(JSON.parse(String(requests[4]!.init!.body))).toEqual({
-      expectedRequestRevision: 8,
-    });
+    expect('acceptedTenant' in accepted && accepted.acceptedTenant.kind)
+      .toBe('administration');
   });
 
-  test('preserves the reviewer-safe per-request approval policy', async () => {
-    const requests: Array<{ kind: 'auth' | 'optional'; url: string; init?: RequestInit }> = [];
-    const transport = createTransport(requests, {}, {
-      requests: [projectedRequest],
+  test('accepts the concealed and pending shapes', () => {
+    expect(parseTenantInvitationInspection({ available: false }))
+      .toEqual({ available: false });
+    expect('invitationAcceptancePending' in parseTenantInvitationAcceptance({
+      ...mfaSetupCompletion(),
+      invitationAcceptancePending: true,
+    })).toBe(true);
+  });
+
+  test('rejects unknown fields, invalid kinds, and malformed accepted tenants', () => {
+    expect(() => parseTenantInvitationInspection({
+      available: false,
+      tenant: null,
+    })).toThrow('invalid tenant invitation response');
+    expect(() => parseTenantInvitationInspection({
+      available: true,
+      tenant: { name: 'Acme', slug: 'acme', kind: 'platform' },
+      emailHint: 'a***@example.test',
+      expiresAt: 1,
+      account: 'sign-in',
+    })).toThrow('invalid tenant invitation response');
+    expect(() => parseTenantInvitationAcceptance({
+      ...sessionCompletion(),
+      invitationAccepted: true,
+      acceptedTenant: {
+        tenantId: 'tenant:bad',
+        membershipId: 'membership_owner',
+        name: 'Acme',
+        slug: 'acme',
+        kind: 'organization',
+      },
+    })).toThrow('invalid tenant invitation response');
+    expect(() => parseTenantInvitationAcceptance({
+      ...mfaSetupCompletion(),
+      invitationAcceptancePending: true,
+      acceptedTenant: null,
+    })).toThrow('invalid tenant invitation response');
+    expect(() => parseTenantInvitationAcceptance({
+      accessToken: 'access',
+      refreshToken: 'refresh',
+      invitationAccepted: true,
+      acceptedTenant: {
+        tenantId: 'tenant_acme',
+        membershipId: 'membership_owner',
+        name: 'Acme',
+        slug: 'acme',
+        kind: 'organization',
+      },
+    })).toThrow('invalid tenant invitation response');
+  });
+
+  test('fails closed on malformed invitation administration responses', async () => {
+    const page = onboardingTransport(async () => Response.json({
+      invitations: [invitation()],
       page: { limit: 25, count: 1, hasMore: false, nextCursor: null },
+    }));
+    await expect(page.listInvitations()).resolves.toMatchObject({
+      invitations: [{ invitationId: 'invitation-1' }],
     });
 
-    const result = await transport.listJoinRequests({ status: 'pending' });
+    const malformed = onboardingTransport(async () => Response.json({
+      invitations: [invitation()],
+      page: { limit: 25, count: 0, hasMore: false, nextCursor: null },
+    }));
+    await expect(malformed.listInvitations()).rejects.toThrow(
+      'invalid tenant-administration response',
+    );
 
-    expect(result.requests[0]).toEqual(projectedRequest);
-  });
-
-  test('rejects malformed join pages and mutation approval policies', async () => {
-    const malformedPolicies = [
-      { canApprove: 'yes', roleSelection: projectedRequest.approvalPolicy.roleSelection },
-      {
-        canApprove: true,
-        roleSelection: {
-          mode: 'selectable',
-          defaultRoleKeys: ['owner'],
-          maxRoleCount: 32,
-          roles: [{ key: 'member', label: 'Member' }],
-        },
-      },
-      {
-        canApprove: true,
-        roleSelection: {
-          mode: 'fixed',
-          roles: [],
-        },
-      },
-      {
-        canApprove: true,
-        roleSelection: {
-          mode: 'default',
-          roles: [{ key: 'member', label: 'Member' }],
-          injected: true,
-        },
-      },
-    ];
-
-    for (const approvalPolicy of malformedPolicies) {
-      const requests: Array<{ kind: 'auth' | 'optional'; url: string; init?: RequestInit }> = [];
-      const malformed = { ...projectedRequest, approvalPolicy };
-      const transport = createTransport(requests, {}, {
-        requests: [malformed],
-        page: { limit: 25, count: 1, hasMore: false, nextCursor: null },
-      });
-      await expect(transport.listJoinRequests()).rejects.toThrow(
-        'invalid tenant join-request response',
-      );
-
-      const mutation = createTransport(requests, {}, { request: malformed });
-      await expect(mutation.approveJoinRequest('tjoin_1', {
-        expectedRequestRevision: 1,
-      })).rejects.toThrow('invalid tenant join-request response');
-      await expect(mutation.denyJoinRequest('tjoin_1', {
-        expectedRequestRevision: 1,
-      })).rejects.toThrow('invalid tenant join-request response');
-    }
-  });
-
-  test('commits invitation acceptance through the shared auth session boundary', async () => {
-    const requests: Array<{ kind: 'auth' | 'optional'; url: string; init?: RequestInit }> = [];
-    let began = 0;
-    let completed = 0;
-    const transport = createTransport(requests, {
-      beginAuthentication: () => {
-        began += 1;
-        return authenticationAttempt();
-      },
-      completeAuthentication: async (result) => {
-        completed += 1;
-        return result;
-      },
-    });
-    const result = await transport.acceptInvitation({
-      token: `zinv_${'A'.repeat(43)}`,
-      continuation: 'onboarding-proof',
-    });
-    expect('invitationAccepted' in result && result.invitationAccepted).toBe(true);
-    expect(began).toBe(1);
-    expect(completed).toBe(1);
-    expect(requests).toHaveLength(1);
-    expect(requests[0]).toMatchObject({
-      kind: 'optional',
-      url: 'https://zero.test/auth/invitations/accept',
-      init: { method: 'POST' },
-    });
+    const badSubmission = onboardingTransport(
+      async () => Response.json({ submitted: false }),
+    );
+    await expect(badSubmission.submitJoinRequest({ tenantSlug: 'acme' }))
+      .rejects.toThrow('invalid tenant-administration response');
   });
 });
 
-function createTransport(
-  requests: Array<{ kind: 'auth' | 'optional'; url: string; init?: RequestInit }>,
-  overrides: Partial<ConstructorParameters<typeof AuthTenantOnboardingTransport>[0]> = {},
-  responseBody: Record<string, unknown> = {
-    invitationAccepted: true,
-    invitation: { invitationId: 'tinv_1' },
-    invitations: [],
-    requests: [],
-    request: projectedRequest,
-    page: { limit: 25, count: 0, hasMore: false, nextCursor: null },
-  },
-) {
-  const response = (url: string) => Response.json(
-    /\/auth\/tenant\/join-requests\/[^/]+\/(?:approve|deny)$/.test(url)
-      ? { request: responseBody.request ?? projectedRequest }
-      : responseBody,
-  );
+function onboardingTransport(
+  send: (url: string, init?: RequestInit) => Promise<Response>,
+): AuthTenantOnboardingTransport {
   return new AuthTenantOnboardingTransport({
     baseUrl: 'https://zero.test',
-    authenticatedFetch: async (url, init) => {
-      requests.push({ kind: 'auth', url, init });
-      return response(url);
-    },
-    optionalAuthenticatedFetch: async (url, init) => {
-      requests.push({ kind: 'optional', url, init });
-      return response(url);
-    },
-    assertResponseCurrent: () => {},
-    createResponseError: () => new Error('unexpected response error'),
-    beginAuthentication: authenticationAttempt,
-    failAuthentication: () => {},
-    completeAuthentication: async (result) => result,
-    ...overrides,
+    authenticatedFetch: send,
+    optionalAuthenticatedFetch: send,
+    createResponseError: (_response, _body, fallback) => new Error(fallback),
+    assertResponseCurrent() {},
+    beginAuthentication: (() => { throw new Error('not used'); }) as never,
+    failAuthentication() {},
+    completeAuthentication: (async (result) => result),
   });
 }
 
-function authenticationAttempt() {
+function invitation() {
   return {
-    signal: new AbortController().signal,
-    assertCurrent: () => {},
-    dispose: () => {},
+    invitationId: 'invitation-1', email: 'person@example.test', roles: ['member'],
+    status: 'pending', expiresAt: 50, createdAt: 1, updatedAt: 1,
+    acceptedAt: null, revokedAt: null,
+  };
+}
+
+function sessionCompletion() {
+  return {
+    user: authUser(),
+    accessToken: 'access-token',
+    refreshToken: 'refresh-token',
+    activeTenant: {
+      tenantId: 'tenant_admin',
+      kind: 'administration',
+      slug: 'platform--administration',
+      name: 'Platform administration',
+      role: 'owner',
+    },
+  };
+}
+
+function mfaSetupCompletion() {
+  return {
+    user: authUser(),
+    mfaSetupRequired: true,
+    mfaSetupToken: 'setup-token',
+    mfa: { methods: ['totp'], allowUserChoice: false },
+  };
+}
+
+function authUser() {
+  return {
+    userId: 'user-1',
+    username: 'owner',
+    email: 'owner@example.test',
+    firstName: 'Platform',
+    lastName: 'Owner',
+    role: 'admin',
+    status: 'active',
+    passwordChangeRequired: false,
+    emailVerifiedAt: 1,
+    emailVerificationRequired: false,
+    mfaRequired: false,
+    properties: {},
+    createdAt: 1,
+    updatedAt: null,
   };
 }

@@ -23,6 +23,7 @@ import {
   assertActionTokenIdentity,
   bindActionTokenIdentity,
 } from './auth-action-token-identity';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 
 /** Result returned when a raw action token is created. */
 export interface CreatedAuthActionToken {
@@ -47,12 +48,29 @@ export class AuthActionTokenService {
     private readonly store: UserStore,
     ttl: string,
     requestCooldown = '5m',
-    private readonly platformTokens: PlatformTokenService | null = getPlatformTokenService()
+    private readonly platformTokens: PlatformTokenService | null = getPlatformTokenService(),
+    private readonly emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
   ) {
     this.ttl = ttl;
     this.requestCooldown = requestCooldown;
     this.ttlMs = parseTokenTTL(ttl, 'auth action token TTL');
     this.cooldownMs = parseTokenTTL(requestCooldown, 'auth action token cooldown');
+    if (this.platformTokens
+      && this.platformTokens.getTransactionDomain() !== this.store.getTransactionDomain()) {
+      const error = new AuthError(
+        'Platform action tokens must share the auth transaction domain',
+        'AUTH_STATE_INVARIANT_FAILED',
+        500,
+      );
+      this.emitCode(OBS_CODES.AUTH_STATE_INVARIANT_FAILED, {
+        error,
+        metadata: {
+          component: 'action-tokens',
+          invariant: 'platform-token-transaction-domain-mismatch',
+        },
+      });
+      throw error;
+    }
   }
 
   /**
@@ -95,7 +113,7 @@ export class AuthActionTokenService {
       }
       const record = this.toAuthActionTokenRecord(created.record, created.rawToken);
 
-      emitPlatformCode(OBS_CODES.AUTH_ACTION_TOKEN_CREATED, {
+      this.emitCode(OBS_CODES.AUTH_ACTION_TOKEN_CREATED, {
         userId: params.userId,
         metadata: {
           tokenId: record.tokenId,
@@ -124,7 +142,7 @@ export class AuthActionTokenService {
       metadata,
     });
 
-    emitPlatformCode(OBS_CODES.AUTH_ACTION_TOKEN_CREATED, {
+    this.emitCode(OBS_CODES.AUTH_ACTION_TOKEN_CREATED, {
       userId: params.userId,
       metadata: {
         tokenId: record.tokenId,
@@ -177,28 +195,27 @@ export class AuthActionTokenService {
     rawToken: string,
     allowedTypes?: AuthActionTokenType[]
   ): AuthActionTokenInspection {
-    const platformInspection = this.consumePlatformToken(rawToken, allowedTypes);
-    if (platformInspection) return platformInspection;
+    return this.store.transaction(() => {
+      const platformInspection = this.consumePlatformToken(rawToken, allowedTypes);
+      if (platformInspection) return platformInspection;
 
-    const inspection = this.inspectLegacy(rawToken, allowedTypes);
-    const consumed = this.store.consumeActionToken(inspection.record.tokenId);
-    if (!consumed) {
-      emitPlatformCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
-        userId: inspection.record.userId,
-        metadata: { tokenId: inspection.record.tokenId, reason: 'consumed' },
-      });
-      throw new AuthError('Action token has already been used', 'ACTION_TOKEN_CONSUMED', 400);
-    }
+      const inspection = this.inspectLegacy(rawToken, allowedTypes);
+      const consumed = this.store.consumeActionToken(inspection.record.tokenId);
+      if (!consumed) {
+        this.emitCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
+          userId: inspection.record.userId,
+          metadata: { tokenId: inspection.record.tokenId, reason: 'consumed' },
+        });
+        throw new AuthError(
+          'Action token has already been used',
+          'ACTION_TOKEN_CONSUMED',
+          400,
+        );
+      }
 
-    emitPlatformCode(OBS_CODES.AUTH_ACTION_TOKEN_CONSUMED, {
-      userId: inspection.record.userId,
-      metadata: {
-        tokenId: inspection.record.tokenId,
-        type: inspection.record.type,
-      },
+      this.emitConsumedAfterCommit(inspection);
+      return inspection;
     });
-
-    return inspection;
   }
 
   /** Delete an undelivered token without requiring its future-state binding. */
@@ -256,13 +273,7 @@ export class AuthActionTokenService {
       });
       const inspection = this.toAuthInspection(record, rawToken);
 
-      emitPlatformCode(OBS_CODES.AUTH_ACTION_TOKEN_CONSUMED, {
-        userId: inspection.record.userId,
-        metadata: {
-          tokenId: inspection.record.tokenId,
-          type: inspection.record.type,
-        },
-      });
+      this.emitConsumedAfterCommit(inspection);
 
       return inspection;
     } catch (err) {
@@ -273,6 +284,16 @@ export class AuthActionTokenService {
       if (err instanceof PlatformTokenError) throw toAuthActionTokenError(err);
       throw err;
     }
+  }
+
+  private emitConsumedAfterCommit(inspection: AuthActionTokenInspection): void {
+    this.store.afterCommit(() => this.emitCode(OBS_CODES.AUTH_ACTION_TOKEN_CONSUMED, {
+      userId: inspection.record.userId,
+      metadata: {
+        tokenId: inspection.record.tokenId,
+        type: inspection.record.type,
+      },
+    }));
   }
 
   private toAuthInspection(
@@ -320,14 +341,14 @@ export class AuthActionTokenService {
   ): AuthActionTokenRecord {
     const record = this.store.getActionTokenByHash(hashToken(rawToken));
     if (!record) {
-      emitPlatformCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
+      this.emitCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
         metadata: { reason: 'missing' },
       });
       throw new AuthError('Action token is invalid', 'ACTION_TOKEN_INVALID', 400);
     }
 
     if (allowedTypes && !allowedTypes.includes(record.type)) {
-      emitPlatformCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
+      this.emitCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
         userId: record.userId,
         metadata: {
           tokenId: record.tokenId,
@@ -339,7 +360,7 @@ export class AuthActionTokenService {
     }
 
     if (record.consumedAt !== null) {
-      emitPlatformCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
+      this.emitCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
         userId: record.userId,
         metadata: { tokenId: record.tokenId, reason: 'consumed' },
       });
@@ -347,7 +368,7 @@ export class AuthActionTokenService {
     }
 
     if (record.expiresAt < Date.now()) {
-      emitPlatformCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
+      this.emitCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
         userId: record.userId,
         metadata: { tokenId: record.tokenId, reason: 'expired' },
       });
@@ -369,7 +390,7 @@ export class AuthActionTokenService {
     });
     if (recent === 0) return;
 
-    emitPlatformCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
+    this.emitCode(OBS_CODES.AUTH_ACTION_TOKEN_REJECTED, {
       userId,
       metadata: { type, reason: 'cooldown' },
     });

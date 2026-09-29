@@ -26,6 +26,8 @@ export interface NativeAuthState {
 
 export interface NativeTenantSummary {
   tenantId: string;
+  /** Protected control-plane scope or ordinary customer data scope. */
+  kind: 'administration' | 'organization';
   slug: string;
   name: string;
   role: string | null;

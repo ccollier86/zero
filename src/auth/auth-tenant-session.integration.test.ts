@@ -29,7 +29,10 @@ afterEach(async () => {
   }
 });
 
-async function start(options: { mfa?: boolean } = {}): Promise<Harness> {
+async function start(options: {
+  mfa?: boolean;
+  mfaPolicy?: 'required' | 'admin-required';
+} = {}): Promise<Harness> {
   const db = createReactiveDB({ mode: 'memory' });
   let runtime: AuthRuntime | null = null;
   const app = new Elysia().use(createAuthPlugin({
@@ -37,10 +40,10 @@ async function start(options: { mfa?: boolean } = {}): Promise<Harness> {
     tenancy: 'multi',
     bootstrap: 'public',
     registration: { mode: 'public' },
-    ...(options.mfa ? {
+    ...(options.mfa || options.mfaPolicy ? {
       mfa: {
         enabled: true,
-        policy: 'required' as const,
+        policy: options.mfaPolicy ?? 'required',
         methods: ['totp' as const],
         totp: {
           issuer: 'Tenant Session Tests',
@@ -455,6 +458,93 @@ describe('multi-tenant browser session completion', () => {
     expect(verifiedChallenge.body.accessToken).toBeUndefined();
     expect(verifiedChallenge.body.refreshToken).toBeUndefined();
     expect(activeSessionCount(harness.db)).toBe(before);
+  }, 60_000);
+
+  test('admin-required dynamically invalidates unassured sessions and preserves verified descendants', async () => {
+    const harness = await start({ mfaPolicy: 'admin-required' });
+    const tenancy = harness.runtime.getTenancyService()!;
+    const tokens = harness.runtime.getTokenService()!;
+
+    const bootstrap = await register(harness, 'admin-assurance-owner');
+    expect(bootstrap.body.mfaSetupRequired).toBe(true);
+    const bootstrapSetup = await post(harness, '/auth/mfa/setup', {
+      setupToken: bootstrap.body.mfaSetupToken,
+      method: 'totp',
+    });
+    const bootstrapVerified = await post(harness, '/auth/mfa/setup/verify', {
+      verificationToken: bootstrapSetup.body.verificationToken,
+      code: generateTotpCode({ secret: bootstrapSetup.body.totp.secret }),
+    });
+    expect(bootstrapVerified.status).toBe(200);
+    expect(bootstrapVerified.body.activeTenant.kind).toBe('administration');
+
+    const customer = await register(harness, 'admin-assurance-customer');
+    expect(customer.status).toBe(200);
+    expect(customer.body.mfaSetupRequired).toBeUndefined();
+    expect(customer.body.activeTenant.kind).toBe('organization');
+    await expect(tokens.resolveAuthContext(customer.body.accessToken)).resolves.toMatchObject({
+      userId: customer.body.user.userId,
+      tenantKind: 'organization',
+    });
+
+    tenancy.addMembership({
+      tenantId: bootstrap.body.tenant.tenantId,
+      userId: customer.body.user.userId,
+      roleKey: 'administrator',
+      createdBy: bootstrap.body.user.userId,
+    });
+
+    // The membership is live policy state. It invalidates both access and
+    // refresh use immediately; no token claim or UI state can delay the gate.
+    await expect(tokens.resolveAuthContext(customer.body.accessToken)).resolves.toBeNull();
+    const staleRefresh = await post(harness, '/auth/refresh', {
+      refreshToken: customer.body.refreshToken,
+    });
+    expect(staleRefresh.status).toBe(401);
+
+    const loginResult = await login(harness, 'admin-assurance-customer');
+    expect(loginResult.body.mfaSetupRequired).toBe(true);
+    const setup = await post(harness, '/auth/mfa/setup', {
+      setupToken: loginResult.body.mfaSetupToken,
+      method: 'totp',
+    });
+    const verified = await post(harness, '/auth/mfa/setup/verify', {
+      verificationToken: setup.body.verificationToken,
+      code: generateTotpCode({ secret: setup.body.totp.secret }),
+    });
+    expect(verified.status).toBe(200);
+    expect(verified.body.tenantSelectionRequired).toBe(true);
+    const continuation = harness.runtime.getAuthTenantSessionService()!.continuations
+      .inspect(verified.body.tenantSelection.continuation, 'tenant_selection');
+    expect(continuation?.mfaVerifiedAt).toBeNumber();
+
+    const selected = await post(harness, '/auth/tenants/select', {
+      continuation: verified.body.tenantSelection.continuation,
+      tenantId: bootstrap.body.tenant.tenantId,
+    });
+    expect(selected.status).toBe(200);
+    await expect(tokens.resolveAuthContext(selected.body.accessToken)).resolves.toMatchObject({
+      tenantKind: 'administration',
+      mfaVerifiedAt: expect.any(Number),
+    });
+
+    const switched = await post(harness, '/auth/tenants/switch', {
+      refreshToken: selected.body.refreshToken,
+      tenantId: customer.body.tenant.tenantId,
+    });
+    expect(switched.status).toBe(200);
+    await expect(tokens.resolveAuthContext(switched.body.accessToken)).resolves.toMatchObject({
+      tenantKind: 'organization',
+      mfaVerifiedAt: continuation!.mfaVerifiedAt,
+    });
+
+    const refreshed = await post(harness, '/auth/refresh', {
+      refreshToken: switched.body.refreshToken,
+    });
+    expect(refreshed.status).toBe(200);
+    await expect(tokens.resolveAuthContext(refreshed.body.accessToken)).resolves.toMatchObject({
+      mfaVerifiedAt: continuation!.mfaVerifiedAt,
+    });
   }, 60_000);
 });
 

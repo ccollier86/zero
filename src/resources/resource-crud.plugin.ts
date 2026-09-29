@@ -19,6 +19,11 @@ import { getSyncDB } from '../sync';
 import { ResourceCrudService, type ResourceCrudResult } from './resource-crud-service';
 import type { ResourcePolicyAuthConfig } from './resource-policy-types';
 import type { ResourceRegistry } from './resource-registry';
+import type {
+  PlatformCodeDefinition,
+  PlatformCodeEmitOptions,
+  PlatformEvent,
+} from '../observability/types';
 
 /** Options for generated resource CRUD route behavior. */
 export interface ResourceCrudRoutesConfig {
@@ -45,6 +50,11 @@ export interface ResourceCrudPluginConfig extends ResourceCrudRoutesConfig {
   getRoleAssignments?: () => AuthorizationRoleAssignmentResolver | null;
   /** App-local database provider. Legacy standalone callers may omit it. */
   getDB?: () => ReactiveDB | null;
+  /** App-local observability emitter. Standalone composition may omit it. */
+  emitCode?: (
+    definition: PlatformCodeDefinition,
+    options?: PlatformCodeEmitOptions,
+  ) => PlatformEvent;
 }
 
 const resourceParamsSchema = t.Object({
@@ -248,6 +258,7 @@ function createService(
     userStore: getUserStore(),
     authorizationKernel: config.getAuthorizationKernel?.() ?? null,
     roleAssignments: config.getRoleAssignments?.() ?? null,
+    emitCode: config.emitCode,
     defaultLimit: config.defaultLimit,
     maxLimit: config.maxLimit,
   });

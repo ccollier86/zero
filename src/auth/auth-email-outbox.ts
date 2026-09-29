@@ -16,6 +16,11 @@ import {
   tenantInvitationEnvelopeAad,
 } from './auth-tenant-invitation-envelope';
 import type { DomainMailboxJobBinding } from './verified-domain-service';
+import { emitPlatformCode } from '../observability/sink';
+import {
+  createAuthStateInvariantError,
+  type AuthPlatformCodeEmitter,
+} from './auth-observability';
 
 export class AuthEmailOutbox {
   private readonly store: AuthEmailOutboxStore;
@@ -23,15 +28,18 @@ export class AuthEmailOutbox {
   private readonly options: AuthEmailOutboxOptions;
   private readonly invitationEnvelope: AuthTenantInvitationEnvelope | null;
   private readonly assertCurrentProfile: () => void;
+  private readonly emitCode: AuthPlatformCodeEmitter;
 
   constructor(db: ReactiveDB, deliveryDeps: AuthEmailOutboxDeliveryDeps,
     options: Partial<AuthEmailOutboxOptions> = {}, private readonly clock = Date.now) {
     this.options = resolveAuthEmailOutboxOptions(options);
+    this.emitCode = deliveryDeps.emitCode ?? emitPlatformCode;
     this.assertCurrentProfile = () => deliveryDeps.store.assertCurrentProfile();
     this.store = new AuthEmailOutboxStore(
       db,
       `aew_${crypto.randomUUID()}`,
       this.assertCurrentProfile,
+      this.emitCode,
     );
     const columns = db.prepare('PRAGMA table_info(_auth_email_outbox)').all() as unknown as Array<{ name: string }>;
     const invitationCapable = columns.some(
@@ -51,8 +59,20 @@ export class AuthEmailOutbox {
       ...deliveryDeps,
       invitationEnvelope: this.invitationEnvelope,
     });
-    const processor = new AuthEmailOutboxProcessor(this.store, delivery, this.options, clock);
-    this.worker = new AuthEmailOutboxWorker(this.store, processor, this.options, clock);
+    const processor = new AuthEmailOutboxProcessor(
+      this.store,
+      delivery,
+      this.options,
+      clock,
+      this.emitCode,
+    );
+    this.worker = new AuthEmailOutboxWorker(
+      this.store,
+      processor,
+      this.options,
+      clock,
+      this.emitCode,
+    );
   }
 
   /**
@@ -66,7 +86,11 @@ export class AuthEmailOutbox {
   }): { result: 'enqueued' | 'capacity'; jobId: string } {
     this.assertCurrentProfile();
     if (!this.invitationEnvelope) {
-      throw new Error('[auth] Tenant invitation delivery is unavailable.');
+      throw createAuthStateInvariantError(this.emitCode, {
+        component: 'auth-email-outbox',
+        invariant: 'tenant-invitation-delivery-unavailable',
+        message: '[auth] Tenant invitation delivery is unavailable.',
+      });
     }
     const recipient = canonicalizeEmail(input.recipient);
     const jobId = `aem_${crypto.randomUUID()}`;
@@ -81,7 +105,7 @@ export class AuthEmailOutbox {
       secretEnvelope: envelope,
       jobId,
     }, this.clock(), this.options.maxActiveJobs, this.options.maxStoredJobs);
-    emitAuthEmailQueued('tenant_invitation', result);
+    emitAuthEmailQueued('tenant_invitation', result, this.emitCode);
     if (result === 'enqueued') this.worker.wake();
     return { result, jobId };
   }
@@ -93,7 +117,7 @@ export class AuthEmailOutbox {
     const result = this.store.enqueue(normalized, this.clock(),
       this.options.requestWindowMs, this.options.maxActiveJobs,
       this.options.maxStoredJobs);
-    emitAuthEmailQueued(input.kind, result);
+    emitAuthEmailQueued(input.kind, result, this.emitCode);
     if (result === 'enqueued') this.worker.wake();
     return result;
   }
@@ -112,7 +136,7 @@ export class AuthEmailOutbox {
       identityContinuationId: input.identityContinuationId,
     }, this.clock(), this.options.requestWindowMs, this.options.maxActiveJobs,
     this.options.maxStoredJobs);
-    emitAuthEmailQueued('domain_mailbox_proof', result);
+    emitAuthEmailQueued('domain_mailbox_proof', result, this.emitCode);
     if (result === 'enqueued') this.worker.wake();
     return result;
   }

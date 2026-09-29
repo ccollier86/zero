@@ -279,6 +279,180 @@ describe('durable browser session boundary', () => {
       .toEqual({ count: 0 });
   });
 
+  test('rejects Promise admission and replacement hooks without rotating web authority', async () => {
+    const app = await createHarness('multi');
+    const user = await createUser(app, 'async-web-authority');
+    const created = app.tenancy!.createTenant({
+      slug: 'async-web-authority',
+      name: 'Async Web Authority',
+      ownerUserId: user.userId,
+    });
+    const binding = {
+      tenantId: created.tenant.tenantId,
+      membershipId: created.ownerMembership.membershipId,
+    };
+    const asyncFalse = (async () => false) as unknown as () => boolean;
+
+    await expect(app.tokens.issueTokenPairAfterAdmission(
+      user,
+      { binding },
+      asyncFalse,
+    )).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Web session issuance admission must be synchronous.',
+    });
+    expect(app.db.prepare('SELECT COUNT(*) AS count FROM _auth_sessions').get())
+      .toEqual({ count: 0 });
+    expect(app.db.prepare('SELECT COUNT(*) AS count FROM _refresh_tokens').get())
+      .toEqual({ count: 0 });
+
+    const pair = await app.tokens.issueTokenPair(user, { binding });
+    await expect(app.tokens.replaceWebSession(
+      pair.refreshToken,
+      binding,
+      asyncFalse,
+    )).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Web session replacement admission must be synchronous.',
+    });
+    await expect(app.tokens.replaceWebSession(
+      pair.refreshToken,
+      binding,
+      () => true,
+      async () => {},
+    )).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Web session replacement callback must be synchronous.',
+    });
+
+    expect(app.tokens.resolveWebRefreshProof(pair.refreshToken)).toMatchObject({
+      user: { userId: user.userId },
+      record: { revokedAt: null },
+      session: { status: 'active' },
+    });
+    expect(app.db.prepare('SELECT COUNT(*) AS count FROM _auth_sessions').get())
+      .toEqual({ count: 1 });
+    expect(app.db.prepare('SELECT COUNT(*) AS count FROM _refresh_tokens').get())
+      .toEqual({ count: 1 });
+  });
+
+  test('rejects Promise callbacks at direct session and refresh-store boundaries', async () => {
+    const app = await createHarness('single');
+    const user = await createUser(app, 'direct-async-session');
+    const asyncTrue = (async () => true) as unknown as () => boolean;
+    const asyncFalse = (async () => false) as unknown as () => boolean;
+
+    const denied = app.sessions.prepareWebSession({
+      userId: user.userId,
+      expiresAt: Date.now() + 60_000,
+    });
+    expect(() => app.sessions.persistPreparedWebSession(
+      denied,
+      () => true,
+      asyncFalse,
+    )).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Web session admission must be synchronous.',
+    }));
+
+    const orphan = app.sessions.prepareWebSession({
+      userId: user.userId,
+      expiresAt: Date.now() + 60_000,
+    });
+    expect(() => app.sessions.persistPreparedWebSession(
+      orphan,
+      asyncTrue,
+    )).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Refresh persistence callback must be synchronous.',
+    }));
+    expect(app.db.prepare('SELECT COUNT(*) AS count FROM _auth_sessions').get())
+      .toEqual({ count: 0 });
+
+    const pair = await app.tokens.issueTokenPair(user);
+    const proof = app.tokens.resolveWebRefreshProof(pair.refreshToken)!;
+    app.db.exec('CREATE TABLE session_callback_probe (value TEXT PRIMARY KEY)');
+    expect(() => app.sessions.withActiveWebSession({
+      sessionId: proof.session.sessionId,
+      userId: user.userId,
+      generation: proof.session.generation,
+    }, Date.now() + 60_000, (async () => {
+      app.db.prepare('INSERT INTO session_callback_probe (value) VALUES (?)').run('unsafe');
+      return true;
+    }) as never)).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Active web session operation must be synchronous.',
+    }));
+    expect(app.db.prepare('SELECT COUNT(*) AS count FROM session_callback_probe').get())
+      .toEqual({ count: 0 });
+
+    expect(() => app.users.replaceRefreshSessionAtomically(
+      proof.record,
+      {
+        tokenId: 'async-parent-replacement',
+        tokenHash: 'async-parent-replacement-hash',
+        expiresAt: Date.now() + 60_000,
+        createdAt: Date.now(),
+      },
+      'async-parent-session',
+      app.users.getAuthGeneration(user.userId),
+      asyncFalse,
+    )).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Refresh parent replacement must be synchronous.',
+    }));
+    expect(app.users.getRefreshTokenByHash(hashToken(pair.refreshToken))?.revokedAt).toBeNull();
+    expect(app.users.getRefreshTokenById('async-parent-replacement')).toBeNull();
+
+    app.sessions.setMfaAssuranceValidator(asyncFalse);
+    expect(() => app.sessions.resolveWebSession({
+      sessionId: proof.session.sessionId,
+      userId: user.userId,
+      generation: proof.session.generation,
+    })).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] MFA assurance validation must be synchronous.',
+    }));
+  });
+
+  test('rejects async authorization resolvers and public runtime profile guards', async () => {
+    const app = await createHarness('single');
+    const user = await createUser(app, 'async-runtime-guards');
+    const pair = await app.tokens.issueTokenPair(user);
+
+    app.tokens.setAuthorizationRevisionResolver(
+      (async () => 'revision') as unknown as () => string,
+    );
+    await expect(app.tokens.resolveAuthContext(pair.accessToken)).rejects.toMatchObject({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Authorization revision resolution must be synchronous.',
+    });
+    app.tokens.setAuthorizationRevisionResolver(() => null);
+
+    app.users.setRuntimeProfileGuard(async () => {});
+    expect(() => app.users.getUserById(user.userId)).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] User runtime profile guard must be synchronous.',
+    }));
+    app.users.setRuntimeProfileGuard(() => {});
+
+    app.sessions.setRuntimeProfileGuard(async () => {});
+    expect(() => app.sessions.resolveWebSession({
+      sessionId: app.tokens.resolveWebRefreshProof(pair.refreshToken)!.session.sessionId,
+      userId: user.userId,
+    })).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Session runtime profile guard must be synchronous.',
+    }));
+    app.sessions.setRuntimeProfileGuard(() => {});
+
+    app.tokens.setRuntimeProfileGuard(async () => {});
+    expect(() => app.tokens.getAuthorityRevision()).toThrow(expect.objectContaining({
+      code: 'AUTH_STATE_INVARIANT_FAILED',
+      message: '[auth] Token runtime profile guard must be synchronous.',
+    }));
+  });
+
   for (const invalidation of [
     'tenant suspension',
     'tenant generation',

@@ -1,9 +1,5 @@
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
-import { defineAuthSessionContinuationTables } from '../auth/auth-session-continuation-schema';
-import { defineAuthSessionTables } from '../auth/auth-session-schema';
-import { defineTenancyTables } from '../auth/tenancy/tenancy-schema';
-import { createReactiveDB } from '../sync/reactive-db';
 import { migrations } from './index';
 import { Migrator } from './migrator';
 
@@ -14,10 +10,8 @@ const TARGET_TABLES = [
   '_auth_session_continuations',
 ] as const;
 
-test('migration 009 matches runtime auth tenancy/session schema and preserves legacy proofs', () => {
+test('migration 009 freezes its historical tenancy/session schema and preserves legacy proofs', () => {
   const migratedDb = new Database(':memory:');
-  const runtimeDb = new Database(':memory:');
-  const runtime = createReactiveDB({ database: runtimeDb });
   const migrator = new Migrator({
     database: migratedDb,
     dbPath: ':memory:',
@@ -31,20 +25,34 @@ test('migration 009 matches runtime auth tenancy/session schema and preserves le
     seedLegacyAuthState(migratedDb);
     expect(migrator.run('009')).toEqual(['009']);
 
-    // Runtime tenancy schema includes last-owner triggers on the canonical
-    // users table. Migration 001 already provides it on the upgraded side;
-    // mirror that dependency before invoking the isolated runtime helper.
-    runtime.exec(`CREATE TABLE users (
-      user_id TEXT PRIMARY KEY,
-      status TEXT NOT NULL DEFAULT 'active'
-    )`);
-    defineTenancyTables(runtime);
-    defineAuthSessionTables(runtime);
-    defineAuthSessionContinuationTables(runtime);
-
-    for (const table of TARGET_TABLES) {
-      expect(tableShape(migratedDb, table)).toEqual(tableShape(runtimeDb, table));
-    }
+    expect(columnNames(migratedDb, '_auth_tenants')).toEqual([
+      'tenant_id', 'slug', 'name', 'status', 'authorization_generation',
+      'created_by', 'created_at', 'updated_at', 'suspended_at',
+    ]);
+    expect(columnNames(migratedDb, '_auth_tenant_memberships')).toEqual([
+      'membership_id', 'tenant_id', 'user_id', 'status', 'role_key',
+      'authorization_generation', 'joined_at', 'created_at', 'updated_at',
+      'suspended_at', 'removed_at', 'created_by',
+    ]);
+    expect(columnNames(migratedDb, '_auth_sessions')).toEqual([
+      'session_id', 'user_id', 'kind', 'status', 'generation', 'scope_kind',
+      'scope_id', 'tenant_id', 'membership_id',
+      'tenant_authorization_generation', 'membership_authorization_generation',
+      'provenance', 'authenticated_at', 'created_at', 'last_seen_at',
+      'expires_at', 'revoked_at', 'revocation_reason',
+    ]);
+    expect(columnNames(migratedDb, '_auth_session_continuations')).toEqual([
+      'continuation_id', 'application_id', 'user_id', 'purpose', 'token_hash',
+      'auth_generation', 'expires_at', 'consumed_at', 'created_at',
+    ]);
+    expect(migratedDb.query(`SELECT sql FROM sqlite_master
+      WHERE type = 'table' AND name = '_auth_session_continuations'`).get())
+      .toEqual(expect.objectContaining({
+        sql: expect.stringContaining("'tenant_onboarding'"),
+      }));
+    expect(migratedDb.query(`SELECT name FROM sqlite_master
+      WHERE type = 'trigger' AND name LIKE 'trg_auth_administration_%'`).all())
+      .toEqual([]);
     expect(columnNames(migratedDb, '_refresh_tokens')).toContain('session_id');
     expect(migratedDb.query(`
       SELECT token_id, session_id FROM _refresh_tokens WHERE token_id = 'legacy-refresh'
@@ -66,13 +74,16 @@ test('migration 009 matches runtime auth tenancy/session schema and preserves le
     });
 
     // Compatibility startup and a manually retried migration remain idempotent.
+    const frozenShapes = Object.fromEntries(TARGET_TABLES.map((table) => [
+      table,
+      tableShape(migratedDb, table),
+    ]));
     migrations.find((migration) => migration.version === '009')!.up(migratedDb);
-    expect(tableShape(migratedDb, '_auth_sessions'))
-      .toEqual(tableShape(runtimeDb, '_auth_sessions'));
+    for (const table of TARGET_TABLES) {
+      expect(tableShape(migratedDb, table)).toEqual(frozenShapes[table]);
+    }
   } finally {
-    runtime.dispose();
     migrator.dispose();
-    runtimeDb.close();
     migratedDb.close();
   }
 });

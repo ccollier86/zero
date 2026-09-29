@@ -14,6 +14,7 @@ import type { UserStore } from './user-store';
 import type { TenancyService } from './tenancy/tenancy-service';
 import type { AuthTenantSessionService } from './auth-tenant-session-service';
 import type { AuthRequestAdmissionService } from './auth-request-admission-service';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 
 export interface AuthSessionPluginConfig {
   getUserStore: () => UserStore | null;
@@ -30,6 +31,8 @@ export interface AuthSessionPluginConfig {
   getRequestAdmissionService?: () => AuthRequestAdmissionService | null;
   getEmailRuntime: () => EmailRuntime;
   getAuthConfig: () => ResolvedAuthBehaviorConfig;
+  /** Managed composition supplies an app-local emitter; standalone adapters may omit it. */
+  emitCode?: AuthPlatformCodeEmitter;
 }
 
 export interface AuthSessionServices {

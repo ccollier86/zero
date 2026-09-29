@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { Elysia } from 'elysia';
 import type { AuthRuntime } from '../auth/auth-runtime';
 import { createAuthPlugin } from '../auth/auth.plugin';
+import { MemoryEventStore } from '../observability';
+import { ZERO_OBSERVABILITY_RUNTIME } from '../runtime/service-keys';
 import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 import type { EphemeralTopicPolicy } from './ephemeral-policy';
 import type { ReactiveDB } from './reactive-db';
@@ -228,6 +230,12 @@ describe('Sync auth cross-replica invalidation', () => {
 
 function createReplica(name: string, path: string): Replica {
   const runtime = new ZeroAppRuntime(name);
+  const events = new MemoryEventStore({ maxEvents: 100 });
+  runtime.set(ZERO_OBSERVABILITY_RUNTIME, {
+    sink: events,
+    store: events,
+    config: { console: false },
+  });
   const services: {
     auth?: AuthRuntime;
     db?: ReactiveDB;

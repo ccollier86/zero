@@ -37,6 +37,7 @@ export interface NativeAuthorizationCodeRecord extends StoredNativeAuthority {
   nonce: string;
   codeChallenge: string;
   authGeneration: number;
+  mfaVerifiedAt: number | null;
   createdAt: number;
   expiresAt: number;
   consumedAt: number | null;
@@ -49,6 +50,7 @@ export interface NativeSessionRecord extends StoredNativeAuthority {
   clientId: string;
   scope: string;
   authGeneration: number;
+  mfaVerifiedAt: number | null;
   expiresAt: number;
   createdAt: number;
   rotationCount: number;

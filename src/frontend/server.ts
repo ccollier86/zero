@@ -493,6 +493,7 @@ export type {
 export type {
   AuthAccountConfig,
   AuthAccountEmailConfig,
+  AuthAdministrationTenantConfig,
   AuthActionTokenRecord,
   AuthActionTokenType,
   AuthAuthorizationConfig,
@@ -514,6 +515,7 @@ export type {
   AuthMfaPolicy,
   AuthMfaQrRobustness,
   AuthMfaTotpConfig,
+  AuthPermissionScope,
   AuthPluginConfig,
   AuthRegistrationConfig,
   AuthRegistrationMode,

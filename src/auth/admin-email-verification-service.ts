@@ -5,19 +5,27 @@
  * manual verification override. It does not authenticate HTTP requests.
  */
 
+import { OBS_CODES } from '../observability/codes';
+import { emitPlatformCode } from '../observability/sink';
 import type { AccountEmailService } from './account-email-service';
 import type { AuthActionTokenService } from './action-token-service';
 import { discardUndeliveredActionToken } from './auth-action-token-delivery';
+import { classifyAuthEmailFailure } from './auth-email-outbox-failure-classification';
 import { AuthError, type ResolvedAuthBehaviorConfig } from './types';
 import type { AuthSecurityAuditContext, UserStore } from './user-store';
-import type { AssertAuthAdminMutationAuthority } from './auth-admin-mutation-authority';
+import {
+  invokeAuthAdminMutationAuthority,
+  type AssertAuthAdminMutationAuthority,
+} from './auth-admin-mutation-authority';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 
 export class AdminEmailVerificationService {
   constructor(
     private readonly store: UserStore,
     private readonly tokens: AuthActionTokenService,
     private readonly email: AccountEmailService,
-    private readonly config: ResolvedAuthBehaviorConfig
+    private readonly config: ResolvedAuthBehaviorConfig,
+    private readonly emitCode: AuthPlatformCodeEmitter = emitPlatformCode,
   ) {}
 
   /** Send a tokenized verification link to an active pending account. */
@@ -29,13 +37,13 @@ export class AdminEmailVerificationService {
       throw new AuthError('Email verification is disabled', 'EMAIL_VERIFICATION_DISABLED', 403);
     }
     const prepared = this.store.transaction(() => {
-      const actorId = assertCurrentAuthority().userId;
+      const actorId = this.assertAuthority(assertCurrentAuthority, userId).userId;
       const user = this.requireUser(userId);
       if (user.status === 'suspended') {
         throw new AuthError('Account is suspended', 'ACCOUNT_SUSPENDED', 403);
       }
       if (!user.emailVerificationRequired || user.emailVerifiedAt !== null) {
-        return { user, created: null };
+        return { actorId, user, created: null };
       }
       this.email.assertReady();
       const created = this.tokens.create({
@@ -45,7 +53,7 @@ export class AdminEmailVerificationService {
         metadata: { source: 'admin' },
         skipCooldown: true,
       });
-      return { user, created };
+      return { actorId, user, created };
     });
     if (!prepared.created) return;
     try {
@@ -54,8 +62,28 @@ export class AdminEmailVerificationService {
         rawToken: prepared.created.rawToken,
         token: prepared.created.record,
       });
-      assertCurrentAuthority();
     } catch (error) {
+      const cleanupSucceeded = discardUndeliveredActionToken(
+        this.tokens,
+        prepared.created.rawToken,
+      );
+      const failure = classifyAuthEmailFailure(error);
+      this.emitCode(OBS_CODES.AUTH_ADMIN_EMAIL_VERIFICATION_DELIVERY_FAILED, {
+        userId: prepared.actorId,
+        metadata: {
+          targetUserId: userId,
+          cleanupSucceeded,
+          code: failure.code,
+          retryable: failure.retryable,
+        },
+      });
+      throw error;
+    }
+    try {
+      this.assertAuthority(assertCurrentAuthority, userId);
+    } catch (error) {
+      // The message cannot be recalled, but revoking the one-time credential
+      // prevents an authority change from completing through the sent link.
       discardUndeliveredActionToken(this.tokens, prepared.created.rawToken);
       throw error;
     }
@@ -75,7 +103,7 @@ export class AdminEmailVerificationService {
       );
     }
     return this.store.transaction(() => {
-      const actorId = assertCurrentAuthority().userId;
+      const actorId = this.assertAuthority(assertCurrentAuthority, userId).userId;
       const existing = this.requireUser(userId);
       const updated = this.store.markEmailVerified(userId);
       if (!updated) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
@@ -101,5 +129,16 @@ export class AdminEmailVerificationService {
     const user = this.store.getUserById(userId);
     if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
     return user;
+  }
+
+  private assertAuthority(
+    assertion: AssertAuthAdminMutationAuthority,
+    targetUserId: string,
+  ) {
+    return invokeAuthAdminMutationAuthority(
+      assertion,
+      { targetUserId },
+      { component: 'admin-email-verification-service', emitCode: this.emitCode },
+    );
   }
 }

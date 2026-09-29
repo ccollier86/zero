@@ -23,6 +23,8 @@ import {
   staleApplicationAuthority,
   type AssertAuthApplicationMutationAuthority,
 } from './auth-application-mutation-authority';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
+import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 
 interface ApplicationUserRow {
   user_id: string;
@@ -66,6 +68,7 @@ export class AuthApplicationAdministrationService {
     private readonly users: UserStore,
     private readonly roles: AuthorizationRoleService,
     private readonly audit: AuthAuditService,
+    private readonly emitCode?: AuthPlatformCodeEmitter,
   ) {}
 
   getConfig(actorUserId: string): AuthApplicationAdministrationConfig {
@@ -185,7 +188,10 @@ export class AuthApplicationAdministrationService {
       this.users.assertCurrentProfile();
       // This live authority read and the assignment writes below share one
       // SQLite transaction. A stale request snapshot can never win the race.
-      const authority = input.assertCurrentAuthority(['application.roles:manage']);
+      const authority = this.invokeAuthority(
+        input.assertCurrentAuthority,
+        ['application.roles:manage'],
+      );
       if (authority.auth.userId !== input.actorUserId) {
         throw staleApplicationAuthority();
       }
@@ -274,7 +280,10 @@ export class AuthApplicationAdministrationService {
   }): AuthApplicationOwnershipTransferResult {
     return this.db.transaction(() => {
       this.users.assertCurrentProfile();
-      const authority = input.assertCurrentAuthority(['application.roles:manage']);
+      const authority = this.invokeAuthority(
+        input.assertCurrentAuthority,
+        ['application.roles:manage'],
+      );
       if (authority.auth.userId !== input.actorUserId) {
         throw staleApplicationAuthority();
       }
@@ -308,6 +317,21 @@ export class AuthApplicationAdministrationService {
         actorAuthorizationChanged: true as const,
       });
     });
+  }
+
+  private invokeAuthority(
+    assertion: AssertAuthApplicationMutationAuthority,
+    permissions: readonly PermissionKey[],
+  ) {
+    return invokeSynchronousAuthCallback(
+      () => assertion(permissions),
+      {
+        component: 'auth-application-administration-service',
+        invariant: 'authority-callback-async',
+        message: '[auth] Application administration authority callback must be synchronous.',
+        emitCode: this.emitCode,
+      },
+    );
   }
 
   private requireActorPermission(userId: string, permission: PermissionKey) {

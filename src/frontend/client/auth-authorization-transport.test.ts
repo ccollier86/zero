@@ -3,6 +3,7 @@ import {
   AuthAuthorizationTransport,
   parseAuthAuthorizationSnapshot,
 } from './auth-authorization-transport';
+import { hasAuthorizationPermission } from './auth-authorization-types';
 
 describe('AuthAuthorizationTransport', () => {
   test('uses the dedicated authenticated endpoint and parses a safe scope', async () => {
@@ -39,6 +40,79 @@ describe('AuthAuthorizationTransport', () => {
         membershipId: 'membership-1',
       },
     })).toThrow('invalid');
+    expect(() => parseAuthAuthorizationSnapshot({
+      ...validSnapshot(),
+      applicationScope: {
+        ...validSnapshot().scope,
+        kind: 'tenant',
+        tenantId: 'tenant-1',
+        membershipId: 'membership-1',
+      },
+    })).toThrow('invalid');
+    expect(() => parseAuthAuthorizationSnapshot({
+      ...validSnapshot(),
+      applicationScope: {
+        ...validSnapshot().scope,
+        permissions: ['application.users:read'],
+      },
+    })).toThrow('invalid');
+    expect(() => parseAuthAuthorizationSnapshot({
+      ...validSnapshot(),
+      profile: { tenancy: 'multi', authorization: 'advanced' },
+      scope: {
+        kind: 'tenant',
+        scopeId: 'tenant-admin',
+        tenantId: 'tenant-admin',
+        membershipId: 'membership-admin',
+        roles: ['administrator'],
+        permissions: ['tenant:read'],
+        allPermissions: false,
+        revision: 'tenant-scope-1',
+      },
+      applicationScope: {
+        kind: 'application',
+        scopeId: 'wrong-scope',
+        roles: ['administrator'],
+        permissions: ['application.users:read'],
+        allPermissions: false,
+        revision: 'application-scope-1',
+      },
+    })).toThrow('invalid');
+    expect(() => parseAuthAuthorizationSnapshot({
+      ...validSnapshot(),
+      scope: {
+        ...validSnapshot().scope,
+        roles: ['reader', 'reader'],
+      },
+    })).toThrow('invalid');
+  });
+
+  test('parses a separate administration application scope for permission hints', () => {
+    const parsed = parseAuthAuthorizationSnapshot({
+      ...validSnapshot(),
+      profile: { tenancy: 'multi', authorization: 'advanced' },
+      scope: {
+        kind: 'tenant',
+        scopeId: 'tenant-admin',
+        tenantId: 'tenant-admin',
+        membershipId: 'membership-admin',
+        roles: ['administrator'],
+        permissions: ['tenant:read'],
+        allPermissions: false,
+        revision: 'tenant-scope-1',
+      },
+      applicationScope: {
+        kind: 'application',
+        scopeId: 'application',
+        roles: ['administrator'],
+        permissions: ['application.users:read'],
+        allPermissions: false,
+        revision: 'application-scope-1',
+      },
+    });
+    expect(hasAuthorizationPermission(parsed, 'tenant:read')).toBe(true);
+    expect(hasAuthorizationPermission(parsed, 'application.users:read')).toBe(true);
+    expect(hasAuthorizationPermission(parsed, 'application.users:manage')).toBe(false);
   });
 });
 

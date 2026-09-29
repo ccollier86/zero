@@ -7,6 +7,7 @@
 
 import type { ReactiveDB } from '../sync/reactive-db';
 import {
+  ensureNativeMfaAssuranceColumns,
   ensureNativeTenantAuthorityColumns,
   repairNativeAuthSchema,
 } from './oidc/native-auth-schema-repair';
@@ -25,6 +26,7 @@ import {
 import { defineAuthSessionContinuationTables } from './auth-session-continuation-schema';
 import { defineAuthAuditTables } from './auth-audit-schema';
 import { defineAuthInstalledProfileTable } from './auth-profile-state';
+import { defineAuthAuthorizationManifestTable } from './auth-authorization-manifest';
 
 /**
  * Define all auth tables on the shared ReactiveDB.
@@ -206,6 +208,7 @@ export function defineAuthTables(db: ReactiveDB): void {
   `);
 
   defineAuthInstalledProfileTable(db);
+  defineAuthAuthorizationManifestTable(db);
 
   defineCurrentAuthRequestAdmissionTables(db);
 
@@ -221,6 +224,7 @@ export function defineAuthTables(db: ReactiveDB): void {
   db.transaction(() => {
     repairNativeAuthSchema(db);
     ensureNativeTenantAuthorityColumns(db);
+    ensureNativeMfaAssuranceColumns(db);
   });
   for (const statement of createNativeAuthIndexStatements()) db.exec(statement);
 }

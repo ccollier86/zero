@@ -2,8 +2,10 @@
 
 import type { Database } from 'bun:sqlite';
 import type { ReactiveDB } from '../../sync/reactive-db';
-import { defineWorkflowExecutionAuthorityTables } from '../../workflows/workflow-execution-authority';
 import type { Migration } from '../types';
+import {
+  defineWorkflowExecutionAuthorityTables,
+} from './014_workflow_execution_authority_schema';
 
 export const migration: Migration = {
   version: '014',

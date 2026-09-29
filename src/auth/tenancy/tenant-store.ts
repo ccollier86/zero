@@ -19,13 +19,18 @@ import {
   type TenantCreationResult,
   type TenantMembershipRecord,
   type TenantMembershipStatus,
+  type TenantKind,
   type TenantOwnershipTransferResult,
   type TenantRecord,
   type TenantStatus,
 } from './tenancy-types';
+import type { AuthPlatformCodeEmitter } from '../auth-observability';
+import { invokeSynchronousAuthCallback } from '../auth-synchronous-callback';
+import { AuthError } from '../types';
 
 interface TenantRow {
   tenant_id: string;
+  kind: string;
   slug: string;
   name: string;
   status: string;
@@ -78,6 +83,8 @@ export interface TenantStoreOptions {
   }) => void;
   /** App-local installed-profile fence checked under every mutation lock. */
   assertCurrentProfile?: () => void;
+  /** App-local observability boundary for transaction invariant failures. */
+  emitCode?: AuthPlatformCodeEmitter;
 }
 
 /**
@@ -94,6 +101,7 @@ export class TenantStore {
   private readonly onOwnerRoleChanged:
     NonNullable<TenantStoreOptions['onOwnerRoleChanged']> | null;
   private readonly assertCurrentProfile: () => void;
+  private readonly emitCode?: AuthPlatformCodeEmitter;
   private readonly stmts: {
     userExists: Statement;
     activeUserExists: Statement;
@@ -103,10 +111,13 @@ export class TenantStore {
     insertMembership: Statement;
     getTenantById: Statement;
     getTenantBySlug: Statement;
+    getAdministrationTenant: Statement;
+    countTenants: Statement;
     getMembershipById: Statement;
     getMembershipByTenantUser: Statement;
     getMembershipTenantHint: Statement;
     listActiveMembershipsForUser: Statement;
+    hasActiveAdministrationMembership: Statement;
     listActiveMembershipsForTenant: Statement;
     lockTenant: Statement;
     countActiveOwners: Statement;
@@ -132,7 +143,16 @@ export class TenantStore {
       ?? (() => `tmem_${crypto.randomUUID()}`);
     this.onOwnerCreated = options.onOwnerCreated ?? null;
     this.onOwnerRoleChanged = options.onOwnerRoleChanged ?? null;
-    this.assertCurrentProfile = options.assertCurrentProfile ?? (() => {});
+    this.emitCode = options.emitCode;
+    const assertCurrentProfile = options.assertCurrentProfile;
+    this.assertCurrentProfile = assertCurrentProfile
+      ? () => invokeSynchronousAuthCallback(assertCurrentProfile, {
+          component: 'tenant-store',
+          invariant: 'runtime-profile-guard-async',
+          message: '[auth] Tenant runtime profile guard must be synchronous.',
+          emitCode: this.emitCode,
+        })
+      : () => {};
     this.stmts = {
       userExists: db.prepare('SELECT user_id FROM users WHERE user_id = ?'),
       activeUserExists: db.prepare(
@@ -148,9 +168,9 @@ export class TenantStore {
       `),
       insertTenant: db.prepare(`
         INSERT INTO _auth_tenants (
-          tenant_id, slug, name, status, authorization_generation,
+          tenant_id, kind, slug, name, status, authorization_generation,
           created_by, created_at, updated_at, suspended_at
-        ) VALUES (?, ?, ?, 'active', 0, ?, ?, ?, NULL)
+        ) VALUES (?, ?, ?, ?, 'active', 0, ?, ?, ?, NULL)
       `),
       insertMembership: db.prepare(`
         INSERT INTO _auth_tenant_memberships (
@@ -165,6 +185,10 @@ export class TenantStore {
       getTenantBySlug: db.prepare(
         'SELECT * FROM _auth_tenants WHERE slug = ? COLLATE NOCASE',
       ),
+      getAdministrationTenant: db.prepare(
+        "SELECT * FROM _auth_tenants WHERE kind = 'administration' LIMIT 2",
+      ),
+      countTenants: db.prepare('SELECT COUNT(*) AS count FROM _auth_tenants'),
       getMembershipById: db.prepare(
         'SELECT * FROM _auth_tenant_memberships WHERE membership_id = ?',
       ),
@@ -181,6 +205,16 @@ export class TenantStore {
         INNER JOIN _auth_tenants t ON t.tenant_id = m.tenant_id
         WHERE m.user_id = ? AND m.status = 'active' AND t.status = 'active'
         ORDER BY t.slug ASC, m.membership_id ASC
+      `),
+      hasActiveAdministrationMembership: db.prepare(`
+        SELECT 1 AS present
+        FROM _auth_tenant_memberships membership
+        INNER JOIN _auth_tenants tenant ON tenant.tenant_id = membership.tenant_id
+        WHERE membership.user_id = ?
+          AND membership.status = 'active'
+          AND tenant.status = 'active'
+          AND tenant.kind = 'administration'
+        LIMIT 1
       `),
       listActiveMembershipsForTenant: db.prepare(`
         SELECT * FROM _auth_tenant_memberships
@@ -293,6 +327,7 @@ export class TenantStore {
     try {
       return this.persistPreparedTenantWithOwner(prepared);
     } catch (error) {
+      if (error instanceof AuthError) throw error;
       if (error instanceof TenancyError) throw error;
       // Never translate a stale-runtime fence failure into a slug conflict.
       this.assertCurrentProfile();
@@ -311,6 +346,7 @@ export class TenantStore {
     return {
       tenantId: this.createTenantId(),
       membershipId: this.createMembershipId(),
+      kind: input.kind ?? 'organization',
       slug: canonicalizeTenantSlug(input.slug),
       name: canonicalizeTenantName(input.name),
       ownerUserId: input.ownerUserId,
@@ -343,6 +379,7 @@ export class TenantStore {
         }
         this.stmts.insertTenant.run(
           prepared.tenantId,
+          prepared.kind,
           prepared.slug,
           prepared.name,
           prepared.createdBy,
@@ -359,7 +396,7 @@ export class TenantStore {
           prepared.createdAt,
           prepared.createdBy,
         );
-        this.onOwnerCreated?.({
+        this.notifyOwnerCreated({
           tenantId: prepared.tenantId,
           membershipId: prepared.membershipId,
           userId: prepared.ownerUserId,
@@ -372,6 +409,7 @@ export class TenantStore {
         };
       });
     } catch (error) {
+      if (error instanceof AuthError) throw error;
       if (error instanceof TenancyError) throw error;
       // Never translate a stale-runtime fence failure into a slug conflict.
       this.assertCurrentProfile();
@@ -428,7 +466,7 @@ export class TenantStore {
           input.createdBy,
         );
         if (roleKey === TENANT_OWNER_ROLE_KEY) {
-          this.onOwnerCreated?.({
+          this.notifyOwnerCreated({
             tenantId: input.tenantId,
             membershipId,
             userId: input.userId,
@@ -439,6 +477,7 @@ export class TenantStore {
         return this.requireMembership(membershipId);
       });
     } catch (error) {
+      if (error instanceof AuthError) throw error;
       if (!(error instanceof TenancyError)
         && this.getMembership(input.tenantId, input.userId)) {
         throw new TenancyError(
@@ -461,6 +500,78 @@ export class TenantStore {
     return this.getTenantByCanonicalSlug(canonicalizeTenantSlug(slug));
   }
 
+  /** Return the sole protected administration tenant, when provisioned. */
+  getAdministrationTenant(): TenantRecord | null {
+    this.assertCurrentProfile();
+    const rows = this.stmts.getAdministrationTenant.all() as TenantRow[];
+    if (rows.length > 1) {
+      throw new TenancyError(
+        'Multiple administration tenants exist',
+        'TENANT_ADMINISTRATION_EXISTS',
+      );
+    }
+    return rows[0] ? mapTenant(rows[0]) : null;
+  }
+
+  /** Count retained tenant boundaries for startup readiness checks. */
+  countTenants(): number {
+    this.assertCurrentProfile();
+    return (this.stmts.countTenants.get() as CountRow).count;
+  }
+
+  /**
+   * Adopt one exact existing organization as the administration boundary.
+   * The database permits this one-way transition only while no administration
+   * tenant exists; kind can never be changed again afterward.
+   */
+  adoptAdministrationTenant(tenantId: string): TenantRecord {
+    return this.mutation(() => {
+      this.lockTenant(tenantId);
+      const current = this.requireTenant(tenantId);
+      const administration = this.getAdministrationTenant();
+      if (administration) {
+        if (administration.tenantId === tenantId) return administration;
+        throw new TenancyError(
+          'An administration tenant already exists',
+          'TENANT_ADMINISTRATION_EXISTS',
+        );
+      }
+      if (current.status !== 'active') {
+        throw new TenancyError(
+          'Administration tenant must be active',
+          'TENANT_NOT_ACTIVE',
+        );
+      }
+      const changedAt = this.now();
+      const changed = this.db.prepare(`
+        UPDATE _auth_tenants
+        SET kind = 'administration',
+            authorization_generation = authorization_generation + 1,
+            updated_at = ?
+        WHERE tenant_id = ? AND kind = 'organization' AND status = 'active'
+          AND NOT EXISTS (
+            SELECT 1 FROM _auth_tenants WHERE kind = 'administration'
+          )
+      `).run(changedAt, tenantId);
+      // `changes` includes the authorization-revision trigger on an installed
+      // runtime, so successful adoption may report more than the tenant row.
+      if (changed.changes < 1) {
+        throw new TenancyError(
+          'Administration tenant adoption conflicted with current state',
+          'TENANT_ADMINISTRATION_EXISTS',
+        );
+      }
+      const adopted = this.requireTenant(tenantId);
+      if (adopted.kind !== 'administration') {
+        throw new TenancyError(
+          'Administration tenant adoption did not establish the protected scope',
+          'TENANT_ADMINISTRATION_REQUIRED',
+        );
+      }
+      return adopted;
+    });
+  }
+
   getMembershipById(membershipId: string): TenantMembershipRecord | null {
     this.assertCurrentProfile();
     const row = this.stmts.getMembershipById.get(membershipId) as MembershipRow | null;
@@ -481,6 +592,12 @@ export class TenantStore {
     this.assertCurrentProfile();
     return (this.stmts.listActiveMembershipsForUser.all(userId) as MembershipRow[])
       .map(mapMembership);
+  }
+
+  /** One indexed existence check for dynamic platform-operator policy. */
+  hasActiveAdministrationMembership(userId: string): boolean {
+    this.assertCurrentProfile();
+    return Boolean(this.stmts.hasActiveAdministrationMembership.get(userId));
   }
 
   /** Return active members for tenant administration, even while the tenant is suspended. */
@@ -546,7 +663,7 @@ export class TenantStore {
       const changedAt = this.now();
       this.stmts.readmitMembership.run(roleKey, changedAt, membershipId);
       if (current.roleKey === TENANT_OWNER_ROLE_KEY) {
-        this.onOwnerRoleChanged?.({
+        this.notifyOwnerRoleChanged({
           tenantId,
           membershipId,
           userId: current.userId,
@@ -637,7 +754,7 @@ export class TenantStore {
           changedAt,
           targetMembershipId,
         );
-        this.onOwnerRoleChanged?.({
+        this.notifyOwnerRoleChanged({
           tenantId,
           membershipId: target.membershipId,
           userId: target.userId,
@@ -655,7 +772,7 @@ export class TenantStore {
         changedAt,
         currentOwnerMembershipId,
       );
-      this.onOwnerRoleChanged?.({
+      this.notifyOwnerRoleChanged({
         tenantId,
         membershipId: current.membershipId,
         userId: current.userId,
@@ -694,7 +811,7 @@ export class TenantStore {
       this.stmts.updateMembershipRole.run(roleKey, changedAt, membershipId);
       if (current.roleKey === TENANT_OWNER_ROLE_KEY
         || roleKey === TENANT_OWNER_ROLE_KEY) {
-        this.onOwnerRoleChanged?.({
+        this.notifyOwnerRoleChanged({
           tenantId,
           membershipId,
           userId: current.userId,
@@ -704,6 +821,30 @@ export class TenantStore {
         });
       }
       return this.requireMembership(membershipId);
+    });
+  }
+
+  private notifyOwnerCreated(
+    input: Parameters<NonNullable<TenantStoreOptions['onOwnerCreated']>>[0],
+  ): void {
+    if (!this.onOwnerCreated) return;
+    invokeSynchronousAuthCallback(() => this.onOwnerCreated!(input), {
+      component: 'tenant-store',
+      invariant: 'owner-created-callback-async',
+      message: '[auth] Tenant owner creation callback must be synchronous.',
+      emitCode: this.emitCode,
+    });
+  }
+
+  private notifyOwnerRoleChanged(
+    input: Parameters<NonNullable<TenantStoreOptions['onOwnerRoleChanged']>>[0],
+  ): void {
+    if (!this.onOwnerRoleChanged) return;
+    invokeSynchronousAuthCallback(() => this.onOwnerRoleChanged!(input), {
+      component: 'tenant-store',
+      invariant: 'owner-role-changed-callback-async',
+      message: '[auth] Tenant owner role callback must be synchronous.',
+      emitCode: this.emitCode,
     });
   }
 
@@ -750,6 +891,12 @@ export class TenantStore {
       this.lockTenant(tenantId);
       const current = this.requireTenant(tenantId);
       if (current.status === status) return current;
+      if (current.kind === 'administration') {
+        throw new TenancyError(
+          'The administration tenant cannot be suspended',
+          'TENANT_ADMINISTRATION_PROTECTED',
+        );
+      }
       if (current.status === 'archived') {
         throw new TenancyError(
           'An archived tenant cannot change active suspension state',
@@ -901,6 +1048,7 @@ export class TenantStore {
 function mapTenant(row: TenantRow): TenantRecord {
   return {
     tenantId: row.tenant_id,
+    kind: row.kind as TenantKind,
     slug: row.slug,
     name: row.name,
     status: row.status as TenantStatus,

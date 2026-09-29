@@ -78,6 +78,7 @@ export function createSyncSocketAuthRuntime(
     dispose,
     invalidateAll: revalidation.invalidateAll,
     revalidate: revalidation.revalidate,
+    revalidateAll: revalidation.revalidateAll,
     start: revalidation.startAuthorityPolling,
     validateCurrentAuthority: revalidation.validateCurrentAuthority,
     waitForRequiredHandshake,

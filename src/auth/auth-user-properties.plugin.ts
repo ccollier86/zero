@@ -14,6 +14,7 @@ import type { UserPropertyService } from './user-property-service';
 import type { UserStore } from './user-store';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
+import type { AuthPlatformCodeEmitter } from './auth-observability';
 import { assertAuthPropertyValueBound } from './auth-request-property-bounds';
 import { authPropertyKeySchema } from './auth-request-schema';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
@@ -22,10 +23,12 @@ export interface AuthUserPropertiesPluginConfig {
   getUserStore: () => UserStore | null;
   getTokenService: () => TokenService | null;
   getPropertyService: () => UserPropertyService | null;
+  emitCode?: AuthPlatformCodeEmitter;
 }
 
 /** Create current-user property routes mounted directly under `/auth`. */
 export function createAuthUserPropertiesPlugin(config: AuthUserPropertiesPluginConfig) {
+  const emitCode = config.emitCode ?? emitPlatformCode;
   return new Elysia({ name: 'auth-user-properties' })
     .put(
       '/me/properties/:key',
@@ -40,7 +43,7 @@ export function createAuthUserPropertiesPlugin(config: AuthUserPropertiesPluginC
         try {
           value = propertyService.validateWrite(params.key, body.value, 'user');
         } catch (err) {
-          emitPlatformCode(OBS_CODES.AUTH_USER_PROPERTY_REJECTED, {
+          emitCode(OBS_CODES.AUTH_USER_PROPERTY_REJECTED, {
             error: err,
             userId: authContext.userId,
             metadata: { key: params.key },
@@ -100,7 +103,7 @@ export function createAuthUserPropertiesPlugin(config: AuthUserPropertiesPluginC
         try {
           propertyService.deleteProperty(authContext.userId, params.key, 'user', store);
         } catch (err) {
-          emitPlatformCode(OBS_CODES.AUTH_USER_PROPERTY_REJECTED, {
+          emitCode(OBS_CODES.AUTH_USER_PROPERTY_REJECTED, {
             error: err,
             userId: authContext.userId,
             metadata: { key: params.key },

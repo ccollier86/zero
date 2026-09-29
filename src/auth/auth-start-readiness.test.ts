@@ -1,11 +1,100 @@
 import { describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 
+import { createEmailRuntime } from '../email/runtime';
+import { MemoryEventStore, OBS_CODES } from '../observability';
+import { ZERO_OBSERVABILITY_RUNTIME } from '../runtime/service-keys';
+import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 import { createReactiveDB } from '../sync/reactive-db';
-import type { AuthRuntime } from './auth-runtime';
+import { resolveAuthBehaviorConfig } from './auth-config';
+import { AuthRuntime } from './auth-runtime';
 import { createAuthPlugin } from './auth.plugin';
 
 describe('standalone auth startup readiness', () => {
+  test('rejects async lazy runtime dependencies through the app-local invariant boundary', async () => {
+    const events = new MemoryEventStore({ maxEvents: 20 });
+    const appRuntime = new ZeroAppRuntime('auth-async-runtime-dependencies');
+    appRuntime.set(ZERO_OBSERVABILITY_RUNTIME, {
+      sink: events,
+      store: events,
+      config: { console: false },
+    });
+    const emailDb = createReactiveDB({ mode: 'memory' });
+    const emailRuntime = new AuthRuntime(
+      { db: emailDb, runtime: appRuntime },
+      resolveAuthBehaviorConfig({ bootstrap: 'public' }),
+      {
+        runtime: appRuntime,
+        getEmailRuntime: (async () => createEmailRuntime(false, {})) as never,
+        getPlatformTokenService: () => null,
+      },
+    );
+
+    try {
+      expect(() => emailRuntime.getEmailRuntime()).toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        message: '[auth] Email runtime resolver must be synchronous.',
+      }));
+      await Promise.resolve();
+    } finally {
+      await emailRuntime.stop();
+      emailDb.dispose();
+    }
+
+    const platformDb = createReactiveDB({ mode: 'memory' });
+    const platformRuntime = new AuthRuntime(
+      { db: platformDb, runtime: appRuntime },
+      resolveAuthBehaviorConfig({ bootstrap: 'public' }),
+      {
+        runtime: appRuntime,
+        getEmailRuntime: () => createEmailRuntime(false, {}),
+        getPlatformTokenService: (async () => null) as never,
+      },
+    );
+    try {
+      await expect(platformRuntime.start()).rejects.toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        message: '[auth] Platform token service resolver must be synchronous.',
+      }));
+      await Promise.resolve();
+    } finally {
+      await platformRuntime.stop();
+      platformDb.dispose();
+      await appRuntime.dispose();
+    }
+
+    expect(events.query({ code: OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code }).events
+      .map((event) => event.metadata)).toEqual(expect.arrayContaining([
+      {
+        component: 'auth-runtime',
+        invariant: 'email-runtime-resolver-async',
+      },
+      {
+        component: 'auth-runtime',
+        invariant: 'platform-token-service-resolver-async',
+      },
+    ]));
+  });
+
+  test('rejects an asynchronous runtime-created composition callback', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    try {
+      expect(() => createAuthPlugin({
+        db,
+        bootstrap: 'public',
+        onRuntimeCreated: (async () => {
+          throw new Error('private composition rejection');
+        }) as never,
+      })).toThrow(expect.objectContaining({
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        message: '[auth] onRuntimeCreated callback must be synchronous.',
+      }));
+      await Promise.resolve();
+    } finally {
+      db.dispose();
+    }
+  });
+
   test('holds auth requests until asynchronous startup is complete', async () => {
     const db = createReactiveDB({ mode: 'memory' });
     let runtime!: AuthRuntime;
@@ -50,9 +139,17 @@ describe('standalone auth startup readiness', () => {
 
   test('contains a startup rejection and closes the standalone listener', async () => {
     const db = createReactiveDB({ mode: 'memory' });
+    const events = new MemoryEventStore({ maxEvents: 20 });
+    const appRuntime = new ZeroAppRuntime('auth-start-failure');
+    appRuntime.set(ZERO_OBSERVABILITY_RUNTIME, {
+      sink: events,
+      store: events,
+      config: { console: false },
+    });
     let runtime!: AuthRuntime;
     const app = new Elysia().use(createAuthPlugin({
       db,
+      runtime: appRuntime,
       bootstrap: 'public',
       onRuntimeCreated(created) {
         runtime = created;
@@ -69,7 +166,12 @@ describe('standalone auth startup readiness', () => {
     } finally {
       await app.stop();
       await runtime.stop();
+      await appRuntime.dispose();
       db.dispose();
     }
+
+    const failures = events.query({ code: OBS_CODES.AUTH_START_FAILED.code }).events;
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.metadata).toEqual({ plugin: 'auth' });
   });
 });

@@ -14,6 +14,10 @@ import {
   type BrowserAuthSignalKind,
 } from './auth-browser-coordination';
 import { resolveAuthRequestUrl } from './auth-errors';
+import {
+  parseAuthRefreshResponse,
+  parseAuthUser,
+} from './auth-completion-parser';
 import { createAuthStore, sendAuthStoreEvent } from './auth-store';
 import type { AuthStore, AuthStoreContext } from './auth-store';
 import { isAuthSessionResult } from './auth-types';
@@ -479,7 +483,7 @@ export class AuthSessionController {
         return;
       }
 
-      const user = await response.json();
+      const user = parseAuthUser(await response.json());
       if (revision !== this.credentialRevision) return;
       this.send('auth.success', {
         user,
@@ -528,8 +532,10 @@ export class AuthSessionController {
         return false;
       }
 
-      const data = await response.json() as Partial<AuthSessionResult>;
-      if (typeof data.accessToken !== 'string' || typeof data.refreshToken !== 'string') {
+      let data;
+      try {
+        data = parseAuthRefreshResponse(await response.json());
+      } catch {
         this.send('auth.error', { error: 'Invalid refresh response' });
         return false;
       }
@@ -683,7 +689,7 @@ export class AuthSessionController {
       if (!response.ok) {
         this.commitLogout();
       } else {
-        const user = await response.json();
+        const user = parseAuthUser(await response.json());
         this.send('auth.success', {
           user,
           activeTenant: this.context.activeTenant ?? undefined,

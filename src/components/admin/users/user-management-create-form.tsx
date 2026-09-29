@@ -31,6 +31,8 @@ import { toAdminUserCreateParams } from './user-management-mappers';
 export interface UserManagementCreateFormProps {
   config: AuthAdminConfig | null;
   roleOptions: readonly UserRoleOption[];
+  /** @internal Controlled surfaces may own global-role authority themselves. */
+  allowGlobalAdminRole?: boolean;
   onSubmit: (params: AuthAdminCreateUserParams) => Promise<void>;
 }
 
@@ -50,9 +52,16 @@ interface CreateFormState {
 export function UserManagementCreateForm({
   config,
   roleOptions,
+  allowGlobalAdminRole = config?.capabilities.canManageGlobalAdmins === true,
   onSubmit,
 }: UserManagementCreateFormProps) {
   const setupEmailReady = Boolean(config?.capabilities.setupEmail);
+  const availableRoleOptions = allowGlobalAdminRole
+    ? roleOptions
+    : roleOptions.filter((option) => option.value !== 'admin');
+  const defaultRole = availableRoleOptions.find((option) => option.value === 'user')?.value
+    ?? availableRoleOptions[0]?.value
+    ?? 'user';
   const multiTenant = config?.tenancy?.mode === 'multi';
   const tenantSingular = config?.tenancy?.terminology?.singular ?? 'organization';
   const defaultSendSetupEmail = Boolean(
@@ -63,7 +72,7 @@ export function UserManagementCreateForm({
     email: '',
     firstName: '',
     lastName: '',
-    role: roleOptions[0]?.value ?? 'user',
+    role: defaultRole,
     password: '',
     sendSetupEmail: defaultSendSetupEmail,
     mfaRequired: false,
@@ -78,6 +87,11 @@ export function UserManagementCreateForm({
     },
     [],
   );
+
+  React.useEffect(() => {
+    if (availableRoleOptions.some((option) => option.value === state.role)) return;
+    setState((current) => ({ ...current, role: defaultRole }));
+  }, [availableRoleOptions, defaultRole, state.role]);
 
   const handleSubmit = React.useCallback(
     async (event: React.FormEvent) => {
@@ -126,6 +140,7 @@ export function UserManagementCreateForm({
             value={state.username}
             onChange={(event) => update('username', event.target.value)}
             autoFocus
+            disabled={submitting}
             required
           />
         </div>
@@ -136,6 +151,7 @@ export function UserManagementCreateForm({
             type="email"
             value={state.email}
             onChange={(event) => update('email', event.target.value)}
+            disabled={submitting}
             required
           />
         </div>
@@ -145,6 +161,7 @@ export function UserManagementCreateForm({
             id="zero-admin-create-first-name"
             value={state.firstName}
             onChange={(event) => update('firstName', event.target.value)}
+            disabled={submitting}
           />
         </div>
         <div className="space-y-2">
@@ -153,30 +170,41 @@ export function UserManagementCreateForm({
             id="zero-admin-create-last-name"
             value={state.lastName}
             onChange={(event) => update('lastName', event.target.value)}
+            disabled={submitting}
           />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="zero-admin-create-role">
-            {multiTenant ? 'Platform role' : 'Role'}
-          </Label>
-          <Select value={state.role} onValueChange={(value) => update('role', value)}>
-            <SelectTrigger id="zero-admin-create-role">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {roleOptions.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {multiTenant && (
-            <p className="text-xs text-muted-foreground">
-              Platform roles govern installation-wide administration. {capitalize(tenantSingular)} access is managed separately.
-            </p>
-          )}
-        </div>
+        {allowGlobalAdminRole ? (
+          <div className="space-y-2">
+            <Label htmlFor="zero-admin-create-role">
+              {multiTenant ? 'Platform role' : 'Role'}
+            </Label>
+            <Select
+              value={state.role}
+              onValueChange={(value) => update('role', value)}
+              disabled={submitting}
+            >
+              <SelectTrigger id="zero-admin-create-role">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {availableRoleOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {multiTenant && (
+              <p className="text-xs text-muted-foreground">
+                Platform roles govern installation-wide administration. {capitalize(tenantSingular)} access is managed separately.
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground sm:col-span-2">
+            This account will use the standard user role. Creating global administrators requires separate authority.
+          </p>
+        )}
         {!state.sendSetupEmail && (
           <div className="space-y-2">
             <Label htmlFor="zero-admin-create-password">Password</Label>
@@ -186,6 +214,7 @@ export function UserManagementCreateForm({
               value={state.password}
               minLength={8}
               onChange={(event) => update('password', event.target.value)}
+              disabled={submitting}
               required
             />
           </div>
@@ -197,6 +226,7 @@ export function UserManagementCreateForm({
           <label className="flex items-center gap-2 text-sm">
             <Checkbox
               checked={state.sendSetupEmail}
+              disabled={submitting}
               onCheckedChange={(checked) => update('sendSetupEmail', checked === true)}
             />
             Send account setup email
@@ -206,6 +236,7 @@ export function UserManagementCreateForm({
           <label className="flex items-center gap-2 text-sm">
             <Checkbox
               checked={state.mfaRequired}
+              disabled={submitting}
               onCheckedChange={(checked) => update('mfaRequired', checked === true)}
             />
             Require MFA

@@ -1,15 +1,17 @@
 /** Align protected-owner guards with the account token-eligibility boundary. */
 
 import type { Database } from 'bun:sqlite';
-import { defineAuthorizationRoleTables } from '../../auth/authorization-role-schema';
-import {
-  authTokenEligibleUserSql,
-  recoverableRegistrationUserSql,
-  recoverableTenantRegistrationUserSql,
-} from '../../auth/auth-user-eligibility';
-import { defineRegistrationIntentTable } from '../../auth/registration-intent-schema';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import type { Migration } from '../types';
+import {
+  defineAuthorizationRoleTablesV011 as defineAuthorizationRoleTables,
+} from './011_advanced_authorization_schema';
+import {
+  authTokenEligibleUserSqlV016 as authTokenEligibleUserSql,
+  defineRegistrationIntentTableV015 as defineRegistrationIntentTable,
+  recoverableRegistrationUserSqlV016 as recoverableRegistrationUserSql,
+  recoverableTenantRegistrationUserSqlV016 as recoverableTenantRegistrationUserSql,
+} from './015_registration_provisioning_schema';
 
 export const migration: Migration = {
   version: '016',

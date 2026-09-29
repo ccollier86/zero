@@ -8,6 +8,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 import { configureEmail, MemoryEmailProvider, type EmailProvider } from '../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import { createReactiveDB } from '../sync/reactive-db';
 import { AdminUserUpdateService } from './admin-user-update-service';
 import { getActionTokenService, getAuthStore } from './auth-runtime';
@@ -450,7 +451,7 @@ describe('Auth Plugin — Admin Security Hardening', () => {
       expect(registered.data.accessToken).toBeDefined();
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -505,7 +506,7 @@ describe('Auth Plugin — Admin Security Hardening', () => {
       expect(stillAuthorized.status).toBe(200);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -583,7 +584,7 @@ describe('Auth Plugin — Admin Security Hardening', () => {
       expect(rejectedLink.data.code).toBe('ACTION_TOKEN_INVALID');
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -647,7 +648,7 @@ describe('Auth Plugin — Admin Security Hardening', () => {
       expect(user.data.user.passwordChangeRequired).toBe(true);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -732,7 +733,7 @@ describe('Auth Plugin — Admin Security Hardening', () => {
     } finally {
       restoreGate?.();
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 });

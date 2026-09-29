@@ -27,6 +27,7 @@ export function toAuthorizationCode(row: Record<string, unknown>): NativeAuthori
     redirectUri: String(row.redirect_uri), scope: String(row.scope),
     nonce: String(row.nonce), codeChallenge: String(row.code_challenge),
     authGeneration: Number(row.auth_generation), createdAt: Number(row.created_at),
+    mfaVerifiedAt: nullableNumber(row.mfa_verified_at),
     ...toAuthority(row),
     expiresAt: Number(row.expires_at), consumedAt: nullableNumber(row.consumed_at),
   };
@@ -37,6 +38,7 @@ export function toNativeSession(row: Record<string, unknown>): NativeSessionReco
     tokenId: String(row.token_id), familyId: String(row.family_id),
     userId: String(row.user_id), clientId: String(row.client_id),
     scope: String(row.scope), authGeneration: Number(row.auth_generation),
+    mfaVerifiedAt: nullableNumber(row.mfa_verified_at),
     ...toAuthority(row),
     expiresAt: Number(row.expires_at), createdAt: Number(row.created_at),
     rotationCount: Number(row.rotation_count ?? 0),

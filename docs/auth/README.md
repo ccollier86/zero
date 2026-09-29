@@ -31,6 +31,9 @@ and [Tenant Invitations and Join Requests](./tenant-invitations-and-join-request
 for their request boundaries, SDKs, hooks, security lifecycle, and packaged UI.
 The separate `single/advanced` control plane is documented in
 [Application Access Administration](./application-access-administration.md).
+Multi-mode bootstrap, the protected Administration Organization, its people,
+and the capability-gated customer-organization directory are documented in
+[Platform Administration Organization](./platform-administration.md).
 The sanitized live browser projection, hooks, and fail-closed visibility gates
 are documented in
 [Browser Authorization Snapshot and Gates](./browser-authorization.md).
@@ -38,12 +41,18 @@ Security and authorization control-plane changes now use the app-local,
 append-only trail documented in
 [Durable Authorization and Control-Plane Audit](./control-plane-audit.md). It
 is intentionally separate from general page/data activity logging.
+Runtime startup, invariant, native-protocol, email-delivery, and browser
+control-plane failures follow the privacy-safe contract in
+[Auth Operational Failure Contract](../observability.md#auth-operational-failure-contract).
 
 This is an unreleased candidate, not a claim that every planned control has
-landed. Protected Administration Organization/platform-tenant lifecycle UI,
-upstream enterprise SSO, break-glass, tenant-custom roles, populated-app
-adoption tooling, and
-verified-domain autojoin/aliases/direct transfer remain deferred. Registered
+landed. The protected Administration Organization and bounded
+customer-organization lifecycle UI are implemented. Upstream enterprise SSO, break-glass,
+tenant-custom roles, broader populated-app discovery/migration tooling, and
+verified-domain autojoin/aliases/direct transfer remain deferred. The narrow,
+exact pre-024 Administration Organization reconciliation path is documented in
+[Platform Administration Organization](./platform-administration.md#adopting-the-administration-organization-on-a-pre-024-installation).
+Registered
 resources now declare explicit server-owned client exposure and field-level
 allow-lists. Managed file-mode runtimes sharing one SQLite database relay
 tracked changes and auth/session invalidations across active sockets. Multi-mode startup
@@ -63,10 +72,18 @@ auth: {
 
 Omitting either field produces the same resolved values. All four combinations
 normalize deterministically, and the server-only authorization config can
-declare a validated permission registry and static role templates. In `multi`
+declare a validated permission registry and static role templates. Its
+positive `registryVersion` (default `1`) is durably fingerprinted by migration
+`027`; same-profile semantic changes require a monotonic bump, while
+label/description-only changes do not. Same-version drift, rollback, corrupt
+markers, and implicit reactivation of retained assignments under a reused role
+key fail startup. A supported profile-axis transition may retain the version
+only when permission, role, and evaluator semantics are otherwise identical;
+a combined profile-and-registry rollout still requires a bump. In `multi`
 mode the auth runtime creates tenant and membership stores, and registration
-atomically creates the first organization plus its owner membership during
-bootstrap. Later identity registration is independent of tenant admission. The
+atomically creates the protected Administration Organization plus its owner
+membership during bootstrap. Later customer organizations are explicitly
+created and later identity registration is independent of tenant admission. The
 pure `AuthorizationKernel` compiles and evaluates the shared policy vocabulary,
 and the HTTP, route, Sync, resource, token, and page-session adapters hydrate
 its live authority. Doctor accepts `multi` and validates tenant resource
@@ -368,6 +385,11 @@ resolving. App-owned caches should use the credential-free
 `useAuthorizationScopeBoundary()` key described in the browser authorization
 guide. `client.activeTenant` and
 `useAuth().activeTenant` contain only the safe current summary.
+The browser authorization snapshot keeps that active membership in `scope`.
+When it is the protected Administration Organization, a separate additive
+`applicationScope` projects live application permissions; permission helpers
+check both while tenant gates stay bound to the active tenant scope. Its opaque
+revision covers both scope revisions and the installed registry version.
 The browser credential coordinator serializes proof-only listing with every
 refresh-family rotation. This prevents a delayed list from presenting the
 just-consumed proof, which the server correctly treats as replay.
@@ -471,9 +493,11 @@ generic user-table subscription.
 
 **Designed for:**
 - Applications already using the sync engine that need user identity
-- Small teams (2–4 users) where a managed auth service is overkill
+- Self-hosted single-application and multi-tenant products that fit SQLite's
+  operational envelope
 - Prototypes that need secure auth without infrastructure
-- Apps that want one database/runtime for identity and policy-controlled application data
+- Apps that want integrated identity, declarative RBAC, tenant control, and
+  policy-controlled application data
 
 ## What This Is NOT
 
@@ -492,7 +516,10 @@ generic user-table subscription.
   are durable, live-enforced, and manageable through the active-tenant API/UI,
   while permission and role templates remain a deployment-time application
   ceiling. Tenant administrators cannot invent runtime permission semantics.
-- **Not a hosted admin product.** It ships admin user-management routes and a reusable `UserManagement` dashboard organism, but apps still choose where that component lives and how the rest of the admin dashboard is composed.
+- **Not a hosted admin product.** It ships reusable global-user,
+  application-access, tenant, Administration Organization, and
+  customer-organization control organisms, but apps still choose where those
+  controls live and how the admin dashboard is composed.
 
 ## Comparison
 
@@ -512,6 +539,12 @@ generic user-table subscription.
 The auth system and sync engine share a **single ReactiveDB instance**. Auth
 defines its tables (`users`, `user_properties`, `_credentials`,
 `_refresh_tokens`, `_auth_config`) in the same database the sync engine uses.
+`createApp()` also mounts `_zero_action_tokens`/`_zero_resume_tokens` on that
+exact instance before auth. That shared transaction domain lets password and
+account transitions consume their one-time platform token atomically and emit
+consumed-success telemetry only after commit; direct plugin composition must
+wire the same instance or startup fails closed. See
+[Platform Tokens: Auth Transaction Boundary](../tokens.md#auth-transaction-boundary).
 Sharing storage does not grant client visibility: `createApp()` keeps `users`
 private, applies row filters to scoped framework tables, and composes those
 decisions with the application's Sync policy. A directly composed
@@ -563,11 +596,13 @@ See [Architecture](./architecture.md) for the full component diagram and data fl
 | [Multi-tenant Auth Implementation Checklist](./multi-tenant-auth-implementation-checklist.md) | Current implementation evidence, release gates, and intentional deferrals |
 | [Auth And Data-Plane Capability Matrix](./auth-data-plane-capability-matrix.md) | Enforcement owner, authoritative scope, evidence, and trusted escape hatch for each official surface |
 | [Architecture](./architecture.md) | Plugin structure, Elysia integration, data flow, composition with sync engine |
-| [User Store](./user-store.md) | SQLite schema, CRUD, properties KV, password hashing with Bun.password |
+| [User Store](./user-store.md) | Stable identity facade, focused credential/token/provisioning stores, SQLite schema, CRUD, and password lifecycle |
 | [Token Service](./token-service.md) | JWT lifecycle, ECDSA keypair management, refresh rotation, JWKS |
+| [Platform Tokens](../tokens.md) | Generic action/resume tokens plus the exact shared-ReactiveDB auth transaction and post-commit telemetry contract |
 | [Auth Guards And Audit Boundaries](./guards-and-audit.md) | Implemented request-scoped route guards and the explicit boundary between durable control-plane audit and deferred general activity tracking |
 | [Control-Plane Audit](./control-plane-audit.md) | Append-only authorization/security events, atomic mutation wiring, authorized query/export, retention, SDK/hook, and packaged viewer |
 | [Application Access Administration](./application-access-administration.md) | Implemented `single/advanced` assignments, protected owner, SDK/hook, and packaged UI |
+| [Platform Administration Organization](./platform-administration.md) | Multi-mode bootstrap administration scope, application permissions, customer-organization lifecycle, SDK/hooks, and packaged controls |
 | [Tenant Member Administration](./tenant-member-administration.md) | Active-tenant member, role, status, ownership, SDK/hook, and packaged UI contract |
 | [Tenant Invitations And Join Requests](./tenant-invitations-and-join-requests.md) | Invitation delivery/acceptance and retained join-request review contract |
 | [Verified Company-Domain Onboarding](./verified-domain-onboarding.md) | Exact-domain DNS/mailbox proof, request-to-join, release/quarantine, and packaged controls |
@@ -599,6 +634,15 @@ src/auth/
 ├── auth-admin.plugin.ts        # Composition root for admin user-management routes
 ├── auth-admin-mfa.plugin.ts    # Admin MFA status/require/clear/reset routes
 ├── auth-admin-email-verification.plugin.ts # Admin verification delivery/override routes
+├── auth-application-administration.plugin.ts # Single/advanced application access routes
+├── auth-platform-administration.plugin.ts # Protected admin-org and customer-tenant routes
+├── auth-tenant-administration.plugin.ts # Active-tenant member/role/ownership routes
+├── auth-tenant-onboarding.plugin.ts # Invitations and retained join-request routes
+├── auth-tenant-invitation-service.ts # Invitation issue/inspect/accept lifecycle
+├── auth-tenant-join-request-service.ts # Join-request policy and lifecycle orchestration
+├── auth-tenant-join-request-store.ts # Retained rows and optimistic-concurrency fences
+├── auth-tenant-join-request-projection.ts # Public-safe join-request mapping
+├── auth-verified-domain.plugin.ts # Verified-domain request-admission routes
 ├── auth-account.plugin.ts      # Forgot/reset/setup/email verification routes
 ├── auth-mfa.plugin.ts          # MFA setup/challenge routes
 ├── auth-mfa-response.ts        # Session-vs-MFA completion helper
@@ -606,9 +650,15 @@ src/auth/
 ├── auth.middleware.ts          # JWT/account-generation resolution, requireAuth/requireAdmin
 ├── auth-config.ts              # Auth config helper and normalization
 ├── authorization-kernel.ts     # Pure access requirement compiler/evaluator
+├── authorization-role-service.ts # Durable application/tenant role assignments
+├── authorization-role-provisioning-service.ts # Bootstrap/adoption/reconciliation
 ├── auth-context.ts             # Authorization header to AuthContext helper
+├── auth-synchronous-callback.ts # Fail-closed transaction callback guard
 ├── tenancy/                    # Tenant/membership schema, store, service, types
-├── token-service.ts            # JWT signing/verification, keypair mgmt, refresh rotation
+├── token-service.ts            # Stable token and live-authority facade
+├── auth-signing-keys.ts        # Atomic ES256 key establishment/import
+├── auth-token-codec.ts         # Strict JWT/JWKS cryptographic codec
+├── auth-web-session-token-service.ts # Browser refresh/page-session lifecycle
 ├── user-property-service.ts    # Configured user property validation/defaults
 ├── auth-email-templates.ts     # Auth email template contracts/branding helper
 ├── mfa-challenge-service.ts    # MFA enrollment/challenge policy and OTP/TOTP verification
@@ -617,7 +667,12 @@ src/auth/
 ├── mfa-secret-crypto.ts        # AES-GCM encryption for authenticator seeds
 ├── mfa-service.ts              # MFA config/readiness helper
 ├── mfa-totp.ts                 # RFC 6238 TOTP helpers
-├── user-store.ts               # SQLite operations: users, credentials, properties, tokens
+├── user-store.ts               # Stable facade: users, properties, config, collaborator orchestration
+├── user-identity-store.ts      # User identity CRUD/list/count persistence
+├── user-property-config-store.ts # User properties and internal auth config KV
+├── user-credential-store.ts    # Password hashes and atomic security transitions
+├── user-token-store.ts         # Refresh replay/revocation and legacy auth action tokens
+├── registration-provisioning-store.ts # Receipt leases, finalize/recovery, exact rollback
 ├── types.ts                    # AuthContext, UserRecord, TokenPair, config, AuthError
 └── index.ts                # Public API: all exports
 ```
@@ -625,8 +680,13 @@ src/auth/
 Single responsibility per file: `auth.plugin.ts` is only the composition root,
 routes stay in named Elysia controllers, runtime service lifecycle lives in
 `auth-runtime.ts`, table setup lives in `auth-schema.ts`, validation/defaults
-live in services, and SQL stays in focused stores such as `UserStore`,
-`MfaMethodStore`, and `MfaChallengeStore`.
+live in services, and SQL stays in focused stores. `UserStore` is the stable
+identity facade; `UserCredentialStore`, `UserTokenStore`,
+`UserIdentityStore`, `UserPropertyConfigStore`,
+`RegistrationProvisioningStore`, `MfaMethodStore`, and `MfaChallengeStore` own
+their narrower persistence/lifecycle concerns. `TokenService` likewise remains
+the stable public facade while its signing-key, compact-token, and browser
+session-family collaborators stay internal.
 
 ## Registration And Admin Users
 
@@ -681,7 +741,7 @@ mode, `/auth/register` also requires
 name when omitted). The first transaction creates provisional bootstrap state:
 
 - the user and credential, with global/platform role `admin`;
-- the organization in `_auth_tenants`;
+- the protected `kind: 'administration'` organization in `_auth_tenants`;
 - the active `owner` membership in `_auth_tenant_memberships`;
 - the advanced owner assignment when advanced authorization is enabled; and
 - an exact receipt in `_auth_registration_provisioning`.
@@ -699,12 +759,13 @@ SQLite writer lock; another runtime's live registration is left untouched and
 a stale runtime cannot finalize after losing its lease. The protected
 last-owner exceptions are scoped to an exact pending receipt and never apply
 to ordinary owner lifecycle calls. A successful multi-mode registration
-returns a public-safe `tenant` summary alongside its normal session, MFA
-continuation, or email-verification result:
+returns a public-safe Administration Organization `tenant` summary alongside
+its normal session, MFA continuation, or email-verification result:
 
 ```ts
 interface AuthRegistrationTenant {
   tenantId: string;
+  kind: 'administration' | 'organization';
   membershipId: string;
   slug: string;
   name: string;
@@ -751,9 +812,9 @@ auth: {
 ```
 
 The first multi-tenant bootstrap is deliberately different: it always requires
-an organization and creates the first organization plus protected owner in the
-same transaction, even when the configured post-bootstrap creation mode is
-`platform-admin` or `disabled`.
+an organization and creates the protected Administration Organization plus its
+protected owner in the same transaction, even when the configured
+post-bootstrap creation mode is `platform-admin` or `disabled`.
 
 ```ts
 createApp({
@@ -850,7 +911,9 @@ for advanced-role declarations and the explicit existing-install owner
 adoption flow. That guide also defines migration `023`'s installed-profile
 marker, transactional multi/simple-to-advanced role/session adoption, the
 recommended two-step legacy rollout, and every rejected reverse or tenancy-axis
-transition.
+transition. It also defines migration `027`'s registry-version deployment
+fence, system audit events, stale-runtime behavior, and retired-role-key
+reactivation guard.
 
 Admin UI can read and manage:
 
@@ -901,11 +964,17 @@ default; opt in with `auth.account.allowAdminMarkEmailVerified: true`.
 `capabilities.adminMarkEmailVerified`, allowing custom and first-party UIs to
 hide the override when it is unavailable.
 
-Admin routes require an admin Bearer token. Deleting or demoting the last admin
-is rejected. `GET /auth/admin/users` is paginated and supports `search`,
-`role`, and `status` filters. Direct password resets remain available for
-manual workflows by default, clear any password-change gate, revoke existing
-sessions, and can be disabled with
+Admin routes require an authenticated Bearer token with the authority for the
+installed profile. `single` mode retains the legacy global-admin boundary. In
+`multi` mode, reads require live Administration Organization authority with
+`application.users:read`, writes additionally require
+`application.users:manage`, and creating, promoting, demoting, or mutating a
+global-admin identity still requires the server-projected global-admin
+capability. Deleting or demoting the last global admin is rejected.
+`GET /auth/admin/users` is paginated and supports `search`, `role`, and
+`status` filters. Direct password resets remain available for manual workflows
+by default, clear any password-change gate, revoke existing sessions, and can
+be disabled with
 `auth.accountEmails.manualPasswordReset: false`.
 
 The preferred email-driven reset/setup routes use a delivery-only password
@@ -916,6 +985,10 @@ the intended recipient. Only after that succeeds does Zero set
 or rejected recipient deletes the undelivered token and leaves an existing
 account ungated. Admin creation with setup email is all-or-cleanup: failed
 delivery removes the new account so the same identity can be retried.
+Those administrator delivery failures emit distinct verification, setup,
+reset, and provisioning-compensation events with stable classifications and
+cleanup status, but no address, provider message, or email content. See the
+[Auth Operational Failure Contract](../observability.md#auth-operational-failure-contract).
 
 Generic create/update payloads cannot newly set
 `passwordChangeRequired: true` without setup-email delivery. If an older
@@ -986,10 +1059,11 @@ the organism. Manual password reset appears only when
 
 Recovery codes, per-device/session inventory and individual-session revocation,
 administrator impersonation, and bulk user actions remain deferred.
-`PlatformUserManagement` does not imply those capabilities. Application and
-tenant RBAC are implemented through the separate controls linked above;
-tenant-custom roles and the protected platform-tenant lifecycle console are
-not part of this global identity organism.
+`PlatformUserManagement` does not imply those capabilities. It distinguishes
+identity read from identity mutation and independently gates global-admin
+targets. Application and tenant RBAC, the Administration Organization, and the
+customer-tenant lifecycle are implemented through the separate controls linked
+above; tenant-custom roles are not part of this global identity organism.
 
 Public account lifecycle routes:
 
@@ -1214,6 +1288,13 @@ directly.
 
 Required MFA does not issue app access/refresh tokens until setup or challenge
 verification succeeds. Auth routes return short-lived transition tokens instead:
+
+Migration `025` persists the resulting server-owned MFA assurance across
+browser sessions and continuations plus native authorization-code and
+refresh-session families. Existing rows are intentionally null: an upgrade never fabricates
+proof. When `required` or `admin-required` policy applies, an unassured legacy
+session or an invitation acceptance re-enters the normal setup/challenge flow;
+verified completion propagates assurance into the replacement session family.
 
 For `required` and `admin-required` policy, Doctor verifies that at least one
 configured method is operational. Email OTP needs the same sender/provider

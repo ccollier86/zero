@@ -1,6 +1,10 @@
 import { Database } from 'bun:sqlite';
 import { expect, test } from 'bun:test';
 
+import { installAuthAuthorityRevision } from '../auth/auth-authority-revision';
+import { defineAuthTables } from '../auth/auth-schema';
+import { defineTenancyTables } from '../auth/tenancy/tenancy-schema';
+import { createReactiveDB } from '../sync/reactive-db';
 import { migrations } from './index';
 import { Migrator } from './migrator';
 
@@ -72,8 +76,8 @@ test('migration 020 installs the durable authority revision and triggers', () =>
     `).run('session-1', 'migration-user', now, now, now, now + 60_000);
     expect(authorityRevision(database)).toBe(beforeSession + 1);
 
-    // Routine sliding-session touches must not wake and revalidate every
-    // socket across every replica. Revocation/generation changes still do.
+    // Migration 020's historical contract watched only its then-known
+    // authority fields. Migration 027 owns the fail-closed v2 replacement.
     database.query(`
       UPDATE _auth_sessions SET last_seen_at = ?, expires_at = ?
       WHERE session_id = ?
@@ -89,6 +93,76 @@ test('migration 020 installs the durable authority revision and triggers', () =>
     database.close();
   }
 });
+
+test('migration 027 upgrades authority triggers to the frozen current contract', () => {
+  const database = new Database(':memory:');
+  const runtimeDatabase = new Database(':memory:');
+  const runtime = createReactiveDB({ database: runtimeDatabase });
+  const migrator = new Migrator({
+    database,
+    dbPath: ':memory:',
+    migrations,
+    createBackups: false,
+    log: () => {},
+  });
+
+  try {
+    expect(migrator.run('027').at(-1)).toBe('027');
+    const triggerNames = new Set((database.query(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'trigger' AND name LIKE 'trg_zero_authority_%'
+    `).all() as Array<{ name: string }>).map((row) => row.name));
+    expect(triggerNames.has('trg_zero_authority__auth_sessions_update_v2')).toBe(true);
+    expect(triggerNames.has('trg_zero_authority__auth_sessions_update_v1')).toBe(false);
+    expect(triggerNames.has('trg_zero_authority__auth_tenants_update_v2')).toBe(true);
+    expect(triggerNames.has('trg_zero_authority__auth_tenants_update_v1')).toBe(false);
+    expect(triggerNames.has('trg_zero_authority__auth_native_sessions_update_v2')).toBe(true);
+    expect(triggerNames.has('trg_zero_authority__auth_native_sessions_update_v1')).toBe(false);
+
+    defineAuthTables(runtime);
+    defineTenancyTables(runtime);
+    installAuthAuthorityRevision(runtime);
+    expect(currentAuthorityTriggerShape(database))
+      .toEqual(currentAuthorityTriggerShape(runtimeDatabase));
+
+    const now = Date.now();
+    database.query(`INSERT INTO users (
+      user_id, username, email, role, status, created_at
+    ) VALUES (?, ?, ?, 'user', 'active', ?)`)
+      .run('v027-owner', 'v027-owner', 'v027@example.test', now);
+    database.query(`INSERT INTO _auth_tenants (
+      tenant_id, slug, name, created_by, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run('v027-tenant', 'v027-tenant', 'V027 tenant', 'v027-owner', now, now);
+
+    const beforeCosmetic = authorityRevision(database);
+    database.query(`UPDATE _auth_tenants SET updated_at = updated_at
+      WHERE tenant_id = ?`).run('v027-tenant');
+    expect(authorityRevision(database)).toBe(beforeCosmetic);
+    database.query(`UPDATE _auth_tenants SET kind = 'administration'
+      WHERE tenant_id = ?`).run('v027-tenant');
+    expect(authorityRevision(database)).toBe(beforeCosmetic + 1);
+  } finally {
+    runtime.dispose();
+    runtimeDatabase.close();
+    migrator.dispose();
+    database.close();
+  }
+});
+
+function currentAuthorityTriggerShape(database: Database) {
+  return (database.query(`SELECT name, sql FROM sqlite_master
+    WHERE type = 'trigger'
+      AND name LIKE 'trg_zero_authority_%'
+      AND tbl_name IN (
+        '_auth_sessions', '_auth_tenants', '_auth_native_sessions',
+        '_auth_authorization_manifest'
+      )
+    ORDER BY name`).all() as Array<{ name: string; sql: string }>).map((trigger) => ({
+    name: trigger.name,
+    sql: trigger.sql.replace(/\s+/g, ' ').trim(),
+  }));
+}
 
 function authorityRevision(database: Database): number {
   return (database.query(`

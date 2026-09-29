@@ -36,7 +36,13 @@ import type { AuthBehaviorConfig } from '../../auth/types';
 import { resolveConfig } from './types';
 import { applyTableSyncResolution, resolveTableSyncModes } from './sync-mode-resolver';
 import { Migrator, migrations } from '../../migrations';
-import { OBS_CODES, configureObservability, createObservabilityPlugin, emitPlatformCode } from '../../observability';
+import {
+  OBS_CODES,
+  configureObservability,
+  createObservabilityPlugin,
+  emitPlatformCode,
+  emitPlatformCodeTo,
+} from '../../observability';
 import { createVectorPlugin } from '../../vector';
 import { createPlatformTokenPlugin } from '../../tokens';
 import { createPlatformSQLiteService, type PlatformSQLiteService } from '../../persistence';
@@ -136,6 +142,8 @@ export async function createApp(userConfig: AppConfig) {
   }
   const observabilityRuntime = configureObservability(config.observability);
   runtime.set(ZERO_OBSERVABILITY_RUNTIME, observabilityRuntime);
+  const emitCode: typeof emitPlatformCode = (definition, options) =>
+    emitPlatformCodeTo(observabilityRuntime, definition, options);
   const sqlite = config.db.sqlite ?? createPlatformSQLiteService(config.db);
   const ownsSqlite = !config.db.sqlite;
   try {
@@ -143,7 +151,7 @@ export async function createApp(userConfig: AppConfig) {
     // releases every dependent service before the final durability boundary.
     // This also covers createApp() results that are disposed before listen().
     if (ownsSqlite) runtime.addCleanup(() => sqlite.close());
-    const emailRuntime = createEmailRuntime(config.email, config.app);
+    const emailRuntime = createEmailRuntime(config.email, config.app, emitCode);
     runtime.set(ZERO_EMAIL_RUNTIME, emailRuntime);
     const emailRuntimeRegistration = registerEmailRuntime(runtime, emailRuntime);
     runtime.addCleanup(() => emailRuntimeRegistration.unregister());
@@ -199,12 +207,12 @@ export async function createApp(userConfig: AppConfig) {
         generatedDir: config.generatedDir,
       });
       clientEntry = bundle.publicPath;
-      emitPlatformCode(OBS_CODES.APP_CLIENT_BUNDLE_READY, {
+      emitCode(OBS_CODES.APP_CLIENT_BUNDLE_READY, {
         metadata: { publicPath: bundle.publicPath },
       });
     } catch (err) {
       // Client bundle is optional — SSR still works without hydration
-      emitPlatformCode(OBS_CODES.APP_CLIENT_BUNDLE_FAILED, {
+      emitCode(OBS_CODES.APP_CLIENT_BUNDLE_FAILED, {
         error: err,
         metadata: { outDir: config.outDir, appDir: config.appDir },
       });
@@ -212,11 +220,11 @@ export async function createApp(userConfig: AppConfig) {
     try {
       const styles = await buildPlatformStyles(config.outDir, config.appDir);
       cssPath = styles.publicPath;
-      emitPlatformCode(OBS_CODES.APP_STYLES_READY, {
+      emitCode(OBS_CODES.APP_STYLES_READY, {
         metadata: { publicPath: styles.publicPath },
       });
     } catch (err) {
-      emitPlatformCode(OBS_CODES.APP_STYLES_FAILED, {
+      emitCode(OBS_CODES.APP_STYLES_FAILED, {
         error: err,
         metadata: { outDir: config.outDir, appDir: config.appDir },
       });
@@ -310,9 +318,29 @@ export async function createApp(userConfig: AppConfig) {
       clientEntry,
       cssPath,
     });
-    const stopped = installAppStopBarrier(mounted, async () => {
-      await runtime.dispose();
-    });
+    const stopped = installAppStopBarrier(
+      mounted,
+      async () => {
+        await runtime.dispose();
+      },
+      {
+        onTransportStopStalled(status) {
+          emitPlatformCodeTo(
+            observabilityRuntime,
+            OBS_CODES.APP_LIFECYCLE_SLOW,
+            {
+              message: 'Native WebSocket shutdown accounting stalled after the listener closed; Zero is continuing managed teardown.',
+              metadata: {
+                stage: 'transport-stop',
+                runtime: 'bun',
+                pendingRequests: status.pendingRequests,
+                pendingWebSockets: status.pendingWebSockets,
+              },
+            },
+          );
+        },
+      },
+    );
     return installAppSignalLifecycle(stopped);
   } catch (error) {
     return cleanupFailedAppCreation(error, runtime, sqlite, ownsSqlite);
@@ -637,6 +665,11 @@ async function mountPlatformApp({
           : undefined,
         getRoleAssignments: config.auth !== false ? getAppRoleAssignments : undefined,
         getDB: () => syncDB,
+        emitCode: (definition, options) => emitPlatformCodeTo(
+          runtime.require(ZERO_OBSERVABILITY_RUNTIME),
+          definition,
+          options,
+        ),
         ...config.resourceRoutes,
       })
     );

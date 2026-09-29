@@ -10,6 +10,7 @@ import {
   type EmailMessage,
   type EmailProvider,
 } from '../email';
+import { resetEmailCompatibilityRuntimeForTesting } from '../email/runtime';
 import {
   configureObservability,
   getObservabilityRuntime,
@@ -1287,7 +1288,7 @@ describe('Auth Plugin — MFA Flows', () => {
       expectActivePageSession(verifiedChallenge);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -1374,7 +1375,7 @@ describe('Auth Plugin — MFA Flows', () => {
       expectActivePageSession(verifiedSetup);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 });
@@ -1450,7 +1451,7 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(replay.data.code).toBe('ACTION_TOKEN_CONSUMED');
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -1546,7 +1547,7 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(deliveryAttempts).toBe(3);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -1578,7 +1579,7 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(row.count).toBe(0);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -1625,7 +1626,7 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(provider.messages).toHaveLength(1);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -1706,7 +1707,7 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(outcomeLog).not.toContain('logged-reset@test.com');
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
       configureObservability(previousObservabilityConfig);
     }
   });
@@ -1794,7 +1795,7 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(activeTokens.count).toBe(1);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
       configureObservability(previousObservabilityConfig);
     }
   });
@@ -1877,7 +1878,7 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(replay.data.code).toBe('ACTION_TOKEN_CONSUMED');
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -1911,7 +1912,7 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(row.count).toBe(0);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -1967,7 +1968,7 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(provider.messages).toHaveLength(1);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -2019,7 +2020,7 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(extractTokenFromEmail(message.text)).toBeTruthy();
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -2115,7 +2116,7 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(newLogin.status).toBe(200);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -2178,7 +2179,7 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(user.data.user.passwordChangeRequired).toBe(false);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 
@@ -2284,7 +2285,7 @@ describe('Auth Plugin — Account Lifecycle Email Flows', () => {
       expect(login.status).toBe(200);
     } finally {
       await local.stop();
-      configureEmail(false);
+      resetEmailCompatibilityRuntimeForTesting();
     }
   });
 

@@ -32,7 +32,9 @@ export interface AuthAuthorizationSnapshot {
     readonly authorization: 'simple' | 'advanced';
   };
   readonly scope: AuthAuthorizationScopeSnapshot | null;
-  /** Opaque equality marker covering identity, platform role, and scope authority. */
+  /** Separate application authority projected only from an admin-organization session. */
+  readonly applicationScope?: AuthAuthorizationScopeSnapshot | null;
+  /** Opaque equality marker covering identity, both scopes, and registry semantics. */
   readonly revision: string;
 }
 
@@ -42,17 +44,10 @@ export function createAuthAuthorizationSnapshot(
   access: RequestAuthorizationAccess,
 ): AuthAuthorizationSnapshot {
   const current = access.authorization;
-  const scope: AuthAuthorizationScopeSnapshot | null = current
-    ? Object.freeze({
-        kind: current.scopeKind,
-        scopeId: current.scopeId,
-        roles: Object.freeze([...current.roles]),
-        permissions: Object.freeze([...current.permissions]),
-        allPermissions: current.allPermissions === true,
-        revision: current.revision,
-        ...(current.tenantId ? { tenantId: current.tenantId } : {}),
-        ...(current.membershipId ? { membershipId: current.membershipId } : {}),
-      })
+  const scope = projectScope(current);
+  const application = access.applicationAuthorization;
+  const applicationScope = application && application !== current
+    ? projectScope(application)
     : null;
 
   return Object.freeze({
@@ -66,13 +61,38 @@ export function createAuthAuthorizationSnapshot(
       authorization: kernel.authorization.mode,
     }),
     scope,
-    revision: authorizationRevision(auth, scope),
+    applicationScope,
+    revision: authorizationRevision(
+      auth,
+      scope,
+      applicationScope,
+      kernel.authorization.registryVersion,
+    ),
   });
+}
+
+function projectScope(
+  current: RequestAuthorizationAccess['authorization'],
+): AuthAuthorizationScopeSnapshot | null {
+  return current
+    ? Object.freeze({
+        kind: current.scopeKind,
+        scopeId: current.scopeId,
+        roles: Object.freeze([...current.roles]),
+        permissions: Object.freeze([...current.permissions]),
+        allPermissions: current.allPermissions === true,
+        revision: current.revision,
+        ...(current.tenantId ? { tenantId: current.tenantId } : {}),
+        ...(current.membershipId ? { membershipId: current.membershipId } : {}),
+      })
+    : null;
 }
 
 function authorizationRevision(
   auth: AuthContext,
   scope: AuthAuthorizationScopeSnapshot | null,
+  applicationScope: AuthAuthorizationScopeSnapshot | null,
+  registryVersion: number,
 ): string {
   // JSON encoding avoids delimiter ambiguity. This is an equality marker, not
   // a credential, and deliberately contains only fields already in the body.
@@ -83,5 +103,8 @@ function authorizationRevision(
     scope?.kind ?? null,
     scope?.scopeId ?? null,
     scope?.revision ?? null,
+    applicationScope?.scopeId ?? null,
+    applicationScope?.revision ?? null,
+    registryVersion,
   ]);
 }

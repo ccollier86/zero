@@ -1,8 +1,8 @@
 /** Atomic verification-token consumption and auth-flow completion. */
 
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
 import {
+  getAuthAccountEmitter,
   requireAccountServices,
   type AuthAccountPluginConfig,
 } from './auth-account-dependencies';
@@ -53,7 +53,7 @@ export async function completeEmailVerification(
     },
   );
   if (!user) throw new AuthError('User not found', 'USER_NOT_FOUND', 404);
-  emitPlatformCode(OBS_CODES.AUTH_EMAIL_VERIFIED, { userId: user.userId });
+  getAuthAccountEmitter(config)(OBS_CODES.AUTH_EMAIL_VERIFIED, { userId: user.userId });
 
   return buildAuthCompletionResponse({
     user,

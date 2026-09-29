@@ -145,7 +145,8 @@ describe('server extensions middleware policy', () => {
     });
 
     expect(response.status).toBe(500);
-    await expect(response.json()).resolves.toMatchObject({
+    await expect(response.json()).resolves.toEqual({
+      error: 'Authentication service unavailable',
       code: 'AUTH_POLICY_UNAVAILABLE',
     });
   });

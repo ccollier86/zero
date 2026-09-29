@@ -2,10 +2,11 @@ import type {
   AuthEmailTemplateResult,
   ResolvedAuthEmailBranding,
 } from './auth-email-templates';
+import type { TenantKind } from './tenancy/tenancy-types';
 
 export interface TenantInvitationEmailContext {
   branding: ResolvedAuthEmailBranding;
-  tenant: { name: string };
+  tenant: { name: string; kind: TenantKind };
   actionUrl: string;
   expiresAt: number;
 }
@@ -15,8 +16,16 @@ export function renderTenantInvitationEmail(
   context: TenantInvitationEmailContext,
 ): AuthEmailTemplateResult {
   const subject = `Join ${context.tenant.name} on ${context.branding.appName}`;
+  const administrationNotice = context.tenant.kind === 'administration'
+    ? [
+        '',
+        'This is the protected administration organization. Membership may grant '
+          + 'application-wide administration access.',
+      ]
+    : [];
   const text = [
     `You have been invited to join ${context.tenant.name} on ${context.branding.appName}.`,
+    ...administrationNotice,
     '',
     'Accept this invitation using the one-time link:',
     context.actionUrl,

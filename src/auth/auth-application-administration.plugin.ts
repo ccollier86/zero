@@ -11,7 +11,10 @@ import type { UserStore } from './user-store';
 import { AuthError, type AuthContext } from './types';
 import { authAuditRequestFromRequest } from './auth-audit-service';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
-import { captureAuthApplicationMutationAuthority } from './auth-application-mutation-authority';
+import {
+  captureAuthApplicationMutationAuthority,
+  type AssertAuthApplicationMutationAuthority,
+} from './auth-application-mutation-authority';
 
 const userIdSchema = t.String({
   minLength: 1,
@@ -40,6 +43,7 @@ interface ApplicationActor {
   store: UserStore;
   tokenService: TokenService;
   roles: AuthorizationRoleService;
+  assertCurrentAuthority: AssertAuthApplicationMutationAuthority;
 }
 
 /** Mount below `/auth`; this namespace never accepts tenant scope input. */
@@ -51,18 +55,22 @@ export function createAuthApplicationAdministrationPlugin(
       applyAuthPrivateNoStore(set);
       const actor = await requireApplicationActor(config, request);
       actor.access.requirePermission('application.roles:read');
-      return actor.service.getConfig(actor.auth.userId);
+      const response = actor.service.getConfig(actor.auth.userId);
+      actor.assertCurrentAuthority(['application.roles:read']);
+      return response;
     })
     .get('/users', async ({ request, query, set }) => {
       applyAuthPrivateNoStore(set);
       const actor = await requireApplicationActor(config, request);
       actor.access.requirePermission('application.roles:read');
-      return actor.service.listUsers(actor.auth.userId, {
+      const response = actor.service.listUsers(actor.auth.userId, {
         limit: query.limit,
         cursor: query.cursor,
         search: query.search,
         status: query.status,
       });
+      actor.assertCurrentAuthority(['application.roles:read']);
+      return response;
     }, {
       query: t.Object({
         limit: t.Optional(t.Numeric({ minimum: 1, maximum: 100 })),
@@ -156,5 +164,12 @@ async function requireApplicationActor(
     store,
     tokenService,
     roles: roleAssignments,
+    assertCurrentAuthority: captureAuthApplicationMutationAuthority({
+      auth,
+      tokenService,
+      kernel,
+      store,
+      roles: roleAssignments,
+    }),
   };
 }

@@ -67,11 +67,26 @@ export type {
   RequestAuthorizationAccess,
   TenantAuthorizationScope,
 } from './authorization-access';
+export { captureAuthApplicationMutationAuthority } from './auth-application-mutation-authority';
+export type {
+  AssertAuthApplicationMutationAuthority,
+  AuthApplicationMutationAuthority,
+} from './auth-application-mutation-authority';
+export { captureAuthTenantMutationAuthority } from './auth-tenant-mutation-authority';
+export type {
+  AssertAuthTenantMutationAuthority,
+  AuthTenantMutationAuthority,
+} from './auth-tenant-mutation-authority';
 export {
+  ADMINISTRATION_TENANT_ROLE_KEYS,
   FRAMEWORK_APPLICATION_AUTHORIZATION_PERMISSIONS,
   FRAMEWORK_APPLICATION_AUTHORIZATION_ROLES,
+  FRAMEWORK_PLATFORM_ADMINISTRATION_PERMISSIONS,
   FRAMEWORK_TENANT_AUTHORIZATION_PERMISSIONS,
   FRAMEWORK_TENANT_AUTHORIZATION_ROLES,
+  isAdministrationOnlyRole,
+  isAdministrationTenantRoleKey,
+  isRoleAssignableToTenantKind,
 } from './authorization-registry';
 export { AuthorizationRoleService } from './authorization-role-service';
 export {
@@ -138,7 +153,16 @@ export type {
   ResolvedAuthAuditConfig,
 } from './auth-audit-types';
 export { UserStore } from './user-store';
+export type {
+  AtomicRegistrationPolicy,
+  AuthSecurityAuditContext,
+  CreateUserInput,
+  UserListOptions,
+  UserStoreOptions,
+} from './user-store';
 export { TokenService } from './token-service';
+export type { IssuedPageSession, WebRefreshProof } from './token-service';
+export type { AuthPlatformCodeEmitter } from './auth-observability';
 export { AuthSessionService } from './auth-session-service';
 export { AuthRequestAdmissionService } from './auth-request-admission-service';
 export { resolveAuthRequestAdmissionConfig } from './auth-request-admission-config';
@@ -156,6 +180,9 @@ export { defineAuthSessionTables } from './auth-session-schema';
 export { AuthTenantSessionService } from './auth-tenant-session-service';
 export { AuthApplicationAdministrationService } from './auth-application-administration-service';
 export { AuthTenantAdministrationService } from './auth-tenant-administration-service';
+export {
+  AuthPlatformTenantAdministrationService,
+} from './auth-platform-tenant-administration-service';
 export { AuthTenantOnboardingService } from './auth-tenant-onboarding-service';
 export { VerifiedDomainOnboardingService } from './verified-domain-service';
 export { resolveAuthTenantOnboardingConfig } from './auth-tenant-onboarding-config';
@@ -166,6 +193,9 @@ export type {
 export type {
   AuthTenantInvitation,
   AuthTenantInvitationCreated,
+  AuthTenantInvitationDeliveryMode,
+  AuthTenantInvitationEmailTemplate,
+  AuthTenantInvitationEmailTemplateContext,
   AuthTenantInvitationInspection,
   AuthTenantInvitationRecord,
   AuthTenantInvitationStatus,
@@ -201,6 +231,13 @@ export type {
   AuthApplicationUserListInput,
   AuthApplicationUserPage,
 } from './auth-application-administration-types';
+export type {
+  AuthPlatformTenant,
+  AuthPlatformTenantCreateResult,
+  AuthPlatformTenantListInput,
+  AuthPlatformTenantPage,
+  AuthPlatformTenantUpdateResult,
+} from './auth-platform-administration-types';
 export type {
   AuthTenantAdministrationConfig,
   AuthTenantMember,
@@ -276,6 +313,7 @@ export type {
   CreateTenantMembershipInput,
   CreateTenantWithOwnerInput,
   TenantCreationResult,
+  TenantKind,
   TenantOwnershipTransferResult,
   TenantMembershipRecord,
   TenantMembershipStatus,
@@ -318,11 +356,13 @@ export type {
   TokenServiceConfig,
   AuthAccountConfig,
   AuthAccountEmailConfig,
+  AuthAdministrationTenantConfig,
   AuthAuthorizationConfig,
   AuthAuthorizationMode,
   AuthAuthorizationOwnerAdoptionConfig,
   AuthAuthorizationOptions,
   AuthPermissionConfig,
+  AuthPermissionScope,
   AuthRoleTemplateConfig,
   AuthBehaviorConfig,
   AuthBootstrapConfig,

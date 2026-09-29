@@ -5,10 +5,11 @@ import { readPageSessionCookie } from '../page-session';
 import type { NativeAuthorizationService } from './native-authorization-service';
 import { escapeHtml, nativeHtml } from './native-http';
 import type { NativeAuthHttpConfig } from './native-plugin-types';
+import { nativeRuntimeUnavailableError } from './native-request-failure';
 
 export function requireNativeService(config: NativeAuthHttpConfig): NativeAuthorizationService {
   const service = config.getService();
-  if (!service) throw new Error('Native authentication is not ready.');
+  if (!service) throw nativeRuntimeUnavailableError();
   return service;
 }
 
@@ -18,8 +19,11 @@ export async function resolveNativePagePost(request: Request, config: NativeAuth
   return raw && tokens ? tokens.resolvePageSessionToken(raw) : null;
 }
 
-export function authorizationProblem(message: string): Response {
-  return nativeHtml(`<main><h1>Authorization unavailable</h1><p>${escapeHtml(message)}</p></main>`, 400);
+export function authorizationProblem(message: string, status = 400): Response {
+  return nativeHtml(
+    `<main><h1>Authorization unavailable</h1><p>${escapeHtml(message)}</p></main>`,
+    status,
+  );
 }
 
 export function authContinuationPath(
