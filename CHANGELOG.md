@@ -220,6 +220,38 @@ All notable Zero Platform changes are tracked here.
 
 ### Fixed
 
+- Made migration drift classification and `ADD COLUMN` draft generation share
+  one SQLite-aware parser. Unsupported primary-key, unique, generated,
+  autoincrement, default, `NOT NULL`, and foreign-key combinations are now
+  omitted for explicit rebuild review; data-dependent supported additions are
+  marked guarded, and foreign-key `SET DEFAULT` actions are no longer confused
+  with a column default.
+- Enforced one lossless primary-key contract across direct ReactiveDB schema
+  definition, app-config resolution, Fabric realm admission, and physical
+  actor startup. Application tables now accept only declared SQLite `TEXT` or
+  `INTEGER` affinity primary keys; `REAL`, `BLOB`, `NUMERIC`, typeless, and
+  composite keys fail before use. Column definitions are isolated before SQL
+  generation with SQLite-aligned tokenization, so top-level separators,
+  injected table constraints, comment-split constraints, or ambiguous quoted
+  type declarations cannot create a hidden composite key. Safe integer keys
+  canonicalize to protocol string row IDs, and Platform Doctor reports
+  definition or affinity failures at the exact table column.
+- Moved deterministic Fabric realm incompatibilities to definition-time
+  admission. `defineDatabaseRealm()` now rejects non-primary `BLOB`/typeless
+  columns, generated columns, mutating foreign-key actions, SQLite/Zero-owned
+  object names, and natural-identity index/table collisions with
+  `DATABASE_CONFIG_INVALID`; actor startup retains independent physical
+  hidden-column, affinity, and schema-drift defenses.
+- Restricted registered Fabric commands to a frozen tracked-data capability.
+  Command handlers retain ReactiveDB CRUD, identity, query, transaction, and
+  post-commit APIs without access to raw SQL/SQLite handles, schema mutation,
+  listeners, lifecycle controls, or internal-change surfaces. The per-command
+  facade is revoked after result validation so retained methods cannot mutate
+  outside the receipt/publication boundary.
+- Preserved hot-image write exhaustion as the closed `max-bytes` classifier
+  across actor and coordinator sanitization. The existing app-local operation
+  failure event now reports `failureReason: 'hot-max-bytes'` while continuing
+  to discard paths, SQL, row data, raw SQLite errors, and measured byte values.
 - Updated the Elysia, validation, file detection, Tailwind/Vite/PostCSS, and
   synchronized AI SDK dependency families within their supported major lines,
   eliminating all advisories reported by `bun audit`. Dependency auditing is

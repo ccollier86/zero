@@ -229,8 +229,26 @@ reviewable SQL.
 It can draft:
 
 - `CREATE TABLE IF NOT EXISTS`.
-- `ALTER TABLE ... ADD COLUMN` for safe SQLite-supported columns.
+- `ALTER TABLE ... ADD COLUMN` for SQLite-supported column definitions.
 - Natural identity unique indexes.
+
+Missing-column planning uses the same quote/comment/parenthesis-aware
+classifier for both the drift issue and the emitted SQL. Plain nullable
+columns and supported literal defaults are safe drafts. A `NOT NULL` column
+with a non-`NULL` literal default, or a column with `CHECK`, is emitted as a
+guarded draft because acceptance can depend on existing rows.
+
+Zero deliberately emits no `ADD COLUMN` statement for definitions SQLite
+cannot add safely to a populated Fabric database: primary keys, unique or
+autoincrement columns, generated columns, parenthesized defaults, unquoted
+`CURRENT_TIME`/`CURRENT_DATE`/`CURRENT_TIMESTAMP` defaults, `NOT NULL` without
+a non-`NULL` default, or a `REFERENCES` clause paired with a non-`NULL`
+default. Those missing columns remain visible as guarded drift for an explicit
+table-rebuild migration. SQL literals, quoted identifiers, nested expressions,
+block comments, and foreign-key `ON DELETE/UPDATE SET DEFAULT` actions are
+parsed in context rather than mistaken for column constraints. Definitions
+containing `--` line comments are omitted because SQLite's `ADD COLUMN` schema
+rewrite cannot retain them reliably, even when the comment is LF-terminated.
 
 It will not auto-write destructive operations. Drops, renames, type changes,
 primary key changes, table rebuilds, and unknown transformations are reported as

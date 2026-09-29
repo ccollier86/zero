@@ -10,6 +10,11 @@ import type {
   AppTableInput,
   ResolvedConfig,
 } from '../frontend/server/types';
+import {
+  databaseColumnDefinitionAffinity,
+  isSupportedDatabaseRowIdentityAffinity,
+  isIsolatedDatabaseColumnDefinition,
+} from '../sync/row-identity';
 import { tableColumnDeclaresPrimaryKey } from '../resources/resource-schema';
 import type { TableSchema } from '../sync/types';
 import {
@@ -56,20 +61,46 @@ export function checkTableSchemas(
     const primaryColumns = findPrimaryKeyColumns(schema);
     const path = `tables.${tableName}`;
 
+    for (const [column, definition] of Object.entries(schema)) {
+      if (column === '_identity' || typeof definition !== 'string') continue;
+      if (isIsolatedDatabaseColumnDefinition(definition)) continue;
+      findings.push({
+        severity: 'error',
+        code: 'schema.column_definition.not_isolated',
+        path: `${path}.${column}`,
+        message: `Table "${tableName}" column "${column}" escapes its single-column schema slot.`,
+        hint: 'Declare table constraints through supported Zero schema features; a column definition cannot contain a top-level comma, statement separator, or unbalanced SQL grouping.',
+        docs: './docs/start-here.md#tables-and-primary-keys',
+      });
+    }
+
     if (primaryColumns.length === 0) {
       findings.push({
         severity: 'error',
         code: 'schema.primary_key.missing',
         path,
-        message: `Table "${tableName}" has no primary key. ReactiveDB tables need one string sync primary key.`,
+        message: `Table "${tableName}" has no primary key. ReactiveDB tables need one single-column sync primary key.`,
       });
     } else if (primaryColumns.length > 1) {
       findings.push({
         severity: 'error',
         code: 'schema.primary_key.composite',
         path,
-        message: `Table "${tableName}" declares multiple primary-key columns. Use one sync primary key plus _identity for natural/composite identity.`,
+        message: `Table "${tableName}" declares multiple primary-key columns. Use one TEXT or INTEGER affinity sync primary key plus _identity for natural/composite identity.`,
       });
+    } else {
+      const primaryKey = primaryColumns[0]!;
+      const affinity = databaseColumnDefinitionAffinity(schema[primaryKey]);
+      if (!isSupportedDatabaseRowIdentityAffinity(affinity)) {
+        findings.push({
+          severity: 'error',
+          code: 'schema.primary_key.unsupported_affinity',
+          path: `${path}.${primaryKey}`,
+          message: `Table "${tableName}" primary key "${primaryKey}" has ${affinity} affinity; ReactiveDB requires TEXT or INTEGER affinity.`,
+          hint: 'Declare the sync primary key as TEXT PRIMARY KEY (recommended) or INTEGER PRIMARY KEY.',
+          docs: './docs/start-here.md#tables-and-primary-keys',
+        });
+      }
     }
 
     checkIdentity(tableName, schema, primaryColumns[0], findings);

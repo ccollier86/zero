@@ -221,7 +221,7 @@ export function prepareDatabaseFile(
   rootDirectory: string,
   input: DatabaseId | string,
 ): PreparedDatabaseFile {
-  return prepareDatabaseFileInternal(rootDirectory, input, null);
+  return prepareDatabaseFileInternal(rootDirectory, input, null, null);
 }
 
 /**
@@ -231,6 +231,9 @@ export function prepareDatabaseFile(
  * absent, immediately before its O_EXCL reservation. The coordinator invokes
  * this while it owns both the physical root and its catalog gate, keeping a
  * capacity decision and creation in one serialized critical section.
+ * `recordCreation`, when provided, runs immediately after O_EXCL succeeds and
+ * before later hardening checks, so a retained file is charged even if one of
+ * those checks subsequently fails.
  * Existing managed files bypass admission and always remain openable.
  *
  * @internal
@@ -239,6 +242,7 @@ export function prepareDatabaseFileWithCreationAdmission(
   rootDirectory: string,
   input: DatabaseId | string,
   admitCreation: () => void,
+  recordCreation?: () => void,
 ): PreparedDatabaseFile {
   if (typeof admitCreation !== 'function') {
     throw new DatabasePathError(
@@ -246,7 +250,18 @@ export function prepareDatabaseFileWithCreationAdmission(
       'Database file creation admission must be a function.',
     );
   }
-  return prepareDatabaseFileInternal(rootDirectory, input, admitCreation);
+  if (recordCreation !== undefined && typeof recordCreation !== 'function') {
+    throw new DatabasePathError(
+      'DATABASE_ROOT_INVALID',
+      'Database file creation recorder must be a function.',
+    );
+  }
+  return prepareDatabaseFileInternal(
+    rootDirectory,
+    input,
+    admitCreation,
+    recordCreation ?? null,
+  );
 }
 
 /** Count exact regular Zero-managed main database files, excluding sidecars. */
@@ -264,6 +279,7 @@ function prepareDatabaseFileInternal(
   rootDirectory: string,
   input: DatabaseId | string,
   admitCreation: (() => void) | null,
+  recordCreation: (() => void) | null,
 ): PreparedDatabaseFile {
   // Preserve resolveDatabaseFile()'s validation order: reject an invalid
   // logical ID before creating or hardening filesystem state.
@@ -278,7 +294,11 @@ function prepareDatabaseFileInternal(
   assertNoSymlinkComponents(location.rootDirectory, false);
   assertExistingDatabaseFile(location);
 
-  const created = reserveAndHardenDatabaseFile(location, admitCreation);
+  const created = reserveAndHardenDatabaseFile(
+    location,
+    admitCreation,
+    recordCreation,
+  );
   assertExistingDatabaseFile(location, true);
 
   const identityGuard = openDatabaseFileIdentityGuard(location.path, {
@@ -494,6 +514,7 @@ function assertExistingDatabaseFile(
 function reserveAndHardenDatabaseFile(
   location: ResolvedDatabaseFile,
   admitCreation: (() => void) | null,
+  recordCreation: (() => void) | null,
 ): boolean {
   const noFollow = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0;
   const createFlags = fsConstants.O_CREAT
@@ -523,6 +544,10 @@ function reserveAndHardenDatabaseFile(
   }
 
   try {
+    // Charge the durable main-file identity immediately after O_EXCL creates
+    // it. Any later hardening or validation failure leaves that file present,
+    // so capacity accounting must retain the charge as well.
+    if (created) recordCreation?.();
     const details = fstatSync(descriptor, { bigint: true });
     if (!details.isFile()) {
       throw new DatabasePathError(

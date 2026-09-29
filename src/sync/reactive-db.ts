@@ -1,6 +1,13 @@
 import type { Database, Statement } from 'bun:sqlite';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
+  canonicalDatabaseRowId,
+  databaseColumnDefinitionAffinity,
+  databaseColumnDefinitionDeclaresPrimaryKey,
+  isSupportedDatabaseRowIdentityAffinity,
+  isIsolatedDatabaseColumnDefinition,
+} from './row-identity';
+import {
   createIdentityId,
   getIdentityValues,
   hasIdentity,
@@ -256,21 +263,31 @@ export class ReactiveDB {
       throw new Error(`defineTable('${name}'): schema must have at least one column`);
     }
 
-    // Find primary key: first column whose definition contains 'primary key'
-    let primaryKey: string | null = null;
+    const primaryKeys: string[] = [];
     for (const col of columns) {
       const def = schema[col];
       if (typeof def !== 'string') {
         throw new Error(`defineTable('${name}'): column '${col}' must have a SQL definition string`);
       }
-      if (def.toLowerCase().includes('primary key')) {
-        primaryKey = col;
-        break;
+      if (!isIsolatedDatabaseColumnDefinition(def)) {
+        throw new Error(
+          `defineTable('${name}'): column '${col}' must describe exactly one isolated SQL column`,
+        );
       }
+      if (databaseColumnDefinitionDeclaresPrimaryKey(def)) primaryKeys.push(col);
     }
-    if (!primaryKey) {
+    if (primaryKeys.length !== 1) {
       throw new Error(
-        `defineTable('${name}'): schema must have a column with 'primary key' in its definition`
+        `defineTable('${name}'): schema must declare exactly one primary-key column`,
+      );
+    }
+    const primaryKey = primaryKeys[0]!;
+    const primaryKeyAffinity = databaseColumnDefinitionAffinity(
+      schema[primaryKey],
+    );
+    if (!isSupportedDatabaseRowIdentityAffinity(primaryKeyAffinity)) {
+      throw new Error(
+        `defineTable('${name}'): primary key '${primaryKey}' must declare TEXT or INTEGER affinity`,
       );
     }
 
@@ -403,7 +420,11 @@ export class ReactiveDB {
       if (pkValue === undefined || pkValue === null || pkValue === '') {
         throw new Error(`insert('${table}'): row is missing primary key '${def.primaryKey}'`);
       }
-      const pk = String(pkValue);
+      const pk = requireCanonicalReactiveDBRowId(
+        table,
+        def.primaryKey,
+        pkValue,
+      );
 
       // Check if row already exists to determine correct op
       const existing = def.stmts.getOne.get(pk) as Row | null;
@@ -412,7 +433,13 @@ export class ReactiveDB {
       assertNoIdentityConflict(
         def,
         nextRow,
-        existing ? String(existing[def.primaryKey]) : pk,
+        existing
+          ? requireCanonicalReactiveDBRowId(
+            table,
+            def.primaryKey,
+            existing[def.primaryKey],
+          )
+          : pk,
       );
 
       // Determine which columns are present in the row object.
@@ -459,7 +486,11 @@ export class ReactiveDB {
       if (!fullRow) {
         throw new Error(`insert('${table}'): persisted row is missing`);
       }
-      const persistedId = String(fullRow[def.primaryKey]);
+      const persistedId = requireCanonicalReactiveDBRowId(
+        table,
+        def.primaryKey,
+        fullRow[def.primaryKey],
+      );
 
       const change = this.createChange(table, op, persistedId, fullRow, existing);
       this.recordAndEmit(change);
@@ -497,7 +528,11 @@ export class ReactiveDB {
         if (pkValue === undefined || pkValue === null || pkValue === '') {
           throw new Error(`createStrict('${table}'): row is missing primary key '${def.primaryKey}'`);
         }
-        const pk = String(pkValue);
+        const pk = requireCanonicalReactiveDBRowId(
+          table,
+          def.primaryKey,
+          pkValue,
+        );
         if (def.stmts.getOne.get(pk)) {
           throw new Error(`createStrict('${table}'): primary key already exists`);
         }
@@ -527,7 +562,11 @@ export class ReactiveDB {
         const change = this.createChange(
           table,
           'INSERT',
-          String(fullRow[def.primaryKey]),
+          requireCanonicalReactiveDBRowId(
+            table,
+            def.primaryKey,
+            fullRow[def.primaryKey],
+          ),
           fullRow,
           null,
         );
@@ -561,7 +600,11 @@ export class ReactiveDB {
         if (pkValue === undefined || pkValue === null || pkValue === '') {
           throw new Error(`createScoped('${table}'): row is missing primary key '${def.primaryKey}'`);
         }
-        const pk = String(pkValue);
+        const pk = requireCanonicalReactiveDBRowId(
+          table,
+          def.primaryKey,
+          pkValue,
+        );
         if (def.stmts.getOne.get(pk)) {
           throw new Error(`createScoped('${table}'): primary key already exists`);
         }
@@ -591,7 +634,11 @@ export class ReactiveDB {
         const change = this.createChange(
           table,
           'INSERT',
-          String(fullRow[def.primaryKey]),
+          requireCanonicalReactiveDBRowId(
+            table,
+            def.primaryKey,
+            fullRow[def.primaryKey],
+          ),
           fullRow,
           null,
         );
@@ -651,7 +698,11 @@ export class ReactiveDB {
       const change = this.createChange(
         table,
         'UPDATE',
-        String(fullRow[def.primaryKey]),
+        requireCanonicalReactiveDBRowId(
+          table,
+          def.primaryKey,
+          fullRow[def.primaryKey],
+        ),
         fullRow,
         existing,
       );
@@ -723,7 +774,11 @@ export class ReactiveDB {
         const change = this.createChange(
           table,
           'UPDATE',
-          String(fullRow[def.primaryKey]),
+          requireCanonicalReactiveDBRowId(
+            table,
+            def.primaryKey,
+            fullRow[def.primaryKey],
+          ),
           fullRow,
           existing,
         );
@@ -805,7 +860,11 @@ export class ReactiveDB {
         const change = this.createChange(
           table,
           'UPDATE',
-          String(fullRow[def.primaryKey]),
+          requireCanonicalReactiveDBRowId(
+            table,
+            def.primaryKey,
+            fullRow[def.primaryKey],
+          ),
           fullRow,
           existing,
         );
@@ -845,7 +904,11 @@ export class ReactiveDB {
       const change = this.createChange(
         table,
         'DELETE',
-        String(existing[def.primaryKey]),
+        requireCanonicalReactiveDBRowId(
+          table,
+          def.primaryKey,
+          existing[def.primaryKey],
+        ),
         null,
         existing,
       );
@@ -894,7 +957,11 @@ export class ReactiveDB {
         const change = this.createChange(
           table,
           'DELETE',
-          String(existing[def.primaryKey]),
+          requireCanonicalReactiveDBRowId(
+            table,
+            def.primaryKey,
+            existing[def.primaryKey],
+          ),
           null,
           existing,
         );
@@ -956,7 +1023,11 @@ export class ReactiveDB {
         const change = this.createChange(
           table,
           'DELETE',
-          String(existing[def.primaryKey]),
+          requireCanonicalReactiveDBRowId(
+            table,
+            def.primaryKey,
+            existing[def.primaryKey],
+          ),
           null,
           existing,
         );
@@ -1220,6 +1291,41 @@ export class ReactiveDB {
     // gap. Durable state/schema failures still throw and invalidate serving.
     try {
       return snapshot.rows.map(deserializeChangeRow);
+    } catch (error) {
+      if (isChangeLogFormatIncompatibleError(error)) return null;
+      throw error;
+    }
+  }
+
+  /**
+   * Read at most `limit` contiguous durable changes and the exact represented
+   * head. This is the bounded replay primitive for actor and transport pages;
+   * it never materializes the complete retained window.
+   *
+   * @internal Fabric transport primitive; application replay continues to use
+   * `getChangesAfter`.
+   */
+  getChangesPageAfter(
+    seq: number,
+    limit: number,
+  ): Readonly<{ changes: Change[]; headSeq: number; hasMore: boolean }> | null {
+    this.assertNotDisposed();
+    this.assertChangeLogUsable();
+    if (!Number.isSafeInteger(seq) || seq < 0) {
+      throw new Error('ReactiveDB change cursor must be a non-negative safe integer');
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
+      throw new Error('ReactiveDB change page size must be between 1 and 1000');
+    }
+
+    const snapshot = this.changeLog.readPage(seq, limit, this.inTransaction);
+    if (!snapshot.contiguous) return null;
+    try {
+      return Object.freeze({
+        changes: snapshot.rows.map(deserializeChangeRow),
+        headSeq: snapshot.state.seq,
+        hasMore: snapshot.hasMore,
+      });
     } catch (error) {
       if (isChangeLogFormatIncompatibleError(error)) return null;
       throw error;
@@ -1872,6 +1978,20 @@ function createReactiveDBRuntime(config: ReactiveDBConfig): ReactiveDBRuntime {
     ownsDatabase: false,
     clearChangesOnStart: config.clearChangesOnStart ?? false,
   };
+}
+
+function requireCanonicalReactiveDBRowId(
+  table: string,
+  primaryKey: string,
+  value: unknown,
+): string {
+  const canonical = canonicalDatabaseRowId(value);
+  if (canonical === null) {
+    throw new Error(
+      `ReactiveDB table '${table}' primary key '${primaryKey}' must persist as a bounded string or safe integer`,
+    );
+  }
+  return canonical;
 }
 
 function createRollbackOnlyError(cause: Error): Error {

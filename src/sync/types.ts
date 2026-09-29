@@ -110,12 +110,14 @@ export interface SyncTableMutationValidator {
  * Table schema definition.
  * Maps column names to SQLite column definitions.
  *
- * The first column whose definition includes 'primary key' (case-insensitive)
- * is treated as the sync primary key. `_identity` optionally declares a
- * natural/business identity whose fields get a unique index and deterministic
- * sync primary key generation. Mutating referential actions (`CASCADE`,
- * `SET NULL`, or `SET DEFAULT`) are rejected because they could change a
- * tracked row without a matching durable event.
+ * Exactly one isolated column definition must declare a top-level PRIMARY KEY.
+ * Its declared SQLite affinity must be TEXT or INTEGER; INTEGER values must
+ * remain safe integers and are canonicalized to string row IDs at the
+ * Sync/Fabric boundary. `_identity` optionally declares a natural/business
+ * identity whose fields get a unique index and deterministic sync primary key
+ * generation. Mutating referential actions (`CASCADE`, `SET NULL`, or
+ * `SET DEFAULT`) are rejected because they could change a tracked row without
+ * a matching durable event.
  *
  * @example
  * {
@@ -268,6 +270,9 @@ export interface ChangeStatements {
 
   /** SELECT * FROM _changes WHERE seq > ? ORDER BY seq */
   after: Statement;
+
+  /** Bounded SELECT * FROM _changes WHERE seq > ? ORDER BY seq LIMIT ? */
+  afterPage: Statement;
 
   /** SELECT MIN(seq) AS min_seq FROM _changes */
   oldest: Statement;

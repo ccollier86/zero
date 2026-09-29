@@ -33,6 +33,12 @@ import {
   resolveControlDatabasePaths,
 } from '../../databases/database-directory-isolation';
 import {
+  databaseColumnDefinitionAffinity,
+  isSupportedDatabaseRowIdentityAffinity,
+  isIsolatedDatabaseColumnDefinition,
+} from '../../sync/row-identity';
+import { tableColumnDeclaresPrimaryKey } from '../../resources/resource-schema';
+import {
   resolveRouteAuthMode,
   type RouteAuthMode,
 } from '../router/auth-policy';
@@ -572,6 +578,7 @@ export function resolveConfig(
       ?? serverTable[SYNC_TABLE_MUTATION_VALIDATOR];
     if (validator) mutationValidators[name] = validator;
   }
+  assertSupportedAppTableRowIdentities(normalized);
 
   const databaseTopology = resolveAppDatabaseTopology(
     config.databaseTopology,
@@ -814,6 +821,36 @@ function getTableColumnNames(schema: TableSchema): string[] {
   return Object.entries(schema)
     .filter(([key, value]) => key !== '_identity' && typeof value === 'string')
     .map(([key]) => key);
+}
+
+/** Reject app schemas whose row identity cannot cross Sync losslessly. */
+function assertSupportedAppTableRowIdentities(
+  tables: Readonly<Record<string, TableSchema>>,
+): void {
+  for (const [table, schema] of Object.entries(tables)) {
+    for (const [column, definition] of Object.entries(schema)) {
+      if (column === '_identity' || typeof definition !== 'string') continue;
+      if (!isIsolatedDatabaseColumnDefinition(definition)) {
+        throw new Error(
+          `[app] Table "${table}" column "${column}" must describe exactly one isolated SQL column.`,
+        );
+      }
+    }
+    const primaryKeys = Object.keys(schema).filter((column) =>
+      tableColumnDeclaresPrimaryKey(schema, column));
+    if (primaryKeys.length !== 1) {
+      throw new Error(
+        `[app] Table "${table}" must declare exactly one primary-key column.`,
+      );
+    }
+    const primaryKey = primaryKeys[0]!;
+    const affinity = databaseColumnDefinitionAffinity(schema[primaryKey]);
+    if (isSupportedDatabaseRowIdentityAffinity(affinity)) continue;
+    throw new Error(
+      `[app] Table "${table}" primary key "${primaryKey}" must declare `
+      + `TEXT or INTEGER affinity; received ${affinity}.`,
+    );
+  }
 }
 
 /**

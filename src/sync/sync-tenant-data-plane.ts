@@ -10,14 +10,17 @@
 
 import type { ServerWebSocket } from 'bun';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode, emitPlatformCodeTo } from '../observability/sink';
+import { emitPlatformCodeTo } from '../observability/sink';
 import type {
   PlatformCodeDefinition,
   PlatformCodeEmitOptions,
   PlatformObservabilityRuntime,
 } from '../observability/types';
 import { projectSyncChange } from './row-filter';
+import { SyncTenantBindingController } from './sync-tenant-binding-controller';
+import { sendTenantCatchup } from './sync-tenant-catchup';
 import { SyncTenantSnapshotBudgetError } from './sync-tenant-snapshot-budget';
+import { syncTenantDataPlaneError } from './sync-tenant-data-plane-error';
 import {
   rejectSyncDrain,
   sendSyncWire,
@@ -49,7 +52,6 @@ import {
   tenantSyncAuthorityChangedError,
   tenantSyncMutationRecoveryError,
   uniqueTenantSyncStrings,
-  validateTenantSyncBinding,
   validateTenantSyncTableCatalog,
   validTenantSyncSubscribe,
 } from './sync-tenant-data-plane-validation';
@@ -60,7 +62,6 @@ import type {
   Row,
   SyncAckMessage,
   SyncAuthContext,
-  SyncCatchupMessage,
   SyncMutateMessage,
   SyncSnapshotMessage,
   SyncSocketData,
@@ -90,7 +91,6 @@ export {
 
 const DEFAULT_REPLAY_LIMIT = 500;
 const MAX_CATCHUP_WIRE_BYTES = 900_000;
-const encoder = new TextEncoder();
 
 interface SyncTenantSocketBridgeOptions {
   readonly socket: ServerWebSocket<SyncSocketData>;
@@ -103,6 +103,16 @@ interface SyncTenantSocketBridgeOptions {
   readonly assertMutationAuthoritySync?: (fingerprint: string) => undefined;
 }
 
+type SyncTenantResnapshotReason =
+  | 'Tenant Sync binding changed'
+  | 'Tenant Sync database reset'
+  | 'Tenant Sync database unavailable'
+  | 'Tenant Sync epoch changed'
+  | 'Tenant Sync generation changed'
+  | 'Tenant Sync history unavailable'
+  | 'Tenant Sync replay failed'
+  | 'Tenant Sync subscription failed';
+
 /** Per-socket owner for a persistent actor tenant binding. */
 export class SyncTenantSocketBridge {
   readonly #socket: ServerWebSocket<SyncSocketData>;
@@ -114,11 +124,8 @@ export class SyncTenantSocketBridge {
   readonly #assertCurrentReadAuthoritySync: () => undefined;
   readonly #assertMutationAuthoritySync?: (fingerprint: string) => undefined;
   readonly #tables: Readonly<Record<string, SyncTenantDataPlaneTable>>;
+  readonly #bindings: SyncTenantBindingController;
 
-  #binding: SyncTenantDataPlaneBinding | null = null;
-  #bindingTask: Promise<SyncTenantDataPlaneBinding> | null = null;
-  #bindingRevision = 0;
-  #unsubscribe: (() => void) | null = null;
   #disposed = false;
   #baselineReady = false;
   #epoch: string | null = null;
@@ -150,6 +157,20 @@ export class SyncTenantSocketBridge {
       ?? options.assertCurrentAuthoritySync;
     this.#assertMutationAuthoritySync = options.assertMutationAuthoritySync;
     this.#tables = validateTenantSyncTableCatalog(options.plane.tables);
+    this.#bindings = new SyncTenantBindingController({
+      plane: this.#plane,
+      authContext: this.#authContext,
+      assertCurrentAuthoritySync: this.#assertCurrentAuthoritySync,
+      assertCurrentReadAuthoritySync: this.#assertCurrentReadAuthoritySync,
+      activeMutationAuthorityFingerprint: () =>
+        this.#activeMutationAuthorityFingerprint,
+      ...(this.#assertMutationAuthoritySync
+        ? { assertMutationAuthoritySync: this.#assertMutationAuthoritySync }
+        : {}),
+      onWakeup: (wakeup) => this.#onWakeup(wakeup),
+      onDetached: () => this.#resetBindingState(),
+      isDisposed: () => this.#disposed,
+    });
   }
 
   ownsTable(table: unknown): table is string {
@@ -188,7 +209,7 @@ export class SyncTenantSocketBridge {
         await waitForSyncDrain(this.#socket);
         this.#assertCurrentDelivery(revision);
       } finally {
-        if (revision === this.#subscriptionRevision) this.#detachBinding();
+        if (revision === this.#subscriptionRevision) this.#bindings.detach();
       }
     });
     const guarded = task.catch((error) => {
@@ -212,7 +233,7 @@ export class SyncTenantSocketBridge {
       lastDeliveredWireSeq: this.#lastDeliveredWireSeq,
       epoch: this.#epoch,
       generation: this.#generation,
-      bound: this.#binding !== null,
+      bound: this.#bindings.current !== null,
     });
   }
 
@@ -248,7 +269,7 @@ export class SyncTenantSocketBridge {
     this.#assertUsable();
     if (!this.ownsTable(table)) return null;
     this.#assertCurrentReadAuthoritySync();
-    const binding = await this.#ensureBinding();
+    const binding = await this.#bindings.ensure();
     const result = await binding.client.get(table, rowId, {
       consistency: { mode: 'strong' },
     });
@@ -279,7 +300,7 @@ export class SyncTenantSocketBridge {
         if (input.authorityFingerprint) {
           this.#assertMutationAuthoritySync?.(input.authorityFingerprint);
         }
-        const binding = await this.#ensureBinding();
+        const binding = await this.#bindings.ensure();
         const operation = input.assertions?.length
           ? {
             type: 'batch' as const,
@@ -346,7 +367,7 @@ export class SyncTenantSocketBridge {
       try {
         this.#assertMutationBaseline();
         this.#assertCurrentAuthoritySync();
-        const binding = await this.#ensureBinding();
+        const binding = await this.#bindings.ensure();
         const receipt = await binding.trustedWriter.findReceipt(
           input.idempotencyKey,
           input.logicalReceiptFingerprint,
@@ -429,9 +450,12 @@ export class SyncTenantSocketBridge {
     if (this.#disposed) return;
     this.#disposed = true;
     rejectSyncDrain(this.#socket);
-    this.#detachBinding();
+    this.#bindings.detach();
     this.#originBySequence.clear();
-    const closed = new Error('Tenant Sync socket is closed');
+    const closed = syncTenantDataPlaneError(
+      'SYNC_TENANT_SOCKET_CLOSED',
+      'Tenant Sync socket is closed.',
+    );
     for (const waiter of this.#drainWaiters) waiter.reject(closed);
     this.#drainWaiters.clear();
   }
@@ -463,11 +487,11 @@ export class SyncTenantSocketBridge {
       if (!sent) return;
       this.#assertCurrentDelivery(revision);
       this.#baselineReady = true;
-      this.#detachBinding();
+      this.#bindings.detach();
       return;
     }
 
-    const binding = await this.#ensureBinding();
+    const binding = await this.#bindings.ensure();
     if (revision !== this.#subscriptionRevision) return;
     const hasPriorCursor = message.epoch !== undefined || message.lastSeq > 0;
     const scopeMatches = typeof message.scope === 'string'
@@ -479,19 +503,27 @@ export class SyncTenantSocketBridge {
       && message.epoch
       && message.lastSeq >= 0) {
       try {
-        const catchup = await this.#sendCatchup(
+        const catchup = await sendTenantCatchup({
+          socket: this.#socket,
           binding,
           message,
           subscribed,
-          revision,
-        );
-        if (catchup === 'sent') {
+          replayLimit: DEFAULT_REPLAY_LIMIT,
+          maxWireBytes: MAX_CATCHUP_WIRE_BYTES,
+          isCurrent: () => revision === this.#subscriptionRevision,
+          assertCurrentReadAuthoritySync: this.#assertCurrentReadAuthoritySync,
+          acceptIdentity: (replay) => this.#acceptIdentity(replay),
+        });
+        if (catchup.status === 'sent') {
+          this.#actorCursor = catchup.head;
+          this.#lastDeliveredWireSeq = catchup.head;
+          this.#dropConsumedOrigins(catchup.head);
           this.#assertCurrentDelivery(revision);
           this.#baselineReady = true;
           this.#schedulePump();
           return;
         }
-        if (catchup === 'failed') return;
+        if (catchup.status === 'failed') return;
       } catch (error) {
         if (!isTenantSyncHistoryGap(error)) throw error;
       }
@@ -562,141 +594,7 @@ export class SyncTenantSocketBridge {
     return undefined;
   }
 
-  async #sendCatchup(
-    binding: SyncTenantDataPlaneBinding,
-    message: SyncSubscribeMessage,
-    subscribed: readonly string[],
-    revision: number,
-  ): Promise<'sent' | 'snapshot' | 'failed'> {
-    let cursor = message.lastSeq;
-    let head = message.lastSeq;
-    let epoch = message.epoch;
-    const changes: SyncCatchupMessage['changes'] = [];
-    // Bound both work and memory. A larger replay safely falls back to the
-    // actor's authoritative snapshot path.
-    for (let pageIndex = 0; pageIndex < 8; pageIndex += 1) {
-      const replay = await binding.replay(cursor, DEFAULT_REPLAY_LIMIT);
-      if (revision !== this.#subscriptionRevision) return 'failed';
-      this.#assertCurrentReadAuthoritySync();
-      if (replay.syncEpoch !== message.epoch) return 'snapshot';
-      this.#acceptIdentity(replay);
-      validateTenantReplayPage(replay, cursor);
-      head = replay.sequence.seq;
-      epoch = replay.syncEpoch;
-      for (const change of replay.value.changes) {
-        cursor = change.seq;
-        if (!subscribed.includes(change.table)) continue;
-        const projected = projectSyncChange(
-          change as Change,
-          this.#socket.data.resourceRowFilters.get(change.table),
-          this.#socket.data.resourceRowProjectors?.get(change.table),
-        );
-        if (projected) changes.push({ ...projected, origin: '' });
-      }
-      const estimate = encoder.encode(JSON.stringify(changes)).byteLength;
-      if (estimate > MAX_CATCHUP_WIRE_BYTES) return 'snapshot';
-      if (replay.value.nextAfterSeq === null) break;
-      if (pageIndex === 7) return 'snapshot';
-    }
-    const response: SyncCatchupMessage = {
-      type: 'sync.catchup',
-      plane: 'tenant',
-      changes,
-      seq: head,
-      prevSeq: message.lastSeq,
-      epoch,
-      scope: this.#socket.data.authorizationScope,
-    };
-    if (encoder.encode(JSON.stringify(response)).byteLength > MAX_CATCHUP_WIRE_BYTES) {
-      return 'snapshot';
-    }
-    this.#assertCurrentReadAuthoritySync();
-    if (!sendSyncWire(this.#socket, response)) return 'failed';
-    this.#actorCursor = head;
-    this.#lastDeliveredWireSeq = head;
-    this.#dropConsumedOrigins(head);
-    return 'sent';
-  }
-
-  async #ensureBinding(): Promise<SyncTenantDataPlaneBinding> {
-    this.#assertUsable();
-    if (this.#binding) return this.#binding;
-    if (this.#bindingTask) return await this.#bindingTask;
-
-    const authority = (): undefined => {
-      this.#assertCurrentAuthoritySync();
-      if (this.#activeMutationAuthorityFingerprint) {
-        this.#assertMutationAuthoritySync?.(
-          this.#activeMutationAuthorityFingerprint,
-        );
-      }
-      return undefined;
-    };
-    const readAuthority = (): undefined => {
-      this.#assertCurrentReadAuthoritySync();
-      if (this.#activeMutationAuthorityFingerprint) {
-        this.#assertMutationAuthoritySync?.(
-          this.#activeMutationAuthorityFingerprint,
-        );
-      }
-      return undefined;
-    };
-    const bindingRevision = this.#bindingRevision;
-    const task = this.#plane.bind(Object.freeze({
-      authContext: this.#authContext,
-      assertCurrentAuthoritySync: authority,
-      assertCurrentReadAuthority: readAuthority,
-    })).then((binding) => {
-      let unsubscribe: (() => void) | null = null;
-      try {
-        if (this.#disposed || bindingRevision !== this.#bindingRevision) {
-          throw new SyncTenantSubscriptionSupersededError();
-        }
-        validateTenantSyncBinding(binding);
-        // Subscribe before publishing the binding. A coordinator invalidation
-        // that happened before this continuation is detected by `released`;
-        // once this synchronous listener install begins, JavaScript cannot
-        // interleave another invalidation before the second state check.
-        const installed = binding.onWakeup((wakeup) => this.#onWakeup(wakeup));
-        if (typeof installed !== 'function') {
-          throw new TypeError('Tenant Sync wakeup subscription is invalid');
-        }
-        unsubscribe = installed;
-        if (this.#disposed
-          || bindingRevision !== this.#bindingRevision
-          || binding.released) {
-          throw new Error('Tenant Sync binding is unavailable');
-        }
-        this.#binding = binding;
-        this.#unsubscribe = unsubscribe;
-        return binding;
-      } catch (error) {
-        try { unsubscribe?.(); } catch { /* Preserve the binding failure. */ }
-        try { binding.release(); } catch { /* Already closed. */ }
-        throw error;
-      }
-    });
-    this.#bindingTask = task;
-    try {
-      return await task;
-    } finally {
-      if (this.#bindingTask === task) this.#bindingTask = null;
-    }
-  }
-
-  #detachBinding(): void {
-    this.#bindingRevision += 1;
-    const unsubscribe = this.#unsubscribe;
-    this.#unsubscribe = null;
-    try { unsubscribe?.(); } catch { /* Preserve binding release. */ }
-    const binding = this.#binding;
-    this.#binding = null;
-    if (binding) {
-      try { binding.release(); } catch { /* Socket cleanup is best effort. */ }
-    }
-    // A pending bind observes the revision before it can publish itself and
-    // releases the newly created capability in its own failure path.
-    this.#bindingTask = null;
+  #resetBindingState(): void {
     this.#epoch = null;
     this.#generation = null;
     this.#actorCursor = 0;
@@ -706,7 +604,7 @@ export class SyncTenantSocketBridge {
 
   #onWakeup(wakeup: SyncTenantDataPlaneWakeup): void {
     if (this.#disposed) return;
-    const binding = this.#binding;
+    const binding = this.#bindings.current;
     if (!binding || wakeup.databaseRef !== binding.databaseRef) {
       this.#closeForResnapshot('Tenant Sync binding changed');
       return;
@@ -756,7 +654,7 @@ export class SyncTenantSocketBridge {
       || this.#socket.data.syncBackpressured
       || this.#mutationsInFlight > 0) return;
     this.#pumpQueued = false;
-    const binding = await this.#ensureBinding();
+    const binding = await this.#bindings.ensure();
 
     while (!this.#disposed
       && !this.#socket.data.syncBackpressured
@@ -816,7 +714,10 @@ export class SyncTenantSocketBridge {
         // The origin change is deliberately delivered at its ordered point.
         // Its optimistic mutation remains pending until the following ack.
         if (!this.#deliverDurable(durable, replay.syncEpoch, false)) {
-          throw new Error('Tenant Sync ordered mutation delivery failed');
+          throw syncTenantDataPlaneError(
+            'SYNC_TENANT_ORDERED_DELIVERY_FAILED',
+            'Tenant Sync ordered mutation delivery failed.',
+          );
         }
         this.#actorCursor = durable.seq;
         this.#originBySequence.delete(durable.seq);
@@ -860,7 +761,12 @@ export class SyncTenantSocketBridge {
   }
 
   #waitForDrain(): Promise<void> {
-    if (this.#disposed) return Promise.reject(new Error('Tenant Sync socket is closed'));
+    if (this.#disposed) {
+      return Promise.reject(syncTenantDataPlaneError(
+        'SYNC_TENANT_SOCKET_CLOSED',
+        'Tenant Sync socket is closed.',
+      ));
+    }
     if (!this.#socket.data.syncBackpressured) return Promise.resolve();
     return new Promise<void>((resolve, reject) => {
       const waiter = {
@@ -882,9 +788,12 @@ export class SyncTenantSocketBridge {
     generation: number;
     syncEpoch: string;
   }): void {
-    const binding = this.#binding;
+    const binding = this.#bindings.current;
     if (!binding || value.databaseRef !== binding.databaseRef) {
-      throw new Error('Tenant Sync database binding changed');
+      throw syncTenantDataPlaneError(
+        'SYNC_TENANT_BINDING_CHANGED',
+        'Tenant Sync database binding changed.',
+      );
     }
     if (this.#generation !== null && value.generation !== this.#generation) {
       throw tenantHistoryGapError();
@@ -902,7 +811,7 @@ export class SyncTenantSocketBridge {
     }
   }
 
-  #closeForResnapshot(reason: string): void {
+  #closeForResnapshot(reason: SyncTenantResnapshotReason): void {
     if (this.#disposed) return;
     this.#emit(OBS_CODES.SYNC_TENANT_RESNAPSHOT_REQUIRED, {
       metadata: { plane: 'tenant-database', reason },
@@ -962,21 +871,29 @@ export class SyncTenantSocketBridge {
     definition: PlatformCodeDefinition,
     options: PlatformCodeEmitOptions = {},
   ): void {
-    if (this.#observability) {
-      emitPlatformCodeTo(this.#observability, definition, options);
-      return;
-    }
-    emitPlatformCode(definition, options);
+    // Socket bridges owned by an app must never fall through to another
+    // process-global compatibility runtime. Standalone callers which omit an
+    // app-local runtime intentionally receive no telemetry.
+    if (!this.#observability) return;
+    emitPlatformCodeTo(this.#observability, definition, options);
   }
 
   #assertUsable(): void {
-    if (this.#disposed) throw new Error('Tenant Sync socket is closed');
+    if (this.#disposed) {
+      throw syncTenantDataPlaneError(
+        'SYNC_TENANT_SOCKET_CLOSED',
+        'Tenant Sync socket is closed.',
+      );
+    }
   }
 
   #assertMutationBaseline(): void {
     this.#assertUsable();
     if (!this.#baselineReady) {
-      throw new Error('Tenant Sync mutation requires an accepted tenant baseline');
+      throw syncTenantDataPlaneError(
+        'SYNC_TENANT_BASELINE_REQUIRED',
+        'Tenant Sync mutation requires an accepted tenant baseline.',
+      );
     }
   }
 }

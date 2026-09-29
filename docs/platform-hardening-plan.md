@@ -271,7 +271,8 @@ selection, editing, update, and delete flows. Composite primary keys remain
 unsupported by ReactiveDB-managed tables.
 
 Follow-up status: addressed with natural identity. ReactiveDB still requires a
-single string sync primary key, but schemas can now declare
+single-column sync primary key with `TEXT` or `INTEGER` affinity (canonicalized
+to a string row ID at protocol boundaries), but schemas can now declare
 `identity: ['field_a', 'field_b']` / `_identity`. The platform generates
 deterministic sync ids from those fields, adds a unique identity index, exposes
 `queryByIdentity()`, `upsertByIdentity()`, `updateByIdentity()`, and

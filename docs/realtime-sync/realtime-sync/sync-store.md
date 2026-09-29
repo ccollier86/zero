@@ -754,6 +754,10 @@ Type mapping from schema definition to TypeScript:
 | `'number'` | `number` |
 | `'boolean'` | `boolean` |
 
-The `_pk` field is metadata — it designates which field is the primary key. It's stripped from the row type (you don't get `_pk` as a column). The PK must be `'string'` — the store keys records by PK as `Record<string, Row>`, and the wire protocol always sends `rowId` as a string.
+The `_pk` field is metadata — it designates which field is the primary key. It
+is stripped from the row type (you do not get `_pk` as a column). ReactiveDB
+tables may use declared SQLite `TEXT` or `INTEGER` affinity keys; integer keys
+must be JavaScript safe integers. The store and wire protocol canonicalize both
+forms to a string `rowId`, so client record indexes remain string-keyed.
 
 No codegen. No build step. Generic inference only.

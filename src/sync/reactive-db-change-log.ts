@@ -154,6 +154,11 @@ export interface ChangeLogReadSnapshot {
   contiguous: boolean;
 }
 
+export interface ChangeLogReadPage extends ChangeLogReadSnapshot {
+  /** True when the durable head contains rows beyond this bounded page. */
+  hasMore: boolean;
+}
+
 export interface SQLiteSchemaVersions {
   main: number;
   temp: number;
@@ -282,6 +287,41 @@ export class ReactiveDBChangeLog {
       : this.database.transaction(read).deferred();
   }
 
+  readPage(
+    afterSeq: number,
+    maxRows: number,
+    insideWriteTransaction: boolean,
+  ): ChangeLogReadPage {
+    if (!Number.isSafeInteger(maxRows) || maxRows < 1) {
+      throw new Error('ReactiveDB change page size must be a positive safe integer');
+    }
+    const read = (): ChangeLogReadPage => {
+      const state = this.currentState();
+      const rows = this.statements.afterPage.all(afterSeq, maxRows) as ChangeRow[];
+      const oldest = this.statements.oldest.get() as { min_seq: number | null } | null;
+      const oldestSeq = oldest?.min_seq ?? state.seq;
+      const available = afterSeq <= state.seq ? state.seq - afterSeq : 0;
+      const expectedCount = Math.min(available, maxRows);
+      let contiguous = afterSeq >= state.prune_through
+        && afterSeq <= state.seq
+        && rows.length === expectedCount;
+      for (let index = 0; contiguous && index < rows.length; index += 1) {
+        contiguous = rows[index]!.seq === afterSeq + index + 1;
+      }
+      return {
+        state,
+        rows,
+        oldestSeq,
+        contiguous,
+        hasMore: contiguous && available > rows.length,
+      };
+    };
+
+    return insideWriteTransaction
+      ? read()
+      : this.database.transaction(read).deferred();
+  }
+
   readSchemaVersions(): SQLiteSchemaVersions {
     const main = this.statements.mainSchemaVersion.get() as {
       schema_version: number;
@@ -344,6 +384,7 @@ export class ReactiveDBChangeLog {
     this.statements.prune.finalize();
     this.statements.unprunedThrough.finalize();
     this.statements.after.finalize();
+    this.statements.afterPage.finalize();
     this.statements.oldest.finalize();
   }
 
@@ -560,6 +601,10 @@ export class ReactiveDBChangeLog {
       after: this.database.prepare(
         `SELECT *, typeof(format_version) AS format_version_type
          FROM main._changes WHERE seq > 0 AND seq > ? ORDER BY seq`,
+      ),
+      afterPage: this.database.prepare(
+        `SELECT *, typeof(format_version) AS format_version_type
+         FROM main._changes WHERE seq > 0 AND seq > ? ORDER BY seq LIMIT ?`,
       ),
       oldest: this.database.prepare(
         'SELECT MIN(seq) AS min_seq FROM main._changes WHERE seq > 0',

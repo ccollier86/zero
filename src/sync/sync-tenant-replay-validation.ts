@@ -9,6 +9,8 @@ import type {
   DatabaseCommitResult,
   DatabaseMutation,
 } from '../databases/database-operations';
+import { DatabaseError } from '../databases/database-error';
+import { syncTenantDataPlaneError } from './sync-tenant-data-plane-error';
 import type {
   SyncTenantDataPlaneReplay,
   SyncTenantMutationReceiptReplay,
@@ -102,10 +104,11 @@ export function assertExpectedTenantReceiptChange(
   }
 }
 
-export function tenantHistoryGapError(): Error & { code: string } {
-  return Object.assign(new Error('Tenant Sync history is unavailable'), {
-    code: 'DATABASE_HISTORY_GAP',
-  });
+export function tenantHistoryGapError(): DatabaseError {
+  return new DatabaseError(
+    'DATABASE_HISTORY_GAP',
+    'Tenant Sync history is unavailable.',
+  );
 }
 
 function assertExpectedMutationEffect(
@@ -125,7 +128,10 @@ function assertExpectedMutationEffect(
 }
 
 function invalidCommit(): Error {
-  return new Error('Tenant Sync actor returned an invalid canonical mutation receipt');
+  return syncTenantDataPlaneError(
+    'SYNC_TENANT_RECEIPT_INVALID',
+    'Tenant Sync actor returned an invalid canonical mutation receipt.',
+  );
 }
 
 function plainRecord(value: unknown): value is Record<string, any> {

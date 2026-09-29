@@ -613,12 +613,92 @@ describe('runPlatformDoctor', () => {
       tables: {
         quoted: { id: "text default 'primary key'" },
         commented: { id: 'text /* PRIMARY KEY */' },
+        bareCrComment: {
+          id: 'text unique-- hidden through bare CR\rprimary key\n',
+        },
+        unicodeJoined: { id: 'text\u00a0primary key unique' },
+        unicodeFolded: { id: 'text prımary key unique' },
       },
       auth: false,
     });
 
     expect(report.findings.filter((finding) =>
-      finding.code === 'schema.primary_key.missing')).toHaveLength(2);
+      finding.code === 'schema.primary_key.missing')).toHaveLength(5);
+  });
+
+  test('diagnoses column definitions that escape into table constraints', () => {
+    const escaped = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        records: {
+          id: 'text',
+          other: 'text unique, primary key (id, other)',
+        },
+      },
+      auth: false,
+    });
+    expect(escaped.findings).toContainEqual(expect.objectContaining({
+      severity: 'error',
+      code: 'schema.column_definition.not_isolated',
+      path: 'tables.records.other',
+    }));
+
+    const nested = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        records: {
+          id: 'text primary key',
+          amount: 'decimal(10, 2) check (amount in (1, 2, 3))',
+        },
+      },
+      auth: false,
+    });
+    expect(nested.findings.some((finding) =>
+      finding.code === 'schema.column_definition.not_isolated')).toBe(false);
+
+    const ambiguousQuotedType = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: { records: { id: '"REAL" text primary key' } },
+      auth: false,
+    });
+    expect(ambiguousQuotedType.findings).toContainEqual(expect.objectContaining({
+      severity: 'error',
+      code: 'schema.column_definition.not_isolated',
+      path: 'tables.records.id',
+    }));
+  });
+
+  test('diagnoses unsupported sync primary-key affinities', () => {
+    const report = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      tables: {
+        textKeys: { id: 'text primary key' },
+        integerKeys: { id: 'integer primary key' },
+        realKeys: { id: 'real primary key' },
+        blobKeys: { id: 'blob primary key' },
+        numericKeys: { id: 'numeric primary key' },
+        typelessKeys: { id: 'primary key' },
+      },
+      auth: false,
+    });
+
+    const affinityFindings = report.findings.filter((finding) =>
+      finding.code === 'schema.primary_key.unsupported_affinity');
+    expect(affinityFindings.map((finding) => finding.path)).toEqual([
+      'tables.realKeys.id',
+      'tables.blobKeys.id',
+      'tables.numericKeys.id',
+      'tables.typelessKeys.id',
+    ]);
+    expect(affinityFindings.map((finding) => finding.message)).toEqual([
+      expect.stringContaining('REAL affinity'),
+      expect.stringContaining('BLOB affinity'),
+      expect.stringContaining('NUMERIC affinity'),
+      expect.stringContaining('TYPELESS affinity'),
+    ]);
+    expect(report.findings.some((finding) =>
+      finding.path === 'tables.textKeys.id'
+      || finding.path === 'tables.integerKeys.id')).toBe(false);
   });
 
   test('checks PDF executable paths and unsafe renderer policy', () => {

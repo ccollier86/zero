@@ -198,6 +198,74 @@ describe('DatabaseObservability', () => {
     expect(encoded).not.toContain('queueDepth');
   });
 
+  test('emits only the correlated hot max-bytes failure classifier', () => {
+    const store = new MemoryEventStore();
+    const observer = createDatabaseObservability(runtimeFor(store));
+    const databaseRef = createDatabaseRef('hot-capacity-database');
+    const error = new DatabaseError(
+      'DATABASE_PAYLOAD_LIMIT',
+      'private SQLite failure',
+      {
+        outcome: 'not-committed',
+        details: {
+          reason: 'max-bytes',
+          path: '/private/hot.sqlite',
+        },
+      },
+    );
+    const event = observer.emit({
+      type: 'operation-failed',
+      databaseRef,
+      placement: 'hot',
+      role: 'writer',
+      slot: 1,
+      generation: 2,
+      operation: 'mutation',
+      durationMs: 3,
+      failureReason: 'hot-max-bytes',
+      error,
+    });
+
+    expect(event.metadata).toEqual({
+      databaseRef,
+      placement: 'hot',
+      role: 'writer',
+      slot: 1,
+      generation: 2,
+      operation: 'mutation',
+      durationMs: 3,
+      failureReason: 'hot-max-bytes',
+      errorCode: 'DATABASE_PAYLOAD_LIMIT',
+      retryable: false,
+      outcome: 'not-committed',
+    });
+    expect(JSON.stringify(event)).not.toContain('/private/hot.sqlite');
+    expect(() => observer.emit({
+      type: 'operation-failed',
+      databaseRef,
+      placement: 'file',
+      role: 'writer',
+      slot: 1,
+      generation: 2,
+      operation: 'mutation',
+      durationMs: 3,
+      failureReason: 'hot-max-bytes',
+      error,
+    })).toThrow('operation failure reason');
+    expect(() => observer.emit({
+      type: 'operation-failed',
+      databaseRef,
+      placement: 'hot',
+      role: 'writer',
+      slot: 1,
+      generation: 2,
+      operation: 'mutation',
+      durationMs: 3,
+      failureReason: 'private-value' as never,
+      error,
+    })).toThrow('operation failure reason');
+  });
+
   test('normalizes unknown caught values to the safe executor failure contract', () => {
     const store = new MemoryEventStore();
     const databaseRef = createDatabaseRef('unknown-failure-database');

@@ -76,7 +76,9 @@ interface TableDef {
 }
 ```
 
-**Schema format:** Plain object mapping column names to SQLite column definitions. The first column ending with `primary key` is treated as the primary key. `_identity` is optional metadata, not a SQL column.
+**Schema format:** Plain object mapping column names to isolated SQLite column
+definitions. Exactly one column must declare a top-level `PRIMARY KEY`
+constraint. `_identity` is optional metadata, not a SQL column.
 
 ```ts
 interface TableSchema {
@@ -96,7 +98,12 @@ interface TableSchema {
 }
 ```
 
-No ORM. No migrations. No type mapping. The schema is the SQL. If you know SQLite column types, you know this.
+No ORM. No type mapping. Each value is one SQLite column definition, not a
+free-form table fragment: top-level commas or semicolons, table constraints,
+unbalanced grouping, ambiguous quoted multi-token declared types, and
+unterminated quotes or comments fail closed. Commas inside balanced expressions
+and quoted literals remain valid. Use the realm migration registry for schema
+changes after deployment.
 
 One constraint is deliberate: a tracked table cannot declare `CASCADE`,
 `SET NULL`, or `SET DEFAULT` foreign-key actions. Those actions can mutate a
@@ -110,10 +117,14 @@ contract.
 
 ## Natural Identity
 
-ReactiveDB-managed sync tables use one string primary key. That keeps snapshots,
-optimistic mutations, ack/rollback, and change replay fast and simple. For
-tables that would normally use a composite primary key, declare `_identity`
-instead:
+ReactiveDB-managed sync tables use one single-column primary key with declared
+SQLite `TEXT` or `INTEGER` affinity. `TEXT` is recommended, and Zero's default
+generated sync key uses it. An explicitly numeric `INTEGER` key must remain a
+JavaScript safe integer;
+Zero canonicalizes it to the same string row-id shape used by snapshots,
+optimistic mutations, acknowledgements, rollback, and change replay. `REAL`,
+`BLOB`, `NUMERIC`, and typeless primary keys are rejected. For tables that
+would normally use a composite primary key, declare `_identity` instead:
 
 ```ts
 db.defineTable('memberships', {

@@ -140,20 +140,25 @@ for the authoritative contract and release boundary.
 | File | Purpose |
 |------|---------|
 | `src/databases/database-manager.ts` | App-facing named and trusted tenant binding manager; derives capabilities instead of exposing paths |
-| `src/databases/database-coordinator.ts` plus `database-coordinator-*.ts` | Public coordinator facade plus focused catalog entry, lease, queue, placement, recovery/durability, and tenant-Sync ownership modules |
+| `src/databases/database-coordinator.ts` plus `database-coordinator-*.ts` | Internal coordinator facade plus focused catalog entry, lease, queue, placement, executor-binding, recovery/durability, and tenant-Sync ownership modules |
 | `src/databases/database-restart-policy.ts` | Bounded exponential per-entry restart delay and circuit-breaker/cancellation policy |
 | `src/databases/database-hot-durability-supervisor.ts` | Parent-side periodic-hot telemetry validation, dirty/snapshot watchdogs, and one-shot fatal generation retirement |
 | `src/databases/database-actor-protocol.ts` | Closed, versioned parent/actor IPC request and result vocabulary |
 | `src/databases/database-actor-runtime.ts` | Child-side lifecycle and structured-operation dispatch facade |
 | `src/databases/database-actor-binding.ts` / `database-actor-error-boundary.ts` | SQLite binding/identity/durability ownership and privacy-safe actor error projection |
-| `src/databases/subprocess-database-executor.ts` | Parent-side Bun subprocess lifecycle, IPC correlation, timeouts, and settlement |
+| `src/databases/subprocess-database-executor.ts` plus `subprocess-database-executor-{wire,lifecycle}.ts`, `subprocess-database-request-registry.ts`, and `subprocess-database-telemetry-state.ts` | Parent-side Bun subprocess facade with focused strict-wire, bounded request/deadline/drain, settlement/termination, and telemetry state collaborators |
 | `src/databases/subprocess-database-protocol.ts` / `subprocess-database-executor-config.ts` | Portable IPC envelopes and detached executor launch/lifecycle validation |
 | `src/databases/subprocess-database-server.ts` | Child-side IPC server and deterministic shutdown |
 | `src/databases/database-file.ts` / `database-root-ownership.ts` | Pseudonymous reference-to-file mapping (operational correlation, not authority), exclusive root ownership, and physical file admission |
 | `src/databases/database-binding-identity.ts` / `database-file-identity.ts` | Immutable logical image identity plus no-follow device/inode handoff proof |
 | `src/databases/database-actor-liveness.ts` | Rollback-journal restart fence against orphan actors after parent failure |
-| `src/databases/database-writer-engine.ts` | ReactiveDB-backed structured writes, assertions, durable receipts, and replay ordering |
-| `src/databases/database-tenant-sync*.ts` | Exact immutable snapshot sessions, replay, wakeups, and bounded session storage |
+| `src/databases/database-operations.ts` plus `database-operation-{contracts,fields,payload,validation}.ts` | Public structured-operation facade plus focused contracts, field grammar, payload cloning/bounds, and catalog-aware validation |
+| `src/databases/database-realm.ts` / `database-realm-schema-admission.ts` | Immutable actor realm registry plus definition-time writable-column, portable-affinity, foreign-key, and reserved-object admission |
+| `src/databases/database-writer-engine.ts` plus `database-writer-{mutation-executor,read-executor,receipts,realm-validation,contracts,errors}.ts` | ReactiveDB writer facade plus focused reads/mutations, assertions, durable receipts, realm checks, replay ordering, and stable error projection |
+| `src/databases/database-read-query-capability.ts`, `database-read-query-sql.ts`, `database-write-command-capability.ts`, and `database-{handler-result,read-result}-validation.ts` | Path-free registered-operation capabilities, revocation, isolated readonly SQL admission grammar, and bounded producer-result validation |
+| `src/databases/database-tenant-sync*.ts` plus the focused snapshot `{codec,materializer,page,storage,limits,errors}` modules | Exact immutable snapshot sessions, replay, wakeups, bounded encoding/materialization, paging, storage, and cleanup |
+| `src/databases/database-observability.ts` plus `database-observability-{contract,spec,validation,runtime}.ts` | App-local closed event catalog, privacy-safe metadata validation/projection, and actor-to-parent telemetry routing |
+| `src/migrations/add-column-classifier.ts` | Shared SQLite-aware `ADD COLUMN` admission and safety classifier used by drift reporting and draft SQL generation |
 | `src/frontend/server/database-topology-config.ts` | Typed `databaseTopology` normalization and cross-feature validation |
 | `src/frontend/server/request-database-client.ts` | Request-local authority-bound database client projection |
 | `src/resources/resource-default-crud-engine.ts` / `resource-tenant-crud-engine.ts` | Generated CRUD on the pinned/default and physical-tenant planes |
@@ -165,9 +170,9 @@ for the authoritative contract and release boundary.
 - Independent files can write concurrently because their synchronous SQLite
   work runs in separate subprocess actors. One database remains FIFO; optional
   file/WAL readers can overlap committed reads with its writer.
-- `file`, bounded `hot`, and synchronous hybrid placement share one public
-  coordinator contract. Placement is pinned for an active entry; there is no
-  online promotion/demotion API.
+- `file`, bounded `hot`, and synchronous hybrid placement share one
+  declarative placement/runtime contract. Placement is pinned for an active
+  entry; there is no online promotion/demotion API.
 - Resource HTTP CRUD, lazy `/api/data`, and multiplexed WebSocket Sync all use
   the same server-owned Resource plane classification and policy boundary.
 - Durable receipt keys, physical files, actor entries, queues, tenant-Sync

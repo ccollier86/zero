@@ -72,9 +72,13 @@ describe('database actor execute result validation', () => {
       value: null,
       sequence: { seq: 4 },
       extra: true,
-    }, read), 'DATABASE_PROTOCOL_ERROR', null);
+    }, read), 'DATABASE_RESULT_LIMIT', null);
     expectFailure(() => validateDatabaseActorExecuteResult({
       value: 'x'.repeat(DATABASE_OPERATION_MAX_STRING_BYTES + 1),
+      sequence: { seq: 4 },
+    }, read), 'DATABASE_RESULT_LIMIT', null);
+    expectFailure(() => validateDatabaseActorExecuteResult({
+      value: undefined,
       sequence: { seq: 4 },
     }, read), 'DATABASE_RESULT_LIMIT', null);
   });
@@ -208,6 +212,40 @@ describe('database actor execute result validation', () => {
         value: { mutation: { rowId: String(committedId) } },
       });
     }
+
+    const generated = operation({
+      type: 'mutate',
+      idempotencyKey: 'create:invalid-generated-id',
+      mutation: { type: 'create', table: 'todos', row: { title: 'invalid' } },
+    });
+    for (const committedId of [1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expectFailure(() => validateDatabaseActorExecuteResult({
+        value: {
+          kind: 'mutation',
+          mutation: {
+            type: 'create', table: 'todos', rowId: String(committedId),
+            changed: true, op: 'INSERT', sequence: { seq: 3 },
+            row: { id: committedId, title: 'invalid' }, previousRow: null,
+          },
+        },
+        sequence: { seq: 3 },
+        idempotencyKey: 'create:invalid-generated-id',
+        replayed: false,
+      }, generated, catalog), 'DATABASE_PROTOCOL_ERROR', 'unknown');
+    }
+    expectFailure(() => validateDatabaseActorExecuteResult({
+      value: {
+        kind: 'mutation',
+        mutation: {
+          type: 'create', table: 'todos', rowId: '1',
+          changed: true, op: 'INSERT', sequence: { seq: 3 },
+          row: { id: 1n, title: 'invalid' }, previousRow: null,
+        },
+      },
+      sequence: { seq: 3 },
+      idempotencyKey: 'create:invalid-generated-id',
+      replayed: false,
+    }, generated, catalog), 'DATABASE_RESULT_LIMIT', 'unknown');
   });
 
   test('detaches only aggregate receipt compaction telemetry', () => {
@@ -327,6 +365,10 @@ describe('database actor execute result validation', () => {
         ...valid.value,
         output: 'x'.repeat(DATABASE_OPERATION_MAX_STRING_BYTES + 1),
       },
+    }, commandOperation), 'DATABASE_RESULT_LIMIT', 'unknown');
+    expectFailure(() => validateDatabaseActorExecuteResult({
+      ...valid,
+      value: { ...valid.value, output: undefined },
     }, commandOperation), 'DATABASE_RESULT_LIMIT', 'unknown');
   });
 });

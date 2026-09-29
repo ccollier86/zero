@@ -15,10 +15,10 @@
 > without a redundant tenant predicate. Resource policy, field projection,
 > conditional writes, durable mutation recovery, independent plane cursors,
 > topology validation, browser routing, and Doctor diagnostics are integrated.
-> Bounded file/hot placement is also integrated: placement is selected from an
+> Bounded file/hot placement is also integrated: placement is selected from a
 > pseudonymous database reference, pinned while the coordinator entry is
-> active, and
-> backed by explicit on-write, periodic, or final-snapshot durability. Fleet
+> active, and backed by explicit on-write, periodic, or final-snapshot
+> durability. Fleet
 > migration and lifecycle operations, online placement changes, operator-grade
 > backup/restore, and the full package/OS deployment matrix remain release
 > work. Nothing in this document marks those unfinished slices as release-ready.
@@ -306,6 +306,8 @@ Its current multi-database findings:
   adaptive actor pages, including the terminal oversized-row contract;
 - explain the finite full-result budget and permanent idempotency-key capacity
   for physical-database receipts and generated default/shared Resource writes;
+- reject unsupported `REAL`, `BLOB`, `NUMERIC`, or typeless sync primary-key
+  declarations and point to the exact app table column;
 - explain that a physical tenant resource needs no managed `tenant_id`
   discriminator;
 - identify a retained realm field as ordinary business/export data rather than
@@ -406,6 +408,27 @@ the registered tenant resources assigned to physical storage. This includes
 `internal` and HTTP-only physical resources, not just Sync-visible tables.
 Unknown realm tables, omitted physical resources, schema drift, or a physical
 resource without multi-tenant authority fail startup.
+
+Every realm table also declares exactly one single-column primary key with
+SQLite `TEXT` or `INTEGER` affinity. `TEXT` is recommended. Stored integer keys
+must remain JavaScript safe integers and are canonicalized to string row IDs at
+the actor and Sync boundaries. `defineDatabaseRealm()` rejects `REAL`, `BLOB`,
+`NUMERIC`, typeless, and composite primary keys with
+`DATABASE_CONFIG_INVALID`; actor startup independently verifies the physical
+SQLite affinity and fails closed on schema drift. This keeps mutations,
+receipts, replay, snapshots, and browser identity on one lossless contract.
+
+That lossless contract applies to every realm column. Non-primary columns may
+use `TEXT`, `INTEGER`, `REAL`, or `NUMERIC` affinity, but not `BLOB` or typeless
+storage. Generated columns are not writable managed columns, and mutating
+foreign-key actions (`CASCADE`, `SET NULL`, or `SET DEFAULT`) cannot produce the
+explicit tracked mutation Fabric requires, so realm definition rejects them.
+It also reserves SQLite's `sqlite_` namespace, Zero's `_zero_` and `idx_zero_`
+object namespaces, and the legacy `_changes`, `_change_sequence`, and
+`_migrations` tables. Natural-identity index names are checked against both
+those reservations and every realm table. All of these deterministic contract
+violations fail as `DATABASE_CONFIG_INVALID` before an actor or file opens;
+physical startup validation remains an independent defense against drift.
 
 Resource declarations remain the authoritative application-data topology:
 
@@ -546,21 +569,26 @@ The coordinator schedules logical work through a narrow transport-neutral
 contract. The exact signatures may evolve, but the ownership boundary is:
 
 ```ts
-interface DatabaseExecutor {
-  readonly backend: 'subprocess-ipc' | 'web-worker';
-  readonly slot: number;
-
-  start(): Promise<DatabaseExecutorReady>;
-  request(message: DatabaseActorRequest): Promise<DatabaseActorResponse>;
-  close(options?: { deadlineMs?: number }): Promise<void>;
-  terminate(): Promise<void>;
+interface DatabaseExecutor extends AsyncDisposable {
+  setEventListener?(listener: DatabaseExecutorEventListener): void;
+  start(): Promise<void>;
+  execute<Result, Payload>(
+    request: {
+      operation: string;
+      kind: 'read' | 'write';
+      payload: Payload;
+    },
+    options?: { timeoutMs?: number },
+  ): Promise<Result>;
+  settled(): Promise<void>;
+  close(): Promise<void>;
   diagnostics(): DatabaseExecutorDiagnostics;
 }
 
-interface DatabaseExecutorFactory {
-  createWriter(slot: number): DatabaseExecutor;
-  createReader(slot: number): DatabaseExecutor;
-}
+type DatabaseExecutorFactory = (context: {
+  role: 'writer' | 'reader';
+  slot: number;
+}) => DatabaseExecutor;
 ```
 
 The production-default factory launches isolated Bun subprocesses and exchanges
@@ -614,7 +642,9 @@ Each slot executes one database at a time:
    closes one eligible idle entry; if neither is possible, acquisition fails
    immediately with retryable `DATABASE_BACKPRESSURE`.
 4. The writer actor prepares the file, imports the database realm, migrates and
-   opens ReactiveDB, registers change delivery, and reports ready.
+   opens ReactiveDB, validates its binding, and reports ready. Committed
+   sequence ranges return with operation results; the coordinator publishes
+   data-free wakeups after the authority lease is released.
 5. The coordinator sends one operation at a time for that database.
 6. When the queue and in-flight count reach zero, an idle deadline permits a
    graceful close and slot reuse.
@@ -679,6 +709,9 @@ Queue overflow fails before dispatch with `DATABASE_BACKPRESSURE`. Exceeding a
 queue deadline fails with `DATABASE_QUEUE_TIMEOUT`. An `AbortSignal` can remove
 work which has not started. Once a synchronous SQLite operation begins, Zero
 must not report cancellation as proof that the database operation stopped.
+Actor-slot exhaustion also fails before admission and emits the closed
+`database.queue.saturated` event with `operation: 'open'`; its metadata carries
+only the requested opaque database reference and bounded pool counts.
 
 A request timeout and a database outcome are separate facts. The HTTP caller
 may stop waiting while the actor finishes the operation, records its receipt,
@@ -878,39 +911,47 @@ IPC uses versioned discriminated unions validated at both ends. A request
 envelope carries only internal routing and correlation data:
 
 ```ts
-interface DatabaseActorRequest {
-  protocolVersion: number;
-  requestId: string;
-  databaseRef: string;
+interface DatabaseExecutorOperationMessage {
+  protocol: 'zero.database-executor';
+  version: 3;
+  nonce: string;
+  role: string;
+  slot: number;
   generation: number;
-  operation: SerializableDatabaseOperation;
-  deadlineAt: number;
-  trace?: {
-    requestId?: string;
-    traceId?: string;
-  };
+  type: 'request';
+  requestId: number;
+  operation: string;
+  operationKind: 'read' | 'write';
+  payload: DatabaseExecutorValue;
 }
 ```
 
-`databaseRef` is a pseudonymous internal correlation digest. It omits the raw
-tenant ID, logical database name, and path, but its SHA-256 derivation is
-deterministic and unkeyed: low-entropy logical IDs can be dictionary-correlated.
-Treat it as operational metadata, never as a secret, credential, or
-authorization capability. Only trusted actor initialization receives the
-prepared path required to open SQLite, and that path is never copied into
-public results or ordinary telemetry.
+The transport envelope has no deadline, trace, database path, or public
+authorization field. Operation deadlines remain parent-owned. A validated
+`databaseRef` appears inside database-specific bind/execute/replay/snapshot/
+receipt/unbind payloads, not as top-level transport routing. It is a
+pseudonymous internal correlation digest which omits the raw tenant ID,
+logical database name, and path, but its SHA-256 derivation is deterministic
+and unkeyed: low-entropy logical IDs can be dictionary-correlated. Treat it as
+operational metadata, never as a secret, credential, or authorization
+capability. Only the trusted bind operation carries the prepared path required
+to open SQLite, and that path is never copied into public results or ordinary
+telemetry.
 
-Parent-to-actor messages cover initialization, opening, execution, replay,
-graceful close, and shutdown. Actor-to-parent messages cover readiness,
-results, durable changes available, safe diagnostics, faults, and closure.
-The same logical envelopes travel over Bun native subprocess IPC today and
-may travel over another explicitly qualified executor backend later.
+Parent-to-actor commands are handshake, validated operation request, and
+transport shutdown. The closed database operation registry covers writer and
+reader bind, execute, replay, tenant snapshot begin/page/abort, receipt lookup,
+and unbind. Actor-to-parent messages are ready, success/failure response,
+payload-free hot-periodic durability telemetry, and shutdown acknowledgement.
+Durable-change wakeups are coordinator publications derived from validated
+operation results; they are not actor push messages. The same logical
+envelopes may travel over another explicitly qualified executor backend later.
 
 The protocol must enforce:
 
 - maximum message and result sizes;
 - supported scalar, row, binary, and query shapes;
-- protocol/build/realm fingerprints;
+- protocol identity/version plus bind-time realm fingerprint and schema checksum;
 - matching request, database, and actor generation;
 - canonical error serialization;
 - rejection of unknown message kinds and fields.
@@ -933,10 +974,73 @@ export default defineDatabaseRealm({
   version: '1',
   tables,
   migrations,
-  queries,
+  queries: {
+    'documents.summary': ({ database }) => {
+      const row = database.query(`
+        SELECT count(*) AS count
+        FROM documents
+        WHERE archived_at IS NULL
+      `).get() as { count: number };
+      return { count: row.count };
+    },
+  },
   commands,
 });
 ```
+
+Registered query handlers receive `DatabaseReadQueryContext`, not Bun's raw
+SQLite `Database`. Its path-free `database` capability exposes only `query()`
+and `prepare()`; prepared statements expose only `all()`, `get()`, `iterate()`,
+`values()`, and `raw()`. There is no `run`, `exec`, transaction, filename,
+native handle, extension-loading, or native-statement escape hatch.
+
+Zero admits exactly one `SELECT` or read-only `WITH ... SELECT` statement per
+prepared query. SQL comments, statement separators, non-read top-level
+statements, every quoted or unquoted `pragma_*` token (including the literal
+spelling), and invocations of dangerous extension/file functions fail with
+`DATABASE_OPERATION_UNSUPPORTED`. Dangerous function names remain valid as
+string literals, ordinary columns, or aliases when they are not invoked. The
+SQL admission check
+is defense in depth:
+reader actors execute on their existing readonly SQLite connection; file-mode
+writer actors execute on their already identity-verified writer handle while
+the serialized read boundary enforces SQLite `query_only`; hot writer actors
+execute against an isolated readonly serialized snapshot. Every
+prepared statement and any owned connection is finalized when the synchronous
+handler returns. A retained facade is closed and cannot outlive that call.
+
+Registered command handlers receive `DatabaseWriteCommandContext`. Its frozen,
+null-prototype `db` capability exposes only ReactiveDB's tracked CRUD, natural
+identity lookup/mutation, tracked reads, nested `transaction()`, and
+`afterCommit()` methods. It does not expose raw SQL (`exec`/`prepare`), the Bun
+SQLite handle or persistence service, schema definition, change listeners,
+lifecycle controls, or internal-change APIs. The writer creates this facade
+itself and executes the handler inside the same transaction as result
+validation, so callers cannot substitute a wider context and an invalid result
+rolls back tracked writes. The capability is revoked after result validation
+and before post-commit callbacks run; retained methods then fail with
+`DATABASE_CLOSED` and cannot create work beyond the command
+receipt/publication boundary.
+
+Handler input and output still use the bounded database-serializable contract.
+Invalid caller input remains `DATABASE_PAYLOAD_INVALID` or
+`DATABASE_PAYLOAD_LIMIT`. Invalid or oversized registered query/command output
+is producer-side failure and is consistently `DATABASE_RESULT_LIMIT` on both
+reader and writer lanes.
+
+Direct ReactiveDB schema definition, app configuration, realm admission, and
+physical actor startup all require one `TEXT` or `INTEGER` affinity primary key
+per application table. The actor protocol exposes either storage form as a
+canonical string row ID, and an `INTEGER` key must fit JavaScript's safe-integer
+range. Every schema value must remain one isolated column definition; a
+top-level comma or semicolon, injected table constraint, unbalanced grouping,
+ambiguous quoted multi-token declared type, or unterminated quote/comment fails
+before SQL generation. Other affinities, typeless keys, and missing or multiple
+primary-key declarations also fail before use.
+
+The realm-only whole-row rules described above then reject non-primary
+`BLOB`/typeless affinity, generated columns, mutating foreign-key actions, and
+reserved or colliding SQLite object names before actor startup.
 
 The app server entry imports the realm and branches through Zero's actor
 bootstrap before normal startup:
@@ -978,14 +1082,16 @@ Opening a writer follows one ordered boundary:
    message. The
    actor verifies that generation while acquiring its SHARED liveness lease,
    before it opens the assigned database pathname.
-5. Verify protocol, build, and realm fingerprints, then open SQLite and repeat
+5. Verify transport protocol identity/version and the bind-time realm
+   fingerprint, then open SQLite and repeat
    the file proof immediately after the path-only Bun SQLite open.
 6. Run the immutable migration registry. The stable realm name and database
    instance remain unchanged across ordinary realm-version migrations.
 7. Construct ReactiveDB, initialize declared tables, and verify the durable
    binding again before reporting readiness.
-8. Register change delivery and publish the schema generation, actor
-   generation, instance proof, and safe readiness result.
+8. Publish the schema checksum, actor generation, instance proof, sequence/
+   Sync epoch, and safe readiness result. Later committed sequence ranges are
+   returned by operations for coordinator-owned wakeup publication.
 9. Admit queued operations and reader handles.
 
 Separate files may migrate concurrently within the configured actor capacity.
@@ -1002,11 +1108,10 @@ a schema which requires eager completion.
 ReactiveDB remains the writer-side owner of tracked mutations and each
 database's durable `_changes` order.
 
-The writer registers its change listener before accepting work. Change
-notifications contain the validated pseudonymous database reference, actor
-generation, sync epoch, and sequence range. An in-memory notification wakes
-the parent
-dispatcher; the durable change log remains the recovery source.
+After a writer commit, the coordinator publishes the validated pseudonymous
+database reference, actor generation, sync epoch, and committed sequence range
+from the operation result. That data-free in-memory notification wakes the
+parent dispatcher; the durable change log remains the recovery source.
 
 Each socket bridge tracks a delivered cursor for its bound tenant database and
 accepts only contiguous sequence batches. After reconnect or actor recovery it
@@ -1100,6 +1205,9 @@ fit in an otherwise empty chunk, or the staged transfer violates its table,
 identity, plane, or frame contract, the server closes with terminal Sync code
 `4004`. The browser reports the data/configuration failure and does not enter a
 reconnect loop; the schema, projection, or row size must be corrected.
+Malformed actor begin/page results and non-retryable actor response-size
+violations use the same terminal snapshot-context behavior; they are not
+treated as transient resnapshot failures.
 Permanent managed-file exhaustion while establishing the tenant binding also
 closes once with `4004` and the fixed safe reason
 `Tenant Sync database capacity is exhausted`; it is not reported as a snapshot
@@ -1469,17 +1577,17 @@ machine-readable code, `retryable` flag, and operation outcome. The closed
 | `DATABASE_QUEUE_TIMEOUT` | Work did not begin before its queue deadline. |
 | `DATABASE_OPERATION_TIMEOUT` | The caller's operation deadline elapsed after dispatch; write outcome may be unknown. |
 | `DATABASE_EXECUTOR_START_FAILED` | The configured actor process could not start or complete its handshake. |
-| `DATABASE_EXECUTOR_FAILED` | The assigned executor or actor exited or its communication boundary failed. |
+| `DATABASE_EXECUTOR_FAILED` | The assigned executor, actor, or trusted registered-query execution boundary failed, including query preparation or execution failure. |
 | `DATABASE_PROTOCOL_ERROR` | IPC validation, versioning, generation, or correlation failed. |
 | `DATABASE_OPEN_FAILED` | The actor could not safely open the physical database. |
 | `DATABASE_MIGRATION_FAILED` | The database could not reach the required schema. |
 | `DATABASE_SCHEMA_MISMATCH` | Actor, realm, reader, or file schema generations disagree. |
 | `DATABASE_AUTHORITY_CHANGED` | Live request authority no longer matches the captured authority. |
-| `DATABASE_CONFLICT` | A declarative precondition or conditional mutation did not match. |
+| `DATABASE_CONFLICT` | A declarative precondition/conditional mutation did not match, an idempotency key was reused for different work, or exclusive root/file/liveness ownership conflicts. |
 | `DATABASE_HISTORY_GAP` | Durable incremental changes cannot cover the requested cursor. |
 | `DATABASE_PAYLOAD_INVALID` | An operation is not part of the canonical serializable contract. |
-| `DATABASE_PAYLOAD_LIMIT` | A valid-shaped operation exceeds a payload bound. |
-| `DATABASE_RESULT_LIMIT` | An actor result exceeds its bounded result contract. |
+| `DATABASE_PAYLOAD_LIMIT` | A valid-shaped operation exceeds a payload bound, or a hot database would exceed its configured logical-image `maxBytes`. |
+| `DATABASE_RESULT_LIMIT` | A trusted read/query/command producer returns an invalid or oversized result, or an actor result exceeds its bounded result contract. |
 | `DATABASE_OPERATION_UNSUPPORTED` | A table, query, command, or operation is not registered for the realm. |
 | `DATABASE_TRANSACTION_EXPIRED` | A transaction-scoped operation crossed its allowed lifetime. |
 | `DATABASE_TRANSACTION_STALE` | A transaction or generation token no longer names the active boundary. |
@@ -1515,6 +1623,11 @@ role, phase, reason, operation, and capacity enums; bounded
 slot/generation/count/limit,
 duration, queue, sequence-range, and aggregate receipt-compaction numbers; and,
 for failure variants, normalized `errorCode`, `retryable`, and `outcome`.
+The only operation-specific failure classifier is the closed
+`failureReason: 'hot-max-bytes'`, emitted for a hot write rejected before commit
+with `DATABASE_PAYLOAD_LIMIT` / `outcome: 'not-committed'`. Its corresponding
+safe error detail is only `reason: 'max-bytes'`; raw SQLite text, file paths,
+SQL, row content, and measured byte values are discarded at actor egress.
 There is no process identifier, backend label, SQLite error class, generic
 metadata bag, or caller-provided message field.
 

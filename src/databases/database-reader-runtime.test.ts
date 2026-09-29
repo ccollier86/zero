@@ -8,9 +8,17 @@ import { createPlatformSQLiteService } from '../persistence';
 import { prepareDatabaseBindingIdentity } from './database-binding-identity';
 import { DatabaseError } from './database-error';
 import { createDatabaseRef, prepareDatabaseFile } from './database-file';
+import { DATABASE_OPERATION_MAX_BYTES } from './database-operations';
 import { DatabaseReaderRuntime } from './database-reader-runtime';
-import { defineDatabaseRealm } from './database-realm';
+import {
+  defineDatabaseRealm,
+  type DatabaseReadQueryHandler,
+} from './database-realm';
 import { DatabaseRuntime } from './database-runtime';
+import { DatabaseWriterOperationEngine } from './database-writer-engine';
+
+const invalidQueryResult = (() => undefined) as unknown as
+  DatabaseReadQueryHandler;
 
 const realm = defineDatabaseRealm({
   name: 'reader-test',
@@ -24,6 +32,10 @@ const realm = defineDatabaseRealm({
       id: 'text primary key',
       value: 'any',
     },
+    decoy_constraints: {
+      note: "text default 'primary key'",
+      id: 'text primary key',
+    },
   },
   queries: {
     'todos.count': ({ database }) => {
@@ -32,10 +44,39 @@ const realm = defineDatabaseRealm({
       };
       return { count: row.count };
     },
-    'todos.tryWrite': ({ database }) => {
-      database.run("INSERT INTO todos (id, title) VALUES ('forbidden', 'no')");
-      return null;
+    'decoy_constraints.count': ({ database }) => {
+      const row = database.query(
+        'SELECT count(*) AS count FROM decoy_constraints',
+      ).get() as { count: number };
+      return { count: row.count };
     },
+    'todos.capabilityProbe': ({ database }) => {
+      const attempt = (sql: string): string => {
+        try {
+          database.query(sql).get();
+          return 'unexpected-success';
+        } catch (error) {
+          return error instanceof DatabaseError ? error.code : 'untyped-error';
+        }
+      };
+      const statement = database.query('SELECT count(*) AS count FROM todos');
+      return {
+        pragma: attempt('PRAGMA query_only = OFF'),
+        pathQuery: attempt('SELECT file FROM pragma_database_list'),
+        insert: attempt(
+          "INSERT INTO todos (id, title) VALUES ('forbidden', 'no')",
+        ),
+        connectionKeys: Object.keys(database).sort(),
+        statementKeys: Object.keys(statement).sort(),
+        hasRun: 'run' in database,
+        hasFilename: 'filename' in database,
+        hasHandle: 'handle' in database,
+        hasLoadExtension: 'loadExtension' in database,
+        hasNative: 'native' in statement,
+      };
+    },
+    'todos.oversizedResult': () => 'x'.repeat(DATABASE_OPERATION_MAX_BYTES + 1),
+    'todos.invalidResult': invalidQueryResult,
   },
 });
 
@@ -102,6 +143,14 @@ describe('DatabaseReaderRuntime', () => {
       value: { count: 3 },
       sequence: { seq: 3 },
     });
+  });
+
+  test('uses exact column constraints when validating the readonly schema', () => {
+    expect(reader.execute({
+      type: 'query',
+      name: 'decoy_constraints.count',
+      input: null,
+    }).value).toEqual({ count: 0 });
   });
 
   test('paginates in stable primary-key order without an unbounded scan', () => {
@@ -245,7 +294,7 @@ describe('DatabaseReaderRuntime', () => {
     expect(error.outcome).toBe('not-started');
   });
 
-  test('rejects strong reads, writes, and query-handler mutation attempts', () => {
+  test('rejects strong reads and exposes only the readonly query capability', () => {
     expect(captureError(() => reader.execute({
       type: 'get', table: 'todos', id: 'a', consistency: { mode: 'strong' },
     })).code).toBe('DATABASE_OPERATION_UNSUPPORTED');
@@ -257,10 +306,44 @@ describe('DatabaseReaderRuntime', () => {
       idempotencyKey: 'write-1',
       mutation: { type: 'delete', table: 'todos', id: 'a' },
     })).code).toBe('DATABASE_OPERATION_UNSUPPORTED');
-    expect(captureError(() => reader.execute({
-      type: 'query', name: 'todos.tryWrite', input: null,
-    })).code).toBe('DATABASE_EXECUTOR_FAILED');
+    expect(reader.execute({
+      type: 'query', name: 'todos.capabilityProbe', input: null,
+    }).value).toEqual({
+      pragma: 'DATABASE_OPERATION_UNSUPPORTED',
+      pathQuery: 'DATABASE_OPERATION_UNSUPPORTED',
+      insert: 'DATABASE_OPERATION_UNSUPPORTED',
+      connectionKeys: ['prepare', 'query'],
+      statementKeys: ['all', 'get', 'iterate', 'raw', 'values'],
+      hasRun: false,
+      hasFilename: false,
+      hasHandle: false,
+      hasLoadExtension: false,
+      hasNative: false,
+    });
     expect(writer.db.get('todos', 'forbidden')).toBeNull();
+  });
+
+  test('normalizes invalid query output identically on reader and writer lanes', () => {
+    const engine = new DatabaseWriterOperationEngine({ runtime: writer, realm });
+    try {
+      for (const name of ['todos.oversizedResult', 'todos.invalidResult']) {
+        expect(captureError(() => reader.execute({
+          type: 'query', name, input: null,
+        })).code).toBe('DATABASE_RESULT_LIMIT');
+        expect(captureError(() => engine.execute({
+          type: 'query', name, input: null,
+        })).code).toBe('DATABASE_RESULT_LIMIT');
+      }
+
+      expect(captureError(() => reader.execute({
+        type: 'query', name: 'todos.count', input: undefined,
+      })).code).toBe('DATABASE_PAYLOAD_INVALID');
+      expect(captureError(() => engine.execute({
+        type: 'query', name: 'todos.count', input: undefined,
+      })).code).toBe('DATABASE_PAYLOAD_INVALID');
+    } finally {
+      engine.close();
+    }
   });
 
   test('closes idempotently and exposes no file path in diagnostics or errors', () => {

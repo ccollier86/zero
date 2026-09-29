@@ -32,16 +32,19 @@ import {
   hasExactDatabaseExecutorKeys,
   readDatabaseExecutorDataRecord,
 } from './database-executor-validation';
+import { canonicalDatabaseRowId } from '../sync/row-identity';
 import {
   DATABASE_WRITER_MAX_RECEIPT_KEYS,
   DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES,
   DATABASE_WRITER_MAX_RECEIPTS,
   DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES,
+  type DatabaseWriterReceiptCompaction,
+} from './database-receipt-contract';
+import {
   type DatabaseChangeReplayResult,
   type DatabaseMutationEffect,
-  type DatabaseWriterReceiptCompaction,
   type DatabaseWriterCommitValue,
-} from './database-writer-engine';
+} from './database-writer-contracts';
 import type {
   DatabaseTrustedReceiptLookup,
 } from './database-trusted-writer';
@@ -469,7 +472,7 @@ function validateMutationEffect(
     const primaryKey = catalog.primaryKeys?.[mutation.table];
     if (primaryKey) {
       const submittedId = mutation.row[primaryKey];
-      const canonicalSubmittedId = canonicalRowId(submittedId);
+      const canonicalSubmittedId = canonicalDatabaseRowId(submittedId);
       if (submittedId !== undefined
         && (canonicalSubmittedId === null
           || effect.rowId !== canonicalSubmittedId)) {
@@ -714,13 +717,6 @@ function isRowId(value: unknown): value is string {
     && textEncoder.encode(value).byteLength <= DATABASE_OPERATION_MAX_ID_BYTES;
 }
 
-function canonicalRowId(value: unknown): string | null {
-  if (typeof value !== 'string'
-    && (typeof value !== 'number' || !Number.isFinite(value))) return null;
-  const canonical = String(value);
-  return isRowId(canonical) ? canonical : null;
-}
-
 function isCanonicalEffectRow(
   value: unknown,
   columns: readonly string[],
@@ -732,7 +728,7 @@ function isCanonicalEffectRow(
   const expectedFields = new Set(columns);
   return rowFields.length === expectedFields.size
     && rowFields.every((field) => expectedFields.has(field))
-    && canonicalRowId(value[primaryKey]) === rowId;
+    && canonicalDatabaseRowId(value[primaryKey]) === rowId;
 }
 
 function isWriteOperation(
@@ -756,7 +752,8 @@ function resultBoundary<T>(write: boolean, validate: () => T): T {
       throw resultLimitFailure(write);
     }
     if (error instanceof DatabaseError
-      && error.code === 'DATABASE_PAYLOAD_LIMIT') {
+      && (error.code === 'DATABASE_PAYLOAD_INVALID'
+        || error.code === 'DATABASE_PAYLOAD_LIMIT')) {
       throw resultLimitFailure(write);
     }
     throw protocolFailure(write);

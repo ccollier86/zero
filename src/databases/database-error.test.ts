@@ -9,6 +9,7 @@ import {
   DATABASE_ERROR_ENVELOPE_VERSION,
   DatabaseError,
   deserializeDatabaseError,
+  isDatabaseError,
   isDatabaseErrorCode,
   isSerializedDatabaseError,
   normalizeDatabaseError,
@@ -238,6 +239,39 @@ describe('database error serialization', () => {
     expect(encoded).not.toContain(secret);
     expect(encoded).not.toContain('SELECT private_value');
     expect(encoded).not.toContain('private-stack');
+  });
+
+  test('fails closed when hostile thrown proxies trap error inspection', () => {
+    const privateText = 'private proxy trap and SQL';
+    const prototypeTrap = new Proxy({}, {
+      getPrototypeOf() {
+        throw new Error(privateText);
+      },
+    });
+    const wrappedDatabaseError = new Proxy(new DatabaseError(
+      'DATABASE_CONFLICT',
+      'Safe original message.',
+    ), {
+      get(target, property, receiver) {
+        if (property === 'code') throw new Error(privateText);
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    for (const value of [prototypeTrap, wrappedDatabaseError]) {
+      expect(() => isDatabaseError(value)).not.toThrow();
+      const normalized = normalizeDatabaseError(value);
+      const serialized = serializeDatabaseError(value);
+
+      expect(normalized).toMatchObject({
+        code: 'DATABASE_EXECUTOR_FAILED',
+        message: 'Database executor failed.',
+        retryable: false,
+        outcome: 'unknown',
+        details: {},
+      });
+      expect(JSON.stringify(serialized)).not.toContain(privateText);
+    }
   });
 
   test('rejects unrecognized and malicious envelopes with a safe fallback', () => {

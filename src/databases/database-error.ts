@@ -209,6 +209,21 @@ export function isDatabaseErrorCode(value: unknown): value is DatabaseErrorCode 
   return typeof value === 'string' && DATABASE_ERROR_CODE_SET.has(value);
 }
 
+/**
+ * Return true for a local database-domain error without allowing a hostile
+ * thrown proxy to escape through JavaScript's `instanceof` traversal.
+ *
+ * This is an internal trust-boundary helper. Call normalizeDatabaseError()
+ * before reading fields from an unknown caught value.
+ */
+export function isDatabaseError(value: unknown): value is DatabaseError {
+  try {
+    return value instanceof DatabaseError;
+  } catch {
+    return false;
+  }
+}
+
 /** Return true only for a complete, current, privacy-safe wire envelope. */
 export function isSerializedDatabaseError(
   value: unknown,
@@ -223,7 +238,10 @@ export function isSerializedDatabaseError(
  * message or details because they may contain SQL, paths, secrets, or stacks.
  */
 export function normalizeDatabaseError(value: unknown): DatabaseError {
-  if (value instanceof DatabaseError) return value;
+  if (isDatabaseError(value)) {
+    const local = copyLocalDatabaseError(value);
+    if (local) return local;
+  }
 
   const parsed = parseSerializedDatabaseError(value);
   if (parsed) return databaseErrorFromEnvelope(parsed);
@@ -307,6 +325,20 @@ function databaseErrorFromEnvelope(
     outcome: envelope.outcome,
     details: envelope.details,
   });
+}
+
+function copyLocalDatabaseError(value: DatabaseError): DatabaseError | null {
+  try {
+    return new DatabaseError(value.code, value.message, {
+      retryable: value.retryable,
+      outcome: value.outcome,
+      details: value.details,
+    });
+  } catch {
+    // A proxied, subclassed, or runtime-mutated error is untrusted input at
+    // this boundary. Do not reflect any of its fields into the fallback.
+    return null;
+  }
 }
 
 function protocolFallback(): DatabaseError {

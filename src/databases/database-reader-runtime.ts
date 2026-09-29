@@ -10,18 +10,24 @@ import { Database, type Statement } from 'bun:sqlite';
 import { lstatSync, realpathSync } from 'node:fs';
 
 import { quoteSqlIdentifier } from '../sync/identity';
+import { databaseColumnDefinitionDeclaresPrimaryKey } from '../sync/row-identity';
 import { DatabaseError } from './database-error';
+import {
+  createDatabaseReadQuerySession,
+  withDatabaseReadQuerySession,
+} from './database-read-query-capability';
+import { produceValidatedDatabaseReadResult } from './database-read-result-validation';
 import {
   readDatabaseBindingIdentity,
   type DatabaseBindingIdentity,
 } from './database-binding-identity';
 import type { DatabaseRef } from './database-file';
 import { runDatabaseFind } from './database-find';
+import { createDatabaseListQuerySql } from './database-list-query';
 import {
   cloneDatabaseSerializableValue,
   createDatabaseSequenceToken,
   validateDatabaseOperation,
-  validateDatabaseReadResult,
   type DatabaseListOperation,
   type DatabaseOperation,
   type DatabaseOperationCatalog,
@@ -267,24 +273,10 @@ export class DatabaseReaderRuntime {
           );
         }
 
-        const result = {
+        return produceValidatedDatabaseReadResult(() => ({
           value: this.executeAtSnapshot(operation),
           sequence: createDatabaseSequenceToken(seq),
-        };
-        try {
-          return validateDatabaseReadResult(result);
-        } catch (error) {
-          if (error instanceof DatabaseError
-            && (error.code === 'DATABASE_PAYLOAD_INVALID'
-              || error.code === 'DATABASE_PAYLOAD_LIMIT')) {
-            throw new DatabaseError(
-              'DATABASE_RESULT_LIMIT',
-              'Database read result is outside the supported result contract.',
-              { outcome: null, cause: error },
-            );
-          }
-          throw error;
-        }
+        }));
       }).deferred();
     } catch (error) {
       if (error instanceof DatabaseError) throw error;
@@ -358,11 +350,14 @@ export class DatabaseReaderRuntime {
       case 'find':
         return runDatabaseFind(this.database, operation, this.catalog);
       case 'query':
-        return runDatabaseRealmQuery(
-          this.realm,
-          { database: this.database },
-          operation.name,
-          operation.input,
+        return withDatabaseReadQuerySession(
+          createDatabaseReadQuerySession(this.database),
+          (context) => runDatabaseRealmQuery(
+            this.realm,
+            context,
+            operation.name,
+            operation.input,
+          ),
         );
     }
   }
@@ -385,13 +380,12 @@ export class DatabaseReaderRuntime {
 
   private list(operation: DatabaseListOperation): DatabaseSerializableValue {
     const primaryKey = this.requirePrimaryKey(operation.table);
-    const quotedPrimaryKey = quoteSqlIdentifier(primaryKey);
     const statement = this.database.prepare(
-      `SELECT * FROM main.${quoteSqlIdentifier(operation.table)} ` +
-      (operation.after === undefined
-        ? ''
-        : `WHERE ${quotedPrimaryKey} COLLATE BINARY > ? `) +
-      `ORDER BY ${quotedPrimaryKey} COLLATE BINARY ASC LIMIT ?`,
+      createDatabaseListQuerySql(
+        operation.table,
+        primaryKey,
+        operation.after !== undefined,
+      ),
     );
     try {
       const values = operation.after === undefined
@@ -543,8 +537,7 @@ function assertRealmSchema(database: Database, realm: DatabaseRealm): void {
     const expectedColumns = Object.keys(schema).filter((key) => key !== '_identity');
     const actualColumns = rows.map((row) => row.name);
     const expectedPrimaryKey = expectedColumns.find((column) => {
-      const definition = schema[column];
-      return typeof definition === 'string' && /\bprimary\s+key\b/iu.test(definition);
+      return databaseColumnDefinitionDeclaresPrimaryKey(schema[column]);
     });
     const actualPrimaryKeys = rows
       .filter((row) => row.pk > 0)

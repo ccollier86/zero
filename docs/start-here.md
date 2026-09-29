@@ -739,7 +739,11 @@ Common variables:
 
 ## Tables And Primary Keys
 
-ReactiveDB-managed tables require one sync primary key:
+ReactiveDB-managed tables require one single-column sync primary key. Its
+declared SQLite affinity must be `TEXT` or `INTEGER`; prefer `TEXT`. Integer
+keys must remain JavaScript safe integers and are represented as canonical
+strings after crossing the Sync or Fabric boundary. `REAL`, `BLOB`, `NUMERIC`,
+typeless, and composite primary keys are rejected:
 
 ```ts
 export const tables = {
@@ -752,8 +756,23 @@ export const tables = {
 };
 ```
 
+Every object value must remain one isolated column definition. Zero rejects
+top-level commas or semicolons, injected table constraints, unbalanced
+grouping, ambiguous quoted multi-token declared types, and unterminated quotes
+or comments before generating `CREATE TABLE`. Nested expression commas and
+quoted literal content remain valid. Declare exactly one top-level column
+`PRIMARY KEY`; use `_identity` for a natural or composite application identity.
+
+When the tables are used in a Fabric `defineDatabaseRealm()`, every non-primary
+column must additionally resolve to `TEXT`, `INTEGER`, `REAL`, or `NUMERIC`
+affinity. Fabric rejects `BLOB`, typeless, and generated columns, mutating
+foreign-key actions, SQLite/Zero-reserved table names, and generated identity
+index names that collide with another realm object. Those deterministic
+configuration failures are reported before an actor or database file opens;
+the complete SQL is still compiled and physically revalidated at startup.
+
 For relationship tables that would normally use a composite primary key, keep
-one string sync primary key and declare a natural identity:
+one supported sync primary key and declare a natural identity:
 
 ```ts
 export const tables = {

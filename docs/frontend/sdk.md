@@ -663,9 +663,12 @@ name it explicitly: `client.collection<Account, 'account_id'>('accounts')`.
 
 ### Natural Identity Collections
 
-ReactiveDB-managed sync tables use one string primary key. For join tables or
-relationship tables that would normally have a composite primary key, declare a
-natural identity in the table schema:
+ReactiveDB-managed sync tables use one single-column `TEXT` or `INTEGER`
+affinity primary key. Zero's default generated sync key uses `TEXT`, and both
+accepted storage forms cross Sync as canonical string row IDs. Explicit
+`INTEGER` values must remain JavaScript safe integers. For join tables or
+relationship tables that would normally have a composite primary key, declare
+a natural identity in the table schema:
 
 ```ts
 export const membershipTable = defineTable('memberships', {

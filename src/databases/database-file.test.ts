@@ -186,6 +186,21 @@ describe('database file resolution and preparation', () => {
     );
     expect(created.created).toBe(true);
     expect(admissions).toBe(2);
+
+    let creationCharges = 0;
+    expect(() => prepareDatabaseFileWithCreationAdmission(
+      root,
+      'charged-before-later-failure',
+      () => { admissions += 1; },
+      () => {
+        creationCharges += 1;
+        throw new Error('injected post-create failure');
+      },
+    )).toThrow('injected post-create failure');
+    expect(creationCharges).toBe(1);
+    expect(lstatSync(
+      resolveDatabaseFile(root, 'charged-before-later-failure').path,
+    ).isFile()).toBe(true);
   });
 
   test('counts only canonical regular Zero-managed main database files', () => {

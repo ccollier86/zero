@@ -845,6 +845,48 @@ describe('actor-backed tenant Sync bridge', () => {
     expect(binding.releaseCount).toBe(1);
   });
 
+  test('closes terminally for non-retryable staged snapshot contract failures', async () => {
+    const scenarios = [
+      {
+        stage: 'begin' as const,
+        error: new DatabaseError(
+          'DATABASE_PROTOCOL_ERROR',
+          'Actor snapshot begin result is invalid.',
+        ),
+      },
+      {
+        stage: 'page' as const,
+        error: new DatabaseError(
+          'DATABASE_PROTOCOL_ERROR',
+          'Actor snapshot page result is invalid.',
+        ),
+      },
+      {
+        stage: 'page' as const,
+        error: new DatabaseError(
+          'DATABASE_RESULT_LIMIT',
+          'Actor snapshot page exceeded its response bound.',
+        ),
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const binding = new FakeTenantBinding();
+      binding.rows.set('t1', { id: 't1', title: 'Tenant' });
+      if (scenario.stage === 'begin') binding.snapshotBeginError = scenario.error;
+      else binding.snapshotPageError = scenario.error;
+      const ws = socket();
+      const tenant = bridge(ws.value, binding);
+
+      await tenant.subscribe({
+        type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'], lastSeq: 0,
+      });
+
+      expect(ws.closes.at(-1)?.[0]).toBe(4004);
+      expect(binding.releaseCount).toBe(1);
+    }
+  });
+
   test('closes permanent database-capacity subscription failure once without snapshot telemetry', async () => {
     const binding = new FakeTenantBinding();
     binding.snapshotBeginError = new DatabaseError(
@@ -1208,6 +1250,15 @@ describe('actor-backed tenant Sync bridge', () => {
       expect(local.query().events.map((event) => event.code)).toEqual([
         OBS_CODES.SYNC_TENANT_RESNAPSHOT_REQUIRED.code,
       ]);
+      expect(ambient.query().count).toBe(0);
+
+      const standaloneBinding = new FakeTenantBinding();
+      const standaloneSocket = socket();
+      const standalone = bridge(standaloneSocket.value, standaloneBinding);
+      await standalone.subscribe({
+        type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'], lastSeq: 0,
+      });
+      standaloneBinding.emitReset();
       expect(ambient.query().count).toBe(0);
     } finally {
       configureObservability(false);

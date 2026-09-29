@@ -226,6 +226,9 @@ describe('resource definitions and registry', () => {
       'text check (tenant_id is not null)',
       'text not1 null',
       'text "not" null',
+      'text-- hidden through bare CR\rnot null\n',
+      'text not\u00a0null',
+      'text, injected text not null',
     ];
     for (const definition of nullableDefinitions) {
       const issues = validateResourceDefinitions([defineResource({
@@ -290,6 +293,10 @@ describe('resource definitions and registry', () => {
       'text /* PRIMARY KEY */',
       'text check (value != "primary key")',
       'text primary1 key',
+      'text unique, primary key (id, tenant_id)',
+      'text unique-- hidden through bare CR\rprimary key\n',
+      'text\u00a0primary key unique',
+      'text prımary key unique',
     ];
     for (const definition of fakePrimaryKeys) {
       const issues = validateResourceDefinitions([defineResource({

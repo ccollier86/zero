@@ -329,10 +329,14 @@ second generic to `client.collection<T, 'account_id'>()` or
 
 ### Natural identity for relationship tables
 
-ReactiveDB intentionally keeps one string sync primary key per row. For tables
-that would normally use a composite primary key, declare a natural identity
-instead. The platform creates a deterministic sync id from those fields and
-adds a unique database index for them.
+ReactiveDB intentionally keeps one single-column sync primary key per row. Its
+declared SQLite affinity must be `TEXT` or `INTEGER`; the default generated
+sync key uses `TEXT`, while an explicitly numeric safe `INTEGER` value is
+canonicalized to a string row ID at the Sync and Fabric boundaries. `REAL`,
+`BLOB`, `NUMERIC`, typeless, and composite primary keys are rejected. For
+tables that would normally use a composite primary key, declare a natural
+identity instead. The platform creates a deterministic text sync id from those
+fields and adds a unique database index for them.
 
 ```ts
 export const membershipTable = defineTable('memberships', {
@@ -3156,8 +3160,25 @@ const tenantData = defineDatabaseRealm({
   tables: tenantServerTables,
   migrations: [],
   // Optional actor-local synchronous handlers, called by registered name:
-  queries: {},
-  commands: {},
+  queries: {
+    'documents.countOpen': ({ database }) => {
+      const row = database.prepare(`
+        SELECT count(*) AS count
+        FROM documents
+        WHERE status = ?
+      `).get('open') as { count: number };
+      return { count: row.count };
+    },
+  },
+  commands: {
+    'documents.archive': ({ db }, input) => {
+      const { documentId } = input as { documentId: string };
+      const change = db.update('documents', documentId, {
+        status: 'archived',
+      });
+      return { updated: change !== null };
+    },
+  },
 });
 
 const config = defineZeroConfig({
@@ -3194,6 +3215,99 @@ if (!await runDatabaseActorIfRequested({ realm: tenantData })) {
   const app = await createApp(config);
   app.listen(config.port);
 }
+```
+
+Every actor-realm table must declare exactly one primary-key column with SQLite
+`TEXT` or `INTEGER` affinity. `TEXT` is recommended; stored integer keys must
+remain JavaScript safe integers and cross Fabric/Sync as canonical string row
+IDs. `defineDatabaseRealm()` rejects `REAL`, `BLOB`, `NUMERIC`, typeless, and
+composite primary keys with `DATABASE_CONFIG_INVALID` before opening an actor
+or database file. Each schema value must remain one isolated column definition;
+top-level separators, injected table constraints, ambiguous quoted multi-token
+declared types, and unterminated quotes or comments fail before SQL generation.
+
+Every other actor-realm column must have `TEXT`, `INTEGER`, `REAL`, or
+`NUMERIC` affinity. `BLOB`, typeless, and generated columns are rejected because
+Fabric rows and receipts use the canonical JSON-compatible actor value
+contract, while generated columns are not writable by ReactiveDB. Column
+foreign keys may use `RESTRICT` or `NO ACTION`; `CASCADE`, `SET NULL`, and
+`SET DEFAULT` are rejected in favor of explicit tracked command writes. Realm
+table names may not use `sqlite_`, `_zero_`, `idx_zero_`, `_changes`,
+`_change_sequence`, or `_migrations`, and an `_identity` index name may not
+collide with a table or reserved object. These known incompatibilities fail
+from `defineDatabaseRealm()` with `DATABASE_CONFIG_INVALID`; actor startup
+still compiles the full SQLite schema and independently verifies its physical
+shape.
+
+The `database` field in a registered query is a
+`DatabaseReadQueryConnection`, not a Bun SQLite handle. Its complete public
+surface is:
+
+| Capability | Read-only methods |
+| --- | --- |
+| `DatabaseReadQueryConnection` | `query(sql)`, `prepare(sql, params?)` |
+| `DatabaseReadQueryStatement` | `all(...)`, `get(...)`, `iterate(...)`, `values(...)`, `raw(...)` |
+
+Only one `SELECT` or read-only `WITH ... SELECT` statement is accepted. SQL
+comments, statement separators, mutation/DDL/PRAGMA statements, extension
+loading, every quoted or unquoted `pragma_*` token (including the literal
+spelling), and invocations of file helper functions are rejected. File-helper
+function names remain usable as ordinary columns, aliases, or string literals
+when they are not invoked. The capability exposes no database path, `run`,
+`exec`, transaction,
+handle, native statement, or extension-loading surface. Reader actors use their
+readonly SQLite connection; file writer queries reuse the already
+identity-verified writer handle inside a serialized SQLite `query_only`
+boundary, so they never reopen its pathname; hot writer queries use a readonly
+snapshot.
+Query handlers are synchronous, so consume an `iterate()` result inside the
+handler rather than retaining it. Zero finalizes all statements and closes
+owned snapshots immediately after the handler.
+
+The `db` field in a registered command is a
+`DatabaseWriteCommandCapability`, not a `ReactiveDB` or Bun SQLite handle.
+`DatabaseWriteCommandCapability`, `DatabaseWriteCommandContext`, and
+`DatabaseWriteCommandHandler` are server-only exports. The capability is a
+frozen, null-prototype facade with this complete surface:
+
+| Group | Tracked methods |
+| --- | --- |
+| CRUD | `insert`, `create`, `createStrict`, `createScoped`, `update`, `updateIfCurrent`, `updateScoped`, `delete`, `deleteIfCurrent`, `deleteScoped` |
+| Reads | `query`, `list`, `queryOne`, `get`, `getScoped` |
+| Natural identity | `getIdentity`, `identityKey`, `queryByIdentity`, `upsertByIdentity`, `updateByIdentity`, `deleteByIdentity` |
+| Transaction lifecycle | `transaction`, `afterCommit` |
+
+It intentionally omits `exec`, `prepare`, raw database/service handles, schema
+definition, listeners, lifecycle controls, and internal-change APIs. Zero
+constructs the context inside the writer and runs the handler and result
+validation in one transaction. Nested `transaction()` calls remain in that
+managed transaction; `afterCommit()` retains ReactiveDB's best-effort,
+synchronous callback contract. Zero revokes the facade after result validation
+and before post-commit callbacks run, so retained reads, writes, transactions,
+and post-commit registration fail with `DATABASE_CLOSED`, including from an
+`afterCommit()` callback.
+
+Registered query/command inputs and returned values must satisfy
+`DatabaseSerializableValue` and the normal payload/result budgets. Invalid
+caller input is a `DATABASE_PAYLOAD_*` error; invalid or oversized handler
+output is `DATABASE_RESULT_LIMIT` on both reader and writer lanes. Application
+callers invoke the registered query name through `zero.data.query(...)`; they
+never submit SQL. Registered writes use the same name-only boundary and require
+the normal durable idempotency key:
+
+```ts
+const openDocuments = await zero.data.query('documents.countOpen', null);
+
+const archived = await zero.data.command(
+  'documents.archive',
+  { documentId },
+  { idempotencyKey: `archive-document:${operationId}` },
+);
+
+return {
+  openCount: (openDocuments.value as { count: number }).count,
+  updated: (archived.value as { updated: boolean }).updated,
+};
 ```
 
 `databaseTopology.rootDirectory` is an exclusively managed Fabric location.
@@ -3570,6 +3684,9 @@ baseline is returned as one actor result or one WebSocket frame. A single
 projected row which cannot fit in one frame is a terminal data-contract error (`4004`),
 reported without a reconnect loop so the operator can correct the row or
 projection.
+Malformed actor begin/page results and non-retryable actor response-size
+violations are terminal in this snapshot context as well; the client does not
+reconnect into the same invalid staged contract.
 
 Permanent managed-file exhaustion while establishing the tenant binding also
 closes once with terminal code `4004` and the fixed reason
@@ -3619,6 +3736,14 @@ migration/schema setup, writes, and snapshot serialization. The `'hot'`
 shorthand uses 64 MiB. Budget actor/runtime overhead separately; if all active
 entries can be hot, `maxDatabases * maxBytes` is the maximum configured image
 budget, not the total memory ceiling.
+
+A write that would cross the active hot image budget fails before commit with
+`DATABASE_PAYLOAD_LIMIT`, `outcome: 'not-committed'`, and only the closed safe
+detail `reason: 'max-bytes'`. Actor and coordinator normalization preserve that
+classifier while discarding SQLite messages, paths, SQL, row data, and measured
+sizes. The existing app-local `database.operation.failed` event then includes
+`failureReason: 'hot-max-bytes'`; no separate high-cardinality event or raw
+error detail is emitted.
 
 Hot durability is explicit:
 
@@ -4204,7 +4329,13 @@ Native-only (from `@zero/framework/native`): `createZeroNativeAuth`,
 `NativeCallbackSession`, `NativeCryptoAdapter`, `NativeFetch`,
 `NativeSyncAuthConfig`, `NativeIdTokenClaims`, and `NativeOidcMetadata`.
 
-Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `AppStorageConfig`, `ResolvedConfig`, `ResolvedAppStorageConfig`, `AppDatabaseTopologyConfig`, `AppSingleDatabaseTopologyConfig`, `AppMultipleDatabaseTopologyConfig`, `AppDatabaseActorConfig`, `AppDatabaseHotPlacementConfig`, `AppDatabasePlacementConfig`, `AppDatabasePlacementPolicyConfig`, `AppTenantDataIsolation`, `ResolvedAppDatabaseTopologyConfig`, `ResolvedAppSingleDatabaseTopologyConfig`, `ResolvedAppMultipleDatabaseTopologyConfig`, `DatabaseCoordinatorRestartPolicy`, `NormalizedDatabaseCoordinatorRestartPolicy`, `DatabaseRealm`, `DatabaseRealmDefinition`, `DatabaseActorLaunch`, `DatabaseActorSourceLaunch`, `DatabaseActorBundleLaunch`, `DatabaseActorCommandPrefixLaunch`, `DatabaseActorExecutorPolicy`, `DatabaseActorSQLiteConfig`, `RunDatabaseActorIfRequestedOptions`, `AsyncDatabaseClient`, `DatabaseOperationRow`, `DatabaseSerializableValue`, `DatabaseListPage`, `DatabaseListPageOptions`, `DatabaseFindInput`, `DatabaseFindRows`, `DatabaseFindFilter`, `DatabaseFindFieldFilter`, `DatabaseFindFilterGroup`, `DatabaseFindFilterOperator`, `DatabaseFindOrder`, `DatabaseMutation`, `DatabaseMutationOptions`, `DatabaseAssertion`, `DatabaseBatchInput`, `DatabaseReadOptions`, `DatabaseReadConsistency`, `DatabaseReadResult`, `DatabaseCommitResult`, `DatabaseSequenceToken`, `DatabaseTenantSyncSnapshotPage`, `DatabaseTenantSyncSnapshotSession`, `DatabaseError`, `DatabaseErrorCode`, `DatabaseRef`, `DatabasePlacement`, `DatabasePlacementPolicy`, `DatabasePlacementSelector`, `DatabasePlacementSelectorContext`, `DatabaseHotDurability`, `DatabaseHotPlacementConfig`, `DATABASE_ACTOR_CHILD_FLAG`, `DATABASE_HOT_DEFAULT_DURABILITY`, `DATABASE_HOT_DEFAULT_SNAPSHOT_INTERVAL_MS`, `DATABASE_HOT_MIN_SNAPSHOT_TIMEOUT_MS`, `DATABASE_HOT_MAX_SNAPSHOT_INTERVAL_MS`, `DATABASE_HOT_MAX_SNAPSHOT_TIMEOUT_MS`, `DATABASE_HOT_SHORTHAND_MAX_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_ROWS`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SESSIONS`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_NODES`, `DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_NODES`, `DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_ROWS`, `DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_SOURCE_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_TTL_MS`, `DATABASE_WRITER_MAX_RECEIPT_KEYS`, `DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES`, `DATABASE_WRITER_MAX_RECEIPTS`, `DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES`, `defaultDatabaseHotSnapshotTimeoutMs`, `createDatabaseRef`, `createNamedDatabaseRef`, `createTenantDatabaseRef`, `AuthPluginConfig`, `AuthTenancyMode`, `AuthTenancyConfig`, `AuthTenancyOptions`, `ResolvedAuthTenancyConfig`, `AuthAuthorizationMode`, `AuthAuthorizationConfig`, `AuthAuthorizationOptions`, `AuthPermissionConfig`, `ResolvedAuthPermissionConfig`, `AuthRoleTemplateConfig`, `ResolvedAuthRoleTemplateConfig`, `ResolvedAuthAuthorizationConfig`, `NormalizedAuthBehaviorConfig`, `ResolvedAuthBehaviorConfig`, `PermissionKey`, `AuthorizationKernel`, `AuthorizationKernelConfig`, `AccessRequirement`, `StructuredAccessRequirement`, `CompiledAccessRequirement`, `AuthorizationSubjectSnapshot`, `AuthorizationScopeSnapshot`, `AuthorizationDecision`, `ProtectedMultipartRequestGuardOptions`, `ZeroElysiaAuthRequirement`, `NativeAuthConfig`, `NativeAuthorizationRequestPolicyConfig`, `NativeAuthorizationSourceResolver`, `NativeRefreshRotationPolicyConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `StorageDriveApi`, `StorageObjectApi`, `StoragePermissionApi`, `StorageUploadGrantApi`, `StorageServiceOptions`, `CreateUploadGrantTokenOptions`, `VerifiedUploadGrant`, `PdfConfig`, `PdfRenderInput`, `PdfRenderResult`, `PdfService`, `PdfStorageTarget`, `PlatformTokenService`, `PlatformActionTokenRecord`, `PlatformResumeTokenRecord`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `defineDatabaseRealm`, `runDatabaseActorIfRequested`, `defineAuthConfig`, `resolveAuthBehaviorConfig`, `createAuthorizationKernel`, `compileAccessRequirement`, `mergeAccessRequirements`, `validateAuthorizationRegistry`, `defineNativeAuthConfig`, `resolveNativeAuthConfig`, `createAuthPlugin`, `installAuthStopBarrier`, `createAuthMiddleware`, `createProtectedMultipartRequestGuard`, `getTokenService`, `createPlatformTokenPlugin`, `getPlatformTokenService`, `createPdfPlugin`, `getPdfService`, `requirePdfService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `createUploadGrantToken`, `verifyUploadGrantToken`, `emitPlatformCode`, `createObservabilityPlugin`
+Server-only (from `@zero/framework/server`): `App`, `AppConfig`, `AppStorageConfig`, `ResolvedConfig`, `ResolvedAppStorageConfig`, `AppDatabaseTopologyConfig`, `AppSingleDatabaseTopologyConfig`, `AppMultipleDatabaseTopologyConfig`, `AppDatabaseActorConfig`, `AppDatabaseHotPlacementConfig`, `AppDatabasePlacementConfig`, `AppDatabasePlacementPolicyConfig`, `AppTenantDataIsolation`, `ResolvedAppDatabaseTopologyConfig`, `ResolvedAppSingleDatabaseTopologyConfig`, `ResolvedAppMultipleDatabaseTopologyConfig`, `DatabaseCoordinatorRestartPolicy`, `NormalizedDatabaseCoordinatorRestartPolicy`, `DatabaseRealm`, `DatabaseRealmDefinition`, `DatabaseReadQueryConnection`, `DatabaseReadQueryContext`, `DatabaseReadQueryStatement`, `DatabaseActorLaunch`, `DatabaseActorSourceLaunch`, `DatabaseActorBundleLaunch`, `DatabaseActorCommandPrefixLaunch`, `DatabaseActorExecutorPolicy`, `DatabaseActorSQLiteConfig`, `RunDatabaseActorIfRequestedOptions`, `AsyncDatabaseClient`, `DatabaseOperationRow`, `DatabaseSerializableValue`, `DatabaseListPage`, `DatabaseListPageOptions`, `DatabaseFindInput`, `DatabaseFindRows`, `DatabaseFindFilter`, `DatabaseFindFieldFilter`, `DatabaseFindFilterGroup`, `DatabaseFindFilterOperator`, `DatabaseFindOrder`, `DatabaseMutation`, `DatabaseMutationOptions`, `DatabaseAssertion`, `DatabaseBatchInput`, `DatabaseReadOptions`, `DatabaseReadConsistency`, `DatabaseReadResult`, `DatabaseCommitResult`, `DatabaseSequenceToken`, `DatabaseTenantSyncSnapshotPage`, `DatabaseTenantSyncSnapshotSession`, `DatabaseError`, `DatabaseErrorCode`, `DatabaseRef`, `DatabasePlacement`, `DatabasePlacementPolicy`, `DatabasePlacementSelector`, `DatabasePlacementSelectorContext`, `DatabaseHotDurability`, `DatabaseHotPlacementConfig`, `DATABASE_ACTOR_CHILD_FLAG`, `DATABASE_HOT_DEFAULT_DURABILITY`, `DATABASE_HOT_DEFAULT_SNAPSHOT_INTERVAL_MS`, `DATABASE_HOT_MIN_SNAPSHOT_TIMEOUT_MS`, `DATABASE_HOT_MAX_SNAPSHOT_INTERVAL_MS`, `DATABASE_HOT_MAX_SNAPSHOT_TIMEOUT_MS`, `DATABASE_HOT_SHORTHAND_MAX_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_ROWS`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SESSIONS`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_MAX_SOURCE_ROW_NODES`, `DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_NODES`, `DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_ROWS`, `DATABASE_TENANT_SYNC_SNAPSHOT_PAGE_MAX_SOURCE_BYTES`, `DATABASE_TENANT_SYNC_SNAPSHOT_TTL_MS`, `DATABASE_WRITER_MAX_RECEIPT_KEYS`, `DATABASE_WRITER_MAX_RECEIPT_RESULT_BYTES`, `DATABASE_WRITER_MAX_RECEIPTS`, `DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES`, `defaultDatabaseHotSnapshotTimeoutMs`, `createDatabaseRef`, `createNamedDatabaseRef`, `createTenantDatabaseRef`, `AuthPluginConfig`, `AuthTenancyMode`, `AuthTenancyConfig`, `AuthTenancyOptions`, `ResolvedAuthTenancyConfig`, `AuthAuthorizationMode`, `AuthAuthorizationConfig`, `AuthAuthorizationOptions`, `AuthPermissionConfig`, `ResolvedAuthPermissionConfig`, `AuthRoleTemplateConfig`, `ResolvedAuthRoleTemplateConfig`, `ResolvedAuthAuthorizationConfig`, `NormalizedAuthBehaviorConfig`, `ResolvedAuthBehaviorConfig`, `PermissionKey`, `AuthorizationKernel`, `AuthorizationKernelConfig`, `AccessRequirement`, `StructuredAccessRequirement`, `CompiledAccessRequirement`, `AuthorizationSubjectSnapshot`, `AuthorizationScopeSnapshot`, `AuthorizationDecision`, `ProtectedMultipartRequestGuardOptions`, `ZeroElysiaAuthRequirement`, `NativeAuthConfig`, `NativeAuthorizationRequestPolicyConfig`, `NativeAuthorizationSourceResolver`, `NativeRefreshRotationPolicyConfig`, `JobDefinition`, `JobStatus`, `SchedulerPluginConfig`, `StoragePluginConfig`, `StorageAdapter`, `StorageDriveApi`, `StorageObjectApi`, `StoragePermissionApi`, `StorageUploadGrantApi`, `StorageServiceOptions`, `CreateUploadGrantTokenOptions`, `VerifiedUploadGrant`, `PdfConfig`, `PdfRenderInput`, `PdfRenderResult`, `PdfService`, `PdfStorageTarget`, `PlatformTokenService`, `PlatformActionTokenRecord`, `PlatformResumeTokenRecord`, `ObservabilityConfig`, `PlatformEvent`, `PlatformSink`, `createApp`, `resolveConfig`, `defineDatabaseRealm`, `runDatabaseActorIfRequested`, `defineAuthConfig`, `resolveAuthBehaviorConfig`, `createAuthorizationKernel`, `compileAccessRequirement`, `mergeAccessRequirements`, `validateAuthorizationRegistry`, `defineNativeAuthConfig`, `resolveNativeAuthConfig`, `createAuthPlugin`, `installAuthStopBarrier`, `createAuthMiddleware`, `createProtectedMultipartRequestGuard`, `getTokenService`, `createPlatformTokenPlugin`, `getPlatformTokenService`, `createPdfPlugin`, `getPdfService`, `requirePdfService`, `createSchedulerPlugin`, `getScheduler`, `createNotificationPlugin`, `createStoragePlugin`, `getStorageService`, `createUploadGrantToken`, `verifyUploadGrantToken`, `emitPlatformCode`, `createObservabilityPlugin`
+
+The server-only Fabric realm contracts also export
+`DatabaseReadQueryHandler`, `DatabaseReadQueryRegistry`,
+`DatabaseWriteCommandCapability`, `DatabaseWriteCommandContext`,
+`DatabaseWriteCommandHandler`, and `DatabaseWriteCommandRegistry` for typed
+registered operations.
 
 Sync-only (from `@zero/framework/sync`): `createDefaultSyncPolicy`, `combineSyncPolicies`, `allowAllSyncPolicy`, `getReadableSyncTables`, `evaluateSyncReadPolicy`, `evaluateSyncMutationPolicy`, `SYNC_ACK_ERROR_CODES`, `SyncAckErrorCode`, `SyncPolicy`, `SyncReadPolicyContext`, `SyncMutationPolicyContext`
 

@@ -1,17 +1,25 @@
 /** Validation and failure classification for the tenant Sync socket bridge. */
 
 import { SyncSnapshotChunkLimitError } from './sync-snapshot-chunks';
+import { DatabaseError } from '../databases/database-error';
 import type {
   SyncTenantDataPlaneBinding,
   SyncTenantDataPlaneTable,
 } from './sync-tenant-data-plane-contract';
 import { SyncTenantSnapshotBudgetError } from './sync-tenant-snapshot-budget';
+import {
+  SyncTenantDataPlaneError,
+  syncTenantDataPlaneError,
+} from './sync-tenant-data-plane-error';
 import type { SyncAuthContext, SyncSubscribeMessage } from './types';
 
 /** Internal cancellation used when a newer subscription replaces old work. */
-export class SyncTenantSubscriptionSupersededError extends Error {
+export class SyncTenantSubscriptionSupersededError extends SyncTenantDataPlaneError {
   constructor() {
-    super('Tenant Sync subscription was superseded.');
+    super(
+      'SYNC_TENANT_SUBSCRIPTION_SUPERSEDED',
+      'Tenant Sync subscription was superseded.',
+    );
     this.name = 'SyncTenantSubscriptionSupersededError';
   }
 }
@@ -20,7 +28,12 @@ export class SyncTenantSubscriptionSupersededError extends Error {
 export function validateTenantSyncTableCatalog(
   value: Readonly<Record<string, SyncTenantDataPlaneTable>>,
 ): Readonly<Record<string, SyncTenantDataPlaneTable>> {
-  if (!plainRecord(value)) throw new TypeError('Tenant Sync table catalog is invalid');
+  if (!plainRecord(value)) {
+    throw syncTenantDataPlaneError(
+      'SYNC_TENANT_CATALOG_INVALID',
+      'Tenant Sync table catalog is invalid.',
+    );
+  }
   const output: Record<string, SyncTenantDataPlaneTable> = Object.create(null);
   for (const [table, definition] of Object.entries(value)) {
     if (!safeIdentifier(table)
@@ -37,7 +50,10 @@ export function validateTenantSyncTableCatalog(
             !safeIdentifier(field) || !definition.columns.includes(field)
           ))
           || new Set(definition.identity).size !== definition.identity.length))) {
-      throw new TypeError('Tenant Sync table catalog is invalid');
+      throw syncTenantDataPlaneError(
+        'SYNC_TENANT_CATALOG_INVALID',
+        'Tenant Sync table catalog is invalid.',
+      );
     }
     output[table] = Object.freeze({
       primaryKey: definition.primaryKey,
@@ -67,7 +83,10 @@ export function validateTenantSyncBinding(binding: SyncTenantDataPlaneBinding): 
     || typeof binding.replay !== 'function'
     || typeof binding.onWakeup !== 'function'
     || typeof binding.release !== 'function') {
-    throw new TypeError('Tenant Sync data-plane binding is invalid');
+    throw syncTenantDataPlaneError(
+      'SYNC_TENANT_BINDING_INVALID',
+      'Tenant Sync data-plane binding is invalid.',
+    );
   }
 }
 
@@ -80,7 +99,10 @@ export function assertVerifiedTenantSyncAuthority(context: SyncAuthContext): voi
     || context.sessionScopeId !== context.tenantId
     || typeof context.membershipId !== 'string'
     || context.membershipId.length === 0) {
-    throw new Error('Tenant Sync requires a verified tenant-scoped authority');
+    throw syncTenantDataPlaneError(
+      'SYNC_TENANT_AUTHORITY_REQUIRED',
+      'Tenant Sync requires a verified tenant-scoped authority.',
+    );
   }
 }
 
@@ -127,19 +149,25 @@ export function isTerminalTenantSyncSnapshotFailure(error: unknown): boolean {
   if (!plainRecord(error)) return false;
   return error.code === 'SYNC_TENANT_SNAPSHOT_INVALID'
     || error.code === 'DATABASE_PAYLOAD_LIMIT'
-    || error.code === 'DATABASE_SCHEMA_MISMATCH';
+    || error.code === 'DATABASE_SCHEMA_MISMATCH'
+    || (error.retryable === false && (
+      error.code === 'DATABASE_PROTOCOL_ERROR'
+      || error.code === 'DATABASE_RESULT_LIMIT'
+    ));
 }
 
-export function tenantSyncAuthorityChangedError(): Error & { code: string } {
-  return Object.assign(new Error('Tenant Sync authority changed'), {
-    code: 'DATABASE_AUTHORITY_CHANGED',
-  });
+export function tenantSyncAuthorityChangedError(): DatabaseError {
+  return new DatabaseError(
+    'DATABASE_AUTHORITY_CHANGED',
+    'Tenant Sync authority changed.',
+  );
 }
 
-export function tenantSyncMutationRecoveryError(): Error & { code: string } {
-  return Object.assign(new Error('Tenant Sync mutation requires receipt recovery'), {
-    code: 'SYNC_TENANT_MUTATION_RECOVERY_REQUIRED',
-  });
+export function tenantSyncMutationRecoveryError(): SyncTenantDataPlaneError {
+  return syncTenantDataPlaneError(
+    'SYNC_TENANT_MUTATION_RECOVERY_REQUIRED',
+    'Tenant Sync mutation requires receipt recovery.',
+  );
 }
 
 function validCursors(value: SyncSubscribeMessage['cursors']): boolean {

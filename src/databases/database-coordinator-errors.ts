@@ -106,6 +106,13 @@ export function safeCoordinatorError(value: unknown): DatabaseError {
       details[key] = detail;
       continue;
     }
+    if (source.code === 'DATABASE_PAYLOAD_LIMIT'
+      && source.outcome === 'not-committed'
+      && key === 'reason'
+      && detail === 'max-bytes') {
+      details.reason = 'max-bytes';
+      continue;
+    }
     if (!SAFE_COORDINATOR_DETAIL_KEYS.has(key)
       || (typeof detail !== 'number'
         && typeof detail !== 'boolean'
@@ -121,6 +128,13 @@ export function safeCoordinatorError(value: unknown): DatabaseError {
       details: details as DatabaseErrorDetails,
     },
   );
+}
+
+/** Identify the one privacy-safe hot image capacity operation failure. */
+export function isHotMaxBytesFailure(error: DatabaseError): boolean {
+  return error.code === 'DATABASE_PAYLOAD_LIMIT'
+    && error.outcome === 'not-committed'
+    && error.details.reason === 'max-bytes';
 }
 
 export function permanentCapacityDetails(error: DatabaseError): Readonly<{

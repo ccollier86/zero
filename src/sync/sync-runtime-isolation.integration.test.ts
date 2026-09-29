@@ -10,10 +10,9 @@ import {
   ZERO_SQLITE_SERVICE,
   ZERO_SYNC_DB,
 } from '../runtime/service-keys';
-import { getPlatformSQLiteService } from '../persistence';
 import { MemoryEventStore, OBS_CODES } from '../observability';
 import { createReactiveDB, type ReactiveDB } from './reactive-db';
-import { createSyncPlugin, getSyncDB } from './sync.plugin';
+import { createSyncPlugin } from './sync.plugin';
 import { allowLegacyEphemeralTopicPolicy } from './ephemeral-policy';
 import type {
   ServerMessage,
@@ -224,8 +223,6 @@ describe('sync plugin runtime isolation', () => {
       },
     })).toThrow('foreign-key actions are not observable');
 
-    expect(getSyncDB()).toBeNull();
-    expect(getPlatformSQLiteService()).toBeNull();
     expect(runtime.get(ZERO_SYNC_DB)).toBeNull();
     expect(runtime.get(ZERO_SQLITE_SERVICE)).toBeNull();
     expect(capturedDB).not.toBeNull();
@@ -233,10 +230,12 @@ describe('sync plugin runtime isolation', () => {
   });
 
   test('rejects invalid replica polling during composition and disposes the database', () => {
+    const runtime = createNoopObservedRuntime('invalid-replica-polling');
     let capturedDB: ReactiveDB | null = null;
 
     expect(() => createSyncPlugin({
       db: { mode: 'memory' },
+      runtime,
       tables: {},
       replicaChangePolling: { intervalMs: Number.NaN },
       onDatabaseCreated(db) {
@@ -244,18 +243,20 @@ describe('sync plugin runtime isolation', () => {
       },
     })).toThrow('positive safe integer');
 
-    expect(getSyncDB()).toBeNull();
-    expect(getPlatformSQLiteService()).toBeNull();
+    expect(runtime.get(ZERO_SYNC_DB)).toBeNull();
+    expect(runtime.get(ZERO_SQLITE_SERVICE)).toBeNull();
     expect(capturedDB).not.toBeNull();
     expect(() => capturedDB!.currentSeq).toThrow('disposed');
   });
 
   test('rejects async database composition hooks and poisons late database access', async () => {
+    const runtime = createNoopObservedRuntime('async-composition-hook');
     let capturedDB: ReactiveDB | null = null;
     let lateAccess = '';
 
     expect(() => createSyncPlugin({
       db: { mode: 'memory' },
+      runtime,
       tables: {},
       async onDatabaseCreated(db) {
         capturedDB = db;
@@ -269,8 +270,8 @@ describe('sync plugin runtime isolation', () => {
     })).toThrow('onDatabaseCreated must be synchronous');
 
     await Promise.resolve();
-    expect(getSyncDB()).toBeNull();
-    expect(getPlatformSQLiteService()).toBeNull();
+    expect(runtime.get(ZERO_SYNC_DB)).toBeNull();
+    expect(runtime.get(ZERO_SQLITE_SERVICE)).toBeNull();
     expect(capturedDB).not.toBeNull();
     expect(() => capturedDB!.currentSeq).toThrow('disposed');
     expect(lateAccess).toContain('disposed');
@@ -296,8 +297,6 @@ describe('sync plugin runtime isolation', () => {
     // onStart. Track it for test teardown; the Sync plugin owns and has already
     // released every resource it created.
     apps.push(app);
-    expect(getSyncDB()).toBeNull();
-    expect(getPlatformSQLiteService()).toBeNull();
     expect(runtime.get(ZERO_SYNC_DB)).toBeNull();
     expect(runtime.get(ZERO_SQLITE_SERVICE)).toBeNull();
     expect(capturedDB).not.toBeNull();
@@ -305,6 +304,7 @@ describe('sync plugin runtime isolation', () => {
   });
 
   test('keeps an injected ReactiveDB caller-owned and removes its Sync listener on stop', async () => {
+    const runtime = createNoopObservedRuntime('injected-caller-owned');
     const injected = createReactiveDB({ mode: 'memory' });
     let observedChanges = 0;
     let capturedDB: ReactiveDB | null = null;
@@ -324,6 +324,7 @@ describe('sync plugin runtime isolation', () => {
     };
     const app = new Elysia({ name: 'injected-sync-database' }).use(createSyncPlugin({
       db: { mode: 'memory' },
+      runtime,
       reactiveDB: injected,
       tables: {
         todos: {
@@ -375,8 +376,8 @@ describe('sync plugin runtime isolation', () => {
         title: 'Caller still owns DB',
       });
       expect(observedChanges).toBe(1);
-      expect(getSyncDB()).toBeNull();
-      expect(getPlatformSQLiteService()).toBeNull();
+      expect(runtime.get(ZERO_SYNC_DB)).toBeNull();
+      expect(runtime.get(ZERO_SQLITE_SERVICE)).toBeNull();
     } finally {
       connection?.close();
       const connectionIndex = connection ? connections.indexOf(connection) : -1;
@@ -387,6 +388,7 @@ describe('sync plugin runtime isolation', () => {
         apps.splice(appIndex, 1);
       }
       injected.dispose();
+      await runtime.dispose();
     }
   });
 
@@ -425,10 +427,12 @@ describe('sync plugin runtime isolation', () => {
   });
 
   test('keeps a caller-owned injected ReactiveDB usable after composition failure', () => {
+    const runtime = createNoopObservedRuntime('failed-caller-owned');
     const injected = createReactiveDB({ mode: 'memory' });
     try {
       expect(() => createSyncPlugin({
         db: { mode: 'memory' },
+        runtime,
         reactiveDB: injected,
         tables: {
           parents: { id: 'text primary key' },
@@ -440,7 +444,8 @@ describe('sync plugin runtime isolation', () => {
       })).toThrow('foreign-key actions are not observable');
 
       expect(injected.currentSeq).toBe(0);
-      expect(getSyncDB()).toBeNull();
+      expect(runtime.get(ZERO_SYNC_DB)).toBeNull();
+      expect(runtime.get(ZERO_SQLITE_SERVICE)).toBeNull();
       injected.defineTable('still_usable', { id: 'text primary key' });
       injected.insert('still_usable', { id: 'retained' });
       expect(injected.queryOne('still_usable', 'retained')).toEqual({ id: 'retained' });
@@ -450,10 +455,12 @@ describe('sync plugin runtime isolation', () => {
   });
 
   test('disposes an owned injected ReactiveDB after composition failure', () => {
+    const runtime = createNoopObservedRuntime('failed-owned-injected');
     const injected = createReactiveDB({ mode: 'memory' });
 
     expect(() => createSyncPlugin({
       db: { mode: 'memory' },
+      runtime,
       reactiveDB: injected,
       ownsReactiveDB: true,
       tables: {
@@ -465,17 +472,21 @@ describe('sync plugin runtime isolation', () => {
       },
     })).toThrow('foreign-key actions are not observable');
 
-    expect(getSyncDB()).toBeNull();
+    expect(runtime.get(ZERO_SYNC_DB)).toBeNull();
+    expect(runtime.get(ZERO_SQLITE_SERVICE)).toBeNull();
     expect(() => injected.currentSeq).toThrow('disposed');
   });
 
   test('rejects an injected-database ownership flag without an injected database', () => {
+    const runtime = createNoopObservedRuntime('invalid-injected-ownership');
     expect(() => createSyncPlugin({
       db: { mode: 'memory' },
+      runtime,
       ownsReactiveDB: false,
       tables: {},
     })).toThrow('ownsReactiveDB is valid only when reactiveDB is provided');
-    expect(getSyncDB()).toBeNull();
+    expect(runtime.get(ZERO_SYNC_DB)).toBeNull();
+    expect(runtime.get(ZERO_SQLITE_SERVICE)).toBeNull();
   });
 
   test('keeps database, managers, listeners, sockets, and mutation origin instance-local', async () => {

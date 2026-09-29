@@ -190,6 +190,7 @@ function createTestApp(options: {
         getUserStore: options.getUserStore,
         getAuthorizationKernel: options.getAuthorizationKernel,
         getRoleAssignments: options.getRoleAssignments,
+        getDB: () => db,
         getDatabaseManager: options.getDatabaseManager,
         resourceRegistry: options.resourceRegistry,
         resourceAuthConfig: options.resourceAuthConfig,

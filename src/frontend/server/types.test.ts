@@ -19,6 +19,122 @@ const tables = {
 };
 
 describe('resolveConfig', () => {
+  test('admits only TEXT or INTEGER affinity app primary keys', () => {
+    expect(resolveConfig({
+      db: { mode: 'memory' },
+      tables: {
+        textKeys: { id: 'text primary key' },
+        integerKeys: {
+          serverTable: { id: 'integer primary key' },
+          clientTable: { _pk: 'id' },
+        },
+      },
+    }).tables.integerKeys?.id).toBe('integer primary key');
+
+    for (const [affinity, definition] of [
+      ['REAL', 'real primary key'],
+      ['BLOB', 'blob primary key'],
+      ['NUMERIC', 'numeric primary key'],
+      ['TYPELESS', 'primary key'],
+    ] as const) {
+      expect(() => resolveConfig({
+        db: { mode: 'memory' },
+        tables: { records: { id: definition } },
+      })).toThrow(
+        `[app] Table "records" primary key "id" must declare TEXT or INTEGER affinity; received ${affinity}.`,
+      );
+    }
+  });
+
+  test('keeps every app schema value inside one generated column slot', () => {
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables: {
+        records: {
+          id: 'text',
+          other: 'text unique, primary key (id, other)',
+        },
+      },
+    })).toThrow(
+      '[app] Table "records" column "other" must describe exactly one isolated SQL column.',
+    );
+
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables: {
+        records: {
+          note: "text default 'primary key, not null'",
+          id: 'text primary key',
+          amount: 'decimal(10, 2) check (amount in (1, 2, 3))',
+        },
+      },
+    })).not.toThrow();
+
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables: {
+        records: {
+          id: 'text unique-- hidden through bare CR\rprimary key\n',
+        },
+      },
+    })).toThrow(
+      '[app] Table "records" must declare exactly one primary-key column.',
+    );
+
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables: {
+        records: {
+          id: 'text\u00a0primary key unique',
+        },
+      },
+    })).toThrow(
+      '[app] Table "records" must declare exactly one primary-key column.',
+    );
+
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables: {
+        records: {
+          id: 'text prımary key unique',
+        },
+      },
+    })).toThrow(
+      '[app] Table "records" must declare exactly one primary-key column.',
+    );
+
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables: {
+        records: {
+          id: '"REAL" text primary key',
+        },
+      },
+    })).toThrow(
+      '[app] Table "records" column "id" must describe exactly one isolated SQL column.',
+    );
+  });
+
+  test('requires exactly one top-level app primary-key constraint', () => {
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables: { records: { value: 'text' } },
+    })).toThrow(
+      '[app] Table "records" must declare exactly one primary-key column.',
+    );
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables: {
+        records: {
+          left_id: 'text primary key',
+          right_id: 'text primary key',
+        },
+      },
+    })).toThrow(
+      '[app] Table "records" must declare exactly one primary-key column.',
+    );
+  });
+
   test('validates auth behavior while preserving app token TTL settings', () => {
     const config = resolveConfig({
       db: { mode: 'memory' },

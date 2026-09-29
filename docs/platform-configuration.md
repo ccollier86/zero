@@ -207,6 +207,38 @@ export const tenantDatabaseRealm = defineDatabaseRealm({
 });
 ```
 
+Each realm table must have exactly one primary-key column whose declared SQLite
+affinity is `TEXT` or `INTEGER`; `TEXT` is recommended. Safe integer values are
+canonicalized to string row IDs across Fabric and Sync. Realm definition rejects
+`REAL`, `BLOB`, `NUMERIC`, typeless, and composite primary keys with
+`DATABASE_CONFIG_INVALID` before startup. Doctor identifies the exact column
+for definition or affinity failures and the table for missing or multiple
+primary-key declarations. Each schema value must also remain one isolated
+column definition; top-level commas or semicolons, table-constraint injection,
+unbalanced grouping, ambiguous quoted multi-token declared types, and
+unterminated quotes or comments fail closed.
+
+Fabric realms add a whole-row portability contract to those primary-key rules.
+Every non-primary column must resolve to `TEXT`, `INTEGER`, `REAL`, or
+`NUMERIC` affinity; `BLOB` and typeless columns cannot cross the durable JSON
+receipt/actor boundary. Generated (`... AS (...)`) columns are read-only SQLite
+columns and are rejected because ReactiveDB writes every declared realm column.
+Mutating foreign-key actions (`CASCADE`, `SET NULL`, and `SET DEFAULT`) are also
+rejected because they could change a tracked row without a matching event.
+Realm table names cannot use SQLite's `sqlite_` namespace, Zero's `_zero_` or
+`idx_zero_` namespaces, or the legacy `_changes`, `_change_sequence`, and
+`_migrations` names. A generated `_identity` index must not collide with any
+realm table or reserved object name. These deterministic failures return
+`DATABASE_CONFIG_INVALID` from `defineDatabaseRealm()`; SQLite still compiles
+the complete application SQL when the actor opens, so this admission layer is
+not a substitute for SQLite syntax validation.
+
+Registered commands receive a frozen `DatabaseWriteCommandCapability` with
+tracked CRUD/read, natural-identity, nested transaction, and `afterCommit`
+methods. It exposes no raw SQL, SQLite handle, schema/lifecycle methods,
+listeners, or internal-change APIs; command execution and result validation
+share the writer transaction.
+
 ```ts
 // zero.config.ts
 import { fileURLToPath } from 'node:url';
@@ -1112,7 +1144,9 @@ Current checks cover:
 1. Invalid `createApp()` config such as `stateSync` without auth.
 2. Explicit storage config without auth, weak operator-provided capability
    keys, and missing external key material for production ephemeral databases.
-3. Missing or multiple primary-key declarations in ReactiveDB tables.
+3. Non-isolated column definitions and missing, multiple, or non-`TEXT`/
+   `INTEGER` primary-key declarations in ReactiveDB tables. Definition errors
+   identify the exact column; table-wide key-count errors identify the table.
 4. Invalid natural identity fields.
 5. Invalid auth action-token TTL/cooldown duration strings.
 6. Auth account email flows with email disabled.

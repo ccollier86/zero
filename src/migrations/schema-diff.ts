@@ -5,6 +5,7 @@
  * This file emits findings only; SQL generation lives in migration-planner.ts.
  */
 
+import { classifyAddColumnDefinition } from './add-column-classifier';
 import { normalizeSql } from './schema-snapshot';
 import type {
   SchemaDiffIssue,
@@ -64,7 +65,7 @@ function compareTable(
       kind: 'composite-primary-key',
       severity: 'error',
       table: actual.name,
-      message: `Table "${actual.name}" has a composite primary key. Reactive sync tables need one string primary key plus optional natural identity.`,
+      message: `Table "${actual.name}" has a composite primary key. Reactive sync tables need one TEXT or INTEGER affinity primary key plus optional natural identity.`,
       actual: actual.compositePrimaryKey,
       safety: 'manual',
     });
@@ -87,6 +88,7 @@ function compareTable(
     const actualColumn = actual.columns[columnName];
 
     if (!actualColumn) {
+      const addColumn = classifyAddColumnDefinition(expectedColumn.definition);
       issues.push({
         kind: 'missing-column',
         severity: 'error',
@@ -95,7 +97,7 @@ function compareTable(
         message: `Column "${expected.name}.${columnName}" is declared but missing from the database.`,
         expected: expectedColumn.definition,
         actual: null,
-        safety: isSafeAddColumn(expectedColumn.definition) ? 'safe' : 'guarded',
+        safety: addColumn.safety,
       });
       continue;
     }
@@ -149,10 +151,4 @@ function compareTable(
       safety: hasMatchingIndex ? 'manual' : 'guarded',
     });
   }
-}
-
-function isSafeAddColumn(definition: string): boolean {
-  if (/\bprimary\s+key\b/i.test(definition)) return false;
-  if (/\bnot\s+null\b/i.test(definition) && !/\bdefault\b/i.test(definition)) return false;
-  return true;
 }

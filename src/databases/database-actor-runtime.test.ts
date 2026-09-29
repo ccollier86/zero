@@ -142,6 +142,27 @@ describe('DatabaseActorRuntime', () => {
           ],
         },
       });
+      expect(call(actor, DATABASE_ACTOR_OPERATIONS.execute, 'read', {
+        databaseRef: firstRef,
+        operation: {
+          type: 'query', name: 'todos.capabilityProbe', input: null,
+        },
+      })).toEqual({
+        value: {
+          pragma: 'DATABASE_OPERATION_UNSUPPORTED',
+          pathQuery: 'DATABASE_OPERATION_UNSUPPORTED',
+          insert: 'DATABASE_OPERATION_UNSUPPORTED',
+          connectionKeys: ['prepare', 'query'],
+          statementKeys: ['all', 'get', 'iterate', 'raw', 'values'],
+          mutableSurfaces: [],
+          nativeStatement: false,
+        },
+        sequence: { seq: 2 },
+      });
+      expect(call(actor, DATABASE_ACTOR_OPERATIONS.execute, 'read', {
+        databaseRef: firstRef,
+        operation: { type: 'get', table: 'todos', id: 'hostile' },
+      })).toEqual({ value: null, sequence: { seq: 2 } });
 
       const ownerToken = '11111111-1111-4111-8111-111111111111';
       const begun = call(
@@ -1001,7 +1022,7 @@ describe('DatabaseActorRuntime', () => {
       expect(failure.code).toBe('DATABASE_PAYLOAD_LIMIT');
       expect(failure.retryable).toBe(false);
       expect(failure.outcome).toBe('not-committed');
-      expect(failure.details).toEqual({});
+      expect(failure.details).toEqual({ reason: 'max-bytes' });
       expect(bounded.diagnostics().state).toBe('bound');
     } finally {
       bounded.close();

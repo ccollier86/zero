@@ -391,6 +391,38 @@ describe('SubprocessDatabaseExecutor', () => {
     });
   });
 
+  test('retries an unsettled close instead of caching its rejected promise', async () => {
+    const executor = createExecutor(
+      {
+        operationTimeoutMs: 10,
+        sigtermTimeoutMs: 50,
+        sigkillTimeoutMs: 50,
+      },
+      RetryableTerminationExecutor,
+    ) as RetryableTerminationExecutor;
+    await executor.start();
+    const result = executor.execute({
+      operation: 'exit-later',
+      kind: 'write',
+      payload: { delayMs: 5_000 },
+    });
+    await expectDatabaseError(result, 'DATABASE_OPERATION_TIMEOUT', 'unknown');
+
+    const first = await captureDatabaseError(executor.close());
+    expect(first.details.phase).toBe('termination-settlement');
+    expect(executor.diagnostics()).toMatchObject({
+      state: 'quarantined',
+      settled: false,
+    });
+
+    executor.allowTermination();
+    await executor.close();
+    expect(executor.diagnostics()).toMatchObject({
+      state: 'closed',
+      settled: true,
+    });
+  });
+
   test('rejects cyclic, exotic, accessor, proxy, and over-limit request values', async () => {
     const executor = createExecutor();
     try {
@@ -570,6 +602,19 @@ function createExecutor(
 class UnsettledTerminationExecutor extends SubprocessDatabaseExecutor {
   protected override async terminateWithEscalation(): Promise<boolean> {
     return false;
+  }
+}
+
+class RetryableTerminationExecutor extends SubprocessDatabaseExecutor {
+  private terminationAllowed = false;
+
+  allowTermination(): void {
+    this.terminationAllowed = true;
+  }
+
+  protected override async terminateWithEscalation(): Promise<boolean> {
+    if (!this.terminationAllowed) return false;
+    return await super.terminateWithEscalation();
   }
 }
 

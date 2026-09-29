@@ -8,28 +8,17 @@
 
 import { randomUUID } from 'node:crypto';
 
-import {
-  DatabaseError,
-  deserializeDatabaseError,
-  isSerializedDatabaseError,
-} from './database-error';
+import { DatabaseError } from './database-error';
 import type {
   DatabaseExecutor,
   DatabaseExecutorDiagnostics,
   DatabaseExecutorEvent,
   DatabaseExecutorEventListener,
   DatabaseExecutorExecuteOptions,
-  DatabaseExecutorOperationKind,
   DatabaseExecutorRequest,
   DatabaseExecutorState,
   DatabaseExecutorValue,
 } from './database-executor';
-import {
-  hasExactDatabaseExecutorKeys as hasExactKeys,
-  isDatabaseExecutorOperationName,
-  isDatabaseExecutorValue,
-  readDatabaseExecutorDataRecord as ownDataRecord,
-} from './database-executor-validation';
 import {
   normalizeSubprocessDatabaseExecutorOptions,
   normalizeSubprocessDatabaseExecutorTimeout,
@@ -37,12 +26,29 @@ import {
   type SubprocessDatabaseExecutorOptions,
 } from './subprocess-database-executor-config';
 import {
+  createDatabaseExecutorDeferred,
+  DatabaseExecutorProcessSettlement,
+  promiseWithDatabaseExecutorTimeout,
+  terminateDatabaseExecutorProcess,
+  waitForDatabaseExecutorProcessExit,
+  type DatabaseExecutorDeferred as Deferred,
+  type DatabaseExecutorProcess as ExecutorProcess,
+} from './subprocess-database-executor-lifecycle';
+import { SubprocessDatabaseRequestRegistry } from './subprocess-database-request-registry';
+import { SubprocessDatabaseTelemetryState } from './subprocess-database-telemetry-state';
+import {
+  normalizeSubprocessDatabaseExecutorRequest,
+  parseSubprocessDatabaseExecutorEvent,
+  type ParsedSubprocessDatabaseExecutorEvent,
+} from './subprocess-database-executor-wire';
+import {
   DATABASE_EXECUTOR_PROTOCOL_KIND,
   DATABASE_EXECUTOR_PROTOCOL_VERSION,
   type DatabaseExecutorHandshakeMessage,
   type DatabaseExecutorOperationMessage,
   type DatabaseExecutorProtocolIdentity as ProtocolIdentity,
   type DatabaseExecutorShutdownMessage,
+  type DatabaseExecutorTelemetryMessage,
   type SubprocessDatabaseExecutorCommand,
 } from './subprocess-database-protocol';
 
@@ -66,22 +72,6 @@ export type { SubprocessDatabaseExecutorOptions } from './subprocess-database-ex
 
 let nextExecutorGeneration = 1;
 
-
-interface PendingRequest {
-  readonly kind: DatabaseExecutorOperationKind;
-  readonly resolve: (value: DatabaseExecutorValue) => void;
-  readonly reject: (error: DatabaseError) => void;
-  readonly timer: ReturnType<typeof setTimeout>;
-}
-
-interface Deferred<T> {
-  readonly promise: Promise<T>;
-  readonly resolve: (value: T) => void;
-  readonly reject: (error: DatabaseError) => void;
-}
-
-type ExecutorProcess = Bun.Subprocess<'ignore', 'ignore', 'ignore'>;
-
 /** Strict, bounded Bun-to-Bun IPC transport for one database actor process. */
 export class SubprocessDatabaseExecutor implements DatabaseExecutor {
   readonly slot: number;
@@ -89,26 +79,18 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
 
   private readonly options: NormalizedOptions;
   private readonly nonce = randomUUID();
-  private readonly pending = new Map<number, PendingRequest>();
-  private readonly settledDeferred = createDeferred<void>();
+  private readonly requests: SubprocessDatabaseRequestRegistry;
+  private readonly processSettlement: DatabaseExecutorProcessSettlement;
+  private readonly telemetry = new SubprocessDatabaseTelemetryState();
   private state: DatabaseExecutorState = 'created';
   private child: ExecutorProcess | null = null;
   private startTask: Promise<void> | null = null;
   private closeTask: Promise<void> | null = null;
-  private terminationTask: Promise<boolean> | null = null;
   private startDeferred: Deferred<void> | null = null;
-  private drainDeferred: Deferred<void> | null = null;
   private shutdownDeferred: Deferred<void> | null = null;
-  private nextRequestId = 1;
   private closeRequested = false;
   private shutdownAcknowledged = false;
-  private hotPeriodicSnapshotActive = false;
-  private hotPeriodicDurabilityDirty = false;
   private disconnectObserved = false;
-  private exitObserved = false;
-  private settlementObserved = false;
-  private exitCode: number | null = null;
-  private signalCode: string | number | null = null;
   private lastFailure: DatabaseError | null = null;
   private eventListener: DatabaseExecutorEventListener | null = null;
 
@@ -116,6 +98,17 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     this.options = normalizeSubprocessDatabaseExecutorOptions(options);
     this.slot = this.options.slot;
     this.generation = allocateGeneration();
+    this.processSettlement = new DatabaseExecutorProcessSettlement(() => {
+      if (this.state === 'quarantined') {
+        this.state = this.closeRequested ? 'closed' : 'failed';
+      }
+    });
+    this.requests = new SubprocessDatabaseRequestRegistry({
+      generation: this.generation,
+      slot: this.slot,
+      maxInFlight: this.options.maxInFlight,
+      onOperationTimeout: (error) => this.handleOperationTimeout(error),
+    });
   }
 
   setEventListener(listener: DatabaseExecutorEventListener): void {
@@ -158,42 +151,22 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     const lifecycleError = this.executionLifecycleError();
     if (lifecycleError) throw lifecycleError;
 
-    const normalizedRequest = normalizeRequest(request);
+    const normalizedRequest = normalizeSubprocessDatabaseExecutorRequest(request);
     // Request inspection is intentionally side-effect free for ordinary data,
     // but re-check the lifecycle before allocating transport capacity in case
     // an adversarial Proxy triggered a re-entrant close while being rejected.
     const postValidationLifecycleError = this.executionLifecycleError();
     if (postValidationLifecycleError) throw postValidationLifecycleError;
-    if (this.pending.size >= this.options.maxInFlight) {
-      throw new DatabaseError(
-        'DATABASE_BACKPRESSURE',
-        'Database executor capacity is exhausted.',
-        {
-          details: {
-            generation: this.generation,
-            maxInFlight: this.options.maxInFlight,
-            slot: this.slot,
-          },
-        },
-      );
-    }
+    this.requests.assertCapacity();
 
     const timeoutMs = normalizeSubprocessDatabaseExecutorTimeout(
       options.timeoutMs ?? this.options.operationTimeoutMs,
       'timeoutMs',
     );
-    const requestId = this.allocateRequestId();
-    const result = new Promise<DatabaseExecutorValue>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.handleOperationTimeout(requestId);
-      }, timeoutMs);
-      this.pending.set(requestId, {
-        kind: normalizedRequest.kind,
-        resolve,
-        reject,
-        timer,
-      });
-    });
+    const { requestId, result } = this.requests.register(
+      normalizedRequest.kind,
+      timeoutMs,
+    );
 
     const message: DatabaseExecutorOperationMessage<Payload> = {
       ...this.identity(),
@@ -205,8 +178,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     };
 
     if (!this.sendToChild(message)) {
-      const pending = this.takePending(requestId);
-      pending?.reject(new DatabaseError(
+      this.requests.reject(requestId, new DatabaseError(
         'DATABASE_EXECUTOR_FAILED',
         'Database executor request could not be sent.',
         {
@@ -226,26 +198,34 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
 
   close(): Promise<void> {
     this.closeRequested = true;
-    this.closeTask ??= this.closeOnce();
-    return this.closeTask;
+    if (this.closeTask) return this.closeTask;
+    const task = this.closeOnce();
+    this.closeTask = task;
+    // A quarantined process has not completed shutdown. Preserve successful
+    // close idempotency, but let an explicit later close retry termination.
+    void task.catch(() => {
+      if (this.closeTask === task) this.closeTask = null;
+    });
+    return task;
   }
 
   settled(): Promise<void> {
-    return this.settledDeferred.promise;
+    return this.processSettlement.settled();
   }
 
   diagnostics(): DatabaseExecutorDiagnostics {
+    const process = this.processSettlement.diagnostics();
     return Object.freeze({
       state: this.state,
       slot: this.slot,
       generation: this.generation,
-      inFlight: this.pending.size,
+      inFlight: this.requests.size,
       maxInFlight: this.options.maxInFlight,
       disconnectObserved: this.disconnectObserved,
-      exitObserved: this.exitObserved,
-      settled: this.settlementObserved,
-      exitCode: this.exitCode,
-      signalCode: this.signalCode,
+      exitObserved: process.exitObserved,
+      settled: process.settled,
+      exitCode: process.exitCode,
+      signalCode: process.signalCode,
       lastFailureCode: this.lastFailure?.code ?? null,
     });
   }
@@ -255,7 +235,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
   }
 
   private async startOnce(): Promise<void> {
-    this.startDeferred = createDeferred<void>();
+    this.startDeferred = createDatabaseExecutorDeferred<void>();
     const startupTimer = setTimeout(() => {
       this.failStart(new DatabaseError(
         'DATABASE_EXECUTOR_START_FAILED',
@@ -331,7 +311,9 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
       await this.startDeferred.promise;
     } catch (error) {
       const terminated = await this.ensureTerminated();
-      if (!terminated && !this.settlementObserved) this.state = 'quarantined';
+      if (!terminated && !this.processSettlement.settledObserved) {
+        this.state = 'quarantined';
+      }
       throw error;
     } finally {
       clearTimeout(startupTimer);
@@ -340,7 +322,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
 
   private async closeOnce(): Promise<void> {
     if (this.state === 'created') {
-      this.observeNoProcessSettlement();
+      this.processSettlement.observeNoProcessSettlement(this.child);
       this.state = 'closed';
       return;
     }
@@ -363,7 +345,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     if (this.state === 'closed') return;
 
     this.state = 'draining';
-    await this.waitForDrain();
+    await this.requests.waitForDrain();
     if (this.hasFailed()) {
       await this.settleTerminationOrQuarantine();
       this.state = 'closed';
@@ -371,7 +353,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     }
 
     this.state = 'closing';
-    this.shutdownDeferred = createDeferred<void>();
+    this.shutdownDeferred = createDatabaseExecutorDeferred<void>();
     if (!this.sendToChild({
         ...this.identity(),
         type: 'shutdown',
@@ -385,7 +367,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
 
     let closeFailure: DatabaseError | null = null;
     try {
-      await promiseWithTimeout(
+      await promiseWithDatabaseExecutorTimeout(
         this.shutdownDeferred.promise,
         this.options.shutdownAckTimeoutMs,
         () => new DatabaseError(
@@ -422,19 +404,22 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
           },
         );
         this.recordFailure(closeFailure);
-      } else if (this.exitCode !== 0 || this.signalCode !== null) {
-        closeFailure = new DatabaseError(
-          'DATABASE_EXECUTOR_FAILED',
-          'Database executor exited abnormally after shutdown.',
-          {
-            details: {
-              generation: this.generation,
-              phase: 'shutdown-exit',
-              slot: this.slot,
+      } else {
+        const process = this.processSettlement.diagnostics();
+        if (process.exitCode !== 0 || process.signalCode !== null) {
+          closeFailure = new DatabaseError(
+            'DATABASE_EXECUTOR_FAILED',
+            'Database executor exited abnormally after shutdown.',
+            {
+              details: {
+                generation: this.generation,
+                phase: 'shutdown-exit',
+                slot: this.slot,
+              },
             },
-          },
-        );
-        this.recordFailure(closeFailure);
+          );
+          this.recordFailure(closeFailure);
+        }
       }
     }
 
@@ -448,31 +433,33 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     if (this.state === 'failed'
       || this.state === 'quarantined'
       || this.state === 'closed') return;
-    const record = ownDataRecord(message);
-    if (!record || !this.hasExpectedIdentity(record)) {
+    const event = parseSubprocessDatabaseExecutorEvent(
+      message,
+      this.identity(),
+    );
+    if (!event) {
       this.failProtocol();
       return;
     }
 
-    switch (record.type) {
+    switch (event.type) {
       case 'ready':
-        if (!hasExactKeys(record, READY_KEYS) || this.state !== 'starting') {
+        if (this.state !== 'starting') {
           this.failProtocol();
           return;
         }
         this.state = 'ready';
         this.startDeferred?.resolve(undefined);
         return;
-      case 'response':
-        this.handleResponse(record);
+      case 'success':
+      case 'failure':
+        this.handleResponse(event);
         return;
       case 'telemetry':
-        this.handleTelemetry(record);
+        this.handleTelemetry(event.signal);
         return;
       case 'shutdown-ack':
-        if (!hasExactKeys(record, SHUTDOWN_ACK_KEYS)
-          || this.state !== 'closing'
-          || this.shutdownAcknowledged) {
+        if (this.state !== 'closing' || this.shutdownAcknowledged) {
           this.failProtocol();
           return;
         }
@@ -484,108 +471,39 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     }
   }
 
-  private handleResponse(record: Record<string, unknown>): void {
+  private handleResponse(
+    event: Extract<
+      ParsedSubprocessDatabaseExecutorEvent,
+      { readonly type: 'success' | 'failure' }
+    >,
+  ): void {
     if (this.state !== 'ready' && this.state !== 'draining') {
       this.failProtocol();
       return;
     }
-    const requestId = record.requestId;
-    if (!Number.isSafeInteger(requestId) || (requestId as number) <= 0) {
+    if (!this.requests.has(event.requestId)) {
       this.failProtocol();
       return;
     }
-    const pending = this.pending.get(requestId as number);
-    if (!pending) {
-      this.failProtocol();
+    if (event.type === 'success') {
+      this.requests.resolve(event.requestId, event.value);
       return;
     }
-
-    if (record.ok === true) {
-      if (!hasExactKeys(record, SUCCESS_KEYS)
-        || !isDatabaseExecutorValue(record.value)) {
-        this.failProtocol();
-        return;
-      }
-      this.takePending(requestId as number)?.resolve(
-        record.value as DatabaseExecutorValue,
-      );
-      return;
-    }
-
-    if (record.ok === false
-      && hasExactKeys(record, FAILURE_KEYS)
-      && isSerializedDatabaseError(record.error)) {
-      this.takePending(requestId as number)?.reject(
-        deserializeDatabaseError(record.error),
-      );
-      return;
-    }
-    this.failProtocol();
+    this.requests.reject(event.requestId, event.error);
   }
 
-  private handleTelemetry(record: Record<string, unknown>): void {
-    if (!hasExactKeys(record, TELEMETRY_KEYS)) {
+  private handleTelemetry(
+    signal: DatabaseExecutorTelemetryMessage['signal'],
+  ): void {
+    const transition = this.telemetry.accept(signal, this.state);
+    if (!transition) {
       this.failProtocol();
       return;
     }
-
-    if (record.signal === 'hot-periodic-snapshot-started') {
-      if ((this.state !== 'ready' && this.state !== 'draining')
-        || this.hotPeriodicSnapshotActive) {
-        this.failProtocol();
-        return;
-      }
-      this.hotPeriodicSnapshotActive = true;
-      this.emitEvent('hot-periodic-snapshot-started');
+    if (transition.kind === 'event') {
+      this.emitEvent(transition.type);
       return;
     }
-
-    if (record.signal === 'hot-periodic-snapshot-finished') {
-      if ((this.state !== 'ready'
-          && this.state !== 'draining'
-          && this.state !== 'closing')
-        || !this.hotPeriodicSnapshotActive) {
-        this.failProtocol();
-        return;
-      }
-      this.hotPeriodicSnapshotActive = false;
-      this.emitEvent('hot-periodic-snapshot-finished');
-      return;
-    }
-
-    if (record.signal === 'hot-periodic-durability-dirty') {
-      if ((this.state !== 'ready' && this.state !== 'draining')
-        || this.hotPeriodicDurabilityDirty) {
-        this.failProtocol();
-        return;
-      }
-      this.hotPeriodicDurabilityDirty = true;
-      this.emitEvent('hot-periodic-durability-dirty');
-      return;
-    }
-
-    if (record.signal === 'hot-periodic-durability-clean') {
-      if ((this.state !== 'ready'
-          && this.state !== 'draining'
-          && this.state !== 'closing')
-        || !this.hotPeriodicDurabilityDirty) {
-        this.failProtocol();
-        return;
-      }
-      this.hotPeriodicDurabilityDirty = false;
-      this.emitEvent('hot-periodic-durability-clean');
-      return;
-    }
-
-    if (record.signal !== 'hot-periodic-durability-failed'
-      || (this.state !== 'ready'
-        && this.state !== 'draining'
-        && this.state !== 'closing')) {
-      this.failProtocol();
-      return;
-    }
-    this.hotPeriodicSnapshotActive = false;
-    this.hotPeriodicDurabilityDirty = false;
 
     const error = new DatabaseError(
       'DATABASE_EXECUTOR_FAILED',
@@ -597,7 +515,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     this.emitEvent('hot-periodic-durability-failed');
     this.startDeferred?.reject(error);
     this.shutdownDeferred?.reject(error);
-    this.rejectPendingForTransportFailure('hot-periodic-durability');
+    this.requests.rejectForTransportFailure('hot-periodic-durability');
     this.beginTermination();
   }
 
@@ -637,10 +555,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     exitCode: number | null,
     signalCode: string | number | null,
   ): void {
-    this.exitObserved = true;
-    this.exitCode = exitCode;
-    this.signalCode = signalCode;
-    this.observeProcessSettlement();
+    this.processSettlement.observeExit(exitCode, signalCode);
     if ((this.state === 'closing' && this.shutdownAcknowledged)
       || this.state === 'failed'
       || this.state === 'quarantined'
@@ -663,25 +578,10 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     this.failTransport('exit');
   }
 
-  private handleOperationTimeout(requestId: number): void {
-    const pending = this.takePending(requestId);
-    if (!pending) return;
-    const error = new DatabaseError(
-      'DATABASE_OPERATION_TIMEOUT',
-      'Database executor operation timed out.',
-      {
-        outcome: pending.kind === 'write' ? 'unknown' : null,
-        retryable: false,
-        details: {
-          generation: this.generation,
-          slot: this.slot,
-        },
-      },
-    );
-    pending.reject(error);
+  private handleOperationTimeout(error: DatabaseError): void {
     this.recordFailure(error);
     this.state = 'failed';
-    this.rejectPendingForTransportFailure('operation-timeout');
+    this.requests.rejectForTransportFailure('operation-timeout');
     this.startDeferred?.reject(error);
     this.shutdownDeferred?.reject(error);
     this.beginTermination();
@@ -710,7 +610,7 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     this.state = 'failed';
     this.startDeferred?.reject(error);
     this.shutdownDeferred?.reject(error);
-    this.rejectAllPending(error);
+    this.requests.rejectAll(error);
     this.beginTermination();
   }
 
@@ -723,47 +623,8 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
     this.state = 'failed';
     this.startDeferred?.reject(error);
     this.shutdownDeferred?.reject(error);
-    this.rejectPendingForTransportFailure(phase);
+    this.requests.rejectForTransportFailure(phase);
     this.beginTermination();
-  }
-
-  private rejectPendingForTransportFailure(phase: string): void {
-    for (const [requestId, pending] of [...this.pending]) {
-      this.takePending(requestId)?.reject(new DatabaseError(
-        'DATABASE_EXECUTOR_FAILED',
-        'Database executor failed while an operation was in flight.',
-        {
-          outcome: pending.kind === 'write' ? 'unknown' : null,
-          retryable: false,
-          details: {
-            generation: this.generation,
-            phase,
-            slot: this.slot,
-          },
-        },
-      ));
-    }
-  }
-
-  private rejectAllPending(error: DatabaseError): void {
-    for (const requestId of [...this.pending.keys()]) {
-      this.takePending(requestId)?.reject(error);
-    }
-  }
-
-  private takePending(requestId: number): PendingRequest | null {
-    const pending = this.pending.get(requestId);
-    if (!pending) return null;
-    this.pending.delete(requestId);
-    clearTimeout(pending.timer);
-    if (this.pending.size === 0) this.drainDeferred?.resolve(undefined);
-    return pending;
-  }
-
-  private waitForDrain(): Promise<void> {
-    if (this.pending.size === 0) return Promise.resolve();
-    this.drainDeferred ??= createDeferred<void>();
-    return this.drainDeferred.promise;
   }
 
   private sendToChild(message: SubprocessDatabaseExecutorCommand): boolean {
@@ -780,21 +641,21 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
   private beginTermination(): void {
     void this.ensureTerminated().then((terminated) => {
       if (!terminated
-        && !this.settlementObserved
+        && !this.processSettlement.settledObserved
         && this.state !== 'closed') {
         this.state = 'quarantined';
       }
     }, () => {
-      if (!this.settlementObserved && this.state !== 'closed') {
+      if (!this.processSettlement.settledObserved && this.state !== 'closed') {
         this.state = 'quarantined';
       }
     });
   }
 
   private async settleTerminationOrQuarantine(): Promise<void> {
-    if (this.settlementObserved) return;
+    if (this.processSettlement.settledObserved) return;
     const terminated = await this.ensureTerminated();
-    if (!terminated && !this.settlementObserved) {
+    if (!terminated && !this.processSettlement.settledObserved) {
       this.state = 'quarantined';
       throw this.settlementError();
     }
@@ -802,94 +663,38 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
   }
 
   private async ensureTerminated(): Promise<boolean> {
-    const existing = this.terminationTask;
-    if (existing) return await existing;
-
-    const task = this.terminateWithEscalation();
-    this.terminationTask = task;
-    const terminated = await task;
-    // A timed-out attempt is not settlement and must not be cached as one.
-    // Keep successful completion stable, but permit an explicit later retry.
-    if (!terminated && this.terminationTask === task) {
-      this.terminationTask = null;
-    }
-    return terminated;
+    return await this.processSettlement.ensureTerminated(
+      () => this.terminateWithEscalation(),
+    );
   }
 
   protected async terminateWithEscalation(): Promise<boolean> {
-    const child = this.child;
-    if (!child) {
-      this.observeNoProcessSettlement();
-      return true;
-    }
-    if (this.exitObserved || child.exitCode !== null) {
-      this.captureSettledProcess(child);
-      return true;
-    }
-
-    try {
-      child.kill('SIGTERM');
-    } catch {
-      // The process may have exited between the state check and signal send.
-    }
-    if (await this.waitForExit(this.options.sigtermTimeoutMs)) return true;
-
-    try {
-      child.kill('SIGKILL');
-    } catch {
-      // The process may have exited between deadline escalation and signal send.
-    }
-    return await this.waitForExit(this.options.sigkillTimeoutMs);
+    return await terminateDatabaseExecutorProcess({
+      child: this.child,
+      exitObserved: this.processSettlement.exitObserved,
+      sigtermTimeoutMs: this.options.sigtermTimeoutMs,
+      sigkillTimeoutMs: this.options.sigkillTimeoutMs,
+      observeNoProcessSettlement: () => {
+        this.processSettlement.observeNoProcessSettlement(this.child);
+      },
+      captureSettledProcess: (child) => {
+        this.processSettlement.captureSettledProcess(child);
+      },
+    });
   }
 
   private async waitForExit(timeoutMs: number): Promise<boolean> {
-    const child = this.child;
-    if (!child) {
-      this.observeNoProcessSettlement();
-      return true;
-    }
-    if (this.exitObserved || child.exitCode !== null) {
-      this.captureSettledProcess(child);
-      return true;
-    }
-    const exited = await settlesWithin(child.exited, timeoutMs);
-    if (exited) {
-      // `exited` and `onExit` are independent notifications. In Bun, the
-      // promise can settle just before the callback, so capture the observable
-      // process state here without depending on callback ordering.
-      this.captureSettledProcess(child);
-    }
-    return exited;
-  }
-
-  private captureSettledProcess(child: ExecutorProcess): void {
-    this.exitObserved = true;
-    this.exitCode = child.exitCode;
-    this.signalCode = child.signalCode;
-    this.observeProcessSettlement();
-  }
-
-  private observeNoProcessSettlement(): void {
-    if (this.child) return;
-    this.observeProcessSettlement();
-  }
-
-  private observeProcessSettlement(): void {
-    if (this.settlementObserved) return;
-    this.settlementObserved = true;
-    this.settledDeferred.resolve(undefined);
-    if (this.state === 'quarantined') {
-      this.state = this.closeRequested ? 'closed' : 'failed';
-    }
-  }
-
-  private hasExpectedIdentity(record: Record<string, unknown>): boolean {
-    return record.protocol === DATABASE_EXECUTOR_PROTOCOL_KIND
-      && record.version === DATABASE_EXECUTOR_PROTOCOL_VERSION
-      && record.nonce === this.nonce
-      && record.role === this.options.role
-      && record.slot === this.slot
-      && record.generation === this.generation;
+    return await waitForDatabaseExecutorProcessExit({
+      child: this.child,
+      exitObserved: this.processSettlement.exitObserved,
+      timeoutMs,
+      observeNoProcessSettlement: () => {
+        this.processSettlement.observeNoProcessSettlement(this.child);
+      },
+      captureSettledProcess: (child) => {
+        this.processSettlement.captureSettledProcess(child);
+      },
+    });
   }
 
   private identity(): ProtocolIdentity {
@@ -901,18 +706,6 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
       slot: this.slot,
       generation: this.generation,
     };
-  }
-
-  private allocateRequestId(): number {
-    const requestId = this.nextRequestId;
-    if (!Number.isSafeInteger(requestId) || requestId <= 0) {
-      throw new DatabaseError(
-        'DATABASE_PROTOCOL_ERROR',
-        'Database executor request identifier space is exhausted.',
-      );
-    }
-    this.nextRequestId += 1;
-    return requestId;
   }
 
   private recordFailure(error: DatabaseError): void {
@@ -974,118 +767,9 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
   }
 }
 
-const IDENTITY_KEYS = [
-  'protocol',
-  'version',
-  'type',
-  'nonce',
-  'role',
-  'slot',
-  'generation',
-] as const;
-const READY_KEYS = new Set(IDENTITY_KEYS);
-const SHUTDOWN_ACK_KEYS = new Set(IDENTITY_KEYS);
-const TELEMETRY_KEYS = new Set([
-  ...IDENTITY_KEYS,
-  'signal',
-]);
-const SUCCESS_KEYS = new Set([
-  ...IDENTITY_KEYS,
-  'requestId',
-  'ok',
-  'value',
-]);
-const FAILURE_KEYS = new Set([
-  ...IDENTITY_KEYS,
-  'requestId',
-  'ok',
-  'error',
-]);
-
-function normalizeRequest<Payload extends DatabaseExecutorValue>(
-  request: DatabaseExecutorRequest<Payload>,
-): DatabaseExecutorRequest<Payload> {
-  const record = ownDataRecord(request);
-  if (!record) {
-    throw new TypeError('Database executor request must be an object.');
-  }
-  if (!isDatabaseExecutorOperationName(record.operation)) {
-    throw new TypeError('Database executor operation must be a bounded identifier.');
-  }
-  if (record.kind !== 'read' && record.kind !== 'write') {
-    throw new TypeError('Database executor request kind must be read or write.');
-  }
-  if (!isDatabaseExecutorValue(record.payload)) {
-    throw new TypeError('Database executor payload must be a portable value.');
-  }
-  return Object.freeze({
-    operation: record.operation,
-    kind: record.kind,
-    payload: record.payload as Payload,
-  });
-}
-
 function allocateGeneration(): number {
   const generation = nextExecutorGeneration;
   nextExecutorGeneration += 1;
   if (!Number.isSafeInteger(nextExecutorGeneration)) nextExecutorGeneration = 1;
   return generation;
-}
-
-function createDeferred<T>(): Deferred<T> {
-  let settled = false;
-  let resolvePromise!: (value: T) => void;
-  let rejectPromise!: (error: DatabaseError) => void;
-  const promise = new Promise<T>((resolve, reject) => {
-    resolvePromise = resolve;
-    rejectPromise = reject;
-  });
-  return {
-    promise,
-    resolve(value) {
-      if (settled) return;
-      settled = true;
-      resolvePromise(value);
-    },
-    reject(error) {
-      if (settled) return;
-      settled = true;
-      rejectPromise(error);
-    },
-  };
-}
-
-async function promiseWithTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  createError: () => DatabaseError,
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(() => reject(createError()), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-async function settlesWithin(
-  promise: Promise<unknown>,
-  timeoutMs: number,
-): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      promise.then(() => true, () => true),
-      new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }

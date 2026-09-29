@@ -6,6 +6,8 @@
  */
 
 import type { TableSchema } from '../sync/types';
+import { isIsolatedDatabaseColumnDefinition } from '../sync/row-identity';
+import { classifyAddColumnDefinition } from './add-column-classifier';
 import { diffSchemaSnapshots } from './schema-diff';
 import {
   snapshotDeclaredTables,
@@ -24,6 +26,7 @@ export function createMigrationPlan(
   declaredTables: Record<string, TableSchema>,
   actual: SchemaSnapshot,
 ): MigrationPlan {
+  assertPlanColumnDefinitions(declaredTables);
   const declared = snapshotDeclaredTables(declaredTables);
   const issues = diffSchemaSnapshots(declared, actual);
   const statements = createStatements(declaredTables, issues);
@@ -107,10 +110,13 @@ function createStatements(
 
     if (issue.kind === 'missing-column' && schema && issue.column) {
       const definition = schema[issue.column];
-      if (typeof definition === 'string' && isAddColumnSupported(definition)) {
+      const addColumn = typeof definition === 'string'
+        ? classifyAddColumnDefinition(definition)
+        : null;
+      if (typeof definition === 'string' && addColumn?.emit) {
         statements.push({
           sql: `ALTER TABLE ${quoteIdentifier(issue.table)} ADD COLUMN ${quoteIdentifier(issue.column)} ${definition}`,
-          safety: /\bnot\s+null\b/i.test(definition) ? 'guarded' : 'safe',
+          safety: addColumn.safety,
           reason: issue.message,
         });
       }
@@ -146,10 +152,19 @@ function createIdentityIndexSql(table: string, schema: TableSchema): string[] {
   ];
 }
 
-function isAddColumnSupported(definition: string): boolean {
-  if (/\bprimary\s+key\b/i.test(definition)) return false;
-  if (/\bnot\s+null\b/i.test(definition) && !/\bdefault\b/i.test(definition)) return false;
-  return true;
+function assertPlanColumnDefinitions(
+  declaredTables: Record<string, TableSchema>,
+): void {
+  for (const [table, schema] of Object.entries(declaredTables)) {
+    for (const [column, definition] of Object.entries(schema)) {
+      if (column === '_identity') continue;
+      if (!isIsolatedDatabaseColumnDefinition(definition)) {
+        throw new Error(
+          `[migrator] Table "${table}" column "${column}" must describe exactly one isolated SQL column.`,
+        );
+      }
+    }
+  }
 }
 
 function dedupeStatements(statements: MigrationPlanStatement[]): MigrationPlanStatement[] {

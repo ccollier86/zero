@@ -110,6 +110,11 @@ export type {
   DatabasePlacementSelectorContext,
   DatabaseReadOptions,
   DatabaseReadConsistency,
+  DatabaseReadQueryConnection,
+  DatabaseReadQueryContext,
+  DatabaseReadQueryHandler,
+  DatabaseReadQueryRegistry,
+  DatabaseReadQueryStatement,
   DatabaseReadResult,
   DatabaseRef,
   DatabaseRealm,
@@ -118,6 +123,10 @@ export type {
   DatabaseSerializableValue,
   DatabaseTenantSyncSnapshotPage,
   DatabaseTenantSyncSnapshotSession,
+  DatabaseWriteCommandCapability,
+  DatabaseWriteCommandContext,
+  DatabaseWriteCommandHandler,
+  DatabaseWriteCommandRegistry,
   RunDatabaseActorIfRequestedOptions,
 } from '../databases';
 export {

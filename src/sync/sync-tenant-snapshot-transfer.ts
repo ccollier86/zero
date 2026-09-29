@@ -11,6 +11,10 @@ import {
   SyncSnapshotChunkWriter,
 } from './sync-snapshot-chunks';
 import { SyncTenantSnapshotBudget } from './sync-tenant-snapshot-budget';
+import {
+  type SyncTenantDataPlaneError,
+  syncTenantDataPlaneError,
+} from './sync-tenant-data-plane-error';
 import { sendSyncWire, waitForSyncDrain } from './sync-wire-send';
 import type {
   SyncTenantDataPlaneBinding,
@@ -233,16 +237,16 @@ function plainRecord(value: unknown): value is Record<string, any> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function terminalSnapshotError(): Error & { code: string } {
-  return Object.assign(
-    new Error('Tenant Sync snapshot does not satisfy its transport contract'),
-    { code: 'SYNC_TENANT_SNAPSHOT_INVALID' },
+function terminalSnapshotError(): SyncTenantDataPlaneError {
+  return syncTenantDataPlaneError(
+    'SYNC_TENANT_SNAPSHOT_INVALID',
+    'Tenant Sync snapshot does not satisfy its transport contract.',
   );
 }
 
-function snapshotCleanupError(): Error & { code: string } {
-  return Object.assign(
-    new Error('Tenant Sync snapshot cleanup failed'),
-    { code: 'SYNC_TENANT_SNAPSHOT_CLEANUP_FAILED' },
+function snapshotCleanupError(): SyncTenantDataPlaneError {
+  return syncTenantDataPlaneError(
+    'SYNC_TENANT_SNAPSHOT_CLEANUP_FAILED',
+    'Tenant Sync snapshot cleanup failed.',
   );
 }

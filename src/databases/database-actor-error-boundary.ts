@@ -8,6 +8,8 @@
 
 import {
   DatabaseError,
+  isDatabaseError,
+  normalizeDatabaseError,
   type DatabaseErrorCode,
   type DatabaseErrorDetails,
 } from './database-error';
@@ -34,7 +36,10 @@ export function validateBindResult<T>(validate: () => T): T {
   try {
     return validate();
   } catch (error) {
-    if (error instanceof DatabaseError && error.code === 'DATABASE_PAYLOAD_LIMIT') {
+    const normalized = isDatabaseError(error)
+      ? normalizeDatabaseError(error)
+      : null;
+    if (normalized?.code === 'DATABASE_PAYLOAD_LIMIT') {
       throw new DatabaseError(
         'DATABASE_RESULT_LIMIT',
         'Database actor result is outside the supported contract.',
@@ -65,17 +70,18 @@ export function writerOpenFailed(error: unknown): DatabaseError {
 
 /** Remove paths, identifiers, SQL, values, and raw messages at actor egress. */
 export function privacySafeActorError(error: unknown): DatabaseError {
-  if (!(error instanceof DatabaseError)) {
+  if (!isDatabaseError(error)) {
     return new DatabaseError(
       'DATABASE_EXECUTOR_FAILED',
       'Database actor operation failed.',
       { retryable: false, outcome: 'unknown' },
     );
   }
-  return new DatabaseError(error.code, safeActorMessage(error.code), {
-    retryable: error.retryable,
-    outcome: error.outcome,
-    details: safeActorDetails(error.code, error.details),
+  const normalized = normalizeDatabaseError(error);
+  return new DatabaseError(normalized.code, safeActorMessage(normalized.code), {
+    retryable: normalized.retryable,
+    outcome: normalized.outcome,
+    details: safeActorDetails(normalized.code, normalized.details),
   });
 }
 
@@ -195,6 +201,9 @@ function safeActorDetails(
       capacityType: details.capacityType,
       capacityLimit: details.capacityLimit as number,
     });
+  }
+  if (code === 'DATABASE_PAYLOAD_LIMIT' && details.reason === 'max-bytes') {
+    return Object.freeze({ reason: 'max-bytes' });
   }
   if ((code === 'DATABASE_BACKPRESSURE'
       || code === 'DATABASE_PAYLOAD_LIMIT'

@@ -172,12 +172,15 @@ export {
   defineDatabaseRealm,
 } from './database-realm';
 export type {
+  DatabaseReadQueryConnection,
   DatabaseReadQueryContext,
   DatabaseReadQueryHandler,
   DatabaseReadQueryRegistry,
+  DatabaseReadQueryStatement,
   DatabaseRealm,
   DatabaseRealmDefinition,
   DatabaseRealmMigrationChecksum,
+  DatabaseWriteCommandCapability,
   DatabaseWriteCommandContext,
   DatabaseWriteCommandHandler,
   DatabaseWriteCommandRegistry,
@@ -252,6 +255,7 @@ export type {
 } from './subprocess-database-executor-factory';
 
 export {
+  DATABASE_OPERATION_FAILURE_REASONS,
   DatabaseObservability,
   createDatabaseObservability,
   emitDatabaseObservabilityEvent,
@@ -260,6 +264,7 @@ export type {
   DatabaseObservabilityEvent,
   DatabaseObservabilityEventType,
   DatabaseObservabilityMetadata,
+  DatabaseOperationFailureReason,
 } from './database-observability';
 
 export { DatabaseRuntime } from './database-runtime';

@@ -98,7 +98,75 @@ describe('defineTable', () => {
   test('throws if schema has no primary key', () => {
     expect(() =>
       db.defineTable('bad', { name: 'text not null', age: 'integer' })
-    ).toThrow('primary key');
+    ).toThrow('primary-key');
+  });
+
+  test('rejects column definitions that escape into table constraints', () => {
+    expect(() => db.defineTable('escaped_composite_key', {
+      id: 'text',
+      other: 'text unique, primary key (id, other)',
+    })).toThrow(
+      "defineTable('escaped_composite_key'): column 'other' must describe exactly one isolated SQL column",
+    );
+    expect(db.hasTable('escaped_composite_key')).toBe(false);
+
+    expect(() => db.defineTable('comment_hidden_key', {
+      id: 'text unique-- hidden through bare CR\rprimary key\n',
+    })).toThrow('primary-key');
+    expect(db.hasTable('comment_hidden_key')).toBe(false);
+
+    expect(() => db.defineTable('unicode_joined_key', {
+      id: 'text\u00a0primary key unique',
+    })).toThrow('primary-key');
+    expect(db.hasTable('unicode_joined_key')).toBe(false);
+
+    expect(() => db.defineTable('unicode_folded_keyword', {
+      id: 'text prımary key unique',
+    })).toThrow('primary-key');
+    expect(db.hasTable('unicode_folded_keyword')).toBe(false);
+
+    for (const [name, definition] of [
+      ['quoted_real_then_text', '"REAL" text primary key'],
+      ['backtick_real_then_text', '`REAL` text primary key'],
+      ['literal_real_then_text', "'REAL' text primary key"],
+      ['bracket_real_then_text', '[REAL] text primary key'],
+      ['quoted_blob_then_integer', '"BLOB" integer primary key'],
+    ] as const) {
+      expect(() => db.defineTable(name, { id: definition })).toThrow(
+        `defineTable('${name}'): column 'id' must describe exactly one isolated SQL column`,
+      );
+      expect(db.hasTable(name)).toBe(false);
+    }
+  });
+
+  test('uses exact top-level constraints while allowing nested SQL commas', () => {
+    expect(() => db.defineTable('safe_column_grammar', {
+      note: "text default 'primary key, not null'",
+      id: 'text primary key',
+      amount: 'decimal(10, 2) check (amount in (1, 2, 3))',
+    })).not.toThrow();
+    expect(db.hasTable('safe_column_grammar')).toBe(true);
+  });
+
+  test('admits only TEXT or INTEGER affinity primary keys', () => {
+    expect(() => db.defineTable('supported_integer_key', {
+      id: 'integer primary key',
+      value: 'text',
+    })).not.toThrow();
+
+    for (const [name, definition] of [
+      ['real_key', 'real primary key'],
+      ['blob_key', 'blob primary key'],
+      ['numeric_key', 'numeric primary key'],
+      ['unicode_integer_key', '"ıNT" primary key'],
+      ['typeless_key', 'primary key'],
+    ] as const) {
+      expect(() => db.defineTable(name, {
+        id: definition,
+        value: 'text',
+      })).toThrow(`defineTable('${name}'): primary key 'id' must declare TEXT or INTEGER affinity`);
+      expect(db.hasTable(name)).toBe(false);
+    }
   });
 
   test('allows _ prefix tables', () => {
@@ -435,6 +503,28 @@ describe('insert', () => {
     expect(db.insert('integer_natural_keys', {
       id: '001', natural_key: 'same', value: 'two',
     }).rowId).toBe('1');
+  });
+
+  test('rolls back INTEGER primary keys outside the safe row-id domain', () => {
+    db.defineTable('bounded_integer_keys', {
+      id: 'integer primary key',
+      value: 'text',
+    });
+    expect(db.insert('bounded_integer_keys', {
+      id: Number.MAX_SAFE_INTEGER,
+      value: 'safe',
+    }).rowId).toBe(String(Number.MAX_SAFE_INTEGER));
+    const sequence = db.currentSeq;
+
+    expect(() => db.insert('bounded_integer_keys', {
+      id: String(Number.MAX_SAFE_INTEGER + 1),
+      value: 'unsafe',
+    })).toThrow('must persist as a bounded string or safe integer');
+    expect(db.currentSeq).toBe(sequence);
+    expect(db.query('bounded_integer_keys')).toEqual([{
+      id: Number.MAX_SAFE_INTEGER,
+      value: 'safe',
+    }]);
   });
 
   test('increments seq monotonically', () => {
@@ -1120,6 +1210,22 @@ describe('ring buffer', () => {
     expect(changes![1].seq).toBe(3);
   });
 
+  test('getChangesPageAfter returns a bounded page and the represented head', () => {
+    db.insert('todos', { id: '1', title: 'First', done: 0 });
+    db.insert('todos', { id: '2', title: 'Second', done: 0 });
+    db.insert('todos', { id: '3', title: 'Third', done: 0 });
+
+    const first = db.getChangesPageAfter(0, 2);
+    expect(first?.changes.map((change) => change.seq)).toEqual([1, 2]);
+    expect(first).toMatchObject({ headSeq: 3, hasMore: true });
+    const second = db.getChangesPageAfter(2, 2);
+    expect(second?.changes.map((change) => change.seq)).toEqual([3]);
+    expect(second).toMatchObject({ headSeq: 3, hasMore: false });
+    expect(() => db.getChangesPageAfter(0, 1_001)).toThrow(
+      'change page size must be between 1 and 1000',
+    );
+  });
+
   test('getChangesAfter(0) returns all changes', () => {
     db.insert('todos', { id: '1', title: 'First', done: 0 });
     db.insert('todos', { id: '2', title: 'Second', done: 0 });
@@ -1158,6 +1264,7 @@ describe('ring buffer', () => {
     // seq 4 is pruned — should return null
     const pruned = smallDb.getChangesAfter(4);
     expect(pruned).toBeNull();
+    expect(smallDb.getChangesPageAfter(4, 2)).toBeNull();
 
     smallDb.dispose();
   });

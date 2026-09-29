@@ -292,7 +292,7 @@ function resourceValidationHint(code: string): string | undefined {
       return 'Add the table to createApp({ tables }) or update the resource table name.';
     case 'resource-primary-key-missing':
     case 'resource-primary-key-mismatch':
-      return 'Resource primary keys must match the single string sync primary key declared on the table.';
+      return 'Resource primary keys must match the single TEXT or INTEGER affinity sync primary key declared on the table.';
     case 'resource-policy-missing':
       return 'Every action listed on a resource needs an explicit policy.';
     case 'resource-owner-field-missing':

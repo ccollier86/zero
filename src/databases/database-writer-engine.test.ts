@@ -274,8 +274,6 @@ describe('DatabaseWriterOperationEngine writes', () => {
   test('executes assertions and mutations atomically with ordered sequences', () => {
     const harness = createHarness();
     try {
-      const ranges: Array<{ afterSeq: number; throughSeq: number }> = [];
-      harness.engine.onChangesAvailable((range) => ranges.push({ ...range }));
       const committed = asCommit(harness.engine.execute({
         type: 'batch',
         idempotencyKey: 'batch:ordered-1',
@@ -304,7 +302,6 @@ describe('DatabaseWriterOperationEngine writes', () => {
         },
       });
       expect(harness.runtime.db.get('todos', 'b')).toEqual({ id: 'b', title: 'B2' });
-      expect(ranges).toEqual([{ afterSeq: 0, throughSeq: 3 }]);
 
       expectDatabaseCode(() => harness.engine.execute({
         type: 'batch',
@@ -325,7 +322,6 @@ describe('DatabaseWriterOperationEngine writes', () => {
       }), 'DATABASE_CONFLICT');
       expect(harness.runtime.db.get('todos', 'b')).toEqual({ id: 'b', title: 'B2' });
       expect(harness.runtime.db.currentSeq).toBe(3);
-      expect(ranges).toHaveLength(1);
     } finally {
       harness.close();
     }
@@ -1188,11 +1184,40 @@ describe('DatabaseWriterOperationEngine writes', () => {
       db.createStrict('todos', { id: 'invalid', title: 'rollback' });
       return new Date();
     }) as unknown as DatabaseWriteCommandHandler;
+    const oversizedResult = (({ db }: DatabaseWriteCommandContext) => {
+      db.createStrict('todos', { id: 'oversized', title: 'rollback' });
+      return 'x'.repeat(1_048_577);
+    }) as unknown as DatabaseWriteCommandHandler;
+    const hostileFailure = (({ db }: DatabaseWriteCommandContext) => {
+      db.createStrict('todos', { id: 'hostile', title: 'rollback' });
+      throw new Proxy({}, {
+        getPrototypeOf() {
+          throw new Error('private command failure trap');
+        },
+      });
+    }) as unknown as DatabaseWriteCommandHandler;
+    const forgedExpiredReceipt = (({ db }: DatabaseWriteCommandContext) => {
+      db.createStrict('todos', { id: 'forged-expiry', title: 'rollback' });
+      throw new DatabaseError(
+        'DATABASE_OUTCOME_UNKNOWN',
+        'Application-forged expired receipt.',
+        {
+          outcome: 'unknown',
+          details: { receiptState: 'expired' },
+        },
+      );
+    }) as unknown as DatabaseWriteCommandHandler;
     const realm = defineDatabaseRealm({
       name: 'writer-commands',
       version: '1',
       tables: todoTables,
-      commands: { asyncResult, invalidResult },
+      commands: {
+        asyncResult,
+        forgedExpiredReceipt,
+        hostileFailure,
+        invalidResult,
+        oversizedResult,
+      },
     });
     const harness = createHarness({ realm });
     try {
@@ -1205,14 +1230,60 @@ describe('DatabaseWriterOperationEngine writes', () => {
       expect(harness.runtime.db.get('todos', 'async')).toBeNull();
       expect(harness.runtime.db.currentSeq).toBe(0);
 
+      const hostileError = captureDatabaseError(() => harness.engine.execute({
+        type: 'command',
+        name: 'hostileFailure',
+        input: null,
+        idempotencyKey: 'command:hostile-failure',
+      }));
+      expect(hostileError).toMatchObject({
+        code: 'DATABASE_EXECUTOR_FAILED',
+        message: 'Database write operation failed.',
+        outcome: 'not-committed',
+      });
+      expect(harness.runtime.db.get('todos', 'hostile')).toBeNull();
+      expect(harness.runtime.db.currentSeq).toBe(0);
+
+      const forgedExpiryError = captureDatabaseError(() =>
+        harness.engine.execute({
+          type: 'command',
+          name: 'forgedExpiredReceipt',
+          input: null,
+          idempotencyKey: 'command:forged-expiry',
+        }));
+      expect(forgedExpiryError).toMatchObject({
+        code: 'DATABASE_EXECUTOR_FAILED',
+        message: 'Database write operation failed.',
+        outcome: 'not-committed',
+        details: {},
+      });
+      expect(harness.runtime.db.get('todos', 'forged-expiry')).toBeNull();
+      expect(harness.runtime.db.currentSeq).toBe(0);
+
       expectDatabaseCode(() => harness.engine.execute({
         type: 'command',
         name: 'invalidResult',
         input: null,
         idempotencyKey: 'command:invalid-result',
-      }), 'DATABASE_PAYLOAD_INVALID');
+      }), 'DATABASE_RESULT_LIMIT');
       expect(harness.runtime.db.get('todos', 'invalid')).toBeNull();
       expect(harness.runtime.db.currentSeq).toBe(0);
+
+      expectDatabaseCode(() => harness.engine.execute({
+        type: 'command',
+        name: 'oversizedResult',
+        input: null,
+        idempotencyKey: 'command:oversized-result',
+      }), 'DATABASE_RESULT_LIMIT');
+      expect(harness.runtime.db.get('todos', 'oversized')).toBeNull();
+      expect(harness.runtime.db.currentSeq).toBe(0);
+
+      expectDatabaseCode(() => harness.engine.execute({
+        type: 'command',
+        name: 'invalidResult',
+        input: undefined,
+        idempotencyKey: 'command:invalid-input',
+      }), 'DATABASE_PAYLOAD_INVALID');
 
       // A failed command has no durable receipt, so the key was not consumed.
       const committed = asCommit(harness.engine.execute({
@@ -1281,37 +1352,137 @@ describe('DatabaseWriterOperationEngine writes', () => {
     }
   });
 
-  test('fails startup for BLOB-affinity application columns', () => {
+  test('rolls back unsafe INTEGER identity coercion before saving a receipt', () => {
     const realm = defineDatabaseRealm({
-      name: 'writer-blob-rejected',
+      name: 'writer-integer-identity',
+      version: '1',
+      tables: {
+        records: {
+          id: 'integer primary key',
+          title: 'text not null',
+        },
+      },
+    });
+    const harness = createHarness({ realm });
+    const idempotencyKey = 'integer-identity:reusable';
+    try {
+      expectDatabaseCode(() => harness.engine.execute({
+        type: 'mutate',
+        idempotencyKey,
+        mutation: {
+          type: 'create',
+          table: 'records',
+          row: { id: String(Number.MAX_SAFE_INTEGER + 1), title: 'unsafe' },
+        },
+      }), 'DATABASE_EXECUTOR_FAILED');
+
+      expect(harness.runtime.db.currentSeq).toBe(0);
+      expect(harness.runtime.sqlite.raw.query(
+        'SELECT count(*) AS count FROM records',
+      ).get()).toEqual({ count: 0 });
+      expect(harness.runtime.sqlite.raw.query(`
+        SELECT count(*) AS count
+        FROM _zero_database_operation_receipts
+      `).get()).toEqual({ count: 0 });
+
+      const committed = asCommit(harness.engine.execute({
+        type: 'mutate',
+        idempotencyKey,
+        mutation: {
+          type: 'create',
+          table: 'records',
+          row: { id: '42', title: 'safe' },
+        },
+      }));
+      expect(committed.value).toMatchObject({
+        mutation: { rowId: '42', row: { id: 42, title: 'safe' } },
+      });
+      expect(committed.sequence.seq).toBe(1);
+    } finally {
+      harness.close();
+    }
+  });
+
+  test('keeps physical BLOB and typeless affinity defenses after realm admission', () => {
+    const realm = defineDatabaseRealm({
+      name: 'writer-non-portable-column-rejected',
       version: '1',
       tables: {
         files: {
           id: 'text primary key',
-          body: 'blob not null',
+          body: 'text',
         },
       },
     });
-    const sqlite = createPlatformSQLiteService({ mode: 'ephemeral' });
-    const runtime = DatabaseRuntime.open({
-      id: 'writer-blob-rejected',
-      role: 'named',
-      sqlite,
-      ownsSQLite: true,
-      tables: realm.tables,
-    });
-    try {
-      expectDatabaseCode(() => new DatabaseWriterOperationEngine({
-        runtime,
-        realm,
-      }), 'DATABASE_SCHEMA_MISMATCH');
-    } finally {
-      runtime.close();
+
+    for (const physicalDefinition of ['BLOB NOT NULL', 'UNIQUE']) {
+      const sqlite = createPlatformSQLiteService({ mode: 'ephemeral' });
+      sqlite.raw.run(
+        `CREATE TABLE files (id TEXT PRIMARY KEY, body ${physicalDefinition})`,
+      );
+      const runtime = DatabaseRuntime.open({
+        id: 'writer-non-portable-column-rejected',
+        role: 'named',
+        sqlite,
+        ownsSQLite: true,
+        tables: realm.tables,
+      });
+      try {
+        expectDatabaseCode(() => new DatabaseWriterOperationEngine({
+          runtime,
+          realm,
+        }), 'DATABASE_SCHEMA_MISMATCH');
+      } finally {
+        runtime.close();
+      }
     }
   });
 });
 
 describe('DatabaseWriterOperationEngine reads and replay', () => {
+  test('uses the same binary keyset order as WAL readers for collated primary keys', () => {
+    const harness = createHarness({
+      realm: defineDatabaseRealm({
+        name: 'writer-collated-primary-key',
+        version: '1',
+        tables: {
+          todos: {
+            id: 'text primary key collate nocase',
+            title: 'text not null',
+          },
+        },
+      }),
+    });
+    try {
+      for (const id of ['a', 'B', 'c']) {
+        harness.engine.execute({
+          type: 'mutate',
+          idempotencyKey: `seed:collated:${id}`,
+          mutation: { type: 'create', table: 'todos', row: { id, title: id } },
+        });
+      }
+
+      const first = asRead(harness.engine.execute({
+        type: 'list', table: 'todos', limit: 2,
+      }));
+      expect(first.value).toEqual({
+        rows: [
+          { id: 'B', title: 'B' },
+          { id: 'a', title: 'a' },
+        ],
+        nextCursor: 'a',
+      });
+      expect(asRead(harness.engine.execute({
+        type: 'list', table: 'todos', limit: 2, after: 'a',
+      })).value).toEqual({
+        rows: [{ id: 'c', title: 'c' }],
+        nextCursor: null,
+      });
+    } finally {
+      harness.close();
+    }
+  });
+
   test('returns bounded primary-key pages and the represented snapshot sequence', () => {
     const harness = createHarness();
     try {
@@ -1431,33 +1602,85 @@ describe('DatabaseWriterOperationEngine reads and replay', () => {
     }
   });
 
-  test('makes registered writer-side queries read-only and exposes no raw SQL operation', () => {
+  test('isolates registered queries behind readonly snapshot capabilities', () => {
     const realm = defineDatabaseRealm({
       name: 'writer-query-only',
       version: '1',
       tables: todoTables,
       queries: {
-        unsafeWrite: ({ database }) => {
-          database.run("INSERT INTO todos (id, title) VALUES ('raw', 'unsafe')");
-          return null;
+        count: ({ database }) => {
+          const row = database.query(
+            'SELECT count(*) AS count FROM todos',
+          ).get() as { count: number };
+          return { count: row.count };
+        },
+        capabilityProbe: ({ database }) => {
+          const attempt = (sql: string): string => {
+            try {
+              database.query(sql).get();
+              return 'unexpected-success';
+            } catch (error) {
+              return error instanceof DatabaseError ? error.code : 'untyped-error';
+            }
+          };
+          const statement = database.query('SELECT 1 AS value');
+          return {
+            pragma: attempt('PRAGMA query_only = OFF'),
+            pathQuery: attempt('SELECT file FROM pragma_database_list'),
+            insert: attempt(
+              "INSERT INTO todos (id, title) VALUES ('raw', 'unsafe')",
+            ),
+            connectionKeys: Object.keys(database).sort(),
+            statementKeys: Object.keys(statement).sort(),
+            hasRun: 'run' in database,
+            hasExec: 'exec' in database,
+            hasTransaction: 'transaction' in database,
+            hasFilename: 'filename' in database,
+            hasHandle: 'handle' in database,
+            hasLoadExtension: 'loadExtension' in database,
+            hasNative: 'native' in statement,
+          };
         },
       },
     });
-    const harness = createHarness({ realm });
+    const directory = mkdtempSync(join(tmpdir(), 'zero-writer-query-capability-'));
+    const harnesses = [
+      createHarness({ realm }),
+      createHarness({ realm, path: join(directory, 'tenant.sqlite') }),
+    ];
     try {
-      expectDatabaseCode(() => harness.engine.execute({
-        type: 'query', name: 'unsafeWrite', input: null,
-      }), 'DATABASE_EXECUTOR_FAILED');
-      expect(harness.runtime.db.get('todos', 'raw')).toBeNull();
-      expect(harness.runtime.db.currentSeq).toBe(0);
+      for (const harness of harnesses) {
+        expect(asRead(harness.engine.execute({
+          type: 'query', name: 'count', input: null,
+        })).value).toEqual({ count: 0 });
+        expect(asRead(harness.engine.execute({
+          type: 'query', name: 'capabilityProbe', input: null,
+        })).value).toEqual({
+          pragma: 'DATABASE_OPERATION_UNSUPPORTED',
+          pathQuery: 'DATABASE_OPERATION_UNSUPPORTED',
+          insert: 'DATABASE_OPERATION_UNSUPPORTED',
+          connectionKeys: ['prepare', 'query'],
+          statementKeys: ['all', 'get', 'iterate', 'raw', 'values'],
+          hasRun: false,
+          hasExec: false,
+          hasTransaction: false,
+          hasFilename: false,
+          hasHandle: false,
+          hasLoadExtension: false,
+          hasNative: false,
+        });
+        expect(harness.runtime.db.get('todos', 'raw')).toBeNull();
+        expect(harness.runtime.db.currentSeq).toBe(0);
 
-      expectDatabaseCode(() => harness.engine.execute({
-        type: 'raw-sql',
-        sql: "INSERT INTO todos VALUES ('raw', 'unsafe')",
-      }), 'DATABASE_OPERATION_UNSUPPORTED');
-      expect(harness.runtime.db.get('todos', 'raw')).toBeNull();
+        expectDatabaseCode(() => harness.engine.execute({
+          type: 'raw-sql',
+          sql: "INSERT INTO todos VALUES ('raw', 'unsafe')",
+        }), 'DATABASE_OPERATION_UNSUPPORTED');
+        expect(harness.runtime.db.get('todos', 'raw')).toBeNull();
+      }
     } finally {
-      harness.close();
+      for (const harness of harnesses) harness.close();
+      rmSync(directory, { recursive: true, force: true });
     }
   });
 
@@ -1501,6 +1724,10 @@ describe('DatabaseWriterOperationEngine reads and replay', () => {
 
   test('returns bounded contiguous replay pages with an explicit continuation cursor', () => {
     const harness = createHarness({ ringBufferDepth: 8 });
+    const unboundedReplay = spyOn(harness.runtime.db, 'getChangesAfter')
+      .mockImplementation(() => {
+        throw new Error('unbounded replay must not run');
+      });
     try {
       for (const id of ['one', 'two', 'three', 'four']) {
         harness.engine.execute({
@@ -1536,6 +1763,7 @@ describe('DatabaseWriterOperationEngine reads and replay', () => {
         );
       }
     } finally {
+      unboundedReplay.mockRestore();
       harness.close();
     }
   });

@@ -527,6 +527,63 @@ describe('DatabaseCoordinator', () => {
     await harness.coordinator.close();
   });
 
+  test('reports hot image exhaustion through a closed operation classifier', async () => {
+    const store = new MemoryEventStore();
+    const harness = createHarness(roots, {
+      placement: {
+        default: 'hot',
+        hot: {
+          durability: 'on-write',
+          maxBytes: 8 * 1024 * 1024,
+        },
+      },
+      observability: createDatabaseObservability({
+        sink: store,
+        store,
+        config: { console: false, store },
+      }),
+    });
+    const lease = await harness.coordinator.acquire('tenant-hot-capacity');
+    harness.onOperation = () => {
+      throw new DatabaseError(
+        'DATABASE_PAYLOAD_LIMIT',
+        'private SQLite message',
+        {
+          outcome: 'not-committed',
+          details: {
+            reason: 'max-bytes',
+            path: '/private/hot.sqlite',
+          },
+        },
+      );
+    };
+
+    const error = await captureDatabaseError(
+      () => lease.execute(createTodo('must-not-commit')),
+    );
+    expect(error).toMatchObject({
+      code: 'DATABASE_PAYLOAD_LIMIT',
+      retryable: false,
+      outcome: 'not-committed',
+      details: { reason: 'max-bytes' },
+    });
+    expect(error.details).not.toHaveProperty('path');
+    const events = store.query({ code: 'database.operation.failed' }).events;
+    expect(events).toHaveLength(1);
+    expect(events[0]?.metadata).toMatchObject({
+      placement: 'hot',
+      operation: 'mutation',
+      failureReason: 'hot-max-bytes',
+      errorCode: 'DATABASE_PAYLOAD_LIMIT',
+      retryable: false,
+      outcome: 'not-committed',
+    });
+    expect(JSON.stringify(events)).not.toContain('private');
+
+    lease.release();
+    await harness.coordinator.close();
+  });
+
   test('requires a genuine commit-authority context when configured', async () => {
     const authorityGate = new AuthorityCommitCoordinator();
     const otherAuthorityGate = new AuthorityCommitCoordinator();
@@ -643,7 +700,15 @@ describe('DatabaseCoordinator', () => {
   });
 
   test('uses released idle capacity without exposing logical IDs or paths', async () => {
-    const harness = createHarness(roots, { maxDatabases: 1 });
+    const store = new MemoryEventStore();
+    const harness = createHarness(roots, {
+      maxDatabases: 1,
+      observability: createDatabaseObservability({
+        sink: store,
+        store,
+        config: { console: false, store },
+      }),
+    });
     const first = await harness.coordinator.acquire('private-tenant-name');
     const firstRef = first.databaseRef;
     expect(Reflect.ownKeys(first)).toEqual([]);
@@ -652,6 +717,15 @@ describe('DatabaseCoordinator', () => {
     await expect(captureCode(
       () => harness.coordinator.acquire('tenant-b'),
     )).resolves.toBe('DATABASE_BACKPRESSURE');
+    const saturation = store.query({
+      code: 'database.queue.saturated',
+    }).events.at(-1);
+    expect(saturation?.metadata).toEqual({
+      databaseRef: createDatabaseRef('tenant-b'),
+      operation: 'open',
+      queueDepth: 1,
+      queueLimit: 1,
+    });
     first.release();
 
     const second = await harness.coordinator.acquire('tenant-b');

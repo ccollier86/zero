@@ -6,7 +6,6 @@
  * none of its functions ever cross the public operation or IPC boundary.
  */
 
-import type { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import { types as utilTypes } from 'node:util';
 import {
@@ -28,6 +27,26 @@ import {
   type TableSchema,
 } from '../sync/types';
 import { DatabaseError } from './database-error';
+import {
+  cloneDatabaseHandlerResult,
+  invalidDatabaseHandlerResult,
+} from './database-handler-result-validation';
+import {
+  databaseRealmColumnAdmissionIssue,
+  databaseRealmRegistryAdmissionIssue,
+  databaseRealmTableNameAdmissionIssue,
+} from './database-realm-schema-admission';
+import type { DatabaseReadQueryContext } from './database-read-query-capability';
+import {
+  createDatabaseWriteCommandSession,
+  type DatabaseWriteCommandContext,
+} from './database-write-command-capability';
+import {
+  databaseColumnDefinitionAffinity,
+  databaseColumnDefinitionDeclaresPrimaryKey,
+  isSupportedDatabaseRowIdentityAffinity,
+  isIsolatedDatabaseColumnDefinition,
+} from '../sync/row-identity';
 import {
   cloneDatabaseSerializableValue,
   isDatabaseRegistryName,
@@ -74,17 +93,15 @@ const VALIDATOR_FIELDS = new Set([
 ]);
 const textEncoder = new TextEncoder();
 
-/** Context supplied only inside a read actor with a readonly/query-only handle. */
-export interface DatabaseReadQueryContext {
-  /** Actor-owned Bun handle opened readonly and protected by PRAGMA query_only. */
-  readonly database: Database;
-}
-
-/** Context supplied only inside the single writer actor for a database file. */
-export interface DatabaseWriteCommandContext {
-  /** Actor-owned ReactiveDB; commands execute inside the actor's transaction. */
-  readonly db: ReactiveDB;
-}
+export type {
+  DatabaseReadQueryConnection,
+  DatabaseReadQueryContext,
+  DatabaseReadQueryStatement,
+} from './database-read-query-capability';
+export type {
+  DatabaseWriteCommandCapability,
+  DatabaseWriteCommandContext,
+} from './database-write-command-capability';
 
 /** Synchronous actor-local registered query. */
 export type DatabaseReadQueryHandler<
@@ -228,11 +245,8 @@ export function createDatabaseRealmOperationCatalog(
   for (const [tableName, schema] of Object.entries(realm.tables)) {
     const tableColumns = Object.keys(schema).filter((name) => name !== '_identity');
     columns[tableName] = Object.freeze(tableColumns);
-    const primaryKey = tableColumns.find((column) => {
-      const definition = schema[column];
-      return typeof definition === 'string'
-        && /\bprimary\s+key\b/iu.test(stripQuotedSql(definition));
-    });
+    const primaryKey = tableColumns.find((column) =>
+      databaseColumnDefinitionDeclaresPrimaryKey(schema[column]));
     if (primaryKey) primaryKeys[tableName] = primaryKey;
   }
   return Object.freeze({
@@ -261,13 +275,13 @@ export function runDatabaseRealmQuery(
   const handler = realm.queries[name]!;
   const output = handler(context, cloneDatabaseSerializableValue(input));
   assertSynchronousResult(output, 'query');
-  return cloneDatabaseSerializableValue(output);
+  return cloneDatabaseHandlerResult(output);
 }
 
 /** Invoke a registered command and enforce its synchronous payload contract. */
 export function runDatabaseRealmCommand(
   realm: DatabaseRealm,
-  context: DatabaseWriteCommandContext,
+  database: ReactiveDB,
   name: string,
   input: DatabaseSerializableValue,
 ): DatabaseSerializableValue {
@@ -280,13 +294,23 @@ export function runDatabaseRealmCommand(
   }
   const handler = realm.commands[name]!;
   const detachedInput = cloneDatabaseSerializableValue(input);
-  return context.db.transaction(() => {
-    const output = handler(context, detachedInput);
-    assertSynchronousResult(output, 'command');
-    // Result validation participates in the transaction so an invalid or
-    // asynchronous handler result cannot commit its preceding writes.
-    return cloneDatabaseSerializableValue(output);
-  });
+  const session = createDatabaseWriteCommandSession(database);
+  try {
+    return database.transaction(() => {
+      const output = handler(session.context, detachedInput);
+      assertSynchronousResult(output, 'command');
+      // Result validation participates in the transaction so an invalid or
+      // asynchronous handler result cannot commit its preceding writes.
+      const result = cloneDatabaseHandlerResult(output);
+      // Revoke before a root transaction can deliver post-commit callbacks.
+      // The outer writer transaction keeps the same ordering in production,
+      // while direct internal callers receive the same non-escapable lifetime.
+      session.close();
+      return result;
+    });
+  } finally {
+    session.close();
+  }
 }
 
 function cloneTableRegistry(
@@ -300,6 +324,8 @@ function cloneTableRegistry(
     if (!isDatabaseTableName(name)) {
       throw configInvalid(`Invalid database realm table name "${name}".`);
     }
+    const nameIssue = databaseRealmTableNameAdmissionIssue(name);
+    if (nameIssue) throw configInvalid(nameIssue);
     const folded = name.toLowerCase();
     if (caseInsensitiveNames.has(folded)) {
       throw configInvalid('Database realm table names must be unique ignoring case.');
@@ -307,6 +333,9 @@ function cloneTableRegistry(
     caseInsensitiveNames.add(folded);
     tables[name] = cloneTableSchema(name, schemaValue);
   }
+
+  const registryIssue = databaseRealmRegistryAdmissionIssue(tables);
+  if (registryIssue) throw configInvalid(registryIssue);
 
   return Object.freeze(tables);
 }
@@ -321,6 +350,7 @@ function cloneTableSchema(tableName: string, value: unknown): Readonly<TableSche
   let validator: Readonly<SyncTableMutationValidator> | undefined;
   let primaryKeys = 0;
   let primaryKey: string | null = null;
+  let primaryKeyDefinition: string | null = null;
 
   for (const key of keys) {
     const descriptor = safeOwnDescriptor(source, key, `schema for table ${tableName}`);
@@ -364,9 +394,15 @@ function cloneTableSchema(tableName: string, value: unknown): Readonly<TableSche
         `Database realm table "${tableName}" has an oversized SQL column definition.`,
       );
     }
-    if (/\bprimary\s+key\b/iu.test(stripQuotedSql(descriptor.value))) {
+    if (!isIsolatedDatabaseColumnDefinition(descriptor.value)) {
+      throw configInvalid(
+        `Database realm table "${tableName}" column "${key}" must describe exactly one isolated SQL column.`,
+      );
+    }
+    if (databaseColumnDefinitionDeclaresPrimaryKey(descriptor.value)) {
       primaryKeys += 1;
       primaryKey = key;
+      primaryKeyDefinition = descriptor.value;
     }
     columns.add(key);
     clone[key] = descriptor.value;
@@ -379,6 +415,26 @@ function cloneTableSchema(tableName: string, value: unknown): Readonly<TableSche
     throw configInvalid(
       `Database realm table "${tableName}" must declare exactly one primary-key column.`,
     );
+  }
+  const primaryKeyAffinity = databaseColumnDefinitionAffinity(
+    primaryKeyDefinition,
+  );
+  if (!isSupportedDatabaseRowIdentityAffinity(primaryKeyAffinity)) {
+    throw configInvalid(
+      `Database realm table "${tableName}" primary-key column "${primaryKey}" `
+      + 'must declare TEXT or INTEGER affinity.',
+    );
+  }
+  for (const column of columns) {
+    const definition = clone[column];
+    if (typeof definition !== 'string') continue;
+    const admissionIssue = databaseRealmColumnAdmissionIssue({
+      table: tableName,
+      column,
+      definition,
+      primaryKey: column === primaryKey,
+    });
+    if (admissionIssue) throw configInvalid(admissionIssue);
   }
   if (identity) {
     for (const field of identity) {
@@ -609,11 +665,7 @@ function assertSynchronousResult(value: unknown, kind: 'query' | 'command'): voi
     try {
       then = (value as { then?: unknown }).then;
     } catch (cause) {
-      throw new DatabaseError(
-        'DATABASE_PAYLOAD_INVALID',
-        `Database ${kind} returned an invalid result.`,
-        { cause },
-      );
+      throw invalidDatabaseHandlerResult(cause);
     }
     if (typeof then === 'function') {
       void Promise.resolve(value).catch(() => {});
@@ -736,17 +788,6 @@ function isWellFormedUnicode(value: string): boolean {
     }
   }
   return true;
-}
-
-/** Remove quoted/comment content before recognizing a top-level-ish PK token. */
-function stripQuotedSql(sql: string): string {
-  return sql
-    .replace(/'(?:''|[^'])*'/gu, ' ')
-    .replace(/"(?:""|[^"])*"/gu, ' ')
-    .replace(/`(?:``|[^`])*`/gu, ' ')
-    .replace(/\[(?:\]\]|[^\]])*\]/gu, ' ')
-    .replace(/--[^\r\n]*/gu, ' ')
-    .replace(/\/\*[\s\S]*?\*\//gu, ' ');
 }
 
 function configInvalid(message: string, cause?: unknown): DatabaseError {

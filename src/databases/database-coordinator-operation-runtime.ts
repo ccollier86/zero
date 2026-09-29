@@ -26,6 +26,7 @@ import {
   authorityUnavailable,
   elapsed,
   historyGapSequenceRange,
+  isHotMaxBytesFailure,
   isExpiredReceiptOutcome,
   permanentCapacityDetails,
   queueCancelled,
@@ -617,6 +618,10 @@ export class DatabaseCoordinatorOperationRuntime {
         ? sameKeyOnlyUnknownWrite(normalized)
         : normalized;
       const capacity = permanentCapacityDetails(error);
+      const failureReason = entry.placement.mode === 'hot'
+        && isHotMaxBytesFailure(error)
+        ? 'hot-max-bytes' as const
+        : null;
       this.options.emit(capacity ? {
         type: 'capacity-exhausted',
         databaseRef: entry.databaseRef,
@@ -645,6 +650,7 @@ export class DatabaseCoordinatorOperationRuntime {
         generation: executor.diagnostics().generation,
         operation: operationClass(operation),
         durationMs: elapsed(startedAt, this.options.now()),
+        ...(failureReason === null ? {} : { failureReason }),
         error,
       });
       if ((kind === 'write' && error.outcome === 'unknown' && !expiredReceipt)
