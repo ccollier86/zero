@@ -2,8 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import type { AuthTenantSummary } from './auth-types';
 import {
   projectTenantAppShellWorkspaces,
+  resolveTenantSwitcherStableDisplay,
   tenantSwitcherHandoffFailureReason,
   tenantSwitcherHandoffRemainingMs,
+  type TenantSwitcherDisplay,
   type UseTenantSwitchPresentationResult,
 } from './tenant-switch-presentation';
 
@@ -145,6 +147,78 @@ describe('tenant switch presentation handoff recovery', () => {
       operation: 'authentication',
       phase: 'recovery-required',
     }, 2_000)).toBeNull();
+  });
+});
+
+describe('tenant switch stable display identity boundary', () => {
+  const display: TenantSwitcherDisplay = {
+    userId: 'user-a',
+    activeTenant: alpha,
+    tenants: [alpha, beta],
+  };
+  const pendingHandoff = {
+    phase: 'pending' as const,
+    userId: 'user-a',
+    sourceTenantId: alpha.tenantId,
+    targetTenantId: beta.tenantId,
+    createdAt: 1_000,
+  };
+
+  test('never carries account A tenant names or roles into account B', () => {
+    expect(resolveTenantSwitcherStableDisplay({
+      display,
+      committedUserId: 'user-b',
+      transition: { operation: null, phase: 'idle' },
+      handoff: null,
+    })).toBeNull();
+    expect(resolveTenantSwitcherStableDisplay({
+      display,
+      committedUserId: null,
+      transition: { operation: 'authentication', phase: 'reconciling' },
+      handoff: pendingHandoff,
+    })).toBeNull();
+  });
+
+  test('preserves a masked display only for its same-user tenant switch', () => {
+    expect(resolveTenantSwitcherStableDisplay({
+      display,
+      committedUserId: null,
+      transition: { operation: 'tenant-switch', phase: 'preparing' },
+      handoff: pendingHandoff,
+    })).toBe(display);
+    expect(resolveTenantSwitcherStableDisplay({
+      display,
+      committedUserId: null,
+      transition: { operation: 'tenant-switch', phase: 'reconciling' },
+      handoff: { ...pendingHandoff, userId: 'user-b' },
+    })).toBeNull();
+    expect(resolveTenantSwitcherStableDisplay({
+      display,
+      committedUserId: null,
+      transition: { operation: 'tenant-switch', phase: 'committed' },
+      handoff: { ...pendingHandoff, sourceTenantId: 'tenant-other' },
+    })).toBeNull();
+  });
+
+  test('drops masked logout and recovery state but keeps proven recovery identity', () => {
+    expect(resolveTenantSwitcherStableDisplay({
+      display,
+      committedUserId: null,
+      transition: { operation: 'logout', phase: 'preparing' },
+      handoff: null,
+    })).toBeNull();
+    expect(resolveTenantSwitcherStableDisplay({
+      display,
+      committedUserId: null,
+      transition: { operation: 'tenant-switch', phase: 'recovery-required' },
+      handoff: pendingHandoff,
+    })).toBeNull();
+    expect(resolveTenantSwitcherStableDisplay({
+      display,
+      committedUserId: 'user-a',
+      transition: { operation: 'tenant-switch', phase: 'recovery-required' },
+      handoff: pendingHandoff,
+    })).toBe(display);
   });
 });
 

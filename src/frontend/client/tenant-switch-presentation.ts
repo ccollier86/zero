@@ -61,6 +61,7 @@ export function useTenantSwitchPresentation(
   const [localError, setLocalError] = React.useState<string | null>(null);
   const [localSwitching, setLocalSwitching] = React.useState(false);
   const [handoff, setHandoff] = React.useState<TenantSwitcherHandoff | null>(null);
+  const handoffRef = React.useRef<TenantSwitcherHandoff | null>(null);
   const [focusRevision, setFocusRevision] = React.useState(0);
   const stableDisplay = React.useRef<TenantSwitcherDisplay | null>(null);
   const switchInFlight = React.useRef(false);
@@ -72,18 +73,31 @@ export function useTenantSwitchPresentation(
     setLocalError(`Failed to switch ${tenant.terminology.singular}. Try again.`);
     setAnnouncement(`${capitalize(tenant.terminology.singular)} switch failed`);
     clearTenantSwitcherHandoff();
+    handoffRef.current = null;
     setHandoff(null);
     setFocusRevision((value) => value + 1);
   }, [tenant.terminology.singular]);
 
-  if (tenant.activeTenant) {
+  const committedUserId = auth.user?.userId ?? null;
+  if (tenant.activeTenant && committedUserId) {
+    const identityDisplay = stableDisplay.current?.userId === committedUserId
+      ? stableDisplay.current
+      : null;
     const available = tenant.tenants.length > 0
       ? tenant.tenants
-      : stableDisplay.current?.tenants ?? [tenant.activeTenant];
+      : identityDisplay?.tenants ?? [tenant.activeTenant];
     stableDisplay.current = {
+      userId: committedUserId,
       activeTenant: tenant.activeTenant,
       tenants: includeActiveTenant(available, tenant.activeTenant),
     };
+  } else {
+    stableDisplay.current = resolveTenantSwitcherStableDisplay({
+      display: stableDisplay.current,
+      committedUserId,
+      transition: auth.sessionTransition,
+      handoff: handoffRef.current,
+    });
   }
 
   const display = stableDisplay.current;
@@ -101,7 +115,11 @@ export function useTenantSwitchPresentation(
     );
 
   React.useEffect(() => {
-    const read = () => setHandoff(readTenantSwitcherHandoff());
+    const read = () => {
+      const next = readTenantSwitcherHandoff();
+      handoffRef.current = next;
+      setHandoff(next);
+    };
     read();
     if (typeof window === 'undefined') return;
     window.addEventListener(TENANT_SWITCHER_HANDOFF_EVENT, read);
@@ -127,6 +145,7 @@ export function useTenantSwitchPresentation(
     }
     if (handoff.userId !== userId) {
       clearTenantSwitcherHandoff();
+      handoffRef.current = null;
       setHandoff(null);
       return;
     }
@@ -158,6 +177,7 @@ export function useTenantSwitchPresentation(
       setLocalError(null);
       setAnnouncement(`Switched to ${activeName}`);
       clearTenantSwitcherHandoff();
+      handoffRef.current = null;
       setHandoff(null);
       options.onSwitched?.(completed.targetTenantId);
       setFocusRevision((value) => value + 1);
@@ -196,6 +216,8 @@ export function useTenantSwitchPresentation(
       targetTenantId: tenantId,
       createdAt: Date.now(),
     };
+    handoffRef.current = pending;
+    setHandoff(pending);
     setLocalSwitching(true);
     setLocalError(null);
     setAnnouncement('');
@@ -311,7 +333,8 @@ export function projectTenantAppShellWorkspaces(
   };
 }
 
-interface TenantSwitcherDisplay {
+export interface TenantSwitcherDisplay {
+  userId: string;
   activeTenant: AuthTenantSummary;
   tenants: AuthTenantSummary[];
 }
@@ -332,6 +355,38 @@ let volatileTenantSwitcherHandoff: TenantSwitcherHandoff | null = null;
 export type TenantSwitcherHandoffFailureReason =
   | 'expired'
   | 'recovery-required';
+
+/**
+ * @internal Bind cached tenant labels and roles to their committed account.
+ *
+ * A masked tenant switch may keep the source presentation only while a
+ * matching same-user handoff is in progress. Every other masked state drops
+ * the cache so account replacement, logout, and recovery cannot reveal a
+ * previous account's tenant metadata.
+ */
+export function resolveTenantSwitcherStableDisplay(input: {
+  display: TenantSwitcherDisplay | null;
+  committedUserId: string | null;
+  transition: Pick<AuthSessionTransitionState, 'operation' | 'phase'>;
+  handoff: TenantSwitcherHandoff | null;
+}): TenantSwitcherDisplay | null {
+  const { display, committedUserId, transition, handoff } = input;
+  if (!display) return null;
+  if (committedUserId) {
+    return committedUserId === display.userId ? display : null;
+  }
+  const phaseKeepsSwitchPending = transition.phase === 'preparing'
+    || transition.phase === 'committed'
+    || transition.phase === 'reconciling';
+  if (!phaseKeepsSwitchPending
+    || transition.operation !== 'tenant-switch'
+    || !handoff
+    || handoff.phase === 'failed'
+    || handoff.userId !== display.userId
+    || handoff.sourceTenantId !== display.activeTenant.tenantId
+    || handoff.targetTenantId === handoff.sourceTenantId) return null;
+  return display;
+}
 
 /** @internal Decide when an interrupted switch must stop blocking its trigger. */
 export function tenantSwitcherHandoffFailureReason(

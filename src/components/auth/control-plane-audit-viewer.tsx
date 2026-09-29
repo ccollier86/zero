@@ -88,21 +88,25 @@ export function ControlPlaneAuditViewer({
         <form
           className="grid gap-2 md:grid-cols-[1fr_1fr_11rem_auto_auto]"
           onSubmit={applyFilters}
+          aria-disabled={audit.isDenied || undefined}
         >
           <Input
             value={draftAction}
             onChange={(event) => setDraftAction(event.target.value)}
             aria-label="Filter audit action"
             placeholder="Action, for example tenant.member-added"
+            disabled={audit.isDenied}
           />
           <Input
             value={draftTargetType}
             onChange={(event) => setDraftTargetType(event.target.value)}
             aria-label="Filter audit target type"
             placeholder="Target type"
+            disabled={audit.isDenied}
           />
           <Select
             value={draftOutcome ?? 'all'}
+            disabled={audit.isDenied}
             onValueChange={(value) => setDraftOutcome(
               value === 'all' ? undefined : value as AuthAuditOutcome,
             )}
@@ -117,11 +121,13 @@ export function ControlPlaneAuditViewer({
               <SelectItem value="failed">Failed</SelectItem>
             </SelectContent>
           </Select>
-          <Button type="submit" disabled={audit.isLoading}>Apply filters</Button>
+          <Button type="submit" disabled={audit.isDenied || audit.isLoading}>
+            Apply filters
+          </Button>
           <Button
             type="button"
             variant="outline"
-            disabled={audit.isExporting || audit.isLoading}
+            disabled={audit.isDenied || audit.isExporting || audit.isLoading}
             onClick={() => { void exportVisibleQuery(); }}
           >
             {audit.isExporting ? 'Exporting…' : 'Export NDJSON'}

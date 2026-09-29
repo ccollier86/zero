@@ -211,8 +211,11 @@ emitFrontendCode(FRONTEND_OBS_CODES.FRONTEND_RENDER_ERROR, {
 });
 ```
 
-`ErrorBoundary`, hydration failures, and notification receipt failures already
-emit through this frontend boundary.
+`ErrorBoundary`, hydration failures, notification receipt failures, public auth
+configuration loads, and packaged auth control-plane actions already emit
+through this frontend boundary. Auth action events carry stable action/error
+codes; proof-bearing and identity-sensitive flows use code-only reporting so
+request values cannot be copied into the event.
 
 ## Auth Operational Failure Contract
 
@@ -298,6 +301,7 @@ The first implementation routes these platform paths through the sink:
 - router layout-config import failures
 - frontend ErrorBoundary and hydration failures
 - frontend auth session redirects
+- frontend public-auth-config retrieval and auth control-plane action failures
 - frontend notification receipt failures
 - frontend storage management action failures
 - migrator library logs

@@ -29,6 +29,7 @@ import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
 import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
 import { Loader } from '#zero/components/animate-ui/icons/loader';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
+import { AuthConfigLoadState } from './auth-config-load-state';
 
 export interface UserPropertiesFormProps {
   title?: string;
@@ -47,7 +48,8 @@ export function UserPropertiesForm({
   className,
 }: UserPropertiesFormProps) {
   const { user, setProperty, getProperties } = useAuth();
-  const { config } = useAuthConfig();
+  const authConfig = useAuthConfig();
+  const { config } = authConfig;
   const fields = React.useMemo(
     () => Object.values(config?.userProperties ?? {}),
     [config],
@@ -90,6 +92,16 @@ export function UserPropertiesForm({
   }
 
   if (!user) return null;
+  if (!config) {
+    return (
+      <AuthConfigLoadState
+        state={authConfig}
+        loadingMessage="Loading account settings…"
+        unavailableMessage="Account settings could not be loaded."
+        className={className}
+      />
+    );
+  }
   if (fields.length === 0) return <>{emptyState}</>;
 
   return (

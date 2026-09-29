@@ -32,6 +32,7 @@ import {
   type PendingConfirmation,
 } from './tenant-member-management-parts';
 import { TenantMemberRoleEditor } from './tenant-member-role-editor';
+import { AuthConfigLoadState } from './auth-config-load-state';
 
 export { rolesForTenantKind } from './tenant-role-scope';
 export {
@@ -51,7 +52,8 @@ export interface TenantMemberManagementProps {
 /** Capability-aware, mode-neutral active-tenant member management. */
 export function TenantMemberManagement(props: TenantMemberManagementProps) {
   const auth = useAuth();
-  const publicConfig = useAuthConfig().config;
+  const authConfig = useAuthConfig();
+  const publicConfig = authConfig.config;
   const configuredTenantSingular = publicConfig?.tenancy?.terminology?.singular
     ?? 'organization';
   const tenantSingular = auth.activeTenant?.kind === 'administration'
@@ -67,6 +69,7 @@ export function TenantMemberManagement(props: TenantMemberManagementProps) {
       {...props}
       tenantSingular={tenantSingular}
       tenantKind={auth.activeTenant?.kind ?? null}
+      configState={authConfig}
     />
   );
 }
@@ -79,9 +82,11 @@ function TenantMemberManagementScope({
   onActorSessionInvalidated,
   tenantSingular,
   tenantKind,
+  configState,
 }: TenantMemberManagementProps & {
   tenantSingular: string;
   tenantKind: 'administration' | 'organization' | null;
+  configState: ReturnType<typeof useAuthConfig>;
 }) {
   const resolvedTitle = title ?? `${capitalize(tenantSingular)} members`;
   const resolvedDescription = description
@@ -308,6 +313,11 @@ function TenantMemberManagementScope({
         )}
       </CardHeader>
       <CardContent className="space-y-4 pt-5">
+        <AuthConfigLoadState
+          state={configState}
+          loadingMessage="Loading organization terminology…"
+          unavailableMessage="Organization terminology could not be loaded. Member controls remain available with default labels."
+        />
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Input
             ref={searchInputRef}

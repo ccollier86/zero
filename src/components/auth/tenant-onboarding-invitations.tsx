@@ -102,11 +102,13 @@ export function TenantInvitationComposer({
 export function ManualInvitationToken({
   token,
   headingId,
+  copyError = null,
   onCopy,
   onDismiss,
 }: {
   token: string;
   headingId: string;
+  copyError?: string | null;
   onCopy(): void;
   onDismiss(): void;
 }) {
@@ -126,6 +128,11 @@ export function ManualInvitationToken({
         <Button type="button" variant="outline" onClick={onCopy}>Copy</Button>
         <Button type="button" variant="ghost" onClick={onDismiss}>Dismiss</Button>
       </div>
+      {copyError && (
+        <p className="mt-2 text-sm" role="alert">
+          {copyError} Select Copy to try again.
+        </p>
+      )}
     </section>
   );
 }

@@ -22,6 +22,8 @@ import { AnimateIcon } from '#zero/components/animate-ui/icons/icon';
 import { CircleCheck } from '#zero/components/animate-ui/icons/circle-check';
 import { CircleX } from '#zero/components/animate-ui/icons/circle-x';
 import { Loader } from '#zero/components/animate-ui/icons/loader';
+import { AuthConfigLoadState } from './auth-config-load-state';
+import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
 
 export interface MFAManagementPanelProps {
   className?: string;
@@ -44,7 +46,8 @@ export function MFAManagementPanel({ className }: MFAManagementPanelProps) {
       setMethods(result?.methods ?? []);
       setRequired(result?.required ?? false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load MFA settings');
+      reportAuthUiError('listMfaMethods', err);
+      setError(getAuthDisplayMessage(err, 'Failed to load MFA settings'));
     } finally {
       setLoading(false);
     }
@@ -60,7 +63,7 @@ export function MFAManagementPanel({ className }: MFAManagementPanelProps) {
     ? mfaConfig.availableMethods
     : mfaConfig?.methods ?? ['totp', 'email'];
 
-  if (enrolling) {
+  if (enrolling && authConfig.config) {
     return (
       <MFAEnrollmentForm
         methods={availableMethods}
@@ -83,6 +86,12 @@ export function MFAManagementPanel({ className }: MFAManagementPanelProps) {
           description="Protect this account with an email code or authenticator app."
         />
 
+        <AuthConfigLoadState
+          state={authConfig}
+          loadingMessage="Loading MFA policy…"
+          unavailableMessage="MFA policy could not be loaded."
+        />
+
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground" role="status" aria-live="polite">
             <AnimateIcon animate loop>
@@ -91,11 +100,16 @@ export function MFAManagementPanel({ className }: MFAManagementPanelProps) {
             Loading MFA settings
           </div>
         ) : error ? (
-          <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-xs text-destructive" role="alert">
-            <AnimateIcon animate>
-              <CircleX size={16} />
-            </AnimateIcon>
-            {error}
+          <div className="flex flex-col gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-xs text-destructive sm:flex-row sm:items-center sm:justify-between" role="alert">
+            <span className="flex items-start gap-2">
+              <AnimateIcon animate>
+                <CircleX size={16} />
+              </AnimateIcon>
+              {error}
+            </span>
+            <Button type="button" size="sm" variant="outline" onClick={() => void reload()}>
+              Retry
+            </Button>
           </div>
         ) : activeMethods.length > 0 ? (
           <div className="space-y-2">
@@ -116,11 +130,11 @@ export function MFAManagementPanel({ className }: MFAManagementPanelProps) {
               </div>
             ))}
           </div>
-        ) : (
+        ) : authConfig.config ? (
           <div className="rounded-md border border-border/75 bg-muted/25 px-3 py-2 text-sm text-muted-foreground">
             MFA is not enabled for this account.
           </div>
-        )}
+        ) : null}
 
         {mfaConfig?.enabled && mfaConfig.ready && activeMethods.length === 0 && (
           <Button type="button" className="w-full" onClick={() => setEnrolling(true)}>

@@ -3,6 +3,7 @@ import { Elysia } from 'elysia';
 
 import { createEmailRuntime } from '../email/runtime';
 import { MemoryEventStore, OBS_CODES } from '../observability';
+import type { PlatformEvent } from '../observability/types';
 import { ZERO_OBSERVABILITY_RUNTIME } from '../runtime/service-keys';
 import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 import { createReactiveDB } from '../sync/reactive-db';
@@ -11,6 +12,50 @@ import { AuthRuntime } from './auth-runtime';
 import { createAuthPlugin } from './auth.plugin';
 
 describe('standalone auth startup readiness', () => {
+  test('installs the profile guard before synchronous reconciliation observers run', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    const appRuntime = new ZeroAppRuntime('auth-reentrant-profile-observer');
+    let runtime: AuthRuntime | null = null;
+    let observedRegistryInitialization = false;
+    let profileAssertionError: unknown;
+    appRuntime.set(ZERO_OBSERVABILITY_RUNTIME, {
+      sink: {
+        emit(event: PlatformEvent) {
+          if (event.code !== OBS_CODES.AUTH_AUTHORIZATION_REGISTRY_INITIALIZED.code) {
+            return;
+          }
+          observedRegistryInitialization = true;
+          try {
+            runtime!.assertCurrentProfile();
+          } catch (error) {
+            profileAssertionError = error;
+          }
+        },
+      },
+      store: null,
+      config: { console: false },
+    });
+    runtime = new AuthRuntime(
+      { db, runtime: appRuntime },
+      resolveAuthBehaviorConfig({ bootstrap: 'public' }),
+      {
+        runtime: appRuntime,
+        getEmailRuntime: () => createEmailRuntime(false, {}),
+        getPlatformTokenService: () => null,
+      },
+    );
+
+    try {
+      await runtime.start();
+      expect(observedRegistryInitialization).toBeTrue();
+      expect(profileAssertionError).toBeUndefined();
+    } finally {
+      await runtime.stop();
+      db.dispose();
+      await appRuntime.dispose();
+    }
+  });
+
   test('rejects async lazy runtime dependencies through the app-local invariant boundary', async () => {
     const events = new MemoryEventStore({ maxEvents: 20 });
     const appRuntime = new ZeroAppRuntime('auth-async-runtime-dependencies');

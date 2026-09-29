@@ -10,6 +10,7 @@ import type {
   AuthTenantDomainDnsChallenge,
   AuthTenantDomainReleaseResult,
 } from './auth-domain-types';
+import { reportAuthClientActionFailure } from './auth-action-observability';
 import { useAuth } from './auth-hooks';
 import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
 import { useClientMaybe } from './client-context';
@@ -462,6 +463,11 @@ function replaceClaim(
 }
 
 function errorMessage(cause: unknown): string {
+  reportAuthClientActionFailure(
+    'verifiedDomainOnboarding',
+    cause,
+    { codeOnly: true },
+  );
   return cause instanceof Error ? cause.message : 'Verified-domain request failed';
 }
 

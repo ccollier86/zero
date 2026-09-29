@@ -1503,6 +1503,16 @@ registration or password-reset actions, hide unavailable actions, keep
 first-admin bootstrap visible, and surface lifecycle errors such as
 `PASSWORD_CHANGE_REQUIRED`, `EMAIL_VERIFICATION_REQUIRED`, and
 `ACCOUNT_SUSPENDED` with UI-friendly messages.
+`useAuthConfig()` backs these decisions with one immutable, client-scoped
+snapshot shared by every consumer. Its `unknown`, `loading`, `ready`, and
+`error` statuses distinguish unavailable policy from a disabled capability;
+`reload()` forces a fenced retry and resolves through state even when the
+request fails. Imperative code can call `useAuth().getConfig()` against the
+same shared controller; it publishes the same safe snapshot but rejects the
+original current transport, server, or validation failure. A successful
+`useAuth().register()` invalidates and reloads the snapshot because completing
+first-admin bootstrap can change registration policy. The projection only
+guides UI; server checks remain authoritative.
 `RegisterForm` automatically switches to a check-your-email state when account
 verification is required and exposes a resend action. When MFA policy is
 optional and ready, it can request MFA setup during signup; required/admin MFA

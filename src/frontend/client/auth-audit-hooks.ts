@@ -8,6 +8,7 @@ import type {
   AuthAuditQuery,
   AuthAuditReadScope,
 } from './auth-audit-types';
+import { reportAuthClientActionFailure } from './auth-action-observability';
 import { AuthClientError } from './auth-errors';
 import { useAuth } from './auth-hooks';
 import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
@@ -242,5 +243,6 @@ function mergeEvents(
 }
 
 function errorMessage(cause: unknown): string {
+  reportAuthClientActionFailure('controlPlaneAudit', cause);
   return cause instanceof Error ? cause.message : 'Authorization audit request failed.';
 }

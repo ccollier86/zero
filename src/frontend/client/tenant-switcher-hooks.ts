@@ -30,6 +30,8 @@ export function useTenantSwitcher(): UseTenantSwitcherResult {
   const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const auth = useAuth();
   const authConfig = useAuthConfig();
+  const configUnavailable = authConfig.config === null
+    && authConfig.error !== null;
   const scopeStable = isTenantAdministrationScopeStable(auth.sessionTransition);
   const enabled = authConfig.config?.tenancy?.mode === 'multi'
     && auth.isAuthenticated
@@ -91,23 +93,41 @@ export function useTenantSwitcher(): UseTenantSwitcherResult {
   ]);
 
   const hasCurrentData = enabled && loadedBoundaryRevision === boundaryRevision;
+  const capabilityAvailable = authConfig.config?.tenancy?.mode === 'multi'
+    || (configUnavailable && auth.activeTenant !== null);
+  const visibleActiveTenant = enabled || configUnavailable
+    ? auth.activeTenant
+    : null;
 
   return {
-    isAvailable: authConfig.config?.tenancy?.mode === 'multi',
+    isAvailable: capabilityAvailable,
     terminology: authConfig.config?.tenancy?.terminology ?? {
       singular: 'organization',
       plural: 'organizations',
     },
     tenants: hasCurrentData ? tenants : [],
-    activeTenant: enabled ? auth.activeTenant : null,
-    isLoading: enabled && (!hasCurrentData || isLoading),
+    activeTenant: visibleActiveTenant,
+    isLoading: (authConfig.config === null && authConfig.isLoading)
+      || (enabled && (!hasCurrentData || isLoading)),
     isSwitching: hasCurrentData && isSwitching,
-    error: hasCurrentData ? error : null,
+    error: configUnavailable
+      ? authConfig.error
+      : hasCurrentData ? error : null,
     reload: React.useCallback(() => {
+      if (authConfig.config === null && authConfig.error !== null) {
+        void authConfig.reload();
+        return;
+      }
       if (boundaryFence.isCurrent(boundaryRevision)) {
         setRevision((value) => value + 1);
       }
-    }, [boundaryFence, boundaryRevision]),
+    }, [
+      authConfig.config,
+      authConfig.error,
+      authConfig.reload,
+      boundaryFence,
+      boundaryRevision,
+    ]),
     switchTenant: React.useCallback(async (tenantId: string) => {
       if (!auth.activeTenant || tenantId === auth.activeTenant.tenantId) return;
       const operationBoundary = boundaryRevision;

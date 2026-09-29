@@ -34,12 +34,12 @@ interface InvitationDelivery {
 export function PlatformAdministrationInvitations({
   administration,
   delivery,
-  onError,
+  onError = () => {},
   onAnnounce,
 }: {
   administration: UsePlatformAdministrationResult;
   delivery?: InvitationDelivery;
-  onError(value: string | null): void;
+  onError?(value: string | null): void;
   onAnnounce(value: string): void;
 }) {
   const capabilities = administration.config?.capabilities;
@@ -47,22 +47,30 @@ export function PlatformAdministrationInvitations({
   const simpleMode = administration.config?.authorization === 'simple';
   const invitationRoles = platformAssignableRoles(roles);
   const roleLabels = createAuthRoleLabelMap(roles);
+  const resolvedDelivery = delivery ?? administration.invitationDelivery ?? undefined;
   const availableModes = [
-    ...(delivery?.email ? ['email' as const] : []),
-    ...(delivery?.manual ? ['manual' as const] : []),
+    ...(resolvedDelivery?.email ? ['email' as const] : []),
+    ...(resolvedDelivery?.manual ? ['manual' as const] : []),
   ];
   const [email, setEmail] = React.useState('');
-  const [mode, setMode] = React.useState<'email' | 'manual'>(delivery?.default ?? 'manual');
+  const [mode, setMode] = React.useState<'email' | 'manual'>(
+    resolvedDelivery?.default ?? 'manual',
+  );
   const [selectedRoles, setSelectedRoles] = React.useState<string[]>([]);
   const [manualToken, setManualToken] = React.useState<string | null>(null);
+  const [clipboardError, setClipboardError] = React.useState<string | null>(null);
   const [confirmation, setConfirmation] = React.useState<AuthTenantInvitation | null>(null);
   const [revokeError, setRevokeError] = React.useState<string | null>(null);
+  const [localError, setLocalError] = React.useState<string | null>(null);
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const headingRef = React.useRef<HTMLHeadingElement | null>(null);
+  const id = React.useId();
+  const manualInvitationHeadingId = `${id}-manual-invitation`;
+  const invitationsHeadingId = `${id}-pending-invitations`;
   const effectiveMode = availableModes.includes(mode)
     ? mode
-    : availableModes.includes(delivery?.default ?? 'manual')
-      ? delivery?.default ?? 'manual'
+    : availableModes.includes(resolvedDelivery?.default ?? 'manual')
+      ? resolvedDelivery?.default ?? 'manual'
       : availableModes[0] ?? mode;
 
   React.useEffect(() => {
@@ -82,7 +90,9 @@ export function PlatformAdministrationInvitations({
     const roles = platformRoleSelection(selectedRoles);
     if (!nextEmail || !roles) return;
     onError(null);
+    setLocalError(null);
     setManualToken(null);
+    setClipboardError(null);
     try {
       const result = await administration.issueInvitation({
         email: nextEmail,
@@ -93,7 +103,9 @@ export function PlatformAdministrationInvitations({
       if ('token' in result) setManualToken(result.token);
       onAnnounce(`Created platform administration invitation for ${nextEmail}`);
     } catch (cause) {
-      onError(message(cause));
+      const error = message(cause);
+      setLocalError(error);
+      onError(error);
     }
   }
 
@@ -101,6 +113,7 @@ export function PlatformAdministrationInvitations({
     if (!confirmation) return;
     const pending = confirmation;
     onError(null);
+    setLocalError(null);
     setRevokeError(null);
     try {
       await administration.revokeInvitation(pending.invitationId);
@@ -110,23 +123,37 @@ export function PlatformAdministrationInvitations({
     } catch (cause) {
       const error = message(cause);
       setRevokeError(error);
+      setLocalError(error);
       onError(error);
     }
   }
 
   async function copyToken() {
     if (!manualToken) return;
+    setClipboardError(null);
     try {
       await writeAuthClipboardText(manualToken);
       onAnnounce('Copied one-time platform administration invitation token');
     } catch (cause) {
-      onError(message(cause));
+      const error = message(cause);
+      setClipboardError(error);
+      onError(error);
     }
   }
 
+  const isMutating = administration.isMutatingInvitations;
+  const ready = !administration.isLoadingConfig
+    && !administration.configError
+    && administration.config !== null
+    && administration.invitationPolicyStatus === 'enabled'
+    && capabilities?.canReadInvitations === true
+    && !administration.isLoadingInvitations;
+
   return (
     <Card className="overflow-hidden" aria-busy={
-      administration.isLoading || administration.isMutating
+      administration.isLoadingConfig
+      || administration.isLoadingInvitations
+      || isMutating
     }>
       <CardHeader className="border-b border-border/70">
         <CardTitle>Administrator invitations</CardTitle>
@@ -136,7 +163,48 @@ export function PlatformAdministrationInvitations({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 pt-5">
-        {capabilities?.canManageInvitations && availableModes.length > 0 && (
+        {administration.isLoadingConfig ? (
+          <InvitationStatus>Loading platform administration settings…</InvitationStatus>
+        ) : administration.configError ? (
+          <InvitationError
+            error={administration.configError}
+            disabled={administration.isLoadingConfig}
+            onRetry={administration.reloadConfig}
+          />
+        ) : !administration.config ? (
+          <InvitationStatus>Platform administration is unavailable for this session.</InvitationStatus>
+        ) : administration.invitationPolicyStatus === 'unresolved' ? (
+          <InvitationStatus live>Loading administrator invitation settings…</InvitationStatus>
+        ) : administration.invitationConfigError ? (
+          <InvitationError
+            error={`Invitation settings could not be loaded: ${administration.invitationConfigError}`}
+            disabled={administration.isLoadingInvitations}
+            onRetry={administration.reloadInvitations}
+          />
+        ) : administration.invitationsEnabled === false ? (
+          <InvitationStatus>Administrator invitations are disabled by auth policy.</InvitationStatus>
+        ) : !capabilities?.canReadInvitations ? (
+          <InvitationStatus>Your administration role cannot view invitations.</InvitationStatus>
+        ) : administration.isLoadingInvitations ? (
+          <InvitationStatus live>Loading administrator invitations…</InvitationStatus>
+        ) : ready ? (
+          <>
+        {(confirmation === null && (localError ?? administration.invitationsError)) && (
+          <InvitationError
+            error={(localError ?? administration.invitationsError)!}
+            disabled={administration.isLoadingInvitations || isMutating}
+            onRetry={() => {
+              setLocalError(null);
+              administration.reloadInvitations();
+            }}
+          />
+        )}
+        {capabilities.canManageInvitations && availableModes.length === 0 && (
+          <InvitationStatus>
+            No administrator-invitation delivery method is enabled.
+          </InvitationStatus>
+        )}
+        {capabilities.canManageInvitations && availableModes.length > 0 && (
           <form className="space-y-3" onSubmit={issue}>
             <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_auto]">
               <Input
@@ -146,10 +214,10 @@ export function PlatformAdministrationInvitations({
                 placeholder="administrator@example.com"
                 aria-label="Administrator invitation email"
                 autoComplete="email"
-                disabled={administration.isMutating}
+                disabled={isMutating}
                 required
               />
-              <Select value={effectiveMode} onValueChange={(value) => setMode(value as typeof mode)} disabled={administration.isMutating}>
+              <Select value={effectiveMode} onValueChange={(value) => setMode(value as typeof mode)} disabled={isMutating}>
                 <SelectTrigger aria-label="Administrator invitation delivery">
                   <SelectValue />
                 </SelectTrigger>
@@ -159,7 +227,7 @@ export function PlatformAdministrationInvitations({
                 </SelectContent>
               </Select>
               <Button type="submit" disabled={
-                administration.isMutating || !email.trim() || selectedRoles.length === 0
+                isMutating || !email.trim() || selectedRoles.length === 0
               }>
                 Invite administrator
               </Button>
@@ -169,9 +237,9 @@ export function PlatformAdministrationInvitations({
                 roles={invitationRoles}
                 selected={selectedRoles}
                 simple={simpleMode}
-                disabled={administration.isMutating}
-                legend="Invited platform roles"
-                selectLabel="Invitation platform roles"
+                disabled={isMutating}
+                legend="Invited administration roles"
+                selectLabel="Administration roles for invitation"
                 actionContext="for administrator invitation"
                 onChange={setSelectedRoles}
               />
@@ -180,21 +248,29 @@ export function PlatformAdministrationInvitations({
         )}
 
         {manualToken && (
-          <section className="rounded-md border border-warning/40 bg-warning/10 p-4" aria-labelledby="zero-platform-manual-invitation">
-            <h3 id="zero-platform-manual-invitation" className="font-semibold">Copy this one-time invitation token now</h3>
+          <section className="rounded-md border border-warning/40 bg-warning/10 p-4" aria-labelledby={manualInvitationHeadingId}>
+            <h3 id={manualInvitationHeadingId} className="font-semibold">Copy this one-time invitation token now</h3>
             <p className="mt-1 text-sm">Zero will not show this token again. Share it only with the intended administrator.</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
               <Input readOnly value={manualToken} aria-label="One-time administrator invitation token" />
               <Button type="button" variant="outline" onClick={() => void copyToken()}>Copy</Button>
-              <Button type="button" variant="ghost" onClick={() => setManualToken(null)}>Dismiss</Button>
+              <Button type="button" variant="ghost" onClick={() => {
+                setManualToken(null);
+                setClipboardError(null);
+              }}>Dismiss</Button>
             </div>
+            {clipboardError && (
+              <p role="alert" className="mt-2 text-sm text-destructive">
+                {clipboardError}
+              </p>
+            )}
           </section>
         )}
 
         <AlertDialog
           open={confirmation !== null}
           onOpenChange={(open) => {
-            if (!open && !administration.isMutating) {
+            if (!open && !isMutating) {
               setConfirmation(null);
               setRevokeError(null);
             }
@@ -219,22 +295,18 @@ export function PlatformAdministrationInvitations({
                 </div>
               )}
               <AlertDialogFooter>
-                <AlertDialogCancel asChild><Button type="button" variant="outline" disabled={administration.isMutating}>Cancel</Button></AlertDialogCancel>
-                <Button type="button" variant="destructive" disabled={administration.isMutating} onClick={() => void revoke()}>
-                  {administration.isMutating ? 'Revoking…' : 'Revoke invitation'}
+                <AlertDialogCancel asChild><Button type="button" variant="outline" disabled={isMutating}>Cancel</Button></AlertDialogCancel>
+                <Button type="button" variant="destructive" disabled={isMutating} onClick={() => void revoke()}>
+                  {isMutating ? 'Revoking…' : 'Revoke invitation'}
                 </Button>
               </AlertDialogFooter>
             </AlertDialogContent>
           )}
         </AlertDialog>
 
-        {administration.isLoading ? (
-          <p role="status" aria-live="polite" className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">Loading administrator invitations…</p>
-        ) : !capabilities?.canReadInvitations ? (
-          <p className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">Your administration role cannot view invitations.</p>
-        ) : (
-          <section aria-labelledby="zero-platform-invitations-heading">
-            <h3 ref={headingRef} tabIndex={-1} id="zero-platform-invitations-heading" className="text-sm font-semibold">Pending invitations</h3>
+          {(!administration.invitationsError || administration.invitations.length > 0) && (
+          <section aria-labelledby={invitationsHeadingId}>
+            <h3 ref={headingRef} tabIndex={-1} id={invitationsHeadingId} className="text-sm font-semibold">Pending invitations</h3>
             <div className="mt-3 divide-y rounded-md border">
               {administration.invitations.length === 0 ? (
                 <p className="p-4 text-sm text-muted-foreground">No pending administrator invitations.</p>
@@ -248,7 +320,7 @@ export function PlatformAdministrationInvitations({
                     <Badge variant="outline">{invitation.status}</Badge>
                     {invitation.roles.map((role) => <Badge key={role} variant="outline">{authRoleLabel(role, roleLabels)}</Badge>)}
                     {capabilities.canManageInvitations && invitation.status === 'pending' && (
-                      <Button type="button" size="sm" variant="outline" aria-haspopup="dialog" disabled={administration.isMutating} onClick={(event) => {
+                      <Button type="button" size="sm" variant="outline" aria-haspopup="dialog" disabled={isMutating} onClick={(event) => {
                         triggerRef.current = event.currentTarget;
                         setRevokeError(null);
                         setConfirmation(invitation);
@@ -264,9 +336,52 @@ export function PlatformAdministrationInvitations({
               </Button>
             )}
           </section>
+          )}
+          </>
+        ) : (
+          <InvitationStatus>Administrator invitations are unavailable for this session.</InvitationStatus>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function InvitationStatus({
+  children,
+  live = false,
+}: {
+  children: React.ReactNode;
+  live?: boolean;
+}) {
+  return (
+    <p
+      {...(live ? { role: 'status', 'aria-live': 'polite' as const } : {})}
+      className="rounded-md border border-dashed p-6 text-sm text-muted-foreground"
+    >
+      {children}
+    </p>
+  );
+}
+
+function InvitationError({
+  error,
+  disabled,
+  onRetry,
+}: {
+  error: string;
+  disabled: boolean;
+  onRetry(): void;
+}) {
+  return (
+    <div
+      role="alert"
+      className="flex flex-col gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between"
+    >
+      <span>{error}</span>
+      <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
   );
 }
 

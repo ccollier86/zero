@@ -5,11 +5,13 @@ import type {
   AuthSessionResult,
   AuthTenantSelectionRequiredResult,
 } from '../../frontend/client/auth-client';
+import { reportAuthClientActionFailure } from '../../frontend/client/auth-action-observability';
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
 import { Button } from '#zero/components/ui/button';
 import { AuthHeader } from '#zero/components/auth/auth-header';
 import { cn } from '#zero/lib/utils';
 import { nextAuthRovingRadioIndex } from './auth-roving-radio';
+import { AuthConfigLoadState } from './auth-config-load-state';
 
 export interface TenantSelectionFormProps {
   result: AuthTenantSelectionRequiredResult;
@@ -32,17 +34,11 @@ export function TenantSelectionForm(props: TenantSelectionFormProps) {
 
 function ConfiguredTenantSelectionForm(props: TenantSelectionFormProps) {
   const authConfig = useAuthConfig();
-  if (authConfig.isLoading) {
-    return (
-      <p role="status" aria-live="polite" className={cn('text-sm text-muted-foreground', props.className)}>
-        Loading access options…
-      </p>
-    );
-  }
   return (
     <TenantSelectionFlow
       key={tenantSelectionFlowKey(props.result)}
       {...props}
+      configState={authConfig}
       terminology={authConfig.config?.tenancy?.terminology ?? {
         singular: 'organization',
         plural: 'organizations',
@@ -57,7 +53,10 @@ function TenantSelectionFlow({
   onBack,
   className,
   terminology,
-}: TenantSelectionFormProps) {
+  configState,
+}: TenantSelectionFormProps & {
+  configState?: ReturnType<typeof useAuthConfig>;
+}) {
   const { selectTenant } = useAuth();
   const tenantSingular = terminology?.singular ?? 'organization';
   const tenantPlural = terminology?.plural ?? 'organizations';
@@ -86,6 +85,11 @@ function TenantSelectionFlow({
       );
       if (mounted.current && session) onSuccess?.(session);
     } catch (cause) {
+      reportAuthClientActionFailure(
+        'tenantSelection',
+        cause,
+        { codeOnly: true },
+      );
       if (mounted.current) {
         setError(cause instanceof Error
           ? cause.message
@@ -123,6 +127,14 @@ function TenantSelectionFlow({
         title={`Choose your ${tenantSingular}`}
         description={`Select the ${tenantSingular} to use for this session. You can switch later.`}
       />
+
+      {configState && (
+        <AuthConfigLoadState
+          state={configState}
+          loadingMessage="Loading organization terminology…"
+          unavailableMessage="Organization terminology could not be loaded. You can still choose from the available access list."
+        />
+      )}
 
       <div
         className="grid gap-2"

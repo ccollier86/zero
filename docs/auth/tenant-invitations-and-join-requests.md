@@ -373,9 +373,59 @@ attach tokens themselves.
 
 ## Hooks and Packaged UI
 
-`useTenantOnboardingAdministration()` loads active-tenant configuration,
-invitations, and join requests according to actor capabilities. It exposes
-issue/revoke/approve/deny mutations and never accepts a tenant ID.
+`useTenantOnboardingAdministration()` coordinates independently fenced
+protected-config, invitation, and join-request slices for the active tenant.
+The protected configuration loads for every enabled, stable tenant scope even
+when public invitation and join-request policy is unresolved or disabled; the
+feature slices wait for both that configuration and explicit public enablement.
+The hook exposes issue/revoke/approve/deny mutations and never accepts a tenant
+ID.
+
+Invitation and join-request panels are independent slices. Custom UI should
+use `isLoadingInvitations`, `isMutatingInvitations`, `invitationsError`, and
+`reloadInvitations()` for invitation work, and `isLoadingJoinRequests`,
+`isMutatingJoinRequests`, `joinRequestsError`, and `reloadJoinRequests()` for
+review work. One slice can remain usable when the other transport fails.
+`isInvitationsPermissionDenied` and `isJoinRequestsPermissionDenied` identify
+a server authorization denial separately from transport/configuration errors.
+
+Public policy is explicit: `authConfigStatus` and `authConfigError` describe
+the shared `/auth/config` load, while nullable `invitationsEnabled` and
+`joinRequestsEnabled` remain `null` until it settles. Disabled features issue
+no list or mutation request. A public-config failure fails both public-policy
+capabilities closed. Each panel retry first repairs a failed public or
+protected-config prerequisite; when those prerequisites are healthy, retrying
+one feature does not discard the successfully loaded sibling slice.
+`isLoading`, `isMutating`, `error`, and `reload()` remain aggregate
+compatibility fields.
+
+The exact result contract is grouped this way:
+
+| Concern | Data and paging | Mutation methods |
+|---|---|---|
+| protected tenant configuration | `config`, `isLoadingConfig`, `configError`, `isConfigPermissionDenied`, `reloadConfig()` | none |
+| invitation administration | `invitations`, `invitationPage`, `isLoadingInvitations`, `isLoadingMoreInvitations`, `invitationsError`, `isInvitationsPermissionDenied`, `loadMoreInvitations()`, `reloadInvitations()` | `issueInvitation()`, `revokeInvitation()`; `isMutatingInvitations` covers only these writes |
+| join-request review | `joinRequests`, `joinRequestPage`, `isLoadingJoinRequests`, `isLoadingMoreJoinRequests`, `joinRequestsError`, `isJoinRequestsPermissionDenied`, `loadMoreJoinRequests()`, `reloadJoinRequests()` | `approveJoinRequest()`, `denyJoinRequest()`; `isMutatingJoinRequests` covers only these writes |
+| public policy | `authConfigStatus`, `authConfigError`, `invitationsEnabled`, `joinRequestsEnabled` | retry occurs through either slice reload while public config is failed |
+
+The returned `config` is the independently loaded current protected
+configuration. It can be `null` while the scope changes or its protected read
+is loading, denied, or failed, but disabling both public onboarding features
+does not suppress that protected read. Permission denial is not a transport
+error: the matching `is*PermissionDenied` field becomes true and its slice
+error remains null. `isConfigPermissionDenied` therefore describes the
+protected configuration request, while the two feature permission fields
+describe their own server capability or request. Administration Organizations
+never load customer join requests.
+
+The compatibility `isLoading` and `isMutating` values are logical ORs of the
+protected and feature slices. Aggregate `error` reports public-policy failure
+first and otherwise the current protected-config, invitation, or join-request
+error. `reload()` retries the failed public or protected prerequisite when one
+exists; otherwise it reloads both feature slices. A panel-specific retry uses
+the same prerequisite ordering before retrying only that feature. New UI can
+use `reloadConfig()` or the narrower feature retry for the surface the user
+selected.
 
 Zero packages three accessible components:
 
@@ -403,6 +453,42 @@ import {
 account creation, composes the packaged MFA continuation UI, and automatically
 finishes deferred acceptance with the post-MFA onboarding proof.
 `TenantJoinRequestForm` preserves the non-enumerating response contract.
+
+When an unauthenticated visitor must sign in, both public forms provide a safe
+return path by default. The server render and initial hydration use `/login`;
+after the browser mounts, the href becomes:
+
+```txt
+/login?redirect=<current pathname + search + hash>
+```
+
+Only a same-origin local current URL is synthesized into that value. External
+origins, protocol-relative paths, backslashes, control characters, malformed
+escapes, and ambiguous decoded paths are ignored. Existing query parameters on
+the login URL are retained, and an existing `redirect` parameter is never
+wrapped again. The components do not log either the current URL or an
+invitation token carried by it.
+
+`signInHref` remains the host escape hatch. When supplied, its value is rendered
+byte-for-byte and Zero does not append a return path or otherwise reinterpret
+it. This preserves custom routers, a host-owned continuation, and intentional
+external identity-provider entry points:
+
+```tsx
+<TenantInvitationForm
+  token={searchParams.token ?? ''}
+  signInHref="/sign-in?mode=sso&redirect=%2Faccept-invitation"
+/>
+```
+
+The host login route owns the final redirect after authentication. It must
+accept `redirect` only as a same-origin absolute path beginning with one slash,
+reject protocol-relative/external URLs, backslashes, and control characters,
+and fall back to a known local route when validation fails. It should preserve
+the complete local search and fragment so invitation acceptance or a join
+request can resume on the app-owned public page. Treat that URL as sensitive
+operational data: do not include it or invitation tokens in logs or telemetry.
+
 `TenantOnboardingManagement` adapts to delivery capabilities and actor
 permissions, shows a manual token only in transient component state, and
 provides retained-request re-admission controls. In advanced authorization it

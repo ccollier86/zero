@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { UsePlatformAdministrationResult } from '../../frontend/client/platform-administration-hooks';
+import {
+  assertPlatformAdministrationInvitationsEnabled,
+  resolvePlatformAdministrationInvitationPolicy,
+  type UsePlatformAdministrationResult,
+} from '../../frontend/client/platform-administration-hooks';
 import {
   PlatformAdministrationManagement,
   PlatformAdministrationMembers,
@@ -51,13 +55,15 @@ describe('packaged platform administration components', () => {
       onAnnounce() {},
     }));
 
-    expect(markup).toContain('id="zero-platform-administration-members"');
+    expect(markup).toContain('aria-labelledby=');
     expect(markup).toContain('tabindex="-1"');
     expect(markup).toContain('aria-label="Existing administrator account email"');
     expect(markup).toContain('type="submit"');
     expect(markup).toContain('Add administrator');
     expect(markup).toContain('aria-haspopup="dialog"');
-    expect(markup).toContain('aria-controls="platform-roles-member-2"');
+    expect(markup).toContain('aria-controls=');
+    expect(markup).not.toContain('zero-platform-administration-members');
+    expect(markup).not.toContain('platform-roles-member-2');
     expect(markup).toContain('Transfer ownership');
     expect(markup).toContain('flex-col');
     expect(markup).toContain('sm:flex-row');
@@ -74,7 +80,7 @@ describe('packaged platform administration components', () => {
 
     expect(markup).toContain('aria-label="Administrator invitation email"');
     expect(markup).toContain('aria-label="Administrator invitation delivery"');
-    expect(markup).toContain('Invited platform roles');
+    expect(markup).toContain('Invited administration roles');
     expect(markup).toContain('aria-haspopup="dialog"');
     expect(markup).toContain('Pending invitations');
     expect(markup).toContain('platform-administrator MFA policy');
@@ -96,22 +102,22 @@ describe('packaged platform administration components', () => {
       onError() {}, onAnnounce() {},
     }));
 
-    expect(simpleMembers).toContain('aria-label="New administrator roles"');
+    expect(simpleMembers).toContain('aria-label="Administration roles for new administrator"');
     expect(simpleMembers).toContain('role="combobox"');
-    expect(simpleInvitations).toContain('aria-label="Invitation platform roles"');
+    expect(simpleInvitations).toContain('aria-label="Administration roles for invitation"');
     expect(simpleInvitations).toContain('role="combobox"');
     expect(advanced).toContain('role="checkbox"');
   });
 
   test('exposes loading state through a polite live region and disables mutation controls', () => {
-    const loading = state({ isLoading: true });
+    const loading = state({ isLoadingMembers: true, isLoading: true });
     const loadingMarkup = renderToStaticMarkup(createElement(PlatformAdministrationMembers, {
       administration: loading,
       onError() {},
       onAnnounce() {},
     }));
     const mutatingMarkup = renderToStaticMarkup(createElement(PlatformAdministrationInvitations, {
-      administration: state({ isMutating: true }),
+      administration: state({ isMutatingInvitations: true, isMutating: true }),
       delivery: { email: true, manual: true, default: 'manual' },
       onError() {},
       onAnnounce() {},
@@ -122,6 +128,150 @@ describe('packaged platform administration components', () => {
     expect(loadingMarkup).toContain('Loading platform administrators');
     expect(mutatingMarkup).toContain('aria-busy="true"');
     expect(mutatingMarkup).toContain('disabled=""');
+  });
+
+  test('keeps member controls usable when public invitation config fails closed', () => {
+    const administration = state({
+      invitationPolicyStatus: 'error',
+      invitationsEnabled: false,
+      invitationDelivery: null,
+      invitationConfigError: 'Failed to load auth config',
+      error: 'Failed to load auth config',
+    });
+    const members = renderToStaticMarkup(createElement(PlatformAdministrationMembers, {
+      administration,
+      onAnnounce() {},
+    }));
+    const invitations = renderToStaticMarkup(createElement(PlatformAdministrationInvitations, {
+      administration,
+      onAnnounce() {},
+    }));
+
+    expect(members).toContain('Grace Hopper');
+    expect(members).toContain('Add administrator');
+    expect(members).not.toContain('Failed to load auth config');
+    expect(invitations).toContain('Invitation settings could not be loaded');
+    expect(invitations).toContain('Retry');
+    expect(invitations).not.toContain('Invite administrator');
+  });
+
+  test('keeps invitation controls and data when the member slice fails', () => {
+    const administration = state({ membersError: 'Member transport failed' });
+    const members = renderToStaticMarkup(createElement(PlatformAdministrationMembers, {
+      administration,
+      onAnnounce() {},
+    }));
+    const invitations = renderToStaticMarkup(createElement(PlatformAdministrationInvitations, {
+      administration,
+      onAnnounce() {},
+    }));
+
+    expect(members).toContain('Member transport failed');
+    expect(members).toContain('Retry');
+    expect(members).toContain('Grace Hopper');
+    expect(invitations).toContain('invitee@example.test');
+    expect(invitations).toContain('Invite administrator');
+    expect(invitations).not.toContain('Member transport failed');
+  });
+
+  test('distinguishes disabled, denied, and transport-failed invitation slices', () => {
+    const disabled = renderToStaticMarkup(createElement(PlatformAdministrationInvitations, {
+      administration: state({
+        invitationPolicyStatus: 'disabled',
+        invitationsEnabled: false,
+        invitationDelivery: { email: false, manual: false, default: 'manual' },
+      }),
+      onAnnounce() {},
+    }));
+    const denied = renderToStaticMarkup(createElement(PlatformAdministrationInvitations, {
+      administration: state({
+        config: {
+          ...state().config!,
+          capabilities: {
+            ...state().config!.capabilities,
+            canReadInvitations: false,
+            canManageInvitations: false,
+          },
+        },
+      }),
+      delivery: { email: true, manual: true, default: 'manual' },
+      onAnnounce() {},
+    }));
+    const failed = renderToStaticMarkup(createElement(PlatformAdministrationInvitations, {
+      administration: state({ invitationsError: 'Invitation transport failed' }),
+      delivery: { email: true, manual: true, default: 'manual' },
+      onAnnounce() {},
+    }));
+
+    expect(disabled).toContain('disabled by auth policy');
+    expect(disabled).not.toContain('Invite administrator');
+    expect(denied).toContain('role cannot view invitations');
+    expect(denied).not.toContain('Invite administrator');
+    expect(failed).toContain('Invitation transport failed');
+    expect(failed).toContain('Retry');
+    expect(failed).toContain('invitee@example.test');
+  });
+
+  test('does not report an empty result when an initial slice read fails', () => {
+    const members = renderToStaticMarkup(createElement(PlatformAdministrationMembers, {
+      administration: state({
+        members: [],
+        memberPage: null,
+        membersError: 'Member transport failed',
+      }),
+      onAnnounce() {},
+    }));
+    const invitations = renderToStaticMarkup(createElement(
+      PlatformAdministrationInvitations,
+      {
+        administration: state({
+          invitations: [],
+          invitationPage: null,
+          invitationsError: 'Invitation transport failed',
+        }),
+        onAnnounce() {},
+      },
+    ));
+
+    expect(members).toContain('Member transport failed');
+    expect(members).not.toContain('No administration members match this view');
+    expect(invitations).toContain('Invitation transport failed');
+    expect(invitations).not.toContain('No pending administrator invitations');
+  });
+
+  test('keeps unresolved invitation policy nullable and fails config errors closed', () => {
+    const unresolved = resolvePlatformAdministrationInvitationPolicy('loading', null, null);
+    const failed = resolvePlatformAdministrationInvitationPolicy(
+      'error',
+      null,
+      'Config transport failed',
+    );
+
+    expect(unresolved).toEqual({
+      status: 'unresolved', enabled: null, delivery: null, error: null,
+    });
+    expect(failed).toEqual({
+      status: 'error', enabled: false, delivery: null, error: 'Config transport failed',
+    });
+    expect(() => assertPlatformAdministrationInvitationsEnabled(unresolved)).toThrow(
+      'configuration must load',
+    );
+    expect(() => assertPlatformAdministrationInvitationsEnabled({
+      status: 'enabled',
+      enabled: true,
+      delivery: { email: true, manual: true, default: 'manual' },
+      error: null,
+    })).not.toThrow();
+    try {
+      assertPlatformAdministrationInvitationsEnabled(failed);
+      throw new Error('Expected invitation policy guard to fail');
+    } catch (cause) {
+      expect(cause).toMatchObject({
+        code: 'TENANT_INVITATIONS_UNAVAILABLE',
+        status: 404,
+        body: null,
+      });
+    }
   });
 
   test('never offers customer roles in protected administration assignment controls', () => {
@@ -177,6 +327,21 @@ function state(
       createdAt: 1, updatedAt: 1, acceptedAt: null, revokedAt: null,
     }],
     invitationPage: { limit: 25, count: 1, hasMore: false, nextCursor: null },
+    isLoadingConfig: false,
+    configError: null,
+    reloadConfig() {},
+    isLoadingMembers: false,
+    isMutatingMembers: false,
+    membersError: null,
+    reloadMembers() {},
+    invitationPolicyStatus: 'enabled',
+    invitationsEnabled: true,
+    invitationDelivery: { email: true, manual: true, default: 'manual' },
+    invitationConfigError: null,
+    isLoadingInvitations: false,
+    isMutatingInvitations: false,
+    invitationsError: null,
+    reloadInvitations() {},
     isLoading: false,
     isLoadingMoreMembers: false,
     isLoadingMoreInvitations: false,

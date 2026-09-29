@@ -1494,6 +1494,34 @@ credential-free `useAuthorizationScopeBoundary().key`, reject older callbacks,
 and hide or freeze scope-sensitive UI while `ready` is false. This key is cache
 metadata, never server authority or a substitute for route/resource policy.
 
+Public auth configuration has two intentional caller contracts on one shared,
+client-scoped controller. `useAuthConfig().reload()` is nonthrowing and reports
+failure through the reactive `status`/`error` snapshot. Imperative
+`useAuth().getConfig()` publishes the same safe state but rejects the original
+current transport, server, or response-validation failure; a superseded
+imperative refresh rejects with `AbortError`. Do not wrap the imperative action
+as a nullable failure or bypass the controller with a separate request.
+
+For custom Administration Organization UI, treat
+`usePlatformAdministration()` as independent protected-config, member, and
+invitation slices. Prefer `isLoadingConfig`/`configError`/`reloadConfig()`,
+`isLoadingMembers`/`membersError`/`reloadMembers()`, and
+`isLoadingInvitations`/`invitationsError`/`reloadInvitations()` over the
+compatibility aggregate fields. Public invitation policy is separately
+explicit through `invitationPolicyStatus`, nullable `invitationsEnabled`,
+`invitationDelivery`, and `invitationConfigError`.
+
+`useTenantOnboardingAdministration()` likewise has independent protected
+config, invitation, and join-request slices. Protected config always loads for
+an enabled stable tenant scope and exposes `isLoadingConfig`,
+`isConfigPermissionDenied`, `configError`, and `reloadConfig()`, even when both
+public features are disabled. Use each feature's own loading, loading-more,
+mutation, permission-denied, error, and retry fields. `authConfigStatus`,
+`authConfigError`, and the nullable `invitationsEnabled`/
+`joinRequestsEnabled` fields describe the separate public-policy prerequisite.
+The aggregate fields remain only for backward compatibility; these hooks do
+not perform one aggregate list request.
+
 Generic hooks:
 
 - `useAsyncAction`

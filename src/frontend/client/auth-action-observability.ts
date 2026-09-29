@@ -4,10 +4,23 @@ import { OBS_CODES } from '../../observability/codes';
 import { AuthClientError } from './auth-errors';
 import { emitFrontendCode } from './observability';
 
+export interface ReportAuthClientActionFailureOptions {
+  /**
+   * Omit the raw error when a flow handles bearer proofs or user-entered
+   * identity data that could be repeated in an upstream error message.
+   * Stable action and error codes remain available for operational grouping.
+   */
+  codeOnly?: boolean;
+}
+
 /** Report one current-scope auth control-plane failure without request data. */
-export function reportAuthClientActionFailure(action: string, error: unknown): void {
+export function reportAuthClientActionFailure(
+  action: string,
+  error: unknown,
+  options: ReportAuthClientActionFailureOptions = {},
+): void {
   emitFrontendCode(OBS_CODES.FRONTEND_AUTH_ACTION_FAILED, {
-    error,
+    ...(options.codeOnly ? {} : { error }),
     metadata: {
       action,
       code: authClientErrorCode(error),

@@ -22,6 +22,7 @@ import {
 } from '#zero/components/ui/select';
 import { cn } from '#zero/lib/utils';
 import { writeAuthClipboardText } from './auth-clipboard';
+import { AuthConfigLoadState } from './auth-config-load-state';
 
 export interface TenantDomainManagementProps {
   className?: string;
@@ -32,7 +33,18 @@ export interface TenantDomainManagementProps {
 /** Active-tenant exact-domain claim and request-onboarding controls. */
 export function TenantDomainManagement(props: TenantDomainManagementProps) {
   const auth = useAuth();
-  const config = useAuthConfig().config;
+  const authConfig = useAuthConfig();
+  const config = authConfig.config;
+  if (!config) {
+    return (
+      <AuthConfigLoadState
+        state={authConfig}
+        loadingMessage="Loading domain onboarding policy…"
+        unavailableMessage="Domain onboarding policy could not be loaded."
+        className={props.className}
+      />
+    );
+  }
   const enabled = config?.tenancy?.onboarding?.verifiedDomains?.enabled === true;
   if (!enabled) return null;
   const tenantSingular = config?.tenancy?.terminology?.singular ?? 'organization';

@@ -24,7 +24,11 @@ import type {
   DomainAdmissionIdentityBinding,
   VerifiedDomainOnboardingService,
 } from './verified-domain-service';
-import { authAuditRequestFromRequest } from './auth-audit-service';
+import {
+  authAuditActorFromContext,
+  authAuditRequestFromRequest,
+} from './auth-audit-service';
+import type { AuthAuditActor } from './auth-audit-types';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
 import {
   captureAuthSessionIdentityAdmission,
@@ -250,6 +254,8 @@ export function createAuthVerifiedDomainPlugin(
         continuation: body.continuation,
         identity: binding,
         consumeIdentity: identity.consume,
+        auditActor: identity.auditActor,
+        auditRequest: authAuditRequestFromRequest(request),
       });
       set.status = 202;
       return result;
@@ -349,7 +355,7 @@ async function resolveAdmissionIdentity(
   request: Request,
   binding: DomainAdmissionIdentityBinding,
   rawContinuation: string | undefined,
-): Promise<{ consume?: () => boolean }> {
+): Promise<{ consume?: () => boolean; auditActor: AuthAuditActor }> {
   const store = requireStore(config);
   if (binding.identityKind === 'session') {
     if (rawContinuation) throw invalidProof();
@@ -359,7 +365,10 @@ async function resolveAdmissionIdentity(
       || store.getAuthGeneration(auth.userId) !== binding.authGeneration) {
       throw invalidProof();
     }
-    return { consume: captureAuthSessionIdentityProof(auth, tokens) };
+    return {
+      consume: captureAuthSessionIdentityProof(auth, tokens),
+      auditActor: authAuditActorFromContext(auth),
+    };
   }
   if (!rawContinuation) throw invalidProof();
   const continuations = config.getTenantSessionService()?.continuations;
@@ -377,6 +386,10 @@ async function resolveAdmissionIdentity(
       record.userId,
       record.authGeneration,
     ),
+    auditActor: {
+      userId: record.userId,
+      provenance: 'authenticated-request',
+    },
   };
 }
 

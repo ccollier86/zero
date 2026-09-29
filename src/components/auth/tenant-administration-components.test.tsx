@@ -10,12 +10,16 @@ import {
   tenantConfirmationAnnouncement,
 } from './tenant-member-management';
 import {
+  canSubmitTenantInvitation,
   filterJoinRequestApprovalRoles,
   JoinRequestRow,
   joinRequestApprovalParams,
   resolveInvitationDeliveryMode,
+  resolveTenantOnboardingSectionPhase,
+  tenantOnboardingManagementBoundaryKey,
   tenantOnboardingConfirmationAnnouncement,
   TenantOnboardingManagement,
+  TenantOnboardingSectionStatus,
   TenantOnboardingTenantKindNotice,
 } from './tenant-onboarding-management';
 import {
@@ -58,6 +62,161 @@ describe('packaged tenant administration components', () => {
     );
   });
 
+  test('distinguishes onboarding policy, permission, and transport states per section', () => {
+    expect(resolveTenantOnboardingSectionPhase({
+      authConfigStatus: 'loading',
+      featureEnabled: null,
+      isLoading: true,
+      isTenantConfigLoading: false,
+      hasTenantConfig: false,
+      tenantConfigError: null,
+      isTenantConfigPermissionDenied: false,
+      isPermissionDenied: false,
+      error: null,
+    })).toBe('loading-policy');
+    expect(resolveTenantOnboardingSectionPhase({
+      authConfigStatus: 'error',
+      featureEnabled: false,
+      isLoading: false,
+      isTenantConfigLoading: false,
+      hasTenantConfig: false,
+      tenantConfigError: null,
+      isTenantConfigPermissionDenied: false,
+      isPermissionDenied: false,
+      error: null,
+    })).toBe('config-error');
+    expect(resolveTenantOnboardingSectionPhase({
+      authConfigStatus: 'ready',
+      featureEnabled: false,
+      isLoading: false,
+      isTenantConfigLoading: false,
+      hasTenantConfig: false,
+      tenantConfigError: null,
+      isTenantConfigPermissionDenied: false,
+      isPermissionDenied: false,
+      error: null,
+    })).toBe('disabled');
+    expect(resolveTenantOnboardingSectionPhase({
+      authConfigStatus: 'ready',
+      featureEnabled: true,
+      isLoading: false,
+      isTenantConfigLoading: false,
+      hasTenantConfig: false,
+      tenantConfigError: 'protected config failed',
+      isTenantConfigPermissionDenied: false,
+      isPermissionDenied: false,
+      error: null,
+    })).toBe('tenant-config-error');
+    expect(resolveTenantOnboardingSectionPhase({
+      authConfigStatus: 'ready',
+      featureEnabled: true,
+      isLoading: false,
+      isTenantConfigLoading: false,
+      hasTenantConfig: false,
+      tenantConfigError: null,
+      isTenantConfigPermissionDenied: false,
+      isPermissionDenied: false,
+      error: null,
+    })).toBe('loading');
+    expect(resolveTenantOnboardingSectionPhase({
+      authConfigStatus: 'ready',
+      featureEnabled: true,
+      isLoading: false,
+      isTenantConfigLoading: false,
+      hasTenantConfig: false,
+      tenantConfigError: null,
+      isTenantConfigPermissionDenied: true,
+      isPermissionDenied: false,
+      error: null,
+    })).toBe('permission-denied');
+    expect(resolveTenantOnboardingSectionPhase({
+      authConfigStatus: 'ready',
+      featureEnabled: true,
+      isLoading: false,
+      isTenantConfigLoading: false,
+      hasTenantConfig: true,
+      tenantConfigError: null,
+      isTenantConfigPermissionDenied: false,
+      isPermissionDenied: true,
+      error: null,
+    })).toBe('permission-denied');
+    expect(resolveTenantOnboardingSectionPhase({
+      authConfigStatus: 'ready',
+      featureEnabled: true,
+      isLoading: false,
+      isTenantConfigLoading: false,
+      hasTenantConfig: true,
+      tenantConfigError: null,
+      isTenantConfigPermissionDenied: false,
+      isPermissionDenied: false,
+      error: 'request timed out',
+    })).toBe('transport-error');
+
+    const disabled = renderOnboardingStatus(
+      'disabled',
+      'Invitations are disabled by application policy.',
+    );
+    const denied = renderOnboardingStatus(
+      'permission-denied',
+      'Invitation history is not available for your current role.',
+    );
+    const configError = renderOnboardingStatus(
+      'config-error',
+      'Invitation policy could not be loaded.',
+      'private upstream config body',
+    );
+    const transportError = renderOnboardingStatus(
+      'transport-error',
+      'request timed out',
+      'request timed out',
+    );
+    const tenantConfigError = renderOnboardingStatus(
+      'tenant-config-error',
+      'Tenant onboarding access could not be loaded.',
+      'feature transport detail',
+    );
+
+    expect(disabled).toContain('disabled by application policy');
+    expect(disabled).not.toContain('Retry');
+    expect(denied).toContain('not available for your current role');
+    expect(denied).not.toContain('Retry');
+    expect(configError).toContain('Invitation policy could not be loaded.');
+    expect(configError).toContain('Retry');
+    expect(configError).not.toContain('private upstream config body');
+    expect(transportError).toContain('request timed out');
+    expect(transportError).toContain('Retry');
+    expect(tenantConfigError).toContain(
+      'Tenant onboarding access could not be loaded.',
+    );
+    expect(tenantConfigError).not.toContain('feature transport detail');
+  });
+
+  test('resets sensitive onboarding UI at authorization-family boundaries', () => {
+    expect(tenantOnboardingManagementBoundaryKey(
+      'authorization-family-a',
+      'user-a',
+      'tenant-a',
+    )).not.toBe(tenantOnboardingManagementBoundaryKey(
+      'authorization-family-b',
+      'user-a',
+      'tenant-a',
+    ));
+  });
+
+  test('keeps clipboard failure beside the retained one-time token', () => {
+    const markup = renderToStaticMarkup(createElement(ManualInvitationToken, {
+      token: 'secret-token',
+      headingId: 'manual-token',
+      copyError: 'Clipboard is unavailable.',
+      onCopy() {},
+      onDismiss() {},
+    }));
+
+    expect(markup).toContain('Clipboard is unavailable.');
+    expect(markup).toContain('Select Copy to try again.');
+    expect(markup).toContain('value="secret-token"');
+  });
+
   test('never submits a stale invitation delivery mode after config loads', () => {
     expect(resolveInvitationDeliveryMode('manual', 'email', ['email'])).toBe(
       'email',
@@ -68,6 +227,16 @@ describe('packaged tenant administration components', () => {
     expect(
       resolveInvitationDeliveryMode('manual', 'email', ['email', 'manual']),
     ).toBe('manual');
+  });
+
+  test('requires projected invitation roles for every submission path', () => {
+    expect(canSubmitTenantInvitation('person@example.com', true, [])).toBe(false);
+    expect(canSubmitTenantInvitation(
+      'person@example.com',
+      true,
+      ['member'],
+    )).toBe(true);
+    expect(canSubmitTenantInvitation('person@example.com', false, [])).toBe(true);
   });
 
   test('submits only projected selectable roles and never overrides fixed/default policy', () => {
@@ -371,6 +540,36 @@ describe('packaged tenant administration components', () => {
     })).toBe('Denied request from ada@example.test');
   });
 });
+
+function renderOnboardingStatus(
+  phase: Exclude<
+    ReturnType<typeof resolveTenantOnboardingSectionPhase>,
+    'ready'
+  >,
+  expectedMessage: string,
+  transportError: string | null = null,
+): string {
+  const markup = renderToStaticMarkup(createElement(
+    TenantOnboardingSectionStatus,
+    {
+      headingId: 'invitation-status',
+      title: 'Invitations',
+      phase,
+      loadingPolicyMessage: 'Loading invitation policy…',
+      loadingMessage: 'Loading invitations…',
+      configErrorMessage: 'Invitation policy could not be loaded.',
+      tenantConfigErrorMessage: 'Tenant onboarding access could not be loaded.',
+      disabledMessage: 'Invitations are disabled by application policy.',
+      permissionDeniedMessage:
+        'Invitation history is not available for your current role.',
+      transportError,
+      busy: false,
+      onRetry() {},
+    },
+  ));
+  expect(markup).toContain(expectedMessage);
+  return markup;
+}
 
 function tenantRole(key: string, grantable: boolean) {
   return {

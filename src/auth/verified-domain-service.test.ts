@@ -163,6 +163,38 @@ describe('verified-domain onboarding service', () => {
     )).toHaveLength(0);
   });
 
+  test('does not disguise unrelated unique-constraint failures as domain conflicts', async () => {
+    const harness = await createHarness();
+    const owner = await createUser(
+      harness,
+      'unique-classification-owner',
+      'owner@platform.com',
+    );
+    const tenant = harness.tenancy.createTenant({
+      name: 'Unique Classification',
+      slug: 'unique-classification',
+      ownerUserId: owner.userId,
+    });
+    harness.db.exec(`
+      CREATE TRIGGER reject_domain_policy_with_unrelated_unique
+      BEFORE INSERT ON _auth_tenant_domain_policies
+      BEGIN
+        SELECT RAISE(ABORT, 'UNIQUE constraint failed: _auth_audit_events.event_id');
+      END
+    `);
+
+    expect(() => harness.domains.createClaim({
+      tenantId: tenant.tenant.tenantId,
+      domain: 'unique-classification.com',
+      assertCurrentAuthority: authority(
+        owner.userId,
+        tenant.ownerMembership.membershipId,
+        tenant.tenant.tenantId,
+      ),
+    })).toThrow('UNIQUE constraint failed: _auth_audit_events.event_id');
+    expect(rowCount(harness.db, '_auth_tenant_domain_claims')).toBe(0);
+  });
+
   test('authorizes challenge rotation before revealing claim existence', async () => {
     const events: string[] = [];
     const harness = await createHarness({
@@ -680,6 +712,8 @@ describe('verified-domain onboarding service', () => {
     expect(harness.domains.inspectAdmissionIdentity(completed.continuation)).toEqual(identity);
     expect(rowCount(harness.db, '_auth_tenant_join_requests')).toBe(0);
     expect(rowCount(harness.db, '_auth_domain_join_request_provenance')).toBe(0);
+    expect(rowCount(harness.db, `_auth_audit_events
+      WHERE action = 'tenant.join-request-submitted'`)).toBe(0);
     expect(emittedCodes.filter(
       (code) => code === OBS_CODES.AUTH_DOMAIN_JOIN_REQUESTED.code,
     )).toHaveLength(0);
@@ -687,6 +721,15 @@ describe('verified-domain onboarding service', () => {
     const admitted = harness.domains.admit({
       continuation: completed.continuation,
       identity: identity!,
+      auditActor: {
+        userId: applicant.userId,
+        sessionId: 'session_domain_admission',
+        provenance: 'authenticated-request',
+      },
+      auditRequest: {
+        requestId: 'request_domain_admission',
+        correlationId: 'correlation_domain_admission',
+      },
     });
     expect(admitted.request).toMatchObject({
       status: 'pending',
@@ -705,6 +748,23 @@ describe('verified-domain onboarding service', () => {
       claim_id: created.claim.claimId,
       domain: 'acme.com',
       request_role_key: 'member',
+    });
+    expect(harness.db.prepare(`SELECT action, actor_user_id, actor_session_id,
+      request_id, correlation_id, target_id, metadata_json
+      FROM _auth_audit_events
+      WHERE action = 'tenant.join-request-submitted' AND target_id = ?`).get(
+      admitted.request.joinRequestId,
+    )).toEqual({
+      action: 'tenant.join-request-submitted',
+      actor_user_id: applicant.userId,
+      actor_session_id: 'session_domain_admission',
+      request_id: 'request_domain_admission',
+      correlation_id: 'correlation_domain_admission',
+      target_id: admitted.request.joinRequestId,
+      metadata_json: JSON.stringify({
+        'verified-domain': true,
+        reopened: false,
+      }),
     });
 
     expect(() => harness.onboarding.approveJoinRequest({
@@ -943,6 +1003,15 @@ describe('verified-domain onboarding service', () => {
     expect(fixed).toMatchObject({
       requestRevision: generic.requestRevision + 1,
       approvalPolicy: { roleSelection: { mode: 'fixed' } },
+    });
+    expect(harness.db.prepare(`SELECT metadata_json FROM _auth_audit_events
+      WHERE action = 'tenant.join-request-submitted' AND target_id = ?
+        AND metadata_json LIKE '%verified-domain%'
+    `).get(generic.joinRequestId)).toEqual({
+      metadata_json: JSON.stringify({
+        'verified-domain': true,
+        reopened: false,
+      }),
     });
 
     expect(() => harness.onboarding.approveJoinRequest({

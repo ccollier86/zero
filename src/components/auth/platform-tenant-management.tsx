@@ -25,6 +25,7 @@ import { Input } from '#zero/components/ui/input';
 import { Label } from '#zero/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#zero/components/ui/select';
 import { cn } from '#zero/lib/utils';
+import { AuthConfigLoadState } from './auth-config-load-state';
 
 export interface PlatformTenantManagementProps {
   className?: string;
@@ -36,7 +37,8 @@ export interface PlatformTenantManagementProps {
 /** Customer-organization directory and lifecycle controls for platform operators. */
 export function PlatformTenantManagement(props: PlatformTenantManagementProps) {
   const auth = useAuth();
-  const config = useAuthConfig().config;
+  const authConfig = useAuthConfig();
+  const config = authConfig.config;
   const terminology = resolveTenantTerminology(config?.tenancy?.terminology);
   const boundary = JSON.stringify([
     auth.user?.userId ?? null,
@@ -48,6 +50,7 @@ export function PlatformTenantManagement(props: PlatformTenantManagementProps) {
       key={boundary}
       {...props}
       terminology={terminology}
+      configState={authConfig}
     />
   );
 }
@@ -58,7 +61,11 @@ function PlatformTenantManagementScope({
   title,
   description,
   terminology,
-}: PlatformTenantManagementProps & { terminology: TenantTerminology }) {
+  configState,
+}: PlatformTenantManagementProps & {
+  terminology: TenantTerminology;
+  configState: ReturnType<typeof useAuthConfig>;
+}) {
   const auth = useAuth();
   const { singular, plural } = terminology;
   const resolvedTitle = title ?? `Customer ${plural}`;
@@ -92,6 +99,17 @@ function PlatformTenantManagementScope({
   const confirmationTriggerRef = React.useRef<HTMLButtonElement | null>(null);
   const directoryHeadingRef = React.useRef<HTMLHeadingElement | null>(null);
   const detailHeadingRef = React.useRef<HTMLHeadingElement | null>(null);
+  const id = React.useId();
+  const createHeadingId = `${id}-create`;
+  const nameId = `${id}-name`;
+  const slugId = `${id}-slug`;
+  const ownerEmailId = `${id}-owner-email`;
+  const ownerEmailDescriptionId = `${id}-owner-email-description`;
+  const directoryHeadingId = `${id}-directory`;
+  const tenantDetailId = (tenantId: string) => `${id}-tenant-detail-${tenantId}`;
+  const tenantDetailHeadingId = (tenantId: string) => (
+    `${id}-tenant-detail-heading-${tenantId}`
+  );
 
   React.useEffect(() => {
     const timeout = setTimeout(() => setSearch(searchInput.trim()), 250);
@@ -169,6 +187,11 @@ function PlatformTenantManagementScope({
         <Badge className="w-fit" variant="secondary">Administration scope</Badge>
       </CardHeader>
       <CardContent className="space-y-5 pt-5">
+        <AuthConfigLoadState
+          state={configState}
+          loadingMessage="Loading customer organization terminology…"
+          unavailableMessage="Customer organization terminology could not be loaded. Tenant controls remain available with default labels."
+        />
         {error && (
           <div role="alert" className="flex flex-col gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
             <span>{error}</span>
@@ -180,20 +203,24 @@ function PlatformTenantManagementScope({
         )}
 
         {capabilities?.canCreateTenants && (
-          <form onSubmit={createTenant} className="space-y-3 rounded-md border border-border/70 p-4" aria-labelledby="zero-create-customer-organization">
-            <h3 id="zero-create-customer-organization" className="text-sm font-semibold">Create customer {singular}</h3>
+          <form onSubmit={createTenant} className="space-y-3 rounded-md border border-border/70 p-4" aria-labelledby={createHeadingId}>
+            <h3 id={createHeadingId} className="text-sm font-semibold">Create customer {singular}</h3>
             <div className="grid gap-3 md:grid-cols-3">
               <div className="grid gap-1.5">
-                <Label htmlFor="zero-platform-tenant-name">{capitalize(singular)} name</Label>
-                <Input id="zero-platform-tenant-name" value={name} onChange={(event) => setName(event.target.value)} disabled={directory.isMutating} autoComplete="organization" required />
+                <Label htmlFor={nameId}>{capitalize(singular)} name</Label>
+                <Input id={nameId} value={name} onChange={(event) => setName(event.target.value)} disabled={directory.isMutating} autoComplete="organization" required />
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="zero-platform-tenant-slug">Slug (optional)</Label>
-                <Input id="zero-platform-tenant-slug" value={slug} onChange={(event) => setSlug(event.target.value)} disabled={directory.isMutating} placeholder="acme-health" />
+                <Label htmlFor={slugId}>Slug (optional)</Label>
+                <Input id={slugId} value={slug} onChange={(event) => setSlug(event.target.value)} disabled={directory.isMutating} placeholder="acme-health" />
               </div>
               <div className="grid gap-1.5">
-                <Label htmlFor="zero-platform-owner-email">Initial owner email</Label>
-                <Input id="zero-platform-owner-email" type="email" value={ownerEmail} onChange={(event) => setOwnerEmail(event.target.value)} disabled={directory.isMutating} autoComplete="email" required />
+                <Label htmlFor={ownerEmailId}>Initial owner email</Label>
+                <Input id={ownerEmailId} type="email" value={ownerEmail} onChange={(event) => setOwnerEmail(event.target.value)} disabled={directory.isMutating} autoComplete="email" aria-describedby={ownerEmailDescriptionId} required />
+                <p id={ownerEmailDescriptionId} className="text-xs text-muted-foreground">
+                  The owner must already have an active Zero identity. Create it in
+                  global user management first if needed.
+                </p>
               </div>
             </div>
             <Button type="submit" disabled={directory.isMutating || !name.trim() || !ownerEmail.trim()}>
@@ -258,21 +285,21 @@ function PlatformTenantManagementScope({
         ) : !capabilities?.canReadTenants ? (
           <p className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">Your administration role cannot view customer {plural}.</p>
         ) : (
-          <section aria-labelledby="zero-customer-organizations-heading">
-            <h3 ref={directoryHeadingRef} tabIndex={-1} id="zero-customer-organizations-heading" className="text-sm font-semibold">{capitalize(singular)} directory</h3>
+          <section aria-labelledby={directoryHeadingId}>
+            <h3 ref={directoryHeadingRef} tabIndex={-1} id={directoryHeadingId} className="text-sm font-semibold">{capitalize(singular)} directory</h3>
             <div className="mt-3 divide-y divide-border/70 rounded-md border border-border/80">
               {directory.tenants.length === 0 ? (
                 <p className="p-6 text-sm text-muted-foreground">No customer {plural} match this view.</p>
               ) : directory.tenants.map((tenant) => (
                 <div key={tenant.tenantId} className={cn('p-4', selectedTenantId === tenant.tenantId && 'bg-accent/35')}>
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <button type="button" className="min-w-0 text-left" aria-expanded={selectedTenantId === tenant.tenantId} aria-controls={`zero-platform-tenant-detail-${tenant.tenantId}`} onClick={() => toggleTenantDetail(tenant.tenantId)}>
+                    <button type="button" className="min-w-0 text-left" aria-expanded={selectedTenantId === tenant.tenantId} aria-controls={tenantDetailId(tenant.tenantId)} onClick={() => toggleTenantDetail(tenant.tenantId)}>
                       <span className="block truncate text-sm font-semibold">{tenant.name}</span>
                       <span className="block truncate text-xs text-muted-foreground">{tenant.slug} · {tenant.memberCount} members · {tenant.activeMemberCount} active</span>
                     </button>
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge variant={tenant.status === 'active' ? 'secondary' : tenant.status === 'suspended' ? 'warning' : 'outline'}>{tenant.status}</Badge>
-                      <Button type="button" size="xs" variant="outline" aria-expanded={selectedTenantId === tenant.tenantId} aria-controls={`zero-platform-tenant-detail-${tenant.tenantId}`} onClick={() => toggleTenantDetail(tenant.tenantId)}>
+                      <Button type="button" size="xs" variant="outline" aria-expanded={selectedTenantId === tenant.tenantId} aria-controls={tenantDetailId(tenant.tenantId)} onClick={() => toggleTenantDetail(tenant.tenantId)}>
                         {selectedTenantId === tenant.tenantId ? 'Hide members' : 'View members'}
                       </Button>
                       {capabilities.canManageTenants && tenant.status !== 'archived' && (
@@ -285,8 +312,8 @@ function PlatformTenantManagementScope({
                     </div>
                   </div>
                   {selectedTenantId === tenant.tenantId && (
-                    <section id={`zero-platform-tenant-detail-${tenant.tenantId}`} className="mt-4 rounded-md border bg-background p-4" aria-labelledby={`zero-platform-tenant-detail-heading-${tenant.tenantId}`}>
-                      <h4 ref={detailHeadingRef} tabIndex={-1} id={`zero-platform-tenant-detail-heading-${tenant.tenantId}`} className="text-sm font-semibold">Members of {tenant.name}</h4>
+                    <section id={tenantDetailId(tenant.tenantId)} className="mt-4 rounded-md border bg-background p-4" aria-labelledby={tenantDetailHeadingId(tenant.tenantId)}>
+                      <h4 ref={detailHeadingRef} tabIndex={-1} id={tenantDetailHeadingId(tenant.tenantId)} className="text-sm font-semibold">Members of {tenant.name}</h4>
                       <p className="mt-1 text-xs text-muted-foreground">Read-only cross-tenant visibility. Switch into this {singular} for customer-scoped work.</p>
                       <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                         <Input type="search" value={memberSearchInput} onChange={(event) => setMemberSearchInput(event.target.value)} aria-label={`Search members of ${tenant.name}`} placeholder="Search members" />

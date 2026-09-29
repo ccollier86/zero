@@ -1,9 +1,9 @@
 'use client';
 
 import * as React from 'react';
-import { reportAuthClientActionFailure } from './auth-action-observability';
 import type {
   AuthTenantAdministrationConfig,
+  AuthTenantDenyJoinRequestParams,
   AuthTenantInvitation,
   AuthTenantInvitationPage,
   AuthTenantInvitationStatus,
@@ -12,10 +12,9 @@ import type {
   AuthTenantJoinRequest,
   AuthTenantJoinRequestPage,
   AuthTenantJoinRequestStatus,
-  AuthTenantDenyJoinRequestParams,
   AuthTenantReviewJoinRequestParams,
 } from './auth-types';
-import { useAuth } from './auth-hooks';
+import { useAuth, useAuthConfig, type AuthConfigStatus } from './auth-hooks';
 import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
 import { useClientMaybe } from './client-context';
 import type { InternalClient } from './sdk';
@@ -24,6 +23,21 @@ import {
   TenantAdministrationBoundaryFence,
   tenantAdministrationBoundaryKey,
 } from './tenant-administration-boundary';
+import {
+  projectTenantOnboardingAggregateError,
+  resolveTenantOnboardingFeaturePolicy,
+  retryTenantOnboardingSection,
+} from './tenant-onboarding-slice-core';
+import { useTenantOnboardingConfigSlice } from './tenant-onboarding-config-slice';
+import { useTenantOnboardingInvitationSlice } from './tenant-onboarding-invitation-slice';
+import { useTenantOnboardingJoinRequestSlice } from './tenant-onboarding-join-request-slice';
+
+export {
+  projectTenantOnboardingSliceSettlement,
+  resolveTenantOnboardingFeaturePolicy,
+  type TenantOnboardingSliceProjection,
+  type TenantOnboardingSliceSettlement,
+} from './tenant-onboarding-slice-core';
 
 export interface UseTenantOnboardingAdministrationOptions {
   enabled?: boolean;
@@ -38,12 +52,32 @@ export interface UseTenantOnboardingAdministrationResult {
   joinRequests: AuthTenantJoinRequest[];
   invitationPage: AuthTenantInvitationPage['page'] | null;
   joinRequestPage: AuthTenantJoinRequestPage['page'] | null;
+  /** Aggregate compatibility fields. Prefer the precise slice fields below. */
   isLoading: boolean;
   isLoadingMoreInvitations: boolean;
   isLoadingMoreJoinRequests: boolean;
   isMutating: boolean;
   error: string | null;
+  /** Public onboarding policy remains unknown until `/auth/config` settles. */
+  authConfigStatus: AuthConfigStatus;
+  authConfigError: string | null;
+  isLoadingConfig: boolean;
+  isConfigPermissionDenied: boolean;
+  configError: string | null;
+  invitationsEnabled: boolean | null;
+  joinRequestsEnabled: boolean | null;
+  isLoadingInvitations: boolean;
+  isLoadingJoinRequests: boolean;
+  isMutatingInvitations: boolean;
+  isMutatingJoinRequests: boolean;
+  isInvitationsPermissionDenied: boolean;
+  isJoinRequestsPermissionDenied: boolean;
+  invitationsError: string | null;
+  joinRequestsError: string | null;
   reload(): void;
+  reloadConfig(): void;
+  reloadInvitations(): void;
+  reloadJoinRequests(): void;
   loadMoreInvitations(): Promise<void>;
   loadMoreJoinRequests(): Promise<void>;
   issueInvitation(
@@ -60,7 +94,7 @@ export interface UseTenantOnboardingAdministrationResult {
   ): Promise<AuthTenantJoinRequest>;
 }
 
-/** Invitation issuance and retained join-request review for the active tenant. */
+/** Invitation and join-request administration for the active tenant. */
 export function useTenantOnboardingAdministration(
   options: UseTenantOnboardingAdministrationOptions = {},
 ): UseTenantOnboardingAdministrationResult {
@@ -68,15 +102,29 @@ export function useTenantOnboardingAdministration(
   const authClient = client?.auth ?? null;
   const authorizationBoundary = useAuthorizationScopeBoundary(client);
   const auth = useAuth();
-  const activeTenantKind = auth.activeTenant?.kind ?? null;
-  const scopeStable = isTenantAdministrationScopeStable(auth.sessionTransition);
-  const enabled = options.enabled !== false && Boolean(
-    authClient && auth.isAuthenticated && auth.activeTenant && scopeStable,
+  const authConfig = useAuthConfig();
+  const tenantKind = auth.activeTenant?.kind ?? null;
+  const scopeEnabled = options.enabled !== false && Boolean(
+    authClient
+      && authorizationBoundary.ready
+      && auth.isAuthenticated
+      && auth.activeTenant
+      && isTenantAdministrationScopeStable(auth.sessionTransition),
+  );
+  const invitationsEnabled = resolveTenantOnboardingFeaturePolicy(
+    authConfig.status,
+    authConfig.config,
+    'invitations',
+  );
+  const joinRequestsEnabled = resolveTenantOnboardingFeaturePolicy(
+    authConfig.status,
+    authConfig.config,
+    'joinRequests',
   );
   const boundaryKey = tenantAdministrationBoundaryKey(
     auth.user?.userId,
     auth.activeTenant?.tenantId,
-    enabled,
+    scopeEnabled,
     authorizationBoundary.key,
   );
   const boundaryFenceRef = React.useRef<TenantAdministrationBoundaryFence | null>(null);
@@ -85,269 +133,158 @@ export function useTenantOnboardingAdministration(
   }
   const boundaryFence = boundaryFenceRef.current;
   const boundaryRevision = boundaryFence.update(boundaryKey);
-  const [config, setConfig] = React.useState<AuthTenantAdministrationConfig | null>(null);
-  const [invitations, setInvitations] = React.useState<AuthTenantInvitation[]>([]);
-  const [joinRequests, setJoinRequests] = React.useState<AuthTenantJoinRequest[]>([]);
-  const [invitationPage, setInvitationPage] = React.useState<
-    AuthTenantInvitationPage['page'] | null
-  >(null);
-  const [joinRequestPage, setJoinRequestPage] = React.useState<
-    AuthTenantJoinRequestPage['page'] | null
-  >(null);
-  const [loadedBoundaryRevision, setLoadedBoundaryRevision] = React.useState(-1);
-  const [isLoading, setLoading] = React.useState(enabled);
-  const [isLoadingMoreInvitations, setLoadingMoreInvitations] = React.useState(false);
-  const [isLoadingMoreJoinRequests, setLoadingMoreJoinRequests] = React.useState(false);
-  const [isMutating, setMutating] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const [revision, setRevision] = React.useState(0);
-  const queryRevision = React.useRef(0);
-  const activeMutationCount = React.useRef(0);
 
-  React.useEffect(() => {
-    activeMutationCount.current = 0;
-    setMutating(false);
-  }, [boundaryRevision]);
+  const protectedConfig = useTenantOnboardingConfigSlice({
+    authClient,
+    boundaryFence,
+    boundaryRevision,
+    scopeEnabled,
+  });
 
-  React.useEffect(() => {
-    const requestRevision = ++queryRevision.current;
-    const requestBoundary = boundaryRevision;
-    setLoadedBoundaryRevision(requestBoundary);
-    setConfig(null);
-    setInvitations([]);
-    setJoinRequests([]);
-    setInvitationPage(null);
-    setJoinRequestPage(null);
-    setLoadingMoreInvitations(false);
-    setLoadingMoreJoinRequests(false);
-    if (!enabled || !authClient) {
-      setConfig(null);
-      setInvitations([]);
-      setJoinRequests([]);
-      setInvitationPage(null);
-      setJoinRequestPage(null);
-      setLoading(false);
-      setError(null);
+  const invitation = useTenantOnboardingInvitationSlice({
+    authClient,
+    boundaryFence,
+    boundaryRevision,
+    scopeEnabled,
+    featureEnabled: invitationsEnabled,
+    administrationConfig: protectedConfig.config,
+    administrationConfigProjection: protectedConfig.projection,
+    limit: options.limit,
+    status: options.invitationStatus,
+  });
+  const joinRequest = useTenantOnboardingJoinRequestSlice({
+    authClient,
+    boundaryFence,
+    boundaryRevision,
+    scopeEnabled,
+    featureEnabled: joinRequestsEnabled,
+    tenantKind,
+    administrationConfig: protectedConfig.config,
+    administrationConfigProjection: protectedConfig.projection,
+    limit: options.limit,
+    status: options.joinRequestStatus,
+  });
+
+  const reloadInvitations = React.useCallback(() => {
+    if (!boundaryFence.isCurrent(boundaryRevision)) return;
+    retryTenantOnboardingSection(
+      authConfig.status,
+      protectedConfig.projection,
+      protectedConfig.config !== null,
+      {
+        reloadPublicConfig: () => void authConfig.reload(),
+        reloadTenantConfig: protectedConfig.reload,
+        reloadFeature: invitation.reload,
+      },
+    );
+  }, [
+    authConfig.reload,
+    authConfig.status,
+    boundaryFence,
+    boundaryRevision,
+    invitation.reload,
+    protectedConfig.config,
+    protectedConfig.projection,
+    protectedConfig.reload,
+  ]);
+  const reloadJoinRequests = React.useCallback(() => {
+    if (!boundaryFence.isCurrent(boundaryRevision)) return;
+    retryTenantOnboardingSection(
+      authConfig.status,
+      protectedConfig.projection,
+      protectedConfig.config !== null,
+      {
+        reloadPublicConfig: () => void authConfig.reload(),
+        reloadTenantConfig: protectedConfig.reload,
+        reloadFeature: joinRequest.reload,
+      },
+    );
+  }, [
+    authConfig.reload,
+    authConfig.status,
+    boundaryFence,
+    boundaryRevision,
+    joinRequest.reload,
+    protectedConfig.config,
+    protectedConfig.projection,
+    protectedConfig.reload,
+  ]);
+  const reload = React.useCallback(() => {
+    if (!boundaryFence.isCurrent(boundaryRevision)) return;
+    if (authConfig.status === 'error') {
+      void authConfig.reload();
       return;
     }
-    setLoading(true);
-    setError(null);
-    void authClient.getTenantAdministrationConfig().then(async (nextConfig) => {
-      if (!boundaryFence.isCurrent(requestBoundary)
-        || requestRevision !== queryRevision.current) return;
-      setConfig(nextConfig);
-      const [invitationPage, joinRequestPage] = await Promise.all([
-        nextConfig.capabilities.canReadInvitations
-          ? authClient.listTenantInvitations({
-              limit: options.limit,
-              status: options.invitationStatus,
-            })
-          : Promise.resolve(null),
-        canLoadTenantJoinRequests(
-          nextConfig.capabilities.canReviewJoinRequests,
-          activeTenantKind,
-        )
-          ? authClient.listTenantJoinRequests({
-              limit: options.limit,
-              status: options.joinRequestStatus,
-            })
-          : Promise.resolve(null),
-      ]);
-      if (!boundaryFence.isCurrent(requestBoundary)
-        || requestRevision !== queryRevision.current) return;
-      setInvitations(invitationPage?.invitations ?? []);
-      setJoinRequests(joinRequestPage?.requests ?? []);
-      setInvitationPage(invitationPage?.page ?? null);
-      setJoinRequestPage(joinRequestPage?.page ?? null);
-    }).catch((cause) => {
-      if (boundaryFence.isCurrent(requestBoundary)
-        && requestRevision === queryRevision.current) setError(errorMessage(cause));
-    }).finally(() => {
-      if (boundaryFence.isCurrent(requestBoundary)
-        && requestRevision === queryRevision.current) setLoading(false);
-    });
+    if (!protectedConfig.config
+      || protectedConfig.projection.error
+      || protectedConfig.projection.isPermissionDenied) {
+      protectedConfig.reload();
+      return;
+    }
+    invitation.reload();
+    joinRequest.reload();
   }, [
-    authClient,
-    activeTenantKind,
+    authConfig.reload,
+    authConfig.status,
     boundaryFence,
     boundaryRevision,
-    enabled,
-    options.invitationStatus,
-    options.joinRequestStatus,
-    options.limit,
-    revision,
+    invitation.reload,
+    joinRequest.reload,
+    protectedConfig.config,
+    protectedConfig.projection.error,
+    protectedConfig.projection.isPermissionDenied,
+    protectedConfig.reload,
   ]);
 
-  const reload = React.useCallback(() => {
-    if (boundaryFence.isCurrent(boundaryRevision)) {
-      setRevision((value) => value + 1);
-    }
-  }, [boundaryFence, boundaryRevision]);
-
-  const loadMoreInvitations = React.useCallback(async () => {
-    if (!boundaryFence.isCurrent(boundaryRevision)
-      || !authClient || !invitationPage?.nextCursor || isLoadingMoreInvitations
-      || loadedBoundaryRevision !== boundaryRevision) return;
-    const requestBoundary = boundaryRevision;
-    const requestRevision = queryRevision.current;
-    setLoadingMoreInvitations(true);
-    setError(null);
-    try {
-      const result = await authClient.listTenantInvitations({
-        limit: options.limit,
-        status: options.invitationStatus,
-        cursor: invitationPage.nextCursor,
-      });
-      if (!boundaryFence.isCurrent(requestBoundary)
-        || requestRevision !== queryRevision.current) return;
-      setInvitations((current) => mergeInvitations(current, result.invitations));
-      setInvitationPage(result.page);
-    } catch (cause) {
-      if (boundaryFence.isCurrent(requestBoundary)
-        && requestRevision === queryRevision.current) setError(errorMessage(cause));
-    } finally {
-      if (boundaryFence.isCurrent(requestBoundary)
-        && requestRevision === queryRevision.current) setLoadingMoreInvitations(false);
-    }
-  }, [
-    authClient,
-    boundaryFence,
-    boundaryRevision,
-    invitationPage?.nextCursor,
-    isLoadingMoreInvitations,
-    loadedBoundaryRevision,
-    options.invitationStatus,
-    options.limit,
-  ]);
-
-  const loadMoreJoinRequests = React.useCallback(async () => {
-    if (!boundaryFence.isCurrent(boundaryRevision)
-      || !authClient || !joinRequestPage?.nextCursor || isLoadingMoreJoinRequests
-      || loadedBoundaryRevision !== boundaryRevision) return;
-    const requestBoundary = boundaryRevision;
-    const requestRevision = queryRevision.current;
-    setLoadingMoreJoinRequests(true);
-    setError(null);
-    try {
-      const result = await authClient.listTenantJoinRequests({
-        limit: options.limit,
-        status: options.joinRequestStatus,
-        cursor: joinRequestPage.nextCursor,
-      });
-      if (!boundaryFence.isCurrent(requestBoundary)
-        || requestRevision !== queryRevision.current) return;
-      setJoinRequests((current) => mergeJoinRequests(current, result.requests));
-      setJoinRequestPage(result.page);
-    } catch (cause) {
-      if (boundaryFence.isCurrent(requestBoundary)
-        && requestRevision === queryRevision.current) setError(errorMessage(cause));
-    } finally {
-      if (boundaryFence.isCurrent(requestBoundary)
-        && requestRevision === queryRevision.current) setLoadingMoreJoinRequests(false);
-    }
-  }, [
-    authClient,
-    boundaryFence,
-    boundaryRevision,
-    isLoadingMoreJoinRequests,
-    joinRequestPage?.nextCursor,
-    loadedBoundaryRevision,
-    options.joinRequestStatus,
-    options.limit,
-  ]);
-  const mutate = React.useCallback(async <T,>(operation: () => Promise<T>) => {
-    const operationBoundary = boundaryRevision;
-    if (!boundaryFence.isCurrent(operationBoundary)) throw staleOperation();
-    activeMutationCount.current += 1;
-    setMutating(true);
-    setError(null);
-    try {
-      const result = await operation();
-      if (!boundaryFence.isCurrent(operationBoundary)) throw staleOperation();
-      reload();
-      return result;
-    } catch (cause) {
-      if (!boundaryFence.isCurrent(operationBoundary)) throw staleOperation();
-      setError(errorMessage(cause));
-      throw cause;
-    } finally {
-      if (boundaryFence.isCurrent(operationBoundary)) {
-        activeMutationCount.current = Math.max(0, activeMutationCount.current - 1);
-        if (activeMutationCount.current === 0) setMutating(false);
-      }
-    }
-  }, [boundaryFence, boundaryRevision, reload]);
-
-  const hasCurrentData = enabled && loadedBoundaryRevision === boundaryRevision;
-
+  const policyError = scopeEnabled && authConfig.status === 'error'
+    ? authConfig.error
+    : null;
   return {
-    config: hasCurrentData ? config : null,
-    invitations: hasCurrentData ? invitations : [],
-    joinRequests: hasCurrentData ? joinRequests : [],
-    invitationPage: hasCurrentData ? invitationPage : null,
-    joinRequestPage: hasCurrentData ? joinRequestPage : null,
-    isLoading: enabled && (!hasCurrentData || isLoading),
-    isLoadingMoreInvitations: hasCurrentData && isLoadingMoreInvitations,
-    isLoadingMoreJoinRequests: hasCurrentData && isLoadingMoreJoinRequests,
-    isMutating: hasCurrentData && isMutating,
-    error: hasCurrentData ? error : null,
+    config: protectedConfig.config,
+    invitations: invitation.invitations,
+    joinRequests: joinRequest.requests,
+    invitationPage: invitation.page,
+    joinRequestPage: joinRequest.page,
+    isLoading: protectedConfig.projection.isLoading
+      || invitation.projection.isLoading
+      || joinRequest.projection.isLoading,
+    isLoadingMoreInvitations: invitation.projection.isLoadingMore,
+    isLoadingMoreJoinRequests: joinRequest.projection.isLoadingMore,
+    isMutating: invitation.projection.isMutating || joinRequest.projection.isMutating,
+    error: projectTenantOnboardingAggregateError(
+      policyError,
+      protectedConfig.projection,
+      invitation.projection,
+      joinRequest.projection,
+    ),
+    authConfigStatus: authConfig.status,
+    authConfigError: policyError,
+    isLoadingConfig: protectedConfig.projection.isLoading,
+    isConfigPermissionDenied: protectedConfig.projection.isPermissionDenied,
+    configError: protectedConfig.projection.error,
+    invitationsEnabled,
+    joinRequestsEnabled,
+    isLoadingInvitations: invitation.projection.isLoading
+      || (invitationsEnabled === true && protectedConfig.projection.isLoading),
+    isLoadingJoinRequests: joinRequest.projection.isLoading
+      || (joinRequestsEnabled === true && protectedConfig.projection.isLoading),
+    isMutatingInvitations: invitation.projection.isMutating,
+    isMutatingJoinRequests: joinRequest.projection.isMutating,
+    isInvitationsPermissionDenied: invitation.projection.isPermissionDenied,
+    isJoinRequestsPermissionDenied: joinRequest.projection.isPermissionDenied,
+    invitationsError: invitation.projection.error,
+    joinRequestsError: joinRequest.projection.error,
     reload,
-    loadMoreInvitations,
-    loadMoreJoinRequests,
-    issueInvitation: React.useCallback(async (params) => {
-      if (!authClient) throw unavailable();
-      return mutate(() => authClient.issueTenantInvitation(params));
-    }, [authClient, mutate]),
-    revokeInvitation: React.useCallback(async (invitationId) => {
-      if (!authClient) throw unavailable();
-      return (await mutate(() => authClient.revokeTenantInvitation(invitationId))).invitation;
-    }, [authClient, mutate]),
-    approveJoinRequest: React.useCallback(async (joinRequestId, params) => {
-      if (!authClient) throw unavailable();
-      return (await mutate(() => authClient.approveTenantJoinRequest(
-        joinRequestId,
-        params,
-      ))).request;
-    }, [authClient, mutate]),
-    denyJoinRequest: React.useCallback(async (joinRequestId, params) => {
-      if (!authClient) throw unavailable();
-      return (await mutate(() => authClient.denyTenantJoinRequest(
-        joinRequestId,
-        params,
-      ))).request;
-    }, [authClient, mutate]),
+    reloadConfig: protectedConfig.reload,
+    reloadInvitations,
+    reloadJoinRequests,
+    loadMoreInvitations: invitation.loadMore,
+    loadMoreJoinRequests: joinRequest.loadMore,
+    issueInvitation: invitation.issue,
+    revokeInvitation: invitation.revoke,
+    approveJoinRequest: joinRequest.approve,
+    denyJoinRequest: joinRequest.deny,
   };
-}
-
-function mergeInvitations(
-  current: AuthTenantInvitation[],
-  incoming: AuthTenantInvitation[],
-): AuthTenantInvitation[] {
-  const merged = new Map(current.map((item) => [item.invitationId, item]));
-  for (const item of incoming) merged.set(item.invitationId, item);
-  return [...merged.values()];
-}
-
-function mergeJoinRequests(
-  current: AuthTenantJoinRequest[],
-  incoming: AuthTenantJoinRequest[],
-): AuthTenantJoinRequest[] {
-  const merged = new Map(current.map((item) => [item.joinRequestId, item]));
-  for (const item of incoming) merged.set(item.joinRequestId, item);
-  return [...merged.values()];
-}
-
-function errorMessage(cause: unknown): string {
-  reportAuthClientActionFailure('tenantOnboarding', cause);
-  return cause instanceof Error ? cause.message : 'Tenant request failed';
-}
-
-function unavailable(): Error {
-  return new Error('Tenant administration requires an authenticated Zero client');
-}
-
-function staleOperation(): Error {
-  return new Error('The active tenant changed before this request completed');
 }
 
 /** Administration tenants never participate in customer join-request admission. */

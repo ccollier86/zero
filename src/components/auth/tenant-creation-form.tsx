@@ -10,6 +10,7 @@ import { Label } from '#zero/components/ui/label';
 import { cn } from '#zero/lib/utils';
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
+import { AuthConfigLoadState } from './auth-config-load-state';
 
 export interface TenantCreationFormProps {
   /** Omit only when an existing browser refresh family proves the creator. */
@@ -36,7 +37,8 @@ function TenantCreationFormScope({
   className,
 }: TenantCreationFormProps) {
   const { createTenant } = useAuth();
-  const { config } = useAuthConfig();
+  const authConfig = useAuthConfig();
+  const { config } = authConfig;
   const term = config?.tenancy?.terminology?.singular ?? 'organization';
   const [name, setName] = React.useState('');
   const [slug, setSlug] = React.useState('');
@@ -80,6 +82,11 @@ function TenantCreationFormScope({
       <AuthHeader
         title={`Create your ${term}`}
         description={`You will become the protected owner of this ${term}.`}
+      />
+      <AuthConfigLoadState
+        state={authConfig}
+        loadingMessage="Loading organization terminology…"
+        unavailableMessage="Organization terminology could not be loaded. You can continue with the default label."
       />
       <div className="space-y-1.5">
         <Label htmlFor={nameId}>{capitalize(term)} name</Label>

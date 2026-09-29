@@ -69,6 +69,7 @@ export type {
 export type {
   AuthActions,
   AuthConfigState,
+  AuthConfigStatus,
   AuthState,
   AuthActionTokenInfo,
   AuthEmailVerificationRequiredResult,

@@ -196,11 +196,10 @@ export class AuthorizationRoleService {
     authority: ExpandedAuthorizationRoleSet;
   } {
     this.requireProfile('single');
-    const role = this.requireAssignableRole(input.roleKey);
-    void role;
-    this.requireActiveUser(input.userId);
-    this.requireUser(input.createdBy);
+    this.requireAssignableRole(input.roleKey);
     return this.mutation(() => {
+      this.requireActiveUser(input.userId);
+      this.requireUser(input.createdBy);
       const inserted = this.store.insertApplication({
         userId: input.userId,
         roleKey: input.roleKey,
@@ -219,8 +218,8 @@ export class AuthorizationRoleService {
   removeApplicationRole(input: RemoveApplicationRoleInput): ExpandedAuthorizationRoleSet {
     this.requireProfile('single');
     this.requireAssignableRole(input.roleKey);
-    this.requireUser(input.revokedBy);
     return this.mutation(() => {
+      this.requireUser(input.revokedBy);
       if (this.store.revokeApplication(input.userId, input.roleKey, input.revokedBy)) {
         this.store.bumpApplicationGeneration(input.userId);
       }
@@ -345,10 +344,13 @@ export class AuthorizationRoleService {
     authority: ExpandedAuthorizationRoleSet;
   } {
     this.requireProfile('multi');
-    this.requireUser(input.createdBy);
-    const membership = this.requireActiveMembership(input.tenantId, input.membershipId);
-    this.requireAssignableTenantRole(input.roleKey, input.tenantId);
     return this.mutation(() => {
+      this.requireUser(input.createdBy);
+      const membership = this.requireActiveMembership(
+        input.tenantId,
+        input.membershipId,
+      );
+      this.requireAssignableTenantRole(input.roleKey, input.tenantId);
       const inserted = this.store.insertTenant({
         tenantId: input.tenantId,
         membershipId: input.membershipId,
@@ -374,9 +376,12 @@ export class AuthorizationRoleService {
   removeTenantRole(input: RemoveTenantRoleInput): ExpandedAuthorizationRoleSet {
     this.requireProfile('multi');
     this.requireAssignableRole(input.roleKey);
-    this.requireUser(input.revokedBy);
-    const membership = this.requireActiveMembership(input.tenantId, input.membershipId);
     return this.mutation(() => {
+      this.requireUser(input.revokedBy);
+      const membership = this.requireActiveMembership(
+        input.tenantId,
+        input.membershipId,
+      );
       if (this.store.revokeTenant(
         input.tenantId,
         input.membershipId,
@@ -403,11 +408,14 @@ export class AuthorizationRoleService {
     changedBy: string;
   }): ExpandedAuthorizationRoleSet {
     this.requireProfile('multi');
-    this.requireUser(input.changedBy);
-    const membership = this.requireActiveMembership(input.tenantId, input.membershipId);
     const desired = [...new Set(input.roleKeys)].sort(compareKeys);
 
     return this.mutation(() => {
+      this.requireUser(input.changedBy);
+      const membership = this.requireActiveMembership(
+        input.tenantId,
+        input.membershipId,
+      );
       const current = this.store.getRetainedTenantRoleKeys(
         input.tenantId,
         input.membershipId,

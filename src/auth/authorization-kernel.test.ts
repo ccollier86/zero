@@ -5,8 +5,10 @@ import {
   compileAccessRequirement,
   mergeAccessRequirements,
   validateAuthorizationRegistry,
+  type AccessRequirement,
   type AuthorizationScopeSnapshot,
   type AuthorizationSubjectSnapshot,
+  type CompiledAccessRequirement,
 } from './authorization-kernel';
 import { AuthError } from './types';
 
@@ -155,6 +157,21 @@ describe('AccessRequirement compilation', () => {
       .toThrow('anyPermissions must be a non-empty string array');
     expect(() => compileAccessRequirement({ properties: { department: {} } }))
       .toThrow('matcher may not be empty');
+    for (const nonFinite of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(() => compileAccessRequirement({
+        properties: { department: nonFinite },
+      })).toThrow('invalid matcher');
+      expect(() => compileAccessRequirement({
+        properties: { department: { equals: nonFinite } },
+      })).toThrow('equals must be a scalar');
+      expect(() => compileAccessRequirement({
+        properties: { department: { in: ['clinical', nonFinite] } },
+      })).toThrow('in must be a non-empty scalar array');
+      expect(() => configured.evaluate({
+        ...compileAccessRequirement('required'),
+        propertyGroups: [{ department: nonFinite }],
+      }, subject())).toThrow('invalid matcher');
+    }
     expect(() => compileAccessRequirement({ permisssion: 'patients:read' } as never))
       .toThrow('unsupported field "permisssion"');
     const compiledWithoutRegistry = compileAccessRequirement({
@@ -196,6 +213,36 @@ describe('AccessRequirement compilation', () => {
 });
 
 describe('AuthorizationKernel scope synthesis and evaluation', () => {
+  test('keeps facade compile and scope-validation extension points in the evaluation path', () => {
+    class InstrumentedAuthorizationKernel extends AuthorizationKernel {
+      compileCalls = 0;
+      scopeValidationCalls = 0;
+
+      override compile(
+        requirement: AccessRequirement,
+        parent?: AccessRequirement | CompiledAccessRequirement,
+      ): CompiledAccessRequirement {
+        this.compileCalls += 1;
+        return super.compile(requirement, parent);
+      }
+
+      override isValidScopeSnapshot(candidate: AuthorizationScopeSnapshot): boolean {
+        this.scopeValidationCalls += 1;
+        return super.isValidScopeSnapshot(candidate);
+      }
+    }
+
+    const base = kernel();
+    const configured = new InstrumentedAuthorizationKernel({
+      tenancy: base.tenancy,
+      authorization: base.authorization,
+    });
+
+    expect(configured.evaluate({ permission: 'patients:read' }, subject()).allowed).toBe(true);
+    expect(configured.compileCalls).toBe(1);
+    expect(configured.scopeValidationCalls).toBe(1);
+  });
+
   test('synthesizes the exact single/simple compatibility scope from live role state', () => {
     const configured = kernel('single', 'simple');
     const clinician = configured.synthesizeSingleSimpleScope({

@@ -8,6 +8,7 @@ import { Button } from '#zero/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '#zero/components/ui/card';
 import { Input } from '#zero/components/ui/input';
 import { cn } from '#zero/lib/utils';
+import { AuthConfigLoadState } from './auth-config-load-state';
 
 export interface DomainOnboardingProps {
   /** Pre-session identity proof from login/registration completion, when present. */
@@ -21,7 +22,18 @@ export interface DomainOnboardingProps {
 /** Generic-before-proof exact-domain request-to-join flow. */
 export function DomainOnboarding(props: DomainOnboardingProps) {
   const auth = useAuth();
-  const publicConfig = useAuthConfig().config;
+  const authConfig = useAuthConfig();
+  const publicConfig = authConfig.config;
+  if (!publicConfig) {
+    return (
+      <AuthConfigLoadState
+        state={authConfig}
+        loadingMessage="Loading company access options…"
+        unavailableMessage="Company access options could not be loaded."
+        className={props.className}
+      />
+    );
+  }
   const enabled = publicConfig?.tenancy?.onboarding
     ?.verifiedDomains?.enabled === true;
   if (!enabled) return null;

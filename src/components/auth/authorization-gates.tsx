@@ -5,6 +5,7 @@ import {
   hasAnyAuthorizationPermission,
   hasEveryAuthorizationPermission,
 } from '../../frontend/client/auth-authorization-types';
+import { useAuth } from '../../frontend/client/auth-hooks';
 import { useAuthorization } from '../../frontend/client/authorization-hooks';
 
 interface AuthorizationGateFallbacks {
@@ -25,11 +26,17 @@ export interface PermissionGateProps extends AuthorizationGateFallbacks {
 export interface TenantGateProps extends AuthorizationGateFallbacks {
   /** Optionally require this exact active tenant id. */
   tenantId?: string;
+  /** Optionally require a customer organization or protected administration scope. */
+  tenantKind?: 'organization' | 'administration';
   /** Optionally require any one current tenant role. */
   role?: string | readonly string[];
 }
 
 export type PlatformAdminGateProps = AuthorizationGateFallbacks;
+export type AdministrationScopeGateProps = Omit<
+  TenantGateProps,
+  'tenantKind'
+>;
 
 /**
  * UI visibility gate for the current live permission projection.
@@ -54,20 +61,30 @@ export function PermissionGate({
 /** Render only within the current live tenant scope, optionally narrowed by id/role. */
 export function TenantGate({
   tenantId,
+  tenantKind,
   role,
   loadingFallback = null,
   fallback = null,
   children,
 }: TenantGateProps) {
   const current = useAuthorization();
+  const auth = useAuth();
   if (current.isLoading) return <>{loadingFallback}</>;
   const scope = current.authorization?.scope;
   const roles = role === undefined ? null : typeof role === 'string' ? [role] : role;
   const allowed = current.isReady
     && scope?.kind === 'tenant'
     && (tenantId === undefined || scope.tenantId === tenantId)
+    && (tenantKind === undefined || auth.activeTenant?.kind === tenantKind)
     && (roles === null || roles.some((candidate) => scope.roles.includes(candidate)));
   return <>{allowed ? children : fallback}</>;
+}
+
+/** Render only inside the protected Administration Organization scope. */
+export function AdministrationScopeGate(
+  props: AdministrationScopeGateProps,
+) {
+  return <TenantGate {...props} tenantKind="administration" />;
 }
 
 /** Render only for the existing live global/platform `admin` role. */

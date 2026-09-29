@@ -38,6 +38,7 @@ import {
   authPresenceTransition,
 } from './auth-motion';
 import { useNativeAuthContinuation, useNativeAuthRoute } from './use-native-auth-route';
+import { AuthConfigLoadState } from './auth-config-load-state';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -119,7 +120,11 @@ function ForgotPasswordForm({
   }
 
   if (configUnavailable) {
-    return <>{unavailable ?? <ResetConfigUnavailable onBack={onBack} loginHref={continuedLoginHref} />}</>;
+    return <>{unavailable ?? <ResetConfigUnavailable
+      authConfig={authConfig}
+      onBack={onBack}
+      loginHref={continuedLoginHref}
+    />}</>;
   }
 
   if (resetUnavailable) {
@@ -231,15 +236,22 @@ function ResetPolicyLoading() {
 }
 
 function ResetConfigUnavailable({
+  authConfig,
   onBack,
   loginHref,
 }: {
+  authConfig: ReturnType<typeof useAuthConfig>;
   onBack?: () => void;
   loginHref: string;
 }) {
   return (
     <div className="space-y-3">
-      <AuthHeader title="Reset unavailable" description="Password reset settings could not be loaded." />
+      <AuthHeader title="Reset unavailable" />
+      <AuthConfigLoadState
+        state={authConfig}
+        loadingMessage="Loading password reset settings…"
+        unavailableMessage="Password reset settings could not be loaded."
+      />
       <p className="text-center text-xs text-muted-foreground">
         {onBack ? (
           <button type="button" onClick={onBack} className="text-primary hover:underline">

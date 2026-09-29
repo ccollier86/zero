@@ -2,42 +2,34 @@
 
 import { Elysia, t } from 'elysia';
 import { parseTokenTTL } from '../tokens/token-utils';
-import { createRequestAuthorizationAccess } from './authorization-access';
-import type { AuthorizationKernel, AuthorizationScopeSnapshot } from './authorization-kernel';
-import type { AuthorizationRoleService } from './authorization-role-service';
-import { extractAuthContext } from './auth-context';
 import { canonicalEmailSchema } from './auth-email-schema';
 import {
   buildAuthCompletionResponse,
 } from './auth-mfa-response';
-import type { MfaChallengeService } from './mfa-challenge-service';
 import { admitAuthRequest } from './auth-request-admission';
 import {
   authDisplayNameSchema,
   authNewPasswordSchema,
   authUsernameSchema,
 } from './auth-request-schema';
-import type { AuthRequestAdmissionService } from './auth-request-admission-service';
-import type { AuthTenantSessionService } from './auth-tenant-session-service';
-import type { AuthTenantOnboardingService } from './auth-tenant-onboarding-service';
-import {
-  captureAuthTenantMutationAuthority,
-  type AssertAuthTenantMutationAuthority,
-} from './auth-tenant-mutation-authority';
 import type { AuthEmailOutbox } from './auth-email-outbox';
-import type { AccountEmailService } from './account-email-service';
 import { syncPageSessionCookie } from './page-session';
-import type { TokenService } from './token-service';
-import type { UserPropertyService } from './user-property-service';
-import type { UserStore } from './user-store';
-import { AuthError, type AuthContext, type ResolvedAuthBehaviorConfig } from './types';
-import {
-  authAuditActorFromContext,
-  authAuditRequestFromRequest,
-} from './auth-audit-service';
-import type { AuthAuditActor } from './auth-audit-types';
+import { AuthError, type ResolvedAuthBehaviorConfig } from './types';
+import { authAuditRequestFromRequest } from './auth-audit-service';
 import { applyAuthPrivateNoStore } from './auth-response-cache';
-import { captureAuthSessionIdentityAdmission } from './auth-session-identity-proof';
+import type { AuthTenantOnboardingPluginConfig } from './auth-tenant-onboarding-plugin-config';
+import {
+  requireOnboardingProperties,
+  requireOnboardingService,
+  requireOnboardingStore,
+  requireOnboardingTenantSessions,
+  requireOnboardingTokenService,
+  requireTenantOnboardingActor,
+  resolveInvitationIdentityProof,
+  resolveJoinRequestIdentityProof,
+} from './auth-tenant-onboarding-identity';
+
+export type { AuthTenantOnboardingPluginConfig } from './auth-tenant-onboarding-plugin-config';
 
 const idSchema = t.String({
   minLength: 1,
@@ -61,43 +53,6 @@ const invitationTokenSchema = t.String({
 });
 const continuationSchema = t.String({ minLength: 1, maxLength: 512 });
 
-export interface AuthTenantOnboardingPluginConfig {
-  getService: () => AuthTenantOnboardingService | null;
-  getUserStore: () => UserStore | null;
-  getTokenService: () => TokenService | null;
-  getPropertyService: () => UserPropertyService | null;
-  getTenantSessionService: () => AuthTenantSessionService | null;
-  getMfaChallengeService: () => MfaChallengeService | null;
-  getRequestAdmissionService: () => AuthRequestAdmissionService | null;
-  getAuthorizationKernel: () => AuthorizationKernel;
-  getAuthorizationRoleService: () => AuthorizationRoleService | null;
-  getAuthConfig: () => ResolvedAuthBehaviorConfig;
-  getAccountEmailService: () => AccountEmailService | null;
-  getAuthEmailOutbox: () => AuthEmailOutbox | null;
-}
-
-interface TenantActor {
-  auth: AuthContext;
-  scope: AuthorizationScopeSnapshot & {
-    scopeKind: 'tenant';
-    tenantId: string;
-    membershipId: string;
-  };
-  access: ReturnType<typeof createRequestAuthorizationAccess>;
-  service: AuthTenantOnboardingService;
-  assertCurrentAuthority: AssertAuthTenantMutationAuthority;
-}
-
-interface IdentityProof {
-  userId: string;
-  /** Exact generation proven by the admitted session or continuation. */
-  authGeneration: number;
-  /** Live server-derived assurance from the admitted bearer/continuation. */
-  mfaVerifiedAt: number | null;
-  consume?: () => boolean;
-  auditActor: AuthAuditActor;
-}
-
 /** Mount below the root `/auth` plugin. */
 export function createAuthTenantOnboardingPlugin(
   config: AuthTenantOnboardingPluginConfig,
@@ -111,7 +66,7 @@ export function createAuthTenantOnboardingPlugin(
         flow: 'invitation',
         subject: body.token,
       });
-      return requireService(config).inspectInvitation(body.token);
+      return requireOnboardingService(config).inspectInvitation(body.token);
     }, {
       body: t.Object({ token: invitationTokenSchema }, { additionalProperties: false }),
     })
@@ -123,9 +78,9 @@ export function createAuthTenantOnboardingPlugin(
         flow: 'invitation',
         subject: body.token,
       });
-      const service = requireService(config);
-      const store = requireStore(config);
-      const tenantSessions = requireTenantSessions(config);
+      const service = requireOnboardingService(config);
+      const store = requireOnboardingStore(config);
+      const tenantSessions = requireOnboardingTenantSessions(config);
       const authConfig = config.getAuthConfig();
       let accepted;
       let requestedMfaSetup = false;
@@ -146,7 +101,7 @@ export function createAuthTenantOnboardingPlugin(
           firstName: body.firstName,
           lastName: body.lastName,
           mfaRequired: requiresUserMfa(authConfig),
-          properties: requireProperties(config).getDefaultProperties(),
+          properties: requireOnboardingProperties(config).getDefaultProperties(),
           auditRequest: authAuditRequestFromRequest(request),
           deferAcceptance: requiresUserMfa(authConfig)
             || requestedMfaSetup
@@ -155,7 +110,7 @@ export function createAuthTenantOnboardingPlugin(
         if ('invitationAcceptancePending' in account) {
           const completion = await buildAuthCompletionResponse({
             user: account.user,
-            tokenService: requireTokenService(config),
+            tokenService: requireOnboardingTokenService(config),
             authConfig,
             mfaChallengeService: config.getMfaChallengeService(),
             tenantSessionService: tenantSessions,
@@ -169,7 +124,7 @@ export function createAuthTenantOnboardingPlugin(
           await syncPageSessionCookie(
             set,
             request,
-            requireTokenService(config),
+            requireOnboardingTokenService(config),
             pending,
             { clearWhenMissing: true },
           );
@@ -177,7 +132,7 @@ export function createAuthTenantOnboardingPlugin(
         }
         accepted = account;
       } else {
-        const identity = await resolveIdentityProof(config, request, body);
+        const identity = await resolveInvitationIdentityProof(config, request, body);
         acceptedMfaVerifiedAt = identity.mfaVerifiedAt;
         accepted = service.acceptInvitationForUser(
           body.token,
@@ -196,7 +151,7 @@ export function createAuthTenantOnboardingPlugin(
       // the live administration-organization role before any session is minted.
       const response = await buildAuthCompletionResponse({
         user: accepted.user,
-        tokenService: requireTokenService(config),
+        tokenService: requireOnboardingTokenService(config),
         authConfig,
         mfaChallengeService: config.getMfaChallengeService(),
         tenantSessionService: tenantSessions,
@@ -218,7 +173,7 @@ export function createAuthTenantOnboardingPlugin(
       await syncPageSessionCookie(
         set,
         request,
-        requireTokenService(config),
+        requireOnboardingTokenService(config),
         result,
         { clearWhenMissing: true },
       );
@@ -249,8 +204,12 @@ export function createAuthTenantOnboardingPlugin(
         flow: 'join-request',
         subject: body.tenantSlug,
       });
-      const proof = await resolveJoinRequestIdentity(config, request, body.continuation);
-      const result = requireService(config).submitJoinRequest({
+      const proof = await resolveJoinRequestIdentityProof(
+        config,
+        request,
+        body.continuation,
+      );
+      const result = requireOnboardingService(config).submitJoinRequest({
         userId: proof.userId,
         tenantSlug: body.tenantSlug,
         admitIdentityProof: proof.consume,
@@ -271,7 +230,7 @@ export function createAuthTenantOnboardingPlugin(
     })
     .get('/tenant/invitations', async ({ request, query, set }) => {
       applyAuthPrivateNoStore(set);
-      const actor = await requireTenantActor(config, request);
+      const actor = await requireTenantOnboardingActor(config, request);
       actor.access.requirePermission('tenant.invitations:read');
       return actor.service.listInvitations({
         tenantId: actor.scope.tenantId,
@@ -293,7 +252,7 @@ export function createAuthTenantOnboardingPlugin(
       }, { additionalProperties: false }),
     })
     .post('/tenant/invitations', async ({ request, body }) => {
-      const actor = await requireTenantActor(config, request);
+      const actor = await requireTenantOnboardingActor(config, request);
       actor.access.requirePermission('tenant.invitations:manage');
       const roleKeys = body.roles ?? ['member'];
       if (!isDefaultMemberRole(roleKeys)) {
@@ -383,7 +342,7 @@ export function createAuthTenantOnboardingPlugin(
       }, { additionalProperties: false }),
     })
     .delete('/tenant/invitations/:invitationId', async ({ request, params }) => {
-      const actor = await requireTenantActor(config, request);
+      const actor = await requireTenantOnboardingActor(config, request);
       actor.access.requirePermission('tenant.invitations:manage');
       return {
         invitation: actor.service.revokeInvitation({
@@ -398,7 +357,7 @@ export function createAuthTenantOnboardingPlugin(
     })
     .get('/tenant/join-requests', async ({ request, query, set }) => {
       applyAuthPrivateNoStore(set);
-      const actor = await requireTenantActor(config, request);
+      const actor = await requireTenantOnboardingActor(config, request);
       actor.access.requirePermission('tenant.join-requests:review');
       return actor.service.listJoinRequests({
         tenantId: actor.scope.tenantId,
@@ -424,7 +383,7 @@ export function createAuthTenantOnboardingPlugin(
     .post('/tenant/join-requests/:joinRequestId/approve', async ({
       request, params, body,
     }) => {
-      const actor = await requireTenantActor(config, request);
+      const actor = await requireTenantOnboardingActor(config, request);
       actor.access.requirePermission('tenant.join-requests:review');
       return {
         request: actor.service.approveJoinRequest({
@@ -448,7 +407,7 @@ export function createAuthTenantOnboardingPlugin(
     .post('/tenant/join-requests/:joinRequestId/deny', async ({
       request, params, body,
     }) => {
-      const actor = await requireTenantActor(config, request);
+      const actor = await requireTenantOnboardingActor(config, request);
       actor.access.requirePermission('tenant.join-requests:review');
       return {
         request: actor.service.denyJoinRequest({
@@ -467,189 +426,10 @@ export function createAuthTenantOnboardingPlugin(
     });
 }
 
-async function requireTenantActor(
-  config: AuthTenantOnboardingPluginConfig,
-  request: Request,
-): Promise<TenantActor> {
-  const store = requireStore(config);
-  const tokenService = requireTokenService(config);
-  const service = requireService(config);
-  const kernel = config.getAuthorizationKernel();
-  if (kernel.tenancy.mode !== 'multi') {
-    throw new AuthError(
-      'Tenant onboarding administration is unavailable',
-      'TENANT_ONBOARDING_UNAVAILABLE',
-      404,
-    );
-  }
-  const auth = await extractAuthContext(request, tokenService);
-  if (!auth) throw unauthorized();
-  const access = createRequestAuthorizationAccess({
-    authContext: auth,
-    kernel,
-    propertyStore: store,
-    roleAssignments: config.getAuthorizationRoleService(),
-  });
-  const scope = access.requireTenant();
-  const assertCurrentAuthority = captureAuthTenantMutationAuthority({
-    auth,
-    tokenService,
-    kernel,
-    store,
-    roles: config.getAuthorizationRoleService(),
-  });
-  return { auth, scope, access, service, assertCurrentAuthority };
-}
-
-async function resolveIdentityProof(
-  config: AuthTenantOnboardingPluginConfig,
-  request: Request,
-  body: {
-    token: string;
-    continuation?: string;
-  },
-): Promise<IdentityProof> {
-  const tokenService = requireTokenService(config);
-  if (request.headers.has('authorization')) {
-    if (body.continuation) throw ambiguousProof();
-    const auth = await extractAuthContext(request, tokenService);
-    if (!auth) throw unauthorized();
-    const admission = captureAuthSessionIdentityAdmission(auth, tokenService);
-    return {
-      userId: auth.userId,
-      authGeneration: admission.authGeneration,
-      mfaVerifiedAt: auth.mfaVerifiedAt ?? null,
-      consume: admission.consume,
-      auditActor: authAuditActorFromContext(auth),
-    };
-  }
-  if (body.continuation) {
-    return resolveOnboardingContinuation(config, body.continuation);
-  }
-  throw new AuthError(
-    'Complete authentication for the invitation email account to continue',
-    'TENANT_INVITATION_IDENTITY_PROOF_REQUIRED',
-    401,
-  );
-}
-
-async function resolveJoinRequestIdentity(
-  config: AuthTenantOnboardingPluginConfig,
-  request: Request,
-  continuation: string | undefined,
-): Promise<IdentityProof> {
-  if (request.headers.has('authorization')) {
-    if (continuation) throw ambiguousProof();
-    const tokenService = requireTokenService(config);
-    const auth = await extractAuthContext(request, tokenService);
-    if (!auth) throw unauthorized();
-    const admission = captureAuthSessionIdentityAdmission(auth, tokenService);
-    return {
-      userId: auth.userId,
-      authGeneration: admission.authGeneration,
-      mfaVerifiedAt: auth.mfaVerifiedAt ?? null,
-      consume: admission.consume,
-      auditActor: authAuditActorFromContext(auth),
-    };
-  }
-  if (!continuation) {
-    throw new AuthError(
-      'Authentication or onboarding continuation is required',
-      'TENANT_ONBOARDING_PROOF_REQUIRED',
-      401,
-    );
-  }
-  return resolveOnboardingContinuation(config, continuation);
-}
-
-function resolveOnboardingContinuation(
-  config: AuthTenantOnboardingPluginConfig,
-  raw: string,
-): IdentityProof {
-  const sessions = requireTenantSessions(config);
-  const store = requireStore(config);
-  const record = sessions.continuations.inspect(raw, 'tenant_onboarding');
-  if (!record || store.getAuthGeneration(record.userId) !== record.authGeneration) {
-    throw new AuthError(
-      'Onboarding continuation is invalid',
-      'TENANT_ONBOARDING_PROOF_INVALID',
-      400,
-    );
-  }
-  const user = store.getUserById(record.userId);
-  if (!user || user.status !== 'active' || user.passwordChangeRequired
-    || (user.emailVerificationRequired && !user.emailVerifiedAt)) {
-    throw new AuthError(
-      'Onboarding continuation is invalid',
-      'TENANT_ONBOARDING_PROOF_INVALID',
-      400,
-    );
-  }
-  return {
-    userId: user.userId,
-    authGeneration: record.authGeneration,
-    mfaVerifiedAt: record.mfaVerifiedAt,
-    auditActor: { userId: user.userId, provenance: 'authenticated-request' },
-    consume: () => store.getAuthGeneration(user.userId) === record.authGeneration
-      && sessions.continuations.consumeInspected(
-        record,
-        'tenant_onboarding',
-        user.userId,
-        record.authGeneration,
-      ),
-  };
-}
-
-function requireService(config: AuthTenantOnboardingPluginConfig) {
-  const service = config.getService();
-  if (!service) throw notReady();
-  return service;
-}
-
-function requireStore(config: AuthTenantOnboardingPluginConfig) {
-  const store = config.getUserStore();
-  if (!store) throw notReady();
-  return store;
-}
-
-function requireTokenService(config: AuthTenantOnboardingPluginConfig) {
-  const service = config.getTokenService();
-  if (!service) throw notReady();
-  return service;
-}
-
-function requireProperties(config: AuthTenantOnboardingPluginConfig) {
-  const service = config.getPropertyService();
-  if (!service) throw notReady();
-  return service;
-}
-
-function requireTenantSessions(config: AuthTenantOnboardingPluginConfig) {
-  const service = config.getTenantSessionService();
-  if (!service) throw notReady();
-  return service;
-}
-
 function requiresUserMfa(config: ResolvedAuthBehaviorConfig): boolean {
   return config.mfa.enabled && config.mfa.policy === 'required';
 }
 
 function isDefaultMemberRole(roles: readonly string[]): boolean {
   return roles.length === 1 && roles[0] === 'member';
-}
-
-function ambiguousProof(): AuthError {
-  return new AuthError(
-    'Provide exactly one identity proof',
-    'TENANT_ONBOARDING_PROOF_AMBIGUOUS',
-    422,
-  );
-}
-
-function unauthorized(): AuthError {
-  return new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
-}
-
-function notReady(): AuthError {
-  return new AuthError('Auth not initialized', 'AUTH_NOT_READY', 503);
 }

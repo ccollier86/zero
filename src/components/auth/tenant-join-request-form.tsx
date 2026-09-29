@@ -8,11 +8,15 @@ import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
 import { useClientMaybe } from '../../frontend/client/client-context';
 import type { InternalClient } from '../../frontend/client/sdk';
 import { getAuthDisplayMessage, reportAuthUiError } from './auth-error';
+import { useLocalReturnToHref } from './use-local-return-to-href';
+import { AuthConfigLoadState } from './auth-config-load-state';
+import type { AuthPublicConfig } from '../../frontend/client/auth-types';
 
 export interface TenantJoinRequestFormProps {
   tenantSlug: string;
   /** Fully completed pre-session proof from `result.onboarding.continuation`. */
   continuation?: string;
+  /** Host-owned override; omitted values return from `/login` to this local page. */
   signInHref?: string;
   onSubmitted?: () => void;
   className?: string;
@@ -36,15 +40,17 @@ export function TenantJoinRequestForm(props: TenantJoinRequestFormProps) {
 function TenantJoinRequestFormScope({
   tenantSlug,
   continuation,
-  signInHref = '/login',
+  signInHref,
   onSubmitted,
   className,
 }: TenantJoinRequestFormProps) {
   const client = useClientMaybe() as InternalClient | null;
   const authClient = client?.auth ?? null;
   const auth = useAuth();
+  const resolvedSignInHref = useLocalReturnToHref(signInHref);
   const config = useAuthConfig();
   const term = config.config?.tenancy?.terminology?.singular ?? 'organization';
+  const policy = tenantJoinRequestPolicy(config.config, config.error);
   const [submitting, setSubmitting] = React.useState(false);
   const [submitted, setSubmitted] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -87,24 +93,39 @@ function TenantJoinRequestFormScope({
       aria-busy={submitting}
     >
       <AuthHeader
-        title={submitted ? 'Request submitted' : `Request ${term} access`}
+        title={submitted
+          ? 'Request submitted'
+          : policy === 'disabled' ? 'Access requests unavailable' : `Request ${term} access`}
         description={submitted
           ? `If this ${term} accepts access requests, an authorized reviewer can now decide it.`
+          : policy === 'disabled'
+            ? `This app does not accept ${term} join requests.`
           : `The response is intentionally the same even when the ${term} is unavailable.`}
       />
+      {!submitted && policy !== 'disabled' && (
+        <AuthConfigLoadState
+          state={config}
+          loadingMessage="Loading access-request policy…"
+          unavailableMessage="Access-request policy could not be loaded."
+        />
+      )}
       {error && (
         <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           {error}
         </p>
       )}
-      {!submitted && canSubmit && (
-        <Button className="w-full" disabled={submitting || !tenantSlug} onClick={() => void submit()}>
+      {!submitted && policy !== 'disabled' && canSubmit && (
+        <Button
+          className="w-full"
+          disabled={submitting || !tenantSlug || policy !== 'enabled'}
+          onClick={() => void submit()}
+        >
           {submitting ? 'Submitting…' : 'Request access'}
         </Button>
       )}
-      {!submitted && !canSubmit && (
+      {!submitted && policy !== 'disabled' && !canSubmit && (
         <Button asChild className="w-full">
-          <a href={signInHref}>Sign in to request access</a>
+          <a href={resolvedSignInHref}>Sign in to request access</a>
         </Button>
       )}
     </div>
@@ -118,4 +139,15 @@ export function tenantJoinRequestFlowKey(
   userId?: string,
 ): string {
   return JSON.stringify([tenantSlug, continuation ?? null, userId ?? null]);
+}
+
+/** @internal Public capability state; missing legacy flags preserve server authority. */
+export function tenantJoinRequestPolicy(
+  config: AuthPublicConfig | null,
+  error: string | null,
+): 'unknown' | 'error' | 'enabled' | 'disabled' {
+  if (!config) return error ? 'error' : 'unknown';
+  return config.tenancy?.onboarding?.joinRequests.enabled === false
+    ? 'disabled'
+    : 'enabled';
 }

@@ -95,6 +95,28 @@ describe('advanced authorization role runtime', () => {
     }), 'AUTHORIZATION_ROLE_UNDECLARED');
   });
 
+  test('rechecks application-role subject eligibility inside the write transaction', () => {
+    const harness = createHarness('single');
+    insertUser(harness.db, 'u_actor', 0);
+    insertUser(harness.db, 'u_subject', 1);
+
+    const restoreTransaction = interleaveBeforeNextTransaction(harness.db, () => {
+      expect(harness.users.updateUser('u_subject', { status: 'suspended' })?.status)
+        .toBe('suspended');
+    });
+    try {
+      expectRoleError(() => harness.roles.assignApplicationRole({
+        userId: 'u_subject',
+        roleKey: 'reader',
+        createdBy: 'u_actor',
+      }), 'AUTHORIZATION_SUBJECT_INACTIVE');
+    } finally {
+      restoreTransaction();
+    }
+
+    expect(harness.roles.getRetainedApplicationRoleKeys('u_subject')).toEqual([]);
+  });
+
   test('exposes deterministic registry metadata only through the admin-safe response', () => {
     const harness = createHarness('single');
     const config = resolveAuthBehaviorConfig({
@@ -421,6 +443,75 @@ describe('advanced authorization role runtime', () => {
       WHERE role_key = 'owner' AND revoked_at IS NULL
     `).get() as { count: number }).count).toBe(1);
     await restarted.stop();
+  });
+
+  test('rechecks tenant membership eligibility inside every role write transaction', () => {
+    for (const operation of ['assign', 'remove', 'replace'] as const) {
+      const harness = createHarness('multi');
+      const tenancy = harness.tenancy!;
+      insertUser(harness.db, `u_owner_${operation}`, 0);
+      insertUser(harness.db, `u_member_${operation}`, 1);
+      const tenant = tenancy.createTenant({
+        slug: `transaction-${operation}`,
+        name: `Transaction ${operation}`,
+        ownerUserId: `u_owner_${operation}`,
+      });
+      const membership = tenancy.addMembership({
+        tenantId: tenant.tenant.tenantId,
+        userId: `u_member_${operation}`,
+        roleKey: 'member',
+        createdBy: `u_owner_${operation}`,
+      });
+      if (operation === 'remove') {
+        harness.roles.assignTenantRole({
+          tenantId: tenant.tenant.tenantId,
+          membershipId: membership.membershipId,
+          roleKey: 'auditor',
+          createdBy: `u_owner_${operation}`,
+        });
+      }
+
+      const restoreTransaction = interleaveBeforeNextTransaction(harness.db, () => {
+        expect(tenancy.suspendMembership(membership.membershipId).status)
+          .toBe('suspended');
+      });
+      try {
+        expectRoleError(() => {
+          if (operation === 'assign') {
+            harness.roles.assignTenantRole({
+              tenantId: tenant.tenant.tenantId,
+              membershipId: membership.membershipId,
+              roleKey: 'auditor',
+              createdBy: `u_owner_${operation}`,
+            });
+            return;
+          }
+          if (operation === 'remove') {
+            harness.roles.removeTenantRole({
+              tenantId: tenant.tenant.tenantId,
+              membershipId: membership.membershipId,
+              roleKey: 'auditor',
+              revokedBy: `u_owner_${operation}`,
+            });
+            return;
+          }
+          harness.roles.replaceTenantRoles({
+            tenantId: tenant.tenant.tenantId,
+            membershipId: membership.membershipId,
+            roleKeys: ['auditor'],
+            changedBy: `u_owner_${operation}`,
+          });
+        }, 'AUTHORIZATION_SUBJECT_INACTIVE');
+      } finally {
+        restoreTransaction();
+      }
+
+      expect(harness.roles.getRetainedTenantRoleKeys({
+        tenantId: tenant.tenant.tenantId,
+        membershipId: membership.membershipId,
+        userId: `u_member_${operation}`,
+      })).toEqual(operation === 'remove' ? ['auditor'] : []);
+    }
   });
 
   test('enforces tenant boundaries, live membership state, and owner synchronization', () => {
@@ -908,6 +999,25 @@ function insertUser(
       created_at, updated_at
     ) VALUES (?, ?, ?, ?, 'active', 0, 0, 0, ?, NULL)
   `).run(userId, `user-${index}`, `admin-${index}@example.test`, role, Date.now());
+}
+
+/** Inject one competing committed write immediately before the next transaction. */
+function interleaveBeforeNextTransaction(
+  db: ReactiveDB,
+  interleaving: () => void,
+): () => void {
+  const original = db.transaction.bind(db);
+  let armed = true;
+  db.transaction = (<T>(operation: () => T): T => {
+    if (armed) {
+      armed = false;
+      interleaving();
+    }
+    return original(operation);
+  });
+  return () => {
+    db.transaction = original;
+  };
 }
 
 function expectRoleError(

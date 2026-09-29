@@ -250,9 +250,18 @@ import type {
   Client,
   LoginFormProps,
   PlatformUserManagementProps,
+  UsePlatformAdministrationOptions,
   UsePlatformAdministrationResult,
   UsePlatformTenantsResult,
+  UseTenantOnboardingAdministrationOptions,
+  UseTenantOnboardingAdministrationResult,
 } from '@zero/framework/react';
+import type {
+  UsePlatformAdministrationOptions as UsePlatformAdministrationOptionsSubpath,
+  UsePlatformAdministrationResult as UsePlatformAdministrationResultSubpath,
+  UseTenantOnboardingAdministrationOptions as UseTenantOnboardingAdministrationOptionsSubpath,
+  UseTenantOnboardingAdministrationResult as UseTenantOnboardingAdministrationResultSubpath,
+} from '@zero/framework/react/hooks';
 import type {
   AssertAuthApplicationMutationAuthority,
   AssertAuthTenantMutationAuthority,
@@ -310,10 +319,96 @@ type PackagedAuthExtensionContract =
   | IssuedPageSession
   | UserListOptions
   | UserStoreOptions
+  | UsePlatformAdministrationOptions
   | UsePlatformAdministrationResult
+  | UsePlatformAdministrationOptionsSubpath
+  | UsePlatformAdministrationResultSubpath
   | UsePlatformTenantsResult
+  | UseTenantOnboardingAdministrationOptions
+  | UseTenantOnboardingAdministrationResult
+  | UseTenantOnboardingAdministrationOptionsSubpath
+  | UseTenantOnboardingAdministrationResultSubpath
   | WebRefreshProof;
 void (null as PackagedAuthExtensionContract | null);
+
+function assertPackagedAdministrationHookContracts(
+  platform: UsePlatformAdministrationResult,
+  onboarding: UseTenantOnboardingAdministrationResult,
+) {
+  const platformPolicyStatus: 'unresolved' | 'enabled' | 'disabled' | 'error' =
+    platform.invitationPolicyStatus;
+  const platformInvitationsEnabled: boolean | null = platform.invitationsEnabled;
+  const onboardingAuthConfigStatus: 'unknown' | 'loading' | 'ready' | 'error' =
+    onboarding.authConfigStatus;
+  const onboardingInvitationsEnabled: boolean | null = onboarding.invitationsEnabled;
+  const onboardingJoinRequestsEnabled: boolean | null = onboarding.joinRequestsEnabled;
+
+  platform.reloadConfig();
+  platform.reloadMembers();
+  platform.reloadInvitations();
+  platform.reload();
+  void platform.isAvailable;
+  void platform.isLoading;
+  void platform.isMutating;
+  void platform.error;
+  void platform.isLoadingConfig;
+  void platform.config;
+  void platform.configError;
+  void platform.isLoadingMembers;
+  void platform.isMutatingMembers;
+  void platform.membersError;
+  void platform.members;
+  void platform.memberPage;
+  void platform.isLoadingMoreMembers;
+  void platform.loadMoreMembers();
+  void platform.isLoadingInvitations;
+  void platform.isMutatingInvitations;
+  void platform.invitationsError;
+  void platform.invitations;
+  void platform.invitationPage;
+  void platform.isLoadingMoreInvitations;
+  void platform.loadMoreInvitations();
+  void platform.invitationConfigError;
+  void platform.invitationDelivery;
+
+  onboarding.reloadConfig();
+  onboarding.reloadInvitations();
+  onboarding.reloadJoinRequests();
+  onboarding.reload();
+  void onboarding.isLoading;
+  void onboarding.isMutating;
+  void onboarding.error;
+  void onboarding.isLoadingConfig;
+  void onboarding.isConfigPermissionDenied;
+  void onboarding.configError;
+  void onboarding.config;
+  void onboarding.isLoadingInvitations;
+  void onboarding.isLoadingJoinRequests;
+  void onboarding.isMutatingInvitations;
+  void onboarding.isMutatingJoinRequests;
+  void onboarding.isInvitationsPermissionDenied;
+  void onboarding.isJoinRequestsPermissionDenied;
+  void onboarding.invitationsError;
+  void onboarding.joinRequestsError;
+  void onboarding.invitations;
+  void onboarding.joinRequests;
+  void onboarding.invitationPage;
+  void onboarding.joinRequestPage;
+  void onboarding.isLoadingMoreInvitations;
+  void onboarding.isLoadingMoreJoinRequests;
+  void onboarding.loadMoreInvitations();
+  void onboarding.loadMoreJoinRequests();
+  void onboarding.authConfigError;
+
+  return {
+    platformPolicyStatus,
+    platformInvitationsEnabled,
+    onboardingAuthConfigStatus,
+    onboardingInvitationsEnabled,
+    onboardingJoinRequestsEnabled,
+  };
+}
+void assertPackagedAdministrationHookContracts;
 
 function assertPackagedPlatformContract(client: Client) {
   const admin: AuthPlatformAdminSdkSurface = client.platformAdmin;

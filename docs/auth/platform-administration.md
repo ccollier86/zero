@@ -294,9 +294,48 @@ creation, and capability-gated read-only member drill-in. Both hooks clear old
 scope data synchronously, ignore late completions, suppress mutation results
 after a foreign scope transition, and expose pending/error/reload state.
 
-`isAvailable` means the current session is in an administration tenant; it is
-not proof of any particular permission. The returned config capabilities
-decide which reads and mutations are attempted.
+The administration hook does not collapse unrelated work into one request.
+Its protected config, member directory, public invitation policy, and
+invitation directory are independently generation-fenced. Use:
+
+- `isLoadingConfig`, `configError`, and `reloadConfig()` for protected config;
+- `isLoadingMembers`, `isMutatingMembers`, `membersError`, and
+  `reloadMembers()` for people and ownership;
+- `invitationPolicyStatus`, nullable `invitationsEnabled`,
+  `invitationDelivery`, and `invitationConfigError` for public policy; and
+- `isLoadingInvitations`, `isMutatingInvitations`, `invitationsError`, and
+  `reloadInvitations()` for invitations.
+
+The older `isLoading`, `isMutating`, `error`, and `reload()` values are
+aggregate compatibility fields. A member failure does not clear invitation
+data, and an invitation failure does not disable member controls. If public
+auth config is unresolved, invitation availability is `null`; if policy is
+disabled or config failed, it is `false` and no invitation request is sent.
+Retrying invitations also retries a failed public-config load. Server
+capabilities and mutation authorization remain authoritative regardless of UI
+state.
+
+The remaining result fields stay slice-specific as well:
+
+| Concern | Data and paging | Mutation methods |
+|---|---|---|
+| protected configuration | `config`, `isLoadingConfig`, `configError`, `reloadConfig()` | none |
+| administration members | `members`, `memberPage`, `isLoadingMembers`, `isLoadingMoreMembers`, `membersError`, `loadMoreMembers()`, `reloadMembers()` | `addMember()`, `updateMember()`, `removeMember()`, `transferOwnership()`; `isMutatingMembers` covers only these writes |
+| invitation policy | `invitationPolicyStatus`, `invitationsEnabled`, `invitationDelivery`, `invitationConfigError` | none |
+| administration invitations | `invitations`, `invitationPage`, `isLoadingInvitations`, `isLoadingMoreInvitations`, `invitationsError`, `loadMoreInvitations()`, `reloadInvitations()` | `issueInvitation()`, `revokeInvitation()`; `isMutatingInvitations` covers only these writes |
+
+`invitationPolicyStatus` is `unresolved`, `enabled`, `disabled`, or `error`.
+The nullable `invitationsEnabled` distinguishes unresolved policy (`null`)
+from an explicitly enabled feature (`true`) and disabled or failed-closed
+policy (`false`). `isAvailable` only means the current session is in an
+Administration Organization. It does not imply that protected config loaded
+or that the actor has a member, invitation, or ownership capability.
+
+For backward compatibility, the aggregate booleans are logical ORs of the
+corresponding slice states, aggregate `error` exposes the first current config,
+member, invitation-policy, or invitation error, and `reload()` asks all three
+protected slices to reload. Prefer the exact slice fields for new UI so one
+failure cannot replace an unrelated panel with a screen-wide error.
 
 ## Packaged React controls
 

@@ -324,6 +324,30 @@ describe('active-tenant member administration', () => {
         grantable: false,
       });
 
+    // Role projection must reuse the already-resolved tenant and grant
+    // ceiling. Adding roles must not add one SQLite tenant lookup per role.
+    const administration = harness.runtime.getTenantAdministrationService()!;
+    const tenancy = harness.runtime.getTenancyService()!;
+    const assertAuthority = await tenantAuthority(harness, alpha.accessToken);
+    const authority = assertAuthority([]);
+    const originalGetTenant = tenancy.getTenant.bind(tenancy);
+    let tenantReads = 0;
+    tenancy.getTenant = (tenantId: string) => {
+      tenantReads += 1;
+      return originalGetTenant(tenantId);
+    };
+    try {
+      administration.getConfig({
+        tenantId: alpha.tenant.tenantId,
+        membershipId: alpha.tenant.membershipId,
+        scope: authority.scope,
+        applicationScope: authority.applicationScope,
+      });
+    } finally {
+      tenancy.getTenant = originalGetTenant;
+    }
+    expect(tenantReads).toBe(1);
+
     // Unknown input cannot select another tenant. Elysia strips the undeclared
     // field and the live alpha bearer remains the only scope source.
     const confusedDeputy = await request(harness, 'POST', '/auth/tenant/members', {
