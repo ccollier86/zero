@@ -2,6 +2,7 @@ import type { PermissionKey } from './types';
 import type {
   AccessRequirement,
   AccessRequirementCompileOptions,
+  AuthorizationCredentialKind,
   CompiledAccessRequirement,
   StructuredAccessRequirement,
   TrustedPropertyRequirement,
@@ -24,6 +25,7 @@ import {
 
 const STRUCTURED_FIELDS = new Set([
   'user',
+  'credentials',
   'platformRole',
   'tenant',
   'scopeRole',
@@ -36,6 +38,7 @@ const COMPILED_FIELDS = new Set([
   'kind',
   'version',
   'user',
+  'credentialKinds',
   'tenant',
   'platformRoleGroups',
   'scopeRoleGroups',
@@ -90,6 +93,10 @@ export function compileAccessRequirement(
     );
   }
 
+  const credentialKinds = structured.credentials === undefined
+    ? undefined
+    : normalizeCredentialKinds(structured.credentials, 'credentials');
+
   const platformRoleGroups = structured.platformRole === undefined
     ? []
     : [normalizeRoleGroup(structured.platformRole, 'platformRole', undefined)];
@@ -122,7 +129,7 @@ export function compileAccessRequirement(
     ? []
     : [normalizeTrustedPropertyGroup(structured.properties, options.trustedProperties)];
 
-  const impliedUser = Boolean(
+  const authorityImpliesUser = Boolean(
     platformRoleGroups.length
     || structured.tenant === 'required'
     || scopeRoleGroups.length
@@ -130,10 +137,15 @@ export function compileAccessRequirement(
     || anyPermissionGroups.length
     || propertyGroups.length,
   );
+  const credentialImpliesUser = credentialKinds !== undefined
+    && structured.user !== 'optional';
 
   return freezeCompiled({
     ...mutableEmpty(),
-    user: structured.user === 'required' || impliedUser ? 'required' : 'optional',
+    user: structured.user === 'required' || authorityImpliesUser || credentialImpliesUser
+      ? 'required'
+      : 'optional',
+    credentialKinds,
     tenant: structured.tenant === 'required',
     platformRoleGroups,
     scopeRoleGroups,
@@ -168,6 +180,10 @@ export function mergeAccessRequirements(
     user: parentCompiled.user === 'required' || childCompiled.user === 'required'
       ? 'required'
       : 'optional',
+    credentialKinds: mergeCredentialKinds(
+      credentialConstraint(parentCompiled),
+      credentialConstraint(childCompiled),
+    ),
     tenant: parentCompiled.tenant || childCompiled.tenant,
     platformRoleGroups: mergeGroups(
       parentCompiled.platformRoleGroups,
@@ -215,6 +231,9 @@ export function validateCompiledRequirement(
   }
   if (requirement.user !== 'optional' && requirement.user !== 'required') {
     throw authorizationConfigError('Compiled access requirement has an invalid user mode.');
+  }
+  if (requirement.credentialKinds !== undefined) {
+    normalizeCredentialKinds(requirement.credentialKinds, 'credentialKinds');
   }
   if (typeof requirement.tenant !== 'boolean') {
     throw authorizationConfigError('Compiled access requirement has an invalid tenant flag.');
@@ -290,6 +309,7 @@ function mutableEmpty() {
     kind: 'zero.access-requirement' as const,
     version: 1 as const,
     user: 'optional' as 'optional' | 'required',
+    credentialKinds: undefined as AuthorizationCredentialKind[] | undefined,
     tenant: false,
     platformRoleGroups: [] as string[][],
     scopeRoleGroups: [] as string[][],
@@ -304,8 +324,12 @@ function emptyRequirement(): CompiledAccessRequirement {
 }
 
 function freezeCompiled(value: ReturnType<typeof mutableEmpty>): CompiledAccessRequirement {
+  const { credentialKinds, ...rest } = value;
   return Object.freeze({
-    ...value,
+    ...rest,
+    ...(credentialKinds === undefined
+      ? {}
+      : { credentialKinds: Object.freeze([...credentialKinds]) }),
     platformRoleGroups: freezeGroups(value.platformRoleGroups),
     scopeRoleGroups: freezeGroups(value.scopeRoleGroups),
     allPermissions: Object.freeze(uniqueSortedAuthorizationValues(value.allPermissions)),
@@ -316,6 +340,58 @@ function freezeCompiled(value: ReturnType<typeof mutableEmpty>): CompiledAccessR
       )),
     ))),
   });
+}
+
+function normalizeCredentialKinds(
+  value: unknown,
+  field: string,
+): AuthorizationCredentialKind[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw authorizationConfigError(
+      `Access requirement ${field} must be a non-empty credential-kind array.`,
+    );
+  }
+  const normalized = uniqueSortedAuthorizationValues(value as readonly string[]);
+  for (const kind of normalized) {
+    if (kind !== 'session' && kind !== 'api-key') {
+      throw authorizationConfigError(
+        `Access requirement ${field} contains unsupported credential kind "${String(kind)}".`,
+      );
+    }
+  }
+  return normalized as AuthorizationCredentialKind[];
+}
+
+function mergeCredentialKinds(
+  parent: readonly AuthorizationCredentialKind[] | undefined,
+  child: readonly AuthorizationCredentialKind[] | undefined,
+): AuthorizationCredentialKind[] | undefined {
+  if (parent === undefined) return child === undefined ? undefined : [...child];
+  if (child === undefined) return [...parent];
+  const childKinds = new Set(child);
+  const intersection = parent.filter((kind) => childKinds.has(kind));
+  if (intersection.length === 0) {
+    throw authorizationConfigError(
+      'Inherited and child access requirements allow no common credential kind.',
+    );
+  }
+  return uniqueSortedAuthorizationValues(intersection) as AuthorizationCredentialKind[];
+}
+
+/**
+ * Omitted credentials are unconstrained only for a genuinely anonymous,
+ * optional policy branch. Once a branch requires a user (directly or through
+ * an authority constraint), the legacy omission is the session-only default.
+ * Materializing that default before an inheritance intersection prevents an
+ * API-key leaf from widening an established authenticated router.
+ */
+function credentialConstraint(
+  requirement: CompiledAccessRequirement,
+): readonly AuthorizationCredentialKind[] | undefined {
+  if (requirement.credentialKinds !== undefined) {
+    return requirement.credentialKinds;
+  }
+  return requirement.user === 'required' ? ['session'] : undefined;
 }
 
 function freezeGroups(

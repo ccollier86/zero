@@ -19,7 +19,10 @@ import {
   requireRequestServiceDataScope,
   type ServiceDataScope,
 } from '../auth/service-data-scope';
-import { getTokenService } from '../auth/auth.plugin';
+import {
+  getAuthRequestCredentialResolver,
+  getTokenService,
+} from '../auth/auth.plugin';
 import { getScheduler } from '../scheduler';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
@@ -28,6 +31,7 @@ import type { SchedulerService } from '../scheduler/scheduler-service';
 import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
 import {
   ZERO_AUTHORIZATION_KERNEL,
+  ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
   ZERO_AUTH_TOKEN_SERVICE,
   ZERO_NOTIFICATION_SERVICE,
   ZERO_SCHEDULER_SERVICE,
@@ -155,6 +159,11 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
     ?? (() => config.runtime?.get(ZERO_AUTHORIZATION_KERNEL) ?? null);
   const authorization: AuthMiddlewareAuthorizationOptions = {
     ...config.authorization,
+    getRequestCredentialResolver:
+      config.authorization?.getRequestCredentialResolver
+      ?? (config.runtime
+        ? () => config.runtime!.get(ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER)
+        : getAuthRequestCredentialResolver),
     getAuthorizationKernel,
   };
   const requestScope = (access: Parameters<typeof requireRequestServiceDataScope>[0]) =>

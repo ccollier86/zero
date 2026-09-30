@@ -272,13 +272,6 @@ describe('installed authorization registry manifest', () => {
 
   test('checks retained assignments from the installed profile before adoption', () => {
     const db = createDb();
-    db.exec(`
-      CREATE TABLE _auth_tenant_memberships (
-        membership_id TEXT PRIMARY KEY,
-        role_key TEXT,
-        status TEXT NOT NULL
-      )
-    `);
     const initial = resolveAuthBehaviorConfig({
       tenancy: 'multi',
       authorization: {
@@ -291,10 +284,28 @@ describe('installed authorization registry manifest', () => {
     db.transaction(() => reconcileAuthorizationManifest({
       db, authorization: initial, tenancy: 'multi',
     }));
+    const now = Date.now();
     db.prepare(`
-      INSERT INTO _auth_tenant_memberships (membership_id, role_key, status)
-      VALUES ('retained-membership', 'retired-clinician', 'active')
-    `).run();
+      INSERT INTO users (
+        user_id, username, email, role, status, password_change_required,
+        email_verification_required, mfa_required, created_at
+      ) VALUES ('retained-user', 'retained-user', 'retained@example.test',
+        'user', 'active', 0, 0, 0, ?)
+    `).run(now);
+    db.prepare(`
+      INSERT INTO _auth_tenants (
+        tenant_id, slug, name, status, authorization_generation,
+        created_by, created_at, updated_at
+      ) VALUES ('retained-tenant', 'retained-tenant', 'Retained tenant',
+        'active', 0, 'retained-user', ?, ?)
+    `).run(now, now);
+    db.prepare(`
+      INSERT INTO _auth_tenant_memberships (
+        membership_id, tenant_id, user_id, status, role_key,
+        authorization_generation, joined_at, created_at, updated_at, created_by
+      ) VALUES ('retained-membership', 'retained-tenant', 'retained-user',
+        'active', 'retired-clinician', 0, ?, ?, ?, 'retained-user')
+    `).run(now, now, now);
 
     const reintroduced = resolveAuthBehaviorConfig({
       tenancy: 'multi',

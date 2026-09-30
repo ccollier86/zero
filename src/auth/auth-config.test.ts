@@ -35,6 +35,16 @@ describe('resolveAuthBehaviorConfig', () => {
       roles: {},
     });
     expect(defaults.bootstrap).toEqual({ mode: 'secret' });
+    expect(defaults.apiKeys).toEqual({
+      enabled: false,
+      selfService: false,
+      administratorIssuance: false,
+      defaultTTL: '30d',
+      defaultTTLms: 30 * 86_400_000,
+      maxTTL: '90d',
+      maxTTLms: 90 * 86_400_000,
+      maxActivePerUser: 10,
+    });
 
     const existing = resolveAuthBehaviorConfig({
       registration: { mode: 'admin-only' },
@@ -53,6 +63,80 @@ describe('resolveAuthBehaviorConfig', () => {
     });
     expect(existing.registration.mode).toBe('admin-only');
     expect(existing.strictUserProperties).toBe(true);
+  });
+
+  test('normalizes an explicit bounded API-key policy', () => {
+    expect(resolveAuthBehaviorConfig({ apiKeys: true }).apiKeys).toMatchObject({
+      enabled: true,
+      selfService: true,
+      administratorIssuance: false,
+    });
+
+    const configured = resolveAuthBehaviorConfig({
+      apiKeys: {
+        enabled: true,
+        selfService: true,
+        administratorIssuance: true,
+        eligibleScopeRoles: ['owner', 'developer'],
+        defaultTTL: '12h',
+        maxTTL: '30d',
+        maxActivePerUser: 4,
+      },
+    }).apiKeys;
+
+    expect(configured).toEqual({
+      enabled: true,
+      selfService: true,
+      administratorIssuance: true,
+      eligibleScopeRoles: ['developer', 'owner'],
+      defaultTTL: '12h',
+      defaultTTLms: 12 * 3_600_000,
+      maxTTL: '30d',
+      maxTTLms: 30 * 86_400_000,
+      maxActivePerUser: 4,
+    });
+    expect(Object.isFrozen(configured)).toBe(true);
+    expect(Object.isFrozen(configured.eligibleScopeRoles)).toBe(true);
+  });
+
+  test('rejects unsafe or malformed API-key policy', () => {
+    expect(() => resolveAuthBehaviorConfig({
+      apiKeys: { enabled: false, selfService: true },
+    })).toThrow('issuance cannot be enabled while API keys are disabled');
+    expect(() => resolveAuthBehaviorConfig({
+      apiKeys: { enabled: true, defaultTTL: '91d', maxTTL: '90d' },
+    })).toThrow('defaultTTL cannot exceed maxTTL');
+    expect(() => resolveAuthBehaviorConfig({
+      apiKeys: {
+        enabled: true,
+        defaultTTL: '1d',
+        maxTTL: '100000000d',
+      },
+    })).toThrow('maxTTL must produce a JavaScript Date-compatible expiry');
+    expect(() => resolveAuthBehaviorConfig({
+      apiKeys: { enabled: true, defaultTTL: 'forever' },
+    })).toThrow('defaultTTL must be a positive duration');
+    expect(() => resolveAuthBehaviorConfig({
+      apiKeys: { enabled: true, maxActivePerUser: 0 },
+    })).toThrow('maxActivePerUser must be an integer');
+    expect(() => resolveAuthBehaviorConfig({
+      apiKeys: { enabled: true, eligibleScopeRoles: [] },
+    })).toThrow('eligibleScopeRoles must be a non-empty array');
+    expect(() => resolveAuthBehaviorConfig({
+      apiKeys: { enabled: true, eligibleScopeRoles: ['owner', 'owner'] },
+    })).toThrow('eligibleScopeRoles must not contain duplicates');
+    expect(() => resolveAuthBehaviorConfig({
+      apiKeys: { enabled: true, autoIssue: true } as never,
+    })).toThrow('API key config contains unsupported field "autoIssue"');
+    expect(() => resolveAuthBehaviorConfig({
+      authorization: { mode: 'advanced' },
+      apiKeys: { enabled: true, eligibleScopeRoles: ['missing'] },
+    })).toThrow('eligible scope role is not declared: "missing"');
+    expect(() => resolveAuthBehaviorConfig({
+      tenancy: 'multi',
+      authorization: { mode: 'advanced' },
+      apiKeys: { enabled: true, eligibleScopeRoles: ['administrator'] },
+    })).toThrow('must be assignable to organization tenants: "administrator"');
   });
 
   test('normalizes explicit bootstrap modes and validates server-only secrets', () => {

@@ -10,6 +10,8 @@
 import { Elysia, t } from 'elysia';
 import { authContextAuthorityFingerprint } from '../auth/auth-context-authority';
 import { createAuthMiddleware } from '../auth/auth.middleware';
+import type { AuthRequestCredentialResolver } from '../auth/auth-api-key-types';
+import type { RequestAuthorizationAccess } from '../auth/authorization-access';
 import type { TokenService } from '../auth/token-service';
 import type { AuthContext } from '../auth/types';
 import type { AuthTenancyMode } from '../auth/types';
@@ -35,6 +37,7 @@ import {
   type ResourcePolicyAuthConfig,
   type ResourceRegistry,
 } from '../resources';
+import { resourcePolicyAdmitsCredential } from '../resources/resource-policy-inspection';
 import {
   buildResourceListFindPlan,
   RESOURCE_QUERY_LIMITS,
@@ -61,6 +64,8 @@ export interface DataQueryConfig {
   policy?: SyncPolicy;
   /** Optional auth token service provider used to resolve HTTP auth context. */
   getTokenService?: () => TokenService | null;
+  /** Guardian request resolver used only by resource policies which opt API keys in. */
+  getRequestCredentialResolver?: () => AuthRequestCredentialResolver | null;
   /** Optional auth user store provider used to hydrate resource metadata policy. */
   getUserStore?: () => UserStore | null;
   /** App-local authorization kernel used by authorizationPolicy(). */
@@ -141,6 +146,7 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
   const database = new DataQueryDatabaseAdapter({
     tenancyMode: config.tenancyMode,
     getTokenService: config.getTokenService,
+    getRequestCredentialResolver: config.getRequestCredentialResolver,
     getDatabaseManager: config.getDatabaseManager,
     authorityFingerprint: (authContext) => (
       resolveDataPolicyAuthority(config, authContext).fingerprint
@@ -166,13 +172,15 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
   };
 
   return new Elysia({ name: 'data-query' })
-    .use(createAuthMiddleware(config.getTokenService ?? (() => null)))
+    .use(createAuthMiddleware(config.getTokenService ?? (() => null), {
+      getRequestCredentialResolver: config.getRequestCredentialResolver,
+    }))
     .onError(({ code, set }) => {
       if (code !== 'VALIDATION') return;
       set.status = 400;
       return { error: 'Invalid data query', code: 'invalid-data-query' };
     })
-    .get('/api/data', async ({ query, set, authContext, request }) => {
+    .get('/api/data', async ({ query, set, access, request }) => {
       // An explicit app-local provider owns this dependency even while it is
       // unavailable. Never fall through to another live app's compatibility
       // provider in that case.
@@ -208,9 +216,11 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
         return { error: `Unknown table: ${table}`, code: 'invalid-data-query' };
       }
 
+      const admittedAuthContext = admitDataQueryCredential(config, table, access);
+
       const readDecision = evaluateSyncReadPolicy(
         policy,
-        { table, authContext },
+        { table, authContext: admittedAuthContext },
         config.observability,
       );
       if (!readDecision.ok) {
@@ -228,8 +238,12 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
         };
       }
 
-      const commitAuthority = database.captureCommitAuthority(authContext);
-      const resourceDecision = await evaluateDataResourcePolicy(config, table, authContext);
+      const commitAuthority = database.captureCommitAuthority(admittedAuthContext);
+      const resourceDecision = await evaluateDataResourcePolicy(
+        config,
+        table,
+        admittedAuthContext,
+      );
       if (!resourceDecision.ok) {
         set.status = resourceDecision.status;
         return { error: resourceDecision.error, code: resourceDecision.code };
@@ -238,6 +252,7 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
         const current = await database.isRequestAuthorityCurrent(
           request,
           resourceDecision.authorityFingerprint,
+          commitAuthority,
         );
         if (!current) {
           set.status = 403;
@@ -490,6 +505,24 @@ async function evaluateDataResourcePolicy(
     authorityFingerprint: authority.fingerprint,
     scope: realm.scope,
   };
+}
+
+function admitDataQueryCredential(
+  config: DataQueryConfig,
+  table: string,
+  access: RequestAuthorizationAccess,
+): AuthContext | null {
+  const policy = config.resourceRegistry?.getByTable(table)?.policy.list;
+  const admitsApiKey = policy
+    ? resourcePolicyAdmitsCredential(policy, 'api-key')
+    : false;
+  // Establish visibility for this exact list policy. This also reconceals a
+  // key admitted by earlier request middleware before policy evaluation.
+  access.authorize({
+    user: 'optional',
+    credentials: admitsApiKey ? ['session', 'api-key'] : ['session'],
+  });
+  return access.context;
 }
 
 function resourcePolicyAuthorityFingerprint(

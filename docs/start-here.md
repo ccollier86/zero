@@ -31,7 +31,8 @@ and data organisms, start with the
 [Component Inventory](./frontend/component-inventory.md).
 For web/server authentication, installation bootstrap, single- or multi-tenant
 operation, simple or advanced authorization, tenant/application administration,
-and packaged access controls, use [Guardian](./auth/README.md) as the
+user-bound API keys, and packaged access controls, use
+[Guardian](./auth/README.md) as the
 canonical subsystem index. It routes to the focused configuration, RBAC,
 onboarding, audit, browser, and installed-app guides without duplicating their
 contracts here.

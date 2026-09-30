@@ -7,6 +7,9 @@
  */
 
 import type { AccountEmailService } from './account-email-service';
+import type { AuthApiKeyService } from './auth-api-key-service';
+import type { AuthApiKeyStore } from './auth-api-key-store';
+import type { GuardianRequestCredentialResolver } from './auth-request-credential-resolver';
 import type { AuthActionTokenService } from './action-token-service';
 import type { AuthApplicationAdministrationService } from './auth-application-administration-service';
 import type { AuthAuditService } from './auth-audit-service';
@@ -36,6 +39,9 @@ export interface AuthRuntimeServiceGraph {
   auditService: AuthAuditService | null;
   requestAdmissionService: AuthRequestAdmissionService | null;
   tokenService: TokenService | null;
+  apiKeyStore: AuthApiKeyStore | null;
+  apiKeyService: AuthApiKeyService | null;
+  requestCredentialResolver: GuardianRequestCredentialResolver | null;
   authSessionService: AuthSessionService | null;
   authTenantSessionService: AuthTenantSessionService | null;
   applicationAdministrationService: AuthApplicationAdministrationService | null;
@@ -64,6 +70,9 @@ export function createAuthRuntimeServiceGraph(): AuthRuntimeServiceGraph {
     auditService: null,
     requestAdmissionService: null,
     tokenService: null,
+    apiKeyStore: null,
+    apiKeyService: null,
+    requestCredentialResolver: null,
     authSessionService: null,
     authTenantSessionService: null,
     applicationAdministrationService: null,

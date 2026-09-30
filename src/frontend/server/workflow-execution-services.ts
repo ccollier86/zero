@@ -117,6 +117,7 @@ function createActorExecutionAccess(
   const scope = actorScope(authority, kernel);
   const subject: AuthorizationSubjectSnapshot = Object.freeze({
     platformRole: authority.identity.platformRole,
+    credentialKind: context.credentialKind ?? 'session',
     properties: Object.freeze({ ...authority.userProperties }),
     authorization: scope,
     applicationAuthorization: scope.scopeKind === 'application' ? scope : null,
@@ -150,16 +151,34 @@ function createActorExecutionAccess(
       return scope as TenantAuthorizationScope;
     },
     hasPermission(permission) {
-      return kernel.evaluate({ permission }, subject).allowed;
+      return kernel.evaluate(actorPermissionRequirement(context, permission), subject).allowed;
     },
     requirePermission(permission) {
-      return kernel.authorize({ permission }, subject)!;
+      return kernel.authorize(actorPermissionRequirement(context, permission), subject)!;
     },
     requireAnyPermission(permissions) {
-      return kernel.authorize({ anyPermissions: permissions }, subject)!;
+      return kernel.authorize(actorPermissionRequirement(
+        context,
+        undefined,
+        permissions,
+      ), subject)!;
     },
   };
   return Object.freeze(access);
+}
+
+function actorPermissionRequirement(
+  context: NonNullable<WorkflowResolvedExecutionAuthority['authContext']>,
+  permission?: PermissionKey,
+  anyPermissions?: readonly PermissionKey[],
+) {
+  return {
+    ...(context.credentialKind === 'api-key'
+      ? { credentials: ['api-key'] as const }
+      : {}),
+    ...(permission ? { permission } : {}),
+    ...(anyPermissions ? { anyPermissions } : {}),
+  };
 }
 
 function actorScope(

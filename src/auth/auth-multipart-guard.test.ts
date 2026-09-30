@@ -3,6 +3,8 @@ import { Elysia, t } from 'elysia';
 import type { AnyElysia } from 'elysia';
 
 import type { TokenService } from './token-service';
+import type { AuthApiKeyService } from './auth-api-key-service';
+import { GuardianRequestCredentialResolver } from './auth-request-credential-resolver';
 import { resolveAuthBehaviorConfig } from './auth-config';
 import { createAuthorizationKernel } from './authorization-kernel';
 import {
@@ -284,6 +286,90 @@ describe('early multipart authentication', () => {
     expect(allowed.status).toBe(200);
     expect(parserRuns).toBe(1);
     expect(handlerRuns).toBe(1);
+  });
+
+  test('admits API keys only for an explicitly opted-in multipart route', async () => {
+    let apiKeyResolutions = 0;
+    let sessionResolutions = 0;
+    let parserRuns = 0;
+    const apiContext: AuthContext = {
+      userId: 'u_api_key',
+      email: 'key@example.test',
+      role: 'user',
+      credentialKind: 'api-key',
+      credentialId: 'key-1',
+      authGeneration: 0,
+      sessionScopeKind: 'application',
+      sessionScopeId: 'application',
+    };
+    const tokens = fakeTokenService(async () => {
+      sessionResolutions += 1;
+      return null;
+    });
+    const apiKeys = {
+      isApiKeyToken: (raw: string) => raw.startsWith('zero_ak_v1.'),
+      resolve: () => {
+        apiKeyResolutions += 1;
+        return apiContext;
+      },
+    } as unknown as AuthApiKeyService;
+    const resolver = new GuardianRequestCredentialResolver(tokens, apiKeys);
+    const authorization = {
+      getRequestCredentialResolver: () => resolver,
+    };
+    const optedIn = {
+      user: 'required',
+      credentials: ['session', 'api-key'],
+    } as const;
+    const app = withAuthErrors(
+      new Elysia()
+        .use(createAuthMiddleware(() => tokens, authorization))
+        .onRequest(createProtectedMultipartRequestGuard(
+          () => tokens,
+          { requirement: optedIn, method: 'POST', path: '/key-upload' },
+          authorization,
+        ))
+        .onRequest(createProtectedMultipartRequestGuard(
+          () => tokens,
+          { requirement: 'user', method: 'POST', path: '/session-upload' },
+          authorization,
+        ))
+        .post('/key-upload', ({ requireAuth }) => ({
+          credentialKind: requireAuth().credentialKind,
+        }), {
+          zeroAuth: optedIn,
+          body: t.Object({ file: t.File() }),
+          parse: () => {
+            parserRuns += 1;
+            return undefined;
+          },
+        })
+        .post('/session-upload', () => ({ unreachable: true }), {
+          zeroAuth: 'user',
+          body: t.Object({ file: t.File() }),
+          parse: () => {
+            parserRuns += 1;
+            return undefined;
+          },
+        })
+    );
+
+    const admitted = await app.handle(multipartRequest(
+      '/key-upload',
+      'zero_ak_v1.key-1.secret',
+    ));
+    const denied = await app.handle(multipartRequest(
+      '/session-upload',
+      'zero_ak_v1.key-1.secret',
+    ));
+
+    expect(admitted.status).toBe(200);
+    expect(await admitted.json()).toEqual({ credentialKind: 'api-key' });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toEqual({ error: 'Forbidden', code: 'FORBIDDEN' });
+    expect(parserRuns).toBe(1);
+    expect(apiKeyResolutions).toBe(2);
+    expect(sessionResolutions).toBe(0);
   });
 
   test('public multipart routes remain public', async () => {

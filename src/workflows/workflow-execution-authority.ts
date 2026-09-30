@@ -13,6 +13,7 @@ import type { Statement } from 'bun:sqlite';
 import type {
   AuthorizationScopeSnapshot,
 } from '../auth/authorization-kernel';
+import type { AuthRequestAuthorityReference } from '../auth/auth-api-key-types';
 import type { AuthContext, AuthContextAuthorityReference } from '../auth/types';
 import {
   trustedSystemServiceDataScope,
@@ -27,13 +28,11 @@ const MAX_AUTHORITY_JSON_BYTES = 32 * 1024;
 export type WorkflowExecutionAuthorityKind = 'actor' | 'system';
 
 /** Immutable, secret-free identity exposed to step handlers. */
-export type WorkflowExecutionIdentity = Readonly<
-  | {
+export type WorkflowExecutionIdentity =
+  | Readonly<{
       kind: 'actor';
       userId: string;
       platformRole: string;
-      sessionKind: 'web' | 'native';
-      clientId: string | null;
       scopeKind: 'application' | 'tenant';
       scopeId: string;
       tenantId: string | null;
@@ -42,8 +41,22 @@ export type WorkflowExecutionIdentity = Readonly<
       permissions: readonly string[];
       allPermissions: boolean;
       authorizationRevision: string;
-    }
-  | {
+    } & (
+      | {
+          /** Omitted by v1 session seals for backwards-compatible persistence. */
+          credentialKind?: 'session';
+          credentialId?: null;
+          sessionKind: 'web' | 'native';
+          clientId: string | null;
+        }
+      | {
+          credentialKind: 'api-key';
+          credentialId: string;
+          sessionKind: null;
+          clientId: null;
+        }
+    )>
+  | Readonly<{
       kind: 'system';
       principal: string;
       reason: string;
@@ -54,13 +67,12 @@ export type WorkflowExecutionIdentity = Readonly<
       permissions: readonly [];
       allPermissions: true;
       legacyCompatibility: boolean;
-    }
->;
+    }>;
 
 export interface WorkflowActorExecutionAuthority {
   readonly version: 1;
   readonly kind: 'actor';
-  readonly reference: AuthContextAuthorityReference;
+  readonly reference: AuthContextAuthorityReference | AuthRequestAuthorityReference;
   readonly identity: Extract<WorkflowExecutionIdentity, { kind: 'actor' }>;
   /** Keyed digest only; raw server-owned user properties are never persisted. */
   readonly propertiesMac: string;
@@ -320,12 +332,10 @@ export function createActorIdentity(
   context: AuthContext,
   authorization: AuthorizationScopeSnapshot,
 ): Extract<WorkflowExecutionIdentity, { kind: 'actor' }> {
-  return deepFreezeIdentity({
+  const common = {
     kind: 'actor',
     userId: context.userId,
     platformRole: context.role,
-    sessionKind: context.sessionKind!,
-    clientId: context.clientId ?? null,
     scopeKind: authorization.scopeKind,
     scopeId: authorization.scopeId,
     tenantId: authorization.tenantId ?? null,
@@ -334,7 +344,20 @@ export function createActorIdentity(
     permissions: [...authorization.permissions].sort(compareText),
     allPermissions: authorization.allPermissions === true,
     authorizationRevision: authorization.revision,
-  });
+  } as const;
+  return context.credentialKind === 'api-key'
+    ? deepFreezeIdentity({
+        ...common,
+        credentialKind: 'api-key',
+        credentialId: context.credentialId!,
+        sessionKind: null,
+        clientId: null,
+      })
+    : deepFreezeIdentity({
+        ...common,
+        sessionKind: context.sessionKind!,
+        clientId: context.clientId ?? null,
+      });
 }
 
 export function createSystemAuthority(input: {
@@ -421,14 +444,7 @@ function isPersistedAuthority(value: unknown): value is WorkflowPersistedExecuti
     || !isActorIdentity(value.identity)
     || !isAuthorityReference(value.reference)
     || !isHexDigest(value.propertiesMac)) return false;
-  return value.identity.userId === value.reference.userId
-    && value.identity.platformRole === value.reference.platformRole
-    && value.identity.sessionKind === value.reference.sessionKind
-    && value.identity.clientId === value.reference.clientId
-    && value.identity.scopeKind === value.reference.sessionScopeKind
-    && value.identity.scopeId === value.reference.sessionScopeId
-    && value.identity.tenantId === value.reference.tenantId
-    && value.identity.membershipId === value.reference.membershipId;
+  return actorIdentityMatchesReference(value.identity, value.reference);
 }
 
 function isActorIdentity(
@@ -438,14 +454,25 @@ function isActorIdentity(
     && value.kind === 'actor'
     && boundedString(value.userId, 256)
     && boundedString(value.platformRole, 128)
-    && (value.sessionKind === 'web' || value.sessionKind === 'native')
-    && nullableBoundedString(value.clientId, 256)
+    && isActorCredentialShape(value)
     && isScopeShape(value)
     && nullableBoundedString(value.membershipId, 256)
     && stringArray(value.roles, 128, 128)
     && stringArray(value.permissions, 1024, 256)
     && typeof value.allPermissions === 'boolean'
     && boundedString(value.authorizationRevision, 1024);
+}
+
+function isActorCredentialShape(value: Record<string, unknown>): boolean {
+  if (value.credentialKind === 'api-key') {
+    return boundedString(value.credentialId, 256)
+      && value.sessionKind === null
+      && value.clientId === null;
+  }
+  return (value.credentialKind === undefined || value.credentialKind === 'session')
+    && (value.credentialId === undefined || value.credentialId === null)
+    && (value.sessionKind === 'web' || value.sessionKind === 'native')
+    && nullableBoundedString(value.clientId, 256);
 }
 
 function isSystemIdentity(
@@ -471,7 +498,24 @@ function isScopeShape(value: Record<string, unknown>): boolean {
     && value.tenantId === value.scopeId;
 }
 
-function isAuthorityReference(value: unknown): value is AuthContextAuthorityReference {
+function isAuthorityReference(
+  value: unknown,
+): value is AuthContextAuthorityReference | AuthRequestAuthorityReference {
+  if (!isRecord(value)) return false;
+  if (value.kind === 'session') return isSessionAuthorityReference(value.reference);
+  if (value.kind === 'api-key') {
+    return value.version === 1
+      && boundedString(value.keyId, 256)
+      && generation(value.keyGeneration)
+      && boundedString(value.userId, 256)
+      && (value.scopeKind === 'application' || value.scopeKind === 'tenant')
+      && boundedString(value.scopeId, 256)
+      && (value.scopeKind === 'tenant' || value.scopeId === 'application');
+  }
+  return isSessionAuthorityReference(value);
+}
+
+function isSessionAuthorityReference(value: unknown): value is AuthContextAuthorityReference {
   if (!isRecord(value)
     || value.version !== 1
     || !boundedString(value.userId, 256)
@@ -505,6 +549,29 @@ function isAuthorityReference(value: unknown): value is AuthContextAuthorityRefe
       && value.membershipAuthorizationGeneration !== null;
 }
 
+function actorIdentityMatchesReference(
+  identity: Extract<WorkflowExecutionIdentity, { kind: 'actor' }>,
+  reference: AuthContextAuthorityReference | AuthRequestAuthorityReference,
+): boolean {
+  if ('kind' in reference && reference.kind === 'api-key') {
+    return identity.credentialKind === 'api-key'
+      && identity.credentialId === reference.keyId
+      && identity.userId === reference.userId
+      && identity.scopeKind === reference.scopeKind
+      && identity.scopeId === reference.scopeId;
+  }
+  const session = 'kind' in reference ? reference.reference : reference;
+  return identity.credentialKind !== 'api-key'
+    && identity.userId === session.userId
+    && identity.platformRole === session.platformRole
+    && identity.sessionKind === session.sessionKind
+    && identity.clientId === session.clientId
+    && identity.scopeKind === session.sessionScopeKind
+    && identity.scopeId === session.sessionScopeId
+    && identity.tenantId === session.tenantId
+    && identity.membershipId === session.membershipId;
+}
+
 function freezePersistedAuthority(
   authority: WorkflowPersistedExecutionAuthority,
 ): WorkflowPersistedExecutionAuthority {
@@ -516,11 +583,27 @@ function freezePersistedAuthority(
   }
   return Object.freeze({
     ...authority,
-    reference: Object.freeze({
-      ...authority.reference,
-      identityScopes: Object.freeze([...authority.reference.identityScopes]),
-    }),
+    reference: freezeAuthorityReference(authority.reference),
     identity: deepFreezeIdentity(authority.identity),
+  });
+}
+
+function freezeAuthorityReference(
+  reference: AuthContextAuthorityReference | AuthRequestAuthorityReference,
+): AuthContextAuthorityReference | AuthRequestAuthorityReference {
+  if ('kind' in reference) {
+    if (reference.kind === 'api-key') return Object.freeze({ ...reference });
+    return Object.freeze({
+      kind: 'session' as const,
+      reference: Object.freeze({
+        ...reference.reference,
+        identityScopes: Object.freeze([...reference.reference.identityScopes]),
+      }),
+    });
+  }
+  return Object.freeze({
+    ...reference,
+    identityScopes: Object.freeze([...reference.identityScopes]),
   });
 }
 

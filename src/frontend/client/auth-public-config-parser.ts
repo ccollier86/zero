@@ -13,6 +13,7 @@ export function isAuthPublicConfig(value: unknown): value is AuthPublicConfig {
 
   return optional(config.tenancy, isTenancy)
     && optional(config.authorization, isAuthorization)
+    && optional(config.apiKeys, isApiKeys)
     && optional(config.bootstrap, isBootstrap)
     && optional(config.accountEmails, isAccountEmails)
     && optional(config.account, isAccount)
@@ -71,6 +72,41 @@ function isAuthorization(value: unknown): boolean {
   const authorization = record(value);
   return Boolean(authorization)
     && oneOf(authorization!.mode, ['simple', 'advanced']);
+}
+
+function isApiKeys(value: unknown): boolean {
+  const apiKeys = record(value);
+  const defaultTTL = durationMilliseconds(apiKeys?.defaultTTL);
+  const maxTTL = durationMilliseconds(apiKeys?.maxTTL);
+  return Boolean(apiKeys)
+    && typeof apiKeys!.enabled === 'boolean'
+    && typeof apiKeys!.selfService === 'boolean'
+    && typeof apiKeys!.administratorIssuance === 'boolean'
+    && defaultTTL !== null
+    && maxTTL !== null
+    && defaultTTL <= maxTTL
+    && typeof apiKeys!.maxActivePerUser === 'number'
+    && Number.isSafeInteger(apiKeys!.maxActivePerUser)
+    && (apiKeys!.maxActivePerUser as number) >= 1
+    && (apiKeys!.maxActivePerUser as number) <= 100;
+}
+
+function durationMilliseconds(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const match = /^(\d+)(s|m|h|d)$/.exec(value);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const multiplier = match[2] === 's'
+    ? 1_000
+    : match[2] === 'm'
+      ? 60_000
+      : match[2] === 'h'
+        ? 3_600_000
+        : 86_400_000;
+  const milliseconds = amount * multiplier;
+  return Number.isSafeInteger(milliseconds) && milliseconds > 0
+    ? milliseconds
+    : null;
 }
 
 function isBootstrap(value: unknown): boolean {

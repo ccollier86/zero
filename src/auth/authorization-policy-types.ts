@@ -29,9 +29,17 @@ export type LegacyAccessRequirement =
   | 'required'
   | 'admin';
 
+/** Credential classes that may present one authenticated request identity. */
+export type AuthorizationCredentialKind = 'session' | 'api-key';
+
 /** Structured, transport-neutral, and JSON-serializable access declaration. */
 export interface StructuredAccessRequirement {
   user?: 'required' | 'optional';
+  /**
+   * Explicit credential admission for this policy branch. Omission preserves
+   * the session-only compatibility default unless an ancestor opted in.
+   */
+  credentials?: readonly AuthorizationCredentialKind[];
   /** Existing global/platform role. This never means tenant role. */
   platformRole?: string | readonly string[];
   /** Require a validated tenant authorization scope. */
@@ -54,6 +62,11 @@ export interface CompiledAccessRequirement {
   readonly kind: 'zero.access-requirement';
   readonly version: 1;
   readonly user: 'optional' | 'required';
+  /**
+   * Explicit inherited credential constraint. Omission evaluates as the
+   * session-only compatibility default.
+   */
+  readonly credentialKinds?: readonly AuthorizationCredentialKind[];
   readonly tenant: boolean;
   /** Each inner group is OR; separate groups are AND. */
   readonly platformRoleGroups: readonly (readonly string[])[];
@@ -94,6 +107,8 @@ export interface AuthorizationScopeSnapshot {
 /** Authenticated identity plus optional live application authorization scope. */
 export interface AuthorizationSubjectSnapshot {
   readonly platformRole: string;
+  /** Omitted snapshots are existing session identities. */
+  readonly credentialKind?: AuthorizationCredentialKind;
   readonly properties?: Readonly<Record<string, string>>;
   /** Active application or tenant scope selected by the session. */
   readonly authorization?: AuthorizationScopeSnapshot | null;
@@ -118,6 +133,7 @@ export interface SingleSimpleScopeInput {
 
 export type AuthorizationDenialReason =
   | 'authentication-required'
+  | 'credential-kind'
   | 'platform-role'
   | 'scope-required'
   | 'scope-invalid'

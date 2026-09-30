@@ -15,6 +15,7 @@ export type {
 
 export {
   createAuthorityScopedServerServices,
+  createDeferredServerRequestServices,
   createServerRequestServices,
   isServerRequestServices,
 } from './server-request-services/create-request-services';

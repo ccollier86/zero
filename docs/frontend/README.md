@@ -210,7 +210,7 @@ The frontend SDK composes these — it doesn't reinvent them:
 |-----------|------|----------------------------------|
 | Design tokens | [Design Tokens](./design-tokens.md) | Core app lane for operational UI plus public/frontend lane for docs, marketing, landing, and public flow components |
 | Sync engine | [docs/realtime-sync/](../realtime-sync/realtime-sync/README.md) | `useCollection`, `useLazyCollection`, `useRow`, `useQuery`, `useStatus`, `SyncClient`, `SyncProvider`, optimistic mutations, reconnect |
-| Auth system | [docs/auth/](../auth/README.md) | Account lifecycle, all four auth profiles, application/tenant administration and onboarding, browser authorization/cache boundary, packaged controls, JWT middleware, and server guards |
+| Auth system | [docs/auth/](../auth/README.md) | Account lifecycle, all four auth profiles, application/tenant administration and onboarding, user API keys, browser authorization/cache boundary, packaged controls, credential middleware, and server guards |
 | State sync | [docs/state-sync.md](../state-sync.md) | `useServerState`, scoped-user persistent KV, same-scope device sync, form drafts, UI preferences |
 | App shell | [AppShell](./app-shell.md) and [Sidebar](./sidebar.md) | `AppShell`, optional breadcrumbs/header content, workspace switcher, nested nav, three-dot item actions, footer user menu, and raw sidebar primitives |
 | Public navigation | [Resizable Navbar](./navbar.md) | `ResizableNavbar` for docs, marketing, landing, and other public route trees |

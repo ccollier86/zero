@@ -13,6 +13,7 @@ import {
   isCompiledAccessRequirement,
   mergeAccessRequirements,
   type AccessRequirement,
+  type AuthorizationCredentialKind,
   type AuthorizationKernel,
   type AuthorizationScopeSnapshot,
   type AuthorizationSubjectSnapshot,
@@ -111,6 +112,14 @@ export function createRequestAuthorizationAccess(
     : () => {};
   let baseSubject: AuthorizationSubjectSnapshot | null | undefined;
   let propertySubject: AuthorizationSubjectSnapshot | null | undefined;
+  let apiKeyAdmitted = false;
+  const isApiKeyRequest = authContext?.credentialKind === 'api-key';
+  const visibleContext = (): AuthContext | null => (
+    isApiKeyRequest && !apiKeyAdmitted ? null : authContext
+  );
+  const assertCredentialAdmitted = (): void => {
+    if (isApiKeyRequest && !apiKeyAdmitted) throw forbidden();
+  };
   const resolveSubject = (
     includeProperties = false,
   ): AuthorizationSubjectSnapshot | null => {
@@ -155,22 +164,28 @@ export function createRequestAuthorizationAccess(
   };
 
   const resolveAuthorization = (): AuthorizationScopeSnapshot | null => (
-    resolveSubject()?.authorization ?? null
+    visibleContext() ? resolveSubject()?.authorization ?? null : null
   );
   const resolveApplicationAuthorization = (): AuthorizationScopeSnapshot | null => (
-    resolveSubject()?.applicationAuthorization ?? null
+    visibleContext() ? resolveSubject()?.applicationAuthorization ?? null : null
   );
   const requireCurrentUser = (): AuthContext => {
     if (!authContext) throw unauthorized();
+    assertCredentialAdmitted();
     return authContext;
   };
   const authorizeRequirement = (
     requirement: AccessRequirement | CompiledAccessRequirement,
   ): AuthorizationScopeSnapshot | null => {
+    const compiled = isCompiledAccessRequirement(requirement)
+      ? requirement
+      : kernel?.compile(requirement) ?? compileAccessRequirement(requirement);
+    // Credential visibility belongs to the policy currently being evaluated,
+    // never to an earlier middleware/guard on the same request. Conceal first
+    // so a denied policy cannot leave a previously admitted key visible.
+    if (isApiKeyRequest) apiKeyAdmitted = false;
+    let authorized: AuthorizationScopeSnapshot | null;
     if (kernel) {
-      const compiled = isCompiledAccessRequirement(requirement)
-        ? requirement
-        : kernel.compile(requirement);
       const requiresProperties = Array.isArray(compiled.propertyGroups)
         && compiled.propertyGroups.length > 0;
       if (requiresProperties && !options.propertyStore) {
@@ -180,18 +195,34 @@ export function createRequestAuthorizationAccess(
           503,
         );
       }
-      return kernel.authorize(
+      authorized = kernel.authorize(
         compiled,
-        resolveSubject(requiresProperties),
+        isApiKeyRequest
+          && compiled.user === 'optional'
+          && !compiled.credentialKinds?.includes('api-key')
+          ? null
+          : resolveSubject(requiresProperties),
+      );
+    } else {
+      authorized = authorizeWithoutKernel(
+        compiled,
+        isApiKeyRequest
+          && compiled.user === 'optional'
+          && !compiled.credentialKinds?.includes('api-key')
+          ? null
+          : authContext,
       );
     }
-    return authorizeWithoutKernel(requirement, authContext);
+    if (isApiKeyRequest) {
+      apiKeyAdmitted = compiled.credentialKinds?.includes('api-key') === true;
+    }
+    return authorized;
   };
 
   const access: RequestAuthorizationAccess = {
     get context() {
       assertCurrentProfile();
-      return authContext;
+      return visibleContext();
     },
     get authorization() {
       assertCurrentProfile();
@@ -241,18 +272,29 @@ export function createRequestAuthorizationAccess(
     },
     hasPermission(permission) {
       assertCurrentProfile();
-      if (!kernel) return false;
-      return kernel.evaluate({ permission }, resolveSubject()).allowed;
+      if (!kernel || (isApiKeyRequest && !apiKeyAdmitted)) return false;
+      return kernel.evaluate(
+        isApiKeyRequest
+          ? { credentials: ['api-key'], permission }
+          : { permission },
+        resolveSubject(),
+      ).allowed;
     },
     requirePermission(permission) {
       assertCurrentProfile();
-      const scope = authorizeRequirement({ permission });
+      requireCurrentUser();
+      const scope = authorizeRequirement(isApiKeyRequest
+        ? { credentials: ['api-key'], permission }
+        : { permission });
       if (!scope) throw forbidden();
       return scope;
     },
     requireAnyPermission(permissions) {
       assertCurrentProfile();
-      const scope = authorizeRequirement({ anyPermissions: permissions });
+      requireCurrentUser();
+      const scope = authorizeRequirement(isApiKeyRequest
+        ? { credentials: ['api-key'], anyPermissions: permissions }
+        : { anyPermissions: permissions });
       if (!scope) throw forbidden();
       return scope;
     },
@@ -301,6 +343,7 @@ export function createAuthorizationSubjectSnapshot(
 
   return Object.freeze({
     platformRole: authContext.role,
+    credentialKind: authContext.credentialKind ?? 'session',
     properties: Object.freeze({ ...properties }),
     authorization,
     applicationAuthorization,
@@ -534,14 +577,19 @@ function freezeScope(scope: AuthorizationScopeSnapshot): AuthorizationScopeSnaps
 
 /** Legacy-only fallback for standalone middleware that has no auth runtime. */
 function authorizeWithoutKernel(
-  requirement: AccessRequirement | CompiledAccessRequirement,
+  compiled: CompiledAccessRequirement,
   authContext: AuthContext | null,
 ): AuthorizationScopeSnapshot | null {
-  const compiled = isCompiledAccessRequirement(requirement)
-    ? mergeAccessRequirements(requirement, false)
-    : compileAccessRequirement(requirement);
+  // Validate an externally supplied compiled policy before using it in the
+  // standalone compatibility path.
+  compiled = mergeAccessRequirements(compiled, false);
   if (compiled.user === 'required' && !authContext) throw unauthorized();
   if (!authContext) return null;
+
+  const credentialKind: AuthorizationCredentialKind = authContext.credentialKind ?? 'session';
+  if (!(compiled.credentialKinds ?? ['session']).includes(credentialKind)) {
+    throw forbidden();
+  }
 
   if (!compiled.platformRoleGroups.every((group) => group.includes(authContext.role))) {
     throw forbidden();

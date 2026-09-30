@@ -30,6 +30,7 @@ sits beside those runtime services until adapters install it at each boundary.
 │                     │ _auth_config  │◄── internal (no broadcast)     │
 │                     │ _auth_tenants │◄── internal tenant control     │
 │                     │ _auth_tenant_memberships │◄── internal control │
+│                     │ _auth_api_keys │◄── hashed user credentials    │
 │                     │ _auth_email_outbox │◄── durable auth delivery  │
 │                     │ todos         │◄── broadcast (app table)       │
 │                     │ _changes      │◄── internal (ring buffer)      │
@@ -49,7 +50,7 @@ mapping, global service derives, and subplugin registration.
 - Creating one app-local `AuthRuntime`, starting/stopping it from the Elysia
   lifecycle, and unregistering its compatibility provider during cleanup.
 - Deriving that app-local runtime's auth services into global Elysia context.
-- Mounting session, account, platform-admin, MFA, current-user property,
+- Mounting session, account, API-key, platform-admin, MFA, current-user property,
   authorization-snapshot, application-administration, tenant-administration,
   tenant-onboarding, verified-domain, control-plane-audit, and optional
   native-provider route plugins.
@@ -69,7 +70,7 @@ mapping, global service derives, and subplugin registration.
 Service lifecycle boundary for auth.
 
 **Owns:**
-- Creating the app-local account, token, property, email, MFA, request-admission,
+- Creating the app-local account, token, API-key, property, email, MFA, request-admission,
   authorization, administration, onboarding, verified-domain, and audit
   services used by the auth route plugins.
 - Creating one app-local `TenantStore`/`TenancyService` when resolved tenancy is
@@ -131,7 +132,7 @@ Schema setup boundary for auth.
 - Creating/upgrading `users`, `user_properties`, `_credentials`,
   `_refresh_tokens`, `_auth_action_tokens`, `_auth_email_outbox`,
   `_auth_mfa_methods`, `_auth_mfa_challenges`, `_auth_mfa_recovery_codes`, and
-  `_auth_config`.
+  `_auth_api_keys` and `_auth_config`.
 - Delegating additive tenancy, durable-session, role-assignment, onboarding,
   native-provider, and provisioning-receipt tables to their focused schema
   modules and numbered migrations.
@@ -195,15 +196,19 @@ Elysia controller for core session and identity routes.
 
 ### Auth Middleware (`auth.middleware.ts`)
 
-JWT verification plus live user/session resolution — separate from the auth
-plugin and applied as a cross-cutting concern.
+Credential dispatch plus live user/session resolution — separate from the auth
+plugin and applied as a cross-cutting concern. Managed apps resolve normal
+access tokens and enabled Guardian API keys through one app-local dispatcher.
 
 **Owns:**
-- Extracting Bearer token from `Authorization` header
-- Verifying access token signature and expiry via TokenService
+- Extracting the Bearer token from the `Authorization` header
+- Dispatching session-shaped tokens to `TokenService` and `zero_ak_v1` tokens
+  to the Guardian API-key service
 - Resolving `authContext` and auth guard helpers into Elysia context
 - Starting Bearer hydration during `onRequest` for multipart requests so nested
   middleware and route guards share one request/service-scoped resolution
+- Hiding an API-key identity and scoped services until the resolved route
+  requirement explicitly admits `credentials: ['api-key']`
 - Providing the raw-Elysia `zeroAuth: 'user' | 'admin'` macro and the early
   `createProtectedMultipartRequestGuard()` escape hatch
 
@@ -220,6 +225,8 @@ interface AuthContext {
   userId: string;
   email: string;
   role: string; // platform/global role
+  credentialKind?: 'session' | 'api-key';
+  credentialId?: string; // stable private identifier, never the raw secret
   authGeneration?: number;
   sessionId?: string;
   sessionKind?: 'web' | 'native';
@@ -235,7 +242,11 @@ interface AuthContext {
 Managed Guardian middleware always resolves `authGeneration`; optionality is
 kept only for standalone or manually constructed context compatibility.
 
-**Key design:** The middleware **does not throw while resolving identity**. It resolves `authContext: AuthContext | null` for unauthenticated requests and provides `requireAuth()` / `requireAdmin()` helpers for routes that need enforcement:
+**Key design:** The middleware **does not throw while resolving identity**. It
+resolves `authContext: AuthContext | null` for unauthenticated requests and
+provides `requireAuth()` / `requireAdmin()` helpers for routes that need
+enforcement. An API-key identity remains intentionally invisible until a route
+authorization declaration admits that credential kind:
 
 ```ts
 // Route that requires auth — throws if not present
@@ -251,6 +262,11 @@ kept only for standalone or manually constructed context compatibility.
 ```
 
 This keeps the middleware simple and pushes authorization decisions to the edge — the route handler that knows what it needs.
+
+The API-key management controllers do not use the credential dispatcher. They
+resolve `TokenService` directly, so an API key cannot administer API keys. See
+[Guardian User API Keys](./api-keys.md) for configuration, route admission,
+lifecycle, and SDK/UI contracts.
 
 For protected multipart endpoints, enforcement begins earlier than the normal
 `resolve`/`beforeHandle` path. Zero-compiled `defineEndpoint()` and

@@ -4,6 +4,9 @@ import type { EmailRuntime } from '../email';
 import type { PlatformTokenService } from '../tokens';
 import { parseTokenTTL } from '../tokens/token-utils';
 import { AccountEmailService } from './account-email-service';
+import { AuthApiKeyService } from './auth-api-key-service';
+import { AuthApiKeyStore } from './auth-api-key-store';
+import { GuardianRequestCredentialResolver } from './auth-request-credential-resolver';
 import { AuthActionTokenService } from './action-token-service';
 import { createAdministrationMemberResolver } from './auth-administration-membership';
 import { AuthApplicationAdministrationService } from './auth-application-administration-service';
@@ -217,6 +220,23 @@ export async function bootstrapAuthRuntimeServices(
       })?.revision ?? null;
     });
   }
+
+  services.apiKeyStore = new AuthApiKeyStore(config.db);
+  services.apiKeyService = new AuthApiKeyService({
+    config: authConfig.apiKeys,
+    store: services.apiKeyStore,
+    users: services.userStore,
+    tenancy: services.tenancyService,
+    authorization: authorizationKernel,
+    roles: services.authorizationRoleService,
+    audit: services.auditService,
+    emitCode,
+    assertCurrentProfile: () => services.installedProfileGuard!.assertCurrent(),
+  });
+  services.requestCredentialResolver = new GuardianRequestCredentialResolver(
+    services.tokenService,
+    services.apiKeyService,
+  );
 
   services.authTenantSessionService = new AuthTenantSessionService(
     new AuthSessionContinuationStore(config.db, { emitCode }),

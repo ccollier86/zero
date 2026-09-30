@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
 const EXPECTED_MIGRATION_VERSIONS = Array.from(
-  { length: 28 },
+  { length: 29 },
   (_, index) => String(index + 1).padStart(3, '0'),
 );
 

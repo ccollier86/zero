@@ -117,6 +117,9 @@ publicly supported.
 - `docs/auth/README.md`: canonical auth subsystem map for bootstrap, all four
   profiles, permissions/RBAC, administration, onboarding, audit, browser
   state, and installed-app authentication.
+- `docs/auth/api-keys.md`: Guardian user API-key configuration, live authority,
+  explicit route admission, session-only management, SDK/hooks/components, and
+  one-time-secret lifecycle.
 - `docs/auth/platform-administration.md`: exact protected Administration
   Organization, application-permission, customer-directory, SDK/hook, and
   packaged-control contract.
@@ -2088,6 +2091,9 @@ reference docs confirm the behavior is implemented.
 - [Auth System](docs/auth/README.md): main auth documentation covering
   registration, admin bootstrap, email verification, MFA, password reset/setup,
   auth UI, config, routes, sessions, user properties, and admin user management.
+- [Guardian User API Keys](docs/auth/api-keys.md): user-bound finite
+  credentials, configuration, explicit route admission, scope/RBAC reuse,
+  lifecycle routes, browser SDK/hooks, and optional packaged controls.
 - [Zero Auth Philosophy](docs/auth/zero-auth-philosophy.md): authoritative
   product/security direction for the additive single/multi-tenancy and
   simple/advanced-authorization model, with current limitations stated first.

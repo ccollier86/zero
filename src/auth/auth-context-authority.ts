@@ -15,6 +15,8 @@ export function authContextAuthorityFingerprint(
     context.userId,
     context.email,
     context.role,
+    context.credentialKind ?? 'session',
+    context.credentialId ?? null,
     context.authGeneration ?? null,
     context.clientId ?? null,
     context.sessionKind ?? null,

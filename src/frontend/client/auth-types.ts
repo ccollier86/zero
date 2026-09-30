@@ -541,6 +541,15 @@ export interface AuthPublicConfig {
   authorization?: {
     mode: 'simple' | 'advanced';
   };
+  /** Public-safe Guardian API-key capability. Missing on older Zero servers means disabled. */
+  apiKeys?: {
+    enabled: boolean;
+    selfService: boolean;
+    administratorIssuance: boolean;
+    defaultTTL: string;
+    maxTTL: string;
+    maxActivePerUser: number;
+  };
   /** Public-safe installation setup state. The configured secret is omitted. */
   bootstrap?: {
     required: boolean;

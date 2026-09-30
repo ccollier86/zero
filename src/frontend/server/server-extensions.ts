@@ -13,6 +13,7 @@ import {
   type AuthMiddlewareAuthorizationOptions,
 } from '../../auth/auth.middleware';
 import {
+  getAuthRequestCredentialResolver,
   getAuthorizationKernel,
   getAuthStore,
   getTokenService,
@@ -55,6 +56,7 @@ import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import {
   ZERO_AUTHORIZATION_KERNEL,
   ZERO_AUTHORIZATION_ROLE_SERVICE,
+  ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
   ZERO_AUTH_STORE,
   ZERO_AUTH_TOKEN_SERVICE,
 } from '../../runtime/service-keys';
@@ -527,9 +529,15 @@ function applyMiddleware(
     if (!applicability.applies) return undefined;
 
     current.access.authorize(accessPlan.requirement);
+    current.authContext = current.access.context;
+    const admittedMatchContext = createLifecycleContextWithUser(
+      context,
+      current.authContext,
+      runtime,
+    );
     const matcherUser = enforceServerPolicy(
       matcher,
-      matchContext,
+      admittedMatchContext,
       createServerPolicyOptions(runtime, kernel),
     );
     const user = accessPlan.forceAnonymous
@@ -539,7 +547,15 @@ function applyMiddleware(
         : matcherUser;
     const handlerContext = createLifecycleContextWithUser(context, user, runtime);
 
-    return middleware.run(handlerContext);
+    try {
+      return await middleware.run(handlerContext);
+    } finally {
+      // Middleware admission is scoped to the middleware callback. Descendant
+      // routes establish their own merged policy and must not inherit a
+      // visible API-key identity merely because this callback admitted it.
+      current.access.authorize('optional');
+      current.authContext = current.access.context;
+    }
   });
 }
 
@@ -621,7 +637,7 @@ function createEarlyMultipartGuard(
   path?: string | ((request: Request) => boolean),
   method?: string,
 ) {
-  if (access.requirement.user !== 'required') return undefined;
+  if (!requiresPreHandlerAdmission(access.requirement)) return undefined;
   const getAppTokenService = runtime
     ? () => runtime.get(ZERO_AUTH_TOKEN_SERVICE)
     : getTokenService;
@@ -635,10 +651,19 @@ function createEarlyMultipartGuard(
 function createAuthGuard(
   access: ResolvedAccessPlan,
 ): ((context: unknown) => void) | undefined {
-  if (access.requirement.user !== 'required') return undefined;
+  if (!requiresPreHandlerAdmission(access.requirement)) return undefined;
   return function requireZeroAccess(context: unknown): void {
-    asContext(context).access.authorize(access.requirement);
+    const current = asContext(context);
+    current.access.authorize(access.requirement);
+    current.authContext = current.access.context;
   };
+}
+
+function requiresPreHandlerAdmission(
+  requirement: CompiledAccessRequirement,
+): boolean {
+  return requirement.user === 'required'
+    || requirement.credentialKinds?.includes('api-key') === true;
 }
 
 function createLifecycleContext(
@@ -648,6 +673,7 @@ function createLifecycleContext(
 ): ZeroLifecycleContext {
   const current = asContext(context);
   current.access.authorize(access.requirement);
+  current.authContext = current.access.context;
   const user = access.forceAnonymous
     ? null
     : access.requirement.user === 'required'
@@ -760,6 +786,9 @@ function createAuthorizationDependencies(
   runtime?: ZeroAppRuntime,
 ): AuthMiddlewareAuthorizationOptions {
   return {
+    getRequestCredentialResolver: runtime
+      ? () => runtime.get(ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER)
+      : getAuthRequestCredentialResolver,
     getAuthorizationKernel: runtime
       ? () => runtime.get(ZERO_AUTHORIZATION_KERNEL)
       : getAuthorizationKernel,

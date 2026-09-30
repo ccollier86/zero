@@ -488,6 +488,8 @@ export type { RouteConfig, LoaderContext, PageMeta } from './router/types';
 // ─── Auth ───────────────────────────────────────────────────────────────
 export {
   createAuthPlugin,
+  getAuthApiKeyService,
+  getAuthRequestCredentialResolver,
   getAuthorizationKernel,
   getAuthStore,
   getMfaChallengeService,
@@ -533,6 +535,7 @@ export type {
 export type {
   AccessRequirement,
   AccessRequirementCompileOptions,
+  AuthorizationCredentialKind,
   AuthorizationDecision,
   AuthorizationDenialReason,
   AuthorizationKernelConfig,
@@ -582,6 +585,31 @@ export {
 } from '../auth/auth-email-templates';
 export { UserPropertyService } from '../auth/user-property-service';
 export { AuthError, AUTH_DEFAULTS } from '../auth/types';
+export { AuthApiKeyService } from '../auth/auth-api-key-service';
+export type { AuthApiKeyServiceOptions } from '../auth/auth-api-key-service';
+export { AuthApiKeyStore } from '../auth/auth-api-key-store';
+export type {
+  AuthApiKeyStoreCursor,
+  AuthApiKeyStorePageInput,
+  InsertAuthApiKeyInput,
+} from '../auth/auth-api-key-store';
+export type {
+  AuthApiKeyAuthorityReference,
+  AuthApiKeyCreatedVia,
+  AuthApiKeyIssueInput,
+  AuthApiKeyListQuery,
+  AuthApiKeyManagementCapabilities,
+  AuthApiKeyMutationAuthority,
+  AuthApiKeyPage,
+  AuthApiKeyRecord,
+  AuthApiKeyScopeKind,
+  AuthApiKeyStatus,
+  AuthApiKeySummary,
+  AuthApiKeyTenantTarget,
+  AuthRequestAuthorityReference,
+  AuthRequestCredentialResolver,
+  IssuedAuthApiKey,
+} from '../auth/auth-api-key-types';
 export type {
   AuthEmailBrandingConfig,
   AuthEmailTemplate,
@@ -620,6 +648,8 @@ export type {
   AuthPluginConfig,
   AuthRegistrationConfig,
   AuthRegistrationMode,
+  AuthApiKeyConfig,
+  AuthApiKeyOptions,
   AuthTenancyConfig,
   AuthTenancyMode,
   AuthTenancyOptions,
@@ -630,6 +660,7 @@ export type {
   AuthTransitionTokenPayload,
   NormalizedAuthBehaviorConfig,
   ResolvedAuthAccountConfig,
+  ResolvedAuthApiKeyConfig,
   ResolvedAuthAccountEmailConfig,
   ResolvedAuthAuthorizationConfig,
   ResolvedAuthPermissionConfig,

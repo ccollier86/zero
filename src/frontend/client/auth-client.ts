@@ -6,6 +6,8 @@
  */
 
 import { AuthAccountTransport } from './auth-account-transport';
+import { AuthApiKeyTransport } from './auth-api-key-transport';
+import type { AuthApiKeySdkSurface } from './auth-api-key-types';
 import type { AuthAuthenticationAttempt } from './auth-authentication-attempt';
 import { AuthActionTransport } from './auth-action-transport';
 import { AuthAdminTransport } from './auth-admin-transport';
@@ -114,6 +116,22 @@ export {
   isAuthTenantSelectionRequiredResult,
 } from './auth-types';
 export type { AuthStore } from './auth-store';
+export type {
+  AuthApiKeyApplicationAdminSdkSurface,
+  AuthApiKeyCreatedVia,
+  AuthApiKeyIssueInput,
+  AuthApiKeyListQuery,
+  AuthApiKeyPage,
+  AuthApiKeyPlatformAdminSdkSurface,
+  AuthApiKeyScopeKind,
+  AuthApiKeySdkSurface,
+  AuthApiKeySelfSdkSurface,
+  AuthApiKeyStatus,
+  AuthApiKeySummary,
+  AuthApiKeyTenantAdminSdkSurface,
+  AuthPlatformApiKeyListQuery,
+  IssuedAuthApiKey,
+} from './auth-api-key-types';
 export {
   hasAnyAuthorizationPermission,
   hasAuthorizationPermission,
@@ -291,6 +309,8 @@ const authenticatedResponseScopeAssertions = new WeakMap<Response, () => void>()
  */
 export class AuthClient {
   readonly store: AuthStore;
+  /** User, tenant, application, and platform API-key management namespaces. */
+  readonly apiKeys: AuthApiKeySdkSurface;
   /** Single/advanced application-role control plane. */
   readonly applicationAdmin: AuthApplicationAdminSdkSurface;
   /** Authorized durable auth/control-plane audit access. */
@@ -358,6 +378,12 @@ export class AuthClient {
           () => this.assertAuthenticatedResponseCurrent(response),
         )
       ),
+    });
+    this.apiKeys = new AuthApiKeyTransport({
+      baseUrl,
+      authenticatedFetch: (url, init) => this.fetchWithAuth(url, init),
+      createResponseError: createAuthClientError,
+      assertResponseCurrent: (response) => this.assertAuthenticatedResponseCurrent(response),
     });
     this.actions = new AuthActionTransport({
       baseUrl,

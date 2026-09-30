@@ -28,6 +28,11 @@ export {
   useRequireAuth,
   useUserProperty,
 } from './auth-hooks';
+export { useAuthApiKeys } from './auth-api-key-hooks';
+export type {
+  UseAuthApiKeysOptions,
+  UseAuthApiKeysResult,
+} from './auth-api-key-hooks';
 export {
   useTenantMembers,
   useTenantOnboardingAdministration,

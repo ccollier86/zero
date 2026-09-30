@@ -87,7 +87,7 @@ test('provisioning receipt migrations preserve history and isolate admin authori
     expect(tableShape(migrated, ADMIN_PROVISIONING_TABLE))
       .toEqual(tableShape(runtimeRaw, ADMIN_PROVISIONING_TABLE));
     expect(triggerShape(migrated)).toEqual(triggerShape(runtimeRaw));
-    expect(migrations.at(-1)?.version).toBe('028');
+    expect(migrations.at(-1)?.version).toBe('029');
   } finally {
     runtime.dispose();
     migrator.dispose();

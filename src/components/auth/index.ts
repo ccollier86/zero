@@ -34,6 +34,21 @@ export {
   type ApplicationAccessManagementProps,
 } from './application-access-management';
 export {
+  ApiKeyManagement,
+  ApplicationUserApiKeyManagement,
+  PlatformApiKeyManagement,
+  SelfApiKeyManagement,
+  TenantMemberApiKeyManagement,
+} from './api-key-management';
+export type {
+  ApiKeyManagementCommonProps,
+  ApiKeyManagementProps,
+  ApplicationUserApiKeyManagementProps,
+  PlatformApiKeyManagementProps,
+  SelfApiKeyManagementProps,
+  TenantMemberApiKeyManagementProps,
+} from './api-key-management-types';
+export {
   PlatformAdministrationManagement,
   type PlatformAdministrationManagementProps,
 } from './platform-administration-management';

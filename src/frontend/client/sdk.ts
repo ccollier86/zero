@@ -13,6 +13,7 @@ import { EphemeralClient } from '../../sync/client/ephemeral-client';
 import { createEphemeralStore, routeEphemeralMessage } from '../../sync/client/ephemeral-store';
 import type { EphemeralErrorMessage } from '../../sync/ephemeral-policy';
 import { AuthClient, createAuthDisabledError } from './auth-client';
+import type { AuthApiKeySdkSurface } from './auth-api-key-types';
 import type {
   AuthDomainOnboardingAdmissionResult,
   AuthDomainOnboardingCompletion,
@@ -126,6 +127,24 @@ const PLATFORM_TABLES: Record<string, ClientTableDef> = {
 };
 
 export type { SyncClient };
+
+export type {
+  AuthApiKeyApplicationAdminSdkSurface,
+  AuthApiKeyCreatedVia,
+  AuthApiKeyIssueInput,
+  AuthApiKeyListQuery,
+  AuthApiKeyManagementCapabilities,
+  AuthApiKeyPage,
+  AuthApiKeyPlatformAdminSdkSurface,
+  AuthApiKeyScopeKind,
+  AuthApiKeySdkSurface,
+  AuthApiKeySelfSdkSurface,
+  AuthApiKeyStatus,
+  AuthApiKeySummary,
+  AuthApiKeyTenantAdminSdkSurface,
+  AuthPlatformApiKeyListQuery,
+  IssuedAuthApiKey,
+} from './auth-api-key-types';
 
 export type {
   AuthAuthorizationIdentitySnapshot,
@@ -365,6 +384,9 @@ export interface Client extends AuthAdminSdkSurface {
 
   /** Namespaced single/advanced application-role administration. */
   readonly applicationAdmin: AuthApplicationAdminSdkSurface;
+
+  /** Guardian API-key management, partitioned by authorization control plane. */
+  readonly apiKeys: AuthApiKeySdkSurface;
 
   /** Authorized durable auth/control-plane audit access. */
   readonly audit: AuthAuditSdkSurface;
@@ -1140,6 +1162,7 @@ export function createClient(config: ClientConfig): Client {
   const client = {
     get url() { return url; },
     get applicationAdmin() { return applicationAdmin; },
+    get apiKeys() { return requireAuthClient().apiKeys; },
     get audit() { return requireAuthClient().audit; },
     get platformAdmin() { return requireAuthClient().platformAdmin; },
     /** @internal */

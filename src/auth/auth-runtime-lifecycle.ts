@@ -3,6 +3,8 @@
 import { OBS_CODES } from '../observability/codes';
 import {
   ZERO_AUTH_AUDIT_SERVICE,
+  ZERO_AUTH_API_KEY_SERVICE,
+  ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
   ZERO_AUTH_STORE,
   ZERO_AUTHORIZATION_KERNEL,
   ZERO_AUTHORIZATION_ROLE_SERVICE,
@@ -107,6 +109,15 @@ function publishRuntimeServices(input: AuthRuntimeLifecycleInput): void {
     }
     runtime.set(ZERO_AUTH_STORE, services.userStore);
     runtime.set(ZERO_AUTH_TOKEN_SERVICE, services.tokenService);
+    if (services.apiKeyService) {
+      runtime.set(ZERO_AUTH_API_KEY_SERVICE, services.apiKeyService);
+    }
+    if (services.requestCredentialResolver) {
+      runtime.set(
+        ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
+        services.requestCredentialResolver,
+      );
+    }
     runtime.set(ZERO_AUTHORIZATION_KERNEL, authorizationKernel);
     if (services.authorizationRoleService) {
       runtime.set(
@@ -135,6 +146,15 @@ function unpublishRuntimeServices(input: AuthRuntimeLifecycleInput): void {
   if (services.userStore) runtime.clear(ZERO_AUTH_STORE, services.userStore);
   if (services.tokenService) {
     runtime.clear(ZERO_AUTH_TOKEN_SERVICE, services.tokenService);
+  }
+  if (services.apiKeyService) {
+    runtime.clear(ZERO_AUTH_API_KEY_SERVICE, services.apiKeyService);
+  }
+  if (services.requestCredentialResolver) {
+    runtime.clear(
+      ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
+      services.requestCredentialResolver,
+    );
   }
   runtime.clear(ZERO_AUTHORIZATION_KERNEL, authorizationKernel);
   if (services.authorizationRoleService) {

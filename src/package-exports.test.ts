@@ -57,6 +57,8 @@ import { AIService } from '@zero/framework/ai';
 import {
   ADMINISTRATION_TENANT_ROLE_KEYS,
   AuthApplicationAdministrationService,
+  AuthApiKeyService,
+  AuthApiKeyStore,
   AuthAuditService,
   AuthPlatformTenantAdministrationService,
   AuthTenantAdministrationService,
@@ -79,7 +81,10 @@ import {
 import type {
   AccessRequirement,
   AuthAdministrationTenantConfig,
+  AuthApiKeyManagementCapabilities,
   AuthApplicationAdministrationConfig,
+  AuthApiKeyServiceOptions,
+  AuthRequestCredentialResolver,
   AuthAuditEvent,
   AuthAuditQuery,
   AuthAuthorizationConfig,
@@ -144,6 +149,8 @@ import { createSchedulerPlugin } from '@zero/framework/scheduler';
 import { defineTable, encodeFieldValue, field } from '@zero/framework/schema';
 import {
   adminOnly,
+  AuthApiKeyService as ServerAuthApiKeyService,
+  AuthApiKeyStore as ServerAuthApiKeyStore,
   createApp,
   DATABASE_ACTOR_CHILD_FLAG,
   DATABASE_HOT_DEFAULT_DURABILITY,
@@ -204,6 +211,8 @@ import {
 import type {
   AppDatabasePlacementConfig,
   AuthAdministrationTenantConfig as ServerAuthAdministrationTenantConfig,
+  AuthApiKeyManagementCapabilities as ServerAuthApiKeyManagementCapabilities,
+  AuthApiKeyServiceOptions as ServerAuthApiKeyServiceOptions,
   AuthAuthorizationOwnerAdoptionConfig,
   AuthPermissionScope as ServerAuthPermissionScope,
   AuthTenantCreationConfig,
@@ -261,6 +270,7 @@ import type {
   DatabaseWriteCommandRegistry,
   NormalizedDatabaseCoordinatorRestartPolicy,
   RunDatabaseActorIfRequestedOptions,
+  AuthRequestCredentialResolver as ServerAuthRequestCredentialResolver,
   ZeroPolicyUserPropertyRegistry,
 } from '@zero/framework/server';
 import {
@@ -390,6 +400,12 @@ const applicationAdministrationConfig = {} as AuthApplicationAdministrationConfi
 const tenantAdministrationConfig = {} as AuthTenantAdministrationConfig;
 const authAuditEvent = {} as AuthAuditEvent;
 const authAuditQuery = {} as AuthAuditQuery;
+const authApiKeyServiceOptions = {} as AuthApiKeyServiceOptions;
+const authApiKeyManagementCapabilities = {} as AuthApiKeyManagementCapabilities;
+const authRequestCredentialResolver = {} as AuthRequestCredentialResolver;
+const serverAuthApiKeyServiceOptions = {} as ServerAuthApiKeyServiceOptions;
+const serverAuthApiKeyManagementCapabilities = {} as ServerAuthApiKeyManagementCapabilities;
+const serverAuthRequestCredentialResolver = {} as ServerAuthRequestCredentialResolver;
 const authorizationSnapshot = {} as AuthAuthorizationSnapshot;
 const compiledAccessRequirement = compileAccessRequirement(accessRequirement);
 const serverResourceFields = defineServerResourceFields({
@@ -425,6 +441,8 @@ const tenantDocumentSubpathResource = defineSubpathResource({
 export const serverSymbols = {
   AIService,
   AuthApplicationAdministrationService,
+  AuthApiKeyService,
+  AuthApiKeyStore,
   AuthAuditService,
   AuthPlatformTenantAdministrationService,
   AuthTenantAdministrationService,
@@ -551,6 +569,9 @@ export const serverSymbols = {
   tenantAdministrationConfig,
   authAuditEvent,
   authAuditQuery,
+  authApiKeyServiceOptions,
+  authApiKeyManagementCapabilities,
+  authRequestCredentialResolver,
   authorizationSnapshot,
   KvMemoryEngine,
   KvMemoryEngineSubpath,
@@ -565,6 +586,11 @@ export const serverSymbols = {
   resourcesOwnerPolicy,
   resolvedAuthAuthorization,
   resolvedAuthTenancy,
+  ServerAuthApiKeyService,
+  ServerAuthApiKeyStore,
+  serverAuthApiKeyServiceOptions,
+  serverAuthApiKeyManagementCapabilities,
+  serverAuthRequestCredentialResolver,
   RoomOwnerCannotLeaveError,
   runPlatformDoctor,
   runUsageAudit,
@@ -579,7 +605,9 @@ export const serverSymbols = {
 const clientSmokeSource = `
 import {
   AdministrationScopeGate as AdministrationScopeGateSubpath,
+  ApiKeyManagement as ApiKeyManagementSubpath,
   ApplicationAccessManagement as ApplicationAccessManagementSubpath,
+  ApplicationUserApiKeyManagement as ApplicationUserApiKeyManagementSubpath,
   AuthFlowContinuation as AuthFlowContinuationSubpath,
   ControlPlaneAuditViewer as ControlPlaneAuditViewerSubpath,
   DomainOnboarding as DomainOnboardingSubpath,
@@ -588,16 +616,27 @@ import {
   PermissionGate as PermissionGateSubpath,
   PlatformAdminGate as PlatformAdminGateSubpath,
   PlatformAdministrationManagement as PlatformAdministrationManagementSubpath,
+  PlatformApiKeyManagement as PlatformApiKeyManagementSubpath,
   PlatformTenantManagement as PlatformTenantManagementSubpath,
+  SelfApiKeyManagement as SelfApiKeyManagementSubpath,
   TenantCreationForm as TenantCreationFormSubpath,
   TenantInvitationForm,
   TenantGate as TenantGateSubpath,
   TenantJoinRequestForm,
+  TenantMemberApiKeyManagement as TenantMemberApiKeyManagementSubpath,
   TenantMemberManagement as TenantMemberManagementSubpath,
   TenantOnboardingManagement,
   TenantSelectionForm as TenantSelectionFormSubpath,
   TenantSwitcher as TenantSwitcherSubpath,
   TenantDomainManagement as TenantDomainManagementSubpath,
+} from '@zero/framework/components/auth';
+import type {
+  ApiKeyManagementCommonProps as ApiKeyManagementCommonPropsSubpath,
+  ApiKeyManagementProps as ApiKeyManagementPropsSubpath,
+  ApplicationUserApiKeyManagementProps as ApplicationUserApiKeyManagementPropsSubpath,
+  PlatformApiKeyManagementProps as PlatformApiKeyManagementPropsSubpath,
+  SelfApiKeyManagementProps as SelfApiKeyManagementPropsSubpath,
+  TenantMemberApiKeyManagementProps as TenantMemberApiKeyManagementPropsSubpath,
 } from '@zero/framework/components/auth';
 import { AppShell as AppShellSubpath } from '@zero/framework/components/app-shell';
 import { AnimatedList as AnimatedListSubpath } from '@zero/framework/components/animated-list';
@@ -636,6 +675,7 @@ import { ModalManager } from '@zero/framework/modals';
 import { AppProvider } from '@zero/framework/react/app-provider';
 import {
   useApplicationAccess as useApplicationAccessSubpath,
+  useAuthApiKeys as useAuthApiKeysSubpath,
   useAuthConfig as useAuthConfigSubpath,
   useAuthAudit as useAuthAuditSubpath,
   useAuthorizationScopeBoundary as useAuthorizationScopeBoundarySubpath,
@@ -653,6 +693,8 @@ import {
   useTenantSwitcher as useTenantSwitcherSubpath,
 } from '@zero/framework/react/hooks';
 import type {
+  UseAuthApiKeysOptions as UseAuthApiKeysOptionsSubpath,
+  UseAuthApiKeysResult as UseAuthApiKeysResultSubpath,
   UsePlatformAdministrationOptions as UsePlatformAdministrationOptionsSubpath,
   UsePlatformAdministrationResult as UsePlatformAdministrationResultSubpath,
   UseTenantOnboardingAdministrationOptions as UseTenantOnboardingAdministrationOptionsSubpath,
@@ -660,7 +702,9 @@ import type {
 } from '@zero/framework/react/hooks';
 import {
   AdministrationScopeGate,
+  ApiKeyManagement,
   ApplicationAccessManagement,
+  ApplicationUserApiKeyManagement,
   AuthFlowContinuation,
   ControlPlaneAuditViewer,
   DomainOnboarding,
@@ -686,6 +730,7 @@ import {
   hasAuthorizationPermission,
   KanbanBoard,
   PlatformAdministrationManagement,
+  PlatformApiKeyManagement,
   PlatformTenantManagement,
   PlatformUserManagement,
   PermissionGate,
@@ -695,6 +740,7 @@ import {
   ResizableNavbar,
   projectKanbanMove,
   StickToBottom,
+  SelfApiKeyManagement,
   TextGenerateEffect,
   ThemeTogglerButton,
   ThemeProvider,
@@ -702,6 +748,7 @@ import {
   TypewriterEffect,
   useCollection,
   useApplicationAccess,
+  useAuthApiKeys,
   useAuthConfig,
   useAuthAudit,
   useDomainOnboarding,
@@ -722,6 +769,7 @@ import {
   TenantGate,
   TenantDomainManagement,
   TenantMemberManagement,
+  TenantMemberApiKeyManagement,
   TenantSelectionForm,
   TenantSwitcher,
   WavyBackground,
@@ -733,7 +781,23 @@ import { createIdentityId } from '@zero/framework/sync/identity';
 import type { ToasterProps } from '@zero/framework/react';
 import type {
   AdministrationScopeGateProps,
+  ApiKeyManagementCommonProps,
+  ApiKeyManagementProps,
   ApplicationAccessManagementProps,
+  ApplicationUserApiKeyManagementProps,
+  AuthApiKeyApplicationAdminSdkSurface,
+  AuthApiKeyCreatedVia,
+  AuthApiKeyIssueInput,
+  AuthApiKeyListQuery,
+  AuthApiKeyManagementCapabilities,
+  AuthApiKeyPage,
+  AuthApiKeyPlatformAdminSdkSurface,
+  AuthApiKeyScopeKind,
+  AuthApiKeySdkSurface,
+  AuthApiKeySelfSdkSurface,
+  AuthApiKeyStatus,
+  AuthApiKeySummary,
+  AuthApiKeyTenantAdminSdkSurface,
   AuthApplicationAdminSdkSurface,
   AuthAuditEvent,
   AuthAuditSdkSurface,
@@ -742,6 +806,7 @@ import type {
   AuthPlatformIssueInvitationParams,
   AuthPlatformRoleSelection,
   AuthPlatformTenantPage,
+  AuthPlatformApiKeyListQuery,
   AuthPlatformUpdateMemberInput,
   AuthPlatformUpdateMemberParams,
   ControlPlaneAuditViewerProps,
@@ -754,15 +819,21 @@ import type {
   AuthTenantDomainReleaseInput,
   AuthTenantDomainReleaseResult,
 	  AppShellWorkspaceConfig,
-	  Client,
+  Client,
+  IssuedAuthApiKey,
 	  LoginFormProps,
   PlatformUserManagementProps,
   PlatformAdministrationManagementProps,
+  PlatformApiKeyManagementProps,
   PlatformTenantManagementProps,
-	  TenantCreationFormProps,
+  TenantCreationFormProps,
+  TenantMemberApiKeyManagementProps,
   TenantMemberManagementProps,
   TenantSelectionFormProps,
   TenantSwitcherProps,
+  SelfApiKeyManagementProps,
+  UseAuthApiKeysOptions,
+  UseAuthApiKeysResult,
   UseTenantAppShellWorkspacesOptions,
   UsePlatformAdministrationOptions,
   UsePlatformAdministrationResult,
@@ -792,6 +863,44 @@ import type {
 	const authorizationScopeBoundary = {} as AuthorizationScopeBoundary;
 	const domainAdministration = {} as AuthTenantDomainAdministration;
 	const domainCompletion = {} as AuthDomainOnboardingCompletion;
+	type ApiKeyPublicTypes = readonly [
+	  AuthApiKeyApplicationAdminSdkSurface,
+	  AuthApiKeyCreatedVia,
+	  AuthApiKeyIssueInput,
+	  AuthApiKeyListQuery,
+	  AuthApiKeyManagementCapabilities,
+	  AuthApiKeyPage,
+	  AuthApiKeyPlatformAdminSdkSurface,
+	  AuthApiKeyScopeKind,
+	  AuthApiKeySdkSurface,
+	  AuthApiKeySelfSdkSurface,
+	  AuthApiKeyStatus,
+	  AuthApiKeySummary,
+	  AuthApiKeyTenantAdminSdkSurface,
+	  AuthPlatformApiKeyListQuery,
+	  IssuedAuthApiKey,
+	  UseAuthApiKeysOptions,
+	  UseAuthApiKeysResult,
+	  ApiKeyManagementCommonProps,
+	  ApiKeyManagementProps,
+	  ApplicationUserApiKeyManagementProps,
+	  PlatformApiKeyManagementProps,
+	  SelfApiKeyManagementProps,
+	  TenantMemberApiKeyManagementProps,
+	];
+	type ApiKeySubpathPublicTypes = readonly [
+	  UseAuthApiKeysOptionsSubpath,
+	  UseAuthApiKeysResultSubpath,
+	  ApiKeyManagementCommonPropsSubpath,
+	  ApiKeyManagementPropsSubpath,
+	  ApplicationUserApiKeyManagementPropsSubpath,
+	  PlatformApiKeyManagementPropsSubpath,
+	  SelfApiKeyManagementPropsSubpath,
+	  TenantMemberApiKeyManagementPropsSubpath,
+	];
+	const apiKeyPublicTypes = {} as ApiKeyPublicTypes;
+	const apiKeySubpathPublicTypes = {} as ApiKeySubpathPublicTypes;
+	const clientApiKeys = {} as Client['apiKeys'];
 		const domainReleaseInput = {} as AuthTenantDomainReleaseInput;
 		const domainReleaseResult = {} as AuthTenantDomainReleaseResult;
 		const clientResourceFields = defineResourceFields({
@@ -833,8 +942,14 @@ import type {
 export const clientSymbols = {
   AdministrationScopeGate,
   AdministrationScopeGateSubpath,
+  ApiKeyManagement,
+  ApiKeyManagementSubpath,
+  apiKeyPublicTypes,
+  apiKeySubpathPublicTypes,
   ApplicationAccessManagement,
   ApplicationAccessManagementSubpath,
+  ApplicationUserApiKeyManagement,
+  ApplicationUserApiKeyManagementSubpath,
   AuthFlowContinuation,
   AuthFlowContinuationSubpath,
   ControlPlaneAuditViewer,
@@ -860,6 +975,7 @@ export const clientSymbols = {
   CollapsibleSubpath,
   createIdentityId,
 	  createSyncClient,
+	  clientApiKeys,
 	  clientResourceFields,
 	  DataTable,
   DataTableView,
@@ -881,6 +997,8 @@ export const clientSymbols = {
   KanbanBoardSubpath,
 	  PlatformAdministrationManagement,
 	  PlatformAdministrationManagementSubpath,
+	  PlatformApiKeyManagement,
+	  PlatformApiKeyManagementSubpath,
 	  PlatformTenantManagement,
 	  PlatformTenantManagementSubpath,
 	  PlatformUserManagement,
@@ -902,6 +1020,8 @@ export const clientSymbols = {
   TenantGate,
   TenantGateSubpath,
   TenantJoinRequestForm,
+  TenantMemberApiKeyManagement,
+  TenantMemberApiKeyManagementSubpath,
   TenantMemberManagement,
   TenantMemberManagementSubpath,
   TenantOnboardingManagement,
@@ -925,6 +1045,8 @@ export const clientSymbols = {
   ResizableNavbar,
   ResizableNavbarSubpath,
   SidebarSubpath,
+  SelfApiKeyManagement,
+  SelfApiKeyManagementSubpath,
   StickToBottom,
   StorageManagement,
   TextGenerateEffect,
@@ -942,6 +1064,8 @@ export const clientSymbols = {
   useCollection,
   useApplicationAccess,
   useApplicationAccessSubpath,
+  useAuthApiKeys,
+  useAuthApiKeysSubpath,
   useAuthConfig,
   useAuthConfigSubpath,
   useAuthAudit,

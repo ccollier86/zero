@@ -96,6 +96,11 @@ export function evaluateAuthorizationRequirement(
     return denied(compiled, null, 'authentication-required', true);
   }
   if (!subject) return allowed(compiled, null);
+  const credentialKind = subject.credentialKind ?? 'session';
+  const admittedCredentialKinds = compiled.credentialKinds ?? ['session'];
+  if (!admittedCredentialKinds.includes(credentialKind)) {
+    return denied(compiled, subject.authorization ?? null, 'credential-kind');
+  }
   if (!isNonEmptyAuthorizationString(subject.platformRole)) {
     return denied(compiled, null, 'scope-invalid');
   }

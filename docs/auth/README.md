@@ -46,6 +46,11 @@ Security and authorization control-plane changes now use the app-local,
 append-only trail documented in
 [Durable Authorization and Control-Plane Audit](./control-plane-audit.md). It
 is intentionally separate from general page/data activity logging.
+[Guardian User API Keys](./api-keys.md) documents the opt-in, user-bound
+credential capability, explicit per-route admission, session-only lifecycle
+APIs, browser SDK/hook, and standalone packaged controls. API-key authority is
+hydrated from the same live user, tenant, and RBAC state as browser sessions;
+enabling the capability does not widen existing routes.
 Runtime startup, invariant, native-protocol, email-delivery, and browser
 control-plane failures follow the privacy-safe contract in
 [Auth Operational Failure Contract](../observability.md#auth-operational-failure-contract).
@@ -255,6 +260,7 @@ user-table subscription for enforcement.
 | **Live user verification** | Protected work re-checks the current user and security generation; properties are joined into auth payloads |
 | **Revocable refresh** | Refresh tokens are opaque UUIDs, SHA-256 hashed in DB, rotated on use |
 | **Persistent sessions** | Browser clients restore from the stored refresh token while direct page requests use a refresh-bound HttpOnly page session |
+| **User-bound API keys** | Optional finite credentials reuse live Guardian scope/RBAC, remain denied on existing routes, and require an explicit `credentials: ['api-key']` declaration |
 | **API boundary** | Page cookies authenticate only safe SSR page requests; APIs, mutations, and sync remain Bearer-authorized |
 | **Private identity defaults** | Credentials stay in internal tables and default `createApp()` policy withholds user rows from generic Sync |
 

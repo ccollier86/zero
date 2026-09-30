@@ -12,6 +12,7 @@ import { EmailError } from '../email/email-error';
 import { OBS_CODES } from '../observability/codes';
 import { getSafeRequestPath } from '../observability/safe-request-path';
 import { createAuthAccountPlugin } from './auth-account.plugin';
+import { createAuthApiKeyPlugin } from './auth-api-key.plugin';
 import { createAuthAdminPlugin } from './auth-admin.plugin';
 import { getPublicAuthErrorMessage } from './auth-error-response';
 import { createAuthApplicationAdministrationPlugin } from './auth-application-administration.plugin';
@@ -43,6 +44,8 @@ import { resolveNativeRuntimeConfig } from './oidc/native-runtime-config';
 
 export {
   getAuthAuditService,
+  getAuthApiKeyService,
+  getAuthRequestCredentialResolver,
   getAuthEmailOutbox,
   getAuthSessionService,
   getAuthStore,
@@ -103,6 +106,7 @@ export function createAuthPlugin(config: AuthPluginConfig) {
   const getUserStore = () => runtime.getStore();
   const getAuditService = () => runtime.getAuditService();
   const getTokenService = () => runtime.getTokenService();
+  const getApiKeyService = () => runtime.getApiKeyService();
   const getTenancyService = () => runtime.getTenancyService();
   const getAuthTenantSessionService = () => runtime.getAuthTenantSessionService();
   const getApplicationAdministrationService = () => (
@@ -281,6 +285,13 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       getAuthConfig: () => authConfig,
       getAuthTenantSessionService,
       emitCode,
+    }))
+    .use(createAuthApiKeyPlugin({
+      getApiKeyService,
+      getUserStore,
+      getTokenService,
+      getAuthorizationKernel,
+      getAuthorizationRoleService,
     }))
     .use(createAuthMfaPlugin({
       getUserStore,

@@ -28,6 +28,8 @@ import { defineAuthSessionContinuationTables } from './auth-session-continuation
 import { defineAuthAuditTables } from './auth-audit-schema';
 import { defineAuthInstalledProfileTable } from './auth-profile-state';
 import { defineAuthAuthorizationManifestTable } from './auth-authorization-manifest';
+import { defineAuthApiKeyTables } from './auth-api-key-schema';
+import { defineTenancyTables } from './tenancy/tenancy-schema';
 
 /**
  * Define all auth tables on the shared ReactiveDB.
@@ -210,6 +212,18 @@ export function defineAuthTables(db: ReactiveDB): void {
 
   defineAuthInstalledProfileTable(db);
   defineAuthAuthorizationManifestTable(db);
+  // API-key tenant bindings use a composite foreign key. Fresh single-mode
+  // direct runtimes have no TenantStore, so install the private substrate
+  // once when neither tenancy table exists. Do not run the current tenancy
+  // repair over a partially migrated historical schema; numbered migrations
+  // own that upgrade path.
+  if (
+    !authTableExists(db, '_auth_tenants')
+    && !authTableExists(db, '_auth_tenant_memberships')
+  ) {
+    defineTenancyTables(db, { registrationProvisioning: false });
+  }
+  defineAuthApiKeyTables(db);
 
   defineCurrentAuthRequestAdmissionTables(db);
 
@@ -241,4 +255,10 @@ function ensureColumn(
   if (!rows.some((row) => row.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+}
+
+function authTableExists(db: ReactiveDB, table: string): boolean {
+  return Boolean(db.prepare(`
+    SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?
+  `).get(table));
 }

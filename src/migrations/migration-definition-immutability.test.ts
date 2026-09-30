@@ -40,6 +40,7 @@ const FROZEN_MIGRATION_DEFINITIONS: Readonly<Record<string, string>> = {
   '026_tenant_invitation_grant_snapshot.ts': 'c7512f41e5915e3f3ad6f193dc4527d5e5a247fd174d6ecb3d00b0664ccc11e6',
   '027_authorization_registry_manifest.ts': '8ce4499f60da14211dc114a597f81fa75afa20760e8eca6b6f2a40514074bfb7',
   '028_admin_user_provisioning_receipts.ts': '15e32cf527d0006e504c97dd5bfbfa466e3782a445d693ac4f8c92d2a033a20b',
+  '029_guardian_api_keys.ts': '10b7e65d959db692a2e43b91aac5d496f5596fcf3aae2caef5825aec51957bc4',
 };
 
 /**

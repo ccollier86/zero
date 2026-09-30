@@ -7,6 +7,7 @@
  */
 
 import { readAuthBearerToken } from '../auth/auth-bearer-token';
+import type { AuthRequestCredentialResolver } from '../auth/auth-api-key-types';
 import type { TokenService } from '../auth/token-service';
 import type { AuthContext, AuthTenancyMode } from '../auth/types';
 import {
@@ -24,6 +25,7 @@ import type { ResourceTenantScope } from '../resources/resource-realm';
 export interface DataQueryDatabaseAdapterOptions {
   readonly tenancyMode?: AuthTenancyMode;
   readonly getTokenService?: () => TokenService | null;
+  readonly getRequestCredentialResolver?: () => AuthRequestCredentialResolver | null;
   readonly getDatabaseManager?: () => DatabaseManager | null;
   readonly authorityFingerprint: (authContext: AuthContext | null) => string;
 }
@@ -63,6 +65,18 @@ export class DataQueryDatabaseAdapter {
     // boundary fails closed instead of accepting stale request-time context.
     const unavailable = (): DataQueryCommitAuthority | undefined =>
       this.options.tenancyMode === 'multi' ? { resolve: () => null } : undefined;
+    const credentials = this.options.getRequestCredentialResolver?.() ?? null;
+    if (credentials) {
+      let reference: ReturnType<AuthRequestCredentialResolver['captureAuthority']> = null;
+      try {
+        reference = credentials.captureAuthority(authContext);
+      } catch {
+        return unavailable();
+      }
+      return reference
+        ? { resolve: () => credentials.resolveAuthority(reference!) }
+        : unavailable();
+    }
     if (!authContext.sessionKind) return unavailable();
 
     const tokens = this.options.getTokenService?.() ?? null;
@@ -82,7 +96,17 @@ export class DataQueryDatabaseAdapter {
   async isRequestAuthorityCurrent(
     request: Request,
     expectedFingerprint: string,
+    authority?: DataQueryCommitAuthority,
   ): Promise<boolean> {
+    if (this.options.getRequestCredentialResolver?.()) {
+      let current: AuthContext | null = null;
+      try {
+        current = authority?.resolve() ?? null;
+      } catch {
+        current = null;
+      }
+      return this.options.authorityFingerprint(current) === expectedFingerprint;
+    }
     const bearer = readAuthBearerToken(request);
     const tokens = this.options.getTokenService?.() ?? null;
     let current: AuthContext | null = null;

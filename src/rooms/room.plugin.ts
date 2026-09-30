@@ -13,13 +13,17 @@ import {
   requireRequestServiceDataScope,
   type ServiceDataScope,
 } from '../auth/service-data-scope';
-import { getTokenService } from '../auth/auth.plugin';
+import {
+  getAuthRequestCredentialResolver,
+  getTokenService,
+} from '../auth/auth.plugin';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import type { TokenService } from '../auth/token-service';
 import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
 import {
   ZERO_AUTHORIZATION_KERNEL,
+  ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
   ZERO_AUTH_TOKEN_SERVICE,
   ZERO_ROOM_SERVICE,
 } from '../runtime/service-keys';
@@ -119,6 +123,11 @@ export function createRoomPlugin(config: RoomPluginConfig) {
     ?? (() => config.runtime?.get(ZERO_AUTHORIZATION_KERNEL) ?? null);
   const authorization: AuthMiddlewareAuthorizationOptions = {
     ...config.authorization,
+    getRequestCredentialResolver:
+      config.authorization?.getRequestCredentialResolver
+      ?? (config.runtime
+        ? () => config.runtime!.get(ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER)
+        : getAuthRequestCredentialResolver),
     getAuthorizationKernel,
   };
   const requestScope = (access: Parameters<typeof requireRequestServiceDataScope>[0]) =>

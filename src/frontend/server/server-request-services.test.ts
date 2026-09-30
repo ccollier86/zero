@@ -4,6 +4,7 @@ import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
 import { createRequestAuthorizationAccess } from '../../auth/authorization-access';
 import { createAuthorizationKernel } from '../../auth/authorization-kernel';
 import type { TokenService } from '../../auth/token-service';
+import type { AuthRequestCredentialResolver } from '../../auth/auth-api-key-types';
 import type { AuthContext, AuthContextAuthorityReference } from '../../auth/types';
 import type { UserStore } from '../../auth/user-store';
 import { NotificationService } from '../../notifications/notification-service';
@@ -296,6 +297,76 @@ describe('request-bound server services', () => {
 
       await expect(upload).rejects.toMatchObject({ code: 'AUTH_STATE_CHANGED' });
       expect(fixture.storage.getFileInfo(drive.drive_id, '/report.txt')).toBeNull();
+    } finally {
+      fixture.db.dispose();
+    }
+  });
+
+  test('revalidates API-key authority at a scoped service commit boundary', () => {
+    const fixture = createFixture();
+    try {
+      let active = true;
+      const context: AuthContext = {
+        ...tenantContext(TENANT_A, 'mem_api_key'),
+        sessionKind: undefined,
+        sessionId: undefined,
+        sessionGeneration: undefined,
+        credentialKind: 'api-key',
+        credentialId: 'key-commit-fence',
+        authGeneration: 0,
+      };
+      const credentials: AuthRequestCredentialResolver = {
+        async resolve() { return active ? context : null; },
+        captureAuthority(current) {
+          return current.credentialKind === 'api-key'
+            ? {
+                kind: 'api-key',
+                version: 1,
+                keyId: current.credentialId!,
+                keyGeneration: 0,
+                userId: current.userId,
+                scopeKind: 'tenant',
+                scopeId: TENANT_A,
+              }
+            : null;
+        },
+        resolveAuthority(reference) {
+          return active && reference.kind === 'api-key'
+            && reference.keyId === context.credentialId
+            ? context
+            : null;
+        },
+      };
+      Object.assign(fixture.services.auth, {
+        requestCredentialResolver: credentials,
+        getRequestCredentialResolver: () => credentials,
+      });
+      const access = createRequestAuthorizationAccess({
+        authContext: context,
+        kernel: fixture.kernel,
+        propertyStore: fixture.store,
+      });
+      access.authorize({
+        user: 'required',
+        tenant: 'required',
+        credentials: ['api-key'],
+      });
+      const zero = createServerRequestServices({
+        request: new Request('http://zero.test/api', {
+          headers: { Authorization: 'Bearer zero_ak_v1.key-commit-fence.secret' },
+        }),
+        access,
+        services: fixture.services,
+      });
+
+      active = false;
+
+      expect(() => zero.storage!.createDrive(context.userId, { name: 'stale' }))
+        .toThrow(expect.objectContaining({
+          code: 'AUTH_STATE_CHANGED',
+          status: 409,
+        }));
+      expect(fixture.storage.listDrives()).toHaveLength(0);
     } finally {
       fixture.db.dispose();
     }
