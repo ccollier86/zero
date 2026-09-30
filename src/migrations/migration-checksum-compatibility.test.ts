@@ -37,6 +37,7 @@ const CANONICAL_CHECKSUMS: Readonly<Record<string, string>> = {
   '026': 'cd5678f16192d6bff8578d487e2d1e63777251079a0a94a19713b662bf7b5825',
   '027': '16942efc6ac8820c2df2f90f2b5d9a4444cad9d7f214c32e6ff8e99bb26555d4',
   '028': '8d27e76b5b9d9299e436d361b7c847f6e94dce6ce5ca6abbc19f6dd098f5c661',
+  '029': '5f898b1f19119a0474bb6c2c22304869cd1ea62eb6e051cb0bc5697e62a5fb51',
 };
 
 test('committed migration checksums remain compatible', () => {

@@ -8,6 +8,7 @@
  */
 
 import type { ResourceAction, ResourcePolicy } from './resource-policy-types';
+import type { AuthorizationCredentialKind } from '../auth/authorization-kernel';
 
 export type ResourcePolicyStaticDecision = 'yes' | 'no' | 'unknown';
 
@@ -39,6 +40,35 @@ export function hasCustomPolicyBranch(policy: ResourcePolicy): boolean {
     if (current.kind === 'custom') found = true;
   });
   return found;
+}
+
+/**
+ * Return whether an explicit credential gate dominates every allowing path.
+ *
+ * An authorization leaf opts in only when it declares the credential. One
+ * gated child is sufficient for `allOf` because every child must allow; every
+ * child of `anyOf` must be gated because any sibling can allow independently.
+ * Owner, preset, metadata, and custom callback leaves never widen transport
+ * admission implicitly.
+ */
+export function resourcePolicyAdmitsCredential(
+  policy: ResourcePolicy,
+  credential: AuthorizationCredentialKind,
+): boolean {
+  const children = policy.diagnostics?.children ?? [];
+  if (policy.kind === 'all-of') {
+    return children.some((child) => (
+      resourcePolicyAdmitsCredential(child, credential)
+    ));
+  }
+  if (policy.kind === 'any-of') {
+    return children.length > 0 && children.every((child) => (
+      resourcePolicyAdmitsCredential(child, credential)
+    ));
+  }
+  return policy.kind === 'authorization'
+    && policy.diagnostics?.authorizationRequirement
+      ?.credentialKinds?.includes(credential) === true;
 }
 
 /**

@@ -44,9 +44,11 @@ const MULTI_TENANT_UNSAFE_AUTH_SERVICES = new Set<PropertyKey>([
   'userStore',
   'tokens',
   'tokenService',
+  'requestCredentialResolver',
   'getStore',
   'getUserStore',
   'getTokenService',
+  'getRequestCredentialResolver',
   'getRoleService',
 ]);
 

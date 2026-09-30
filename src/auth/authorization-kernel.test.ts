@@ -105,6 +105,23 @@ describe('AccessRequirement compilation', () => {
     });
   });
 
+  test('defaults existing policies to sessions and makes credential opt-in explicit', () => {
+    expect(compileAccessRequirement('required').credentialKinds).toBeUndefined();
+    expect(compileAccessRequirement({
+      credentials: ['session', 'api-key'],
+    })).toMatchObject({
+      user: 'required',
+      credentialKinds: ['api-key', 'session'],
+    });
+    expect(compileAccessRequirement({
+      user: 'optional',
+      credentials: ['session', 'api-key'],
+    })).toMatchObject({
+      user: 'optional',
+      credentialKinds: ['api-key', 'session'],
+    });
+  });
+
   test('merges root-to-leaf requirements monotonically without flattening OR groups', () => {
     const parent = compileAccessRequirement({
       platformRole: ['admin', 'support'],
@@ -139,6 +156,49 @@ describe('AccessRequirement compilation', () => {
     expect(cannotWeaken).toEqual(merged);
   });
 
+  test('inherits explicit credential admission and intersects explicit parent constraints', () => {
+    const leafOptIn = mergeAccessRequirements('optional', {
+      credentials: ['session', 'api-key'],
+      permission: 'patients:read',
+    });
+    expect(leafOptIn.credentialKinds).toEqual(['api-key', 'session']);
+
+    const sessionParent = compileAccessRequirement({
+      user: 'optional',
+      credentials: ['session'],
+    });
+    expect(mergeAccessRequirements(sessionParent, {
+      credentials: ['session', 'api-key'],
+      permission: 'patients:read',
+    }).credentialKinds).toEqual(['session']);
+    expect(() => mergeAccessRequirements(sessionParent, {
+      credentials: ['api-key'],
+      permission: 'patients:read',
+    })).toThrow('allow no common credential kind');
+
+    const broadParent = compileAccessRequirement({
+      user: 'optional',
+      credentials: ['session', 'api-key'],
+    });
+    expect(mergeAccessRequirements(broadParent, {
+      credentials: ['api-key'],
+      permission: 'patients:read',
+    }).credentialKinds).toEqual(['api-key']);
+
+    expect(mergeAccessRequirements('required', {
+      credentials: ['session', 'api-key'],
+      permission: 'patients:read',
+    }).credentialKinds).toEqual(['session']);
+    expect(() => mergeAccessRequirements('admin', {
+      credentials: ['api-key'],
+    })).toThrow('allow no common credential kind');
+    expect(() => mergeAccessRequirements({
+      permission: 'patients:read',
+    }, {
+      credentials: ['api-key'],
+    })).toThrow('allow no common credential kind');
+  });
+
   test('fails static validation for unsafe or undeclared policy inputs', () => {
     const configured = kernel();
     expect(() => configured.compile({ permission: 'patients:delete' }))
@@ -155,6 +215,10 @@ describe('AccessRequirement compilation', () => {
       .toThrow('require tenancy mode "multi"');
     expect(() => compileAccessRequirement({ anyPermissions: [] }))
       .toThrow('anyPermissions must be a non-empty string array');
+    expect(() => compileAccessRequirement({ credentials: [] }))
+      .toThrow('credentials must be a non-empty credential-kind array');
+    expect(() => compileAccessRequirement({ credentials: ['password'] as never }))
+      .toThrow('unsupported credential kind "password"');
     expect(() => compileAccessRequirement({ properties: { department: {} } }))
       .toThrow('matcher may not be empty');
     for (const nonFinite of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
@@ -282,6 +346,29 @@ describe('AuthorizationKernel scope synthesis and evaluation', () => {
     } catch (error) {
       expect(error).toMatchObject({ code: 'UNAUTHORIZED', status: 401 });
     }
+  });
+
+  test('admits API-key subjects only through an explicit credential policy', () => {
+    const configured = kernel();
+    const apiKeySubject = subject({ credentialKind: 'api-key' });
+
+    expect(configured.evaluate('required', apiKeySubject)).toMatchObject({
+      allowed: false,
+      reason: 'credential-kind',
+      error: { code: 'FORBIDDEN', status: 403 },
+    });
+    expect(configured.evaluate({
+      credentials: ['session', 'api-key'],
+      permission: 'patients:read',
+    }, apiKeySubject).allowed).toBe(true);
+    expect(configured.evaluate({
+      credentials: ['api-key'],
+      permission: 'patients:read',
+    }, subject())).toMatchObject({ allowed: false, reason: 'credential-kind' });
+    expect(configured.evaluate({
+      user: 'optional',
+      credentials: ['api-key'],
+    }, null)).toMatchObject({ allowed: true, scope: null });
   });
 
   test('keeps platform roles separate from scoped application roles', () => {

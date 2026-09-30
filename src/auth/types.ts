@@ -32,6 +32,10 @@ export interface AuthContext {
   userId: string;
   email: string;
   role: string;
+  /** Authentication mechanism admitted for this request. Omitted legacy contexts are sessions. */
+  credentialKind?: 'session' | 'api-key';
+  /** Stable server-side credential identifier; never a raw bearer secret. */
+  credentialId?: string;
   /** Exact user security generation validated by this request credential. */
   authGeneration?: number;
   /** Present when the bearer was issued to a registered native public client. */
@@ -260,6 +264,40 @@ export interface AuthMfaChallengeRecord {
 
 /** Public registration mode after the first-user bootstrap account exists. */
 export type AuthRegistrationMode = 'public' | 'admin-only' | 'disabled';
+
+/** Developer-authored policy for user-bound Guardian API keys. */
+export interface AuthApiKeyOptions {
+  /** Master capability switch. Default: false. */
+  enabled?: boolean;
+  /** Allow eligible users to create and manage their own keys. Default: false. */
+  selfService?: boolean;
+  /** Allow authorized app/tenant administrators to issue keys for eligible users. Default: false. */
+  administratorIssuance?: boolean;
+  /** Optional live scope-role eligibility allowlist. Omit to allow every otherwise eligible user. */
+  eligibleScopeRoles?: readonly string[];
+  /** Default finite key lifetime. Default: '30d'. */
+  defaultTTL?: string;
+  /** Maximum finite key lifetime. Default: '90d'. */
+  maxTTL?: string;
+  /** Maximum active keys for one user in one authorization scope. Default: 10. */
+  maxActivePerUser?: number;
+}
+
+/** Compact capability switch or extensible API-key policy. */
+export type AuthApiKeyConfig = boolean | AuthApiKeyOptions;
+
+/** Fully validated server-side API-key policy. */
+export interface ResolvedAuthApiKeyConfig {
+  readonly enabled: boolean;
+  readonly selfService: boolean;
+  readonly administratorIssuance: boolean;
+  readonly eligibleScopeRoles?: readonly string[];
+  readonly defaultTTL: string;
+  readonly defaultTTLms: number;
+  readonly maxTTL: string;
+  readonly maxTTLms: number;
+  readonly maxActivePerUser: number;
+}
 
 /** How an empty installation may create its one bootstrap administrator. */
 export type AuthBootstrapMode = 'secret' | 'public' | 'disabled';
@@ -638,6 +676,8 @@ export interface AuthBehaviorConfig {
   strictUserProperties?: boolean;
   /** Registered desktop/mobile public clients using OIDC Authorization Code + PKCE. */
   nativeApps?: NativeAuthConfig;
+  /** User-bound, explicitly scoped API credentials. Disabled by default. */
+  apiKeys?: AuthApiKeyConfig;
 }
 
 /** Normalized auth behavior config used by backend services and routes. */
@@ -664,6 +704,7 @@ export interface ResolvedAuthBehaviorConfig {
   userProperties: Record<string, ResolvedUserPropertyFieldConfig>;
   strictUserProperties: boolean;
   nativeApps: ResolvedNativeAuthConfig;
+  apiKeys: ResolvedAuthApiKeyConfig;
 }
 
 /** Exact return contract of resolveAuthBehaviorConfig(). */

@@ -196,6 +196,10 @@ interface Client {
   sendAuthAdminVerificationEmail(userId: string): Promise<void>;
   verifyAuthAdminUserEmail(userId: string): Promise<AuthUser>;
 
+  // ─── Guardian user API keys ──────────────────────────────────
+  /** Session-authenticated, mode-separated API-key management transports. */
+  readonly apiKeys: AuthApiKeySdkSurface;
+
   // ─── HTTP (JSON fetch; auth headers when auth is enabled) ─────
   /** Auto-prepends server URL, auto-JSON, auto-auth, throws FetchError on non-2xx */
   fetch<T = unknown>(path: string, init?: FetchInit): Promise<T>;
@@ -230,6 +234,58 @@ The public `Client` does not expose Zero's internal sync, state, or ephemeral
 objects. Use the exported state, presence, room, and data hooks for those
 features. The internal objects exist only for framework provider wiring.
 
+### Guardian API-key management
+
+When `auth.apiKeys.enabled` is configured, the same client exposes four
+session-authenticated management namespaces:
+
+```ts
+const own = await client.apiKeys.self.list({ limit: 25 });
+const issued = await client.apiKeys.self.issue({ label: 'deployment', ttl: '7d' });
+await client.apiKeys.self.rotate(issued.apiKey.keyId, {
+  label: 'deployment',
+  ttl: '7d',
+});
+await client.apiKeys.self.revoke(issued.apiKey.keyId);
+
+await client.apiKeys.applicationAdmin.listUser(userId);
+await client.apiKeys.applicationAdmin.issueUser(userId, input);
+
+await client.apiKeys.tenantAdmin.listMember(membershipId);
+await client.apiKeys.tenantAdmin.issueMember(membershipId, input);
+
+await client.apiKeys.platformAdmin.list({ tenantId });
+await client.apiKeys.platformAdmin.listMember(tenantId, membershipId);
+await client.apiKeys.platformAdmin.issueMember(tenantId, membershipId, input);
+```
+
+The three administrator namespaces also expose `rotate(keyId, input)` and
+`revoke(keyId)`. All calls use the restored Guardian session and `no-store`;
+management routes do not accept an API key as their own credential. Issue and
+rotation return `{ apiKey, secret }`. The `secret` is a one-time value and is
+never inserted into list state.
+
+For React, `useAuthApiKeys()` wraps the same namespaces with identity/scope
+fencing, cursor pagination, and capability state:
+
+```tsx
+const keys = useAuthApiKeys({ mode: 'self', limit: 25 });
+const memberKeys = useAuthApiKeys({
+  mode: 'tenant-admin',
+  membershipId,
+});
+```
+
+Modes are `self`, `application-admin`, `tenant-admin`, and `platform-admin`;
+the latter can be a platform directory (optional `tenantId` filter) or an exact
+`tenantId` + `membershipId` target. The hook exposes `apiKeys`, `page`,
+`isAvailable`, server-authoritative `canIssue`, `canRotate`, and `canRevoke`,
+loading/mutation/denial/error state, `reload`, `loadMore`, `issue`, `rotate`,
+and `revoke`.
+
+See [Guardian User API Keys](../auth/api-keys.md) for server configuration,
+explicit route admission, scope/lifecycle semantics, and optional packaged UI.
+
 ### Auth Registration Config
 
 `client.getAuthConfig()` reads `GET /auth/config` and is safe for public auth
@@ -258,6 +314,13 @@ if (config.tenancy?.onboarding?.verifiedDomains?.enabled) {
   // Only request-to-join is defined in the first browser contract.
   console.log(config.tenancy.onboarding.verifiedDomains.admission);
 }
+
+if (config.apiKeys?.enabled) {
+  console.log(config.apiKeys.selfService);
+  console.log(config.apiKeys.administratorIssuance);
+  console.log(config.apiKeys.defaultTTL, config.apiKeys.maxTTL);
+  console.log(config.apiKeys.maxActivePerUser);
+}
 ```
 
 Both public and admin auth-config responses include the resolved capability
@@ -265,10 +328,11 @@ axes. Older servers/clients may omit these additive fields, so mixed-version
 clients should treat absence as `single/simple`. Public config deliberately
 contains only safe capability data: tenancy mode, configured singular/plural
 terminology, tenant-creation mode, and authorization mode. The permission
-registry, role templates, bootstrap secret, and other policy internals remain
-server-only. Treat a missing terminology value as `organization/organizations`
-and a missing multi-mode creation value as `authenticated` when supporting an
-older server.
+registry, role templates, API-key eligible-role allowlist, bootstrap secret,
+and other policy internals remain server-only. Treat a missing terminology
+value as `organization/organizations` and a missing multi-mode creation value
+as `authenticated` when supporting an older server. Treat missing `apiKeys` as
+disabled.
 
 `registrationEnabled` covers either an available installation ceremony or
 ordinary public registration. `publicRegistrationEnabled` is narrower and is

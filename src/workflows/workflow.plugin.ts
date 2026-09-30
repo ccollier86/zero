@@ -19,6 +19,7 @@ import {
   type ServiceDataScope,
 } from '../auth/service-data-scope';
 import {
+  getAuthRequestCredentialResolver,
   getAuthStore,
   getAuthorizationKernel as getLegacyAuthorizationKernel,
   getAuthorizationRoleService,
@@ -36,6 +37,7 @@ import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider
 import {
   ZERO_AUTHORIZATION_KERNEL,
   ZERO_AUTHORIZATION_ROLE_SERVICE,
+  ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
   ZERO_AUTH_STORE,
   ZERO_AUTH_TOKEN_SERVICE,
   ZERO_WORKFLOW_REGISTRY,
@@ -193,8 +195,14 @@ export function createWorkflowPlugin(config: WorkflowPluginConfig) {
     ?? (config.runtime
       ? () => config.runtime!.get(ZERO_AUTHORIZATION_ROLE_SERVICE)
       : getAuthorizationRoleService);
+  const getRequestCredentialResolver =
+    config.authorization?.getRequestCredentialResolver
+    ?? (config.runtime
+      ? () => config.runtime!.get(ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER)
+      : getAuthRequestCredentialResolver);
   const authorization: AuthMiddlewareAuthorizationOptions = {
     ...config.authorization,
+    getRequestCredentialResolver,
     getAuthorizationKernel,
   };
   const requestScope = (access: Parameters<typeof requireRequestServiceDataScope>[0]) =>
@@ -217,6 +225,7 @@ export function createWorkflowPlugin(config: WorkflowPluginConfig) {
       const authorityStore = new WorkflowExecutionAuthorityStore(db);
       const authorityProvider = new AuthWorkflowExecutionAuthorityProvider({
         tokens,
+        requestCredentials: getRequestCredentialResolver(),
         kernel,
         properties,
         roleAssignments: getRoleAssignments(),

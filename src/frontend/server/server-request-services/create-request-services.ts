@@ -48,6 +48,45 @@ export function createServerRequestServices(
 }
 
 /**
+ * Defer authority-scoped service projection until route authorization has run.
+ * API-key contexts are deliberately hidden by RequestAuthorizationAccess until
+ * an explicit credential declaration admits them, so eagerly projecting here
+ * would either leak the key identity or permanently cache an anonymous facade.
+ */
+export function createDeferredServerRequestServices(
+  options: CreateServerRequestServicesOptions,
+): ServerRequestServices {
+  let initialized = false;
+  let admittedContext = options.access.context;
+  let current: ServerRequestServices;
+  const resolve = (): ServerRequestServices => {
+    const nextContext = options.access.context;
+    if (!initialized || nextContext !== admittedContext) {
+      admittedContext = nextContext;
+      current = createServerRequestServices(options);
+      initialized = true;
+    }
+    return current!;
+  };
+
+  return new Proxy(options.services as ServerRequestServices, {
+    get(_target, property) {
+      const services = resolve();
+      return Reflect.get(services, property, services);
+    },
+    has(_target, property) {
+      return Reflect.has(resolve(), property);
+    },
+    ownKeys() {
+      return Reflect.ownKeys(resolve());
+    },
+    getOwnPropertyDescriptor(_target, property) {
+      return Reflect.getOwnPropertyDescriptor(resolve(), property);
+    },
+  });
+}
+
+/**
  * Build one scope-closed service facade from already validated authority.
  * Callers own authority capture/revalidation; this function owns capability
  * projection and mutation fencing.

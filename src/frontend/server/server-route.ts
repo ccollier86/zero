@@ -11,19 +11,21 @@ import type { ElysiaConfig } from 'elysia';
 
 import { createAuthMiddleware } from '../../auth/auth.middleware';
 import {
+  getAuthRequestCredentialResolver,
   getAuthorizationKernel,
   getAuthStore,
   getTokenService,
 } from '../../auth/auth.plugin';
 import { createLazyServerRouteServices } from './server-services';
 import {
-  createServerRequestServices,
+  createDeferredServerRequestServices,
   type ServerRequestServices,
 } from './server-request-services';
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import {
   ZERO_AUTHORIZATION_KERNEL,
   ZERO_AUTHORIZATION_ROLE_SERVICE,
+  ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
   ZERO_AUTH_STORE,
   ZERO_AUTH_TOKEN_SERVICE,
 } from '../../runtime/service-keys';
@@ -60,6 +62,9 @@ export function createServerRoute(
         ? () => runtime.get(ZERO_AUTH_TOKEN_SERVICE)
         : getTokenService,
       {
+        getRequestCredentialResolver: runtime
+          ? () => runtime.get(ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER)
+          : getAuthRequestCredentialResolver,
         getAuthorizationKernel: runtime
           ? () => runtime.get(ZERO_AUTHORIZATION_KERNEL)
           : getAuthorizationKernel,
@@ -76,7 +81,7 @@ export function createServerRoute(
         zero?: ServerRequestServices;
       }).zero;
       return {
-        zero: inherited ?? createServerRequestServices({
+        zero: inherited ?? createDeferredServerRequestServices({
           request: context.request,
           access: context.access,
           services: createLazyServerRouteServices(runtime),

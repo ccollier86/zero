@@ -6,6 +6,10 @@ import {
   type AuthorizationRoleAssignmentResolver,
 } from '../auth/authorization-access';
 import type { AuthorizationKernel } from '../auth/authorization-kernel';
+import type {
+  AuthRequestAuthorityReference,
+  AuthRequestCredentialResolver,
+} from '../auth/auth-api-key-types';
 import { serviceDataScopeFromIdentity } from '../auth/service-data-scope';
 import type { TokenService } from '../auth/token-service';
 import type { AuthContext } from '../auth/types';
@@ -20,6 +24,8 @@ import {
 
 export interface AuthWorkflowExecutionAuthorityProviderOptions {
   tokens: TokenService;
+  /** Managed Guardian credential dispatcher; omitted by legacy standalone callers. */
+  requestCredentials?: AuthRequestCredentialResolver | null;
   kernel: AuthorizationKernel;
   properties: AuthorizationPropertyStore;
   roleAssignments?: AuthorizationRoleAssignmentResolver | null;
@@ -37,9 +43,9 @@ implements WorkflowExecutionAuthorityProvider {
   ) {}
 
   captureActor(context: AuthContext): WorkflowActorExecutionAuthority | null {
-    const reference = this.options.tokens.captureAuthContextAuthority(context);
+    const reference = this.captureAuthority(context);
     if (!reference) return null;
-    const current = this.options.tokens.resolveAuthContextAuthority(reference);
+    const current = this.resolveAuthority(reference);
     if (!current) return null;
     const resolved = this.resolveLive(current);
     if (!resolved) return null;
@@ -56,7 +62,7 @@ implements WorkflowExecutionAuthorityProvider {
   revalidateActor(
     authority: WorkflowActorExecutionAuthority,
   ): WorkflowResolvedExecutionAuthority | null {
-    const current = this.options.tokens.resolveAuthContextAuthority(authority.reference);
+    const current = this.resolveAuthority(authority.reference);
     if (!current) return null;
     const resolved = this.resolveLive(current);
     if (!resolved
@@ -70,6 +76,33 @@ implements WorkflowExecutionAuthorityProvider {
       authContext: current,
       userProperties: resolved.userProperties,
     });
+  }
+
+  private captureAuthority(
+    context: AuthContext,
+  ): WorkflowActorExecutionAuthority['reference'] | null {
+    if (this.options.requestCredentials) {
+      return this.options.requestCredentials.captureAuthority(context);
+    }
+    return this.options.tokens.captureAuthContextAuthority(context);
+  }
+
+  private resolveAuthority(
+    reference: WorkflowActorExecutionAuthority['reference'],
+  ): AuthContext | null {
+    if (this.options.requestCredentials) {
+      if (isRequestAuthorityReference(reference)) {
+        return this.options.requestCredentials.resolveAuthority(reference);
+      }
+      // Managed runtimes never create new bare references, but retaining this
+      // bridge lets workflows sealed before the resolver upgrade finish.
+      return this.options.tokens.resolveAuthContextAuthority(reference);
+    }
+    return isRequestAuthorityReference(reference)
+      ? reference.kind === 'session'
+        ? this.options.tokens.resolveAuthContextAuthority(reference.reference)
+        : null
+      : this.options.tokens.resolveAuthContextAuthority(reference);
   }
 
   private resolveLive(context: AuthContext) {
@@ -98,4 +131,11 @@ implements WorkflowExecutionAuthorityProvider {
       userProperties: properties,
     } as const;
   }
+}
+
+function isRequestAuthorityReference(
+  reference: WorkflowActorExecutionAuthority['reference'],
+): reference is AuthRequestAuthorityReference {
+  return 'kind' in reference
+    && (reference.kind === 'session' || reference.kind === 'api-key');
 }

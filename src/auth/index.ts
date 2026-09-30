@@ -1,6 +1,8 @@
 // ─── Auth Plugin ──────────────────────────────────────────────────────────
 export {
   createAuthPlugin,
+  getAuthApiKeyService,
+  getAuthRequestCredentialResolver,
   getAuthAuditService,
   getAuthorizationKernel,
   getAuthorizationRoleService,
@@ -113,6 +115,7 @@ export type {
 export type {
   AccessRequirement,
   AccessRequirementCompileOptions,
+  AuthorizationCredentialKind,
   AuthorizationDecision,
   AuthorizationDenialReason,
   AuthorizationKernelConfig,
@@ -134,6 +137,32 @@ export {
   authAuditRequestFromRequest,
 } from './auth-audit-service';
 export { resolveAuthAuditConfig } from './auth-audit-config';
+export { resolveAuthApiKeyConfig } from './auth-api-key-config';
+export { AuthApiKeyService } from './auth-api-key-service';
+export type { AuthApiKeyServiceOptions } from './auth-api-key-service';
+export { AuthApiKeyStore } from './auth-api-key-store';
+export type {
+  AuthApiKeyStoreCursor,
+  AuthApiKeyStorePageInput,
+  InsertAuthApiKeyInput,
+} from './auth-api-key-store';
+export type {
+  AuthApiKeyAuthorityReference,
+  AuthApiKeyCreatedVia,
+  AuthApiKeyIssueInput,
+  AuthApiKeyListQuery,
+  AuthApiKeyManagementCapabilities,
+  AuthApiKeyMutationAuthority,
+  AuthApiKeyPage,
+  AuthApiKeyRecord,
+  AuthApiKeyScopeKind,
+  AuthApiKeyStatus,
+  AuthApiKeySummary,
+  AuthApiKeyTenantTarget,
+  AuthRequestAuthorityReference,
+  AuthRequestCredentialResolver,
+  IssuedAuthApiKey,
+} from './auth-api-key-types';
 export { defineAuthAuditTables } from './auth-audit-schema';
 export type {
   AppendAuthAuditEventInput,
@@ -384,6 +413,8 @@ export type {
   AuthMfaTotpConfig,
   AuthRegistrationConfig,
   AuthRegistrationMode,
+  AuthApiKeyConfig,
+  AuthApiKeyOptions,
   AuthTenancyConfig,
   AuthTenancyMode,
   AuthTenancyOptions,
@@ -392,6 +423,7 @@ export type {
   AuthTenantTerminologyConfig,
   NormalizedAuthBehaviorConfig,
   ResolvedAuthAccountConfig,
+  ResolvedAuthApiKeyConfig,
   ResolvedAuthAccountEmailConfig,
   ResolvedAuthAuthorizationConfig,
   ResolvedAuthPermissionConfig,

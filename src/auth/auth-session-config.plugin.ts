@@ -72,6 +72,14 @@ export function createAuthSessionConfigPlugin(config: AuthSessionPluginConfig) {
       authorization: {
         mode: authConfig.authorization?.mode ?? 'simple' as const,
       },
+      apiKeys: {
+        enabled: authConfig.apiKeys.enabled,
+        selfService: authConfig.apiKeys.selfService,
+        administratorIssuance: authConfig.apiKeys.administratorIssuance,
+        defaultTTL: authConfig.apiKeys.defaultTTL,
+        maxTTL: authConfig.apiKeys.maxTTL,
+        maxActivePerUser: authConfig.apiKeys.maxActivePerUser,
+      },
       bootstrap,
       registration,
       accountEmails: {

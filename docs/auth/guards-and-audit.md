@@ -7,8 +7,9 @@ expiration remain separate design ideas and are not current framework APIs.
 
 ## Current Runtime Contract
 
-`createAuthMiddleware(getTokenService)` resolves Bearer authentication once for
-each HTTP request and adds three values to the Elysia request context:
+`createAuthMiddleware(getTokenService)` resolves session Bearer authentication
+once for each HTTP request and adds the authorization facade plus three common
+values to the Elysia request context:
 
 - `authContext`: the current live `AuthContext`, or `null` when the request has
   no acceptable Bearer token;
@@ -50,6 +51,28 @@ Missing or invalid credentials deliberately produce `authContext: null`; the
 middleware itself does not reject public routes. A protected handler must call
 the appropriate guard, or use a higher-level Zero declaration that compiles the
 same requirement.
+
+When Guardian user API keys are enabled, managed `createApp()` composition also
+installs the app-local credential resolver. A valid API-key identity remains
+hidden on public, optional, legacy `user`/`admin`, and otherwise session-only
+routes. The route must explicitly admit it:
+
+```ts
+export default defineEndpoint({
+  method: 'POST',
+  path: '/api/imports',
+  auth: {
+    user: 'required',
+    credentials: ['session', 'api-key'],
+    permission: 'imports:write',
+  },
+  handler: ({ user }) => ({ accepted: true, submittedBy: user.userId }),
+});
+```
+
+Use `credentials: ['api-key']` for a user-bound machine endpoint that should
+reject browser/native sessions. See [Guardian User API Keys](./api-keys.md) for
+configuration, live scope semantics, management APIs, and client surfaces.
 
 ## Recommended App-Owned Routes
 
@@ -123,31 +146,48 @@ import {
   createAuthMiddleware,
   createAuthPlugin,
   createProtectedMultipartRequestGuard,
+  getAuthRequestCredentialResolver,
+  getAuthorizationKernel,
+  getAuthStore,
   getTokenService,
 } from '@zero/framework/auth';
 
 const app = new Elysia()
-  .use(createAuthPlugin({ db }))
-  .use(createAuthMiddleware(getTokenService))
+  .use(createAuthPlugin({ db, apiKeys: { enabled: true } }))
+  .use(createAuthMiddleware(getTokenService, {
+    getRequestCredentialResolver: getAuthRequestCredentialResolver,
+    getAuthorizationKernel,
+    getPropertyStore: getAuthStore,
+  }))
   .onRequest(createProtectedMultipartRequestGuard(getTokenService, {
-    requirement: 'user',
+    requirement: {
+      user: 'required',
+      credentials: ['session', 'api-key'],
+    },
     method: 'POST',
     path: '/api/documents/parse',
+  }, {
+    getRequestCredentialResolver: getAuthRequestCredentialResolver,
+    getAuthorizationKernel,
+    getPropertyStore: getAuthStore,
   }))
   .post('/api/documents/parse', ({ body, requireAuth }) => {
     const user = requireAuth();
     return { uploadedBy: user.userId, bytes: body.file.size };
   }, {
-    zeroAuth: 'user',
+    zeroAuth: {
+      user: 'required',
+      credentials: ['session', 'api-key'],
+    },
     body: t.Object({ file: t.File() }),
   });
 ```
 
-Use `requirement: 'admin'` and `zeroAuth: 'admin'` together for a global-admin
-upload. Non-multipart and non-matching requests pass through the early hook and
-reach ordinary route authorization. Public multipart routes stay public. Early
-failures use the normal stable JSON contract: `401 UNAUTHORIZED`, `403
-FORBIDDEN`, or `503 AUTH_NOT_READY`.
+Use matching requirements in the early guard and `zeroAuth`; otherwise the two
+request phases would enforce different policy. Non-multipart and non-matching
+requests pass through the early hook and reach ordinary route authorization.
+Public multipart routes stay public. Early failures use the normal stable JSON
+contract: `401 UNAUTHORIZED`, `403 FORBIDDEN`, or `503 AUTH_NOT_READY`.
 
 Bearer hydration is memoized per `Request` and per app-local `TokenService`, so
 root middleware, a nested router, the early guard, and the normal handler share

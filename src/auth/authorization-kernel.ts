@@ -47,6 +47,7 @@ export type { PermissionKey } from './types';
 export type {
   AccessRequirement,
   AccessRequirementCompileOptions,
+  AuthorizationCredentialKind,
   AuthorizationDecision,
   AuthorizationDenialReason,
   AuthorizationKernelConfig,

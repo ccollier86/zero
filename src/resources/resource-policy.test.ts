@@ -30,6 +30,7 @@ import {
   requiresAuthenticatedUser,
   validateResourcePolicy,
 } from './resource-policy';
+import { resourcePolicyAdmitsCredential } from './resource-policy-inspection';
 
 const authConfig = resolveAuthBehaviorConfig({
   userProperties: {
@@ -369,6 +370,37 @@ describe('resource policy core', () => {
     expect(allowsPublicAction(policy, 'delete')).toBe('unknown');
     expect(requiresAuthenticatedUser(publicReadUserWrite(), 'create')).toBe('yes');
     expect(requiresAuthenticatedUser(publicReadUserWrite(), 'list')).toBe('no');
+  });
+
+  test('credential admission must dominate every allowing composite path', () => {
+    const apiKeyGate = authorizationPolicy({
+      user: 'required',
+      credentials: ['session', 'api-key'],
+      permission: 'tickets:read',
+    });
+    const owner = ownerPolicy({ userField: 'owner_id' });
+    const custom = customPolicy(() => true, { name: 'app-owned-override' });
+
+    expect(resourcePolicyAdmitsCredential(apiKeyGate, 'api-key')).toBe(true);
+    expect(resourcePolicyAdmitsCredential(
+      allOf(apiKeyGate, custom),
+      'api-key',
+    )).toBe(true);
+    expect(resourcePolicyAdmitsCredential(
+      anyOf(apiKeyGate, owner),
+      'api-key',
+    )).toBe(false);
+    expect(resourcePolicyAdmitsCredential(
+      anyOf(
+        allOf(apiKeyGate, custom),
+        allOf(owner, apiKeyGate),
+      ),
+      'api-key',
+    )).toBe(true);
+    expect(resourcePolicyAdmitsCredential(
+      anyOf(allOf(apiKeyGate, custom), owner),
+      'api-key',
+    )).toBe(false);
   });
 });
 

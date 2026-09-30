@@ -132,6 +132,34 @@ describe('installation bootstrap security', () => {
     expect(getAuthStore()!.countUsers()).toBe(1);
   });
 
+  test('projects only public-safe API-key capability settings', async () => {
+    await start({
+      apiKeys: {
+        enabled: true,
+        selfService: true,
+        administratorIssuance: true,
+        eligibleScopeRoles: ['owner'],
+        defaultTTL: '12h',
+        maxTTL: '30d',
+        maxActivePerUser: 7,
+      },
+    });
+
+    const publicConfig = await json('GET', '/auth/config');
+    expect(publicConfig.status).toBe(200);
+    expect(publicConfig.body.apiKeys).toEqual({
+      enabled: true,
+      selfService: true,
+      administratorIssuance: true,
+      defaultTTL: '12h',
+      maxTTL: '30d',
+      maxActivePerUser: 7,
+    });
+    expect(publicConfig.body.apiKeys).not.toHaveProperty('eligibleScopeRoles');
+    expect(publicConfig.body.apiKeys).not.toHaveProperty('defaultTTLms');
+    expect(publicConfig.body.apiKeys).not.toHaveProperty('maxTTLms');
+  });
+
   test('concurrent correct, wrong, and missing attempts elect exactly one admin', async () => {
     await start({
       bootstrap: { mode: 'secret', secret: BOOTSTRAP_SECRET },

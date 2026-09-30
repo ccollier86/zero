@@ -7,6 +7,7 @@
  */
 
 import {
+  getAuthRequestCredentialResolver,
   getAuthorizationKernel,
   getAuthorizationRoleService,
   getAuthStore,
@@ -15,6 +16,7 @@ import {
 import type { AuthorizationKernel } from '../../auth/authorization-kernel';
 import type { AuthorizationRoleService } from '../../auth/authorization-role-service';
 import type { TokenService } from '../../auth/token-service';
+import type { AuthRequestCredentialResolver } from '../../auth/auth-api-key-types';
 import type { UserStore } from '../../auth/user-store';
 import type { EmailService } from '../../email';
 import { getEmailRuntime, getEmailService } from '../../email';
@@ -64,6 +66,7 @@ import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import {
   ZERO_AI_SERVICE,
   ZERO_AUTH_STORE,
+  ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
   ZERO_AUTHORIZATION_KERNEL,
   ZERO_AUTHORIZATION_ROLE_SERVICE,
   ZERO_AUTH_TOKEN_SERVICE,
@@ -102,12 +105,16 @@ export interface ServerAuthServices {
   readonly tokens: TokenService | null;
   /** Explicit alias for `tokens` when service-oriented naming is clearer. */
   readonly tokenService: TokenService | null;
+  /** Credential-neutral Guardian resolver used by app request/commit fences. */
+  readonly requestCredentialResolver: AuthRequestCredentialResolver | null;
   /** Resolve the current auth user store lazily. */
   readonly getStore: typeof getAuthStore;
   /** Resolve the current auth user store lazily. */
   readonly getUserStore: typeof getAuthStore;
   /** Compatibility getter retained from the Phase 1 backend context. */
   readonly getTokenService: typeof getTokenService;
+  /** Resolve the app-local request credential dispatcher lazily. */
+  readonly getRequestCredentialResolver: () => AuthRequestCredentialResolver | null;
   /** Resolve the app-local authorization kernel lazily. */
   readonly getAuthorizationKernel: typeof getAuthorizationKernel;
   /** Resolve the app-local advanced role service lazily. */
@@ -302,6 +309,9 @@ function createServerAuthServices(runtime?: ZeroAppRuntime): ServerAuthServices 
   const resolveTokens = (): TokenService | null => runtime
     ? runtime.get(ZERO_AUTH_TOKEN_SERVICE)
     : getTokenService();
+  const resolveRequestCredentials = (): AuthRequestCredentialResolver | null => runtime
+    ? runtime.get(ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER)
+    : getAuthRequestCredentialResolver();
   const resolveAuthorization = (): AuthorizationKernel | null => runtime
     ? runtime.get(ZERO_AUTHORIZATION_KERNEL)
     : getAuthorizationKernel();
@@ -334,9 +344,13 @@ function createServerAuthServices(runtime?: ZeroAppRuntime): ServerAuthServices 
     get tokenService() {
       return resolveTokens();
     },
+    get requestCredentialResolver() {
+      return resolveRequestCredentials();
+    },
     getStore: resolveStore,
     getUserStore: resolveStore,
     getTokenService: resolveTokens,
+    getRequestCredentialResolver: resolveRequestCredentials,
     getAuthorizationKernel: resolveAuthorization,
     getRoleService: resolveRoles,
   };

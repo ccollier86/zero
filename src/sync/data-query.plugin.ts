@@ -11,6 +11,8 @@ import { Elysia, t } from 'elysia';
 import { readAuthBearerToken } from '../auth/auth-bearer-token';
 import { authContextAuthorityFingerprint } from '../auth/auth-context-authority';
 import { createAuthMiddleware } from '../auth/auth.middleware';
+import type { AuthRequestCredentialResolver } from '../auth/auth-api-key-types';
+import type { RequestAuthorizationAccess } from '../auth/authorization-access';
 import type { TokenService } from '../auth/token-service';
 import type { AuthContext } from '../auth/types';
 import type { AuthTenancyMode } from '../auth/types';
@@ -29,6 +31,7 @@ import {
   type ResourcePolicyAuthConfig,
   type ResourceRegistry,
 } from '../resources';
+import { resourcePolicyAdmitsCredential } from '../resources/resource-policy-inspection';
 import {
   resolveResourceRealm,
   resourceRealmConstraint,
@@ -49,6 +52,8 @@ export interface DataQueryConfig {
   policy?: SyncPolicy;
   /** Optional auth token service provider used to resolve HTTP auth context. */
   getTokenService?: () => TokenService | null;
+  /** Guardian request resolver used only by resource policies which opt API keys in. */
+  getRequestCredentialResolver?: () => AuthRequestCredentialResolver | null;
   /** Optional auth user store provider used to hydrate resource metadata policy. */
   getUserStore?: () => UserStore | null;
   /** App-local authorization kernel used by authorizationPolicy(). */
@@ -108,8 +113,10 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
   const maxLimit = config.maxLimit ?? MAX_LIMIT;
 
   return new Elysia({ name: 'data-query' })
-    .use(createAuthMiddleware(config.getTokenService ?? (() => null)))
-    .get('/api/data', async ({ query, set, authContext, request }) => {
+    .use(createAuthMiddleware(config.getTokenService ?? (() => null), {
+      getRequestCredentialResolver: config.getRequestCredentialResolver,
+    }))
+    .get('/api/data', async ({ query, set, access, request }) => {
       // An explicit app-local provider owns this dependency even while it is
       // unavailable. Never fall through to another live app's compatibility
       // provider in that case.
@@ -143,7 +150,12 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
         return { error: `Unknown table: ${table}` };
       }
 
-      const readDecision = evaluateSyncReadPolicy(policy, { table, authContext });
+      const admittedAuthContext = admitDataQueryCredential(config, table, access);
+
+      const readDecision = evaluateSyncReadPolicy(policy, {
+        table,
+        authContext: admittedAuthContext,
+      });
       if (!readDecision.ok) {
         set.status = 403;
         return { error: readDecision.reason ?? `Not allowed: ${table}` };
@@ -156,8 +168,12 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
         return { error: `No column metadata for table: ${table}` };
       }
 
-      const commitAuthority = captureDataCommitAuthority(config, authContext);
-      const resourceDecision = await evaluateDataResourcePolicy(config, table, authContext);
+      const commitAuthority = captureDataCommitAuthority(config, admittedAuthContext);
+      const resourceDecision = await evaluateDataResourcePolicy(
+        config,
+        table,
+        admittedAuthContext,
+      );
       if (!resourceDecision.ok) {
         set.status = resourceDecision.status;
         return { error: resourceDecision.error, code: resourceDecision.code };
@@ -167,6 +183,7 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
           config,
           request,
           resourceDecision.authorityFingerprint,
+          commitAuthority,
         );
         if (!current) {
           set.status = 403;
@@ -213,7 +230,7 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
         errorPlatform(OBS_CODES.DATA_QUERY_FAILED, {
           error,
           metadata: { table },
-          userId: authContext?.userId,
+          userId: admittedAuthContext?.userId,
         });
         set.status = 500;
         return { error: 'Data query failed', code: 'data-query-failed' };
@@ -368,7 +385,18 @@ async function resolveCurrentDataAuthority(
   config: DataQueryConfig,
   request: Request,
   expectedFingerprint: string,
+  authority?: DataCommitAuthority,
 ): Promise<boolean> {
+  const credentials = config.getRequestCredentialResolver?.() ?? null;
+  if (credentials) {
+    let current: AuthContext | null = null;
+    try {
+      current = authority?.resolve() ?? null;
+    } catch {
+      current = null;
+    }
+    return resolveDataPolicyAuthority(config, current).fingerprint === expectedFingerprint;
+  }
   const bearer = readAuthBearerToken(request);
   const tokens = config.getTokenService?.() ?? null;
   let current: AuthContext | null = null;
@@ -410,6 +438,18 @@ function captureDataCommitAuthority(
   // boundary fails closed instead of accepting a stale request-time context.
   const unavailable = (): DataCommitAuthority | undefined =>
     config.tenancyMode === 'multi' ? { resolve: () => null } : undefined;
+  const credentials = config.getRequestCredentialResolver?.() ?? null;
+  if (credentials) {
+    let reference: ReturnType<AuthRequestCredentialResolver['captureAuthority']> = null;
+    try {
+      reference = credentials.captureAuthority(authContext);
+    } catch {
+      return unavailable();
+    }
+    return reference
+      ? { resolve: () => credentials.resolveAuthority(reference!) }
+      : unavailable();
+  }
   if (!authContext.sessionKind) return unavailable();
   const tokens = config.getTokenService?.() ?? null;
   if (!tokens
@@ -422,6 +462,24 @@ function captureDataCommitAuthority(
       ? tokens.resolveAuthContextAuthority(reference)
       : null,
   };
+}
+
+function admitDataQueryCredential(
+  config: DataQueryConfig,
+  table: string,
+  access: RequestAuthorizationAccess,
+): AuthContext | null {
+  const policy = config.resourceRegistry?.getByTable(table)?.policy.list;
+  const admitsApiKey = policy
+    ? resourcePolicyAdmitsCredential(policy, 'api-key')
+    : false;
+  // Establish visibility for this exact list policy. This also reconceals a
+  // key admitted by earlier request middleware before policy evaluation.
+  access.authorize({
+    user: 'optional',
+    credentials: admitsApiKey ? ['session', 'api-key'] : ['session'],
+  });
+  return access.context;
 }
 
 function isDataAuthorityCurrentAtCommit(

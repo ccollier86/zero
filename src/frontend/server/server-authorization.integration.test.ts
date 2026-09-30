@@ -8,10 +8,12 @@ import {
   type CompiledAccessRequirement,
 } from '../../auth/authorization-kernel';
 import type { TokenService } from '../../auth/token-service';
+import type { AuthRequestCredentialResolver } from '../../auth/auth-api-key-types';
 import type { AuthContext } from '../../auth/types';
 import type { UserStore } from '../../auth/user-store';
 import {
   ZERO_AUTHORIZATION_KERNEL,
+  ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
   ZERO_AUTH_STORE,
   ZERO_AUTH_TOKEN_SERVICE,
 } from '../../runtime/service-keys';
@@ -143,6 +145,198 @@ describe('server extension authorization kernel integration', () => {
         handler: () => ({ unreachable: true }),
       })],
     })).rejects.toThrow('undeclared permission "documents:read"');
+  });
+
+  test('requires explicit API-key admission and preserves explicit parent constraints', async () => {
+    const fixture = createRuntime('credential-policy', {
+      permissions: { 'documents:read': { label: 'Read documents' } },
+      roles: { clinician: { permissions: ['documents:read'] } },
+      tokenRole: 'clinician',
+    });
+    const app = await createServerExtensionApp({
+      runtime: fixture.runtime,
+      extensions: [
+        defineEndpoint({
+          method: 'GET',
+          path: '/session-default',
+          auth: { permission: 'documents:read' },
+          handler: () => ({ admitted: true }),
+        }),
+        defineEndpoint({
+          method: 'GET',
+          path: '/api-key-opt-in',
+          auth: {
+            credentials: ['session', 'api-key'],
+            permission: 'documents:read',
+          },
+          handler: ({ access, user, zero }) => ({
+            credentialKind: access.context?.credentialKind,
+            userKind: user?.credentialKind,
+            scopeKind: zero.scope?.scopeKind,
+          }),
+        }),
+        defineEndpoint({
+          method: 'GET',
+          path: '/public-no-key-identity',
+          auth: false,
+          handler: ({ access, user, zero }) => ({
+            accessUserId: access.context?.userId ?? null,
+            userId: user?.userId ?? null,
+            scope: zero.scope ?? null,
+          }),
+        }),
+        defineEndpoint({
+          method: 'GET',
+          path: '/optional-no-key-identity',
+          auth: 'optional',
+          handler: ({ access, user, zero }) => ({
+            accessUserId: access.context?.userId ?? null,
+            userId: user?.userId ?? null,
+            scope: zero.scope ?? null,
+          }),
+        }),
+        defineEndpoint({
+          method: 'GET',
+          path: '/optional-api-key-opt-in',
+          auth: {
+            user: 'optional',
+            credentials: ['session', 'api-key'],
+          },
+          beforeHandle: ({ access, set, zero }) => {
+            (set as { headers: Record<string, string> }).headers['x-before-key'] =
+              `${access.context?.credentialKind ?? 'anonymous'}:${zero.scope?.scopeKind ?? 'none'}`;
+          },
+          handler: ({ user }) => ({ credentialKind: user?.credentialKind ?? null }),
+        }),
+        defineMiddleware({
+          name: 'api-key-middleware',
+          auth: {
+            credentials: ['session', 'api-key'],
+            permission: 'documents:read',
+          },
+          matcher: {
+            path: '/api-key-middleware',
+            auth: 'user',
+            role: 'user',
+          },
+          run({ set, user, zero }) {
+            (set as { headers: Record<string, string> }).headers['x-key-user'] =
+              `${user.userId}:${zero.scope?.scopeKind ?? 'none'}`;
+          },
+        }),
+        defineEndpoint({
+          method: 'GET',
+          path: '/api-key-middleware',
+          auth: {
+            credentials: ['session', 'api-key'],
+            permission: 'documents:read',
+          },
+          handler: () => ({ admitted: true }),
+        }),
+        defineMiddleware({
+          name: 'api-key-public-middleware',
+          auth: {
+            credentials: ['session', 'api-key'],
+            permission: 'documents:read',
+          },
+          matcher: {
+            path: '/api-key-middleware-public',
+            auth: 'user',
+            role: 'user',
+          },
+          run({ set, user, zero }) {
+            (set as { headers: Record<string, string> }).headers['x-key-middleware-user'] =
+              `${user.userId}:${zero.scope?.scopeKind ?? 'none'}`;
+          },
+        }),
+        defineEndpoint({
+          method: 'GET',
+          path: '/api-key-middleware-public',
+          auth: false,
+          handler: ({ access, user, zero }) => ({
+            accessUserId: access.context?.userId ?? null,
+            userId: user?.userId ?? null,
+            scope: zero.scope ?? null,
+          }),
+        }),
+        defineRouter({
+          name: 'session-only-parent',
+          prefix: '/session-parent',
+          auth: { user: 'required', credentials: ['session'] },
+          routes: [defineEndpoint({
+            method: 'GET',
+            path: '/cannot-broaden',
+            auth: {
+              credentials: ['session', 'api-key'],
+              permission: 'documents:read',
+            },
+            handler: () => ({ admitted: true }),
+          })],
+        }),
+      ],
+    });
+
+    const defaultApiKey = await app.handle(request('/session-default', 'api-key'));
+    const explicitApiKey = await app.handle(request('/api-key-opt-in', 'api-key'));
+    const constrainedApiKey = await app.handle(request(
+      '/session-parent/cannot-broaden',
+      'api-key',
+    ));
+    const explicitSession = await app.handle(request('/api-key-opt-in', 'valid'));
+    const publicApiKey = await app.handle(request('/public-no-key-identity', 'api-key'));
+    const optionalApiKey = await app.handle(request(
+      '/optional-no-key-identity',
+      'api-key',
+    ));
+    const optionalOptInApiKey = await app.handle(request(
+      '/optional-api-key-opt-in',
+      'api-key',
+    ));
+    const middlewareApiKey = await app.handle(request('/api-key-middleware', 'api-key'));
+    const middlewarePublicApiKey = await app.handle(request(
+      '/api-key-middleware-public',
+      'api-key',
+    ));
+
+    expect(defaultApiKey.status).toBe(403);
+    expect(explicitApiKey.status).toBe(200);
+    await expect(explicitApiKey.json()).resolves.toEqual({
+      credentialKind: 'api-key',
+      userKind: 'api-key',
+      scopeKind: 'tenant',
+    });
+    expect(constrainedApiKey.status).toBe(403);
+    expect(explicitSession.status).toBe(200);
+    expect(publicApiKey.status).toBe(200);
+    await expect(publicApiKey.json()).resolves.toEqual({
+      accessUserId: null,
+      userId: null,
+      scope: null,
+    });
+    expect(optionalApiKey.status).toBe(200);
+    await expect(optionalApiKey.json()).resolves.toEqual({
+      accessUserId: null,
+      userId: null,
+      scope: null,
+    });
+    expect(optionalOptInApiKey.status).toBe(200);
+    expect(optionalOptInApiKey.headers.get('x-before-key')).toBe('api-key:tenant');
+    await expect(optionalOptInApiKey.json()).resolves.toEqual({
+      credentialKind: 'api-key',
+    });
+    expect(middlewareApiKey.status).toBe(200);
+    expect(middlewareApiKey.headers.get('x-key-user')).toBe(
+      'u_credential-policy:tenant',
+    );
+    expect(middlewarePublicApiKey.status).toBe(200);
+    expect(middlewarePublicApiKey.headers.get('x-key-middleware-user')).toBe(
+      'u_credential-policy:tenant',
+    );
+    await expect(middlewarePublicApiKey.json()).resolves.toEqual({
+      accessUserId: null,
+      userId: null,
+      scope: null,
+    });
   });
 
   test('a nested endpoint cannot weaken tenant and permission requirements', async () => {
@@ -298,11 +492,12 @@ function createRuntime(
     : () => tokenRole;
   const tokenService = {
     async resolveAuthContext(token: string): Promise<AuthContext | null> {
-      if (!token || token === 'invalid') return null;
+      if (!token || token === 'invalid' || token === 'api-key') return null;
       return {
         userId: `u_${label}`,
         email: `${label}@example.test`,
         role: 'user',
+        credentialKind: 'session',
         sessionKind: 'web',
         sessionId: `ses_${label}`,
         sessionGeneration: 0,
@@ -316,12 +511,55 @@ function createRuntime(
       };
     },
   } as TokenService;
+  const apiKeyContext: AuthContext = {
+    userId: `u_${label}`,
+    email: `${label}@example.test`,
+    role: 'user',
+    credentialKind: 'api-key',
+    credentialId: `key_${label}`,
+    authGeneration: 0,
+    sessionScopeKind: 'tenant',
+    sessionScopeId: `ten_${label}`,
+    tenantId: `ten_${label}`,
+    membershipId: `tmem_${label}`,
+    tenantRole: resolveRole('api-key'),
+    tenantAuthorizationGeneration: 0,
+    membershipAuthorizationGeneration: 0,
+  };
+  const credentialResolver: AuthRequestCredentialResolver = {
+    async resolve(currentRequest) {
+      const raw = currentRequest.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+      return raw === 'api-key'
+        ? apiKeyContext
+        : tokenService.resolveAuthContext(raw ?? '');
+    },
+    captureAuthority(context) {
+      return context.credentialKind === 'api-key'
+        ? {
+            kind: 'api-key',
+            version: 1,
+            keyId: context.credentialId!,
+            keyGeneration: 0,
+            userId: context.userId,
+            scopeKind: 'tenant',
+            scopeId: context.tenantId!,
+          }
+        : null;
+    },
+    resolveAuthority(reference) {
+      return reference.kind === 'api-key'
+        && reference.keyId === apiKeyContext.credentialId
+        ? apiKeyContext
+        : null;
+    },
+  };
   const store = {
     getProperties: () => ({ department: 'clinical' }),
   } as unknown as UserStore;
 
   runtime.set(ZERO_AUTHORIZATION_KERNEL, kernel);
   runtime.set(ZERO_AUTH_TOKEN_SERVICE, tokenService);
+  runtime.set(ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER, credentialResolver);
   runtime.set(ZERO_AUTH_STORE, store);
   return { runtime, kernel, tokenService, store };
 }

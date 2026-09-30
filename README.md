@@ -18,6 +18,9 @@ sessions, registered resources, Sync, scoped built-in services, tenant
 administration, invitations/join requests, browser authorization state, and
 packaged controls are present, including opt-in verified-company-domain
 request onboarding and the bounded authorization/control-plane audit.
+Optional user-bound API keys reuse that same live scope and RBAC system, with
+explicit per-route credential admission, session-only lifecycle controls, and
+standalone SDK/UI surfaces.
 Multi-mode bootstrap now creates a protected Administration Organization, and
 the browser SDK, hooks, and packaged controls cover its people plus the
 capability-gated customer-organization directory and lifecycle. Upstream
@@ -184,7 +187,11 @@ apps. Start with the
   canonical imports and app-owned extension examples.
 - [Auth System](./docs/auth/README.md): canonical auth index for installation
   bootstrap, all four tenancy/authorization profiles, declarative permissions,
-  administration, onboarding, browser state, audit, and installed-app auth.
+  administration, onboarding, user API keys, browser state, audit, and
+  installed-app auth.
+- [Guardian User API Keys](./docs/auth/api-keys.md): opt-in configuration,
+  live scope/RBAC authority, route admission, management APIs, browser SDK,
+  hooks, standalone controls, and one-time-secret operations.
 - [App Authentication SDK Guide](./docs/auth/app-auth-sdk-guide.md): choose the
   web, TypeScript native, Rust/Tauri, or Chrome surface and follow the installed
   app onboarding/release checklist.

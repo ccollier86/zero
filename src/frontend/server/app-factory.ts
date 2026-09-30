@@ -69,6 +69,7 @@ import {
   ZERO_EMAIL_RUNTIME,
   ZERO_AUTHORIZATION_KERNEL,
   ZERO_AUTHORIZATION_ROLE_SERVICE,
+  ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
   ZERO_AUTH_STORE,
   ZERO_AUTH_TOKEN_SERVICE,
   ZERO_OBSERVABILITY_RUNTIME,
@@ -427,6 +428,9 @@ async function mountPlatformApp({
 }: MountPlatformAppInput) {
   const getAppAuthStore = () => runtime.get(ZERO_AUTH_STORE);
   const getAppTokenService = () => runtime.get(ZERO_AUTH_TOKEN_SERVICE);
+  const getAppRequestCredentialResolver = () => (
+    runtime.get(ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER)
+  );
   const getAppAuthorizationKernel = () => runtime.get(ZERO_AUTHORIZATION_KERNEL);
   const getAppRoleAssignments = () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE);
   const managedStartup: {
@@ -467,6 +471,7 @@ async function mountPlatformApp({
         userProperties: config.auth.userProperties,
         strictUserProperties: config.auth.strictUserProperties,
         nativeApps: config.auth.nativeApps,
+        apiKeys: config.auth.apiKeys,
         nativeIssuer: resourceAuthConfig.nativeApps.issuer
           ?? nativeIssuerFromPublicUrl(config.app.publicUrl),
         nativeAudience: config.app.publicUrl?.replace(/\/+$/, ''),
@@ -480,6 +485,7 @@ async function mountPlatformApp({
 
     // Auth middleware — resolves authContext + requireAuth/requireAdmin globally
     app.use(createAuthMiddleware(getAppTokenService, {
+      getRequestCredentialResolver: getAppRequestCredentialResolver,
       getAuthorizationKernel: () => runtime.get(ZERO_AUTHORIZATION_KERNEL),
       getPropertyStore: getAppAuthStore,
       getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
@@ -540,6 +546,7 @@ async function mountPlatformApp({
       runtime,
       getTokenService: getAppTokenService,
       authorization: {
+        getRequestCredentialResolver: getAppRequestCredentialResolver,
         getAuthorizationKernel: () => runtime.get(ZERO_AUTHORIZATION_KERNEL),
         getPropertyStore: getAppAuthStore,
         getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
@@ -555,6 +562,7 @@ async function mountPlatformApp({
       runtime,
       getTokenService: getAppTokenService,
       authorization: {
+        getRequestCredentialResolver: getAppRequestCredentialResolver,
         getAuthorizationKernel: () => runtime.get(ZERO_AUTHORIZATION_KERNEL),
         getPropertyStore: getAppAuthStore,
         getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
@@ -572,6 +580,7 @@ async function mountPlatformApp({
       runtime,
       getTokenService: getAppTokenService,
       authorization: {
+        getRequestCredentialResolver: getAppRequestCredentialResolver,
         getAuthorizationKernel: () => runtime.get(ZERO_AUTHORIZATION_KERNEL),
         getPropertyStore: getAppAuthStore,
         getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
@@ -599,6 +608,7 @@ async function mountPlatformApp({
       },
       getTokenService: getAppTokenService,
       authorization: {
+        getRequestCredentialResolver: getAppRequestCredentialResolver,
         getAuthorizationKernel: () => runtime.get(ZERO_AUTHORIZATION_KERNEL),
         getPropertyStore: getAppAuthStore,
         getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
@@ -637,6 +647,9 @@ async function mountPlatformApp({
       tableColumns: config.tableColumns,
       policy: syncPolicy,
       getTokenService: config.auth !== false ? getAppTokenService : undefined,
+      getRequestCredentialResolver: config.auth !== false
+        ? getAppRequestCredentialResolver
+        : undefined,
       getUserStore: config.auth !== false ? getAppAuthStore : undefined,
       getAuthorizationKernel: config.auth !== false
         ? getAppAuthorizationKernel
@@ -659,6 +672,9 @@ async function mountPlatformApp({
         authConfig: resourceAuthConfig,
         tenancyMode: resourceAuthConfig.tenancy.mode,
         getTokenService: config.auth !== false ? getAppTokenService : undefined,
+        getRequestCredentialResolver: config.auth !== false
+          ? getAppRequestCredentialResolver
+          : undefined,
         getUserStore: config.auth !== false ? getAppAuthStore : undefined,
         getAuthorizationKernel: config.auth !== false
           ? getAppAuthorizationKernel

@@ -277,6 +277,53 @@ const auth = defineAuthConfig({
 });
 ```
 
+### Guardian user API keys
+
+User-bound API keys are an optional capability inside the same auth config:
+
+```ts
+const auth = defineAuthConfig({
+  tenancy: 'multi',
+  authorization: {
+    mode: 'advanced',
+    registryVersion: 1,
+    permissions: {
+      'records:read': { label: 'Read records' },
+      'records:write': { label: 'Write records' },
+    },
+    roles: {
+      integration: {
+        label: 'Integration',
+        permissions: ['records:read'],
+      },
+    },
+  },
+  apiKeys: {
+    enabled: true,
+    selfService: false,
+    administratorIssuance: true,
+    eligibleScopeRoles: ['integration'],
+    defaultTTL: '14d',
+    maxTTL: '30d',
+    maxActivePerUser: 5,
+  },
+});
+```
+
+The defaults are fail-closed: `enabled`, `selfService`, and
+`administratorIssuance` are all `false`; lifetime defaults are `30d` and `90d`;
+and the active-key ceiling defaults to 10. `apiKeys: true` enables eligible-user
+self-service and keeps administrator issuance disabled; use the object form for
+authentication without self-service. Advanced eligible roles must exist in the
+declared registry, and multi-tenant eligible roles must be assignable to
+customer organizations. The configured maximum lifetime must also produce a
+JavaScript `Date`-representable absolute expiry.
+
+Route acceptance is a separate declaration. Existing route policy remains
+session-only until it includes `credentials: ['api-key']` (or both `session`
+and `api-key`). See [Guardian User API Keys](./auth/api-keys.md) for the full
+configuration, lifecycle, route, SDK, and packaged-component contract.
+
 ### Administration Organization adoption
 
 Fresh multi-tenant installations omit `tenancy.administration`: bootstrap

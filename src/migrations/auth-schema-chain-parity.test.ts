@@ -17,9 +17,10 @@ const PARITY_TABLES = [
   '_auth_tenant_invitations',
   '_auth_registration_provisioning',
   '_auth_admin_user_provisioning',
+  '_auth_api_keys',
 ] as const;
 
-test('001 through 028 introduce auth columns once and match fresh runtime schema', () => {
+test('001 through 029 introduce auth columns once and match fresh runtime schema', () => {
   const migratedDb = new Database(':memory:');
   const runtimeDb = new Database(':memory:');
   const runtime = createReactiveDB({ database: runtimeDb });
@@ -70,6 +71,29 @@ test('001 through 028 introduce auth columns once and match fresh runtime schema
       'lease_owner_hash',
       'lease_expires_at',
       'created_at',
+    ]);
+    expect(tableExists(migratedDb, '_auth_api_keys')).toBe(false);
+    expect(migrator.run('029')).toEqual(['029']);
+    expect(columnNames(migratedDb, '_auth_api_keys')).toEqual([
+      'key_id',
+      'user_id',
+      'label',
+      'secret_hash',
+      'secret_hint',
+      'scope_kind',
+      'scope_id',
+      'tenant_id',
+      'membership_id',
+      'issued_auth_generation',
+      'key_generation',
+      'created_by_user_id',
+      'created_via',
+      'created_at',
+      'expires_at',
+      'last_used_at',
+      'revoked_at',
+      'revoked_by_user_id',
+      'rotated_from_key_id',
     ]);
     expect(columnNames(migratedDb, '_auth_registration_provisioning'))
       .not.toContain('provisioning_kind');

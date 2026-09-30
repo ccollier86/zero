@@ -19,6 +19,8 @@ import {
   type PlatformTokenService,
 } from '../tokens';
 import type { AccountEmailService } from './account-email-service';
+import type { AuthApiKeyService } from './auth-api-key-service';
+import type { GuardianRequestCredentialResolver } from './auth-request-credential-resolver';
 import type { AuthActionTokenService } from './action-token-service';
 import type { AuthApplicationAdministrationService } from './auth-application-administration-service';
 import type { AuthAuditService } from './auth-audit-service';
@@ -66,6 +68,8 @@ export {
   getAccountEmailService,
   getActionTokenService,
   getAuthAuditService,
+  getAuthApiKeyService,
+  getAuthRequestCredentialResolver,
   getAuthEmailOutbox,
   getAuthRuntimeContext,
   getAuthSessionService,
@@ -199,6 +203,12 @@ export class AuthRuntime {
   getTokenService(): TokenService | null {
     return this.withCurrentProfile(this.services.tokenService);
   }
+  getApiKeyService(): AuthApiKeyService | null {
+    return this.withCurrentProfile(this.services.apiKeyService);
+  }
+  getRequestCredentialResolver(): GuardianRequestCredentialResolver | null {
+    return this.withCurrentProfile(this.services.requestCredentialResolver);
+  }
   getAuthSessionService(): AuthSessionService | null {
     return this.withCurrentProfile(this.services.authSessionService);
   }
@@ -274,6 +284,8 @@ export class AuthRuntime {
       authStore: this.services.userStore,
       authAuditService: this.services.auditService,
       tokenService: this.services.tokenService,
+      authApiKeyService: this.services.apiKeyService,
+      authRequestCredentialResolver: this.services.requestCredentialResolver,
       authSessionService: this.services.authSessionService,
       authTenantSessionService: this.services.authTenantSessionService,
       applicationAdministrationService:

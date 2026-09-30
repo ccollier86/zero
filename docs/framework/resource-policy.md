@@ -146,6 +146,19 @@ browser/native session, tenant membership, and additive advanced assignments
 through the app-local `AuthorizationKernel`. No tenant, role, or permission is
 accepted from the request body, query, resource row, or browser claim.
 
+Guardian user API keys remain denied unless the policy explicitly declares
+them. Add `credentials: ['session', 'api-key']` to an action requirement when
+both interactive clients and user automation may use its HTTP CRUD and
+`/api/data` paths, or `credentials: ['api-key']` for an HTTP machine-only
+action. Custom policy callbacks cannot opt API keys in implicitly because they
+have no statically inspectable credential declaration. Credential admission
+must dominate every allowing path: one gated child is enough inside `allOf()`,
+while every child of `anyOf()` must contain a gate. This prevents one narrow
+authorization branch from admitting an API key through a sibling owner or
+custom branch. WebSocket Sync remains session-authenticated, so resources used
+through Sync normally retain `session` in the credential list. See
+[Guardian User API Keys](../auth/api-keys.md#opt-a-route-in).
+
 This works in all four `single|multi` × `simple|advanced` profiles. In
 advanced mode, an assignment grant or revocation is visible to generated CRUD,
 `/api/data`, and Sync without app-specific adapter code. `authorizationPolicy`

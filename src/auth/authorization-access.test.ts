@@ -511,6 +511,62 @@ describe('request authorization access', () => {
       .toThrow('Auth policy services are unavailable');
   });
 
+  test('keeps API keys out of legacy policies and admits explicit route policies', () => {
+    const authContext = {
+      userId: 'u_api_key',
+      email: 'api-key@example.test',
+      role: 'clinician',
+      credentialKind: 'api-key' as const,
+    };
+    const access = createRequestAuthorizationAccess({
+      kernel: createKernel('single'),
+      authContext,
+    });
+
+    expect(access.context).toBeNull();
+    expect(access.authorization).toBeNull();
+    expect(access.applicationAuthorization).toBeNull();
+    expect(access.authorize('optional')).toBeNull();
+    expect(access.context).toBeNull();
+    expect(() => access.requireUser()).toThrow('Forbidden');
+    expect(access.hasPermission('documents:read')).toBe(false);
+    expect(() => access.requirePermission('documents:read')).toThrow('Forbidden');
+    expect(() => access.authorize('user')).toThrow(expect.objectContaining({
+      code: 'FORBIDDEN',
+      status: 403,
+    }));
+    expect(access.authorize({
+      credentials: ['session', 'api-key'],
+      permission: 'documents:read',
+    })).toBe(access.authorization);
+    expect(access.requireUser()).toBe(authContext);
+    expect(access.hasPermission('documents:read')).toBe(true);
+    expect(access.requirePermission('documents:read')).toBe(access.authorization!);
+    expect(access.authorize('optional')).toBeNull();
+    expect(access.context).toBeNull();
+    expect(access.authorization).toBeNull();
+    expect(() => access.authorize('user')).toThrow('Forbidden');
+    expect(access.context).toBeNull();
+    expect(access.authorize({
+      credentials: ['api-key'],
+      permission: 'documents:read',
+    })).toBe(access.authorization);
+
+    const legacyAccess = createRequestAuthorizationAccess({
+      kernel: null,
+      authContext,
+    });
+    expect(legacyAccess.context).toBeNull();
+    expect(legacyAccess.authorize(false)).toBeNull();
+    expect(legacyAccess.context).toBeNull();
+    expect(() => legacyAccess.authorize('user')).toThrow('Forbidden');
+    expect(legacyAccess.authorize({
+      credentials: ['session', 'api-key'],
+      user: 'required',
+    })).toBeNull();
+    expect(legacyAccess.requireUser()).toBe(authContext);
+  });
+
   test('fails closed when a trusted-property policy has no live store', () => {
     const access = createRequestAuthorizationAccess({
       kernel: createKernel('single'),

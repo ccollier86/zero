@@ -38,6 +38,14 @@ export function getTokenService() {
   return authRuntimeProviders.get()?.getTokenService() ?? null;
 }
 
+export function getAuthApiKeyService() {
+  return authRuntimeProviders.get()?.getApiKeyService() ?? null;
+}
+
+export function getAuthRequestCredentialResolver() {
+  return authRuntimeProviders.get()?.getRequestCredentialResolver() ?? null;
+}
+
 export function getAuthSessionService() {
   return authRuntimeProviders.get()?.getAuthSessionService() ?? null;
 }
@@ -95,6 +103,8 @@ function emptyAuthRuntimeContext() {
     authStore: null,
     authAuditService: null,
     tokenService: null,
+    authApiKeyService: null,
+    authRequestCredentialResolver: null,
     authSessionService: null,
     authTenantSessionService: null,
     applicationAdministrationService: null,

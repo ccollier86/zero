@@ -39,6 +39,7 @@ import { migration as m025 } from './definitions/025_auth_mfa_assurance';
 import { migration as m026 } from './definitions/026_tenant_invitation_grant_snapshot';
 import { migration as m027 } from './definitions/027_authorization_registry_manifest';
 import { migration as m028 } from './definitions/028_admin_user_provisioning_receipts';
+import { migration as m029 } from './definitions/029_guardian_api_keys';
 
 export { Migrator, type MigratorConfig, type MigrationStatus } from './migrator';
 export type {
@@ -97,4 +98,5 @@ export const migrations: Migration[] = [
   m026,
   m027,
   m028,
+  m029,
 ];

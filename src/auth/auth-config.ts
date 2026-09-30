@@ -8,6 +8,10 @@
 
 import { resolveAuthAuditConfig } from './auth-audit-config';
 import {
+  resolveAuthApiKeyConfig,
+  validateAuthApiKeyRoles,
+} from './auth-api-key-config';
+import {
   normalizeAuthAccount,
   normalizeAuthBootstrap,
   normalizeAuthMfa,
@@ -54,6 +58,7 @@ const AUTH_BEHAVIOR_FIELDS = [
   'userProperties',
   'strictUserProperties',
   'nativeApps',
+  'apiKeys',
 ] as const;
 
 /**
@@ -87,6 +92,8 @@ export function resolveAuthBehaviorConfig(
   const tenancy = normalizeAuthTenancy(config.tenancy);
   const authorization = normalizeAuthAuthorization(config.authorization, tenancy);
   validateVerifiedDomainRoles(tenancy, authorization);
+  const apiKeys = resolveAuthApiKeyConfig(config.apiKeys);
+  validateAuthApiKeyRoles(apiKeys, tenancy, authorization);
 
   return {
     audit: resolveAuthAuditConfig(config.audit),
@@ -103,6 +110,7 @@ export function resolveAuthBehaviorConfig(
     userProperties: normalizeAuthUserProperties(config.userProperties),
     strictUserProperties: config.strictUserProperties ?? false,
     nativeApps: resolveNativeAuthConfig(config.nativeApps),
+    apiKeys,
   };
 }
 

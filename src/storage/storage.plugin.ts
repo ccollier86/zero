@@ -22,6 +22,7 @@ import type {
   PermissionLevel,
 } from './types';
 import { AuthError } from '../auth/types';
+import type { AuthRequestCredentialResolver } from '../auth/auth-api-key-types';
 import { getPublicAuthErrorMessage } from '../auth/auth-error-response';
 import type { RequestAuthorizationAccess } from '../auth/authorization-access';
 import { readAuthBearerToken } from '../auth/auth-bearer-token';
@@ -38,13 +39,18 @@ import {
 } from '../auth/service-data-scope';
 import { effectiveServiceDataRoles } from '../auth/service-data-authority';
 import type { AuthContext } from '../auth/types';
-import { getAuthStore, getTokenService } from '../auth/auth.plugin';
+import {
+  getAuthRequestCredentialResolver,
+  getAuthStore,
+  getTokenService,
+} from '../auth/auth.plugin';
 import { getPropertyService } from '../auth/auth-runtime';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
 import {
   ZERO_AUTHORIZATION_KERNEL,
+  ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
   ZERO_AUTH_STORE,
   ZERO_AUTH_TOKEN_SERVICE,
   ZERO_STORAGE_SERVICE,
@@ -117,14 +123,24 @@ export function createStoragePlugin(config: StoragePluginConfig) {
   config.runtime?.addCleanup(() => registration?.unregister());
   const getAuthorizationKernel = config.authorization?.getAuthorizationKernel
     ?? (() => config.runtime?.get(ZERO_AUTHORIZATION_KERNEL) ?? null);
+  const getRequestCredentialResolver =
+    config.authorization?.getRequestCredentialResolver
+    ?? (config.runtime
+      ? () => config.runtime!.get(ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER)
+      : getAuthRequestCredentialResolver);
   const authorization: AuthMiddlewareAuthorizationOptions = {
     ...config.authorization,
+    getRequestCredentialResolver,
     getAuthorizationKernel,
   };
   const requestScope = (access: Parameters<typeof requireRequestServiceDataScope>[0]) =>
     requireRequestServiceDataScope(access, getAuthorizationKernel);
   const uploadCommitGuard = (request: Request, auth: AuthContext) => {
     const bearer = readAuthBearerToken(request);
+    const credentials = getRequestCredentialResolver();
+    const requestReference = credentials
+      ? captureStorageRequestAuthority(credentials, auth)
+      : null;
     const captured = authContextAuthorityFingerprint(
       auth,
       resolveUserProperties(auth.userId),
@@ -133,9 +149,11 @@ export function createStoragePlugin(config: StoragePluginConfig) {
       const tokens = getStorageTokenService();
       let current: AuthContext | null = null;
       try {
-        current = bearer && tokens
-          ? await tokens.resolveAuthContext(bearer)
-          : null;
+        current = requestReference
+          ? credentials!.resolveAuthority(requestReference)
+          : !credentials && bearer && tokens
+            ? await tokens.resolveAuthContext(bearer)
+            : null;
       } catch {
         current = null;
       }
@@ -976,6 +994,17 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         return info;
       }
     );
+}
+
+function captureStorageRequestAuthority(
+  credentials: AuthRequestCredentialResolver,
+  context: AuthContext,
+) {
+  try {
+    return credentials.captureAuthority(context);
+  } catch {
+    return null;
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────

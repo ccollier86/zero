@@ -76,6 +76,23 @@ export type {
   AuthAuthorizationScopeLifecycle,
   AuthClientOptions,
 } from './client/auth-client';
+export type {
+  AuthApiKeyApplicationAdminSdkSurface,
+  AuthApiKeyCreatedVia,
+  AuthApiKeyIssueInput,
+  AuthApiKeyListQuery,
+  AuthApiKeyManagementCapabilities,
+  AuthApiKeyPage,
+  AuthApiKeyPlatformAdminSdkSurface,
+  AuthApiKeyScopeKind,
+  AuthApiKeySdkSurface,
+  AuthApiKeySelfSdkSurface,
+  AuthApiKeyStatus,
+  AuthApiKeySummary,
+  AuthApiKeyTenantAdminSdkSurface,
+  AuthPlatformApiKeyListQuery,
+  IssuedAuthApiKey,
+} from './client/auth-api-key-types';
 
 export type {
   AuthAuditActorProvenance,
@@ -257,6 +274,7 @@ export {
   useMutation,
   // Auth
   useAuth,
+  useAuthApiKeys,
   useAuthorization,
   useAuthConfig,
   useCurrentUser,
@@ -289,6 +307,8 @@ export {
 export type {
   AuthState,
   AuthActions,
+  UseAuthApiKeysOptions,
+  UseAuthApiKeysResult,
   AuthorizationScopeBoundary,
   UseAuthorizationResult,
   AuthConfigState,
@@ -743,6 +763,8 @@ export {
   LoginForm, RegisterForm, ForgotPasswordForm, OTPVerification,
   PasswordActionForm, EmailVerificationForm, ChangePasswordForm, UserPropertiesForm,
   AuthFlowContinuation, TenantCreationForm, TenantSelectionForm,
+  ApiKeyManagement, SelfApiKeyManagement, ApplicationUserApiKeyManagement,
+  TenantMemberApiKeyManagement, PlatformApiKeyManagement,
   ApplicationAccessManagement, PlatformAdministrationManagement, PlatformTenantManagement,
   TenantSwitcher, TenantMemberManagement, TenantOnboardingManagement,
   TenantDomainManagement, DomainOnboarding, ControlPlaneAuditViewer,
@@ -760,6 +782,9 @@ export type {
   PasswordActionFormProps, EmailVerificationFormProps, ChangePasswordFormProps, UserPropertiesFormProps,
   AuthFlowContinuationProps, AuthFlowContinuationResult, TenantCreationFormProps,
   TenantSelectionFormProps,
+  ApiKeyManagementCommonProps, ApiKeyManagementProps,
+  SelfApiKeyManagementProps, ApplicationUserApiKeyManagementProps,
+  TenantMemberApiKeyManagementProps, PlatformApiKeyManagementProps,
   ApplicationAccessManagementProps,
   PlatformAdministrationManagementProps, PlatformTenantManagementProps,
   TenantSwitcherProps, TenantMemberManagementProps, TenantOnboardingManagementProps,

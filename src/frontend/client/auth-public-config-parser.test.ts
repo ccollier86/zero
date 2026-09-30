@@ -6,6 +6,17 @@ describe('public auth config parser', () => {
     expect(isAuthPublicConfig({ registration: registration() })).toBe(true);
     expect(isAuthPublicConfig({
       registration: registration(),
+      apiKeys: {
+        enabled: true,
+        selfService: false,
+        administratorIssuance: false,
+        defaultTTL: '01d',
+        maxTTL: '030d',
+        maxActivePerUser: 1,
+      },
+    })).toBe(true);
+    expect(isAuthPublicConfig({
+      registration: registration(),
       tenancy: {
         mode: 'multi',
         terminology: { singular: 'practice', plural: 'practices' },
@@ -21,6 +32,14 @@ describe('public auth config parser', () => {
         },
       },
       authorization: { mode: 'advanced' },
+      apiKeys: {
+        enabled: true,
+        selfService: true,
+        administratorIssuance: true,
+        defaultTTL: '12h',
+        maxTTL: '30d',
+        maxActivePerUser: 7,
+      },
       bootstrap: {
         required: false,
         mode: 'secret',
@@ -68,6 +87,61 @@ describe('public auth config parser', () => {
       [],
       { registration: { ...registration(), mode: 'publci' } },
       { registration: registration(), tenancy: { mode: 'many' } },
+      {
+        registration: registration(),
+        apiKeys: {
+          enabled: true,
+          selfService: true,
+          administratorIssuance: false,
+          defaultTTL: '30d',
+          maxTTL: '90d',
+          maxActivePerUser: 0,
+        },
+      },
+      {
+        registration: registration(),
+        apiKeys: {
+          enabled: true,
+          selfService: 'yes',
+          administratorIssuance: false,
+          defaultTTL: '30d',
+          maxTTL: '90d',
+          maxActivePerUser: 10,
+        },
+      },
+      {
+        registration: registration(),
+        apiKeys: {
+          enabled: true,
+          selfService: true,
+          administratorIssuance: false,
+          defaultTTL: 'forever',
+          maxTTL: '90d',
+          maxActivePerUser: 10,
+        },
+      },
+      {
+        registration: registration(),
+        apiKeys: {
+          enabled: true,
+          selfService: true,
+          administratorIssuance: false,
+          defaultTTL: '90d',
+          maxTTL: '30d',
+          maxActivePerUser: 10,
+        },
+      },
+      {
+        registration: registration(),
+        apiKeys: {
+          enabled: true,
+          selfService: true,
+          administratorIssuance: false,
+          defaultTTL: '30d',
+          maxTTL: '90d',
+          maxActivePerUser: 101,
+        },
+      },
       {
         registration: registration(),
         tenancy: {

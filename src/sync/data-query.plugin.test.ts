@@ -9,6 +9,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 import type { TokenService } from '../auth/token-service';
+import type { AuthRequestCredentialResolver } from '../auth/auth-api-key-types';
+import type { AuthContext } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
 import { resolveAuthBehaviorConfig } from '../auth/auth-config';
 import { createAuthorizationKernel } from '../auth/authorization-kernel';
@@ -146,6 +148,7 @@ function createUserStore(): UserStore {
 function createTestApp(options: {
   policy?: SyncPolicy;
   getTokenService?: () => TokenService | null;
+  getRequestCredentialResolver?: () => AuthRequestCredentialResolver | null;
   getUserStore?: () => UserStore | null;
   getAuthorizationKernel?: () => ReturnType<typeof createAuthorizationKernel> | null;
   getRoleAssignments?: () => AuthorizationRoleAssignmentResolver | null;
@@ -174,6 +177,7 @@ function createTestApp(options: {
         tableColumns,
         policy: options.policy,
         getTokenService: options.getTokenService,
+        getRequestCredentialResolver: options.getRequestCredentialResolver,
         getUserStore: options.getUserStore,
         getAuthorizationKernel: options.getAuthorizationKernel,
         getRoleAssignments: options.getRoleAssignments,
@@ -531,6 +535,106 @@ describe('/api/data', () => {
     });
     expect(denied.status).toBe(403);
     expect(denied.body.code).toBe('authorization-denied');
+  });
+
+  test('requires explicit resource-policy opt-in for API keys', async () => {
+    const authConfig = resolveAuthBehaviorConfig({
+      authorization: {
+        permissions: {
+          'items:read': { label: 'Read items' },
+          'items:write': { label: 'Write items' },
+        },
+        roles: { reader: { permissions: ['items:read'] } },
+      },
+    });
+    const kernel = createAuthorizationKernel(authConfig);
+    const registry = new ResourceRegistry();
+    registry.register([
+      defineResource({
+        table: 'items',
+        actions: ['list'],
+        policy: authorizationPolicy({
+          credentials: ['session', 'api-key'],
+          permission: 'items:read',
+        }),
+      }),
+      defineResource({
+        table: 'admin_items',
+        actions: ['list'],
+        policy: authorizationPolicy({ permission: 'items:read' }),
+      }),
+      defineResource({
+        table: 'owned_items',
+        actions: ['list'],
+        policy: anyOf(
+          authorizationPolicy({
+            credentials: ['session', 'api-key'],
+            permission: 'items:write',
+          }),
+          ownerPolicy({ userField: 'owner_id' }),
+        ),
+      }),
+    ], { tables: testTables, authConfig });
+    const context: AuthContext = {
+      userId: 'api-reader',
+      email: 'api-reader@example.test',
+      role: 'reader',
+      credentialKind: 'api-key',
+      credentialId: 'key-reader',
+      authGeneration: 0,
+      sessionScopeKind: 'application',
+      sessionScopeId: 'application',
+    };
+    const resolver: AuthRequestCredentialResolver = {
+      async resolve(request) {
+        return request.headers.get('authorization') ? context : null;
+      },
+      captureAuthority() {
+        return {
+          kind: 'api-key',
+          version: 1,
+          keyId: 'key-reader',
+          keyGeneration: 0,
+          userId: context.userId,
+          scopeKind: 'application',
+          scopeId: 'application',
+        };
+      },
+      resolveAuthority(reference) {
+        return reference.kind === 'api-key' && reference.keyId === 'key-reader'
+          ? context
+          : null;
+      },
+    };
+    app = createTestApp({
+      getTokenService: () => null,
+      getRequestCredentialResolver: () => resolver,
+      getAuthorizationKernel: () => kernel,
+      resourceRegistry: registry,
+      resourceAuthConfig: authConfig,
+    });
+    seedItems(app);
+    getAppDatabase(app).insert('owned_items', {
+      id: 'api-owned',
+      title: 'Must not admit through a sibling branch',
+      owner_id: context.userId,
+      priority: 1,
+    });
+
+    const admitted = await getJson('/api/data?table=items', {
+      authorization: 'Bearer zero_ak_v1.key-reader.secret',
+    });
+    const defaultDenied = await getJson('/api/data?table=admin_items', {
+      authorization: 'Bearer zero_ak_v1.key-reader.secret',
+    });
+    const siblingDenied = await getJson('/api/data?table=owned_items', {
+      authorization: 'Bearer zero_ak_v1.key-reader.secret',
+    });
+
+    expect(admitted.status).toBe(200);
+    expect(admitted.body.rows).toHaveLength(4);
+    expect(defaultDenied.status).not.toBe(200);
+    expect(siblingDenied.status).not.toBe(200);
   });
 
   test('fails closed when registered resource has no list action', async () => {

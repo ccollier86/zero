@@ -53,11 +53,16 @@ export function createAuthorityRevalidators(
   );
   const bearer = readAuthBearerToken(request);
   const tokens = services.auth.tokens;
+  const credentials = services.auth.requestCredentialResolver;
   // Standalone/compatibility token-service adapters may implement only
   // `resolveAuthContext()`. They can still support asynchronous revalidation,
   // while synchronous mutations must continue to fail closed without the
   // durable capture/resolve pair.
-  const reference = access.context
+  const requestReference = access.context && credentials
+    ? safelyCaptureRequestAuthority(credentials, access.context)
+    : null;
+  const sessionReference = !credentials
+    && access.context
     && tokens
     && typeof tokens.captureAuthContextAuthority === 'function'
     && typeof tokens.resolveAuthContextAuthority === 'function'
@@ -77,10 +82,12 @@ export function createAuthorityRevalidators(
     // Anonymous single-tenant server routes retain their explicit trusted
     // route semantics; there is no auth authority to revalidate.
     if (!access.context) return;
-    if (!tokens || !reference) throw authorityChanged();
+    if (!requestReference && (!tokens || !sessionReference)) throw authorityChanged();
     let current: AuthContext | null = null;
     try {
-      current = tokens.resolveAuthContextAuthority(reference);
+      current = requestReference
+        ? credentials!.resolveAuthority(requestReference)
+        : tokens!.resolveAuthContextAuthority(sessionReference!);
     } catch {
       throw authorityChanged();
     }
@@ -89,10 +96,14 @@ export function createAuthorityRevalidators(
 
   const asynchronous = async (): Promise<void> => {
     if (!access.context) return;
-    if (reference) {
+    if (requestReference || sessionReference) {
       synchronous();
       return;
     }
+    // A configured credential resolver owns API-key/session dispatch. If it
+    // cannot capture a secret-free durable reference, reusing its memoized
+    // request resolution would not be a commit-time revalidation.
+    if (credentials) throw authorityChanged();
     // Upgrade compatibility for an already-admitted legacy bearer which has
     // no durable parent reference. Synchronous mutations fail closed above.
     if (!bearer || !tokens) throw authorityChanged();
@@ -107,6 +118,17 @@ export function createAuthorityRevalidators(
   };
 
   return { synchronous, asynchronous };
+}
+
+function safelyCaptureRequestAuthority(
+  credentials: NonNullable<ServerRouteServices['auth']['requestCredentialResolver']>,
+  context: AuthContext,
+) {
+  try {
+    return credentials.captureAuthority(context);
+  } catch {
+    return null;
+  }
 }
 
 function authorityChanged(): AuthError {

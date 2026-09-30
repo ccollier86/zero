@@ -22,6 +22,8 @@ import type { AuthSessionService } from '../auth/auth-session-service';
 import type { AuthorizationKernel } from '../auth/authorization-kernel';
 import type { AuthorizationRoleService } from '../auth/authorization-role-service';
 import type { AuthAuditService } from '../auth/auth-audit-service';
+import type { AuthApiKeyService } from '../auth/auth-api-key-service';
+import type { AuthRequestCredentialResolver } from '../auth/auth-api-key-types';
 import { createZeroRuntimeServiceKey } from './zero-app-runtime';
 
 export const ZERO_SYNC_DB = createZeroRuntimeServiceKey<ReactiveDB>(
@@ -36,6 +38,13 @@ export const ZERO_AUTH_STORE = createZeroRuntimeServiceKey<UserStore>('Auth user
 export const ZERO_AUTH_TOKEN_SERVICE = createZeroRuntimeServiceKey<TokenService>(
   'Auth token service',
 );
+export const ZERO_AUTH_API_KEY_SERVICE = createZeroRuntimeServiceKey<AuthApiKeyService>(
+  'Guardian API key service',
+);
+export const ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER =
+  createZeroRuntimeServiceKey<AuthRequestCredentialResolver>(
+    'Guardian request credential resolver',
+  );
 export const ZERO_AUTH_TENANCY_SERVICE = createZeroRuntimeServiceKey<TenancyService>(
   'Auth tenancy service',
 );

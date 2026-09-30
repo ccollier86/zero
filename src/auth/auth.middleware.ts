@@ -21,6 +21,7 @@ import type {
   AuthorizationKernel,
   CompiledAccessRequirement,
 } from './authorization-kernel';
+import type { AuthRequestCredentialResolver } from './auth-api-key-types';
 import type { TokenService } from './token-service';
 import { AuthError, type AuthContext } from './types';
 
@@ -29,6 +30,8 @@ export type ZeroElysiaAuthRequirement = AccessRequirement;
 
 /** App-local dependencies used to build the request authorization snapshot. */
 export interface AuthMiddlewareAuthorizationOptions {
+  /** Optional Guardian dispatcher for session and explicitly admitted API-key credentials. */
+  getRequestCredentialResolver?: () => AuthRequestCredentialResolver | null;
   getAuthorizationKernel?: () => AuthorizationKernel | null;
   getPropertyStore?: () => AuthorizationPropertyStore | null;
   getRoleAssignments?: () => AuthorizationRoleAssignmentResolver | null;
@@ -36,12 +39,13 @@ export interface AuthMiddlewareAuthorizationOptions {
 
 /**
  * One request can pass through the root app and one or more nested Elysia
- * plugins. Cache the live hydration by both Request and TokenService so those
- * layers share one authoritative lookup without coupling separate apps.
+ * plugins. Cache the live hydration by both Request and the app-local
+ * credential resolver (or legacy TokenService) so those layers share one
+ * authoritative lookup without coupling separate apps.
  */
 const requestAccessResolutions = new WeakMap<
   Request,
-  Map<TokenService, Promise<RequestAuthorizationAccess>>
+  Map<object, Promise<RequestAuthorizationAccess>>
 >();
 
 /**
@@ -74,7 +78,11 @@ export function createAuthMiddleware(
       // large body. Public multipart routes remain public: rejection is owned
       // by the route-level guard below, not this preload.
       if (isMultipartRequest(request) && readAuthBearerToken(request)) {
-        await resolveRequestAuthContext(request, getTokenService);
+        await resolveRequestAuthContext(
+          request,
+          getTokenService,
+          dependencies.getRequestCredentialResolver,
+        );
       }
     })
     .resolve(
@@ -107,8 +115,12 @@ export function createAuthMiddleware(
       zeroAuth(requirement: ZeroElysiaAuthRequirement) {
         return {
           beforeHandle(context: unknown) {
-            const current = context as { access: RequestAuthorizationAccess };
+            const current = context as {
+              access: RequestAuthorizationAccess;
+              authContext: AuthContext | null;
+            };
             current.access.authorize(requirement);
+            current.authContext = current.access.context;
           },
         };
       },
@@ -154,7 +166,8 @@ export function createProtectedMultipartRequestGuard(
     if (!matchesProtectedMultipartRequest(context.request, options)) return undefined;
 
     const tokenService = getTokenService();
-    if (!tokenService) {
+    const credentialResolver = dependencies.getRequestCredentialResolver();
+    if (!tokenService && !credentialResolver) {
       context.set.status = 503;
       return { error: 'Auth not initialized', code: 'AUTH_NOT_READY' };
     }
@@ -184,7 +197,8 @@ export async function resolveRequestAuthorizationAccess(
 ): Promise<RequestAuthorizationAccess> {
   const dependencies = resolveAuthorizationDependencies(authorization);
   const tokenService = getTokenService();
-  if (!tokenService) {
+  const credentialResolver = dependencies.getRequestCredentialResolver();
+  if (!tokenService && !credentialResolver) {
     return createRequestAuthorizationAccess({
       authContext: null,
       kernel: dependencies.getAuthorizationKernel(),
@@ -196,15 +210,21 @@ export async function resolveRequestAuthorizationAccess(
     byService = new Map();
     requestAccessResolutions.set(request, byService);
   }
-  const existing = byService.get(tokenService);
+  const resolutionOwner = credentialResolver ?? tokenService!;
+  const existing = byService.get(resolutionOwner);
   if (existing) return existing;
 
   const resolution = (async () => {
-    const authContext = await resolveRequestAuthContext(request, () => tokenService);
+    const authContext = await resolveRequestAuthContext(
+      request,
+      () => tokenService,
+      () => credentialResolver,
+    );
     // Built-in TokenService instances own the durable profile fence. Server
     // extensions may instead provide a structural verifier with no mutable
     // profile; preserve that standalone contract as the access facade's no-op.
-    const assertCurrentProfile = typeof tokenService.assertCurrentProfile === 'function'
+    const assertCurrentProfile = tokenService
+      && typeof tokenService.assertCurrentProfile === 'function'
       ? () => tokenService.assertCurrentProfile()
       : undefined;
     return createRequestAuthorizationAccess({
@@ -215,7 +235,7 @@ export async function resolveRequestAuthorizationAccess(
       assertCurrentProfile,
     });
   })();
-  byService.set(tokenService, resolution);
+  byService.set(resolutionOwner, resolution);
   return resolution;
 }
 
@@ -223,7 +243,10 @@ export async function resolveRequestAuthorizationAccess(
 export async function resolveRequestAuthContext(
   request: Request,
   getTokenService: () => TokenService | null,
+  getRequestCredentialResolver?: () => AuthRequestCredentialResolver | null,
 ): Promise<AuthContext | null> {
+  const credentialResolver = getRequestCredentialResolver?.() ?? null;
+  if (credentialResolver) return credentialResolver.resolve(request);
   const tokenService = getTokenService();
   if (!tokenService) return null;
   return extractAuthContext(request, tokenService);
@@ -288,6 +311,8 @@ function resolveAuthorizationDependencies(
     // otherwise independent apps and becomes ambiguous as soon as two apps
     // coexist. Legacy user/admin checks need neither dependency; structured
     // policy callers must inject their app-local services explicitly.
+    getRequestCredentialResolver:
+      options.getRequestCredentialResolver ?? (() => null),
     getAuthorizationKernel: options.getAuthorizationKernel ?? (() => null),
     getPropertyStore: options.getPropertyStore ?? (() => null),
     getRoleAssignments: options.getRoleAssignments ?? (() => null),

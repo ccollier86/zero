@@ -65,6 +65,27 @@ test('a released main database through 007 upgrades through the current chain', 
         'lease_expires_at',
         'created_at',
       ]);
+      expect(columnNames(database, '_auth_api_keys')).toEqual([
+        'key_id',
+        'user_id',
+        'label',
+        'secret_hash',
+        'secret_hint',
+        'scope_kind',
+        'scope_id',
+        'tenant_id',
+        'membership_id',
+        'issued_auth_generation',
+        'key_generation',
+        'created_by_user_id',
+        'created_via',
+        'created_at',
+        'expires_at',
+        'last_used_at',
+        'revoked_at',
+        'revoked_by_user_id',
+        'rotated_from_key_id',
+      ]);
     } finally {
       current.dispose();
     }
