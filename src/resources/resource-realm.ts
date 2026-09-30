@@ -7,8 +7,11 @@
 import type { ResourceDataConstraint } from './resource-policy-types';
 import type { RegisteredResourceDefinition } from './resource-registry';
 
-/** Narrow session authority needed to bind one request/socket to a tenant. */
+/** Narrow durable authority needed to bind one request/socket to a tenant. */
 export interface ResourceRealmAuthContext {
+  credentialKind?: 'session' | 'api-key';
+  credentialId?: string;
+  authGeneration?: number;
   sessionKind?: 'web' | 'native';
   clientId?: string;
   sessionId?: string;
@@ -74,7 +77,7 @@ export function resolveResourceRealm(
       ok: false,
       status: 403,
       code: 'resource-tenant-context-required',
-      message: 'A live tenant-bound session is required for this resource',
+      message: 'A live tenant-bound credential is required for this resource',
     };
   }
 
@@ -94,6 +97,9 @@ export function resolveResourceRealm(
   const fingerprint = JSON.stringify([
     storage.isolation,
     storage.isolation === 'shared-row' ? storage.field : null,
+    authContext.credentialKind ?? 'session',
+    authContext.credentialId ?? null,
+    authContext.authGeneration ?? null,
     authContext.sessionKind,
     authContext.clientId,
     authContext.sessionId,
@@ -204,7 +210,6 @@ function hasLiveTenantAuthority(
   auth: ResourceRealmAuthContext | null | undefined,
 ): auth is ResourceRealmAuthContext & Required<Pick<
   ResourceRealmAuthContext,
-  | 'sessionId'
   | 'sessionScopeKind'
   | 'sessionScopeId'
   | 'tenantId'
@@ -214,8 +219,7 @@ function hasLiveTenantAuthority(
 >> {
   return Boolean(
     auth
-    && hasDurableSessionShape(auth)
-    && nonEmpty(auth.sessionId)
+    && hasDurableCredentialShape(auth)
     && auth.sessionScopeKind === 'tenant'
     && nonEmpty(auth.sessionScopeId)
     && nonEmpty(auth.tenantId)
@@ -227,6 +231,27 @@ function hasLiveTenantAuthority(
 }
 
 /**
+ * Resource realms accept either a resolved Guardian API key or a durable
+ * browser/native session. API-key contexts come from AuthApiKeyAuthority and
+ * deliberately have no parent-session identity; mixing those two authority
+ * shapes must fail closed.
+ */
+function hasDurableCredentialShape(auth: ResourceRealmAuthContext): boolean {
+  if (auth.credentialKind === 'api-key') {
+    return nonEmpty(auth.credentialId)
+      && nonNegativeInteger(auth.authGeneration)
+      && auth.sessionKind === undefined
+      && auth.clientId === undefined
+      && auth.sessionId === undefined
+      && auth.sessionGeneration === undefined;
+  }
+  if (auth.credentialKind !== undefined && auth.credentialKind !== 'session') {
+    return false;
+  }
+  return hasDurableSessionShape(auth);
+}
+
+/**
  * Browser parents carry a numeric generation; native refresh families carry
  * an audience-bound public client id instead. Both have already been resolved
  * against their durable server-side owner before reaching resource policy.
@@ -234,6 +259,7 @@ function hasLiveTenantAuthority(
  * explicit `sessionKind`, while rejecting contradictory native/web mixtures.
  */
 function hasDurableSessionShape(auth: ResourceRealmAuthContext): boolean {
+  if (!nonEmpty(auth.sessionId)) return false;
   if (auth.sessionKind === 'web') {
     return nonNegativeInteger(auth.sessionGeneration) && auth.clientId === undefined;
   }

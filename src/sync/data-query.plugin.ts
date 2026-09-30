@@ -9,12 +9,12 @@
 
 import { Elysia, t } from 'elysia';
 import { authContextAuthorityFingerprint } from '../auth/auth-context-authority';
+import { getPublicAuthErrorMessage } from '../auth/auth-error-response';
 import { createAuthMiddleware } from '../auth/auth.middleware';
 import type { AuthRequestCredentialResolver } from '../auth/auth-api-key-types';
 import type { RequestAuthorizationAccess } from '../auth/authorization-access';
 import type { TokenService } from '../auth/token-service';
-import type { AuthContext } from '../auth/types';
-import type { AuthTenancyMode } from '../auth/types';
+import { AuthError, type AuthContext, type AuthTenancyMode } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
 import type { AuthorizationKernel } from '../auth/authorization-kernel';
 import type { AuthorizationRoleAssignmentResolver } from '../auth/authorization-access';
@@ -37,7 +37,10 @@ import {
   type ResourcePolicyAuthConfig,
   type ResourceRegistry,
 } from '../resources';
-import { resourcePolicyAdmitsCredential } from '../resources/resource-policy-inspection';
+import {
+  requiresAuthenticatedUser,
+  resourcePolicyAdmitsCredential,
+} from '../resources/resource-policy-inspection';
 import {
   buildResourceListFindPlan,
   RESOURCE_QUERY_LIMITS,
@@ -175,10 +178,15 @@ export function createDataQueryPlugin(config: DataQueryConfig) {
     .use(createAuthMiddleware(config.getTokenService ?? (() => null), {
       getRequestCredentialResolver: config.getRequestCredentialResolver,
     }))
-    .onError(({ code, set }) => {
-      if (code !== 'VALIDATION') return;
-      set.status = 400;
-      return { error: 'Invalid data query', code: 'invalid-data-query' };
+    .onError(({ code, error, set }) => {
+      if (error instanceof AuthError) {
+        set.status = error.status;
+        return { error: getPublicAuthErrorMessage(error), code: error.code };
+      }
+      if (code === 'VALIDATION') {
+        set.status = 400;
+        return { error: 'Invalid data query', code: 'invalid-data-query' };
+      }
     })
     .get('/api/data', async ({ query, set, access, request }) => {
       // An explicit app-local provider owns this dependency even while it is
@@ -516,13 +524,21 @@ function admitDataQueryCredential(
   const admitsApiKey = policy
     ? resourcePolicyAdmitsCredential(policy, 'api-key')
     : false;
-  // Establish visibility for this exact list policy. This also reconceals a
-  // key admitted by earlier request middleware before policy evaluation.
+  const requiresUser = policy
+    ? requiresAuthenticatedUser(policy, 'list') === 'yes'
+    : false;
+  // Resolve credential identity for this exact list policy before applying
+  // its admission decision. API keys are never silently downgraded to
+  // anonymous callers: the Resource must explicitly admit them.
   access.authorize({
-    user: 'optional',
-    credentials: admitsApiKey ? ['session', 'api-key'] : ['session'],
+    user: requiresUser ? 'required' : 'optional',
+    credentials: ['session', 'api-key'],
   });
-  return access.context;
+  const context = access.context;
+  if (context?.credentialKind === 'api-key' && !admitsApiKey) {
+    throw new AuthError('Forbidden', 'FORBIDDEN', 403);
+  }
+  return context;
 }
 
 function resourcePolicyAuthorityFingerprint(

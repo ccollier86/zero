@@ -723,8 +723,14 @@ describe('/api/data', () => {
 
     expect(admitted.status).toBe(200);
     expect(admitted.body.rows).toHaveLength(4);
-    expect(defaultDenied.status).not.toBe(200);
-    expect(siblingDenied.status).not.toBe(200);
+    expect(defaultDenied).toEqual({
+      status: 403,
+      body: { error: 'Forbidden', code: 'FORBIDDEN' },
+    });
+    expect(siblingDenied).toEqual({
+      status: 403,
+      body: { error: 'Forbidden', code: 'FORBIDDEN' },
+    });
   });
 
   test('fails closed when registered resource has no list action', async () => {
@@ -931,9 +937,16 @@ describe('/api/data', () => {
     expect(attemptedWiden.body.rows).toEqual([]);
 
     const anonymous = await getJson('/api/data?table=tenant_docs');
-    expect(anonymous).toMatchObject({
-      status: 403,
-      body: { code: 'resource-tenant-context-required' },
+    expect(anonymous).toEqual({
+      status: 401,
+      body: { error: 'Unauthorized', code: 'UNAUTHORIZED' },
+    });
+    const invalid = await getJson('/api/data?table=tenant_docs', {
+      authorization: 'Bearer invalid-tenant-token',
+    });
+    expect(invalid).toEqual({
+      status: 401,
+      body: { error: 'Unauthorized', code: 'UNAUTHORIZED' },
     });
 
     expect(() => createDataQueryPlugin({

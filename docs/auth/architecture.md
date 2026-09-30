@@ -731,8 +731,10 @@ The implemented client recovery path is refresh-token based:
 Browsers with Web Locks serialize one-time refresh-token rotation per Zero
 server across tabs and workers. A waiter rereads the current token from
 browser storage after acquiring the lock, so it does not submit the token a
-different tab just rotated. Without Web Locks, Zero's fallback coordinates
-only callers in the same JavaScript realm.
+different tab just rotated. Without Web Locks, Zero uses a bounded, expiring
+`localStorage` bakery lock across tabs when browser storage is available. The
+in-process queue is the final same-JavaScript-realm fallback for runtimes
+without either facility.
 
 `AppProvider` provides the default UI safety net. When auth is enabled and the
 client becomes unauthenticated on a protected route, it removes protected route

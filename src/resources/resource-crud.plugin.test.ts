@@ -12,7 +12,9 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 
 import { createApp } from '../frontend/server/app-factory';
+import type { AuthRequestCredentialResolver } from '../auth/auth-api-key-types';
 import type { TokenService } from '../auth/token-service';
+import type { AuthContext } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import {
@@ -56,6 +58,100 @@ afterEach(async () => {
 });
 
 describe('generated resource CRUD routes', () => {
+  test('orders authentication before tenant binding for a session-only tenant resource', async () => {
+    const tables = {
+      session_docs: {
+        id: 'text primary key',
+        tenant_id: 'text not null',
+        title: 'text not null',
+      },
+    };
+    const db = createReactiveDB({ mode: 'memory' });
+    db.defineTable('session_docs', tables.session_docs);
+    const registry = new ResourceRegistry();
+    registry.register(defineResource({
+      table: 'session_docs',
+      actions: ['list'],
+      exposure: 'http',
+      realm: tenantRealm(),
+      policy: authenticatedOnly(),
+    }), {
+      tables,
+      authConfig: { userProperties: {} },
+      tenancyMode: 'multi',
+      managedTables: ['session_docs'],
+    });
+    const context: AuthContext = {
+      userId: 'api-reader',
+      email: 'api-reader@example.test',
+      role: 'user',
+      credentialKind: 'api-key',
+      credentialId: 'key-reader',
+      authGeneration: 0,
+      sessionScopeKind: 'application',
+      sessionScopeId: 'application',
+    };
+    const resolver: AuthRequestCredentialResolver = {
+      async resolve(request) {
+        return request.headers.get('authorization')
+          === 'Bearer zero_ak_v1.key-reader.secret'
+          ? context
+          : null;
+      },
+      captureAuthority() {
+        return {
+          kind: 'api-key',
+          version: 1,
+          keyId: 'key-reader',
+          keyGeneration: 0,
+          userId: context.userId,
+          scopeKind: 'application',
+          scopeId: 'application',
+        };
+      },
+      resolveAuthority(reference) {
+        return reference.kind === 'api-key' && reference.keyId === 'key-reader'
+          ? context
+          : null;
+      },
+    };
+    const isolated = new Elysia().use(createResourceCrudPlugin({
+      registry,
+      tables,
+      authConfig: { userProperties: {} },
+      tenancyMode: 'multi',
+      getTokenService: () => null,
+      getRequestCredentialResolver: () => resolver,
+      getDB: () => db,
+    }));
+
+    try {
+      const response = await isolated.handle(new Request(
+        'http://zero.test/api/resources/session_docs',
+        { headers: { authorization: 'Bearer zero_ak_v1.key-reader.secret' } },
+      ));
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: 'Forbidden',
+        code: 'FORBIDDEN',
+      });
+
+      for (const authorization of [undefined, 'Bearer zero_ak_v1.invalid.secret']) {
+        const denied = await isolated.handle(new Request(
+          'http://zero.test/api/resources/session_docs',
+          authorization ? { headers: { authorization } } : undefined,
+        ));
+        expect(denied.status).toBe(401);
+        expect(await denied.json()).toEqual({
+          error: 'Unauthorized',
+          code: 'UNAUTHORIZED',
+        });
+      }
+    } finally {
+      db.dispose();
+    }
+  });
+
   test('bounds list query input behind a stable non-reflective error', async () => {
     const runtime = await startResourceApp();
     const marker = 'private-filter-value-';

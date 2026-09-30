@@ -104,6 +104,57 @@ describe('browser auth coordination primitives', () => {
     blocked.dispose();
   });
 
+  test('settles startup restoration when credential coordination rejects', async () => {
+    const storage = new SharedStorage();
+    const ids = idFactory();
+    const baseEnvironment = environmentFor(storage, {
+      ids,
+      channel: false,
+      locks: false,
+    });
+    const seed = new BrowserAuthCoordinator('http://zero.test', baseEnvironment);
+    seed.commitSession('stored-refresh', 'stored-scope', 'session');
+    seed.dispose();
+
+    let fetchCalls = 0;
+    globalThis.fetch = (async (
+      _input: string | URL | Request,
+      _init?: RequestInit,
+    ) => {
+      fetchCalls += 1;
+      return Response.json({ error: 'Unexpected request' }, { status: 500 });
+    }) as typeof fetch;
+
+    const coordinationFailure = new BrowserAuthCoordinationError(
+      'Injected credential lock failure',
+    );
+    const client = track(new AuthClient('http://zero.test', {
+      browserAuthCoordination: {
+        ...baseEnvironment,
+        locks: {
+          async request<T>(
+            _name: string,
+            _options: { mode: 'exclusive' },
+            _callback: () => Promise<T>,
+          ): Promise<T> {
+            throw coordinationFailure;
+          },
+        },
+      },
+    }));
+
+    expect(client.isLoading).toBe(true);
+    expect(client.isRestoring).toBe(true);
+    await waitFor(() => !client.isLoading && !client.isRestoring);
+
+    expect(client.error).toBe('Unable to restore the browser session');
+    expect(client.isAuthenticated).toBe(false);
+    expect(fetchCalls).toBe(0);
+    expect(JSON.parse(
+      storage.getItem(getBrowserAuthStorageKeys('http://zero.test').credential)!,
+    ).refreshToken).toBe('stored-refresh');
+  });
+
   test('publishes only sanitized revision/scope signals', async () => {
     const storage = new SharedStorage();
     const hub = new ChannelHub();

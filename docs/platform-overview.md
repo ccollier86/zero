@@ -1040,7 +1040,9 @@ same route. An explicit same-route `postLoginPath` is rejected; the legacy
 refreshed and `/auth/me` is loading, and `AppProvider` withholds login UI during
 that interval. Browsers with Web Locks serialize one-time refresh rotation per
 Zero server across tabs and workers and reread the persisted token inside the
-lock. The no-Web-Locks fallback coordinates only the current JavaScript realm.
+lock. Without Web Locks, Zero uses a bounded, expiring `localStorage` bakery
+lock across tabs when browser storage is available. The in-process queue is the
+final same-JavaScript-realm fallback for runtimes without either facility.
 
 ```tsx
 // In any page — useCollection is the primary mutation API

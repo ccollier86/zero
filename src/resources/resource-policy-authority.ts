@@ -143,6 +143,7 @@ function policyAuthorityFingerprint(
       role: auth.role,
       credentialKind: auth.credentialKind ?? 'session',
       credentialId: auth.credentialId ?? null,
+      authGeneration: auth.authGeneration ?? null,
       clientId: auth.clientId ?? null,
       sessionKind: auth.sessionKind ?? null,
       scope: auth.scope ? [...auth.scope].sort(compareText) : null,

@@ -1400,8 +1400,10 @@ never sees a recoverable expired-access-token 401.
 **Rotation:** Every refresh call produces a new refresh token and revokes the old
 one. Browsers with Web Locks serialize this operation per Zero server across
 tabs and workers. A waiter rereads the persisted token after it acquires the
-lock, so it does not reuse the token another tab replaced. In runtimes without
-Web Locks, the fallback serializes only callers in the same JavaScript realm.
+lock, so it does not reuse the token another tab replaced. Without Web Locks,
+Zero uses a bounded, expiring `localStorage` bakery lock across tabs when
+browser storage is available. The in-process queue is the final
+same-JavaScript-realm fallback for runtimes without either facility.
 If an old token is still replayed, the server revokes the entire token family.
 
 The lower-level exported `AuthClient.refresh()` returns `Promise<boolean>` so

@@ -620,8 +620,9 @@ auth state plus local synced table/state data.
 refresh token and loads `/auth/me`; `isLoading` is also true during that
 interval. Browsers with Web Locks serialize rotation per Zero server across
 tabs and workers, and a waiter rereads the persisted token after acquiring the
-lock. Without Web Locks, the fallback serializes only callers in the same
-JavaScript realm.
+lock. Without Web Locks, Zero uses a bounded, expiring `localStorage` bakery
+lock across tabs when browser storage is available. The in-process queue is the
+final same-JavaScript-realm fallback for runtimes without either facility.
 
 ### FetchError
 

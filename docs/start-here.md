@@ -430,8 +430,10 @@ session is rotating its refresh token and loading `/auth/me`. `AppProvider`
 withholds the login subtree during that interval, avoiding a login-page flash.
 In browsers with Web Locks, refresh rotation is serialized per Zero server
 across tabs and workers, and a waiter rereads the latest persisted token after
-it acquires the lock. The fallback for runtimes without Web Locks serializes
-only callers in the same JavaScript realm.
+it acquires the lock. Without Web Locks, Zero uses a bounded, expiring
+`localStorage` bakery lock across tabs when browser storage is available. The
+in-process queue is the final same-JavaScript-realm fallback for runtimes
+without either facility.
 
 Use the generated `server/` folders for app-owned backend code:
 

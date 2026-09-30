@@ -457,8 +457,10 @@ does not flash the login form or lose its return destination.
 
 Browsers with Web Locks serialize one-time refresh-token rotation per Zero
 server across tabs and workers. A waiting tab rereads the latest persisted token
-after acquiring the lock. The fallback in environments without Web Locks
-coordinates only callers in the same JavaScript realm.
+after acquiring the lock. Without Web Locks, Zero uses a bounded, expiring
+`localStorage` bakery lock across tabs when browser storage is available. The
+in-process queue is the final same-JavaScript-realm fallback for runtimes
+without either facility.
 
 When an anonymous protected route redirects to login, Zero carries one safe
 root-relative `redirect` value. Once authenticated on the login route, that

@@ -10,10 +10,11 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { Elysia, t } from 'elysia';
 import { readAuthBearerToken } from '../auth/auth-bearer-token';
+import { getPublicAuthErrorMessage } from '../auth/auth-error-response';
 import { createAuthMiddleware } from '../auth/auth.middleware';
 import type { AuthRequestCredentialResolver } from '../auth/auth-api-key-types';
 import type { TokenService } from '../auth/token-service';
-import type { AuthContext, AuthTenancyMode } from '../auth/types';
+import { AuthError, type AuthContext, type AuthTenancyMode } from '../auth/types';
 import type { AuthorizationKernel } from '../auth/authorization-kernel';
 import type {
   AuthorizationRoleAssignmentResolver,
@@ -35,7 +36,10 @@ import {
   type ResourceTenantDatabaseClientProvider,
 } from './resource-crud-service';
 import type { ResourcePolicyAuthConfig } from './resource-policy-types';
-import { resourcePolicyAdmitsCredential } from './resource-policy-inspection';
+import {
+  requiresAuthenticatedUser,
+  resourcePolicyAdmitsCredential,
+} from './resource-policy-inspection';
 import type { ResourceAction } from './resource-policy-types';
 import { RESOURCE_QUERY_LIMITS } from './resource-query';
 import type { ResourceRegistry } from './resource-registry';
@@ -125,14 +129,19 @@ export function createResourceCrudPlugin(config: ResourceCrudPluginConfig) {
     .use(createAuthMiddleware(getTokenService, {
       getRequestCredentialResolver: config.getRequestCredentialResolver,
     }))
-    .onError(({ code, request, set }) => {
-      if (code !== 'VALIDATION') return;
-      const read = request.method === 'GET';
-      set.status = 400;
-      return {
-        error: read ? 'Invalid resource query' : 'Invalid resource input',
-        code: read ? 'invalid-resource-query' : 'invalid-resource-input',
-      };
+    .onError(({ code, error, request, set }) => {
+      if (error instanceof AuthError) {
+        set.status = error.status;
+        return { error: getPublicAuthErrorMessage(error), code: error.code };
+      }
+      if (code === 'VALIDATION') {
+        const read = request.method === 'GET';
+        set.status = 400;
+        return {
+          error: read ? 'Invalid resource query' : 'Invalid resource input',
+          code: read ? 'invalid-resource-query' : 'invalid-resource-input',
+        };
+      }
     })
     .get(`${prefix}/:resource`, async ({ params, query, set, access, request }) => {
       const service = createService(config, getUserStore);
@@ -323,13 +332,21 @@ function admitResourceCredential(
   const admitsApiKey = policy
     ? resourcePolicyAdmitsCredential(policy, 'api-key')
     : false;
-  // Establish visibility for this exact resource action. This also
-  // reconceals a key admitted by an earlier middleware on the same request.
+  const requiresUser = policy
+    ? requiresAuthenticatedUser(policy, action) === 'yes'
+    : false;
+  // Resolve credential identity for this exact action before applying the
+  // resource's admission decision. API keys are never silently downgraded to
+  // anonymous callers: a resource must explicitly admit them.
   access.authorize({
-    user: 'optional',
-    credentials: admitsApiKey ? ['session', 'api-key'] : ['session'],
+    user: requiresUser ? 'required' : 'optional',
+    credentials: ['session', 'api-key'],
   });
-  return access.context;
+  const context = access.context;
+  if (context?.credentialKind === 'api-key' && !admitsApiKey) {
+    throw new AuthError('Forbidden', 'FORBIDDEN', 403);
+  }
+  return context;
 }
 
 function captureRequestAuthority(

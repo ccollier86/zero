@@ -832,8 +832,10 @@ page-navigation options, not fields under `auth` and not raw `createClient()`
 options. `useAuth().isRestoring` is true only while a persisted web session is
 being refreshed and `/auth/me` is loading. In browsers with Web Locks, refresh
 rotation is serialized per Zero server across tabs and workers; each waiter
-rereads the persisted token after acquiring the lock. Without Web Locks, the
-fallback coordinates only callers in the same JavaScript realm.
+rereads the persisted token after acquiring the lock. Without Web Locks, Zero
+uses a bounded, expiring `localStorage` bakery lock across tabs when browser
+storage is available. The in-process queue is the final same-JavaScript-realm
+fallback for runtimes without either facility.
 
 ### Native installed-app authentication
 

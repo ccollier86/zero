@@ -77,6 +77,36 @@ describe('physical tenant resource boundary', () => {
     }, resolved.scope)).toEqual({ ok: true });
   });
 
+  test('binds physical tenant files to exact resolved API-key authority', () => {
+    const resource = createPhysicalRegistry().getByTable('documents')!;
+    const first = resolveResourceRealm(resource, apiKeyTenantAuth('tenant-a', 'key-a', 1));
+    const second = resolveResourceRealm(resource, apiKeyTenantAuth('tenant-a', 'key-b', 1));
+    const regenerated = resolveResourceRealm(resource, apiKeyTenantAuth('tenant-a', 'key-a', 2));
+
+    expect(first).toMatchObject({
+      ok: true,
+      scope: {
+        isolation: 'tenant-database',
+        tenantId: 'tenant-a',
+      },
+    });
+    if (!first.ok || !second.ok || !regenerated.ok) {
+      throw new Error('Expected resolved API-key tenant realms.');
+    }
+    expect(first.scope?.fingerprint).not.toBe(second.scope?.fingerprint);
+    expect(first.scope?.fingerprint).not.toBe(regenerated.scope?.fingerprint);
+
+    expect(resolveResourceRealm(resource, {
+      ...apiKeyTenantAuth('tenant-a', 'key-a', 1),
+      sessionKind: 'native',
+      clientId: 'contradictory-native-client',
+      sessionId: 'contradictory-native-family',
+    })).toMatchObject({
+      ok: false,
+      code: 'resource-tenant-context-required',
+    });
+  });
+
   test('classifies and authorizes physical resources for actor-backed Sync', async () => {
     const registry = createPhysicalRegistry('sync');
     const service = new ResourceSyncPolicyService({
@@ -254,6 +284,28 @@ function tenantAuth(tenantId: string): AuthContext {
     sessionKind: 'web',
     sessionId: `session-${tenantId}`,
     sessionGeneration: 0,
+    sessionScopeKind: 'tenant',
+    sessionScopeId: tenantId,
+    tenantId,
+    membershipId: `membership-${tenantId}`,
+    tenantRole: 'member',
+    tenantAuthorizationGeneration: 0,
+    membershipAuthorizationGeneration: 0,
+  };
+}
+
+function apiKeyTenantAuth(
+  tenantId: string,
+  credentialId: string,
+  authGeneration: number,
+): AuthContext {
+  return {
+    userId: 'api-key-user',
+    email: 'api-key@example.test',
+    role: 'user',
+    credentialKind: 'api-key',
+    credentialId,
+    authGeneration,
     sessionScopeKind: 'tenant',
     sessionScopeId: tenantId,
     tenantId,

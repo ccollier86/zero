@@ -153,6 +153,47 @@ describe('tenant resource CRUD boundary', () => {
     });
   });
 
+  test('accepts a resolved tenant API key and rejects mixed or incomplete key authority', async () => {
+    const service = createService(authenticatedOnly());
+    const apiKey = apiKeyTenantAuth('tenant-api');
+    db.insert('documents', {
+      id: 'api-key-document',
+      tenant_id: 'tenant-api',
+      title: 'API key',
+    });
+
+    expect(await service.list('documents', {}, { authContext: apiKey })).toMatchObject({
+      ok: true,
+      body: { rows: [{ id: 'api-key-document', tenant_id: 'tenant-api' }] },
+    });
+    expect(await service.create('documents', {
+      id: 'api-key-created',
+      title: 'Created by API key',
+    }, { authContext: apiKey })).toMatchObject({
+      ok: true,
+      status: 201,
+      body: { row: { id: 'api-key-created', tenant_id: 'tenant-api' } },
+    });
+
+    const invalidContexts: AuthContext[] = [
+      { ...apiKey, credentialId: undefined },
+      { ...apiKey, credentialId: '' },
+      { ...apiKey, authGeneration: undefined },
+      { ...apiKey, authGeneration: -1 },
+      { ...apiKey, sessionKind: 'web' },
+      { ...apiKey, sessionId: 'session-must-not-be-present' },
+      { ...apiKey, sessionGeneration: 0 },
+      { ...apiKey, clientId: 'native-client-must-not-be-present' },
+    ];
+    for (const authContext of invalidContexts) {
+      expect(await service.list('documents', {}, { authContext })).toMatchObject({
+        ok: false,
+        status: 403,
+        body: { code: 'resource-tenant-context-required' },
+      });
+    }
+  });
+
   test('accepts a live native tenant family without requiring a browser generation', async () => {
     const service = createService(authenticatedOnly());
     const native = nativeTenantAuth('tenant-native');
@@ -513,6 +554,24 @@ function nativeTenantAuth(tenantId: string): AuthContext {
     tenantRole: 'member',
     tenantAuthorizationGeneration: 0,
     membershipAuthorizationGeneration: 0,
+  };
+}
+
+function apiKeyTenantAuth(tenantId: string): AuthContext {
+  return {
+    userId: 'api-key-user',
+    email: 'api-key@example.test',
+    role: 'user',
+    credentialKind: 'api-key',
+    credentialId: `key-${tenantId}`,
+    authGeneration: 2,
+    sessionScopeKind: 'tenant',
+    sessionScopeId: tenantId,
+    tenantId,
+    membershipId: `api-key-membership-${tenantId}`,
+    tenantRole: 'member',
+    tenantAuthorizationGeneration: 3,
+    membershipAuthorizationGeneration: 4,
   };
 }
 

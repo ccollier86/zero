@@ -483,7 +483,18 @@ export class AuthSessionController {
   }
 
   private async restoreSession(): Promise<void> {
-    const refreshed = await this.refresh();
+    let refreshed: boolean;
+    try {
+      refreshed = await this.refresh();
+    } catch {
+      // Coordination can fail before the refresh transport runs (for example,
+      // when a bounded fallback lock times out). Keep the persisted proof for a
+      // later retry, but always finish the startup-loading state.
+      if (this.context.refreshToken) {
+        this.send('auth.error', { error: 'Unable to restore the browser session' });
+      }
+      return;
+    }
     if (!refreshed || !this.accessToken) {
       // Rejected proof commits logout inside performRefreshLocked. A transient
       // network failure retains the rotating proof for a later retry, but the

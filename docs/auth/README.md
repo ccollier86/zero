@@ -427,8 +427,10 @@ validated tenant authority.
 Because refresh tokens rotate once, browsers with Web Locks serialize refreshes
 per Zero server across tabs and workers. A waiting tab rereads the current
 persisted token after acquiring the lock instead of submitting the token another
-tab just replaced. In runtimes without Web Locks, the fallback serializes
-concurrent refreshes only within the same JavaScript realm.
+tab just replaced. Without Web Locks, Zero uses a bounded, expiring
+`localStorage` bakery lock across tabs when browser storage is available. The
+in-process queue is the final same-JavaScript-realm fallback for runtimes
+without either facility.
 
 `AppProvider` also guards protected client routes when auth is enabled. If a
 session cannot be restored or a refresh token is rejected, it withholds the
