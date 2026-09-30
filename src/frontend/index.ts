@@ -78,6 +78,10 @@ export {
   isAuthTenantOnboardingRequiredResult,
   isAuthTenantSelectionRequiredResult,
 } from './client/auth-client';
+export {
+  normalizeAbsoluteLocalPath,
+  normalizeConfiguredLocalPath,
+} from '../auth/local-path';
 export type {
   AuthAuthorizationScopeLifecycle,
   AuthClientOptions,

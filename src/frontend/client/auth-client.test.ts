@@ -1280,6 +1280,41 @@ describe('AuthClient token lifecycle', () => {
     }
   });
 
+  it('serializes persisted refresh-token rotation across concurrent clients', async () => {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'refresh-0');
+    const rotatedTokens: string[] = [];
+
+    mockFetch((url, init) => {
+      if (url.endsWith('/auth/refresh')) {
+        const token = JSON.parse(String(init?.body)).refreshToken as string;
+        rotatedTokens.push(token);
+        const sequence = rotatedTokens.length;
+        return Response.json({
+          accessToken: `access-${sequence}`,
+          refreshToken: `refresh-${sequence}`,
+        });
+      }
+
+      if (url.endsWith('/auth/me')) return Response.json(authUser());
+      return Response.json({ ok: true });
+    });
+
+    const first = new AuthClient('http://zero.test');
+    const second = new AuthClient('http://zero.test/');
+
+    await Promise.all([first.refresh(), second.refresh()]);
+    await Promise.all([
+      waitForAuthenticated(first),
+      waitForAuthenticated(second),
+    ]);
+
+    expect(rotatedTokens).toEqual(['refresh-0', 'refresh-1']);
+    expect(localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)).toBe('refresh-2');
+    expect(first.isAuthenticated).toBe(true);
+    expect(second.isAuthenticated).toBe(true);
+  });
+
   it('replaces an existing bearer header case-insensitively', async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     mockFetch((url, init) => {
@@ -1503,6 +1538,17 @@ function applicationAccessUser(userId: string) {
     createdAt: 1,
     updatedAt: null,
   };
+}
+
+async function waitForAuthenticated(client: AuthClient): Promise<void> {
+  if (client.isAuthenticated) return;
+  await new Promise<void>((resolve) => {
+    const unsubscribe = client.subscribe(() => {
+      if (!client.isAuthenticated) return;
+      unsubscribe();
+      resolve();
+    });
+  });
 }
 
 function authUser() {

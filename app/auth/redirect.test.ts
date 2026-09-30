@@ -10,7 +10,13 @@ describe('resolveSafeAuthRedirect', () => {
   });
 
   test('rejects external, protocol-relative, and backslash redirects', () => {
-    for (const value of ['https://evil.example', '//evil.example', '/\\evil.example']) {
+    for (const value of [
+      'https://evil.example',
+      '//evil.example',
+      '/\\evil.example',
+      '/%2e%2e//evil.example',
+      '/a/%2e%2e//evil.example',
+    ]) {
       expect(resolveSafeAuthRedirect(value, 'https://app.example')).toBe('/');
     }
   });

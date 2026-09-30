@@ -13,6 +13,7 @@ export interface AuthStoreContext {
   accessToken: string | null;
   refreshToken: string | null;
   isLoading: boolean;
+  isRestoring: boolean;
   error: string | null;
   sessionTransition: AuthSessionTransitionState;
 }
@@ -24,6 +25,7 @@ export function createAuthStore() {
     accessToken: null,
     refreshToken: null,
     isLoading: false as boolean,
+    isRestoring: false as boolean,
     error: null,
     sessionTransition: {
       phase: 'idle',
@@ -40,6 +42,13 @@ export function createAuthStore() {
       'auth.loading': (context: AuthStoreContext): AuthStoreContext => ({
         ...context,
         isLoading: true,
+        isRestoring: false,
+        error: null,
+      }),
+      'auth.restoring': (context: AuthStoreContext): AuthStoreContext => ({
+        ...context,
+        isLoading: true,
+        isRestoring: true,
         error: null,
       }),
       'auth.success': (
@@ -57,6 +66,7 @@ export function createAuthStore() {
         accessToken: event.accessToken,
         refreshToken: event.refreshToken,
         isLoading: false,
+        isRestoring: false,
         error: null,
       }),
       'auth.error': (
@@ -65,6 +75,7 @@ export function createAuthStore() {
       ): AuthStoreContext => ({
         ...context,
         isLoading: false,
+        isRestoring: false,
         error: event.error,
       }),
       'auth.logout': (context: AuthStoreContext): AuthStoreContext => ({
@@ -74,6 +85,7 @@ export function createAuthStore() {
         accessToken: null,
         refreshToken: null,
         isLoading: false,
+        isRestoring: false,
         error: null,
       }),
       'auth.refresh': (

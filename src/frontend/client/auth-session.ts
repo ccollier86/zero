@@ -104,6 +104,10 @@ export class AuthSessionController {
     return this.context.isLoading;
   }
 
+  get isRestoring(): boolean {
+    return this.context.isRestoring;
+  }
+
   get error(): string | null {
     return this.context.error;
   }
@@ -466,7 +470,7 @@ export class AuthSessionController {
     this.adoptRecord(stored);
     if (!stored.refreshToken) return;
 
-    this.send('auth.loading');
+    this.send('auth.restoring');
     this.send('auth.refresh', { accessToken: '', refreshToken: stored.refreshToken });
     // Deferring one microtask lets createClient finish wiring Sync/state/
     // ephemeral lifecycle callbacks before restoration can publish state.
@@ -480,7 +484,15 @@ export class AuthSessionController {
 
   private async restoreSession(): Promise<void> {
     const refreshed = await this.refresh();
-    if (!refreshed || !this.accessToken) return;
+    if (!refreshed || !this.accessToken) {
+      // Rejected proof commits logout inside performRefreshLocked. A transient
+      // network failure retains the rotating proof for a later retry, but the
+      // startup restoration state must still finish.
+      if (this.context.refreshToken) {
+        this.send('auth.error', { error: 'Unable to restore the browser session' });
+      }
+      return;
+    }
 
     const revision = this.credentialRevision;
     try {

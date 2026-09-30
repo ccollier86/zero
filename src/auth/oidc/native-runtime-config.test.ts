@@ -38,7 +38,14 @@ describe('native runtime config', () => {
     })).toThrow('audience must be a canonical origin');
   });
 
-  test.each(['/\\attacker.example', '//attacker.example', ' /login', '/log\u0000in'])(
+  test.each([
+    '/\\attacker.example',
+    '//attacker.example',
+    ' /login',
+    '/log\u0000in',
+    '/%2e%2e//attacker.example',
+    '/a/%2e%2e//attacker.example',
+  ])(
     'rejects unsafe browser auth route %s',
     (loginPath) => {
       expect(() => resolve({

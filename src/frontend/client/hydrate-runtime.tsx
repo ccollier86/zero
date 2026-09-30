@@ -61,6 +61,7 @@ declare global {
       publicPaths?: string[];
       routeAuth?: 'protected-by-default' | 'explicit';
       loginPath?: string;
+      postLoginPath?: string;
     };
   }
 }

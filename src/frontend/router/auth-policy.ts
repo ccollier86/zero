@@ -12,6 +12,7 @@ import {
   type AccessRequirement,
   type CompiledAccessRequirement,
 } from '../../auth/authorization-kernel';
+import { comparableAuthPathname } from './auth-navigation';
 
 /** Global route-auth strategy used when app auth is enabled. */
 export type RouteAuthMode = 'protected-by-default' | 'explicit';
@@ -24,7 +25,15 @@ export type EffectiveRouteAuthRequirement = false | 'required' | 'admin';
 
 /** Return true when a pathname is covered by a public path prefix. */
 export function isPublicPath(pathname: string, publicPaths: readonly string[]): boolean {
-  return publicPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  const comparablePathname = comparableAuthPathname(pathname);
+  return publicPaths.some((path) => {
+    const comparablePublicPath = comparableAuthPathname(path);
+    return comparablePathname === comparablePublicPath
+      || (
+        comparablePublicPath !== '/'
+        && comparablePathname.startsWith(`${comparablePublicPath}/`)
+      );
+  });
 }
 
 /**

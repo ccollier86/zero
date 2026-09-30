@@ -133,7 +133,9 @@ before configuring it.
 
 - **User registration** with username/email/password
 - **JWT access + refresh tokens** with rotation
-- **Persistent browser sessions:** refresh-token restore, 401 retry, sync reconnect with fresh tokens
+- **Persistent browser sessions:** coordinated refresh-token restore,
+  `isRestoring`, 401 retry, sync reconnect with fresh tokens, and safe login
+  return paths
 - **Role-based middleware:** `requireAuth()` and `requireAdmin()` — fully typed, zero casts
 - **Four additive profiles:** `single/simple`, `single/advanced`,
   `multi/simple`, and `multi/advanced` through one authorization kernel
@@ -1020,10 +1022,25 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
 When auth is enabled, `AppProvider` also handles client-side auth loss on
 protected routes. If a stored refresh token is rejected or an authenticated call
-cannot refresh, it clears the local synced data, removes protected route
-content, and redirects to `loginPath` with a `redirect` query parameter.
-`routeAuth`, `publicPaths`, and `loginPath` come from `createApp()` and can be
-overridden on the provider.
+cannot refresh, it clears local synced data, removes protected route content,
+and sends the user to `loginPath` with one safe, URL-encoded `redirect` return
+path. The client can retain pathname, query, and fragment; direct server guards
+retain pathname and query only. Once the login route is authenticated, that
+deep link wins, then `postLoginPath` (default `/`) is the fallback.
+
+`routeAuth`, `publicPaths`, `loginPath`, and `postLoginPath` come from
+`createApp()` and can be overridden on the provider. Redirect values must be a
+single bounded root-relative local URL. External, scheme-relative, malformed,
+duplicate, recursive, backslash/control-character, and canonicalization-unsafe
+values are ignored. Trailing-slash-equivalent login targets are treated as the
+same route. An explicit same-route `postLoginPath` is rejected; the legacy
+`loginPath: '/'` plus implicit `/` fallback remains a no-op.
+
+`useAuth().isRestoring` is true only while a persisted browser session is being
+refreshed and `/auth/me` is loading, and `AppProvider` withholds login UI during
+that interval. Browsers with Web Locks serialize one-time refresh rotation per
+Zero server across tabs and workers and reread the persisted token inside the
+lock. The no-Web-Locks fallback coordinates only the current JavaScript realm.
 
 ```tsx
 // In any page — useCollection is the primary mutation API

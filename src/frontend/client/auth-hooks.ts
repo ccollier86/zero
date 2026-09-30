@@ -99,6 +99,8 @@ export interface AuthState {
   activeTenant: AuthTenantSummary | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  /** True only while a persisted browser session is being restored. */
+  isRestoring: boolean;
   error: string | null;
   sessionTransition: AuthSessionTransitionState;
 }
@@ -149,6 +151,7 @@ const SSR_AUTH_SNAPSHOT = {
   accessToken: null,
   refreshToken: null,
   isLoading: false as boolean,
+  isRestoring: false as boolean,
   error: null,
   sessionTransition: {
     phase: 'idle' as const,
@@ -165,6 +168,7 @@ const SSR_AUTH_DEFAULTS: AuthState & AuthActions = {
   activeTenant: null,
   isAuthenticated: false,
   isLoading: false,
+  isRestoring: false,
   error: null,
   sessionTransition: SSR_AUTH_SNAPSHOT.sessionTransition,
   login: SSR_AUTH_NOOP as any,
@@ -504,6 +508,7 @@ export function useAuth(): AuthState & AuthActions {
     activeTenant: authorizationBoundary.ready ? state.activeTenant : null,
     isAuthenticated: authorizationBoundary.ready && state.user !== null,
     isLoading: state.isLoading || !authorizationBoundary.ready,
+    isRestoring: state.isRestoring,
     error: authorizationBoundary.ready ? state.error : null,
     sessionTransition: state.sessionTransition,
     login,

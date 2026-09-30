@@ -293,6 +293,7 @@ describe('resolveConfig', () => {
     expect(config.serverResourcesDir).toBe('./server/resources');
     expect(config.resourceRoutes).toEqual({});
     expect(config.routeAuth).toBe('protected-by-default');
+    expect(config.postLoginPath).toBe('/');
   });
 
   test('normalizes auth: true to the backward-compatible capability profile', () => {
@@ -358,6 +359,33 @@ describe('resolveConfig', () => {
       db: { mode: 'memory' }, tables,
       auth: { account: { emailVerificationPath: '//attacker.example/verify' } },
     })).toThrow('account.emailVerificationPath must be a safe local path');
+  });
+
+  test('normalizes and validates the authenticated post-login destination', () => {
+    const config = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: true,
+      loginPath: 'signin?mode=password',
+      postLoginPath: 'dashboard?tab=home#today',
+    });
+
+    expect(config.loginPath).toBe('/signin?mode=password');
+    expect(config.postLoginPath).toBe('/dashboard?tab=home#today');
+
+    expect(() => resolveConfig({
+      db: { mode: 'memory' }, tables, auth: true,
+      postLoginPath: 'https://attacker.example/dashboard',
+    })).toThrow('postLoginPath must be a safe local path');
+
+    expect(() => resolveConfig({
+      db: { mode: 'memory' }, tables, auth: true,
+      loginPath: '/signin/', postLoginPath: '/signin',
+    })).toThrow('postLoginPath must not resolve to loginPath');
+
+    expect(resolveConfig({
+      db: { mode: 'memory' }, tables, auth: true, loginPath: '/',
+    }).postLoginPath).toBe('/');
   });
 
   test('defaults authless apps to explicit route auth', () => {

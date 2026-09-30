@@ -209,6 +209,7 @@ import {
   verifyUploadGrantToken,
 } from '@zero/framework/server';
 import type {
+  AppConfig,
   AppDatabasePlacementConfig,
   AuthAdministrationTenantConfig as ServerAuthAdministrationTenantConfig,
   AuthApiKeyManagementCapabilities as ServerAuthApiKeyManagementCapabilities,
@@ -271,6 +272,7 @@ import type {
   NormalizedDatabaseCoordinatorRestartPolicy,
   RunDatabaseActorIfRequestedOptions,
   AuthRequestCredentialResolver as ServerAuthRequestCredentialResolver,
+  ResolvedConfig,
   ZeroPolicyUserPropertyRegistry,
 } from '@zero/framework/server';
 import {
@@ -437,6 +439,8 @@ const tenantDocumentSubpathResource = defineSubpathResource({
   realm: resourcesTenantRealm(),
   policy: resourcesOwnerPolicy({ userField: 'tenant_id', create: 'require' }),
 });
+const configuredPostLoginPath = (config: AppConfig): string | undefined => config.postLoginPath;
+const resolvedPostLoginPath = (config: ResolvedConfig): string => config.postLoginPath;
 
 export const serverSymbols = {
   AIService,
@@ -464,6 +468,7 @@ export const serverSymbols = {
   authTenantCreation,
   authTenantCreationMode,
   authTenantTerminology,
+  configuredPostLoginPath,
   createApp,
   DatabaseError,
   DATABASE_ACTOR_CHILD_FLAG,
@@ -592,6 +597,7 @@ export const serverSymbols = {
   serverAuthApiKeyManagementCapabilities,
   serverAuthRequestCredentialResolver,
   RoomOwnerCannotLeaveError,
+  resolvedPostLoginPath,
   runPlatformDoctor,
   runUsageAudit,
   runDatabaseActorIfRequested,
@@ -735,6 +741,8 @@ import {
   PlatformUserManagement,
   PermissionGate,
   PlatformAdminGate,
+  normalizeAbsoluteLocalPath,
+  normalizeConfiguredLocalPath,
   QRCode,
   RadialMenu,
   ResizableNavbar,
@@ -780,6 +788,7 @@ import { createIdentityId } from '@zero/framework/sync/identity';
 	import type { ComponentProps } from 'react';
 import type { ToasterProps } from '@zero/framework/react';
 import type {
+  AppProviderProps,
   AdministrationScopeGateProps,
   ApiKeyManagementCommonProps,
   ApiKeyManagementProps,
@@ -811,6 +820,7 @@ import type {
   AuthPlatformUpdateMemberParams,
   ControlPlaneAuditViewerProps,
   AuthAuthorizationState,
+  AuthState,
   AuthConfigState,
   AuthConfigStatus,
   AuthorizationScopeBoundary,
@@ -932,6 +942,8 @@ import type {
 	const tenantOnboardingAdministrationOptionsSubpath = {} as UseTenantOnboardingAdministrationOptionsSubpath;
 	const tenantOnboardingAdministrationResultSubpath = {} as UseTenantOnboardingAdministrationResultSubpath;
 	const clientPlatformAdmin = {} as Client['platformAdmin'];
+	const appProviderPostLoginPath = (props: AppProviderProps): string | undefined => props.postLoginPath;
+	const authRestorationState = (state: AuthState): boolean => state.isRestoring;
 	type MasterDetailProps = ComponentProps<typeof MasterDetailView>;
 	const masterDetailLazySource: MasterDetailProps['source'] = {
 	  type: 'lazy',
@@ -961,6 +973,7 @@ export const clientSymbols = {
   AnimatedListCard,
   AnimatedListSubpath,
   AppProvider,
+  appProviderPostLoginPath,
   AppShell,
   AppShellSubpath,
   BentoGrid,
@@ -1011,6 +1024,7 @@ export const clientSymbols = {
   PlatformAdminGate,
   PlatformAdminGateSubpath,
   LoginForm,
+	authRestorationState,
 	  MasterDetailView,
 	  masterDetailLazySource,
   MFAEnrollmentForm,
@@ -1038,6 +1052,8 @@ export const clientSymbols = {
   createTenant,
   switchTenant,
   ModalManager,
+  normalizeAbsoluteLocalPath,
+  normalizeConfiguredLocalPath,
   QRCode,
   QRCodeSubpath,
   RadialMenu,

@@ -63,6 +63,7 @@ export const config = defineZeroConfig({
       brandColor: Bun.env.AUTH_EMAIL_BRAND_COLOR,
     },
   },
+  postLoginPath: '/',
   sitemap: true,
   doctor: {
     indexedFields: {
