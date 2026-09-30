@@ -24,7 +24,8 @@ const DATABASE_ACTOR_ENTRYPOINT = fileURLToPath(new URL(
   import.meta.url,
 ));
 
-const TODOS_PERMISSION = 'todos:manage';
+const TODOS_READ_PERMISSION = 'todos:read';
+const TODOS_WRITE_PERMISSION = 'todos:write';
 const TEST_PASSWORD = 'password123';
 
 type ManagedApp = Awaited<ReturnType<typeof createApp>>;
@@ -83,17 +84,23 @@ describe('Guardian and Fabric integration', () => {
     const appDir = join(activeRoot, 'app');
     await mkdir(appDir, { recursive: true });
 
-    const apiKeyAccess = authorizationPolicy({
+    const apiKeyReadAccess = authorizationPolicy({
       user: 'required',
       tenant: 'required',
       credentials: ['session', 'api-key'],
-      permission: TODOS_PERMISSION,
+      permission: TODOS_READ_PERMISSION,
     });
-    const sessionOnlyAccess = authorizationPolicy({
+    const apiKeyWriteAccess = authorizationPolicy({
+      user: 'required',
+      tenant: 'required',
+      credentials: ['session', 'api-key'],
+      permission: TODOS_WRITE_PERMISSION,
+    });
+    const sessionOnlyWriteAccess = authorizationPolicy({
       user: 'required',
       tenant: 'required',
       credentials: ['session'],
-      permission: TODOS_PERMISSION,
+      permission: TODOS_WRITE_PERMISSION,
     });
     activeApp = await createApp({
       db: {
@@ -111,11 +118,11 @@ describe('Guardian and Fabric integration', () => {
         exposure: 'http',
         realm: tenantRealm(),
         policy: {
-          list: apiKeyAccess,
-          get: apiKeyAccess,
-          create: apiKeyAccess,
-          update: allOf(apiKeyAccess, updateBarrier.policy),
-          delete: sessionOnlyAccess,
+          list: apiKeyReadAccess,
+          get: apiKeyReadAccess,
+          create: apiKeyWriteAccess,
+          update: allOf(apiKeyWriteAccess, updateBarrier.policy),
+          delete: sessionOnlyWriteAccess,
         },
       })],
       auth: {
@@ -125,7 +132,18 @@ describe('Guardian and Fabric integration', () => {
         authorization: {
           mode: 'advanced',
           permissions: {
-            [TODOS_PERMISSION]: { label: 'Manage todos' },
+            [TODOS_READ_PERMISSION]: { label: 'Read todos' },
+            [TODOS_WRITE_PERMISSION]: { label: 'Write todos' },
+          },
+          roles: {
+            viewer: {
+              label: 'Todo viewer',
+              permissions: [TODOS_READ_PERMISSION],
+            },
+            editor: {
+              label: 'Todo editor',
+              permissions: [TODOS_READ_PERMISSION, TODOS_WRITE_PERMISSION],
+            },
           },
         },
         apiKeys: {
@@ -240,6 +258,95 @@ describe('Guardian and Fabric integration', () => {
     // pinned default/control database.
     expect(controlDB.hasTable('todos')).toBe(false);
     expect(controlDB.hasTable('users')).toBe(true);
+
+    // A real non-owner identity is admitted through Guardian's public tenant
+    // administration API. Its viewer role can read this tenant's physical
+    // database but cannot mutate it.
+    const viewerIdentity = await register(baseUrl, 'viewer', 'Viewer Home');
+    const viewerMembership = await jsonRequest(
+      baseUrl,
+      'POST',
+      '/auth/tenant/members',
+      tenantA.accessToken,
+      { email: viewerIdentity.user.email, roles: ['viewer'] },
+    );
+    expect(viewerMembership).toMatchObject({
+      status: 200,
+      body: {
+        member: {
+          identity: { userId: viewerIdentity.user.userId },
+          roles: ['viewer'],
+        },
+      },
+    });
+    const viewerSession = await switchTenant(
+      baseUrl,
+      viewerIdentity.refreshToken,
+      tenantA.tenant.tenantId,
+    );
+    expect(await resourceRequest(
+      baseUrl,
+      'GET',
+      '/api/resources/todos/same-id',
+      viewerSession.accessToken,
+    )).toEqual({
+      status: 200,
+      body: { row: { id: 'same-id', title: 'Tenant A value' } },
+    });
+    expect(await resourceRequest(
+      baseUrl,
+      'POST',
+      '/api/resources/todos',
+      viewerSession.accessToken,
+      { id: 'viewer-must-not-write', title: 'Forbidden viewer write' },
+      { 'Idempotency-Key': 'viewer-write-denied' },
+    )).toEqual({
+      status: 403,
+      body: { error: 'Forbidden', code: 'authorization-denied' },
+    });
+
+    // Role replacement advances live membership authority. The captured
+    // viewer credential fails closed, while a fresh tenant switch projects
+    // the editor permissions and can write through the same Resource path.
+    const promoted = await jsonRequest(
+      baseUrl,
+      'PATCH',
+      `/auth/tenant/members/${viewerMembership.body.member.membershipId}`,
+      tenantA.accessToken,
+      {
+        roles: ['editor'],
+        expectedRoleRevision: viewerMembership.body.member.roleRevision,
+      },
+    );
+    expect(promoted).toMatchObject({
+      status: 200,
+      body: { member: { roles: ['editor'] } },
+    });
+    expect(await resourceRequest(
+      baseUrl,
+      'GET',
+      '/api/resources/todos/same-id',
+      viewerSession.accessToken,
+    )).toEqual({
+      status: 401,
+      body: { error: 'Unauthorized', code: 'UNAUTHORIZED' },
+    });
+    const editorSession = await loginToTenant(
+      baseUrl,
+      viewerIdentity.user.email,
+      tenantA.tenant.tenantId,
+    );
+    expect(await resourceRequest(
+      baseUrl,
+      'POST',
+      '/api/resources/todos',
+      editorSession.accessToken,
+      { id: 'editor-created', title: 'Created by editor' },
+      { 'Idempotency-Key': 'editor-write-allowed' },
+    )).toEqual({
+      status: 201,
+      body: { row: { id: 'editor-created', title: 'Created by editor' } },
+    });
 
     const sessionOnlyDenial = await resourceRequest(
       baseUrl,
@@ -412,6 +519,45 @@ async function issueApiKey(
   expect(response.status).toBe(200);
   expect(response.body.secret).toBeString();
   return response.body as IssuedApiKey;
+}
+
+async function loginToTenant(
+  baseUrl: string,
+  username: string,
+  tenantId: string,
+): Promise<{ accessToken: string; refreshToken: string }> {
+  const login = await jsonRequest(baseUrl, 'POST', '/auth/login', undefined, {
+    username,
+    password: TEST_PASSWORD,
+  });
+  expect(login).toMatchObject({
+    status: 200,
+    body: { tenantSelectionRequired: true },
+  });
+  expect(login.body.tenantSelection?.continuation).toBeString();
+  const selected = await jsonRequest(baseUrl, 'POST', '/auth/tenants/select', undefined, {
+    continuation: login.body.tenantSelection.continuation,
+    tenantId,
+  });
+  expect(selected.status).toBe(200);
+  expect(selected.body.accessToken).toBeString();
+  expect(selected.body.refreshToken).toBeString();
+  return selected.body as { accessToken: string; refreshToken: string };
+}
+
+async function switchTenant(
+  baseUrl: string,
+  refreshToken: string,
+  tenantId: string,
+): Promise<{ accessToken: string; refreshToken: string }> {
+  const response = await jsonRequest(baseUrl, 'POST', '/auth/tenants/switch', undefined, {
+    refreshToken,
+    tenantId,
+  });
+  expect(response.status).toBe(200);
+  expect(response.body.accessToken).toBeString();
+  expect(response.body.refreshToken).toBeString();
+  return response.body as { accessToken: string; refreshToken: string };
 }
 
 async function resourceRequest(
