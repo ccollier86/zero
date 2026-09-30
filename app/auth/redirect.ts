@@ -5,29 +5,23 @@
  * only; route guards and token lifecycle remain in Zero auth.
  */
 
+import { normalizeAbsoluteLocalPath } from '@zero/framework/react';
+
 /** Return a local redirect target from the current URL, or the fallback path. */
 export function getSafeAuthRedirect(fallback = '/'): string {
   if (typeof window === 'undefined') return fallback;
 
-  const redirect = new URL(window.location.href).searchParams.get('redirect');
+  const values = new URL(window.location.href).searchParams.getAll('redirect');
+  const redirect = values.length === 1 ? values[0] : null;
   return resolveSafeAuthRedirect(redirect, window.location.origin, fallback);
 }
 
 /** Normalize a same-origin absolute-path redirect without browser backslash ambiguity. */
 export function resolveSafeAuthRedirect(
   redirect: string | null,
-  origin: string,
+  _origin: string,
   fallback = '/',
 ): string {
-  if (!redirect || redirect !== redirect.trim() || /[\\\u0000-\u001f\u007f]/.test(redirect)) {
-    return fallback;
-  }
-  try {
-    const target = new URL(redirect, origin);
-    return target.origin === origin && redirect.startsWith('/')
-      ? `${target.pathname}${target.search}${target.hash}`
-      : fallback;
-  } catch {
-    return fallback;
-  }
+  const safeFallback = normalizeAbsoluteLocalPath(fallback) ?? '/';
+  return normalizeAbsoluteLocalPath(redirect) ?? safeFallback;
 }

@@ -147,6 +147,10 @@ export class AuthClient {
     return this.session.isLoading;
   }
 
+  get isRestoring(): boolean {
+    return this.session.isRestoring;
+  }
+
   get error(): string | null {
     return this.session.error;
   }

@@ -8,12 +8,20 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  isPublicPath,
   mergeRouteAuthRequirements,
   resolveRouteAuthMode,
   shouldRequireAuthForRoute,
 } from './auth-policy';
 
 describe('route auth policy', () => {
+  test('treats an optional trailing slash as the same public route', () => {
+    expect(isPublicPath('/login', ['/login/'])).toBe(true);
+    expect(isPublicPath('/login/', ['/login'])).toBe(true);
+    expect(isPublicPath('/login/help', ['/login/'])).toBe(true);
+    expect(isPublicPath('/dashboard', ['/'])).toBe(false);
+  });
+
   test('preserves protected-by-default behavior for auth-enabled apps', () => {
     expect(resolveRouteAuthMode(undefined, true)).toBe('protected-by-default');
     expect(resolveRouteAuthMode(undefined, false)).toBe('explicit');

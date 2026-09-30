@@ -101,7 +101,11 @@ import {
   ownerPolicy,
   verifyUploadGrantToken,
 } from '@zero/framework/server';
-import type { NativeAuthorizationSourceResolver } from '@zero/framework/server';
+import type {
+  AppConfig,
+  NativeAuthorizationSourceResolver,
+  ResolvedConfig,
+} from '@zero/framework/server';
 import {
   createStoragePlugin,
   createUploadGrantToken as createSubpathUploadGrantToken,
@@ -114,10 +118,13 @@ import { WorkflowService } from '@zero/framework/workflows';
 
 const nativeSourceResolver: NativeAuthorizationSourceResolver = () => 'trusted-edge';
 const authNativeSourceResolver: AuthNativeSourceResolver = () => 'trusted-edge';
+const configuredPostLoginPath = (config: AppConfig): string | undefined => config.postLoginPath;
+const resolvedPostLoginPath = (config: ResolvedConfig): string => config.postLoginPath;
 
 export const serverSymbols = {
   AIService,
   authNativeSourceResolver,
+  configuredPostLoginPath,
   createApp,
   createAuthPlugin,
   installAuthStopBarrier,
@@ -168,6 +175,7 @@ export const serverSymbols = {
   PlatformTokenService,
   PURE_OBS_CODES,
   resourcesOwnerPolicy,
+  resolvedPostLoginPath,
   runPlatformDoctor,
   runUsageAudit,
   verifySubpathUploadGrantToken,
@@ -234,6 +242,8 @@ import {
   groupKanbanItemIds,
   Hero,
   KanbanBoard,
+  normalizeAbsoluteLocalPath,
+  normalizeConfiguredLocalPath,
   QRCode,
   RadialMenu,
   ResizableNavbar,
@@ -253,10 +263,16 @@ import { createSyncClient } from '@zero/framework/sync/client';
 import { createIdentityId } from '@zero/framework/sync/identity';
 	import type { Row } from '@zero/framework/sync/types';
 	import type { ComponentProps } from 'react';
-	import type { ToasterProps } from '@zero/framework/react';
+	import type {
+	  AppProviderProps,
+	  AuthState,
+	  ToasterProps,
+	} from '@zero/framework/react';
 
 	const row: Row = {};
 	const toasterProps: ToasterProps = {};
+	const appProviderPostLoginPath = (props: AppProviderProps): string | undefined => props.postLoginPath;
+	const authRestorationState = (state: AuthState): boolean => state.isRestoring;
 	type MasterDetailProps = ComponentProps<typeof MasterDetailView>;
 	const masterDetailLazySource: MasterDetailProps['source'] = {
 	  type: 'lazy',
@@ -270,6 +286,7 @@ import { createIdentityId } from '@zero/framework/sync/identity';
   AnimatedListCard,
   AnimatedListSubpath,
   AppProvider,
+  appProviderPostLoginPath,
   AppShell,
   AppShellSubpath,
   BentoGrid,
@@ -302,10 +319,13 @@ import { createIdentityId } from '@zero/framework/sync/identity';
   KanbanBoard,
   KanbanBoardSubpath,
   LoginForm,
+	authRestorationState,
 	  MasterDetailView,
 	  masterDetailLazySource,
 	  MFAEnrollmentForm,
   ModalManager,
+  normalizeAbsoluteLocalPath,
+  normalizeConfiguredLocalPath,
   QRCode,
   QRCodeSubpath,
   RadialMenu,

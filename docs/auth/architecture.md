@@ -462,16 +462,37 @@ The implemented client recovery path is refresh-token based:
 1. Access tokens are short-lived and stored only in memory.
 2. Refresh tokens are opaque, stored hashed in `_refresh_tokens`, persisted by the browser SDK, and rotated on every refresh.
 3. A signed HttpOnly page JWT is bound to the same refresh row and authenticates direct safe page requests during SSR.
-4. Browser startup exchanges the stored refresh token for a fresh access token, then loads `/auth/me`.
+4. Browser startup exchanges the stored refresh token for a fresh access token,
+   then loads `/auth/me`. `useAuth().isRestoring` distinguishes only this
+   persisted-session recovery from other auth loading states.
 5. Authenticated HTTP calls that receive 401 call `/auth/refresh` and retry once.
 6. The sync WebSocket reads the current access token every time it opens or reconnects, so login/restore/refresh cannot leave sync using a stale token.
 7. Logout, rejected refresh, token replay, or an unrefreshable 401 clears auth state and resets local synced table/state data.
 
+Browsers with Web Locks serialize one-time refresh-token rotation per Zero
+server across tabs and workers. A waiter rereads the current token from
+browser storage after acquiring the lock, so it does not submit the token a
+different tab just rotated. Without Web Locks, Zero's fallback coordinates
+only callers in the same JavaScript realm.
+
 `AppProvider` provides the default UI safety net. When auth is enabled and the
 client becomes unauthenticated on a protected route, it removes protected route
-content and redirects to `loginPath` with a `redirect` query parameter. The
-server router uses the same route-auth mode, layout/page `config.auth`,
-`publicPaths`, and `loginPath` settings during SSR/protected route handling.
+content and redirects to `loginPath` with one validated `redirect` query value.
+The server router uses the same route-auth mode, layout/page `config.auth`,
+`publicPaths`, `loginPath`, and `postLoginPath` settings during protected page
+handling. A direct server redirect preserves the path and query; a client
+redirect can also preserve the fragment. Once authenticated on the login route,
+one safe return path wins, then `postLoginPath` (default `/`) is the fallback.
+The guard uses replacement navigation and withholds the login subtree while
+`isRestoring` is true.
+
+Return paths must be bounded root-relative local URLs. Zero rejects external,
+scheme-relative, malformed, duplicate, recursive, backslash/control-character,
+and canonicalization-unsafe values. Trailing slashes are equivalent when
+comparing a target with `loginPath`. An explicit post-login target resolving to
+the login route is a configuration error; the legacy combination of
+`loginPath: '/'` and an omitted, implicitly `/` post-login target remains a
+no-op to avoid a redirect loop.
 
 Push-based inactivity messages over a personal `auth:{userId}` WebSocket topic
 belong to the deferred user-activity audit system. They are not part of the

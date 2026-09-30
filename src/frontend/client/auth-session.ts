@@ -8,6 +8,7 @@
 
 import { createAuthStore, sendAuthStoreEvent } from './auth-store';
 import type { AuthStore, AuthStoreContext } from './auth-store';
+import { withAuthRefreshLock } from './auth-refresh-coordinator';
 import { isAuthSessionResult } from './auth-types';
 import type { AuthCompletionResult, AuthUser } from './auth-types';
 
@@ -32,6 +33,10 @@ export class AuthSessionController {
 
   get isLoading(): boolean {
     return this.context.isLoading;
+  }
+
+  get isRestoring(): boolean {
+    return this.context.isRestoring;
   }
 
   get error(): string | null {
@@ -171,7 +176,7 @@ export class AuthSessionController {
     const stored = localStorage.getItem(REFRESH_TOKEN_KEY);
     if (!stored) return;
 
-    this.send('auth.loading');
+    this.send('auth.restoring');
     this.send('auth.refresh', { accessToken: '', refreshToken: stored });
     this.restoreSession().catch(() => this.expireSession());
   }
@@ -202,26 +207,41 @@ export class AuthSessionController {
   }
 
   private async performRefresh(): Promise<boolean> {
-    const { refreshToken } = this.context;
-    if (!refreshToken) return false;
-
-    try {
-      const response = await fetch(`${this.baseUrl}/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken }),
-      });
-      if (!response.ok) {
-        this.expireSession();
-        return false;
+    return withAuthRefreshLock(this.baseUrl, async () => {
+      // Another tab may have rotated the one-time token while this tab waited
+      // for the lock. The persisted value is authoritative at lock entry.
+      const refreshToken = this.currentRefreshToken();
+      if (!refreshToken) return false;
+      if (refreshToken !== this.context.refreshToken) {
+        this.send('auth.refresh', {
+          accessToken: this.context.accessToken ?? '',
+          refreshToken,
+        });
       }
 
-      const data = await response.json();
-      this.updateTokens(data.accessToken, data.refreshToken);
-      return true;
-    } catch {
-      return false;
-    }
+      try {
+        const response = await fetch(`${this.baseUrl}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken }),
+        });
+        if (!response.ok) {
+          this.expireSession();
+          return false;
+        }
+
+        const data = await response.json();
+        this.updateTokens(data.accessToken, data.refreshToken);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  private currentRefreshToken(): string | null {
+    if (typeof localStorage === 'undefined') return this.context.refreshToken;
+    return localStorage.getItem(REFRESH_TOKEN_KEY);
   }
 
   private persistRefreshToken(token: string): void {

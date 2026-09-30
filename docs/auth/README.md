@@ -208,7 +208,9 @@ mutations, server plugins, or WebSocket sync; those remain Bearer-only.
 
 The SDK handles the normal lifecycle:
 
-1. On startup, it exchanges the stored refresh token for a fresh access token.
+1. On startup, it exchanges the stored refresh token for a fresh access token,
+   then loads `/auth/me`. `useAuth().isRestoring` is true only during this
+   persisted-session recovery; `isLoading` also remains true.
 2. Authenticated HTTP calls retry once after a 401 by refreshing the access token.
 3. The sync WebSocket reads the current access token whenever it opens or reconnects.
 4. Login, session-returning registration/email verification, MFA completion,
@@ -220,11 +222,25 @@ The SDK handles the normal lifecycle:
 7. Logout or an unrefreshable 401 clears client auth state and resets local
    synced table/state data.
 
+Because refresh tokens rotate once, browsers with Web Locks serialize refreshes
+per Zero server across tabs and workers. A waiting tab rereads the current
+persisted token after acquiring the lock instead of submitting the token another
+tab just replaced. In runtimes without Web Locks, the fallback serializes
+concurrent refreshes only within the same JavaScript realm.
+
 `AppProvider` also guards protected client routes when auth is enabled. If a
-session cannot be restored or a refresh token is rejected, protected routes are
-redirected to the configured login path with a `redirect` query string.
-Configure public paths and the login route in `createApp()` or override them on
-`<AppProvider publicPaths={...} loginPath="/login" />`.
+session cannot be restored or a refresh token is rejected, it withholds the
+protected subtree and sends the browser to the configured `loginPath` with one
+validated `redirect` query value. On a successful login or any authenticated
+visit to the login route, that safe return path wins; otherwise Zero uses
+`postLoginPath`, which defaults to `/`.
+
+Configure these paths in `createApp()` or override them on
+`<AppProvider publicPaths={...} loginPath="/login"
+postLoginPath="/dashboard" />`. Packaged forms still invoke their existing
+`onSuccess` callbacks, so callbacks used for analytics or other side effects
+remain compatible. Under `AppProvider`, do not add a second callback solely to
+duplicate the normal login navigation.
 
 ## Route Auth Modes
 
@@ -238,6 +254,7 @@ createApp({
   routeAuth: 'protected-by-default',
   publicPaths: ['/login', '/register', '/forgot-password', '/reset-password', '/setup-password', '/verify-email'],
   loginPath: '/login',
+  postLoginPath: '/dashboard',
 });
 ```
 
@@ -251,6 +268,7 @@ createApp({
   auth: true,
   routeAuth: 'explicit',
   loginPath: '/login',
+  postLoginPath: '/dashboard',
 });
 ```
 
@@ -271,7 +289,17 @@ Layout/page `config.auth` is server-enforced before rendering. The browser
 hydration runtime also tracks the matched route auth requirement. If the user
 logs out, a refresh token is rejected, or auth becomes unauthenticated while on
 a protected route, `AppProvider` removes the protected subtree from the screen
-and redirects to `loginPath?redirect=<current-url>`.
+and redirects with one URL-encoded local return path. Client navigation can
+retain pathname, query, and fragment; a direct server response retains pathname
+and query because fragments never reach the server.
+
+The `redirect` parameter must occur exactly once and resolve to a bounded,
+root-relative local URL. External, scheme-relative, malformed, duplicate,
+recursive, backslash/control-character, and canonicalization-unsafe values are
+ignored. `/login` and `/login/` are equivalent for recursion checks. An explicit
+`postLoginPath` resolving to the login route is rejected. For compatibility,
+`loginPath: '/'` with the implicit default `postLoginPath: '/'` remains a no-op
+for authenticated root visits instead of redirecting in a loop.
 
 ## Stack
 

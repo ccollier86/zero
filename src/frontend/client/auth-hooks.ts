@@ -68,6 +68,8 @@ export interface AuthState {
   user: AuthUser | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  /** True only while a persisted browser session is being restored. */
+  isRestoring: boolean;
   error: string | null;
 }
 
@@ -111,6 +113,7 @@ const SSR_AUTH_SNAPSHOT = {
   accessToken: null,
   refreshToken: null,
   isLoading: false as boolean,
+  isRestoring: false as boolean,
   error: null,
 };
 
@@ -119,6 +122,7 @@ const SSR_AUTH_DEFAULTS: AuthState & AuthActions = {
   user: null,
   isAuthenticated: false,
   isLoading: false,
+  isRestoring: false,
   error: null,
   login: SSR_AUTH_NOOP as any,
   register: SSR_AUTH_NOOP as any,
@@ -355,6 +359,7 @@ export function useAuth(): AuthState & AuthActions {
     user: state.user,
     isAuthenticated: state.user !== null,
     isLoading: state.isLoading,
+    isRestoring: state.isRestoring,
     error: state.error,
     login,
     register,

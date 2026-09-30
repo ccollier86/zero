@@ -98,6 +98,7 @@ export interface PlatformConfig {
   publicPaths?: string[];
   routeAuth?: RouteAuthMode;
   loginPath?: string;
+  postLoginPath?: string;
 }
 
 export interface RenderOptions {

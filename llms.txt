@@ -543,6 +543,7 @@ defineZeroConfig({
   auth: true,
   routeAuth: 'explicit',
   loginPath: '/login',
+  postLoginPath: '/dashboard',
 });
 ```
 
@@ -570,8 +571,32 @@ defineZeroConfig({
 });
 ```
 
-If a session expires or refresh fails on a protected route, the browser should
-clear protected UI and redirect to `loginPath` with a `redirect` query.
+If a session expires or refresh fails on a protected route, Zero clears
+protected UI and redirects to `loginPath` with exactly one validated,
+URL-encoded `redirect` return path. A direct server redirect preserves pathname
+and query. Client navigation can also preserve the fragment, which is never
+sent to the server. Once the configured login route is authenticated, one safe
+return path wins; otherwise `postLoginPath` (default `/`) is used with
+replacement navigation.
+
+Return paths must be bounded root-relative local URLs. External,
+scheme-relative, malformed, duplicate, recursive, backslash/control-character,
+and canonicalization-unsafe values are ignored. `/login` and `/login/` are the
+same route for loop prevention. An explicit `postLoginPath` resolving to
+`loginPath` is rejected. For compatibility, `loginPath: '/'` with the implicit
+default `/` post-login path remains a no-op for authenticated root visits.
+
+`postLoginPath` is a top-level `createApp()`/`defineZeroConfig()` option and an
+`AppProvider` override, not an `auth` or raw `createClient()` field. Packaged and
+custom auth forms keep their success callbacks; inside `AppProvider`, use them
+for side effects instead of duplicating normal login navigation.
+
+`useAuth().isRestoring` is true only while a persisted browser session rotates
+its refresh token and loads `/auth/me`; `isLoading` is also true. `AppProvider`
+withholds the login subtree during that interval. Browsers with Web Locks
+serialize rotation per Zero server across tabs and workers and reread the
+persisted token after acquiring the lock. Without Web Locks, the fallback
+coordinates only callers in the same JavaScript realm.
 
 ## Sitemap
 

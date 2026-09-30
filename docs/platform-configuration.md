@@ -230,6 +230,51 @@ createApp({
 });
 ```
 
+### Web auth navigation
+
+Web login navigation is configured at the top level of `AppConfig`, beside the
+page-router settings:
+
+```ts
+export default defineZeroConfig({
+  auth: true,
+  routeAuth: 'protected-by-default',
+  publicPaths: ['/login', '/register', '/forgot-password'],
+  loginPath: '/login',
+  postLoginPath: '/dashboard',
+});
+```
+
+| Path | Default and validation |
+|---|---|
+| `loginPath` | `/login`; safe local login route used by server and client page guards |
+| `registrationPath` | `/register`; safe local registration route, including native browser authorization |
+| `postLoginPath` | `/`; safe local fallback after login or an authenticated visit to `loginPath` |
+
+An anonymous protected request is sent to `loginPath` with exactly one encoded,
+validated `redirect` return path. A direct server redirect retains pathname and
+query. Client navigation can also retain the fragment, which is never sent to
+the server. Once the login route is authenticated, a safe return path takes
+precedence over `postLoginPath`; navigation replaces the login history entry.
+
+Local auth paths are bounded and reject external or scheme-relative URLs,
+backslashes and control characters, malformed encodings, and paths whose
+canonical form could become scheme-relative. Duplicate or recursive `redirect`
+values are ignored, and trailing slashes are equivalent when comparing the
+return target or fallback with `loginPath`. An explicit `postLoginPath`
+resolving to the login route is rejected. The legacy combination of
+`loginPath: '/'` and an omitted, implicitly `/` post-login path remains a no-op
+for authenticated root visits.
+
+`AppProvider` receives the resolved paths through the server-injected platform
+config and exposes matching `loginPath` and `postLoginPath` overrides. These are
+page-navigation options, not fields under `auth` and not raw `createClient()`
+options. `useAuth().isRestoring` is true only while a persisted web session is
+being refreshed and `/auth/me` is loading. In browsers with Web Locks, refresh
+rotation is serialized per Zero server across tabs and workers; each waiter
+rereads the persisted token after acquiring the lock. Without Web Locks, the
+fallback coordinates only callers in the same JavaScript realm.
+
 ### Native installed-app authentication
 
 Native desktop/mobile clients and Chrome extensions are registered under
@@ -344,7 +389,7 @@ Native access tokens use the normal `auth.accessTokenTTL` (15 minutes by
 default), the exact app origin as audience, and the same managed ES256 signing
 key as the rest of Zero auth.
 
-#### Redirect and lifecycle configuration
+#### Native redirect and lifecycle configuration
 
 Supported redirect classes are exact claimed HTTPS URLs, reverse-domain
 private-use schemes using the single-slash form, and IP-literal HTTP loopback.

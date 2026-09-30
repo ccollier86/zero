@@ -7,6 +7,12 @@ import { renderRoute } from '../router/renderer';
 import type { PlatformConfig } from '../router/renderer';
 import type { RouteNode, ApiHandler, LoaderContext, RouteConfig } from '../router/types';
 import { isPublicPath, type RouteAuthMode } from '../router/auth-policy';
+import {
+  authenticatedLoginDestination,
+  comparableAuthPathname,
+  configuredAuthPathname,
+  loginRedirectLocation,
+} from '../router/auth-navigation';
 import { OBS_CODES } from '../../observability/codes';
 import { emitPlatformCode } from '../../observability/sink';
 import { generateSitemapXml } from './sitemap';
@@ -52,6 +58,8 @@ export interface RouterPluginOptions {
     publicPaths?: string[];
     /** Redirect target for unauthenticated users. Default: '/login' */
     loginPath?: string;
+    /** Fallback destination for authenticated visits to login. Default: '/' */
+    postLoginPath?: string;
     /** Resolve ambient identity for safe page requests only. Never used by APIs. */
     resolvePageAuth?: (
       request: Request
@@ -194,6 +202,31 @@ export function createRouterPlugin(options: RouterPluginOptions) {
         ? null
         : options.authGuard?.clearRejectedPageSession?.(request) ?? null;
 
+      // A valid ambient session should never strand a user on the login page.
+      // Honor one safe return target first, then the configured app home.
+      if (
+        loaderCtx.auth
+        && options.authGuard
+        && comparableAuthPathname(pathname) === comparableAuthPathname(
+          configuredAuthPathname(
+            options.authGuard.loginPath ?? '/login',
+            'loginPath',
+          ),
+        )
+      ) {
+        const destination = authenticatedLoginDestination({
+          loginPath: options.authGuard.loginPath ?? '/login',
+          postLoginPath: options.authGuard.postLoginPath ?? '/',
+          search: url.search,
+        });
+        if (destination) {
+          return withPrivatePageHeaders(new Response(null, {
+            status: 302,
+            headers: { Location: destination },
+          }));
+        }
+      }
+
       // Global page guard. Keeping this below API dispatch preserves strict
       // Bearer-only authentication for route.ts handlers.
       if (options.authGuard) {
@@ -216,7 +249,12 @@ export function createRouterPlugin(options: RouterPluginOptions) {
           return withPrivatePageHeaders(
             new Response(null, {
               status: 302,
-              headers: { Location: loginPath },
+              headers: {
+                Location: loginRedirectLocation(
+                  loginPath,
+                  `${pathname}${url.search}`,
+                ),
+              },
             }),
             rejectedPageSessionHeader
           );
@@ -375,7 +413,11 @@ async function runRouteMiddleware(
   if (config.auth) {
     if (!ctx.auth) {
       // Not authenticated — redirect to login
-      return ctx.redirect(loginPath);
+      const url = new URL(ctx.request.url);
+      return ctx.redirect(loginRedirectLocation(
+        loginPath,
+        `${url.pathname}${url.search}`,
+      ));
     }
     if (config.auth === 'admin' && ctx.auth.role !== 'admin') {
       return new Response('Forbidden', { status: 403 });

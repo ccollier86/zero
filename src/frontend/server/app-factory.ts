@@ -453,6 +453,7 @@ async function mountPlatformApp({
         publicPaths: config.publicPaths,
         routeAuth: config.routeAuth,
         loginPath: config.loginPath,
+        postLoginPath: config.postLoginPath,
       },
       // When auth is enabled, protect all page routes by default
       ...(config.auth !== false
@@ -461,6 +462,7 @@ async function mountPlatformApp({
               routeAuth: config.routeAuth,
               publicPaths: config.publicPaths,
               loginPath: config.loginPath,
+              postLoginPath: config.postLoginPath,
               resolvePageAuth: async (request: Request) => {
                 const auth = await resolvePageSessionAuth(
                   request,

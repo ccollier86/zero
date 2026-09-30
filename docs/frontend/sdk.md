@@ -695,6 +695,12 @@ interface AuthClient {
   /** Whether a user is currently authenticated */
   readonly isAuthenticated: boolean;
 
+  /** Whether any auth operation is currently loading */
+  readonly isLoading: boolean;
+
+  /** Whether a persisted browser session is currently being restored */
+  readonly isRestoring: boolean;
+
   /** Whether the current user has admin role */
   readonly isAdmin: boolean;
 
@@ -878,7 +884,8 @@ await client.refresh();
 
 **What happens:**
 
-1. Reads refresh token from `localStorage`
+1. Acquires the per-server refresh lock and rereads the current refresh token
+   from `localStorage`
 2. `POST /auth/refresh` with the refresh token
 3. Server verifies: hash matches, not expired, not revoked
 4. Server **rotates** — revokes old refresh token, issues new access + refresh pair
@@ -890,7 +897,12 @@ await client.refresh();
 HTTP calls and automatically refreshes before retrying once. The component
 never sees a recoverable expired-access-token 401.
 
-**Rotation:** Every refresh call produces a new refresh token and revokes the old one. If an old refresh token is reused (replay attack), the server detects the revocation and revokes the entire token family — forcing re-login on all devices.
+**Rotation:** Every refresh call produces a new refresh token and revokes the old
+one. Browsers with Web Locks serialize this operation per Zero server across
+tabs and workers. A waiter rereads the persisted token after it acquires the
+lock, so it does not reuse the token another tab replaced. In runtimes without
+Web Locks, the fallback serializes only callers in the same JavaScript realm.
+If an old token is still replayed, the server revokes the entire token family.
 
 **Errors:**
 
@@ -910,17 +922,28 @@ initial server-rendered document request, before JavaScript can run.
 The SDK keeps the user logged in across normal access-token expiry:
 
 1. Startup with a stored refresh token calls `/auth/refresh`, then `/auth/me`.
+   `useAuth().isRestoring` is true only for this recovery interval, while
+   `isLoading` is also true.
 2. Direct and refreshed `GET`/`HEAD` pages can use the server-readable page cookie during SSR.
 3. Authenticated HTTP calls that receive 401 refresh and retry once.
 4. Sync opens and reconnects with the latest access token instead of a stale token captured at startup.
 5. Login, registration, and refresh reconnect sync when the auth token changes.
 6. Logout, rejected refresh, revoked refresh token, or unknown 401 clears auth state and resets local synced table/state data.
 
-When auth is enabled, `AppProvider` watches auth state on the client. If the
-user becomes unauthenticated on a protected route, it removes the protected
-subtree from the screen, redirects to `loginPath`, and appends
-`?redirect=<current-url>`. Server rendering uses the same route auth policy for
-direct protected route responses.
+When auth is enabled, `AppProvider` watches auth state on the client. During
+persisted-session restoration it withholds the login subtree, preventing a
+login-form flash. If the user becomes unauthenticated on a protected route, it
+removes the protected subtree and redirects to `loginPath` with exactly one
+validated, URL-encoded `redirect` return path. The client can retain pathname,
+query, and fragment. A direct server response retains pathname and query only,
+because fragments are never sent to the server.
+
+After login, or whenever an authenticated user visits the login route, one safe
+return path wins; otherwise Zero uses `postLoginPath`, which defaults to `/`.
+External, scheme-relative, malformed, duplicate, recursive,
+backslash/control-character, and canonicalization-unsafe return values are
+ignored. Login paths with equivalent trailing slashes are the same route.
+Navigation uses replacement so the login page is not added to browser history.
 
 For protected-first apps, configure public paths in `createApp()`:
 
@@ -930,6 +953,7 @@ createApp({
   routeAuth: 'protected-by-default',
   publicPaths: ['/login', '/register', '/forgot-password', '/reset-password', '/setup-password', '/verify-email'],
   loginPath: '/login',
+  postLoginPath: '/dashboard',
 });
 ```
 
@@ -940,6 +964,7 @@ createApp({
   auth: true,
   routeAuth: 'explicit',
   loginPath: '/login',
+  postLoginPath: '/dashboard',
 });
 ```
 
@@ -954,10 +979,40 @@ Or override them in the root provider:
   auth
   publicPaths={['/login', '/forgot-password']}
   loginPath="/login"
+  postLoginPath="/dashboard"
 >
   {children}
 </AppProvider>
 ```
+
+`postLoginPath` is a top-level app option and a provider override, not an auth
+plugin or raw `createClient()` option. An explicit value may not resolve to the
+login route; trailing slashes are equivalent for that comparison. For backward
+compatibility, `loginPath: '/'` with an omitted, implicitly `/` post-login path
+leaves an authenticated root visit in place instead of looping.
+
+Packaged and custom forms keep their existing success callbacks. When the form
+runs on the configured login route inside `AppProvider`, use `onSuccess` for
+side effects rather than issuing a second navigation; the provider applies the
+validated return path or fallback when auth state changes.
+
+Custom auth pages outside the provider-owned flow can reuse the same local-path
+validation rather than reimplementing redirect checks:
+
+```ts
+import {
+  normalizeAbsoluteLocalPath,
+  normalizeConfiguredLocalPath,
+} from '@zero/framework/react';
+
+const returnPath = normalizeAbsoluteLocalPath(untrustedRedirect) ?? '/';
+const configuredPath = normalizeConfiguredLocalPath('dashboard') ?? '/';
+```
+
+Use `normalizeAbsoluteLocalPath()` for untrusted return values because it
+requires an already root-relative URL. `normalizeConfiguredLocalPath()` is for
+trusted app settings and may add a missing leading slash. Both return `null`
+for unsafe input.
 
 ### User Record
 
@@ -1223,9 +1278,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 `AppProvider` creates the client internally, auto-extracts what it needs from
 the `tables` object, connects the WebSocket, and provides all contexts (sync,
 auth, router). `__PLATFORM_CONFIG__` no longer carries `tables`; it carries
-runtime server settings such as `auth`, `stateSync`, and resolved
-`tableSyncModes` so omitted provider props and auto-lazy decisions match the
-backend.
+runtime server settings such as `auth`, `stateSync`, `loginPath`,
+`postLoginPath`, and resolved `tableSyncModes` so omitted provider props and
+auto-lazy decisions match the backend.
 
 ### Hook organization
 
@@ -1515,22 +1570,19 @@ Full auth state and actions. Reads from AuthContext, mutations call the auth API
 
 ```tsx
 function LoginPage() {
-  const { login, isAuthenticated, user } = useAuth();
-  const [error, setError] = useState<string | null>(null);
+  const { login, isLoading, isRestoring, error: authError } = useAuth();
+  const [localError, setLocalError] = useState<string | null>(null);
 
-  if (isAuthenticated) {
-    redirect('/dashboard');
-    return null;
-  }
+  if (isRestoring) return null;
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setError(null);
+    setLocalError(null);
     const form = new FormData(e.target as HTMLFormElement);
     try {
       await login(form.get('username') as string, form.get('password') as string);
     } catch (err) {
-      setError(err.message);
+      setLocalError(err instanceof Error ? err.message : 'Login failed');
     }
   };
 
@@ -1538,8 +1590,10 @@ function LoginPage() {
     <form onSubmit={handleSubmit}>
       <input name="username" required />
       <input name="password" type="password" required />
-      {error && <p className="error">{error}</p>}
-      <button type="submit">Login</button>
+      {(localError ?? authError) && (
+        <p className="error">{localError ?? authError}</p>
+      )}
+      <button type="submit" disabled={isLoading}>Login</button>
     </form>
   );
 }
@@ -1559,6 +1613,8 @@ interface AuthHookResult {
 
   /** Current auth loading/error state. */
   isLoading: boolean;
+  /** True only while a persisted browser session is being restored. */
+  isRestoring: boolean;
   error: string | null;
 
   /** Register a new user. Returns a session, email-verification user state, or MFA continuation. */
@@ -1605,8 +1661,9 @@ interface AuthHookResult {
 **Session expiry:** When the refresh token can no longer restore the session,
 the hook reflects the cleared auth state. `user` becomes `null`,
 `isAuthenticated` becomes `false`, and `AppProvider` redirects protected
-client routes to the configured login path. You can still add local guards when
-you want a component-specific fallback:
+client routes to the configured login path with the safe return destination
+described above. You can still add local guards when you want a
+component-specific fallback:
 
 ```tsx
 // app/dashboard/layout.tsx

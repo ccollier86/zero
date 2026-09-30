@@ -6,6 +6,15 @@ All notable Zero Platform changes are tracked here.
 
 ### Added
 
+- Added a safe, configurable web-auth return flow. Apps can set the top-level
+  `postLoginPath` option (also available on `AppProvider`) while one validated
+  local `redirect` deep link takes precedence after login. Server guards retain
+  the requested path and query, client guards can also retain the fragment, and
+  authenticated visits to the login route no longer strand users there.
+- Added `useAuth().isRestoring` and coordinated browser refresh-token rotation.
+  Browsers with Web Locks serialize one-time token rotation across tabs and
+  workers, and each waiter rereads the current persisted token after acquiring
+  the lock before it refreshes.
 - Added native desktop and mobile authentication through a registered public
   OpenID Connect Authorization Code + PKCE provider and the
   `@zero/framework/native` SDK. Native sessions use the existing Zero users,
@@ -48,6 +57,10 @@ All notable Zero Platform changes are tracked here.
 
 ### Fixed
 
+- Hardened local auth navigation against external, scheme-relative, malformed,
+  duplicate, recursive, backslash/control-character, and canonicalization-unsafe
+  redirect targets. Login paths with equivalent trailing slashes are treated as
+  the same route, and unsafe return targets fall back to `postLoginPath`.
 - Upgraded `DatePicker` from a button-only calendar trigger to a synchronized
   typed input and calendar control. Unambiguous U.S. numeric dates with `/` or
   `-` normalize to the existing long display, while invalid or disabled dates

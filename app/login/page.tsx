@@ -7,9 +7,7 @@
  * UI only; authentication transport and route protection stay in the platform.
  */
 
-import { AuthLayout, LoginForm, useRouter } from '@zero/framework/react';
-
-import { getSafeAuthRedirect } from '../auth/redirect';
+import { AuthLayout, LoginForm } from '@zero/framework/react';
 
 export const meta = {
   title: 'Sign in | LaunchBoard',
@@ -18,8 +16,6 @@ export const meta = {
 
 /** Render the public sign-in page. */
 export default function LoginPage() {
-  const router = useRouter();
-
   return (
     <AuthLayout appName="LaunchBoard">
       <LoginForm
@@ -28,7 +24,6 @@ export default function LoginPage() {
         identifierLabel="Email"
         identifierPlaceholder="you@example.com"
         registerHref="/register"
-        onSuccess={() => router.replace(getSafeAuthRedirect('/'))}
       />
     </AuthLayout>
   );

@@ -300,6 +300,7 @@ const config = defineZeroConfig({
   auth: true,
   routeAuth: 'explicit',
   loginPath: '/login',
+  postLoginPath: '/dashboard',
 });
 ```
 
@@ -344,10 +345,31 @@ defineZeroConfig({
 });
 ```
 
-In both modes, Zero watches auth state in the browser. If a session expires,
-logout runs, or refresh fails while the user is on a protected route, the
-protected subtree is removed from the screen and the browser redirects to
-`loginPath` with a `redirect` query parameter.
+In both modes, the server and browser route guards send an anonymous protected
+request to `loginPath` with one URL-encoded `redirect` return path. A direct
+server redirect can retain the requested path and query; client navigation can
+also retain the fragment because fragments are never sent to the server. After
+login, a safe return path wins. Otherwise Zero uses the top-level
+`postLoginPath`, which defaults to `/` and is also available as an
+`AppProvider` override.
+
+Return paths must be bounded, root-relative local URLs. Zero rejects external,
+scheme-relative, malformed, duplicate, recursive, backslash/control-character,
+and canonicalization-unsafe values, then falls back to `postLoginPath`.
+Authenticated visits to the login route follow the same rule, using replacement
+navigation so login does not add another history entry. `/login` and `/login/`
+are the same route for these checks. An explicit `postLoginPath` may not resolve
+to `loginPath`; for compatibility, an app that already uses `loginPath: '/'`
+and leaves the default post-login path implicit remains a no-op instead of
+looping.
+
+On browser startup, `useAuth().isRestoring` is true only while a persisted
+session is rotating its refresh token and loading `/auth/me`. `AppProvider`
+withholds the login subtree during that interval, avoiding a login-page flash.
+In browsers with Web Locks, refresh rotation is serialized per Zero server
+across tabs and workers, and a waiter rereads the latest persisted token after
+it acquires the lock. The fallback for runtimes without Web Locks serializes
+only callers in the same JavaScript realm.
 
 Use the generated `server/` folders for app-owned backend code:
 

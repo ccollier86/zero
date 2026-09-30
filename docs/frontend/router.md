@@ -556,7 +556,37 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 The auth config runs on the server before rendering the layout or page. During
 client navigation, Zero carries the matched route auth config through
 hydration. If the user logs out or refresh fails while on a protected route,
-`AppProvider` removes the protected subtree and redirects to `loginPath`.
+`AppProvider` removes the protected subtree and redirects to `loginPath` with
+one URL-encoded, validated `redirect` return path. Client navigation can retain
+the pathname, query, and fragment.
+
+For a direct protected request, the server uses the same route policy and adds
+the requested pathname and query to the login redirect. It cannot retain a URL
+fragment because browsers do not send fragments in HTTP requests. After login,
+or whenever an authenticated user visits the login route, one safe return path
+takes precedence; otherwise Zero uses `postLoginPath`, which defaults to `/`.
+The redirect uses replacement navigation so login is not added to browser
+history.
+
+```ts
+defineZeroConfig({
+  auth: true,
+  loginPath: '/login',
+  postLoginPath: '/dashboard',
+});
+```
+
+The return parameter must occur exactly once and resolve to a bounded,
+root-relative local URL. External, scheme-relative, malformed, duplicate,
+recursive, backslash/control-character, and canonicalization-unsafe values are
+ignored in favor of `postLoginPath`. `/login` and `/login/` are equivalent for
+loop prevention. An explicit post-login target resolving to `loginPath` is a
+configuration error. For compatibility, `loginPath: '/'` with the default
+post-login path left implicit remains a no-op for authenticated root visits.
+
+During persisted-session recovery, `useAuth().isRestoring` is true and
+`AppProvider` withholds the login subtree. This prevents a valid session from
+briefly rendering login before refresh and `/auth/me` finish.
 
 For a direct navigation or browser refresh, the server restores page identity
 from Zero's signed HttpOnly page-session cookie before it evaluates these

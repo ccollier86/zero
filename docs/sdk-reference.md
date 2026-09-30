@@ -70,6 +70,8 @@ const config = resolveConfig({
   db: { mode: 'myapp.db' },
   tables,
   auth: true,
+  loginPath: '/login',
+  postLoginPath: '/dashboard',
 });
 ```
 
@@ -94,6 +96,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   );
 }
 ```
+
+`postLoginPath` is a top-level server option and an optional `AppProvider` prop.
+The provider normally receives its resolved value from the injected server
+configuration, so the root layout does not need to repeat it.
 
 ### 4. Build features
 
@@ -397,6 +403,13 @@ retries authenticated HTTP calls after an expired access-token 401, and
 reconnects sync with the latest access token. If refresh is rejected, it clears
 auth state plus local synced table/state data.
 
+`useAuth().isRestoring` is true only while startup recovery rotates the stored
+refresh token and loads `/auth/me`; `isLoading` is also true during that
+interval. Browsers with Web Locks serialize rotation per Zero server across
+tabs and workers, and a waiter rereads the persisted token after acquiring the
+lock. Without Web Locks, the fallback serializes only callers in the same
+JavaScript realm.
+
 ### FetchError
 
 All HTTP shortcuts throw `FetchError` on non-2xx responses:
@@ -647,7 +660,18 @@ revocation, and deployment checks.
 
 ```tsx
 function LoginPage() {
-  const { user, isAuthenticated, isLoading, error, login, logout, register } = useAuth();
+  const {
+    user,
+    isAuthenticated,
+    isLoading,
+    isRestoring,
+    error,
+    login,
+    logout,
+    register,
+  } = useAuth();
+
+  if (isRestoring) return null;
 
   if (isAuthenticated) {
     return (
@@ -666,7 +690,7 @@ function LoginPage() {
 
 | Hook | Returns | Description |
 |------|---------|-------------|
-| `useAuth()` | `AuthState & AuthActions` | Full auth state + login/logout/register/refresh |
+| `useAuth()` | `AuthState & AuthActions` | Full auth state, including persisted-session `isRestoring`, plus login/logout/register/refresh |
 | `useAuthConfig()` | `AuthConfigState` | Public registration/bootstrap config for auth UI |
 | `useCurrentUser()` | `AuthUser \| null` | Just the user object |
 | `useRequireAuth(redirectTo?)` | `AuthUser \| null` | Redirects to `/login` if not authenticated |
@@ -674,9 +698,20 @@ function LoginPage() {
 `AppProvider` also owns the default client-side protected-route behavior when
 auth is enabled. If a restored or refreshed session fails and the current path
 is protected, it removes protected route content and redirects to `loginPath`
-with a `redirect` query parameter. The defaults come from `createApp()` and can
-be overridden with `<AppProvider routeAuth="explicit" publicPaths={...}
-loginPath="/login" />`.
+with exactly one validated local `redirect` value. Client navigation can retain
+path, query, and fragment; a direct server redirect retains path and query only.
+After authentication on the login route, that deep link wins, then
+`postLoginPath` (default `/`) is used. The defaults come from `createApp()` and
+can be overridden with `<AppProvider routeAuth="explicit" publicPaths={...}
+loginPath="/login" postLoginPath="/dashboard" />`.
+
+Return paths that are external, scheme-relative, malformed, duplicate,
+recursive, backslash/control-character, or canonicalization-unsafe are ignored.
+Trailing slashes are equivalent when checking the login route. An explicit
+same-route post-login fallback is rejected; `loginPath: '/'` with the implicit
+default `/` fallback remains a compatibility no-op. Packaged/custom success
+callbacks still run, but inside `AppProvider` they need not duplicate login
+navigation.
 
 ### AuthUser shape
 
@@ -2556,7 +2591,7 @@ app.listen(3000);
 
 | Hook | Signature | Description |
 |------|-----------|-------------|
-| `useAuth` | `() => AuthState & AuthActions` | Full auth state + actions |
+| `useAuth` | `() => AuthState & AuthActions` | Full auth state, persisted-session `isRestoring`, and actions |
 | `useAuthConfig` | `() => AuthConfigState` | Public auth registration/bootstrap/user-property config |
 | `useCurrentUser` | `() => AuthUser \| null` | Current user shorthand |
 | `useRequireAuth` | `(redirectTo?) => AuthUser \| null` | Guard: redirects if not authed |

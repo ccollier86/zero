@@ -25,6 +25,13 @@ import {
   shouldRequireAuthForRoute,
   type RouteAuthMode,
 } from '../router/auth-policy';
+import {
+  authenticatedLoginDestination,
+  comparableAuthPathname,
+  configuredAuthPathname,
+  loginRedirectLocation,
+  normalizeConfiguredAuthPath,
+} from '../router/auth-navigation';
 
 // ─── AppProvider ───────────────────────────────────────────────────────────
 
@@ -43,6 +50,7 @@ interface BrowserPlatformConfig {
   publicPaths?: string[];
   routeAuth?: RouteAuthMode;
   loginPath?: string;
+  postLoginPath?: string;
 }
 
 function getBrowserPlatformConfig(): BrowserPlatformConfig {
@@ -127,6 +135,8 @@ export interface AppProviderProps {
   routeAuth?: RouteAuthMode;
   /** Login route for client-side auth redirects. Defaults to injected server config. */
   loginPath?: string;
+  /** Safe fallback after login or an authenticated visit to login. Default: '/'. */
+  postLoginPath?: string;
   /** Custom error fallback component. */
   errorFallback?: (props: { error: Error; reset: () => void }) => ReactNode;
   children?: ReactNode;
@@ -172,6 +182,7 @@ export function AppProvider({
   publicPaths,
   routeAuth,
   loginPath,
+  postLoginPath,
   errorFallback,
   children,
 }: AppProviderProps) {
@@ -194,7 +205,32 @@ export function AppProvider({
   const stateSyncEnabled = stateSync ?? platformConfig.stateSync ?? false;
   const resolvedPublicPaths = publicPaths ?? platformConfig.publicPaths ?? ['/login', '/register', '/forgot-password', '/reset-password', '/setup-password', '/verify-email'];
   const resolvedRouteAuth = routeAuth ?? platformConfig.routeAuth ?? 'protected-by-default';
-  const resolvedLoginPath = loginPath ?? platformConfig.loginPath ?? '/login';
+  const resolvedLoginPath = normalizeConfiguredAuthPath(
+    loginPath ?? platformConfig.loginPath ?? '/login',
+    'loginPath',
+  );
+  const resolvedPostLoginPath = normalizeConfiguredAuthPath(
+    postLoginPath ?? platformConfig.postLoginPath ?? '/',
+    'postLoginPath',
+  );
+  const resolvedLoginPathname = comparableAuthPathname(configuredAuthPathname(
+    resolvedLoginPath,
+    'loginPath',
+  ));
+  const resolvedPostLoginPathname = comparableAuthPathname(configuredAuthPathname(
+    resolvedPostLoginPath,
+    'postLoginPath',
+  ));
+  const legacyRootNoop = postLoginPath === undefined
+    && resolvedLoginPathname === '/'
+    && resolvedPostLoginPathname === '/';
+  if (
+    (loginPath !== undefined || postLoginPath !== undefined)
+    && resolvedPostLoginPathname === resolvedLoginPathname
+    && !legacyRootNoop
+  ) {
+    throw new Error('[app] postLoginPath must not resolve to loginPath.');
+  }
   assertAppProviderConfig(authEnabled, stateSyncEnabled, auth, stateSync, platformConfig);
   const resolvedTables = resolveProviderTables(tables, platformConfig.tableSyncModes);
 
@@ -224,6 +260,7 @@ export function AppProvider({
         AuthRouteGuard,
         {
           loginPath: resolvedLoginPath,
+          postLoginPath: resolvedPostLoginPath,
           publicPaths: resolvedPublicPaths,
           routeAuth: resolvedRouteAuth,
           children,
@@ -256,16 +293,18 @@ export function AppProvider({
 
 function AuthRouteGuard({
   loginPath,
+  postLoginPath,
   publicPaths,
   routeAuth,
   children,
 }: {
   loginPath: string;
+  postLoginPath: string;
   publicPaths: string[];
   routeAuth: RouteAuthMode;
   children?: ReactNode;
 }) {
-  const { isAuthenticated, isLoading, user } = useAuth();
+  const { isAuthenticated, isLoading, isRestoring, user } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
   const routeRequirement = useRouteAuthRequirement();
@@ -276,17 +315,52 @@ function AuthRouteGuard({
     routeRequirement,
   });
   const routeRequiresAdmin = routeRequirement === 'admin';
+  const isLoginRoute = comparableAuthPathname(pathname) === comparableAuthPathname(
+    configuredAuthPathname(loginPath, 'loginPath'),
+  );
+  const authenticatedDestination = !isLoading && isAuthenticated && isLoginRoute
+    ? authenticatedLoginDestination({
+        loginPath,
+        postLoginPath,
+        search: window.location.search,
+      })
+    : null;
 
   useEffect(() => {
-    if (isLoading || !routeRequiresAuth || isAuthenticated) return;
+    if (isLoading) return;
+
+    if (authenticatedDestination) {
+      router.replace(authenticatedDestination);
+      return;
+    }
+
+    if (!routeRequiresAuth || isAuthenticated) return;
 
     const from = `${pathname}${window.location.search}${window.location.hash}`;
-    const target = withRedirectParam(loginPath, from);
+    const target = loginRedirectLocation(loginPath, from);
     emitFrontendCode(FRONTEND_OBS_CODES.FRONTEND_AUTH_SESSION_REDIRECT, {
       metadata: { from: pathname, to: loginPath },
     });
     router.replace(target);
-  }, [isAuthenticated, isLoading, loginPath, pathname, routeRequiresAuth, router]);
+  }, [
+    isAuthenticated,
+    authenticatedDestination,
+    isLoading,
+    isLoginRoute,
+    loginPath,
+    pathname,
+    postLoginPath,
+    routeRequiresAuth,
+    router,
+  ]);
+
+  if (isRestoring && isLoginRoute) {
+    return null;
+  }
+
+  if (authenticatedDestination) {
+    return null;
+  }
 
   if (!isLoading && routeRequiresAuth && !isAuthenticated) {
     return null;
@@ -297,12 +371,4 @@ function AuthRouteGuard({
   }
 
   return createElement(Fragment, null, children);
-}
-
-function withRedirectParam(loginPath: string, from: string): string {
-  const [path, query = ''] = loginPath.split('?');
-  const params = new URLSearchParams(query);
-  if (from && from !== path) params.set('redirect', from);
-  const nextQuery = params.toString();
-  return nextQuery ? `${path}?${nextQuery}` : path;
 }

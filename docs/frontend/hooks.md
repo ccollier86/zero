@@ -205,6 +205,32 @@ aliases. Use `useDataPage` for paged `/api/data` screens, `useRecord` /
 workflow UI, `useResourceList` for generated resource CRUD screens, and
 `useNotifications` for notification lists and counts.
 
+### Auth Restoration
+
+`useAuth()` exposes both the general `isLoading` flag and the narrower
+`isRestoring` flag:
+
+```tsx
+const { user, isLoading, isRestoring, login, logout } = useAuth();
+```
+
+`isRestoring` is true only while Zero recovers a persisted browser session by
+rotating its refresh token and loading `/auth/me`. It remains false for explicit
+login and other ordinary auth loading states. `AppProvider` uses it to withhold
+the configured login route until restoration settles, so a valid stored session
+does not flash the login form or lose its return destination.
+
+Browsers with Web Locks serialize one-time refresh-token rotation per Zero
+server across tabs and workers. A waiting tab rereads the latest persisted token
+after acquiring the lock. The fallback in environments without Web Locks
+coordinates only callers in the same JavaScript realm.
+
+When an anonymous protected route redirects to login, Zero carries one safe
+root-relative `redirect` value. Once authenticated on the login route, that
+deep link wins; otherwise `postLoginPath` (default `/`) is used. Packaged and
+custom form success callbacks still run, so use them for side effects rather
+than duplicating `AppProvider` navigation.
+
 ### Data Screens
 
 `useDataPage(table, options?)` manages `/api/data` pagination, filters, sorting,

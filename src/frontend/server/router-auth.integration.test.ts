@@ -115,6 +115,7 @@ describe('router page-session authentication boundary', () => {
             routeAuth: 'protected-by-default',
             publicPaths: ['/login'],
             loginPath: '/login',
+            postLoginPath: '/dashboard',
             resolvePageAuth: resolveTestPageAuth,
             clearRejectedPageSession: rejectedPageSessionCookieHeader,
           },
@@ -138,7 +139,9 @@ describe('router page-session authentication boundary', () => {
 
     const anonymous = await request('/protected');
     expect(anonymous.status).toBe(302);
-    expect(anonymous.headers.get('location')).toBe('/login');
+    expect(anonymous.headers.get('location')).toBe(
+      '/login?redirect=%2Fprotected',
+    );
   });
 
   test('does not fall back to the page cookie when an explicit Authorization header is invalid', async () => {
@@ -149,7 +152,9 @@ describe('router page-session authentication boundary', () => {
     });
 
     expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toBe('/login');
+    expect(response.headers.get('location')).toBe(
+      '/login?redirect=%2Fprotected',
+    );
     expect(response.headers.get('set-cookie')).toBeNull();
     expect(pageResolverAccepts).toBe(acceptedBefore);
   });
@@ -160,7 +165,9 @@ describe('router page-session authentication boundary', () => {
     });
 
     expect(response.status).toBe(302);
-    expect(response.headers.get('location')).toBe('/login');
+    expect(response.headers.get('location')).toBe(
+      '/login?redirect=%2Fprotected',
+    );
     expect(response.headers.get('set-cookie')).toContain(
       `${PAGE_SESSION_COOKIE_NAME}=`
     );
@@ -174,7 +181,9 @@ describe('router page-session authentication boundary', () => {
     });
 
     expect(cookieOnly.status).toBe(302);
-    expect(cookieOnly.headers.get('location')).toBe('/login');
+    expect(cookieOnly.headers.get('location')).toBe(
+      '/login?redirect=%2Fapi-only',
+    );
     expect(pageResolverAttempts).toBe(attemptsBefore);
 
     const bearer = await request('/api-only', {
@@ -196,6 +205,33 @@ describe('router page-session authentication boundary', () => {
     expect(response.status).toBe(200);
     expect(body).toContain('"userId":"cookie-alice"');
     expect(body).toContain('"route":"page"');
+  });
+
+  test('preserves protected queries and redirects authenticated login visits', async () => {
+    const anonymous = await request('/protected?tab=notes&page=2');
+    expect(anonymous.status).toBe(302);
+    expect(anonymous.headers.get('location')).toBe(
+      '/login?redirect=%2Fprotected%3Ftab%3Dnotes%26page%3D2',
+    );
+
+    const returned = await request(
+      '/login?redirect=%2Fprotected%3Ftab%3Dnotes%26page%3D2',
+      { cookieSession: 'alice' },
+    );
+    expect(returned.status).toBe(302);
+    expect(returned.headers.get('location')).toBe('/protected?tab=notes&page=2');
+    expect(returned.headers.get('cache-control')).toBe('private, no-store');
+
+    const fallback = await request('/login', { cookieSession: 'alice' });
+    expect(fallback.status).toBe(302);
+    expect(fallback.headers.get('location')).toBe('/dashboard');
+
+    const hostile = await request(
+      '/login?redirect=https%3A%2F%2Fattacker.example',
+      { cookieSession: 'alice' },
+    );
+    expect(hostile.status).toBe(302);
+    expect(hostile.headers.get('location')).toBe('/dashboard');
   });
 
   test('marks authenticated SSR private/no-store and bypasses ISR across users', async () => {

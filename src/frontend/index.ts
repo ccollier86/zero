@@ -54,6 +54,10 @@ export type { Api } from './client/api';
 
 // ─── Auth Client (vanilla JS) ────────────────────────────────────────────
 export { AuthClient, AuthClientError } from './client/auth-client';
+export {
+  normalizeAbsoluteLocalPath,
+  normalizeConfiguredLocalPath,
+} from '../auth/local-path';
 export type {
   AuthAdminConfig,
   AuthAdminCreateUserParams,

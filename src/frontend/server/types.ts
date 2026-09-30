@@ -15,6 +15,11 @@ import {
   resolveRouteAuthMode,
   type RouteAuthMode,
 } from '../router/auth-policy';
+import {
+  comparableAuthPathname,
+  configuredAuthPathname,
+  normalizeConfiguredAuthPath,
+} from '../router/auth-navigation';
 
 // ─── App Configuration ─────────────────────────────────────────────────────
 
@@ -365,6 +370,12 @@ export interface AppConfig {
   /** Registration route used by native-app browser authorization. Default: '/register'. */
   registrationPath?: string;
 
+  /**
+   * Fallback destination after login, and for authenticated visits to the
+   * login page. A safe `redirect` return path takes precedence. Default: '/'.
+   */
+  postLoginPath?: string;
+
   /** App-owned hints for platform doctor checks. */
   doctor?: AppDoctorConfig;
 }
@@ -417,6 +428,7 @@ export interface ResolvedConfig {
   sitemap: false | ResolvedSitemapConfig;
   loginPath: string;
   registrationPath: string;
+  postLoginPath: string;
   doctor: AppDoctorConfig;
   /** Table names with lazy sync mode — auto-registered for /api/data queries. */
   lazyTables: Set<string>;
@@ -455,8 +467,26 @@ export function resolveConfig(
   const syncAuthDefaulted = auth !== false && config.syncAuth === undefined;
   const routeAuth = resolveRouteAuthMode(config.routeAuth, auth !== false);
   const sitemap = resolveSitemapConfig(config.sitemap);
-  const loginPath = config.loginPath ?? '/login';
-  const registrationPath = config.registrationPath ?? '/register';
+  const loginPath = normalizeConfiguredAuthPath(
+    config.loginPath ?? '/login',
+    'loginPath',
+  );
+  const registrationPath = normalizeConfiguredAuthPath(
+    config.registrationPath ?? '/register',
+    'registrationPath',
+  );
+  const postLoginPath = normalizeConfiguredAuthPath(
+    config.postLoginPath ?? '/',
+    'postLoginPath',
+  );
+  if (
+    config.postLoginPath !== undefined
+    &&
+    comparableAuthPathname(configuredAuthPathname(postLoginPath, 'postLoginPath'))
+    === comparableAuthPathname(configuredAuthPathname(loginPath, 'loginPath'))
+  ) {
+    throw new Error('[app] postLoginPath must not resolve to loginPath.');
+  }
   const publicPaths = config.publicPaths ?? defaultPublicPaths(
     loginPath,
     registrationPath,
@@ -544,6 +574,7 @@ export function resolveConfig(
     sitemap,
     loginPath,
     registrationPath,
+    postLoginPath,
     doctor: config.doctor ?? {},
     lazyTables,
     snapshotTables,
@@ -588,19 +619,7 @@ function authRoutePathname(
   fallback: string,
   label: string
 ): string {
-  const configured = value?.trim() || fallback;
-  const suffix = configured.search(/[?#]/);
-  const path = suffix === -1 ? configured : configured.slice(0, suffix);
-  const localPath = path.startsWith('/') ? path : `/${path}`;
-  if (
-    !path
-    || localPath.startsWith('//')
-    || /^[a-z][a-z\d+.-]*:/i.test(path)
-    || /[\\\u0000-\u001f\u007f]/.test(path)
-  ) {
-    throw new Error(`[app] ${label} must be a safe local path.`);
-  }
-  return new URL(localPath, 'https://zero.local').pathname;
+  return configuredAuthPathname(value?.trim() || fallback, label);
 }
 
 /** Normalize sitemap config while keeping the feature opt-in. */

@@ -77,7 +77,7 @@ describe('createApp page-session SSR integration', () => {
 
     const anonymous = await fetch(`${baseUrl}/app`, { redirect: 'manual' });
     expect(anonymous.status).toBe(302);
-    expect(anonymous.headers.get('location')).toBe('/login');
+    expect(anonymous.headers.get('location')).toBe('/login?redirect=%2Fapp');
 
     const registrationResponse = await fetch(`${baseUrl}/auth/register`, {
       method: 'POST',
@@ -128,7 +128,7 @@ describe('createApp page-session SSR integration', () => {
       redirect: 'manual',
     });
     expect(afterLogout.status).toBe(302);
-    expect(afterLogout.headers.get('location')).toBe('/login');
+    expect(afterLogout.headers.get('location')).toBe('/login?redirect=%2Fapp');
     expect(afterLogout.headers.get('set-cookie')).toContain('Max-Age=0');
   });
 });

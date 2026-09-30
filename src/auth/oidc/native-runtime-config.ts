@@ -1,6 +1,7 @@
 /** Resolve app/plugin config into the strict runtime values used by OIDC. */
 
 import { parseTokenTTL } from '../../tokens/token-utils';
+import { normalizeAbsoluteLocalPath } from '../local-path';
 import { assertNativeIssuer } from '../native';
 import type { AuthPluginConfig, ResolvedAuthBehaviorConfig } from '../types';
 
@@ -46,15 +47,11 @@ export function resolveNativeRuntimeConfig(
 }
 
 function safeLocalPath(path: string, label: string): string {
-  if (
-    path !== path.trim()
-    || !path.startsWith('/')
-    || path.startsWith('//')
-    || /[\\\u0000-\u001f\u007f]/.test(path)
-  ) {
+  const normalized = normalizeAbsoluteLocalPath(path);
+  if (!normalized) {
     throw new Error(`[native-auth] ${label} must be an absolute local path.`);
   }
-  return path;
+  return normalized;
 }
 
 function withoutTrailingSlash(value: string | undefined): string | undefined {
