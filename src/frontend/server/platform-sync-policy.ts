@@ -13,6 +13,7 @@ import {
   type RequestAuthorizationAccess,
 } from '../../auth/authorization-access';
 import type { AuthorizationKernel } from '../../auth/authorization-kernel';
+import { IDENTITY_PROJECTION_TARGET_TABLES } from '../../auth/identity-projection-schema';
 import type {
   Change,
   Row,
@@ -40,7 +41,7 @@ import { canManageWorkflowScope } from '../../workflows/workflow-access';
 
 /** Framework tables that must never be exposed through generic Sync reads. */
 export const PLATFORM_SYNC_PRIVATE_TABLES = new Set([
-  'users',
+  ...IDENTITY_PROJECTION_TARGET_TABLES,
   'workflow_definitions',
   'storage_drives',
   'storage_objects',

@@ -59,7 +59,23 @@ export type {
   ResourceMutationOptions,
   ResourceRowResult,
   SyncClient,
+  SyncMutationRejection,
 } from './client/sdk';
+export {
+  DATA_REALM_READINESS_DEFAULT_POLL_MS,
+  DATA_REALM_READINESS_MAX_POLL_MS,
+  DATA_REALM_READINESS_MIN_POLL_MS,
+  DATA_REALM_READINESS_STATUSES,
+  DataRealmReadinessContractError,
+  dataRealmReadinessAllowsApplicationData,
+  parseDataRealmReadinessSnapshot,
+} from '../auth/data-realm-readiness-types';
+export type {
+  DataRealmReadinessScope,
+  DataRealmReadinessSdkSurface,
+  DataRealmReadinessSnapshot,
+  DataRealmReadinessStatus,
+} from '../auth/data-realm-readiness-types';
 export type { IdentityKey, IdentityValue } from '../sync/identity';
 
 // ─── Typed API (Eden Treaty) ────────────────────────────────────────────
@@ -281,6 +297,7 @@ export {
   buildDataPageQuery,
   buildResourceListQuery,
   useConnectionHealth,
+  useDataRealmReadiness,
   useMutation,
   // Auth
   useAuth,
@@ -329,6 +346,10 @@ export type {
   UseApplicationAccessResult,
   UseAuthAuditOptions,
   UseAuthAuditResult,
+  DataRealmReadinessControl,
+  DataRealmReadinessUiStatus,
+  UseDataRealmReadinessOptions,
+  UseDataRealmReadinessResult,
   UseTenantMembersOptions,
   UseTenantMembersResult,
   UsePlatformAdministrationOptions,
@@ -773,6 +794,7 @@ export {
   LoginForm, RegisterForm, ForgotPasswordForm, OTPVerification,
   PasswordActionForm, EmailVerificationForm, ChangePasswordForm, UserPropertiesForm,
   AuthFlowContinuation, TenantCreationForm, TenantSelectionForm,
+  DataRealmReadinessNotice, DataRealmReadyGate,
   ApiKeyManagement, SelfApiKeyManagement, ApplicationUserApiKeyManagement,
   TenantMemberApiKeyManagement, PlatformApiKeyManagement,
   ApplicationAccessManagement, PlatformAdministrationManagement, PlatformTenantManagement,
@@ -792,6 +814,7 @@ export type {
   PasswordActionFormProps, EmailVerificationFormProps, ChangePasswordFormProps, UserPropertiesFormProps,
   AuthFlowContinuationProps, AuthFlowContinuationResult, TenantCreationFormProps,
   TenantSelectionFormProps,
+  DataRealmReadinessNoticeProps, DataRealmReadyGateProps,
   ApiKeyManagementCommonProps, ApiKeyManagementProps,
   SelfApiKeyManagementProps, ApplicationUserApiKeyManagementProps,
   TenantMemberApiKeyManagementProps, PlatformApiKeyManagementProps,

@@ -8,6 +8,7 @@ import {
   clearPlatformSQLiteService,
   createPlatformSQLiteService,
   getPlatformSQLiteService,
+  type PlatformSQLiteService,
 } from '../../persistence';
 import { getPlatformEventStore } from '../../observability';
 import {
@@ -15,7 +16,6 @@ import {
   defineResource,
   tenantRealm,
 } from '../../resources';
-import type { ReactiveDB } from '../../sync/reactive-db';
 import type { ServerMessage, SyncSnapshotMessage } from '../../sync/types';
 import { createApp } from './app-factory';
 
@@ -43,6 +43,7 @@ interface SyncConnection {
 
 let activeApp: ManagedApp | null = null;
 let activeRoot: string | null = null;
+let activeApplicationSqlite: PlatformSQLiteService | null = null;
 const activeConnections = new Set<SyncConnection>();
 
 afterEach(async () => {
@@ -53,13 +54,17 @@ afterEach(async () => {
   const sqlite = getPlatformSQLiteService();
   sqlite?.close();
   clearPlatformSQLiteService(sqlite);
+  if (activeApplicationSqlite && activeApplicationSqlite !== sqlite) {
+    activeApplicationSqlite.close();
+  }
+  activeApplicationSqlite = null;
 
   if (activeRoot) await rm(activeRoot, { recursive: true, force: true });
   activeRoot = null;
 }, 30_000);
 
 describe('createApp actor-backed multi-database Sync', () => {
-  test('multiplexes shared control data with isolated tenant resources', async () => {
+  test('multiplexes system control data with isolated tenant resources', async () => {
     const zeroDir = join(process.cwd(), '.zero');
     await mkdir(zeroDir, { recursive: true });
     activeRoot = await mkdtemp(join(zeroDir, 'multi-database-sync-'));
@@ -67,6 +72,7 @@ describe('createApp actor-backed multi-database Sync', () => {
     await mkdir(appDir, { recursive: true });
 
     const sqlite = createPlatformSQLiteService({ mode: 'memory' });
+    activeApplicationSqlite = sqlite;
     activeApp = await createApp({
       db: { sqlite, ringBufferDepth: 500 },
       tables: {
@@ -117,54 +123,95 @@ describe('createApp actor-backed multi-database Sync', () => {
       kv: false,
     });
 
-    const defaultDatabase = installDefaultDatabaseProbe(activeApp);
     activeApp.listen(0);
     const baseUrl = `http://localhost:${activeApp.server!.port}`;
     const syncUrl = `ws://localhost:${activeApp.server!.port}/sync`;
-    const db = await defaultDatabase.resolve(baseUrl);
 
     const tenantA = await registerTenant(baseUrl, 'tenant-a', 'Tenant A');
     const tenantB = await registerTenant(baseUrl, 'tenant-b', 'Tenant B');
     expect(tenantA.tenant.tenantId).not.toBe(tenantB.tenant.tenantId);
 
-    insertTenantNotification(
-      db,
-      'control-notification-a',
-      tenantA.tenant.tenantId,
+    const notificationA = await createTenantNotification(
+      baseUrl,
+      tenantA.accessToken,
+      'Tenant A control notification',
     );
-    insertTenantNotification(
-      db,
-      'control-notification-b',
-      tenantB.tenant.tenantId,
+    const notificationB = await createTenantNotification(
+      baseUrl,
+      tenantB.accessToken,
+      'Tenant B control notification',
     );
 
-    // Physical tenant resources are never materialized as shadow tables in
-    // the pinned default/control database.
-    expect(db.hasTable('todos')).toBe(false);
-    expect(db.hasTable('notifications')).toBe(true);
+    // Neither actor-owned resources nor framework system tables are
+    // materialized as shadows in the application database.
+    expect(hasSQLiteTable(sqlite, 'todos')).toBe(false);
+    expect(hasSQLiteTable(sqlite, 'notifications')).toBe(false);
 
     const connectionA = await connectSync(syncUrl, tenantA.accessToken);
     const connectionB = await connectSync(syncUrl, tenantB.accessToken);
     subscribeMixed(connectionA);
     subscribeMixed(connectionB);
 
-    const [defaultA, physicalA, defaultB, physicalB] = await Promise.all([
+    const [defaultA, systemA, tenantSnapshotA, defaultB, systemB, tenantSnapshotB]
+      = await Promise.all([
       waitForSnapshot(connectionA, 'default'),
+      waitForSnapshot(connectionA, 'system'),
       waitForSnapshot(connectionA, 'tenant'),
       waitForSnapshot(connectionB, 'default'),
+      waitForSnapshot(connectionB, 'system'),
       waitForSnapshot(connectionB, 'tenant'),
     ]);
 
-    expect(Object.keys(defaultA.tables.notifications ?? {})).toEqual([
-      'control-notification-a',
+    expect(defaultA.tables).toEqual({});
+    expect(defaultB.tables).toEqual({});
+    expect(Object.keys(systemA.tables.notifications ?? {})).toEqual([
+      notificationA.notification_id,
     ]);
-    expect(Object.keys(defaultB.tables.notifications ?? {})).toEqual([
-      'control-notification-b',
+    expect(Object.keys(systemB.tables.notifications ?? {})).toEqual([
+      notificationB.notification_id,
     ]);
-    expect(defaultA.tables.todos).toBeUndefined();
-    expect(defaultB.tables.todos).toBeUndefined();
-    expect(physicalA.tables).toEqual({ todos: {} });
-    expect(physicalB.tables).toEqual({ todos: {} });
+    expect(systemA.tables.todos).toBeUndefined();
+    expect(systemB.tables.todos).toBeUndefined();
+    expect(tenantSnapshotA.tables).toEqual({ todos: {} });
+    expect(tenantSnapshotB.tables).toEqual({ todos: {} });
+
+    await expectSystemMutationRejected(
+      connectionA,
+      notificationA.notification_id,
+    );
+
+    // Resource writes and Sync mutations share the actor writer lane. Keep a
+    // second live socket on the same physical tenant database to prove an HTTP
+    // commit wakes every persistent binding without crossing tenant scope.
+    const secondConnectionA = await connectSync(syncUrl, tenantA.accessToken);
+    subscribeMixed(secondConnectionA);
+    expect((await waitForSnapshot(secondConnectionA, 'tenant')).tables)
+      .toEqual({ todos: {} });
+    const resourceTodo = {
+      id: 'resource-live',
+      title: 'Resource fanout value',
+    };
+    const resourceCreated = await fetch(`${baseUrl}/api/resources/todos`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${tenantA.accessToken}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': 'resource-live-fanout',
+      },
+      body: JSON.stringify(resourceTodo),
+    });
+    expect(resourceCreated.status).toBe(201);
+    expect(await resourceCreated.json()).toEqual({ row: resourceTodo });
+    await Promise.all([
+      waitForTodoChange(connectionA, resourceTodo),
+      waitForTodoChange(secondConnectionA, resourceTodo),
+    ]);
+    expect(connectionB.messages.some(
+      (message) => message.type === 'sync.change'
+        && message.plane === 'tenant'
+        && message.table === 'todos'
+        && message.rowId === resourceTodo.id,
+    )).toBe(false);
 
     await insertTodo(
       connectionA,
@@ -183,7 +230,11 @@ describe('createApp actor-backed multi-database Sync', () => {
       'insert-b',
     );
 
-    await Promise.all([connectionA.close(), connectionB.close()]);
+    await Promise.all([
+      connectionA.close(),
+      secondConnectionA.close(),
+      connectionB.close(),
+    ]);
     const reconnectA = await connectSync(syncUrl, tenantA.accessToken);
     const reconnectB = await connectSync(syncUrl, tenantB.accessToken);
     subscribeMixed(reconnectA);
@@ -194,6 +245,7 @@ describe('createApp actor-backed multi-database Sync', () => {
       waitForSnapshot(reconnectB, 'tenant'),
     ]);
     expect(reloadedA.tables.todos).toEqual({
+      [resourceTodo.id]: resourceTodo,
       'same-id': { id: 'same-id', title: 'Tenant A value' },
     });
     expect(reloadedB.tables.todos).toEqual({
@@ -202,47 +254,31 @@ describe('createApp actor-backed multi-database Sync', () => {
   }, 60_000);
 });
 
-function insertTenantNotification(
-  db: ReactiveDB,
-  notificationId: string,
-  tenantId: string,
-): void {
-  db.insert('notifications', {
-    notification_id: notificationId,
-    tenant_id: tenantId,
-    type: 'info',
-    priority: 'normal',
-    title: 'Shared control plane',
-    body: null,
-    target_type: 'all',
-    target_value: null,
-    sender_id: null,
-    action_url: null,
-    metadata: null,
-    created_at: Date.now(),
-    expires_at: null,
-  });
+function hasSQLiteTable(sqlite: PlatformSQLiteService, table: string): boolean {
+  return sqlite.raw.query(`
+    SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1
+  `).get(table) !== null;
 }
 
-function installDefaultDatabaseProbe(app: ManagedApp): {
-  resolve(baseUrl: string): Promise<ReactiveDB>;
-} {
-  const path = `/__zero_test/default-database-${crypto.randomUUID()}`;
-  let captured: ReactiveDB | null = null;
-  app.get(path, (context) => {
-    captured = (context as unknown as { syncDB?: ReactiveDB }).syncDB ?? null;
-    return { ready: captured !== null };
-  });
-  return {
-    async resolve(baseUrl) {
-      for (let attempt = 0; attempt < 100; attempt++) {
-        await fetch(`${baseUrl}${path}`);
-        if (captured) return captured;
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
-      throw new Error('Timed out waiting for the default database');
+async function createTenantNotification(
+  baseUrl: string,
+  token: string,
+  title: string,
+): Promise<{ readonly notification_id: string }> {
+  const response = await fetch(`${baseUrl}/notifications/broadcast`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
     },
+    body: JSON.stringify({ title }),
+  });
+  const body = await response.json() as {
+    notification?: { notification_id?: unknown };
   };
+  expect(response.status).toBe(200);
+  expect(body.notification?.notification_id).toBeString();
+  return body.notification as { notification_id: string };
 }
 
 async function registerTenant(
@@ -279,7 +315,7 @@ function subscribeMixed(connection: SyncConnection): void {
 
 async function waitForSnapshot(
   connection: SyncConnection,
-  plane: 'default' | 'tenant',
+  plane: 'default' | 'system' | 'tenant',
 ): Promise<SyncSnapshotMessage> {
   const first = await connection.waitFor(
     (candidate) => (
@@ -319,6 +355,33 @@ async function waitForSnapshot(
     ...(begin.scope === undefined ? {} : { scope: begin.scope }),
     reset: begin.reset,
   };
+}
+
+async function expectSystemMutationRejected(
+  connection: SyncConnection,
+  notificationId: string,
+): Promise<void> {
+  const ref = `system-write-${crypto.randomUUID()}`;
+  connection.ws.send(JSON.stringify({
+    type: 'sync.mutate',
+    plane: 'system',
+    ref,
+    table: 'notifications',
+    op: 'UPDATE',
+    rowId: notificationId,
+    row: { title: 'Client write must be rejected' },
+  }));
+  const ack = await connection.waitFor(
+    (message) => message.type === 'sync.ack' && message.ref === ref,
+    'system mutation rejection',
+  );
+  expect(ack).toMatchObject({
+    type: 'sync.ack',
+    plane: 'system',
+    ref,
+    ok: false,
+    error: 'Framework system tables are read-only over Sync.',
+  });
 }
 
 async function insertTodo(
@@ -379,6 +442,26 @@ async function insertTodo(
     plane: 'tenant',
     ref,
     ok: true,
+  });
+}
+
+async function waitForTodoChange(
+  connection: SyncConnection,
+  todo: Readonly<{ id: string; title: string }>,
+): Promise<void> {
+  const change = await connection.waitFor(
+    (message) => message.type === 'sync.change'
+      && message.plane === 'tenant'
+      && message.table === 'todos'
+      && message.rowId === todo.id
+      && message.row?.title === todo.title,
+    `${todo.title} Resource-originated tenant change`,
+  );
+  expect(change).toMatchObject({
+    type: 'sync.change',
+    plane: 'tenant',
+    op: 'INSERT',
+    row: todo,
   });
 }
 

@@ -8,6 +8,7 @@
 
 import { createPlatformSQLiteService } from '../persistence';
 import { DatabaseError } from './database-error';
+import { DatabaseActorAuthorityCommitGuard } from './database-actor-authority-commit-guard';
 import {
   acquireDatabaseActorLiveness,
   type DatabaseActorLivenessGuard,
@@ -36,6 +37,11 @@ import { DatabaseReaderRuntime } from './database-reader-runtime';
 import { DatabaseRuntime } from './database-runtime';
 import { DatabaseTenantSyncSnapshotSessionStore } from './database-tenant-sync-snapshot-session';
 import { DatabaseWriterOperationEngine } from './database-writer-engine';
+import { defineIdentityAnchorSQLiteTables } from '../auth/identity-projection-schema';
+import {
+  inspectGuardianReferenceSchema,
+  type GuardianReferenceSchemaReader,
+} from '../schema/guardian-references';
 
 export interface DatabaseActorWriterBinding {
   readonly role: 'writer';
@@ -43,6 +49,7 @@ export interface DatabaseActorWriterBinding {
   readonly placement: DatabaseActorPlacementConfig;
   readonly runtime: DatabaseRuntime;
   readonly engine: DatabaseWriterOperationEngine;
+  readonly authorityCommitGuard: DatabaseActorAuthorityCommitGuard | null;
   readonly snapshotSessions: DatabaseTenantSyncSnapshotSessionStore;
   readonly openedFileIdentity: DatabaseFileIdentityProof;
   readonly bindingIdentity: DatabaseBindingIdentity;
@@ -83,6 +90,7 @@ export function openWriterBinding(
   let sqlite: ReturnType<typeof createPlatformSQLiteService> | null = null;
   let runtime: DatabaseRuntime | null = null;
   let engine: DatabaseWriterOperationEngine | null = null;
+  let authorityCommitGuard: DatabaseActorAuthorityCommitGuard | null = null;
   let snapshotSessions: DatabaseTenantSyncSnapshotSessionStore | null = null;
   let livenessGuard: DatabaseActorLivenessGuard | null = null;
   let fileGuard: DatabaseFileIdentityGuard | null = null;
@@ -135,6 +143,11 @@ export function openWriterBinding(
         { retryable: false, outcome: 'not-started' },
       );
     }
+    if (realm.guardianAnchorRequirements.length > 0) {
+      // Framework FK anchors must exist before realm tables are prepared and
+      // before any reader generation can observe this database schema.
+      defineIdentityAnchorSQLiteTables(sqlite.raw);
+    }
     runtime = DatabaseRuntime.open({
       id: payload.databaseRef,
       role: 'named',
@@ -148,6 +161,7 @@ export function openWriterBinding(
       tables: realm.tables,
       migrationLog: () => undefined,
     });
+    assertActorGuardianReferenceStorage(runtime.sqlite.raw, realm);
     bindingIdentity = readDatabaseBindingIdentity(
       runtime.sqlite.raw,
       payload.databaseRef,
@@ -182,12 +196,22 @@ export function openWriterBinding(
       || payload.placement.durability === 'periodic') {
       runtime.start();
     }
+    // Runtime startup may perform framework-owned maintenance transactions.
+    // Install the request revision guard only after startup is complete so no
+    // maintenance write can inherit or require ambient request authority.
+    authorityCommitGuard = payload.authorityCommitFence
+      ? DatabaseActorAuthorityCommitGuard.open(
+          runtime.db,
+          payload.authorityCommitFence,
+        )
+      : null;
     return {
       role: 'writer',
       databaseRef: payload.databaseRef,
       placement: payload.placement,
       runtime,
       engine,
+      authorityCommitGuard,
       snapshotSessions,
       openedFileIdentity: openedFileIdentity,
       bindingIdentity,
@@ -196,6 +220,12 @@ export function openWriterBinding(
     };
   } catch (error) {
     const cleanupFailures: unknown[] = [];
+    // Remove request authority before framework-owned snapshot cleanup opens
+    // its own maintenance transaction. No request revision may leak into or
+    // be required by binding teardown.
+    if (authorityCommitGuard) {
+      attemptClose(() => authorityCommitGuard!.close(), cleanupFailures);
+    }
     if (snapshotSessions) {
       attemptClose(() => snapshotSessions!.close(), cleanupFailures);
     }
@@ -223,6 +253,35 @@ export function openWriterBinding(
     }
     if (error instanceof DatabaseError) throw error;
     throw writerOpenFailed(error);
+  }
+}
+
+/** Reject an existing actor image whose Guardian metadata and SQLite FKs diverge. */
+function assertActorGuardianReferenceStorage(
+  database: GuardianReferenceSchemaReader,
+  realm: DatabaseRealm,
+): void {
+  for (const [table, schema] of Object.entries(realm.tables)) {
+    const issue = inspectGuardianReferenceSchema(schema, {
+      database,
+      tableName: table,
+    })[0];
+    if (!issue) continue;
+    throw new DatabaseError(
+      'DATABASE_SCHEMA_MISMATCH',
+      'Database actor Guardian reference schema does not match its configured realm.',
+      {
+        retryable: false,
+        outcome: 'not-started',
+        details: {
+          component: 'guardian-identity-projection',
+          reason: 'reference-storage-invalid',
+          table,
+          field: issue.field,
+          issue: issue.code,
+        },
+      },
+    );
   }
 }
 
@@ -376,6 +435,12 @@ export function sameActorPlacement(
 export function closeActorBinding(binding: DatabaseActorBinding): void {
   const failures: unknown[] = [];
   if (binding.role === 'writer') {
+    // Teardown transactions are framework reconciliation, not request data
+    // commits. Detach the per-request authority guard first so cleanup cannot
+    // inherit stale or absent ambient request state.
+    if (binding.authorityCommitGuard) {
+      attemptClose(() => binding.authorityCommitGuard!.close(), failures);
+    }
     attemptClose(() => binding.snapshotSessions.close(), failures);
     attemptClose(() => binding.engine.close(), failures);
     attemptClose(() => binding.runtime.close(), failures);

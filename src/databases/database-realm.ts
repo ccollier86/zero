@@ -21,6 +21,15 @@ import {
 } from '../migrations/schema-snapshot';
 import type { ReactiveDB } from '../sync/reactive-db';
 import {
+  attachGuardianTableReferences,
+  getGuardianAnchorRequirements,
+  getGuardianTableReferences,
+  GUARDIAN_TABLE_REFERENCES,
+  inspectGuardianReferenceSchema,
+  type GuardianFieldReference,
+  type GuardianReferenceKind,
+} from '../schema/guardian-references';
+import {
   SYNC_TABLE_MUTATION_VALIDATOR,
   type Row,
   type SyncTableMutationValidator,
@@ -164,6 +173,8 @@ export interface DatabaseRealm<
   readonly migrations: MigrationRegistry;
   readonly queries: Readonly<TQueries>;
   readonly commands: Readonly<TCommands>;
+  /** Framework-owned identity anchors required by this actor realm. */
+  readonly guardianAnchorRequirements: readonly GuardianReferenceKind[];
   readonly schemaChecksum: string;
   readonly migrationChecksums: readonly DatabaseRealmMigrationChecksum[];
   /** SHA-256 over realm identity, schema/migrations, and registered names. */
@@ -197,6 +208,16 @@ export function defineDatabaseRealm<
     record.commands,
     'command',
   ) as TCommands;
+  const guardianAnchorRequirements = Object.freeze([
+    ...(Object.values(tables).some((table) =>
+      getGuardianAnchorRequirements(table).includes('user'))
+      ? ['user' as const]
+      : []),
+    ...(Object.values(tables).some((table) =>
+      getGuardianAnchorRequirements(table).includes('membership'))
+      ? ['membership' as const]
+      : []),
+  ]);
 
   for (const queryName of Object.keys(queries)) {
     if (Object.prototype.hasOwnProperty.call(commands, queryName)) {
@@ -221,6 +242,12 @@ export function defineDatabaseRealm<
     migrationChecksums,
     queries: Object.keys(queries).sort(),
     commands: Object.keys(commands).sort(),
+    guardianReferences: Object.fromEntries(
+      Object.entries(tables).map(([table, schema]) => [
+        table,
+        getGuardianTableReferences(schema),
+      ]),
+    ),
   });
 
   return Object.freeze({
@@ -230,6 +257,7 @@ export function defineDatabaseRealm<
     migrations,
     queries: queries as Readonly<TQueries>,
     commands: commands as Readonly<TCommands>,
+    guardianAnchorRequirements,
     schemaChecksum,
     migrationChecksums,
     fingerprint,
@@ -348,22 +376,36 @@ function cloneTableSchema(tableName: string, value: unknown): Readonly<TableSche
   const caseInsensitiveColumns = new Set<string>();
   let identity: readonly string[] | undefined;
   let validator: Readonly<SyncTableMutationValidator> | undefined;
+  let guardianReferences: ReturnType<typeof getGuardianTableReferences> | undefined;
   let primaryKeys = 0;
   let primaryKey: string | null = null;
   let primaryKeyDefinition: string | null = null;
 
   for (const key of keys) {
     const descriptor = safeOwnDescriptor(source, key, `schema for table ${tableName}`);
-    if (!descriptor.enumerable || !('value' in descriptor)) {
-      throw configInvalid('Database realm table schemas must use enumerable data properties.');
-    }
-
     if (typeof key === 'symbol') {
-      if (key !== SYNC_TABLE_MUTATION_VALIDATOR || validator !== undefined) {
+      if (!('value' in descriptor)) {
+        throw configInvalid('Database realm table schema symbols must be data properties.');
+      }
+      if (key === GUARDIAN_TABLE_REFERENCES && guardianReferences === undefined) {
+        if (descriptor.enumerable || descriptor.configurable || descriptor.writable) {
+          throw configInvalid(
+            'Database realm Guardian metadata must be immutable and non-enumerable.',
+          );
+        }
+        guardianReferences = cloneGuardianReferences(descriptor.value, tableName);
+        continue;
+      }
+      if (!descriptor.enumerable
+        || key !== SYNC_TABLE_MUTATION_VALIDATOR
+        || validator !== undefined) {
         throw configInvalid('Database realm table schema contains an unsupported symbol.');
       }
       validator = cloneMutationValidator(descriptor.value, tableName);
       continue;
+    }
+    if (!descriptor.enumerable || !('value' in descriptor)) {
+      throw configInvalid('Database realm table schemas must use enumerable data properties.');
     }
     if (key === '_identity') {
       identity = cloneIdentity(descriptor.value, tableName);
@@ -467,7 +509,86 @@ function cloneTableSchema(tableName: string, value: unknown): Readonly<TableSche
     }
     clone[SYNC_TABLE_MUTATION_VALIDATOR] = validator;
   }
+  if (guardianReferences && guardianReferences.length > 0) {
+    for (const reference of guardianReferences) {
+      if (!columns.has(reference.field)) {
+        throw configInvalid(
+          `Database realm table "${tableName}" Guardian reference uses an unknown field.`,
+        );
+      }
+    }
+    attachGuardianTableReferences(clone, guardianReferences);
+    const declarationIssue = inspectGuardianReferenceSchema(clone)[0];
+    if (declarationIssue) {
+      throw configInvalid(
+        `Database realm table "${tableName}" Guardian field "${declarationIssue.field}" does not declare its exact managed foreign key.`,
+      );
+    }
+  }
   return Object.freeze(clone);
+}
+
+function cloneGuardianReferences(
+  value: unknown,
+  tableName: string,
+): readonly GuardianFieldReference[] {
+  const metadata = configRecord(value, `Guardian metadata for table ${tableName}`);
+  assertOnlyFields(
+    metadata,
+    new Set(['fields', 'anchorRequirements']),
+    `Guardian metadata for table ${tableName}`,
+  );
+  const entries = configArray(
+    metadata.fields,
+    `Guardian fields for table ${tableName}`,
+  );
+  const references = entries.map((entry, index): GuardianFieldReference => {
+    const reference = configRecord(
+      entry,
+      `Guardian field ${index} for table ${tableName}`,
+    );
+    assertOnlyFields(
+      reference,
+      new Set(['field', 'kind', 'table', 'column', 'onDelete']),
+      `Guardian field ${index} for table ${tableName}`,
+    );
+    if (!isDatabaseTableName(reference.field)
+      || reference.onDelete !== 'restrict'
+      || (reference.kind !== 'user' && reference.kind !== 'membership')
+      || (reference.kind === 'user'
+        && (reference.table !== 'users' || reference.column !== 'user_id'))
+      || (reference.kind === 'membership'
+        && (reference.table !== 'tenant_memberships'
+          || reference.column !== 'membership_id'))) {
+      throw configInvalid(`Guardian field ${index} for table ${tableName} is invalid.`);
+    }
+    return Object.freeze({
+      field: reference.field,
+      kind: reference.kind,
+      table: reference.table,
+      column: reference.column,
+      onDelete: 'restrict',
+    }) as GuardianFieldReference;
+  });
+  if (references.length === 0) {
+    throw configInvalid(`Guardian metadata for table ${tableName} is empty.`);
+  }
+  const declared = configArray(
+    metadata.anchorRequirements,
+    `Guardian requirements for table ${tableName}`,
+  );
+  const expected = [
+    ...(references.some((reference) => reference.kind === 'user'
+      || reference.kind === 'membership') ? ['user'] : []),
+    ...(references.some((reference) => reference.kind === 'membership')
+      ? ['membership']
+      : []),
+  ];
+  if (declared.length !== expected.length
+    || declared.some((requirement, index) => requirement !== expected[index])) {
+    throw configInvalid(`Guardian requirements for table ${tableName} are invalid.`);
+  }
+  return Object.freeze(references);
 }
 
 function cloneIdentity(value: unknown, tableName: string): readonly string[] {
@@ -609,6 +730,7 @@ function createRealmFingerprint(input: {
   migrationChecksums: readonly DatabaseRealmMigrationChecksum[];
   queries: readonly string[];
   commands: readonly string[];
+  guardianReferences: Readonly<Record<string, unknown>>;
 }): string {
   const canonical = stableStringify({
     fingerprintVersion: DATABASE_REALM_FINGERPRINT_VERSION,

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createPlatformSQLiteService } from '../persistence';
+import { registerReactiveDBCommitGuard } from '../sync/reactive-db';
 import { DatabaseError } from './database-error';
 import { createDatabaseRealmOperationCatalog } from './database-realm';
 import { DatabaseRuntime } from './database-runtime';
@@ -86,6 +87,46 @@ function captureDatabaseError(run: () => unknown): DatabaseError {
 }
 
 describe('DatabaseTenantSyncSnapshotSessionStore', () => {
+  test('keeps TEMP snapshot lifecycle outside the durable application commit guard', () => {
+    const harness = createHarness();
+    let durableGuardCaptures = 0;
+    const removeGuard = registerReactiveDBCommitGuard(harness.runtime.db, {
+      capture() {
+        durableGuardCaptures += 1;
+        throw new DatabaseError(
+          'DATABASE_AUTHORITY_CHANGED',
+          'Durable application writes require request authority.',
+          { retryable: false, outcome: 'not-committed' },
+        );
+      },
+      beforeCommit() {
+        throw new Error('A rejected guard capture cannot reach beforeCommit.');
+      },
+    });
+    try {
+      expect(() => harness.runtime.db.transaction(() => undefined)).toThrow(
+        expect.objectContaining({
+          code: 'DATABASE_AUTHORITY_CHANGED',
+          outcome: 'not-committed',
+        }),
+      );
+      expect(durableGuardCaptures).toBe(1);
+
+      const payload = beginPayload(0, []);
+      const begun = harness.store.begin(payload);
+      expect(harness.store.abort({
+        ...payload,
+        sessionId: begun.sessionId,
+      })).toEqual({ aborted: true });
+      harness.store.close();
+
+      expect(durableGuardCaptures).toBe(1);
+    } finally {
+      removeGuard();
+      harness.close();
+    }
+  });
+
   test('seals admission and retries only failed statement cleanup', () => {
     const attempts = new Map<object, number>();
     let injectFailure = true;

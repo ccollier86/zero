@@ -1,8 +1,8 @@
 # Architecture
 
-Four layers, one data flow. Each Zero runtime composes them in one Bun process;
-file-mode runtimes may share one local SQLite database and relay its durable
-change log without turning RAM-only channels into a distributed bus.
+Four layers, one data flow. Each ReactiveDB plane owns its SQLite state and
+durable change log. File-mode runtimes which share that plane can relay its log
+without turning separate planes or RAM-only channels into a distributed bus.
 
 > **Advanced engine docs:** This diagram uses lower-level standalone sync hook
 > names. In normal Zero frontend apps, the public app-facing hooks are
@@ -34,8 +34,9 @@ change log without turning RAM-only channels into a distributed bus.
 
 ### ReactiveDB (Server)
 
-SQLite wrapper that makes every write observable. Each runtime owns one
-instance; file-mode instances may point at the same local SQLite database.
+SQLite wrapper that makes every write observable. Each data plane owns one
+instance; file-mode instances in peer runtimes may point at the same local
+SQLite database.
 
 **Owns:**
 - The SQLite database (`:memory:` or WAL file)
@@ -652,6 +653,15 @@ interface SyncPluginConfig {
     /** Positive safe integer; values 1-9 are clamped to 10ms. */
     intervalMs?: number;
   };
+  /** Managed read-only framework tables in a separate system database. */
+  systemDataPlane?: {
+    db: ReactiveDB;
+    tables: readonly string[] | Readonly<Record<string, unknown>>;
+    /** Independent system-file polling; omission inherits/auto-detects. */
+    replicaChangePolling?: false | { intervalMs?: number };
+  };
+  /** Optional State Sync database; managed apps bind this to system.db. */
+  stateDB?: ReactiveDB;
 }
 ```
 
@@ -663,14 +673,20 @@ authless standalone plugins preserve legacy unrestricted topics, while an
 authenticated plugin without `ephemeralPolicy` denies every unclassified
 topic.
 
-File-mode plugins automatically poll the shared versioned `_changes` log (250
-ms by default). `_zero_sync_log_state` owns its monotonic cursor/watermark, and
+Each configured file-backed application and system plane automatically polls
+its own shared versioned `_changes` log (250 ms by default). When `stateDB` and
+`systemDataPlane.db` are the same handle, one secondary poller serves both
+rather than delivering duplicates. The nested system polling option can be
+tuned independently; omission inherits the top-level choice and otherwise
+uses file-mode auto-detection. `_zero_sync_log_state` owns each plane's
+monotonic cursor/watermark, and
 the first seq-0 fence adoption requires the release guide's stop-all upgrade.
 The ordered dispatcher is the sole listener path while enabled: it
 emits local and external commits exactly once in durable sequence order and
-uses writer origin only to label process-local delivery metadata. An injected SQLite handle
-does not reveal its topology, so direct composition must opt in with
-`replicaChangePolling`. If pruning, an incompatible format, or corruption
+uses writer origin only to label process-local delivery metadata. An injected
+SQLite handle does not reveal its topology, so direct composition must opt in
+with `replicaChangePolling` (or the nested system option). If pruning, an
+incompatible format, or corruption
 creates a cursor gap, the plugin reports whether it was a `retention`,
 `continuity`, or `format` gap. Before closing sockets with `1012`, it calls the
 resource policy's synchronous `onHistoryGap` reset so state derived from
@@ -749,9 +765,10 @@ authority can receive another change. Official trusted-property writes revoke
 the affected user's sessions so they participate in this fence. The client
 reconnects with a fresh token and receives a fresh policy.
 
-Managed `createApp()` auth adds a shared SQLite authority clock and polls it at
-250 ms. Security-relevant changes on another runtime trigger immediate local
-socket and ephemeral-policy revalidation without copying a bearer token. A
+Managed `createApp()` auth adds a system-plane SQLite authority clock and polls
+it at 250 ms. Security-relevant changes on another runtime sharing `systemDb`
+trigger immediate local socket and ephemeral-policy revalidation without
+copying a bearer token. A
 standalone verifier may expose `getAuthorityRevision()` and configure
 `invalidationPollIntervalMs` to use the same boundary.
 

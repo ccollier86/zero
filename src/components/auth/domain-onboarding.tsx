@@ -111,7 +111,7 @@ function DomainOnboardingScope({
   return (
     <Card className={cn('overflow-hidden', className)}>
       <CardHeader className="border-b border-border/70">
-        <CardTitle>{title}</CardTitle>
+        <CardTitle asChild><h2>{title}</h2></CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 pt-5">

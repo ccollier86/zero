@@ -12,6 +12,86 @@ import { AuthRuntime } from './auth-runtime';
 import { createAuthPlugin } from './auth.plugin';
 
 describe('standalone auth startup readiness', () => {
+  test('reports a missing installed-profile guard through the auth invariant boundary', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    const events = new MemoryEventStore({ maxEvents: 20 });
+    const appRuntime = new ZeroAppRuntime('auth-profile-guard-not-ready');
+    appRuntime.set(ZERO_OBSERVABILITY_RUNTIME, {
+      sink: events,
+      store: events,
+      config: { console: false },
+    });
+    const runtime = new AuthRuntime(
+      { db, runtime: appRuntime },
+      resolveAuthBehaviorConfig({ bootstrap: 'public' }),
+      {
+        runtime: appRuntime,
+        getEmailRuntime: () => createEmailRuntime(false, {}),
+        getPlatformTokenService: () => null,
+      },
+    );
+
+    try {
+      expect(() => runtime.assertCurrentProfile()).toThrow(expect.objectContaining({
+        name: 'AuthError',
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        status: 500,
+      }));
+      expect(events.query({ code: OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code }).events)
+        .toContainEqual(expect.objectContaining({
+          metadata: {
+            component: 'auth-runtime',
+            invariant: 'installed-profile-guard-ready',
+          },
+        }));
+    } finally {
+      await runtime.stop();
+      db.dispose();
+      await appRuntime.dispose();
+    }
+  });
+
+  test('reports a malformed authority clock through the stable invariant boundary', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    db.exec('CREATE TABLE _auth_authority_revision (wrong_column TEXT)');
+    const events = new MemoryEventStore({ maxEvents: 20 });
+    const appRuntime = new ZeroAppRuntime('auth-malformed-authority-clock');
+    appRuntime.set(ZERO_OBSERVABILITY_RUNTIME, {
+      sink: events,
+      store: events,
+      config: { console: false },
+    });
+    const runtime = new AuthRuntime(
+      { db, runtime: appRuntime },
+      resolveAuthBehaviorConfig({ bootstrap: 'public' }),
+      {
+        runtime: appRuntime,
+        getEmailRuntime: () => createEmailRuntime(false, {}),
+        getPlatformTokenService: () => null,
+      },
+    );
+
+    try {
+      await expect(runtime.start()).rejects.toMatchObject({
+        name: 'AuthError',
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        status: 500,
+      });
+    } finally {
+      await runtime.stop();
+      db.dispose();
+      await appRuntime.dispose();
+    }
+
+    expect(events.query({ code: OBS_CODES.AUTH_STATE_INVARIANT_FAILED.code }).events)
+      .toContainEqual(expect.objectContaining({
+        metadata: {
+          component: 'authority-revision',
+          invariant: 'managed-trigger-contract',
+        },
+      }));
+  });
+
   test('installs the profile guard before synchronous reconciliation observers run', async () => {
     const db = createReactiveDB({ mode: 'memory' });
     const appRuntime = new ZeroAppRuntime('auth-reentrant-profile-observer');

@@ -14,6 +14,7 @@ export const MULTI_TENANT_UNSCOPED_SERVICES = new Set<PropertyKey>([
   'databases',
   'sql',
   'sqlite',
+  'system',
   'tokens',
   'kv',
   'counter',

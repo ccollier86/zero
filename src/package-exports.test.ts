@@ -70,12 +70,34 @@ import {
   createAuthAuthorizationSnapshot,
   createAuthPlugin,
   createAuthorizationKernel,
+  createDataRealmReadinessPlugin,
+  createIdentityProjectionLifecycleHook,
+  DATA_REALM_READINESS_DEFAULT_POLL_MS,
+  DATA_REALM_READINESS_MAX_POLL_MS,
+  DATA_REALM_READINESS_MIN_POLL_MS,
+  DATA_REALM_READINESS_STATUSES,
+  DataRealmReadinessContractError,
+  dataRealmReadinessAllowsApplicationData,
+  defineIdentityAnchorTables,
+  defineIdentityProjectionSystemTables,
   getAuthAuditService,
+  IDENTITY_PROJECTION_ERROR_CODES,
+  IDENTITY_PROJECTION_INSTALLATION_TABLE,
+  IDENTITY_PROJECTION_OUTBOX_TABLE,
+  IDENTITY_PROJECTION_RECEIPTS_TABLE,
+  IDENTITY_PROJECTION_STATE_TABLE,
+  IDENTITY_PROJECTION_TARGETS_TABLE,
+  IdentityAnchorStore,
+  IdentityProjectionError,
+  IdentityProjectionOutboxStore,
+  IdentityProjectionService,
+  identityProjectionError,
   installAuthStopBarrier,
   isAdministrationOnlyRole,
   isAdministrationTenantRoleKey,
   isPolicyTrustedUserProperty,
   isRoleAssignableToTenantKind,
+  parseDataRealmReadinessSnapshot,
   type NativeAuthorizationSourceResolver as AuthNativeSourceResolver,
 } from '@zero/framework/auth';
 import type {
@@ -110,6 +132,10 @@ import type {
   AuthApplicationMutationAuthority,
   AuthTenantMutationAuthority,
   CreateUserInput,
+  IdentityAnchorStoreOptions,
+  IdentityProjectionErrorCode,
+  IdentityProjectionLifecycleRoutes,
+  SynchronousIdentityProjectionTarget,
   IssuedPageSession,
   TenantKind,
   UserListOptions,
@@ -134,11 +160,13 @@ import {
   createResourceCrudPlugin as createSubpathResourceCrudPlugin,
   defineResource as defineSubpathResource,
   defineResourceFields as defineSubpathResourceFields,
+  guardianActorPolicy as resourcesGuardianActorPolicy,
   ownerPolicy as resourcesOwnerPolicy,
   RESOURCE_DEFAULT_RECEIPT_MAX_KEYS as subpathResourceReceiptMaxKeys,
   RESOURCE_DEFAULT_RECEIPT_MAX_RESULT_BYTES as subpathResourceReceiptMaxResultBytes,
   RESOURCE_DEFAULT_RECEIPT_MAX_RETAINED_BYTES as subpathResourceReceiptMaxRetainedBytes,
   RESOURCE_DEFAULT_RECEIPT_RETAINED_LIMIT as subpathResourceReceiptRetainedLimit,
+  tenantKindPolicy as resourcesTenantKindPolicy,
   tenantRealm as resourcesTenantRealm,
 } from '@zero/framework/resources';
 import {
@@ -146,7 +174,20 @@ import {
   createRoomPlugin,
 } from '@zero/framework/rooms';
 import { createSchedulerPlugin } from '@zero/framework/scheduler';
-import { defineTable, encodeFieldValue, field } from '@zero/framework/schema';
+import {
+  defineTable,
+  encodeFieldValue,
+  field,
+  getGuardianAnchorRequirements,
+  getGuardianTableReferences,
+  GUARDIAN_TABLE_REFERENCES,
+  hasGuardianTableReferences,
+} from '@zero/framework/schema';
+import type {
+  GuardianFieldReference,
+  GuardianReferenceKind,
+  GuardianTableReferenceMetadata,
+} from '@zero/framework/schema';
 import {
   adminOnly,
   AuthApiKeyService as ServerAuthApiKeyService,
@@ -174,6 +215,7 @@ import {
   DATABASE_WRITER_MAX_RETAINED_RECEIPT_BYTES,
   defaultDatabaseHotSnapshotTimeoutMs,
   DatabaseError,
+  createDataRealmReadinessPlugin as createServerDataRealmReadinessPlugin,
   createDatabaseRef,
   createNamedDatabaseRef,
   createTenantDatabaseRef,
@@ -204,6 +246,7 @@ import {
   RESOURCE_DEFAULT_RECEIPT_MAX_RESULT_BYTES,
   RESOURCE_DEFAULT_RECEIPT_MAX_RETAINED_BYTES,
   RESOURCE_DEFAULT_RECEIPT_RETAINED_LIMIT,
+  tenantKindPolicy,
   tenantRealm,
   runDatabaseActorIfRequested,
   verifyUploadGrantToken,
@@ -273,6 +316,8 @@ import type {
   RunDatabaseActorIfRequestedOptions,
   AuthRequestCredentialResolver as ServerAuthRequestCredentialResolver,
   ResolvedConfig,
+  ServerSystemDatabaseServices,
+  SystemDatabaseConfig,
   ZeroPolicyUserPropertyRegistry,
 } from '@zero/framework/server';
 import {
@@ -280,7 +325,18 @@ import {
   createUploadGrantToken as createSubpathUploadGrantToken,
   verifyUploadGrantToken as verifySubpathUploadGrantToken,
 } from '@zero/framework/storage';
-import { createSyncPlugin, type SyncPluginConfig } from '@zero/framework/sync';
+import {
+  createSyncPlugin,
+  SYNC_ACK_ERROR_CODES,
+  type SyncAckErrorCode,
+  type SyncAckMessage,
+  type SyncDataPlaneName,
+  type SyncMutationRejection,
+  type SyncPluginConfig,
+  type SyncSnapshotBeginMessage,
+  type SyncSnapshotChunkMessage,
+  type SyncSnapshotEndMessage,
+} from '@zero/framework/sync';
 import { PlatformTokenService } from '@zero/framework/tokens';
 import { createVectorPlugin } from '@zero/framework/vector';
 import { WorkflowService } from '@zero/framework/workflows';
@@ -425,10 +481,57 @@ const syncPluginConfig: SyncPluginConfig = {
   tables: {},
   replicaChangePolling: { intervalMs: 250 },
 };
+const syncAckErrorCode: SyncAckErrorCode = SYNC_ACK_ERROR_CODES.dataRealmNotReady;
+const syncAckMessage: SyncAckMessage = {
+  type: 'sync.ack',
+  ref: 'mutation-ref',
+  seq: null,
+  ok: false,
+  errorCode: syncAckErrorCode,
+};
+const syncMutationRejection = {} as SyncMutationRejection;
+type SyncDataPlaneSnapshotMessages = readonly [
+  SyncDataPlaneName,
+  SyncSnapshotBeginMessage,
+  SyncSnapshotChunkMessage,
+  SyncSnapshotEndMessage,
+];
+const syncDataPlaneSnapshotMessages = {} as SyncDataPlaneSnapshotMessages;
+const systemDatabaseConfig: SystemDatabaseConfig = {
+  mode: 'file',
+  path: './data/zero.system.db',
+};
+const systemDatabaseServices = {} as ServerSystemDatabaseServices;
+type IdentityProjectionPublicTypes = readonly [
+  IdentityAnchorStoreOptions,
+  IdentityProjectionErrorCode,
+  IdentityProjectionLifecycleRoutes,
+  SynchronousIdentityProjectionTarget,
+];
+const identityProjectionPublicTypes = {} as IdentityProjectionPublicTypes;
 const tenantDocuments = defineTable('tenant_documents', {
   tenant_id: field.text({ required: true }),
   title: field.text({ required: true }),
 });
+const guardianOwnedRecords = defineTable('guardian_owned_records', {
+  user_id: field.guardianUser(),
+  title: field.text({ required: true }),
+});
+const guardianAnchorRequirements = getGuardianAnchorRequirements(
+  guardianOwnedRecords.serverTable,
+);
+const guardianTableReferences = getGuardianTableReferences(
+  guardianOwnedRecords.serverTable,
+);
+const guardianFieldReference = guardianTableReferences[0] as
+  | GuardianFieldReference
+  | undefined;
+type GuardianReferencePublicTypes = readonly [
+  GuardianReferenceKind,
+  GuardianTableReferenceMetadata,
+];
+const guardianReferencePublicTypes = {} as GuardianReferencePublicTypes;
+const guardianOwnedPolicy = resourcesGuardianActorPolicy({ userField: 'user_id' });
 const tenantDocumentResource = defineResource({
   table: tenantDocuments,
   realm: tenantRealm(),
@@ -470,6 +573,7 @@ export const serverSymbols = {
   authTenantTerminology,
   configuredPostLoginPath,
   createApp,
+  createIdentityProjectionLifecycleHook,
   DatabaseError,
   DATABASE_ACTOR_CHILD_FLAG,
   DATABASE_HOT_DEFAULT_DURABILITY,
@@ -502,6 +606,8 @@ export const serverSymbols = {
   createAuthAuthorizationSnapshot,
   createAuthPlugin,
   createAuthorizationKernel,
+  createDataRealmReadinessPlugin,
+  createServerDataRealmReadinessPlugin,
   getAuthAuditService,
   createServerAuthorizationKernel,
   compiledAccessRequirement,
@@ -526,6 +632,8 @@ export const serverSymbols = {
   createUploadGrantToken,
   createVectorPlugin,
   defineNativeAuthConfig,
+  defineIdentityAnchorTables,
+  defineIdentityProjectionSystemTables,
   defineDatabaseRealm,
   emptyDatabaseRealm,
   databaseReadQueryHandler,
@@ -543,10 +651,40 @@ export const serverSymbols = {
   tenantDocuments,
   tenantDocumentResource,
   tenantDocumentSubpathResource,
+  tenantKindPolicy,
+  resourcesTenantKindPolicy,
   tenantRealm,
   resourcesTenantRealm,
   EmailService,
   field,
+  getGuardianAnchorRequirements,
+  getGuardianTableReferences,
+  GUARDIAN_TABLE_REFERENCES,
+  guardianAnchorRequirements,
+  guardianFieldReference,
+  guardianOwnedPolicy,
+  guardianOwnedRecords,
+  guardianReferencePublicTypes,
+  guardianTableReferences,
+  hasGuardianTableReferences,
+  DATA_REALM_READINESS_DEFAULT_POLL_MS,
+  DATA_REALM_READINESS_MAX_POLL_MS,
+  DATA_REALM_READINESS_MIN_POLL_MS,
+  DATA_REALM_READINESS_STATUSES,
+  DataRealmReadinessContractError,
+  dataRealmReadinessAllowsApplicationData,
+  IDENTITY_PROJECTION_ERROR_CODES,
+  IDENTITY_PROJECTION_INSTALLATION_TABLE,
+  IDENTITY_PROJECTION_OUTBOX_TABLE,
+  IDENTITY_PROJECTION_RECEIPTS_TABLE,
+  IDENTITY_PROJECTION_STATE_TABLE,
+  IDENTITY_PROJECTION_TARGETS_TABLE,
+  identityProjectionPublicTypes,
+  IdentityAnchorStore,
+  IdentityProjectionError,
+  IdentityProjectionOutboxStore,
+  IdentityProjectionService,
+  identityProjectionError,
   encodeFieldValue,
   getAI,
   getEmailService,
@@ -601,7 +739,15 @@ export const serverSymbols = {
   runPlatformDoctor,
   runUsageAudit,
   runDatabaseActorIfRequested,
+  parseDataRealmReadinessSnapshot,
   syncPluginConfig,
+  SYNC_ACK_ERROR_CODES,
+  syncAckErrorCode,
+  syncAckMessage,
+  syncDataPlaneSnapshotMessages,
+  syncMutationRejection,
+  systemDatabaseConfig,
+  systemDatabaseServices,
   verifySubpathUploadGrantToken,
   verifyUploadGrantToken,
   WorkflowService,
@@ -616,6 +762,8 @@ import {
   ApplicationUserApiKeyManagement as ApplicationUserApiKeyManagementSubpath,
   AuthFlowContinuation as AuthFlowContinuationSubpath,
   ControlPlaneAuditViewer as ControlPlaneAuditViewerSubpath,
+  DataRealmReadinessNotice as DataRealmReadinessNoticeSubpath,
+  DataRealmReadyGate as DataRealmReadyGateSubpath,
   DomainOnboarding as DomainOnboardingSubpath,
   LoginForm,
   MFAEnrollmentForm,
@@ -640,6 +788,7 @@ import type {
   ApiKeyManagementCommonProps as ApiKeyManagementCommonPropsSubpath,
   ApiKeyManagementProps as ApiKeyManagementPropsSubpath,
   ApplicationUserApiKeyManagementProps as ApplicationUserApiKeyManagementPropsSubpath,
+  DataRealmReadyGateProps as DataRealmReadyGatePropsSubpath,
   PlatformApiKeyManagementProps as PlatformApiKeyManagementPropsSubpath,
   SelfApiKeyManagementProps as SelfApiKeyManagementPropsSubpath,
   TenantMemberApiKeyManagementProps as TenantMemberApiKeyManagementPropsSubpath,
@@ -687,6 +836,7 @@ import {
   useAuthorizationScopeBoundary as useAuthorizationScopeBoundarySubpath,
   useAuthorization as useAuthorizationSubpath,
   useCollection as useCollectionSubpath,
+  useDataRealmReadiness as useDataRealmReadinessSubpath,
   useHasPermission as useHasPermissionSubpath,
   usePlatformAdministration as usePlatformAdministrationSubpath,
   usePlatformTenants as usePlatformTenantsSubpath,
@@ -701,6 +851,7 @@ import {
 import type {
   UseAuthApiKeysOptions as UseAuthApiKeysOptionsSubpath,
   UseAuthApiKeysResult as UseAuthApiKeysResultSubpath,
+  UseDataRealmReadinessResult as UseDataRealmReadinessResultSubpath,
   UsePlatformAdministrationOptions as UsePlatformAdministrationOptionsSubpath,
   UsePlatformAdministrationResult as UsePlatformAdministrationResultSubpath,
   UseTenantOnboardingAdministrationOptions as UseTenantOnboardingAdministrationOptionsSubpath,
@@ -713,6 +864,14 @@ import {
   ApplicationUserApiKeyManagement,
   AuthFlowContinuation,
   ControlPlaneAuditViewer,
+  DATA_REALM_READINESS_DEFAULT_POLL_MS,
+  DATA_REALM_READINESS_MAX_POLL_MS,
+  DATA_REALM_READINESS_MIN_POLL_MS,
+  DATA_REALM_READINESS_STATUSES,
+  DataRealmReadinessContractError,
+  dataRealmReadinessAllowsApplicationData,
+  DataRealmReadinessNotice,
+  DataRealmReadyGate,
   DomainOnboarding,
   Button,
   AppShell,
@@ -743,6 +902,7 @@ import {
   PlatformAdminGate,
   normalizeAbsoluteLocalPath,
   normalizeConfiguredLocalPath,
+  parseDataRealmReadinessSnapshot,
   QRCode,
   RadialMenu,
   ResizableNavbar,
@@ -755,6 +915,7 @@ import {
   TooltipSubpath,
   TypewriterEffect,
   useCollection,
+  useDataRealmReadiness,
   useApplicationAccess,
   useAuthApiKeys,
   useAuthConfig,
@@ -782,7 +943,10 @@ import {
   TenantSwitcher,
   WavyBackground,
 } from '@zero/framework/react';
-import { createSyncClient } from '@zero/framework/sync/client';
+import {
+  createSyncClient,
+  type SyncMutationRejection as ClientSyncMutationRejection,
+} from '@zero/framework/sync/client';
 import { createIdentityId } from '@zero/framework/sync/identity';
 	import type { Row } from '@zero/framework/sync/types';
 	import type { ComponentProps } from 'react';
@@ -819,6 +983,8 @@ import type {
   AuthPlatformUpdateMemberInput,
   AuthPlatformUpdateMemberParams,
   ControlPlaneAuditViewerProps,
+  DataRealmReadinessSnapshot,
+  DataRealmReadyGateProps,
   AuthAuthorizationState,
   AuthState,
   AuthConfigState,
@@ -831,6 +997,7 @@ import type {
 	  AppShellWorkspaceConfig,
   Client,
   IssuedAuthApiKey,
+	  SyncMutationRejection,
 	  LoginFormProps,
   PlatformUserManagementProps,
   PlatformAdministrationManagementProps,
@@ -844,6 +1011,7 @@ import type {
   SelfApiKeyManagementProps,
   UseAuthApiKeysOptions,
   UseAuthApiKeysResult,
+  UseDataRealmReadinessResult,
   UseTenantAppShellWorkspacesOptions,
   UsePlatformAdministrationOptions,
   UsePlatformAdministrationResult,
@@ -858,6 +1026,11 @@ import type {
 	const authConfigState = {} as AuthConfigState;
 	const authConfigStatus = 'ready' as AuthConfigStatus;
 	const applicationAccessProps: ApplicationAccessManagementProps = {};
+	const dataRealmReadinessSnapshot = {} as DataRealmReadinessSnapshot;
+	const dataRealmReadyGateProps = {} as DataRealmReadyGateProps;
+	const dataRealmReadyGatePropsSubpath = {} as DataRealmReadyGatePropsSubpath;
+	const dataRealmReadinessResult = {} as UseDataRealmReadinessResult;
+	const dataRealmReadinessResultSubpath = {} as UseDataRealmReadinessResultSubpath;
 	const applicationAdmin = {} as AuthApplicationAdminSdkSurface;
 	const platformAdmin = {} as AuthPlatformAdminSdkSurface;
 	const platformAddMember = {} as AuthPlatformAddMemberParams;
@@ -911,6 +1084,9 @@ import type {
 	const apiKeyPublicTypes = {} as ApiKeyPublicTypes;
 	const apiKeySubpathPublicTypes = {} as ApiKeySubpathPublicTypes;
 	const clientApiKeys = {} as Client['apiKeys'];
+	const clientDataRealm = {} as Client['dataRealm'];
+	const clientMutationRejection = {} as SyncMutationRejection;
+	const clientSubpathMutationRejection = {} as ClientSyncMutationRejection;
 		const domainReleaseInput = {} as AuthTenantDomainReleaseInput;
 		const domainReleaseResult = {} as AuthTenantDomainReleaseResult;
 		const clientResourceFields = defineResourceFields({
@@ -966,6 +1142,21 @@ export const clientSymbols = {
   AuthFlowContinuationSubpath,
   ControlPlaneAuditViewer,
   ControlPlaneAuditViewerSubpath,
+  DATA_REALM_READINESS_DEFAULT_POLL_MS,
+  DATA_REALM_READINESS_MAX_POLL_MS,
+  DATA_REALM_READINESS_MIN_POLL_MS,
+  DATA_REALM_READINESS_STATUSES,
+  DataRealmReadinessContractError,
+  dataRealmReadinessAllowsApplicationData,
+  DataRealmReadinessNotice,
+  DataRealmReadinessNoticeSubpath,
+  DataRealmReadyGate,
+  DataRealmReadyGateSubpath,
+  dataRealmReadinessResult,
+  dataRealmReadinessResultSubpath,
+  dataRealmReadinessSnapshot,
+  dataRealmReadyGateProps,
+  dataRealmReadyGatePropsSubpath,
   DomainOnboarding,
   DomainOnboardingSubpath,
   Button,
@@ -989,6 +1180,9 @@ export const clientSymbols = {
   createIdentityId,
 	  createSyncClient,
 	  clientApiKeys,
+	  clientDataRealm,
+	  clientMutationRejection,
+	  clientSubpathMutationRejection,
 	  clientResourceFields,
 	  DataTable,
   DataTableView,
@@ -1054,6 +1248,7 @@ export const clientSymbols = {
   ModalManager,
   normalizeAbsoluteLocalPath,
   normalizeConfiguredLocalPath,
+  parseDataRealmReadinessSnapshot,
   QRCode,
   QRCodeSubpath,
   RadialMenu,
@@ -1078,6 +1273,8 @@ export const clientSymbols = {
   UiRadioGroup,
   UiRadioGroupItem,
   useCollection,
+  useDataRealmReadiness,
+  useDataRealmReadinessSubpath,
   useApplicationAccess,
   useApplicationAccessSubpath,
   useAuthApiKeys,

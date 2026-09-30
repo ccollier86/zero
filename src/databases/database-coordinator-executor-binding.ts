@@ -161,7 +161,7 @@ export class DatabaseCoordinatorExecutorBinding {
         phase: 'close',
         error: safeCoordinatorError(caught),
       });
-    });
+    }).catch(() => undefined);
   }
 
   emitRestarted(
@@ -213,7 +213,7 @@ export class DatabaseCoordinatorExecutorBinding {
         phase: 'close',
         error: safeCoordinatorError(caught),
       });
-    });
+    }).catch(() => undefined);
   }
 
   #requireGeneration(executor: DatabaseExecutor): number {

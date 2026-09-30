@@ -71,6 +71,10 @@ function TenantInvitationFormScope({
     | null
   >(null);
   const [flow, setFlow] = React.useState<AuthFlowContinuationResult | null>(null);
+  const activeFlow = flow
+    ?? (isAuthFlowContinuationResult(auth.authenticationContinuation)
+      ? auth.authenticationContinuation
+      : null);
   const [form, setForm] = React.useState({
     email: '',
     username: '',
@@ -151,11 +155,11 @@ function TenantInvitationFormScope({
     }
   }
 
-  if (flow) {
+  if (activeFlow) {
     if (finalizing) return status('Finishing invitation acceptance…', className);
     return (
       <AuthFlowContinuation
-        result={flow}
+        result={activeFlow}
         className={className}
         onTenantOnboardingRequired={(result) => {
           void finishAfterAuthentication(result.onboarding.continuation);
@@ -263,14 +267,14 @@ function TenantInvitationFormScope({
               onChange={(event) => setForm((value) => ({ ...value, password: event.target.value }))} />
           </Field>
           <Button type="submit" className="w-full" disabled={submitting}>
-            {submitting ? 'Creating account…' : `Create account and join ${presentation.actionTerm}`}
+            {submitting ? 'Creating account and preparing data…' : `Create account and join ${presentation.actionTerm}`}
           </Button>
         </form>
       ) : canAcceptExisting ? (
         <Button type="button" className="w-full" disabled={submitting} onClick={() => {
           void accept(auth.isAuthenticated ? { token } : { token, continuation });
         }}>
-          {submitting ? 'Accepting…' : `Accept and join ${presentation.actionTerm}`}
+          {submitting ? 'Joining and preparing…' : `Accept and join ${presentation.actionTerm}`}
         </Button>
       ) : (
         <Button asChild className="w-full">

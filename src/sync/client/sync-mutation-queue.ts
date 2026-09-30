@@ -2,6 +2,7 @@ import type {
   PendingMutation,
   Row,
   SyncDataPlaneName,
+  SyncMutationRejection,
   SyncMutateMessage,
 } from '../types';
 export type SyncOptimisticEvent = {
@@ -29,6 +30,7 @@ interface SyncMutationQueueInput {
     epoch: string | null;
     plane?: SyncDataPlaneName;
   };
+  rejected: (rejection: SyncMutationRejection) => void;
 }
 /** Serializes optimistic mutations that target the same row. */
 export class SyncMutationQueue {
@@ -66,6 +68,15 @@ export class SyncMutationQueue {
   timeout(mutation: PendingMutation): void {
     this.input.apply({
       type: 'sync.ack', ref: mutation.ref, ok: false, error: 'Mutation timeout',
+    });
+    this.input.rejected({
+      ref: mutation.ref,
+      table: mutation.table,
+      op: mutation.op,
+      rowId: mutation.rowId,
+      plane: this.input.route(mutation.table).plane,
+      error: 'Mutation timeout',
+      source: 'timeout',
     });
     const key = rowKey(mutation.table, mutation.rowId);
     if (this.inFlight.get(key)?.message.ref !== mutation.ref) return;

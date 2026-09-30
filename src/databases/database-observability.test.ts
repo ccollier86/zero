@@ -309,6 +309,79 @@ describe('DatabaseObservability', () => {
     expect(JSON.stringify(hostileEvent)).not.toContain(privateText);
   });
 
+  test('emits only canonical bounded coordinator aggregate failure details', () => {
+    const store = new MemoryEventStore();
+    const observer = createDatabaseObservability(runtimeFor(store));
+    const privateText = '/private/tenant.sqlite token=private';
+    const event = observer.emit({
+      type: 'coordinator-failed',
+      phase: 'shutdown',
+      failedCloseCount: 3,
+      remainingEntryCount: 2,
+      quarantinedSlotCount: 1,
+      availableSlotCount: 4,
+      failureCodeSummary:
+        'DATABASE_EXECUTOR_FAILED:2,DATABASE_PROTOCOL_ERROR:1',
+      error: new DatabaseError('DATABASE_EXECUTOR_FAILED', privateText, {
+        details: { rawCause: privateText },
+      }),
+    });
+
+    expect(event.metadata).toEqual({
+      phase: 'shutdown',
+      failedCloseCount: 3,
+      remainingEntryCount: 2,
+      quarantinedSlotCount: 1,
+      availableSlotCount: 4,
+      failureCodeSummary:
+        'DATABASE_EXECUTOR_FAILED:2,DATABASE_PROTOCOL_ERROR:1',
+      errorCode: 'DATABASE_EXECUTOR_FAILED',
+      retryable: false,
+      outcome: 'unknown',
+    });
+    expect(JSON.stringify(event)).not.toContain(privateText);
+
+    for (const failureCodeSummary of [
+      'private/path:1',
+      'DATABASE_PROTOCOL_ERROR:1,DATABASE_EXECUTOR_FAILED:2',
+      'DATABASE_EXECUTOR_FAILED:1,DATABASE_EXECUTOR_FAILED:1',
+      'DATABASE_EXECUTOR_FAILED:4',
+      [
+        'DATABASE_CLOSED:1',
+        'DATABASE_CONFLICT:1',
+        'DATABASE_DISABLED:1',
+        'DATABASE_EXECUTOR_FAILED:1',
+        'DATABASE_OPEN_FAILED:1',
+      ].join(','),
+    ]) {
+      expect(() => observer.emit({
+        type: 'coordinator-failed',
+        phase: 'close',
+        failedCloseCount: 3,
+        remainingEntryCount: 0,
+        quarantinedSlotCount: 0,
+        availableSlotCount: 1,
+        failureCodeSummary,
+        error: new Error(privateText),
+      })).toThrow();
+    }
+    expect(() => observer.emit({
+      type: 'coordinator-failed',
+      phase: 'close',
+      failedCloseCount: DATABASE_OBSERVABILITY_MAX_COUNT + 1,
+      remainingEntryCount: 0,
+      quarantinedSlotCount: 0,
+      availableSlotCount: 1,
+      error: new Error(privateText),
+    })).toThrow('count or limit');
+    expect(() => observer.emit({
+      type: 'coordinator-failed',
+      phase: 'close',
+      failedCloseCount: 1,
+      error: new Error(privateText),
+    } as DatabaseObservabilityEvent)).toThrow('counts are incomplete');
+  });
+
   test('emits only bounded placement data for periodic hot durability failure', () => {
     const store = new MemoryEventStore();
     const databaseRef = createDatabaseRef('private-periodic-tenant');

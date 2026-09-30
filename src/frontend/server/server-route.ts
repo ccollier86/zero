@@ -37,6 +37,7 @@ export type {
   ServerAuthServices,
   ServerObservabilityServices,
   ServerRouteServices,
+  ServerSystemDatabaseServices,
 } from './server-services';
 export type { ServerRequestServices } from './server-request-services';
 export { UnsafeServerServiceAccessError } from './server-request-services';

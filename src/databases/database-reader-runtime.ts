@@ -10,6 +10,7 @@ import { Database, type Statement } from 'bun:sqlite';
 import { lstatSync, realpathSync } from 'node:fs';
 
 import { quoteSqlIdentifier } from '../sync/identity';
+import { inspectGuardianReferenceSchema } from '../schema/guardian-references';
 import { databaseColumnDefinitionDeclaresPrimaryKey } from '../sync/row-identity';
 import { DatabaseError } from './database-error';
 import {
@@ -550,6 +551,27 @@ function assertRealmSchema(database: Database, realm: DatabaseRealm): void {
       throw new DatabaseError(
         'DATABASE_SCHEMA_MISMATCH',
         'Readonly database schema does not match its configured realm.',
+      );
+    }
+    const guardianIssue = inspectGuardianReferenceSchema(schema, {
+      database,
+      tableName: table,
+    })[0];
+    if (guardianIssue) {
+      throw new DatabaseError(
+        'DATABASE_SCHEMA_MISMATCH',
+        'Readonly database Guardian reference schema does not match its configured realm.',
+        {
+          retryable: false,
+          outcome: 'not-started',
+          details: {
+            component: 'guardian-identity-projection',
+            reason: 'reference-storage-invalid',
+            table,
+            field: guardianIssue.field,
+            issue: guardianIssue.code,
+          },
+        },
       );
     }
   }

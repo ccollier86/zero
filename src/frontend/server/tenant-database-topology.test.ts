@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { defineDatabaseRealm } from '../../databases/database-realm';
+import { DatabaseError } from '../../databases/database-error';
 import type {
   RegisteredResourceDefinition,
   ResourceRegistry,
@@ -9,6 +10,11 @@ import {
   assertTenantDatabaseRealmSchemaSubset,
   resolveTenantDatabaseResourceTopology,
 } from './tenant-database-topology';
+import {
+  allOf,
+  authenticatedOnly,
+  tenantKindPolicy,
+} from '../../resources/resource-policy';
 
 describe('tenant database resource topology', () => {
   test('accepts only a schema-identical subset of application tables', () => {
@@ -52,6 +58,47 @@ describe('tenant database resource topology', () => {
       .toThrow('foreign_records');
   });
 
+  test('classifies tenant topology failures through the database contract', () => {
+    const appTables = {
+      documents: {
+        document_id: 'text primary key',
+        title: 'text not null',
+      },
+    };
+    const drifted = defineDatabaseRealm({
+      name: 'tenant-schema-error-contract',
+      version: '1',
+      tables: {
+        documents: {
+          document_id: 'text primary key',
+          title: 'text',
+        },
+      },
+    });
+    expect(captureDatabaseError(() => {
+      assertTenantDatabaseRealmSchemaSubset(drifted, appTables);
+    })).toMatchObject({
+      code: 'DATABASE_SCHEMA_MISMATCH',
+      retryable: false,
+      outcome: 'not-started',
+      details: { component: 'tenant-database-topology' },
+    });
+
+    const unknown = defineDatabaseRealm({
+      name: 'tenant-config-error-contract',
+      version: '1',
+      tables: { foreign_records: { id: 'text primary key' } },
+    });
+    expect(captureDatabaseError(() => {
+      assertTenantDatabaseRealmSchemaSubset(unknown, appTables);
+    })).toMatchObject({
+      code: 'DATABASE_CONFIG_INVALID',
+      retryable: false,
+      outcome: 'not-started',
+      details: { component: 'tenant-database-topology' },
+    });
+  });
+
   test('builds a Sync catalog only for physically isolated Sync resources', () => {
     const realm = defineDatabaseRealm({
       name: 'tenant-resource-topology',
@@ -86,8 +133,41 @@ describe('tenant database resource topology', () => {
         identity: ['owner_id', 'title'],
       },
     });
+    expect(topology.eligibleTenantKinds).toEqual([
+      'organization',
+      'administration',
+    ]);
     expect(Object.isFrozen(topology)).toBe(true);
     expect(Object.isFrozen(topology.syncCatalog.documents)).toBe(true);
+  });
+
+  test('derives a conservative tenant-kind admission boundary from resource policies', () => {
+    const realm = defineDatabaseRealm({
+      name: 'tenant-kind-topology',
+      version: '1',
+      tables: {
+        organization_documents: { id: 'text primary key' },
+      },
+    });
+    const organizationOnly = {
+      ...resource(
+        'organization_documents',
+        'all',
+        'tenant-database',
+        'id',
+      ),
+      policy: Object.fromEntries(
+        ['list', 'get', 'create', 'update', 'delete'].map((action) => [
+          action,
+          allOf(authenticatedOnly(), tenantKindPolicy('organization')),
+        ]),
+      ),
+    } as unknown as RegisteredResourceDefinition;
+
+    expect(resolveTenantDatabaseResourceTopology(
+      fakeRegistry([organizationOnly]),
+      realm,
+    ).eligibleTenantKinds).toEqual(['organization']);
   });
 
   test('rejects missing tenant tables and global tables duplicated in the realm', () => {
@@ -103,8 +183,16 @@ describe('tenant database resource topology', () => {
       resource('global_plans', 'all', 'global', 'plan_id'),
     ]);
 
-    expect(() => resolveTenantDatabaseResourceTopology(registry, realm))
-      .toThrow('missing: documents; extra: global_plans');
+    const error = captureDatabaseError(() => {
+      resolveTenantDatabaseResourceTopology(registry, realm);
+    });
+    expect(error.message).toContain('missing: documents; extra: global_plans');
+    expect(error).toMatchObject({
+      code: 'DATABASE_SCHEMA_MISMATCH',
+      retryable: false,
+      outcome: 'not-started',
+      details: { component: 'tenant-database-topology' },
+    });
   });
 });
 
@@ -140,4 +228,14 @@ function resource(
     fields: null,
     policy: {},
   } as unknown as RegisteredResourceDefinition;
+}
+
+function captureDatabaseError(operation: () => unknown): DatabaseError {
+  try {
+    operation();
+  } catch (error) {
+    expect(error).toBeInstanceOf(DatabaseError);
+    return error as DatabaseError;
+  }
+  throw new Error('Expected DatabaseError.');
 }

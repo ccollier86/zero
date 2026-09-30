@@ -61,6 +61,8 @@ export interface SyncProviderProps {
   onError?: (error: string) => void;
   /** Callback after reconnect */
   onReconnect?: () => void;
+  /** Callback after an optimistic mutation is rejected and rolled back. */
+  onMutationRejected?: SyncClientConfig['onMutationRejected'];
   /** Mutation ack timeout in ms */
   ackTimeout?: number;
   /** Max reconnect attempts */
@@ -87,6 +89,7 @@ export function SyncProvider({
   ephemeralClient: existingEphemeralClient,
   onError,
   onReconnect,
+  onMutationRejected,
   ackTimeout,
   maxReconnectAttempts,
   children,
@@ -111,6 +114,7 @@ export function SyncProvider({
         bindAuthLifecycle,
         onError,
         onReconnect,
+        onMutationRejected,
         ackTimeout,
         maxReconnectAttempts,
       });

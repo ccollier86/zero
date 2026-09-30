@@ -14,6 +14,9 @@ describe('ControlPlaneAuditViewer', () => {
       scope: 'tenant',
     }));
     expect(markup).toContain('Authorization audit');
+    expect(markup).toMatch(
+      /<h2[^>]*data-slot="card-title"[^>]*>Authorization audit<\/h2>/,
+    );
     expect(markup).toContain('Filter audit action');
     expect(markup).toContain('Filter audit target type');
     expect(markup).toContain('Export NDJSON');

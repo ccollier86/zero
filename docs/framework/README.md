@@ -84,6 +84,9 @@ Zero.
 - [Auth System](../auth/README.md): canonical feature index for auth profiles,
   declarative permissions and RBAC, tenant/application administration,
   onboarding, browser authorization state, and installed-app authentication.
+- [Guardian User API Keys](../auth/api-keys.md): opt-in user-bound credentials,
+  explicit HTTP route/resource admission, live RBAC authority, lifecycle APIs,
+  browser SDK/hooks, and optional packaged management controls.
 - [Platform Administration Organization](../auth/platform-administration.md):
   protected multi-mode operator scope, customer-organization directory,
   permissions, routes, SDK/hooks, and packaged controls.
@@ -121,6 +124,12 @@ Zero.
   explicit hot durability, Resource receipts, multiplexed ReactiveDB
   ordering/recovery, delivery-time authority fences, trusted tenant routing,
   and the remaining operational/release boundaries.
+- [System and Application Database Planes](./system-database.md): separate
+  Zero/Guardian authority, application data, identity anchors, projection
+  readiness, privileged server services, and upgrade/Doctor behavior.
+- [Realtime Sync Wire Protocol](../realtime-sync/realtime-sync/protocol.md):
+  multiplexed data planes, acknowledgements, stable rejection codes, rollback,
+  reconnect, and mutation-rejection observers.
 - [Platform KV/cache](../kv.md): Zero-owned memory-first KV/cache service,
   journal/checkpoint recovery, app-facing `zero.kv`, counters, limiters, and
   `createApp()` defaults.

@@ -166,6 +166,11 @@ export type DatabaseObservabilityEvent =
   | ({
       readonly type: 'coordinator-failed';
       readonly phase: DatabaseObservabilityPhase;
+      readonly failedCloseCount?: number;
+      readonly remainingEntryCount?: number;
+      readonly quarantinedSlotCount?: number;
+      readonly availableSlotCount?: number;
+      readonly failureCodeSummary?: string;
     } & DatabaseFailureEvent)
   | ({
       readonly type: 'executor-restarted';
@@ -300,6 +305,11 @@ export interface DatabaseObservabilityMetadata {
   readonly readerCount?: number;
   readonly runtimeCount?: number;
   readonly activeCount?: number;
+  readonly failedCloseCount?: number;
+  readonly remainingEntryCount?: number;
+  readonly quarantinedSlotCount?: number;
+  readonly availableSlotCount?: number;
+  readonly failureCodeSummary?: string;
   readonly queueDepth?: number;
   readonly retryCount?: number;
   readonly writerLimit?: number;

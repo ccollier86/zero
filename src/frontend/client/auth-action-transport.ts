@@ -2,7 +2,11 @@
 
 import { createAuthClientError } from './auth-errors';
 import { parseAuthCompletionResult } from './auth-completion-parser';
-import type { AuthAuthenticationAttempt } from './auth-authentication-attempt';
+import {
+  failCurrentAuthenticationCompletion,
+  failCurrentAuthenticationAttempt,
+  type AuthAuthenticationAttempt,
+} from './auth-authentication-attempt';
 import type { AuthActionTokenInfo, AuthCompletionResult } from './auth-types';
 
 export interface AuthActionTransportOptions {
@@ -64,31 +68,45 @@ export class AuthActionTransport {
   ): Promise<AuthCompletionResult> {
     const attempt = this.options.beginAuthentication();
     try {
-      const response = await fetch(`${this.options.baseUrl}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: attempt.signal,
-      });
-      attempt.assertCurrent();
-      if (!response.ok) {
-        const responseBody = await response.json().catch(() => null);
-        attempt.assertCurrent();
-        const error = createAuthClientError(response, responseBody, fallback);
-        this.options.failAuthentication(error.message, attempt);
-        throw error;
-      }
       let result: AuthCompletionResult;
+      let failureMessage = fallback;
       try {
+        const response = await fetch(`${this.options.baseUrl}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: attempt.signal,
+        });
+        attempt.assertCurrent();
+        if (!response.ok) {
+          const responseBody = await response.json().catch(() => null);
+          attempt.assertCurrent();
+          const error = createAuthClientError(response, responseBody, fallback);
+          failureMessage = error.message;
+          throw error;
+        }
+        failureMessage = 'Invalid authentication response';
         const responseBody = await response.json();
         attempt.assertCurrent();
         result = parseAuthCompletionResult(responseBody);
-      } catch (error) {
-        attempt.assertCurrent();
-        this.options.failAuthentication('Invalid authentication response', attempt);
-        throw error;
+      } catch (cause) {
+        return failCurrentAuthenticationAttempt(
+          attempt,
+          this.options.failAuthentication,
+          cause,
+          failureMessage,
+        );
       }
-      return this.options.completeAuthentication(result, attempt);
+      try {
+        return await this.options.completeAuthentication(result, attempt);
+      } catch (cause) {
+        return failCurrentAuthenticationCompletion(
+          attempt,
+          this.options.failAuthentication,
+          cause,
+          fallback,
+        );
+      }
     } finally {
       attempt.dispose();
     }

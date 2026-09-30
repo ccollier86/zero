@@ -132,10 +132,12 @@ for silent behavior.
   monotonic explicit registry version for same-profile changes, reject
   rollback/corruption/implicit retained-role reactivation, system-audit
   changes, and fence stale runtimes through the shared authority revision.
-- [x] Bound the built-in multi-runtime contract to runtimes sharing one local
-  file-mode SQLite database, and document that separate databases, cross-host
-  transports, application-owned caches, and RAM-only topic delivery require a
-  future external coordination contract rather than implying unsafe support.
+- [x] Bound shared-file fanout/invalidation to runtimes sharing the relevant
+  local file-mode SQLite plane. Fabric coordinates its actor-owned databases
+  only within one app coordinator/root; independent roots, cross-host
+  transports, application-owned caches, and RAM-only topic delivery require
+  an explicit external coordination contract rather than implying unsafe
+  support.
 
 ## 3. Managed data plane
 
@@ -338,7 +340,7 @@ trusted application code and must apply their own projection and write rules.
 
 ## Definition of shipped
 
-The implementation in this branch is an unreleased candidate. A profile is
+The implementation documented here is an unreleased candidate. A profile is
 shipped only after the applicable unchecked release gates pass, maintainers
 freeze its documented boundary, the exact release commit passes clean-checkout
 package verification, and a version is published. Source presence, a checked

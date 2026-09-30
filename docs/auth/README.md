@@ -7,12 +7,15 @@ system. The product name is documentation vocabulary only: existing `auth.*`
 configuration, `/auth/*` routes, package exports, and TypeScript symbols remain
 stable.
 
-Guardian is self-hosted inside each Bun runtime and
-backed by the app's ReactiveDB. File-mode runtimes sharing one SQLite database
-also share durable session authority and promptly revalidate their own sockets;
-this is not coordination between separate databases or hosts. User and session
-data travel through the authenticated auth APIs; default `createApp()` policy
-does not expose the `users` table through generic Sync. Argon2id passwords,
+Guardian is self-hosted inside each Bun runtime and backed by the app's pinned
+system ReactiveDB (`systemDb`), always separate from the application `db` in
+managed apps. File-mode runtimes sharing that system SQLite file also share
+durable session authority and promptly revalidate their own sockets; this is
+not cross-host replication. User and session data travel through authenticated
+auth APIs; default `createApp()` policy exposes only authorized system
+projections, not the Guardian `users` authority table, through generic Sync.
+See [System and Application Database Planes](../framework/system-database.md)
+for the ownership, ID-anchor, and upgrade boundary. Argon2id passwords,
 ES256 JWTs, generation-aware Bearer verification, and a revocable HttpOnly page
 session support browser, SSR, and installed-app sessions without an external
 auth service.
@@ -64,8 +67,9 @@ exact pre-024 Administration Organization reconciliation path is documented in
 [Platform Administration Organization](./platform-administration.md#adopting-the-administration-organization-on-a-pre-024-installation).
 Registered
 resources now declare explicit server-owned client exposure and field-level
-allow-lists. Managed file-mode runtimes sharing one SQLite database relay
-tracked changes and auth/session invalidations across active sockets. Multi-mode startup
+allow-lists. Managed file-mode runtimes sharing the relevant SQLite plane relay
+that plane's tracked changes or auth/session invalidations across active
+sockets. Multi-mode startup
 validates actual non-partial tenant-leading indexes, tenant-scoped business
 uniqueness, and composite tenant consistency for foreign keys between
 registered tenant resources.
@@ -119,7 +123,7 @@ package and from applications created or updated by the Zero CLI.
 ## The Full Loop
 
 ```ts
-// ─── Server: auth + sync, shared database ─────────────
+// ─── Advanced standalone composition (shared manually) ──
 
 import { Elysia } from 'elysia';
 import {
@@ -154,7 +158,7 @@ const sync = createSyncPlugin({
 });
 
 const app = installAuthStopBarrier(new Elysia()
-  // Sync constructs and owns the one ReactiveDB used by every plugin.
+  // Low-level standalone composition deliberately supplies one DB to both.
   .use(sync)
   .use(createAuthPlugin({
     db,
@@ -183,7 +187,7 @@ app.listen(3000);
 Install `installAuthStopBarrier()` after composing a standalone Elysia app.
 Elysia invokes asynchronous plugin stop hooks without joining them, so the
 barrier drains auth-owned asynchronous work before normal plugin stop hooks
-dispose the shared database. `createApp()` already installs the platform-wide
+dispose that standalone database. `createApp()` already installs the platform-wide
 equivalent.
 Doctor's usage audit warns when it sees a directly composed public
 `createAuthPlugin()` without an invoked barrier; ordinary `createApp()`
@@ -526,16 +530,17 @@ for the complete example and failure contract.
 |-----------|-----------|------|
 | Password hashing | `Bun.password` (Argon2id) | Native, zero deps — built into Bun runtime |
 | JWT signing/verification | `jose` | ECDSA P-256, JWKS export, one dependency |
-| Database | bun:sqlite (shared ReactiveDB) | Users, credentials, tokens, config — same instance as sync |
+| Database | bun:sqlite ReactiveDB | Managed apps keep Guardian in `systemDb`; advanced standalone composition may deliberately share an injected transaction domain |
 | HTTP framework | Elysia plugin | Routes, derive, lifecycle hooks, composable |
 
 ## What This Is
 
 A **standalone auth primitive** that composes with the sync engine. It owns user
-identity (registration, login, password verification, JWT issuance) and stores
-user data in the same ReactiveDB that can also power real-time application
-data. Auth state is exposed through purpose-built auth APIs rather than a
-generic user-table subscription.
+identity (registration, login, password verification, JWT issuance).
+`createApp()` stores that state in `systemDb` and keeps app data separate;
+advanced direct plugin composition can inject a shared transaction domain when
+it deliberately owns all lifecycle and policy wiring. Auth state is exposed
+through purpose-built APIs rather than a generic user-table subscription.
 
 **Designed for:**
 - Applications already using the sync engine that need user identity
@@ -572,7 +577,7 @@ generic user-table subscription.
 | | Firebase Auth | Lucia | This |
 |---|--------------|-------|------|
 | **Hosting** | Managed cloud | Self-hosted | Self-hosted; one runtime or shared-file replicas |
-| **Database** | Proprietary | Any SQL/NoSQL | bun:sqlite (shared ReactiveDB) |
+| **Database** | Proprietary | Any SQL/NoSQL | bun:sqlite (separate system authority and application ReactiveDB planes) |
 | **Reactivity** | Snapshot listeners | None built-in | Policy-controlled app-table Sync; auth state through auth APIs |
 | **Password hashing** | Managed | Configurable (bcrypt, scrypt, argon2) | Argon2id via Bun.password (native) |
 | **Token format** | Proprietary | Session-based | Standard JWT (ES256), JWKS endpoint |
@@ -582,39 +587,44 @@ generic user-table subscription.
 
 ## Integration with Sync Engine
 
-The auth system and sync engine share a **single ReactiveDB instance**. Auth
-defines its tables (`users`, `user_properties`, `_credentials`,
-`_refresh_tokens`, `_auth_config`) in the same database the sync engine uses.
-`createApp()` also mounts `_zero_action_tokens`/`_zero_resume_tokens` on that
-exact instance before auth. That shared transaction domain lets password and
-account transitions consume their one-time platform token atomically and emit
+Guardian and platform tokens share the **system ReactiveDB**. Auth defines its
+authority tables there, and `createApp()` mounts
+`_zero_action_tokens`/`_zero_resume_tokens` on that exact system instance before
+auth. That shared system transaction domain lets password and account
+transitions consume one-time platform tokens atomically and emit
 consumed-success telemetry only after commit; direct plugin composition must
-wire the same instance or startup fails closed. See
+wire the same system instance or startup fails closed. The application
+ReactiveDB is separate and contains only app tables plus managed ID-only
+identity anchors when app foreign keys require them. See
 [Platform Tokens: Auth Transaction Boundary](../tokens.md#auth-transaction-boundary).
-Sharing storage does not grant client visibility: `createApp()` keeps `users`
-private, applies row filters to scoped framework tables, and composes those
-decisions with the application's Sync policy. A directly composed
+One WebSocket can carry authorized system projections and application data on
+independent planes; that transport does not merge their storage. `createApp()`
+applies row filters to scoped framework tables and composes those decisions
+with the application's Sync policy. A directly composed
 `createSyncPlugin()` remains public-by-default for compatibility, so standalone
 apps must supply authentication and a policy explicitly, as in the example
 above.
 
 ```
-                    Shared ReactiveDB
+                    System ReactiveDB
                   ┌───────────────────────────────────────┐
-                  │                                       │
-  Auth Plugin ──► │  users (platform-private) ── auth APIs│ ◄── Sync policy
-  defineTable()   │  user_properties          ── auth APIs│     filters reads
-                  │  _credentials           ── internal   │
-                  │  _refresh_tokens        ── internal   │
-                  │  _auth_config           ── internal   │
-                  │  _auth_tenants          ── internal   │
-                  │  _auth_tenant_memberships ── internal │
-                  │                                       │
-  Sync Plugin ──► │  todos (app policy)     ── live Sync  │
-  defineTable()   │  projects (app policy)  ── live Sync  │
-                  │  _changes               ── internal   │
-                  │                                       │
+  Auth Plugin ──► │  users / user_properties ── auth APIs│
+                  │  credentials / sessions  ── internal │
+                  │  tenants / memberships   ── internal │
+                  │  RBAC / API keys / audit ── internal │
+                  │  platform tokens         ── internal │
+                  └───────────────────┬───────────────────┘
+                                      │ ID-only projection
+                                      ▼
+                  Application ReactiveDB
+                  ┌───────────────────────────────────────┐
+  Sync Plugin ──► │  users(user_id)          ── FK anchor │
+  defineTable()   │  tenant_memberships      ── FK anchor │
+                  │  todos / projects        ── live Sync │
+                  │  _changes                ── internal  │
                   └───────────────────────────────────────┘
+                              ▲
+                              └── Sync/resource policy filters app reads
 ```
 
 **Policy-controlled app tables** — readable changes can flow to authorized
@@ -644,7 +654,7 @@ See [Architecture](./architecture.md) for the full component diagram and data fl
 | [Architecture](./architecture.md) | Plugin structure, Elysia integration, data flow, composition with sync engine |
 | [User Store](./user-store.md) | Stable identity facade, focused credential/token/provisioning stores, SQLite schema, CRUD, and password lifecycle |
 | [Token Service](./token-service.md) | JWT lifecycle, ECDSA keypair management, refresh rotation, JWKS |
-| [Platform Tokens](../tokens.md) | Generic action/resume tokens plus the exact shared-ReactiveDB auth transaction and post-commit telemetry contract |
+| [Platform Tokens](../tokens.md) | Generic action/resume tokens plus the exact shared system-ReactiveDB auth transaction and post-commit telemetry contract |
 | [Auth Guards And Audit Boundaries](./guards-and-audit.md) | Implemented request-scoped route guards and the explicit boundary between durable control-plane audit and deferred general activity tracking |
 | [Control-Plane Audit](./control-plane-audit.md) | Append-only authorization/security events, atomic mutation wiring, authorized query/export, retention, SDK/hook, and packaged viewer |
 | [Application Access Administration](./application-access-administration.md) | Implemented `single/advanced` assignments, protected owner, SDK/hook, and packaged UI |
@@ -653,6 +663,7 @@ See [Architecture](./architecture.md) for the full component diagram and data fl
 | [Tenant Invitations And Join Requests](./tenant-invitations-and-join-requests.md) | Invitation delivery/acceptance and retained join-request review contract |
 | [Verified Company-Domain Onboarding](./verified-domain-onboarding.md) | Exact-domain DNS/mailbox proof, request-to-join, release/quarantine, and packaged controls |
 | [Browser Authorization Snapshot And Gates](./browser-authorization.md) | Sanitized live scope, cache boundary, permission hooks, and presentation gates |
+| [Guardian User API Keys](./api-keys.md) | Opt-in user-bound credentials, explicit HTTP admission, live authority, lifecycle routes, SDK/hooks, and optional packaged controls |
 | [Admin User Management](./admin-user-management-plan.md) | Implemented registration policy, user/security lifecycle routes, configured properties, and production admin UI |
 | [Email And Account Lifecycle](./email-account-lifecycle-plan.md) | Platform email foundation, Resend adapter, and implemented verification/reset/setup flows |
 | [App Authentication SDK Guide](./app-auth-sdk-guide.md) | Choose web, TypeScript native, Rust/Tauri, Chrome, or another client and follow the installed-app onboarding checklist |

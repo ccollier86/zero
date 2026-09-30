@@ -7,6 +7,7 @@
  */
 
 import { classifyDatabaseHttpFailure } from '../databases/database-http-error';
+import { IdentityProjectionError } from '../auth/identity-projection-error';
 import type { PlatformObservabilityRuntime } from '../observability/types';
 import type { ResourceCrudFailure } from './resource-crud-contracts';
 import {
@@ -25,6 +26,7 @@ import type { RegisteredResourceDefinition } from './resource-registry';
 import {
   resourceAuthorityChangedFailure,
   resourceConflictFailure,
+  resourceDataRealmReadinessFailure,
   resourceFailure,
   resourceRowChangedFailure,
   sameIdempotencyKeyFailure,
@@ -118,6 +120,9 @@ export class ResourceCrudFailureMapper {
     action: ResourceAction,
     operation: 'read' | 'write',
   ): ResourceCrudFailure {
+    if (error instanceof IdentityProjectionError) {
+      return resourceDataRealmReadinessFailure(error);
+    }
     const classified = classifyDatabaseHttpFailure(error, operation);
     if (classified.receiptState !== 'expired'
       && (classified.kind === 'write-outcome-unknown'
@@ -244,6 +249,9 @@ export class ResourceCrudFailureMapper {
     resource: RegisteredResourceDefinition,
     action: ResourceAction,
   ): ResourceCrudFailure {
+    if (isDatabaseAuthorityChanged(error)) {
+      return resourceAuthorityChangedFailure();
+    }
     const message = error instanceof Error ? error.message : 'Resource mutation failed';
     if (message.includes('primary key already exists')) {
       return resourceFailure(409, 'Resource row already exists', 'resource-conflict');
@@ -281,6 +289,12 @@ export class ResourceCrudFailureMapper {
     });
     return resourceFailure(500, 'Resource query failed', 'resource-query-failed');
   }
+}
+
+function isDatabaseAuthorityChanged(error: unknown): boolean {
+  return Boolean(error
+    && typeof error === 'object'
+    && (error as { code?: unknown }).code === 'DATABASE_AUTHORITY_CHANGED');
 }
 
 function isResourceReceiptAction(action: ResourceAction): action is MutationAction {

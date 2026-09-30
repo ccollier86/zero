@@ -180,7 +180,7 @@ export class DatabaseTenantSyncSnapshotStorage {
   }
 
   deleteSessionRows(sessionId: string): void {
-    this.#runtime.db.transaction(() => {
+    this.#runTempTransaction(() => {
       this.#prepared.deleteRows.run(sessionId);
       this.#prepared.deleteSession.run(sessionId);
     });
@@ -212,7 +212,7 @@ export class DatabaseTenantSyncSnapshotStorage {
     const failures: unknown[] = [];
     if (!this.#contentsCleared) {
       try {
-        this.#runtime.db.transaction(() => {
+        this.#runTempTransaction(() => {
           this.#runtime.sqlite.raw.run(`DELETE FROM temp.${ROW_TABLE}`);
           this.#runtime.sqlite.raw.run(`DELETE FROM temp.${SESSION_TABLE}`);
         });
@@ -235,6 +235,15 @@ export class DatabaseTenantSyncSnapshotStorage {
       );
     }
     this.#closed = true;
+  }
+
+  /**
+   * Snapshot sessions exist only in actor-local TEMP tables. Their lifecycle
+   * must stay transactional, but it must not enter ReactiveDB's durable-main
+   * commit guard: cleanup changes no application row or durable authority.
+   */
+  #runTempTransaction(operation: () => void): void {
+    this.#runtime.sqlite.raw.transaction(operation).deferred();
   }
 }
 

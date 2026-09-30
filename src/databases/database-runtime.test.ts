@@ -275,6 +275,52 @@ describe('DatabaseRuntime', () => {
     expect(attempts).toBe(2);
   });
 
+  test('closes runtime start failures and closed-state reuse into DatabaseError', () => {
+    const sqlite = createPlatformSQLiteService({ mode: 'ephemeral' });
+    const runtime = DatabaseRuntime.open({
+      id: 'start-error-contract',
+      role: 'service',
+      sqlite,
+      ownsSQLite: false,
+    });
+    const start = sqlite.start.bind(sqlite);
+    sqlite.start = () => {
+      throw new Error('/private/database/startup detail');
+    };
+
+    const startError = captureDatabaseError(() => runtime.start());
+    expect(startError).toMatchObject({
+      code: 'DATABASE_OPEN_FAILED',
+      retryable: true,
+      outcome: 'not-started',
+    });
+    expect(startError.message).not.toContain('/private/database');
+
+    sqlite.start = () => {
+      throw new Proxy(Object.create(null), {
+        getPrototypeOf() {
+          throw new Error('/private/hostile-prototype-trap');
+        },
+      });
+    };
+    const hostileError = captureDatabaseError(() => runtime.start());
+    expect(hostileError).toMatchObject({
+      code: 'DATABASE_OPEN_FAILED',
+      retryable: true,
+      outcome: 'not-started',
+    });
+    expect(hostileError.message).not.toContain('hostile-prototype-trap');
+
+    sqlite.start = start;
+    runtime.close();
+    expect(captureDatabaseError(() => runtime.start())).toMatchObject({
+      code: 'DATABASE_CLOSED',
+      retryable: false,
+      outcome: 'not-started',
+    });
+    sqlite.close();
+  });
+
   test('aborts owned SQLite when table initialization fails', () => {
     const sqlite = createPlatformSQLiteService({ mode: 'ephemeral' });
     let closeCalls = 0;

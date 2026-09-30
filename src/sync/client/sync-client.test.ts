@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { SyncStoreContext } from './sync-store';
 import type { SyncClient } from './sync-client';
+import { SYNC_ACK_ERROR_CODES } from '../types';
 import { createNativeSyncAuth } from '../../native/sync-auth';
 import { createNativeTestHarness } from '../../native/test-support';
 
@@ -805,6 +806,51 @@ describe('message routing', () => {
 
     expect(getCtx(client)._sync.pending).toHaveLength(0);
 
+    client.disconnect();
+  });
+
+  test('reports stable mutation rejection details after rollback', async () => {
+    const configured: unknown[] = [];
+    const observed: unknown[] = [];
+    const client = makeClient({
+      onMutationRejected: (rejection) => configured.push(rejection),
+    });
+    const unsubscribe = client.onMutationRejected(
+      (rejection) => observed.push(rejection),
+    );
+    client.onMessage(() => {
+      throw new Error('consumer callback failure');
+    });
+    await flushMicrotasks();
+
+    client.insert('todos', { id: 'rejected', title: 'Nope', done: 0 });
+    const ref = getCtx(client)._sync.pending[0].ref;
+    MockWebSocket.latest().simulateMessage(JSON.stringify({
+      type: 'sync.ack',
+      ref,
+      ok: false,
+      seq: null,
+      error: 'Data realm is still being prepared',
+      errorCode: SYNC_ACK_ERROR_CODES.dataRealmNotReady,
+    }));
+
+    const expected = {
+      ref,
+      table: 'todos',
+      op: 'INSERT',
+      rowId: 'rejected',
+      plane: undefined,
+      error: 'Data realm is still being prepared',
+      errorCode: SYNC_ACK_ERROR_CODES.dataRealmNotReady,
+      source: 'server',
+    };
+    expect(configured).toEqual([expected]);
+    expect(observed).toEqual([expected]);
+    expect(getCtx(client)._sync.pending).toEqual([]);
+    expect((getCtx(client).todos as Record<string, unknown>).rejected)
+      .toBeUndefined();
+
+    unsubscribe();
     client.disconnect();
   });
 

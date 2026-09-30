@@ -79,7 +79,7 @@ describe.serial('createApp composition lifecycle', () => {
 
       expect(events.query({
         code: OBS_CODES.PERSISTENCE_SQL_CLOSED.code,
-      }).events).toHaveLength(1);
+      }).events).toHaveLength(2);
       expect(getEmailRuntime().app.name).not.toBe('Failed App');
 
       app = await createApp(config(root, {
@@ -115,7 +115,7 @@ describe.serial('createApp composition lifecycle', () => {
       expect(getKvService()).toBeNull();
       expect(events.query({
         code: OBS_CODES.PERSISTENCE_SQL_CLOSED.code,
-      }).events).toHaveLength(1);
+      }).events).toHaveLength(2);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

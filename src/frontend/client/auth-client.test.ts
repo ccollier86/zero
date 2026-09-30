@@ -299,6 +299,49 @@ describe('AuthClient authorization surface', () => {
 });
 
 describe('AuthClient token lifecycle', () => {
+  it('settles account, action-token, MFA, and invitation loading after failures', async () => {
+    const scenarios = [
+      {
+        path: '/auth/login',
+        fallback: 'Login failed',
+        run: (client: AuthClient) => client.login('ada', 'password'),
+      },
+      {
+        path: '/auth/verify-email',
+        fallback: 'Failed to verify email',
+        run: (client: AuthClient) => client.verifyEmail('verification-token'),
+      },
+      {
+        path: '/auth/mfa/challenge/verify',
+        fallback: 'Failed to verify MFA challenge',
+        run: (client: AuthClient) => client.verifyMfaChallenge({
+          challengeToken: 'challenge-token',
+          code: '123456',
+        }),
+      },
+      {
+        path: '/auth/invitations/accept',
+        fallback: 'Failed to accept invitation',
+        run: (client: AuthClient) => client.acceptTenantInvitation({
+          token: 'invitation-token',
+        }),
+      },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      mockFetch((url) => url.endsWith(scenario.path)
+        ? Promise.reject(new Error('network unavailable'))
+        : Response.json({ ok: true }));
+      const client = new AuthClient('http://zero.test');
+
+      await expect(scenario.run(client)).rejects.toThrow('network unavailable');
+      expect(client.isLoading).toBe(false);
+      expect(client.error).toBe(scenario.fallback);
+      expect(client.isAuthenticated).toBe(false);
+      client.dispose();
+    }
+  });
+
   it('fails closed and leaves loading state after a malformed successful login response', async () => {
     mockFetch(() => Response.json({
       user: authUser(),
@@ -369,6 +412,44 @@ describe('AuthClient token lifecycle', () => {
     expect(client.activeTenant?.tenantId).toBe('ten_newer');
   });
 
+  it('does not let an older transport failure clobber replacement auth state', async () => {
+    let rejectOlderLogin!: (cause: unknown) => void;
+    const olderLoginResponse = new Promise<Response>((_resolve, reject) => {
+      rejectOlderLogin = reject;
+    });
+    const lifecycle = createTestScopeLifecycle();
+    mockFetch((url, init) => {
+      if (!url.endsWith('/auth/login')) return Response.json({ ok: true });
+      const body = JSON.parse(String(init?.body)) as { username: string };
+      if (body.username === 'older') return olderLoginResponse;
+      return Response.json({
+        user: { ...authUser(), userId: 'u_newer', username: 'newer' },
+        accessToken: 'access-newer',
+        refreshToken: 'refresh-newer',
+        activeTenant: tenantSummary('ten_newer', 'owner'),
+      });
+    });
+    const client = new AuthClient('http://zero.test', {
+      authorizationScopeLifecycle: lifecycle.api,
+    });
+
+    const olderLogin = client.login('older', 'password');
+    const observedOlderLogin = olderLogin.catch((cause: unknown) => cause);
+    await Promise.resolve();
+    await client.login('newer', 'password');
+    rejectOlderLogin(new Error('late network failure'));
+
+    const rejection = await observedOlderLogin;
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).message).toContain(
+      'Discarded a response from a previous authorization scope',
+    );
+    expect(client.user?.userId).toBe('u_newer');
+    expect(client.activeTenant?.tenantId).toBe('ten_newer');
+    expect(client.error).toBeNull();
+    expect(client.isLoading).toBe(false);
+  });
+
   it('keeps tenant selection unauthenticated until the one-time exchange completes', async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const lifecycle = createTestScopeLifecycle();
@@ -402,6 +483,7 @@ describe('AuthClient token lifecycle', () => {
     const loginResult = await client.login('ada', 'password');
     expect(isAuthTenantSelectionRequiredResult(loginResult)).toBe(true);
     expect(client.isAuthenticated).toBe(false);
+    expect(client.isLoading).toBe(false);
     expect(client.accessToken).toBeNull();
 
     const selected = await client.selectTenant('identity-only-continuation', 'ten_a');
@@ -410,12 +492,59 @@ describe('AuthClient token lifecycle', () => {
     expect(client.accessToken).toBe('access-selected');
     expect(lifecycle.events).toEqual([
       'begin', 'complete',
-      'begin', 'complete',
     ]);
     expect(JSON.parse(String(requests[1]!.init?.body))).toEqual({
       continuation: 'identity-only-continuation',
       tenantId: 'ten_a',
     });
+  });
+
+  it('keeps the tenant-selection form mounted until its response is parsed', async () => {
+    const pendingSelection = deferred<Response>();
+    let selectionRequests = 0;
+    const lifecycle = createTestScopeLifecycle();
+    mockFetch((url) => {
+      if (url.endsWith('/auth/login')) {
+        return Response.json({
+          user: authUser(),
+          tenantSelectionRequired: true,
+          tenantSelection: {
+            continuation: 'selection-proof',
+            expiresAt: Date.now() + 60_000,
+            tenants: [tenantSummary('ten_a', 'owner')],
+          },
+        });
+      }
+      if (url.endsWith('/auth/tenants/select')) {
+        selectionRequests += 1;
+        return pendingSelection.promise;
+      }
+      return Response.json({ ok: true });
+    });
+    const client = new AuthClient('http://zero.test', {
+      authorizationScopeLifecycle: lifecycle.api,
+    });
+    await client.login('ada', 'password');
+
+    const selection = client.selectTenant('selection-proof', 'ten_a');
+    await waitForCondition(() => selectionRequests === 1);
+    expect(lifecycle.events).toEqual([]);
+    expect(client.sessionTransition.phase).toBe('idle');
+    expect(client.authenticationContinuation).toMatchObject({
+      tenantSelectionRequired: true,
+    });
+
+    pendingSelection.resolve(Response.json({
+      user: authUser(),
+      accessToken: 'access-selected',
+      refreshToken: 'refresh-selected',
+      activeTenant: tenantSummary('ten_a', 'owner'),
+    }));
+    await selection;
+
+    expect(lifecycle.events).toEqual(['begin', 'complete']);
+    expect(client.authenticationContinuation).toBeNull();
+    expect(client.activeTenant?.tenantId).toBe('ten_a');
   });
 
   it('creates a tenant with onboarding proof or the current refresh family', async () => {
@@ -477,7 +606,6 @@ describe('AuthClient token lifecycle', () => {
     ]);
     expect(client.activeTenant).toEqual(tenantSummary('ten_2', 'owner'));
     expect(lifecycle.events).toEqual([
-      'begin', 'complete',
       'begin', 'complete',
       'begin', 'complete',
     ]);
@@ -543,6 +671,134 @@ describe('AuthClient token lifecycle', () => {
       refreshToken: 'refresh-before-switch',
       tenantId: 'ten_b',
     });
+  });
+
+  it('deduplicates only identical tenant intents and rejects different concurrent intent', async () => {
+    const pendingCreate = deferred<Response>();
+    const pendingSwitch = deferred<Response>();
+    let createRequests = 0;
+    let switchRequests = 0;
+    const lifecycle = createTestScopeLifecycle();
+    mockFetch((url) => {
+      if (url.endsWith('/auth/login')) {
+        return Response.json({
+          user: authUser(),
+          accessToken: 'access-a',
+          refreshToken: 'refresh-a',
+          activeTenant: tenantSummary('ten_a', 'owner'),
+        });
+      }
+      if (url.endsWith('/auth/tenants/create')) {
+        createRequests += 1;
+        return pendingCreate.promise;
+      }
+      if (url.endsWith('/auth/tenants/switch')) {
+        switchRequests += 1;
+        return pendingSwitch.promise;
+      }
+      return Response.json({ ok: true });
+    });
+    const client = new AuthClient('http://zero.test', {
+      authorizationScopeLifecycle: lifecycle.api,
+    });
+    await client.login('ada', 'password');
+    lifecycle.events.length = 0;
+
+    const firstCreate = client.createTenant({ name: 'Northstar', slug: 'northstar' });
+    await waitForCondition(() => createRequests === 1);
+    const duplicateCreate = client.createTenant({ name: 'Northstar', slug: 'northstar' });
+    await expect(client.createTenant({ name: 'Aurora', slug: 'aurora' }))
+      .rejects.toMatchObject({
+        status: 409,
+        code: 'AUTH_TENANT_CREATE_IN_PROGRESS',
+        message: 'Another tenant scope change is already in progress; creation was not started.',
+      });
+    await expect(client.switchTenant('ten_b')).rejects.toMatchObject({
+      status: 409,
+      code: 'AUTH_TENANT_SWITCH_IN_PROGRESS',
+      message: 'Another tenant scope change is already in progress; switch was not started.',
+    });
+    expect(lifecycle.events).toEqual([]);
+    pendingCreate.resolve(Response.json({
+      user: authUser(),
+      accessToken: 'access-northstar',
+      refreshToken: 'refresh-northstar',
+      activeTenant: tenantSummary('ten_northstar', 'owner'),
+    }));
+    const created = await Promise.all([firstCreate, duplicateCreate]);
+    expect(created.map((result) => result.activeTenant?.tenantId)).toEqual([
+      'ten_northstar',
+      'ten_northstar',
+    ]);
+    expect(createRequests).toBe(1);
+    expect(lifecycle.events).toEqual(['begin', 'complete']);
+    lifecycle.events.length = 0;
+
+    const firstSwitch = client.switchTenant('ten_b');
+    await waitForCondition(() => switchRequests === 1);
+    const duplicateSwitch = client.switchTenant('ten_b');
+    await expect(client.switchTenant('ten_c')).rejects.toMatchObject({
+      status: 409,
+      code: 'AUTH_TENANT_SWITCH_IN_PROGRESS',
+      message: 'Another tenant scope change is already in progress; switch was not started.',
+    });
+    expect(lifecycle.events).toEqual([]);
+    pendingSwitch.resolve(Response.json({
+      user: authUser(),
+      accessToken: 'access-b',
+      refreshToken: 'refresh-b',
+      activeTenant: tenantSummary('ten_b', 'member'),
+    }));
+    const switched = await Promise.all([firstSwitch, duplicateSwitch]);
+    expect(switched.map((result) => result.activeTenant?.tenantId)).toEqual([
+      'ten_b',
+      'ten_b',
+    ]);
+    expect(switchRequests).toBe(1);
+    expect(lifecycle.events).toEqual(['begin', 'complete']);
+  });
+
+  it('deduplicates tenant selection and conflicts a different scope intent', async () => {
+    const pendingSelection = deferred<Response>();
+    let selectionRequests = 0;
+    mockFetch((url) => {
+      if (url.endsWith('/auth/tenants/select')) {
+        selectionRequests += 1;
+        return pendingSelection.promise;
+      }
+      return Response.json({ ok: true });
+    });
+    const client = new AuthClient('http://zero.test');
+
+    const first = client.selectTenant('selection-proof', 'ten_a');
+    await waitForCondition(() => selectionRequests === 1);
+    const duplicate = client.selectTenant('selection-proof', 'ten_a');
+    await expect(client.selectTenant('selection-proof', 'ten_b'))
+      .rejects.toMatchObject({
+        status: 409,
+        code: 'AUTH_TENANT_SELECT_IN_PROGRESS',
+        message: 'Another tenant scope change is already in progress; selection was not started.',
+      });
+    await expect(client.createTenant({
+      name: 'Northstar',
+      continuation: 'creation-proof',
+    })).rejects.toMatchObject({
+      status: 409,
+      code: 'AUTH_TENANT_CREATE_IN_PROGRESS',
+    });
+    expect(selectionRequests).toBe(1);
+
+    pendingSelection.resolve(Response.json({
+      user: authUser(),
+      accessToken: 'access-selected',
+      refreshToken: 'refresh-selected',
+      activeTenant: tenantSummary('ten_a', 'owner'),
+    }));
+    const results = await Promise.all([first, duplicate]);
+    expect(results.map((result) => result.activeTenant?.tenantId)).toEqual([
+      'ten_a',
+      'ten_a',
+    ]);
   });
 
   it('serializes tenant listing before a refresh-proof tenant switch', async () => {
@@ -1344,6 +1600,7 @@ describe('AuthClient token lifecycle', () => {
   });
 
   it('clears auth state when refresh is rejected', async () => {
+    const lifecycle = createTestScopeLifecycle();
     mockFetch((url) => {
       if (url.endsWith('/auth/login')) {
         return Response.json({
@@ -1366,17 +1623,44 @@ describe('AuthClient token lifecycle', () => {
       });
     });
 
-    const client = new AuthClient('http://zero.test');
+    const client = new AuthClient('http://zero.test', {
+      authorizationScopeLifecycle: lifecycle.api,
+    });
     await client.login('ada', 'password');
+    lifecycle.events.length = 0;
 
     const response = await client.fetchWithAuth('http://zero.test/api/protected');
 
     expect(response.status).toBe(401);
     expect(client.isAuthenticated).toBe(false);
     expect(client.accessToken).toBeNull();
+    expect(lifecycle.events).toEqual(['begin', 'complete']);
     if (typeof localStorage !== 'undefined') {
       expect(localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)).toBeNull();
     }
+  });
+
+  it('runs explicit revision-fenced expiry through the scope purge barrier', async () => {
+    const lifecycle = createTestScopeLifecycle();
+    mockFetch((url) => url.endsWith('/auth/login')
+      ? Response.json({
+          user: authUser(),
+          accessToken: 'access-expire',
+          refreshToken: 'refresh-expire',
+          activeTenant: tenantSummary('ten_a', 'owner'),
+        })
+      : Response.json({ ok: true }));
+    const client = new AuthClient('http://zero.test', {
+      authorizationScopeLifecycle: lifecycle.api,
+    });
+    await client.login('ada', 'password');
+    lifecycle.events.length = 0;
+
+    client.expireSession();
+    await waitForCondition(() => !client.isAuthenticated);
+
+    expect(client.accessToken).toBeNull();
+    expect(lifecycle.events).toEqual(['begin', 'complete']);
   });
 
   it('notifies the server on logout even without a local refresh token', async () => {

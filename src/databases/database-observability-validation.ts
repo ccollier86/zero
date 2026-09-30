@@ -37,6 +37,7 @@ import {
   type DatabaseOperationFailureReason,
 } from './database-observability-contract';
 import { DATABASE_OBSERVABILITY_EVENT_SPECS } from './database-observability-spec';
+import { normalizeDatabaseFailureCodeSummary } from './database-failure-code-summary';
 
 const DATABASE_EXECUTOR_ROLE_SET: ReadonlySet<DatabaseExecutorRole> =
   new Set(DATABASE_EXECUTOR_ROLES);
@@ -100,6 +101,7 @@ export function prepareDatabaseObservabilityEvent(
   }
 
   assertSequenceRange(metadata);
+  assertCoordinatorFailureAggregate(eventType, metadata);
 
   if (spec.failure) {
     const error = normalizeCaughtDatabaseError(descriptors.error!.value);
@@ -169,6 +171,8 @@ function normalizeMetadataValue(
       );
     case 'capacityType':
       return enumValue(value, DATABASE_CAPACITY_TYPE_SET, 'capacity type');
+    case 'failureCodeSummary':
+      return normalizeDatabaseFailureCodeSummary(value);
     case 'slot':
       return boundedInteger(
         value,
@@ -194,6 +198,10 @@ function normalizeMetadataValue(
     case 'readerCount':
     case 'runtimeCount':
     case 'activeCount':
+    case 'failedCloseCount':
+    case 'remainingEntryCount':
+    case 'quarantinedSlotCount':
+    case 'availableSlotCount':
     case 'queueDepth':
     case 'retryCount':
     case 'writerLimit':
@@ -228,6 +236,42 @@ function normalizeMetadataValue(
         DATABASE_OBSERVABILITY_MAX_SEQUENCE,
         'database sequence',
       );
+  }
+}
+
+function assertCoordinatorFailureAggregate(
+  eventType: DatabaseObservabilityEventType,
+  metadata: Record<string, unknown>,
+): void {
+  if (eventType !== 'coordinator-failed') return;
+  const countKeys = [
+    'failedCloseCount',
+    'remainingEntryCount',
+    'quarantinedSlotCount',
+    'availableSlotCount',
+  ] as const;
+  const suppliedCount = countKeys.filter((key) => key in metadata).length;
+  if (suppliedCount !== 0 && suppliedCount !== countKeys.length) {
+    throw new TypeError(
+      'Database coordinator aggregate failure counts are incomplete.',
+    );
+  }
+  if ('failureCodeSummary' in metadata) {
+    if (suppliedCount === 0 || metadata.failedCloseCount === 0) {
+      throw new TypeError(
+        'Database coordinator failure-code summary has no close failures.',
+      );
+    }
+    const summarizedCount = (metadata.failureCodeSummary as string)
+      .split(',')
+      .reduce((total, entry) => total + Number(entry.slice(
+        entry.lastIndexOf(':') + 1,
+      )), 0);
+    if (summarizedCount > (metadata.failedCloseCount as number)) {
+      throw new TypeError(
+        'Database coordinator failure-code summary exceeds close failures.',
+      );
+    }
   }
 }
 

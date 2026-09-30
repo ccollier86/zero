@@ -285,7 +285,7 @@ export interface StoragePluginConfig {
   localDir?: string;
   /**
    * Secret for signing presigned URLs and upload grants. When omitted, a
-   * random 32-byte secret is generated once and retained in the app database.
+   * random 32-byte secret is generated once and retained in the system database.
    */
   signingSecret?: string;
   /** Default presigned URL expiry in seconds. Default: 3600. */

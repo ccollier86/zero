@@ -129,6 +129,28 @@ describe('request authorization access', () => {
     expect(access.applicationAuthorization).toBeNull();
   });
 
+  test('makes customer-only simple roles inert in the administration organization', () => {
+    const kernel = createKernel('multi', 'simple');
+    const access = createRequestAuthorizationAccess({
+      kernel,
+      authContext: {
+        userId: 'u_administration_customer_role',
+        email: 'administration-customer-role@example.test',
+        role: 'user',
+        sessionScopeKind: 'tenant',
+        sessionScopeId: 'ten_administration',
+        tenantId: 'ten_administration',
+        tenantKind: 'administration',
+        membershipId: 'tmem_administration',
+        tenantRole: 'member',
+        tenantAuthorizationGeneration: 1,
+        membershipAuthorizationGeneration: 1,
+      },
+    });
+    expect(access.authorization).toBeNull();
+    expect(access.applicationAuthorization).toBeNull();
+  });
+
   test('fences every cached authority accessor after the runtime profile changes', () => {
     const kernel = createKernel('multi');
     const authContext: AuthContext = {

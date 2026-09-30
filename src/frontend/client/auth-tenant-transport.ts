@@ -24,32 +24,60 @@ export interface AuthTenantTransportOptions {
   abortScopeTransition: () => Promise<void>;
 }
 
+export interface AuthTenantScopeAttempt {
+  /** Cancel preflight I/O when another browser authorization scope wins. */
+  readonly signal?: AbortSignal;
+  /** Assert the request still belongs to the scope that dispatched it. */
+  assertCurrent(): void;
+  /** Hand lifecycle ownership to the transition immediately before commit. */
+  consumeStartingScope(): void;
+}
+
+interface PendingTenantOperation {
+  readonly key: string;
+  readonly promise: Promise<AuthSessionResult>;
+}
+
 export class AuthTenantTransport {
-  private switchPromise: Promise<AuthSessionResult> | null = null;
-  private createPromise: Promise<AuthSessionResult> | null = null;
+  private scopeOperation: PendingTenantOperation | null = null;
 
   constructor(private readonly options: AuthTenantTransportOptions) {}
 
-  async selectTenant(
+  selectTenant(
     continuation: string,
     tenantId: string,
-    assertStartingScopeCurrent: () => void = () => {},
+    attempt: AuthTenantScopeAttempt = NOOP_SCOPE_ATTEMPT,
+  ): Promise<AuthSessionResult> {
+    return this.startScopeOperation(
+      selectIntentKey(this.options.getRevision(), continuation, tenantId),
+      'AUTH_TENANT_SELECT_IN_PROGRESS',
+      'Another tenant scope change is already in progress; selection was not started.',
+      () => this.performSelect(continuation, tenantId, attempt),
+    );
+  }
+
+  private performSelect(
+    continuation: string,
+    tenantId: string,
+    attempt: AuthTenantScopeAttempt,
   ): Promise<AuthSessionResult> {
     return this.options.runCredentialOperation(async () => {
-      assertStartingScopeCurrent();
-      this.options.beginScopeTransition('tenant-select');
+      attempt.assertCurrent();
+      const response = await fetch(
+        `${this.options.baseUrl}/auth/tenants/select`,
+        { ...jsonRequest({ continuation, tenantId }), signal: attempt.signal },
+      );
+      if (!response.ok) {
+        const error = await responseError(response, 'Failed to select tenant');
+        attempt.assertCurrent();
+        throw error;
+      }
+      const result = await parseCurrentSession(response, attempt);
+      attempt.consumeStartingScope();
       let committed = false;
       try {
-        const response = await fetch(
-          `${this.options.baseUrl}/auth/tenants/select`,
-          jsonRequest({ continuation, tenantId }),
-        );
-        if (!response.ok) {
-          throw await responseError(response, 'Failed to select tenant');
-        }
-        const result = this.options.commitScopeAuthentication(
-          parseAuthSessionResult(await response.json()),
-        );
+        this.options.beginScopeTransition('tenant-select');
+        this.options.commitScopeAuthentication(result);
         committed = true;
         await this.options.completeScopeTransition();
         return result;
@@ -98,47 +126,51 @@ export class AuthTenantTransport {
   /** Create and activate an owned tenant using onboarding or refresh proof. */
   createTenant(
     params: AuthTenantCreateParams,
-    assertStartingScopeCurrent: () => void = () => {},
+    attempt: AuthTenantScopeAttempt = NOOP_SCOPE_ATTEMPT,
   ): Promise<AuthSessionResult> {
-    if (this.createPromise) return this.createPromise;
-    const operation = this.performCreate(params, assertStartingScopeCurrent);
-    this.createPromise = operation;
-    void operation.finally(() => {
-      if (this.createPromise === operation) this.createPromise = null;
-    }).catch(() => undefined);
-    return operation;
+    return this.startScopeOperation(
+      createIntentKey(this.options.getRevision(), params),
+      'AUTH_TENANT_CREATE_IN_PROGRESS',
+      'Another tenant scope change is already in progress; creation was not started.',
+      () => this.performCreate(params, attempt),
+    );
   }
 
   private async performCreate(
     params: AuthTenantCreateParams,
-    assertStartingScopeCurrent: () => void,
+    attempt: AuthTenantScopeAttempt,
   ): Promise<AuthSessionResult> {
     const revision = this.options.getRevision();
     let expireRejectedSession = false;
     try {
       return await this.options.runCredentialOperation(async () => {
-        assertStartingScopeCurrent();
+        attempt.assertCurrent();
         const proof = params.continuation
           ? { continuation: params.continuation }
           : { refreshToken: this.requireRefreshToken() };
-        this.options.beginScopeTransition('tenant-create');
-        let committed = false;
-        try {
-          const response = await fetch(
-            `${this.options.baseUrl}/auth/tenants/create`,
-            jsonRequest({
+        const response = await fetch(
+          `${this.options.baseUrl}/auth/tenants/create`,
+          {
+            ...jsonRequest({
               name: params.name,
               ...(params.slug ? { slug: params.slug } : {}),
               ...proof,
             }),
-          );
-          if (!response.ok) {
-            expireRejectedSession = !params.continuation && response.status === 401;
-            throw await responseError(response, 'Failed to create tenant');
-          }
-          const result = this.options.commitScopeAuthentication(
-            parseAuthSessionResult(await response.json()),
-          );
+            signal: attempt.signal,
+          },
+        );
+        if (!response.ok) {
+          expireRejectedSession = !params.continuation && response.status === 401;
+          const error = await responseError(response, 'Failed to create tenant');
+          attempt.assertCurrent();
+          throw error;
+        }
+        const result = await parseCurrentSession(response, attempt);
+        attempt.consumeStartingScope();
+        let committed = false;
+        try {
+          this.options.beginScopeTransition('tenant-create');
+          this.options.commitScopeAuthentication(result);
           committed = true;
           await this.options.completeScopeTransition();
           return result;
@@ -156,41 +188,60 @@ export class AuthTenantTransport {
   /** Deduplicate browser switch calls so one stored refresh token is used once. */
   switchTenant(
     tenantId: string,
-    assertStartingScopeCurrent: () => void = () => {},
+    attempt: AuthTenantScopeAttempt = NOOP_SCOPE_ATTEMPT,
   ): Promise<AuthSessionResult> {
-    if (this.switchPromise) return this.switchPromise;
-    const operation = this.performSwitch(tenantId, assertStartingScopeCurrent);
-    this.switchPromise = operation;
+    return this.startScopeOperation(
+      switchIntentKey(this.options.getRevision(), tenantId),
+      'AUTH_TENANT_SWITCH_IN_PROGRESS',
+      'Another tenant scope change is already in progress; switch was not started.',
+      () => this.performSwitch(tenantId, attempt),
+    );
+  }
+
+  private startScopeOperation(
+    key: string,
+    conflictCode: string,
+    conflictMessage: string,
+    start: () => Promise<AuthSessionResult>,
+  ): Promise<AuthSessionResult> {
+    if (this.scopeOperation) {
+      if (this.scopeOperation.key === key) return this.scopeOperation.promise;
+      return Promise.reject(tenantOperationConflict(conflictCode, conflictMessage));
+    }
+    const operation = start();
+    this.scopeOperation = { key, promise: operation };
     void operation.finally(() => {
-      if (this.switchPromise === operation) this.switchPromise = null;
+      if (this.scopeOperation?.promise === operation) this.scopeOperation = null;
     }).catch(() => undefined);
     return operation;
   }
 
   private async performSwitch(
     tenantId: string,
-    assertStartingScopeCurrent: () => void,
+    attempt: AuthTenantScopeAttempt,
   ): Promise<AuthSessionResult> {
     const revision = this.options.getRevision();
     let expireRejectedSession = false;
     try {
       return await this.options.runCredentialOperation(async () => {
-        assertStartingScopeCurrent();
+        attempt.assertCurrent();
         const refreshToken = this.requireRefreshToken();
-        this.options.beginScopeTransition('tenant-switch');
+        const response = await fetch(
+          `${this.options.baseUrl}/auth/tenants/switch`,
+          { ...jsonRequest({ refreshToken, tenantId }), signal: attempt.signal },
+        );
+        if (!response.ok) {
+          expireRejectedSession = response.status === 401;
+          const error = await responseError(response, 'Failed to switch tenant');
+          attempt.assertCurrent();
+          throw error;
+        }
+        const result = await parseCurrentSession(response, attempt);
+        attempt.consumeStartingScope();
         let committed = false;
         try {
-          const response = await fetch(
-            `${this.options.baseUrl}/auth/tenants/switch`,
-            jsonRequest({ refreshToken, tenantId }),
-          );
-          if (!response.ok) {
-            expireRejectedSession = response.status === 401;
-            throw await responseError(response, 'Failed to switch tenant');
-          }
-          const result = this.options.commitScopeAuthentication(
-            parseAuthSessionResult(await response.json()),
-          );
+          this.options.beginScopeTransition('tenant-switch');
+          this.options.commitScopeAuthentication(result);
           committed = true;
           await this.options.completeScopeTransition();
           return result;
@@ -216,6 +267,51 @@ export class AuthTenantTransport {
       );
     }
     return refreshToken;
+  }
+}
+
+const NOOP_SCOPE_ATTEMPT: AuthTenantScopeAttempt = Object.freeze({
+  assertCurrent() {},
+  consumeStartingScope() {},
+});
+
+function selectIntentKey(
+  revision: number,
+  continuation: string,
+  tenantId: string,
+): string {
+  return JSON.stringify(['select', revision, continuation, tenantId]);
+}
+
+function createIntentKey(revision: number, params: AuthTenantCreateParams): string {
+  return JSON.stringify([
+    'create',
+    revision,
+    params.name,
+    params.slug ?? null,
+    params.continuation ?? null,
+  ]);
+}
+
+function switchIntentKey(revision: number, tenantId: string): string {
+  return JSON.stringify(['switch', revision, tenantId]);
+}
+
+function tenantOperationConflict(code: string, message: string): AuthClientError {
+  return new AuthClientError(message, 409, code, null);
+}
+
+async function parseCurrentSession(
+  response: Response,
+  attempt: AuthTenantScopeAttempt,
+): Promise<AuthSessionResult> {
+  try {
+    const result = parseAuthSessionResult(await response.json());
+    attempt.assertCurrent();
+    return result;
+  } catch (cause) {
+    attempt.assertCurrent();
+    throw cause;
   }
 }
 

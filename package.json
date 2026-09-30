@@ -155,6 +155,13 @@
   },
   "files": [
     "src",
+    "examples/guardian-fabric-proof/.env.example",
+    "examples/guardian-fabric-proof/README.md",
+    "examples/guardian-fabric-proof/app",
+    "examples/guardian-fabric-proof/db",
+    "examples/guardian-fabric-proof/server",
+    "examples/guardian-fabric-proof/tsconfig.json",
+    "examples/guardian-fabric-proof/zero.config.ts",
     "examples/package-mode",
     "examples/native-auth",
     "docs",

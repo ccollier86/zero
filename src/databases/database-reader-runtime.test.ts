@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createPlatformSQLiteService } from '../persistence';
+import { defineTable, field } from '../schema';
 import { prepareDatabaseBindingIdentity } from './database-binding-identity';
 import { DatabaseError } from './database-error';
 import { createDatabaseRef, prepareDatabaseFile } from './database-file';
@@ -151,6 +152,63 @@ describe('DatabaseReaderRuntime', () => {
       name: 'decoy_constraints.count',
       input: null,
     }).value).toEqual({ count: 0 });
+  });
+
+  test('rejects a readonly realm file whose Guardian FK was retargeted', () => {
+    const tasks = defineTable('guardian_tasks', {
+      owner_user_id: field.guardianUser(),
+    }, { pk: 'task_id' });
+    const guardianRealm = defineDatabaseRealm({
+      name: 'reader-guardian-test',
+      version: '1',
+      tables: { guardian_tasks: tasks.serverTable },
+    });
+    const guardianRef = createDatabaseRef('reader-guardian-test');
+    const prepared = prepareDatabaseFile(directory, 'reader-guardian-test');
+    const binding = prepareDatabaseBindingIdentity({
+      filePath: prepared.path,
+      fileIdentity: prepared.identity,
+      databaseRef: guardianRef,
+      realmName: guardianRealm.name,
+      initialize: true,
+    });
+    const anchors = new Database(prepared.path);
+    anchors.exec('CREATE TABLE users (user_id TEXT PRIMARY KEY)');
+    anchors.close();
+    const guardianWriter = DatabaseRuntime.open({
+      id: 'guardian-writer',
+      role: 'tenant',
+      sqlite: createPlatformSQLiteService({ mode: 'file', path: prepared.path }),
+      ownsSQLite: true,
+      tables: guardianRealm.tables,
+    });
+    guardianWriter.close();
+    const drifted = new Database(prepared.path);
+    try {
+      drifted.exec(`
+        DROP TABLE guardian_tasks;
+        CREATE TABLE guardian_tasks (
+          task_id TEXT PRIMARY KEY,
+          owner_user_id TEXT NOT NULL
+            REFERENCES users(user_id) ON DELETE CASCADE
+        );
+      `);
+    } finally {
+      drifted.close();
+    }
+
+    expect(() => DatabaseReaderRuntime.open({
+      filePath: prepared.path,
+      realm: guardianRealm,
+      databaseRef: guardianRef,
+      instanceId: binding.instanceId,
+    })).toThrow(expect.objectContaining({
+      code: 'DATABASE_SCHEMA_MISMATCH',
+      details: expect.objectContaining({
+        reason: 'reference-storage-invalid',
+        issue: 'invalid-foreign-key',
+      }),
+    }));
   });
 
   test('paginates in stable primary-key order without an unbounded scan', () => {

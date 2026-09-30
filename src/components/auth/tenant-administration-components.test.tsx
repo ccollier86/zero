@@ -9,6 +9,7 @@ import {
   TenantMemberManagement,
   tenantConfirmationAnnouncement,
 } from './tenant-member-management';
+import { canRetainTenantMemberConfirmation } from './tenant-member-management-parts';
 import {
   canSubmitTenantInvitation,
   filterJoinRequestApprovalRoles,
@@ -38,6 +39,9 @@ describe('packaged tenant administration components', () => {
     const markup = renderToStaticMarkup(createElement(TenantMemberManagement));
 
     expect(markup).toContain('Organization members');
+    expect(markup).toMatch(
+      /<h2[^>]*data-slot="card-title"[^>]*>Organization members<\/h2>/,
+    );
     expect(markup).toContain(
       'Organization member controls are available after signing in with active organization access.',
     );
@@ -57,6 +61,9 @@ describe('packaged tenant administration components', () => {
     );
 
     expect(markup).toContain('Organization onboarding');
+    expect(markup).toMatch(
+      /<h2[^>]*data-slot="card-title"[^>]*>Organization onboarding<\/h2>/,
+    );
     expect(markup).toContain(
       'Organization onboarding controls require signing in with active organization access.',
     );
@@ -213,7 +220,7 @@ describe('packaged tenant administration components', () => {
     }));
 
     expect(markup).toContain('Clipboard is unavailable.');
-    expect(markup).toContain('Select Copy to try again.');
+    expect(markup).toContain('Use the one-time token field above to copy it manually.');
     expect(markup).toContain('value="secret-token"');
   });
 
@@ -466,6 +473,14 @@ describe('packaged tenant administration components', () => {
     const token = renderToStaticMarkup(createElement(ManualInvitationToken, {
       token: 'one-time-secret', headingId: 'manual-token', onCopy() {}, onDismiss() {},
     }));
+    const administratorToken = renderToStaticMarkup(createElement(ManualInvitationToken, {
+      token: 'one-time-admin-secret',
+      headingId: 'administrator-token',
+      inputLabel: 'One-time administrator invitation token',
+      recipient: 'intended administrator',
+      onCopy() {},
+      onDismiss() {},
+    }));
     const list = renderToStaticMarkup(createElement(TenantInvitationList, {
       headingId: 'invitations', headingRef: null,
       invitations: [{
@@ -485,6 +500,16 @@ describe('packaged tenant administration components', () => {
     expect(token).toContain('aria-labelledby="manual-token"');
     expect(token).toContain('aria-label="One-time invitation token"');
     expect(token).toContain('readOnly=""');
+    expect(token).toContain('font-mono');
+    expect(token).toContain('autoComplete="off"');
+    expect(token).toContain('spellCheck="false"');
+    expect(token).toContain('Copy now');
+    expect(token).toContain('Dismiss and clear from page');
+    expect(token).toContain('aria-live="polite"');
+    expect(administratorToken).toContain(
+      'aria-label="One-time administrator invitation token"',
+    );
+    expect(administratorToken).toContain('intended administrator');
     expect(list).toContain('tabindex="-1"');
     expect(list).toContain('aria-haspopup="dialog"');
     expect(list).toContain('sm:flex-row');
@@ -539,6 +564,32 @@ describe('packaged tenant administration components', () => {
       },
     })).toBe('Denied request from ada@example.test');
   });
+
+  test('closes member confirmations immediately when their exact capability vanishes', () => {
+    const member = tenantMember();
+    const allCapabilities = {
+      canReadMembers: true,
+      canManageMembers: true,
+      canTransferOwnership: true,
+    };
+
+    expect(canRetainTenantMemberConfirmation(
+      { action: 'suspend', member },
+      allCapabilities,
+    )).toBe(true);
+    expect(canRetainTenantMemberConfirmation(
+      { action: 'remove', member },
+      { ...allCapabilities, canManageMembers: false },
+    )).toBe(false);
+    expect(canRetainTenantMemberConfirmation(
+      { action: 'transfer', member },
+      { ...allCapabilities, canTransferOwnership: false },
+    )).toBe(false);
+    expect(canRetainTenantMemberConfirmation(
+      { action: 'transfer', member },
+      { ...allCapabilities, canReadMembers: false },
+    )).toBe(false);
+  });
 });
 
 function renderOnboardingStatus(
@@ -581,6 +632,24 @@ function tenantRole(key: string, grantable: boolean) {
     system: false,
     assignable: true,
     grantable,
+  };
+}
+
+function tenantMember() {
+  return {
+    membershipId: 'membership-1',
+    identity: {
+      userId: 'user-1',
+      username: 'grace',
+      email: 'grace@example.test',
+      firstName: 'Grace',
+      lastName: 'Hopper',
+    },
+    status: 'active' as const,
+    roles: ['member'],
+    roleRevision: 'tenant-1:membership-1:1',
+    joinedAt: 1,
+    updatedAt: 1,
   };
 }
 

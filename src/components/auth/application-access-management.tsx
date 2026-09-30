@@ -184,7 +184,7 @@ function ApplicationAccessManagementScope({
     >
       <CardHeader className="gap-3 border-b border-border/70">
         <div>
-          <CardTitle>{title}</CardTitle>
+          <CardTitle asChild><h2>{title}</h2></CardTitle>
           <CardDescription>{description}</CardDescription>
         </div>
       </CardHeader>

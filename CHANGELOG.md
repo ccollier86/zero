@@ -161,8 +161,10 @@ All notable Zero Platform changes are tracked here.
   application-owned caches, and raw SQL/custom response projection are not
   implied by those managed boundaries.
 - Added ReactiveDB Fabric, an opt-in actor-backed multi-database topology which
-  keeps Zero's control/auth database pinned while routing named or authenticated
-  physical-tenant application data into independently reactive SQLite files.
+  keeps the shared application database pinned while routing named or
+  authenticated physical-tenant application data into independently reactive
+  SQLite files. Guardian/Zero authority stays in the separate pinned system
+  database.
   Fabric provides per-database FIFO writers, optional same-file WAL readers,
   concurrent work across admitted files, bounded file/hot/hybrid placement,
   strict root/file/logical identity and orphan-actor fencing, durable
@@ -176,8 +178,68 @@ All notable Zero Platform changes are tracked here.
   receipt, queue, binding, snapshot-session, payload, and transfer work all
   have explicit limits. Added the declarative `databaseTopology`/actor-realm
   surface, Doctor findings, package exports, deployment constraints, and the
-  full Fabric architecture and SDK documentation. This remains unreleased
-  child-branch work pending combined-app and supported deployment acceptance.
+  full Fabric architecture and SDK documentation. This remains an unreleased
+  candidate pending combined-app and supported deployment acceptance.
+- Added always-separate pinned system and application database planes. `db`
+  remains the application-facing `zero.db`/`zero.sql` plane; `systemDb` owns
+  Guardian authority and Zero service state behind the privileged
+  `zero.system` facade (or deliberate `zero.unsafe.system` boundary in
+  multi-tenant request code). Startup rejects handle, main-file, snapshot,
+  WAL/SHM/journal, filesystem-alias, and authority-sidecar collisions. This is
+  a breaking storage-boundary change: legacy combined Guardian/application
+  layouts fail closed with `DATABASE_SCHEMA_MISMATCH` and
+  `requiredAction: 'split-system-database'`, while an application-owned
+  `users` table alone remains valid. Existing deployments own a deliberate
+  backup, stop, offline extraction, anchor seed, and verification migration;
+  Zero does not silently mutate them. A future automated offline splitter is a
+  convenience rather than a prerequisite for new separated-plane installs or
+  deliberately migrated deployments.
+- Added schema-declared, ID-only Guardian user and membership anchors for
+  application and physical-tenant foreign keys. Guardian commits enqueue a
+  durable system outbox; idempotent target receipts, watermarks, leases,
+  quarantine, and installation binding drive shallow projection without
+  copying credentials, email, roles, permissions, profile properties, or
+  other PII. The authenticated data-realm readiness routes, client API/hook,
+  and `DataRealmReadyGate` keep application collections closed until required
+  anchors are ready while Guardian controls remain usable. The server-only
+  auth barrel also exposes the stores, service, lifecycle hook, stable error
+  codes, options/target contracts, and installation constant needed by
+  advanced standalone adapters; managed apps continue to let `createApp()` own
+  this lifecycle, and internal projection table rows are not an app query API.
+- Added migration `029` and first-class Guardian user API keys. Keys are bound
+  to one live user and, in multi-tenant mode, one live organization membership;
+  only a SHA-256 digest and bounded lifecycle metadata are retained after the
+  one-time secret reveal. Declarative policy controls self-service and tenant-
+  administrator issuance, lifetime, and active-key limits. The typed client,
+  hooks, packaged controls, audit events, Bearer authentication, rotation, and
+  revocation all reuse Guardian's live RBAC and authority-generation checks.
+  Service-level keys, HMAC request signing, and IP allow/deny policy remain
+  separate future security slices rather than implied capabilities.
+- Added one authority commit protocol across the separate system/application
+  files. Process-local shared/exclusive leases close the final validation gap,
+  and file-mode system authority adds the crash-released, zero-wait
+  `<systemDb.path>.authority-fence.sqlite` lock so independent processes cannot
+  interleave either a pinned or Fabric tenant application commit with a
+  Guardian authority commit. Tenant writer actors reread the captured system
+  revision at their own final commit edge and take compatible shared sidecar
+  leases, preserving concurrent commits across different tenant databases.
+  The sidecar stores no identity or application data.
+- Added stable Sync negative-acknowledgement recovery codes
+  `SYNC_DATA_REALM_NOT_READY` and `SYNC_DATA_REALM_UNAVAILABLE`, alongside the
+  existing receipt-expiry/capacity codes. `sync.ack` now carries its owning
+  `plane` when required by multiplexing plus optional machine-readable
+  `errorCode`; clients roll back the rejected optimistic attempt and follow
+  readiness state instead of parsing or tight-looping the human error string.
+  `ClientConfig`/`SyncClientConfig` and both client surfaces now expose
+  `onMutationRejected`, delivering the exported table/operation/plane/code/
+  source record only after local rollback without allowing observer failures
+  to interrupt Sync progress.
+- Added the runnable `examples/guardian-fabric-proof` application as the
+  combined acceptance fixture for the Administration Organization, customer
+  workspaces, advanced RBAC, user API-key lifecycle, ID-only Guardian anchors,
+  physical tenant task databases, and multiplexed realtime Sync. Its tests use
+  the same pure configuration factory as the runnable server so fixture-only
+  policy cannot drift from the documented example.
 - Added a safe, configurable web-auth return flow. Apps can set the top-level
   `postLoginPath` option (also available on `AppProvider`) while one validated
   local `redirect` deep link takes precedence after login. Server guards retain
@@ -230,6 +292,44 @@ All notable Zero Platform changes are tracked here.
 
 ### Fixed
 
+- Made Fabric coordinator existing-only acquisition prove the target file
+  exists before reserving or evicting capacity, then recheck after admission to
+  close disappearance races. Missing targets no longer evict a healthy idle
+  actor at capacity. Aggregate drain/shutdown failures now include bounded,
+  privacy-safe canonical failure-code counts without accepting actor-supplied
+  aggregate metadata.
+- Consumed every background Sync authorization-revalidation rejection and
+  report it through `SYNC_AUTH_REVALIDATION_FAILED` with only the channel and
+  trigger before fail-closed invalidation. Local socket authorization state is
+  cleared even when subscription teardown, capability release, observability,
+  or transport close throws, preventing one broken connection from preserving
+  or blocking cleanup of the remaining sockets.
+- Fenced identity-projection acknowledgements, releases, and quarantines by a
+  monotonic lease-attempt generation, closing stale-worker ABA races even when
+  the same worker ID is reused. Rebuilt-target replay now leaves immutable
+  completed source history intact on retryable target failures, validates the
+  exact durable lease/watermark schema, and keeps tenant target registration
+  plus initial user/membership seeding atomic.
+- Kept tenant Sync snapshot TEMP-table cleanup outside the durable authority
+  commit guard so one completed snapshot cannot detach other live bindings.
+  ID-only Guardian anchor projection now rechecks its private routed
+  capability at the actor FIFO head without taking application-data commit
+  authority, allowing an immediately added member to switch into the tenant
+  while ordinary application writes remain revision-fenced.
+- Moved persisted automatic Sync-mode decisions into `systemDb` while still
+  measuring application rows from `db`, and reserved every ID-anchor/projection
+  mirror table from generic Sync reads and writes. Separate application/system
+  snapshots, catch-up cursors, built-in services, and physical table placement
+  now have adversarial integration coverage.
+- Distinguished a retryable Guardian mutation collision with an active data
+  commit as `AUTH_COMMIT_CONFLICT` instead of incorrectly telling a current
+  user that authentication state changed. Browser SDK errors expose the
+  server-owned `retryable` flag without changing existing call shapes.
+- Validated physical-tenant Sync catalogs during plugin composition and stopped
+  disguising unexpected catalog/protocol construction defects as tenant-auth
+  failures; only the exact missing-tenant-authority condition receives the
+  authentication close code, while server defects follow standard Sync
+  observability and failure handling.
 - Made migration drift classification and `ADD COLUMN` draft generation share
   one SQLite-aware parser. Unsupported primary-key, unique, generated,
   autoincrement, default, `NOT NULL`, and foreign-key combinations are now

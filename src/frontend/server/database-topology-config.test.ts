@@ -17,6 +17,7 @@ import {
   DATABASE_COORDINATOR_MAX_DATABASES,
   DATABASE_OBSERVABILITY_COUNT_MAX,
 } from '../../databases/database-capacity';
+import { DatabaseError } from '../../databases/database-error';
 import { resolveConfig } from './types';
 
 const appTables = {
@@ -375,6 +376,36 @@ describe('database topology config', () => {
     });
   });
 
+  test('closes topology startup rejection into the stable database error contract', () => {
+    expect(captureDatabaseError(() => resolveWithTopology({ mode: 'named' })))
+      .toMatchObject({
+        code: 'DATABASE_CONFIG_INVALID',
+        retryable: false,
+        outcome: 'not-started',
+        details: { component: 'database-topology' },
+      });
+
+    const driftedRealm = defineDatabaseRealm({
+      name: 'topology-error-contract-drift',
+      version: '1',
+      tables: { todos: { id: 'text primary key', title: 'text' } },
+    });
+    expect(captureDatabaseError(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables: appTables,
+      auth: { tenancy: 'multi' },
+      databaseTopology: multiple({
+        tenantIsolation: 'tenant-database',
+        realm: driftedRealm,
+      }),
+    }))).toMatchObject({
+      code: 'DATABASE_SCHEMA_MISMATCH',
+      retryable: false,
+      outcome: 'not-started',
+      details: { component: 'tenant-database-topology' },
+    });
+  });
+
   test('rejects unsupported modes, branch mixing, placement, and actor policy', () => {
     expect(() => resolveWithTopology({ mode: 'named' })).toThrow(
       'databaseTopology.mode must be "single" or "multiple"',
@@ -697,3 +728,13 @@ describe('database topology config', () => {
     }).databaseTopology).toMatchObject({ mode: 'multiple' });
   });
 });
+
+function captureDatabaseError(operation: () => unknown): DatabaseError {
+  try {
+    operation();
+  } catch (error) {
+    expect(error).toBeInstanceOf(DatabaseError);
+    return error as DatabaseError;
+  }
+  throw new Error('Expected DatabaseError.');
+}

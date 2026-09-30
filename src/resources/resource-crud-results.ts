@@ -10,6 +10,7 @@ import type {
   ResourceCrudFailure,
   ResourceCrudSuccess,
 } from './resource-crud-contracts';
+import type { IdentityProjectionError } from '../auth/identity-projection-error';
 
 /** Build a successful generated Resource result. */
 export function resourceSuccess<TBody>(
@@ -95,5 +96,20 @@ export function tenantDatabaseUnavailableFailure(): ResourceCrudFailure {
     503,
     'Tenant database is temporarily unavailable',
     'database-unavailable',
+  );
+}
+
+/** Stable failure for an application realm whose Guardian anchors are not usable. */
+export function resourceDataRealmReadinessFailure(
+  error: IdentityProjectionError,
+): ResourceCrudFailure {
+  const retryable = error.retryable;
+  return resourceFailure(
+    503,
+    retryable
+      ? 'Application data realm is still provisioning'
+      : 'Application data realm is unavailable',
+    retryable ? 'data-realm-not-ready' : 'data-realm-unavailable',
+    retryable,
   );
 }

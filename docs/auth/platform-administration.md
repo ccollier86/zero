@@ -72,8 +72,8 @@ tenant.
 After a successful start, keeping the same selector is idempotent; removing it
 is also safe because the tenant's protected `kind` is durable and immutable.
 Review retained non-owner memberships after adoption: legacy customer roles
-remain visible and inert for application authority until they are deliberately
-replaced with an administration-only role. This selector is not a
+remain visible but inert in the Administration Organization until the live
+owner deliberately removes them and retains an administration-only role. This selector is not a
 `single`-to-`multi` profile migration, does not discover a candidate, and does
 not provide broader guided populated-app adoption. See
 [Platform Configuration](../platform-configuration.md#administration-organization-adoption)
@@ -253,6 +253,12 @@ fenced member view. Ordinary tenant `addTenantMember` keeps `roles` optional so
 omission can select `member`.
 
 The platform config is intentionally capability-driven. In particular,
+member status/removal use `canManageMembers`, while member creation and role
+replacement require both `canManageMembers` and `canManageRoles`. Invitation
+revocation uses `canManageInvitations`, while issuance requires both
+`canManageInvitations` and `canManageRoles`. This preserves useful delegated
+lifecycle authority without presenting a role-grant path the server will deny.
+In the customer directory,
 `canManageTenants` controls suspend/reactivate, while `canCreateTenants`
 captures the stronger tenant-manage plus user-read requirement;
 `canReadTenantMembers` captures the combined tenant-read plus user-read
@@ -407,7 +413,7 @@ The canonical native tenant wire contract adds the same `kind` discriminator.
 The framework TypeScript native client parses it strictly. The standalone
 Rust/Tauri and Chrome-extension SDKs are separate unreleased repositories and
 must release their matching tenant-kind model/parser updates in lockstep with
-this server contract; applications must not pair this branch with an older
+this server contract; applications must not pair this server version with an older
 strict preview SDK.
 
 ## Security checklist
@@ -424,7 +430,9 @@ strict preview SDK.
 - Preserve expected revision/generation fields on role and lifecycle writes.
 - Do not expose the manual one-time invitation token in logs or long-lived UI;
   the packaged invitation control labels its manual-delivery fallback as a
-  secret and displays it only from the mutation receipt.
+  secret and displays it only from the mutation receipt. The shared reveal
+  disables autofill, correction, and spellcheck, selects on focus or clipboard
+  failure, and clears its transient token when dismissed.
 - Retain the durable authorization/control-plane audit for bootstrap,
   membership, invitations, ownership, role, identity, and tenant lifecycle
   changes.

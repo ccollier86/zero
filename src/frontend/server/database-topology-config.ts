@@ -32,6 +32,7 @@ import {
   type DatabaseRealm,
   type SubprocessDatabaseExecutorFactory,
 } from '../../databases';
+import { DatabaseError } from '../../databases/database-error';
 import { MAX_RUNTIME_TIMER_INTERVAL_MS } from '../../runtime/timer-limits';
 import type { TableSchema } from '../../sync/types';
 import { assertTenantDatabaseRealmSchemaSubset } from './tenant-database-topology';
@@ -100,7 +101,7 @@ export function resolveAppDatabaseTopology(
     return SINGLE_DATABASE_TOPOLOGY;
   }
   if (mode !== 'multiple') {
-    throw new Error(
+    throw databaseTopologyConfigError(
       `[app] databaseTopology.mode must be "single" or "multiple"; received ${JSON.stringify(mode)}.`,
     );
   }
@@ -119,12 +120,12 @@ export function resolveAppDatabaseTopology(
   const tenantIsolation = multiple.tenantIsolation ?? 'shared-row';
   if (tenantIsolation !== 'shared-row'
     && tenantIsolation !== 'tenant-database') {
-    throw new Error(
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.tenantIsolation must be "shared-row" or "tenant-database".',
     );
   }
   if (tenantIsolation === 'tenant-database' && authTenancy !== 'multi') {
-    throw new Error(
+    throw databaseTopologyConfigError(
       '[app] databaseTopology tenant-database isolation requires auth.tenancy: "multi".',
     );
   }
@@ -155,7 +156,7 @@ export function resolveAppDatabaseTopology(
     'databaseTopology.maxTenantSyncDatabases',
   );
   if (maxTenantSyncDatabases > maxDatabases) {
-    throw new Error(
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.maxTenantSyncDatabases must not exceed databaseTopology.maxDatabases.',
     );
   }
@@ -167,7 +168,9 @@ export function resolveAppDatabaseTopology(
   );
   const readers = multiple.readers ?? true;
   if (typeof readers !== 'boolean') {
-    throw new Error('[app] databaseTopology.readers must be a boolean.');
+    throw databaseTopologyConfigError(
+      '[app] databaseTopology.readers must be a boolean.',
+    );
   }
   const maxQueuedPerDatabase = normalizeBoundedPositiveSafeInteger(
     multiple.maxQueuedPerDatabase
@@ -254,11 +257,12 @@ function normalizeAppDatabaseRestartPolicy(
   }
   try {
     return normalizeDatabaseCoordinatorRestartPolicy(input);
-  } catch {
-    throw new Error(
+  } catch (cause) {
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.restart requires positive bounded delays, '
       + 'circuitFailureThreshold of at least 2, initialDelayMs no greater '
       + 'than maxDelayMs, and circuitCooldownMs at least maxDelayMs.',
+      cause,
     );
   }
 }
@@ -290,17 +294,17 @@ function normalizeDatabasePlacementPolicy(
   );
 
   if (!isDatabasePlacement(input.default)) {
-    throw new Error(
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.placement.default must be "file" or "hot".',
     );
   }
   if (input.select !== undefined && typeof input.select !== 'function') {
-    throw new Error(
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.placement.select must be a synchronous function.',
     );
   }
   if ((input.default === 'hot' || input.select !== undefined) && input.hot === undefined) {
-    throw new Error(
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.placement.hot is required when hot placement can be selected.',
     );
   }
@@ -328,7 +332,7 @@ function normalizeDatabaseHotPlacement(
 
   const durability = input.durability ?? DATABASE_HOT_DEFAULT_DURABILITY;
   if (!isDatabaseHotDurability(durability)) {
-    throw new Error(
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.placement.hot.durability must be "on-write", "periodic", or "final".',
     );
   }
@@ -337,12 +341,12 @@ function normalizeDatabaseHotPlacement(
     'databaseTopology.placement.hot.maxBytes',
   );
   if (input.snapshotIntervalMs !== undefined && durability !== 'periodic') {
-    throw new Error(
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.placement.hot.snapshotIntervalMs is only valid with periodic durability.',
     );
   }
   if (input.snapshotTimeoutMs !== undefined && durability !== 'periodic') {
-    throw new Error(
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.placement.hot.snapshotTimeoutMs is only valid with periodic durability.',
     );
   }
@@ -364,7 +368,7 @@ function normalizeDatabaseHotPlacement(
   if (snapshotTimeoutMs !== undefined
     && snapshotIntervalMs !== undefined
     && snapshotTimeoutMs < snapshotIntervalMs) {
-    throw new Error(
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.placement.hot.snapshotTimeoutMs must be at least snapshotIntervalMs.',
     );
   }
@@ -379,19 +383,21 @@ function normalizeDatabaseHotPlacement(
 
 function normalizeMultipleDatabaseRootDirectory(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) {
-    throw new Error(
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.rootDirectory must be a non-empty path without null bytes.',
     );
   }
   if (value.trim() !== value) {
-    throw new Error(
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.rootDirectory must not contain leading or trailing whitespace.',
     );
   }
 
   const normalized = resolve(value);
   if (normalized === parse(normalized).root) {
-    throw new Error('[app] databaseTopology.rootDirectory must not be a filesystem root.');
+    throw databaseTopologyConfigError(
+      '[app] databaseTopology.rootDirectory must not be a filesystem root.',
+    );
   }
   return normalized;
 }
@@ -406,9 +412,10 @@ function normalizeMultipleDatabaseRealm(value: unknown): DatabaseRealm {
     }
     createDatabaseRealmOperationCatalog(realm);
     return realm;
-  } catch {
-    throw new Error(
+  } catch (cause) {
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.realm must be created with defineDatabaseRealm().',
+      cause,
     );
   }
 }
@@ -423,16 +430,19 @@ function normalizeMultipleDatabaseActors(
       env?: Readonly<Record<string, string>>;
       executor?: DatabaseActorExecutorPolicy;
     });
-  } catch {
-    throw new Error(
+  } catch (cause) {
+    throw databaseTopologyConfigError(
       '[app] databaseTopology.actors contains an invalid subprocess launch policy.',
+      cause,
     );
   }
 }
 
 function normalizePositiveSafeInteger(value: unknown, label: string): number {
   if (!Number.isSafeInteger(value) || (value as number) <= 0) {
-    throw new Error(`[app] ${label} must be a positive safe integer.`);
+    throw databaseTopologyConfigError(
+      `[app] ${label} must be a positive safe integer.`,
+    );
   }
   return value as number;
 }
@@ -444,14 +454,18 @@ function normalizeBoundedPositiveSafeInteger(
 ): number {
   const normalized = normalizePositiveSafeInteger(value, label);
   if (normalized > maximum) {
-    throw new Error(`[app] ${label} must not exceed ${maximum}.`);
+    throw databaseTopologyConfigError(
+      `[app] ${label} must not exceed ${maximum}.`,
+    );
   }
   return normalized;
 }
 
 function normalizeNonNegativeSafeInteger(value: unknown, label: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new Error(`[app] ${label} must be a non-negative safe integer.`);
+    throw databaseTopologyConfigError(
+      `[app] ${label} must be a non-negative safe integer.`,
+    );
   }
   return value as number;
 }
@@ -466,7 +480,7 @@ function assertConfigRecord(
     || Array.isArray(value)
     || ![Object.prototype, null].includes(Object.getPrototypeOf(value))
   ) {
-    throw new Error(`[app] ${label} must be an object.`);
+    throw databaseTopologyConfigError(`[app] ${label} must be an object.`);
   }
 }
 
@@ -477,7 +491,21 @@ function assertOnlyConfigFields(
 ): void {
   for (const field of Object.keys(value)) {
     if (!supported.has(field)) {
-      throw new Error(`[app] ${label} contains unsupported field "${field}".`);
+      throw databaseTopologyConfigError(
+        `[app] ${label} contains unsupported field "${field}".`,
+      );
     }
   }
+}
+
+function databaseTopologyConfigError(
+  message: string,
+  cause?: unknown,
+): DatabaseError {
+  return new DatabaseError('DATABASE_CONFIG_INVALID', message, {
+    ...(cause === undefined ? {} : { cause }),
+    retryable: false,
+    outcome: 'not-started',
+    details: { component: 'database-topology' },
+  });
 }

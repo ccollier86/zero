@@ -110,6 +110,7 @@ Acknowledgment of a client mutation request. Sent only to the requesting client.
 ```json
 {
   "type": "sync.ack",
+  "plane": "default",
   "ref": "abc-123",
   "seq": 43,
   "ok": true,
@@ -125,26 +126,55 @@ Acknowledgment of a client mutation request. Sent only to the requesting client.
 ```json
 {
   "type": "sync.ack",
+  "plane": "default",
   "ref": "abc-123",
   "seq": null,
   "ok": false,
-  "error": "Validation failed: title is required"
+  "error": "Application data realm is not ready",
+  "errorCode": "SYNC_DATA_REALM_NOT_READY"
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `plane` | `'default' \| 'system' \| 'tenant'?` | Data plane which owns the acknowledged table. Present for tenant/system acknowledgements and for default acknowledgements on a multiplexed socket; omission is the legacy/default plane. It is a server assertion, never a client-selected database. |
 | `ref` | `string` | Client-generated reference ID (echoed back from the mutation request) |
 | `seq` | `number \| null` | Server sequence at canonical resolution time (null if rejected) |
 | `ok` | `boolean` | Whether the mutation succeeded |
 | `error` | `string?` | Human-readable error message (only present when `ok: false`) |
+| `errorCode` | `SyncAckErrorCode?` | Stable machine-readable rejection class. Branch on this value, not `error`; omitted for rejection classes without a stable public code. |
 | `change` | `{ table, op, rowId, row }?` | Current authorization-projected canonical result; current servers include it for successful SDK mutations |
 
 On `ok: true`, the client installs the canonical `change` when present and
 removes the mutation from its pending queue. This also reconciles defaults,
 normalization, later writes, and durable receipt replay.
 
-On `ok: false`, the client rolls back the optimistic change by restoring the previous state from the pending queue.
+On `ok: false`, the client rolls back the optimistic change by restoring the
+previous state from the pending queue. A negative acknowledgement settles that
+attempt; recovery behavior depends on `errorCode`:
+
+| `errorCode` | Meaning | Client recovery |
+| --- | --- | --- |
+| `SYNC_DATA_REALM_NOT_READY` | The selected application realm's required identity anchors are still provisioning or retrying. No mutation committed. | Query the active realm through `client.dataRealm.getReadiness()`, use the idempotent `client.dataRealm.retry()` flow (or `DataRealmReadyGate`), and submit the desired application mutation only after the realm reports `ready`. Do not tight-loop the Sync mutation. |
+| `SYNC_DATA_REALM_UNAVAILABLE` | Projection is terminally failed, quarantined, or otherwise unavailable. No mutation committed. | Keep the optimistic change rolled back, surface the realm failure, and require operator repair or an explicit supported readiness recovery. Do not automatically resubmit. |
+| `SYNC_MUTATION_RECEIPT_EXPIRED` | The server can no longer prove the outcome of an older idempotency key. Current synchronized state is authoritative. | Reconcile from the accepted snapshot/catch-up state. Never blindly replay the old logical effect; create a new user-intended mutation only after the app has re-evaluated current state. |
+| `SYNC_MUTATION_CAPACITY_EXHAUSTED` | The durable mutation-receipt capacity is exhausted. | Roll back and stop automatic retries; capacity requires operator remediation. |
+
+Realm readiness codes currently apply to mutations on the pinned default
+application plane whose declared Guardian references require projection. The
+HTTP readiness API remains the source of retry timing and terminal/retryable
+state; the Sync code deliberately contains no target ID, path, SQL detail, or
+private projection failure.
+
+High-level and low-level clients expose the same rejection notification:
+`ClientConfig.onMutationRejected` / `SyncClientConfig.onMutationRejected` for a
+configured observer and `client.onMutationRejected(handler)` for a disposable
+runtime subscription. It fires after the optimistic row has been rolled back
+and carries `{ ref, table, op, rowId, plane?, error?, errorCode?, source }`,
+where `source` is `server` or `timeout`. Callback failures cannot interrupt
+rollback or queue progress. Applications should branch on `errorCode` and use
+`source` only to distinguish a local acknowledgement timeout; `error` remains
+display-oriented text.
 
 #### `sync.catchup`
 
@@ -811,6 +841,8 @@ interface PendingMutation {
 | Malformed JSON from client | Server ignores message, no ack sent |
 | Unknown table in `sync.mutate` | `sync.ack { ok: false, error: 'Unknown table: xyz' }` |
 | Policy-denied `sync.mutate` | `sync.ack { ok: false, error: '<policy reason>' }` |
+| Identity anchors are still provisioning | Negative ack with `errorCode: 'SYNC_DATA_REALM_NOT_READY'`; optimistic state rolls back and the client follows the readiness API before a deliberate retry. |
+| Identity projection is terminally unavailable | Negative ack with `errorCode: 'SYNC_DATA_REALM_UNAVAILABLE'`; optimistic state rolls back and automatic mutation retry stops. |
 | Unknown table in `sync.subscribe` | Server subscribes to known tables, ignores unknown ones |
 | WS connection drops | Client auto-reconnects with exponential backoff + jitter, sends `sync.auth`, waits for `sync.auth.ready`, then sends `sync.subscribe { epoch, scope, lastSeq }`. |
 | Server restart | The new epoch makes every old cursor incomparable; clients receive an authoritative replacement snapshot. |

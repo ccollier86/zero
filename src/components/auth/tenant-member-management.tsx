@@ -6,6 +6,7 @@ import type {
   AuthTenantMembershipStatus,
 } from '../../frontend/client/auth-types';
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
+import { useAuthorizationScopeBoundary } from '../../frontend/client/authorization-scope-hooks';
 import { useTenantMembers } from '../../frontend/client/tenant-administration-hooks';
 import {
   AlertDialog,
@@ -25,6 +26,7 @@ import { createAuthRoleLabelMap } from './auth-role-presentation';
 import { TenantRolePicker } from './tenant-role-picker';
 import { rolesForTenantKind } from './tenant-role-scope';
 import {
+  canRetainTenantMemberConfirmation,
   ConfirmationDialog,
   MemberRow,
   tenantMemberName,
@@ -53,19 +55,16 @@ export interface TenantMemberManagementProps {
 export function TenantMemberManagement(props: TenantMemberManagementProps) {
   const auth = useAuth();
   const authConfig = useAuthConfig();
+  const authorizationBoundary = useAuthorizationScopeBoundary();
   const publicConfig = authConfig.config;
   const configuredTenantSingular = publicConfig?.tenancy?.terminology?.singular
     ?? 'organization';
   const tenantSingular = auth.activeTenant?.kind === 'administration'
     ? 'platform administration'
     : configuredTenantSingular;
-  const boundary = JSON.stringify([
-    auth.user?.userId ?? null,
-    auth.activeTenant?.tenantId ?? null,
-  ]);
   return (
     <TenantMemberManagementScope
-      key={boundary}
+      key={authorizationBoundary.key}
       {...props}
       tenantSingular={tenantSingular}
       tenantKind={auth.activeTenant?.kind ?? null}
@@ -131,6 +130,12 @@ function TenantMemberManagementScope({
   }, [search, status]);
 
   const selectedMember = tenant.members.find((member) => member.membershipId === selected) ?? null;
+  const capabilities = tenant.config?.capabilities;
+  const canRetainConfirmation = canRetainTenantMemberConfirmation(
+    confirmation,
+    capabilities,
+  );
+  const visibleConfirmation = canRetainConfirmation ? confirmation : null;
   const roleSelectionChanged = selectedMember
     ? !sameRoleSelection(
         selectedMember.roles.filter((role) => role !== 'owner'),
@@ -142,6 +147,20 @@ function TenantMemberManagementScope({
     setLocalError(null);
   }, [selectedMember?.membershipId, selectedMember?.roleRevision,
     selectedMember?.roles.join('|')]);
+
+  React.useEffect(() => {
+    if (confirmation && !canRetainConfirmation) {
+      setConfirmation(null);
+      setLocalError(null);
+      confirmationTriggerRef.current = null;
+    }
+  }, [canRetainConfirmation, confirmation]);
+
+  React.useEffect(() => {
+    if (selected && (!capabilities?.canReadMembers || !capabilities.canManageRoles)) {
+      setSelected(null);
+    }
+  }, [capabilities?.canManageRoles, capabilities?.canReadMembers, selected]);
 
   async function addMember(event: React.FormEvent) {
     event.preventDefault();
@@ -195,8 +214,8 @@ function TenantMemberManagementScope({
   }
 
   async function confirmAction() {
-    if (!confirmation) return;
-    const pending = confirmation;
+    if (!visibleConfirmation) return;
+    const pending = visibleConfirmation;
     setLocalError(null);
     setAnnouncement('');
     try {
@@ -225,7 +244,6 @@ function TenantMemberManagementScope({
     }
   }
 
-  const capabilities = tenant.config?.capabilities;
   const actorMembershipId = tenant.config?.actor.membershipId;
   const roles = rolesForTenantKind(tenant.config?.roles ?? [], tenantKind);
   const roleLabels = createAuthRoleLabelMap(roles);
@@ -266,7 +284,7 @@ function TenantMemberManagementScope({
     >
       <CardHeader className="gap-3 border-b border-border/70">
         <div>
-          <CardTitle>{resolvedTitle}</CardTitle>
+          <CardTitle asChild><h2>{resolvedTitle}</h2></CardTitle>
           <CardDescription>{resolvedDescription}</CardDescription>
         </div>
         {canAddMember && (
@@ -340,7 +358,7 @@ function TenantMemberManagementScope({
           </Select>
         </div>
 
-        {!confirmation && (tenant.error || localError) && (
+        {!visibleConfirmation && (tenant.error || localError) && (
           <div role="alert" className="flex flex-col gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
             <span className="min-w-0">{localError ?? tenant.error}</span>
             <Button
@@ -359,15 +377,15 @@ function TenantMemberManagementScope({
         )}
 
         <AlertDialog
-          open={confirmation !== null}
+          open={visibleConfirmation !== null}
           onOpenChange={(open) => {
             if (!open && !tenant.isMutating) setConfirmation(null);
           }}
         >
-          {confirmation && (
+          {visibleConfirmation && (
             <ConfirmationDialog
-              key={`${confirmation.action}:${confirmation.member.membershipId}`}
-              confirmation={confirmation}
+              key={`${visibleConfirmation.action}:${visibleConfirmation.member.membershipId}`}
+              confirmation={visibleConfirmation}
               tenantSingular={tenantSingular}
               busy={tenant.isMutating}
               error={localError}
@@ -465,7 +483,6 @@ function TenantMemberManagementScope({
     </Card>
   );
 }
-
 
 /** @internal Accessible action-completion copy shared by the live region and tests. */
 export function tenantConfirmationAnnouncement(

@@ -7,6 +7,9 @@ describe('ApplicationAccessManagement', () => {
   test('renders an SSR-safe profile hint without global account controls', () => {
     const markup = renderToStaticMarkup(createElement(ApplicationAccessManagement));
     expect(markup).toContain('Application access');
+    expect(markup).toMatch(
+      /<h2[^>]*data-slot="card-title"[^>]*>Application access<\/h2>/,
+    );
     expect(markup).toContain('advanced single-application authorization profile');
     expect(markup).not.toContain('tenant');
     expect(markup).not.toContain('organization');

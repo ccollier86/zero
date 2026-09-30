@@ -69,6 +69,7 @@ export function createResourcePolicyAuthorization(
   if (!kernel) return null;
   return Object.freeze({
     kernel,
+    tenantKind: authContext?.tenantKind ?? null,
     subject: authContext && user
       ? createAuthorizationSubjectSnapshot(
           kernel,

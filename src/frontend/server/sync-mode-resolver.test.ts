@@ -119,6 +119,48 @@ describe('sync mode resolver', () => {
     });
   });
 
+  test('counts application rows while persisting decisions only in system metadata', () => {
+    const config = createConfig({ rowLimit: 1 });
+    db = createDb(config);
+    const systemDB = createReactiveDB({ mode: 'memory' });
+    try {
+      seedRows(2);
+
+      const first = resolveTableSyncModes(config, db, undefined, {
+        metadataDB: systemDB,
+      });
+      expect(first.decisions[0]).toMatchObject({
+        resolvedMode: 'lazy',
+        source: 'auto',
+        rowCount: 2,
+        persisted: true,
+      });
+      expect(hasPhysicalTable(db, '_zero_sync_table_modes')).toBe(false);
+      expect(systemDB.prepare(`
+        SELECT table_name, mode, source, row_count_at_decision
+        FROM _zero_sync_table_modes
+      `).all()).toEqual([{
+        table_name: 'events',
+        mode: 'lazy',
+        source: 'auto',
+        row_count_at_decision: 2,
+      }]);
+
+      db.delete('events', 'e0');
+      db.delete('events', 'e1');
+      const restarted = resolveTableSyncModes(createConfig({ rowLimit: 1 }), db, undefined, {
+        metadataDB: systemDB,
+      });
+      expect(restarted.decisions[0]).toMatchObject({
+        resolvedMode: 'lazy',
+        source: 'persisted',
+        rowCount: 0,
+      });
+    } finally {
+      systemDB.dispose();
+    }
+  });
+
   test('reject action fails startup instead of auto-lazying', () => {
     const config = createConfig({ rowLimit: 1, action: 'reject' });
     db = createDb(config);
@@ -218,3 +260,9 @@ describe('sync mode resolver', () => {
     }
   });
 });
+
+function hasPhysicalTable(database: ReactiveDB, table: string): boolean {
+  return Boolean(database.prepare(
+    'SELECT 1 FROM sqlite_schema WHERE type = \'table\' AND name = ? LIMIT 1',
+  ).get(table));
+}

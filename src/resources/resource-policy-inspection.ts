@@ -9,8 +9,20 @@
 
 import type { ResourceAction, ResourcePolicy } from './resource-policy-types';
 import type { AuthorizationCredentialKind } from '../auth/authorization-kernel';
+import type { TenantKind } from '../auth/tenancy/tenancy-types';
 
 export type ResourcePolicyStaticDecision = 'yes' | 'no' | 'unknown';
+
+const ALL_TENANT_KINDS = Object.freeze([
+  'organization',
+  'administration',
+] as const satisfies readonly TenantKind[]);
+
+/** Guardian reference fields declared by one guardianActorPolicy() leaf. */
+export interface ResourcePolicyGuardianActorFields {
+  readonly userField: string;
+  readonly membershipField?: string;
+}
 
 /** Return owner fields referenced anywhere in a policy tree. */
 export function getPolicyOwnerFields(policy: ResourcePolicy): string[] {
@@ -18,8 +30,29 @@ export function getPolicyOwnerFields(policy: ResourcePolicy): string[] {
   visitPolicy(policy, (current) => {
     const field = current.diagnostics?.ownerField?.trim();
     if (field) fields.add(field);
+    for (const ownerField of current.diagnostics?.ownerFields ?? []) {
+      const normalized = ownerField.trim();
+      if (normalized) fields.add(normalized);
+    }
   });
   return [...fields];
+}
+
+/** Return Guardian actor declarations referenced anywhere in a policy tree. */
+export function getPolicyGuardianActorFields(
+  policy: ResourcePolicy,
+): ResourcePolicyGuardianActorFields[] {
+  const references: ResourcePolicyGuardianActorFields[] = [];
+  visitPolicy(policy, (current) => {
+    const userField = current.diagnostics?.guardianUserField;
+    if (userField === undefined) return;
+    const membershipField = current.diagnostics?.guardianMembershipField;
+    references.push(Object.freeze({
+      userField,
+      ...(membershipField === undefined ? {} : { membershipField }),
+    }));
+  });
+  return references;
 }
 
 /** Return trusted metadata keys referenced anywhere in a policy tree. */
@@ -40,6 +73,46 @@ export function hasCustomPolicyBranch(policy: ResourcePolicy): boolean {
     if (current.kind === 'custom') found = true;
   });
   return found;
+}
+
+/**
+ * Return a safe static upper bound of tenant kinds which one policy can admit.
+ *
+ * A policy without `tenantKindPolicy()` is deliberately unrestricted on this
+ * axis. `allOf` intersects restrictions while `anyOf` unions them; custom
+ * callbacks remain unrestricted because inspecting them must never execute app
+ * code or guess at a denial. The result is an admission/capacity hint only —
+ * the live policy remains the authorization boundary.
+ */
+export function getPolicyEligibleTenantKinds(
+  policy: ResourcePolicy,
+): readonly TenantKind[] {
+  const kinds = eligibleTenantKinds(policy);
+  return Object.freeze(ALL_TENANT_KINDS.filter((kind) => kinds.has(kind)));
+}
+
+function eligibleTenantKinds(policy: ResourcePolicy): Set<TenantKind> {
+  const children = policy.diagnostics?.children ?? [];
+  if (policy.kind === 'tenant-kind') {
+    return new Set(policy.diagnostics?.tenantKinds ?? ALL_TENANT_KINDS);
+  }
+  if (policy.kind === 'all-of') {
+    if (children.length === 0) return new Set();
+    let result = new Set<TenantKind>(ALL_TENANT_KINDS);
+    for (const child of children) {
+      const childKinds = eligibleTenantKinds(child);
+      result = new Set([...result].filter((kind) => childKinds.has(kind)));
+    }
+    return result;
+  }
+  if (policy.kind === 'any-of') {
+    const result = new Set<TenantKind>();
+    for (const child of children) {
+      for (const kind of eligibleTenantKinds(child)) result.add(kind);
+    }
+    return result;
+  }
+  return new Set(ALL_TENANT_KINDS);
 }
 
 /**

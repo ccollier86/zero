@@ -8,8 +8,18 @@
  */
 
 import type { ReactiveDB } from '../sync/reactive-db';
+import { AuthError } from './types';
 
 export const AUTH_AUTHORITY_REVISION_TABLE = '_auth_authority_revision';
+
+const AUTH_AUTHORITY_REVISION_CREATE_SQL = `
+  CREATE TABLE IF NOT EXISTS ${AUTH_AUTHORITY_REVISION_TABLE} (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0)
+  )
+`;
+
+export type AuthAuthorityRevisionSchemaStatus = 'ready' | 'missing' | 'invalid';
 
 interface AuthorityTableTarget {
   table: string;
@@ -74,6 +84,23 @@ const AUTHORITY_TABLES: readonly AuthorityTableTarget[] = [
   { table: '_auth_application_role_assignments', updateColumns: [] },
   { table: '_auth_tenant_membership_roles', updateColumns: [] },
   {
+    table: '_auth_api_keys',
+    // Usage telemetry and presentation fields do not change admission.
+    // Secret, scope, generation, expiry, and revocation changes do.
+    updateColumns: [
+      'user_id',
+      'secret_hash',
+      'scope_kind',
+      'scope_id',
+      'tenant_id',
+      'membership_id',
+      'issued_auth_generation',
+      'key_generation',
+      'expires_at',
+      'revoked_at',
+    ],
+  },
+  {
     table: '_auth_native_sessions',
     // Refresh-family identity, token replacement, and rotation fields are as
     // authoritative as explicit revocation/scope columns. Keep this table
@@ -85,12 +112,12 @@ const AUTHORITY_TABLES: readonly AuthorityTableTarget[] = [
 
 /** Install the shared revision clock and versioned authority triggers. */
 export function installAuthAuthorityRevision(db: Pick<ReactiveDB, 'exec' | 'prepare'>): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ${AUTH_AUTHORITY_REVISION_TABLE} (
-      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-      revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0)
-    )
-  `);
+  // CREATE IF NOT EXISTS cannot repair an incompatible same-name clock. Check
+  // first so malformed columns never escape as a raw SQLite INSERT error.
+  if (inspectAuthAuthorityRevisionSchema(db) === 'invalid') {
+    throw authAuthorityRevisionInvariantError();
+  }
+  db.exec(AUTH_AUTHORITY_REVISION_CREATE_SQL);
   db.exec(`
     INSERT OR IGNORE INTO ${AUTH_AUTHORITY_REVISION_TABLE} (singleton, revision)
     VALUES (1, 0)
@@ -100,6 +127,59 @@ export function installAuthAuthorityRevision(db: Pick<ReactiveDB, 'exec' | 'prep
     if (!sqliteTableExists(db, target.table)) continue;
     installTableTriggers(db, target);
   }
+  assertExactAuthAuthorityRevisionSchema(db);
+}
+
+/**
+ * Inspect the revision clock and every current versioned trigger contract.
+ * Missing objects are recoverable before installation; same-name objects with
+ * a different table/event/body are incompatible and must fail closed.
+ */
+export function inspectAuthAuthorityRevisionSchema(
+  db: Pick<ReactiveDB, 'prepare'>,
+): AuthAuthorityRevisionSchemaStatus {
+  const clock = readSchemaDefinition(db, AUTH_AUTHORITY_REVISION_TABLE);
+  if (!clock) return 'missing';
+  if (clock.type !== 'table'
+    || typeof clock.sql !== 'string'
+    || normalizeSqlShape(clock.sql)
+      !== normalizeSqlShape(AUTH_AUTHORITY_REVISION_CREATE_SQL)) return 'invalid';
+
+  let missing = false;
+  for (const target of AUTHORITY_TABLES) {
+    if (!sqliteTableExists(db, target.table)) continue;
+    for (const operation of ['insert', 'delete', 'update'] as const) {
+      const expected = authorityTriggerContract(target, operation);
+      const actual = readSchemaDefinition(db, expected.name);
+      if (!actual) {
+        missing = true;
+        continue;
+      }
+      if (actual.type !== 'trigger'
+        || actual.table !== target.table
+        || typeof actual.sql !== 'string'
+        || normalizeSqlShape(actual.sql) !== normalizeSqlShape(expected.sql)) {
+        return 'invalid';
+      }
+    }
+  }
+  return missing ? 'missing' : 'ready';
+}
+
+/** Fail startup with Guardian's stable invariant error on schema drift. */
+export function assertExactAuthAuthorityRevisionSchema(
+  db: Pick<ReactiveDB, 'prepare'>,
+): void {
+  if (inspectAuthAuthorityRevisionSchema(db) === 'ready') return;
+  throw authAuthorityRevisionInvariantError();
+}
+
+function authAuthorityRevisionInvariantError(): AuthError {
+  return new AuthError(
+    'Auth authority revision schema is incompatible',
+    'AUTH_STATE_INVARIANT_FAILED',
+    500,
+  );
 }
 
 /** Read the monotonic authority revision; null means the schema is not installed. */
@@ -129,41 +209,70 @@ function installTableTriggers(
   db: Pick<ReactiveDB, 'exec'>,
   target: AuthorityTableTarget,
 ): void {
-  const table = quoteIdentifier(target.table);
-  const safeName = target.table.replace(/[^A-Za-z0-9_]/g, '_');
   for (const operation of ['insert', 'delete', 'update'] as const) {
     // Version trigger names when their definition changes. CREATE IF NOT
     // EXISTS avoids a DROP/CREATE window where another live connection could
     // commit an authority mutation without advancing the shared revision.
-    const triggerVersion = operation === 'update'
-      ? target.updateTriggerVersion ?? 1
-      : 1;
-    const trigger = quoteIdentifier(
-      `trg_zero_authority_${safeName}_${operation}_v${triggerVersion}`,
-    );
-    const updateColumns = operation === 'update' && target.updateColumns.length > 0
-      ? ` OF ${target.updateColumns.map(quoteIdentifier).join(', ')}`
-      : '';
-    db.exec(`
-      CREATE TRIGGER IF NOT EXISTS ${trigger}
-      AFTER ${operation.toUpperCase()}${updateColumns} ON ${table}
+    const contract = authorityTriggerContract(target, operation);
+    db.exec(contract.sql);
+
+    // Create the replacement first, then remove obsolete versions. A crash in
+    // between can cause a harmless extra revision bump but never a missed
+    // authority invalidation.
+    for (let version = 1; version < contract.version; version += 1) {
+      db.exec(`
+        DROP TRIGGER IF EXISTS ${quoteIdentifier(
+          `trg_zero_authority_${safeAuthorityName(target.table)}_${operation}_v${version}`,
+        )}
+      `);
+    }
+  }
+}
+
+function authorityTriggerContract(
+  target: AuthorityTableTarget,
+  operation: 'insert' | 'delete' | 'update',
+): { readonly name: string; readonly sql: string; readonly version: number } {
+  const version = operation === 'update'
+    ? target.updateTriggerVersion ?? 1
+    : 1;
+  const name = `trg_zero_authority_${safeAuthorityName(target.table)}_${operation}_v${version}`;
+  const updateColumns = operation === 'update' && target.updateColumns.length > 0
+    ? ` OF ${target.updateColumns.map(quoteIdentifier).join(', ')}`
+    : '';
+  return Object.freeze({
+    name,
+    version,
+    sql: `
+      CREATE TRIGGER IF NOT EXISTS ${quoteIdentifier(name)}
+      AFTER ${operation.toUpperCase()}${updateColumns} ON ${quoteIdentifier(target.table)}
       BEGIN
         UPDATE ${AUTH_AUTHORITY_REVISION_TABLE}
         SET revision = revision + 1
         WHERE singleton = 1;
       END
-    `);
+    `,
+  });
+}
 
-    // Create the replacement first, then remove obsolete versions. A crash in
-    // between can cause a harmless extra revision bump but never a missed
-    // authority invalidation.
-    for (let version = 1; version < triggerVersion; version += 1) {
-      db.exec(`
-        DROP TRIGGER IF EXISTS ${quoteIdentifier(
-          `trg_zero_authority_${safeName}_${operation}_v${version}`,
-        )}
-      `);
-    }
+function readSchemaDefinition(
+  db: Pick<ReactiveDB, 'prepare'>,
+  name: string,
+): { readonly type: unknown; readonly table: unknown; readonly sql: unknown } | null {
+  const statement = db.prepare(`
+    SELECT type, tbl_name AS "table", sql
+    FROM sqlite_master
+    WHERE name = ?
+    LIMIT 1
+  `);
+  try {
+    return statement.get(name) as {
+      readonly type: unknown;
+      readonly table: unknown;
+      readonly sql: unknown;
+    } | null;
+  } finally {
+    statement.finalize();
   }
 }
 
@@ -183,4 +292,17 @@ function sqliteTableExists(
 
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+function safeAuthorityName(table: string): string {
+  return table.replace(/[^A-Za-z0-9_]/g, '_');
+}
+
+function normalizeSqlShape(sql: string): string {
+  return sql.trim()
+    .replace(/\bif\s+not\s+exists\b/giu, '')
+    .replace(/\s+/gu, ' ')
+    .replace(/\s*,\s*/gu, ', ')
+    .trim()
+    .toLowerCase();
 }

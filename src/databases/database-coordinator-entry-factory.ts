@@ -6,6 +6,7 @@ import { resolveCoordinatorEntryPlacement } from './database-coordinator-placeme
 import { DatabaseError } from './database-error';
 import {
   createDatabaseRef,
+  prepareExistingDatabaseFile,
   prepareDatabaseFileWithCreationAdmission,
   type DatabaseId,
   type DatabaseRef,
@@ -48,6 +49,42 @@ export class DatabaseCoordinatorEntryFactory {
   }
 
   create(id: DatabaseId, slot: number): DatabaseCoordinatorEntry {
+    return this.#create(id, slot, true)!;
+  }
+
+  /** Build an entry only when its managed main file already exists. */
+  createExisting(id: DatabaseId, slot: number): DatabaseCoordinatorEntry | null {
+    return this.#create(id, slot, false);
+  }
+
+  /**
+   * Securely probe the managed main-file boundary without reserving an actor
+   * slot. A later createExisting() call must still revalidate the file after
+   * admission because another process can change filesystem state meanwhile.
+   */
+  existingFileIsPresent(id: DatabaseId): boolean {
+    try {
+      this.#options.assertOwnedRootCurrent();
+      const prepared = prepareExistingDatabaseFile(
+        this.#options.rootDirectory(),
+        id,
+      );
+      this.#options.assertOwnedRootCurrent();
+      return prepared !== null;
+    } catch (error) {
+      if (error instanceof DatabaseError) throw error;
+      throw new DatabaseError(
+        'DATABASE_OPEN_FAILED',
+        'Database file could not be inspected.',
+      );
+    }
+  }
+
+  #create(
+    id: DatabaseId,
+    slot: number,
+    createIfMissing: boolean,
+  ): DatabaseCoordinatorEntry | null {
     const databaseRef = createDatabaseRef(id);
     const placement = resolveCoordinatorEntryPlacement(
       this.#options.placementPolicy,
@@ -56,12 +93,15 @@ export class DatabaseCoordinatorEntryFactory {
     let prepared;
     try {
       this.#options.assertOwnedRootCurrent();
-      prepared = prepareDatabaseFileWithCreationAdmission(
-        this.#options.rootDirectory(),
-        id,
-        () => this.#assertFileAdmission(databaseRef, placement.mode),
-        () => { this.#managedDatabaseFiles += 1; },
-      );
+      prepared = createIfMissing
+        ? prepareDatabaseFileWithCreationAdmission(
+            this.#options.rootDirectory(),
+            id,
+            () => this.#assertFileAdmission(databaseRef, placement.mode),
+            () => { this.#managedDatabaseFiles += 1; },
+          )
+        : prepareExistingDatabaseFile(this.#options.rootDirectory(), id);
+      if (!prepared) return null;
       this.#options.assertOwnedRootCurrent();
       const bindingIdentity = prepareDatabaseBindingIdentity({
         filePath: prepared.path,

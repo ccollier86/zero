@@ -170,7 +170,7 @@ function ApiKeyManagementScope({
       aria-busy={management.isLoading || management.isLoadingMore || management.isMutating}
     >
       <CardHeader className="border-b border-border/70">
-        <CardTitle>
+        <CardTitle asChild>
           <h2 ref={headingRef} tabIndex={-1}>{copy.title}</h2>
         </CardTitle>
         <CardDescription>{copy.description}</CardDescription>
@@ -241,6 +241,7 @@ function ApiKeyManagementScope({
               confirmation={confirmation}
               busy={management.isMutating}
               error={localError}
+              tenantSingular={terminology.singular}
               onConfirm={() => void confirmAction()}
               onCloseAutoFocus={(event) => {
                 event.preventDefault();

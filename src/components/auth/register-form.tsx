@@ -80,7 +80,14 @@ function RegisterForm({
   socialProviders,
   className,
 }: RegisterFormProps) {
-  const { register, resendVerificationEmail, isLoading, error } = useAuth();
+  const {
+    register,
+    resendVerificationEmail,
+    isLoading,
+    error,
+    authenticationContinuation,
+    clearAuthenticationContinuation,
+  } = useAuth();
   const authConfig = useAuthConfig();
   const [form, setForm] = React.useState({
     email: '',
@@ -102,6 +109,10 @@ function RegisterForm({
   const [authContinuation, setAuthContinuation] = React.useState<
     AuthFlowContinuationResult | null
   >(null);
+  const activeAuthContinuation = authContinuation
+    ?? (isAuthFlowContinuationResult(authenticationContinuation)
+      ? authenticationContinuation
+      : null);
 
   const displayError = localError ?? error;
   const hasNames = fields.includes('firstName') || fields.includes('lastName');
@@ -199,6 +210,20 @@ function RegisterForm({
     }
   }
 
+  if (activeAuthContinuation) {
+    return (
+      <AuthFlowContinuation
+        result={activeAuthContinuation}
+        onSuccess={onSuccess}
+        onBack={() => {
+          clearAuthenticationContinuation();
+          setAuthContinuation(null);
+        }}
+        className={className}
+      />
+    );
+  }
+
   if (configPending) {
     return <RegistrationPolicyLoading />;
   }
@@ -213,17 +238,6 @@ function RegisterForm({
 
   if (registrationClosed) {
     return <>{unavailable ?? <RegistrationUnavailable loginHref={continuedLoginHref} showLoginLink={showLoginLink} />}</>;
-  }
-
-  if (authContinuation) {
-    return (
-      <AuthFlowContinuation
-        result={authContinuation}
-        onSuccess={onSuccess}
-        onBack={() => setAuthContinuation(null)}
-        className={className}
-      />
-    );
   }
 
   if (pendingVerificationEmail) {

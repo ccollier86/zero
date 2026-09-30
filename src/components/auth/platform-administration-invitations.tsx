@@ -23,6 +23,7 @@ import {
   platformAssignableRoles,
   platformRoleSelection,
 } from './platform-administration-role-policy';
+import { ManualInvitationToken } from './tenant-onboarding-invitations';
 import { TenantRolePicker } from './tenant-role-picker';
 
 interface InvitationDelivery {
@@ -156,7 +157,7 @@ export function PlatformAdministrationInvitations({
       || isMutating
     }>
       <CardHeader className="border-b border-border/70">
-        <CardTitle>Administrator invitations</CardTitle>
+        <CardTitle asChild><h2>Administrator invitations</h2></CardTitle>
         <CardDescription>
           Invitations grant access only to the protected administration organization.
           Administration members follow the platform-administrator MFA policy.
@@ -199,12 +200,16 @@ export function PlatformAdministrationInvitations({
             }}
           />
         )}
-        {capabilities.canManageInvitations && availableModes.length === 0 && (
+        {capabilities.canManageInvitations
+          && capabilities.canManageRoles
+          && availableModes.length === 0 && (
           <InvitationStatus>
             No administrator-invitation delivery method is enabled.
           </InvitationStatus>
         )}
-        {capabilities.canManageInvitations && availableModes.length > 0 && (
+        {capabilities.canManageInvitations
+          && capabilities.canManageRoles
+          && availableModes.length > 0 && (
           <form className="space-y-3" onSubmit={issue}>
             <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_auto]">
               <Input
@@ -248,23 +253,18 @@ export function PlatformAdministrationInvitations({
         )}
 
         {manualToken && (
-          <section className="rounded-md border border-warning/40 bg-warning/10 p-4" aria-labelledby={manualInvitationHeadingId}>
-            <h3 id={manualInvitationHeadingId} className="font-semibold">Copy this one-time invitation token now</h3>
-            <p className="mt-1 text-sm">Zero will not show this token again. Share it only with the intended administrator.</p>
-            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
-              <Input readOnly value={manualToken} aria-label="One-time administrator invitation token" />
-              <Button type="button" variant="outline" onClick={() => void copyToken()}>Copy</Button>
-              <Button type="button" variant="ghost" onClick={() => {
-                setManualToken(null);
-                setClipboardError(null);
-              }}>Dismiss</Button>
-            </div>
-            {clipboardError && (
-              <p role="alert" className="mt-2 text-sm text-destructive">
-                {clipboardError}
-              </p>
-            )}
-          </section>
+          <ManualInvitationToken
+            token={manualToken}
+            headingId={manualInvitationHeadingId}
+            inputLabel="One-time administrator invitation token"
+            recipient="intended administrator"
+            copyError={clipboardError}
+            onCopy={() => void copyToken()}
+            onDismiss={() => {
+              setManualToken(null);
+              setClipboardError(null);
+            }}
+          />
         )}
 
         <AlertDialog

@@ -84,6 +84,11 @@ describe('package distribution', () => {
       expect(contents).toContain('package/examples/package-mode/app/page.tsx');
       expect(contents).toContain('package/examples/package-mode/db/schema.ts');
       expect(contents).toContain('package/examples/package-mode/zero.config.ts');
+      expect(contents).toContain('package/examples/guardian-fabric-proof/.env.example');
+      expect(contents).toContain('package/examples/guardian-fabric-proof/README.md');
+      expect(contents).toContain('package/examples/guardian-fabric-proof/app/server.ts');
+      expect(contents).toContain('package/examples/guardian-fabric-proof/server/resources/tasks.ts');
+      expect(contents).toContain('package/examples/guardian-fabric-proof/zero.config.ts');
       expect(contents).toContain('package/scripts/install-local-tools.sh');
       expect(packagedFiles).toContain('package/.env.example');
       expect(contents).toContain('package/README.md');
@@ -99,6 +104,14 @@ describe('package distribution', () => {
       expect(packagedFiles.some((file) =>
         file.startsWith('package/examples/fabric-tenancy/')
       )).toBe(false);
+      expect(packagedFiles.some((file) =>
+        file.startsWith('package/examples/guardian-fabric-proof/.build/')
+        || file.startsWith('package/examples/guardian-fabric-proof/.zero/')
+        || file.startsWith('package/examples/guardian-fabric-proof/data/')
+      )).toBe(false);
+      expect(packagedFiles).not.toContain(
+        'package/examples/guardian-fabric-proof/.env',
+      );
       expect(packagedFiles).not.toContain('package/docs/auth/rust-tauri-auth-sdk.md');
 
       await spawnChecked(['tar', '-xzf', tarball, '-C', extractDir]);
@@ -120,6 +133,7 @@ describe('package distribution', () => {
       expect(frameworkPackageJson.files.some((file) =>
         file.startsWith('examples/fabric-tenancy')
       )).toBe(false);
+      expect(frameworkPackageJson.files).not.toContain('examples/guardian-fabric-proof');
       expect(Object.keys(frameworkPackageJson.imports).length).toBeGreaterThan(0);
       expect(Object.values(frameworkPackageJson.imports).every((target) =>
         /^\.\/src\/.+\.tsx?$/.test(target)
@@ -170,9 +184,21 @@ describe('package distribution', () => {
         stat(join(appDir, 'node_modules/@zero/framework/examples/native-auth/mobile.ts'))
           .then((value) => value.isFile())
       ).resolves.toBe(true);
+      await expect(
+        stat(join(appDir, 'node_modules/@zero/framework/examples/guardian-fabric-proof/README.md'))
+          .then((value) => value.isFile())
+      ).resolves.toBe(true);
       await buildInstalledNativeRecipes(appDir);
+      await buildInstalledGuardianFabricProof(appDir);
       await writePackageRuntimeSmoke(appDir);
       await writePackageReleaseSmoke(appDir);
+      await spawnChecked([
+        'bun',
+        join(appDir, 'node_modules/typescript/bin/tsc'),
+        '--noEmit',
+        '--project',
+        join(appDir, 'package-runtime-smoke.tsconfig.json'),
+      ], appDir);
       await spawnChecked(['bun', 'run', 'typecheck'], appDir);
       await spawnChecked(['bun', 'package-runtime-smoke.ts'], appDir);
       await spawnChecked(['bun', 'package-release-smoke.ts'], appDir);
@@ -229,12 +255,45 @@ async function buildInstalledNativeRecipes(appDir: string): Promise<void> {
   ], appDir);
 }
 
+/** Prove the shipped integration example resolves only published package files. */
+async function buildInstalledGuardianFabricProof(appDir: string): Promise<void> {
+  const proof = join(
+    appDir,
+    'node_modules/@zero/framework/examples/guardian-fabric-proof',
+  );
+  await spawnChecked([
+    'bun',
+    join(appDir, 'node_modules/typescript/bin/tsc'),
+    '--noEmit',
+    '--project',
+    join(proof, 'tsconfig.json'),
+  ], appDir);
+  await spawnChecked([
+    'bun',
+    'build',
+    join(proof, 'app/server.ts'),
+    '--target=bun',
+    `--outdir=${join(appDir, '.guardian-fabric-proof-smoke')}`,
+  ], appDir);
+}
+
 /** Write the packed-package runtime check used by the distribution test. */
 async function writePackageRuntimeSmoke(appDir: string): Promise<void> {
-  const source = `import { createApp } from '@zero/framework/server';
+  const source = `import {
+  createApp,
+  createDataRealmReadinessPlugin as createServerDataRealmReadinessPlugin,
+} from '@zero/framework/server';
 import type {
+  AppDatabaseTopologyConfig,
+  AppMultipleDatabaseTopologyConfig,
+  AppTenantDataIsolation,
   AuthAdministrationTenantConfig,
+  AuthApiKeyConfig,
   AuthPermissionScope,
+  DatabaseRealmDefinition,
+  ResolvedAuthApiKeyConfig,
+  ServerSystemDatabaseServices,
+  SystemDatabaseConfig,
 } from '@zero/framework/server';
 import type {
   AuthAuthorizationScopeLifecycle,
@@ -266,17 +325,64 @@ import type {
   AssertAuthApplicationMutationAuthority,
   AssertAuthTenantMutationAuthority,
   AtomicRegistrationPolicy,
+  AuthApiKeyIssueInput,
+  AuthApiKeyManagementCapabilities,
   AuthPlatformCodeEmitter,
   AuthSecurityAuditContext,
   AuthTenantInvitationDeliveryMode,
   AuthTenantInvitationEmailTemplate,
   AuthTenantInvitationEmailTemplateContext,
   CreateUserInput,
+  DataRealmReadinessPluginConfig,
+  DataRealmReadinessRequest,
+  DataRealmReadinessScope,
+  DataRealmReadinessSdkSurface,
+  DataRealmReadinessService,
+  DataRealmReadinessSnapshot,
+  DataRealmReadinessStatus,
+  IdentityAnchorStoreOptions,
+  IdentityProjectionErrorCode,
+  IdentityProjectionLifecycleRoutes,
+  IdentityProjectionOutboxStoreOptions,
+  IdentityProjectionServiceOptions,
   IssuedPageSession,
+  SynchronousIdentityProjectionTarget,
   UserListOptions,
   UserStoreOptions,
   WebRefreshProof,
 } from '@zero/framework/auth';
+import {
+  createDataRealmReadinessPlugin,
+  DATA_REALM_READINESS_DEFAULT_POLL_MS,
+  DATA_REALM_READINESS_MAX_POLL_MS,
+  DATA_REALM_READINESS_MIN_POLL_MS,
+  DATA_REALM_READINESS_STATUSES,
+  DataRealmReadinessContractError,
+  dataRealmReadinessAllowsApplicationData,
+  defineIdentityAnchorTables,
+  defineIdentityProjectionSystemTables,
+  IDENTITY_PROJECTION_ERROR_CODES,
+  IDENTITY_PROJECTION_INSTALLATION_TABLE,
+  IDENTITY_PROJECTION_OUTBOX_TABLE,
+  IDENTITY_PROJECTION_RECEIPTS_TABLE,
+  IDENTITY_PROJECTION_STATE_TABLE,
+  IDENTITY_PROJECTION_TARGETS_TABLE,
+  IdentityAnchorStore,
+  IdentityProjectionError,
+  IdentityProjectionOutboxStore,
+  IdentityProjectionService,
+  identityProjectionError,
+  parseDataRealmReadinessSnapshot,
+} from '@zero/framework/auth';
+import {
+  SYNC_ACK_ERROR_CODES,
+  type SyncAckErrorCode,
+  type SyncDataPlaneName,
+  type SyncMutationRejection,
+  type SyncSnapshotBeginMessage,
+  type SyncSnapshotChunkMessage,
+  type SyncSnapshotEndMessage,
+} from '@zero/framework/sync';
 import { createZeroNativeAuth, type ZeroNativeAuthOptions } from '@zero/framework/native';
 import type {
   ApplicationAccessManagementProps,
@@ -330,6 +436,66 @@ type PackagedAuthExtensionContract =
   | UseTenantOnboardingAdministrationResultSubpath
   | WebRefreshProof;
 void (null as PackagedAuthExtensionContract | null);
+
+type PackagedGuardianFabricContract = readonly [
+  AppDatabaseTopologyConfig,
+  AppMultipleDatabaseTopologyConfig,
+  AppTenantDataIsolation,
+  AuthApiKeyConfig,
+  ResolvedAuthApiKeyConfig,
+  DatabaseRealmDefinition,
+  ServerSystemDatabaseServices,
+  SystemDatabaseConfig,
+  AuthApiKeyIssueInput,
+  AuthApiKeyManagementCapabilities,
+  DataRealmReadinessPluginConfig,
+  DataRealmReadinessRequest,
+  DataRealmReadinessScope,
+  DataRealmReadinessSdkSurface,
+  DataRealmReadinessService,
+  DataRealmReadinessSnapshot,
+  DataRealmReadinessStatus,
+  IdentityAnchorStoreOptions,
+  IdentityProjectionErrorCode,
+  IdentityProjectionLifecycleRoutes,
+  IdentityProjectionOutboxStoreOptions,
+  IdentityProjectionServiceOptions,
+  SynchronousIdentityProjectionTarget,
+  SyncAckErrorCode,
+  SyncDataPlaneName,
+  SyncMutationRejection,
+  SyncSnapshotBeginMessage,
+  SyncSnapshotChunkMessage,
+  SyncSnapshotEndMessage,
+];
+void (null as PackagedGuardianFabricContract | null);
+
+const packagedGuardianFabricRuntimeExports = {
+  createDataRealmReadinessPlugin,
+  createServerDataRealmReadinessPlugin,
+  DATA_REALM_READINESS_DEFAULT_POLL_MS,
+  DATA_REALM_READINESS_MAX_POLL_MS,
+  DATA_REALM_READINESS_MIN_POLL_MS,
+  DATA_REALM_READINESS_STATUSES,
+  DataRealmReadinessContractError,
+  dataRealmReadinessAllowsApplicationData,
+  defineIdentityAnchorTables,
+  defineIdentityProjectionSystemTables,
+  IDENTITY_PROJECTION_ERROR_CODES,
+  IDENTITY_PROJECTION_INSTALLATION_TABLE,
+  IDENTITY_PROJECTION_OUTBOX_TABLE,
+  IDENTITY_PROJECTION_RECEIPTS_TABLE,
+  IDENTITY_PROJECTION_STATE_TABLE,
+  IDENTITY_PROJECTION_TARGETS_TABLE,
+  IdentityAnchorStore,
+  IdentityProjectionError,
+  IdentityProjectionOutboxStore,
+  IdentityProjectionService,
+  identityProjectionError,
+  parseDataRealmReadinessSnapshot,
+  SYNC_ACK_ERROR_CODES,
+};
+void packagedGuardianFabricRuntimeExports;
 
 function assertPackagedAdministrationHookContracts(
   platform: UsePlatformAdministrationResult,
@@ -476,7 +642,17 @@ if (page.status !== 200) throw new Error(\`page failed with status \${page.statu
 if (!html.includes('Build your app from here')) throw new Error('starter SSR content missing');
 `;
 
-  await writeFile(join(appDir, 'package-runtime-smoke.ts'), source);
+  await Promise.all([
+    writeFile(join(appDir, 'package-runtime-smoke.ts'), source),
+    writeFile(
+      join(appDir, 'package-runtime-smoke.tsconfig.json'),
+      `${JSON.stringify({
+        extends: './tsconfig.json',
+        compilerOptions: { noEmit: true },
+        include: ['package-runtime-smoke.ts'],
+      }, null, 2)}\n`,
+    ),
+  ]);
 }
 
 /**
@@ -486,9 +662,10 @@ if (!html.includes('Build your app from here')) throw new Error('starter SSR con
  */
 async function writePackageReleaseSmoke(appDir: string): Promise<void> {
   const source = `import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { Database } from 'bun:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createApp } from '@zero/framework/server';
+import { createApp, createPlatformSQLiteService } from '@zero/framework/server';
 import { Migrator, migrations } from '@zero/framework/migrations';
 
 const expectedVersions = ${JSON.stringify(EXPECTED_MIGRATION_VERSIONS)};
@@ -685,9 +862,12 @@ async function smokeCleanMigrations(root: string): Promise<void> {
 async function smokeAuthProfile(root: string, profile: AuthProfile): Promise<void> {
   const profileName = profile.tenancy + '/' + profile.authorization;
   const profileRoot = join(root, profile.tenancy + '-' + profile.authorization);
-  const dbPath = await migrateFreshProfileDatabase(profileRoot, profileName);
+  const systemDbPath = await migrateFreshProfileDatabase(profileRoot, profileName);
+  const appDbPath = join(profileRoot, 'app.db');
   const bootstrapSecret = 'packed-release-' + profile.tenancy + '-bootstrap-secret-000000000000';
   await mkdir(join(profileRoot, 'app'), { recursive: true });
+  const appSqlite = createPlatformSQLiteService({ mode: 'file', path: appDbPath });
+  initializeApplicationPlane(appSqlite.raw);
 
   const tenancy = profile.tenancy === 'multi'
     ? {
@@ -711,7 +891,8 @@ async function smokeAuthProfile(root: string, profile: AuthProfile): Promise<voi
     : { mode: 'simple' as const };
 
   const app = await createApp({
-    db: { mode: 'file', path: dbPath },
+    db: { sqlite: appSqlite },
+    systemDb: { mode: 'file', path: systemDbPath },
     tables: {},
     auth: {
       bootstrap: profile.tenancy === 'multi'
@@ -822,7 +1003,9 @@ async function smokeAuthProfile(root: string, profile: AuthProfile): Promise<voi
     await app.stop(true);
   }
 
-  assertPersistedProfile(dbPath, profileRoot, profile);
+  assertPersistedProfile(systemDbPath, profileRoot, profile);
+  assertSeparatedApplicationPlane(appSqlite.raw, profileName);
+  appSqlite.close();
 }
 
 async function migrateFreshProfileDatabase(
@@ -942,6 +1125,46 @@ function assertPersistedProfile(
   } finally {
     verifier.dispose();
   }
+}
+
+function assertSeparatedApplicationPlane(
+  database: Database,
+  profileName: string,
+): void {
+  const authorityTables = database.query(\`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table'
+        AND name IN (
+          '_auth_sessions', '_auth_tenants', '_auth_config',
+          '_auth_api_keys', '_zero_action_tokens', '_zero_resume_tokens'
+        )
+    \`).all() as Array<{ name: string }>;
+  assert(
+    authorityTables.length === 0,
+    profileName + ' leaked Guardian/Zero authority into the application DB',
+  );
+  const appProbe = database.query(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'package_release_probe'"
+  ).get() as { name?: string } | null;
+  assert(
+    appProbe?.name === 'package_release_probe',
+    profileName + ' did not preserve the application-owned database plane',
+  );
+  const userColumns = database.query('PRAGMA table_info("users")')
+    .all() as Array<{ name: string; type: string; pk: number }>;
+  assert(
+    userColumns.length === 0,
+    profileName + ' created an identity anchor without a declared Guardian reference',
+  );
+}
+
+function initializeApplicationPlane(database: Database): void {
+  database.run(\`
+      CREATE TABLE package_release_probe (
+        probe_id TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    \`);
 }
 
 function tableCount(migrator: Migrator, table: string): number {

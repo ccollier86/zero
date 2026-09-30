@@ -61,8 +61,13 @@ The store handles two categories of events:
 |-------|---------|--------|
 | `sync.snapshot` | `{ tables, seq, epoch, scope, reset }` | Replace every cache, install full-table rows, preserve or purge pending work as directed |
 | `sync.change` | `{ seq, prevSeq, epoch, scope, table, op, rowId, row }` | Apply only after stream continuity validation, then update `lastSeq` |
-| `sync.ack` | `{ ref, ok, error?, seq?, change? }` | Resolve by ref and install canonical result or roll back |
+| `sync.ack` | `{ plane?, ref, ok, error?, errorCode?, seq?, change? }` | Resolve by ref and install canonical result or roll back; stable negative-ack recovery is defined by `errorCode` |
 | `sync.catchup` | `{ changes, prevSeq, seq, epoch, scope }` | Validate and atomically apply ordered replay changes |
+
+See [Wire Protocol](./protocol.md#syncack) for the exact optional `plane`
+semantics and the four stable `errorCode` recovery classes. The reducer always
+settles and rolls back a rejected optimistic attempt; application recovery must
+not infer retryability from the human-readable `error` string.
 
 **Local events** (from mutation actions, applied optimistically):
 

@@ -491,9 +491,15 @@ operational data: do not include it or invitation tokens in logs or telemetry.
 
 `TenantOnboardingManagement` adapts to delivery capabilities and actor
 permissions, shows a manual token only in transient component state, and
-provides retained-request re-admission controls. In advanced authorization it
-also renders a role picker only when the request's server-projected approval
-policy permits reviewer choice. The projection distinguishes:
+provides retained-request re-admission controls. Its one-time-token reveal uses
+a read-only, non-autofill, non-correcting, non-spellcheck monospaced field,
+selects the token on focus, moves focus to the copy action on reveal, selects
+the retained field after a clipboard failure, and explicitly clears the token
+when dismissed. The platform-administration invitation control uses this same
+reveal rather than maintaining a weaker parallel secret UI. In advanced
+authorization it also renders a role picker only when the request's
+server-projected approval policy permits reviewer choice. The projection
+distinguishes:
 
 - `default`: use the ordinary least-privilege admission role without sending a
   browser-selected role (including simple mode);

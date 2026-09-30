@@ -55,6 +55,11 @@ export class TenantStoreMembershipLifecycle {
           now,
           input.createdBy,
         );
+        this.context.notifyMembershipCreated({
+          tenantId: input.tenantId,
+          membershipId,
+          userId: input.userId,
+        });
         if (roleKey === TENANT_OWNER_ROLE_KEY) {
           this.context.notifyOwnerCreated({
             tenantId: input.tenantId,

@@ -668,10 +668,10 @@ Resolved from sections 3-6:
    filter operators, result caps, page metadata, SDK hook options, sync read
    policy enforcement, and documented index guidance.
 9. Omitted table sync mode now defaults to auto-lazy protection: startup
-   resolves full/lazy mode from row counts, persists auto decisions in
-   `_zero_sync_table_modes`, enforces snapshot eligibility server-side, exposes
-   resolved modes to `AppProvider`, and keeps explicit full/lazy declarations
-   authoritative.
+   resolves full/lazy mode from row counts, persists auto decisions in the
+   system-plane `_zero_sync_table_modes`, enforces snapshot eligibility
+   server-side, exposes resolved modes to `AppProvider`, and keeps explicit
+   full/lazy declarations authoritative.
 
 Still open from sections 5-6:
 

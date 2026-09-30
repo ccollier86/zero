@@ -6,7 +6,11 @@ import {
   parseAuthMfaCompletionResult,
   parseAuthMfaMethod,
 } from './auth-completion-parser';
-import type { AuthAuthenticationAttempt } from './auth-authentication-attempt';
+import {
+  failCurrentAuthenticationCompletion,
+  failCurrentAuthenticationAttempt,
+  type AuthAuthenticationAttempt,
+} from './auth-authentication-attempt';
 import type {
   AuthCompletionResult,
   AuthMfaMethod,
@@ -94,28 +98,41 @@ export class AuthMfaTransport {
   }): Promise<AuthCompletionResult> {
     const attempt = this.options.beginAuthentication();
     try {
-      const response = await fetch(
-        `${this.options.baseUrl}/auth/mfa/challenge/verify`,
-        { ...jsonRequest(params), signal: attempt.signal },
-      );
-      attempt.assertCurrent();
-      if (!response.ok) {
-        const error = await responseError(response, 'Failed to verify MFA challenge');
-        attempt.assertCurrent();
-        this.options.failAuthentication(error.message, attempt);
-        throw error;
-      }
       let result: AuthCompletionResult;
+      let failureMessage = 'Failed to verify MFA challenge';
       try {
+        const response = await fetch(
+          `${this.options.baseUrl}/auth/mfa/challenge/verify`,
+          { ...jsonRequest(params), signal: attempt.signal },
+        );
+        attempt.assertCurrent();
+        if (!response.ok) {
+          const error = await responseError(response, failureMessage);
+          failureMessage = error.message;
+          throw error;
+        }
+        failureMessage = 'Invalid MFA response';
         const body = await response.json();
         attempt.assertCurrent();
         result = parseAuthMfaCompletionResult(body);
-      } catch (error) {
-        attempt.assertCurrent();
-        this.options.failAuthentication('Invalid MFA response', attempt);
-        throw error;
+      } catch (cause) {
+        return failCurrentAuthenticationAttempt(
+          attempt,
+          this.options.failAuthentication,
+          cause,
+          failureMessage,
+        );
       }
-      return this.options.completeAuthentication(result, attempt);
+      try {
+        return await this.options.completeAuthentication(result, attempt);
+      } catch (cause) {
+        return failCurrentAuthenticationCompletion(
+          attempt,
+          this.options.failAuthentication,
+          cause,
+          'Failed to verify MFA challenge',
+        );
+      }
     } finally {
       attempt.dispose();
     }

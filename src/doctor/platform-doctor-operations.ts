@@ -33,15 +33,15 @@ export function checkStorage(
     });
   }
 
-  const databaseMode = resolved.db.sqlite?.mode
-    ?? resolveSQLiteStorageConfig(resolved.db).mode;
+  const databaseMode = resolved.systemDb.sqlite?.mode
+    ?? resolveSQLiteStorageConfig(resolved.systemDb).mode;
   if (!signingSecret && databaseMode === 'ephemeral') {
     addFinding(findings, {
       severity: 'error',
       code: 'storage.signing_secret.ephemeral_database',
       path: 'storage.signingSecret',
       message: 'Production storage cannot retain its generated capability signing key in an ephemeral database.',
-      hint: 'Configure storage.signingSecret or ZERO_STORAGE_SIGNING_SECRET with at least 32 random bytes, or use a durable shared database.',
+      hint: 'Configure storage.signingSecret or ZERO_STORAGE_SIGNING_SECRET with at least 32 random bytes, or use a durable system database.',
       docs: './docs/platform-configuration.md#file-storage-capability-signing',
     });
   }

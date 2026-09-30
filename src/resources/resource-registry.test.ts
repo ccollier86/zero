@@ -33,6 +33,7 @@ import {
   adminOnly,
   anyOf,
   authenticatedOnly,
+  guardianActorPolicy,
   metadataPolicy,
   ownerPolicy,
   readOnly,
@@ -827,6 +828,85 @@ describe('resource definitions and registry', () => {
     expect(issues.map((issue) => issue.code)).toContain('resource-policy-missing');
     expect(issues.map((issue) => issue.code)).toContain('metadata-property-untrusted');
     expect(issues.map((issue) => issue.code)).toContain('resource-owner-field-missing');
+  });
+
+  test('requires guardianActorPolicy fields to use matching Guardian schema references', () => {
+    const multiAuth = resolveAuthBehaviorConfig({ tenancy: 'multi' });
+    const typedTasks = defineTable('typed_tasks', {
+      title: field.text({ required: true }),
+      created_by_user_id: field.guardianUser(),
+      assigned_membership_id: field.guardianMembership(),
+    }, { pk: 'task_id' });
+    const untypedTasks = defineTable('untyped_tasks', {
+      title: field.text({ required: true }),
+      created_by_user_id: field.text({ required: true }),
+      assigned_membership_id: field.text({ required: true }),
+    }, { pk: 'task_id' });
+    const policy = guardianActorPolicy({
+      userField: 'created_by_user_id',
+      membershipField: 'assigned_membership_id',
+    });
+    const typedResource = defineResource({
+      table: typedTasks,
+      exposure: 'all',
+      realm: tenantRealm(),
+      actions: ['list'],
+      policy,
+    });
+    const untypedResource = defineResource({
+      table: untypedTasks,
+      exposure: 'all',
+      realm: tenantRealm(),
+      actions: ['list'],
+      policy,
+    });
+    const context = {
+      authConfig: multiAuth,
+      tenancyMode: 'multi' as const,
+      tenantIsolation: 'tenant-database' as const,
+    };
+
+    expect(validateResourceDefinitions([typedResource], {
+      ...context,
+      tables: { typed_tasks: typedTasks.serverTable },
+    }).map(({ code }) => code)).not.toContain('resource-guardian-reference-invalid');
+    expect(validateResourceDefinitions([untypedResource], {
+      ...context,
+      tables: { untyped_tasks: untypedTasks.serverTable },
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'resource-guardian-reference-invalid',
+        path: 'policy.list.guardianActor.userField',
+      }),
+      expect.objectContaining({
+        code: 'resource-guardian-reference-invalid',
+        path: 'policy.list.guardianActor.membershipField',
+      }),
+    ]));
+  });
+
+  test('rejects a Resource whose Guardian metadata no longer matches its SQL', () => {
+    const typedTasks = defineTable('typed_tasks', {
+      created_by_user_id: field.guardianUser(),
+    }, { pk: 'task_id' });
+    typedTasks.serverTable.created_by_user_id =
+      'text references users(user_id) on delete cascade not null';
+    const resource = defineResource({
+      table: typedTasks,
+      actions: ['list'],
+      policy: guardianActorPolicy({ userField: 'created_by_user_id' }),
+    });
+
+    expect(validateResourceDefinitions([resource], {
+      tables: { typed_tasks: typedTasks.serverTable },
+      authConfig,
+    })).toContainEqual(expect.objectContaining({
+      code: 'resource-guardian-reference-invalid',
+      path: 'schema.created_by_user_id',
+      metadata: expect.objectContaining({
+        issue: 'invalid-column-definition',
+      }),
+    }));
   });
 
   test('registry rejects duplicate resource names and tables', () => {

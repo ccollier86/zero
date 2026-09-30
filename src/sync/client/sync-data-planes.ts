@@ -4,7 +4,11 @@ import type {
 } from '../types';
 
 export const DEFAULT_SYNC_DATA_PLANE: SyncDataPlaneName = 'default';
-export const SYNC_DATA_PLANES = ['default', 'tenant'] as const satisfies readonly SyncDataPlaneName[];
+export const SYNC_DATA_PLANES = [
+  'default',
+  'system',
+  'tenant',
+] as const satisfies readonly SyncDataPlaneName[];
 
 /**
  * Client-side routing information generated from the server's trusted Sync
@@ -66,7 +70,7 @@ export function resolveSyncClientDataPlaneTopology(
     const plane = configured[table];
     if (!isSyncDataPlaneName(plane)) {
       throw new Error(
-        `[sync] tableSyncPlanes.${table} must be "default" or "tenant".`,
+        `[sync] tableSyncPlanes.${table} must be "default", "system", or "tenant".`,
       );
     }
     tablePlanes[table] = plane;
@@ -97,7 +101,7 @@ export function tablesInSyncDataPlane(
 }
 
 export function isSyncDataPlaneName(value: unknown): value is SyncDataPlaneName {
-  return value === 'default' || value === 'tenant';
+  return value === 'default' || value === 'system' || value === 'tenant';
 }
 
 export function messageSyncDataPlane(

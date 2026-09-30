@@ -4,6 +4,7 @@ import {
   authTokenEligibleUserSql,
   recoverableTenantRegistrationUserSql,
 } from '../auth-user-eligibility';
+import { ADMIN_USER_PROVISIONING_TABLE } from '../admin-user-provisioning-schema';
 import { invokeSynchronousAuthCallback } from '../auth-synchronous-callback';
 import { defineTenancyTables } from './tenancy-schema';
 import {
@@ -54,6 +55,7 @@ interface TenantStoreStatements {
   activeUserExists: Statement;
   tokenEligibleUserExists: Statement;
   pendingRegistrationUserExists: Statement;
+  pendingAdminUserExists: Statement | null;
   insertTenant: Statement;
   insertMembership: Statement;
   getTenantById: Statement;
@@ -90,6 +92,8 @@ export class TenantStoreContext {
   private readonly onOwnerCreated: NonNullable<TenantStoreOptions['onOwnerCreated']> | null;
   private readonly onOwnerRoleChanged:
     NonNullable<TenantStoreOptions['onOwnerRoleChanged']> | null;
+  private readonly identityProjection:
+    NonNullable<TenantStoreOptions['identityProjection']> | null;
   private readonly profileGuard: () => void;
   private readonly emitCode: TenantStoreOptions['emitCode'];
   readonly statements: TenantStoreStatements;
@@ -107,6 +111,7 @@ export class TenantStoreContext {
       ?? (() => `tmem_${crypto.randomUUID()}`);
     this.onOwnerCreated = options.onOwnerCreated ?? null;
     this.onOwnerRoleChanged = options.onOwnerRoleChanged ?? null;
+    this.identityProjection = options.identityProjection ?? null;
     this.emitCode = options.emitCode;
     const assertCurrentProfile = options.assertCurrentProfile;
     this.profileGuard = assertCurrentProfile
@@ -258,6 +263,31 @@ export class TenantStoreContext {
     );
   }
 
+  notifyMembershipCreated(input: {
+    membershipId: string;
+    tenantId: string;
+    userId: string;
+  }): void {
+    if (!this.identityProjection) return;
+    if (this.identityProjectionIsDeferred(input.userId, input.tenantId)) return;
+    invokeSynchronousAuthCallback(
+      () => this.identityProjection!.membershipCreated(input),
+      {
+        component: 'tenant-store',
+        invariant: 'identity-projection-membership-hook-async',
+        message: '[auth] Identity projection membership hook must be synchronous.',
+        emitCode: this.emitCode,
+      },
+    );
+  }
+
+  private identityProjectionIsDeferred(userId: string, tenantId: string): boolean {
+    return Boolean(
+      this.statements.pendingRegistrationUserExists.get(userId, tenantId)
+      || this.statements.pendingAdminUserExists?.get(userId),
+    );
+  }
+
   notifyOwnerRoleChanged(
     input: Parameters<NonNullable<TenantStoreOptions['onOwnerRoleChanged']>>[0],
   ): void {
@@ -343,6 +373,12 @@ function prepareTenantStoreStatements(db: ReactiveDB): TenantStoreStatements {
       SELECT user_id FROM _auth_registration_provisioning
       WHERE user_id = ? AND (tenant_id IS NULL OR tenant_id = ?) LIMIT 1
     `),
+    pendingAdminUserExists: hasTable(db, ADMIN_USER_PROVISIONING_TABLE)
+      ? db.prepare(`
+          SELECT user_id FROM ${ADMIN_USER_PROVISIONING_TABLE}
+          WHERE user_id = ? LIMIT 1
+        `)
+      : null,
     insertTenant: db.prepare(`
       INSERT INTO _auth_tenants (
         tenant_id, kind, slug, name, status, authorization_generation,
@@ -495,6 +531,12 @@ function prepareTenantStoreStatements(db: ReactiveDB): TenantStoreStatements {
       WHERE membership_id = ?
     `),
   };
+}
+
+function hasTable(db: ReactiveDB, table: string): boolean {
+  return Boolean(db.prepare(`
+    SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?
+  `).get(table));
 }
 
 function mapTenant(row: TenantRow): TenantRecord {

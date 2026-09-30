@@ -87,7 +87,13 @@ function LoginForm({
   socialProviders,
   className,
 }: LoginFormProps) {
-  const { login, isLoading, error } = useAuth();
+  const {
+    login,
+    isLoading,
+    error,
+    authenticationContinuation,
+    clearAuthenticationContinuation,
+  } = useAuth();
   const authConfig = useAuthConfig();
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
@@ -96,6 +102,10 @@ function LoginForm({
   const [authContinuation, setAuthContinuation] = React.useState<
     AuthFlowContinuationResult | null
   >(null);
+  const activeAuthContinuation = authContinuation
+    ?? (isAuthFlowContinuationResult(authenticationContinuation)
+      ? authenticationContinuation
+      : null);
   const fieldId = React.useId();
   const emailId = `${fieldId}-email`;
   const passwordId = `${fieldId}-password`;
@@ -137,12 +147,15 @@ function LoginForm({
     }
   }
 
-  if (authContinuation) {
+  if (activeAuthContinuation) {
     return (
       <AuthFlowContinuation
-        result={authContinuation}
+        result={activeAuthContinuation}
         onSuccess={onSuccess}
-        onBack={() => setAuthContinuation(null)}
+        onBack={() => {
+          clearAuthenticationContinuation();
+          setAuthContinuation(null);
+        }}
         className={className}
       />
     );

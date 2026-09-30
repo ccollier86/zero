@@ -1,4 +1,5 @@
 import type { Database, Statement } from 'bun:sqlite';
+import type { ReactiveDB } from './reactive-db';
 import type { PlatformSQLiteService, SQLiteStorageConfig } from '../persistence';
 import type { PlatformObservabilityRuntime } from '../observability/types';
 import type { SyncPolicy } from './sync-policy';
@@ -144,7 +145,7 @@ export type Row = Record<string, unknown>;
 export type SyncMode = 'full' | 'lazy';
 
 /** Independent durable data logs multiplexed over one Sync WebSocket. */
-export type SyncDataPlaneName = 'default' | 'tenant';
+export type SyncDataPlaneName = 'default' | 'system' | 'tenant';
 
 /** Non-retryable Sync data/configuration failure requiring operator action. */
 export const SYNC_TERMINAL_DATA_CLOSE_CODE = 4_004 as const;
@@ -368,6 +369,15 @@ export interface SyncPluginConfig {
    */
   resourcePolicy?: SyncResourcePolicyAdapter;
   /**
+   * Managed default-plane Guardian FK barrier. It runs only after mutation
+   * policy succeeds and before validation/commit; Sync revalidates the socket
+   * authority again after any asynchronous reconciliation.
+   */
+  ensureMutationReady?: (input: Readonly<{
+    table: string;
+    authContext: SyncAuthContext | null;
+  }>) => void | Promise<void>;
+  /**
    * Authorization and namespace policy for ephemeral collaboration topics.
    *
    * Authenticated plugins fail closed when this is omitted. Standalone
@@ -394,10 +404,34 @@ export interface SyncPluginConfig {
    *
    * The provider receives only the already-verified socket authority. Tenant
    * or database selectors are never accepted from the Sync wire protocol.
-   * State Sync, ephemeral collaboration, and framework control tables remain
-   * on the default ReactiveDB plane.
+   * Ephemeral collaboration remains process-local. Managed framework tables
+   * and State Sync use the separately configured system/state planes.
    */
   tenantDataPlane?: import('./sync-tenant-data-plane').SyncTenantDataPlane;
+
+  /**
+   * Optional read-only framework control plane. Its tables live in the
+   * dedicated Zero system database while application tables remain on the
+   * default/application plane. Client mutations never route to this plane;
+   * framework HTTP plugins own all control-plane writes.
+   */
+  systemDataPlane?: Readonly<{
+    db: ReactiveDB;
+    tables: readonly string[] | Readonly<Record<string, unknown>>;
+    /**
+     * Durable cross-runtime change polling for the system database. Omission
+     * inherits the top-level polling setting and otherwise auto-enables for a
+     * file-backed system database. Configure this independently when the app
+     * and system planes have different replica ownership.
+     */
+    replicaChangePolling?: false | { intervalMs?: number };
+  }>;
+
+  /**
+   * Reactive database used by per-user State Sync. Omission preserves the
+   * standalone single-database contract. Managed apps bind this to system.db.
+   */
+  stateDB?: ReactiveDB;
 }
 
 /**
@@ -770,10 +804,29 @@ export interface SyncChangeMessage {
 export const SYNC_ACK_ERROR_CODES = Object.freeze({
   mutationReceiptExpired: 'SYNC_MUTATION_RECEIPT_EXPIRED',
   mutationCapacityExhausted: 'SYNC_MUTATION_CAPACITY_EXHAUSTED',
+  dataRealmNotReady: 'SYNC_DATA_REALM_NOT_READY',
+  dataRealmUnavailable: 'SYNC_DATA_REALM_UNAVAILABLE',
 } as const);
 
 export type SyncAckErrorCode =
   (typeof SYNC_ACK_ERROR_CODES)[keyof typeof SYNC_ACK_ERROR_CODES];
+
+/**
+ * A rejected optimistic mutation after its local row has been rolled back.
+ *
+ * Applications should branch on `errorCode`; `error` is a safe display value,
+ * not a stable machine contract.
+ */
+export interface SyncMutationRejection {
+  ref: string;
+  table: string;
+  op: ChangeOp;
+  rowId: string;
+  plane?: SyncDataPlaneName;
+  error?: string;
+  errorCode?: SyncAckErrorCode;
+  source: 'server' | 'timeout';
+}
 
 export interface SyncAckMessage {
   type: 'sync.ack';
@@ -986,6 +1039,8 @@ export interface SyncClientConfig {
   onAuthFailure?: (error: string) => void;
   /** Callback after successful reconnect */
   onReconnect?: () => void;
+  /** Called after a rejected optimistic mutation has been rolled back. */
+  onMutationRejected?: (rejection: SyncMutationRejection) => void;
   /** Mutation ack timeout in ms. Default: 10000 */
   ackTimeout?: number;
   /** Max reconnect attempts. Default: Infinity */

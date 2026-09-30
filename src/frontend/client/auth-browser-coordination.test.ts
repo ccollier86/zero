@@ -155,6 +155,126 @@ describe('browser auth coordination primitives', () => {
     ).refreshToken).toBe('stored-refresh');
   });
 
+  test('settles login loading when credential coordination rejects', async () => {
+    const storage = new SharedStorage();
+    const coordinationFailure = new BrowserAuthCoordinationError(
+      'Injected credential lock failure',
+    );
+    globalThis.fetch = (async (
+      _input: string | URL | Request,
+      _init?: RequestInit,
+    ) => Response.json({
+      user: authUser(),
+      accessToken: 'uncommitted-access',
+      refreshToken: 'uncommitted-refresh',
+      activeTenant: tenant('ten_a'),
+    })) as unknown as typeof fetch;
+    const client = track(new AuthClient('http://zero.test', {
+      browserAuthCoordination: {
+        ...environmentFor(storage, {
+          ids: idFactory(), channel: false, locks: false,
+        }),
+        locks: {
+          async request<T>(): Promise<T> {
+            throw coordinationFailure;
+          },
+        },
+      },
+    }));
+
+    await expect(client.login('ada', 'password')).rejects.toBe(coordinationFailure);
+    expect(client.isLoading).toBe(false);
+    expect(client.error).toBe('Login failed');
+    expect(client.isAuthenticated).toBe(false);
+    expect(client.accessToken).toBeNull();
+  });
+
+  test('retains identity continuation across stale-session purge and remount', async () => {
+    const storage = new SharedStorage();
+    const environment = environmentFor(storage, {
+      ids: idFactory(), channel: false, locks: false,
+    });
+    const seed = new BrowserAuthCoordinator('http://zero.test', environment);
+    seed.commitSession('stale-refresh', 'stale-scope', 'session');
+    seed.dispose();
+    const lifecycle = createLifecycleRecorder();
+
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = typeof input === 'string' || input instanceof URL
+        ? String(input)
+        : input.url;
+      if (url.endsWith('/auth/refresh')) {
+        throw new Error('restore network unavailable');
+      }
+      if (url.endsWith('/auth/login')) {
+        return Response.json({
+          user: authUser(),
+          tenantSelectionRequired: true,
+          tenantSelection: {
+            continuation: 'selection-continuation',
+            expiresAt: Date.now() + 60_000,
+            tenants: [tenant('ten_a'), tenant('ten_b')],
+          },
+        });
+      }
+      return Response.json({ ok: true });
+    }) as typeof fetch;
+
+    const client = track(new AuthClient('http://zero.test', {
+      authorizationScopeLifecycle: lifecycle.api,
+      browserAuthCoordination: environment,
+    }));
+    await waitFor(() => !client.isRestoring && !client.isLoading);
+    expect(client.error).toBe('Unable to restore the browser session');
+
+    const completion = await client.login('ada', 'password');
+
+    expect(completion).toMatchObject({
+      tenantSelectionRequired: true,
+      tenantSelection: { continuation: 'selection-continuation' },
+    });
+    expect(client.authenticationContinuation).toEqual(completion);
+    expect(client.isLoading).toBe(false);
+    expect(client.isAuthenticated).toBe(false);
+    expect(client.authorizationScopeKey).toBeNull();
+    expect(lifecycle.events).toEqual(['begin', 'complete']);
+
+    client.clearAuthenticationContinuation();
+    expect(client.authenticationContinuation).toBeNull();
+  });
+
+  test('preserves a committed-login synchronization error without optional cancellation hooks', async () => {
+    const storage = new SharedStorage();
+    const environment = environmentFor(storage, {
+      ids: idFactory(), channel: false, locks: false,
+    });
+    const lifecycle = createLifecycleRecorder();
+    lifecycle.failCompletion = true;
+    globalThis.fetch = (async () => Response.json({
+      user: authUser(),
+      accessToken: 'committed-access',
+      refreshToken: 'committed-refresh',
+      activeTenant: tenant('ten_a'),
+    })) as unknown as typeof fetch;
+    const client = track(new AuthClient('http://zero.test', {
+      authorizationScopeLifecycle: lifecycle.api,
+      browserAuthCoordination: environment,
+    }));
+
+    await expect(client.login('ada', 'password')).rejects.toBeInstanceOf(
+      AuthSessionSynchronizationError,
+    );
+    expect(client.isAuthenticated).toBe(true);
+    expect(client.accessToken).toBe('committed-access');
+    expect(client.sessionTransition.phase).toBe('recovery-required');
+    expect(client.sessionTransition.recoverable).toBe(true);
+    expect(lifecycle.events).not.toContain('abort');
+
+    lifecycle.failCompletion = false;
+    await client.reconcileSession();
+    expect(client.sessionTransition.phase).toBe('idle');
+  });
+
   test('publishes only sanitized revision/scope signals', async () => {
     const storage = new SharedStorage();
     const hub = new ChannelHub();

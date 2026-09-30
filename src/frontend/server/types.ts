@@ -52,6 +52,13 @@ import {
   configuredAuthPathname,
   normalizeConfiguredAuthPath,
 } from '../router/auth-navigation';
+import {
+  resolveSystemDatabaseConfig,
+  resolveSystemDatabaseOwnedPaths,
+  type SystemDatabaseConfig,
+} from './system-database-config';
+
+export type { SystemDatabaseConfig } from './system-database-config';
 
 export type {
   AppDatabaseActorConfig,
@@ -109,7 +116,7 @@ export interface SyncDefaultsConfig {
     rowLimit?: number;
     /** Behavior when an auto table crosses rowLimit. Default: 'lazy'. */
     action?: AutoLazyAction;
-    /** Persist auto decisions in the app database. Default: true. */
+    /** Persist auto decisions in the managed system database. Default: true. */
     persist?: boolean;
   };
   /** Per-table sync overrides. */
@@ -164,7 +171,7 @@ export interface AppStorageConfig {
   /**
    * HMAC secret for presigned URLs and upload grants. Explicit config wins
    * over ZERO_STORAGE_SIGNING_SECRET. When both are omitted, Zero persists a
-   * random key in the durable app database during storage startup.
+   * random key in the durable system database during storage startup.
    */
   signingSecret?: string;
   /** Default capability expiry in seconds. Default: 3600. */
@@ -214,8 +221,16 @@ export interface AppConfig {
   /** App identity used by system UI and platform emails. */
   app?: AppIdentityConfig;
 
-  /** Database configuration. Uses the platform SQLite persistence foundation. */
+  /** Application database configuration exposed through `zero.db` and `zero.sql`. */
   db: ReactiveDBConfig;
+
+  /**
+   * Zero-owned control-plane database. Guardian, platform tokens, and built-in
+   * service state use this database and never share the application handle.
+   * Defaults to an independent ephemeral database when `db` is ephemeral and
+   * to `./data/zero.system.db` otherwise.
+   */
+  systemDb?: SystemDatabaseConfig;
 
   /**
    * Optional app-level database topology. Omission preserves the historical
@@ -482,6 +497,7 @@ export function defineZeroConfig<const TConfig extends AppConfig>(config: TConfi
 export interface ResolvedConfig {
   app: AppIdentityConfig;
   db: ReactiveDBConfig;
+  systemDb: ReactiveDBConfig;
   databaseTopology: ResolvedAppDatabaseTopologyConfig;
   tables: Record<string, TableSchema>;
   /** Server-only logical validators used by websocket mutation handling. */
@@ -615,6 +631,7 @@ export function resolveConfig(
     authBehavior?.tenancy.mode ?? 'single',
     normalized,
   );
+  const systemDb = resolveSystemDatabaseConfig(config.db, config.systemDb);
   const storageDir = config.storageDir ?? '.storage';
   const outDir = config.outDir ?? './.build';
   if (databaseTopology.mode === 'multiple') {
@@ -622,7 +639,10 @@ export function resolveConfig(
       rootDirectory: databaseTopology.rootDirectory,
       outDir,
       storageDir,
-      controlDatabasePaths: resolveControlDatabasePaths(config.db),
+      controlDatabasePaths: [
+        ...resolveControlDatabasePaths(config.db),
+        ...resolveSystemDatabaseOwnedPaths(systemDb),
+      ],
     });
   }
 
@@ -657,6 +677,7 @@ export function resolveConfig(
   return {
     app: config.app ?? {},
     db: config.db,
+    systemDb,
     databaseTopology,
     tables: normalized,
     mutationValidators,

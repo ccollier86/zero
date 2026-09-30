@@ -30,6 +30,14 @@ export {
 } from './tenant-creation-form';
 export { TenantSwitcher, type TenantSwitcherProps } from './tenant-switcher';
 export {
+  DataRealmReadinessNotice,
+  DataRealmReadyGate,
+} from './data-realm-ready-gate';
+export type {
+  DataRealmReadinessNoticeProps,
+  DataRealmReadyGateProps,
+} from './data-realm-ready-gate';
+export {
   ApplicationAccessManagement,
   type ApplicationAccessManagementProps,
 } from './application-access-management';

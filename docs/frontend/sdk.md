@@ -114,6 +114,9 @@ interface ClientConfig {
 
   /** Called after successful reconnect. */
   onReconnect?: () => void;
+
+  /** Called after a realtime mutation rejection has rolled back locally. */
+  onMutationRejected?: (rejection: SyncMutationRejection) => void;
 }
 ```
 
@@ -226,9 +229,38 @@ interface Client {
   connect(): void;
   readonly connected: boolean;
   onConnectionChange(callback: (connected: boolean) => void): () => void;
+  onMutationRejected(
+    callback: (rejection: SyncMutationRejection) => void,
+  ): () => void;
   disconnect(): void;
 }
 ```
+
+`ClientConfig.onMutationRejected` installs a startup observer;
+`client.onMutationRejected(callback)` adds a runtime observer and returns an
+unsubscribe function. Both fire after the optimistic row has been rolled back.
+Observer failures cannot interrupt Sync state or queue progress.
+
+```ts
+interface SyncMutationRejection {
+  ref: string;
+  table: string;
+  op: 'INSERT' | 'UPDATE' | 'DELETE';
+  rowId: string;
+  plane?: 'default' | 'system' | 'tenant';
+  error?: string;
+  errorCode?: SyncAckErrorCode;
+  source: 'server' | 'timeout';
+}
+```
+
+Branch on `errorCode`, not the display-oriented `error`. A
+`SYNC_DATA_REALM_NOT_READY` rejection should wait for
+`client.dataRealm.getReadiness()`/`retry()` to report `ready` before a
+deliberate resubmission. `SYNC_DATA_REALM_UNAVAILABLE` and
+`SYNC_MUTATION_CAPACITY_EXHAUSTED` stop automatic replay. A local acknowledgement
+timeout uses `source: 'timeout'` and may not carry an error code. The low-level
+`SyncClientConfig` and `SyncClient` expose the same callback/subscription.
 
 The public `Client` does not expose Zero's internal sync, state, or ephemeral
 objects. Use the exported state, presence, room, and data hooks for those
@@ -582,9 +614,10 @@ with backend route/query authorization as well.
 ### Auth and HTTP Errors
 
 Auth and admin-auth methods throw `AuthClientError`, which preserves the
-server's structured auth error code. Generic `client.fetch()` shortcuts throw
-`FetchError` for non-2xx server responses; local authenticated-transport policy
-errors remain `AuthClientError` values.
+server's structured auth error code and exposes `retryable` only when the
+server explicitly marks the failure safe to repeat. Generic `client.fetch()`
+shortcuts throw `FetchError` for non-2xx server responses; local authenticated-
+transport policy errors remain `AuthClientError` values.
 
 Authenticated SDK transports are bound to the configured Zero server origin.
 Passing a cross-origin absolute URL to `client.fetch()` fails locally with
@@ -597,10 +630,15 @@ try {
   await client.updateAuthAdminUser(id, { role: 'admin' });
 } catch (err) {
   if (err instanceof AuthClientError) {
-    console.log(err.status, err.code, err.body);
+    console.log(err.status, err.code, err.retryable, err.body);
   }
 }
 ```
+
+A cross-plane authority commit collision returns HTTP 409
+`AUTH_COMMIT_CONFLICT` with `retryable === true`; the Guardian mutation did not
+commit, so the caller may repeat it. Do not treat that code as a stale login.
+`AUTH_STATE_CHANGED` remains the separate stale-ceremony/session signal.
 
 `FetchError` is thrown by `client.fetch()` and its HTTP shortcuts on non-2xx
 responses:
@@ -2997,8 +3035,9 @@ customer-organization lifecycle are documented in
 [Platform Administration Organization](../auth/platform-administration.md).
 Registered resources now declare explicit server-owned client
 exposure and optional field-level allow-lists across CRUD, `/api/data`, Sync,
-caches, and packaged forms. Managed file-mode runtimes sharing one SQLite
-database relay tracked Sync changes and auth/session invalidations. Multi-mode startup
+caches, and packaged forms. Managed file-mode runtimes sharing a relevant
+SQLite plane relay that plane's tracked changes; runtimes sharing `systemDb`
+also relay auth/session invalidation. Multi-mode startup
 also validates actual non-partial tenant-leading indexes, tenant-scoped business
 uniqueness, and composite tenant consistency for foreign keys between
 registered tenant resources.

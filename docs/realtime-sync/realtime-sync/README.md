@@ -163,7 +163,7 @@ The key insight: for small datasets that fit in RAM, table-level change broadcas
 | Document | What it covers |
 |----------|---------------|
 | [Architecture](./architecture.md) | System layers, Elysia plugin design, data flow, component responsibilities |
-| [Wire Protocol](./protocol.md) | Message types, sequencing, reconnect, optimistic updates |
+| [Wire Protocol](./protocol.md) | Message types, planes, sequencing, reconnect, optimistic updates, stable rejection codes, and post-rollback observers |
 | [ReactiveDB](./reactive-db.md) | Server-side SQLite wrapper, defineTable, change tracking, transactions |
 | [SyncStore](./sync-store.md) | Client-side @xstate/store integration, React hooks, selectors |
 | [Subscription And Mutation Policy](#subscription-and-mutation-policy) | Application-level control over reads and direct sync writes |

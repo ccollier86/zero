@@ -12,6 +12,10 @@ import {
 } from '../databases/database-directory-isolation';
 import type { AppConfig, ResolvedConfig } from '../frontend/server/types';
 import {
+  resolveSystemDatabaseConfig,
+  resolveSystemDatabaseOwnedPaths,
+} from '../frontend/server/system-database-config';
+import {
   addPlatformDoctorFinding as addFinding,
   type PlatformDoctorFindingSink,
 } from './platform-doctor-contracts';
@@ -35,7 +39,13 @@ export function checkPreResolutionDatabaseDirectoryIsolation(
       rootDirectory: topology.rootDirectory,
       outDir: config.outDir ?? './.build',
       storageDir: config.storageDir ?? '.storage',
-      controlDatabasePaths: resolveControlDatabasePaths(config.db),
+      controlDatabasePaths: [
+        ...resolveControlDatabasePaths(config.db),
+        ...resolveSystemDatabaseOwnedPaths(resolveSystemDatabaseConfig(
+          config.db,
+          config.systemDb,
+        )),
+      ],
     });
   } catch {
     return;
@@ -60,8 +70,8 @@ export function checkPreResolutionDatabaseDirectoryIsolation(
       addFinding(findings, {
         ...common,
         code: 'database.root.overlaps_control_database',
-        message: 'The multi-database root overlaps a default/control database or hot snapshot path.',
-        hint: 'Keep the pinned default/control database and every hot snapshot outside the Fabric-managed root.',
+        message: 'The multi-database root overlaps an application/system database or hot snapshot path.',
+        hint: 'Keep both pinned database planes and every hot snapshot outside the Fabric-managed root.',
       });
       return;
     case 'storage-root':

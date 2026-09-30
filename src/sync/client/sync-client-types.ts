@@ -1,4 +1,8 @@
-import type { ClientTableDef, Row } from '../types';
+import type {
+  ClientTableDef,
+  Row,
+  SyncMutationRejection,
+} from '../types';
 import type { createSyncStore } from './sync-store';
 
 /** Public client surface for realtime table synchronization. */
@@ -32,6 +36,10 @@ export interface SyncClient {
   /** Observe extension-protocol messages; returns an unsubscribe function. */
   onMessage(
     handler: (message: { type: string; [key: string]: unknown }) => void,
+  ): () => void;
+  /** Observe rejected optimistic mutations after their local rollback. */
+  onMutationRejected(
+    handler: (rejection: SyncMutationRejection) => void,
   ): () => void;
   /** Permanently disconnect this client and release its lifecycle binding. */
   disconnect(): void;

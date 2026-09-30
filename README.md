@@ -11,9 +11,11 @@ called **Guardian**. This is a documentation/product name; its established
 `auth.*` configuration, `/auth/*` routes, and `@zero/framework/auth` API remain
 unchanged.
 
-ReactiveDB Fabric is active, unreleased child-branch work that extends the
-existing pinned control database with bounded actor-owned application
-databases. Its tenant mode derives a pseudonymous database binding from trusted
+ReactiveDB Fabric is an active, unreleased release-candidate implementation
+that extends the pinned shared application database with bounded actor-owned
+application databases. Zero/Guardian authority stays in the always-separate
+system database.
+Its tenant mode derives a pseudonymous database binding from trusted
 authorization scope, so tenant identity selects the database rather than a
 caller-provided path or a redundant `tenant_id` predicate. The deterministic,
 unkeyed binding reference is operational correlation metadata—not a secret or
@@ -25,7 +27,13 @@ multiplexed realtime Sync
 use the selected database while preserving server-side policy and commit-time
 authority checks. See the
 [ReactiveDB Fabric architecture](./docs/framework/multi-database-architecture.md)
-for its exact contract and remaining release gates.
+for its exact contract and remaining release gates, and see
+[System and Application Database Planes](./docs/framework/system-database.md)
+for the ownership boundary.
+That boundary is a breaking upgrade for legacy combined databases: startup
+fails closed until the operator completes a backed-up, offline, app-specific
+split. Zero does not silently move authority data or currently ship a generic
+splitter; new separated-plane apps are unaffected.
 
 Current development boundary: Guardian implements all four auth
 profiles—`single/simple`, `single/advanced`, `multi/simple`, and
@@ -45,9 +53,10 @@ discovery/migration tooling beyond the exact documented pre-024 administration
 reconciliation, and domain
 autojoin/aliases/direct transfer remain explicitly deferred. Registered
 resources now declare explicit server-owned client exposure and optional
-field-level read/write/filter/sort allow-lists. File-mode runtimes sharing one
-SQLite database relay durable changes and authorization invalidations across
-their active sockets; hot/ephemeral or separate-database replicas still need an
+field-level read/write/filter/sort allow-lists. File-mode runtimes sharing a
+relevant SQLite plane relay that plane's durable changes; runtimes sharing
+`systemDb` also relay authorization invalidations across their active sockets.
+Hot/ephemeral or independently coordinated database files still need an
 external coordination layer. Multi-mode
 startup verifies their actual SQLite primary key and tenant discriminator,
 requires a non-partial tenant-leading index, rejects tenant-owned business

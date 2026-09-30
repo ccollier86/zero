@@ -15,6 +15,8 @@ import type {
   SyncPluginConfig,
 } from './types';
 import type { SyncTenantDataPlane } from './sync-tenant-data-plane';
+import { validateTenantSyncTableCatalog } from './sync-tenant-data-plane-validation';
+import { DatabaseError } from '../databases/database-error';
 
 export function resolveSyncDatabase(config: SyncPluginConfig): {
   db: ReactiveDB;
@@ -22,8 +24,9 @@ export function resolveSyncDatabase(config: SyncPluginConfig): {
 } {
   if (!config.reactiveDB) {
     if (config.ownsReactiveDB !== undefined) {
-      throw new Error(
+      throw invalidSyncConfiguration(
         '[sync] ownsReactiveDB is valid only when reactiveDB is provided',
+        'ownership-without-injected-database',
       );
     }
     return {
@@ -42,12 +45,21 @@ export function resolveReplicaChangePolling(
   config: SyncPluginConfig,
   db: ReactiveDB,
 ): { intervalMs: number } | null {
-  if (config.replicaChangePolling === false) return null;
-  if (config.replicaChangePolling) {
-    const requestedInterval = config.replicaChangePolling.intervalMs ?? 250;
+  return resolveReplicaChangePollingOption(config.replicaChangePolling, db);
+}
+
+/** Resolve one independently owned durable data plane's polling contract. */
+export function resolveReplicaChangePollingOption(
+  configured: SyncPluginConfig['replicaChangePolling'],
+  db: ReactiveDB,
+): { intervalMs: number } | null {
+  if (configured === false) return null;
+  if (configured) {
+    const requestedInterval = configured.intervalMs ?? 250;
     if (!Number.isSafeInteger(requestedInterval) || requestedInterval < 1) {
-      throw new Error(
+      throw invalidSyncConfiguration(
         'ReactiveDB replica polling intervalMs must be a positive safe integer',
+        'replica-polling-interval',
       );
     }
     return { intervalMs: Math.max(10, requestedInterval) };
@@ -102,9 +114,10 @@ export function assertMultiTenantResourceClassification(
     if (table.startsWith('_')) continue;
     const realm = config.resourcePolicy?.classifyManagedTableRealm?.(table) ?? null;
     if (realm === 'global' || realm === 'tenant') continue;
-    throw new Error(
+    throw invalidSyncConfiguration(
       `[sync] Multi-tenant table "${table}" must have an explicit global or tenant resource realm before Sync starts. ` +
       'Use defineResource({ realm: globalRealm() | tenantRealm(), ... }) and the resource Sync policy adapter.',
+      'missing-resource-realm',
     );
   }
 
@@ -116,9 +129,10 @@ export function assertMultiTenantResourceClassification(
       || exposure === 'http'
       || exposure === 'sync'
       || exposure === 'all') continue;
-    throw new Error(
+    throw invalidSyncConfiguration(
       `[sync] Multi-tenant table "${table}" must have an explicit resource exposure before Sync starts. `
       + 'Use defineResource({ exposure: "internal" | "http" | "sync" | "all", ... }).',
+      'missing-resource-exposure',
     );
   }
 }
@@ -126,6 +140,16 @@ export function assertMultiTenantResourceClassification(
 export function assertTenantDataPlaneConfiguration(
   config: SyncPluginConfig,
 ): void {
+  if (config.tenantDataPlane) {
+    try {
+      validateTenantSyncTableCatalog(config.tenantDataPlane.tables);
+    } catch {
+      throw invalidSyncConfiguration(
+        '[sync] Actor-backed tenant Sync table catalog is invalid.',
+        'tenant-plane-catalog-invalid',
+      );
+    }
+  }
   const actorTables = new Set(Object.keys(config.tenantDataPlane?.tables ?? {}));
   const classifier = config.resourcePolicy?.classifyManagedTableDataPlane;
   const expected = new Set<string>();
@@ -141,38 +165,44 @@ export function assertTenantDataPlaneConfiguration(
 
   if (!config.tenantDataPlane) {
     if (expected.size > 0) {
-      throw new Error(
+      throw invalidSyncConfiguration(
         '[sync] Sync-exposed physical tenant resources require a tenant data plane.',
+        'tenant-plane-required',
       );
     }
     return;
   }
   if (config.tenancyMode !== 'multi' || !config.auth?.required) {
-    throw new Error(
+    throw invalidSyncConfiguration(
       '[sync] Actor-backed tenant Sync requires multi-tenant, required authentication.',
+      'tenant-plane-auth-required',
     );
   }
   if (!classifier) {
-    throw new Error(
+    throw invalidSyncConfiguration(
       '[sync] Actor-backed tenant Sync requires trusted per-table data-plane classification.',
+      'tenant-plane-classifier-required',
     );
   }
   if (typeof config.resourcePolicy?.validateReadAuthorityAtDelivery !== 'function') {
-    throw new Error(
+    throw invalidSyncConfiguration(
       '[sync] Actor-backed tenant Sync requires a synchronous comparable read-authority policy.',
+      'tenant-plane-read-authority-required',
     );
   }
   for (const table of expected) {
     if (!actorTables.has(table)) {
-      throw new Error(
+      throw invalidSyncConfiguration(
         `[sync] Physical tenant Sync table "${table}" is missing from the actor catalog.`,
+        'tenant-plane-table-missing',
       );
     }
   }
   for (const table of actorTables) {
     if (!expected.has(table)) {
-      throw new Error(
+      throw invalidSyncConfiguration(
         `[sync] Actor Sync table "${table}" is not a Sync-exposed physical tenant resource.`,
+        'tenant-plane-table-unexpected',
       );
     }
   }
@@ -212,17 +242,19 @@ export function assertMutationValidatorMatchesTable(
 ): void {
   const primaryKey = db.getPrimaryKey(table);
   if (validator.primaryKey !== primaryKey) {
-    throw new Error(
+    throw invalidSyncConfiguration(
       `[sync] Mutation validator for table "${table}" declares primary key `
       + `"${validator.primaryKey}", but the SQL table uses "${primaryKey}".`,
+      'mutation-validator-primary-key',
     );
   }
 
   const columns = new Set(db.getColumns(table));
   for (const field of validator.fieldNames) {
     if (!columns.has(field)) {
-      throw new Error(
+      throw invalidSyncConfiguration(
         `[sync] Mutation validator for table "${table}" declares unknown field "${field}".`,
+        'mutation-validator-field',
       );
     }
   }
@@ -234,24 +266,67 @@ export function assertActorMutationValidatorMatchesTable(
   actorTable: SyncTenantDataPlane['tables'][string],
 ): void {
   if (validator.primaryKey !== actorTable.primaryKey) {
-    throw new Error(
+    throw invalidSyncConfiguration(
       `[sync] Mutation validator for actor table "${table}" declares primary key `
       + `"${validator.primaryKey}", but the tenant realm uses "${actorTable.primaryKey}".`,
+      'actor-mutation-validator-primary-key',
     );
   }
   const columns = new Set(actorTable.columns);
   for (const field of validator.fieldNames) {
     if (!columns.has(field)) {
-      throw new Error(
+      throw invalidSyncConfiguration(
         `[sync] Mutation validator for actor table "${table}" declares unknown field "${field}".`,
+        'actor-mutation-validator-field',
       );
     }
   }
 }
 
-export function tenantSyncAuthorityChanged(): Error & { code: string } {
-  return Object.assign(new Error('Tenant Sync authority changed'), {
-    code: 'DATABASE_AUTHORITY_CHANGED',
+export function tenantSyncAuthorityChanged(): DatabaseError {
+  return new DatabaseError(
+    'DATABASE_AUTHORITY_CHANGED',
+    'Tenant Sync authority changed',
+    {
+      retryable: false,
+      outcome: 'not-started',
+      details: { component: 'tenant-sync' },
+    },
+  );
+}
+
+export type InvalidSyncConfigurationReason =
+  | 'ownership-without-injected-database'
+  | 'replica-polling-interval'
+  | 'missing-resource-realm'
+  | 'missing-resource-exposure'
+  | 'tenant-plane-required'
+  | 'tenant-plane-auth-required'
+  | 'tenant-plane-classifier-required'
+  | 'tenant-plane-read-authority-required'
+  | 'tenant-plane-catalog-invalid'
+  | 'tenant-plane-table-missing'
+  | 'tenant-plane-table-unexpected'
+  | 'mutation-validator-primary-key'
+  | 'mutation-validator-field'
+  | 'actor-mutation-validator-primary-key'
+  | 'actor-mutation-validator-field'
+  | 'system-application-runtime-alias'
+  | 'state-system-runtime-mismatch'
+  | 'duplicate-table-plane'
+  | 'async-database-created-hook';
+
+export function invalidSyncConfiguration(
+  message: string,
+  reason: InvalidSyncConfigurationReason,
+): DatabaseError {
+  return new DatabaseError('DATABASE_CONFIG_INVALID', message, {
+    retryable: false,
+    outcome: 'not-started',
+    details: {
+      component: 'sync',
+      reason,
+    },
   });
 }
 

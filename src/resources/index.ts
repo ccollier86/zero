@@ -86,9 +86,11 @@ export {
   authorizationPolicy,
   authenticatedOnly,
   customPolicy,
+  guardianActorPolicy,
   evaluateResourcePolicy,
   allowsPublicAction,
   getPolicyMetadataKeys,
+  getPolicyGuardianActorFields,
   getPolicyOwnerFields,
   hasCustomPolicyBranch,
   metadataPolicy,
@@ -96,8 +98,10 @@ export {
   publicReadUserWrite,
   readOnly,
   requiresAuthenticatedUser,
+  tenantKindPolicy,
   validateResourcePolicy,
   validateAuthorizationPolicy,
+  validateGuardianActorPolicy,
 } from './resource-policy';
 
 export type {
@@ -166,6 +170,7 @@ export type {
 export type {
   CustomResourcePolicyCallback,
   CustomResourcePolicyOptions,
+  GuardianActorPolicyOptions,
   OwnerPolicyCreateMode,
   OwnerPolicyOptions,
   ResourceAction,
@@ -187,6 +192,7 @@ export type {
   ResourcePolicyResource,
   ResourcePolicyScalar,
   ResourcePolicyStaticDecision,
+  ResourcePolicyGuardianActorFields,
   ResourcePolicyUser,
   ResourcePolicyValidationCode,
   ResourcePolicyValidationContext,

@@ -19,6 +19,21 @@ const tables = {
 };
 
 describe('resolveConfig', () => {
+  test('resolves an always-separate system database without changing db', () => {
+    const appDb = { mode: 'file' as const, path: './data/application.db' };
+    const systemDb = { mode: 'file' as const, path: './data/control.db' };
+    const explicit = resolveConfig({ db: appDb, systemDb, tables });
+
+    expect(explicit.db).toBe(appDb);
+    expect(explicit.systemDb).toBe(systemDb);
+
+    const ephemeral = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+    });
+    expect(ephemeral.systemDb).toEqual({ mode: 'ephemeral' });
+  });
+
   test('admits only TEXT or INTEGER affinity app primary keys', () => {
     expect(resolveConfig({
       db: { mode: 'memory' },

@@ -1,7 +1,7 @@
 # Framework Developer Surface
 
 This document maps how an app developer should use Zero when it behaves like an
-installed framework. It is intentionally honest about the current branch state:
+installed framework. It is intentionally honest about the current package surface:
 the runtime, package export map, and app-owned Elysia route loader exist on this
 branch; `create-zero` writes a blank package-mode starter app, and `zero add`
 copies selected component/hook source into app-owned code.
@@ -237,8 +237,9 @@ SQLite's file/WAL path.
 | System | How it appears |
 | --- | --- |
 | ReactiveDB | Always created by sync plugin; app tables come from `tables`. |
-| ReactiveDB Fabric | With `databaseTopology.mode: 'multiple'`, keeps the default/control database pinned and routes named or physical-tenant Resources through bounded subprocess actors. Active unreleased branch work. |
-| Shared SQL | Always created before plugins; app-owned backend routes can use `zero.sql`/`zero.sqlite` for backend-only SQL. |
+| System ReactiveDB | Always separate from app data; owns Guardian and Zero state. Trusted server setup can reach the privileged `zero.system` facade. |
+| ReactiveDB Fabric | With `databaseTopology.mode: 'multiple'`, keeps the shared application database pinned and routes named or physical-tenant Resources through bounded subprocess actors. Unreleased release-candidate surface. |
+| Application SQL | Always created before plugins; app-owned backend routes can use `zero.sql`/`zero.sqlite` for backend-only application SQL. |
 | WebSocket sync | Always mounted at `/sync`. Auth-aware and resource-policy-aware when auth/resources are enabled. |
 | Auth | Mounted when `auth !== false`; adds `/auth/*`, request helpers, and protected page redirects. |
 | Observability | Mounted by default; exposes protected Zero observability routes. |
@@ -268,7 +269,7 @@ Because source-mode actors re-enter the application executable, a Fabric app
 must call `runDatabaseActorIfRequested({ realm })` before `createApp()`. Keep
 the realm in a side-effect-free shared module and point `actors.launch` to that
 server entry. Omitting `databaseTopology` preserves the ordinary composition
-shown above. See [Platform Configuration](./platform-configuration.md#reactivedb-fabric-topology-active-unreleased-branch)
+shown above. See [Platform Configuration](./platform-configuration.md#reactivedb-fabric-topology-unreleased-candidate)
 and the [Fabric architecture](./framework/multi-database-architecture.md) for
 the complete, currently unreleased contract.
 
@@ -396,9 +397,13 @@ export default createServerRoute({ name: 'reports', prefix: '/api/reports' })
 
 Use `zero.db` when you want ReactiveDB change tracking and websocket sync. Use
 `zero.sql`/`zero.sqlite` for backend-only SQL, migrations-style setup, reporting
-queries, and internal platform tables. Both point at the same platform
-persistence foundation when mounted through `createApp()`. These direct handles
-remain available at their historical paths in single-tenant mode. In
+queries, and application-owned internal tables. Both point at the pinned
+application persistence foundation when mounted through `createApp()`.
+Guardian and Zero-owned state instead live in `systemDb`; the deliberate
+privileged facade is `zero.system.db` plus `zero.system.sql`/`.sqlite`, but
+ordinary app code should use Guardian and platform services so it cannot bypass
+their invariants. These direct application handles remain available at their
+historical paths in single-tenant mode. In
 multi-tenant request handlers they are intentionally available only under
 `zero.unsafe.db` / `zero.unsafe.sql`, because Zero cannot infer a safe tenant
 predicate for arbitrary SQL. Ordinary multi-tenant CRUD belongs in a
@@ -443,6 +448,8 @@ server code:
 | Name | Use |
 | --- | --- |
 | `zero.db` | ReactiveDB reads/writes. |
+| `zero.sql` / `zero.sqlite` | Direct application-plane SQLite for backend-only app data. |
+| `zero.system` | Privileged system-plane ReactiveDB and SQLite. Prefer platform services; multi-tenant request code must opt in through `zero.unsafe.system`. |
 | `zero.auth` | Auth store/token helpers; values are `null` when auth is disabled. |
 | `zero.tokens` | Generic action/resume token service for secure links and public continuation flows. |
 | `zero.kv` | Durable memory-first KV/cache service. |
@@ -474,12 +481,13 @@ In `auth.tenancy: 'multi'`, route handlers receive a request-bound facade:
   never the global platform role or retained membership role as a fallback;
 - observability emitters automatically attach the current user, membership,
   and tenant correlation, while the raw event store/sink remains privileged;
-- raw DB/SQL, auth stores and token services, KV/counters/limiters, vectors,
+- raw DB/SQL, system persistence, auth stores and token services,
+  KV/counters/limiters, vectors,
   scheduler controls, workflow registration, and runtime inspection throw
   `ZERO_UNSAFE_SERVICE_REQUIRED` at their historical paths;
 - those raw capabilities remain deliberately reachable through `zero.unsafe`
   for migrations, platform administration, and other reviewed privileged
-  operations.
+  operations. Workflow/background authority never receives this escape hatch.
 
 `zero.unsafe` is not an authorization bypass to use casually: it marks code
 whose tenant predicate, actor checks, audit trail, and retry/revalidation rules

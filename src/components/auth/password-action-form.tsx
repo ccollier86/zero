@@ -56,7 +56,13 @@ export function PasswordActionForm({
   onSuccess,
   className,
 }: PasswordActionFormProps) {
-  const { inspectActionToken, resetPassword, setupPassword } = useAuth();
+  const {
+    inspectActionToken,
+    resetPassword,
+    setupPassword,
+    authenticationContinuation,
+    clearAuthenticationContinuation,
+  } = useAuth();
   const tokenInputId = React.useId();
   const newPasswordId = React.useId();
   const confirmPasswordId = React.useId();
@@ -72,11 +78,19 @@ export function PasswordActionForm({
   const [authContinuation, setAuthContinuation] = React.useState<
     AuthFlowContinuationResult | null
   >(null);
+  const activeAuthContinuation = authContinuation
+    ?? (isAuthFlowContinuationResult(authenticationContinuation)
+      ? authenticationContinuation
+      : null);
   const activeToken = (token?.trim() || manualToken.trim()).trim();
   const continuedLoginHref = useNativeAuthRoute(loginHref);
 
   React.useEffect(() => {
     let active = true;
+    if (activeAuthContinuation) {
+      setLoadingToken(false);
+      return () => { active = false; };
+    }
     if (!activeToken) {
       setLoadingToken(false);
       setError(null);
@@ -106,7 +120,7 @@ export function PasswordActionForm({
     return () => {
       active = false;
     };
-  }, [activeToken, inspectActionToken]);
+  }, [activeAuthContinuation, activeToken, inspectActionToken]);
 
   const action = resolvePasswordAction(mode, tokenInfo);
   const actionMismatch = isPasswordActionModeMismatch(mode, tokenInfo);
@@ -159,6 +173,20 @@ export function PasswordActionForm({
     setManualToken(nextToken);
   }
 
+  if (activeAuthContinuation) {
+    return (
+      <AuthFlowContinuation
+        result={activeAuthContinuation}
+        onSuccess={onSuccess}
+        onBack={() => {
+          clearAuthenticationContinuation();
+          setAuthContinuation(null);
+        }}
+        className={className}
+      />
+    );
+  }
+
   if (loadingToken) {
     return (
       <div
@@ -171,17 +199,6 @@ export function PasswordActionForm({
         </AnimateIcon>
         Checking password link…
       </div>
-    );
-  }
-
-  if (authContinuation) {
-    return (
-      <AuthFlowContinuation
-        result={authContinuation}
-        onSuccess={onSuccess}
-        onBack={() => setAuthContinuation(null)}
-        className={className}
-      />
     );
   }
 

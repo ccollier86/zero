@@ -125,6 +125,7 @@ describe('platform administration response boundary', () => {
   test('accepts and freezes every canonical response contract', () => {
     const config = parsePlatformAdministrationConfig(platformConfig());
     expect(config.administration.kind).toBe('administration');
+    expect(config.capabilities.canManageRoles).toBe(true);
     expect(Object.isFrozen(config)).toBe(true);
     expect(parsePlatformMemberPage(memberPage()).members).toHaveLength(1);
     expect(parsePlatformMemberMutation(memberMutation()).member.membershipId).toBe('member-1');
@@ -159,6 +160,11 @@ describe('platform administration response boundary', () => {
     expectInvalid(() => parsePlatformAdministrationConfig({
       ...platformConfig(),
       administration: { ...platformConfig().administration, kind: 'organization' },
+    }));
+    const { canManageRoles: _missingRoleCapability, ...missingRoleCapability } =
+      platformConfig().capabilities;
+    expectInvalid(() => parsePlatformAdministrationConfig({
+      ...platformConfig(), capabilities: missingRoleCapability,
     }));
     expectInvalid(() => parsePlatformMemberPage({
       ...memberPage(), page: { ...memberPage().page, count: 0 },
@@ -221,7 +227,7 @@ function platformConfig() {
       name: 'Platform administration', membershipId: 'member-1',
     },
     capabilities: {
-      canReadMembers: true, canManageMembers: true,
+      canReadMembers: true, canManageMembers: true, canManageRoles: true,
       canReadInvitations: true, canManageInvitations: true,
       canReadTenants: true, canReadTenantMembers: true,
       canManageTenants: true, canCreateTenants: true, canTransferOwnership: true,

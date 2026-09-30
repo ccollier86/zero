@@ -560,6 +560,82 @@ describe('storage route auth', () => {
     expect(service.permissions.get(grant.data.permission_id)).toBeNull();
   });
 
+  test('requires destination write authority for copy and move routes', async () => {
+    const owner = await createUser();
+    const collaborator = await createUser();
+    const service = getStorageService()!;
+    const drive = service.drives.create(owner.user.userId, { name: 'Move boundary' });
+    await service.objects.upload(
+      drive.drive_id,
+      '/source.txt',
+      new TextEncoder().encode('source'),
+      'source.txt',
+      owner.user.userId,
+    );
+    service.permissions.grant(drive.drive_id, {
+      objectPath: '/source.txt',
+      grantType: 'user',
+      grantValue: collaborator.user.userId,
+      permission: 'write',
+    });
+
+    for (const operation of ['copy', 'move'] as const) {
+      const denied = await requestJson<{ error: string }>(
+        `/storage/drives/${drive.drive_id}/${operation}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            from: '/source.txt',
+            to: `/unauthorized-${operation}.txt`,
+          }),
+        },
+        collaborator.token,
+      );
+      expect(denied.status).toBe(403);
+      expect(service.objects.get(
+        drive.drive_id,
+        `/unauthorized-${operation}.txt`,
+      )).toBeNull();
+    }
+    expect(service.objects.get(drive.drive_id, '/source.txt')).not.toBeNull();
+
+    service.permissions.grant(drive.drive_id, {
+      grantType: 'user',
+      grantValue: collaborator.user.userId,
+      permission: 'write',
+    });
+    const copied = await requestJson<FileInfo>(
+      `/storage/drives/${drive.drive_id}/copy`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          from: '/source.txt',
+          to: '/authorized-copy.txt',
+        }),
+      },
+      collaborator.token,
+    );
+    expect(copied.status).toBe(200);
+    expect(copied.data.path).toBe('/authorized-copy.txt');
+
+    const moved = await requestJson<FileInfo>(
+      `/storage/drives/${drive.drive_id}/move`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          from: '/source.txt',
+          to: '/authorized-move.txt',
+        }),
+      },
+      collaborator.token,
+    );
+    expect(moved.status).toBe(200);
+    expect(moved.data.path).toBe('/authorized-move.txt');
+  });
+
   test('applies folder listing type filters, sorting, and totals consistently', async () => {
     const { user, token } = await createUser();
     const service = getStorageService()!;

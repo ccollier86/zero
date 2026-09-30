@@ -49,6 +49,11 @@ export class TenantStoreTenantLifecycle {
           prepared.createdAt,
           prepared.createdBy,
         );
+        this.context.notifyMembershipCreated({
+          tenantId: prepared.tenantId,
+          membershipId: prepared.membershipId,
+          userId: prepared.ownerUserId,
+        });
         this.context.notifyOwnerCreated({
           tenantId: prepared.tenantId,
           membershipId: prepared.membershipId,

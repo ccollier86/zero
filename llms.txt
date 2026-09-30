@@ -16,8 +16,9 @@ quickly from one integrated platform. It combines:
 - React frontend runtime
 - file-router pages, layouts, route groups, and route auth metadata
 - ReactiveDB over SQLite
+- separate pinned system and application ReactiveDB planes
 - ReactiveDB Fabric for bounded actor-owned file/WAL, hot, and hybrid
-  multi-database topologies (active unreleased feature-branch work)
+  multi-database topologies (unreleased release candidate)
 - WebSocket sync and lazy `/api/data`
 - generated resource CRUD with server-side policy
 - auth, email, account lifecycle, password reset/setup, email verification,
@@ -74,28 +75,29 @@ Current unreleased-candidate boundary:
   support, tenant-custom roles, broader populated-app discovery/migration
   tooling beyond exact pre-024 administration reconciliation,
   domain autojoin/aliases/direct transfer, and upstream enterprise SSO remain
-  separate future capabilities. File-mode runtimes sharing one SQLite database
-  relay durable row and State Sync changes and poll durable auth authority so
-  another runtime's security change promptly revalidates local sockets and
-  managed ephemeral bindings. This is not replication for `hot`/`ephemeral`
-  databases, separate database files, cross-host messages, or RAM-only
-  ephemeral topic values. Registered resources now use explicit server-owned
+  separate future capabilities. File-mode runtimes sharing a relevant SQLite
+  plane relay that plane's durable changes; runtimes sharing `systemDb` also
+  poll durable auth authority so another runtime's security change promptly
+  revalidates local sockets and managed ephemeral bindings. This is not
+  replication for `hot`/`ephemeral` databases, independently coordinated
+  database files, cross-host messages, or RAM-only ephemeral topic values.
+  Registered resources now use explicit server-owned
   client exposure plus optional immutable read/create/update/filter/sort field
   allow-lists. Under shared-row isolation, multi-mode startup validates actual
   non-partial tenant-leading indexes, tenant-scoped business uniqueness, and
   tenant-consistent composite foreign keys between registered tenant
   resources; physical tenant isolation validates the actor realm instead.
-- ReactiveDB Fabric is implemented on an unmerged child feature branch, not a
-  released app contract. It keeps the historical control/auth database pinned
-  and can route physical tenant Resources to isolated actor-owned databases
-  selected only from trusted authorization scope. Generated Resource CRUD,
-  lazy data reads, and one multiplexed WebSocket use that topology. File/WAL
-  databases have independent subprocess writer lanes and optional read lanes;
-  bounded hot placement and synchronous hybrid selection are implemented with
-  explicit durability contracts. Read the architecture document before using
-  or changing this surface; fleet lifecycle, operator-grade backup/restore,
-  online placement migration, and the full package/OS matrix remain release
-  gates.
+- ReactiveDB Fabric is an unreleased app contract. `db` is the pinned shared
+  application plane, `systemDb` is the always-separate Guardian/Zero authority
+  plane, and Fabric can route physical-tenant Resources to isolated actor-owned
+  databases selected only from trusted authorization scope. Generated Resource
+  CRUD, lazy data reads, and one multiplexed WebSocket use that topology.
+  File/WAL databases have independent subprocess writer lanes and optional read
+  lanes; bounded hot placement and synchronous hybrid selection are implemented
+  with explicit durability contracts. Read the architecture and system-database
+  documents before using or changing this surface; fleet lifecycle,
+  operator-grade backup/restore, online placement migration, and the full
+  package/OS matrix remain outside the candidate's current support boundary.
 
 Read [Releasing Zero](docs/releasing.md) before describing a capability as
 publicly supported.
@@ -110,6 +112,11 @@ publicly supported.
 - `docs/framework/multi-database-architecture.md`: authoritative unreleased
   ReactiveDB Fabric contract, including topology, isolation, routing,
   concurrency, Sync, capacity, durability, and release boundaries.
+- `docs/framework/system-database.md`: authoritative system/application plane,
+  ID-only identity-anchor projection, data-realm readiness, authority-fence,
+  legacy-layout detection, and operational contract.
+- `docs/realtime-sync/realtime-sync/protocol.md`: Sync wire messages, plane
+  multiplexing, stable mutation acknowledgement codes, and retry behavior.
 - `docs/frontend/component-inventory.md`: component and UI use-first map.
 - `docs/frontend/router.md`: file router, layouts, route groups, auth
   boundaries, sitemap.
@@ -426,6 +433,16 @@ const config = defineZeroConfig({
     path: Bun.env.DB_PATH ?? './data/app.db',
     snapshotPath: Bun.env.DB_SNAPSHOT_PATH ?? './data/app.snapshot.db',
   },
+  systemDb: {
+    mode: Bun.env.SYSTEM_DB_MODE === 'ephemeral'
+      ? 'ephemeral'
+      : Bun.env.SYSTEM_DB_MODE === 'hot'
+        ? 'hot'
+        : 'file',
+    path: Bun.env.SYSTEM_DB_PATH ?? './data/zero.system.db',
+    snapshotPath:
+      Bun.env.SYSTEM_DB_SNAPSHOT_PATH ?? './data/zero.system.snapshot.db',
+  },
   tables,
   auth: true,
   routeAuth: 'explicit',
@@ -472,6 +489,23 @@ export default config;
 export { config };
 ```
 
+`db` and `systemDb` are always different physical planes. `db` owns
+application data; `systemDb` owns Guardian authority and Zero service state.
+Their handles, main files, snapshots, WAL/SHM files, rollback journals, and the
+derived system authority-fence sidecar must not overlap. If `systemDb` is
+omitted, an ephemeral application gets an independent ephemeral system plane;
+other modes default to `./data/zero.system.db`. Configure that durable path
+explicitly in production.
+
+This boundary is breaking for legacy databases which mixed Guardian/Zero and
+application tables. Startup detects private system sentinels in the app plane
+and fails closed with `DATABASE_SCHEMA_MISMATCH` plus
+`requiredAction: 'split-system-database'`; an app-owned `users` table alone is
+not treated as legacy. Zero does not currently ship or run an automatic
+splitter. Existing deployments must perform a backed-up, stopped, app-specific
+offline extraction and verification. A future automated migrator is useful
+convenience, not a prerequisite for new separated-plane apps.
+
 `app/server.ts` should stay small:
 
 ```ts
@@ -488,9 +522,10 @@ app.listen(config.port ?? 3000);
 
 | System | Runtime behavior |
 | --- | --- |
-| ReactiveDB | App tables from `tables`; server writes emit sync changes. |
-| ReactiveDB Fabric | With `databaseTopology`, actor-owned application databases use validated file/WAL, bounded hot, or hybrid placement while the control/auth database stays pinned. |
-| Shared SQL | Platform SQLite service available as `zero.sql`/`zero.sqlite`. |
+| Application ReactiveDB | The pinned `db` plane owns shared application tables from `tables`; server writes emit Sync changes. |
+| System ReactiveDB | The always-separate pinned `systemDb` plane owns Guardian authority and Zero service state. File mode is the production default. |
+| ReactiveDB Fabric | With `databaseTopology`, actor-owned application databases use validated file/WAL, bounded hot, or hybrid placement while both pinned planes remain in the app runtime. |
+| Application SQL | The application SQLite service is available as `zero.sql`/`zero.sqlite`. |
 | WebSocket sync | Mounted at `/sync`; auth and resource-policy aware. |
 | `/api/data` | Lazy table query API with pagination, sorting, filters, limits, and policy integration. |
 | Auth | `/auth/*`, account lifecycle, tokens, session helpers, route auth. |
@@ -517,7 +552,10 @@ App-owned backend handlers receive a lazy `zero` service context. Prefer
 canonical names:
 
 - `zero.db`: ReactiveDB writes with sync/change tracking
-- `zero.sql` / `zero.sqlite`: direct backend SQL for reporting/internal tables
+- `zero.sql` / `zero.sqlite`: direct backend SQL for application-owned
+  reporting/internal tables
+- `zero.system.db`: privileged system-plane ReactiveDB
+- `zero.system.sql` / `zero.system.sqlite`: privileged system-plane SQLite
 - `zero.kv`: durable KV/cache
 - `zero.counter`: counter helper
 - `zero.limiter`: rate limiter helper
@@ -534,7 +572,11 @@ canonical names:
 - `zero.observability`: observability sink/service
 
 Use `zero.db` for app tables that should sync. Use `zero.sql` for backend-only
-SQL that does not need ReactiveDB change tracking.
+application SQL that does not need ReactiveDB change tracking. Prefer Guardian
+and platform services over direct system-table access. In multi-tenant request
+code, unscoped system persistence is available only through the deliberate
+trusted escape hatch `zero.unsafe.system`; workflow/background authority does
+not receive that escape hatch.
 
 ## Data Models And ReactiveDB
 
@@ -582,7 +624,19 @@ export const memberships = defineTable(
 Zero generates deterministic ids from natural identity values and creates a
 unique identity index.
 
-### ReactiveDB Fabric (unreleased branch)
+For Guardian-owned foreign keys, use `field.guardianUser()` and
+`field.guardianMembership()` plus the documented actor-stamping Resource
+policy. `createApp()` automatically owns the system outbox, ID-only target
+anchors, reconciliation, and readiness lifecycle. Do not build a second
+projector or query its internal tables. The low-level
+`IdentityAnchorStore`/`IdentityProjectionOutboxStore`/
+`IdentityProjectionService` exports from `@zero/framework/auth` are server-only
+advanced composition primitives; custom adapters must preserve ordered durable
+receipts/watermarks, installation binding, post-Guardian-commit target I/O, and
+fail-closed error semantics. See the advanced composition section in the
+system-database document.
+
+### ReactiveDB Fabric (unreleased candidate)
 
 Fabric coordinates multiple independently reactive SQLite databases without
 changing the default single-database contract. Configure it only through the
@@ -591,12 +645,12 @@ already bound from trusted server authority; URL parameters, request bodies,
 headers, and browser messages never choose a file or logical database.
 
 In tenant-database mode, tables physically stored per tenant do not need a
-`tenant_id` column merely for isolation. Global/control data remains in the
-pinned default database, and logical shared-row tenancy continues to use the
-existing tenant-column rules. The Resource registry is the source of truth for
-which plane owns each exposed table. Resource CRUD, `/api/data`, and Sync all
-follow that server-owned topology and retain their policy and field-access
-checks.
+`tenant_id` column merely for isolation. Guardian/Zero authority stays in the
+separate pinned `systemDb`; global/shared application data stays in the pinned
+`db`; logical shared-row tenancy continues to use the existing tenant-column
+rules. The Resource registry is the source of truth for which application
+plane owns each exposed table. Resource CRUD, `/api/data`, and Sync all follow
+that server-owned topology and retain their policy and field-access checks.
 
 File/WAL placement gives each active database one FIFO writer actor. Separate
 databases can write concurrently when the topology has multiple writer slots;
@@ -607,6 +661,13 @@ pins that choice for the active entry; it is not live promotion or demotion.
 The deterministic reference is unkeyed operational correlation metadata, not
 a secret or authorization capability, and a low-entropy source ID can be
 guess-correlated.
+
+Guardian-authorized tenant writes join the same commit fence as the pinned app
+database. Each writer actor receives only a trusted system-file binding and a
+captured authority revision, then takes a compatible shared sidecar lease and
+rereads that revision at its own final commit edge. Guardian authority commits
+take the exclusive lease. This preserves concurrent commits across distinct
+tenant databases without allowing revocation to race a data commit.
 
 Fabric has independent hard limits for active actor entries, durable database
 files, tenant-Sync-pinned databases, per-database Sync bindings, queues,
@@ -621,8 +682,8 @@ delay at 1 second, and uses a 5-second half-open cadence after five attempts.
 Waiting operations retain queue timeout/cancellation; the last lease and app
 shutdown cancel pending replacement delays.
 
-This is active implementation on an unmerged child branch. Before treating it
-as supported, follow the remaining gates in
+This is an active release-candidate implementation, not a released contract.
+Before treating it as supported, follow the remaining gates in
 [ReactiveDB Fabric: Multi-Database Architecture](docs/framework/multi-database-architecture.md).
 
 ## Sync Modes
@@ -638,6 +699,22 @@ Table sync defaults to `auto`.
 - Ring-buffer reconnect replays missed changes when possible.
 - Same-row optimistic mutations are serialized.
 - Disconnected sends are buffered and flushed on reconnect.
+
+On multiplexed sockets, `sync.ack.plane` identifies `system`, `default`, or
+`tenant`; an omitted plane is legacy/default. Negative acknowledgements may
+include stable `errorCode`. `SYNC_DATA_REALM_NOT_READY` means roll back, advance
+the active realm through `client.dataRealm`/`DataRealmReadyGate`, and retry the
+user's operation only after `ready`. `SYNC_DATA_REALM_UNAVAILABLE` is terminal
+until explicit repair/recovery. Receipt-expired and receipt-capacity failures
+also stop blind replay. Never branch on the human-readable `error` string; see
+the canonical Sync protocol document.
+
+Use `ClientConfig.onMutationRejected` or
+`client.onMutationRejected(handler)` when app UI must surface these failures.
+The exported `SyncMutationRejection` includes ref/table/op/rowId, optional
+plane/error/errorCode, and `source: 'server' | 'timeout'`. The callback runs
+after optimistic rollback; observer errors cannot interrupt Sync. The low-level
+`SyncClientConfig`/`SyncClient` expose the same contract.
 
 Sync mode controls loading, not authorization. For auth-enabled `createApp()`:
 
@@ -1852,6 +1929,10 @@ Database/KV:
 - `DB_MODE`: `hot`, `file`, or `ephemeral`
 - `DB_PATH`
 - `DB_SNAPSHOT_PATH`
+- `SYSTEM_DB_MODE`: `file` is the production authority default; `hot` and
+  `ephemeral` have the documented durability constraints
+- `SYSTEM_DB_PATH`
+- `SYSTEM_DB_SNAPSHOT_PATH`
 - `ZERO_KV_BASE_DIR`
 - `ZERO_KV_DURABILITY`: `everysec` or `always`
 
@@ -2029,9 +2110,16 @@ reference docs confirm the behavior is implemented.
   package imports, generated app shape, composition root, backend extensions,
   resources, package mode, and frontend/backend usage examples.
 - [ReactiveDB Fabric: Multi-Database Architecture](docs/framework/multi-database-architecture.md):
-  authoritative active-branch contract for actor-owned multi-database
+  authoritative release-candidate contract for actor-owned multi-database
   topology, tenant routing, file/WAL and bounded hot placement, hybrid policy,
   exact tenant Sync, capacity, durability, observability, and release gates.
+- [System And Application Database Planes](docs/framework/system-database.md):
+  canonical `systemDb`/`db` ownership, `zero.system` privilege boundary,
+  ID-only Guardian anchors, durable projection/readiness, commit fencing,
+  legacy-layout detection, and backup/Doctor guidance.
+- [Realtime Sync Protocol](docs/realtime-sync/realtime-sync/protocol.md):
+  canonical WebSocket messages, multiplexed plane tags, stable negative-ack
+  error codes, and client recovery behavior.
 - [Framework API Standardization Plan](docs/framework/api-standardization-plan.md):
   historical plan for unifying framework APIs, package-mode behavior,
   extension loaders, resource APIs, and generators.

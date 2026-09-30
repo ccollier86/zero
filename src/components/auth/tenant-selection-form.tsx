@@ -83,7 +83,10 @@ function TenantSelectionFlow({
         result.tenantSelection.continuation,
         tenantId,
       );
-      if (mounted.current && session) onSuccess?.(session);
+      // Scope replacement hides and unmounts the old authorization subtree
+      // before reconciliation completes. Preserve the public completion
+      // contract across that expected unmount while guarding local state.
+      if (session) onSuccess?.(session);
     } catch (cause) {
       reportAuthClientActionFailure(
         'tenantSelection',
@@ -175,11 +178,19 @@ function TenantSelectionFlow({
         </p>
       )}
 
-      <Button type="submit" className="h-10 w-full" disabled={!tenantId || submitting}>
-        {submitting ? `Opening ${tenantSingular}…` : 'Continue'}
+      <Button
+        type="submit"
+        className="h-10 w-full"
+        disabled={!tenantId || submitting}
+      >
+        {submitting ? `Opening and preparing ${tenantSingular}…` : 'Continue'}
       </Button>
       {onBack && (
-        <button type="button" onClick={onBack} className="block w-full text-center text-xs text-primary hover:underline">
+        <button
+          type="button"
+          onClick={onBack}
+          className="block w-full text-center text-xs text-primary hover:underline"
+        >
           Back to sign in
         </button>
       )}

@@ -37,11 +37,17 @@ describe('DatabaseManager', () => {
     }
   });
 
-  test('preserves the pinned default runtime and exact single-database behavior', async () => {
+  test('owns separate pinned system and application runtimes without actor databases', async () => {
+    const systemRuntime = createSystemRuntime();
     const defaultRuntime = createDefaultRuntime();
-    const manager = new DatabaseManager({ defaultRuntime });
+    const manager = new DatabaseManager({
+      systemRuntime,
+      appRuntime: defaultRuntime,
+    });
     managers.push(manager);
 
+    expect(manager.systemRuntime).toBe(systemRuntime);
+    expect(manager.appRuntime).toBe(defaultRuntime);
     expect(manager.defaultRuntime).toBe(defaultRuntime);
     expect(manager.defaultRuntime.db).toBe(defaultRuntime.db);
     expect(manager.defaultRuntime.sqlite).toBe(defaultRuntime.sqlite);
@@ -54,13 +60,17 @@ describe('DatabaseManager', () => {
     });
 
     manager.start();
+    expect(manager.diagnostics().system.started).toBe(true);
     expect(manager.diagnostics().default.started).toBe(true);
+    expect(manager.diagnostics().planes.map((entry) => entry.plane))
+      .toEqual(['system', 'application']);
     await expect(databaseCode(() => manager.acquireNamed('unused')))
       .resolves.toBe('DATABASE_OPERATION_UNSUPPORTED');
 
     await manager.close();
     expect(manager.diagnostics()).toMatchObject({
       state: 'closed',
+      system: { closed: true },
       default: { closed: true },
     });
   });
@@ -107,6 +117,31 @@ describe('DatabaseManager', () => {
       tenant.release();
     }
   }, 20_000);
+
+  test('owns future service database planes through the generic pinned lifecycle', async () => {
+    const systemRuntime = createSystemRuntime();
+    const appRuntime = createDefaultRuntime();
+    const auditRuntime = DatabaseRuntime.open({
+      id: 'audit',
+      role: 'service',
+      sqlite: createPlatformSQLiteService({ mode: 'ephemeral' }),
+      ownsSQLite: true,
+    });
+    const manager = new DatabaseManager({
+      systemRuntime,
+      appRuntime,
+      serviceRuntimes: [{ plane: 'audit', runtime: auditRuntime }],
+    });
+    managers.push(manager);
+
+    expect(manager.diagnostics().planes.map(({ plane }) => plane))
+      .toEqual(['system', 'application', 'audit']);
+    manager.start();
+    expect(auditRuntime.diagnostics().started).toBe(true);
+
+    await manager.close();
+    expect(auditRuntime.diagnostics().closed).toBe(true);
+  });
 
   test('revalidates tenant reads and writes and fails closed after revocation', async () => {
     const harness = createMultipleManager(roots, { tenantDatabases: true });
@@ -392,9 +427,11 @@ describe('DatabaseManager', () => {
     // Closing released the physical-root owner, so a fresh app topology may
     // claim the same root without unlinking or replacing its ownership file.
     const nextDefault = createDefaultRuntime();
+    const nextSystem = createSystemRuntime();
     const nextCoordinator = createCoordinator(harness.root, null, false);
     const next = new DatabaseManager({
-      defaultRuntime: nextDefault,
+      systemRuntime: nextSystem,
+      appRuntime: nextDefault,
       multiple: { coordinator: nextCoordinator },
     });
     managers.push(next);
@@ -408,6 +445,7 @@ function createMultipleManager(
   options: { tenantDatabases: boolean },
 ) {
   const root = createRoot(roots);
+  const systemRuntime = createSystemRuntime();
   const defaultRuntime = createDefaultRuntime();
   const authority = options.tenantDatabases
     ? new AuthorityCommitCoordinator()
@@ -418,14 +456,15 @@ function createMultipleManager(
     options.tenantDatabases,
   );
   const manager = new DatabaseManager({
-    defaultRuntime,
+    systemRuntime,
+    appRuntime: defaultRuntime,
     multiple: {
       coordinator,
       ...(authority ? { authorityCommitCoordinator: authority } : {}),
       tenantDatabases: options.tenantDatabases,
     },
   });
-  return { root, defaultRuntime, authority, coordinator, manager };
+  return { root, systemRuntime, defaultRuntime, authority, coordinator, manager };
 }
 
 function createCoordinator(
@@ -462,6 +501,15 @@ function createDefaultRuntime(): DatabaseRuntime {
   return DatabaseRuntime.open({
     id: 'default',
     role: 'default',
+    sqlite: createPlatformSQLiteService({ mode: 'ephemeral' }),
+    ownsSQLite: true,
+  });
+}
+
+function createSystemRuntime(): DatabaseRuntime {
+  return DatabaseRuntime.open({
+    id: 'system',
+    role: 'system',
     sqlite: createPlatformSQLiteService({ mode: 'ephemeral' }),
     ownsSQLite: true,
   });

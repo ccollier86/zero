@@ -7,6 +7,7 @@
  */
 
 import type { AuthorityCommitCoordinator } from './authority-commit-coordinator';
+import type { DatabaseActorAuthorityContext } from './database-actor-authority-context';
 import type { DatabaseCommitAuthority } from './database-commit-authority';
 import type {
   DatabaseActorPlacementConfig,
@@ -76,6 +77,8 @@ export interface DatabaseCoordinatorOptions {
   readonly authorityCommitCoordinator?: AuthorityCommitCoordinator;
   /** Require every acquired capability to carry live commit authority. */
   readonly requireCommitAuthority?: boolean;
+  /** @internal File-backed Guardian fence installed by createApp(). */
+  readonly actorAuthorityContext?: DatabaseActorAuthorityContext;
   /** Deterministic test seam. */
   readonly now?: () => number;
 }

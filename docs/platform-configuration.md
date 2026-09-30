@@ -51,6 +51,7 @@ import auth from './config/auth';
 
 export default defineZeroConfig({
   db: { mode: 'file', path: './data/app.db' },
+  systemDb: { mode: 'file', path: './data/zero.system.db' },
   tables,
   auth,
   port: 3000,
@@ -80,6 +81,7 @@ import { tables } from './db/schema';
 
 const app = await createApp(defineZeroConfig({
   db: { mode: 'file', path: './data/app.db' },
+  systemDb: { mode: 'file', path: './data/zero.system.db' },
   tables,
   auth: defineAuthConfig({
     bootstrap: {
@@ -92,6 +94,19 @@ const app = await createApp(defineZeroConfig({
   }),
 }));
 ```
+
+`db` is always the application plane. `systemDb` is the separate Zero-owned
+plane for Guardian and platform authority. Their handles, main files,
+snapshots, WAL/SHM files, and rollback journals must not overlap. Omission uses
+an independent ephemeral system plane when `db` is ephemeral and otherwise
+defaults to durable `./data/zero.system.db`; production apps should configure
+the durable path explicitly. See
+[System and Application Database Planes](./framework/system-database.md).
+Legacy apps whose one database contains private Guardian/Zero tables must be
+backed up, stopped, and deliberately split offline before adopting this
+version. Startup detects that combined layout and fails closed; Zero does not
+silently move rows or currently ship a generic splitter. An application-owned
+`users` table by itself is valid and does not trigger the legacy fence.
 
 `defineAuthConfig()` covers auth behavior. Top-level auth token lifetimes still
 belong on the `auth` value accepted by `AppConfig`; add them while composing the
@@ -181,12 +196,14 @@ createApp({
 });
 ```
 
-### ReactiveDB Fabric topology (active unreleased branch)
+### ReactiveDB Fabric topology (unreleased candidate)
 
 `databaseTopology` is the typed configuration surface for Fabric. Omitting it,
-or using `{ mode: 'single' }`, preserves the historical one-database behavior.
-`mode: 'multiple'` keeps `db` as the pinned default/control database and adds a
-bounded coordinator for named or physical-tenant application databases.
+or using `{ mode: 'single' }`, keeps one pinned application database alongside
+the separate system database. `mode: 'multiple'` keeps `db` as the pinned
+shared application database and adds a bounded coordinator for named or
+physical-tenant application databases. Fabric never stores Guardian authority
+in `db` or a tenant file.
 
 The actor realm must be a side-effect-free module shared by the app config and
 the subprocess bootstrap. It defines only the tables, migrations, and named
@@ -319,14 +336,14 @@ Fabric validates actor/file/queue/timer bounds and the relationship between
 `maxDatabases`, tenant-Sync admission, auth mode, Resources, and the realm
 schema. Configuration resolution does not create directories or database
 files. Startup then repeats filesystem ownership checks before opening the
-control database, actor root, or object storage. Do not reuse `outDir`, the
-control database path, or Storage's owned root/tmp/blob directories as the
-Fabric root. Newly scaffolded apps ignore `data/` plus common `.db`/`.sqlite`
+application and system databases, actor root, or object storage. Do not reuse
+`outDir`, either pinned database path, or Storage's owned root/tmp/blob
+directories as the Fabric root. Newly scaffolded apps ignore `data/` plus common `.db`/`.sqlite`
 main, WAL, SHM, and rollback-journal filenames. Existing apps or custom roots
 must apply equivalent source-control exclusions; tenant database files and
 sidecars are runtime data, never application assets.
 
-This surface is not released from the current branch. Its exact options,
+This surface is an unreleased candidate. Its exact options,
 durability semantics, error contract, deployment requirements, and remaining
 release gates are authoritative in
 [ReactiveDB Fabric: Multi-Database Architecture](./framework/multi-database-architecture.md).
@@ -353,18 +370,18 @@ createApp({
 
 The effective key order is explicit `storage.signingSecret`, then
 `ZERO_STORAGE_SIGNING_SECRET`, then a random 32-byte key generated once and
-stored in the app database's private config table. The database-backed default
-survives restarts and lets runtimes that share that database verify each
+stored in the system database's private config table. The database-backed default
+survives restarts and lets runtimes that share that system database verify each
 other's presigned URLs and upload grants. It is cryptographically random; Zero
 does not use a hard-coded production default.
 
-Configure an external secret when the database is ephemeral or when replicas
-do not share one database. Production Doctor treats an ephemeral database with
-no external storage key as an error and reports operator-provided keys shorter
-than 32 UTF-8 bytes. Rotating the key immediately invalidates every outstanding
-presigned URL and upload grant, so deploy rotations with the maximum configured
-capability lifetime in mind. Storage secrets remain server-only and are never
-included in browser platform config.
+Configure an external secret when `systemDb` is ephemeral or when replicas do
+not share the same system database. Production Doctor treats an ephemeral
+system database with no external storage key as an error and reports operator-
+provided keys shorter than 32 UTF-8 bytes. Rotating the key immediately
+invalidates every outstanding presigned URL and upload grant, so deploy
+rotations with the maximum configured capability lifetime in mind. Storage
+secrets remain server-only and are never included in browser platform config.
 
 The capability axes and all four combinations normalize deterministically;
 omitting them still resolves to `single/simple`.
@@ -383,9 +400,10 @@ No mode selection implies upstream enterprise SSO, break-glass,
 tenant-custom roles, general populated-app discovery/migration tooling, or verified-domain
 autojoin/aliases/direct transfer. Registered
 resources now declare explicit server-owned client exposure and optional field
-allow-lists. Managed file-mode runtimes sharing one SQLite database automatically
-relay tracked changes and auth/session invalidations; other replica topologies
-need an external coordination layer. Multi-mode startup
+allow-lists. Managed file-mode runtimes sharing a relevant SQLite plane relay
+that plane's tracked changes; runtimes sharing `systemDb` also relay
+auth/session invalidation. Independent roots or hosts need an external
+coordination layer. Multi-mode startup
 also inspects the actual SQLite schema: tenant resources need a non-partial
 tenant-leading index, business-unique indexes must include the tenant field,
 and foreign keys between registered tenant resources must carry the tenant pair
@@ -1108,7 +1126,7 @@ Relevant environment variables are shown in `.env.example`:
 | `ACCESS_TOKEN_TTL` | Access token lifetime. |
 | `REFRESH_TOKEN_TTL` | Refresh token lifetime. |
 | `AUTH_SIGNING_KEY` | Optional externally managed ES256 private JWK as raw JSON or base64; PEM is not supported. Missing `kid` is derived deterministically from the public key. |
-| `ZERO_STORAGE_SIGNING_SECRET` | Optional HMAC key for storage presigned URLs and upload grants; use at least 32 random bytes. Durable shared databases can use Zero's persisted generated key. |
+| `ZERO_STORAGE_SIGNING_SECRET` | Optional HMAC key for storage presigned URLs and upload grants; use at least 32 random bytes. A durable shared system database can use Zero's persisted generated key. |
 | `OPENAI_API_KEY` | Enables OpenAI when `ai: true`. |
 | `ANTHROPIC_API_KEY` | Enables Anthropic when `ai: true`. |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables Google Generative AI when `ai: true`. |
@@ -1249,7 +1267,7 @@ Current checks cover:
 6. Auth account email flows with email disabled.
 7. Missing `app.publicUrl`, sender address, or Resend API key for email-driven
    account flows.
-8. File-backed databases with startup migrations disabled.
+8. A durable system database with platform startup migrations disabled.
 9. Auth-enabled app tables not covered by an app `syncPolicy` or registered
    resource policy.
 10. Login, registration, verification, reset, and setup route access when
@@ -1273,6 +1291,10 @@ Current checks cover:
     calls, and files above the responsibility threshold.
 17. Native app auth issuer/public URL readiness, registered public clients,
     identity scopes, lifetimes, and desktop/mobile redirect safety.
+18. Application/system database handle and path overlap, filesystem aliases,
+    unsafe authority durability, legacy combined authority layouts, Guardian
+    reference compatibility, shared anchor readiness, and aggregate projection
+    target/backlog health. Existing files are inspected read-only.
 
 Usage-audit options:
 

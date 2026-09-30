@@ -2,6 +2,7 @@ import type {
   SyncClientConfig,
   SyncCatchupMessage,
   SyncDataPlaneName,
+  SyncMutationRejection,
   SyncSnapshotMessage,
 } from '../types';
 import { SYNC_TERMINAL_DATA_CLOSE_CODE } from '../types';
@@ -47,6 +48,7 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     onError,
     onAuthFailure,
     onReconnect,
+    onMutationRejected,
     ackTimeout = DEFAULT_ACK_TIMEOUT,
     maxReconnectAttempts = DEFAULT_MAX_RECONNECT_ATTEMPTS,
   } = config;
@@ -68,6 +70,23 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
   const messageHandlers = new Set<
     (message: { type: string; [key: string]: unknown }) => void
   >();
+  const mutationRejectionHandlers = new Set<
+    (rejection: SyncMutationRejection) => void
+  >();
+
+  function reportMutationRejection(rejection: SyncMutationRejection): void {
+    const handlers = [
+      ...(onMutationRejected ? [onMutationRejected] : []),
+      ...mutationRejectionHandlers,
+    ];
+    for (const handler of handlers) {
+      try {
+        handler(rejection);
+      } catch {
+        // Application callbacks cannot interrupt rollback or queue progress.
+      }
+    }
+  }
 
   const connection = new SyncSocketConnection({
     url,
@@ -80,6 +99,7 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
       snapshots,
       tablePlanes: topology.tablePlanes,
       recover: recoverSyncStream,
+      mutationRejected: reportMutationRejection,
       synchronized: finishSyncBaseline,
     }, socket, event),
     closed: handleSocketClose,
@@ -95,6 +115,7 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
         ...(topology.assertMutationPlanes ? { plane } : {}),
       };
     },
+    rejected: reportMutationRejection,
   });
   const ackMonitor = new SyncAckMonitor({
     timeoutMs: ackTimeout,
@@ -310,6 +331,7 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
       waiter.reject(new Error('Sync client disconnected before authorization completed'));
     }
     baselineWaiters.clear();
+    mutationRejectionHandlers.clear();
   }
 
   const client: SyncClient = {
@@ -343,6 +365,10 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     onMessage(handler) {
       messageHandlers.add(handler);
       return () => { messageHandlers.delete(handler); };
+    },
+    onMutationRejected(handler) {
+      mutationRejectionHandlers.add(handler);
+      return () => { mutationRejectionHandlers.delete(handler); };
     },
     disconnect,
   };

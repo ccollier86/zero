@@ -47,6 +47,7 @@ describe('TenantSelectionForm flow reset key', () => {
     expect(markup).toContain('Platform administration');
     expect(markup).toContain('tenant-1 · member');
   });
+
 });
 
 describe('auth card radio keyboard navigation', () => {

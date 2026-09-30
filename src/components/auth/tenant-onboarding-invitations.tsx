@@ -103,36 +103,78 @@ export function ManualInvitationToken({
   token,
   headingId,
   copyError = null,
+  inputLabel = 'One-time invitation token',
+  recipient = 'intended recipient',
   onCopy,
   onDismiss,
 }: {
   token: string;
   headingId: string;
   copyError?: string | null;
+  inputLabel?: string;
+  recipient?: string;
   onCopy(): void;
   onDismiss(): void;
 }) {
+  const descriptionId = React.useId();
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const copyButtonRef = React.useRef<HTMLButtonElement | null>(null);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      copyButtonRef.current?.focus();
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => copyButtonRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [token]);
+
+  React.useEffect(() => {
+    if (!copyError) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [copyError]);
+
   return (
     <section
       aria-labelledby={headingId}
+      aria-describedby={descriptionId}
       className="rounded-md border border-warning/40 bg-warning/10 p-4 text-warning-foreground dark:border-warning/50 dark:bg-warning/15 dark:text-warning"
     >
-      <h3 id={headingId} className="font-semibold">
+      <h3 id={headingId} className="text-sm font-semibold">
         Copy this one-time invitation token now
       </h3>
-      <p className="mt-1 text-sm">
-        Zero will not show this token again. Share it only with the intended recipient.
+      <p id={descriptionId} className="mt-1 text-sm">
+        Zero will not show this token again. Share it only with the {recipient}.
       </p>
-      <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
-        <Input readOnly value={token} aria-label="One-time invitation token" />
-        <Button type="button" variant="outline" onClick={onCopy}>Copy</Button>
-        <Button type="button" variant="ghost" onClick={onDismiss}>Dismiss</Button>
-      </div>
+      <Input
+        ref={inputRef}
+        className="mt-3 font-mono text-xs"
+        readOnly
+        value={token}
+        aria-label={inputLabel}
+        autoCapitalize="none"
+        autoComplete="off"
+        autoCorrect="off"
+        spellCheck={false}
+        onFocus={(event) => event.currentTarget.select()}
+      />
       {copyError && (
         <p className="mt-2 text-sm" role="alert">
-          {copyError} Select Copy to try again.
+          {copyError} Use the one-time token field above to copy it manually.
         </p>
       )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button ref={copyButtonRef} type="button" size="sm" onClick={onCopy}>
+          Copy now
+        </Button>
+        <Button type="button" size="sm" variant="outline" onClick={onDismiss}>
+          Dismiss and clear from page
+        </Button>
+      </div>
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        A new one-time invitation token is ready to copy.
+      </p>
     </section>
   );
 }

@@ -1,4 +1,9 @@
 import * as v from 'valibot';
+import {
+  GUARDIAN_MEMBERSHIP_REFERENCE,
+  GUARDIAN_USER_REFERENCE,
+  type GuardianReferenceDefinition,
+} from './guardian-references';
 
 // ─── Field Type Definitions ─────────────────────────────────────────────────
 
@@ -55,6 +60,8 @@ export interface FieldDef<
   readonly _meta: FieldMeta;
   readonly _sqlType: string;
   readonly _clientType: string;
+  /** @internal Server-side identity projection metadata. Never an auth claim. */
+  readonly _guardianReference?: GuardianReferenceDefinition;
   /** @internal Phantom — not used at runtime. Carries the TS type for InferRow. */
   readonly _output?: TOutput;
 }
@@ -138,6 +145,17 @@ interface DateOptions {
 
 interface HiddenOptions {
   defaultValue?: unknown;
+}
+
+/** Options for a server-owned Guardian identity reference. */
+export interface GuardianReferenceOptions {
+  label?: string;
+  description?: string;
+  required?: boolean;
+  tableVisible?: boolean;
+  sortable?: boolean;
+  filterable?: boolean;
+  columnWidth?: number;
 }
 
 // ─── Helper: build meta from common options ─────────────────────────────────
@@ -536,6 +554,42 @@ function hidden(opts: HiddenOptions = {}): FieldDef<any, string> {
   };
 }
 
+function guardianReference(
+  reference: GuardianReferenceDefinition,
+  opts: GuardianReferenceOptions,
+): FieldDef<any, string> {
+  const required = opts.required ?? true;
+  const base = v.pipe(v.string(), v.minLength(1));
+  const schema = required ? base : v.optional(base);
+  return {
+    _schema: schema as any,
+    _meta: baseMeta('hidden', {
+      ...opts,
+      required,
+      tableVisible: opts.tableVisible ?? false,
+    }),
+    _sqlType: `text references ${reference.table}(${reference.column}) on delete ${reference.onDelete}${required ? ' not null' : ''}`,
+    _clientType: 'text',
+    _guardianReference: reference,
+  };
+}
+
+/**
+ * Reference the canonical ID-only Guardian user anchor in an app table.
+ * The value is storage attribution, not proof of authorization.
+ */
+function guardianUser(opts: GuardianReferenceOptions = {}): FieldDef<any, string> {
+  return guardianReference(GUARDIAN_USER_REFERENCE, opts);
+}
+
+/**
+ * Reference the canonical tenant-membership anchor in an app/tenant table.
+ * Membership references imply both membership and user anchor projections.
+ */
+function guardianMembership(opts: GuardianReferenceOptions = {}): FieldDef<any, string> {
+  return guardianReference(GUARDIAN_MEMBERSHIP_REFERENCE, opts);
+}
+
 // ─── Export namespace ───────────────────────────────────────────────────────
 
 export const field = {
@@ -556,4 +610,6 @@ export const field = {
   tags,
   combobox,
   dateRange,
+  guardianUser,
+  guardianMembership,
 } as const;

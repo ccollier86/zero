@@ -357,7 +357,7 @@ function TenantOnboardingManagementScope({
       >
         <CardHeader className="gap-3 border-b border-border/70">
           <div>
-            <CardTitle>{resolvedTitle}</CardTitle>
+            <CardTitle asChild><h2>{resolvedTitle}</h2></CardTitle>
             <CardDescription>{resolvedDescription}</CardDescription>
           </div>
         </CardHeader>

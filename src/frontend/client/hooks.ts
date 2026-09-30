@@ -176,6 +176,14 @@ export type {
 export { useConnectionHealth } from './connection-health-hooks';
 export type { ConnectionHealth } from './connection-health-hooks';
 
+export { useDataRealmReadiness } from './data-realm-readiness-hooks';
+export type {
+  DataRealmReadinessControl,
+  DataRealmReadinessUiStatus,
+  UseDataRealmReadinessOptions,
+  UseDataRealmReadinessResult,
+} from './data-realm-readiness-hooks';
+
 export { useMutation } from './mutation-hooks';
 export type { UseMutationOptions, UseMutationReturn } from './mutation-hooks';
 

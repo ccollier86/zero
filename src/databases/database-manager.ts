@@ -1,6 +1,6 @@
 /**
- * App-local ownership boundary for the compatibility database and optional
- * actor-backed file databases.
+ * App-local ownership boundary for the system database, application database,
+ * and optional actor-backed file databases.
  *
  * This class is infrastructure, not a request capability. Request code gets
  * only an already-bound AsyncDatabaseClient produced by bindTenant().
@@ -8,111 +8,82 @@
 
 import { AuthorityCommitCoordinator } from './authority-commit-coordinator';
 import {
-  deriveNamedDatabaseId,
-  deriveTenantDatabaseId,
-} from './database-binding-ref';
-import { createAsyncDatabaseClient } from './database-client';
-import {
-  assertDatabaseCommitAuthorityCurrent,
-  createDatabaseCommitAuthority,
-  type DatabaseCommitAuthority,
-} from './database-commit-authority';
-import {
   DatabaseCoordinator,
-  type DatabaseCoordinatorDiagnostics,
   type DatabaseCoordinatorLease,
 } from './database-coordinator';
 import { DatabaseError } from './database-error';
-import { createDatabaseRef, type DatabaseId } from './database-file';
+import { DatabaseManagerActorRouter } from './database-manager-actor-router';
 import type {
-  AsyncDatabaseClient,
-  AsyncDatabaseOperationExecutor,
-} from './database-operations';
-import type { DatabaseTrustedWriteExecutor } from './database-trusted-writer';
-import type { DatabaseTenantSyncBinding } from './database-tenant-sync';
-import {
-  DatabaseRuntime,
-  type DatabaseRuntimeRole,
-} from './database-runtime';
+  BindTenantDatabaseOptions,
+  DatabaseManagerDiagnostics,
+  DatabaseManagerOptions,
+  DatabaseManagerState,
+  TenantDatabaseBinding,
+  TenantDatabaseSyncBinding,
+} from './database-manager-contract';
+import { DatabaseRuntime } from './database-runtime';
+import { PinnedDatabaseRuntimes } from './pinned-database-runtimes';
+import type { IdentityAnchorState } from '../auth/identity-projection-types';
 
-export type DatabaseManagerState =
-  | 'created'
-  | 'started'
-  | 'draining'
-  | 'close-failed'
-  | 'closed';
-
-export interface MultipleDatabaseManagerOptions {
-  /** Actor-backed owner for every non-default physical database. */
-  readonly coordinator: DatabaseCoordinator;
-  /** The same gate supplied to the coordinator when tenant files are enabled. */
-  readonly authorityCommitCoordinator?: AuthorityCommitCoordinator;
-  /** Enables auth-derived tenant bindings and requires the authority gate. */
-  readonly tenantDatabases?: boolean;
-}
-
-export interface DatabaseManagerOptions {
-  /** Pinned compatibility runtime used by zero.db and zero.sql. */
-  readonly defaultRuntime: DatabaseRuntime;
-  /** Omit to preserve historical single-database behavior exactly. */
-  readonly multiple?: MultipleDatabaseManagerOptions;
-}
-
-export interface BindTenantDatabaseOptions {
-  /** Trusted tenant identity from a committed authorization scope. */
-  readonly tenantId: string;
-  /** Synchronous durable authority check used at the writer FIFO head. */
-  readonly assertCurrentAuthoritySync: () => undefined;
-  /** Read fence run before dispatch and before data is returned. */
-  readonly assertCurrentReadAuthority?: () => undefined;
-}
-
-/** Opaque ownership token for one already-routed tenant client. */
-export interface TenantDatabaseBinding extends AsyncDisposable {
-  readonly client: AsyncDatabaseClient;
-  /** @internal Framework logical-request receipt capability. */
-  readonly trustedWriter: DatabaseTrustedWriteExecutor;
-  readonly released: boolean;
-  release(): void;
-}
-
-/** @internal Persistent tenant database capability reserved for Zero Sync. */
-export type TenantDatabaseSyncBinding = DatabaseTenantSyncBinding;
-
-export interface DatabaseManagerDiagnostics {
-  readonly state: DatabaseManagerState;
-  readonly multipleEnabled: boolean;
-  readonly tenantDatabasesEnabled: boolean;
-  readonly default: Readonly<{
-    readonly role: DatabaseRuntimeRole;
-    readonly started: boolean;
-    readonly closed: boolean;
-  }>;
-  readonly coordinator: DatabaseCoordinatorDiagnostics | null;
-  readonly authority: ReturnType<AuthorityCommitCoordinator['diagnostics']> | null;
-}
+export type {
+  BindTenantDatabaseOptions,
+  DatabaseManagerDiagnostics,
+  DatabaseManagerOptions,
+  DatabaseManagerState,
+  DatabaseTenantEligibilityOptions,
+  DatabaseTenantIdentityProjectionOptions,
+  MultipleDatabaseManagerOptions,
+  TenantDatabaseBinding,
+  TenantDatabaseSyncBinding,
+} from './database-manager-contract';
 
 /**
  * Owns startup/shutdown order and trusted routing for all database planes.
- * It deliberately exposes no named SQLite, ReactiveDB, path, or runtime.
+ * Process-pinned infrastructure runtimes are explicit; actor-backed named and
+ * tenant runtimes are delegated to a narrow trusted router.
  */
 export class DatabaseManager implements AsyncDisposable {
+  readonly systemRuntime: DatabaseRuntime;
+  readonly appRuntime: DatabaseRuntime;
+  /** Compatibility alias retained for code which names the application plane default. */
   readonly defaultRuntime: DatabaseRuntime;
 
-  readonly #coordinator: DatabaseCoordinator | null;
+  readonly #pinnedRuntimes: PinnedDatabaseRuntimes;
+  readonly #actorRouter: DatabaseManagerActorRouter;
   readonly #authority: AuthorityCommitCoordinator | null;
-  readonly #tenantDatabases: boolean;
   #state: DatabaseManagerState = 'created';
   #closeTask: Promise<void> | null = null;
 
   constructor(options: DatabaseManagerOptions) {
     if (!options || typeof options !== 'object'
-      || !(options.defaultRuntime instanceof DatabaseRuntime)) {
-      throw configInvalid('Database manager requires a default runtime.');
+      || !(options.systemRuntime instanceof DatabaseRuntime)
+      || !(options.appRuntime instanceof DatabaseRuntime)) {
+      throw configInvalid('Database manager requires system and application runtimes.');
     }
-    if (options.defaultRuntime.role !== 'default'
-      || options.defaultRuntime.diagnostics().closed) {
-      throw configInvalid('Database manager default runtime is invalid.');
+    if (options.systemRuntime === options.appRuntime) {
+      throw configInvalid('Database manager runtimes must be separate.');
+    }
+    if (options.systemRuntime.role !== 'system'
+      || options.systemRuntime.diagnostics().closed) {
+      throw configInvalid('Database manager system runtime is invalid.');
+    }
+    if (options.appRuntime.role !== 'default'
+      || options.appRuntime.diagnostics().closed) {
+      throw configInvalid('Database manager application runtime is invalid.');
+    }
+    const serviceRuntimes = options.serviceRuntimes ?? [];
+    if (!Array.isArray(serviceRuntimes)) {
+      throw configInvalid('Database manager service runtimes are invalid.');
+    }
+    for (const binding of serviceRuntimes) {
+      if (binding?.plane === 'system'
+        || binding?.plane === 'application'
+        || binding?.plane === 'default') {
+        throw configInvalid('Database manager service runtime uses a reserved plane.');
+      }
+      if (binding?.runtime?.role !== 'service') {
+        throw configInvalid('Database manager service runtimes must use the service role.');
+      }
     }
 
     const multiple = options.multiple;
@@ -126,28 +97,70 @@ export class DatabaseManager implements AsyncDisposable {
       && !(multiple.authorityCommitCoordinator instanceof AuthorityCommitCoordinator)) {
       throw configInvalid('Database authority coordinator is invalid.');
     }
+    if (options.authorityCommitCoordinator !== undefined
+      && !(options.authorityCommitCoordinator instanceof AuthorityCommitCoordinator)) {
+      throw configInvalid('Pinned database authority coordinator is invalid.');
+    }
+    if (options.authorityCommitCoordinator
+      && multiple?.authorityCommitCoordinator
+      && options.authorityCommitCoordinator !== multiple.authorityCommitCoordinator) {
+      throw configInvalid('Database manager authority coordinators must match.');
+    }
     if (multiple?.tenantDatabases !== undefined
       && typeof multiple.tenantDatabases !== 'boolean') {
       throw configInvalid('Tenant-database policy is invalid.');
     }
     if (multiple?.tenantDatabases === true
-      && !multiple.authorityCommitCoordinator) {
+      && !multiple.authorityCommitCoordinator
+      && !options.authorityCommitCoordinator) {
       throw configInvalid('Tenant databases require an authority coordinator.');
     }
+    if (multiple?.tenantIdentityProjection !== undefined
+      && (!multiple.tenantIdentityProjection
+        || typeof multiple.tenantIdentityProjection.installationId !== 'string'
+        || typeof multiple.tenantIdentityProjection.targetIdForTenant !== 'function'
+        || typeof multiple.tenantIdentityProjection.reconcile !== 'function')) {
+      throw configInvalid('Tenant identity projection configuration is invalid.');
+    }
+    if (multiple?.tenantIdentityProjection && multiple.tenantDatabases !== true) {
+      throw configInvalid('Tenant identity projection requires tenant databases.');
+    }
+    if (multiple?.tenantDatabaseEligibility !== undefined
+      && (!multiple.tenantDatabaseEligibility
+        || typeof multiple.tenantDatabaseEligibility.assertEligible !== 'function')) {
+      throw configInvalid('Tenant database eligibility configuration is invalid.');
+    }
+    if (multiple?.tenantDatabaseEligibility && multiple.tenantDatabases !== true) {
+      throw configInvalid('Tenant database eligibility requires tenant databases.');
+    }
 
-    this.defaultRuntime = options.defaultRuntime;
-    this.#coordinator = multiple?.coordinator ?? null;
-    this.#authority = multiple?.authorityCommitCoordinator ?? null;
-    this.#tenantDatabases = multiple?.tenantDatabases ?? false;
+    this.systemRuntime = options.systemRuntime;
+    this.appRuntime = options.appRuntime;
+    this.defaultRuntime = options.appRuntime;
+    this.#pinnedRuntimes = new PinnedDatabaseRuntimes([
+      { plane: 'system', runtime: options.systemRuntime },
+      { plane: 'application', runtime: options.appRuntime },
+      ...serviceRuntimes,
+    ]);
+    this.#authority = options.authorityCommitCoordinator
+      ?? multiple?.authorityCommitCoordinator
+      ?? null;
+    this.#actorRouter = new DatabaseManagerActorRouter({
+      coordinator: multiple?.coordinator ?? null,
+      authority: this.#authority,
+      tenantDatabases: multiple?.tenantDatabases ?? false,
+      tenantIdentityProjection: multiple?.tenantIdentityProjection ?? null,
+      tenantDatabaseEligibility: multiple?.tenantDatabaseEligibility ?? null,
+    });
   }
 
-  /** Start the pinned runtime and claim the actor database root. */
+  /** Start system before application services, then claim the actor database root. */
   start(): void {
     if (this.#state === 'started') return;
     if (this.#state !== 'created') throw closedError();
     try {
-      this.defaultRuntime.start();
-      this.#coordinator?.start();
+      this.#pinnedRuntimes.start();
+      this.#actorRouter.start();
       this.#state = 'started';
     } catch (error) {
       this.#state = 'close-failed';
@@ -161,20 +174,7 @@ export class DatabaseManager implements AsyncDisposable {
    */
   async acquireNamed(input: string): Promise<DatabaseCoordinatorLease> {
     this.#assertStarted();
-    const coordinator = this.#requireCoordinator();
-    const physicalId = deriveNamedDatabaseId(input);
-    // A tenant-file coordinator may require authority for every write. Named
-    // setup bindings are already privileged, so bind an internal live proof.
-    const commitAuthority = this.#tenantDatabases
-      ? createDatabaseCommitAuthority(
-        this.#requireAuthority(),
-        physicalId,
-        () => undefined,
-      )
-      : undefined;
-    return await coordinator.acquire(physicalId, {
-      ...(commitAuthority ? { commitAuthority } : {}),
-    });
+    return await this.#actorRouter.acquireNamed(input);
   }
 
   /** Bind one request/background capability from trusted tenant authority. */
@@ -182,42 +182,32 @@ export class DatabaseManager implements AsyncDisposable {
     options: BindTenantDatabaseOptions,
   ): Promise<TenantDatabaseBinding> {
     this.#assertStarted();
-    const { physicalId, authority } = this.#resolveTenantBinding(options);
-    const lease = await this.#requireCoordinator().acquire(physicalId, {
-      commitAuthority: authority,
-    });
-    try {
-      const executor = createLeaseExecutor(lease);
-      const client = createAsyncDatabaseClient({
-        executor,
-        assertReadAuthority: options.assertCurrentReadAuthority
-          ?? options.assertCurrentAuthoritySync,
-      });
-      return new BoundTenantDatabase(lease, client);
-    } catch (error) {
-      lease.release();
-      throw error;
-    }
+    return await this.#actorRouter.bindTenant(options);
   }
 
-  /**
-   * Bind the persistent, generation-aware capability consumed by Zero Sync.
-   * It uses the exact physical identity and authority domain as bindTenant().
-   */
+  /** Bind the persistent, generation-aware capability consumed by Zero Sync. */
   async bindTenantSync(
     options: BindTenantDatabaseOptions,
   ): Promise<TenantDatabaseSyncBinding> {
     this.#assertStarted();
-    const { physicalId, authority } = this.#resolveTenantBinding(options);
-    return await this.#requireCoordinator().acquireTenantSync(physicalId, {
-      commitAuthority: authority,
-      ...(options.assertCurrentReadAuthority === undefined
-        ? {}
-        : { assertReadAuthority: options.assertCurrentReadAuthority }),
-    });
+    return await this.#actorRouter.bindTenantSync(options);
   }
 
-  /** Drain actors, then authority leases, then the default database. */
+  /** Provision/reconcile one authoritative tenant target for lifecycle work. */
+  async ensureTenantIdentityProjection(tenantId: string): Promise<void> {
+    this.#assertStarted();
+    await this.#actorRouter.ensureTenantIdentityProjection(tenantId);
+  }
+
+  /** Inspect one existing tenant target without creating or reconciling it. */
+  async inspectTenantIdentityProjection(
+    tenantId: string,
+  ): Promise<IdentityAnchorState | null> {
+    this.#assertStarted();
+    return await this.#actorRouter.inspectTenantIdentityProjection(tenantId);
+  }
+
+  /** Drain actors, then authority leases, then pinned database planes. */
   close(): Promise<void> {
     if (this.#state === 'closed') return Promise.resolve();
     if (this.#closeTask) return this.#closeTask;
@@ -230,17 +220,18 @@ export class DatabaseManager implements AsyncDisposable {
   }
 
   diagnostics(): DatabaseManagerDiagnostics {
-    const defaultDiagnostics = this.defaultRuntime.diagnostics();
+    const systemDiagnostics = this.systemRuntime.diagnostics();
+    const appDiagnostics = this.appRuntime.diagnostics();
+    const application = runtimeSummary(appDiagnostics);
     return Object.freeze({
       state: this.#state,
-      multipleEnabled: this.#coordinator !== null,
-      tenantDatabasesEnabled: this.#tenantDatabases,
-      default: Object.freeze({
-        role: defaultDiagnostics.role,
-        started: defaultDiagnostics.started,
-        closed: defaultDiagnostics.closed,
-      }),
-      coordinator: this.#coordinator?.diagnostics() ?? null,
+      multipleEnabled: this.#actorRouter.multipleEnabled,
+      tenantDatabasesEnabled: this.#actorRouter.tenantDatabasesEnabled,
+      system: runtimeSummary(systemDiagnostics),
+      application,
+      default: application,
+      planes: this.#pinnedRuntimes.diagnostics(),
+      coordinator: this.#actorRouter.diagnostics(),
       authority: this.#authority?.diagnostics() ?? null,
     });
   }
@@ -251,145 +242,40 @@ export class DatabaseManager implements AsyncDisposable {
 
   async #closeOnce(): Promise<void> {
     this.#state = 'draining';
-    if (this.#coordinator) {
-      await this.#coordinator.close();
-      if (this.#coordinator.diagnostics().heldAuthorityLeases > 0) {
+    try {
+      await this.#actorRouter.close();
+      if ((this.#actorRouter.diagnostics()?.heldAuthorityLeases ?? 0) > 0) {
         // Settlement proof failed closed. Begin gate drain to reject new work,
-        // but retain the default control plane for a later operator retry.
+        // but retain all local planes for a later operator retry.
         void this.#authority?.close().catch(() => undefined);
-        this.#state = 'close-failed';
         throw new DatabaseError(
           'DATABASE_EXECUTOR_FAILED',
           'Database authority settlement is incomplete.',
           { retryable: false, outcome: 'unknown' },
         );
       }
+      if (this.#authority) await this.#authority.close();
+      this.#pinnedRuntimes.close();
+      this.#state = 'closed';
+    } catch (error) {
+      this.#state = 'close-failed';
+      throw error;
     }
-    if (this.#authority) await this.#authority.close();
-    this.defaultRuntime.close();
-    this.#state = 'closed';
   }
 
   #assertStarted(): void {
     if (this.#state !== 'started') throw closedError();
   }
-
-  #requireCoordinator(): DatabaseCoordinator {
-    if (!this.#coordinator) {
-      throw new DatabaseError(
-        'DATABASE_OPERATION_UNSUPPORTED',
-        'Multiple databases are not enabled.',
-      );
-    }
-    return this.#coordinator;
-  }
-
-  #requireAuthority(): AuthorityCommitCoordinator {
-    if (!this.#authority) {
-      throw configInvalid('Database authority coordinator is unavailable.');
-    }
-    return this.#authority;
-  }
-
-  #resolveTenantBinding(options: BindTenantDatabaseOptions): Readonly<{
-    physicalId: DatabaseId;
-    authority: DatabaseCommitAuthority;
-  }> {
-    if (!this.#tenantDatabases) {
-      throw new DatabaseError(
-        'DATABASE_OPERATION_UNSUPPORTED',
-        'Tenant database isolation is not enabled.',
-      );
-    }
-    if (!options || typeof options !== 'object'
-      || typeof options.assertCurrentAuthoritySync !== 'function'
-      || (options.assertCurrentReadAuthority !== undefined
-        && typeof options.assertCurrentReadAuthority !== 'function')) {
-      throw configInvalid('Tenant database authority is invalid.');
-    }
-
-    const physicalId = deriveTenantDatabaseId(options.tenantId);
-    const authorityOwner = this.#requireAuthority();
-    const authority = createDatabaseCommitAuthority(
-      authorityOwner,
-      physicalId,
-      options.assertCurrentAuthoritySync,
-    );
-    // Reject an already-revoked request before actor admission can reserve a
-    // slot or create an otherwise unused tenant file. Operation dispatch still
-    // performs the authoritative check again at the writer FIFO head.
-    assertDatabaseCommitAuthorityCurrent(
-      authority,
-      authorityOwner,
-      createDatabaseRef(physicalId),
-    );
-    assertTenantReadAuthorityCurrent(options.assertCurrentReadAuthority);
-    return Object.freeze({
-      physicalId,
-      authority,
-    });
-  }
 }
 
-function assertTenantReadAuthorityCurrent(
-  check: (() => undefined) | undefined,
-): void {
-  if (!check) return;
-  let result: unknown;
-  try {
-    result = check();
-  } catch {
-    throw new DatabaseError(
-      'DATABASE_AUTHORITY_CHANGED',
-      'Database read authority changed before binding.',
-      { retryable: false, outcome: 'not-started' },
-    );
-  }
-  if (result !== undefined) {
-    void Promise.resolve(result).catch(() => undefined);
-    throw configInvalid('Database read authority checks must be synchronous.');
-  }
-}
-
-class BoundTenantDatabase implements TenantDatabaseBinding {
-  readonly #lease: DatabaseCoordinatorLease;
-  readonly #client: AsyncDatabaseClient;
-  #released = false;
-
-  constructor(
-    lease: DatabaseCoordinatorLease,
-    client: AsyncDatabaseClient,
-  ) {
-    this.#lease = lease;
-    this.#client = client;
-    Object.preventExtensions(this);
-  }
-
-  get client(): AsyncDatabaseClient { return this.#client; }
-  get trustedWriter(): DatabaseTrustedWriteExecutor {
-    return this.#lease.trustedWriter;
-  }
-  get released(): boolean { return this.#released; }
-
-  release(): void {
-    if (this.#released) return;
-    this.#released = true;
-    this.#lease.release();
-  }
-
-  async [Symbol.asyncDispose](): Promise<void> {
-    this.release();
-  }
-}
-
-function createLeaseExecutor(
-  lease: DatabaseCoordinatorLease,
-): AsyncDatabaseOperationExecutor {
-  return {
-    execute(operation, options) {
-      return lease.execute(operation, options);
-    },
-  } as AsyncDatabaseOperationExecutor;
+function runtimeSummary(
+  diagnostics: ReturnType<DatabaseRuntime['diagnostics']>,
+) {
+  return Object.freeze({
+    role: diagnostics.role,
+    started: diagnostics.started,
+    closed: diagnostics.closed,
+  });
 }
 
 function configInvalid(message: string): DatabaseError {

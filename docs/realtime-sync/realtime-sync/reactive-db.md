@@ -710,6 +710,12 @@ direct/injected compositions may opt in with
 `replicaChangePolling: { intervalMs }`, or set it to `false` for an intentional
 single-owner file.
 
+Managed apps apply the same rule independently to the application and system
+ReactiveDB planes. A system plane shared with State Sync uses one poller for
+that handle, and every emitted change retains its `default`, `system`, or
+`tenant` plane tag so identical sequence numbers from different files never
+collide.
+
 #### First fenced upgrade and mixed versions
 
 The first upgrade from a pre-fence Zero release is a coordinated stop-all

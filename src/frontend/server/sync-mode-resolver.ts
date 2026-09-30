@@ -66,6 +66,8 @@ interface ResolveTableOptions {
 export interface SyncModeResolverOptions {
   /** Tables physically stored in independently sized tenant databases. */
   tenantDatabaseTables?: ReadonlySet<string>;
+  /** Zero-owned durable decision store. Defaults to `db` for standalone callers. */
+  metadataDB?: ReactiveDB;
   /** App-local observability owner. Standalone callers may use the ambient fallback. */
   observability?: PlatformObservabilityRuntime | null;
 }
@@ -79,7 +81,8 @@ export function resolveTableSyncModes(
   logger?: SyncModeResolverLogger,
   options: SyncModeResolverOptions = {},
 ): SyncModeResolution {
-  ensureSyncModeTable(db);
+  const metadataDB = options.metadataDB ?? db;
+  ensureSyncModeTable(metadataDB);
 
   const decisions: TableSyncModeDecision[] = [];
   const lazyTables = new Set<string>();
@@ -97,7 +100,9 @@ export function resolveTableSyncModes(
           declaredMode,
           rowCount: countRows(db, table),
           tableDefault,
-          persistedRow: tableDefault.persist ? readPersistedMode(db, table) : null,
+          persistedRow: tableDefault.persist
+            ? readPersistedMode(metadataDB, table)
+            : null,
         });
 
     decisions.push(decision);
@@ -110,7 +115,7 @@ export function resolveTableSyncModes(
     }
 
     if (decision.source === 'auto' && tableDefault.persist) {
-      persistModeDecision(db, decision);
+      persistModeDecision(metadataDB, decision);
       decision.persisted = true;
     }
 

@@ -309,17 +309,18 @@ and deliberate raw SQL remain outside that managed schema guarantee.
 Sync authenticates against the same durable session and live authorization revisions. Its
 snapshot, catch-up, live delivery, mutations, state, presence, and mutation receipts all
 obey the active scope. A changed membership, tenant, policy fingerprint, or elevation
-closes and resets the connection. File-mode runtimes sharing one SQLite database
-also share a transactional change sequence/log for row fanout. Migration `020`
+closes and resets the connection. File-mode runtimes sharing a relevant SQLite
+plane also share that plane's transactional change sequence/log. Migration `020`
 adds a monotonic auth-authority revision so a security change committed by one
 runtime promptly revalidates sockets and managed ephemeral bindings in the
 others. A retention gap closes affected sockets for a clean snapshot rather
 than silently skipping data.
 
 That mechanism is intentionally topology-specific: it does not replicate
-`hot` or `ephemeral` runtime databases, separate SQLite files,
+`hot` or `ephemeral` runtime databases, independently coordinated SQLite files,
 application-owned caches, cross-host messages, or RAM-only ephemeral/presence
-topic values. Those deployments need explicit external coordination, and raw
+topic values. Fabric's actor-owned files remain inside one app coordinator and
+root; deployments beyond that boundary need explicit external coordination, and raw
 SQL writes remain responsible for participating in the tracked managed change
 path when realtime fanout is required.
 

@@ -23,7 +23,6 @@ import {
 import { Badge } from '#zero/components/ui/badge';
 import { Button } from '#zero/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '#zero/components/ui/card';
-import { Checkbox } from '#zero/components/ui/checkbox';
 import { Input } from '#zero/components/ui/input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -31,6 +30,7 @@ import {
 import { cn } from '#zero/lib/utils';
 import { authRoleLabel, createAuthRoleLabelMap } from './auth-role-presentation';
 import { PlatformAdministrationInvitations } from './platform-administration-invitations';
+import { PlatformAdministrationRoleEditor } from './platform-administration-role-editor';
 import {
   platformAssignableRoles,
   platformRoleSelection,
@@ -98,7 +98,7 @@ function PlatformAdministrationScope({
     return (
       <Card className={cn('overflow-hidden', className)}>
         <CardHeader>
-          <CardTitle>{title}</CardTitle>
+          <CardTitle asChild><h2>{title}</h2></CardTitle>
           <CardDescription>{description}</CardDescription>
         </CardHeader>
         <CardContent>
@@ -120,7 +120,7 @@ function PlatformAdministrationScope({
       }>
         <CardHeader className="gap-3 border-b border-border/70">
           <div>
-            <CardTitle>{title}</CardTitle>
+            <CardTitle asChild><h2>{title}</h2></CardTitle>
             <CardDescription>{description}</CardDescription>
           </div>
           {administration.config && (
@@ -339,7 +339,7 @@ export function PlatformAdministrationMembers({
           />
         </div>
       )}
-      {capabilities.canManageMembers && (
+      {capabilities.canManageMembers && capabilities.canManageRoles && (
         <form className="mt-3 space-y-3 rounded-md border border-border/70 p-3" onSubmit={addMember}>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Input
@@ -426,7 +426,10 @@ export function PlatformAdministrationMembers({
         ) : administration.members.map((member) => {
           const owner = member.roles.includes('owner');
           const actor = member.membershipId === actorMembershipId;
-          const canEditRoles = capabilities.canManageMembers && !owner && member.status === 'active';
+          const canEditRoles = capabilities.canManageMembers
+            && capabilities.canManageRoles
+            && !owner
+            && member.status === 'active';
           return (
             <div key={member.membershipId} className="p-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -480,45 +483,22 @@ export function PlatformAdministrationMembers({
                 </div>
               </div>
               {editing === member.membershipId && canEditRoles && (
-                <div id={rolePanelId(member.membershipId)} className="mt-3 rounded-md border bg-muted/20 p-3">
-                  {simpleMode ? (
-                    <TenantRolePicker
-                      roles={assignableRoles}
-                      selected={draftRoles.slice(0, 1)}
-                      simple
-                      disabled={isMutating}
-                      legend={`Administration role for ${memberName(member)}`}
-                      selectLabel={`Administration role for ${memberName(member)}`}
-                      actionContext={`for ${memberName(member)}`}
-                      onChange={setDraftRoles}
-                    />
-                  ) : (
-                    <fieldset className="grid gap-2 sm:grid-cols-2">
-                      <legend className="mb-2 text-xs font-medium">Administration roles for {memberName(member)}</legend>
-                      {assignableRoles.map((role) => {
-                        const checked = draftRoles.includes(role.key);
-                        return (
-                          <label key={role.key} className="flex items-start gap-2 rounded-md border bg-background p-3 text-sm">
-                            <Checkbox
-                              checked={checked}
-                              disabled={isMutating || !role.grantable}
-                              aria-label={`${checked ? 'Remove' : 'Assign'} ${role.label}`}
-                              onCheckedChange={(value) => setDraftRoles((current) => value
-                                ? [...new Set([...current, role.key])]
-                                : current.filter((item) => item !== role.key))}
-                            />
-                            <span><span className="block font-medium">{role.label}</span>{role.description && <span className="block text-xs text-muted-foreground">{role.description}</span>}</span>
-                          </label>
-                        );
-                      })}
-                    </fieldset>
-                  )}
-                  <Button type="button" size="sm" className="mt-3" disabled={
-                    isMutating
-                    || draftRoles.length === 0
-                    || (simpleMode && draftRoles.length !== 1)
-                    || sameRoles(member.roles.filter((role) => role !== 'owner'), draftRoles)
-                  } onClick={() => void saveRoles()}>Save roles</Button>
+                <div className="mt-3">
+                  <PlatformAdministrationRoleEditor
+                    member={member}
+                    roles={roles}
+                    simple={simpleMode}
+                    draftRoles={draftRoles}
+                    busy={isMutating}
+                    canTransferOwnership={capabilities.canTransferOwnership}
+                    rolePanelId={rolePanelId(member.membershipId)}
+                    roleSelectionChanged={!sameRoles(
+                      member.roles.filter((role) => role !== 'owner'),
+                      draftRoles,
+                    )}
+                    onChange={setDraftRoles}
+                    onSave={() => void saveRoles()}
+                  />
                 </div>
               )}
             </div>

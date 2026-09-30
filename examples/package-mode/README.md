@@ -92,6 +92,10 @@ The starter uses SQLite `hot` mode by default: active relational data stays in
 process memory and Zero writes snapshot recovery files under `./data`. Set
 `DB_MODE=file` when you want explicit SQLite file/WAL mode instead, and use
 `DB_PATH` / `DB_SNAPSHOT_PATH` to override the default storage files.
+Zero/Guardian authority is always separate from application data. The starter
+uses durable `SYSTEM_DB_MODE=file` at `./data/zero.system.db`; configure
+`SYSTEM_DB_PATH` separately and never point it or its hot snapshot at an
+application database path.
 The starter also mounts the platform KV/cache service by default with journal
 and checkpoint files under `ZERO_KV_BASE_DIR` or `./data/kv`.
 The generated starter keeps auth and state sync off by default so the first app

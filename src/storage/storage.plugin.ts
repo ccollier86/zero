@@ -610,6 +610,7 @@ export function createStoragePlugin(config: StoragePluginConfig) {
         const scope = requestScope(access);
         const svc = requireStorage();
         requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', body.from);
+        requireDriveAccess(svc, params.driveId, auth, scope, access, 'write', body.to);
         return await svc.moveObject(params.driveId, body.from, body.to);
       },
       {

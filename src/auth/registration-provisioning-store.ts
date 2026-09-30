@@ -58,6 +58,8 @@ interface RegistrationProvisioningDependencies {
   countUsers: () => number;
   getUserById: (userId: string) => UserRecord | null;
   getAuthorizationBootstrapper: () => AuthAuthorizationBootstrapper | null;
+  /** Publish the finalized user and any retained memberships atomically. */
+  activateIdentityProjection: (userId: string) => void;
   auditService: AuthAuditService | null;
   emitCode?: AuthPlatformCodeEmitter;
 }
@@ -321,6 +323,7 @@ export class RegistrationProvisioningStore {
           '[auth] Registration provisioning finalization lost its marker.',
         );
       }
+      this.dependencies.activateIdentityProjection(row.user_id);
       this.recordAudit(
         row.user_id,
         row.tenant_id,

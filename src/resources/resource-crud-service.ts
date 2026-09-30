@@ -12,6 +12,7 @@ import type {
   ResourceCrudRequestContext,
   ResourceCrudResult,
   ResourceCrudServiceOptions,
+  ResourceIdentityAnchorReadinessBarrier,
 } from './resource-crud-contracts';
 import type {
   PlatformCodeDefinition,
@@ -42,6 +43,7 @@ export type {
   ResourceCrudRequestContext,
   ResourceCrudResult,
   ResourceCrudServiceOptions,
+  ResourceIdentityAnchorReadinessBarrier,
   ResourceCrudSuccess,
   ResourceTenantDatabaseAccess,
   ResourceTenantDatabaseClientProvider,
@@ -74,6 +76,7 @@ export class ResourceCrudService {
     const planeOptions = {
       tables: options.tables,
       authConfig: options.authConfig,
+      ensureIdentityAnchors: options.ensureIdentityAnchors,
       defaultLimit: options.defaultLimit,
       maxLimit: options.maxLimit,
     };

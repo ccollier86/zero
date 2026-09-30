@@ -17,6 +17,7 @@ import type {
   ResolvedAuthTenancyConfig,
   ResolvedUserPropertyFieldConfig,
 } from '../auth/types';
+import type { TenantKind } from '../auth/tenancy/tenancy-types';
 
 /** Sync or async return helper used by custom resource policies. */
 export type ResourceMaybePromise<T> = T | Promise<T>;
@@ -45,6 +46,12 @@ export interface ResourcePolicyUser {
 export interface ResourcePolicyAuthorizationContext {
   readonly kernel: AuthorizationKernel;
   readonly subject: AuthorizationSubjectSnapshot | null;
+  /**
+   * Live tenant purpose resolved by Zero from the durable session/API-key
+   * authority. Managed transports always supply it; omission remains accepted
+   * only for legacy standalone policy evaluators.
+   */
+  readonly tenantKind?: TenantKind | null;
 }
 
 /** Minimal resource shape needed by the policy evaluator. */
@@ -97,6 +104,11 @@ export type ResourcePolicyDenyReason =
   | 'owner-row-required'
   | 'owner-mismatch'
   | 'owner-input-mismatch'
+  | 'guardian-actor-row-required'
+  | 'guardian-user-mismatch'
+  | 'guardian-membership-mismatch'
+  | 'guardian-reference-immutable'
+  | 'tenant-membership-required'
   | 'metadata-property'
   | 'policy-invalid'
   | 'policy-empty'
@@ -134,8 +146,10 @@ export type ResourcePolicyKind =
   | 'read-only'
   | 'public-read-user-write'
   | 'owner'
+  | 'guardian-actor'
   | 'metadata'
   | 'authorization'
+  | 'tenant-kind'
   | 'any-of'
   | 'all-of'
   | 'custom';
@@ -143,7 +157,14 @@ export type ResourcePolicyKind =
 /** Static metadata used by doctor and registration validation. */
 export interface ResourcePolicyDiagnostics {
   ownerField?: string;
+  /** Ownership/reference fields that registration must prove exist. */
+  ownerFields?: readonly string[];
   ownerCreateMode?: OwnerPolicyCreateMode;
+  ownerImmutable?: boolean;
+  /** Guardian user reference field stamped/checked by guardianActorPolicy(). */
+  guardianUserField?: string;
+  /** Guardian membership reference field stamped/checked by guardianActorPolicy(). */
+  guardianMembershipField?: string;
   metadataKeys?: readonly string[];
   publicActions?: readonly ResourceAction[];
   authenticatedActions?: readonly ResourceAction[];
@@ -151,6 +172,8 @@ export interface ResourcePolicyDiagnostics {
   customName?: string;
   /** Canonical route-compatible requirement enforced by authorizationPolicy(). */
   authorizationRequirement?: CompiledAccessRequirement;
+  /** Server-resolved tenant purposes admitted by tenantKindPolicy(). */
+  tenantKinds?: readonly TenantKind[];
 }
 
 /** Context used to validate resource policies before registration. */
@@ -163,9 +186,15 @@ export type ResourcePolicyValidationCode =
   | 'metadata-property-unknown'
   | 'metadata-property-untrusted'
   | 'owner-field-invalid'
+  | 'guardian-actor-field-invalid'
+  | 'guardian-actor-fields-conflict'
+  | 'guardian-actor-tenancy-config-unavailable'
+  | 'guardian-actor-requires-multi-tenancy'
   | 'composite-policy-empty'
   | 'authorization-config-unavailable'
-  | 'authorization-requirement-invalid';
+  | 'authorization-requirement-invalid'
+  | 'tenant-kind-config-unavailable'
+  | 'tenant-kind-requires-multi-tenancy';
 
 /** Structured policy validation issue. */
 export interface ResourcePolicyValidationIssue {
@@ -183,6 +212,20 @@ export type OwnerPolicyCreateMode = 'stamp' | 'require' | 'forbid';
 export interface OwnerPolicyOptions {
   userField: string;
   create?: OwnerPolicyCreateMode;
+  /** Reject changes to the owner field after create. Defaults to true. */
+  immutable?: boolean;
+}
+
+/** Options for trusted Guardian user/membership attribution. */
+export interface GuardianActorPolicyOptions {
+  /** App-table field referencing the canonical Guardian user anchor. */
+  userField: string;
+  /** App-table field referencing the canonical Guardian membership anchor. */
+  membershipField?: string;
+  /** Create behavior. `stamp` is the secure default. */
+  create?: OwnerPolicyCreateMode;
+  /** Reject changes to either reference after create. Defaults to true. */
+  immutable?: boolean;
 }
 
 /** Object-form metadata requirement for one trusted user property. */

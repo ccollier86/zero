@@ -173,7 +173,9 @@ export function tenantSyncMutationRecoveryError(): SyncTenantDataPlaneError {
 function validCursors(value: SyncSubscribeMessage['cursors']): boolean {
   if (value === undefined) return true;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  if (Object.keys(value).some((key) => key !== 'default' && key !== 'tenant')) {
+  if (Object.keys(value).some(
+    (key) => key !== 'default' && key !== 'system' && key !== 'tenant',
+  )) {
     return false;
   }
   return Object.values(value).every((cursor) => cursor === undefined || (

@@ -66,7 +66,11 @@ function TenantCreationFormScope({
         ...(continuation ? { continuation } : {}),
       });
       if (!result) throw new Error(`Failed to create ${term}`);
-      if (mounted.current) onSuccess?.();
+      // A successful tenant replacement deliberately unmounts the previous
+      // authorization subtree while the new sync baseline is established.
+      // The completion callback owns post-flow routing, so it must survive
+      // that expected unmount; only local state writes remain mount-guarded.
+      onSuccess?.();
     } catch (cause) {
       reportAuthUiError('createTenant', cause);
       if (mounted.current) {
@@ -78,7 +82,11 @@ function TenantCreationFormScope({
   }
 
   return (
-    <form onSubmit={handleSubmit} className={cn('space-y-4', className)} aria-busy={submitting}>
+    <form
+      onSubmit={handleSubmit}
+      className={cn('space-y-4', className)}
+      aria-busy={submitting}
+    >
       <AuthHeader
         title={`Create your ${term}`}
         description={`You will become the protected owner of this ${term}.`}
@@ -117,16 +125,26 @@ function TenantCreationFormScope({
           {error}
         </p>
       )}
-      <Button type="submit" className="w-full" disabled={submitting || !name.trim()}>
+      <Button
+        type="submit"
+        className="w-full"
+        disabled={submitting || !name.trim()}
+      >
         {submitting && (
           <AnimateIcon animate loop>
             <Loader size={16} />
           </AnimateIcon>
         )}
-        {submitting ? 'Creating…' : `Create ${term}`}
+        {submitting ? 'Creating and preparing…' : `Create ${term}`}
       </Button>
       {onBack && (
-        <Button type="button" variant="outline" className="w-full" onClick={onBack} disabled={submitting}>
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full"
+          onClick={onBack}
+          disabled={submitting}
+        >
           Back to sign in
         </Button>
       )}

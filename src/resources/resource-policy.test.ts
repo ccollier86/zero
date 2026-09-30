@@ -19,6 +19,7 @@ import {
   authenticatedOnly,
   customPolicy,
   evaluateResourcePolicy,
+  guardianActorPolicy,
   allowsPublicAction,
   getPolicyMetadataKeys,
   getPolicyOwnerFields,
@@ -28,6 +29,7 @@ import {
   publicReadUserWrite,
   readOnly,
   requiresAuthenticatedUser,
+  tenantKindPolicy,
   validateResourcePolicy,
 } from './resource-policy';
 import { resourcePolicyAdmitsCredential } from './resource-policy-inspection';
@@ -146,6 +148,165 @@ describe('resource policy core', () => {
       'create-forbidden',
       403
     );
+    await expectDenied(
+      policy,
+      context({
+        action: 'update',
+        user,
+        row: { owner_id: 'u_1' },
+        input: { owner_id: 'u_2' },
+      }),
+      'owner-input-mismatch',
+      403,
+    );
+    await expectAllowed(
+      ownerPolicy({ userField: 'owner_id', immutable: false }),
+      context({
+        action: 'update',
+        user,
+        row: { owner_id: 'u_1' },
+        input: { owner_id: 'u_2' },
+      }),
+    );
+  });
+
+  test('Guardian actor policy stamps and protects live user and membership references', async () => {
+    const resolved = resolveAuthBehaviorConfig({
+      tenancy: 'multi',
+      authorization: {
+        mode: 'advanced',
+        permissions: {
+          'tickets:read': { label: 'Read tickets' },
+        },
+        roles: {
+          agent: { permissions: ['tickets:read'] },
+        },
+      },
+    });
+    const kernel = createAuthorizationKernel(resolved);
+    const subject = {
+      platformRole: 'user',
+      properties: {},
+      authorization: {
+        tenancy: 'multi' as const,
+        mode: 'advanced' as const,
+        scopeKind: 'tenant' as const,
+        scopeId: 'tenant_1',
+        tenantId: 'tenant_1',
+        membershipId: 'membership_1',
+        roles: ['agent'],
+        permissions: ['tickets:read'],
+        revision: 'tenant:tenant_1:membership_1:1',
+      },
+    };
+    const authorization = { kernel, subject, tenantKind: 'organization' as const };
+    const policy = guardianActorPolicy({
+      userField: 'created_by_user_id',
+      membershipField: 'assigned_membership_id',
+    });
+
+    expect(validateResourcePolicy(policy, { authConfig: resolved })).toEqual([]);
+    expect(getPolicyOwnerFields(policy)).toEqual([
+      'created_by_user_id',
+      'assigned_membership_id',
+    ]);
+    expect(Object.isFrozen(policy.diagnostics?.ownerFields)).toBe(true);
+
+    const list = await evaluateResourcePolicy(policy, context({
+      action: 'list',
+      authConfig: resolved,
+      authorization,
+    }));
+    expect(list).toMatchObject({
+      allowed: true,
+      constraints: [
+        { field: 'created_by_user_id', operator: 'eq', value: 'u_1' },
+        { field: 'assigned_membership_id', operator: 'eq', value: 'membership_1' },
+      ],
+    });
+
+    const create = await evaluateResourcePolicy(policy, context({
+      action: 'create',
+      authConfig: resolved,
+      authorization,
+      input: {
+        title: 'Investigate',
+        created_by_user_id: 'attacker',
+        assigned_membership_id: 'attacker_membership',
+      },
+    }));
+    expect(create).toMatchObject({
+      allowed: true,
+      stampedInput: {
+        title: 'Investigate',
+        created_by_user_id: 'u_1',
+        assigned_membership_id: 'membership_1',
+      },
+    });
+
+    await expectAllowed(policy, context({
+      action: 'update',
+      authConfig: resolved,
+      authorization,
+      row: {
+        created_by_user_id: 'u_1',
+        assigned_membership_id: 'membership_1',
+      },
+      input: { title: 'Resolved' },
+    }));
+    await expectDenied(policy, context({
+      action: 'update',
+      authConfig: resolved,
+      authorization,
+      row: {
+        created_by_user_id: 'u_1',
+        assigned_membership_id: 'membership_1',
+      },
+      input: { assigned_membership_id: 'membership_2' },
+    }), 'guardian-reference-immutable', 403);
+    await expectDenied(policy, context({
+      action: 'get',
+      authConfig: resolved,
+      authorization,
+      row: {
+        created_by_user_id: 'u_2',
+        assigned_membership_id: 'membership_1',
+      },
+    }), 'guardian-user-mismatch', 403);
+    await expectDenied(policy, context({
+      action: 'get',
+      authConfig: resolved,
+      authorization,
+      row: {
+        created_by_user_id: 'u_1',
+        assigned_membership_id: 'membership_2',
+      },
+    }), 'guardian-membership-mismatch', 403);
+    await expectDenied(policy, context({
+      action: 'get',
+      authConfig: resolved,
+      authorization: { kernel, subject: { ...subject, authorization: null } },
+    }), 'tenant-membership-required', 403);
+    await expectDenied(policy, context({
+      action: 'get',
+      authConfig: resolved,
+      authorization: null,
+    }), 'authorization-unavailable', 503);
+
+    const required = guardianActorPolicy({
+      userField: 'created_by_user_id',
+      membershipField: 'assigned_membership_id',
+      create: 'require',
+    });
+    await expectDenied(required, context({
+      action: 'create',
+      authConfig: resolved,
+      authorization,
+      input: {
+        created_by_user_id: 'u_1',
+        assigned_membership_id: 'membership_2',
+      },
+    }), 'guardian-membership-mismatch', 403);
   });
 
   test('metadata policy validates trusted user properties and matches values', async () => {
@@ -251,6 +412,83 @@ describe('resource policy core', () => {
     }]);
   });
 
+  test('tenant-kind policy admits only a live server-resolved tenant purpose', async () => {
+    const resolved = resolveAuthBehaviorConfig({
+      tenancy: 'multi',
+      authorization: {
+        mode: 'advanced',
+        permissions: {
+          'tickets:read': { label: 'Read tickets' },
+        },
+        roles: {
+          agent: { permissions: ['tickets:read'] },
+        },
+      },
+    });
+    const kernel = createAuthorizationKernel(resolved);
+    const subject = {
+      platformRole: 'user',
+      properties: {},
+      authorization: {
+        tenancy: 'multi' as const,
+        mode: 'advanced' as const,
+        scopeKind: 'tenant' as const,
+        scopeId: 'tenant_1',
+        tenantId: 'tenant_1',
+        membershipId: 'membership_1',
+        roles: ['agent'],
+        permissions: ['tickets:read'],
+        revision: 'tenant:tenant_1:membership_1:1',
+      },
+    };
+    const customerWorkspace = tenantKindPolicy('organization');
+
+    expect(validateResourcePolicy(customerWorkspace, { authConfig: resolved })).toEqual([]);
+    expect(validateResourcePolicy(customerWorkspace, { authConfig })).toMatchObject([{
+      code: 'tenant-kind-requires-multi-tenancy',
+      path: 'tenantKind',
+    }]);
+    expect(validateResourcePolicy(customerWorkspace, {
+      authConfig: {
+        userProperties: resolved.userProperties,
+        authorization: resolved.authorization,
+      },
+    })).toMatchObject([{
+      code: 'tenant-kind-config-unavailable',
+      path: 'tenantKind',
+    }]);
+    await expectAllowed(customerWorkspace, context({
+      authConfig: resolved,
+      authorization: { kernel, subject, tenantKind: 'organization' },
+    }));
+    await expectDenied(customerWorkspace, context({
+      authConfig: resolved,
+      authorization: { kernel, subject, tenantKind: 'administration' },
+    }), 'authorization-denied', 403);
+    await expectDenied(customerWorkspace, context({
+      authConfig: resolved,
+      authorization: {
+        kernel,
+        tenantKind: 'organization',
+        subject: { ...subject, authorization: null },
+      },
+    }), 'authorization-denied', 403);
+    await expectDenied(customerWorkspace, context({
+      authConfig: resolved,
+      user: null,
+      authorization: { kernel, subject: null, tenantKind: null },
+    }), 'unauthorized', 401);
+    await expectDenied(customerWorkspace, context({
+      authConfig: resolved,
+      authorization: null,
+    }), 'authorization-unavailable', 503);
+    expect(customerWorkspace.diagnostics?.tenantKinds).toEqual(['organization']);
+    expect(Object.isFrozen(customerWorkspace.diagnostics?.tenantKinds)).toBe(true);
+    expect(() => tenantKindPolicy('invalid' as 'organization')).toThrow(
+      'Unknown tenant kind "invalid"',
+    );
+  });
+
   test('anyOf composes admin overrides and constrained owner branches', async () => {
     const policy = anyOf(ownerPolicy({ userField: 'owner_id' }), adminOnly());
 
@@ -351,6 +589,21 @@ describe('resource policy core', () => {
       code: 'composite-policy-empty',
       path: 'allOf',
     }]);
+
+    expect(validateResourcePolicy(guardianActorPolicy({
+      userField: '',
+      membershipField: '',
+    }), { authConfig })).toMatchObject([
+      { code: 'guardian-actor-field-invalid', path: 'guardianActor.userField' },
+      { code: 'guardian-actor-field-invalid', path: 'guardianActor.membershipField' },
+    ]);
+    expect(validateResourcePolicy(guardianActorPolicy({
+      userField: 'actor_id',
+      membershipField: 'actor_id',
+    }), { authConfig })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'guardian-actor-fields-conflict' }),
+      expect.objectContaining({ code: 'guardian-actor-requires-multi-tenancy' }),
+    ]));
   });
 
   test('policy inspection exposes static metadata without evaluation', () => {

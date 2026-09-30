@@ -202,19 +202,24 @@ const storage = createPlatformStorage({
 });
 ```
 
-Then `createApp()` wires subsystems from that shared boundary:
+Then `createApp()` wires each subsystem to its owned plane. The original
+single-handle sketch has been superseded by the mandatory system/application
+split:
 
 ```ts
-const db = new ReactiveDB({
-  database: storage.db.raw,
-  statements: storage.db.statements,
-  transactions: storage.db.transactions,
+const applicationDB = createReactiveDB({
+  database: applicationStorage.raw,
+  ringBufferDepth,
+});
+const systemDB = createReactiveDB({
+  database: systemStorage.raw,
   ringBufferDepth,
 });
 
-const state = new StateManager(db);
-const tokens = new PlatformTokenStore(db);
-const auth = new UserStore(db);
+const state = new StateManager(systemDB);
+const tokens = new PlatformTokenStore(systemDB);
+const auth = new UserStore(systemDB);
+// Resource CRUD and the default Sync plane use applicationDB.
 const kv = storage.kv;
 const vector = createVectorService(storage.vector);
 ```
@@ -492,8 +497,9 @@ createSyncPlugin({
 
 Target behavior:
 
-- `createApp()` creates platform storage first.
-- `createSyncPlugin()` receives the shared database handle.
+- `createApp()` creates the application and system SQL services first.
+- `createSyncPlugin()` receives the application database handle and, when
+  Guardian is enabled, the separate system-plane projection handle.
 - Sync plugin no longer creates the root SQLite connection by itself when used
   from `createApp()`.
 - Standalone sync usage still works by letting ReactiveDB create its own
@@ -503,13 +509,17 @@ Target behavior:
 
 `createApp()` should become the canonical composition owner:
 
-1. Resolve storage config.
-2. Create `PlatformStorageService`.
-3. Run migrations/schema setup against `storage.db.raw`.
-4. Create `ReactiveDB` from `storage.db.raw`.
-5. Mount sync, auth, tokens, storage, workflows, resources, notifications, AI,
-   vector, and observability around the shared services.
-6. Close services in reverse order on stop.
+1. Resolve the application `db` and Zero-owned `systemDb` configs.
+2. Create separate platform SQL services and ReactiveDB runtimes for both
+   planes.
+3. Run Zero migrations and built-in service schema setup only against the
+   system plane; install application tables and ID-only Guardian anchors only
+   where their declarative schema requires them.
+4. Mount application Sync/resources against `db`, system projections and
+   built-in services against `systemDb`, and actor-backed tenant planes through
+   Fabric when configured.
+5. Close actor-owned databases before the authority/system plane, with pinned
+   planes otherwise closing in reverse dependency order.
 
 Generated apps should default to durable local storage:
 
@@ -809,7 +819,7 @@ the detailed phased work plan and KV/cache file layout.
 
 ### Phase 1: Port SQL Persistence Primitive
 
-Status: implemented on this branch as `src/persistence` with the
+Status: implemented in the current package as `src/persistence` with the
 `@zero/framework/persistence` export. The follow-up runtime wiring is also in
 place: `createApp()` creates one shared SQLite service, migrations run on that
 handle, ReactiveDB consumes it, and app-owned backend routes can inspect/use it
@@ -826,7 +836,7 @@ through `zero.sql`.
 
 ### Phase 2: Refactor ReactiveDB Onto SQL Storage
 
-Status: implemented on this branch for SQL. ReactiveDB accepts injected
+Status: implemented in the current package for SQL. ReactiveDB accepts injected
 `PlatformSQLiteService` and raw `Database` handles, routes standalone legacy
 configs through `createPlatformSQLiteService`, and makes disposal ownership
 explicit.
@@ -841,7 +851,7 @@ explicit.
 
 ### Phase 2.5: Wire `createApp()` To Shared SQL
 
-Status: implemented on this branch for SQL. `createApp()` constructs the
+Status: implemented in the current package for SQL. `createApp()` constructs the
 platform SQLite service before migrations and plugin composition, passes it
 into the sync plugin, and exposes the same service as `zero.sql`/`zero.sqlite`
 for app-owned backend routes. KV/cache and vector still have their own later
@@ -867,13 +877,13 @@ storage-mode alignment work.
 
 ### Phase 4: Refactor App Factory And Sync Plugin
 
-- Create `PlatformStorageService` before sync/auth/resources.
-- Pass the shared DB handle into ReactiveDB.
+- Create the application and system SQL services before sync/auth/resources.
+- Pass each plane's owned handle into its corresponding ReactiveDB.
 - Mount the KV/cache plugin early enough that backend routes, workflows,
   scheduler jobs, AI helpers, auth throttles, and app code can use it.
-- Ensure `StateManager`, auth stores, token stores, workflows, resources, and
-  storage-related DB tables use the shared ReactiveDB/platform DB path where
-  SQL is the right persistence layer.
+- Keep `StateManager`, auth/token stores, workflows, notifications, rooms, and
+  storage metadata in `systemDb`; keep application Resources in `db` or their
+  trusted Fabric tenant plane. These planes are never the same handle or file.
 - Change generated app defaults from ephemeral memory to durable hot storage.
 - Keep standalone `createSyncPlugin()` compatibility.
 

@@ -43,6 +43,8 @@ interface AdminUserProvisioningDependencies {
   assertCurrentProfile: () => void;
   getUserById: (userId: string) => UserRecord | null;
   getAuthGeneration: (userId: string) => number;
+  /** Publish a preserved/finalized identity in the marker-retirement commit. */
+  activateIdentityProjection: (userId: string) => void;
   auditService: AuthAuditService | null;
   emitCode?: AuthPlatformCodeEmitter;
 }
@@ -256,6 +258,7 @@ export class AdminUserProvisioningStore {
         row.user_id,
         row.lease_owner_hash,
       ).changes !== 1) throw this.invariant('marker-finalization-lost');
+      this.dependencies.activateIdentityProjection(row.user_id);
     });
   }
 
@@ -312,6 +315,7 @@ export class AdminUserProvisioningStore {
     }
     if (!this.adminUserStateIsPristine(row, user)) {
       this.retireMarker(row);
+      this.dependencies.activateIdentityProjection(row.user_id);
       return false;
     }
     if (!this.db.delete('users', row.user_id)) {

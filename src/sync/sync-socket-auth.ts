@@ -26,10 +26,15 @@ interface SyncSocketAuthRuntimeOptions {
   requireDurableAuthority?: boolean;
   /** Actor-backed tenant reads require a synchronously comparable policy snapshot. */
   requireComparableReadAuthority?: boolean;
-  /** Revalidate managed ephemeral subscriptions after an authority revision. */
-  onAuthorityInvalidated?: () => void | Promise<void>;
+  /** Synchronously schedule managed ephemeral revalidation after a revision. */
+  onAuthorityInvalidated?: () => void;
   /** Release socket-owned capabilities before an invalidated socket is closed. */
   onSocketInvalidated?: (socket: ServerWebSocket<SyncSocketData>) => void;
+  /** Observe unexpected background revalidation failures before fail-closed cleanup. */
+  onRevalidationFailure?: (
+    error: unknown,
+    trigger: 'authority-revision' | 'periodic',
+  ) => void;
 }
 
 /** Create the per-plugin lifecycle owner for socket authentication. */

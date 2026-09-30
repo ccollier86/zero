@@ -11,6 +11,7 @@ import {
   compileAccessRequirement,
   type AccessRequirement,
 } from '../auth/authorization-kernel';
+import type { TenantKind } from '../auth/tenancy/tenancy-types';
 import {
   allowResourcePolicyDecision,
   combineAnyOfConstraints,
@@ -23,6 +24,7 @@ import { evaluateResourcePolicy } from './resource-policy-evaluator';
 import type {
   CustomResourcePolicyCallback,
   CustomResourcePolicyOptions,
+  GuardianActorPolicyOptions,
   OwnerPolicyOptions,
   ResourceDataConstraint,
   ResourceMetadataRequirement,
@@ -36,8 +38,10 @@ import type {
 import {
   validateCompositePolicy,
   validateAuthorizationPolicy,
+  validateGuardianActorPolicy,
   validateMetadataPolicy,
   validateResourcePolicy,
+  validateTenantKindPolicy,
 } from './resource-policy-validation';
 import { warnResourcePolicy } from './resource-observability';
 
@@ -99,6 +103,7 @@ export function publicReadUserWrite(): ResourcePolicy {
 export function ownerPolicy(options: OwnerPolicyOptions): ResourcePolicy {
   const createMode = options.create ?? 'stamp';
   const userField = options.userField;
+  const immutable = options.immutable ?? true;
 
   return createResourcePolicy(
     'owner',
@@ -159,6 +164,20 @@ export function ownerPolicy(options: OwnerPolicyOptions): ResourcePolicy {
         );
       }
 
+      if (
+        action === 'update'
+        && immutable
+        && hasOwn(input, userField)
+        && input?.[userField] !== row[userField]
+      ) {
+        return denyResourcePolicyDecision(
+          'owner-input-mismatch',
+          403,
+          'Owner field is immutable',
+          { field: userField },
+        );
+      }
+
       return allowResourcePolicyDecision();
     },
     () => {
@@ -173,8 +192,151 @@ export function ownerPolicy(options: OwnerPolicyOptions): ResourcePolicy {
     {
       ownerField: userField,
       ownerCreateMode: createMode,
+      ownerImmutable: immutable,
       authenticatedActions: ['list', 'get', 'create', 'update', 'delete'],
     }
+  );
+}
+
+/**
+ * Bind app data to the current server-resolved Guardian actor.
+ *
+ * Create stamping ignores caller-supplied identity values. Membership values
+ * come only from the live tenant authorization subject, while user values come
+ * from the authenticated Resource policy principal. The referenced anchor
+ * rows provide relational integrity; this policy provides authorization.
+ */
+export function guardianActorPolicy(options: GuardianActorPolicyOptions): ResourcePolicy {
+  const createMode = options.create ?? 'stamp';
+  const immutable = options.immutable ?? true;
+  const userField = options.userField;
+  const membershipField = options.membershipField;
+  const validationOptions = Object.freeze({
+    userField,
+    ...(membershipField === undefined ? {} : { membershipField }),
+    create: createMode,
+    immutable,
+  });
+  const ownerFields = Object.freeze([
+    userField,
+    ...(membershipField === undefined ? [] : [membershipField]),
+  ]);
+
+  return createResourcePolicy(
+    'guardian-actor',
+    ({ action, user, row, input, authorization }) => {
+      if (!user) return denyResourcePolicyDecision('unauthorized', 401, 'Unauthorized');
+
+      let membershipId: string | undefined;
+      if (membershipField !== undefined) {
+        if (!authorization) {
+          return denyResourcePolicyDecision(
+            'authorization-unavailable',
+            503,
+            'Authorization services are unavailable',
+          );
+        }
+        const scope = authorization.subject?.authorization;
+        if (
+          scope?.scopeKind !== 'tenant'
+          || !scope.tenantId
+          || !scope.membershipId
+          || scope.scopeId !== scope.tenantId
+        ) {
+          return denyResourcePolicyDecision(
+            'tenant-membership-required',
+            authorization.subject ? 403 : 401,
+            authorization.subject ? 'Active tenant membership is required' : 'Unauthorized',
+          );
+        }
+        membershipId = scope.membershipId;
+      }
+
+      const referenceValues: Array<readonly [string, string]> = [
+        [userField, user.userId],
+        ...(membershipField !== undefined && membershipId !== undefined
+          ? [[membershipField, membershipId] as const]
+          : []),
+      ];
+
+      if (action === 'list') {
+        return allowResourcePolicyDecision({
+          constraints: referenceValues.map(([field, value]) => (
+            fieldEqualsConstraint(field, value)
+          )),
+        });
+      }
+
+      if (action === 'create') {
+        if (createMode === 'forbid') {
+          return denyResourcePolicyDecision(
+            'create-forbidden',
+            403,
+            'Guardian actor policy does not allow create',
+          );
+        }
+        if (createMode === 'require') {
+          const mismatch = referenceValues.find(([field, value]) => input?.[field] !== value);
+          if (!mismatch) return allowResourcePolicyDecision();
+          return denyResourcePolicyDecision(
+            mismatch[0] === userField ? 'guardian-user-mismatch' : 'guardian-membership-mismatch',
+            403,
+            'Guardian actor reference does not match the active principal',
+            { field: mismatch[0] },
+          );
+        }
+        return allowResourcePolicyDecision({
+          stampedInput: Object.fromEntries([
+            ...Object.entries(input ?? {}),
+            ...referenceValues,
+          ]),
+        });
+      }
+
+      if (!row) {
+        return denyResourcePolicyDecision(
+          'guardian-actor-row-required',
+          403,
+          'Loaded row is required for Guardian actor policy',
+          { fields: ownerFields },
+        );
+      }
+
+      const rowMismatch = referenceValues.find(([field, value]) => row[field] !== value);
+      if (rowMismatch) {
+        return denyResourcePolicyDecision(
+          rowMismatch[0] === userField ? 'guardian-user-mismatch' : 'guardian-membership-mismatch',
+          403,
+          'Guardian actor does not own this resource',
+          { field: rowMismatch[0] },
+        );
+      }
+
+      if (action === 'update' && immutable) {
+        const changed = referenceValues.find(([field]) => (
+          hasOwn(input, field) && input?.[field] !== row[field]
+        ));
+        if (changed) {
+          return denyResourcePolicyDecision(
+            'guardian-reference-immutable',
+            403,
+            'Guardian actor references are immutable',
+            { field: changed[0] },
+          );
+        }
+      }
+
+      return allowResourcePolicyDecision();
+    },
+    ({ authConfig }) => validateGuardianActorPolicy(validationOptions, authConfig),
+    {
+      ownerFields,
+      ownerCreateMode: createMode,
+      ownerImmutable: immutable,
+      guardianUserField: userField,
+      guardianMembershipField: membershipField,
+      authenticatedActions: ['list', 'get', 'create', 'update', 'delete'],
+    },
   );
 }
 
@@ -256,6 +418,60 @@ export function authorizationPolicy(requirement: AccessRequirement): ResourcePol
       ...(authenticated
         ? { authenticatedActions: ['list', 'get', 'create', 'update', 'delete'] }
         : { publicActions: ['list', 'get', 'create', 'update', 'delete'] }),
+    },
+  );
+}
+
+/**
+ * Admit only live tenant scopes whose server-owned purpose matches one of the
+ * declared kinds. The tenant kind comes from durable Guardian authority, never
+ * from a request header, body, resource row, or bearer claim.
+ */
+export function tenantKindPolicy(
+  tenantKind: TenantKind,
+  ...additionalTenantKinds: TenantKind[]
+): ResourcePolicy {
+  const tenantKinds = normalizeTenantKinds([tenantKind, ...additionalTenantKinds]);
+
+  return createResourcePolicy(
+    'tenant-kind',
+    ({ authorization }) => {
+      if (!authorization) {
+        return denyResourcePolicyDecision(
+          'authorization-unavailable',
+          503,
+          'Authorization services are unavailable',
+        );
+      }
+      if (!authorization.subject) {
+        return denyResourcePolicyDecision('unauthorized', 401, 'Unauthorized');
+      }
+      const scope = authorization.subject.authorization;
+      if (scope?.scopeKind !== 'tenant' || !scope.tenantId || !scope.membershipId) {
+        return denyResourcePolicyDecision(
+          'authorization-denied',
+          403,
+          'Forbidden',
+          { reason: 'tenant-scope-required' },
+        );
+      }
+      if (!authorization.tenantKind || !tenantKinds.includes(authorization.tenantKind)) {
+        return denyResourcePolicyDecision(
+          'authorization-denied',
+          403,
+          'Forbidden',
+          {
+            tenantKind: authorization.tenantKind ?? null,
+            requiredTenantKinds: tenantKinds,
+          },
+        );
+      }
+      return allowResourcePolicyDecision();
+    },
+    ({ authConfig }) => validateTenantKindPolicy(authConfig),
+    {
+      tenantKinds,
+      authenticatedActions: ['list', 'get', 'create', 'update', 'delete'],
     },
   );
 }
@@ -395,14 +611,33 @@ function createResourcePolicy(
     ...(diagnostics.metadataKeys ? {
       metadataKeys: Object.freeze([...diagnostics.metadataKeys]),
     } : {}),
+    ...(diagnostics.ownerFields ? {
+      ownerFields: Object.freeze([...diagnostics.ownerFields]),
+    } : {}),
     ...(diagnostics.publicActions ? {
       publicActions: Object.freeze([...diagnostics.publicActions]),
     } : {}),
     ...(diagnostics.authenticatedActions ? {
       authenticatedActions: Object.freeze([...diagnostics.authenticatedActions]),
     } : {}),
+    ...(diagnostics.tenantKinds ? {
+      tenantKinds: Object.freeze([...diagnostics.tenantKinds]),
+    } : {}),
   }) : undefined;
   return Object.freeze({ kind, evaluate, validate, diagnostics: frozenDiagnostics });
+}
+
+function normalizeTenantKinds(tenantKinds: readonly TenantKind[]): readonly TenantKind[] {
+  const normalized = [...new Set(tenantKinds)];
+  for (const tenantKind of normalized) {
+    if (tenantKind !== 'organization' && tenantKind !== 'administration') {
+      throw new Error(
+        `[resources] Unknown tenant kind "${String(tenantKind)}". `
+        + 'Expected "organization" or "administration".',
+      );
+    }
+  }
+  return Object.freeze(normalized);
 }
 
 function freezeMetadataRequirements(
@@ -493,4 +728,8 @@ function isPolicyScalarArray(value: unknown): value is readonly ResourcePolicySc
 
 function serializePolicyScalar(value: ResourcePolicyScalar): string {
   return String(value);
+}
+
+function hasOwn(value: Record<string, unknown> | undefined, field: string): boolean {
+  return value !== undefined && Object.prototype.hasOwnProperty.call(value, field);
 }

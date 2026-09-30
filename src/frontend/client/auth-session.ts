@@ -112,6 +112,10 @@ export class AuthSessionController {
     return this.context.error;
   }
 
+  get authenticationContinuation(): AuthCompletionResult | null {
+    return this.context.authenticationContinuation;
+  }
+
   get sessionTransition(): AuthSessionTransitionState {
     return this.context.sessionTransition;
   }
@@ -159,6 +163,10 @@ export class AuthSessionController {
     this.send('auth.error', { error });
   }
 
+  clearAuthenticationContinuation(): void {
+    this.send('auth.continuation.clear');
+  }
+
   /** Commit an ordinary login/registration/MFA completion under the tab lock. */
   async completeAuthentication(
     data: AuthCompletionResult,
@@ -168,20 +176,37 @@ export class AuthSessionController {
       // Reconciliation while waiting for the cross-tab lock may have adopted
       // a newer session. Refuse to let this older network result replace it.
       assertRequestCurrent();
-      this.beginScopeTransition('authentication');
+      // An identity-only continuation does not establish an authorization
+      // scope. When the browser is already anonymous, keep the calling auth
+      // form mounted so it can render the one-time MFA/tenant continuation;
+      // there is no credential, Sync plane, or cached tenant data to purge.
+      if (!isAuthSessionResult(data) && !this.hasAuthorizationScope()) {
+        this.send('auth.continuation', { result: data });
+        return data;
+      }
+      let transitionStarted = false;
       let committed = false;
       try {
+        this.beginScopeTransition('authentication');
+        transitionStarted = true;
         if (isAuthSessionResult(data)) {
           this.installSession(data, 'session', true);
         } else {
           this.commitLogout();
+          // The authorization subtree remounts after the purge barrier. Keep
+          // the one-time identity result in memory so the new form instance
+          // can continue MFA/tenant binding without replaying credentials.
+          this.send('auth.continuation', { result: data });
         }
         this.markScopeTransitionCommitted();
         committed = true;
         await this.completeScopeTransition();
         return data;
       } catch (error) {
-        if (!committed) await this.abortScopeTransition();
+        if (!committed && transitionStarted) await this.abortScopeTransition();
+        if (!committed) {
+          this.send('auth.error', { error: 'Unable to complete authentication' });
+        }
         throw error;
       }
     });
@@ -235,7 +260,10 @@ export class AuthSessionController {
     });
   }
 
-  async logout(assertStartingScopeCurrent: () => void = () => {}): Promise<void> {
+  async logout(
+    assertStartingScopeCurrent: () => void = () => {},
+    consumeStartingScope: () => void = assertStartingScopeCurrent,
+  ): Promise<void> {
     await this.runCredentialOperation(async () => {
       // A retained logout intent must not survive adoption of another tab's
       // replacement account while it waited for the credential lock.
@@ -248,27 +276,15 @@ export class AuthSessionController {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(refreshToken ? { refreshToken } : {}),
       }).catch(() => undefined);
-
-      this.beginScopeTransition('logout');
-      this.commitLogout();
-      this.markScopeTransitionCommitted();
-      await this.completeScopeTransition();
+      assertStartingScopeCurrent();
+      await this.commitLogoutWithScopeBarrier('logout', consumeStartingScope);
     });
   }
 
   /** Clear local state after a rejected or no-longer-trusted session. */
   expireSession(): void {
     const expectedRevision = this.credentialRevision;
-    this.send('auth.logout');
-    void this.coordinator.runExclusive(async () => {
-      const current = this.coordinator.readCredential();
-      if ((current?.revision ?? 0) !== expectedRevision) {
-        // A newer signal will reconcile the replacement session. Do not mark
-        // its revision observed here before that purge/restore barrier runs.
-        return;
-      }
-      this.commitLogout();
-    }).catch(() => undefined);
+    void this.expireIfRevision(expectedRevision).catch(() => undefined);
   }
 
   /** Expire only if the credential observed by a request is still current. */
@@ -460,6 +476,16 @@ export class AuthSessionController {
     return this.store.getSnapshot().context as AuthStoreContext;
   }
 
+  private hasAuthorizationScope(): boolean {
+    return Boolean(
+      this.scopeId
+      || this.context.user
+      || this.context.accessToken
+      || this.context.refreshToken
+      || this.context.activeTenant,
+    );
+  }
+
   private send(type: string, payload: Record<string, unknown> = {}): void {
     sendAuthStoreEvent(this.store, type, payload);
   }
@@ -560,8 +586,7 @@ export class AuthSessionController {
         // The rejected proof belongs to the request's own starting scope.
         // Let its caller consume that scope before this intentional logout so
         // a final stale-response assertion does not reject the useful 401.
-        consumeStartingScope();
-        this.commitLogout();
+        await this.commitLogoutWithScopeBarrier('logout', consumeStartingScope);
         return false;
       }
 
@@ -617,9 +642,38 @@ export class AuthSessionController {
   ): Promise<void> {
     await this.runCredentialOperation(async () => {
       if (this.credentialRevision !== expectedRevision) return;
-      consumeStartingScope();
-      this.commitLogout();
+      await this.commitLogoutWithScopeBarrier('logout', consumeStartingScope);
     });
+  }
+
+  /** Commit one logout tombstone behind the same purge/reconnect barrier. */
+  private async commitLogoutWithScopeBarrier(
+    operation: AuthSessionTransitionOperation,
+    consumeStartingScope: () => void,
+  ): Promise<void> {
+    consumeStartingScope();
+    // Replacement-session reconciliation already owns the barrier. A refresh
+    // rejection inside it must update the committed credential without trying
+    // to open a nested transition; the outer operation completes the purge.
+    if (this.transitionOperation
+      && this.context.sessionTransition.phase !== 'recovery-required') {
+      this.commitLogout();
+      return;
+    }
+
+    let transitionStarted = false;
+    let committed = false;
+    try {
+      this.beginScopeTransition(operation);
+      transitionStarted = true;
+      this.commitLogout();
+      this.markScopeTransitionCommitted();
+      committed = true;
+      await this.completeScopeTransition();
+    } catch (cause) {
+      if (transitionStarted && !committed) await this.abortScopeTransition();
+      throw cause;
+    }
   }
 
   private adoptStoredCredential(): void {

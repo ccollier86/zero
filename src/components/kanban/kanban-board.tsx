@@ -73,6 +73,8 @@ export interface KanbanBoardProps<TColumn, TItem> {
   onItemMove?: (move: KanbanItemMove<TColumn, TItem>) => void;
   onItemClick?: (item: TItem, context: KanbanRenderContext<TColumn, TItem>) => void;
   renderItem?: (context: KanbanRenderContext<TColumn, TItem>) => React.ReactNode;
+  /** Render controls beside, rather than inside, the keyboard drag activator. */
+  renderItemActions?: (context: KanbanRenderContext<TColumn, TItem>) => React.ReactNode;
   renderColumnHeader?: (context: { column: TColumn; columnId: string; itemCount: number }) => React.ReactNode;
   getColumnAccentClassName?: (column: TColumn) => string | undefined;
   getColumnClassName?: (column: TColumn) => string | undefined;
@@ -85,6 +87,9 @@ export interface KanbanBoardProps<TColumn, TItem> {
   getItemAssigneeAvatar?: (item: TItem) => string | undefined;
   getItemAssigneeFallback?: (item: TItem) => string | undefined;
   emptyColumnText?: React.ReactNode;
+  /** Disable drag sensors without dimming or blocking readable board content. */
+  dragEnabled?: boolean;
+  /** Disable every board interaction and apply unavailable-state styling. */
   disabled?: boolean;
   className?: string;
   boardClassName?: string;
@@ -133,6 +138,7 @@ export function KanbanBoard<TColumn, TItem>({
   onItemMove,
   onItemClick,
   renderItem,
+  renderItemActions,
   renderColumnHeader,
   getColumnAccentClassName,
   getColumnClassName,
@@ -145,6 +151,7 @@ export function KanbanBoard<TColumn, TItem>({
   getItemAssigneeAvatar,
   getItemAssigneeFallback,
   emptyColumnText = 'Drop here',
+  dragEnabled = true,
   disabled = false,
   className,
   boardClassName,
@@ -315,6 +322,8 @@ export function KanbanBoard<TColumn, TItem>({
       >
         <div
           data-slot="kanban-board"
+          aria-disabled={disabled || undefined}
+          inert={disabled ? true : undefined}
           className={cn(
             'flex min-h-[28rem] gap-3 overflow-x-auto pb-2',
             disabled && 'pointer-events-none opacity-60',
@@ -339,19 +348,29 @@ export function KanbanBoard<TColumn, TItem>({
                 <AnimatePresence initial={false}>
                   {columnItems.map((item) => {
                     const itemId = getItemId(item);
+                    const itemContext = {
+                      column,
+                      columnId,
+                      item,
+                      itemId,
+                      isDragging: activeItemId === itemId,
+                      isOverlay: false,
+                    } satisfies KanbanRenderContext<TColumn, TItem>;
                     return (
                       <SortableKanbanItem
                         key={itemId}
                         id={itemId}
                         disabled={disabled}
+                        dragEnabled={dragEnabled}
                         active={activeItemId === itemId}
                         className={getItemClassName?.(item)}
-                        onClick={() => {
+                        actions={disabled ? null : renderItemActions?.(itemContext)}
+                        onClick={onItemClick ? () => {
                           if (movedRef.current) {
                             movedRef.current = false;
                             return;
                           }
-                          onItemClick?.(item, {
+                          onItemClick(item, {
                             column,
                             columnId,
                             item,
@@ -359,15 +378,11 @@ export function KanbanBoard<TColumn, TItem>({
                             isDragging: false,
                             isOverlay: false,
                           });
-                        }}
+                        } : undefined}
                       >
                         {(isDragging) => renderKanbanItem({
-                          column,
-                          columnId,
-                          item,
-                          itemId,
+                          ...itemContext,
                           isDragging,
-                          isOverlay: false,
                         })}
                       </SortableKanbanItem>
                     );
@@ -536,8 +551,10 @@ function KanbanColumn({
 interface SortableKanbanItemProps {
   id: string;
   disabled: boolean;
+  dragEnabled: boolean;
   active: boolean;
   className?: string;
+  actions?: React.ReactNode;
   onClick?: () => void;
   children: (isDragging: boolean) => React.ReactNode;
 }
@@ -545,18 +562,21 @@ interface SortableKanbanItemProps {
 function SortableKanbanItem({
   id,
   disabled,
+  dragEnabled,
   active,
   className,
+  actions,
   onClick,
   children,
 }: SortableKanbanItemProps) {
   const {
     attributes,
     listeners,
+    setActivatorNodeRef,
     setNodeRef,
     transform,
     transition,
-  } = useSortable({ id: encodeItemId(id), disabled });
+  } = useSortable({ id: encodeItemId(id), disabled: disabled || !dragEnabled });
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -568,7 +588,7 @@ function SortableKanbanItem({
       ref={setNodeRef}
       data-slot="kanban-sortable-item"
       className={cn(
-        'cursor-grab touch-manipulation opacity-100 outline-none transition-opacity active:cursor-grabbing',
+        'relative opacity-100 transition-opacity',
         active && 'opacity-0',
         className,
       )}
@@ -578,18 +598,43 @@ function SortableKanbanItem({
       animate={{ y: 0 }}
       exit={{ y: -6 }}
       transition={{ duration: 0.16 }}
-      {...attributes}
-      tabIndex={disabled ? -1 : attributes.tabIndex ?? 0}
-      onClick={onClick}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          onClick?.();
-        }
-      }}
-      {...listeners}
     >
-      {children(active)}
+      <div
+        ref={setActivatorNodeRef}
+        data-slot="kanban-item-activator"
+        className={cn(
+          'outline-none',
+          dragEnabled && !disabled
+            ? 'cursor-grab touch-manipulation active:cursor-grabbing'
+            : 'cursor-default select-text',
+        )}
+        {...(dragEnabled && !disabled ? attributes : {})}
+        tabIndex={disabled
+          ? -1
+          : dragEnabled
+            ? attributes.tabIndex ?? 0
+            : onClick
+              ? 0
+              : undefined}
+        role={!dragEnabled && onClick ? 'button' : undefined}
+        onClick={disabled ? undefined : onClick}
+        onKeyDown={!dragEnabled && onClick && !disabled
+          ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onClick();
+              }
+            }
+          : undefined}
+        {...(dragEnabled && !disabled ? listeners : {})}
+      >
+        {children(active)}
+      </div>
+      {actions && !active ? (
+        <div data-slot="kanban-item-actions" className="absolute right-2 top-2 z-10">
+          {actions}
+        </div>
+      ) : null}
     </motion.div>
   );
 }

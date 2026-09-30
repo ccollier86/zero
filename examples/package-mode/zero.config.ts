@@ -39,6 +39,7 @@ export const config = defineZeroConfig({
     supportEmail: readEnv('APP_SUPPORT_EMAIL'),
   },
   db: resolveDatabaseConfig(),
+  systemDb: resolveSystemDatabaseConfig(),
   tables,
 
   // The generated starter stays public until ZERO_AUTH_ENABLED=true. Once
@@ -119,7 +120,7 @@ export default config;
 
 /** Resolve app database config from env while keeping hot mode as the default. */
 function resolveDatabaseConfig(): SQLiteStorageConfig {
-  const mode = resolveDatabaseMode(Bun.env.DB_MODE);
+  const mode = resolveDatabaseMode(Bun.env.DB_MODE, 'DB_MODE', 'hot');
   const path = readEnv('DB_PATH') ?? './data/app.db';
   const snapshotPath = readEnv('DB_SNAPSHOT_PATH') ?? './data/app.snapshot.db';
 
@@ -133,10 +134,31 @@ function resolveDatabaseConfig(): SQLiteStorageConfig {
   };
 }
 
-function resolveDatabaseMode(value: string | undefined): SQLiteStorageMode {
-  if (!value) return 'hot';
+/** Keep Zero/Guardian authority durable and separate from application data. */
+function resolveSystemDatabaseConfig(): SQLiteStorageConfig {
+  const mode = resolveDatabaseMode(
+    Bun.env.SYSTEM_DB_MODE,
+    'SYSTEM_DB_MODE',
+    'file',
+  );
+  const path = readEnv('SYSTEM_DB_PATH') ?? './data/zero.system.db';
+  const snapshotPath = readEnv('SYSTEM_DB_SNAPSHOT_PATH')
+    ?? './data/zero.system.snapshot.db';
+
+  if (mode === 'ephemeral') return { mode };
+  if (mode === 'file') return { mode, path };
+
+  return { mode, path, snapshotPath };
+}
+
+function resolveDatabaseMode(
+  value: string | undefined,
+  variable: string,
+  fallback: SQLiteStorageMode,
+): SQLiteStorageMode {
+  if (!value) return fallback;
   if (value === 'hot' || value === 'file' || value === 'ephemeral') return value;
-  throw new Error(`DB_MODE must be "hot", "file", or "ephemeral"; received "${value}".`);
+  throw new Error(`${variable} must be "hot", "file", or "ephemeral"; received "${value}".`);
 }
 
 function readEnv(name: string): string | undefined {

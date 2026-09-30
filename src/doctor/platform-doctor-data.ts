@@ -17,6 +17,7 @@ import {
 } from '../sync/row-identity';
 import { tableColumnDeclaresPrimaryKey } from '../resources/resource-schema';
 import type { TableSchema } from '../sync/types';
+import { resolveSQLiteStorageConfig } from '../persistence/storage-config';
 import {
   addPlatformDoctorFinding as addFinding,
   type PlatformDoctorFindingSink,
@@ -111,12 +112,16 @@ export function checkMigrations(
   resolved: ResolvedConfig,
   findings: PlatformDoctorFindingSink,
 ): void {
-  if (resolved.db.mode !== 'memory' && !resolved.migrate) {
+  const systemMode = resolved.systemDb.sqlite?.mode
+    ?? resolveSQLiteStorageConfig(resolved.systemDb).mode;
+  if (systemMode !== 'ephemeral' && !resolved.migrate) {
     findings.push({
       severity: 'warning',
       code: 'migrations.startup.disabled',
       path: 'migrate',
-      message: 'File-backed databases should run migrations on startup or through the migration CLI before deploy.',
+      message: 'The durable system database must run platform migrations on startup or through the migration CLI before deploy.',
+      hint: 'Run migrations against systemDb, not the application db plane.',
+      docs: './docs/framework/system-database.md#configuration-and-server-surface',
     });
   }
 }

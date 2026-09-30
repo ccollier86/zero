@@ -33,6 +33,7 @@ import {
   ResourceCrudService,
   type ResourceCrudRequestContext,
   type ResourceCrudResult,
+  type ResourceIdentityAnchorReadinessBarrier,
   type ResourceTenantDatabaseClientProvider,
 } from './resource-crud-service';
 import type { ResourcePolicyAuthConfig } from './resource-policy-types';
@@ -73,6 +74,8 @@ export interface ResourceCrudPluginConfig extends ResourceCrudRoutesConfig {
   getDB?: () => ReactiveDB | null;
   /** @internal Verified-realm actor capability; never a request selector. */
   getTenantDatabaseClient?: ResourceTenantDatabaseClientProvider;
+  /** @internal Managed application-plane Guardian FK readiness barrier. */
+  ensureIdentityAnchors?: ResourceIdentityAnchorReadinessBarrier;
   /** App-local observability runtime. Standalone plugins may omit it. */
   observability?: PlatformObservabilityRuntime | null;
   /** App-local observability emitter retained for standalone composition. */
@@ -379,6 +382,7 @@ function createService(
     authorizationKernel: config.getAuthorizationKernel?.() ?? null,
     roleAssignments: config.getRoleAssignments?.() ?? null,
     getTenantDatabaseClient: config.getTenantDatabaseClient,
+    ensureIdentityAnchors: config.ensureIdentityAnchors,
     observability: config.observability,
     emitCode: config.emitCode,
     defaultLimit: config.defaultLimit,

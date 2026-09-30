@@ -145,8 +145,8 @@ methods, and legacy action-token methods instead of reaching into those stores.
   policy. These writes do not currently emit ReactiveDB change events.
 - Internal tables (`_credentials`, `_refresh_tokens`, `_auth_action_tokens`,
   `_auth_config`, and registration receipts) use prepared statements directly
-  inside the shared ReactiveDB transaction domain and have no client Sync
-  surface.
+  inside the shared system-plane ReactiveDB transaction domain and have no
+  client Sync surface.
 
 **Transaction callback contract:** Authority and lifecycle callbacks invoked
 inside a `UserStore` transaction are synchronous-only. If one returns a
@@ -543,7 +543,8 @@ outstanding links. Advanced direct composition may explicitly select a null
 platform-token service to keep the legacy storage path.
 
 The platform-token store is separate from `UserTokenStore`, but the two must
-share the exact same ReactiveDB transaction domain when composed together. See
+share the exact same system-plane ReactiveDB transaction domain when composed
+together. See
 [Platform Tokens: Auth Transaction Boundary](../tokens.md#auth-transaction-boundary).
 
 `deleteExpiredTokens()` delegates cleanup to `UserTokenStore`, removes expired

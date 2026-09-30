@@ -6,7 +6,11 @@ import {
   parseAuthRefreshResponse,
   parseAuthRegistrationResult,
 } from './auth-completion-parser';
-import type { AuthAuthenticationAttempt } from './auth-authentication-attempt';
+import {
+  failCurrentAuthenticationCompletion,
+  failCurrentAuthenticationAttempt,
+  type AuthAuthenticationAttempt,
+} from './auth-authentication-attempt';
 import type {
   AuthCompletionResult,
   AuthPublicConfig,
@@ -87,30 +91,43 @@ export class AuthAccountTransport {
   ): Promise<TResult> {
     const attempt = this.options.beginAuthentication();
     try {
-      const response = await fetch(
-        `${this.options.baseUrl}${path}`,
-        { ...jsonRequest(body), signal: attempt.signal },
-      );
-      attempt.assertCurrent();
-      if (!response.ok) {
-        const error = await responseError(response, fallback);
-        attempt.assertCurrent();
-        this.options.failAuthentication(error.message, attempt);
-        throw error;
-      }
       let result: AuthCompletionResult;
+      let failureMessage = fallback;
       try {
+        const response = await fetch(
+          `${this.options.baseUrl}${path}`,
+          { ...jsonRequest(body), signal: attempt.signal },
+        );
+        attempt.assertCurrent();
+        if (!response.ok) {
+          const error = await responseError(response, fallback);
+          failureMessage = error.message;
+          throw error;
+        }
+        failureMessage = 'Invalid authentication response';
         const bodyValue = await response.json();
         attempt.assertCurrent();
         result = path === '/auth/register'
           ? parseAuthRegistrationResult(bodyValue)
           : parseAuthCompletionResult(bodyValue);
-      } catch (error) {
-        attempt.assertCurrent();
-        this.options.failAuthentication('Invalid authentication response', attempt);
-        throw error;
+      } catch (cause) {
+        return failCurrentAuthenticationAttempt(
+          attempt,
+          this.options.failAuthentication,
+          cause,
+          failureMessage,
+        );
       }
-      return this.options.completeAuthentication(result, attempt) as Promise<TResult>;
+      try {
+        return await this.options.completeAuthentication(result, attempt) as TResult;
+      } catch (cause) {
+        return failCurrentAuthenticationCompletion(
+          attempt,
+          this.options.failAuthentication,
+          cause,
+          fallback,
+        );
+      }
     } finally {
       attempt.dispose();
     }

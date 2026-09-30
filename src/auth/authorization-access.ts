@@ -21,7 +21,7 @@ import {
 } from './authorization-kernel';
 import { AuthError, type AuthContext, type PermissionKey } from './types';
 import type { AuthorizationRoleSet } from './authorization-role-types';
-import { isAdministrationOnlyRole } from './authorization-registry';
+import { isRoleAssignableToTenantKind } from './authorization-registry';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
 import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
 
@@ -397,13 +397,6 @@ function projectAuthorizationScope(
     return null;
   }
 
-  // These framework roles are control-plane roles. A retained simple-mode
-  // assignment in an ordinary customer organization is invalid authority,
-  // even though its tenant-only permission subset would otherwise look safe.
-  if (auth.tenantKind !== 'administration'
-    && auth.tenantRole
-    && isAdministrationOnlyRole(kernel.authorization, auth.tenantRole)) return null;
-
   if (kernel.authorization.mode === 'advanced') {
     const assignment = resolveTenantRoleAssignment(roleAssignments, {
       tenantId: auth.tenantId,
@@ -426,6 +419,16 @@ function projectAuthorizationScope(
   }
 
   if (!auth.tenantRole) return null;
+  // A retained simple-mode assignment outside the live tenant kind is invalid
+  // authority in either direction. `owner` is the shared protected lifecycle
+  // role and is therefore valid for both customer and administration tenants.
+  if (auth.tenantKind
+    && auth.tenantRole !== 'owner'
+    && !isRoleAssignableToTenantKind(
+      auth.tenantRole,
+      auth.tenantKind,
+      kernel.authorization,
+    )) return null;
   const expanded = expandAuthorizationRolesForScope(
     kernel.authorization,
     [auth.tenantRole],

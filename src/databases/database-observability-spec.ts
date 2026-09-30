@@ -62,6 +62,14 @@ export const DATABASE_OBSERVABILITY_EVENT_SPECS = Object.freeze({
   ),
   'coordinator-failed': failureSpec(
     OBS_CODES.DATABASE_COORDINATOR_FAILED,
+    [
+      'phase',
+      'failedCloseCount',
+      'remainingEntryCount',
+      'quarantinedSlotCount',
+      'availableSlotCount',
+      'failureCodeSummary',
+    ],
     ['phase'],
   ),
   'executor-restarted': eventSpec(

@@ -566,6 +566,15 @@ describe('actor-backed tenant Sync bridge', () => {
         async bind() { throw new Error('not reached'); },
       },
     })).toThrow('is not a Sync-exposed physical tenant resource');
+    expect(() => createSyncPlugin({
+      ...config,
+      tenantDataPlane: {
+        tables: {
+          todos: { primaryKey: 'id', columns: ['id', 'not valid'] },
+        },
+        async bind() { throw new Error('not reached'); },
+      },
+    })).toThrow('table catalog is invalid');
   });
 
   test('keeps every physical tenant table out of the default database and only exposes Sync tables', async () => {
@@ -824,7 +833,7 @@ describe('actor-backed tenant Sync bridge', () => {
     tenant.dispose();
   });
 
-  test('closes terminally when one actor snapshot row cannot cross IPC', async () => {
+  test('closes terminally when snapshot cleanup and telemetry both fail', async () => {
     const binding = new FakeTenantBinding();
     binding.snapshotPageError = new DatabaseError(
       'DATABASE_PAYLOAD_LIMIT',
@@ -833,7 +842,15 @@ describe('actor-backed tenant Sync bridge', () => {
     binding.snapshotAbortError = new Error('/private/snapshot/session');
     binding.rows.set('t1', { id: 't1', title: 'Tenant' });
     const ws = socket();
-    const tenant = bridge(ws.value, binding);
+    const tenant = bridge(ws.value, binding, {
+      sink: {
+        emit() {
+          throw new Error('private observability failure');
+        },
+      },
+      store: null,
+      config: { console: false },
+    });
 
     await tenant.subscribe({
       type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'], lastSeq: 0,
@@ -842,6 +859,29 @@ describe('actor-backed tenant Sync bridge', () => {
     expect(binding.snapshotPageCalls).toEqual([0]);
     expect(binding.snapshotAbortCount).toBe(0);
     expect(ws.closes.at(-1)?.[0]).toBe(4004);
+    expect(binding.releaseCount).toBe(1);
+  });
+
+  test('closes mutation recovery even when telemetry fails', async () => {
+    const binding = new FakeTenantBinding();
+    const ws = socket();
+    const tenant = bridge(ws.value, binding, {
+      sink: {
+        emit() {
+          throw new Error('private observability failure');
+        },
+      },
+      store: null,
+      config: { console: false },
+    });
+    await tenant.subscribe({
+      type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'], lastSeq: 0,
+    });
+
+    expect(() => tenant.recoverUnacknowledgedMutation()).not.toThrow();
+    expect(ws.closes.at(-1)).toEqual([
+      1012, 'Tenant Sync mutation recovery required',
+    ]);
     expect(binding.releaseCount).toBe(1);
   });
 
@@ -1277,6 +1317,36 @@ describe('actor-backed tenant Sync bridge', () => {
     await settle();
 
     expect(ws.closes.at(-1)?.[0]).toBe(1012);
+    expect(binding.releaseCount).toBe(1);
+  });
+
+  test('consumes replay teardown failures after attempting close and release', async () => {
+    const binding = new FakeTenantBinding();
+    const ws = socket();
+    let closeAttempts = 0;
+    (ws.value as unknown as {
+      close(code?: number, reason?: string): void;
+    }).close = () => {
+      closeAttempts += 1;
+      throw new Error('private transport close failure');
+    };
+    const tenant = bridge(ws.value, binding, {
+      sink: {
+        emit() {
+          throw new Error('private observability failure');
+        },
+      },
+      store: null,
+      config: { console: false },
+    });
+    await tenant.subscribe({
+      type: 'sync.subscribe', tables: ['todos'], snapshot: ['todos'], lastSeq: 0,
+    });
+    binding.replayGap = true;
+    binding.external('lost', { id: 'lost', title: 'Lost' });
+    await settle();
+
+    expect(closeAttempts).toBe(1);
     expect(binding.releaseCount).toBe(1);
   });
 

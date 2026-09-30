@@ -153,6 +153,7 @@ function policyAuthorityFingerprint(
       sessionScopeId: auth.sessionScopeId ?? null,
       tenantId: auth.tenantId ?? null,
       membershipId: auth.membershipId ?? null,
+      tenantKind: auth.tenantKind ?? null,
       tenantRole: auth.tenantRole ?? null,
       tenantAuthorizationGeneration: auth.tenantAuthorizationGeneration ?? null,
       membershipAuthorizationGeneration:
@@ -168,6 +169,7 @@ function policyAuthorityFingerprint(
         compareText(left, right)),
     } : null,
     authorization: authorization?.subject?.authorization ? {
+      tenantKind: authorization.tenantKind ?? null,
       scopeKind: authorization.subject.authorization.scopeKind,
       scopeId: authorization.subject.authorization.scopeId,
       roles: authorization.subject.authorization.roles,

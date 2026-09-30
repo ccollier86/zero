@@ -128,8 +128,8 @@ async function writeGeneratedPackageJson(
       build: 'bun build app/server.ts --target bun --outdir dist',
       typecheck: 'tsc --noEmit',
       doctor: 'zero doctor --config ./zero.config.ts',
-      migrate: 'zero migrate --db ./data/app.db',
-      'migrate:status': 'zero migrate --status --db ./data/app.db',
+      migrate: 'zero migrate --db ./data/zero.system.db',
+      'migrate:status': 'zero migrate --status --db ./data/zero.system.db',
       'migrate:plan': 'zero migrate --plan --schema ./db/schema.ts --db ./data/app.db',
       'pdf:install': 'zero pdf install',
       'pdf:status': 'zero pdf status',
@@ -260,6 +260,13 @@ secret (for example, \`openssl rand -base64 32\`), set
 that key on the first-administrator registration screen. The key is used only
 for the one-time bootstrap ceremony and is never returned by config APIs.
 
+Zero-owned state and application data always use separate SQLite planes.
+\`systemDb\` defaults to durable \`./data/zero.system.db\`; \`db\` defaults to the
+application's hot \`./data/app.db\` runtime. Never point those settings, their
+snapshots, or their sidecar files at the same path. The generated \`migrate\` and
+\`migrate:status\` commands target the system plane for platform migrations;
+\`migrate:plan\` targets the application database and its declared schema.
+
 ## Commands
 
 \`\`\`sh
@@ -329,7 +336,7 @@ Those are scaffold commands and may replace a non-empty project.
 | \`hooks/\` | App-owned React hooks. |
 | \`lib/\` | App-owned client/server helpers. |
 | \`db/schema.ts\` | Shared data model definitions. |
-| \`zero.config.ts\` | Platform systems, paths, auth mode, sitemap, and runtime settings. |
+| \`zero.config.ts\` | Separate application/system database planes plus platform systems, auth, sitemap, and runtime settings. |
 | \`.zero/generated/\` | Generated client/router build glue. Ignored by git. |
 
 Use package imports:

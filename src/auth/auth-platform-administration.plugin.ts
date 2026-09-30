@@ -110,6 +110,7 @@ export function createAuthPlatformAdministrationPlugin(
         capabilities: Object.freeze({
           canReadMembers: tenantConfig.capabilities.canReadMembers,
           canManageMembers: tenantConfig.capabilities.canManageMembers,
+          canManageRoles: tenantConfig.capabilities.canManageRoles,
           canReadInvitations: tenantConfig.capabilities.canReadInvitations,
           canManageInvitations: tenantConfig.capabilities.canManageInvitations,
           canReadTenants: has('application.tenants:read'),

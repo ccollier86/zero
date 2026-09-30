@@ -89,6 +89,9 @@ function createFakeSyncClient(
     onMessage(): () => void {
       return () => {};
     },
+    onMutationRejected(): () => void {
+      return () => {};
+    },
     disconnect(): void {},
   };
 

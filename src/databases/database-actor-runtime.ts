@@ -69,6 +69,11 @@ import type {
 } from './database-executor';
 import type { DatabaseTrustedReceiptLookup } from './database-trusted-writer';
 import {
+  DatabaseIdentityProjectionActorSession,
+  validateDatabaseIdentityProjectionPayload,
+  type DatabaseIdentityProjectionResult,
+} from './database-identity-projection-actor';
+import {
   SubprocessDatabaseServer,
   type DatabaseExecutorServerRequest,
   type SubprocessDatabaseServerOptions,
@@ -129,6 +134,8 @@ export class DatabaseActorRuntime implements Disposable {
   private state: DatabaseActorRuntimeState = 'unbound';
   private closeRequested = false;
   private hotDurabilityFailureReported = false;
+  private readonly identityProjectionSession =
+    new DatabaseIdentityProjectionActorSession();
   private readonly onEvent: ((event: DatabaseExecutorEvent) => void) | null;
 
   constructor(options: DatabaseActorRuntimeOptions) {
@@ -170,6 +177,8 @@ export class DatabaseActorRuntime implements Disposable {
           return asExecutorValue(this.tenantSyncSnapshotAbort(request));
         case DATABASE_ACTOR_OPERATIONS.findReceipt:
           return asExecutorValue(this.findReceipt(request));
+        case DATABASE_ACTOR_OPERATIONS.identityProjection:
+          return asExecutorValue(this.identityProjection(request));
         case DATABASE_ACTOR_OPERATIONS.unbind:
           return this.unbind(request);
         default:
@@ -193,6 +202,7 @@ export class DatabaseActorRuntime implements Disposable {
         closeActorBinding(this.binding);
         this.binding = null;
       }
+      this.identityProjectionSession.reset();
       this.state = 'closed';
     } catch {
       this.state = 'failed';
@@ -239,6 +249,7 @@ export class DatabaseActorRuntime implements Disposable {
         'Database actor is already bound.',
       );
     }
+    this.identityProjectionSession.reset();
     if (payload.realmFingerprint !== this.realm.fingerprint) {
       throw new DatabaseError(
         'DATABASE_SCHEMA_MISMATCH',
@@ -350,12 +361,26 @@ export class DatabaseActorRuntime implements Disposable {
     const expectedKind = operationKind(payload.operation);
     requireOperationKind(request.kind, expectedKind);
 
-    const value = binding.role === 'reader'
+    const execute = () => binding.role === 'reader'
       ? binding.runtime.execute(payload.operation)
       : binding.engine.execute(
         payload.operation,
         payload.logicalReceiptFingerprint,
       );
+    let value;
+    if (isWriteOperation(payload.operation) && binding.role === 'writer') {
+      if (binding.authorityCommitGuard) {
+        value = binding.authorityCommitGuard.run(
+          payload.authorityRevision,
+          execute,
+        );
+      } else {
+        rejectUnexpectedAuthorityRevision(payload.authorityRevision);
+        value = execute();
+      }
+    } else {
+      value = execute();
+    }
     if (payload.logicalReceiptFingerprint === undefined) {
       const result = validateDatabaseActorExecuteResult(
         value,
@@ -478,6 +503,37 @@ export class DatabaseActorRuntime implements Disposable {
     );
   }
 
+  private identityProjection(
+    request: DatabaseExecutorServerRequest,
+  ): DatabaseIdentityProjectionResult {
+    const payload = validateDatabaseIdentityProjectionPayload(request.payload);
+    const binding = this.requireBinding(payload.databaseRef);
+    requireOperationKind(request.kind, 'write');
+    if (binding.role !== 'writer') {
+      throw new DatabaseError(
+        'DATABASE_OPERATION_UNSUPPORTED',
+        'Readonly database actors do not project identity anchors.',
+      );
+    }
+    if (this.realm.guardianAnchorRequirements.length === 0) {
+      throw new DatabaseError(
+        'DATABASE_OPERATION_UNSUPPORTED',
+        'Database realm does not declare Guardian identity references.',
+      );
+    }
+    const execute = () => this.identityProjectionSession.execute(
+      binding.runtime.db,
+      payload,
+    );
+    const result = binding.authorityCommitGuard
+      ? binding.authorityCommitGuard.runAuthorityNeutral(execute)
+      : execute();
+    if (payload.action !== 'inspect') {
+      this.establishHotWriteDurability(binding, false);
+    }
+    return result;
+  }
+
   private unbind(request: DatabaseExecutorServerRequest): null {
     const payload = validateDatabaseActorUnbindPayload(request.payload);
     const binding = this.requireBinding(payload.databaseRef);
@@ -485,6 +541,7 @@ export class DatabaseActorRuntime implements Disposable {
     try {
       closeActorBinding(binding);
       this.binding = null;
+      this.identityProjectionSession.reset();
       this.state = 'unbound';
       return null;
     } catch {
@@ -577,6 +634,17 @@ export class DatabaseActorRuntime implements Disposable {
       // Lifecycle observers cannot alter snapshot or actor state.
     }
   }
+}
+
+function rejectUnexpectedAuthorityRevision(
+  authorityRevision: number | undefined,
+): void {
+  if (authorityRevision === undefined) return;
+  throw new DatabaseError(
+    'DATABASE_PROTOCOL_ERROR',
+    'Database actor received authority revision without a commit fence.',
+    { retryable: false, outcome: 'not-started' },
+  );
 }
 
 /** Compose the database handler and strict IPC server without starting either. */

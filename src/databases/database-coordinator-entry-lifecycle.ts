@@ -5,6 +5,7 @@ import {
   validateDatabaseActorBindPayload,
   validateDatabaseActorBindResult,
   type DatabaseActorSQLiteConfig,
+  type DatabaseActorAuthorityCommitFenceConfig,
 } from './database-actor-protocol';
 import type { DatabaseActorLivenessBinding } from './database-actor-liveness';
 import { prepareDatabaseBindingIdentity } from './database-binding-identity';
@@ -55,6 +56,7 @@ interface DatabaseCoordinatorEntryLifecycleOptions {
   readonly quarantinedSlots: Set<number>;
   readonly state: () => DatabaseCoordinatorState;
   readonly actorLiveness: () => DatabaseActorLivenessBinding;
+  readonly authorityCommitFence: DatabaseActorAuthorityCommitFenceConfig | null;
   readonly assertOwnedRootCurrent: () => void;
   readonly releaseSlot: (slot: number) => void;
   readonly rememberBlockedDatabase: (
@@ -79,6 +81,7 @@ export class DatabaseCoordinatorEntryLifecycle {
   readonly #quarantinedSlots: Set<number>;
   readonly #state: () => DatabaseCoordinatorState;
   readonly #actorLiveness: () => DatabaseActorLivenessBinding;
+  readonly #authorityCommitFence: DatabaseActorAuthorityCommitFenceConfig | null;
   readonly #assertOwnedRootCurrent: () => void;
   readonly #releaseSlot: (slot: number) => void;
   readonly #rememberBlockedDatabase:
@@ -99,6 +102,7 @@ export class DatabaseCoordinatorEntryLifecycle {
     this.#quarantinedSlots = options.quarantinedSlots;
     this.#state = options.state;
     this.#actorLiveness = options.actorLiveness;
+    this.#authorityCommitFence = options.authorityCommitFence;
     this.#assertOwnedRootCurrent = options.assertOwnedRootCurrent;
     this.#releaseSlot = options.releaseSlot;
     this.#rememberBlockedDatabase = options.rememberBlockedDatabase;
@@ -130,7 +134,7 @@ export class DatabaseCoordinatorEntryLifecycle {
             phase: 'close',
             error: safeCoordinatorError(caught),
           });
-        });
+        }).catch(() => undefined);
       },
     });
     this.#executorBinding = new DatabaseCoordinatorExecutorBinding({
@@ -165,6 +169,9 @@ export class DatabaseCoordinatorEntryLifecycle {
         placement: entry.placement,
         realmFingerprint: this.#realm.fingerprint,
         sqlite: this.#sqlite,
+        ...(this.#authorityCommitFence
+          ? { authorityCommitFence: this.#authorityCommitFence }
+          : {}),
       });
       entry.writer = this.#executorBinding.create(entry, 'writer');
       await entry.writer.start();
@@ -806,7 +813,7 @@ export class DatabaseCoordinatorEntryLifecycle {
       error: safeCoordinatorError(error),
     })).finally(() => {
       if (entry.settlement === task) entry.settlement = null;
-    });
+    }).catch(() => undefined);
   }
 
   async #closeExecutors(

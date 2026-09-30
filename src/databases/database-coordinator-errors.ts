@@ -12,6 +12,10 @@ import {
   type DatabaseErrorCode,
   type DatabaseErrorDetails,
 } from './database-error';
+import {
+  summarizeDatabaseFailureCodes,
+} from './database-failure-code-summary';
+import { DATABASE_OBSERVABILITY_COUNT_MAX } from './database-capacity';
 
 const MAX_OBSERVED_DURATION_MS = 604_800_000;
 
@@ -127,6 +131,38 @@ export function safeCoordinatorError(value: unknown): DatabaseError {
       outcome: source.outcome,
       details: details as DatabaseErrorDetails,
     },
+  );
+}
+
+export type CoordinatorAggregateCloseDetails = DatabaseErrorDetails & Readonly<{
+  readonly failedCloseCount: number;
+  readonly remainingEntryCount: number;
+  readonly quarantinedSlotCount: number;
+  readonly availableSlotCount: number;
+  readonly failureCodeSummary?: string;
+}>;
+
+/** Build bounded aggregate close details without retaining raw failure causes. */
+export function coordinatorAggregateCloseDetails(input: Readonly<{
+  failures: readonly unknown[];
+  remainingEntryCount: number;
+  quarantinedSlotCount: number;
+  availableSlotCount: number;
+}>): CoordinatorAggregateCloseDetails {
+  const failureCodeSummary = summarizeDatabaseFailureCodes(input.failures);
+  return Object.freeze({
+    failedCloseCount: boundedAggregateCount(input.failures.length),
+    remainingEntryCount: boundedAggregateCount(input.remainingEntryCount),
+    quarantinedSlotCount: boundedAggregateCount(input.quarantinedSlotCount),
+    availableSlotCount: boundedAggregateCount(input.availableSlotCount),
+    ...(failureCodeSummary ? { failureCodeSummary } : {}),
+  });
+}
+
+function boundedAggregateCount(value: number): number {
+  return Math.max(
+    0,
+    Math.min(DATABASE_OBSERVABILITY_COUNT_MAX, Math.trunc(value)),
   );
 }
 

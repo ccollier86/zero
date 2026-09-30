@@ -60,6 +60,11 @@ import {
 } from './reactive-db-external-poller';
 import { isReactiveDBPromiseLike } from './reactive-db-synchronous-boundary';
 import {
+  beginReactiveDBRollbackRecoveryScope,
+  discardReactiveDBRollbackRecoveries,
+  runReactiveDBRollbackRecoveries,
+} from './reactive-db-rollback-recovery';
+import {
   bindReactiveDBLocalChangeOrigin,
   clearAllReactiveDBLocalChangeOrigins,
   clearReactiveDBLocalChangeOrigin,
@@ -148,6 +153,7 @@ export function registerReactiveDBCommitGuard(
     }
   };
 }
+
 /**
  * Trusted equality predicate enforced with exact JS, SQLite storage-class, and
  * BINARY comparison semantics. Declared column affinity/collation cannot widen it.
@@ -1412,6 +1418,7 @@ export class ReactiveDB {
     this.inTransaction = true;
     this.deferredChanges = pendingChanges;
     this.postCommitCallbacks = pendingPostCommitCallbacks;
+    beginReactiveDBRollbackRecoveryScope(this);
     this.activeTransactionChangeOrigin = transactionChangeOrigin;
     const commitGuardLease: { release: (() => undefined) | null } = {
       release: null,
@@ -1480,10 +1487,18 @@ export class ReactiveDB {
       // the cache only after SQLite confirms this transaction committed.
       this.changeLog.commitSchemaVersions(committedSchemaVersions!);
 
+      // The cross-database authority edge protects the SQLite commit, not
+      // listener delivery or application callbacks. Release immediately after
+      // the local commit is durably settled so a synchronous afterCommit
+      // Guardian mutation cannot conflict with an already-finished data write.
+      commitGuardLease.release?.();
+      commitGuardLease.release = null;
+
       // Transaction committed — emit all deferred changes
       this.inTransaction = false;
       this.deferredChanges = null;
       this.postCommitCallbacks = null;
+      discardReactiveDBRollbackRecoveries(this);
       this.activeTransactionChangeOrigin = null;
 
       if (pendingChanges.length > 0 && this.externalChangeDispatcher) {
@@ -1516,6 +1531,11 @@ export class ReactiveDB {
       for (const change of pendingChanges) {
         clearReactiveDBLocalChangeOrigin(this, change.seq);
       }
+      // A recovery may open a fresh transaction, so release any authority
+      // lease retained by a failed commit attempt before invoking it.
+      commitGuardLease.release?.();
+      commitGuardLease.release = null;
+      runReactiveDBRollbackRecoveries(this);
       throw err;
     } finally {
       commitGuardLease.release?.();
@@ -1717,6 +1737,7 @@ export class ReactiveDB {
         this.postCommitCallbacks = null;
         clearAllReactiveDBLocalChangeOrigins(this);
         reactiveDBCommitGuards.delete(this);
+        discardReactiveDBRollbackRecoveries(this);
       } finally {
         this.lifecycleState = 'released';
       }

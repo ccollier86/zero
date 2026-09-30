@@ -81,6 +81,7 @@ export async function bootstrapAuthRuntimeServices(
 
   config.db.exec('PRAGMA foreign_keys = ON');
   defineAuthTables(config.db);
+  await config.identityProjection?.initialize?.();
 
   services.auditService = new AuthAuditService(
     config.db,
@@ -91,6 +92,7 @@ export async function bootstrapAuthRuntimeServices(
     tenancyMode: authConfig.tenancy?.mode ?? 'single',
     auditService: services.auditService,
     emitCode,
+    identityProjection: config.identityProjection,
   });
   services.requestAdmissionService = new AuthRequestAdmissionService(
     config.db,
@@ -106,6 +108,7 @@ export async function bootstrapAuthRuntimeServices(
       onOwnerCreated: (owner) => advancedRoles?.establishTenantOwner(owner),
       onOwnerRoleChanged: (owner) => advancedRoles?.syncTenantOwnerRole(owner),
       emitCode,
+      identityProjection: config.identityProjection,
     }));
   }
   if (authConfig.authorization?.mode === 'advanced') {

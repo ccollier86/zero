@@ -182,6 +182,74 @@ export type {
   ResolvedAuthAuditConfig,
 } from './auth-audit-types';
 export { UserStore } from './user-store';
+export { createDataRealmReadinessPlugin } from './data-realm-readiness.plugin';
+export type {
+  DataRealmReadinessPluginConfig,
+  DataRealmReadinessRequest,
+  DataRealmReadinessService,
+} from './data-realm-readiness.plugin';
+export {
+  DATA_REALM_READINESS_DEFAULT_POLL_MS,
+  DATA_REALM_READINESS_MAX_POLL_MS,
+  DATA_REALM_READINESS_MIN_POLL_MS,
+  DATA_REALM_READINESS_STATUSES,
+  DataRealmReadinessContractError,
+  dataRealmReadinessAllowsApplicationData,
+  parseDataRealmReadinessSnapshot,
+} from './data-realm-readiness-types';
+export type {
+  DataRealmReadinessScope,
+  DataRealmReadinessSdkSurface,
+  DataRealmReadinessSnapshot,
+  DataRealmReadinessStatus,
+} from './data-realm-readiness-types';
+export { IdentityAnchorStore } from './identity-anchor-store';
+export type { IdentityAnchorStoreOptions } from './identity-anchor-store';
+export {
+  IDENTITY_PROJECTION_ERROR_CODES,
+  IdentityProjectionError,
+  identityProjectionError,
+} from './identity-projection-error';
+export type { IdentityProjectionErrorCode } from './identity-projection-error';
+export { createIdentityProjectionLifecycleHook } from './identity-projection-lifecycle';
+export { IdentityProjectionOutboxStore } from './identity-projection-outbox-store';
+export {
+  defineIdentityAnchorTables,
+  defineIdentityProjectionSystemTables,
+  IDENTITY_PROJECTION_INSTALLATION_TABLE,
+  IDENTITY_PROJECTION_OUTBOX_TABLE,
+  IDENTITY_PROJECTION_RECEIPTS_TABLE,
+  IDENTITY_PROJECTION_STATE_TABLE,
+  IDENTITY_PROJECTION_TARGETS_TABLE,
+} from './identity-projection-schema';
+export { IdentityProjectionService } from './identity-projection-service';
+export type {
+  IdentityProjectionLifecycleRoute,
+  IdentityProjectionLifecycleRoutes,
+} from './identity-projection-lifecycle';
+export type {
+  IdentityProjectionEnqueueResult,
+  IdentityProjectionOutboxStoreOptions,
+} from './identity-projection-outbox-store';
+export type {
+  IdentityProjectionServiceOptions,
+} from './identity-projection-service';
+export type {
+  EnsureIdentityAnchorResult,
+  IdentityAnchor,
+  IdentityAnchorState,
+  IdentityProjectionDelivery,
+  IdentityProjectionDeliveryStatus,
+  IdentityProjectionLifecycleHook,
+  IdentityProjectionReceipt,
+  IdentityProjectionTarget,
+  IdentityProjectionTargetScope,
+  IdentityProjectionTargetState,
+  IdentityProjectionTargetStatus,
+  MembershipIdentityAnchor,
+  SynchronousIdentityProjectionTarget,
+  UserIdentityAnchor,
+} from './identity-projection-types';
 export type {
   AtomicRegistrationPolicy,
   AuthGenerationReceipt,

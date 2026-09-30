@@ -75,6 +75,7 @@ interface DatabaseCoordinatorOperationRuntimeOptions {
   readonly now: () => number;
   readonly authorityCommitCoordinator: AuthorityCommitCoordinator | null;
   readonly requireCommitAuthority: boolean;
+  readonly captureAuthorityRevision: (() => number) | null;
   readonly assertStarted: () => void;
   readonly canAwaitOpening: (entry: DatabaseCoordinatorEntry) => boolean;
   readonly assertUsableEntry: (entry: DatabaseCoordinatorEntry) => void;
@@ -535,6 +536,10 @@ export class DatabaseCoordinatorOperationRuntime {
     let transferred = false;
     try {
       const writer = this.options.requireWriter(entry);
+      // Capture the durable clock before the live request check. Capturing it
+      // afterwards would bless an authority mutation which committed in the
+      // gap between that check and actor dispatch.
+      const authorityRevision = this.options.captureAuthorityRevision?.();
       assertDatabaseCommitAuthorityCurrent(
         commitAuthority,
         authorityCoordinator,
@@ -547,6 +552,7 @@ export class DatabaseCoordinatorOperationRuntime {
           operation,
           execution,
           logicalReceiptFingerprint,
+          authorityRevision,
         );
       } catch (error) {
         const normalized = safeCoordinatorError(error);
@@ -569,6 +575,7 @@ export class DatabaseCoordinatorOperationRuntime {
     operation: DatabaseOperation,
     execution: DatabaseExecutionOptions,
     logicalReceiptFingerprint?: DatabaseLogicalReceiptFingerprint,
+    authorityRevision?: number,
   ): Promise<DatabaseReadResult | DatabaseCommitResult> {
     const kind = isWriteOperation(operation) ? 'write' : 'read';
     const startedAt = this.options.now();
@@ -582,6 +589,9 @@ export class DatabaseCoordinatorOperationRuntime {
           ...(logicalReceiptFingerprint === undefined
             ? {}
             : { logicalReceiptFingerprint }),
+          ...(authorityRevision === undefined
+            ? {}
+            : { authorityRevision }),
         } as unknown as DatabaseExecutorValue,
       }, {
         timeoutMs: operationTimeout(execution, this.options.operationTimeoutMs),

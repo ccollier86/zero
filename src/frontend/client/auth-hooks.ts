@@ -102,6 +102,8 @@ export interface AuthState {
   /** True only while a persisted browser session is being restored. */
   isRestoring: boolean;
   error: string | null;
+  /** Interactive auth result retained while the root scope safely remounts. */
+  authenticationContinuation: AuthCompletionResult | null;
   sessionTransition: AuthSessionTransitionState;
 }
 
@@ -136,6 +138,7 @@ export interface AuthActions {
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   reconcileSession: () => Promise<void>;
+  clearAuthenticationContinuation: () => void;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   setProperty: (key: string, value: unknown) => Promise<void>;
   getProperty: (key: string) => Promise<string | null>;
@@ -153,6 +156,7 @@ const SSR_AUTH_SNAPSHOT = {
   isLoading: false as boolean,
   isRestoring: false as boolean,
   error: null,
+  authenticationContinuation: null,
   sessionTransition: {
     phase: 'idle' as const,
     operation: null,
@@ -170,6 +174,7 @@ const SSR_AUTH_DEFAULTS: AuthState & AuthActions = {
   isLoading: false,
   isRestoring: false,
   error: null,
+  authenticationContinuation: null,
   sessionTransition: SSR_AUTH_SNAPSHOT.sessionTransition,
   login: SSR_AUTH_NOOP as any,
   register: SSR_AUTH_NOOP as any,
@@ -191,6 +196,7 @@ const SSR_AUTH_DEFAULTS: AuthState & AuthActions = {
   logout: SSR_AUTH_NOOP as any,
   refresh: SSR_AUTH_NOOP as any,
   reconcileSession: SSR_AUTH_NOOP as any,
+  clearAuthenticationContinuation: () => {},
   changePassword: SSR_AUTH_NOOP as any,
   setProperty: SSR_AUTH_NOOP as any,
   getProperty: async () => null,
@@ -417,6 +423,10 @@ export function useAuth(): AuthState & AuthActions {
     [authClient, authDisabled, runScopeChangingAction],
   );
 
+  const clearAuthenticationContinuation = useCallback(() => {
+    authClient?.clearAuthenticationContinuation();
+  }, [authClient]);
+
   const selectTenant = useCallback(
     async (continuation: string, tenantId: string) => {
       if (authClient) return runScopeChangingAction(
@@ -510,6 +520,9 @@ export function useAuth(): AuthState & AuthActions {
     isLoading: state.isLoading || !authorizationBoundary.ready,
     isRestoring: state.isRestoring,
     error: authorizationBoundary.ready ? state.error : null,
+    authenticationContinuation: authorizationBoundary.ready
+      ? state.authenticationContinuation
+      : null,
     sessionTransition: state.sessionTransition,
     login,
     register,
@@ -531,6 +544,7 @@ export function useAuth(): AuthState & AuthActions {
     logout,
     refresh,
     reconcileSession,
+    clearAuthenticationContinuation,
     changePassword,
     setProperty,
     getProperty,

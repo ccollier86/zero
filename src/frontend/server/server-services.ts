@@ -84,6 +84,8 @@ import {
   ZERO_SQLITE_SERVICE,
   ZERO_STORAGE_SERVICE,
   ZERO_SYNC_DB,
+  ZERO_SYSTEM_DB,
+  ZERO_SYSTEM_SQLITE_SERVICE,
   ZERO_VECTOR_SERVICE,
   ZERO_WORKFLOW_REGISTRY,
   ZERO_WORKFLOW_SERVICE,
@@ -149,6 +151,16 @@ export interface ServerObservabilityServices {
   readonly warn: typeof warnPlatform;
 }
 
+/** Explicit privileged facade for Zero-owned control-plane persistence. */
+export interface ServerSystemDatabaseServices {
+  /** System ReactiveDB. Prefer Guardian and platform service APIs for writes. */
+  readonly db: ReactiveDB;
+  /** System SQLite service for deliberate trusted server operations. */
+  readonly sql: PlatformSQLiteService;
+  /** Explicit alias for the system SQLite service. */
+  readonly sqlite: PlatformSQLiteService;
+}
+
 /** Platform services exposed under `zero` in app-owned server route handlers. */
 export interface ServerRouteServices {
   /** Primary reactive database handle for app-owned server code. */
@@ -161,6 +173,11 @@ export interface ServerRouteServices {
   readonly sql: PlatformSQLiteService | null;
   /** Explicit alias for the shared platform SQLite foundation. */
   readonly sqlite: PlatformSQLiteService | null;
+  /**
+   * Privileged Zero-owned control plane. Multi-tenant request and workflow
+   * contexts expose this only through their explicit `zero.unsafe` boundary.
+   */
+  readonly system: ServerSystemDatabaseServices | null;
   /** Auth store/token helpers. Values are null when auth is disabled. */
   readonly auth: ServerAuthServices;
   /** Generic platform action/resume token service. */
@@ -243,6 +260,13 @@ function createServerRouteServices(runtime?: ZeroAppRuntime): ServerRouteService
       return runtime
         ? runtime.get(ZERO_SQLITE_SERVICE)
         : getPlatformSQLiteService();
+    },
+    get system() {
+      if (!runtime) return null;
+      const db = runtime.get(ZERO_SYSTEM_DB);
+      const sql = runtime.get(ZERO_SYSTEM_SQLITE_SERVICE);
+      if (!db || !sql) return null;
+      return Object.freeze({ db, sql, sqlite: sql });
     },
     auth: createServerAuthServices(runtime),
     get tokens() {

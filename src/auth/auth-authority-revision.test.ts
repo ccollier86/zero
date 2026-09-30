@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import {
+  inspectAuthAuthorityRevisionSchema,
   installAuthAuthorityRevision,
   readAuthAuthorityRevision,
 } from './auth-authority-revision';
@@ -148,6 +149,56 @@ describe('durable auth authority revision', () => {
     }
   });
 
+  test('fails closed when a current versioned trigger has the wrong contract', () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    try {
+      defineAuthTables(db);
+      db.exec(`
+        CREATE TRIGGER trg_zero_authority_users_update_v2
+        AFTER UPDATE OF role ON users
+        BEGIN
+          SELECT 1;
+        END
+      `);
+
+      let failure: unknown;
+      try {
+        installAuthAuthorityRevision(db);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toMatchObject({
+        name: 'AuthError',
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        status: 500,
+      });
+      expect(inspectAuthAuthorityRevisionSchema(db)).toBe('invalid');
+    } finally {
+      db.dispose();
+    }
+  });
+
+  test('reports an incompatible revision clock before attempting installation', () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    try {
+      defineAuthTables(db);
+      db.exec(`
+        CREATE TABLE _auth_authority_revision (
+          wrong_column TEXT
+        )
+      `);
+
+      expect(() => installAuthAuthorityRevision(db)).toThrow(expect.objectContaining({
+        name: 'AuthError',
+        code: 'AUTH_STATE_INVARIANT_FAILED',
+        status: 500,
+      }));
+      expect(inspectAuthAuthorityRevisionSchema(db)).toBe('invalid');
+    } finally {
+      db.dispose();
+    }
+  });
+
   test('treats every durable browser and native session update as authority', () => {
     const db = createReactiveDB({ mode: 'memory' });
     try {
@@ -202,6 +253,61 @@ describe('durable auth authority revision', () => {
         WHERE tenant_id = 'administration-candidate'
       `).run();
       expect(readAuthAuthorityRevision(db)).toBe(beforeKindChange + 1);
+    } finally {
+      db.dispose();
+    }
+  });
+
+  test('advances for API-key revoke and rotation but not usage telemetry', () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    try {
+      defineAuthTables(db);
+      installAuthAuthorityRevision(db);
+      const now = Date.now();
+      db.prepare(`
+        INSERT INTO users (
+          user_id, username, email, role, status, created_at
+        ) VALUES ('api-user', 'api-user', 'api-user@example.test',
+          'user', 'active', ?)
+      `).run(now);
+      db.prepare(`
+        INSERT INTO _auth_api_keys (
+          key_id, user_id, label, secret_hash, secret_hint, scope_kind,
+          scope_id, tenant_id, membership_id, issued_auth_generation,
+          key_generation, created_by_user_id, created_via, created_at,
+          expires_at, last_used_at, revoked_at, revoked_by_user_id,
+          rotated_from_key_id
+        ) VALUES (
+          'key-a', 'api-user', 'Automation', ?, 'abcd', 'application',
+          'application', NULL, NULL, 0, 1, 'api-user', 'self', ?, ?,
+          NULL, NULL, NULL, NULL
+        )
+      `).run('a'.repeat(64), now, now + 60_000);
+
+      const baseline = readAuthAuthorityRevision(db)!;
+      db.prepare(`
+        UPDATE _auth_api_keys SET last_used_at = ? WHERE key_id = 'key-a'
+      `).run(now + 1);
+      expect(readAuthAuthorityRevision(db)).toBe(baseline);
+
+      db.prepare(`
+        UPDATE _auth_api_keys SET label = 'Renamed' WHERE key_id = 'key-a'
+      `).run();
+      expect(readAuthAuthorityRevision(db)).toBe(baseline);
+
+      db.prepare(`
+        UPDATE _auth_api_keys
+        SET revoked_at = ?, revoked_by_user_id = 'api-user'
+        WHERE key_id = 'key-a'
+      `).run(now + 2);
+      expect(readAuthAuthorityRevision(db)).toBe(baseline + 1);
+
+      db.prepare(`
+        UPDATE _auth_api_keys
+        SET secret_hash = ?, key_generation = key_generation + 1
+        WHERE key_id = 'key-a'
+      `).run('b'.repeat(64));
+      expect(readAuthAuthorityRevision(db)).toBe(baseline + 2);
     } finally {
       db.dispose();
     }

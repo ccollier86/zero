@@ -36,6 +36,9 @@ user-bound API keys, and packaged access controls, use
 canonical subsystem index. It routes to the focused configuration, RBAC,
 onboarding, audit, browser, and installed-app guides without duplicating their
 contracts here.
+For the exact opt-in user-key configuration, per-route credential admission,
+live-authority lifecycle, SDK, and packaged management controls, read
+[Guardian User API Keys](./auth/api-keys.md).
 For one-time action tokens, resumable public flows, and the exact shared-
 ReactiveDB transaction contract used by auth password/account actions, read
 [Platform Tokens](./tokens.md#auth-transaction-boundary).
@@ -44,6 +47,11 @@ Zero now has a quiet core app lane for dashboards and a richer public/frontend
 lane for docs, marketing, blogs, landing pages, and public flows.
 The repository also includes `examples/package-mode` as the blank generated-app
 starter that imports Zero through `@zero/framework/*`.
+For an executable combined acceptance reference, use
+[`examples/guardian-fabric-proof`](../examples/guardian-fabric-proof/README.md).
+It composes Guardian multi-tenancy, advanced RBAC, user API keys, packaged
+administration UI, ReactiveDB realtime, and one actor-backed SQLite database
+per customer workspace without a redundant `tenant_id` application column.
 Packaged `examples/native-auth` factories show the minimal trusted host bridge
 for desktop loopback and mobile browser-authentication sessions using the
 implemented `@zero/framework/native` TypeScript core. They do not make the
@@ -65,7 +73,7 @@ sync, Guardian auth/authorization, email, storage, workflows, notifications, AI,
 actions plus resumable public flows.
 
 ReactiveDB Fabric—Zero's multi-database routing, isolation, actor, and
-lifecycle layer—is active feature-branch work rather than a
+lifecycle layer—is an active unreleased candidate rather than a
 released app contract. Its compatibility, subprocess execution, WAL reader,
 Resource CRUD, multiplexed ReactiveDB realtime, tenant-authority, and bounded
 hybrid-placement contracts are tracked in the
@@ -73,9 +81,11 @@ hybrid-placement contracts are tracked in the
 The declarative application surface is summarized in the
 [SDK reference](./sdk-reference.md#reactivedb-fabric-actor-backed-multi-database-tenancy).
 
-Fabric leaves the existing `db` as the pinned control/auth database and can
-route each selected tenant's application Resources to an isolated actor-owned
-database. `databaseTopology.placement` may be `'file'`, bounded `'hot'`
+Fabric leaves `db` as the pinned shared application database, while Guardian
+and other Zero authority remain in the separate `systemDb`. It can route each
+selected tenant's application Resources to an isolated actor-owned database.
+See [System and Application Database Planes](./framework/system-database.md).
+`databaseTopology.placement` may be `'file'`, bounded `'hot'`
 (on-write durability and a 64 MiB logical-image limit), or an explicit hybrid
 policy selected synchronously from an opaque, pseudonymous `databaseRef`. The
 reference is deterministic and unkeyed: it is not a secret or authority token,
@@ -234,6 +244,16 @@ const config = defineZeroConfig({
         : 'hot',
     path: Bun.env.DB_PATH ?? './data/app.db',
     snapshotPath: Bun.env.DB_SNAPSHOT_PATH ?? './data/app.snapshot.db',
+  },
+  systemDb: {
+    mode: Bun.env.SYSTEM_DB_MODE === 'ephemeral'
+      ? 'ephemeral'
+      : Bun.env.SYSTEM_DB_MODE === 'hot'
+        ? 'hot'
+        : 'file',
+    path: Bun.env.SYSTEM_DB_PATH ?? './data/zero.system.db',
+    snapshotPath:
+      Bun.env.SYSTEM_DB_SNAPSHOT_PATH ?? './data/zero.system.snapshot.db',
   },
   tables,
   email: hasEmail
@@ -461,8 +481,9 @@ flag on self-editable user preferences.
 
 For server-side resource authorization, use the policy core exported from
 `@zero/framework/server`: `defineResource()`, `ownerPolicy()`,
-`metadataPolicy()`, `authorizationPolicy()`, `adminOnly()`, `anyOf()`, `allOf()`,
-`validateResourcePolicy()`, and `evaluateResourcePolicy()`. Resource
+`metadataPolicy()`, `authorizationPolicy()`, `tenantKindPolicy()`, `adminOnly()`,
+`anyOf()`, `allOf()`, `validateResourcePolicy()`, and
+`evaluateResourcePolicy()`. Resource
 definitions can live in `server/resources` or `createApp({ resources })`.
 Generated CRUD routes are enabled by default at `/api/resources/:resource` and
 `/api/resources/:resource/:id`; set `resourceRoutes: false` to disable them or
@@ -480,6 +501,10 @@ request/socket to one actor-owned physical file.
 `authorizationPolicy({ tenant: 'required', permission: 'records:read' })`
 reuses the exact route RBAC requirement and live application/tenant assignment
 for CRUD, `/api/data`, and Sync; no custom role adapter is required.
+In multi-tenant apps, compose `tenantKindPolicy('organization')` or
+`tenantKindPolicy('administration')` with that RBAC policy when a Resource is
+valid in only one tenant purpose. The kind is derived from Guardian's live
+server authority, never request input.
 An optional `fields: defineResourceFields({ read, create, update, filter,
 sort })` declaration applies one frozen column allow-list to all three
 transports. Hidden columns remain available to server policy but never enter
@@ -551,9 +576,13 @@ predicates. All registered creates are non-replacing. Registered
 updates/deletes compare the policy-evaluated row snapshot in the final write.
 Default/shared-row operations recheck durable session and trusted-property
 authority inside the same SQLite transaction; physical tenant operations fence
-that control-plane authority across actor acquisition, execution, and result
-delivery. `/api/data` follows the equivalent boundary for its selected storage
-plane.
+that control-plane authority across actor acquisition and execution, then
+reauthorize any result before delivery. With file-backed `systemDb`, the actor
+takes a shared sidecar lease and rereads the captured authority revision at its
+own final commit edge.
+Shared leases keep distinct tenant databases concurrent; Guardian authority
+changes take the exclusive side. `/api/data` follows the equivalent boundary
+for its selected storage plane.
 
 App-owned backend handlers receive a lazy `zero` service context. In
 single-tenant mode, canonical service names and their older aliases retain the
@@ -718,9 +747,12 @@ Common variables:
 | Variable | Purpose |
 | --- | --- |
 | `PORT` | HTTP port. |
-| `DB_MODE` | Default/control SQLite runtime mode. Use `hot` for memory-first snapshot recovery, `file` for direct SQLite/WAL, or `ephemeral` for tests. Fabric actor placement is configured separately under `databaseTopology.placement`. |
-| `DB_PATH` | Default/control SQLite source path used by `hot` and `file` modes; it is not a tenant database selector. |
-| `DB_SNAPSHOT_PATH` | Snapshot recovery path used by `hot` mode. |
+| `DB_MODE` | Shared application SQLite runtime mode. Use `hot` for memory-first snapshot recovery, `file` for direct SQLite/WAL, or `ephemeral` for tests. Fabric actor placement is configured separately under `databaseTopology.placement`. |
+| `DB_PATH` | Shared application SQLite source path used by `hot` and `file` modes; it is not a tenant database selector. |
+| `DB_SNAPSHOT_PATH` | Application snapshot recovery path used by `hot` mode. |
+| `SYSTEM_DB_MODE` | Zero-owned system-plane mode. Use durable `file` in production; `hot` can acknowledge authority changes before its next interval snapshot and `ephemeral` loses platform state on restart. |
+| `SYSTEM_DB_PATH` | System SQLite path. It must not overlap the application DB, either snapshot, or any SQLite sidecar. |
+| `SYSTEM_DB_SNAPSHOT_PATH` | System snapshot path used only by `hot` mode. |
 | `APP_NAME` | Display name used by system email. |
 | `APP_PUBLIC_URL` | Public origin for setup/reset links. |
 | `APP_LOGO_URL` | Optional logo URL for auth pages and branded auth email. |
@@ -935,7 +967,8 @@ Enable AI with provider keys and `ai: true`:
 
 ```ts
 const app = await createApp({
-  db: { mode: './data/app.db' },
+  db: { mode: 'file', path: './data/app.db' },
+  systemDb: { mode: 'file', path: './data/zero.system.db' },
   tables,
   auth: true,
   ai: true,
@@ -971,7 +1004,8 @@ search, or app-owned RAG data without a separate vector server:
 
 ```ts
 const app = await createApp({
-  db: { mode: './data/app.db' },
+  db: { mode: 'file', path: './data/app.db' },
+  systemDb: { mode: 'file', path: './data/zero.system.db' },
   tables,
   auth: true,
   ai: true,
@@ -1241,10 +1275,10 @@ Return the token to the browser and upload with
 default and the grant cannot overwrite an existing object unless
 `overwrite: true` is set.
 
-Zero persists a random 32-byte storage capability key in a durable app
+Zero persists a random 32-byte storage capability key in the durable system
 database when neither `storage.signingSecret` nor
 `ZERO_STORAGE_SIGNING_SECRET` is set. Configure the secret explicitly for an
-ephemeral production database or replicas that do not share a database;
+ephemeral production system plane or replicas that do not share `systemDb`;
 rotating it invalidates outstanding presigned URLs and upload grants.
 
 For custom storage UI, prefer the platform hooks before writing raw fetches:

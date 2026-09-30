@@ -28,11 +28,19 @@ import type { AuthRequestCredentialResolver } from '../auth/auth-api-key-types';
 import { createZeroRuntimeServiceKey } from './zero-app-runtime';
 
 export const ZERO_SYNC_DB = createZeroRuntimeServiceKey<ReactiveDB>(
-  'Reactive database',
+  'Application reactive database',
 );
 
 export const ZERO_SQLITE_SERVICE = createZeroRuntimeServiceKey<PlatformSQLiteService>(
-  'Platform SQLite service',
+  'Application SQLite service',
+);
+
+export const ZERO_SYSTEM_DB = createZeroRuntimeServiceKey<ReactiveDB>(
+  'System reactive database',
+);
+
+export const ZERO_SYSTEM_SQLITE_SERVICE = createZeroRuntimeServiceKey<PlatformSQLiteService>(
+  'System SQLite service',
 );
 
 export const ZERO_DATABASE_MANAGER = createZeroRuntimeServiceKey<DatabaseManager>(

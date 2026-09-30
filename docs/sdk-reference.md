@@ -168,7 +168,7 @@ Browser                          Server
 └─────────────────────┘         └─────────────────────┘
 ```
 
-- **Single live channel** — policy-authorized app data, state, and scoped notifications share one Bearer-authenticated WebSocket; physical tenant mode multiplexes independent default/control and tenant data-plane cursors on that channel, while login/session APIs remain HTTP
+- **Single live channel** — policy-authorized app data, authorized system projections, state, and scoped notifications share one Bearer-authenticated WebSocket; physical tenant mode multiplexes independent system, default application, and tenant data-plane cursors on that channel, while login/session APIs remain HTTP
 - **Optimistic mutations** — writes apply locally first, sync to server in background
 - **@xstate/store** — tear-free reactive state via `useSyncExternalStore`
 - **Schema-driven** — define once, get forms + tables + DB + validation
@@ -200,6 +200,8 @@ definitions, UI metadata, and a server-only logical mutation validator.
 | `field.datetime(opts?)` | `text` | ISO timestamp |
 | `field.json(opts?)` | `text` | Arbitrary JSON, renders as code textarea |
 | `field.hidden(opts?)` | `text` | Not rendered in forms or tables |
+| `field.guardianUser(opts?)` | `text` foreign key | ID-only reference to Guardian's local `users(user_id)` anchor; required and hidden by default |
+| `field.guardianMembership(opts?)` | `text` foreign key | ID-only reference to `tenant_memberships(membership_id)`; implies user and membership anchor projection and is required/hidden by default |
 | `field.tags(opts?)` | `text` | Tag/chip input, stored as JSON `string[]`. Options: `maxTags` |
 | `field.combobox(options, opts?)` | `text` | Searchable dropdown. Options: `multiple`, `searchable`, `optionIcon`, `optionDescription` |
 | `field.dateRange(opts?)` | `text` | Date range, stored as JSON `["start","end"]` ISO strings |
@@ -421,6 +423,14 @@ const client = createClient({
   maxReconnectAttempts: 10,   // default: Infinity
   onError: (msg) => console.error(msg),
   onReconnect: () => console.log('Reconnected'),
+  onMutationRejected: ({ errorCode, source }) => {
+    // This runs after the optimistic row has already rolled back.
+    if (errorCode === 'SYNC_DATA_REALM_NOT_READY') {
+      console.info('Wait for the active data realm before retrying');
+    } else if (source === 'timeout') {
+      console.warn('The realtime mutation timed out');
+    }
+  },
 });
 ```
 
@@ -428,14 +438,16 @@ In a full-stack Zero app, `AppProvider` receives the server-authored Sync table
 catalog through `window.__PLATFORM_CONFIG__`. When physical tenant storage is
 enabled, it automatically supplies `tableSyncPlanes` to the client, removes
 known HTTP-only/internal resources from the Sync schema, and keeps framework
-tables on the `default` plane. Do not hand-author this map in application UI.
+tables on the server-owned `system` plane. Do not hand-author this map in application UI.
 The low-level `createClient({ tableSyncPlanes })` option exists for generated or
-standalone composition and must contain exactly one `default` or `tenant`
-entry for every configured application table.
+standalone composition and must contain exactly one `default`, `system`, or
+`tenant` entry for every configured table. The server-owned catalog remains
+authoritative; a browser plane is an assertion, not a database selector.
 
 One client and one WebSocket still back the app. The Sync client maintains
 independent cursor, epoch, authorization scope, baseline, and reset state for
-the default/control and tenant planes; a reconnect sends both cursors. A
+the system, default application, and tenant planes; a reconnect sends each
+active cursor. A
 browser `plane` value is only an assertion. The server always routes a table
 from its validated Resource/realm catalog.
 
@@ -460,6 +472,10 @@ await client.apiKeys.applicationAdmin.listUser(userId)
 await client.apiKeys.tenantAdmin.listMember(membershipId)
 await client.apiKeys.platformAdmin.list({ tenantId })
 
+// ─── Active data-realm readiness ──────────────────────
+await client.dataRealm.getReadiness() // server-derived active realm only
+await client.dataRealm.retry()        // idempotent reconcile; no target input
+
 // ─── HTTP (JSON fetch; auth headers when auth is enabled) ─────
 await client.get('/api/users')                           // → parsed JSON
 await client.post('/api/users', { name: 'Alice' })       // → parsed JSON
@@ -477,8 +493,35 @@ client.url                 // Server URL
 client.connected           // WebSocket connected?
 client.connect()           // Open WebSocket when autoConnect was false
 client.onConnectionChange(cb)  // Subscribe to connection state
+client.onMutationRejected(cb)  // Rejected mutation after optimistic rollback
 client.disconnect()            // Tear everything down
 ```
+
+`ClientConfig.onMutationRejected` installs one startup callback, and
+`client.onMutationRejected(callback)` adds a runtime subscription and returns
+an unsubscribe function. Both receive the exported `SyncMutationRejection`:
+
+```ts
+interface SyncMutationRejection {
+  ref: string;
+  table: string;
+  op: 'INSERT' | 'UPDATE' | 'DELETE';
+  rowId: string;
+  plane?: 'default' | 'system' | 'tenant';
+  error?: string;
+  errorCode?: SyncAckErrorCode;
+  source: 'server' | 'timeout';
+}
+```
+
+The callback runs only after the rejected optimistic mutation has been rolled
+back. Callback exceptions are isolated from Sync state and queue progress.
+Branch on stable `errorCode`, never the human-readable `error`;
+timeouts have `source: 'timeout'` and may not have an error code. For
+`SYNC_DATA_REALM_NOT_READY`, drive `client.dataRealm` to `ready` before a
+deliberate retry. `SYNC_DATA_REALM_UNAVAILABLE` and mutation-capacity failures
+must not be automatically replayed. The same config callback and subscription
+exist on the low-level `SyncClient` from `@zero/framework/sync`.
 
 `client.resource(name)` can reach only registered resources whose server-owned
 exposure is `http` or `all`. `internal` and `sync` resources deliberately look
@@ -942,6 +985,7 @@ function LoginPage() {
 | `useHasAllPermissions(permissions)` | `boolean` | Checks every permission across the active tenant and additive application scopes |
 | `useHasAnyPermission(permissions)` | `boolean` | Checks for any permission across the active tenant and additive application scopes |
 | `useAuthorizationScopeBoundary()` | `AuthorizationScopeBoundary` | Stable boundary key for discarding work from a previous identity or tenant scope |
+| `useDataRealmReadiness(options?)` | `UseDataRealmReadinessResult` | Scope-fenced application/Fabric realm readiness, automatic pending reconciliation, safe retry, and polling |
 | `useAuthApiKeys(options)` | `UseAuthApiKeysResult` | Scope-fenced user API-key listing, pagination, issue/rotate/revoke, and exact server-projected mutation capability state |
 | `useApplicationAccess(options?)` | `UseApplicationAccessResult` | Single/advanced application-role assignments and ownership actions |
 | `useAuthAudit(options)` | `UseAuthAuditResult` | Paginated control-plane audit access for the active authority |
@@ -953,6 +997,49 @@ function LoginPage() {
 | `useTenantAppShellWorkspaces(options?)` | `AppShellWorkspaceConfig \| undefined` | Tenant choices projected for the packaged app shell |
 | `useTenantDomainAdministration(options?)` | tenant domain administration state/actions | Active-tenant exact-domain claims and fixed-role request policy |
 | `useDomainOnboarding(options?)` | mailbox-proof/request state/actions | Generic-before-proof request-to-join flow |
+
+For application data that depends on Guardian identity anchors or Fabric
+provisioning, mount the collection-owning subtree behind the packaged gate:
+
+```tsx
+import {
+  DataRealmReadyGate,
+  TenantSwitcher,
+  useDataRealmReadiness,
+} from '@zero/framework/react';
+
+export function Workspace() {
+  const readiness = useDataRealmReadiness();
+  return (
+    <>
+      {/* Guardian/system-plane navigation always remains available. */}
+      <TenantSwitcher />
+      <DataRealmReadyGate readiness={readiness}>
+        <TaskBoard />
+      </DataRealmReadyGate>
+    </>
+  );
+}
+```
+
+The public statuses are `not-required`, `provisioning`, `retrying`, `ready`,
+and `failed`; the hook adds UI-only `disabled`, `loading`, and `error` states.
+`ready` and `not-required` mount children. Pending states poll at the bounded
+server hint and call the idempotent retry/reconcile route, so a target with
+queued projection work makes progress instead of merely being observed.
+`failed` exposes `canRetry` and `retry()` without exposing database paths or
+private failure messages. Every result is discarded on a Guardian
+authorization-scope change.
+
+`DataRealmReadinessNotice` is the standalone default presentation. Keep
+Guardian/system-plane controls—login, logout, tenant selection/creation,
+invitation acceptance, `TenantSwitcher`, and AppShell workspace navigation—
+outside the gate. Readiness describes only the currently authenticated active
+realm; using it to disable an action toward another realm can deadlock recovery.
+After the action activates its new Guardian scope, the scope-fenced hook loads
+that realm and the gate blocks only its application-data children. The gate is
+presentation only: server provisioning and Resource authorization remain
+authoritative.
 
 `UsePlatformAdministrationResult` exposes independently fenced config,
 member, and invitation slices. Prefer `isLoadingConfig`/`configError`/
@@ -1291,8 +1378,9 @@ tenant-custom roles, broader populated-app discovery/migration tooling beyond
 exact pre-024 administration reconciliation, and
 verified-domain autojoin/aliases/direct transfer. The resource registry now
 has independent server-owned client-exposure and field-access axes. Managed
-file-mode runtimes sharing one SQLite database relay tracked Sync changes and
-auth/session invalidations across active sockets. Under shared-row isolation,
+file-mode runtimes sharing a relevant SQLite plane relay that plane's tracked
+changes; runtimes sharing `systemDb` also relay auth/session invalidation across
+active sockets. Under shared-row isolation,
 multi-mode startup also validates actual non-partial tenant-leading indexes,
 tenant-scoped business uniqueness, and composite tenant consistency for foreign
 keys between registered tenant Resources; physical tenant isolation validates
@@ -1682,6 +1770,38 @@ Sync rather than lazy loading. Omitted `actions` enables the standard five
 operations, while explicit `actions: []` enables none. Per-action policy maps
 reject unknown keys and actions not present in that declared set.
 
+For Resources that belong only to customer organizations or only to the
+protected Administration Organization, compose the RBAC policy with the
+server-derived tenant purpose:
+
+```ts
+const customerAttendanceRead = allOf(
+  authorizationPolicy({
+    tenant: 'required',
+    permission: 'attendance:read',
+  }),
+  tenantKindPolicy('organization'),
+);
+```
+
+`tenantKindPolicy('organization' | 'administration', ...additionalKinds)`
+requires a live tenant authorization scope and reads its kind from durable
+Guardian session or API-key authority. Browser state, headers, bodies, query
+parameters, and application rows cannot choose or widen that boundary. Resource
+registration rejects the policy unless Guardian uses multi-tenant mode.
+
+When app rows need Guardian ownership or attribution, declare
+`field.guardianUser()` and, in multi-tenant apps,
+`field.guardianMembership()`. Pair them with
+`guardianActorPolicy({ userField, membershipField })` in the server Resource.
+The policy stamps values from the server-owned user and active membership,
+adds exact owner constraints to list reads, verifies loaded rows, and rejects
+reference changes after create. Keep those fields out of Resource
+`create`/`update` allow-lists; they are trusted policy output, not client input.
+The local ID-only anchors enforce foreign-key existence and retention but never
+replace live Guardian status, RBAC, session/API-key authority, or commit
+fencing. See [Bind app rows to Guardian identities](./framework/resource-policy.md#bind-app-rows-to-guardian-identities).
+
 For registered resources, unconstrained `list` policy uses the normal full-sync
 fast path. Owner-only or otherwise row-constrained resource lists use
 per-connection row filters for snapshots, catchup, and live changes.
@@ -1998,6 +2118,9 @@ by caller-owned columns. It is controlled: pass `columns` and `items`, then
 persist completed drops in `onItemMove`. Use `onItemClick` with Zero's
 `modals.open` manager for edit/detail surfaces so modal behavior stays
 consistent with the rest of the platform.
+Use `renderItemActions` for buttons or menus so controls remain outside the
+keyboard drag activator. Set `dragEnabled={false}` for a readable, selectable
+view-only board; `disabled` is the visually unavailable state.
 
 See [docs/frontend/kanban.md](./frontend/kanban.md) for the full reactive DB
 wiring guide and custom card examples.
@@ -3252,12 +3375,12 @@ actors, concurrency, isolation, and lifecycle across many databases. The
 typed configuration surface is `databaseTopology`.
 
 `databaseTopology` adds bounded actor-owned SQLite files without changing the
-default database API. Omitting it preserves single-database behavior. In
-physical tenant mode, the existing `db` remains the pinned control/default
-database for identity, sessions, memberships, role assignments, platform
-tables, and global/shared app resources; each selected tenant's application
-resources use a separate actor-owned database whose placement is file/WAL or a
-bounded hot snapshot runtime.
+application database API. Omitting it keeps one pinned application database.
+In every topology, `systemDb` separately owns identity, sessions, memberships,
+role assignments, and platform tables. In physical tenant mode, `db` remains
+the pinned shared application database for global/shared app resources; each
+selected tenant's application resources use a separate actor-owned database
+whose placement is file/WAL or a bounded hot snapshot runtime.
 
 Define the tenant schema as a side-effect-free actor realm and branch the same
 server entry before ordinary app startup:
@@ -3306,7 +3429,8 @@ const tenantData = defineDatabaseRealm({
 });
 
 const config = defineZeroConfig({
-  db: { mode: 'file', path: './data/control.db' },
+  db: { mode: 'file', path: './data/application.db' },
+  systemDb: { mode: 'file', path: './data/system.db' },
   tables,
   auth: { tenancy: 'multi' },
   resources: [
@@ -3435,8 +3559,8 @@ return {
 ```
 
 `databaseTopology.rootDirectory` is an exclusively managed Fabric location.
-It must not overlap `outDir`, the effective default/control SQLite source, hot
-snapshot, or deterministic WAL/SHM/journal companion paths, the object-storage
+It must not overlap `outDir`, the effective application or system SQLite
+source, hot snapshot, or deterministic WAL/SHM/journal companion paths, the object-storage
 root in a containing direction, or `storageDir/tmp` / `storageDir/blobs`. A
 dedicated unowned child such as `storageDir/databases` is allowed. Zero
 validates both lexical configuration
@@ -3662,7 +3786,11 @@ and registered `command` operations—never raw SQL, paths, a database manager,
 or a tenant selector. Reads support `snapshot`, `read-your-writes` with a prior
 sequence token, and `strong` consistency. The historical synchronous
 `zero.db`, `zero.syncDB`, `zero.sql`, and `zero.sqlite` identities continue to
-refer only to the pinned default database.
+refer only to the pinned application database. Privileged system persistence
+is explicit under `zero.system`; multi-tenant request code must use the
+deliberate `zero.unsafe.system` escape hatch, and workflow/background contexts
+do not receive it. Ordinary app code should use Guardian and platform service
+APIs instead.
 
 `list(table, { limit, after? })` reads 1–500 rows in declared-primary-key
 ascending order. `after` is an exclusive primary-key cursor, so passing the
@@ -3747,7 +3875,7 @@ pre-read, commit, and canonical result authorization, then releases it in
 Generated mutations use equivalent private receipt ledgers on both storage
 planes. Physical tenant Resources persist the receipt with the actor effect in
 the tenant database; global and shared-row Resources persist the canonical
-receipt with the ReactiveDB effect in the pinned default database. Lookup
+receipt with the ReactiveDB effect in the pinned application database. Lookup
 happens before a mutable row pre-read. Exact replay returns the stored canonical
 effect, then rechecks current authority and the original policy shape:
 update/delete use the immutable preimage while create receives its original
@@ -3841,7 +3969,7 @@ and does not reconnect-loop. See
 [ReactiveDB Fabric](./framework/multi-database-architecture.md#reactivedb-and-realtime).
 
 Physical tables declared with `sync: 'auto'` resolve conservatively to lazy
-because no count from the shared control database can represent independently
+because no count from the shared application database can represent independently
 sized tenant files. Explicit `full` and `lazy` still win. Lazy hydration
 requires HTTP exposure (`all` for a table which also participates in Sync).
 
@@ -3916,10 +4044,12 @@ a managed `tenant_id` discriminator. If one is retained for business/export
 meaning, it is ordinary data and never routing authority. Shared-row mode keeps
 the existing tenant-column and tenant-leading-index checks.
 
-The pinned default/control database remains outside Fabric placement and keeps
-identity, auth, memberships, platform administration, and global/shared
-resources. Splitting Zero-owned control/logging/metrics/plugin realms is future
-work. The current feature branch also does not provide online placement
+Both the pinned application database and the separate Zero-owned system
+database remain outside Fabric placement. `systemDb` keeps identity, auth,
+memberships, and platform administration; `db` keeps global/shared application
+resources. The generic pinned-runtime registry is the extension seam for
+future isolated logging, metrics, audit, and plugin-owned databases. The
+current candidate also does not provide online placement
 migration, automatic heat/spill policy, distributed owners, operator-grade
 fleet backup/restore or tenant lifecycle administration, or a completed
 supported package/OS release matrix. See
@@ -4053,7 +4183,11 @@ For a physical tenant resource, those same checks run around actor reads and
 writes. The tenant database capability replaces only the mandatory tenant-row
 predicate; discretionary Resource policy, advanced RBAC, field projection,
 strict creates, conditional updates/deletes, and commit-time authority
-revalidation remain in force. Actor-backed Sync also uses durable logical
+revalidation remain in force. With file-backed `systemDb`, the writer actor
+takes a shared authority-sidecar lease and rereads the captured system revision
+at its own final commit edge; Guardian authority changes take the exclusive
+lease, while distinct tenant writers can still commit concurrently.
+Actor-backed Sync also uses durable logical
 mutation receipts. If the write may have committed but no safe acknowledgement
 can be produced, Zero reconnects without a negative ack so the client can
 replay the same mutation reference after its new baseline.
@@ -4236,6 +4370,7 @@ a standalone Elysia composition without `createApp()`.
 | `useQuery` | `<T>(name, predicate) => T[]` | Local filtered rows; recomputes when the table map changes |
 | `useStatus` | `() => { connected: boolean }` | WebSocket connected? |
 | `useConnectionHealth` | `() => ConnectionHealth` | Auth/sync/pending-mutation health for app banners |
+| `useDataRealmReadiness` | `(options?) => UseDataRealmReadinessResult` | Authorization-scope-fenced active-realm readiness with automatic idempotent pending reconciliation |
 | `useMutation` | `(action, options?) => UseMutationReturn` | SDK-backed command lifecycle with observability errors |
 
 ### Auth Hooks
@@ -4427,14 +4562,18 @@ barrel for the exact installed-version surface.
 ### React Components
 `AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `LoginForm`, `RegisterForm`, `ForgotPasswordForm`, `PasswordActionForm`, `ChangePasswordForm`, `EmailVerificationForm`, `UserPropertiesForm`, `AuthFlowContinuation`, `TenantSelectionForm`, `TenantCreationForm`, `TenantSwitcher`, `ApiKeyManagement`, `SelfApiKeyManagement`, `ApplicationUserApiKeyManagement`, `TenantMemberApiKeyManagement`, `PlatformApiKeyManagement`, `ApplicationAccessManagement`, `PlatformAdministrationManagement`, `PlatformTenantManagement`, `TenantMemberManagement`, `TenantOnboardingManagement`, `TenantDomainManagement`, `DomainOnboarding`, `TenantInvitationForm`, `TenantJoinRequestForm`, `ControlPlaneAuditViewer`, `PermissionGate`, `TenantGate`, `AdministrationScopeGate`, `PlatformAdminGate`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `KanbanBoard`, `KanbanTaskCard`, `PlatformUserManagement`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
 
+Realm-readiness additions: `DataRealmReadyGate`, `DataRealmReadinessNotice`.
+
 ### React Hooks
 `useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useAuthApiKeys`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `isAuthorizationScopeCallbackCurrent`, `useAuthorizationScopeBoundary`, `useAuthorization`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `usePlatformAdministration`, `usePlatformTenants`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher`, `useTenantAppShellWorkspaces`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
+
+Realm-readiness hook: `useDataRealmReadiness`.
 
 ### Constants
 `STORAGE_TABLES`, `zeroAnimatedIconNames`, `zeroAnimatedIcons`
 
 ### Types
-`Client`, `Collection`, `ClientConfig`, `SyncClient`, `ResourceClient`, `ResourceClientOptions`, `ResourceListResult`, `ResourceMutationOptions`, `ResourceRowResult`, `ResourceDeleteResult`, `AuthUser`, `AuthCompletionResult`, `AuthRegistrationResult`, `AuthRegistrationTenant`, `AuthPlatformAdministrationConfig`, `AuthPlatformAdminSdkSurface`, `AuthPlatformTenant`, `AuthPlatformTenantPage`, `AuthEmailVerificationRequiredResult`, `RegisterParams`, `LoginFormProps`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `PlatformUserManagementProps`, `PlatformAdministrationManagementProps`, `PlatformTenantManagementProps`, `UserManagementProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `AuthConfigStatus`, `AuthorizationScopeBoundary`, `UseAuthorizationResult`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `UseApplicationAccessOptions`, `UseApplicationAccessResult`, `UsePlatformAdministrationOptions`, `UsePlatformAdministrationResult`, `UsePlatformTenantsOptions`, `UsePlatformTenantsResult`, `UseAuthAuditOptions`, `UseAuthAuditResult`, `UseTenantMembersOptions`, `UseTenantMembersResult`, `UseTenantOnboardingAdministrationOptions`, `UseTenantOnboardingAdministrationResult`, `UseTenantDomainAdministrationOptions`, `UseTenantDomainAdministrationResult`, `UseDomainOnboardingOptions`, `UseDomainOnboardingResult`, `UseTenantSwitcherResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `InferInsert`, `InsertInput`, `PrimaryKeyOf`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
+`Client`, `Collection`, `ClientConfig`, `SyncClient`, `SyncMutationRejection`, `ResourceClient`, `ResourceClientOptions`, `ResourceListResult`, `ResourceMutationOptions`, `ResourceRowResult`, `ResourceDeleteResult`, `AuthUser`, `AuthCompletionResult`, `AuthRegistrationResult`, `AuthRegistrationTenant`, `AuthPlatformAdministrationConfig`, `AuthPlatformAdminSdkSurface`, `AuthPlatformTenant`, `AuthPlatformTenantPage`, `AuthEmailVerificationRequiredResult`, `RegisterParams`, `LoginFormProps`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `PlatformUserManagementProps`, `PlatformAdministrationManagementProps`, `PlatformTenantManagementProps`, `UserManagementProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `AuthConfigStatus`, `AuthorizationScopeBoundary`, `UseAuthorizationResult`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `UseApplicationAccessOptions`, `UseApplicationAccessResult`, `UsePlatformAdministrationOptions`, `UsePlatformAdministrationResult`, `UsePlatformTenantsOptions`, `UsePlatformTenantsResult`, `UseAuthAuditOptions`, `UseAuthAuditResult`, `UseTenantMembersOptions`, `UseTenantMembersResult`, `UseTenantOnboardingAdministrationOptions`, `UseTenantOnboardingAdministrationResult`, `UseTenantDomainAdministrationOptions`, `UseTenantDomainAdministrationResult`, `UseDomainOnboardingOptions`, `UseDomainOnboardingResult`, `UseTenantSwitcherResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `InferInsert`, `InsertInput`, `PrimaryKeyOf`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
 
 Guardian user API-key types in the browser-safe barrel:
 `AuthApiKeyApplicationAdminSdkSurface`, `AuthApiKeyCreatedVia`,
@@ -4481,7 +4620,21 @@ Guardian user API-key configuration and credential policy types from that
 server barrel: `AuthApiKeyConfig`, `AuthApiKeyOptions`,
 `ResolvedAuthApiKeyConfig`, and `AuthorizationCredentialKind`.
 
-Sync-only (from `@zero/framework/sync`): `createDefaultSyncPolicy`, `combineSyncPolicies`, `allowAllSyncPolicy`, `getReadableSyncTables`, `evaluateSyncReadPolicy`, `evaluateSyncMutationPolicy`, `SYNC_ACK_ERROR_CODES`, `SyncAckErrorCode`, `SyncPolicy`, `SyncReadPolicyContext`, `SyncMutationPolicyContext`
+Advanced server-only projection composition (from `@zero/framework/auth`):
+`IdentityAnchorStore`, `IdentityProjectionOutboxStore`,
+`IdentityProjectionService`, `createIdentityProjectionLifecycleHook`,
+`IdentityProjectionError`, `identityProjectionError`,
+`IDENTITY_PROJECTION_ERROR_CODES`, and
+`IDENTITY_PROJECTION_INSTALLATION_TABLE`; options/contracts include
+`IdentityAnchorStoreOptions`, `IdentityProjectionOutboxStoreOptions`,
+`IdentityProjectionServiceOptions`, `IdentityProjectionLifecycleRoutes`,
+`SynchronousIdentityProjectionTarget`, and `IdentityProjectionErrorCode`.
+Managed apps must let `createApp()` own this lifecycle. Schema installers and
+table-name constants exist for trusted adapter ownership only; their rows and
+columns are not an application query contract. See
+[System and Application Database Planes](./framework/system-database.md#advanced-server-only-projection-composition).
+
+Sync-only (from `@zero/framework/sync`): `createDefaultSyncPolicy`, `combineSyncPolicies`, `allowAllSyncPolicy`, `getReadableSyncTables`, `evaluateSyncReadPolicy`, `evaluateSyncMutationPolicy`, `SYNC_ACK_ERROR_CODES`, `SyncAckErrorCode`, `SyncMutationRejection`, `SyncPolicy`, `SyncReadPolicyContext`, `SyncMutationPolicyContext`
 
 ### CVA Variant Functions
 `buttonVariants`, `badgeVariants`

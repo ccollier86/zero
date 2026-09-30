@@ -28,6 +28,17 @@ export function isAuthorizationScopeStable(
   return transition.phase === 'idle' || transition.phase === 'recovery-required';
 }
 
+/** True when cached application state may be rendered for the current scope. */
+export function isAuthorizationScopeReady(
+  transition: AuthSessionTransitionState,
+  isRestoring: boolean,
+): boolean {
+  // Ordinary login/MFA form submission uses isLoading but does not make the
+  // current scope unsafe. Initial credential restoration and explicit scope
+  // transitions do, and remain masked by this boundary.
+  return isAuthorizationScopeStable(transition) && !isRestoring;
+}
+
 /**
  * Shared browser cache boundary for every Zero-owned hook.
  *
@@ -98,12 +109,15 @@ export function useAuthorizationScopeBoundary(
   const key = useSyncExternalStore(subscribe, getSnapshot, () => SSR_BOUNDARY_KEY);
   const phase = auth?.sessionTransition.phase ?? 'idle';
   const stable = auth ? isAuthorizationScopeStable(auth.sessionTransition) : true;
+  const ready = auth
+    ? isAuthorizationScopeReady(auth.sessionTransition, auth.isRestoring)
+    : true;
 
   return {
     key,
     scopeKey: readAuthorizationScopeIdentityKey(auth),
     stable,
-    ready: stable && !(auth?.isLoading ?? false),
+    ready,
     phase,
   };
 }

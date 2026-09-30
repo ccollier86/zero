@@ -9,7 +9,11 @@ import {
   SelfApiKeyManagement,
   TenantMemberApiKeyManagement,
 } from './api-key-management';
-import { ApiKeyIssueForm, ApiKeyList } from './api-key-management-parts';
+import {
+  apiKeyConfirmationTarget,
+  ApiKeyIssueForm,
+  ApiKeyList,
+} from './api-key-management-parts';
 import {
   apiKeyManagementCopy,
   apiKeyManagementHookOptions,
@@ -54,6 +58,9 @@ describe('ApiKeyManagement mode routing', () => {
     for (const component of components) {
       const markup = renderToStaticMarkup(component);
       expect(markup).toContain('Loading API key configuration…');
+      expect(markup).toMatch(
+        /<h2[^>]*data-slot="card-title"[^>]*>[^<]*API key(?:s| directory)<\/h2>/,
+      );
       expect(markup).not.toContain('Issue key');
       expect(markup).not.toContain('Revoke');
     }
@@ -150,6 +157,31 @@ describe('ApiKeyManagement mode routing', () => {
     }));
     expect(markup).toContain('Defaults to 8h; maximum 14d.');
     expect(markup).not.toContain('12h or 30d');
+  });
+
+  test('identifies duplicate labels by hint, subject, and exact scope in confirmations', () => {
+    const first = {
+      ...issued().apiKey,
+      tenantId: 'tenant-a',
+      membershipId: 'membership-a',
+    };
+    const second = {
+      ...issued().apiKey,
+      keyId: '223e4567-e89b-42d3-a456-426614174000',
+      hint: 'bbbb',
+      userId: 'user-2',
+      tenantId: 'tenant-b',
+      membershipId: 'membership-b',
+    };
+
+    expect(apiKeyConfirmationTarget(first, 'practice')).toBe(
+      'API key Automation, ending in aaaa, for user user-1 in practice tenant-a, membership membership-a',
+    );
+    expect(apiKeyConfirmationTarget(second, 'practice')).toBe(
+      'API key Automation, ending in bbbb, for user user-2 in practice tenant-b, membership membership-b',
+    );
+    expect(apiKeyConfirmationTarget(first, 'practice'))
+      .not.toBe(apiKeyConfirmationTarget(second, 'practice'));
   });
 });
 

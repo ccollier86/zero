@@ -10,6 +10,7 @@ import { isPolicyTrustedUserProperty } from '../auth/auth-config';
 import { AuthorizationKernel } from '../auth/authorization-kernel';
 import type { CompiledAccessRequirement } from '../auth/authorization-kernel';
 import type {
+  GuardianActorPolicyOptions,
   ResourcePolicyAuthConfig,
   ResourceAuthorizationRequirement,
   ResourceMetadataRequirements,
@@ -96,6 +97,82 @@ export function validateAuthorizationPolicy(
       severity: 'error',
     }];
   }
+}
+
+/** Reject tenant-purpose policies outside Guardian's multi-tenant authority model. */
+export function validateTenantKindPolicy(
+  authConfig: ResourcePolicyAuthConfig,
+): ResourcePolicyValidationIssue[] {
+  if (!authConfig.tenancy) {
+    return [{
+      code: 'tenant-kind-config-unavailable',
+      message: 'tenantKindPolicy requires Zero tenancy configuration.',
+      path: 'tenantKind',
+      severity: 'error',
+    }];
+  }
+  if (authConfig.tenancy.mode !== 'multi') {
+    return [{
+      code: 'tenant-kind-requires-multi-tenancy',
+      message: 'tenantKindPolicy is available only when auth.tenancy.mode is "multi".',
+      path: 'tenantKind',
+      severity: 'error',
+    }];
+  }
+  return [];
+}
+
+/** Validate Guardian actor references and their required tenancy model. */
+export function validateGuardianActorPolicy(
+  options: GuardianActorPolicyOptions,
+  authConfig: ResourcePolicyAuthConfig,
+): ResourcePolicyValidationIssue[] {
+  const issues: ResourcePolicyValidationIssue[] = [];
+  const userField = options.userField.trim();
+  const membershipField = options.membershipField?.trim();
+
+  if (!userField) {
+    issues.push({
+      code: 'guardian-actor-field-invalid',
+      message: 'guardianActorPolicy requires a non-empty userField.',
+      path: 'guardianActor.userField',
+      severity: 'error',
+    });
+  }
+  if (options.membershipField !== undefined && !membershipField) {
+    issues.push({
+      code: 'guardian-actor-field-invalid',
+      message: 'guardianActorPolicy membershipField must be non-empty when provided.',
+      path: 'guardianActor.membershipField',
+      severity: 'error',
+    });
+  }
+  if (userField && membershipField && userField === membershipField) {
+    issues.push({
+      code: 'guardian-actor-fields-conflict',
+      message: 'guardianActorPolicy userField and membershipField must reference different columns.',
+      path: 'guardianActor.membershipField',
+      severity: 'error',
+    });
+  }
+
+  if (membershipField && !authConfig.tenancy) {
+    issues.push({
+      code: 'guardian-actor-tenancy-config-unavailable',
+      message: 'guardianActorPolicy membership references require Zero tenancy configuration.',
+      path: 'guardianActor.membershipField',
+      severity: 'error',
+    });
+  } else if (membershipField && authConfig.tenancy?.mode !== 'multi') {
+    issues.push({
+      code: 'guardian-actor-requires-multi-tenancy',
+      message: 'guardianActorPolicy membership references require auth.tenancy.mode "multi".',
+      path: 'guardianActor.membershipField',
+      severity: 'error',
+    });
+  }
+
+  return issues;
 }
 
 /** Validate and path-prefix child policy issues for composite policy helpers. */

@@ -229,7 +229,8 @@ export function usePlatformAdministrationInvitationSlice(
       } catch (cause) {
         return Promise.reject(cause);
       }
-      if (!current.config.capabilities.canManageInvitations) {
+      if (!current.config.capabilities.canManageInvitations
+        || !current.config.capabilities.canManageRoles) {
         return Promise.reject(platformAdministrationPermissionDenied());
       }
       return mutate(() => current.platform!.issueInvitation(params));

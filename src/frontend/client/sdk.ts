@@ -3,6 +3,7 @@ import type {
   ClientTableDef,
   JsonValue,
   SyncDataPlaneName,
+  SyncMutationRejection,
 } from '../../sync/types';
 import type { PrimaryKeyOf } from '../../schema/infer';
 import { createSyncClient } from '../../sync/client/sync-client';
@@ -114,6 +115,8 @@ import {
   type ResourceClient,
   type ResourceClientOptions,
 } from './resource-client';
+import { createDataRealmReadinessSdkSurface } from './data-realm-readiness-transport';
+import type { DataRealmReadinessSdkSurface } from '../../auth/data-realm-readiness-types';
 
 /**
  * All platform-internal tables that hooks depend on.
@@ -127,6 +130,7 @@ const PLATFORM_TABLES: Record<string, ClientTableDef> = {
 };
 
 export type { SyncClient };
+export type { SyncMutationRejection } from '../../sync/types';
 
 export type {
   AuthApiKeyApplicationAdminSdkSurface,
@@ -374,6 +378,9 @@ export interface ClientConfig {
 
   /** Called after successful reconnect. */
   onReconnect?: () => void;
+
+  /** Called after a rejected realtime mutation has been rolled back locally. */
+  onMutationRejected?: (rejection: SyncMutationRejection) => void;
 }
 
 // ─── Client Interface ──────────────────────────────────────────────────────
@@ -393,6 +400,9 @@ export interface Client extends AuthAdminSdkSurface {
 
   /** Protected administration-organization and customer-tenant control plane. */
   readonly platformAdmin: AuthPlatformAdminSdkSurface;
+
+  /** Readiness of the authenticated request's server-derived application realm. */
+  readonly dataRealm: DataRealmReadinessSdkSurface;
 
   // ─── Auth (top-level shortcuts) ──────────────────────────────────
 
@@ -694,6 +704,11 @@ export interface Client extends AuthAdminSdkSurface {
   /** Subscribe to connection state changes. Returns unsubscribe. */
   onConnectionChange(callback: (connected: boolean) => void): () => void;
 
+  /** Observe rejected optimistic mutations after their local rollback. */
+  onMutationRejected(
+    callback: (rejection: SyncMutationRejection) => void,
+  ): () => void;
+
   /** Disconnect everything — WS, auth, state. */
   disconnect(): void;
 }
@@ -805,6 +820,7 @@ export function createClient(config: ClientConfig): Client {
     resourcePrefix = '/api/resources',
     onError,
     onReconnect,
+    onMutationRejected,
   } = config;
 
   if (stateSync && !authEnabled) {
@@ -818,17 +834,18 @@ export function createClient(config: ClientConfig): Client {
     appTables[name] = 'clientTable' in def ? (def as { clientTable: ClientTableDef }).clientTable : def as ClientTableDef;
   }
 
-  // Merge platform-internal tables with normalized app tables.
-  // Platform tables (notifications, rooms, workflows, storage) are
-  // auto-registered so apps never need to import or spread them.
+  // Auth-backed platform services live exclusively on the system plane. Do
+  // not register their tables for auth-disabled apps, whose server has no
+  // system Sync bridge and therefore cannot complete a system baseline.
   // App tables spread last so they can override if needed.
   const tables: Record<string, ClientTableDef> = {
-    ...PLATFORM_TABLES,
+    ...(authEnabled ? PLATFORM_TABLES : {}),
     ...appTables,
   };
   const resolvedTableSyncPlanes = resolveSdkTableSyncPlanes(
     appTables,
     tableSyncPlanes,
+    authEnabled,
   );
 
   // ─── Auth ─────────────────────────────────────────────────────────
@@ -969,6 +986,7 @@ export function createClient(config: ClientConfig): Client {
     }
     if (syncAuthRefresh) return;
 
+    const refreshScope = authClient.authorizationScopeKey;
     syncAuthRefresh = (async () => {
       const refreshed = await authClient.refresh();
       if (refreshed && currentAuthToken()) {
@@ -976,12 +994,27 @@ export function createClient(config: ClientConfig): Client {
         return;
       }
 
-      authClient.expireSession();
+      // A rejected refresh already commits expiry through AuthSession's scope
+      // purge barrier. Only transports that returned false without expiring
+      // an established scope still need the revision-fenced fallback.
+      if (authClient.authorizationScopeKey || authClient.isAuthenticated) {
+        authClient.expireSession();
+      }
       resetClientSessionState();
       onError?.(error);
-    })().finally(() => {
-      syncAuthRefresh = null;
-    });
+    })()
+      .catch(() => {
+        // Scope replacement intentionally cancels refresh work retained by
+        // the rejected socket. Its replacement lifecycle owns reconnect and
+        // cache state, so cancellation is neither an app error nor a reason
+        // to expire the newly committed session.
+        if (authClient.authorizationScopeKey !== refreshScope
+          || authClient.sessionTransition.phase !== 'idle') return;
+        onError?.(error);
+      })
+      .finally(() => {
+        syncAuthRefresh = null;
+      });
   }
 
   syncClient = createSyncClient({
@@ -996,6 +1029,7 @@ export function createClient(config: ClientConfig): Client {
     onError,
     onAuthFailure: handleSyncAuthFailure,
     onReconnect,
+    onMutationRejected,
     maxReconnectAttempts,
   });
 
@@ -1135,6 +1169,8 @@ export function createClient(config: ClientConfig): Client {
     return (text ? JSON.parse(text) : undefined) as T;
   }
 
+  const dataRealm = createDataRealmReadinessSdkSurface(clientFetch);
+
   // ─── Eden Treaty API ────────────────────────────────────────────
   const api = createApi(url, authClient);
   const applicationAdmin: AuthApplicationAdminSdkSurface = Object.freeze({
@@ -1165,6 +1201,7 @@ export function createClient(config: ClientConfig): Client {
     get apiKeys() { return requireAuthClient().apiKeys; },
     get audit() { return requireAuthClient().audit; },
     get platformAdmin() { return requireAuthClient().platformAdmin; },
+    get dataRealm() { return dataRealm; },
     /** @internal */
     get auth() { return authClient; },
     get state() { return stateClient; },
@@ -1381,6 +1418,12 @@ export function createClient(config: ClientConfig): Client {
       return () => sub.unsubscribe();
     },
 
+    onMutationRejected(
+      callback: (rejection: SyncMutationRejection) => void,
+    ) {
+      return syncClient.onMutationRejected(callback);
+    },
+
     disconnect() {
       authorizationScopeEpoch += 1;
       cancelAuthorizationScopeRequests();
@@ -1406,10 +1449,13 @@ export function createClient(config: ClientConfig): Client {
 function resolveSdkTableSyncPlanes(
   appTables: Readonly<Record<string, ClientTableDef>>,
   configured: Readonly<Record<string, SyncDataPlaneName>> | undefined,
-): Readonly<Record<string, SyncDataPlaneName>> | undefined {
-  if (configured === undefined) return undefined;
+  authEnabled: boolean,
+): Readonly<Record<string, SyncDataPlaneName>> {
+  const appPlanes = configured ?? Object.fromEntries(
+    Object.keys(appTables).map((table) => [table, 'default' as const]),
+  );
 
-  const platform = Object.keys(configured)
+  const platform = Object.keys(appPlanes)
     .filter((table) => Object.hasOwn(PLATFORM_TABLES, table));
   if (platform.length > 0) {
     throw new Error(
@@ -1417,7 +1463,7 @@ function resolveSdkTableSyncPlanes(
     );
   }
 
-  const unknown = Object.keys(configured)
+  const unknown = Object.keys(appPlanes)
     .filter((table) => !Object.hasOwn(appTables, table));
   if (unknown.length > 0) {
     throw new Error(
@@ -1426,7 +1472,7 @@ function resolveSdkTableSyncPlanes(
   }
 
   const missing = Object.keys(appTables)
-    .filter((table) => !Object.hasOwn(configured, table));
+    .filter((table) => !Object.hasOwn(appPlanes, table));
   if (missing.length > 0) {
     throw new Error(
       `[client] tableSyncPlanes is missing application table${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}`,
@@ -1434,9 +1480,11 @@ function resolveSdkTableSyncPlanes(
   }
 
   const resolved = Object.fromEntries(
-    Object.keys(PLATFORM_TABLES).map((table) => [table, 'default' as const]),
+    authEnabled
+      ? Object.keys(PLATFORM_TABLES).map((table) => [table, 'system' as const])
+      : [],
   ) as Record<string, SyncDataPlaneName>;
-  for (const [table, plane] of Object.entries(configured)) {
+  for (const [table, plane] of Object.entries(appPlanes)) {
     resolved[table] = plane;
   }
   return Object.freeze(resolved);

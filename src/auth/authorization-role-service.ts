@@ -25,7 +25,6 @@ import type { UserStore } from './user-store';
 import type { AuthAuditService } from './auth-audit-service';
 import { canUserReceiveAuthTokens } from './auth-user-eligibility';
 import {
-  isAdministrationOnlyRole,
   isRoleAssignableToTenantKind,
 } from './authorization-registry';
 import { AuthorizationRoleProvisioningService } from './authorization-role-provisioning-service';
@@ -91,14 +90,20 @@ export class AuthorizationRoleService {
       input.membershipId,
       input.userId,
     );
-    if (!set || tenant.kind === 'administration') return set;
+    if (!set) return set;
 
     // A role retained from an older configuration remains visible to the
-    // control plane for cleanup, but becomes inert if it is now protected as
-    // administration-only. This prevents future template changes from
-    // turning a historical customer assignment into platform authority.
+    // control plane for cleanup, but becomes inert when it does not belong to
+    // the live tenant kind. This protects both directions: administration
+    // roles cannot leak into customer organizations, and customer roles cannot
+    // accidentally confer authority inside the administration organization.
     const roles = set.roles.filter((roleKey) => (
-      !isAdministrationOnlyRole(this.kernel.authorization, roleKey)
+      roleKey === 'owner'
+      || isRoleAssignableToTenantKind(
+        roleKey,
+        tenant.kind,
+        this.kernel.authorization,
+      )
     ));
     return Object.freeze({
       ...set,

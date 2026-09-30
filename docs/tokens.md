@@ -97,9 +97,10 @@ commit or roll back together. Construction fails closed with
 `AuthActionTokenService` receives a platform-token service from another
 ReactiveDB.
 
-`createApp()` handles this automatically: it mounts platform tokens on the
-Sync-owned ReactiveDB before auth and injects that app-local service into the
-auth runtime. No application configuration is required.
+`createApp()` handles this automatically: it mounts platform tokens and
+Guardian on the same system-plane ReactiveDB and injects that app-local service
+into the auth runtime. The application ReactiveDB remains separate. No
+application configuration beyond the normal `systemDb` placement is required.
 
 Advanced direct plugin composition must preserve the same wiring explicitly:
 

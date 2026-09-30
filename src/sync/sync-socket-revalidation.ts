@@ -25,6 +25,7 @@ export function createSyncSocketRevalidation(options: Options) {
     code: number,
     reason: string,
   ): void => {
+    clear(socket);
     try {
       options.onSocketInvalidated?.(socket);
     } catch {
@@ -40,7 +41,9 @@ export function createSyncSocketRevalidation(options: Options) {
       10,
       options.auth?.revalidateIntervalMs ?? DEFAULT_REVALIDATION_MS,
     );
-    timers.set(socket, setInterval(() => { void revalidate(socket); }, intervalMs));
+    timers.set(socket, setInterval(() => {
+      requestSocketRevalidation(socket);
+    }, intervalMs));
   }
 
   function startAuthorityPolling(): void {
@@ -71,7 +74,7 @@ export function createSyncSocketRevalidation(options: Options) {
       }
       if (revision === lastAuthorityRevision) return;
       lastAuthorityRevision = revision;
-      void options.onAuthorityInvalidated?.();
+      options.onAuthorityInvalidated?.();
       scheduleAuthorityRevalidation();
     } catch {
       // A configured durable revision that cannot be read is not a safe stale
@@ -106,11 +109,37 @@ export function createSyncSocketRevalidation(options: Options) {
       if (authorityRevalidation === task) authorityRevalidation = null;
       if (authorityRevalidationQueued && !disposed) scheduleAuthorityRevalidation();
     };
-    void task.then(finish, () => {
+    void task.then(finish, (error) => {
       authorityRevalidationQueued = false;
+      reportRevalidationFailure(error, 'authority-revision');
       invalidateAll(1011, 'Sync authority revalidation failed');
       finish();
-    });
+    }).catch(() => undefined);
+  }
+
+  function requestSocketRevalidation(
+    socket: ServerWebSocket<SyncSocketData>,
+  ): void {
+    try {
+      void revalidate(socket).catch((error) => {
+        reportRevalidationFailure(error, 'periodic');
+        closeInvalidSocket(socket, 1011, 'Sync authority revalidation failed');
+      });
+    } catch (error) {
+      reportRevalidationFailure(error, 'periodic');
+      closeInvalidSocket(socket, 1011, 'Sync authority revalidation failed');
+    }
+  }
+
+  function reportRevalidationFailure(
+    error: unknown,
+    trigger: 'authority-revision' | 'periodic',
+  ): void {
+    try {
+      options.onRevalidationFailure?.(error, trigger);
+    } catch {
+      // Observability cannot prevent fail-closed authority cleanup.
+    }
   }
 
   function invalidateAll(code: number, reason: string): void {
@@ -315,7 +344,11 @@ function closeAndReset(socket: ServerWebSocket<SyncSocketData>, code: number, re
   const data = socket.data;
   for (const topic of [...data.subscribedTopics]) {
     if (!topic.startsWith('sync:')) continue;
-    socket.unsubscribe(topic);
+    try {
+      socket.unsubscribe(topic);
+    } catch {
+      // Transport teardown cannot preserve an authorized local subscription.
+    }
     data.subscribedTopics.delete(topic);
   }
   data.allowedTables.clear();
@@ -330,5 +363,10 @@ function closeAndReset(socket: ServerWebSocket<SyncSocketData>, code: number, re
   data.authorizationFingerprint = null;
   data.readAuthorizationFingerprint = null;
   data.authorizationScope = null;
-  socket.close(code, reason);
+  try {
+    socket.close(code, reason);
+  } catch {
+    // The local authorization state is already revoked even if the transport
+    // disappeared before it could accept the close frame.
+  }
 }

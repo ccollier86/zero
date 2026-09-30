@@ -199,9 +199,9 @@ export class VerifiedDomainDnsCoordinator {
       }
       this.dependencies.emitCode(OBS_CODES.AUTH_DOMAIN_WORKER_FAILED, {
         error,
-        metadata: { error: error instanceof Error ? error.name : 'UnknownError' },
+        metadata: { stage: 'process-due' },
       });
-    });
+    }).catch(() => undefined);
   }
 
   private acquireManualLease(input: {

@@ -222,7 +222,8 @@ export function usePlatformAdministrationMemberSlice(
       if (!enabled || !platform || !currentConfig) {
         return Promise.reject(platformAdministrationUnavailable());
       }
-      if (!currentConfig.capabilities.canManageMembers) {
+      if (!currentConfig.capabilities.canManageMembers
+        || !currentConfig.capabilities.canManageRoles) {
         return Promise.reject(platformAdministrationPermissionDenied());
       }
       return mutate(() => platform.addMember(params), actorInvalidated);
@@ -232,7 +233,8 @@ export function usePlatformAdministrationMemberSlice(
       if (!enabled || !platform || !currentConfig) {
         return Promise.reject(platformAdministrationUnavailable());
       }
-      if (!currentConfig.capabilities.canManageMembers) {
+      if (!currentConfig.capabilities.canManageMembers
+        || (params.roles !== undefined && !currentConfig.capabilities.canManageRoles)) {
         return Promise.reject(platformAdministrationPermissionDenied());
       }
       if (params.roles === undefined) {

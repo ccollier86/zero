@@ -1317,6 +1317,7 @@ describe('transactions', () => {
       db.insert('todos', { id: 'guarded', title: 'Guarded', done: 0 });
       authorityRevision += 1;
       events.push('mutation');
+      db.afterCommit(() => events.push('after-commit'));
     });
 
     expect(db.get('todos', 'guarded')).toBeTruthy();
@@ -1326,6 +1327,7 @@ describe('transactions', () => {
       'before:1:2',
       'acquire',
       'release',
+      'after-commit',
     ]);
     remove();
   });

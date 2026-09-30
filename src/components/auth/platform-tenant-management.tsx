@@ -8,6 +8,7 @@ import type {
 } from '../../frontend/client/auth-platform-administration-types';
 import type { AuthTenantMembershipStatus } from '../../frontend/client/auth-types';
 import { useAuth, useAuthConfig } from '../../frontend/client/auth-hooks';
+import { useAuthorizationScopeBoundary } from '../../frontend/client/authorization-scope-hooks';
 import { usePlatformTenants } from '../../frontend/client/platform-administration-hooks';
 import {
   AlertDialog,
@@ -26,6 +27,12 @@ import { Label } from '#zero/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#zero/components/ui/select';
 import { cn } from '#zero/lib/utils';
 import { AuthConfigLoadState } from './auth-config-load-state';
+import { createAuthRoleLabelMap } from './auth-role-presentation';
+import { PlatformTenantMemberRows } from './platform-tenant-management-parts';
+import {
+  canRetainPlatformTenantConfirmation,
+  platformTenantErrorPlacement,
+} from './platform-tenant-management-policy';
 
 export interface PlatformTenantManagementProps {
   className?: string;
@@ -36,18 +43,13 @@ export interface PlatformTenantManagementProps {
 
 /** Customer-organization directory and lifecycle controls for platform operators. */
 export function PlatformTenantManagement(props: PlatformTenantManagementProps) {
-  const auth = useAuth();
   const authConfig = useAuthConfig();
+  const authorizationBoundary = useAuthorizationScopeBoundary();
   const config = authConfig.config;
   const terminology = resolveTenantTerminology(config?.tenancy?.terminology);
-  const boundary = JSON.stringify([
-    auth.user?.userId ?? null,
-    auth.activeTenant?.tenantId ?? null,
-    auth.activeTenant?.kind ?? null,
-  ]);
   return (
     <PlatformTenantManagementScope
-      key={boundary}
+      key={authorizationBoundary.key}
       {...props}
       terminology={terminology}
       configState={authConfig}
@@ -110,6 +112,17 @@ function PlatformTenantManagementScope({
   const tenantDetailHeadingId = (tenantId: string) => (
     `${id}-tenant-detail-heading-${tenantId}`
   );
+  const capabilities = directory.config?.capabilities;
+  const roleLabels = createAuthRoleLabelMap(directory.config?.roles ?? []);
+  const canRetainConfirmation = canRetainPlatformTenantConfirmation(
+    confirmation !== null,
+    capabilities,
+  );
+  const visibleConfirmation = canRetainConfirmation ? confirmation : null;
+  const visibleErrors = platformTenantErrorPlacement(
+    localError ?? directory.error,
+    visibleConfirmation !== null,
+  );
 
   React.useEffect(() => {
     const timeout = setTimeout(() => setSearch(searchInput.trim()), 250);
@@ -122,6 +135,20 @@ function PlatformTenantManagementScope({
   React.useEffect(() => {
     setSelectedTenantId(null);
   }, [search, status]);
+  React.useEffect(() => {
+    if (confirmation && !canRetainConfirmation) {
+      setConfirmation(null);
+      setLocalError(null);
+      confirmationTriggerRef.current = null;
+    }
+  }, [canRetainConfirmation, confirmation]);
+  React.useEffect(() => {
+    if (selectedTenantId && capabilities?.canReadTenants !== true) {
+      setSelectedTenantId(null);
+      setMemberSearchInput('');
+      setMemberSearch('');
+    }
+  }, [capabilities?.canReadTenants, selectedTenantId]);
 
   async function createTenant(event: React.FormEvent) {
     event.preventDefault();
@@ -147,8 +174,8 @@ function PlatformTenantManagementScope({
   }
 
   async function confirmStatus() {
-    if (!confirmation) return;
-    const pending = confirmation;
+    if (!visibleConfirmation) return;
+    const pending = visibleConfirmation;
     setLocalError(null);
     setAnnouncement('');
     try {
@@ -176,14 +203,12 @@ function PlatformTenantManagementScope({
     />;
   }
 
-  const capabilities = directory.config?.capabilities;
-  const error = localError ?? directory.error;
   return (
     <Card className={cn('overflow-hidden', className)} aria-busy={
       directory.isLoading || directory.isMutating
     }>
       <CardHeader className="gap-3 border-b border-border/70">
-        <div><CardTitle>{resolvedTitle}</CardTitle><CardDescription>{resolvedDescription}</CardDescription></div>
+        <div><CardTitle asChild><h2>{resolvedTitle}</h2></CardTitle><CardDescription>{resolvedDescription}</CardDescription></div>
         <Badge className="w-fit" variant="secondary">Administration scope</Badge>
       </CardHeader>
       <CardContent className="space-y-5 pt-5">
@@ -192,9 +217,9 @@ function PlatformTenantManagementScope({
           loadingMessage="Loading customer organization terminology…"
           unavailableMessage="Customer organization terminology could not be loaded. Tenant controls remain available with default labels."
         />
-        {error && (
+        {visibleErrors.page && (
           <div role="alert" className="flex flex-col gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
-            <span>{error}</span>
+            <span>{visibleErrors.page}</span>
             <Button type="button" size="sm" variant="outline" disabled={directory.isLoading || directory.isMutating} onClick={() => {
               setLocalError(null);
               directory.reload();
@@ -242,38 +267,38 @@ function PlatformTenantManagementScope({
           </Select>
         </div>
 
-        <AlertDialog open={confirmation !== null} onOpenChange={(open) => {
+        <AlertDialog open={visibleConfirmation !== null} onOpenChange={(open) => {
           if (!open && !directory.isMutating) {
             setConfirmation(null);
             setLocalError(null);
           }
         }}>
-          {confirmation && (
+          {visibleConfirmation && (
             <AlertDialogContent onCloseAutoFocus={(event) => {
               event.preventDefault();
               if (confirmationTriggerRef.current?.isConnected) confirmationTriggerRef.current.focus();
               else directoryHeadingRef.current?.focus();
             }}>
               <AlertDialogHeader>
-                <AlertDialogTitle>{confirmation.nextStatus === 'active' ? `Reactivate ${singular}?` : `Suspend ${singular}?`}</AlertDialogTitle>
+                <AlertDialogTitle>{visibleConfirmation.nextStatus === 'active' ? `Reactivate ${singular}?` : `Suspend ${singular}?`}</AlertDialogTitle>
                 <AlertDialogDescription>
-                  {confirmation.nextStatus === 'active'
-                    ? `${confirmation.tenant.name} can resume customer access after this change.`
-                    : `${confirmation.tenant.name} will lose customer data-plane access until reactivated.`}
+                  {visibleConfirmation.nextStatus === 'active'
+                    ? `${visibleConfirmation.tenant.name} can resume customer access after this change.`
+                    : `${visibleConfirmation.tenant.name} will lose customer data-plane access until reactivated.`}
                 </AlertDialogDescription>
               </AlertDialogHeader>
-              {localError && (
+              {visibleErrors.dialog && (
                 <div
                   role="alert"
                   className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
                 >
-                  {localError}
+                  {visibleErrors.dialog}
                 </div>
               )}
               <AlertDialogFooter>
                 <AlertDialogCancel asChild><Button type="button" variant="outline" disabled={directory.isMutating}>Cancel</Button></AlertDialogCancel>
-                <Button type="button" variant={confirmation.nextStatus === 'active' ? 'default' : 'destructive'} disabled={directory.isMutating} onClick={() => void confirmStatus()}>
-                  {directory.isMutating ? 'Updating…' : confirmation.nextStatus === 'active' ? `Reactivate ${singular}` : `Suspend ${singular}`}
+                <Button type="button" variant={visibleConfirmation.nextStatus === 'active' ? 'default' : 'destructive'} disabled={directory.isMutating} onClick={() => void confirmStatus()}>
+                  {directory.isMutating ? 'Updating…' : visibleConfirmation.nextStatus === 'active' ? `Reactivate ${singular}` : `Suspend ${singular}`}
                 </Button>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -331,14 +356,10 @@ function PlatformTenantManagementScope({
                       ) : directory.selectedTenantMembers.length === 0 ? (
                         <p className="mt-3 text-sm text-muted-foreground">No members match this view.</p>
                       ) : (
-                        <div className="mt-3 divide-y rounded-md border">
-                          {directory.selectedTenantMembers.map((member) => (
-                            <div key={member.membershipId} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
-                              <div className="min-w-0"><p className="truncate text-sm font-medium">{memberName(member)}</p><p className="truncate text-xs text-muted-foreground">{member.identity.email}</p></div>
-                              <div className="flex flex-wrap gap-2"><Badge variant="outline">{member.status}</Badge>{member.roles.map((role) => <Badge key={role} variant="outline">{role}</Badge>)}</div>
-                            </div>
-                          ))}
-                        </div>
+                        <PlatformTenantMemberRows
+                          members={directory.selectedTenantMembers}
+                          roleLabels={roleLabels}
+                        />
                       )}
                       {directory.selectedTenantMemberPage?.hasMore && (
                         <Button type="button" className="mt-3" size="sm" variant="outline" disabled={directory.isLoadingMoreMembers} onClick={() => void directory.loadMoreMembers()}>{directory.isLoadingMoreMembers ? 'Loading…' : 'Load more members'}</Button>
@@ -356,11 +377,6 @@ function PlatformTenantManagementScope({
       </CardContent>
     </Card>
   );
-}
-
-function memberName(member: { identity: { firstName: string | null; lastName: string | null; username: string } }): string {
-  return [member.identity.firstName, member.identity.lastName].filter(Boolean).join(' ')
-    || member.identity.username;
 }
 
 interface TenantTerminology {
@@ -381,7 +397,7 @@ export function PlatformTenantUnavailable({
 }) {
   return (
     <Card className={cn('overflow-hidden', className)}>
-      <CardHeader><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></CardHeader>
+      <CardHeader><CardTitle asChild><h2>{title}</h2></CardTitle><CardDescription>{description}</CardDescription></CardHeader>
       <CardContent>
         <p className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
           Switch to Platform administration to browse customer {plural}.

@@ -65,6 +65,8 @@ import {
   UserIdentityStore,
 } from './user-identity-store';
 import { UserPropertyConfigStore } from './user-property-config-store';
+import type { IdentityProjectionLifecycleHook } from './identity-projection-types';
+import { UserStoreIdentityProjectionLifecycle } from './user-store-identity-projection-lifecycle';
 
 export type {
   AuthSessionRevoker,
@@ -127,6 +129,9 @@ export interface UserStoreOptions {
   auditService?: AuthAuditService;
   /** App-bound runtime emitter for operator-visible invariant failures. */
   emitCode?: AuthPlatformCodeEmitter;
+  /** Synchronous system-plane hook for durable ID-only anchor enqueue. */
+  identityProjection?: Pick<IdentityProjectionLifecycleHook, 'userCreated'>
+    & Partial<Pick<IdentityProjectionLifecycleHook, 'membershipCreated'>>;
 }
 
 interface PreparedUserCreate {
@@ -196,11 +201,17 @@ export class UserStore {
   private readonly tenancyMode: AuthTenancyMode;
   private readonly auditService: AuthAuditService | null;
   private readonly emitCode: AuthPlatformCodeEmitter | null;
+  private readonly identityProjection: UserStoreIdentityProjectionLifecycle;
 
   constructor(private db: ReactiveDB, options: UserStoreOptions = {}) {
     this.tenancyMode = options.tenancyMode ?? 'single';
     this.auditService = options.auditService ?? null;
     this.emitCode = options.emitCode ?? null;
+    this.identityProjection = new UserStoreIdentityProjectionLifecycle(db, {
+      tenancyMode: this.tenancyMode,
+      hook: options.identityProjection,
+      emitCode: this.emitCode ?? undefined,
+    });
     // Direct UserStore consumers may define legacy refresh tables themselves.
     // Ensure additive private lifecycle tables exist before preparing SQL.
     defineAuthSessionTables(db);
@@ -250,6 +261,9 @@ export class UserStore {
       countUsers: () => this.countUsers(),
       getUserById: (userId) => this.getUserById(userId),
       getAuthorizationBootstrapper: () => this.authorizationBootstrapper,
+      activateIdentityProjection: (userId) => (
+        this.identityProjection.activateFinalizedUser(userId)
+      ),
       auditService: this.auditService,
       emitCode: this.emitCode ?? undefined,
     });
@@ -259,6 +273,9 @@ export class UserStore {
       assertCurrentProfile: () => this.assertRuntimeProfileCurrent(),
       getUserById: (userId) => this.getUserById(userId),
       getAuthGeneration: (userId) => this.getAuthGeneration(userId),
+      activateIdentityProjection: (userId) => (
+        this.identityProjection.activateFinalizedUser(userId)
+      ),
       auditService: this.auditService,
       emitCode: this.emitCode ?? undefined,
     });
@@ -409,7 +426,7 @@ export class UserStore {
           503,
         );
       }
-      const user = this.insertPreparedUser(prepared);
+      const user = this.insertPreparedUser(prepared, true);
       const authGeneration = this.getAuthGeneration(user.userId);
       const receipt = this.adminUserProvisioning.insert({
         ...provisional,
@@ -488,7 +505,7 @@ export class UserStore {
               emailVerificationRequired: policy.requireEmailVerification,
               mfaRequired: policy.mfaRequired,
             },
-          });
+          }, provisional !== null);
           if (provisional) {
             const createdAt = Date.now();
             const authGeneration = this.getAuthGeneration(user.userId);
@@ -667,7 +684,10 @@ export class UserStore {
     };
   }
 
-  private insertPreparedUser(prepared: PreparedUserCreate): UserRecord {
+  private insertPreparedUser(
+    prepared: PreparedUserCreate,
+    deferIdentityProjection = false,
+  ): UserRecord {
     const { params, email, userId, now, passwordHash } = prepared;
     // Password hashing yields. Recheck inside the write transaction so a
     // concurrent identity cannot be replaced by ReactiveDB's upsert primitive.
@@ -681,6 +701,7 @@ export class UserStore {
       userId,
       params.properties ?? {},
     );
+    if (!deferIdentityProjection) this.identityProjection.userCreated(userId);
     return this.identity.getByIdInCurrentProfile(userId)!;
   }
 

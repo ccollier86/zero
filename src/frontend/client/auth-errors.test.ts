@@ -12,6 +12,19 @@ describe('createAuthClientError', () => {
     expect(error.message).toBe('Forbidden');
     expect(error.status).toBe(403);
     expect(error.code).toBe('FORBIDDEN');
+    expect(error.retryable).toBe(false);
+  });
+
+  it('projects an explicit retryable auth conflict without guessing from status', () => {
+    const response = new Response(null, { status: 409 });
+    const error = createAuthClientError(response, {
+      error: 'Authentication update conflicted; retry the request',
+      code: 'AUTH_COMMIT_CONFLICT',
+      retryable: true,
+    }, 'Auth failed');
+
+    expect(error.code).toBe('AUTH_COMMIT_CONFLICT');
+    expect(error.retryable).toBe(true);
   });
 
   it('includes HTTP status when an upstream body is not structured', () => {

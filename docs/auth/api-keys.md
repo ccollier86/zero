@@ -13,6 +13,10 @@ advanced-RBAC assignments. Suspending the account or organization, removing
 the membership, changing eligibility, revoking the key, or changing the
 account security generation changes what the credential can do immediately.
 
+This capability does not issue service-level or environment credentials, sign
+requests with HMAC, or enforce an API-key IP allow/deny policy. Those are
+separate security features, not implied by enabling Guardian user API keys.
+
 ## Enable The Capability
 
 Configure user API keys inside the existing `auth` contract:
@@ -102,9 +106,9 @@ export default defineEndpoint({
 });
 ```
 
-To create a machine-only endpoint while preserving the same user/RBAC
-authority, use `credentials: ['api-key']`. A normal browser session will then
-be rejected:
+To create an API-key-only endpoint tied to the same live user/RBAC authority,
+use `credentials: ['api-key']`. This is still a user credential, not a service
+identity; a normal browser session will be rejected:
 
 ```ts
 auth: {

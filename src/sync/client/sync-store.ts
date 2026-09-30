@@ -37,7 +37,11 @@ export interface SyncMeta {
   epoch: string | null;
   scope: string | null;
   /** Independent durable stream cursor for each multiplexed data plane. */
-  cursors: Record<SyncDataPlaneName, SyncPlaneCursorState>;
+  cursors: Readonly<{
+    default: SyncPlaneCursorState;
+    tenant: SyncPlaneCursorState;
+    system?: SyncPlaneCursorState;
+  }>;
   pending: PendingMutation[];
 }
 
@@ -190,8 +194,8 @@ function updateSyncPlaneCursor(
   const next: SyncMeta = {
     ...meta,
     cursors: {
+      ...meta.cursors,
       default: { ...getSyncPlaneCursor(meta, 'default') },
-      tenant: { ...getSyncPlaneCursor(meta, 'tenant') },
       [plane]: cursor,
     },
   };

@@ -22,11 +22,13 @@ import {
 } from './database-actor-protocol';
 import { AuthorityCommitCoordinator } from './authority-commit-coordinator';
 import { createDatabaseCommitAuthority } from './database-commit-authority';
+import { executeCoordinatorIdentityProjection } from './database-coordinator-capability';
 import {
   DatabaseCoordinator,
   type DatabaseCoordinatorRestartPolicy,
   type DatabaseExecutorFactoryContext,
 } from './database-coordinator';
+import { safeCoordinatorError } from './database-coordinator-errors';
 import { DatabaseError } from './database-error';
 import { DATABASE_COORDINATOR_MAX_DATABASES } from './database-capacity';
 import {
@@ -527,6 +529,84 @@ describe('DatabaseCoordinator', () => {
     await harness.coordinator.close();
   });
 
+  test('classifies private identity-projection actor failures with bounded mutation events', async () => {
+    for (const scenario of [
+      {
+        error: new DatabaseError(
+          'DATABASE_CAPACITY_EXHAUSTED',
+          'private projection capacity detail',
+          {
+            details: {
+              capacityType: 'receipts',
+              capacityLimit: 1_000_000,
+              privateValue: 'must-not-emit',
+            },
+          },
+        ),
+        eventCode: 'database.capacity.exhausted',
+      },
+      {
+        error: new DatabaseError(
+          'DATABASE_PAYLOAD_INVALID',
+          'private projection validation detail',
+          { outcome: 'not-committed' },
+        ),
+        eventCode: 'database.operation.failed',
+      },
+      {
+        error: new DatabaseError(
+          'DATABASE_EXECUTOR_FAILED',
+          'private projection executor detail',
+          { outcome: 'unknown' },
+        ),
+        eventCode: 'database.operation.outcome_unknown',
+      },
+    ] as const) {
+      const store = new MemoryEventStore();
+      const harness = createHarness(roots, {
+        observability: createDatabaseObservability({
+          sink: store,
+          store,
+          config: { console: false, store },
+        }),
+      });
+      const lease = await harness.coordinator.acquire(
+        `identity-projection-${scenario.error.code.toLowerCase()}`,
+      );
+      harness.onIdentityProjection = () => {
+        throw scenario.error;
+      };
+
+      const error = await captureDatabaseError(() =>
+        executeCoordinatorIdentityProjection(lease, {
+          action: 'mark-ready',
+          installationId: 'installation-a',
+          targetId: 'target-a',
+        }));
+      expect(error.code).toBe(scenario.error.code);
+      const events = store.query({ code: scenario.eventCode }).events;
+      expect(events).toHaveLength(1);
+      expect(events[0]?.metadata).toMatchObject(
+        scenario.eventCode === 'database.capacity.exhausted'
+          ? {
+              role: 'writer',
+              capacityType: 'receipts',
+              capacityLimit: 1_000_000,
+            }
+          : {
+              role: 'writer',
+              operation: 'mutation',
+              errorCode: scenario.error.code,
+              outcome: scenario.error.outcome,
+            },
+      );
+      expect(JSON.stringify(events)).not.toContain('private');
+
+      lease.release();
+      await harness.coordinator.close();
+    }
+  });
+
   test('reports hot image exhaustion through a closed operation classifier', async () => {
     const store = new MemoryEventStore();
     const harness = createHarness(roots, {
@@ -738,6 +818,96 @@ describe('DatabaseCoordinator', () => {
 
     second.release();
     await harness.coordinator.close();
+  });
+
+  test('returns null for a missing existing-only target before busy-capacity admission', async () => {
+    const harness = createHarness(roots, { maxDatabases: 1 });
+    const held = await harness.coordinator.acquire('tenant-held');
+    const before = harness.coordinator.diagnostics();
+
+    await expect(harness.coordinator.acquireExisting('tenant-missing'))
+      .resolves.toBeNull();
+    expect(harness.coordinator.diagnostics()).toMatchObject({
+      openDatabases: 1,
+      availableSlots: 0,
+      databases: [{ databaseRef: held.databaseRef, leases: 1 }],
+    });
+    expect(harness.executors).toHaveLength(2);
+    expect(harness.coordinator.diagnostics().databaseFiles)
+      .toBe(before.databaseFiles);
+
+    held.release();
+    await harness.coordinator.close();
+  });
+
+  test('returns null for a missing existing-only target without evicting idle capacity', async () => {
+    const store = new MemoryEventStore();
+    const harness = createHarness(roots, {
+      maxDatabases: 1,
+      observability: createDatabaseObservability({
+        sink: store,
+        store,
+        config: { console: false, store },
+      }),
+    });
+    const retained = await harness.coordinator.acquire('tenant-retained');
+    const retainedRef = retained.databaseRef;
+    retained.release();
+
+    await expect(harness.coordinator.acquireExisting('tenant-missing'))
+      .resolves.toBeNull();
+    expect(harness.coordinator.diagnostics()).toMatchObject({
+      openDatabases: 1,
+      availableSlots: 0,
+      databases: [{ databaseRef: retainedRef, leases: 0 }],
+    });
+    expect(harness.executors).toHaveLength(2);
+    expect(store.query({ code: 'database.runtime.evicted' }).count).toBe(0);
+
+    const reacquired = await harness.coordinator.acquireExisting('tenant-retained');
+    expect(reacquired?.databaseRef).toBe(retainedRef);
+    expect(harness.executors).toHaveLength(2);
+    reacquired?.release();
+    await harness.coordinator.close();
+  });
+
+  test('rechecks an existing-only file after reserving and returns the slot if it disappeared', async () => {
+    const original = createHarness(roots, { maxDatabases: 1 });
+    const lease = await original.coordinator.acquire('tenant-transient');
+    lease.release();
+    await original.coordinator.close();
+    const filePath = resolveDatabaseFile(original.root, 'tenant-transient').path;
+    expect(existsSync(filePath)).toBe(true);
+
+    let removed = false;
+    const inspector = createHarness(roots, {
+      rootDirectory: original.root,
+      maxDatabases: 1,
+      placement: {
+        default: 'file',
+        hot: {
+          durability: 'on-write',
+          maxBytes: 8 * 1024 * 1024,
+        },
+        select: () => {
+          if (!removed) {
+            removed = true;
+            unlinkSync(filePath);
+          }
+          return 'file';
+        },
+      },
+    });
+    await expect(inspector.coordinator.acquireExisting('tenant-transient'))
+      .resolves.toBeNull();
+    expect(removed).toBe(true);
+    expect(inspector.executors).toHaveLength(0);
+    expect(inspector.coordinator.diagnostics()).toMatchObject({
+      openDatabases: 0,
+      availableSlots: 1,
+    });
+
+    await inspector.coordinator.close();
   });
 
   test('honors abort and queue bounds only before writer dispatch', async () => {
@@ -1851,6 +2021,122 @@ describe('DatabaseCoordinator', () => {
     expect(harness.coordinator.diagnostics().state).toBe('closed');
   });
 
+  test('reports bounded privacy-safe aggregate details for idle close failures', async () => {
+    const store = new MemoryEventStore();
+    const harness = createHarness(roots, {
+      maxDatabases: 2,
+      observability: createDatabaseObservability({
+        sink: store,
+        store,
+        config: { console: false, store },
+      }),
+    });
+    const first = await harness.coordinator.acquire('private-idle-a');
+    const second = await harness.coordinator.acquire('private-idle-b');
+    first.release();
+    second.release();
+    harness.failWriterClosePermanently = true;
+
+    const error = await captureDatabaseError(
+      () => harness.coordinator.sweepIdle(Number.MAX_SAFE_INTEGER),
+    );
+    expect(error).toMatchObject({
+      code: 'DATABASE_EXECUTOR_FAILED',
+      retryable: false,
+      outcome: 'unknown',
+      details: {
+        failedCloseCount: 2,
+        remainingEntryCount: 0,
+        quarantinedSlotCount: 0,
+        availableSlotCount: 2,
+        failureCodeSummary: 'DATABASE_EXECUTOR_FAILED:2',
+      },
+    });
+    const event = store.query({ code: 'database.coordinator.failed' })
+      .events.at(-1);
+    expect(event?.metadata).toEqual({
+      phase: 'close',
+      failedCloseCount: 2,
+      remainingEntryCount: 0,
+      quarantinedSlotCount: 0,
+      availableSlotCount: 2,
+      failureCodeSummary: 'DATABASE_EXECUTOR_FAILED:2',
+      errorCode: 'DATABASE_EXECUTOR_FAILED',
+      retryable: false,
+      outcome: 'unknown',
+    });
+    expect(JSON.stringify({ error, event })).not.toContain('private-idle');
+
+    await harness.coordinator.close();
+  });
+
+  test('does not accept aggregate close metadata through the generic actor error sanitizer', () => {
+    const error = safeCoordinatorError(new DatabaseError(
+      'DATABASE_EXECUTOR_FAILED',
+      'Actor-supplied aggregate metadata must not cross the boundary.',
+      {
+        details: {
+          failedCloseCount: 1,
+          remainingEntryCount: 1,
+          quarantinedSlotCount: 1,
+          availableSlotCount: 0,
+          failureCodeSummary: 'DATABASE_EXECUTOR_FAILED:1',
+        },
+      },
+    ));
+
+    expect(error.details).toEqual({});
+  });
+
+  test('reports aggregate shutdown state without retaining close causes', async () => {
+    const store = new MemoryEventStore();
+    const harness = createHarness(roots, {
+      maxDatabases: 1,
+      observability: createDatabaseObservability({
+        sink: store,
+        store,
+        config: { console: false, store },
+      }),
+    });
+    const lease = await harness.coordinator.acquire('private-shutdown');
+    lease.release();
+    const generationMaySettle = deferred<void>();
+    harness.deferNextWriterSettlement = generationMaySettle.promise;
+
+    const error = await captureDatabaseError(() => harness.coordinator.close());
+    expect(error).toMatchObject({
+      code: 'DATABASE_EXECUTOR_FAILED',
+      details: {
+        failedCloseCount: 1,
+        remainingEntryCount: 1,
+        quarantinedSlotCount: 1,
+        availableSlotCount: 0,
+        failureCodeSummary: 'DATABASE_EXECUTOR_FAILED:1',
+      },
+    });
+    expect(error.cause).toBeUndefined();
+    expect(store.query({ code: 'database.coordinator.failed' }).events.at(-1)?.metadata)
+      .toEqual({
+        phase: 'shutdown',
+        failedCloseCount: 1,
+        remainingEntryCount: 1,
+        quarantinedSlotCount: 1,
+        availableSlotCount: 0,
+        failureCodeSummary: 'DATABASE_EXECUTOR_FAILED:1',
+        errorCode: 'DATABASE_EXECUTOR_FAILED',
+        retryable: false,
+        outcome: 'unknown',
+      });
+    expect(JSON.stringify({ error, events: store.query().events }))
+      .not.toContain('private-shutdown');
+
+    generationMaySettle.resolve();
+    await waitUntil(() => (
+      harness.coordinator.diagnostics().quarantinedSlots === 0
+    ));
+    await harness.coordinator.close();
+  });
+
   test('never reuses a settled actor whose final durability close failed', async () => {
     const harness = createHarness(roots, {
       maxDatabases: 1,
@@ -2802,6 +3088,7 @@ function createHarness(roots: string[], options: HarnessOptions = {}) {
     root: string;
     coordinator: DatabaseCoordinator;
     onOperation?: (input: OperationHookInput) => void | Promise<void>;
+    onIdentityProjection?: (payload: any) => void | Promise<void>;
     bindFailureOnce?: {
       role: 'writer' | 'reader';
       error: DatabaseError;
@@ -3110,6 +3397,16 @@ class FakeExecutor implements DatabaseExecutor {
         return {
           aborted: this.snapshotSessions.delete(payload.sessionId),
         } as unknown as Result;
+      }
+      if (request.operation === DATABASE_ACTOR_OPERATIONS.identityProjection) {
+        await this.harness.onIdentityProjection?.(payload);
+        if (payload.action !== 'mark-ready') {
+          throw new DatabaseError(
+            'DATABASE_OPERATION_UNSUPPORTED',
+            'Fake identity projection action unsupported.',
+          );
+        }
+        return null as Result;
       }
       if (request.operation !== DATABASE_ACTOR_OPERATIONS.execute) {
         throw new DatabaseError('DATABASE_OPERATION_UNSUPPORTED', 'Fake operation unsupported.');

@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
 
 import type { Migration } from '../migrations/types';
+import { defineTable, field } from '../schema';
 import { createReactiveDB } from '../sync/reactive-db';
 import {
   SYNC_TABLE_MUTATION_VALIDATOR,
@@ -68,6 +69,19 @@ const tables = {
 } satisfies Record<string, TableSchema>;
 
 describe('database realm definition', () => {
+  test('rejects Guardian metadata whose actor-realm SQL was mutated', () => {
+    const tasks = defineTable('tasks', {
+      owner_user_id: field.guardianUser(),
+    }, { pk: 'task_id' });
+    tasks.serverTable.owner_user_id = 'text not null';
+
+    expectDatabaseConfigMessage(() => defineDatabaseRealm({
+      name: 'invalid-guardian-realm',
+      version: '1',
+      tables: { tasks: tasks.serverTable },
+    }), 'does not declare its exact managed foreign key');
+  });
+
   test('clones and freezes schema, migrations, and handler registries', () => {
     const sourceTables: Record<string, TableSchema> = {
       todos: {

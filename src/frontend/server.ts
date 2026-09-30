@@ -43,6 +43,7 @@ export type {
   SitemapEntry,
   SyncAuthMode,
   SyncDefaultsConfig,
+  SystemDatabaseConfig,
   TableSyncDefaultConfig,
 } from './server/types';
 
@@ -180,6 +181,7 @@ export type {
   ServerAuthServices,
   ServerObservabilityServices,
   ServerRouteServices,
+  ServerSystemDatabaseServices,
 } from './server/server-services';
 export { createWorkflowExecutionServiceProvider } from './server/workflow-execution-services';
 export type {
@@ -283,6 +285,7 @@ export {
   defineResource,
   defineResourceFields,
   globalRealm,
+  guardianActorPolicy,
   evaluateResourcePolicy,
   getPolicyMetadataKeys,
   getPolicyOwnerFields,
@@ -308,15 +311,18 @@ export {
   sanitizeResourceCreateInput,
   sanitizeResourceUpdateInput,
   tableHasColumn,
+  tenantKindPolicy,
   tenantRealm,
   validateResourceDefinitions,
   validateResourcePolicy,
   validateAuthorizationPolicy,
+  validateGuardianActorPolicy,
 } from '../resources';
 export type {
   ConfigureResourceRegistryOptions,
   CustomResourcePolicyCallback,
   CustomResourcePolicyOptions,
+  GuardianActorPolicyOptions,
   OwnerPolicyCreateMode,
   OwnerPolicyOptions,
   RegisteredResourceDefinition,
@@ -585,6 +591,17 @@ export {
 } from '../auth/auth-email-templates';
 export { UserPropertyService } from '../auth/user-property-service';
 export { AuthError, AUTH_DEFAULTS } from '../auth/types';
+export { createDataRealmReadinessPlugin } from '../auth/data-realm-readiness.plugin';
+export type {
+  DataRealmReadinessPluginConfig,
+  DataRealmReadinessRequest,
+  DataRealmReadinessService,
+} from '../auth/data-realm-readiness.plugin';
+export type {
+  DataRealmReadinessScope,
+  DataRealmReadinessSnapshot,
+  DataRealmReadinessStatus,
+} from '../auth/data-realm-readiness-types';
 export { AuthApiKeyService } from '../auth/auth-api-key-service';
 export type { AuthApiKeyServiceOptions } from '../auth/auth-api-key-service';
 export { AuthApiKeyStore } from '../auth/auth-api-key-store';

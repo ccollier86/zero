@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "outDir": ".build/types",
+    "paths": {
+      "@app/*": ["./app/*"]
+    }
+  },
+  "include": [
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "db/**/*.ts",
+    "server/**/*.ts",
+    "zero.config.ts"
+  ]
+}

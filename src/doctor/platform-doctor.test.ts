@@ -381,6 +381,17 @@ describe('runPlatformDoctor', () => {
         rootDirectory: './data/tenant-databases',
       },
     });
+    const authorityFenceOverlap = runPlatformDoctor({
+      db: { mode: ':memory:' },
+      systemDb: { mode: 'file', path: './data/system.db' },
+      outDir: './dist',
+      tables,
+      auth: false,
+      databaseTopology: {
+        ...topology,
+        rootDirectory: './data/system.db.authority-fence.sqlite',
+      },
+    });
     const dedicatedStorageChild = runPlatformDoctor({
       db: { mode: ':memory:' },
       outDir: './dist',
@@ -397,6 +408,7 @@ describe('runPlatformDoctor', () => {
     expect(hasFinding(storageReuse, 'database.root.reuses_storage_directory')).toBe(true);
     expect(hasFinding(storageTempOverlap, 'database.root.overlaps_storage_temp')).toBe(true);
     expect(hasFinding(controlDatabaseOverlap, 'database.root.overlaps_control_database')).toBe(true);
+    expect(hasFinding(authorityFenceOverlap, 'database.root.overlaps_control_database')).toBe(true);
     expect(hasFinding(dedicatedStorageChild, 'database.root.reuses_storage_directory')).toBe(false);
     expect(hasFinding(dedicatedStorageChild, 'database.root.overlaps_storage_temp')).toBe(false);
     expect(hasFinding(dedicatedStorageChild, 'database.root.overlaps_storage_blobs')).toBe(false);
@@ -793,6 +805,30 @@ describe('runPlatformDoctor', () => {
       'storage.signing_secret.ephemeral_database',
     )).toBe(false);
 
+    const durableAppEphemeralSystem = runPlatformDoctor({
+      db: { mode: 'file', path: './data/doctor-app.db' },
+      systemDb: { mode: 'ephemeral' },
+      tables: {},
+      auth: true,
+      email: false,
+    }, { env: { NODE_ENV: 'production' } });
+    expect(hasFinding(
+      durableAppEphemeralSystem,
+      'storage.signing_secret.ephemeral_database',
+    )).toBe(true);
+
+    const ephemeralAppDurableSystem = runPlatformDoctor({
+      db: { mode: 'ephemeral' },
+      systemDb: { mode: 'file', path: './data/doctor-system.db' },
+      tables: {},
+      auth: true,
+      email: false,
+    }, { env: { NODE_ENV: 'production' } });
+    expect(hasFinding(
+      ephemeralAppDurableSystem,
+      'storage.signing_secret.ephemeral_database',
+    )).toBe(false);
+
     const externallyManaged = runPlatformDoctor({
       db: { mode: 'ephemeral' },
       tables: {},
@@ -1141,6 +1177,7 @@ describe('runPlatformDoctor', () => {
   test('checks auth login routes and production observability readiness', () => {
     const report = runPlatformDoctor({
       db: { mode: ':memory:' },
+      systemDb: { mode: 'file', path: './data/doctor-system.db' },
       tables: {
         users: { id: 'text primary key' },
       },

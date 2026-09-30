@@ -10,6 +10,11 @@ import {
 } from '../sync/types';
 import { assertIdentityFields } from '../sync/identity';
 import { decodeFieldValue, encodeFieldValue } from './field-codecs';
+import {
+  attachGuardianTableReferences,
+  type GuardianFieldReference,
+  type GuardianReferenceKind,
+} from './guardian-references';
 
 export type { ClientTableDef };
 
@@ -30,6 +35,10 @@ export interface SchemaDescriptor<
   readonly primaryKey: TPk;
   /** Natural/business identity fields used for deterministic sync ids. */
   readonly identity: readonly string[];
+  /** Guardian identity references declared by app fields. Storage metadata only. */
+  readonly guardianReferences: readonly GuardianFieldReference[];
+  /** Complete anchor set required by this schema. */
+  readonly guardianAnchorRequirements: readonly GuardianReferenceKind[];
   /** Get the valibot schema for a single field by name. */
   getFieldSchema(name: string): v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>> | undefined;
   /** Convert to ReactiveDB table schema (SQL column defs). */
@@ -64,6 +73,10 @@ export interface TableDefinition<
   readonly mutationValidator: SyncTableMutationValidator;
   /** Client-side table def for createClient(). */
   readonly clientTable: ClientTableDef;
+  /** Guardian identity references declared by app fields. Storage metadata only. */
+  readonly guardianReferences: readonly GuardianFieldReference[];
+  /** Complete anchor set required by this table. */
+  readonly guardianAnchorRequirements: readonly GuardianReferenceKind[];
 }
 
 // ─── defineSchema ───────────────────────────────────────────────────────────
@@ -95,12 +108,27 @@ export function defineSchema<
   const identity = normalizeIdentity(opts?.identity, names, primaryKey);
   const metaMap = new Map<string, FieldMeta>();
   const entries: Record<string, v.BaseSchema<unknown, unknown, v.BaseIssue<unknown>>> = {};
+  const guardianReferences: GuardianFieldReference[] = [];
 
   for (const name of names) {
     const def = fieldDefs[name]!;
     metaMap.set(name, def._meta);
     entries[name] = def._schema;
+    if (def._guardianReference) {
+      guardianReferences.push(Object.freeze({
+        field: name,
+        ...def._guardianReference,
+      }));
+    }
   }
+
+  const frozenGuardianReferences = Object.freeze(guardianReferences);
+  const needsMembership = frozenGuardianReferences.some(({ kind }) => kind === 'membership');
+  const needsUser = needsMembership || frozenGuardianReferences.some(({ kind }) => kind === 'user');
+  const guardianAnchorRequirements = Object.freeze([
+    ...(needsUser ? ['user' as const] : []),
+    ...(needsMembership ? ['membership' as const] : []),
+  ]);
 
   const schema = v.object(entries as v.ObjectEntries);
 
@@ -110,6 +138,8 @@ export function defineSchema<
     fieldNames: names,
     primaryKey,
     identity,
+    guardianReferences: frozenGuardianReferences,
+    guardianAnchorRequirements,
 
     getFieldSchema(name: string) {
       return fieldDefs[name]?._schema;
@@ -143,6 +173,7 @@ export function defineSchema<
         fieldDefs,
         schema,
       });
+      attachGuardianTableReferences(result, frozenGuardianReferences);
 
       return result;
     },
@@ -255,6 +286,8 @@ export function defineTable<
     serverTable,
     mutationValidator: serverTable[SYNC_TABLE_MUTATION_VALIDATOR]!,
     clientTable: desc.toClientTableDef({ sync: opts?.sync, identity: opts?.identity }),
+    guardianReferences: desc.guardianReferences,
+    guardianAnchorRequirements: desc.guardianAnchorRequirements,
   };
 }
 

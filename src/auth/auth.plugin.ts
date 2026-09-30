@@ -8,6 +8,10 @@
  */
 
 import { Elysia } from 'elysia';
+import {
+  isDatabaseError,
+  normalizeDatabaseError,
+} from '../databases/database-error';
 import { EmailError } from '../email/email-error';
 import { OBS_CODES } from '../observability/codes';
 import { getSafeRequestPath } from '../observability/safe-request-path';
@@ -30,6 +34,7 @@ import { createAuthTenantAdministrationPlugin } from './auth-tenant-administrati
 import { createAuthPlatformAdministrationPlugin } from './auth-platform-administration.plugin';
 import { createAuthTenantOnboardingPlugin } from './auth-tenant-onboarding.plugin';
 import { createAuthVerifiedDomainPlugin } from './auth-verified-domain.plugin';
+import { createDataRealmReadinessPlugin } from './data-realm-readiness.plugin';
 import { emitAuthRequestValidationRejected } from './auth-request-validation';
 import { createAuthPlatformCodeEmitter } from './auth-observability';
 import { invokeSynchronousAuthCallback } from './auth-synchronous-callback';
@@ -241,6 +246,31 @@ export function createAuthPlugin(config: AuthPluginConfig) {
           code: error.code,
         };
       }
+      if (isDatabaseError(error)) {
+        const databaseError = normalizeDatabaseError(error);
+        if (databaseError.code === 'DATABASE_CONFLICT'
+          && databaseError.retryable
+          && databaseError.outcome === 'not-committed') {
+          set.status = 409;
+          emitCode(OBS_CODES.AUTH_STATE_CONFLICT, {
+            metadata: {
+              method: request.method,
+              path: getSafeRequestPath(request),
+              status: 409,
+              authCode: 'AUTH_COMMIT_CONFLICT',
+              databaseCode: databaseError.code,
+              retryable: true,
+              outcome: databaseError.outcome,
+            },
+          });
+          return {
+            error: 'Authentication update conflicted with an active data '
+              + 'commit; retry the request',
+            code: 'AUTH_COMMIT_CONFLICT',
+            retryable: true,
+          };
+        }
+      }
 
       set.status = 500;
       emitCode(OBS_CODES.APP_REQUEST_FAILED, {
@@ -273,6 +303,12 @@ export function createAuthPlugin(config: AuthPluginConfig) {
       getAuthConfig: () => authConfig,
       emitCode,
     }))
+    .use(config.dataRealmReadiness
+      ? createDataRealmReadinessPlugin({
+          getTokenService,
+          getReadinessService: () => config.dataRealmReadiness ?? null,
+        })
+      : new Elysia({ name: 'auth-data-realm-readiness-disabled' }))
     .use(createAuthAccountPlugin({
       getUserStore,
       getTokenService,
@@ -434,6 +470,8 @@ function authBehaviorConfig(config: AuthPluginConfig): AuthBehaviorConfig {
     getEmailRuntime: _getEmailRuntime,
     platformTokenService: _platformTokenService,
     getPlatformTokenService: _getPlatformTokenService,
+    identityProjection: _identityProjection,
+    dataRealmReadiness: _dataRealmReadiness,
     onRuntimeCreated: _onRuntimeCreated,
     accessTokenTTL: _accessTokenTTL,
     refreshTokenTTL: _refreshTokenTTL,

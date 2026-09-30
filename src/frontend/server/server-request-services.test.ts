@@ -56,6 +56,75 @@ describe('request-bound server services', () => {
     }
   });
 
+  test('requires destination write authority before scoped storage copy or move', async () => {
+    const fixture = createFixture();
+    try {
+      const scope = trustedSystemServiceDataScope({
+        scopeKind: 'tenant',
+        tenantId: TENANT_A,
+      });
+      const drive = fixture.storage.createDrive(
+        'peer-owner',
+        { name: 'Peer files' },
+        scope,
+      );
+      await fixture.storage.upload(
+        drive.drive_id,
+        '/source.txt',
+        new Uint8Array([1, 2, 3]),
+        'source.txt',
+        'peer-owner',
+        undefined,
+        scope,
+      );
+      fixture.storage.grantPermission(drive.drive_id, {
+        objectPath: '/source.txt',
+        grantType: 'user',
+        grantValue: USER_ID,
+        permission: 'write',
+      });
+
+      const alpha = fixture.forToken('alpha');
+      await expect(alpha.storage!.copyObject(
+        drive.drive_id,
+        '/source.txt',
+        '/unauthorized-copy.txt',
+      )).rejects.toThrow('Forbidden');
+      await expect(alpha.storage!.moveObject(
+        drive.drive_id,
+        '/source.txt',
+        '/unauthorized-move.txt',
+      )).rejects.toThrow('Forbidden');
+      expect(fixture.storage.getFileInfo(
+        drive.drive_id,
+        '/unauthorized-copy.txt',
+      )).toBeNull();
+      expect(fixture.storage.getFileInfo(
+        drive.drive_id,
+        '/unauthorized-move.txt',
+      )).toBeNull();
+      expect(fixture.storage.getFileInfo(drive.drive_id, '/source.txt')).not.toBeNull();
+
+      fixture.storage.grantPermission(drive.drive_id, {
+        grantType: 'user',
+        grantValue: USER_ID,
+        permission: 'write',
+      });
+      await expect(alpha.storage!.copyObject(
+        drive.drive_id,
+        '/source.txt',
+        '/authorized-copy.txt',
+      )).resolves.toMatchObject({ path: '/authorized-copy.txt' });
+      await expect(alpha.storage!.moveObject(
+        drive.drive_id,
+        '/source.txt',
+        '/authorized-move.txt',
+      )).resolves.toMatchObject({ path: '/authorized-move.txt' });
+    } finally {
+      fixture.db.dispose();
+    }
+  });
+
   test('keeps Storage ownership usable with an empty advanced-role set', () => {
     const fixture = createFixture();
     try {

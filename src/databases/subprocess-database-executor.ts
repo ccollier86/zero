@@ -255,6 +255,12 @@ export class SubprocessDatabaseExecutor implements DatabaseExecutor {
         child = Bun.spawn({
           cmd: this.options.command,
           env: this.options.env,
+          // The app process owns terminal signal handling and coordinates
+          // actor drain over IPC. Keep actors outside its process group so a
+          // terminal SIGINT/SIGTERM does not race that ordered shutdown.
+          // Direct child.kill() escalation and parent-IPC disconnect remain
+          // intact; service managers must still target only the parent.
+          detached: true,
           stdin: 'ignore',
           stdout: 'ignore',
           stderr: 'ignore',

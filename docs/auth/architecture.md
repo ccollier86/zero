@@ -1,9 +1,10 @@
 # Architecture
 
-One app-local auth runtime, one shared database. The Elysia auth plugin composes
-focused identity, session, and optional tenancy services over the same
-ReactiveDB the Sync engine uses; the transport-neutral authorization kernel
-sits beside those runtime services until adapters install it at each boundary.
+One app-local auth runtime, one dedicated system database. The Elysia auth
+plugin composes focused identity, session, and optional tenancy services over
+the Zero-owned system ReactiveDB. Application data uses a separate ReactiveDB;
+the transport-neutral authorization kernel sits beside both until adapters
+install it at each boundary.
 
 ## System Overview
 
@@ -19,22 +20,13 @@ sits beside those runtime services until adapters install it at each boundary.
 │  │ GET /auth/jwks  │   │                   │   │                  │  │
 │  └────────┬────────┘   └───────────────────┘   └────────┬─────────┘  │
 │           │                                              │           │
-│           │         ┌───────────────┐                    │           │
-│           └────────►│  ReactiveDB   │◄───────────────────┘           │
-│                     │  (shared)     │                                │
-│                     │               │                                │
-│                     │ users         │◄── private auth/API data       │
-│                     │ user_properties│◄── direct SQL (composite PK)   │
-│                     │ _credentials  │◄── internal (no broadcast)     │
-│                     │ _refresh_tkns │◄── internal (no broadcast)     │
-│                     │ _auth_config  │◄── internal (no broadcast)     │
-│                     │ _auth_tenants │◄── internal tenant control     │
-│                     │ _auth_tenant_memberships │◄── internal control │
-│                     │ _auth_api_keys │◄── hashed user credentials    │
-│                     │ _auth_email_outbox │◄── durable auth delivery  │
-│                     │ todos         │◄── broadcast (app table)       │
-│                     │ _changes      │◄── internal (ring buffer)      │
-│                     └───────────────┘                                │
+│           │         ┌───────────────┐      ┌───────────────────┐     │
+│           └────────►│ System DB     │      │ Application DB    │◄────┘
+│                     │ users/profile │      │ ID-only users     │     │
+│                     │ credentials   │      │ app tables        │     │
+│                     │ sessions/RBAC │      │ app change log    │     │
+│                     │ tenants/keys  │      │ projection state  │     │
+│                     └───────────────┘      └───────────────────┘     │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -434,7 +426,7 @@ stable failure codes, and private-safe metadata contract is documented in
 
 ```ts
 interface AuthPluginConfig { // excerpt; it also extends AuthBehaviorConfig
-  /** Shared ReactiveDB instance — auth defines its tables here */
+  /** Zero-owned system ReactiveDB — auth defines its tables here */
   db: ReactiveDB;
 
   /** Access token TTL (default: '15m') */
@@ -759,48 +751,45 @@ Push-based inactivity messages over a personal `auth:{userId}` WebSocket topic
 belong to the deferred user-activity audit system. They are not part of the
 current auth runtime contract.
 
-## Shared ReactiveDB
+## Separate System And Application ReactiveDBs
 
-Auth and sync share a **single ReactiveDB instance**. This keeps identity and
-application writes in one lifecycle and change sequence, but storage sharing
-does not imply client visibility. Sync policy remains the authorization
-boundary.
+Guardian owns the **system ReactiveDB**; app tables own the separate
+application ReactiveDB. Platform tokens stay in Guardian's system transaction
+domain. ID-only user and membership anchors are projected into application
+planes only when declared foreign keys require them. Anchors provide
+referential integrity, never authorization.
 
-### Why shared
+### Why separate
 
 ```
                      ┌─────────────────┐
-                     │   ReactiveDB    │
-                     │   (:memory:)    │
-                     │                 │
-  Auth writes ──────►│  users          │────── auth APIs
-                     │  user_properties│      (not generic Sync)
-                     │                 │
-  Sync reads ◄───────│  todos          │────── policy filter
-  App writes ───────►│  projects       │────── authorized clients
+                     │  System DB      │────── Guardian APIs
+  Auth writes ──────►│  users/profile  │
+                     │  sessions/RBAC  │
+                     └─────────────────┘
+
+                     ┌─────────────────┐
+  Sync reads ◄───────│ Application DB  │────── policy filter
+  App writes ───────►│ todos/projects  │
+                     │ ID-only anchors │
                      └─────────────────┘
 ```
 
-When `authStore.createUser()` calls `db.insert('users', row)`, ReactiveDB writes
-the row, increments `seq`, records the change, and invokes change observers.
-Default `createApp()` policy classifies `users` as platform-private, so the row
-is not available through snapshot, catch-up, or live generic Sync delivery.
-Auth routes and the SDK session store expose the appropriate current-user or
-admin projection instead.
-
-App-owned tables can use the same database/change path for live delivery, but
-only after the composed table/resource policy authorizes the connection and
-row. A standalone `createSyncPlugin()` intentionally preserves its legacy
-public-by-default contract; a directly composed auth app must supply required
-WebSocket auth and read/write policy explicitly.
+Auth routes and the SDK session store expose current-user/admin projections
+without copying credentials, profile, roles, or status into app storage.
+Authorized framework projections and application rows can share one WebSocket,
+but retain independent system/default/tenant cursors and storage ownership.
+App rows enter Sync only after composed table/resource policy authorizes the
+connection and row.
 
 ### Table ownership
 
-Both plugins define tables on the same database, but each plugin owns its own tables:
+Each subsystem owns tables in its declared plane:
 
-| Table | Defined by | Storage class | Default client access |
-|-------|-----------|---------------|-----------------------|
-| `users` | Auth plugin | Platform/private | Auth current-user and admin APIs; denied by generic `createApp()` Sync |
+| Table | Defined by | Plane/storage class | Default client access |
+|-------|-----------|---------------------|-----------------------|
+| `users` (profile-bearing) | Auth plugin | System/private | Auth current-user and admin APIs; denied by generic app-table Sync |
+| `users(user_id)` | Identity projection | Application/ID-only anchor | Referential integrity only; never authorization |
 | `user_properties` | Auth plugin | Platform/private direct SQL | Auth property/current-user/admin APIs; not a ReactiveDB table stream |
 | `_credentials` | Auth plugin | Internal | None — password hashes stay server-side |
 | `_refresh_tokens` | Auth plugin | Internal | None — token hashes are sensitive |
@@ -811,7 +800,7 @@ Both plugins define tables on the same database, but each plugin owns its own ta
 | `_zero_resume_tokens` | Platform token plugin | Internal | None — generic resume-token hashes are sensitive |
 | `_auth_config` | Auth plugin | Internal | None — signing keys are sensitive |
 | `todos`, etc. | Sync plugin (app config) | Application | Only when the composed Sync/resource policy allows it |
-| `_changes` | ReactiveDB (auto) | Internal | None — server-side ring buffer for replay decisions |
+| `_changes` | Each ReactiveDB (auto) | Plane-local internal | None — server-side replay ordering |
 
 ### The `_` prefix convention
 
@@ -853,6 +842,11 @@ Structural credential separation is defense in depth. It does not replace the
 Sync policy that protects identity rows themselves.
 
 ## Composition
+
+The following is the advanced standalone plugin composition, where the caller
+deliberately owns one shared transaction domain. Managed `createApp()` instead
+pins Guardian/platform tokens to `systemDb` and app tables to the separate
+application `db` described above.
 
 ### Plugin ordering
 
@@ -898,13 +892,13 @@ const tokenPlugin = createPlatformTokenPlugin({
 });
 
 const app = installAuthStopBarrier(new Elysia()
-  // 1. Sync owns the shared ReactiveDB and WebSocket transport.
+  // 1. Standalone Sync owns this deliberately shared ReactiveDB and transport.
   .use(sync)
 
   // 2. Platform tokens use that exact database/transaction domain.
   .use(tokenPlugin)
 
-  // 3. Auth uses the same DB and the app-local platform-token service.
+  // 3. Standalone Auth uses the same DB and app-local platform-token service.
   .use(createAuthPlugin({
     db,
     getPlatformTokenService: () => platformTokens,
@@ -966,8 +960,9 @@ const app = installAuthStopBarrier(new Elysia()
 app.listen(3000);
 ```
 
-Sync creates and owns the ReactiveDB; platform tokens and auth receive that
-same instance. Do not create a separate ReactiveDB for either service, and do
+This advanced standalone example lets Sync create the injected transaction
+domain; platform tokens and auth receive that same instance. Do not create a
+separate ReactiveDB for either authority service in this composition, and do
 not pass a ReactiveDB object as `createSyncPlugin({ db })`: that property is
 database configuration. The action-token integration compares an opaque
 transaction-domain identity, not paths or configuration, and throws
@@ -1049,8 +1044,9 @@ their purpose-built HTTP/service APIs remain the supported write path.
 
 Each component does one thing. Auth doesn't know about WebSocket transport.
 Sync does not handle passwords. ReactiveDB does not decide authorization. The
-application layer composes them through the shared database and explicit
-Elysia plugins. The bounded append-only authorization/control-plane audit is
+application layer composes them through separate managed planes—or a
+deliberately shared low-level transaction domain—and explicit Elysia plugins.
+The bounded append-only authorization/control-plane audit is
 part of this runtime. A general page/read/application-activity middleware or
 tracker is not; its separate requirements remain deferred in
 [Auth Guards And Audit Boundaries](./guards-and-audit.md).

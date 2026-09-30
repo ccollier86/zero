@@ -1,4 +1,5 @@
 import type { AuthPlatformCodeEmitter } from '../auth-observability';
+import type { IdentityProjectionLifecycleHook } from '../identity-projection-types';
 
 export interface TenantStoreOptions {
   now?: () => number;
@@ -25,4 +26,6 @@ export interface TenantStoreOptions {
   assertCurrentProfile?: () => void;
   /** App-local observability boundary for transaction invariant failures. */
   emitCode?: AuthPlatformCodeEmitter;
+  /** Synchronous system-plane hook for durable ID-only membership enqueue. */
+  identityProjection?: Pick<IdentityProjectionLifecycleHook, 'membershipCreated'>;
 }

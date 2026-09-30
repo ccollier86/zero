@@ -13,6 +13,10 @@ import type { TableSchema } from '../sync/types';
 import type { ReactiveDB } from '../sync/reactive-db';
 import type { AuthTenancyMode } from '../auth/types';
 import {
+  getGuardianTableReferences,
+  inspectGuardianReferenceSchema,
+} from '../schema/guardian-references';
+import {
   RESOURCE_EXPOSURES,
   type ResourceDefinition,
   type ResourceExposure,
@@ -21,7 +25,10 @@ import type {
   ResourcePolicyAuthConfig,
   ResourcePolicyValidationIssue,
 } from './resource-policy-types';
-import { getPolicyOwnerFields } from './resource-policy-inspection';
+import {
+  getPolicyGuardianActorFields,
+  getPolicyOwnerFields,
+} from './resource-policy-inspection';
 import { validateResourcePolicy } from './resource-policy-validation';
 import {
   getResourceTableColumns,
@@ -89,6 +96,7 @@ export type ResourceRegistryIssueCode =
   | 'resource-exposure-missing'
   | 'resource-exposure-invalid'
   | 'resource-owner-field-missing'
+  | 'resource-guardian-reference-invalid'
   | 'resource-realm-missing'
   | 'resource-realm-invalid'
   | 'resource-tenant-isolation-invalid'
@@ -598,6 +606,24 @@ export function validateResourceDefinitions(
     const inferredPrimaryKey = inferTablePrimaryKey(schema);
     const primaryKey = resource.primaryKey ?? inferredPrimaryKey;
 
+    if (schema) {
+      for (const guardianIssue of inspectGuardianReferenceSchema(schema)) {
+        issues.push({
+          code: 'resource-guardian-reference-invalid',
+          message: `Resource "${resource.name}" Guardian field "${guardianIssue.field}" does not declare its exact managed foreign key on table "${resource.table}".`,
+          resource: resource.name,
+          table: resource.table,
+          path: `schema.${guardianIssue.field}`,
+          severity: 'error',
+          metadata: {
+            field: guardianIssue.field,
+            expectedKind: guardianIssue.kind,
+            issue: guardianIssue.code,
+          },
+        });
+      }
+    }
+
     if (!schema) {
       issues.push(issue('resource-table-missing', `Resource table "${resource.table}" is not defined in createApp tables.`, resource));
     } else if (!inferredPrimaryKey) {
@@ -660,7 +686,7 @@ export function validateResourceDefinitions(
           if (tableHasColumn(schema, ownerField)) continue;
           issues.push({
             code: 'resource-owner-field-missing',
-            message: `Resource "${resource.name}" ownerPolicy references missing column "${ownerField}" on table "${resource.table}".`,
+            message: `Resource "${resource.name}" ownership policy references missing column "${ownerField}" on table "${resource.table}".`,
             resource: resource.name,
             table: resource.table,
             action,
@@ -668,6 +694,30 @@ export function validateResourceDefinitions(
             severity: 'error',
             metadata: { field: ownerField },
           });
+        }
+        const guardianReferences = getGuardianTableReferences(schema);
+        for (const actorFields of getPolicyGuardianActorFields(policy)) {
+          const expected = [
+            { field: actorFields.userField, kind: 'user' as const },
+            ...(actorFields.membershipField === undefined
+              ? []
+              : [{ field: actorFields.membershipField, kind: 'membership' as const }]),
+          ];
+          for (const reference of expected) {
+            if (guardianReferences.some((candidate) => (
+              candidate.field === reference.field && candidate.kind === reference.kind
+            ))) continue;
+            issues.push({
+              code: 'resource-guardian-reference-invalid',
+              message: `Resource "${resource.name}" guardianActorPolicy field "${reference.field}" must use field.guardian${reference.kind === 'user' ? 'User' : 'Membership'}() on table "${resource.table}".`,
+              resource: resource.name,
+              table: resource.table,
+              action,
+              path: `policy.${action}.guardianActor.${reference.kind}Field`,
+              severity: 'error',
+              metadata: { field: reference.field, expectedKind: reference.kind },
+            });
+          }
         }
       }
     }

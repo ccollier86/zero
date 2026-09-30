@@ -45,6 +45,7 @@ import type { UserPropertyService } from './user-property-service';
 import type { UserStore } from './user-store';
 import type { VerifiedDomainOnboardingService } from './verified-domain-service';
 import {
+  createAuthStateInvariantError,
   createAuthPlatformCodeEmitter,
   type AuthPlatformCodeEmitter,
 } from './auth-observability';
@@ -241,7 +242,11 @@ export class AuthRuntime {
   }
   assertCurrentProfile(): void {
     if (!this.services.installedProfileGuard) {
-      throw new Error('[auth] Installed auth profile is not initialized.');
+      throw createAuthStateInvariantError(this.emitCode, {
+        component: 'auth-runtime',
+        invariant: 'installed-profile-guard-ready',
+        message: '[auth] Installed auth profile is not initialized.',
+      });
     }
     this.services.installedProfileGuard.assertCurrent();
   }

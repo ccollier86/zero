@@ -78,6 +78,8 @@ export interface AuthPlatformAdministrationConfig {
   capabilities: {
     canReadMembers: boolean;
     canManageMembers: boolean;
+    /** Actor may assign or replace administration-organization roles. */
+    canManageRoles: boolean;
     canReadInvitations: boolean;
     canManageInvitations: boolean;
     canReadTenants: boolean;

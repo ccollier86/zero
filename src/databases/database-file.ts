@@ -221,7 +221,32 @@ export function prepareDatabaseFile(
   rootDirectory: string,
   input: DatabaseId | string,
 ): PreparedDatabaseFile {
-  return prepareDatabaseFileInternal(rootDirectory, input, null, null);
+  return prepareDatabaseFileInternal(
+    rootDirectory,
+    input,
+    null,
+    null,
+    true,
+  )!;
+}
+
+/**
+ * Prepare an already-existing managed database without creating its main file.
+ * Returns null when the file is absent at the atomic no-follow open boundary.
+ *
+ * @internal Coordinator inspection path; not exported from the package barrel.
+ */
+export function prepareExistingDatabaseFile(
+  rootDirectory: string,
+  input: DatabaseId | string,
+): PreparedDatabaseFile | null {
+  return prepareDatabaseFileInternal(
+    rootDirectory,
+    input,
+    null,
+    null,
+    false,
+  );
 }
 
 /**
@@ -261,7 +286,8 @@ export function prepareDatabaseFileWithCreationAdmission(
     input,
     admitCreation,
     recordCreation ?? null,
-  );
+    true,
+  )!;
 }
 
 /** Count exact regular Zero-managed main database files, excluding sidecars. */
@@ -280,7 +306,8 @@ function prepareDatabaseFileInternal(
   input: DatabaseId | string,
   admitCreation: (() => void) | null,
   recordCreation: (() => void) | null,
-): PreparedDatabaseFile {
+  createIfMissing: boolean,
+): PreparedDatabaseFile | null {
   // Preserve resolveDatabaseFile()'s validation order: reject an invalid
   // logical ID before creating or hardening filesystem state.
   const id = normalizeDatabaseId(input);
@@ -292,13 +319,16 @@ function prepareDatabaseFileInternal(
   const canonicalRoot = prepareDatabaseRoot(rootDirectory);
   const location = resolveDatabaseFile(canonicalRoot, id);
   assertNoSymlinkComponents(location.rootDirectory, false);
+  if (!createIfMissing && !tryLstat(location.path)) return null;
   assertExistingDatabaseFile(location);
 
   const created = reserveAndHardenDatabaseFile(
     location,
     admitCreation,
     recordCreation,
+    createIfMissing,
   );
+  if (created === null) return null;
   assertExistingDatabaseFile(location, true);
 
   const identityGuard = openDatabaseFileIdentityGuard(location.path, {
@@ -515,7 +545,8 @@ function reserveAndHardenDatabaseFile(
   location: ResolvedDatabaseFile,
   admitCreation: (() => void) | null,
   recordCreation: (() => void) | null,
-): boolean {
+  createIfMissing: boolean,
+): boolean | null {
   const noFollow = typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0;
   const createFlags = fsConstants.O_CREAT
     | fsConstants.O_EXCL
@@ -524,23 +555,31 @@ function reserveAndHardenDatabaseFile(
   let descriptor: number;
   let created = false;
 
-  if (!tryLstat(location.path)) admitCreation?.();
-
-  try {
-    descriptor = openSync(location.path, createFlags, 0o600);
-    created = true;
-  } catch (error) {
-    if (!isErrno(error, 'EEXIST')) {
-      if (isErrno(error, 'ELOOP')) {
-        throw new DatabasePathError(
-          'DATABASE_PATH_SYMLINK',
-          'Database file must not be a symbolic link.',
-          { cause: error },
-        );
+  if (createIfMissing) {
+    if (!tryLstat(location.path)) admitCreation?.();
+    try {
+      descriptor = openSync(location.path, createFlags, 0o600);
+      created = true;
+    } catch (error) {
+      if (!isErrno(error, 'EEXIST')) {
+        if (isErrno(error, 'ELOOP')) {
+          throw new DatabasePathError(
+            'DATABASE_PATH_SYMLINK',
+            'Database file must not be a symbolic link.',
+            { cause: error },
+          );
+        }
+        throw error;
       }
+      descriptor = openExistingDatabaseFile(location.path, noFollow);
+    }
+  } else {
+    try {
+      descriptor = openExistingDatabaseFile(location.path, noFollow);
+    } catch (error) {
+      if (isErrno(error, 'ENOENT')) return null;
       throw error;
     }
-    descriptor = openExistingDatabaseFile(location.path, noFollow);
   }
 
   try {

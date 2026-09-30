@@ -432,7 +432,7 @@ export class SyncTenantSocketBridge {
   /** Preserve pending optimistic work and force a same-ref receipt recovery. */
   recoverUnacknowledgedMutation(): void {
     if (this.#disposed) return;
-    this.#emit(OBS_CODES.SYNC_TENANT_MUTATION_RECOVERY_REQUIRED, {
+    this.#emitDuringTeardown(OBS_CODES.SYNC_TENANT_MUTATION_RECOVERY_REQUIRED, {
       metadata: {
         plane: 'tenant-database',
         reason: 'mutation-recovery-required',
@@ -646,7 +646,7 @@ export class SyncTenantSocketBridge {
         && !this.#disposed
         && !this.#socket.data.syncBackpressured
         && this.#mutationsInFlight === 0) this.#schedulePump();
-    });
+    }).catch(() => undefined);
   }
 
   async #pump(): Promise<void> {
@@ -813,7 +813,7 @@ export class SyncTenantSocketBridge {
 
   #closeForResnapshot(reason: SyncTenantResnapshotReason): void {
     if (this.#disposed) return;
-    this.#emit(OBS_CODES.SYNC_TENANT_RESNAPSHOT_REQUIRED, {
+    this.#emitDuringTeardown(OBS_CODES.SYNC_TENANT_RESNAPSHOT_REQUIRED, {
       metadata: { plane: 'tenant-database', reason },
     });
     try { this.#socket.close(1012, reason); } finally { this.dispose(); }
@@ -822,7 +822,7 @@ export class SyncTenantSocketBridge {
   #closeForTerminalSnapshot(error: unknown): void {
     if (this.#disposed) return;
     const budgetFailure = error instanceof SyncTenantSnapshotBudgetError;
-    this.#emit(
+    this.#emitDuringTeardown(
       budgetFailure
         ? OBS_CODES.SYNC_TENANT_SNAPSHOT_BUDGET_REJECTED
         : OBS_CODES.SYNC_SNAPSHOT_TRANSPORT_REJECTED,
@@ -859,7 +859,7 @@ export class SyncTenantSocketBridge {
 
   /** Closed producer schema: no caught value or snapshot identity is accepted. */
   #emitTenantSnapshotCleanupFailure(): void {
-    this.#emit(OBS_CODES.SYNC_TENANT_SNAPSHOT_CLEANUP_FAILED, {
+    this.#emitDuringTeardown(OBS_CODES.SYNC_TENANT_SNAPSHOT_CLEANUP_FAILED, {
       metadata: Object.freeze({
         plane: 'tenant-database',
         reason: 'snapshot-cleanup-failed',
@@ -876,6 +876,18 @@ export class SyncTenantSocketBridge {
     // app-local runtime intentionally receive no telemetry.
     if (!this.#observability) return;
     emitPlatformCodeTo(this.#observability, definition, options);
+  }
+
+  /** Telemetry must never interrupt a required transport/binding teardown. */
+  #emitDuringTeardown(
+    definition: PlatformCodeDefinition,
+    options: PlatformCodeEmitOptions = {},
+  ): void {
+    try {
+      this.#emit(definition, options);
+    } catch {
+      // The caller continues with its closed-state transition.
+    }
   }
 
   #assertUsable(): void {

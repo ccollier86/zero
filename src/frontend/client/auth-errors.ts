@@ -5,6 +5,8 @@ export const AUTH_DISABLED_MESSAGE =
 
 /** Error thrown by AuthClient when an auth route returns a non-2xx response. */
 export class AuthClientError extends Error {
+  readonly retryable: boolean;
+
   constructor(
     message: string,
     readonly status: number,
@@ -13,6 +15,7 @@ export class AuthClientError extends Error {
   ) {
     super(message);
     this.name = 'AuthClientError';
+    this.retryable = getAuthResponseRetryable(body);
   }
 }
 
@@ -91,4 +94,13 @@ function getAuthResponseCode(body: unknown): string | null {
     return typeof code === 'string' ? code : null;
   }
   return null;
+}
+
+function getAuthResponseRetryable(body: unknown): boolean {
+  return Boolean(
+    body
+    && typeof body === 'object'
+    && 'retryable' in body
+    && (body as { retryable?: unknown }).retryable === true,
+  );
 }

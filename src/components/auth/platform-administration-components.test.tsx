@@ -20,6 +20,11 @@ import {
   PlatformTenantManagement,
   PlatformTenantUnavailable,
 } from './platform-tenant-management';
+import { PlatformTenantMemberRows } from './platform-tenant-management-parts';
+import {
+  canRetainPlatformTenantConfirmation,
+  platformTenantErrorPlacement,
+} from './platform-tenant-management-policy';
 
 describe('packaged platform administration components', () => {
   test('fails closed outside administration scope with an explicit switching instruction', () => {
@@ -29,9 +34,15 @@ describe('packaged platform administration components', () => {
     const tenants = renderToStaticMarkup(createElement(PlatformTenantManagement));
 
     expect(administrators).toContain('Switch to the Platform administration organization');
+    expect(administrators).toMatch(
+      /<h2[^>]*data-slot="card-title"[^>]*>Platform administrators<\/h2>/,
+    );
     expect(administrators).toContain('Customer-organization membership never grants');
     expect(administrators).not.toContain('Add administrator');
     expect(tenants).toContain('Switch to Platform administration');
+    expect(tenants).toMatch(
+      /<h2[^>]*data-slot="card-title"[^>]*>Customer organizations<\/h2>/,
+    );
     expect(tenants).not.toContain('Create organization');
   });
 
@@ -79,6 +90,9 @@ describe('packaged platform administration components', () => {
     }));
 
     expect(markup).toContain('aria-label="Administrator invitation email"');
+    expect(markup).toMatch(
+      /<h2[^>]*data-slot="card-title"[^>]*>Administrator invitations<\/h2>/,
+    );
     expect(markup).toContain('aria-label="Administrator invitation delivery"');
     expect(markup).toContain('Invited administration roles');
     expect(markup).toContain('aria-haspopup="dialog"');
@@ -153,6 +167,36 @@ describe('packaged platform administration components', () => {
     expect(invitations).toContain('Invitation settings could not be loaded');
     expect(invitations).toContain('Retry');
     expect(invitations).not.toContain('Invite administrator');
+  });
+
+  test('keeps delegated member and invitation lifecycle controls independent from role grants', () => {
+    const baseline = state();
+    const delegated = state({
+      config: {
+        ...baseline.config!,
+        capabilities: {
+          ...baseline.config!.capabilities,
+          canManageRoles: false,
+          canTransferOwnership: false,
+        },
+      },
+    });
+    const members = renderToStaticMarkup(createElement(PlatformAdministrationMembers, {
+      administration: delegated,
+      onAnnounce() {},
+    }));
+    const invitations = renderToStaticMarkup(createElement(PlatformAdministrationInvitations, {
+      administration: delegated,
+      delivery: { email: true, manual: true, default: 'manual' },
+      onAnnounce() {},
+    }));
+
+    expect(members).not.toContain('Add administrator');
+    expect(members).not.toMatch(/>Roles<\/button>/);
+    expect(members).toContain('Suspend');
+    expect(members).toContain('Remove');
+    expect(invitations).not.toContain('Invite administrator');
+    expect(invitations).toContain('Revoke');
   });
 
   test('keeps invitation controls and data when the member slice fails', () => {
@@ -294,6 +338,47 @@ describe('packaged platform administration components', () => {
     expect(platformMemberAnnouncement('transfer', 'Grace Hopper'))
       .toBe('Transferred platform ownership to Grace Hopper');
   });
+
+  test('closes tenant lifecycle confirmation as soon as its capabilities vanish', () => {
+    expect(canRetainPlatformTenantConfirmation(true, {
+      canReadTenants: true,
+      canManageTenants: true,
+    })).toBe(true);
+    expect(canRetainPlatformTenantConfirmation(true, {
+      canReadTenants: true,
+      canManageTenants: false,
+    })).toBe(false);
+    expect(canRetainPlatformTenantConfirmation(true, {
+      canReadTenants: false,
+      canManageTenants: true,
+    })).toBe(false);
+  });
+
+  test('routes a failed status mutation to exactly one live-alert location', () => {
+    expect(platformTenantErrorPlacement('Status update failed', true)).toEqual({
+      page: null,
+      dialog: 'Status update failed',
+    });
+    expect(platformTenantErrorPlacement('Status update failed', false)).toEqual({
+      page: 'Status update failed',
+      dialog: null,
+    });
+  });
+
+  test('uses configured customer-role labels in tenant member drill-in with raw fallback', () => {
+    const markup = renderToStaticMarkup(createElement(PlatformTenantMemberRows, {
+      members: [{
+        ...member('member-customer', 'grace', ['clinician', 'retired-role']),
+        status: 'suspended',
+      }],
+      roleLabels: new Map([['clinician', 'Clinical collaborator']]),
+    }));
+
+    expect(markup).toContain('Clinical collaborator');
+    expect(markup).toContain('retired-role');
+    expect(markup).not.toContain('>clinician<');
+    expect(markup).toContain('>suspended<');
+  });
 });
 
 function state(
@@ -309,7 +394,7 @@ function state(
         name: 'Platform administration', membershipId: 'member-1',
       },
       capabilities: {
-        canReadMembers: true, canManageMembers: true,
+        canReadMembers: true, canManageMembers: true, canManageRoles: true,
         canReadInvitations: true, canManageInvitations: true,
         canReadTenants: true, canReadTenantMembers: true,
         canManageTenants: true, canCreateTenants: true, canTransferOwnership: true,

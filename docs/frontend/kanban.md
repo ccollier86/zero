@@ -159,6 +159,9 @@ modal manager into one ReactiveDB-backed example.
 Use `renderItem` when the default card is too small for the domain.
 
 ```tsx
+import { Button } from '@zero/framework/components/ui/button';
+import { Trash } from '@zero/framework/icons';
+
 <KanbanBoard
   columns={columns}
   items={tickets}
@@ -170,12 +173,30 @@ Use `renderItem` when the default card is too small for the domain.
   renderItem={({ item, isDragging }) => (
     <TicketCard ticket={item} dragging={isDragging} />
   )}
+  renderItemActions={({ item }) => (
+    <Button
+      type="button"
+      size="icon-xs"
+      aria-label={`Delete ${item.title}`}
+      onClick={() => removeTicket(item.ticket_id)}
+    >
+      <Trash aria-hidden="true" />
+    </Button>
+  )}
 />
 ```
 
 The render context includes the column, column id, item, item id, and drag
-state. Keep persistence in `onItemMove`; `renderItem` should only own visual
-composition and local card actions.
+state. Keep persistence in `onItemMove`; `renderItem` owns visual composition.
+Put buttons, menus, and other interactive card controls in
+`renderItemActions`. Zero renders that slot beside the keyboard drag activator,
+avoiding nested interactive controls while keeping the action visually attached
+to the card.
+
+For permission-based read-only boards, pass `dragEnabled={false}`. That disables
+drag sensors while preserving normal contrast, pointer selection, and text
+copying. Reserve `disabled` for a genuinely unavailable or mutating board; it
+blocks all interaction and applies disabled styling.
 
 ## Source Copy
 
@@ -205,10 +226,13 @@ provided.
 | `onItemMove` | Persist a completed move. Receives source/target columns, indexes, flat board order, and per-column ordered item ids. |
 | `onItemClick` | Open a caller-owned edit dialog, detail panel, or context menu for a card. |
 | `renderItem` | Fully custom card renderer. |
+| `renderItemActions` | Interactive card controls rendered outside the drag activator. |
 | `renderColumnHeader` | Fully custom lane header renderer. |
 | `getItemTitle`, `getItemDescription`, `getItemBadge` | Default-card content helpers. |
 | `getColumnAccentClassName` | Optional token or utility class for the lane dot. |
 | `columnWidthClassName` | Width class for each lane. Defaults to a responsive 20rem lane. |
+| `dragEnabled` | Enables pointer and keyboard dragging without changing readable-state styling. Defaults to `true`. |
+| `disabled` | Blocks all board interaction and presents the board as unavailable. |
 
 `groupKanbanItemIds()` and `projectKanbanMove()` are exported from
 `@zero/framework/components/kanban` for tests and advanced custom board

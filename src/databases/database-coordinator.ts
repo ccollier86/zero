@@ -62,12 +62,17 @@ import {
   CoordinatorTenantSyncBinding,
   type CoordinatorTenantSyncSnapshotStart,
 } from './database-coordinator-capability';
+import type {
+  DatabaseIdentityProjectionPayload,
+  DatabaseIdentityProjectionResult,
+} from './database-identity-projection-actor';
 import {
   type DatabaseCoordinatorEntry as DatabaseEntry,
   type DatabaseCoordinatorSyncBindingHandle,
 } from './database-coordinator-entry';
 import { AsyncCatalogGate } from './database-coordinator-catalog-gate';
 import {
+  coordinatorAggregateCloseDetails,
   elapsed,
   safeCoordinatorError,
 } from './database-coordinator-errors';
@@ -80,6 +85,7 @@ import {
 } from './database-coordinator-runtime';
 import { DatabaseCoordinatorTenantSyncRuntime } from './database-coordinator-tenant-sync-runtime';
 import { DatabaseCoordinatorOperationRuntime } from './database-coordinator-operation-runtime';
+import { DatabaseCoordinatorIdentityProjectionRuntime } from './database-coordinator-identity-projection-runtime';
 import {
   normalizeDatabaseCoordinatorConfig,
 } from './database-coordinator-config';
@@ -136,6 +142,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
   private readonly admission: DatabaseCoordinatorAdmission;
   private readonly authority: DatabaseCoordinatorAuthority;
   private readonly operationRuntime: DatabaseCoordinatorOperationRuntime;
+  private readonly identityProjectionRuntime: DatabaseCoordinatorIdentityProjectionRuntime;
   private readonly tenantSyncRuntime: DatabaseCoordinatorTenantSyncRuntime;
   private readonly blockedDatabases = new Map<DatabaseId, {
     readonly databaseRef: DatabaseRef;
@@ -195,6 +202,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
       quarantinedSlots: this.quarantinedSlots,
       state: () => this.state,
       actorLiveness: () => this.requireActorLiveness(),
+      authorityCommitFence: config.actorAuthorityContext?.actorBinding() ?? null,
       assertOwnedRootCurrent: () => this.assertOwnedRootCurrent(),
       releaseSlot: (slot) => this.releaseSlot(slot),
       rememberBlockedDatabase: (entry, failure) => {
@@ -238,6 +246,9 @@ export class DatabaseCoordinator implements AsyncDisposable {
       now: this.now,
       authorityCommitCoordinator: config.authorityCommitCoordinator,
       requireCommitAuthority: config.requireCommitAuthority,
+      captureAuthorityRevision: config.actorAuthorityContext
+        ? () => config.actorAuthorityContext!.captureRevision()
+        : null,
       assertStarted: () => this.assertStarted(),
       canAwaitOpening: (entry) => this.entryLifecycle.canAwaitOpening(entry),
       assertUsableEntry: (entry) => this.assertUsableEntry(entry),
@@ -269,6 +280,40 @@ export class DatabaseCoordinator implements AsyncDisposable {
       ),
       emit: (event) => this.emit(event),
     });
+    this.identityProjectionRuntime =
+      new DatabaseCoordinatorIdentityProjectionRuntime({
+        operationTimeoutMs: this.operationTimeoutMs,
+        now: this.now,
+        authorityCommitCoordinator: config.authorityCommitCoordinator,
+        requireCommitAuthority: config.requireCommitAuthority,
+        assertStarted: () => this.assertStarted(),
+        canAwaitOpening: (entry) => this.entryLifecycle.canAwaitOpening(entry),
+        awaitReplacementOpening: (entry, execution, operation, resume) => (
+          this.operationRuntime.awaitReplacementOpening(
+            entry,
+            execution,
+            operation,
+            resume,
+          )
+        ),
+        assertUsableEntry: (entry) => this.assertUsableEntry(entry),
+        enqueueLane: (entry, operation, execution, run) => (
+          this.operationRuntime.enqueueLane(entry, operation, execution, run)
+        ),
+        requireWriter: (entry) => this.entryLifecycle.requireWriter(entry),
+        isTerminalFailure: (executor, error) => (
+          this.entryLifecycle.isTerminalExecutorFailure(executor, error)
+        ),
+        retire: (entry, executor, error) => (
+          this.entryLifecycle.retireBinding(
+            entry,
+            executor,
+            error,
+            'runtime-failure',
+          )
+        ),
+        emit: (event) => this.emit(event),
+      });
     this.tenantSyncRuntime = new DatabaseCoordinatorTenantSyncRuntime({
       operationCatalog: this.operationCatalog,
       operationTimeoutMs: this.operationTimeoutMs,
@@ -362,11 +407,8 @@ export class DatabaseCoordinator implements AsyncDisposable {
       this.state = 'started';
       if (this.sweepIntervalMs !== false) {
         this.idleTimer = setInterval(() => {
-          void this.sweepIdle().catch((error) => this.emit({
-            type: 'coordinator-failed',
-            phase: 'close',
-            error,
-          }));
+          // sweepIdle() emits its one aggregate failure signal before rejecting.
+          void this.sweepIdle().catch(() => undefined);
         }, this.sweepIntervalMs);
         this.idleTimer.unref?.();
       }
@@ -422,14 +464,30 @@ export class DatabaseCoordinator implements AsyncDisposable {
     input: string,
     options: DatabaseAcquireOptions = {},
   ): Promise<DatabaseCoordinatorLease> {
-    return await this.acquireCoordinatorLease(input, options, false);
+    const lease = await this.acquireCoordinatorLease(input, options, false, false);
+    if (!lease) throw this.notReadyError();
+    return lease;
+  }
+
+  /**
+   * Acquire only an already-existing managed database. Missing targets return
+   * null without reserving a new main file.
+   *
+   * @internal Framework target-state inspection path.
+   */
+  async acquireExisting(
+    input: string,
+    options: DatabaseAcquireOptions = {},
+  ): Promise<DatabaseCoordinatorLease | null> {
+    return await this.acquireCoordinatorLease(input, options, false, true);
   }
 
   private async acquireCoordinatorLease(
     input: string,
     options: DatabaseAcquireOptions,
     reserveTenantSyncBinding: boolean,
-  ): Promise<CoordinatorLease> {
+    existingOnly: boolean,
+  ): Promise<CoordinatorLease | null> {
     this.assertStarted();
     const id = normalizeCoordinatorDatabaseId(input);
     const commitAuthority = this.authority.resolve(id, options);
@@ -438,6 +496,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
       const decision = await this.catalogGate.run(async (): Promise<
         | { readonly type: 'entry'; readonly entry: DatabaseEntry }
         | { readonly type: 'evict'; readonly entry: DatabaseEntry }
+        | { readonly type: 'missing' }
       > => {
         this.assertStarted();
         const blocked = this.blockedDatabases.get(id);
@@ -460,6 +519,10 @@ export class DatabaseCoordinator implements AsyncDisposable {
           this.admission.assertTenantSync(id, current ?? null);
         }
         if (!current) {
+          if (existingOnly
+            && !this.entryFactory.existingFileIsPresent(id)) {
+            return { type: 'missing' };
+          }
           const slot = firstSetValue(this.freeSlots);
           if (slot === null) {
             const candidate = this.admission.selectCapacityEviction();
@@ -471,7 +534,14 @@ export class DatabaseCoordinator implements AsyncDisposable {
           }
           this.freeSlots.delete(slot);
           try {
-            current = this.createEntry(id, slot);
+            const created = existingOnly
+              ? this.createExistingEntry(id, slot)
+              : this.createEntry(id, slot);
+            if (!created) {
+              this.releaseSlot(slot);
+              return { type: 'missing' };
+            }
+            current = created;
             this.entries.set(id, current);
           } catch (error) {
             this.releaseSlot(slot);
@@ -488,6 +558,7 @@ export class DatabaseCoordinator implements AsyncDisposable {
         await this.entryLifecycle.closeEntry(decision.entry, 'capacity');
         continue;
       }
+      if (decision.type === 'missing') return null;
 
       const { entry } = decision;
       try {
@@ -520,7 +591,8 @@ export class DatabaseCoordinator implements AsyncDisposable {
         'Database tenant Sync read authority is invalid.',
       );
     }
-    const lease = await this.acquireCoordinatorLease(input, options, true);
+    const lease = await this.acquireCoordinatorLease(input, options, true, false);
+    if (!lease) throw this.notReadyError();
     const entry = lease.tenantSyncReservedEntry();
     try {
       lease.assertTenantSyncAuthority();
@@ -595,12 +667,28 @@ export class DatabaseCoordinator implements AsyncDisposable {
     const evicted = outcomes.flatMap((outcome) => (
       outcome.status === 'fulfilled' ? [outcome.value] : []
     ));
-    if (outcomes.some((outcome) => outcome.status === 'rejected')) {
-      throw new DatabaseError(
+    const failures = outcomes.flatMap((outcome) => (
+      outcome.status === 'rejected' ? [outcome.reason] : []
+    ));
+    if (failures.length > 0) {
+      const details = coordinatorAggregateCloseDetails({
+        failures,
+        remainingEntryCount: this.entries.size,
+        quarantinedSlotCount: this.quarantinedSlots.size,
+        availableSlotCount: this.freeSlots.size,
+      });
+      const error = new DatabaseError(
         'DATABASE_EXECUTOR_FAILED',
         'One or more idle database actors did not close cleanly.',
-        { retryable: false, outcome: 'unknown' },
+        { retryable: false, outcome: 'unknown', details },
       );
+      this.emit({
+        type: 'coordinator-failed',
+        phase: 'close',
+        ...details,
+        error,
+      });
+      throw error;
     }
     return Object.freeze(evicted);
   }
@@ -667,6 +755,20 @@ export class DatabaseCoordinator implements AsyncDisposable {
     return this.operationRuntime.executeTrustedWrite(
       entry,
       value,
+      options,
+      commitAuthority,
+    );
+  }
+
+  executeIdentityProjection(
+    entry: DatabaseEntry,
+    input: Omit<DatabaseIdentityProjectionPayload, 'databaseRef'>,
+    options: DatabaseExecutionOptions = {},
+    commitAuthority: DatabaseCommitAuthority | null = null,
+  ): Promise<DatabaseIdentityProjectionResult> {
+    return this.identityProjectionRuntime.execute(
+      entry,
+      input,
       options,
       commitAuthority,
     );
@@ -791,6 +893,13 @@ export class DatabaseCoordinator implements AsyncDisposable {
     return this.entryFactory.create(id, slot);
   }
 
+  private createExistingEntry(
+    id: DatabaseId,
+    slot: number,
+  ): DatabaseEntry | null {
+    return this.entryFactory.createExisting(id, slot);
+  }
+
   private assertUsableEntry(entry: DatabaseEntry): void {
     this.assertStarted();
     if (this.entries.get(entry.id) !== entry || entry.state !== 'ready') {
@@ -862,14 +971,21 @@ export class DatabaseCoordinator implements AsyncDisposable {
       || this.freeSlots.size !== this.maxDatabases;
     if (shutdownIncomplete) {
       this.state = 'close-failed';
+      const details = coordinatorAggregateCloseDetails({
+        failures,
+        remainingEntryCount: this.entries.size,
+        quarantinedSlotCount: this.quarantinedSlots.size,
+        availableSlotCount: this.freeSlots.size,
+      });
       const error = new DatabaseError(
         'DATABASE_EXECUTOR_FAILED',
         'Database coordinator shutdown was incomplete.',
-        { retryable: false, outcome: 'unknown' },
+        { retryable: false, outcome: 'unknown', details },
       );
       this.emit({
         type: 'coordinator-failed',
         phase: 'shutdown',
+        ...details,
         error,
       });
       throw error;

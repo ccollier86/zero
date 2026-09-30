@@ -3,6 +3,7 @@ import type { AuthClient } from './auth-client';
 import {
   AuthorizationScopeBoundaryFence,
   isAuthorizationScopeCallbackCurrent,
+  isAuthorizationScopeReady,
   isAuthorizationScopeStable,
   readAuthorizationScopeBoundaryKey,
   readAuthorizationScopeIdentityKey,
@@ -69,6 +70,15 @@ describe('authorization scope hook boundary', () => {
     expect(isAuthorizationScopeStable(
       authState({ phase: 'reconciling' }).sessionTransition,
     )).toBe(false);
+  });
+
+  test('keeps ordinary auth form submission mounted while masking restoration and transitions', () => {
+    const idle = authState().sessionTransition;
+    const preparing = authState({ phase: 'preparing' }).sessionTransition;
+
+    expect(isAuthorizationScopeReady(idle, false)).toBe(true);
+    expect(isAuthorizationScopeReady(idle, true)).toBe(false);
+    expect(isAuthorizationScopeReady(preparing, false)).toBe(false);
   });
 
   test('invalidates async work at every boundary change', () => {
@@ -276,6 +286,8 @@ const authorizationScopedHookFiles = [
   '../../sync/client/hooks.ts',
   '../../hooks/use-form.ts',
   '../../components/data-table/data-table-source.ts',
+  '../../components/auth/tenant-member-management.tsx',
+  '../../components/auth/platform-tenant-management.tsx',
   '../../components/admin/users/use-admin-user-data.ts',
   '../../components/admin/users/use-admin-user-actions.ts',
 ];

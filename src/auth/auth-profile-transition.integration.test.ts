@@ -32,12 +32,21 @@ describe('auth runtime profile transitions', () => {
     await simple.start();
     insertUser(db, 'owner', 0);
     insertUser(db, 'manager', 1);
-    const created = simple.getTenancyService()!.createTenant({
-      slug: 'continuity', name: 'Continuity', ownerUserId: 'owner',
+    const administration = simple.getTenancyService()!.createTenant({
+      slug: 'continuity-administration',
+      name: 'Continuity Administration',
+      ownerUserId: 'owner',
     });
-    simple.getTenancyService()!.adoptAdministrationTenant(created.tenant.tenantId);
+    simple.getTenancyService()!.adoptAdministrationTenant(
+      administration.tenant.tenantId,
+    );
+    const customer = simple.getTenancyService()!.createTenant({
+      slug: 'continuity-customer',
+      name: 'Continuity Customer',
+      ownerUserId: 'owner',
+    });
     const manager = simple.getTenancyService()!.addMembership({
-      tenantId: created.tenant.tenantId,
+      tenantId: customer.tenant.tenantId,
       userId: 'manager',
       roleKey: 'manager',
       createdBy: 'owner',
@@ -58,7 +67,7 @@ describe('auth runtime profile transitions', () => {
       db,
       'multi',
       'advanced',
-      created.tenant.tenantId,
+      administration.tenant.tenantId,
     );
     runtimes.push(advanced);
     await advanced.start();
@@ -115,19 +124,28 @@ describe('auth runtime profile transitions', () => {
     await simple.start();
     insertUser(db, 'owner', 0);
     insertUser(db, 'member', 1);
-    const created = simple.getTenancyService()!.createTenant({
-      slug: 'restart', name: 'Restart', ownerUserId: 'owner',
+    const administration = simple.getTenancyService()!.createTenant({
+      slug: 'restart-administration',
+      name: 'Restart Administration',
+      ownerUserId: 'owner',
     });
-    simple.getTenancyService()!.adoptAdministrationTenant(created.tenant.tenantId);
+    simple.getTenancyService()!.adoptAdministrationTenant(
+      administration.tenant.tenantId,
+    );
+    const customer = simple.getTenancyService()!.createTenant({
+      slug: 'restart-customer',
+      name: 'Restart Customer',
+      ownerUserId: 'owner',
+    });
     const member = simple.getTenancyService()!.addMembership({
-      tenantId: created.tenant.tenantId,
+      tenantId: customer.tenant.tenantId,
       userId: 'member', roleKey: 'member', createdBy: 'owner',
     });
     const advanced = runtime(
       db,
       'multi',
       'advanced',
-      created.tenant.tenantId,
+      administration.tenant.tenantId,
     );
     runtimes.push(advanced);
     await advanced.start();
@@ -141,7 +159,7 @@ describe('auth runtime profile transitions', () => {
       db,
       'multi',
       'advanced',
-      created.tenant.tenantId,
+      administration.tenant.tenantId,
     );
     runtimes.push(restarted);
     await restarted.start();

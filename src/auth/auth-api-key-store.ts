@@ -113,6 +113,7 @@ export class AuthApiKeyStore {
       UPDATE _auth_api_keys
       SET revoked_at = ?, revoked_by_user_id = ?, key_generation = key_generation + 1
       WHERE key_id = ? AND key_generation = ? AND revoked_at IS NULL
+      RETURNING key_id
     `);
     this.touchStatement = db.prepare(`
       UPDATE _auth_api_keys SET last_used_at = ?
@@ -130,24 +131,26 @@ export class AuthApiKeyStore {
   }
 
   insert(input: InsertAuthApiKeyInput): AuthApiKeyRecord {
-    this.insertStatement.run(
-      input.keyId,
-      input.userId,
-      input.label,
-      input.secretHash,
-      input.secretHint,
-      input.scopeKind,
-      input.scopeId,
-      input.tenantId,
-      input.membershipId,
-      input.issuedAuthGeneration,
-      input.createdByUserId,
-      input.createdVia,
-      input.createdAt,
-      input.expiresAt,
-      input.rotatedFromKeyId ?? null,
-    );
-    return this.getById(input.keyId)!;
+    return this.db.transaction(() => {
+      this.insertStatement.run(
+        input.keyId,
+        input.userId,
+        input.label,
+        input.secretHash,
+        input.secretHint,
+        input.scopeKind,
+        input.scopeId,
+        input.tenantId,
+        input.membershipId,
+        input.issuedAuthGeneration,
+        input.createdByUserId,
+        input.createdVia,
+        input.createdAt,
+        input.expiresAt,
+        input.rotatedFromKeyId ?? null,
+      );
+      return this.getById(input.keyId)!;
+    });
   }
 
   getById(keyId: string): AuthApiKeyRecord | null {
@@ -212,12 +215,14 @@ export class AuthApiKeyStore {
     revokedByUserId: string,
     now: number,
   ): boolean {
-    return this.revokeStatement.run(
+    // Authority-revision triggers add their own UPDATE. Bun's `.changes`
+    // includes trigger side effects, so RETURNING is the exact target-row CAS.
+    return this.db.transaction(() => this.revokeStatement.get(
       now,
       revokedByUserId,
       keyId,
       expectedGeneration,
-    ).changes === 1;
+    ) !== null);
   }
 
   touchLastUsed(

@@ -74,10 +74,15 @@ export {
 // ─── Wire Protocol Types ──────────────────────────────────────────────────
 export { SYNC_ACK_ERROR_CODES } from './types';
 export type {
+  SyncDataPlaneName,
   SyncSnapshotMessage,
+  SyncSnapshotBeginMessage,
+  SyncSnapshotChunkMessage,
+  SyncSnapshotEndMessage,
   SyncChangeMessage,
   SyncAckMessage,
   SyncAckErrorCode,
+  SyncMutationRejection,
   SyncCatchupMessage,
   SyncAuthMessage,
   SyncAuthReadyMessage,

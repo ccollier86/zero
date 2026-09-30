@@ -13,6 +13,8 @@ Bun package-mode apps today.
 Before publishing to npm, verify the package `files` allowlist includes:
 
 - `src`
+- the selective `examples/guardian-fabric-proof` proof-app paths declared in
+  `package.json` (not its runtime data, generated output, or build output)
 - `examples/package-mode`
 - `examples/native-auth`
 - `docs`
@@ -43,7 +45,8 @@ be deliberate and covered by package-mode smoke tests.
 `bun pm pack` can include allowlisted files that are still untracked. The
 outside-tree package test proves the archive works, but only a fresh checkout
 proves every required source and recipe was committed. Always repeat the
-package test from the release commit before tagging.
+package test from the release commit before tagging, and verify the proof-app
+paths plus every linked canonical document exist in that clean checkout.
 
 ## Current Public Boundary
 
@@ -80,9 +83,10 @@ the roadmap. For this unreleased candidate:
   runtimes to share the same file-mode SQLite database. `hot`, `ephemeral`,
   separate-database, cross-host message fanout, and ephemeral-topic replication
   are not provided by this mechanism.
-- ReactiveDB Fabric is implemented on the unmerged multi-database child branch
-  as a separate topology from shared-file replica polling. It keeps the
-  default/control database pinned and routes named or physical-tenant
+- ReactiveDB Fabric is an implemented, unreleased candidate topology separate
+  from shared-file replica polling. It keeps the
+  shared application database pinned, keeps Zero/Guardian state in its
+  separate system database, and routes named or physical-tenant
   application Resources through bounded Bun subprocess actors with independent
   writer lanes, optional file/WAL readers, bounded hot placement, synchronous
   hybrid selection, durable receipts, exact tenant-Sync snapshot sessions,
@@ -93,6 +97,14 @@ the roadmap. For this unreleased candidate:
   remain outside this candidate boundary. Do not present Fabric as released
   until the architecture document's gates, the checks below, and a combined
   multi-tenant acceptance app pass.
+- The system/application database split is a breaking upgrade for legacy
+  combined layouts. Runtime and Doctor detect that layout read-only and fail
+  closed with `requiredAction: 'split-system-database'`; they do not move data.
+  Existing operators must back up, stop, perform their app-specific offline
+  extraction/anchor seed, and verify both planes. A generic automatic splitter
+  would be useful follow-on tooling, but its absence is not a release blocker
+  for fresh separated-plane apps or deliberately migrated deployments. Release
+  notes must state this boundary instead of implying an updater migrates data.
 - Zero's managed routes, resources, Sync, and scoped services enforce their
   documented boundary. Deliberate raw SQL/database/service escape hatches are
   trusted server code outside that guarantee.
@@ -369,8 +381,10 @@ npm publish "$ZERO_RELEASE_ARCHIVE" --access public --dry-run
 ```
 
 The tarball listing must contain the selected `LICENSE`, package docs, source,
-CLI bins, and both example directories, and must exclude secrets, app data,
-databases, Storage roots, caches, and standalone preview SDK repositories.
+CLI bins, the `package-mode` and `native-auth` example directories, and the
+selectively allowlisted `guardian-fabric-proof` slice. It must exclude secrets,
+app data, databases, Storage roots, caches, and standalone preview SDK
+repositories.
 Publish that same inspected archive, supplying npm's OTP/provenance options as
 required by the release account:
 

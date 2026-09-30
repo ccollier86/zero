@@ -1,11 +1,12 @@
 # Platform Overview
 
 A full-stack reactive application framework whose deployment unit is a single
-Bun binary with its services in-process. The normal shape is one server; file
-mode also supports multiple runtimes sharing one local SQLite database for
-durable Sync, State Sync, and authorization invalidation. No microservices,
-Redis, or external queue are required. SQLite + WebSockets + React are wired end
-to end.
+Bun binary with its services in-process. The normal shape is one server. In
+file mode, multiple runtimes which share a relevant SQLite plane can relay
+that plane's durable Sync/State Sync changes or authorization invalidation.
+The application and Guardian/Zero system planes remain separate. No
+microservices, Redis, or external queue are required. SQLite + WebSockets +
+React are wired end to end.
 
 For the practical app setup path, start with [Start Here](./start-here.md).
 
@@ -83,11 +84,10 @@ protected `/api/_zero/observability/events` endpoint. See
 
 ### ReactiveDB Fabric: isolated multi-database runtime
 
-ReactiveDB Fabric is active implementation on Zero's unmerged multi-database
-feature branch. It extends the existing single-database contract without
-moving the default database: identity, sessions, memberships, Zero internals,
-and global/control resources stay pinned, while selected application resources
-can live in separately actor-owned databases.
+ReactiveDB Fabric is an active, unreleased release-candidate implementation. It
+extends the pinned application database while identity, sessions, memberships,
+and Zero internals stay in the separate pinned system database. Selected
+application resources can live in separately actor-owned databases.
 
 In physical tenant mode, the server derives an opaque, pseudonymous database
 reference from the authenticated tenant scope. A URL, body, header, WebSocket
@@ -97,14 +97,23 @@ merely for separation; shared-row Resources continue to use the normal
 discriminator and schema rules.
 
 ```text
-                         pinned control/auth ReactiveDB
-Browser -> Elysia/Sync <             |
+                         pinned system ReactiveDB (Guardian/Zero)
+Browser -> Elysia/Sync < pinned application ReactiveDB
+                                      |
                          Fabric coordinator
                            |       |
                       tenant A  tenant B
                       writer     writer       independent subprocess lanes
                         + reader   + reader    optional file/WAL readers
 ```
+
+See [System and Application Database Planes](./framework/system-database.md)
+for `systemDb`/`db` ownership, ID-only Guardian anchors, readiness, privileged
+`zero.system` access, legacy-layout detection, and the authority commit fence.
+At final commit, each Guardian-authorized Fabric writer rereads the captured
+system authority revision while holding a shared lease on the same file-backed
+system sidecar used by the pinned app plane. Shared leases preserve concurrent
+tenant-file commits; Guardian authority changes take the exclusive side.
 
 Fabric supports direct file/WAL placement, bounded RAM-active hot placement,
 and a synchronous hybrid policy selected from that database reference. The
@@ -1077,7 +1086,8 @@ const { users } = await client.listAuthAdminUsers();
 | Icons | Animate UI animated Lucide icons via `@zero/framework/icons`; raw `lucide-react` only for missing shapes |
 
 Within one runtime, Zero's services communicate in-process with no component
-network hop. Local commits enter the same ordered dispatcher synchronously;
-file-mode peer runtimes observe committed rows by polling the shared SQLite
-log. `hot`/`ephemeral` databases, separate files, and RAM-only ephemeral topics
-remain process-local unless an application supplies external coordination.
+network hop. Local commits enter the owning plane's ordered dispatcher
+synchronously; file-mode peer runtimes observe committed rows by polling that
+plane's shared SQLite log. `hot`/`ephemeral` databases, independently
+coordinated files, and RAM-only ephemeral topics remain process-local unless an
+application supplies external coordination.

@@ -29,6 +29,10 @@ import {
   checkPreResolutionDatabaseDirectoryIsolation,
 } from './platform-doctor-database';
 import {
+  checkPreResolutionSystemDatabase,
+  checkSystemDatabase,
+} from './platform-doctor-system-database';
+import {
   checkMigrations,
   checkPreResolutionConfig,
   checkSyncPolicy,
@@ -62,6 +66,7 @@ export function runPlatformDoctor(
   const env = options.env ?? process.env;
 
   checkPreResolutionConfig(config, sink);
+  checkPreResolutionSystemDatabase(config, sink);
   checkPreResolutionDatabaseDirectoryIsolation(config, sink);
   checkNativeAuthConfig(config, findings);
 
@@ -96,6 +101,7 @@ export function runPlatformDoctor(
     checkAuthAndEmail(resolved, sink, env, doctorAuthConfig);
     checkStorage(resolved, sink, env);
     checkMigrations(resolved, sink);
+    checkSystemDatabase(resolved, sink, env, options.projectRoot);
     checkDatabaseTopology(resolved, sink);
     checkSyncPolicy(resolved, sink);
     checkResources(resolved, sink, doctorAuthConfig);

@@ -5,29 +5,35 @@ export {
   authorizationPolicy,
   authenticatedOnly,
   customPolicy,
+  guardianActorPolicy,
   metadataPolicy,
   ownerPolicy,
   publicReadUserWrite,
   readOnly,
+  tenantKindPolicy,
 } from './resource-policy-helpers';
 
 export { evaluateResourcePolicy } from './resource-policy-evaluator';
 export {
   allowsPublicAction,
   getPolicyMetadataKeys,
+  getPolicyGuardianActorFields,
   getPolicyOwnerFields,
   hasCustomPolicyBranch,
   requiresAuthenticatedUser,
   type ResourcePolicyStaticDecision,
+  type ResourcePolicyGuardianActorFields,
 } from './resource-policy-inspection';
 export {
   validateAuthorizationPolicy,
+  validateGuardianActorPolicy,
   validateResourcePolicy,
 } from './resource-policy-validation';
 
 export type {
   CustomResourcePolicyCallback,
   CustomResourcePolicyOptions,
+  GuardianActorPolicyOptions,
   OwnerPolicyCreateMode,
   OwnerPolicyOptions,
   ResourceAction,

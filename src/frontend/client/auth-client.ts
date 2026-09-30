@@ -52,7 +52,10 @@ import {
   AuthSessionController,
   AuthSessionSynchronizationError,
 } from './auth-session';
-import { AuthTenantTransport } from './auth-tenant-transport';
+import {
+  AuthTenantTransport,
+  type AuthTenantScopeAttempt,
+} from './auth-tenant-transport';
 import { AuthTenantAdministrationTransport } from './auth-tenant-administration-transport';
 import { AuthTenantOnboardingTransport } from './auth-tenant-onboarding-transport';
 import type { BrowserAuthCoordinationEnvironment } from './auth-browser-coordination';
@@ -403,7 +406,7 @@ export class AuthClient {
         return this.fetchWithOptionalAuth(url, init);
       },
       assertResponseCurrent: (response) => this.assertAuthenticatedResponseCurrent(response),
-      beginAuthentication: () => this.beginAuthenticationAttempt(),
+      beginAuthentication: (markLoading) => this.beginAuthenticationAttempt(markLoading),
       failAuthentication: (message, attempt) => {
         attempt.assertCurrent();
         this.session.failAuthentication(message);
@@ -556,9 +559,18 @@ export class AuthClient {
     return this.session.error;
   }
 
+  /** In-memory interactive result retained across an authorization remount. */
+  get authenticationContinuation(): AuthCompletionResult | null {
+    return this.session.authenticationContinuation;
+  }
+
   /** Current authorization-scope transition/recovery phase. */
   get sessionTransition(): AuthSessionTransitionState {
     return this.session.sessionTransition;
+  }
+
+  clearAuthenticationContinuation(): void {
+    this.session.clearAuthenticationContinuation();
   }
 
   get accessToken(): string | null {
@@ -659,8 +671,8 @@ export class AuthClient {
   }
 
   selectTenant(continuation: string, tenantId: string): Promise<AuthSessionResult> {
-    return this.runScopeChangingOperation((consumeStartingScope) => (
-      this.tenants.selectTenant(continuation, tenantId, consumeStartingScope)
+    return this.runScopeChangingOperation((attempt) => (
+      this.tenants.selectTenant(continuation, tenantId, attempt)
     ));
   }
 
@@ -671,14 +683,14 @@ export class AuthClient {
   }
 
   createTenant(params: AuthTenantCreateParams): Promise<AuthSessionResult> {
-    return this.runScopeChangingOperation((consumeStartingScope) => (
-      this.tenants.createTenant(params, consumeStartingScope)
+    return this.runScopeChangingOperation((attempt) => (
+      this.tenants.createTenant(params, attempt)
     ));
   }
 
   switchTenant(tenantId: string): Promise<AuthSessionResult> {
-    return this.runScopeChangingOperation((consumeStartingScope) => (
-      this.tenants.switchTenant(tenantId, consumeStartingScope)
+    return this.runScopeChangingOperation((attempt) => (
+      this.tenants.switchTenant(tenantId, attempt)
     ));
   }
 
@@ -820,8 +832,8 @@ export class AuthClient {
   }
 
   logout(): Promise<void> {
-    return this.runScopeChangingOperation((consumeStartingScope) => (
-      this.session.logout(consumeStartingScope)
+    return this.runScopeChangingOperation((attempt) => (
+      this.session.logout(attempt.assertCurrent, attempt.consumeStartingScope)
     ));
   }
 
@@ -876,17 +888,24 @@ export class AuthClient {
   }
 
   private async runScopeChangingOperation<T>(
-    operation: (consumeStartingScope: () => void) => Promise<T>,
+    operation: (attempt: AuthTenantScopeAttempt) => Promise<T>,
   ): Promise<T> {
     const attempt = this.beginAuthorizationScopeAttempt();
+    let consumed = false;
     const consumeStartingScope = () => {
+      if (consumed) return;
       attempt.assertCurrent();
       // The operation now owns the lifecycle transition, so its preflight
       // request must no longer cancel itself when beginTransition() runs.
+      consumed = true;
       attempt.dispose();
     };
     try {
-      return await operation(consumeStartingScope);
+      return await operation({
+        signal: attempt.signal,
+        assertCurrent: attempt.assertCurrent,
+        consumeStartingScope,
+      });
     } finally {
       attempt.dispose();
     }

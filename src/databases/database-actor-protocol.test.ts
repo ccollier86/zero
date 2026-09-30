@@ -153,6 +153,25 @@ describe('database actor protocol', () => {
         tenantId: 'caller-controlled',
       },
     }, catalog));
+    expect(validateDatabaseActorExecutePayload({
+      databaseRef,
+      authorityRevision: 7,
+      operation: {
+        type: 'mutate',
+        idempotencyKey: 'todo:update:authority-revision',
+        mutation: {
+          type: 'update',
+          table: 'todos',
+          id: 'todo-1',
+          patch: { title: 'Current authority' },
+        },
+      },
+    }, catalog).authorityRevision).toBe(7);
+    expectCode(() => validateDatabaseActorExecutePayload({
+      databaseRef,
+      authorityRevision: 7,
+      operation: { type: 'get', table: 'todos', id: 'todo-1' },
+    }, catalog));
   });
 
   test('bounds replay and validates unbind references', () => {

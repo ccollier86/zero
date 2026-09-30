@@ -22,6 +22,23 @@ export interface PendingConfirmation {
   member: AuthTenantMember;
 }
 
+interface TenantMemberConfirmationCapabilities {
+  canReadMembers: boolean;
+  canManageMembers: boolean;
+  canTransferOwnership: boolean;
+}
+
+/** Fail closed when a member dialog outlives the actor's exact capabilities. */
+export function canRetainTenantMemberConfirmation(
+  confirmation: PendingConfirmation | null,
+  capabilities: TenantMemberConfirmationCapabilities | null | undefined,
+): boolean {
+  if (!confirmation || !capabilities?.canReadMembers) return false;
+  return confirmation.action === 'transfer'
+    ? capabilities.canTransferOwnership
+    : capabilities.canManageMembers;
+}
+
 export function MemberRow({
   member,
   actorMembershipId,

@@ -615,7 +615,7 @@ exposes the service to app-owned backend routes through `zero.kv`,
 
 ### Slice 5: SQL Persistence Primitive
 
-Status: implemented on this branch as `src/persistence` and exported through
+Status: implemented in the current package as `src/persistence` and exported through
 `@zero/framework/persistence`. ReactiveDB and `createApp()` now consume it
 through the shared SQL service described in Slice 6 and Slice 7.
 
@@ -626,7 +626,7 @@ through the shared SQL service described in Slice 6 and Slice 7.
 
 ### Slice 6: ReactiveDB Refactor
 
-Status: implemented on this branch as a broader SQL-runtime expansion:
+Status: implemented in the current package as a broader SQL-runtime expansion:
 ReactiveDB accepts injected `Database` and `PlatformSQLiteService` handles,
 legacy configs route through `createPlatformSQLiteService`, `createApp()`
 creates the shared SQL service first, migrations run on that handle, and
@@ -640,7 +640,7 @@ second database.
 
 ### Slice 7: App Factory Wiring
 
-Status: implemented for SQL and KV/cache on this branch. `createApp()` creates
+Status: implemented for SQL and KV/cache in the current package. `createApp()` creates
 the platform SQLite service first, runs migrations against that handle, injects
 it into ReactiveDB through the sync plugin, and app-owned backend routes can use
 `zero.sql`/`zero.sqlite`. `createApp()` also mounts durable KV/cache by default

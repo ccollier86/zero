@@ -424,7 +424,7 @@ export class SubprocessDatabaseServer implements AsyncDisposable {
     void task.then(finish, () => {
       this.failClosed(this.transportError());
       finish();
-    });
+    }).catch(() => undefined);
   }
 
   private async executeRequest(
@@ -496,7 +496,7 @@ export class SubprocessDatabaseServer implements AsyncDisposable {
   private requestCleanup(sendShutdownAck: boolean): void {
     this.shutdownAckRequested ||= sendShutdownAck;
     this.cleanupTask ??= this.cleanup();
-    void this.cleanupTask;
+    void this.cleanupTask.catch(() => undefined);
   }
 
   private async cleanup(): Promise<void> {

@@ -1,12 +1,13 @@
 # ReactiveDB Fabric: Multi-Database Architecture
 
-> **Status:** active implementation on the child multi-database feature
-> branch; it is not merged or released. The file/WAL actor foundation is now
+> **Status:** active, unreleased release-candidate implementation. The
+> file/WAL actor foundation is now
 > implemented with isolated Bun subprocesses, native IPC, bounded per-file
 > writer queues, separate WAL readers, durable idempotency receipts, change
 > replay, generation recovery, root ownership, app-local observability, and
 > deterministic shutdown. `createApp()` validates and owns the topology, the
-> historical default/control database remains pinned, and tenant bindings are
+> shared application database and separate Zero-owned system database remain
+> pinned, and tenant bindings are
 > derived from trusted authorization scope with a cross-file commit fence.
 > Real subprocess tests prove persistence, same-file read/write overlap, and
 > concurrent writes to separate files. The ordinary request capability,
@@ -28,7 +29,7 @@
 > failure before termination. Web Workers are not the production backend. The
 > isolated Bun subprocess/native-IPC backend is the qualified production
 > direction; the full application and release acceptance suite remains
-> required before this branch can merge.
+> required before public release.
 
 ## Purpose
 
@@ -63,7 +64,7 @@ The implementation has two distinct storage forms:
    readers.
 2. Policy-driven hybrid placement in which appropriate databases can use
    Zero's bounded hot snapshot runtime while others remain file/WAL databases.
-   This placement layer is implemented on the feature branch.
+   This placement layer is implemented in the release candidate.
 
 Hybrid placement does not mean online promotion or demotion. A coordinator
 selects placement synchronously when it creates an entry, pins that decision
@@ -77,7 +78,8 @@ offline operator migration problem.
 The production direction is a compatibility-preserving database coordinator
 over an explicit executor abstraction:
 
-- The historical default database remains pinned to the app runtime.
+- The shared application database remains pinned to the app runtime; the
+  separate pinned system database remains Guardian/Zero authority.
 - Named and tenant files use asynchronous operations dispatched to isolated
   database actors.
 - Each opened named/tenant database uses either file/WAL or bounded hot
@@ -97,8 +99,9 @@ over an explicit executor abstraction:
   fences tenant commits against control-plane authority changes. Ordinary
   request code, generated Resource HTTP CRUD, `/api/data`, and actor-backed
   Sync consume that bound capability.
-- One authenticated WebSocket multiplexes the pinned default/control plane and
-  the selected tenant plane. Each plane retains its own epoch, authorization
+- One authenticated WebSocket multiplexes authorized system projections, the
+  pinned default application plane, and the selected tenant plane. Each plane
+  retains its own epoch, authorization
   scope, sequence cursor, snapshot/catch-up boundary, and reset behavior.
 - The server derives a table's plane from the validated Resource topology.
   Browser-supplied plane fields are assertions only and never select storage.
@@ -175,8 +178,8 @@ optional backend.
    or `hot` placement. `ephemeral` is not a Fabric placement.
 8. Database paths and logical tenant identifiers never appear in public
    errors, request-visible diagnostics, or ordinary observability metadata.
-9. The Fabric root may not overlap build output, any effective default/control
-   database source, hot snapshot, or deterministic SQLite WAL/SHM/journal
+9. The Fabric root may not overlap build output, any effective application or
+   system database source, hot snapshot, or deterministic SQLite WAL/SHM/journal
    companion path, the object-storage root when Fabric would contain it, or
    the adapter-owned `storageDir/tmp` and
    `storageDir/blobs` namespaces. A dedicated unowned child such as
@@ -239,26 +242,27 @@ optional backend.
 
 ## Runtime Topology
 
-The default database and multi-database data plane have deliberately different
-contracts:
+The two pinned databases and multi-database data plane have deliberately
+different contracts:
 
 | Plane | Execution | Storage | API | Primary purpose |
 | --- | --- | --- | --- | --- |
-| Default/control | App runtime | Existing `hot`, `file`, or `ephemeral` behavior | Existing synchronous `zero.db` and `zero.sql` | Zero control plane and compatibility application data |
+| System | App runtime | Independent `hot`, `file`, or `ephemeral` behavior; durable `file` is the production authority default | Privileged `zero.system.db` and `zero.system.sql`; platform service APIs | Guardian identity/authorization and Zero-owned state |
+| Default/application | App runtime | Existing `hot`, `file`, or `ephemeral` behavior | Existing synchronous `zero.db` and `zero.sql` | Shared and compatibility application data |
 | Named/tenant writer | Bounded subprocess writer actors through `DatabaseExecutor` | Policy-selected file/WAL or bounded hot snapshot | New asynchronous database client | Isolated application data and ordered mutations |
 | Named/tenant reader | Bounded subprocess reader actors through `DatabaseExecutor` | Read-only connection for file/WAL placement only | New asynchronous reads | Snapshot reads concurrent with an active file writer |
 
-The default database initially continues to hold global identity, sessions,
-tenant membership, tenant registry, platform-administrator state, and any
-other mandatory Zero control-plane tables. Two operations that both mutate
-that one physical file are still subject to SQLite's one-writer rule. Once
+The system database holds global identity, sessions, tenant membership, tenant
+registry, platform-administrator state, and other mandatory Zero-owned tables.
+The default database holds shared application data. Two operations that mutate
+one physical file remain subject to SQLite's one-writer rule. Once
 authentication has selected a tenant, application operations against tenant A
 and tenant B use different writer actors and do not wait on one another.
 
-Fabric placement does not move the default/control database. Its storage mode
-continues to come from the existing top-level `db` configuration. Separating
-auth, logs, metrics, or other Zero-owned realms into additional Fabric
-databases is future realm-expansion work.
+Fabric placement moves neither pinned database. The application mode comes
+from `db`; system authority comes from `systemDb`. The generic pinned-runtime
+registry is the extension seam for future isolated logs, metrics, audit, or
+plugin-owned service databases.
 
 ### Where tenant scope lives
 
@@ -270,11 +274,12 @@ strategy from the presence or absence of a column:
 | `shared-row` | Verified tenant scope plus a trusted row predicate | Tenant-owned tables carry the configured tenant-scope column | Resource and service adapters inject and enforce that scope for every read and mutation |
 | `tenant-database` | The already-bound physical database capability | Tenant-owned tables normally omit a redundant tenant-scope column | Resource and service adapters execute inside that tenant's file without adding a tenant predicate |
 
-The control plane remains shared in the first tenant-file release. Tenants,
+The separate Guardian system plane remains shared across tenants. Tenants,
 memberships, invitations, sessions, role assignments, platform administration,
-database placement, and other cross-tenant records therefore retain explicit
-tenant references. Application data which is intentionally global or
-cross-tenant belongs in a separately declared shared/control realm as well.
+database placement, and other cross-tenant authority records therefore retain
+explicit tenant references in `systemDb`. Application data which is
+intentionally global or cross-tenant belongs in the pinned shared application
+plane (`db`).
 
 An application may retain a `tenant_id` value inside an isolated file for
 business or export purposes, but that value is ordinary data and is not the
@@ -440,7 +445,7 @@ Resource declarations remain the authoritative application-data topology:
 - Only physical resources with `sync` or `all` exposure join the tenant Sync
   catalog. HTTP-only and internal tables remain in the actor realm but are not
   sent to the browser.
-- Global and shared/control resources stay on the default database and default
+- Global and shared-row resources stay on the default application database and default
   Sync plane.
 
 The bounded topology options are `maxDatabases`, `maxDatabaseFiles`,
@@ -541,7 +546,7 @@ offline migration procedure for deliberate moves.
 ## App-Local Coordinator
 
 `createApp()` owns one coordinator through `ZeroAppRuntime`. The coordinator
-owns scheduling and IPC, but not the default database's compatibility API.
+owns scheduling and IPC, but not the pinned application database's compatibility API.
 
 Its responsibilities are:
 
@@ -623,7 +628,7 @@ Executor selection is explicit and validated at startup:
 | --- | --- | --- |
 | `subprocess-ipc` | Proof-qualified production direction; full acceptance pending | Default implementation direction; public release requires the complete pinned-runtime and packaging suite |
 | `web-worker` | Disqualified on installed Bun 1.3.14 by crashes and nondeterministic failures; Bun API remains experimental | Disabled in production; future opt-in only after pinned-version qualification |
-| Main-thread/in-process | Does not provide the required concurrency | Unit-test helpers and the historical default DB only; never a named-database fallback |
+| Main-thread/in-process | Does not provide the required concurrency | Unit-test helpers and the pinned application/system DBs only; never a named-database fallback |
 
 A backend failure never triggers automatic transport substitution. In
 particular, failure to launch a subprocess must not retry the operation in a
@@ -1221,7 +1226,8 @@ multiplexing two logical data planes:
 
 | Plane | Storage owner | Typical tables |
 | --- | --- | --- |
-| `default` | Pinned app-local ReactiveDB | Zero control/platform tables and global/shared application resources |
+| `system` | Pinned Zero-owned system ReactiveDB | Authorized Guardian/Zero client projections |
+| `default` | Pinned application ReactiveDB | Global/shared application resources |
 | `tenant` | Persistent authority-bound actor lease for the selected tenant file | Tenant Resources with physical storage and `sync`/`all` exposure |
 
 The server splits one `sync.subscribe` request with its trusted Resource
@@ -1236,8 +1242,8 @@ for an authoritative reconnect rather than guessing across a gap.
 The browser receives a server-authored `tableSyncPlanes` catalog in
 `window.__PLATFORM_CONFIG__`. `AppProvider` projects the app's local schemas
 through that catalog, excludes known HTTP-only/internal resources, pins
-SDK-owned platform tables to `default`, and configures the Sync client. The
-client sends both reconnect cursors in one handshake and maintains independent
+SDK-owned platform tables to `system`, and configures the Sync client. The
+client sends its active reconnect cursors in one handshake and maintains independent
 epoch, scope, and sequence state for each non-empty plane. It reports the
 connection baseline ready only after every expected non-empty plane has
 accepted a snapshot or catch-up. Plane-local reset and stream validation cannot
@@ -1276,9 +1282,11 @@ tenant database binding is created only from the verified socket authority.
 
 ## Authentication and Tenant Routing
 
-The control-plane database initially owns application identity, sessions,
-tenant membership, role assignments, and tenant lifecycle. Middleware resolves
-that state before binding an application-data database.
+The separate pinned system database owns Guardian identity, sessions, tenant
+membership, role assignments, tenant lifecycle, and the authority revision.
+The pinned shared application database and Fabric tenant databases never
+become authorization truth. Middleware resolves live system authority before
+binding an application-data database.
 
 The binding source is the verified authority context:
 
@@ -1294,54 +1302,67 @@ selected tenant.
 
 ### Commit-boundary authority
 
-With control state and application data in separate files, a validation in the
-app process is not atomically part of the actor's SQLite transaction. A role,
-membership, or session could otherwise change between validation and commit.
-
-Single-process tenant-file mode therefore requires an authority mutation gate:
+With system authority and application data in separate files, a validation in
+the app process is not atomically part of the application SQLite transaction.
+A role, membership, or session could otherwise change between validation and
+commit. Managed writes therefore use the authority commit fence:
 
 1. The coordinator reaches the head of the database's mutation FIFO.
-2. It acquires the relevant authority gate.
-3. It resolves the captured durable authority reference again.
-4. It dispatches the tenant transaction and holds the gate through commit or
+2. It acquires the process-local shared gate, captures the durable system
+   authority revision, and resolves the request's captured authority again.
+3. It dispatches the captured revision and trusted system-file binding to the
+   already-bound writer; neither value comes from request data.
+4. At the final tenant commit edge, the writer actor acquires a shared lease on
+   `<systemDb.path>.authority-fence.sqlite`, rereads the authority revision
+   directly from the identity-checked system database, and rolls back if the
+   lease is busy or the revision differs. It holds that lease through commit or
    rollback.
-5. A control-plane ReactiveDB transaction whose authority revision changed
+5. A system-plane ReactiveDB transaction whose authority revision changed
    tries to acquire the exclusive gate at its final commit boundary. It never
    waits while holding SQLite locks: contention rolls that transaction back
    with a retryable conflict. Once acquired, the exclusive lease remains held
    until SQLite commit or rollback is known.
 
 Tenant execution follows authority gate then tenant SQLite transaction. The
-control-plane final-commit guard is deliberately non-blocking, which permits
+system-plane final-commit guard is deliberately non-blocking, which permits
 it to discover an authority-table change through SQLite triggers without
 creating an inverted-lock deadlock. Code must never begin a SQLite transaction
-and then *await* the gate. A tenant operation holds its shared lease until the
-actor has confirmed commit/rollback or the failed actor has exited and SQLite
-has settled the transaction; the caller timing out does not release that
-protection while work is still running. Once the commit boundary is known,
-the lease is released before websocket fanout or response delivery. Those
-later actions do not change whether the already-committed write was authorized
-and must not unnecessarily block revocation.
+and then *await* a contended gate. The actor holds its sidecar lease through its
+SQLite commit or rollback and releases it once that local outcome is known.
+The parent retains the process-local lease until the actor confirms that
+outcome; after an unknown response it retains the lease until the failed actor
+has exited and SQLite has settled. A caller timeout does not release that
+protection while work may still be running. The commit fence is released
+before websocket fanout or response delivery. Those later actions do not
+change whether the already-committed write was authorized and must not
+unnecessarily block revocation.
 
-Every control-plane write to an authority-revision-owning table takes the
+Every system-plane write to an authority-revision-owning table takes the
 exclusive side, including grants, role/status changes, session rotation or
 scope switching, membership changes, generation bumps, and revocations.
 Versioned SQLite triggers advance one shared authority revision inside the
 same transaction, and the installed ReactiveDB commit guard fails closed if a
 changed revision cannot obtain the exclusive fence. Managed auth writes must
 therefore use a ReactiveDB transaction; privileged raw SQLite is outside this
-contract and must not mutate auth-owned tables. Single-database mode retains
-its existing synchronous in-transaction authority validation.
+contract and must not mutate auth-owned tables. The pinned application
+ReactiveDB uses the same revision check at its final commit edge.
 
 The resulting order is deterministic: either the tenant write committed while
 the authority was current, or the authority change committed first and the
 write is denied with `DATABASE_AUTHORITY_CHANGED`.
 
-That gate belongs to one parent coordinator topology. Until Zero has a
-distributed equivalent, multi-database roots must be owned by one parent Zero
-app replica and its managed child actors. A deployment which attempts to share
-one local root between independent app replicas must fail validation rather
-than silently weaken the commit-boundary guarantee.
+Within one app runtime, system, pinned-application, and tenant writes share one
+process-local coordinator. A file-mode `systemDb` adds the derived
+`<systemDb.path>.authority-fence.sqlite` sidecar. The pinned writer and Fabric
+writer subprocesses take compatible shared leases, while Guardian takes the
+exclusive lease; different tenant files therefore retain concurrent commits
+without permitting an authority change to cross any final-commit boundary.
+The zero-wait SQLite locks are released by the OS on crash. Fabric roots still
+belong to one parent Zero app replica and its managed child actors.
+A deployment which attempts to share one Fabric root between independent app
+replicas must fail validation rather than silently weaken database ownership.
+See [System and Application Database Planes](./system-database.md#authority-fence)
+for the exact fence contract.
 
 ## Idempotency, Failure, and Restart
 
@@ -1359,7 +1380,7 @@ There are two internal implementations relevant to generated Resources:
   use a private trusted wrapper around that ledger so the receipt commits in
   the same tenant database transaction as the actor effect. That wrapper is
   not exposed through `zero.data` or the public async client.
-- Generated Resource mutations on the pinned default database—including
+- Generated Resource mutations on the pinned default application database—including
   global and shared-row Resources—use a private default Resource receipt table.
   ReactiveDB applies the row effect and canonical receipt in one transaction.
 
@@ -1856,17 +1877,17 @@ correctness.
 
 ### Phase 0 — Foundations
 
-Status: implemented and covered in branch work.
+Status: implemented and covered in the candidate test suite.
 
 - Opaque ID normalization and safe deterministic file mapping.
 - Root/file containment, symlink, type, and permission checks.
 - One physical `DatabaseRuntime` abstraction.
 - Immutable custom migration registries.
-- Sync ownership injection for the pinned default ReactiveDB.
-- Default database identity and lifecycle compatibility tests.
+- Sync ownership injection for the pinned application ReactiveDB.
+- Separate pinned system/application identity and lifecycle tests.
 
-The foundations remain branch-internal until every later integration and
-release gate is qualified.
+The foundations remain an unreleased contract until the applicable integration
+and release gates are qualified.
 
 ### Phase 1 — Qualified actor data plane
 
@@ -1895,11 +1916,11 @@ overall multi-database initiative.
 
 ### Phase 2 — Realtime execution boundary
 
-Status: implemented on the feature branch with focused server, browser, policy,
-and actor integration coverage; full release/package acceptance remains open.
+Status: implemented with focused server, browser, policy, and actor integration
+coverage; full release/package acceptance remains open.
 
-- One control/default plus tenant data plane multiplexed on one authenticated
-  WebSocket.
+- System, default application, and tenant data planes multiplexed on one
+  authenticated WebSocket.
 - Persistent per-socket tenant binding, actor snapshot, durable replay, wakeup,
   and release lifecycle.
 - Independent per-plane epoch, scope, sequence, baseline, catch-up, reset, and
@@ -1914,8 +1935,8 @@ and actor integration coverage; full release/package acceptance remains open.
 ### Phase 3 — Auth-derived tenant files
 
 Status: core authenticated request, Resource, lazy-query, and realtime routing
-are implemented on the feature branch. Tenant fleet lifecycle and operational
-administration remain open.
+are implemented in the release candidate. Tenant fleet lifecycle and
+operational administration remain open.
 
 - Bind databases only from verified tenant authority. Implemented in the
   manager, ordinary route `zero.data` projection, generated Resource HTTP CRUD,
@@ -1937,8 +1958,8 @@ administration remain open.
 
 ### Phase 4 — Hybrid hot/file placement
 
-Status: bounded placement and durability are implemented on the feature branch;
-full release/package acceptance remains open.
+Status: bounded placement and durability are implemented in the release
+candidate; full release/package acceptance remains open.
 
 - File, hot shorthand, and synchronous opaque-ref hybrid policy.
 - Per-entry placement pinning with clean-eviction re-evaluation.
@@ -1956,8 +1977,9 @@ not yet a released platform claim.
 
 Status: future work.
 
-- Optionally place Zero control, audit, logging, metrics, plugin, or other
-  internal realms into dedicated databases.
+- Keep the already-separated Guardian/Zero system plane pinned and optionally
+  place logging, metrics, audit, plugin, or other service realms into further
+  dedicated databases.
 - Reuse the same database coordinator, placement, migration, authority, and
   observability contracts.
 - Avoid subsystem-specific SQLite managers.
@@ -2086,7 +2108,7 @@ subprocesses; the assertion remains part of pinned-runtime qualification.
 
 ### Hybrid placement acceptance
 
-The feature branch must retain deterministic coverage for:
+The release candidate must retain deterministic coverage for:
 
 - shorthand and explicit policy normalization, invalid selector results, and
   opaque-ref helper matching;
@@ -2107,9 +2129,9 @@ placement-aware fleet backup/restore are explicit non-goals of the implemented
 runtime. They require separate operator design and must not be inferred from a
 selector changing after an entry has already opened.
 
-## Implemented Branch Surface and Remaining Work
+## Implemented Candidate Surface and Remaining Work
 
-The feature branch now composes the following production-shaped boundaries:
+The release candidate composes the following production-shaped boundaries:
 
 - validated pseudonymous-reference file resolution, private root ownership,
   and one writer owner per physical database;
@@ -2134,17 +2156,18 @@ Publication still requires the complete supported-platform package/bundle/
 deployment matrix, operator-grade tenant fleet migration and lifecycle tools,
 backup/restore and suspension/deletion workflows, and production acceptance of
 the implemented placement policies. Distributed root ownership, online
-placement migration, automatic promotion/spill, and realm separation for
-Zero-owned subsystems are not implemented. Those remaining gates do not make
-Resource, tenant Sync, or bounded hybrid routing "pending"; they constrain the
-narrower release claims that may be made about the branch.
+placement migration, automatic promotion/spill, and separation of additional
+Zero-owned service realms beyond the system/application split are not
+implemented. Those remaining gates do not make Resource, tenant Sync, or
+bounded hybrid routing "pending"; they constrain the narrower release claims
+that may be made about the candidate.
 
 ## Release Boundary
 
 The following claims have different completion points and must not be
 collapsed into one status:
 
-| Claim | Required phase | Feature-branch status |
+| Claim | Required phase | Candidate status |
 | --- | --- | --- |
 | Multiple isolated SQLite files can be resolved and opened safely | Phase 0 | Implemented |
 | Different files execute writes concurrently and the same file supports WAL readers | Phase 1 | Implemented; release matrix pending |

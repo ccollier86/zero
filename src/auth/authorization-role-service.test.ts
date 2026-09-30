@@ -381,9 +381,14 @@ describe('advanced authorization role runtime', () => {
       dependencies,
     );
 
-    await expect(blocked.start()).rejects.toThrow(
-      'existing users but no active application owner',
-    );
+    await expect(blocked.start()).rejects.toMatchObject({
+      name: 'AuthError',
+      code: 'AUTHORIZATION_OWNERSHIP_REQUIRED',
+      status: 503,
+      message: expect.stringContaining(
+        'existing users but no active application owner',
+      ),
+    });
     expect((db.prepare(`
       SELECT COUNT(*) AS count FROM _auth_application_role_assignments
     `).get() as { count: number }).count).toBe(0);

@@ -86,7 +86,7 @@ imports that exact winner instead of retaining a process-local key. The two
 configuration rows commit atomically, and a partial legacy pair is repaired
 without replacing the half that is already durable.
 
-**Key persistence:** The private key is stored as a JWK in the `_auth_config` table. On restart, the same key is loaded — existing access tokens remain valid. If the database is wiped (`:memory:` mode restart), a new key is generated and all tokens are implicitly invalidated.
+**Key persistence:** The private key is stored as a JWK in the system-plane `_auth_config` table. On restart, the same key is loaded — existing access tokens remain valid. If that database is wiped (`:memory:` mode restart), a new key is generated and all tokens are implicitly invalidated.
 
 **Env var override:** `AUTH_SIGNING_KEY` takes precedence over the database. It
 is useful when a secrets manager or orchestrator supplies the same ES256

@@ -9,6 +9,10 @@
 
 import type { DatabaseRealm } from '../../databases/database-realm';
 import {
+  DatabaseError,
+  type DatabaseErrorCode,
+} from '../../databases/database-error';
+import {
   hashSchemaSnapshot,
   snapshotDeclaredTables,
 } from '../../migrations/schema-snapshot';
@@ -16,6 +20,8 @@ import type {
   RegisteredResourceDefinition,
   ResourceRegistry,
 } from '../../resources/resource-registry';
+import { getPolicyEligibleTenantKinds } from '../../resources/resource-policy-inspection';
+import type { TenantKind } from '../../auth/tenancy/tenancy-types';
 import type { SyncTenantDataPlaneTable } from '../../sync/sync-tenant-data-plane';
 import type { TableSchema } from '../../sync/types';
 
@@ -26,6 +32,8 @@ export interface TenantDatabaseResourceTopology {
   readonly syncTables: readonly string[];
   /** Trusted server catalog used to route and validate tenant Sync tables. */
   readonly syncCatalog: Readonly<Record<string, SyncTenantDataPlaneTable>>;
+  /** Tenant purposes which at least one physical resource policy may admit. */
+  readonly eligibleTenantKinds: readonly TenantKind[];
 }
 
 /**
@@ -41,9 +49,10 @@ export function assertTenantDatabaseRealmSchemaSubset(
   const realmNames = Object.keys(realm.tables);
   const unknown = realmNames.filter((table) => !Object.hasOwn(appTables, table));
   if (unknown.length > 0) {
-    throw new Error(
+    throw tenantTopologyError(
       '[app] databaseTopology tenant realm contains tables not declared by '
       + `createApp({ tables }): ${unknown.sort(compareText).join(', ')}.`,
+      'DATABASE_CONFIG_INVALID',
     );
   }
 
@@ -51,9 +60,10 @@ export function assertTenantDatabaseRealmSchemaSubset(
   for (const table of realmNames) expected[table] = appTables[table]!;
   const checksum = hashSchemaSnapshot(snapshotDeclaredTables(expected));
   if (realm.schemaChecksum !== checksum) {
-    throw new Error(
+    throw tenantTopologyError(
       '[app] databaseTopology tenant realm table schemas must match the '
       + 'corresponding createApp({ tables }) declarations.',
+      'DATABASE_SCHEMA_MISMATCH',
     );
   }
 }
@@ -74,28 +84,48 @@ export function resolveTenantDatabaseResourceTopology(
   if (!sameStrings(expected, actual)) {
     const missing = expected.filter((table) => !actual.includes(table));
     const extra = actual.filter((table) => !expected.includes(table));
-    throw new Error(
+    throw tenantTopologyError(
       '[app] databaseTopology tenant realm tables must exactly match '
       + 'tenant-owned resource tables.'
       + describeDifference(missing, extra),
+      'DATABASE_SCHEMA_MISMATCH',
     );
   }
 
   const syncCatalog: Record<string, SyncTenantDataPlaneTable> = Object.create(null);
+  const eligibleTenantKinds = new Set<TenantKind>();
   for (const resource of physical) {
+    const policies = resource.actions
+      .map((action) => resource.policy[action])
+      .filter((policy) => policy !== undefined);
+    // A malformed/legacy registry with no action policy must not be mistaken
+    // for a proof that no tenant kind is eligible. Registry validation rejects
+    // this in managed apps; keeping the topology conservative makes this
+    // helper safe when used independently in tests or diagnostics.
+    if (policies.length === 0) {
+      eligibleTenantKinds.add('organization');
+      eligibleTenantKinds.add('administration');
+    }
+    for (const policy of policies) {
+      for (const kind of getPolicyEligibleTenantKinds(policy!)) {
+        eligibleTenantKinds.add(kind);
+      }
+    }
     if (!resource.exposure.sync) continue;
     const schema = realm.tables[resource.table];
     if (!schema) {
       // The exact-set check above makes this unreachable, but keep the catalog
       // construction fail-closed if it is ever reused independently.
-      throw new Error(
+      throw tenantTopologyError(
         `[app] Tenant Sync table "${resource.table}" is missing from the database realm.`,
+        'DATABASE_SCHEMA_MISMATCH',
       );
     }
     const columns = Object.keys(schema).filter((field) => field !== '_identity');
     if (!columns.includes(resource.primaryKey)) {
-      throw new Error(
+      throw tenantTopologyError(
         `[app] Tenant Sync table "${resource.table}" does not declare its resource primary key.`,
+        'DATABASE_SCHEMA_MISMATCH',
       );
     }
     const identity = Array.isArray(schema._identity)
@@ -113,6 +143,10 @@ export function resolveTenantDatabaseResourceTopology(
     tables: Object.freeze(expected),
     syncTables: Object.freeze(syncTables),
     syncCatalog: Object.freeze(syncCatalog),
+    eligibleTenantKinds: Object.freeze(
+      (['organization', 'administration'] as const)
+        .filter((kind) => eligibleTenantKinds.has(kind)),
+    ),
   });
 }
 
@@ -141,4 +175,18 @@ function describeDifference(
 
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function tenantTopologyError(
+  message: string,
+  code: Extract<
+    DatabaseErrorCode,
+    'DATABASE_CONFIG_INVALID' | 'DATABASE_SCHEMA_MISMATCH'
+  >,
+): DatabaseError {
+  return new DatabaseError(code, message, {
+    retryable: false,
+    outcome: 'not-started',
+    details: { component: 'tenant-database-topology' },
+  });
 }

@@ -1,6 +1,7 @@
 /** Runtime validation and normalization for DatabaseCoordinator construction. */
 
 import { AuthorityCommitCoordinator } from './authority-commit-coordinator';
+import { DatabaseActorAuthorityContext } from './database-actor-authority-context';
 import {
   normalizeDatabaseActorSQLiteConfig,
   type DatabaseActorSQLiteConfig,
@@ -67,6 +68,7 @@ export interface NormalizedDatabaseCoordinatorConfig {
   readonly observability: DatabaseObservability | null;
   readonly authorityCommitCoordinator: AuthorityCommitCoordinator | null;
   readonly requireCommitAuthority: boolean;
+  readonly actorAuthorityContext: DatabaseActorAuthorityContext | null;
   readonly now: () => number;
 }
 
@@ -192,6 +194,21 @@ export function normalizeDatabaseCoordinatorConfig(
       'Required database commit authority needs an authority coordinator.',
     );
   }
+  if (options.actorAuthorityContext !== undefined
+    && !(options.actorAuthorityContext instanceof DatabaseActorAuthorityContext)) {
+    throw new DatabaseError(
+      'DATABASE_CONFIG_INVALID',
+      'Database actor authority context is invalid.',
+    );
+  }
+  if (options.actorAuthorityContext
+    && (options.requireCommitAuthority !== true
+      || !options.authorityCommitCoordinator)) {
+    throw new DatabaseError(
+      'DATABASE_CONFIG_INVALID',
+      'Database actor authority context requires commit authority.',
+    );
+  }
   if (options.readers !== undefined && typeof options.readers !== 'boolean') {
     throw new DatabaseError(
       'DATABASE_CONFIG_INVALID',
@@ -238,6 +255,7 @@ export function normalizeDatabaseCoordinatorConfig(
     observability: options.observability ?? null,
     authorityCommitCoordinator: options.authorityCommitCoordinator ?? null,
     requireCommitAuthority: options.requireCommitAuthority ?? false,
+    actorAuthorityContext: options.actorAuthorityContext ?? null,
     now: options.now ?? Date.now,
   });
 }

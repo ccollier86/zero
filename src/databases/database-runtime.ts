@@ -2,10 +2,10 @@ import type { PlatformSQLiteService } from '../persistence';
 import { Migrator, type Migration } from '../migrations';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import type { ReactiveDBConfig, TableSchema } from '../sync/types';
-import { DatabaseError } from './database-error';
+import { DatabaseError, isDatabaseError } from './database-error';
 
 /** Stable purpose assigned to one physical database runtime. */
-export type DatabaseRuntimeRole = 'default' | 'named' | 'tenant';
+export type DatabaseRuntimeRole = 'system' | 'default' | 'service' | 'named' | 'tenant';
 
 /** ReactiveDB settings that remain meaningful for an injected SQLite service. */
 export type DatabaseReactiveConfig = Pick<
@@ -160,10 +160,23 @@ export class DatabaseRuntime {
   /** Start background checkpoint/snapshot work exactly once. */
   start(): void {
     if (this.closed) {
-      throw new Error(`[databases] Database runtime "${this.id}" is closed.`);
+      throw new DatabaseError(
+        'DATABASE_CLOSED',
+        'Database runtime is closed.',
+        { retryable: false, outcome: 'not-started' },
+      );
     }
     if (this.started) return;
-    this.sqlite.start();
+    try {
+      this.sqlite.start();
+    } catch (cause) {
+      if (isDatabaseError(cause)) throw cause;
+      throw new DatabaseError(
+        'DATABASE_OPEN_FAILED',
+        'Database runtime background services could not start.',
+        { cause, retryable: true, outcome: 'not-started' },
+      );
+    }
     this.started = true;
   }
 
@@ -465,7 +478,9 @@ function assertDatabaseRuntimeOptions(options: DatabaseRuntimeOptions): void {
   if (!options.id.trim()) {
     throw invalidRuntimeConfig('Database runtime id must not be empty.');
   }
-  if (options.role !== 'default'
+  if (options.role !== 'system'
+    && options.role !== 'default'
+    && options.role !== 'service'
     && options.role !== 'named'
     && options.role !== 'tenant') {
     throw invalidRuntimeConfig('Database runtime role is invalid.');

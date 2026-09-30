@@ -8,10 +8,14 @@
  */
 
 import type { ReactiveDB, Row, TableSchema } from '../sync';
+import { IdentityProjectionError } from '../auth/identity-projection-error';
 import type {
+  ResourceCrudFailure,
   ResourceCrudRequestContext,
   ResourceCrudResult,
+  ResourceIdentityAnchorReadinessBarrier,
 } from './resource-crud-contracts';
+import { getGuardianAnchorRequirements } from '../schema/guardian-references';
 import type { ResourceCrudFailureMapper } from './resource-crud-failures';
 import type { ResourceCrudPolicyService } from './resource-crud-policy';
 import {
@@ -50,6 +54,7 @@ import {
 import { normalizeResourceInput, resourceRowsMatch } from './resource-crud-rows';
 import {
   resourceAuthorityChangedFailure,
+  resourceDataRealmReadinessFailure,
   resourceFailure,
   resourcePolicyFailure,
   resourceRowChangedFailure,
@@ -61,6 +66,7 @@ export interface ResourceDefaultCrudEngineOptions {
   readonly db: ReactiveDB;
   readonly tables: Record<string, TableSchema>;
   readonly authConfig: ResourcePolicyAuthConfig;
+  readonly ensureIdentityAnchors?: ResourceIdentityAnchorReadinessBarrier;
   readonly defaultLimit?: number;
   readonly maxLimit?: number;
 }
@@ -251,6 +257,13 @@ export class ResourceDefaultCrudEngine {
     if (!await this.authority.isCurrent(context, captured)) {
       return resourceAuthorityChangedFailure();
     }
+    const readinessFailure = await this.ensureIdentityAnchorReadiness(
+      resource,
+      'create',
+      context,
+      captured,
+    );
+    if (readinessFailure) return readinessFailure;
 
     const mergedInput = { ...realmInput.input, ...(decision.stampedInput ?? {}) };
     const finalRealmInput = stampResourceCreateRealm(mergedInput, scope);
@@ -385,6 +398,13 @@ export class ResourceDefaultCrudEngine {
     if (!await this.authority.isCurrent(context, captured)) {
       return resourceAuthorityChangedFailure();
     }
+    const readinessFailure = await this.ensureIdentityAnchorReadiness(
+      resource,
+      'update',
+      context,
+      captured,
+    );
+    if (readinessFailure) return readinessFailure;
 
     const mergedInput = { ...rawInput, ...(decision.stampedInput ?? {}) };
     const finalRealmUpdate = rejectResourceRealmUpdate(mergedInput, scope);
@@ -533,6 +553,32 @@ export class ResourceDefaultCrudEngine {
 
   private getColumns(resource: RegisteredResourceDefinition): string[] {
     return getResourceTableColumns(this.options.tables[resource.table]);
+  }
+
+  private async ensureIdentityAnchorReadiness(
+    resource: RegisteredResourceDefinition,
+    action: 'create' | 'update',
+    context: ResourceCrudRequestContext,
+    captured: ReturnType<ResourcePolicyAuthorityService['capture']>,
+  ): Promise<ResourceCrudFailure | null> {
+    const barrier = this.options.ensureIdentityAnchors;
+    const table = this.options.tables[resource.table];
+    if (!barrier || !table || getGuardianAnchorRequirements(table).length === 0) {
+      return null;
+    }
+    try {
+      await barrier({
+        resource,
+        authContext: captured.authContext,
+      });
+    } catch (error) {
+      return error instanceof IdentityProjectionError
+        ? resourceDataRealmReadinessFailure(error)
+        : this.failures.mutation(error, resource, action);
+    }
+    return await this.authority.isCurrent(context, captured)
+      ? null
+      : resourceAuthorityChangedFailure();
   }
 
   private getRow(

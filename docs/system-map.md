@@ -127,11 +127,34 @@ src/
   migration `020`, and revalidates long-lived Sync/ephemeral authorization when
   another runtime changes a session, account, membership, tenant, or role.
 
-### ReactiveDB Fabric (active unreleased branch)
+### System and application database planes
+
+**What:** `createApp()` always pins a Zero/Guardian `systemDb` separately from
+the app-facing `db`. Schema-declared Guardian references activate ID-only
+anchors, durable projection, active-realm readiness, and the cross-file final-
+commit fence. See
+[System and Application Database Planes](./framework/system-database.md) for
+the authoritative ownership and upgrade contract.
+
+| File | Purpose |
+| --- | --- |
+| `src/databases/pinned-database-runtimes.ts` | Ordered ownership/start/stop registry for pinned system, application, and future service planes |
+| `src/frontend/server/system-database-config.ts` / `system-database-layout.ts` | Defaults, physical path/handle isolation, and read-only legacy combined-layout detection |
+| `src/frontend/server/app-database-planes.ts` | Composition root for pinned runtimes, authority fencing, Fabric manager, and identity projection |
+| `src/databases/database-application-authority-commit-guard.ts`, `database-authority-commit-guard.ts`, and `database-authority-commit-file-fence.ts` | Pinned/Fabric application versus system final-commit ordering plus the crash-released file-mode sidecar |
+| `src/databases/database-actor-authority-context.ts` and `database-actor-authority-commit-guard.ts` | Trusted parent-side system-file/revision capability and actor-local shared-sidecar/revision check at the tenant writer's final commit edge |
+| `src/auth/identity-anchor-store.ts`, `identity-projection-outbox-store.ts`, and `identity-projection-service.ts` | Target-local anchors, durable system outbox, and ordered sync/async reconciliation |
+| `src/frontend/server/identity-projection-*.ts` | Managed schema requirement partitioning, Guardian source, application/tenant provisioning, and public readiness mapping |
+| `src/auth/data-realm-readiness.plugin.ts` and `src/frontend/client/data-realm-readiness-*.ts` | Scope-derived readiness routes, transport, polling/retry hook, and gate support |
+| `src/schema/guardian-references.ts` | Server-only metadata behind `field.guardianUser()` and `field.guardianMembership()` |
+| `src/doctor/platform-doctor-system-database.ts` | Read-only plane collision, durability, legacy-layout, anchor, and projection-health diagnostics |
+
+### ReactiveDB Fabric (unreleased candidate)
 
 **What:** Bounded multi-database routing around independently reactive SQLite
-databases. The historical default database remains the in-process control/auth
-plane; named or physical-tenant application databases run in isolated Bun
+databases. The shared application database remains in-process, Zero/Guardian
+authority uses the separate system database, and named or physical-tenant
+application databases run in isolated Bun
 subprocess actors with one FIFO writer lane per database and optional file/WAL
 reader actors. See
 [ReactiveDB Fabric: Multi-Database Architecture](./framework/multi-database-architecture.md)

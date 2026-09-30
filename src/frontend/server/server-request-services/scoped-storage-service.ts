@@ -197,13 +197,15 @@ export function createScopedStorageService(
     },
     async moveObject(driveId, fromPath, toPath) {
       requireDrive(driveId, 'write', fromPath);
+      requireDrive(driveId, 'write', toPath);
       await assertCurrentAuthority();
       const result = await service.moveObject(driveId, fromPath, toPath);
       await assertCurrentAuthority();
       return result;
     },
     async copyObject(driveId, fromPath, toPath) {
-      requireDrive(driveId, 'write', fromPath);
+      requireDrive(driveId, 'read', fromPath);
+      requireDrive(driveId, 'write', toPath);
       await assertCurrentAuthority();
       const result = await service.copyObject(driveId, fromPath, toPath);
       await assertCurrentAuthority();

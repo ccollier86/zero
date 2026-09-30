@@ -7,6 +7,7 @@ import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import { captureAuthApplicationMutationAuthority } from './auth-application-mutation-authority';
 import type { AuthRuntime } from './auth-runtime';
 import { createAuthPlugin } from './auth.plugin';
+import type { AuthAuthorizationConfig } from './types';
 
 interface Harness {
   app: AnyElysia;
@@ -60,6 +61,7 @@ describe('protected platform administration', () => {
           membershipId: owner.tenant.membershipId,
         },
         capabilities: {
+          canManageRoles: true,
           canReadTenants: true,
           canReadTenantMembers: true,
           canManageTenants: true,
@@ -372,6 +374,226 @@ describe('protected platform administration', () => {
     });
   }, 60_000);
 
+  test('projects delegated role authority without coupling independent lifecycle controls', async () => {
+    const harness = await start({
+      mode: 'advanced',
+      roles: {
+        'delegated-operator': {
+          label: 'Delegated operator',
+          permissions: [
+            'tenant:read',
+            'tenant.members:read',
+            'tenant.members:manage',
+            'tenant.invitations:read',
+            'tenant.invitations:manage',
+            'application.users:read',
+          ],
+        },
+      },
+    });
+    const owner = await register(harness, 'platform-capability-owner');
+    const delegate = await register(harness, 'platform-capability-delegate');
+    const target = await register(harness, 'platform-capability-target');
+    const unadded = await register(harness, 'platform-capability-unadded');
+
+    const delegated = await request(harness, 'POST', '/auth/platform/members', {
+      email: delegate.user.email,
+      roles: ['delegated-operator'],
+    }, owner.accessToken);
+    const targetMember = await request(harness, 'POST', '/auth/platform/members', {
+      email: target.user.email,
+      roles: ['access-manager'],
+    }, owner.accessToken);
+    expect(delegated.status).toBe(200);
+    expect(targetMember.status).toBe(200);
+
+    const delegatedSession = await switchTenant(
+      harness,
+      delegate.refreshToken,
+      owner.tenant.tenantId,
+    );
+    const config = await request(
+      harness,
+      'GET',
+      '/auth/platform/config',
+      undefined,
+      delegatedSession.accessToken,
+    );
+    expect(config).toMatchObject({
+      status: 200,
+      body: {
+        capabilities: {
+          canReadMembers: true,
+          canManageMembers: true,
+          canManageRoles: false,
+          canReadInvitations: true,
+          canManageInvitations: true,
+        },
+      },
+    });
+    expect(config.body.roles.every((role: any) => role.grantable === false)).toBe(true);
+
+    expect(await request(harness, 'POST', '/auth/platform/members', {
+      email: unadded.user.email,
+      roles: ['delegated-operator'],
+    }, delegatedSession.accessToken)).toMatchObject({
+      status: 403,
+      body: { code: 'FORBIDDEN' },
+    });
+    expect(await request(
+      harness,
+      'PATCH',
+      `/auth/platform/members/${targetMember.body.member.membershipId}`,
+      { status: 'suspended' },
+      delegatedSession.accessToken,
+    )).toMatchObject({ status: 200, body: { member: { status: 'suspended' } } });
+    expect(await request(
+      harness,
+      'PATCH',
+      `/auth/platform/members/${targetMember.body.member.membershipId}`,
+      { status: 'active' },
+      delegatedSession.accessToken,
+    )).toMatchObject({ status: 200, body: { member: { status: 'active' } } });
+    expect(await request(
+      harness,
+      'PATCH',
+      `/auth/platform/members/${targetMember.body.member.membershipId}`,
+      {
+        roles: ['delegated-operator'],
+        expectedRoleRevision: targetMember.body.member.roleRevision,
+      },
+      delegatedSession.accessToken,
+    )).toMatchObject({ status: 403, body: { code: 'FORBIDDEN' } });
+
+    const invitation = await request(harness, 'POST', '/auth/platform/invitations', {
+      email: 'delegated-revoke@example.test',
+      roles: ['administrator'],
+      delivery: 'manual',
+    }, owner.accessToken);
+    expect(invitation.status).toBe(200);
+    expect(await request(harness, 'POST', '/auth/platform/invitations', {
+      email: 'delegated-issue@example.test',
+      roles: ['delegated-operator'],
+      delivery: 'manual',
+    }, delegatedSession.accessToken)).toMatchObject({
+      status: 403,
+      body: { code: 'FORBIDDEN' },
+    });
+    expect(await request(
+      harness,
+      'DELETE',
+      `/auth/platform/invitations/${invitation.body.invitation.invitationId}`,
+      undefined,
+      delegatedSession.accessToken,
+    )).toMatchObject({ status: 200, body: { invitation: { status: 'revoked' } } });
+    expect(await request(
+      harness,
+      'DELETE',
+      `/auth/platform/members/${targetMember.body.member.membershipId}`,
+      undefined,
+      delegatedSession.accessToken,
+    )).toMatchObject({ status: 200, body: { member: { status: 'removed' } } });
+  }, 60_000);
+
+  test('keeps out-of-kind assignments inert and lets only the live owner clean them up', async () => {
+    const harness = await start({ mode: 'advanced' });
+    const owner = await register(harness, 'platform-scope-cleanup-owner');
+    const delegate = await register(harness, 'platform-scope-cleanup-delegate');
+    const target = await register(harness, 'platform-scope-cleanup-target');
+    const delegated = await request(harness, 'POST', '/auth/platform/members', {
+      email: delegate.user.email,
+      roles: ['access-manager'],
+    }, owner.accessToken);
+    const targetMember = await request(harness, 'POST', '/auth/platform/members', {
+      email: target.user.email,
+      roles: ['administrator'],
+    }, owner.accessToken);
+    expect(delegated.status).toBe(200);
+    expect(targetMember.status).toBe(200);
+
+    harness.db.prepare(`
+      INSERT INTO _auth_tenant_membership_roles (
+        assignment_id, tenant_id, membership_id, user_id, role_key,
+        source, source_id, created_by, created_at, revoked_by, revoked_at
+      ) VALUES (?, ?, ?, ?, 'member', 'migration', ?, ?, ?, NULL, NULL)
+    `).run(
+      'arole_platform_out_of_kind_test',
+      owner.tenant.tenantId,
+      targetMember.body.member.membershipId,
+      target.user.userId,
+      'platform-out-of-kind-test',
+      owner.user.userId,
+      Date.now(),
+    );
+    harness.db.prepare(`
+      UPDATE _auth_tenant_memberships
+      SET authorization_generation = authorization_generation + 1
+      WHERE membership_id = ?
+    `).run(targetMember.body.member.membershipId);
+
+    const listed = await request(
+      harness,
+      'GET',
+      '/auth/platform/members?search=platform-scope-cleanup-target',
+      undefined,
+      owner.accessToken,
+    );
+    expect(listed.status).toBe(200);
+    expect(listed.body.members[0].roles).toEqual(['administrator', 'member']);
+    expect(harness.runtime.getAuthorizationRoleService()!.resolveTenantRoles({
+      tenantId: owner.tenant.tenantId,
+      membershipId: targetMember.body.member.membershipId,
+      userId: target.user.userId,
+    })?.roles).toEqual(['administrator']);
+
+    const delegateSession = await switchTenant(
+      harness,
+      delegate.refreshToken,
+      owner.tenant.tenantId,
+    );
+    expect(await request(
+      harness,
+      'PATCH',
+      `/auth/platform/members/${targetMember.body.member.membershipId}`,
+      {
+        roles: ['administrator'],
+        expectedRoleRevision: listed.body.members[0].roleRevision,
+      },
+      delegateSession.accessToken,
+    )).toMatchObject({
+      status: 403,
+      body: { code: 'TENANT_ROLE_ESCALATION_FORBIDDEN' },
+    });
+
+    const cleaned = await request(
+      harness,
+      'PATCH',
+      `/auth/platform/members/${targetMember.body.member.membershipId}`,
+      {
+        roles: ['administrator'],
+        expectedRoleRevision: listed.body.members[0].roleRevision,
+      },
+      owner.accessToken,
+    );
+    expect(cleaned).toMatchObject({
+      status: 200,
+      body: { member: { roles: ['administrator'] } },
+    });
+    expect(await request(
+      harness,
+      'PATCH',
+      `/auth/platform/members/${targetMember.body.member.membershipId}`,
+      {
+        roles: ['administrator', 'member'],
+        expectedRoleRevision: cleaned.body.member.roleRevision,
+      },
+      owner.accessToken,
+    )).toMatchObject({
+      status: 422,
+      body: { code: 'AUTHORIZATION_ADMINISTRATION_ROLE_REQUIRED' },
+    });
+  }, 60_000);
+
   test('revalidates application authority inside tenant lifecycle writes', async () => {
     const harness = await start();
     const owner = await register(harness, 'platform-fence-owner');
@@ -499,7 +721,9 @@ describe('protected platform administration', () => {
   }, 60_000);
 });
 
-async function start(): Promise<Harness> {
+async function start(
+  authorization: AuthAuthorizationConfig = 'simple',
+): Promise<Harness> {
   const db = createReactiveDB({ mode: 'memory' });
   const appRuntime = new ZeroAppRuntime(`platform-administration-${crypto.randomUUID()}`);
   const events = new MemoryEventStore({ maxEvents: 100 });
@@ -513,7 +737,7 @@ async function start(): Promise<Harness> {
     db,
     runtime: appRuntime,
     tenancy: 'multi',
-    authorization: 'simple',
+    authorization,
     bootstrap: 'public',
     registration: { mode: 'public' },
     onRuntimeCreated(created) {

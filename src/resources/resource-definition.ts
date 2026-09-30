@@ -293,9 +293,11 @@ function freezeResourcePolicy(
       freezeResourcePolicy(child, seen);
     }
     if (diagnostics.children) Object.freeze(diagnostics.children);
+    if (diagnostics.ownerFields) Object.freeze(diagnostics.ownerFields);
     if (diagnostics.metadataKeys) Object.freeze(diagnostics.metadataKeys);
     if (diagnostics.publicActions) Object.freeze(diagnostics.publicActions);
     if (diagnostics.authenticatedActions) Object.freeze(diagnostics.authenticatedActions);
+    if (diagnostics.tenantKinds) Object.freeze(diagnostics.tenantKinds);
     Object.freeze(diagnostics);
   }
   return Object.freeze(policy);

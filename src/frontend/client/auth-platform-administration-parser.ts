@@ -38,7 +38,7 @@ export function parsePlatformAdministrationConfig(
   ]);
   if (administration.kind !== 'administration') throw invalid();
   const capabilities = exact(result.capabilities, [
-    'canReadMembers', 'canManageMembers', 'canReadInvitations',
+    'canReadMembers', 'canManageMembers', 'canManageRoles', 'canReadInvitations',
     'canManageInvitations', 'canReadTenants', 'canManageTenants',
     'canReadTenantMembers', 'canCreateTenants', 'canTransferOwnership',
   ]);
@@ -59,6 +59,7 @@ export function parsePlatformAdministrationConfig(
     capabilities: Object.freeze({
       canReadMembers: capabilities.canReadMembers,
       canManageMembers: capabilities.canManageMembers,
+      canManageRoles: capabilities.canManageRoles,
       canReadInvitations: capabilities.canReadInvitations,
       canManageInvitations: capabilities.canManageInvitations,
       canReadTenants: capabilities.canReadTenants,

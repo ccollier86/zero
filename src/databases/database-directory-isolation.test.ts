@@ -16,6 +16,7 @@ import {
   resolveControlDatabasePaths,
   type DatabaseDirectoryIsolationInput,
 } from './database-directory-isolation';
+import { DatabaseError } from './database-error';
 
 const temporaryDirectories: string[] = [];
 
@@ -145,9 +146,18 @@ describe('database directory lexical isolation', () => {
     expect(existsSync(base)).toBe(false);
     expect(findDatabaseDirectoryConflict(safeInput)).toBeNull();
     expect(() => assertDatabaseDirectoryIsolation(safeInput)).not.toThrow();
-    expect(() => assertDatabaseDirectoryIsolation(conflictingInput)).toThrow(
+    const error = captureDatabaseError(() => {
+      assertDatabaseDirectoryIsolation(conflictingInput);
+    });
+    expect(error.message).toBe(
       '[app] databaseTopology.rootDirectory must not overlap outDir.',
     );
+    expect(error).toMatchObject({
+      code: 'DATABASE_CONFIG_INVALID',
+      retryable: false,
+      outcome: 'not-started',
+      details: { component: 'database-directory-isolation' },
+    });
     expect(existsSync(base)).toBe(false);
   });
 
@@ -338,4 +348,14 @@ function createTemporaryDirectory(): string {
   const directory = mkdtempSync(join(tmpdir(), 'zero-directory-isolation-'));
   temporaryDirectories.push(directory);
   return directory;
+}
+
+function captureDatabaseError(operation: () => unknown): DatabaseError {
+  try {
+    operation();
+  } catch (error) {
+    expect(error).toBeInstanceOf(DatabaseError);
+    return error as DatabaseError;
+  }
+  throw new Error('Expected DatabaseError.');
 }

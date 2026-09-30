@@ -118,6 +118,7 @@ describe('tenant AppShell workspace projection', () => {
       { id: 'tenant-a', name: 'Alpha', subtitle: 'owner' },
     ]);
   });
+
 });
 
 describe('tenant switch presentation handoff recovery', () => {

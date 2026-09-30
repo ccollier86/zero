@@ -93,10 +93,27 @@ export class AuthTenantAdministrationRolePolicy {
       input.authority.scope.membershipId,
       input.authority.auth.userId,
     );
+    const tenant = this.tenancy.getTenant(input.tenantId);
+    if (!tenant) throw tenantMemberNotFound();
     for (const roleKey of changedKeys) {
-      if (!this.kernel.authorization.roles[roleKey]) {
+      const role = this.kernel.authorization.roles[roleKey];
+      if (!role) {
         // Removed templates are inert. Only the live tenant owner may remove
         // their retained audit assignment; they can never be newly granted.
+        if (actor.roleKey !== TENANT_OWNER_ROLE_KEY) throw roleEscalationForbidden();
+        continue;
+      }
+      const removingOutOfKindRole = currentSet.has(roleKey)
+        && !desiredSet.has(roleKey)
+        && !isRoleAssignableToTenantKind(
+          roleKey,
+          tenant.kind,
+          this.kernel.authorization,
+        );
+      if (removingOutOfKindRole) {
+        // A configuration transition or historical import can leave a
+        // declared role in the wrong tenant kind. It is inert at resolution;
+        // only the live owner may remove the retained assignment.
         if (actor.roleKey !== TENANT_OWNER_ROLE_KEY) throw roleEscalationForbidden();
         continue;
       }

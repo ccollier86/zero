@@ -18,6 +18,7 @@ import {
   defineResource,
   defineResourceFields,
 } from '../../resources';
+import { defineTable, field } from '../../schema';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import type {
   ServerMessage,
@@ -50,7 +51,8 @@ interface SyncConnection {
 }
 
 interface PlatformTestServices {
-  db: ReactiveDB;
+  appDB: ReactiveDB;
+  systemDB: ReactiveDB;
   authStore: UserStore;
   tokenService: TokenService;
   rooms: RoomService;
@@ -71,6 +73,12 @@ let second: TestIdentity;
 let admin: TestIdentity;
 const openConnections = new Set<SyncConnection>();
 
+const todosTable = defineTable('todos', {
+  title: field.text({ required: true }),
+  secret: field.text(),
+  owner_user_id: field.guardianUser({ required: false }),
+}, { pk: 'todo_id' });
+
 beforeAll(async () => {
   const zeroDir = join(process.cwd(), '.zero');
   await mkdir(zeroDir, { recursive: true });
@@ -81,11 +89,7 @@ beforeAll(async () => {
   app = await createApp({
     db: { mode: 'memory', ringBufferDepth: 500 },
     tables: {
-      todos: {
-        todo_id: 'text primary key',
-        title: 'text not null',
-        secret: 'text',
-      },
+      todos: todosTable.serverTable,
     },
     resources: [defineResource({
       table: 'todos',
@@ -122,6 +126,47 @@ beforeAll(async () => {
   first = await createIdentity('first', 'user');
   second = await createIdentity('second', 'user');
   admin = await createIdentity('platform-admin', 'admin');
+  const { appDB, systemDB } = requirePlatformServices();
+  expect(appDB).not.toBe(systemDB);
+  expect(appDB.hasTable('todos')).toBe(true);
+  // Anchor infrastructure is physically present for local FKs, but remains
+  // outside ReactiveDB's application-table catalog and generic Sync surface.
+  for (const privateTable of identityMirrorTables()) {
+    expect(hasPhysicalTable(appDB, privateTable)).toBe(true);
+    expect(appDB.hasTable(privateTable)).toBe(false);
+  }
+  expect(tableColumns(appDB, 'users')).toEqual(['user_id']);
+  expect(tableColumns(appDB, 'tenant_memberships')).toEqual([
+    'membership_id',
+    'tenant_id',
+    'user_id',
+  ]);
+  expect(appDB.prepare('SELECT user_id FROM users ORDER BY user_id').all())
+    .toEqual(expect.arrayContaining([
+      { user_id: first.user.userId },
+      { user_id: second.user.userId },
+      { user_id: admin.user.userId },
+    ]));
+  for (const systemOnlyTable of [
+    'user_properties',
+    '_credentials',
+    '_refresh_tokens',
+    '_auth_tenants',
+    '_auth_tenant_memberships',
+    '_auth_api_keys',
+  ]) {
+    expect(hasPhysicalTable(appDB, systemOnlyTable)).toBe(false);
+  }
+  expect(appDB.hasTable('notifications')).toBe(false);
+  expect(appDB.hasTable('rooms')).toBe(false);
+  expect(appDB.hasTable('workflow_instances')).toBe(false);
+  expect(appDB.hasTable('storage_objects')).toBe(false);
+  expect(systemDB.hasTable('todos')).toBe(false);
+  expect(systemDB.hasTable('users')).toBe(true);
+  expect(systemDB.hasTable('notifications')).toBe(true);
+  expect(systemDB.hasTable('rooms')).toBe(true);
+  expect(systemDB.hasTable('workflow_instances')).toBe(true);
+  expect(systemDB.hasTable('storage_objects')).toBe(true);
   seedPlatformRows();
 }, 30_000);
 
@@ -150,55 +195,72 @@ describe('createApp framework-table Sync policy', () => {
   test('scopes snapshots, catchup, and live delivery without narrowing app tables', async () => {
     let userConnection = await connectSync(syncUrl, first.token);
     subscribe(userConnection, 0);
-    const userSnapshot = await userConnection.waitForMessage(
-      (message) => message.type === 'sync.snapshot',
+    const userAppSnapshot = await userConnection.waitForMessage(
+      (message) => message.type === 'sync.snapshot'
+        && message.plane !== 'system',
     );
-    expect(userSnapshot.type).toBe('sync.snapshot');
-    if (userSnapshot.type !== 'sync.snapshot') throw new Error('Expected snapshot');
+    const userSystemSnapshot = await userConnection.waitForMessage(
+      (message) => message.type === 'sync.snapshot'
+        && message.plane === 'system',
+    );
+    expect(userAppSnapshot.type).toBe('sync.snapshot');
+    expect(userSystemSnapshot.type).toBe('sync.snapshot');
+    if (userAppSnapshot.type !== 'sync.snapshot'
+      || userSystemSnapshot.type !== 'sync.snapshot') {
+      throw new Error('Expected application and system snapshots');
+    }
 
-    expect(Object.keys(userSnapshot.tables.todos ?? {}).sort()).toEqual([
+    expect(Object.keys(userAppSnapshot.tables.todos ?? {}).sort()).toEqual([
       'todo-1',
       'todo-2',
     ]);
-    expect(userSnapshot.tables.todos?.['todo-1']).toEqual({
+    expect(userAppSnapshot.tables.todos?.['todo-1']).toEqual({
       todo_id: 'todo-1',
       title: 'First app row',
     });
-    expect(userSnapshot.tables.users).toBeUndefined();
-    expect(userSnapshot.tables.workflow_definitions).toBeUndefined();
-    expect(Object.keys(userSnapshot.tables.notifications ?? {}).sort()).toEqual([
+    expect(userAppSnapshot.tables.notifications).toBeUndefined();
+    expect(userSystemSnapshot.tables.todos).toBeUndefined();
+    expect(userSystemSnapshot.tables.users).toBeUndefined();
+    expect(userSystemSnapshot.tables.workflow_definitions).toBeUndefined();
+    expect(Object.keys(userSystemSnapshot.tables.notifications ?? {}).sort()).toEqual([
       'notification-all',
       'notification-first',
       'notification-role-user',
       'notification-users-first',
     ]);
-    expect(Object.keys(userSnapshot.tables.notification_receipts ?? {})).toEqual([
+    expect(Object.keys(userSystemSnapshot.tables.notification_receipts ?? {})).toEqual([
       'receipt-first',
     ]);
-    expect(Object.keys(userSnapshot.tables.rooms ?? {}).sort()).toEqual([
+    expect(Object.keys(userSystemSnapshot.tables.rooms ?? {}).sort()).toEqual([
       'room-first',
       'room-shared',
     ]);
-    expect(Object.keys(userSnapshot.tables.room_members ?? {}).sort()).toEqual([
+    expect(Object.keys(userSystemSnapshot.tables.room_members ?? {}).sort()).toEqual([
       'member-first-owner',
       'member-first-second',
       'member-shared-first',
       'member-shared-owner',
     ]);
-    expect(Object.keys(userSnapshot.tables.workflow_instances ?? {})).toEqual([
+    expect(Object.keys(userSystemSnapshot.tables.workflow_instances ?? {})).toEqual([
       'workflow-first',
     ]);
-    expect(Object.keys(userSnapshot.tables.workflow_steps ?? {})).toEqual([
+    expect(Object.keys(userSystemSnapshot.tables.workflow_steps ?? {})).toEqual([
       'step-first',
     ]);
-    expect(Object.keys(userSnapshot.tables.workflow_events ?? {})).toEqual([
+    expect(Object.keys(userSystemSnapshot.tables.workflow_events ?? {})).toEqual([
       'event-first',
     ]);
+    for (const privateTable of identityMirrorTables()) {
+      expect(userAppSnapshot.tables[privateTable]).toBeUndefined();
+      expect(userSystemSnapshot.tables[privateTable]).toBeUndefined();
+    }
+    await assertIdentityMirrorMutationsRejected(userConnection);
 
     const adminConnection = await connectSync(syncUrl, admin.token);
     subscribe(adminConnection, 0);
     const adminSnapshot = await adminConnection.waitForMessage(
-      (message) => message.type === 'sync.snapshot',
+      (message) => message.type === 'sync.snapshot'
+        && message.plane === 'system',
     );
     expect(adminSnapshot.type).toBe('sync.snapshot');
     if (adminSnapshot.type !== 'sync.snapshot') throw new Error('Expected admin snapshot');
@@ -217,11 +279,11 @@ describe('createApp framework-table Sync policy', () => {
     ]);
     await adminConnection.close();
 
-    const db = requirePlatformServices().db;
+    const { appDB, systemDB } = requirePlatformServices();
 
     // Moving a row out of target scope must remove it from the client; moving
     // another row in must upsert it. This exercises live previous-row policy.
-    db.update('notifications', 'notification-first', {
+    systemDB.update('notifications', 'notification-first', {
       target_value: second.user.userId,
     });
     const movedOut = await userConnection.waitForMessage(
@@ -231,7 +293,7 @@ describe('createApp framework-table Sync policy', () => {
     );
     expect(movedOut.type).toBe('sync.change');
 
-    db.update('notifications', 'notification-second', {
+    systemDB.update('notifications', 'notification-second', {
       target_value: first.user.userId,
     });
     const movedIn = await userConnection.waitForMessage(
@@ -242,7 +304,7 @@ describe('createApp framework-table Sync policy', () => {
     expect(movedIn.type).toBe('sync.change');
 
     insertNotification('notification-live-hidden', 'user', second.user.userId);
-    db.insert('todos', {
+    appDB.insert('todos', {
       todo_id: 'todo-live',
       title: 'Visible app change',
       secret: 'must-not-cross-live-sync',
@@ -282,7 +344,7 @@ describe('createApp framework-table Sync policy', () => {
       ref: 'workflow-owner-transfer',
       ok: false,
     });
-    expect(db.get('workflow_instances', 'workflow-first')?.started_by).toBe(
+    expect(systemDB.get('workflow_instances', 'workflow-first')?.started_by).toBe(
       first.user.userId,
     );
 
@@ -300,7 +362,7 @@ describe('createApp framework-table Sync policy', () => {
       code: 4001,
       reason: 'Sync read authority changed',
     });
-    db.update('rooms', 'room-shared', { name: 'Revoked room update' });
+    systemDB.update('rooms', 'room-shared', { name: 'Revoked room update' });
     expect(userConnection.messages.some(
       (message) => message.type === 'sync.change'
         && message.rowId === 'room-shared',
@@ -310,7 +372,8 @@ describe('createApp framework-table Sync policy', () => {
     userConnection = await connectSync(syncUrl, first.token);
     subscribe(userConnection, 0);
     const refreshed = await userConnection.waitForMessage(
-      (message) => message.type === 'sync.snapshot',
+      (message) => message.type === 'sync.snapshot'
+        && message.plane === 'system',
       3_000,
       'post-membership-change snapshot',
     );
@@ -322,7 +385,7 @@ describe('createApp framework-table Sync policy', () => {
     expect(refreshed.tables.rooms).not.toHaveProperty('room-shared');
     expect(refreshed.tables.rooms).toHaveProperty('room-second');
 
-    db.update('rooms', 'room-second', { name: 'Admitted room update' });
+    systemDB.update('rooms', 'room-second', { name: 'Admitted room update' });
     const admittedRoomUpdate = await userConnection.waitForMessage(
       (message) => message.type === 'sync.change'
         && message.rowId === 'room-second'
@@ -340,7 +403,7 @@ describe('createApp framework-table Sync policy', () => {
     const ownDrive = storage.createDrive(first.user.userId, { name: 'Own drive' });
     insertStorageObject('object-hidden', hiddenDrive.drive_id, second.user.userId);
     insertStorageObject('object-own', ownDrive.drive_id, first.user.userId);
-    db.insert('todos', { todo_id: 'todo-storage-sentinel', title: 'Storage sentinel' });
+    appDB.insert('todos', { todo_id: 'todo-storage-sentinel', title: 'Storage sentinel' });
     await userConnection.waitForMessage(
       (message) => message.type === 'sync.change'
         && message.rowId === 'todo-storage-sentinel',
@@ -361,11 +424,20 @@ describe('createApp framework-table Sync policy', () => {
     // then attempt a reconnect catchup containing mixed framework/app rows.
     const baselineConnection = await connectSync(syncUrl, first.token);
     subscribe(baselineConnection, 0);
-    const baseline = await baselineConnection.waitForMessage(
-      (message) => message.type === 'sync.snapshot',
+    const appBaseline = await baselineConnection.waitForMessage(
+      (message) => message.type === 'sync.snapshot'
+        && message.plane !== 'system',
     );
-    expect(baseline.type).toBe('sync.snapshot');
-    if (baseline.type !== 'sync.snapshot') throw new Error('Expected baseline snapshot');
+    const systemBaseline = await baselineConnection.waitForMessage(
+      (message) => message.type === 'sync.snapshot'
+        && message.plane === 'system',
+    );
+    expect(appBaseline.type).toBe('sync.snapshot');
+    expect(systemBaseline.type).toBe('sync.snapshot');
+    if (appBaseline.type !== 'sync.snapshot'
+      || systemBaseline.type !== 'sync.snapshot') {
+      throw new Error('Expected application and system baseline snapshots');
+    }
     await baselineConnection.close();
 
     insertNotification('notification-catchup-own', 'user', first.user.userId);
@@ -373,7 +445,7 @@ describe('createApp framework-table Sync policy', () => {
     insertReceipt('receipt-catchup-own', 'notification-catchup-own', first.user.userId);
     insertReceipt('receipt-catchup-hidden', 'notification-catchup-hidden', second.user.userId);
     await createIdentity('catchup-hidden-user', 'user');
-    db.insert('todos', {
+    appDB.insert('todos', {
       todo_id: 'todo-catchup',
       title: 'Catchup app row',
       secret: 'must-not-cross-catchup-sync',
@@ -382,24 +454,39 @@ describe('createApp framework-table Sync policy', () => {
     const catchupConnection = await connectSync(syncUrl, first.token);
     subscribe(
       catchupConnection,
-      baseline.seq,
-      baseline.epoch,
-      baseline.scope,
+      appBaseline.seq,
+      appBaseline.epoch,
+      appBaseline.scope,
+      requestedTables(),
+      {
+        default: syncCursor(appBaseline),
+        system: syncCursor(systemBaseline),
+      },
     );
-    const catchup = await catchupConnection.waitForMessage(
-      (message) => message.type === 'sync.catchup',
+    const appCatchup = await catchupConnection.waitForMessage(
+      (message) => message.type === 'sync.catchup'
+        && message.plane !== 'system',
     );
-    expect(catchup.type).toBe('sync.catchup');
-    if (catchup.type !== 'sync.catchup') throw new Error('Expected catchup');
+    const systemCatchup = await catchupConnection.waitForMessage(
+      (message) => message.type === 'sync.catchup'
+        && message.plane === 'system',
+    );
+    expect(appCatchup.type).toBe('sync.catchup');
+    expect(systemCatchup.type).toBe('sync.catchup');
+    if (appCatchup.type !== 'sync.catchup'
+      || systemCatchup.type !== 'sync.catchup') {
+      throw new Error('Expected application and system catchup');
+    }
 
-    const catchupIds = catchup.changes.map((change) => change.rowId);
-    expect(catchupIds).toContain('notification-catchup-own');
-    expect(catchupIds).toContain('receipt-catchup-own');
-    expect(catchupIds).toContain('todo-catchup');
-    expect(catchupIds).not.toContain('notification-catchup-hidden');
-    expect(catchupIds).not.toContain('receipt-catchup-hidden');
-    expect(catchup.changes.some((change) => change.table === 'users')).toBe(false);
-    const projectedCatchupChange = catchup.changes.find(
+    const appCatchupIds = appCatchup.changes.map((change) => change.rowId);
+    const systemCatchupIds = systemCatchup.changes.map((change) => change.rowId);
+    expect(appCatchupIds).toEqual(['todo-catchup']);
+    expect(systemCatchupIds).toContain('notification-catchup-own');
+    expect(systemCatchupIds).toContain('receipt-catchup-own');
+    expect(systemCatchupIds).not.toContain('notification-catchup-hidden');
+    expect(systemCatchupIds).not.toContain('receipt-catchup-hidden');
+    expect(systemCatchup.changes.some((change) => change.table === 'users')).toBe(false);
+    const projectedCatchupChange = appCatchup.changes.find(
       (change) => change.rowId === 'todo-catchup',
     );
     expect(projectedCatchupChange?.row).toEqual({
@@ -410,7 +497,7 @@ describe('createApp framework-table Sync policy', () => {
   });
 
   test('changes the comparable policy fingerprint when room membership changes', async () => {
-    const db = requirePlatformServices().db;
+    const db = requirePlatformServices().systemDB;
     const delegate: SyncResourcePolicyAdapter = {
       async resolveTableAccess(context: SyncResourceTableAccessContext) {
         return {
@@ -481,7 +568,7 @@ describe('createApp framework-table Sync policy', () => {
   });
 
   test('revokes rooms-only subscribers without requiring room_members delivery', async () => {
-    const { db, rooms } = requirePlatformServices();
+    const { systemDB: db, rooms } = requirePlatformServices();
     const revokedRoom = rooms.create(second.user.userId, {
       name: 'Rooms-only revoked scope',
     });
@@ -603,7 +690,8 @@ describe('createApp framework-table Sync policy', () => {
       connection = await connectSync(syncUrl, first.token);
       subscribe(connection, 0);
       const snapshot = await connection.waitForMessage(
-        (message) => message.type === 'sync.snapshot',
+        (message) => message.type === 'sync.snapshot'
+          && message.plane === 'system',
       );
       expect(snapshot.type).toBe('sync.snapshot');
       if (snapshot.type !== 'sync.snapshot') throw new Error('Expected snapshot');
@@ -630,16 +718,22 @@ function installPlatformServiceProbe(testApp: ZeroApp): PlatformServiceProbe {
       roomService?: RoomService | null;
       storageService?: StorageService | null;
     };
-
+    const systemDB = scoped.authStore
+      ? serviceDatabase(scoped.authStore)
+      : null;
     if (
       scoped.syncDB
+      && systemDB
       && scoped.authStore
       && scoped.tokenService
       && scoped.roomService
       && scoped.storageService
     ) {
+      expect(serviceDatabase(scoped.roomService)).toBe(systemDB);
+      expect(serviceDatabase(scoped.storageService)).toBe(systemDB);
       captured = {
-        db: scoped.syncDB,
+        appDB: scoped.syncDB,
+        systemDB,
         authStore: scoped.authStore,
         tokenService: scoped.tokenService,
         rooms: scoped.roomService,
@@ -650,7 +744,10 @@ function installPlatformServiceProbe(testApp: ZeroApp): PlatformServiceProbe {
     return { ready: captured !== null };
   });
 
-  return { path, read: () => captured };
+  return {
+    path,
+    read: () => captured,
+  };
 }
 
 async function waitForPlatformServices(
@@ -660,10 +757,15 @@ async function waitForPlatformServices(
   for (let attempt = 0; attempt < 100; attempt++) {
     await fetch(`http://localhost:${testApp.server!.port}${probe.path}`);
     const captured = probe.read();
-    if (captured?.db.hasTable('workflow_instances')) return captured;
+    if (captured?.systemDB.hasTable('workflow_instances')) return captured;
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error('Platform services did not start');
+}
+
+/** Test-only confirmation that every mounted built-in shares one system plane. */
+function serviceDatabase(service: object): ReactiveDB | null {
+  return (service as { db?: ReactiveDB }).db ?? null;
 }
 
 function requirePlatformServices(): PlatformTestServices {
@@ -685,13 +787,13 @@ async function createIdentity(name: string, role: string): Promise<TestIdentity>
 }
 
 function seedPlatformRows(): void {
-  const db = requirePlatformServices().db;
-  db.insert('todos', {
+  const appDB = requirePlatformServices().appDB;
+  appDB.insert('todos', {
     todo_id: 'todo-1',
     title: 'First app row',
     secret: 'must-not-cross-snapshot-sync',
   });
-  db.insert('todos', { todo_id: 'todo-2', title: 'Second app row' });
+  appDB.insert('todos', { todo_id: 'todo-2', title: 'Second app row' });
 
   insertNotification('notification-all', 'all', null);
   insertNotification('notification-first', 'user', first.user.userId);
@@ -704,7 +806,7 @@ function seedPlatformRows(): void {
   insertReceipt('receipt-first', 'notification-first', first.user.userId);
   insertReceipt('receipt-second', 'notification-second', second.user.userId);
 
-  db.transaction(() => {
+  requirePlatformServices().systemDB.transaction(() => {
     insertRoom('room-first', first.user.userId);
     insertMember('member-first-owner', 'room-first', first.user.userId, 'owner');
     insertMember('member-first-second', 'room-first', second.user.userId, 'member');
@@ -727,7 +829,7 @@ function insertNotification(
   targetType: 'all' | 'user' | 'users' | 'role',
   targetValue: string | null,
 ): void {
-  requirePlatformServices().db.insert('notifications', {
+  requirePlatformServices().systemDB.insert('notifications', {
     notification_id: id,
     type: 'info',
     priority: 'normal',
@@ -744,7 +846,7 @@ function insertNotification(
 }
 
 function insertReceipt(id: string, notificationId: string, userId: string): void {
-  requirePlatformServices().db.insert('notification_receipts', {
+  requirePlatformServices().systemDB.insert('notification_receipts', {
     receipt_id: id,
     notification_id: notificationId,
     user_id: userId,
@@ -755,7 +857,7 @@ function insertReceipt(id: string, notificationId: string, userId: string): void
 }
 
 function insertRoom(roomId: string, createdBy: string): void {
-  requirePlatformServices().db.insert('rooms', {
+  requirePlatformServices().systemDB.insert('rooms', {
     room_id: roomId,
     name: roomId,
     type: 'default',
@@ -772,7 +874,7 @@ function insertMember(
   userId: string,
   role: 'owner' | 'member',
 ): void {
-  requirePlatformServices().db.insert('room_members', {
+  requirePlatformServices().systemDB.insert('room_members', {
     member_id: memberId,
     room_id: roomId,
     user_id: userId,
@@ -783,7 +885,7 @@ function insertMember(
 }
 
 function insertWorkflowDefinition(): void {
-  requirePlatformServices().db.insert('workflow_definitions', {
+  requirePlatformServices().systemDB.insert('workflow_definitions', {
     definition_id: 'definition-private',
     name: 'private-definition',
     version: 1,
@@ -800,7 +902,7 @@ function insertWorkflow(
   stepId: string,
   eventId: string,
 ): void {
-  const db = requirePlatformServices().db;
+  const db = requirePlatformServices().systemDB;
   const now = new Date().toISOString();
   db.insert('workflow_instances', {
     instance_id: instanceId,
@@ -846,7 +948,7 @@ function insertWorkflow(
 }
 
 function insertStorageObject(id: string, driveId: string, createdBy: string): void {
-  requirePlatformServices().db.insert('storage_objects', {
+  requirePlatformServices().systemDB.insert('storage_objects', {
     object_id: id,
     drive_id: driveId,
     parent_id: null,
@@ -870,6 +972,11 @@ function subscribe(
   epoch?: string,
   scope?: string | null,
   tables = requestedTables(),
+  cursors?: Partial<Record<'default' | 'system', Readonly<{
+    lastSeq: number;
+    epoch?: string;
+    scope?: string | null;
+  }>>>,
 ): void {
   connection.ws.send(JSON.stringify({
     type: 'sync.subscribe',
@@ -878,13 +985,24 @@ function subscribe(
     lastSeq,
     ...(epoch ? { epoch } : {}),
     ...(scope !== undefined ? { scope } : {}),
+    ...(cursors ? { cursors } : {}),
   }));
+}
+
+function syncCursor(
+  snapshot: Extract<ServerMessage, { type: 'sync.snapshot' }>,
+): Readonly<{ lastSeq: number; epoch?: string; scope?: string | null }> {
+  return {
+    lastSeq: snapshot.seq,
+    ...(snapshot.epoch === undefined ? {} : { epoch: snapshot.epoch }),
+    ...(snapshot.scope === undefined ? {} : { scope: snapshot.scope }),
+  };
 }
 
 function requestedTables(): string[] {
   return [
     'todos',
-    'users',
+    ...identityMirrorTables(),
     'notifications',
     'notification_receipts',
     'rooms',
@@ -896,6 +1014,48 @@ function requestedTables(): string[] {
     'storage_drives',
     'storage_objects',
   ];
+}
+
+function identityMirrorTables(): string[] {
+  return [
+    'users',
+    'tenant_memberships',
+    '_zero_identity_projection_state',
+    '_zero_identity_projection_receipts',
+  ];
+}
+
+async function assertIdentityMirrorMutationsRejected(
+  connection: SyncConnection,
+): Promise<void> {
+  for (const table of identityMirrorTables()) {
+    const ref = `private-mirror-${table}`;
+    connection.ws.send(JSON.stringify({
+      type: 'sync.mutate',
+      ref,
+      table,
+      op: 'DELETE',
+      rowId: 'must-not-change',
+    }));
+    expect(await connection.waitForMessage(
+      (message) => message.type === 'sync.ack' && message.ref === ref,
+    )).toMatchObject({
+      type: 'sync.ack',
+      ref,
+      ok: false,
+    });
+  }
+}
+
+function tableColumns(db: ReactiveDB, table: string): string[] {
+  return (db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>)
+    .map((column) => column.name);
+}
+
+function hasPhysicalTable(db: ReactiveDB, table: string): boolean {
+  return Boolean(db.prepare(
+    'SELECT 1 FROM sqlite_schema WHERE type = \'table\' AND name = ? LIMIT 1',
+  ).get(table));
 }
 
 async function connectSync(url: string, token: string): Promise<SyncConnection> {

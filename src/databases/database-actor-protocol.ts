@@ -50,6 +50,7 @@ export const DATABASE_ACTOR_OPERATIONS = Object.freeze({
   tenantSyncSnapshotPage: 'database.tenant-sync.snapshot.page',
   tenantSyncSnapshotAbort: 'database.tenant-sync.snapshot.abort',
   findReceipt: 'database.receipt.find',
+  identityProjection: 'database.identity-projection',
   unbind: 'database.unbind',
 } as const);
 
@@ -75,6 +76,21 @@ const BIND_FIELDS = new Set([
   'placement',
   'realmFingerprint',
   'sqlite',
+  'authorityCommitFence',
+]);
+const REQUIRED_BIND_FIELDS = Object.freeze([
+  'databaseRef',
+  'filePath',
+  'fileIdentity',
+  'instanceId',
+  'actorLiveness',
+  'placement',
+  'realmFingerprint',
+  'sqlite',
+] as const);
+const AUTHORITY_COMMIT_FENCE_FIELDS = new Set([
+  'systemDatabasePath',
+  'systemDatabaseIdentity',
 ]);
 const FILE_PLACEMENT_FIELDS = new Set(['mode']);
 const HOT_PLACEMENT_FIELDS = new Set([
@@ -137,6 +153,12 @@ export type DatabaseActorPlacementConfig =
     readonly snapshotTimeoutMs?: number;
   }>;
 
+/** Trusted file-backed Guardian boundary supplied only during actor bind. */
+export interface DatabaseActorAuthorityCommitFenceConfig {
+  readonly systemDatabasePath: string;
+  readonly systemDatabaseIdentity: DatabaseFileIdentityProof;
+}
+
 /**
  * Validate, detach, and freeze the file-safe SQLite settings shared by the
  * parent coordinator and actor bind protocol.
@@ -157,6 +179,7 @@ export interface DatabaseActorBindPayload {
   readonly placement: DatabaseActorPlacementConfig;
   readonly realmFingerprint: string;
   readonly sqlite: DatabaseActorSQLiteConfig;
+  readonly authorityCommitFence?: DatabaseActorAuthorityCommitFenceConfig;
 }
 
 /** Actor readiness proof returned after open/migration/schema validation. */
@@ -177,6 +200,7 @@ export interface DatabaseActorExecutePayload {
   readonly databaseRef: DatabaseRef;
   readonly operation: DatabaseOperation;
   readonly logicalReceiptFingerprint?: DatabaseLogicalReceiptFingerprint;
+  readonly authorityRevision?: number;
 }
 
 /** Trusted writer-only lookup of one durable logical-request receipt. */
@@ -203,7 +227,13 @@ export function validateDatabaseActorBindPayload(
   value: unknown,
 ): DatabaseActorBindPayload {
   const record = dataRecord(cloneDatabaseSerializableValue(value));
-  assertExactFields(record, BIND_FIELDS);
+  assertExactFields(record, BIND_FIELDS, false);
+  if (REQUIRED_BIND_FIELDS.some((field) => !Object.hasOwn(record, field))) {
+    throw payloadInvalid('Invalid database actor payload fields.');
+  }
+  const authorityCommitFence = Object.hasOwn(record, 'authorityCommitFence')
+    ? parseAuthorityCommitFence(record.authorityCommitFence)
+    : undefined;
   const result = {
     databaseRef: parseDatabaseRef(record.databaseRef),
     filePath: parseCanonicalFilePath(record.filePath),
@@ -213,6 +243,9 @@ export function validateDatabaseActorBindPayload(
     placement: parsePlacementConfig(record.placement),
     realmFingerprint: parseRealmFingerprint(record.realmFingerprint),
     sqlite: normalizeDatabaseActorSQLiteConfig(record.sqlite),
+    ...(authorityCommitFence === undefined
+      ? {}
+      : { authorityCommitFence }),
   };
   return Object.freeze(result);
 }
@@ -335,7 +368,12 @@ export function validateDatabaseActorExecutePayload(
   const record = dataRecord(cloneDatabaseSerializableValue(value));
   assertExactFields(
     record,
-    new Set(['databaseRef', 'operation', 'logicalReceiptFingerprint']),
+    new Set([
+      'databaseRef',
+      'operation',
+      'logicalReceiptFingerprint',
+      'authorityRevision',
+    ]),
     false,
   );
   if (!Object.hasOwn(record, 'databaseRef')
@@ -357,13 +395,43 @@ export function validateDatabaseActorExecutePayload(
     && operation.type !== 'command') {
     throw payloadInvalid('Logical receipt fingerprints require a write operation.');
   }
+  const authorityRevision = Object.hasOwn(record, 'authorityRevision')
+    ? parseAuthorityRevision(record.authorityRevision)
+    : undefined;
+  if (authorityRevision !== undefined
+    && operation.type !== 'mutate'
+    && operation.type !== 'batch'
+    && operation.type !== 'command') {
+    throw payloadInvalid('Authority revisions require a write operation.');
+  }
   return Object.freeze({
     databaseRef: parseDatabaseRef(record.databaseRef),
     operation,
     ...(logicalReceiptFingerprint === undefined
       ? {}
       : { logicalReceiptFingerprint }),
+    ...(authorityRevision === undefined ? {} : { authorityRevision }),
   });
+}
+
+function parseAuthorityCommitFence(
+  value: unknown,
+): DatabaseActorAuthorityCommitFenceConfig {
+  const record = dataRecord(value);
+  assertExactFields(record, AUTHORITY_COMMIT_FENCE_FIELDS);
+  return Object.freeze({
+    systemDatabasePath: parseCanonicalFilePath(record.systemDatabasePath),
+    systemDatabaseIdentity: validateDatabaseFileIdentityProof(
+      record.systemDatabaseIdentity,
+    ),
+  });
+}
+
+function parseAuthorityRevision(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw payloadInvalid('Invalid database actor authority revision.');
+  }
+  return value as number;
 }
 
 /** Validate one trusted logical receipt lookup. */

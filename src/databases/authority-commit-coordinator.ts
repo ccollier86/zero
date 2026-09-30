@@ -118,6 +118,20 @@ export class AuthorityCommitCoordinator {
   }
 
   /**
+   * Acquire the shared side on the current stack, or return null when an
+   * authority mutation owns or is already waiting for the boundary.
+   *
+   * SQLite commit guards cannot await while a transaction is open. A null
+   * result therefore tells the application transaction to roll back and let
+   * the caller reauthorize/retry after the authority mutation settles.
+   */
+  tryAcquireShared(): AuthorityCommitLease | null {
+    if (this.state !== 'open') throw closedError();
+    if (!this.canGrantImmediately('shared')) return null;
+    return this.grant('shared');
+  }
+
+  /**
    * Acquire the exclusive side on the current stack, or return null when a
    * tenant commit or earlier waiter already owns priority.
    *

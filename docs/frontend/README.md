@@ -129,7 +129,7 @@ A **fullstack runtime** that composes the sync engine, auth system, and a file-b
 **Designed for:**
 - Applications that need auth + real-time + SSR without stitching frameworks together
 - Small teams shipping fast—one binary and in-process services per runtime, with
-  optional same-file local replicas for durable Sync and auth invalidation
+  optional same-plane local replicas for durable Sync and auth invalidation
 - Prototypes that should feel production-grade from day one
 - Any app where "define a table, it's live" is the right abstraction
 
@@ -141,8 +141,8 @@ A **fullstack runtime** that composes the sync engine, auth system, and a file-b
   also the routing, rendering, auth, sync, and data layer.
 - **Not serverless.** Each deployment unit is a Bun process/binary designed for
   a VM, container, or bare metal—not Lambda. File mode can coordinate multiple
-  local runtimes through one SQLite file; separate files/hosts require an
-  external coordination contract.
+  local runtimes which share the relevant SQLite plane; independent Fabric
+  roots or hosts require an external coordination contract.
 - **Not a build tool.** Bun is the build tool. This configures it, doesn't replace it.
 
 ## How It Composes
@@ -157,10 +157,10 @@ A **fullstack runtime** that composes the sync engine, auth system, and a file-b
 │  │ middleware     │  │ onChange→pub │  │ app/ → routes        │ │
 │  └──────┬───────┘  └──────┬───────┘  └──────────┬──────────┘ │
 │         │                  │                      │            │
-│         │         ┌────────┴────────┐             │            │
-│         └────────►│   ReactiveDB    │◄────────────┘            │
-│                   │   (shared)      │                          │
-│                   └─────────────────┘                          │
+│  ┌──────▼────────┐  ┌──────▼────────┐             │            │
+│  │ System DB     │  │ Application DB│◄────────────┘            │
+│  │ Guardian/Zero │  │ app tables    │                          │
+│  └───────────────┘  └───────────────┘                          │
 │                                                               │
 │  ┌──────────────┐  ┌──────────────┐  ┌─────────────────────┐ │
 │  │ Static Files  │  │ Client Bundle│  │ Observability        │ │
@@ -169,9 +169,10 @@ A **fullstack runtime** that composes the sync engine, auth system, and a file-b
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Auth, sync, and router share one ReactiveDB. The router renders pages with
-React 19 streaming. The sync engine makes policy-authorized app data live.
-Auth supplies private session/current-user/admin projections with live server
+`createApp()` pins separate system and application ReactiveDB planes. The
+router renders pages with React 19 streaming, while one Sync channel can carry
+authorized projections from both planes without merging their storage. The
+sync engine makes policy-authorized app data live. Auth supplies private session/current-user/admin projections with live server
 authority, tenant/application administration, onboarding, audit, and browser
 visibility/cache-boundary hooks. App-owned caches use
 `useAuthorizationScopeBoundary()`; its credential-free key is not authority.
@@ -201,6 +202,7 @@ call wires it all.
 | [MasterDetailView](./master-detail.md) | List/detail organism, generated detail forms, custom detail rendering, navigation, low-level detail primitives |
 | [Migrations](../migrations.md) | First-class migration files, schema history, doctor, migrate-plan, rollback, backups |
 | [Observability](../observability.md) | Stable event codes, default console + memory store, protected event endpoint, frontend sink |
+| [System and Application Database Planes](../framework/system-database.md) | `systemDb`/`db` ownership, identity anchors, readiness, privileged services, and legacy upgrade behavior |
 
 ## Primitives (documented separately)
 

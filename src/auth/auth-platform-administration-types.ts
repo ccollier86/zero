@@ -19,6 +19,7 @@ export interface AuthPlatformAdministrationConfig {
   capabilities: {
     canReadMembers: boolean;
     canManageMembers: boolean;
+    canManageRoles: boolean;
     canReadInvitations: boolean;
     canManageInvitations: boolean;
     canReadTenants: boolean;

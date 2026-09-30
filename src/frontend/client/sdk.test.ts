@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { AUTH_DISABLED_MESSAGE } from './auth-client';
 import { createClient, getClient, type InternalClient } from './sdk';
+import { SYNC_ACK_ERROR_CODES } from '../../sync/types';
 
 const tables = {
   todos: { _pk: 'id', id: 'text', title: 'text' },
@@ -60,20 +61,22 @@ class MockWebSocket {
           }),
         }));
       } else if (message.type === 'sync.subscribe') {
-        this.onmessage?.(new MessageEvent('message', {
-          data: JSON.stringify({
-            type: 'sync.snapshot',
-            tables: Object.fromEntries(
-              (message.snapshot ?? [])
-                .filter((table) => !(message.cursors?.tenant && table === 'todos'))
-                .map((table) => [table, {}]),
-            ),
-            seq: 0,
-            epoch: message.epoch ?? 'test-epoch',
-            scope: message.scope ?? 'test-scope',
-            reset: 'preserve-pending',
-          }),
-        }));
+        const planes = Object.keys(message.cursors ?? { default: {} });
+        for (const plane of planes) {
+          const snapshot = (message.snapshot ?? []).filter((table) =>
+            plane === 'system' ? table !== 'todos' : table === 'todos');
+          this.onmessage?.(new MessageEvent('message', {
+            data: JSON.stringify({
+              type: 'sync.snapshot',
+              ...(plane === 'default' ? {} : { plane }),
+              tables: Object.fromEntries(snapshot.map((table) => [table, {}])),
+              seq: 0,
+              epoch: `${plane}-epoch`,
+              scope: message.scope ?? 'test-scope',
+              reset: 'preserve-pending',
+            }),
+          }));
+        }
       } else if (message.type === 'state.subscribe') {
         this.onmessage?.(new MessageEvent('message', {
           data: JSON.stringify({
@@ -118,11 +121,12 @@ afterEach(() => {
 });
 
 describe('createClient auth configuration', () => {
-  test('expands the app table plane catalog with SDK-owned default tables', async () => {
+  test('expands the app table plane catalog with SDK-owned system tables', async () => {
     const client = createClient({
       url: 'http://localhost:3000',
       tables,
       tableSyncPlanes: { todos: 'tenant' },
+      auth: true,
     });
     await flushMicrotasks();
 
@@ -132,7 +136,7 @@ describe('createClient auth configuration', () => {
       .find((message) => message.type === 'sync.subscribe') as {
         cursors: Record<string, unknown>;
       };
-    expect(Object.keys(subscribe.cursors).sort()).toEqual(['default', 'tenant']);
+    expect(Object.keys(subscribe.cursors).sort()).toEqual(['system', 'tenant']);
 
     socket.onmessage?.(new MessageEvent('message', {
       data: JSON.stringify({
@@ -155,6 +159,88 @@ describe('createClient auth configuration', () => {
       plane: 'tenant',
       epoch: 'tenant-epoch',
     });
+  });
+
+  test('omits system-only SDK tables from an auth-disabled managed catalog', async () => {
+    const client = createClient({
+      url: 'http://localhost:3000',
+      tables,
+      tableSyncPlanes: { todos: 'default' },
+      auth: false,
+    });
+    await flushMicrotasks();
+
+    const internal = client as InternalClient;
+    await internal._syncClient.waitForAuthorizationBaseline(100);
+    const subscribe = MockWebSocket.latest().sent
+      .map((item) => JSON.parse(item) as Record<string, unknown>)
+      .find((message) => message.type === 'sync.subscribe') as {
+        cursors: Record<string, unknown>;
+        tables: string[];
+      };
+    expect(Object.keys(subscribe.cursors)).toEqual(['default']);
+    expect(subscribe.tables).toEqual(['todos']);
+    expect(Object.keys(internal._syncClient.tables)).toEqual(['todos']);
+  });
+
+  test('routes SDK tables to system even without a generated catalog', async () => {
+    const client = createClient({
+      url: 'http://localhost:3000',
+      tables,
+      auth: true,
+    });
+    await flushMicrotasks();
+
+    const subscribe = MockWebSocket.latest().sent
+      .map((item) => JSON.parse(item) as Record<string, unknown>)
+      .find((message) => message.type === 'sync.subscribe') as {
+        cursors: Record<string, unknown>;
+      };
+    expect(Object.keys(subscribe.cursors).sort()).toEqual(['default', 'system']);
+  });
+
+  test('exposes rejected realtime mutations without leaking the Sync client', async () => {
+    const configured: unknown[] = [];
+    const observed: unknown[] = [];
+    const client = createClient({
+      url: 'http://localhost:3000',
+      tables,
+      onMutationRejected: (rejection) => configured.push(rejection),
+    });
+    const unsubscribe = client.onMutationRejected(
+      (rejection) => observed.push(rejection),
+    );
+    await flushMicrotasks();
+
+    client.collection('todos').insert({ id: 'todo-rejected', title: 'Nope' });
+    const socket = MockWebSocket.latest();
+    const mutation = socket.sent
+      .map((item) => JSON.parse(item) as Record<string, unknown>)
+      .find((message) => message.type === 'sync.mutate')!;
+    socket.onmessage?.(new MessageEvent('message', {
+      data: JSON.stringify({
+        type: 'sync.ack',
+        ref: mutation.ref,
+        ok: false,
+        seq: null,
+        error: 'Data realm is still being prepared',
+        errorCode: SYNC_ACK_ERROR_CODES.dataRealmNotReady,
+      }),
+    }));
+
+    expect(configured).toHaveLength(1);
+    expect(observed).toEqual(configured);
+    expect(observed[0]).toMatchObject({
+      ref: mutation.ref,
+      table: 'todos',
+      op: 'INSERT',
+      rowId: 'todo-rejected',
+      errorCode: SYNC_ACK_ERROR_CODES.dataRealmNotReady,
+      source: 'server',
+    });
+    expect(client.collection('todos').getOne('todo-rejected')).toBeNull();
+
+    unsubscribe();
   });
 
   test('rejects incomplete or unknown app table plane catalogs', () => {

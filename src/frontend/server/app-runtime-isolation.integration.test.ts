@@ -123,8 +123,9 @@ describe('createApp runtime isolation', () => {
     expect(alphaRoute.body.tenantId).toBe(alpha.body.tenant.tenantId);
     expect(betaRoute.body.tenantId).toBe(beta.body.tenant.tenantId);
 
-    // An otherwise valid credential from the other live app must not hydrate
-    // against this app's auth runtime or reach its protected route/resource.
+    // An otherwise valid credential from the other live app is invalid in
+    // this issuer/runtime and must fail as unauthenticated before reaching a
+    // protected route, Resource policy, or lazy-data policy.
     const crossedRoute = await requestJson(appB, '/api/runtime-proof', {
       token: alpha.body.accessToken,
     });
@@ -134,9 +135,12 @@ describe('createApp runtime isolation', () => {
     const crossedData = await requestJson(appB, '/api/data?table=documents', {
       token: alpha.body.accessToken,
     });
-    expect(crossedRoute.status).toBe(401);
-    expect(crossedResource.status).toBe(403);
-    expect(crossedData.status).toBe(403);
+    for (const crossed of [crossedRoute, crossedResource, crossedData]) {
+      expect(crossed).toMatchObject({
+        status: 401,
+        body: { code: 'UNAUTHORIZED' },
+      });
+    }
   });
 });
 

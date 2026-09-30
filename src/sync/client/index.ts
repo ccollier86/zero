@@ -10,6 +10,7 @@ export type { SyncStoreContext, SyncMeta, Slice } from './sync-store';
 // ─── Client Connection ────────────────────────────────────────────────────
 export { createSyncClient } from './sync-client';
 export type { SyncClient } from './sync-client';
+export type { SyncMutationRejection } from '../types';
 
 // ─── React Hooks (Sync) ──────────────────────────────────────────────────
 export {

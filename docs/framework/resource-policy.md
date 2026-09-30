@@ -21,6 +21,7 @@ import {
   globalRealm,
   metadataPolicy,
   ownerPolicy,
+  tenantKindPolicy,
   tenantRealm,
   requiresAuthenticatedUser,
   validateResourcePolicy,
@@ -30,7 +31,11 @@ import {
 Or from the focused subpath:
 
 ```ts
-import { defineResource, ownerPolicy } from '@zero/framework/resources';
+import {
+  defineResource,
+  guardianActorPolicy,
+  ownerPolicy,
+} from '@zero/framework/resources';
 ```
 
 ## Resource Definitions
@@ -174,6 +179,121 @@ list: allOf(
 The first branch decides capability; the second narrows the returned rows.
 Tenant realm isolation is still applied separately and cannot be weakened by
 either branch.
+
+In multi-tenant apps, use `tenantKindPolicy()` when an application resource
+belongs only to ordinary customer organizations or only to the protected
+Administration Organization:
+
+```ts
+const readCustomerTickets = allOf(
+  authorizationPolicy({
+    user: 'required',
+    tenant: 'required',
+    permission: 'tickets:read',
+  }),
+  tenantKindPolicy('organization'),
+);
+```
+
+The helper reads the tenant purpose from Guardian's durable, server-resolved
+session or API-key authority and also requires a live tenant authorization
+scope. Request headers, bodies, query strings, resource rows, and browser
+claims cannot choose the kind. Zero rejects this policy at startup unless
+Guardian is configured for multi-tenancy. Compose it into every relevant
+action policy; UI `TenantGate` components are presentation boundaries, not
+server policy.
+
+### Bind app rows to Guardian identities
+
+Use Guardian reference fields when app data needs relational ownership or
+attribution without copying Guardian's private user records into an app
+database:
+
+```ts
+// db/work-items.ts — shared, declarative storage contract
+import { defineTable, field } from '@zero/framework/schema';
+
+export const workItems = defineTable('work_items', {
+  title: field.text({ required: true }),
+  created_by_user_id: field.guardianUser(),
+  assigned_membership_id: field.guardianMembership(),
+}, { pk: 'work_item_id', sync: 'full' });
+```
+
+`field.guardianUser()` creates a restrictive foreign key to the ID-only
+`users(user_id)` anchor. `field.guardianMembership()` creates one to
+`tenant_memberships(membership_id)` and declares that both user and membership
+anchors are required. In a physical tenant database, the membership anchor
+retains `tenant_id` as provenance. These retained anchors exist for relational
+integrity and historical attribution only: they contain no PII, roles, status,
+or permissions and must never be treated as authorization truth.
+
+Pair those fields with a server Resource policy:
+
+```ts
+// server/resources/work-items.ts
+import {
+  allOf,
+  authorizationPolicy,
+  defineResource,
+  defineResourceFields,
+  tenantKindPolicy,
+  tenantRealm,
+} from '@zero/framework/server';
+import { guardianActorPolicy } from '@zero/framework/resources';
+import { workItems } from '../../db/work-items';
+
+const currentActor = guardianActorPolicy({
+  userField: 'created_by_user_id',
+  membershipField: 'assigned_membership_id',
+});
+
+export default defineResource({
+  table: workItems,
+  exposure: 'all',
+  realm: tenantRealm(),
+  fields: defineResourceFields({
+    read: [
+      'work_item_id',
+      'title',
+      'created_by_user_id',
+      'assigned_membership_id',
+    ],
+    create: ['title'],
+    update: ['title'],
+  }),
+  policy: allOf(
+    authorizationPolicy({
+      user: 'required',
+      tenant: 'required',
+      permission: 'work-items:own',
+    }),
+    tenantKindPolicy('organization'),
+    currentActor,
+  ),
+});
+```
+
+The secure default is `create: 'stamp'`: Zero overwrites caller-supplied values
+with the authenticated user ID and membership ID from the live tenant
+authorization subject. List requests receive equality constraints for both
+fields; get/update/delete verify the loaded row. Both references are immutable
+after create by default, including for direct server callers that bypass a
+client form. Set `immutable: false` only when a separate, explicit reassignment
+policy owns that transition. `create: 'require'` accepts exact server-verified
+values instead of stamping, while `create: 'forbid'` disables creation through
+that policy.
+
+Do not include either identity field in Resource `create` or `update`
+allow-lists. Policy stamping runs after raw client-field validation and before
+the database write, so the client neither needs nor receives authority to set
+them. Anchor foreign keys prove referenced IDs exist locally; the live Guardian
+subject, RBAC policy, tenant-kind policy, and commit fence decide access.
+
+For single-tenant user attribution without membership ownership, omit
+`membershipField` and use only `field.guardianUser()`. Membership references
+are rejected during Resource registration unless Guardian is configured for
+multi-tenancy.
 
 ### Keep access beside the schema—on the server
 
@@ -370,7 +490,7 @@ The resolved topology applies one tenant-isolation mode to the registry:
 schema-identical subset of `createApp({ tables })` and, after Resource loading,
 must exactly equal all physical tenant Resources, including `internal` and
 HTTP-only tables. A physical tenant Resource is deliberately absent from the
-pinned control database; it cannot fall through to a same-named shadow table.
+pinned shared application database; it cannot fall through to a same-named shadow table.
 See [ReactiveDB Fabric](./multi-database-architecture.md) for actor lifecycle,
 capacity, durability, snapshot, and deployment boundaries.
 
@@ -632,7 +752,7 @@ separate tenant data plane with its own epoch, sequence, baseline, catch-up,
 and reset boundary. The socket holds one persistent authority-bound database
 lease. Full baselines use bounded `begin`/`page`/`abort` actor snapshot
 sessions and chunked WebSocket frames; they never query a same-named table in
-the control database. The server-generated table-plane catalog is
+the shared application database. The server-generated table-plane catalog is
 authoritative—browser plane fields can assert, but cannot select, storage.
 
 Direct `sync.mutate` writes also evaluate resource policy for registered
@@ -716,11 +836,17 @@ Available helpers:
 - `authenticatedOnly()`: requires any authenticated user.
 - `readOnly()`: allows public `list` and `get`, denies writes.
 - `publicReadUserWrite()`: allows public reads, requires auth for writes.
-- `ownerPolicy({ userField, create })`: checks row ownership, returns list
-  constraints, and defaults creates to `create: 'stamp'`.
+- `ownerPolicy({ userField, create, immutable })`: checks row ownership,
+  returns list constraints, defaults creates to `create: 'stamp'`, and rejects
+  owner-field changes by default.
+- `guardianActorPolicy({ userField, membershipField?, create?, immutable? })`:
+  stamps and verifies server-resolved Guardian identity references. A
+  membership field requires live multi-tenant membership authority.
 - `metadataPolicy(requirements)`: checks trusted auth user properties.
 - `authorizationPolicy(requirement)`: enforces the same structured
   application/tenant RBAC requirement used by routes and `context.access`.
+- `tenantKindPolicy('organization' | 'administration', ...)`: admits only a
+  live server-resolved tenant purpose from the declared set.
 - `anyOf(...policies)`: OR composition with constraint preservation.
 - `allOf(...policies)`: AND composition with constraint and stamp merging.
 - `customPolicy(fn)`: callback escape hatch; thrown errors fail closed and flow

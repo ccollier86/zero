@@ -1,4 +1,8 @@
-import type { ServerMessage, SyncDataPlaneName } from '../types';
+import type {
+  ServerMessage,
+  SyncDataPlaneName,
+  SyncMutationRejection,
+} from '../types';
 import {
   routeServerMessage,
   type createSyncStore,
@@ -22,6 +26,7 @@ interface SyncSocketMessageRouterInput {
   snapshots: SyncSnapshotAssembler;
   tablePlanes: Readonly<Record<string, SyncDataPlaneName>>;
   recover: () => void;
+  mutationRejected: (rejection: SyncMutationRejection) => void;
   synchronized: (message: Extract<
     ServerMessage,
     { type: 'sync.snapshot' | 'sync.catchup' }
@@ -62,10 +67,16 @@ export function routeSyncSocketEvent(
       return;
     }
   }
+  const rejection = mutationRejection(input.store, message);
   routeServerMessage(input.store, message);
   for (const handler of input.handlers) {
-    handler(message as unknown as ExternalMessage);
+    try {
+      handler(message as unknown as ExternalMessage);
+    } catch {
+      // Consumer callbacks cannot interrupt cursor, receipt, or queue progress.
+    }
   }
+  if (rejection) input.mutationRejected(rejection);
   if (message.type === 'sync.ack') input.mutations.acknowledge(message.ref);
   if (message.type === 'sync.snapshot') {
     const plane = messageSyncDataPlane(message)!;
@@ -81,6 +92,26 @@ export function routeSyncSocketEvent(
   if (message.type === 'sync.catchup') {
     input.synchronized(message);
   }
+}
+
+function mutationRejection(
+  store: ReturnType<typeof createSyncStore>['store'],
+  message: ServerMessage,
+): SyncMutationRejection | null {
+  if (message.type !== 'sync.ack' || message.ok) return null;
+  const context = store.getSnapshot().context as SyncStoreContext;
+  const mutation = context._sync.pending.find(({ ref }) => ref === message.ref);
+  if (!mutation) return null;
+  return {
+    ref: message.ref,
+    table: mutation.table,
+    op: mutation.op,
+    rowId: mutation.rowId,
+    plane: message.plane,
+    error: message.error,
+    errorCode: message.errorCode,
+    source: 'server',
+  };
 }
 
 function isSnapshotFrame(message: ServerMessage): message is Extract<

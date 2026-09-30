@@ -6,7 +6,17 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { defineSchema, defineTable, field, schema } from './index';
+import {
+  GUARDIAN_TABLE_REFERENCES,
+  defineSchema,
+  defineTable,
+  field,
+  getGuardianAnchorRequirements,
+  getGuardianTableReferences,
+  hasGuardianTableReferences,
+  inspectGuardianReferenceSchema,
+  schema,
+} from './index';
 import type { InferInsert, InferRow, InsertInput } from './index';
 
 describe('natural identity schema metadata', () => {
@@ -104,5 +114,81 @@ describe('natural identity schema metadata', () => {
       pk: 'id',
       identity: ['id'],
     })).toThrow('cannot be the primary key');
+  });
+
+  test('emits immutable server-only Guardian reference metadata and foreign keys', () => {
+    const tasks = defineTable('tasks', {
+      title: field.text({ required: true }),
+      created_by_user_id: field.guardianUser(),
+      assigned_membership_id: field.guardianMembership(),
+    }, { pk: 'task_id' });
+
+    expect(tasks.serverTable.created_by_user_id).toBe(
+      'text references users(user_id) on delete restrict not null',
+    );
+    expect(tasks.serverTable.assigned_membership_id).toBe(
+      'text references tenant_memberships(membership_id) on delete restrict not null',
+    );
+    expect(tasks.guardianReferences).toEqual([
+      {
+        field: 'created_by_user_id',
+        kind: 'user',
+        table: 'users',
+        column: 'user_id',
+        onDelete: 'restrict',
+      },
+      {
+        field: 'assigned_membership_id',
+        kind: 'membership',
+        table: 'tenant_memberships',
+        column: 'membership_id',
+        onDelete: 'restrict',
+      },
+    ]);
+    expect(getGuardianTableReferences(tasks.serverTable)).toEqual(tasks.guardianReferences);
+    expect(getGuardianAnchorRequirements(tasks.serverTable)).toEqual(['user', 'membership']);
+    expect(tasks.guardianAnchorRequirements).toEqual(['user', 'membership']);
+    expect(hasGuardianTableReferences(tasks.serverTable)).toBe(true);
+    expect(Object.isFrozen(tasks.guardianReferences)).toBe(true);
+    expect(Object.isFrozen(getGuardianTableReferences(tasks.serverTable))).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(
+      tasks.serverTable,
+      GUARDIAN_TABLE_REFERENCES,
+    )?.enumerable).toBe(false);
+    expect(Reflect.ownKeys(tasks.clientTable)).not.toContain(GUARDIAN_TABLE_REFERENCES);
+    expect(JSON.stringify(tasks.serverTable)).not.toContain('guardian-table-references');
+  });
+
+  test('a membership reference implies both canonical Guardian anchors', () => {
+    const assignments = defineTable('assignments', {
+      membership_id: field.guardianMembership({ required: false }),
+    });
+
+    expect(assignments.schema.guardianAnchorRequirements).toEqual(['user', 'membership']);
+    expect(assignments.serverTable.membership_id).toBe(
+      'text references tenant_memberships(membership_id) on delete restrict',
+    );
+    expect(assignments.schema.validate({}).success).toBe(true);
+  });
+
+  test('detects Guardian metadata whose declared SQL was weakened or retargeted', () => {
+    for (const invalidDefinition of [
+      'text not null',
+      'text references users(user_id) on delete cascade not null',
+      'text references tenant_memberships(membership_id) on delete restrict not null',
+    ]) {
+      const tasks = defineTable('tasks', {
+        owner_user_id: field.guardianUser(),
+      }, { pk: 'task_id' });
+      tasks.serverTable.owner_user_id = invalidDefinition;
+
+      expect(inspectGuardianReferenceSchema(tasks.serverTable)).toEqual([
+        expect.objectContaining({
+          code: 'invalid-column-definition',
+          field: 'owner_user_id',
+          kind: 'user',
+        }),
+      ]);
+    }
   });
 });

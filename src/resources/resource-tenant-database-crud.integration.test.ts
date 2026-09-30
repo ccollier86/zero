@@ -1113,6 +1113,7 @@ function assertNoHeldActorWork(coordinator: DatabaseCoordinator): void {
 
 function createActorHarness(): {
   root: string;
+  systemRuntime: DatabaseRuntime;
   defaultRuntime: DatabaseRuntime;
   coordinator: DatabaseCoordinator;
   manager: DatabaseManager;
@@ -1120,6 +1121,12 @@ function createActorHarness(): {
   const root = realpathSync.native(
     mkdtempSync(join(tmpdir(), 'zero-resource-tenant-database-')),
   );
+  const systemRuntime = DatabaseRuntime.open({
+    id: 'system',
+    role: 'system',
+    sqlite: createPlatformSQLiteService({ mode: 'ephemeral' }),
+    ownsSQLite: true,
+  });
   const defaultRuntime = DatabaseRuntime.open({
     id: 'default',
     role: 'default',
@@ -1150,12 +1157,13 @@ function createActorHarness(): {
     }),
   });
   const manager = new DatabaseManager({
-    defaultRuntime,
+    systemRuntime,
+    appRuntime: defaultRuntime,
     multiple: {
       coordinator,
       authorityCommitCoordinator: authority,
       tenantDatabases: true,
     },
   });
-  return { root, defaultRuntime, coordinator, manager };
+  return { root, systemRuntime, defaultRuntime, coordinator, manager };
 }

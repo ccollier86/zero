@@ -41,11 +41,23 @@ afterEach(async () => {
 
 describe('verified-domain onboarding service', () => {
   test('fails cached control-plane and worker boundaries after a profile change', async () => {
-    const events: Array<{ code: string; error: unknown }> = [];
+    const events: Array<{
+      code: string;
+      error: unknown;
+      metadata: Record<string, unknown> | undefined;
+    }> = [];
     const harness = await createHarness({
       emitCode: (definition, options) => {
-        events.push({ code: definition.code, error: options?.error });
-        return emitPlatformCode(definition, options);
+        events.push({
+          code: definition.code,
+          error: options?.error,
+          metadata: options?.metadata,
+        });
+        const event = emitPlatformCode(definition, options);
+        if (definition === OBS_CODES.AUTH_DOMAIN_WORKER_FAILED) {
+          throw new Error('private observability failure');
+        }
+        return event;
       },
     });
     const owner = await createUser(harness, 'profile-owner', 'owner@platform.com');
@@ -100,6 +112,7 @@ describe('verified-domain onboarding service', () => {
     ))).toEqual({
       code: OBS_CODES.AUTH_DOMAIN_WORKER_FAILED.code,
       error: profileFailure,
+      metadata: { stage: 'process-due' },
     });
   });
 

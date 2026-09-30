@@ -15,7 +15,11 @@ import type {
   AuthTenantJoinRequestPage,
   AuthTenantReviewJoinRequestParams,
 } from './auth-types';
-import type { AuthAuthenticationAttempt } from './auth-authentication-attempt';
+import {
+  failCurrentAuthenticationCompletion,
+  failCurrentAuthenticationAttempt,
+  type AuthAuthenticationAttempt,
+} from './auth-authentication-attempt';
 import {
   parseJoinRequestMutation,
   parseJoinRequestPage,
@@ -68,34 +72,48 @@ export class AuthTenantOnboardingTransport {
   ): Promise<AuthTenantInvitationAcceptanceResult> {
     const attempt = this.options.beginAuthentication();
     try {
-      const response = await this.options.optionalAuthenticatedFetch(
-        `${this.options.baseUrl}/auth/invitations/accept`,
-        { ...jsonRequest('POST', params), signal: attempt.signal, cache: 'no-store' },
-      );
-      attempt.assertCurrent();
-      const body = await response.json().catch(() => null);
-      attempt.assertCurrent();
-      if (!response.ok) {
-        const error = this.options.createResponseError(
-          response,
-          body,
+      let result: AuthTenantInvitationAcceptanceResult;
+      let failureMessage = 'Failed to accept invitation';
+      try {
+        const response = await this.options.optionalAuthenticatedFetch(
+          `${this.options.baseUrl}/auth/invitations/accept`,
+          { ...jsonRequest('POST', params), signal: attempt.signal, cache: 'no-store' },
+        );
+        attempt.assertCurrent();
+        const body = await response.json().catch(() => null);
+        attempt.assertCurrent();
+        if (!response.ok) {
+          const error = this.options.createResponseError(
+            response,
+            body,
+            failureMessage,
+          );
+          failureMessage = error.message;
+          throw error;
+        }
+        failureMessage = 'Invalid invitation response';
+        result = parseTenantInvitationAcceptance(body);
+      } catch (cause) {
+        return failCurrentAuthenticationAttempt(
+          attempt,
+          this.options.failAuthentication,
+          cause,
+          failureMessage,
+        );
+      }
+      try {
+        return await this.options.completeAuthentication(
+          result,
+          attempt,
+        ) as AuthTenantInvitationAcceptanceResult;
+      } catch (cause) {
+        return failCurrentAuthenticationCompletion(
+          attempt,
+          this.options.failAuthentication,
+          cause,
           'Failed to accept invitation',
         );
-        this.options.failAuthentication(error.message, attempt);
-        throw error;
       }
-      let result: AuthTenantInvitationAcceptanceResult;
-      try {
-        result = parseTenantInvitationAcceptance(body);
-      } catch (error) {
-        attempt.assertCurrent();
-        this.options.failAuthentication('Invalid invitation response', attempt);
-        throw error;
-      }
-      return this.options.completeAuthentication(
-        result,
-        attempt,
-      ) as Promise<AuthTenantInvitationAcceptanceResult>;
     } finally {
       attempt.dispose();
     }

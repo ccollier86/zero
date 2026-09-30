@@ -20,8 +20,22 @@ import type {
 } from '../observability/types';
 import type { ReactiveDB, TableSchema } from '../sync';
 import type { ResourcePolicyAuthConfig } from './resource-policy-types';
-import type { ResourceRegistry } from './resource-registry';
+import type { RegisteredResourceDefinition, ResourceRegistry } from './resource-registry';
 import type { ResourceTenantDatabaseScope } from './resource-realm';
+
+/** Input to the managed default-plane Guardian FK readiness barrier. */
+export interface ResourceIdentityAnchorReadinessInput {
+  readonly resource: RegisteredResourceDefinition;
+  readonly authContext: AuthContext | null;
+}
+
+/**
+ * Reconcile the live caller's ID-only Guardian anchors before a default-plane
+ * Resource mutation can commit a declarative Guardian foreign key.
+ */
+export type ResourceIdentityAnchorReadinessBarrier = (
+  input: ResourceIdentityAnchorReadinessInput,
+) => void | Promise<void>;
 
 /** @internal Capability projection used by the generated HTTP plugin. */
 export type ResourceTenantDatabaseClientProvider = (input: Readonly<{
@@ -68,6 +82,8 @@ export interface ResourceCrudServiceOptions {
   roleAssignments?: AuthorizationRoleAssignmentResolver | null;
   /** @internal Opaque verified-scope projection for physical tenant files. */
   getTenantDatabaseClient?: ResourceTenantDatabaseClientProvider;
+  /** @internal Managed application-plane Guardian FK readiness barrier. */
+  ensureIdentityAnchors?: ResourceIdentityAnchorReadinessBarrier;
   /** App-local sink. Standalone service construction may omit it. */
   observability?: PlatformObservabilityRuntime | null;
   /** App-local emitter compatibility seam for standalone service composition. */

@@ -110,6 +110,17 @@ export type {
 export {
   registerDatabaseAuthorityCommitGuard,
 } from './database-authority-commit-guard';
+export {
+  registerApplicationAuthorityCommitGuard,
+} from './database-application-authority-commit-guard';
+export {
+  DATABASE_AUTHORITY_COMMIT_FENCE_SUFFIX,
+  DatabaseAuthorityCommitFileFence,
+  databaseAuthorityCommitFencePath,
+} from './database-authority-commit-file-fence';
+export type {
+  DatabaseAuthorityCommitFileLease,
+} from './database-authority-commit-file-fence';
 
 export { DatabaseCoordinator } from './database-coordinator';
 export type {
@@ -274,6 +285,12 @@ export type {
   DatabaseRuntimeOptions,
   DatabaseRuntimeRole,
 } from './database-runtime';
+
+export { PinnedDatabaseRuntimes } from './pinned-database-runtimes';
+export type {
+  PinnedDatabaseRuntimeBinding,
+  PinnedDatabaseRuntimeDiagnostics,
+} from './pinned-database-runtimes';
 
 export {
   DATABASE_WRITER_MAX_RECEIPTS,

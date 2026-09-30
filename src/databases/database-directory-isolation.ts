@@ -6,11 +6,15 @@
  * aliases before build or storage initialization can mutate either domain.
  */
 
-import { lstatSync, realpathSync } from 'node:fs';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 
 import { resolveSQLiteStorageConfig } from '../persistence/storage-config';
 import type { SQLiteStorageConfig } from '../persistence/storage-types';
+import {
+  canonicalizeDatabasePathCandidate,
+  databaseOwnershipPathKey,
+} from './database-path-ownership';
+import { DatabaseError } from './database-error';
 
 /** Directory ownership conflicts which make a Fabric root unsafe. */
 export type DatabaseDirectoryConflict =
@@ -87,20 +91,21 @@ export function assertCanonicalDatabaseDirectoryIsolation(
 ): void {
   let conflict: DatabaseDirectoryConflict | null;
   try {
-    const storage = canonicalizePathCandidate(input.storageDir);
+    const storage = canonicalizeDatabasePathCandidate(input.storageDir);
     conflict = findResolvedDatabaseDirectoryConflict({
-      root: canonicalizePathCandidate(input.rootDirectory),
-      output: canonicalizePathCandidate(input.outDir),
+      root: canonicalizeDatabasePathCandidate(input.rootDirectory),
+      output: canonicalizeDatabasePathCandidate(input.outDir),
       storage,
-      storageTemp: canonicalizePathCandidate(join(input.storageDir, 'tmp')),
-      storageBlobs: canonicalizePathCandidate(join(input.storageDir, 'blobs')),
+      storageTemp: canonicalizeDatabasePathCandidate(join(input.storageDir, 'tmp')),
+      storageBlobs: canonicalizeDatabasePathCandidate(join(input.storageDir, 'blobs')),
       controlDatabasePaths: (input.controlDatabasePaths ?? []).map(
-        canonicalizePathCandidate,
+        (path) => canonicalizeDatabasePathCandidate(path),
       ),
     });
-  } catch {
-    throw new Error(
+  } catch (cause) {
+    throw directoryIsolationError(
       '[app] database directory isolation could not be validated.',
+      cause,
     );
   }
 
@@ -149,23 +154,23 @@ function throwDatabaseDirectoryConflict(
 ): void {
   switch (conflict) {
     case 'build-output':
-      throw new Error(
+      throw directoryIsolationError(
         '[app] databaseTopology.rootDirectory must not overlap outDir.',
       );
     case 'control-database':
-      throw new Error(
+      throw directoryIsolationError(
         '[app] databaseTopology.rootDirectory must not overlap a default/control database path.',
       );
     case 'storage-root':
-      throw new Error(
+      throw directoryIsolationError(
         '[app] databaseTopology.rootDirectory must not reuse or contain storageDir.',
       );
     case 'storage-temp':
-      throw new Error(
+      throw directoryIsolationError(
         '[app] databaseTopology.rootDirectory must not overlap the object-storage temporary directory.',
       );
     case 'storage-blobs':
-      throw new Error(
+      throw directoryIsolationError(
         '[app] databaseTopology.rootDirectory must not overlap the object-storage blob directory.',
       );
     case null:
@@ -180,25 +185,13 @@ function pathsOverlap(left: string, right: string): boolean {
 }
 
 function isWithin(candidate: string, parent: string): boolean {
-  return ownershipPathKey(candidate).startsWith(
-    `${ownershipPathKey(parent)}${sep}`,
+  return databaseOwnershipPathKey(candidate).startsWith(
+    `${databaseOwnershipPathKey(parent)}${sep}`,
   );
 }
 
 function pathsEqual(left: string, right: string): boolean {
-  return ownershipPathKey(left) === ownershipPathKey(right);
-}
-
-/**
- * Conservatively reject case/Unicode-only ownership distinctions on every OS.
- * This keeps configs portable and closes initially-missing aliases on default
- * case-insensitive macOS and Windows volumes without probing or creating them.
- */
-function ownershipPathKey(value: string): string {
-  return value
-    .normalize('NFKC')
-    .toLocaleLowerCase('en-US')
-    .normalize('NFKC');
+  return databaseOwnershipPathKey(left) === databaseOwnershipPathKey(right);
 }
 
 function expandSQLiteOwnedPaths(
@@ -215,32 +208,14 @@ function expandSQLiteOwnedPaths(
   return Object.freeze([...owned]);
 }
 
-/** Resolve the deepest existing ancestor without creating filesystem state. */
-function canonicalizePathCandidate(input: string): string {
-  const missing: string[] = [];
-  let cursor = resolve(input);
-
-  while (true) {
-    try {
-      lstatSync(cursor);
-      const canonical = realpathSync.native(cursor);
-      return resolve(canonical, ...missing.reverse());
-    } catch (error) {
-      if (!isMissingPath(error)) throw error;
-    }
-
-    const parent = dirname(cursor);
-    if (parent === cursor) throw new Error('No filesystem ancestor.');
-    missing.push(basename(cursor));
-    cursor = parent;
-  }
-}
-
-function isMissingPath(error: unknown): boolean {
-  return Boolean(
-    error
-      && typeof error === 'object'
-      && 'code' in error
-      && (error as { code?: unknown }).code === 'ENOENT',
-  );
+function directoryIsolationError(
+  message: string,
+  cause?: unknown,
+): DatabaseError {
+  return new DatabaseError('DATABASE_CONFIG_INVALID', message, {
+    ...(cause === undefined ? {} : { cause }),
+    retryable: false,
+    outcome: 'not-started',
+    details: { component: 'database-directory-isolation' },
+  });
 }

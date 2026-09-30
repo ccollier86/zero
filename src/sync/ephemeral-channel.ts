@@ -33,7 +33,17 @@ interface EphemeralTopicBinding {
 export interface EphemeralChannelOptions {
   /** Periodically recheck live custom/room membership policy. Default: 30000. */
   revalidateIntervalMs?: number;
+  /** Observe a failed authority sweep before its sockets are failed closed. */
+  onRevalidationFailure?: (
+    error: unknown,
+    trigger: EphemeralRevalidationTrigger,
+  ) => void;
 }
+
+export type EphemeralRevalidationTrigger =
+  | 'authority-revision'
+  | 'periodic'
+  | 'room-members-change';
 
 type EphemeralSocket = ServerWebSocket<SyncSocketData>;
 
@@ -62,6 +72,7 @@ export class EphemeralChannel {
   private readonly bindings = new Map<string, Map<string, EphemeralTopicBinding>>();
   private readonly sockets = new Map<string, EphemeralSocket>();
   private readonly revalidationTimer: ReturnType<typeof setInterval> | null;
+  private readonly observedRevalidations = new WeakSet<Promise<void>>();
   private revalidation: Promise<void> | null = null;
   private revalidationQueued = false;
   private disposed = false;
@@ -69,11 +80,14 @@ export class EphemeralChannel {
   constructor(
     private readonly manager: EphemeralStateManager,
     private readonly policy: EphemeralTopicPolicy,
-    options: EphemeralChannelOptions = {},
+    private readonly options: EphemeralChannelOptions = {},
   ) {
     const intervalMs = options.revalidateIntervalMs ?? 30_000;
     this.revalidationTimer = intervalMs > 0
-      ? setInterval(() => { void this.revalidateAll(); }, Math.max(10, intervalMs))
+      ? setInterval(
+          () => { this.requestRevalidation('periodic'); },
+          Math.max(10, intervalMs),
+        )
       : null;
   }
 
@@ -314,8 +328,18 @@ export class EphemeralChannel {
         this.revalidationQueued = false;
         if (this.revalidation === task) this.revalidation = null;
       },
-    );
+    ).catch(() => undefined);
     return task;
+  }
+
+  /** Launch an authority sweep whose failure is observed and handled fail closed. */
+  requestRevalidation(trigger: EphemeralRevalidationTrigger): void {
+    const task = this.revalidateAll();
+    if (this.observedRevalidations.has(task)) return;
+    this.observedRevalidations.add(task);
+    void task.catch((error) => {
+      this.handleRevalidationFailure(error, trigger);
+    }).catch(() => undefined);
   }
 
   cleanup(ws: EphemeralSocket): void {
@@ -345,6 +369,33 @@ export class EphemeralChannel {
       if (!socketBindings) continue;
       for (const binding of [...socketBindings.values()]) {
         await this.revalidateBinding(ws, binding);
+      }
+    }
+  }
+
+  private handleRevalidationFailure(
+    error: unknown,
+    trigger: EphemeralRevalidationTrigger,
+  ): void {
+    try {
+      this.options.onRevalidationFailure?.(error, trigger);
+    } catch {
+      // Observability/invalidation hooks cannot prevent local fail-closed cleanup.
+    }
+
+    for (const ws of [...this.sockets.values()]) {
+      try {
+        this.cleanup(ws);
+      } catch {
+        // A damaged manager cannot retain a live channel/socket association.
+        this.bindings.delete(ws.data.connectionId);
+        this.sockets.delete(ws.data.connectionId);
+        ws.data.ephemeralTopics.clear();
+      }
+      try {
+        ws.close(1011, 'Ephemeral authority revalidation failed');
+      } catch {
+        // Local maps are already revoked even if the transport is unavailable.
       }
     }
   }

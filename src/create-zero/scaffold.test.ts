@@ -76,8 +76,22 @@ describe('scaffoldZeroApp', () => {
       };
       expect(packageJson.dependencies['@zero/framework']).toBe('file:../zero-framework');
       expect(packageJson.scripts.doctor).toBe('zero doctor --config ./zero.config.ts');
-    expect(packageJson.scripts['pdf:install']).toBe('zero pdf install');
-    expect(packageJson.scripts['pdf:status']).toBe('zero pdf status');
+      expect(packageJson.scripts.migrate)
+        .toBe('zero migrate --db ./data/zero.system.db');
+      expect(packageJson.scripts['migrate:status'])
+        .toBe('zero migrate --status --db ./data/zero.system.db');
+      expect(packageJson.scripts['migrate:plan'])
+        .toBe('zero migrate --plan --schema ./db/schema.ts --db ./data/app.db');
+      expect(packageJson.scripts['pdf:install']).toBe('zero pdf install');
+      expect(packageJson.scripts['pdf:status']).toBe('zero pdf status');
+
+      const generatedConfig = await readFile(join(targetDir, 'zero.config.ts'), 'utf8');
+      expect(generatedConfig).toContain('systemDb: resolveSystemDatabaseConfig()');
+      expect(generatedConfig).toContain("'./data/zero.system.db'");
+      const generatedEnv = await readFile(join(targetDir, '.env.example'), 'utf8');
+      expect(generatedEnv).toContain('SYSTEM_DB_MODE=file');
+      expect(generatedEnv).toContain('SYSTEM_DB_PATH=./data/zero.system.db');
+      expect(generatedEnv).toContain('SYSTEM_DB_SNAPSHOT_PATH=');
 
       const tsconfig = JSON.parse(await readFile(join(targetDir, 'tsconfig.json'), 'utf8')) as {
         compilerOptions: {
@@ -113,6 +127,8 @@ describe('scaffoldZeroApp', () => {
       expect(readme).toContain('package saved from committed local `main`');
       expect(readme).toContain('zero update --project . --local');
       expect(readme).toContain("it never\npacks the checkout's live working tree");
+      expect(readme).toContain('Zero-owned state and application data always use separate SQLite planes');
+      expect(readme).toContain('`migrate:plan` targets the application database');
 
       await linkFrameworkPackage(targetDir);
 

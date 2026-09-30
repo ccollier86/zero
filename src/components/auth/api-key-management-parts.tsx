@@ -209,26 +209,34 @@ export function ApiKeyConfirmationDialog({
   confirmation,
   busy,
   error,
+  tenantSingular = 'organization',
   onConfirm,
   onCloseAutoFocus,
 }: {
   confirmation: PendingApiKeyConfirmation;
   busy: boolean;
   error: string | null;
+  tenantSingular?: string;
   onConfirm(): void;
   onCloseAutoFocus: React.ComponentProps<typeof AlertDialogContent>['onCloseAutoFocus'];
 }) {
   const rotating = confirmation.action === 'rotate';
+  const keyDescription = apiKeyConfirmationTarget(
+    confirmation.apiKey,
+    tenantSingular,
+  );
   return (
     <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus}>
       <AlertDialogHeader>
         <AlertDialogTitle>
-          {rotating ? 'Rotate this API key?' : 'Revoke this API key?'}
+          {rotating
+            ? `Rotate API key ${confirmation.apiKey.label} ending in ${confirmation.apiKey.hint}?`
+            : `Revoke API key ${confirmation.apiKey.label} ending in ${confirmation.apiKey.hint}?`}
         </AlertDialogTitle>
         <AlertDialogDescription>
           {rotating
-            ? `${confirmation.apiKey.label} will stop working immediately. The replacement secret will be shown once and use the configured default lifetime.`
-            : `${confirmation.apiKey.label} will stop working immediately. This cannot be undone.`}
+            ? `${keyDescription} will stop working immediately. The replacement secret will be shown once and use the configured default lifetime.`
+            : `${keyDescription} will stop working immediately. This cannot be undone.`}
         </AlertDialogDescription>
       </AlertDialogHeader>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
@@ -247,6 +255,22 @@ export function ApiKeyConfirmationDialog({
       </AlertDialogFooter>
     </AlertDialogContent>
   );
+}
+
+/**
+ * Identifies the exact non-secret credential target in destructive dialogs.
+ * Labels are intentionally not assumed to be unique in global directories.
+ */
+export function apiKeyConfirmationTarget(
+  apiKey: AuthApiKeySummary,
+  tenantSingular = 'organization',
+): string {
+  const scope = apiKey.tenantId
+    ? `${tenantSingular} ${apiKey.tenantId}${
+      apiKey.membershipId ? `, membership ${apiKey.membershipId}` : ''
+    }`
+    : 'the application scope';
+  return `API key ${apiKey.label}, ending in ${apiKey.hint}, for user ${apiKey.userId} in ${scope}`;
 }
 
 function ApiKeyStatusBadge({ status }: Pick<AuthApiKeySummary, 'status'>) {

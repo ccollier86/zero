@@ -2,6 +2,7 @@
 
 import { createStore } from '@xstate/store';
 import type {
+  AuthCompletionResult,
   AuthSessionTransitionState,
   AuthTenantSummary,
   AuthUser,
@@ -15,6 +16,7 @@ export interface AuthStoreContext {
   isLoading: boolean;
   isRestoring: boolean;
   error: string | null;
+  authenticationContinuation: AuthCompletionResult | null;
   sessionTransition: AuthSessionTransitionState;
 }
 
@@ -27,6 +29,7 @@ export function createAuthStore() {
     isLoading: false as boolean,
     isRestoring: false as boolean,
     error: null,
+    authenticationContinuation: null,
     sessionTransition: {
       phase: 'idle',
       operation: null,
@@ -44,6 +47,17 @@ export function createAuthStore() {
         isLoading: true,
         isRestoring: false,
         error: null,
+        authenticationContinuation: null,
+      }),
+      'auth.continuation': (
+        context: AuthStoreContext,
+        event: { result: AuthCompletionResult },
+      ): AuthStoreContext => ({
+        ...context,
+        isLoading: false,
+        isRestoring: false,
+        error: null,
+        authenticationContinuation: event.result,
       }),
       'auth.restoring': (context: AuthStoreContext): AuthStoreContext => ({
         ...context,
@@ -68,6 +82,7 @@ export function createAuthStore() {
         isLoading: false,
         isRestoring: false,
         error: null,
+        authenticationContinuation: null,
       }),
       'auth.error': (
         context: AuthStoreContext,
@@ -77,6 +92,7 @@ export function createAuthStore() {
         isLoading: false,
         isRestoring: false,
         error: event.error,
+        authenticationContinuation: null,
       }),
       'auth.logout': (context: AuthStoreContext): AuthStoreContext => ({
         ...context,
@@ -87,6 +103,7 @@ export function createAuthStore() {
         isLoading: false,
         isRestoring: false,
         error: null,
+        authenticationContinuation: null,
       }),
       'auth.refresh': (
         context: AuthStoreContext,
@@ -137,6 +154,10 @@ export function createAuthStore() {
       'auth.clearError': (context: AuthStoreContext): AuthStoreContext => ({
         ...context,
         error: null,
+      }),
+      'auth.continuation.clear': (context: AuthStoreContext): AuthStoreContext => ({
+        ...context,
+        authenticationContinuation: null,
       }),
       'auth.transition': (
         context: AuthStoreContext,

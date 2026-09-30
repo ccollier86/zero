@@ -32,6 +32,10 @@ import type {
 } from './database-tenant-sync';
 import type { DatabaseActorTenantSyncSnapshotBeginResult } from './database-tenant-sync-snapshot-protocol';
 import type {
+  DatabaseIdentityProjectionPayload,
+  DatabaseIdentityProjectionResult,
+} from './database-identity-projection-actor';
+import type {
   DatabaseLogicalReceiptFingerprint,
   DatabaseTrustedReceiptExecutionOptions,
   DatabaseTrustedReceiptLookup,
@@ -48,6 +52,12 @@ export interface CoordinatorTenantSyncSnapshotStart {
 
 /** Narrow host boundary implemented by DatabaseCoordinator. */
 export interface DatabaseCoordinatorCapabilityHost {
+  executeIdentityProjection(
+    entry: DatabaseCoordinatorEntry,
+    input: Omit<DatabaseIdentityProjectionPayload, 'databaseRef'>,
+    options: DatabaseExecutionOptions | undefined,
+    commitAuthority: DatabaseCommitAuthority | null,
+  ): Promise<DatabaseIdentityProjectionResult>;
   execute(
     entry: DatabaseCoordinatorEntry,
     value: unknown,
@@ -198,6 +208,20 @@ export class CoordinatorLease implements DatabaseCoordinatorLease {
     );
   }
 
+  /** @internal Guardian target path; not part of DatabaseCoordinatorLease. */
+  executeIdentityProjection(
+    input: Omit<DatabaseIdentityProjectionPayload, 'databaseRef'>,
+    options?: DatabaseExecutionOptions,
+  ): Promise<DatabaseIdentityProjectionResult> {
+    this.assertActive();
+    return this.#coordinator.executeIdentityProjection(
+      this.#entry,
+      input,
+      options,
+      this.#commitAuthority,
+    );
+  }
+
   replay(
     afterSeq: number,
     limit?: number,
@@ -222,6 +246,21 @@ export class CoordinatorLease implements DatabaseCoordinatorLease {
       throw new DatabaseError('DATABASE_CLOSED', 'Database capability was released.');
     }
   }
+}
+
+/** Invoke the private projection path only on a coordinator-owned lease. */
+export function executeCoordinatorIdentityProjection(
+  lease: DatabaseCoordinatorLease,
+  input: Omit<DatabaseIdentityProjectionPayload, 'databaseRef'>,
+  options?: DatabaseExecutionOptions,
+): Promise<DatabaseIdentityProjectionResult> {
+  if (!(lease instanceof CoordinatorLease)) {
+    throw new DatabaseError(
+      'DATABASE_CONFIG_INVALID',
+      'Database identity projection requires a coordinator-owned binding.',
+    );
+  }
+  return lease.executeIdentityProjection(input, options);
 }
 
 class CoordinatorTrustedWriter implements DatabaseTrustedWriteExecutor {

@@ -37,6 +37,8 @@ import {
   ZERO_RESOURCE_REGISTRY,
   ZERO_SQLITE_SERVICE,
   ZERO_SYNC_DB,
+  ZERO_SYSTEM_DB,
+  ZERO_SYSTEM_SQLITE_SERVICE,
 } from '../../runtime/service-keys';
 import type { ReactiveDB } from '../../sync';
 import type { PlatformSQLiteService } from '../../persistence';
@@ -66,6 +68,7 @@ describe('server service context', () => {
     expect(zero.databases).toBeNull();
     expect(zero.sql).toBe(getPlatformSQLiteService());
     expect(zero.sqlite).toBe(zero.sql);
+    expect(zero.system).toBeNull();
     expect(zero.kv).toBe(getKvService());
     expect(zero.counter).toBe(getKvService()?.counters ?? null);
     expect(zero.limiter).toBe(getKvService()?.limiter ?? null);
@@ -107,6 +110,10 @@ describe('server service context', () => {
     expect(second.databases).toBe(secondRuntime.databases);
     expect(first.sql).toBe(firstRuntime.sqlite);
     expect(second.sql).toBe(secondRuntime.sqlite);
+    expect(first.system?.db).toBe(firstRuntime.systemDb);
+    expect(second.system?.db).toBe(secondRuntime.systemDb);
+    expect(first.system?.sql).toBe(firstRuntime.systemSqlite);
+    expect(first.system?.sqlite).toBe(firstRuntime.systemSqlite);
     expect(first.resources).toBe(firstRuntime.resources);
     expect(second.resources).toBe(secondRuntime.resources);
     expect(first.emailRuntime).toBe(firstRuntime.email);
@@ -131,6 +138,10 @@ function createTestRuntime(label: string) {
   const db = { label } as unknown as ReactiveDB;
   const databases = { label } as unknown as DatabaseManager;
   const sqlite = { label } as unknown as PlatformSQLiteService;
+  const systemDb = { label: `${label}-system` } as unknown as ReactiveDB;
+  const systemSqlite = {
+    label: `${label}-system`,
+  } as unknown as PlatformSQLiteService;
   const resources = { label } as unknown as ResourceRegistry;
   const email = {
     enabled: false,
@@ -144,6 +155,8 @@ function createTestRuntime(label: string) {
   runtime.set(ZERO_SYNC_DB, db);
   runtime.set(ZERO_DATABASE_MANAGER, databases);
   runtime.set(ZERO_SQLITE_SERVICE, sqlite);
+  runtime.set(ZERO_SYSTEM_DB, systemDb);
+  runtime.set(ZERO_SYSTEM_SQLITE_SERVICE, systemSqlite);
   runtime.set(ZERO_RESOURCE_REGISTRY, resources);
   runtime.set(ZERO_EMAIL_RUNTIME, email);
   runtime.set(ZERO_OBSERVABILITY_RUNTIME, {
@@ -152,5 +165,15 @@ function createTestRuntime(label: string) {
     store,
   });
 
-  return { runtime, db, databases, sqlite, resources, email, store };
+  return {
+    runtime,
+    db,
+    databases,
+    sqlite,
+    systemDb,
+    systemSqlite,
+    resources,
+    email,
+    store,
+  };
 }

@@ -55,7 +55,13 @@ export function EmailVerificationForm({
   onSuccess,
   className,
 }: EmailVerificationFormProps) {
-  const { inspectActionToken, verifyEmail, resendVerificationEmail } = useAuth();
+  const {
+    inspectActionToken,
+    verifyEmail,
+    resendVerificationEmail,
+    authenticationContinuation,
+    clearAuthenticationContinuation,
+  } = useAuth();
   const tokenInputId = React.useId();
   const resendEmailId = React.useId();
   const [tokenInfo, setTokenInfo] = React.useState<AuthActionTokenInfo | null>(null);
@@ -71,12 +77,20 @@ export function EmailVerificationForm({
   const [authContinuation, setAuthContinuation] = React.useState<
     AuthFlowContinuationResult | null
   >(null);
+  const activeAuthContinuation = authContinuation
+    ?? (isAuthFlowContinuationResult(authenticationContinuation)
+      ? authenticationContinuation
+      : null);
   const activeToken = (token?.trim() || manualToken.trim()).trim();
   const continuedLoginHref = useNativeAuthRoute(loginHref);
   const nativeContinuation = useNativeAuthContinuation();
 
   React.useEffect(() => {
     let active = true;
+    if (activeAuthContinuation) {
+      setLoadingToken(false);
+      return () => { active = false; };
+    }
     if (!activeToken) {
       setLoadingToken(false);
       setError(null);
@@ -117,7 +131,7 @@ export function EmailVerificationForm({
     return () => {
       active = false;
     };
-  }, [activeToken, inspectActionToken]);
+  }, [activeAuthContinuation, activeToken, inspectActionToken]);
 
   async function handleVerify(event: React.FormEvent) {
     event.preventDefault();
@@ -173,6 +187,20 @@ export function EmailVerificationForm({
   const displayError = error;
   const shouldShowTokenEntry = !activeToken || (!tokenInfo && Boolean(displayError));
 
+  if (activeAuthContinuation) {
+    return (
+      <AuthFlowContinuation
+        result={activeAuthContinuation}
+        onSuccess={onSuccess}
+        onBack={() => {
+          clearAuthenticationContinuation();
+          setAuthContinuation(null);
+        }}
+        className={className}
+      />
+    );
+  }
+
   if (loadingToken) {
     return (
       <div
@@ -185,17 +213,6 @@ export function EmailVerificationForm({
         </AnimateIcon>
         Checking verification link…
       </div>
-    );
-  }
-
-  if (authContinuation) {
-    return (
-      <AuthFlowContinuation
-        result={authContinuation}
-        onSuccess={onSuccess}
-        onBack={() => setAuthContinuation(null)}
-        className={className}
-      />
     );
   }
 

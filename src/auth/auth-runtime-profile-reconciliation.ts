@@ -47,7 +47,21 @@ export function reconcileAuthRuntimeProfile(
   // Install the shared clock before profile adoption so role projection,
   // membership invalidation, and the profile marker are all observable to
   // other runtimes in the same commit.
-  installAuthAuthorityRevision(input.db);
+  try {
+    installAuthAuthorityRevision(input.db);
+  } catch (error) {
+    if (error instanceof AuthError
+      && error.code === 'AUTH_STATE_INVARIANT_FAILED') {
+      input.emitCode(OBS_CODES.AUTH_STATE_INVARIANT_FAILED, {
+        error,
+        metadata: {
+          component: 'authority-revision',
+          invariant: 'managed-trigger-contract',
+        },
+      });
+    }
+    throw error;
+  }
 
   const requestedProfile = {
     tenancy: input.authorizationKernel.tenancy.mode,
@@ -125,12 +139,14 @@ export function reconcileAuthRuntimeProfile(
             && !input.authorizationRoleService.hasActiveApplicationOwner()
             && !input.authorizationRoleService
               .hasPendingApplicationOwnerVerification()) {
-            throw new Error(
+            throw new AuthError(
               '[auth] single/advanced authorization has existing users but no active '
               + 'application owner capable of authenticating. Configure '
               + 'auth.authorization.ownerAdoption with '
               + 'one exact existing userId or email, start once to adopt it atomically, '
               + 'then keep or remove the idempotent setting.',
+              'AUTHORIZATION_OWNERSHIP_REQUIRED',
+              503,
             );
           }
         }

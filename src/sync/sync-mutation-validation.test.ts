@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { ServerWebSocket } from 'bun';
 import { defineTable, field } from '../schema';
+import { IdentityAnchorStore } from '../auth/identity-anchor-store';
+import { IdentityProjectionOutboxStore } from '../auth/identity-projection-outbox-store';
+import { IdentityProjectionService } from '../auth/identity-projection-service';
+import { identityProjectionError } from '../auth/identity-projection-error';
 import { routeMessage } from './message-handler';
 import { createReactiveDB } from './reactive-db';
 import type {
@@ -11,6 +15,7 @@ import type {
   SyncSocketData,
   SyncTableMutationValidator,
 } from './types';
+import { SYNC_ACK_ERROR_CODES } from './types';
 
 function socket(tableNames: string[]) {
   const messages: ServerMessage[] = [];
@@ -52,6 +57,10 @@ async function mutate(input: {
   resourcePolicy?: SyncResourcePolicyAdapter;
   revalidateMutationAuthority?: () => Promise<boolean>;
   validateMutationAuthorityAtCommit?: () => boolean;
+  ensureMutationReady?: (input: Readonly<{
+    table: string;
+    authContext: SyncSocketData['authContext'];
+  }>) => void | Promise<void>;
 }): Promise<SyncAckMessage> {
   const ws = socket(input.db.getTableNames());
   await routeMessage(
@@ -71,6 +80,12 @@ async function mutate(input: {
     'single',
     input.revalidateMutationAuthority,
     input.validateMutationAuthorityAtCommit,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    input.db,
+    input.ensureMutationReady,
   );
   return ws.messages.at(-1) as SyncAckMessage;
 }
@@ -455,6 +470,168 @@ describe('Sync logical mutation validation', () => {
     });
     expect(db.get('documents', 'document-revoked')).toBeNull();
     db.dispose();
+  });
+
+  test('blocks a default-plane mutation behind the identity readiness barrier', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    db.defineTable('documents', {
+      id: 'text primary key',
+      title: 'text not null',
+    });
+    let barrierCalls = 0;
+
+    const ack = await mutate({
+      db,
+      ensureMutationReady: async ({ table, authContext }) => {
+        barrierCalls += 1;
+        expect(table).toBe('documents');
+        expect(authContext?.userId).toBe('user-1');
+        throw identityProjectionError('IDENTITY_PROJECTION_NOT_READY', {
+          cause: new Error('private provisioning detail'),
+        });
+      },
+      message: {
+        type: 'sync.mutate', ref: 'realm-not-ready',
+        table: 'documents', op: 'INSERT',
+        row: { id: 'document-pending', title: 'Must not commit' },
+      },
+    });
+
+    expect(barrierCalls).toBe(1);
+    expect(ack).toMatchObject({
+      ok: false,
+      error: 'Application data realm is not ready',
+      errorCode: SYNC_ACK_ERROR_CODES.dataRealmNotReady,
+    });
+    expect(JSON.stringify(ack)).not.toContain('private provisioning detail');
+    expect(db.get('documents', 'document-pending')).toBeNull();
+    db.dispose();
+  });
+
+  test('distinguishes terminal identity projection failure from retryable readiness', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    db.defineTable('documents', {
+      id: 'text primary key',
+      title: 'text not null',
+    });
+
+    const ack = await mutate({
+      db,
+      ensureMutationReady: () => {
+        throw identityProjectionError('IDENTITY_PROJECTION_QUARANTINED');
+      },
+      message: {
+        type: 'sync.mutate', ref: 'realm-unavailable',
+        table: 'documents', op: 'INSERT',
+        row: { id: 'document-unavailable', title: 'Must not commit' },
+      },
+    });
+
+    expect(ack).toMatchObject({
+      ok: false,
+      error: 'Application data realm is unavailable',
+      errorCode: SYNC_ACK_ERROR_CODES.dataRealmUnavailable,
+    });
+    expect(db.get('documents', 'document-unavailable')).toBeNull();
+    db.dispose();
+  });
+
+  test('does not mask unrelated readiness failures as projection retries', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    db.defineTable('documents', {
+      id: 'text primary key',
+      title: 'text not null',
+    });
+
+    await expect(mutate({
+      db,
+      ensureMutationReady: () => {
+        throw new Error('private implementation failure');
+      },
+      message: {
+        type: 'sync.mutate', ref: 'realm-unknown-failure',
+        table: 'documents', op: 'INSERT',
+        row: { id: 'document-unknown', title: 'Must not commit' },
+      },
+    })).rejects.toThrow('private implementation failure');
+    expect(db.get('documents', 'document-unknown')).toBeNull();
+    db.dispose();
+  });
+
+  test('revalidates socket authority after asynchronous identity reconciliation', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    db.defineTable('documents', {
+      id: 'text primary key',
+      title: 'text not null',
+    });
+    let revalidations = 0;
+    const ack = await mutate({
+      db,
+      ensureMutationReady: async () => Promise.resolve(),
+      revalidateMutationAuthority: async () => {
+        revalidations += 1;
+        return revalidations === 1;
+      },
+      message: {
+        type: 'sync.mutate', ref: 'realm-authority-race',
+        table: 'documents', op: 'INSERT',
+        row: { id: 'document-race', title: 'Must not commit' },
+      },
+    });
+
+    expect(revalidations).toBe(2);
+    expect(ack).toMatchObject({
+      ok: false,
+      error: 'Authorization changed during mutation',
+    });
+    expect(db.get('documents', 'document-race')).toBeNull();
+    db.dispose();
+  });
+
+  test('allows repeated Sync mutations for an already-projected caller', async () => {
+    const system = createReactiveDB({ mode: 'memory' });
+    const db = createReactiveDB({ mode: 'memory' });
+    const outbox = new IdentityProjectionOutboxStore(system, {
+      createInstallationId: () => 'installation-sync-repeat',
+      createEventId: () => 'event-sync-repeat',
+    });
+    outbox.registerTarget('application', 'application');
+    const target = new IdentityAnchorStore(db, {
+      installationId: outbox.getInstallationId(),
+      targetId: 'application',
+    });
+    db.defineTable('documents', {
+      id: 'text primary key',
+      title: 'text not null',
+    });
+    const projector = new IdentityProjectionService(outbox, {
+      workerId: 'worker-sync-repeat',
+      emitCode: () => ({}) as never,
+    });
+    const ensureMutationReady = () => {
+      projector.ensureAnchorSync('application', {
+        kind: 'user',
+        userId: 'user-1',
+      }, target);
+    };
+
+    for (const suffix of ['one', 'two']) {
+      const ack = await mutate({
+        db,
+        ensureMutationReady,
+        message: {
+          type: 'sync.mutate', ref: `sync-repeat-${suffix}`,
+          table: 'documents', op: 'INSERT',
+          row: { id: `document-${suffix}`, title: suffix },
+        },
+      });
+      expect(ack.ok).toBe(true);
+    }
+    expect(db.prepare('SELECT user_id FROM users').all()).toEqual([
+      { user_id: 'user-1' },
+    ]);
+    db.dispose();
+    system.dispose();
   });
 
   test('rejects authority revoked after async revalidation at the SQLite commit edge', async () => {

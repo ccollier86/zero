@@ -18,6 +18,7 @@ export function TenantMemberRoleEditor({
   draftRoles,
   busy,
   canTransferOwnership,
+  requireAtLeastOneRole = false,
   tenantSingular,
   rolePanelId,
   roleSelectionChanged,
@@ -31,6 +32,7 @@ export function TenantMemberRoleEditor({
   draftRoles: readonly string[];
   busy: boolean;
   canTransferOwnership: boolean;
+  requireAtLeastOneRole?: boolean;
   tenantSingular: string;
   rolePanelId: string;
   roleSelectionChanged: boolean;
@@ -42,15 +44,30 @@ export function TenantMemberRoleEditor({
     member.roles,
     simple,
   );
-  const lockedAssignedRoles = simple
-    ? assignedRolesAboveGrantCeiling(assignableRoles, member.roles)
-    : [];
+  const lockedAssignedRoles = assignedRolesAboveGrantCeiling(
+    assignableRoles,
+    member.roles,
+  );
+  const assignableRoleKeys = new Set(assignableRoles.map((role) => role.key));
+  const declaredRolesByKey = new Map(declaredRoles.map((role) => [role.key, role]));
   const declaredRoleKeys = new Set(declaredRoles.map((role) => role.key));
   const retiredRoles = member.roles.filter((role) => (
     role !== 'owner' && !declaredRoleKeys.has(role)
   ));
+  const outOfScopeRoles = member.roles.filter((roleKey) => {
+    const role = declaredRolesByKey.get(roleKey);
+    return roleKey !== 'owner'
+      && role !== undefined
+      && !role.system
+      && !assignableRoleKeys.has(roleKey);
+  });
   const retainedRetiredRoles = retiredRoles.filter((role) => draftRoles.includes(role));
+  const retainedOutOfScopeRoles = outOfScopeRoles.filter((role) => (
+    draftRoles.includes(role)
+  ));
   const retiredRolesRequireOwner = retiredRoles.length > 0 && !canTransferOwnership;
+  const outOfScopeRolesRequireOwner = outOfScopeRoles.length > 0
+    && !canTransferOwnership;
 
   return (
     <section id={rolePanelId} aria-labelledby={`${rolePanelId}-heading`} className="rounded-md border border-border/80 bg-muted/20 p-4">
@@ -76,21 +93,32 @@ export function TenantMemberRoleEditor({
           authorized {tenantSingular} manager must change it.
         </p>
       )}
+      {outOfScopeRoles.length > 0 && (
+        <p role="status" className="mt-2 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-muted-foreground">
+          This member has a declared role that is not valid in this organization.
+          It grants no authority here and must be removed before other role changes
+          can be saved.
+          {outOfScopeRolesRequireOwner
+            ? ` Only the ${tenantSingular} owner can remove it.`
+            : ''}
+        </p>
+      )}
       {simple ? (
         <div className="mt-3">
           <TenantRolePicker
             roles={displayedRoleChoices}
-            selected={draftRoles.filter((role) => declaredRoleKeys.has(role))}
+            selected={draftRoles.filter((role) => assignableRoleKeys.has(role))}
             simple
             disabled={busy
               || retainedRetiredRoles.length > 0
+              || retainedOutOfScopeRoles.length > 0
               || lockedAssignedRoles.length > 0}
             legend={`Member ${tenantSingular} role`}
             selectLabel={`${capitalize(tenantSingular)} role for ${tenantMemberName(member)}`}
             selectPlaceholder={`Choose ${tenantSingular} role`}
             actionContext={`for ${tenantMemberName(member)}`}
             onChange={(nextRoles) => onChange([
-              ...draftRoles.filter((role) => !declaredRoleKeys.has(role)),
+              ...draftRoles.filter((role) => !assignableRoleKeys.has(role)),
               ...nextRoles,
             ])}
           />
@@ -99,7 +127,10 @@ export function TenantMemberRoleEditor({
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {displayedRoleChoices.map((role) => {
             const checked = draftRoles.includes(role.key);
-            const disabled = busy || !role.grantable || retainedRetiredRoles.length > 0;
+            const disabled = busy
+              || !role.grantable
+              || retainedRetiredRoles.length > 0
+              || retainedOutOfScopeRoles.length > 0;
             return (
               <label key={role.key} className={cn(
                 'flex items-start gap-2 rounded-md border bg-background p-3 text-sm',
@@ -116,7 +147,9 @@ export function TenantMemberRoleEditor({
                   aria-label={`${checked ? 'Remove' : 'Assign'} ${role.label}`}
                 />
                 <span>
-                  <span className="block font-medium">{role.label}</span>
+                  <span className="block font-medium">
+                    {role.label}{!role.grantable && checked ? ' (locked)' : ''}
+                  </span>
                   {role.description && (
                     <span className="mt-0.5 block text-xs text-muted-foreground">
                       {role.description}
@@ -160,7 +193,42 @@ export function TenantMemberRoleEditor({
           })}
         </div>
       )}
-      {displayedRoleChoices.length === 0 && retiredRoles.length === 0 && (
+      {outOfScopeRoles.length > 0 && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {outOfScopeRoles.map((roleKey) => {
+            const role = declaredRolesByKey.get(roleKey)!;
+            const checked = draftRoles.includes(roleKey);
+            const disabled = busy || !canTransferOwnership;
+            return (
+              <label key={roleKey} className={cn(
+                'flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-sm',
+                disabled && 'opacity-65',
+              )}>
+                <Checkbox
+                  checked={checked}
+                  disabled={disabled}
+                  onCheckedChange={(value) => onChange(
+                    value
+                      ? [...new Set([...draftRoles, roleKey])]
+                      : draftRoles.filter((item) => item !== roleKey),
+                  )}
+                  aria-label={`${checked ? 'Remove' : 'Retain'} invalid ${tenantSingular} role ${role.label}`}
+                />
+                <span>
+                  <span className="block font-medium">{role.label} (not valid here)</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    This declared role cannot be used in {tenantSingular}.
+                    {disabled ? ` Only the ${tenantSingular} owner can remove it.` : ''}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+      {displayedRoleChoices.length === 0
+        && retiredRoles.length === 0
+        && outOfScopeRoles.length === 0 && (
         <p className="mt-3 text-xs text-muted-foreground">
           No assignable roles are within your current authority.
         </p>
@@ -173,8 +241,11 @@ export function TenantMemberRoleEditor({
         disabled={busy
           || !roleSelectionChanged
           || retiredRolesRequireOwner
+          || outOfScopeRolesRequireOwner
           || retainedRetiredRoles.length > 0
-          || lockedAssignedRoles.length > 0
+          || retainedOutOfScopeRoles.length > 0
+          || (simple && lockedAssignedRoles.length > 0)
+          || (requireAtLeastOneRole && draftRoles.length === 0)
           || (simple && draftRoles.length !== 1)}
       >
         Save roles

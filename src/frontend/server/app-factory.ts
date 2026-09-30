@@ -1,123 +1,46 @@
 import { Elysia } from 'elysia';
-import { createSyncPlugin } from '../../sync/sync.plugin';
 import type { ReactiveDB } from '../../sync/reactive-db';
-import { combineSyncPolicies, createDefaultSyncPolicy } from '../../sync/sync-policy';
-import { createManagedEphemeralTopicPolicy } from '../../sync/ephemeral-managed-policy';
-import { createAuthPlugin } from '../../auth/auth.plugin';
-import type { AuthRuntime } from '../../auth/auth-runtime';
-import { createAuthMiddleware } from '../../auth/auth.middleware';
-import {
-  rejectedPageSessionCookieHeader,
-  resolvePageSessionAuth,
-} from '../../auth/page-session';
-import { createSchedulerPlugin } from '../../scheduler';
-import { SchedulerService } from '../../scheduler/scheduler-service';
-import { createNotificationPlugin } from '../../notifications/notification.plugin';
-import { NOTIFICATION_TABLES } from '../../notifications/types';
-import { createRoomPlugin } from '../../rooms/room.plugin';
-import { ROOM_TABLES } from '../../rooms/types';
-import { createWorkflowPlugin } from '../../workflows';
-import type { WorkflowService } from '../../workflows/workflow-service';
-import { WORKFLOW_TABLES } from '../../workflows/types';
-import { createStoragePlugin } from '../../storage/storage.plugin';
-import { STORAGE_TABLES } from '../../storage/types';
-import { createDataQueryPlugin } from '../../sync/data-query.plugin';
-import { createRouterPlugin } from './router-plugin';
-import { loadServerRoutePlugins } from './server-route-loader';
-import { createWorkflowExecutionServiceProvider } from './workflow-execution-services';
-import { buildClientBundle } from './client-bundle';
-import { buildPlatformStyles } from './style-bundle';
 import { createEmailRuntime, registerEmailRuntime } from '../../email';
-import { createAIPlugin } from '../../ai';
-import { createKvPlugin, type KvService } from '../../kv';
-import { createPdfPlugin } from '../../pdf';
 import type { AppConfig } from './types';
 import type { AuthBehaviorConfig } from '../../auth/types';
-import { trustedSystemServiceDataScope } from '../../auth/service-data-scope';
 import { resolveConfig } from './types';
-import { applyTableSyncResolution, resolveTableSyncModes } from './sync-mode-resolver';
-import { migrations } from '../../migrations';
 import {
   OBS_CODES,
   configureObservability,
-  createObservabilityPlugin,
   emitPlatformCode,
   emitPlatformCodeTo,
 } from '../../observability';
-import { createVectorPlugin } from '../../vector';
-import { createPlatformTokenPlugin } from '../../tokens';
-import { createPlatformSQLiteService, type PlatformSQLiteService } from '../../persistence';
-import {
-  AuthorityCommitCoordinator,
-  DatabaseCoordinator,
-  DatabaseManager,
-  DatabaseRuntime,
-  createDatabaseObservability,
-  registerDatabaseAuthorityCommitGuard,
-} from '../../databases';
+import { DatabaseError } from '../../databases';
 import {
   assertCanonicalDatabaseDirectoryIsolation,
   resolveControlDatabasePaths,
 } from '../../databases/database-directory-isolation';
 import {
-  isPolicyTrustedUserProperty,
   resolveAuthBehaviorConfig,
 } from '../../auth/auth-config';
-import {
-  createResourceRegistry,
-  createResourceCrudPlugin,
-  assertResourceStorageRealms,
-  registerResourceRegistry,
-  ResourceSyncPolicyService,
-  loadResourceDefinitions,
-} from '../../resources';
 import { installAppStopBarrier } from './app-stop-lifecycle';
 import { installAppSignalLifecycle } from './app-signal-lifecycle';
-import {
-  PLATFORM_SYNC_PRIVATE_TABLES,
-  PlatformSyncPolicyService,
-} from './platform-sync-policy';
 import { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import {
   ZERO_EMAIL_RUNTIME,
-  ZERO_DATABASE_MANAGER,
-  ZERO_AUTHORIZATION_KERNEL,
-  ZERO_AUTHORIZATION_ROLE_SERVICE,
-  ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER,
-  ZERO_AUTH_STORE,
-  ZERO_AUTH_TOKEN_SERVICE,
   ZERO_OBSERVABILITY_RUNTIME,
-  ZERO_RESOURCE_REGISTRY,
-  ZERO_ROOM_SERVICE,
 } from '../../runtime/service-keys';
-import { createResourceTenantDatabaseAccess } from './request-database-client';
-import { resolveTenantDatabaseResourceTopology } from './tenant-database-topology';
-import { createManagedTenantSyncDataPlane } from './tenant-sync-data-plane';
-import { resolveBrowserSyncTablePlanes } from './sync-client-topology';
+import {
+  assertCanonicalSeparateDatabaseConfigs,
+  resolveSystemDatabaseOwnedPaths,
+} from './system-database-config';
+import { assertApplicationDatabaseHasNoLegacySystemLayout } from './system-database-layout';
+import {
+  assertAppIdentityProjectionConfiguration,
+} from './identity-projection-runtime';
+import { createManagedAppDatabasePlanes } from './app-database-planes';
+import { mountPlatformApp } from './app-platform-mount';
+import { buildAppAssets } from './app-build-assets';
+import { AppDatabaseBootstrap } from './app-database-bootstrap';
+import { composeAppResources } from './app-resource-composition';
+import { mountAppSyncEngine } from './app-sync-mount';
 
 // ─── App Factory ───────────────────────────────────────────────────────────
-
-const PLATFORM_SYNC_WRITE_PROTECTED_TABLES = new Set([
-  'users',
-  ...Object.keys(NOTIFICATION_TABLES),
-  ...Object.keys(ROOM_TABLES),
-  ...Object.keys(WORKFLOW_TABLES),
-  ...Object.keys(STORAGE_TABLES),
-]);
-
-const PLATFORM_CLIENT_TABLES = {
-  ...NOTIFICATION_TABLES,
-  ...ROOM_TABLES,
-  ...WORKFLOW_TABLES,
-  ...STORAGE_TABLES,
-};
-
-/** Include framework-owned full-sync tables in the websocket snapshot allow-list. */
-function addPlatformSnapshotTables(snapshotTables: Set<string>): void {
-  for (const [table, def] of Object.entries(PLATFORM_CLIENT_TABLES)) {
-    if (def._sync !== 'lazy') snapshotTables.add(table);
-  }
-}
 
 /**
  * Create a full-stack Elysia application.
@@ -152,218 +75,94 @@ export async function createApp(userConfig: AppConfig) {
       rootDirectory: config.databaseTopology.rootDirectory,
       outDir: config.outDir,
       storageDir: config.storageDir,
-      controlDatabasePaths: resolveControlDatabasePaths(config.db),
+      controlDatabasePaths: [
+        ...resolveControlDatabasePaths(config.db),
+        ...resolveSystemDatabaseOwnedPaths(config.systemDb),
+      ],
     });
   }
-  const runtime = new ZeroAppRuntime();
+  assertCanonicalSeparateDatabaseConfigs(config.db, config.systemDb);
   const resourceAuthConfig = resolveAuthBehaviorConfig(
     config.auth === false ? {} : appAuthBehaviorConfig(config.auth),
   );
-  const getAppAuthStore = () => runtime.get(ZERO_AUTH_STORE);
-  const getAppTokenService = () => runtime.get(ZERO_AUTH_TOKEN_SERVICE);
-  const getAppAuthorizationKernel = () => runtime.get(ZERO_AUTHORIZATION_KERNEL);
-  const getAppRoleAssignments = () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE);
-  let appSyncDB: ReactiveDB | null = null;
-  let defaultDatabaseRuntime: DatabaseRuntime | null = null;
-  let databaseManager: DatabaseManager | null = null;
+  assertAppIdentityProjectionConfiguration({
+    tables: config.tables,
+    authEnabled: config.auth !== false,
+    tenancyMode: resourceAuthConfig.tenancy.mode,
+  });
+  const runtime = new ZeroAppRuntime();
+  let systemSyncDB: ReactiveDB | null = null;
   if (config.db.database && !config.db.sqlite) {
-    throw new Error('[app] createApp({ db.database }) bypasses the platform SQL service. Pass db.sqlite or a platform storage config instead.');
+    throw new DatabaseError(
+      'DATABASE_CONFIG_INVALID',
+      '[app] createApp({ db.database }) bypasses the platform SQL service. Pass db.sqlite or a platform storage config instead.',
+      { retryable: false, outcome: 'not-started' },
+    );
   }
   const observabilityRuntime = configureObservability(config.observability);
   runtime.set(ZERO_OBSERVABILITY_RUNTIME, observabilityRuntime);
   const emitCode: typeof emitPlatformCode = (definition, options) =>
     emitPlatformCodeTo(observabilityRuntime, definition, options);
-  const sqlite = config.db.sqlite ?? createPlatformSQLiteService(config.db, {
-    observability: observabilityRuntime,
-  });
-  const ownsSqlite = !config.db.sqlite;
+  const databaseBootstrap = new AppDatabaseBootstrap(
+    config,
+    runtime,
+    observabilityRuntime,
+  );
   try {
+    const {
+      application: sqlite,
+      system: controlSqlite,
+    } = databaseBootstrap.openSQLiteServices();
+    assertApplicationDatabaseHasNoLegacySystemLayout(sqlite);
     const emailRuntime = createEmailRuntime(config.email, config.app, emitCode);
     runtime.set(ZERO_EMAIL_RUNTIME, emailRuntime);
     const emailRuntimeRegistration = registerEmailRuntime(runtime, emailRuntime);
     runtime.addCleanup(() => emailRuntimeRegistration.unregister());
-    addPlatformSnapshotTables(config.snapshotTables);
-    const platformSyncPolicy = config.auth !== false
-      ? createDefaultSyncPolicy({
-          readProtectedTables: PLATFORM_SYNC_PRIVATE_TABLES,
-          writeProtectedTables: PLATFORM_SYNC_WRITE_PROTECTED_TABLES,
-        })
-      : undefined;
-    const syncPolicy = combineSyncPolicies(platformSyncPolicy, config.syncPolicy);
-    const loadedResources = await loadResourceDefinitions({
-      resourcesDir: config.serverResourcesDir,
-      observability: observabilityRuntime,
-    });
-    const managedResourceTables = new Set(Object.keys(config.tables));
-    const resourceRegistry = createResourceRegistry({
-      resources: [...config.resources, ...loadedResources],
-      tables: config.tables,
-      authConfig: resourceAuthConfig,
-      tenancyMode: resourceAuthConfig.tenancy.mode,
-      tenantIsolation: config.databaseTopology.mode === 'multiple'
-        ? config.databaseTopology.tenantIsolation
-        : 'shared-row',
-      managedTables: managedResourceTables,
-      observability: observabilityRuntime,
-    });
-    const tenantDatabaseResourceTopology = config.databaseTopology.mode === 'multiple'
-      && config.databaseTopology.tenantIsolation === 'tenant-database'
-      ? resolveTenantDatabaseResourceTopology(
-          resourceRegistry,
-          config.databaseTopology.realm,
-        )
-      : null;
-    assertResourceExposureLoadingCompatibility(
-      resourceRegistry,
-      config,
-      tenantDatabaseResourceTopology
-        ? new Set(tenantDatabaseResourceTopology.tables)
-        : undefined,
-    );
-    runtime.set(ZERO_RESOURCE_REGISTRY, resourceRegistry);
-    const resourceRegistryRegistration = registerResourceRegistry(runtime, resourceRegistry);
-    runtime.addCleanup(() => resourceRegistryRegistration.unregister());
-    const appResourceSyncPolicy = new ResourceSyncPolicyService({
+    const {
       registry: resourceRegistry,
+      syncPolicy,
+      resourceSyncPolicy,
+      tenantDatabaseTopology: tenantDatabaseResourceTopology,
+    } = await composeAppResources({
+      config,
+      runtime,
       authConfig: resourceAuthConfig,
-      getUserStore: config.auth !== false ? getAppAuthStore : undefined,
-      getAuthorizationKernel: config.auth !== false
-        ? getAppAuthorizationKernel
-        : undefined,
-      getRoleAssignments: config.auth !== false ? getAppRoleAssignments : undefined,
-      tenancyMode: resourceAuthConfig.tenancy.mode,
-      managedTables: managedResourceTables,
+      observability: observabilityRuntime,
+      getSystemDB: () => systemSyncDB,
     });
-    const resourceSyncPolicy = config.auth === false
-      ? appResourceSyncPolicy
-      : new PlatformSyncPolicyService({
-          delegate: appResourceSyncPolicy,
-          getDB: () => appSyncDB,
-          getAuthorizationKernel: () => runtime.get(ZERO_AUTHORIZATION_KERNEL),
-          getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
-          tenancyMode: resourceAuthConfig.tenancy.mode,
-        });
 
     // ─── Build client bundle ────────────────────────────────
-    let clientEntry: string | undefined;
-    let cssPath: string | undefined;
-    try {
-      const bundle = await buildClientBundle(config.outDir, config.appDir, {
-        generatedDir: config.generatedDir,
-      });
-      clientEntry = bundle.publicPath;
-      emitCode(OBS_CODES.APP_CLIENT_BUNDLE_READY, {
-        metadata: { publicPath: bundle.publicPath },
-      });
-    } catch {
-      // Client bundle is optional — SSR still works without hydration
-      emitCode(OBS_CODES.APP_CLIENT_BUNDLE_FAILED, {
-        metadata: { stage: 'client-bundle' },
-      });
-    }
-    try {
-      const styles = await buildPlatformStyles(config.outDir, config.appDir);
-      cssPath = styles.publicPath;
-      emitCode(OBS_CODES.APP_STYLES_READY, {
-        metadata: { publicPath: styles.publicPath },
-      });
-    } catch {
-      emitCode(OBS_CODES.APP_STYLES_FAILED, {
-        metadata: { stage: 'style-bundle' },
-      });
-    }
+    const { clientEntry, cssPath } = await buildAppAssets(config, emitCode);
 
     // ─── Build the database runtime boundary ───────────────────
-    // The pinned runtime preserves the historical `zero.db`/`zero.sql`
-    // identity. Additional files are owned exclusively by isolated actor
-    // processes; createApp never opens one on the application thread.
-    const openedDefaultRuntime = DatabaseRuntime.open({
-      id: 'default',
-      role: 'default',
-      sqlite,
-      ownsSQLite: ownsSqlite,
-      reactive: {
-        clearChangesOnStart: config.db.clearChangesOnStart,
-        ringBufferDepth: config.db.ringBufferDepth,
-        observability: observabilityRuntime,
+    // System authority is opened and migrated before the application plane.
+    // `zero.db`/`zero.sql` remain pinned to the application runtime.
+    const {
+      systemRuntime: openedSystemRuntime,
+      applicationRuntime: openedDefaultRuntime,
+      removeTemporarySystemCleanup: removeSystemRuntimeCleanup,
+      removeTemporaryApplicationCleanup: removeDefaultRuntimeCleanup,
+    } = databaseBootstrap.openBaseRuntimes();
+    systemSyncDB = openedSystemRuntime.db;
+    const databasePlanes = createManagedAppDatabasePlanes({
+      config,
+      runtime,
+      systemRuntime: openedSystemRuntime,
+      applicationRuntime: openedDefaultRuntime,
+      systemSqlite: controlSqlite,
+      observability: observabilityRuntime,
+      emitCode,
+      tenancyMode: resourceAuthConfig.tenancy.mode,
+      tenantResourceTopology: tenantDatabaseResourceTopology,
+      removeTemporarySystemCleanup: removeSystemRuntimeCleanup,
+      removeTemporaryApplicationCleanup: removeDefaultRuntimeCleanup,
+      onManagerCreated(manager) {
+        databaseBootstrap.adoptManager(manager);
       },
-      migrations,
-      migrate: shouldRunMigrations(sqlite, config.migrate),
     });
-    defaultDatabaseRuntime = openedDefaultRuntime;
-
-    // Cover the small construction window before the manager takes ownership.
-    const removeDefaultRuntimeCleanup = runtime.addCleanup(
-      () => openedDefaultRuntime.close(),
-    );
-    const multipleTopology = config.databaseTopology.mode === 'multiple'
-      ? config.databaseTopology
-      : null;
-    const authorityCommitCoordinator = multipleTopology?.tenantIsolation
-      === 'tenant-database'
-      ? new AuthorityCommitCoordinator()
-      : undefined;
-    if (authorityCommitCoordinator) {
-      const removeAuthorityCommitGuard = registerDatabaseAuthorityCommitGuard(
-        openedDefaultRuntime.db,
-        authorityCommitCoordinator,
-      );
-      runtime.addCleanup(removeAuthorityCommitGuard);
-    }
-    const coordinator = multipleTopology
-      ? new DatabaseCoordinator({
-          rootDirectory: multipleTopology.rootDirectory,
-          realm: multipleTopology.realm,
-          createExecutor: multipleTopology.createExecutor,
-          placement: multipleTopology.placement,
-          sqlite: multipleTopology.sqlite,
-          maxDatabases: multipleTopology.maxDatabases,
-          maxDatabaseFiles: multipleTopology.maxDatabaseFiles,
-          maxBlockedDatabases: multipleTopology.maxBlockedDatabases,
-          maxTenantSyncDatabases: multipleTopology.maxTenantSyncDatabases,
-          maxTenantSyncBindingsPerDatabase:
-            multipleTopology.maxTenantSyncBindingsPerDatabase,
-          readers: multipleTopology.readers,
-          maxQueuedPerDatabase: multipleTopology.maxQueuedPerDatabase,
-          maxQueuedTotal: multipleTopology.maxQueuedTotal,
-          queueTimeoutMs: multipleTopology.queueTimeoutMs,
-          operationTimeoutMs: multipleTopology.operationTimeoutMs,
-          restart: multipleTopology.restart,
-          idleTimeoutMs: multipleTopology.idleTimeoutMs,
-          sweepIntervalMs: multipleTopology.sweepIntervalMs,
-          observability: createDatabaseObservability(observabilityRuntime),
-          ...(authorityCommitCoordinator
-            ? {
-                authorityCommitCoordinator,
-                requireCommitAuthority: true,
-              }
-            : {}),
-        })
-      : undefined;
-    const openedDatabaseManager = new DatabaseManager({
-      defaultRuntime: openedDefaultRuntime,
-      multiple: coordinator
-        ? {
-            coordinator,
-            ...(authorityCommitCoordinator
-              ? { authorityCommitCoordinator, tenantDatabases: true }
-              : {}),
-          }
-        : undefined,
-    });
-    databaseManager = openedDatabaseManager;
-    runtime.set(ZERO_DATABASE_MANAGER, openedDatabaseManager);
-    runtime.addCleanup(() => {
-      runtime.clear(ZERO_DATABASE_MANAGER, openedDatabaseManager);
-      return openedDatabaseManager.close();
-    });
-    removeDefaultRuntimeCleanup();
-    const tenantDataPlane = tenantDatabaseResourceTopology
-      ? createManagedTenantSyncDataPlane({
-          manager: openedDatabaseManager,
-          tables: tenantDatabaseResourceTopology.syncCatalog,
-        })
-      : undefined;
+    const openedDatabaseManager = databasePlanes.manager;
+    const identityProjectionRuntime = databasePlanes.identityProjection;
+    const tenantDataPlane = databasePlanes.tenantDataPlane;
 
     // ─── Assemble Elysia app ────────────────────────────────
     const app = new Elysia({ name: 'platform' });
@@ -372,69 +171,41 @@ export async function createApp(userConfig: AppConfig) {
       openedDatabaseManager.start();
     });
 
-    // 1. Sync engine — always first (provides ReactiveDB over shared SQL)
-    app.use(
-      createSyncPlugin({
-        runtime,
-        db: {
-          ...config.db,
-          sqlite,
-        },
-        reactiveDB: openedDefaultRuntime.db,
-        ownsReactiveDB: false,
-        onDatabaseCreated(db) {
-          appSyncDB = db;
-        },
-        tables: config.tables,
-        mutationValidators: config.mutationValidators,
-        stateSync: config.stateSync,
-        tenancyMode: resourceAuthConfig.tenancy.mode,
-        policy: syncPolicy,
-        resourcePolicy: resourceSyncPolicy,
-        ephemeralPolicy: config.auth !== false
-          ? createManagedEphemeralTopicPolicy({
-              getRoomService: () => runtime.get(ZERO_ROOM_SERVICE),
-              customPolicy: config.ephemeralPolicy,
-              tenancyMode: resourceAuthConfig.tenancy.mode,
-            })
-          : config.ephemeralPolicy,
-        snapshotTables: config.snapshotTables,
-        tenantDataPlane,
-        auth: config.auth !== false
-          ? {
-              required: config.syncAuth === 'required',
-              modeDefaulted: config.syncAuthDefaulted,
-              // Auth routes are mounted after sync, so the verifier is resolved lazily
-              // when a WebSocket opens rather than during plugin composition.
-              getTokenVerifier: getAppTokenService,
-              invalidationPollIntervalMs: 250,
-            }
-          : undefined,
-      })
-    );
-
-    if (!appSyncDB) {
-      throw new Error('[app] Sync plugin did not provide its app-local database during composition.');
-    }
-    // `CREATE TABLE IF NOT EXISTS` preserves old on-disk schemas. Verify the
-    // actual SQLite columns before any HTTP or Sync transport can serve a
-    // tenant resource, rather than trusting only the current config string.
-    assertResourceStorageRealms(resourceRegistry, appSyncDB);
+    const tenantDatabaseTables = tenantDatabaseResourceTopology
+      ? new Set(tenantDatabaseResourceTopology.tables)
+      : new Set<string>();
+    const appSyncDB = mountAppSyncEngine({
+      app,
+      runtime,
+      config,
+      applicationSQLite: sqlite,
+      applicationDB: openedDefaultRuntime.db,
+      systemDB: openedSystemRuntime.db,
+      authConfig: resourceAuthConfig,
+      syncPolicy,
+      resourceSyncPolicy,
+      resourceRegistry,
+      tenantDatabaseTables,
+      tenantDataPlane,
+      identityProjectionRuntime,
+    });
 
     const mounted = await mountPlatformApp({
       app,
       runtime,
       syncDB: appSyncDB,
+      systemDB: openedSystemRuntime.db,
       config,
       syncPolicy,
       resourceRegistry,
       resourceAuthConfig,
       tenantDatabaseTables: tenantDatabaseResourceTopology
-        ? new Set(tenantDatabaseResourceTopology.tables)
+        ? tenantDatabaseTables
         : undefined,
       emailRuntime,
       clientEntry,
       cssPath,
+      identityProjectionRuntime,
     });
     const stopped = installAppStopBarrier(
       mounted,
@@ -461,497 +232,8 @@ export async function createApp(userConfig: AppConfig) {
     );
     return installAppSignalLifecycle(stopped);
   } catch (error) {
-    return cleanupFailedAppCreation({
-      startupError: error,
-      runtime,
-      sqlite,
-      ownsSqlite,
-      defaultDatabaseRuntime,
-      databaseManager,
-    });
+    return databaseBootstrap.fail(error);
   }
-}
-
-interface FailedAppCreationCleanupInput {
-  startupError: unknown;
-  runtime: ZeroAppRuntime;
-  sqlite: PlatformSQLiteService;
-  ownsSqlite: boolean;
-  defaultDatabaseRuntime: DatabaseRuntime | null;
-  databaseManager: DatabaseManager | null;
-}
-
-async function cleanupFailedAppCreation({
-  startupError,
-  runtime,
-  sqlite,
-  ownsSqlite,
-  defaultDatabaseRuntime,
-  databaseManager,
-}: FailedAppCreationCleanupInput): Promise<never> {
-  const failures = [startupError];
-  try {
-    await runtime.dispose();
-  } catch (error) {
-    failures.push(error);
-  }
-  try {
-    if (databaseManager) await databaseManager.close();
-    else if (defaultDatabaseRuntime) defaultDatabaseRuntime.close();
-    else if (ownsSqlite) sqlite.close();
-  } catch (error) {
-    failures.push(error);
-  }
-  if (failures.length === 1) throw startupError;
-  throw new AggregateError(
-    failures,
-    '[app] App creation failed and one or more owned resources also failed to close.',
-  );
-}
-
-/**
- * Lazy Sync hydration uses `/api/data`. A sync-only resource deliberately
- * denies that HTTP surface, so it must be guaranteed to remain full-sync.
- */
-function assertResourceExposureLoadingCompatibility(
-  registry: ReturnType<typeof createResourceRegistry>,
-  config: ReturnType<typeof resolveConfig>,
-  tenantDatabaseTables?: ReadonlySet<string>,
-): void {
-  for (const resource of registry.list()) {
-    if (resource.exposure.kind !== 'sync') continue;
-    const mode = config.declaredSyncModes.get(resource.table)
-      ?? config.syncDefaults.defaultMode;
-    const tableDefault = config.syncDefaults.tables.get(resource.table);
-    // Physical tenant tables have no authoritative default-database row count,
-    // so their `auto` mode is always resolved to lazy. Keep this startup fence
-    // aligned with resolveTenantDatabaseTableMode(): autoLazy.action only
-    // controls shared/default tables and cannot make physical auto full-sync.
-    const autoCanResolveLazy = tenantDatabaseTables?.has(resource.table)
-      || (tableDefault?.action ?? config.syncDefaults.action) === 'lazy';
-    if (mode !== 'lazy' && !(mode === 'auto' && autoCanResolveLazy)) continue;
-
-    throw new Error(
-      `[resources] Sync-only resource "${resource.name}" cannot use ${mode} loading because lazy Sync hydration requires /api/data, which exposure: "sync" denies. `
-      + 'Use exposure: "all" or configure this table for guaranteed full Sync.',
-    );
-  }
-}
-
-interface MountPlatformAppInput {
-  app: Elysia;
-  runtime: ZeroAppRuntime;
-  syncDB: ReactiveDB;
-  config: ReturnType<typeof resolveConfig>;
-  syncPolicy: ReturnType<typeof combineSyncPolicies>;
-  resourceRegistry: ReturnType<typeof createResourceRegistry>;
-  resourceAuthConfig: ReturnType<typeof resolveAuthBehaviorConfig>;
-  tenantDatabaseTables?: ReadonlySet<string>;
-  emailRuntime: ReturnType<typeof createEmailRuntime>;
-  clientEntry?: string;
-  cssPath?: string;
-}
-
-function shouldRunMigrations(sqlite: PlatformSQLiteService, migrate: boolean): boolean {
-  return migrate && sqlite.mode !== 'ephemeral';
-}
-
-async function mountPlatformApp({
-  app,
-  runtime,
-  syncDB,
-  config,
-  syncPolicy,
-  resourceRegistry,
-  resourceAuthConfig,
-  tenantDatabaseTables,
-  emailRuntime,
-  clientEntry,
-  cssPath,
-}: MountPlatformAppInput) {
-  const getAppAuthStore = () => runtime.get(ZERO_AUTH_STORE);
-  const getAppTokenService = () => runtime.get(ZERO_AUTH_TOKEN_SERVICE);
-  const getAppRequestCredentialResolver = () => (
-    runtime.get(ZERO_AUTH_REQUEST_CREDENTIAL_RESOLVER)
-  );
-  const getAppAuthorizationKernel = () => runtime.get(ZERO_AUTHORIZATION_KERNEL);
-  const getAppRoleAssignments = () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE);
-  const observabilityRuntime = runtime.require(ZERO_OBSERVABILITY_RUNTIME);
-  const managedStartup: {
-    auth: AuthRuntime | null;
-    kv: KvService | null;
-    workflows: (() => Promise<void>) | null;
-  } = { auth: null, kv: null, workflows: null };
-
-  // 1.5. Platform tokens — generic action/resume token service for auth and app flows
-  app.use(createPlatformTokenPlugin({ db: syncDB, runtime }));
-
-  app.onStart(() => {
-    const resolution = resolveTableSyncModes(
-      config,
-      syncDB,
-      undefined,
-      {
-        tenantDatabaseTables,
-        observability: runtime.get(ZERO_OBSERVABILITY_RUNTIME),
-      },
-    );
-    applyTableSyncResolution(config, resolution);
-    addPlatformSnapshotTables(config.snapshotTables);
-  });
-
-  // 2. Auth — optional, mounted before middleware
-  if (config.auth !== false) {
-    app.use(
-      createAuthPlugin({
-        db: syncDB,
-        runtime,
-        emailRuntime,
-        accessTokenTTL: config.auth.accessTokenTTL,
-        refreshTokenTTL: config.auth.refreshTokenTTL,
-        audit: config.auth.audit,
-        tenancy: config.auth.tenancy,
-        authorization: config.auth.authorization,
-        bootstrap: config.auth.bootstrap,
-        registration: config.auth.registration,
-        requestAdmission: config.auth.requestAdmission,
-        account: config.auth.account,
-        mfa: config.auth.mfa,
-        accountEmails: config.auth.accountEmails,
-        branding: config.auth.branding,
-        emails: config.auth.emails,
-        userProperties: config.auth.userProperties,
-        strictUserProperties: config.auth.strictUserProperties,
-        nativeApps: config.auth.nativeApps,
-        apiKeys: config.auth.apiKeys,
-        nativeIssuer: resourceAuthConfig.nativeApps.issuer
-          ?? nativeIssuerFromPublicUrl(config.app.publicUrl),
-        nativeAudience: config.app.publicUrl?.replace(/\/+$/, ''),
-        onRuntimeCreated(created) {
-          managedStartup.auth = created;
-        },
-        loginPath: config.loginPath,
-        registrationPath: config.registrationPath,
-      })
-    );
-
-    // Auth middleware — resolves authContext + requireAuth/requireAdmin globally
-    app.use(createAuthMiddleware(getAppTokenService, {
-      getRequestCredentialResolver: getAppRequestCredentialResolver,
-      getAuthorizationKernel: () => runtime.get(ZERO_AUTHORIZATION_KERNEL),
-      getPropertyStore: getAppAuthStore,
-      getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
-    }));
-  }
-
-  // 2.5. Observability — default sink endpoint + global error reporting
-  app.use(createObservabilityPlugin({
-    config: config.observability,
-    runtime: observabilityRuntime,
-    authEnabled: config.auth !== false,
-  }));
-
-  // 2.6. AI — optional internal provider service for loaders, jobs, workflows, and plugins
-  if (config.ai !== false) {
-    app.use(createAIPlugin({
-      config: config.ai,
-      authEnabled: config.auth !== false,
-      runtime,
-    }));
-  }
-
-  // 2.7. Vector store — optional local zvec service for loaders, jobs, workflows, and plugins
-  if (config.vector !== false) {
-    app.use(createVectorPlugin({
-      config: config.vector,
-      runtime,
-    }));
-  }
-
-  // 2.75. PDF — lazy browser-grade renderer for server code and workflows
-  if (config.pdf !== false) {
-    app.use(createPdfPlugin({ config: config.pdf, runtime }));
-  }
-
-  // 2.8. KV/cache — memory-first app cache with journal/checkpoint recovery
-  if (config.kv !== false) {
-    app.use(createKvPlugin({
-      ...config.kv,
-      runtime,
-      onServiceCreated(service) {
-        managedStartup.kv = service;
-      },
-    }));
-  }
-
-  // 3. Scheduler — provides cron job registration for other plugins
-  const appScheduler = new SchedulerService();
-  app.use(createSchedulerPlugin({
-    runtime,
-    getTokenService: getAppTokenService,
-    service: appScheduler,
-  }));
-
-  // 4. Notifications — depends on auth + scheduler
-  if (config.auth !== false) {
-    app.use(createNotificationPlugin({
-      db: syncDB,
-      runtime,
-      getTokenService: getAppTokenService,
-      authorization: {
-        getRequestCredentialResolver: getAppRequestCredentialResolver,
-        getAuthorizationKernel: () => runtime.get(ZERO_AUTHORIZATION_KERNEL),
-        getPropertyStore: getAppAuthStore,
-        getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
-      },
-      getScheduler: () => appScheduler,
-    }));
-  }
-
-  // 4.5. Rooms — depends on auth
-  if (config.auth !== false) {
-    app.use(createRoomPlugin({
-      db: syncDB,
-      runtime,
-      getTokenService: getAppTokenService,
-      authorization: {
-        getRequestCredentialResolver: getAppRequestCredentialResolver,
-        getAuthorizationKernel: () => runtime.get(ZERO_AUTHORIZATION_KERNEL),
-        getPropertyStore: getAppAuthStore,
-        getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
-      },
-    }));
-  }
-
-  // 5. Storage — workflow recovery may need its scoped storage facade
-  if (config.auth !== false) {
-    app.use(createStoragePlugin({
-      db: syncDB,
-      localDir: config.storageDir,
-      signingSecret: config.storage.signingSecret,
-      defaultPresignedTTL: config.storage.defaultPresignedTTL,
-      runtime,
-      getTokenService: getAppTokenService,
-      authorization: {
-        getRequestCredentialResolver: getAppRequestCredentialResolver,
-        getAuthorizationKernel: () => runtime.get(ZERO_AUTHORIZATION_KERNEL),
-        getPropertyStore: getAppAuthStore,
-        getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
-      },
-      getUserProperties: (userId) => getAppAuthStore()?.getProperties(userId) ?? {},
-      isPolicyTrustedProperty: (key) => {
-        const field = resourceAuthConfig.userProperties[key];
-        return field ? isPolicyTrustedUserProperty(field) : false;
-      },
-    }));
-  }
-
-  // 6. Workflows — depends on auth + scheduler + scoped service providers
-  if (config.auth !== false) {
-    let appWorkflowService: WorkflowService | null = null;
-    app.use(createWorkflowPlugin({
-      db: syncDB,
-      runtime,
-      executionServices: createWorkflowExecutionServiceProvider({ runtime }),
-      ensureAuthReady: async () => {
-        if (!managedStartup.auth) {
-          throw new Error('[app] Auth runtime is unavailable for workflow startup.');
-        }
-        await managedStartup.auth.start();
-      },
-      getTokenService: getAppTokenService,
-      authorization: {
-        getRequestCredentialResolver: getAppRequestCredentialResolver,
-        getAuthorizationKernel: () => runtime.get(ZERO_AUTHORIZATION_KERNEL),
-        getPropertyStore: getAppAuthStore,
-        getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
-      },
-      onServiceCreated(service) {
-        appWorkflowService = service;
-      },
-      onInitializerCreated(initialize) {
-        managedStartup.workflows = initialize;
-      },
-    }));
-
-    // Register workflow polling jobs after scheduler is available
-    appScheduler.register({
-      name: 'workflow-retries',
-      pattern: '* * * * *', // every minute
-      run: async () => {
-        const svc = appWorkflowService;
-        if (svc) await svc.pollRetries();
-      },
-    });
-    appScheduler.register({
-      name: 'workflow-timeouts',
-      pattern: '* * * * *',
-      run: () => {
-        const svc = appWorkflowService;
-        if (svc) svc.pollTimeouts();
-      },
-    });
-  }
-
-  // 6.7. Data query — lazy-table reads plus registered resource read policy
-  app.use(
-    createDataQueryPlugin({
-      queryableTables: config.lazyTables,
-      tableColumns: config.tableColumns,
-      policy: syncPolicy,
-      getTokenService: config.auth !== false ? getAppTokenService : undefined,
-      getRequestCredentialResolver: config.auth !== false
-        ? getAppRequestCredentialResolver
-        : undefined,
-      getUserStore: config.auth !== false ? getAppAuthStore : undefined,
-      getAuthorizationKernel: config.auth !== false
-        ? getAppAuthorizationKernel
-        : undefined,
-      getRoleAssignments: config.auth !== false ? getAppRoleAssignments : undefined,
-      getDB: () => syncDB,
-      getDatabaseManager: () => runtime.get(ZERO_DATABASE_MANAGER),
-      resourceRegistry,
-      resourceAuthConfig,
-      tenancyMode: resourceAuthConfig.tenancy.mode,
-      managedTables: new Set(Object.keys(config.tables)),
-      observability: runtime.get(ZERO_OBSERVABILITY_RUNTIME),
-    })
-  );
-
-  // 6.8. Generated resource CRUD — resource policy enforced server-side
-  if (config.resourceRoutes !== false) {
-    app.use(
-      createResourceCrudPlugin({
-        registry: resourceRegistry,
-        tables: config.tables,
-        authConfig: resourceAuthConfig,
-        tenancyMode: resourceAuthConfig.tenancy.mode,
-        getTokenService: config.auth !== false ? getAppTokenService : undefined,
-        getRequestCredentialResolver: config.auth !== false
-          ? getAppRequestCredentialResolver
-          : undefined,
-        getUserStore: config.auth !== false ? getAppAuthStore : undefined,
-        getAuthorizationKernel: config.auth !== false
-          ? getAppAuthorizationKernel
-          : undefined,
-        getRoleAssignments: config.auth !== false ? getAppRoleAssignments : undefined,
-        getDB: () => syncDB,
-        observability: runtime.get(ZERO_OBSERVABILITY_RUNTIME),
-        getTenantDatabaseClient: ({ scope, assertCurrentAuthoritySync }) =>
-          createResourceTenantDatabaseAccess({
-            manager: runtime.get(ZERO_DATABASE_MANAGER),
-            scope: trustedSystemServiceDataScope({
-              scopeKind: 'tenant',
-              tenantId: scope.tenantId,
-            }),
-            assertCurrentAuthoritySync,
-          }),
-        emitCode: (definition, options) => emitPlatformCodeTo(
-          runtime.require(ZERO_OBSERVABILITY_RUNTIME),
-          definition,
-          options,
-        ),
-        ...config.resourceRoutes,
-      })
-    );
-  }
-
-  // 6.9. App-owned backend extensions — mounted before health and file-router catch-all
-  const serverRoutePlugins = await loadServerRoutePlugins({
-    runtime,
-    extensionDirs: [
-      { kind: 'plugins', dir: config.serverPluginsDir },
-      { kind: 'middleware', dir: config.serverMiddlewareDir },
-      { kind: 'endpoints', dir: config.serverEndpointsDir },
-      { kind: 'routes', dir: config.serverRoutesDir },
-    ],
-  });
-  for (const serverRoutePlugin of serverRoutePlugins) {
-    app.use(serverRoutePlugin as any);
-  }
-
-  // 7. Health check — always available
-  app.get('/api/health', () => ({ status: 'ok', uptime: process.uptime() }));
-
-  // 8. File-based router — LAST (catch-all)
-  // URL is derived from each request in the router plugin (not hardcoded)
-  app.use(
-    createRouterPlugin({
-      observability: observabilityRuntime,
-      appDir: config.appDir,
-      outDir: config.outDir,
-      clientEntry,
-      cssPath,
-      platformConfig: {
-        url: '', // Derived from request.url at runtime
-        auth: config.auth !== false,
-        email: emailRuntime.enabled,
-        stateSync: config.stateSync,
-        tableSyncModes: config.resolvedSyncModes,
-        tableSyncPlanes: resolveBrowserSyncTablePlanes(
-          Object.keys(config.tables),
-          resourceRegistry,
-        ),
-        managedTableNames: Object.keys(config.tables).sort(),
-        publicPaths: config.publicPaths,
-        routeAuth: config.routeAuth,
-        loginPath: config.loginPath,
-        postLoginPath: config.postLoginPath,
-      },
-      ...(config.auth !== false
-        ? {
-            authorization: {
-              getKernel: () => runtime.get(ZERO_AUTHORIZATION_KERNEL),
-              getPropertyStore: getAppAuthStore,
-              getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
-            },
-          }
-        : {}),
-      // When auth is enabled, protect all page routes by default
-      ...(config.auth !== false
-        ? {
-            authGuard: {
-              routeAuth: config.routeAuth,
-              publicPaths: config.publicPaths,
-              loginPath: config.loginPath,
-              postLoginPath: config.postLoginPath,
-              resolvePageAuth: async (request: Request) => {
-                const auth = await resolvePageSessionAuth(
-                  request,
-                  getAppTokenService()
-                );
-                return auth ? { ...auth } : null;
-              },
-              clearRejectedPageSession: rejectedPageSessionCookieHeader,
-            },
-          }
-        : {}),
-      ...(config.sitemap
-        ? {
-            sitemap: {
-              config: config.sitemap,
-              publicUrl: config.app.publicUrl,
-              routeAuth: config.routeAuth,
-              publicPaths: config.publicPaths,
-            },
-          }
-        : {}),
-    })
-  );
-
-  // Elysia's Bun adapter does not await async onStart hooks. Managed apps
-  // complete every fallible async owner before createApp publishes a
-  // listenable server, while each plugin keeps an idempotent onStart hook for
-  // standalone composition.
-  await managedStartup.auth?.start();
-  await managedStartup.kv?.start();
-  await managedStartup.workflows?.();
-
-  return app;
-}
-
-function nativeIssuerFromPublicUrl(publicUrl: string | undefined): string | undefined {
-  return publicUrl ? `${publicUrl.replace(/\/+$/, '')}/auth` : undefined;
 }
 
 /** Remove createApp-only token settings before strict auth behavior resolution. */

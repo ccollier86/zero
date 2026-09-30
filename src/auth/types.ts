@@ -1,4 +1,5 @@
 import type { ReactiveDB } from '../sync/reactive-db';
+import type { IdentityProjectionLifecycleHook } from './identity-projection-types';
 import type { EmailRuntime } from '../email/types';
 import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 import type { PlatformTokenService } from '../tokens/token-service';
@@ -20,6 +21,7 @@ import type { NativeAuthConfig, ResolvedNativeAuthConfig } from './native/types'
 import type { AuthAuditConfig, ResolvedAuthAuditConfig } from './auth-audit-types';
 import type { TenantKind } from './tenancy/tenancy-types';
 import type { AuthPlatformCodeEmitter } from './auth-observability';
+import type { DataRealmReadinessService } from './data-realm-readiness.plugin';
 
 // ─── Auth Context ──────────────────────────────────────────────────────────
 
@@ -721,6 +723,12 @@ export interface NormalizedAuthBehaviorConfig extends ResolvedAuthBehaviorConfig
 export interface AuthPluginConfig extends AuthBehaviorConfig {
   /** Shared ReactiveDB instance — auth defines its tables here */
   db: ReactiveDB;
+
+  /** @internal Synchronous system-db outbox hook installed by createApp. */
+  identityProjection?: IdentityProjectionLifecycleHook;
+
+  /** @internal Caller-derived application/Fabric provisioning readiness. */
+  dataRealmReadiness?: DataRealmReadinessService;
 
   /** Managed app-local service/lifecycle container. */
   runtime?: ZeroAppRuntime;

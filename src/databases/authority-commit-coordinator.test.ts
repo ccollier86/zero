@@ -6,6 +6,22 @@ import { DatabaseError } from './database-error';
 import { MAX_RUNTIME_TIMER_INTERVAL_MS } from '../runtime/timer-limits';
 
 describe('AuthorityCommitCoordinator', () => {
+  test('offers a non-blocking shared lease without bypassing exclusive priority', async () => {
+    const coordinator = new AuthorityCommitCoordinator();
+    const shared = coordinator.tryAcquireShared();
+    expect(shared?.mode).toBe('shared');
+    const exclusive = coordinator.acquireExclusive();
+    expect(coordinator.tryAcquireShared()).toBeNull();
+    shared?.release();
+    const exclusiveLease = await exclusive;
+    expect(coordinator.tryAcquireShared()).toBeNull();
+    exclusiveLease.release();
+    const next = coordinator.tryAcquireShared();
+    expect(next?.mode).toBe('shared');
+    next?.release();
+    await coordinator.close();
+  });
+
   test('allows concurrent shared leases and gives a queued exclusive lease preference over later shared work', async () => {
     const coordinator = new AuthorityCommitCoordinator();
     const first = await coordinator.acquireShared();

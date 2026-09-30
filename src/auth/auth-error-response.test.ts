@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 
+import { DatabaseError } from '../databases/database-error';
 import { MemoryEventStore, OBS_CODES } from '../observability';
 import { ZERO_OBSERVABILITY_RUNTIME } from '../runtime/service-keys';
 import { ZeroAppRuntime } from '../runtime/zero-app-runtime';
@@ -72,6 +73,63 @@ describe('auth HTTP error responses', () => {
         authCode: 'AUTH_STATE_INVARIANT_FAILED',
       });
       expect(failure?.error).toBeUndefined();
+    } finally {
+      await appRuntime.dispose();
+      db.dispose();
+    }
+  });
+
+  test('maps retryable authority-fence contention to stable auth conflict', async () => {
+    const db = createReactiveDB({ mode: 'memory' });
+    const appRuntime = new ZeroAppRuntime('auth-authority-fence-conflict');
+    const events = new MemoryEventStore();
+    appRuntime.set(ZERO_OBSERVABILITY_RUNTIME, {
+      sink: events,
+      store: events,
+      config: { console: false },
+    });
+    const app = new Elysia().use(createAuthPlugin({
+      db,
+      runtime: appRuntime,
+      bootstrap: 'public',
+      onRuntimeCreated(runtime) {
+        runtime.assertCurrentProfile = () => {
+          throw new DatabaseError(
+            'DATABASE_CONFLICT',
+            'Final authority commit edge is currently leased.',
+            { retryable: true, outcome: 'not-committed' },
+          );
+        };
+      },
+    }));
+
+    try {
+      const response = await app.handle(new Request('http://zero.test/auth/missing'));
+      const body = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(body).toEqual({
+        error: 'Authentication update conflicted with an active data '
+          + 'commit; retry the request',
+        code: 'AUTH_COMMIT_CONFLICT',
+        retryable: true,
+      });
+      const [conflict] = events.query({
+        code: OBS_CODES.AUTH_STATE_CONFLICT.code,
+      }).events;
+      expect(conflict?.metadata).toEqual({
+        method: 'GET',
+        path: '/auth/missing',
+        status: 409,
+        authCode: 'AUTH_COMMIT_CONFLICT',
+        databaseCode: 'DATABASE_CONFLICT',
+        retryable: true,
+        outcome: 'not-committed',
+      });
+      expect(conflict?.error).toBeUndefined();
+      expect(events.query({
+        code: OBS_CODES.APP_REQUEST_FAILED.code,
+      }).events).toHaveLength(0);
     } finally {
       await appRuntime.dispose();
       db.dispose();

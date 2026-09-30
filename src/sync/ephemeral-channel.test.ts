@@ -256,6 +256,81 @@ describe('managed ephemeral topic authorization', () => {
     });
   });
 
+  test('observes periodic sweep failure before fail-closed socket cleanup', async () => {
+    let authorizationCalls = 0;
+    const cleanupFailure = new Error('private manager failure');
+    const order: string[] = [];
+    let observedFailure: unknown;
+    let observedTrigger: string | undefined;
+    let releaseObserved!: () => void;
+    const observed = new Promise<void>((resolve) => { releaseObserved = resolve; });
+    const manager = new EphemeralStateManager(1_000_000);
+    const originalUnsubscribe = manager.unsubscribe.bind(manager);
+    const channel = new EphemeralChannel(manager, {
+      async authorize(context) {
+        authorizationCalls += 1;
+        return authorizationCalls === 1
+          ? {
+              ok: true,
+              namespace: `periodic:${context.topic}`,
+              keyOwnership: 'actor',
+            }
+          : {
+              ok: false,
+              code: 'EPHEMERAL_FORBIDDEN',
+              reason: 'Periodic authority was revoked',
+            };
+      },
+    }, {
+      revalidateIntervalMs: 10,
+      onRevalidationFailure(error, trigger) {
+        order.push('report');
+        observedFailure = error;
+        observedTrigger = trigger;
+        releaseObserved();
+        throw new Error('private observability failure');
+      },
+    });
+    const socket = createSocket('periodic-failure', 'alice');
+    (socket.ws as unknown as {
+      close(code: number, reason: string): void;
+    }).close = (code, reason) => {
+      order.push(`close:${code}:${reason}`);
+      throw new Error('private transport close failure');
+    };
+    manager.unsubscribe = (namespace, connectionId) => {
+      if (authorizationCalls > 1) throw cleanupFailure;
+      originalUnsubscribe(namespace, connectionId);
+    };
+    managers.push(manager);
+    channels.push(channel);
+
+    await channel.subscribe(socket.ws, 'custom:periodic');
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        observed,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('Periodic revalidation did not run.')),
+            1_000,
+          );
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+
+    expect(observedFailure).toBe(cleanupFailure);
+    expect(observedTrigger).toBe('periodic');
+    await Bun.sleep(30);
+    expect(order).toEqual([
+      'report',
+      'close:1011:Ephemeral authority revalidation failed',
+    ]);
+    expect(socket.ws.data.ephemeralTopics.size).toBe(0);
+  });
+
   test('isolates identical room and custom topics across active tenants', async () => {
     const policy = createManagedEphemeralTopicPolicy({
       getRoomService: () => ({

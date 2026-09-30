@@ -26,9 +26,10 @@ import { resolveConfig, createApp } from '@zero/framework/server';
 import { tables } from './lib/schemas';
 
 const config = resolveConfig({
-  // File mode is required for durability across process restarts and for
-  // multiple Zero runtimes serving this same application database.
-  db: { mode: './data/app.sqlite' },
+  db: { mode: 'file', path: './data/app.sqlite' },
+  // State Sync is Zero-owned user state, so durability and shared-runtime
+  // coordination follow the separate system database.
+  systemDb: { mode: 'file', path: './data/zero.system.sqlite' },
   tables,
   auth: true,          // Required: state is keyed by authenticated scope + user
   stateSync: true,     // Enables scoped-user KV state
