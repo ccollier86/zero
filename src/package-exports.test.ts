@@ -223,6 +223,7 @@ import { ModalManager } from '@zero/framework/modals';
 import { AppProvider } from '@zero/framework/react/app-provider';
 import { useCollection as useCollectionSubpath, useResourceList as useResourceListSubpath } from '@zero/framework/react/hooks';
 import {
+  ApiError,
   Button,
   AppShell,
   AnimatedList,
@@ -257,6 +258,7 @@ import {
   useCollection,
   useNativeAuthContinuation,
   useResourceList,
+  unwrap,
   WavyBackground,
 } from '@zero/framework/react';
 import { createSyncClient } from '@zero/framework/sync/client';
@@ -281,6 +283,7 @@ import { createIdentityId } from '@zero/framework/sync/identity';
 	};
 
 	export const clientSymbols = {
+  ApiError,
   Button,
   AnimatedList,
   AnimatedListCard,
@@ -353,6 +356,7 @@ import { createIdentityId } from '@zero/framework/sync/identity';
   useResourceList,
   useResourceListSubpath,
   useDisclosure,
+  unwrap,
   FlipWords,
   WavyBackground,
   projectKanbanMove,

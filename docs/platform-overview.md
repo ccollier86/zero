@@ -413,16 +413,35 @@ is mounted. See [PDF Rendering](./pdf.md).
 
 ## Workflows — Durable Multi-Step Processes
 
-Define workflows as step graphs with conditions, branching, retry with exponential backoff, event-based waiting, and crash recovery.
+Register handlers and definitions with `AppConfig.workflows.register`. Zero
+awaits registration, preflights live handlers, recovers in-flight work, and
+only then publishes the runtime or accepts workflow requests. Within each run,
+the first unfinished step is a strict frontier: retries, event waits, and
+failures cannot be passed by later steps.
 
 ```tsx
-const { workflow, steps } = useWorkflow(workflowId);
+const {
+  instance,
+  steps,
+  isWaiting,
+  isRetrying,
+  isCancelled,
+} = useWorkflow(workflowId);
 const { start, cancel, pause, resume, sendEvent } = useWorkflowActions();
 
-await start('onboarding', { userId: 'alice' });
+const instanceId = await start('onboarding', { userId: 'alice' });
+const matched = await sendEvent(instanceId, 'approved', { reviewer: 'sam' });
 ```
 
-SQLite-backed — state survives server restart. Scheduler polls for retries and timeouts every minute.
+Runtime state is SQLite-backed and delivered to hooks through owner-scoped
+ReactiveDB Sync; hooks do not poll. Event delivery claims, step-attempt fences,
+deadlines, retry state, and pause boundaries survive restart. The scheduler's
+minute jobs discover due retries and timeouts, while normal execution still
+enforces their exact persisted timestamps. Definition start/inspection access
+can be declared for authenticated users, the global admin, or app roles.
+Definitions remain server-only and are excluded from Sync; executable
+`steps_json` and `wait_event` topology is also removed from browser runtime
+rows. See [Durable Workflows](./workflows.md).
 
 ---
 

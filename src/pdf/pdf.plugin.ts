@@ -29,11 +29,11 @@ export interface PdfPluginConfig extends PdfServiceOptions {
  */
 export function createPdfPlugin(options: PdfPluginConfig) {
   const service = options.service ?? new PdfService(options.config, options);
-  activePdfService = service;
 
   return new Elysia({ name: 'zero-platform-pdf' })
     .decorate('pdf', service)
     .onStart(() => {
+      activePdfService = service;
       emitPlatformCode(OBS_CODES.PDF_CONFIGURED, {
         metadata: {
           renderer: service.status().renderer,

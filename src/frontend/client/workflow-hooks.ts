@@ -15,24 +15,27 @@ import { useQuery, useRow } from './data-hooks';
 import { unwrap } from './api';
 import type {
   WorkflowStatus,
-  WorkflowInstanceRecord,
-  WorkflowStepRecord,
+  WorkflowClientInstanceRecord,
+  WorkflowClientStepRecord,
 } from '../../workflows/types';
 
 // ─── Types ───────────────────────────────────────────
 
 export interface UseWorkflowResult {
-  instance: WorkflowInstanceRecord | null;
-  steps: WorkflowStepRecord[];
-  currentStep: WorkflowStepRecord | null;
+  instance: WorkflowClientInstanceRecord | null;
+  steps: WorkflowClientStepRecord[];
+  currentStep: WorkflowClientStepRecord | null;
   isRunning: boolean;
   isComplete: boolean;
   isFailed: boolean;
   isPaused: boolean;
+  isCancelled: boolean;
+  isWaiting: boolean;
+  isRetrying: boolean;
 }
 
 export interface UseWorkflowListResult {
-  instances: WorkflowInstanceRecord[];
+  instances: WorkflowClientInstanceRecord[];
   count: number;
 }
 
@@ -41,7 +44,7 @@ export interface WorkflowActions {
   cancel: (instanceId: string) => Promise<void>;
   pause: (instanceId: string) => Promise<void>;
   resume: (instanceId: string) => Promise<void>;
-  sendEvent: (instanceId: string, eventName: string, payload?: unknown) => Promise<void>;
+  sendEvent: (instanceId: string, eventName: string, payload?: unknown) => Promise<boolean>;
 }
 
 // ─── Hooks ───────────────────────────────────────────
@@ -51,16 +54,16 @@ export interface WorkflowActions {
  * when the sync engine broadcasts changes.
  */
 export function useWorkflow(instanceId: string | null): UseWorkflowResult {
-  const instance = useRow<WorkflowInstanceRecord & Row>(
+  const instance = useRow<WorkflowClientInstanceRecord & Row>(
     'workflow_instances',
     instanceId ?? '',
   );
 
   const stepFilter = useCallback(
-    (s: WorkflowStepRecord & Row) => s.instance_id === instanceId,
+    (s: WorkflowClientStepRecord & Row) => s.instance_id === instanceId,
     [instanceId],
   );
-  const steps = useQuery<WorkflowStepRecord & Row>('workflow_steps', stepFilter);
+  const steps = useQuery<WorkflowClientStepRecord & Row>('workflow_steps', stepFilter);
 
   const sorted = useMemo(
     () => [...steps].sort((a, b) => a.step_index - b.step_index),
@@ -68,8 +71,21 @@ export function useWorkflow(instanceId: string | null): UseWorkflowResult {
   );
 
   const currentStep = useMemo(
-    () => sorted.find(s => s.status === 'running' || s.status === 'waiting') ?? null,
-    [sorted],
+    () => {
+      const indexed = sorted.find(
+        (step) => step.step_index === instance?.current_step,
+      );
+      if (indexed && indexed.status !== 'completed' && indexed.status !== 'skipped') {
+        return indexed;
+      }
+      return sorted.find((step) =>
+        step.status === 'pending'
+        || step.status === 'running'
+        || step.status === 'waiting'
+        || step.status === 'failed'
+      ) ?? null;
+    },
+    [instance?.current_step, sorted],
   );
 
   return {
@@ -80,6 +96,9 @@ export function useWorkflow(instanceId: string | null): UseWorkflowResult {
     isComplete: instance?.status === 'completed',
     isFailed: instance?.status === 'failed',
     isPaused: instance?.status === 'paused',
+    isCancelled: instance?.status === 'cancelled',
+    isWaiting: currentStep?.status === 'waiting',
+    isRetrying: currentStep?.status === 'failed' && currentStep.retry_at !== null,
   };
 }
 
@@ -93,14 +112,17 @@ export function useWorkflowList(filter?: {
   const filterStatus = filter?.status;
   const filterName = filter?.name;
   const instanceFilter = useCallback(
-    (i: WorkflowInstanceRecord & Row) => {
+    (i: WorkflowClientInstanceRecord & Row) => {
       if (filterStatus && i.status !== filterStatus) return false;
       if (filterName && i.name !== filterName) return false;
       return true;
     },
     [filterStatus, filterName],
   );
-  const instances = useQuery<WorkflowInstanceRecord & Row>('workflow_instances', instanceFilter);
+  const instances = useQuery<WorkflowClientInstanceRecord & Row>(
+    'workflow_instances',
+    instanceFilter,
+  );
 
   const sorted = useMemo(
     () => [...instances].sort((a, b) =>
@@ -136,8 +158,9 @@ export function useWorkflowActions(): WorkflowActions {
   }, [client]);
 
   const sendEvent = useCallback(
-    async (instanceId: string, eventName: string, payload?: unknown): Promise<void> => {
-      unwrap(await client.api.workflows[instanceId].events.post({ eventName, payload }));
+    async (instanceId: string, eventName: string, payload?: unknown): Promise<boolean> => {
+      const result = unwrap(await client.api.workflows[instanceId].events.post({ eventName, payload }));
+      return Boolean((result as { matched?: boolean }).matched);
     },
     [client],
   );

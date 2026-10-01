@@ -18,10 +18,12 @@ export interface ProjectedSyncChange {
   ts: number;
 }
 
-/** Return only rows visible through an optional row filter. */
+/** Return only visible rows, applying any wire projection after authorization. */
 export function filterSyncRows(rows: readonly Row[], filter?: SyncRowFilter): Row[] {
   if (!filter) return [...rows];
-  return rows.filter((row) => filter.matches(row));
+  return rows
+    .filter((row) => filter.matches(row))
+    .map((row) => projectRow(row, filter));
 }
 
 /**
@@ -51,17 +53,27 @@ export function projectSyncChange(
 
   if (change.op === 'INSERT') {
     if (!currentMatches) return null;
-    return toProjectedChange(change, 'INSERT', change.row);
+    return toProjectedChange(change, 'INSERT', projectNullableRow(change.row, filter));
   }
 
   if (change.op === 'UPDATE') {
-    if (currentMatches) return toProjectedChange(change, 'UPDATE', change.row);
+    if (currentMatches) {
+      return toProjectedChange(change, 'UPDATE', projectNullableRow(change.row, filter));
+    }
     if (previousMatches) return toProjectedChange(change, 'DELETE', null);
     return null;
   }
 
   if (!previousMatches) return null;
   return toProjectedChange(change, 'DELETE', null);
+}
+
+function projectNullableRow(row: Row | null, filter: SyncRowFilter): Row | null {
+  return row ? projectRow(row, filter) : null;
+}
+
+function projectRow(row: Row, filter: SyncRowFilter): Row {
+  return filter.project?.(row) ?? row;
 }
 
 function toProjectedChange(

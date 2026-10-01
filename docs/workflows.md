@@ -1,308 +1,542 @@
-# Durable Workflow System
+# Durable Workflows
 
-**Location**: `src/workflows/`
-**Files**: 6 (types, registry, executor, service, plugin, barrel) + SDK + React hooks
-**Purpose**: Multi-step durable workflow engine with SQLite state, in-memory handler registry, automatic retry with exponential backoff, event-based step waiting, condition-based branching, and crash recovery.
+**Source:** `src/workflows/`
 
-## Architecture Overview
+Zero workflows are durable, sequential step graphs backed by SQLite. They
+support validated input, conditional steps, exponential retry, durable event
+waits, total step deadlines, pause/resume, cancellation, crash recovery, live
+owner-scoped Sync state, and stable HTTP and observability errors.
 
+Handlers are ordinary server functions. They can call app services, but they
+must treat external effects as at-least-once operations and use the supplied
+idempotency key where duplication would be unsafe.
+
+## Enable And Register
+
+Workflows are enabled by default when auth is enabled. Set `workflows: false`
+to omit the subsystem. Register every handler and definition through the app
+configuration callback:
+
+```ts
+import { t } from 'elysia';
+import { defineZeroConfig } from '@zero/framework/server';
+import { tables } from './db/schema';
+
+export default defineZeroConfig({
+  db: { mode: 'file', path: './data/app.db' },
+  tables,
+  auth: true,
+  workflows: {
+    register(registry) {
+      registry.registerHandler('load-account', async (ctx) => {
+        // attemptId, idempotencyKey, and signal are present at runtime.
+        const account = await loadAccount(
+          (ctx.input as { accountId: string }).accountId,
+          { signal: ctx.signal },
+        );
+        return account;
+      });
+
+      registry.registerHandler('notify-account', async (ctx) => {
+        const account = ctx.input as { id: string; email: string };
+        await sendAccountEmail(account, {
+          idempotencyKey: ctx.idempotencyKey,
+          signal: ctx.signal,
+        });
+        return { notified: account.id };
+      });
+
+      registry.create({
+        name: 'account-onboarding',
+        inputSchema: t.Object({ accountId: t.String({ minLength: 1 }) }),
+        steps: [
+          { name: 'Load account', handler: 'load-account' },
+          { name: 'Notify account', handler: 'notify-account', retries: 3 },
+        ],
+      });
+    },
+  },
+});
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Workflow Plugin                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐ │
-│  │   Registry    │  │   Service    │  │   Executor    │ │
-│  │ (handlers +   │  │ (lifecycle   │  │ (single step  │ │
-│  │  definitions) │  │  orchestrate)│  │  execution)   │ │
-│  └──────────────┘  └──────────────┘  └───────────────┘ │
-│                          │                               │
-│                    ┌─────┴──────┐                        │
-│                    │ ReactiveDB │ (4 tables)             │
-│                    └────────────┘                        │
-└─────────────────────────────────────────────────────────┘
-```
 
-The registry holds handler functions and workflow definitions in memory. The service orchestrates full lifecycle operations (run/start, advance, stop/cancel, retry polling). The executor runs a single step, handling waitFor/condition/retry logic. All state is persisted to SQLite via ReactiveDB — tables have no `_` prefix, so changes broadcast through the sync layer for real-time observability.
+Register a handler before any definition that references it. `create()` is the
+canonical definition method; `registerWorkflow()` remains an alias. Handler
+names and workflow names must be unique within one registry. Registration
+rejects malformed retry/deadline values, empty event names, missing handlers,
+and invalid condition syntax before startup recovery can begin.
 
-## Data Flow
+`createWorkflowPlugin()` constructs and publishes its registry synchronously
+during composition, before `listen()`. `getWorkflowRegistry()` therefore
+returns that registry while the plugin is composed and running, and returns
+`null` only when workflows are absent or stopped. Managed apps should prefer
+`workflows.register`; direct plugin composition can use the getter when needed.
+The getter's early availability is an integration seam, not a late-registration
+window: finish registering handlers and definitions before initialization and
+recovery. Do not mutate the registry from request handlers or post-start hooks.
 
-### Start Path
-1. **`run(name, input)`** — looks up definition by name from registry
-2. **Create instance** — inserts `workflow_instances` row with `status=running`
-3. **Create steps** — inserts one `workflow_steps` row per step definition, all `status=pending`
-4. **Execute first step** — calls `advance(instanceId)` to begin execution
+When upgrading a 1.3 app, move any handler/definition registration that ran in
+`onStart` or after `listen()` into `workflows.register`. Directly composed apps
+may instead register through `getWorkflowRegistry()` after `createApp()` has
+finished composition and before `listen()`. Post-listen registration is too
+late for deterministic recovery preflight.
 
-### Step Execution Path
-1. **Look up handler** — resolve handler name from registry
-2. **Check waitFor** — if step declares `waitFor` and no matching event exists, set `status=waiting` and return
-3. **Check condition** — evaluate expression against workflow input; if false, set `status=skipped` and advance to next step
-4. **Build StepContext** — chain I/O: step receives previous step's output as its input, plus full workflow input and any wait event payload
-5. **Execute handler** — call the registered async function with StepContext
-6. **On success** — set `status=completed`, store output, advance to next step
-7. **On failure** — if retries remaining, schedule retry with exponential backoff; otherwise fail the workflow
+## Startup And Shutdown Barrier
 
-### I/O Chaining
-Each step receives the previous step's output as its input. The first step receives the workflow-level input. This enables pipelines where data flows through transformations:
+Workflow startup is intentionally ordered:
 
-```
-Step 1 (verify) → { verified: true, policyNumber: "ABC123" }
-                    ↓ (becomes input to step 2)
-Step 2 (approve) → { approved: true }
-                    ↓ (becomes input to step 3)
-Step 3 (create)  → { recordId: "R-001" }
-                    ↓ (becomes workflow output)
-```
+1. Create the registry synchronously.
+2. Invoke and await `workflows.register`, including an async callback.
+3. Wait for managed auth services.
+4. Construct the service and validate every nonterminal persisted run, its
+   step topology, and all referenced handlers as one recovery set.
+5. Recover in-flight work.
+6. Publish `getWorkflowService()` and accept workflow requests.
 
-### Event Path
-1. **`sendEvent(instanceId, eventName, payload)`** — inserts into `workflow_events`
-2. **Find waiting step** — looks for a step with `status=waiting` and matching `wait_event`
-3. **Execute step** — the event payload is available via `ctx.waitEvent` inside the handler
+`createApp()` installs a real readiness barrier around the platform and
+app-owned start hooks registered before workflows. Promise-returning hooks must
+settle before recovery handlers run, and requests entering during startup await
+that same barrier and single-flight initializer. A registration, dependency, or
+recovery failure keeps the service unpublished, emits a stable startup/recovery
+event, and stops the listener rather than serving a partially recovered
+runtime. Recovery preflight does not partially normalize otherwise valid runs
+when another run is corrupt or references a missing handler.
 
-### Retry Path
-1. **Step fails** — if `retries < maxRetries`, compute next `retry_at` with exponential backoff
-2. **Backoff formula** — `base * 2^attempt`, capped at 5 minutes (300,000ms)
-3. **`pollRetries()`** — scheduler finds failed steps with `retry_at <= now`, re-executes them
-4. **Exhausted** — if all retries consumed, step and workflow both marked `failed`
+Shutdown unregisters the workflow scheduler jobs, fences and aborts active
+attempts, waits for physical handler settlement, normalizes recoverable public
+state, and only then permits database teardown.
 
-### Timeout Path
-1. **Step starts** — if `timeoutMs` is set, `timeout_at` is computed and stored
-2. **`pollTimeouts()`** — scheduler finds running/waiting steps past their deadline
-3. **Expired** — step marked `failed` with timeout error, workflow fails
+## Definition And Step Contracts
 
-### Recovery Path (process restart)
-1. **`recoverInFlight()`** — finds all steps stuck in `status=running` (indicates mid-execution crash)
-2. **Reset to pending** — these steps are set back to `status=pending`
-3. **Re-advance** — all workflow instances with `status=running` are re-advanced from their current step
-
-## Database Schema
-
-Four tables, all without `_` prefix so ReactiveDB broadcasts changes through the sync layer.
-
-### workflow_definitions
-| Column | Type | Notes |
-|--------|------|-------|
-| definition_id | TEXT PK | UUID |
-| name | TEXT UNIQUE | Workflow name for lookup |
-| version | INTEGER | Schema version |
-| steps_json | TEXT | JSON array of StepDefinition |
-| input_schema | TEXT | Optional JSON schema for input validation |
-
-### workflow_instances
-| Column | Type | Notes |
-|--------|------|-------|
-| instance_id | TEXT PK | UUID |
-| definition_id | TEXT | FK to definitions |
-| name | TEXT | Workflow name (denormalized for queries) |
-| status | TEXT | WorkflowStatus enum |
-| current_step | INTEGER | Index of current/next step |
-| input | TEXT | JSON workflow input |
-| output | TEXT | JSON workflow output (set on completion) |
-| error | TEXT | Error message (set on failure) |
-| started_by | TEXT | Optional caller identifier |
-| created_at | TEXT | ISO timestamp |
-| updated_at | TEXT | ISO timestamp |
-
-### workflow_steps
-| Column | Type | Notes |
-|--------|------|-------|
-| step_id | TEXT PK | UUID |
-| instance_id | TEXT | FK to instances |
-| step_index | INTEGER | Ordered position |
-| step_name | TEXT | Human-readable step name |
-| status | TEXT | StepStatus enum |
-| input | TEXT | JSON step input (previous step's output) |
-| output | TEXT | JSON step output |
-| error | TEXT | Error message |
-| retries | INTEGER | Current retry count |
-| max_retries | INTEGER | Max retries allowed (default 3) |
-| retry_at | TEXT | ISO timestamp for next retry |
-| wait_event | TEXT | Event name this step waits for |
-| timeout_at | TEXT | ISO timestamp for step deadline |
-| created_at | TEXT | ISO timestamp |
-| updated_at | TEXT | ISO timestamp |
-
-### workflow_events
-| Column | Type | Notes |
-|--------|------|-------|
-| event_id | TEXT PK | UUID |
-| instance_id | TEXT | FK to instances |
-| event_name | TEXT | Event identifier |
-| payload | TEXT | JSON event payload |
-| sent_by | TEXT | Optional sender identifier |
-| created_at | TEXT | ISO timestamp |
-
-## Key Types
-
-```typescript
-// Status enums
-type WorkflowStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'paused';
-type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'waiting' | 'skipped';
-
-// Step definition (stored in workflow_definitions.steps_json)
+```ts
 interface StepDefinition {
   name: string;
-  handler: string;          // Key into handler registry
-  waitFor?: string;         // Event name to wait for
-  condition?: string;       // Expression evaluated against workflow input
-  timeoutMs?: number;       // Step deadline in milliseconds
-  maxRetries?: number;      // Override default retry count (default 3)
+  handler: string;
+  retries?: number;
+  backoffMs?: number;
+  timeoutMs?: number;
+  waitFor?: string;
+  condition?: string;
 }
 
-// Context passed to handler functions
-interface StepContext {
-  input: unknown;                           // Previous step's output (or workflow input for first step)
-  workflowInput: Record<string, unknown>;   // Original workflow-level input
-  waitEvent?: { payload: unknown };         // Event payload (if step was waiting)
-  instanceId: string;
-  stepIndex: number;
-}
-
-// Handler function signature
-type StepHandler = (ctx: StepContext) => Promise<unknown>;
-
-// Workflow definition (registered in registry)
 interface WorkflowDefinition {
   name: string;
   steps: StepDefinition[];
-  inputSchema?: Record<string, unknown>;    // Optional validation schema
+  inputSchema?: TSchema;
+  access?: {
+    start?: 'authenticated' | 'admin' | readonly string[];
+    inspect?: 'authenticated' | 'admin' | readonly string[];
+  };
 }
 ```
 
-## Service API
+`retries` currently sets the maximum total handler attempts, with a minimum of
+one, a default of three, and a registration-time ceiling of 1,000. `backoffMs`
+defaults to 1,000 ms; retry delays double from that base and cap at five minutes.
+A zero backoff retries through the same frontier pump immediately instead of
+waiting for the minute scheduler. A definition must contain at least one step.
+Workflow names, handler keys, and `waitFor` event identifiers are canonical
+identifiers and cannot contain surrounding whitespace. Unknown definition,
+access-policy, and step keys fail registration so misspelled declarative
+options cannot silently fall back to a less restrictive/default behavior.
 
-### Lifecycle Methods
+`inputSchema` is checked before an instance or any step rows are created. Input,
+event payloads, and handler outputs must be JSON-serializable.
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `run` | `(name, input, startedBy?) => instanceId` | Create instance + steps from definition, execute first step |
-| `advance` | `(instanceId) => void` | Execute next pending step; complete workflow if all steps done |
-| `sendEvent` | `(instanceId, eventName, payload) => void` | Deliver event to waiting step, trigger execution |
-| `stop` | `(instanceId) => void` | Set workflow and all pending/waiting steps to cancelled |
-| `pause` | `(instanceId) => void` | Set workflow to paused, halt advancement |
-| `resume` | `(instanceId) => void` | Set workflow back to running, re-advance |
+Conditions are trusted server-authored expressions evaluated against the
+workflow input as `input`, for example `input.approved === true`. A false
+condition skips the step before it can claim a wait event. Syntax is compiled
+during registration. If a syntactically valid expression throws for a specific
+runtime input, the step and instance fail closed; Zero never treats a broken
+condition as permission to execute the guarded handler.
 
-Compatibility aliases remain supported: `start()` for `run()` and `cancel()`
-for `stop()`.
+## StepContext
 
-### Scheduler Methods
-
-| Method | Description |
-|--------|-------------|
-| `pollRetries()` | Find failed steps with `retry_at <= now`, re-execute them |
-| `pollTimeouts()` | Find running/waiting steps past `timeout_at`, fail them |
-| `recoverInFlight()` | Startup recovery: reset stuck `running` steps to `pending`, re-advance |
-
-## Server Registration Example
-
-```typescript
-const registry = getWorkflowRegistry()!;
-
-registry.registerHandler('verify-insurance', async (ctx) => {
-  const result = await insuranceAPI.verify(ctx.workflowInput.patientId);
-  return { verified: result.ok, policyNumber: result.policyNumber };
-});
-
-registry.registerHandler('await-approval', async (ctx) => {
-  // waitFor event provides the payload
-  return { approved: ctx.waitEvent?.payload?.approved ?? false };
-});
-
-registry.registerHandler('create-record', async (ctx) => {
-  // Receives output of previous step (await-approval)
-  if (!ctx.input.approved) throw new Error('Not approved');
-  return await createPatientRecord(ctx.workflowInput);
-});
-
-registry.create({
-  name: 'patient-intake',
-  steps: [
-    { name: 'Verify Insurance', handler: 'verify-insurance' },
-    { name: 'Await Approval', handler: 'await-approval', waitFor: 'approval', timeoutMs: 86400000 },
-    { name: 'Create Record', handler: 'create-record' },
-  ],
-});
+```ts
+interface StepContext<TInput = unknown> {
+  input: TInput;
+  workflowInput: unknown;
+  instanceId: string;
+  stepIndex: number;
+  attempt: number;
+  attemptId?: string;
+  idempotencyKey?: string;
+  signal?: AbortSignal;
+  waitEvent?: {
+    id: string;
+    name: string;
+    payload: unknown;
+  };
+}
 ```
 
-`registerWorkflow()` remains supported for existing apps.
+For compatibility, `attemptId`, `idempotencyKey`, and `signal` remain optional
+in the public TypeScript type. Zero always supplies them at runtime:
 
-## SDK Integration
+- `attempt` is the zero-based retry count stored on the step.
+- `attemptId` is unique to one physical handler invocation.
+- `idempotencyKey` is stable for the logical instance/step across retries and
+  recovery: `workflow:<instanceId>:step:<stepIndex>`.
+- `signal` is aborted on pause, cancellation, timeout, and runtime shutdown.
+  Cancellation is cooperative; a handler may ignore it.
+- `waitEvent` identifies the durably claimed event for a `waitFor` step.
 
-The SDK provides `client.workflows` for interacting with workflows from the client:
+For step zero, both `input` and `workflowInput` contain the original workflow
+input. For every later step, `input` is the previous step's parsed output while
+`workflowInput` remains the original input.
 
-| Method | Description |
-|--------|-------------|
-| `definitions()` | List all registered workflow definitions |
-| `list(filter?)` | List workflow instances with optional status filter |
-| `get(instanceId)` | Get a single workflow instance |
-| `getSteps(instanceId)` | Get all steps for an instance |
-| `getEvents(instanceId)` | Get all events sent to an instance |
-| `start(name, input)` | Start a new workflow instance |
-| `sendEvent(instanceId, eventName, payload)` | Send an event to a waiting step |
-| `cancel(instanceId)` | Cancel a running workflow |
-| `pause(instanceId)` | Pause a running workflow |
-| `resume(instanceId)` | Resume a paused workflow |
+The context object and `waitEvent` object are frozen. Return JSON-safe values;
+the last completed step's serialized output becomes the instance output. An
+output that cannot produce JSON fails the step immediately rather than
+repeating a deterministic serialization failure through the retry budget.
+
+## Strict Frontier Execution
+
+Each instance has exactly one legal frontier: its first step that is not
+`completed` or `skipped`. Zero coalesces concurrent advancement requests for
+the same instance into one pump, while different instances may execute in
+parallel.
+
+A later step cannot pass a frontier that is:
+
+- running;
+- waiting for an event;
+- waiting for a retry deadline;
+- terminally failed.
+
+When a handler returns or throws, its result is committed only if the instance
+is still running, the step is still running, and its durable physical-attempt
+fence still matches. A late result after pause, cancellation, timeout, recovery,
+or a newer attempt is discarded.
+
+## Durable Event Inbox
+
+`sendEvent(instanceId, eventName, payload, sentBy?)` writes two records in one
+transaction:
+
+- a public `workflow_events` audit row;
+- an internal `_workflow_event_delivery` inbox row.
+
+The legal frontier claims the oldest matching unclaimed inbox item. The claim
+is durable and unique to that step, so an event received before the wait step
+becomes active is buffered, and a failed event handler receives the same event
+ID and payload on every retry and after recovery.
+
+Historical `workflow_events` rows created before durable inbox support have no
+internal delivery row. They remain readable audit history and are deliberately
+never replayed as new input.
+
+The boolean returned by `sendEvent()` and the HTTP `matched` field answer one
+precise question: was that newly inserted event claimed before this call
+returned? A paused workflow accepts and buffers the event but returns `false`;
+resume may claim it later. A nonmatching event also remains buffered and can be
+claimed by a later legal wait step. Terminal workflows reject new events with
+`WORKFLOW_STATE_INVALID`.
+
+Internal coordination tables are underscore-prefixed and never enter Sync:
+
+- `_workflow_event_delivery` owns inbox availability and durable claims.
+- `_workflow_step_attempts` owns physical-attempt fences.
+- `_workflow_pauses` stores the pause boundary used to freeze deadlines.
+
+## Retries And Deadlines
+
+A retryable handler failure leaves the workflow running and stores a failed
+frontier step with `retry_at`. The scheduler discovers due frontiers every
+minute; normal advancement still respects the exact persisted deadline.
+
+`timeoutMs` is one total logical-step deadline. It starts when the step first
+becomes active and includes:
+
+- time waiting for an event;
+- handler execution;
+- retry backoff;
+- later retry attempts.
+
+The deadline boundary is inclusive: `now >= timeout_at` times out the step.
+Timeout polling transactionally rereads the current row before failing it and
+fences/aborts any physical handler, so stale candidates and late success cannot
+overwrite the terminal timeout.
+
+Timeout wins at an exact boundary. That includes a retry becoming due at the
+same instant as its logical-step deadline and a pause requested after the
+deadline has been reached. The transition commits the timeout once; a competing
+cancel, pause, or resume action cannot replace the resulting terminal state.
+
+Pause freezes both `timeout_at` and `retry_at`. Resume waits for any old physical
+handler—even one that ignored `AbortSignal`—to settle, shifts those timestamps
+by the paused duration, then starts a fresh attempt. It never overlaps the old
+and new physical attempts for one step.
+
+## Cancellation And Terminal States
+
+Cancelling a live workflow:
+
+- fences and aborts active attempts;
+- sets every nonterminal step to `skipped` with `Workflow cancelled`;
+- clears retry and timeout deadlines;
+- sets the instance to `cancelled`.
+
+`completed`, `failed`, and `cancelled` instances are terminal and immutable.
+Cancel, pause, and resume reject invalid transitions with
+`WORKFLOW_STATE_INVALID`. `stop()` is the service alias for `cancel()`.
+
+## Crash Recovery And Idempotency
+
+Recovery validates every nonterminal persisted instance—including paused
+instances—as one set. It rejects malformed snapshots, invalid topology or
+timestamps, impossible counters/statuses, and unregistered referenced handlers
+before mutating public workflow rows. Only instances whose durable status is
+`running` are normalized and re-driven; paused work stays paused.
+
+Physical attempts left `running` by a crash are reset and re-driven from the
+strict frontier. Durable event claims and logical deadlines survive. This is an
+at-least-once execution model: a process can crash after an external effect but
+before committing step completion. Use `ctx.idempotencyKey` with email,
+payments, webhooks, storage writes, and other nontransactional effects. Do not
+use `attemptId` as an external idempotency key because it changes on retry.
+
+## Authorization And Sync
+
+All HTTP workflow routes require authentication.
+
+- Definition access is declarative. `access.start` defaults to
+  `authenticated`; `access.inspect` defaults to the effective start rule. Use
+  `admin` for the global platform administrator or a role array such as
+  `['operator', 'reviewer']`. Global administrators always bypass these rules.
+- A definition hidden by `inspect`, or denied by `start`, is indistinguishable
+  from a missing definition. The server returns `404 WORKFLOW_NOT_FOUND` and
+  does not disclose that the definition exists.
+- A normal user can list, read, inspect steps/events, send events, pause,
+  resume, and cancel only instances whose `started_by` is that user.
+- The stable single-tenant global `admin` role can inspect and control every
+  instance.
+- Foreign instance IDs return the same `404 WORKFLOW_NOT_FOUND` response as
+  missing IDs.
+- `GET /workflows/definitions` returns only definitions the caller may inspect,
+  with the definition name and human step labels. Handler keys, conditions,
+  schemas, and executable topology remain server-only. Definitions never enter
+  browser Sync.
+
+The same boundary applies to Sync snapshots and live changes:
+
+- `workflow_instances`, `workflow_steps`, and `workflow_events` are filtered to
+  their owner, with global admins allowed to see all runtime rows.
+- The immutable `steps_json` execution snapshot is retained in SQLite for
+  recovery but is stripped from HTTP lists, HTTP instance reads, Sync
+  snapshots, catchup, and live changes. A versioned authorization scope forces
+  existing clients to purge any pre-upgrade cached topology.
+- Public step rows resolve their human label from that immutable snapshot.
+  Legacy 1.3 rows therefore do not leak the handler key formerly stored in
+  `step_name`; if no valid snapshot exists, clients receive `Step N`.
+- A step's `wait_event` is executable routing topology and is likewise removed
+  from HTTP, Sync, and the browser table descriptor. Event-history
+  `event_name` values remain owner-visible by design.
+- Anonymous Sync sees no workflow runtime rows.
+- All public workflow tables are read-only over Sync. Lifecycle changes must
+  use the HTTP/service actions.
+- Existing app resource-policy denials and row predicates remain authoritative;
+  workflow ownership is composed with them using deny-wins behavior.
+
+Trusted server code that starts a run for browser observation must pass that
+user's ID as `startedBy` to `run()`/`start()`. A run with `started_by = null`
+has no normal-user owner and is visible through HTTP/Sync only to a global
+admin. `WorkflowService` is a trusted server API and does not apply the HTTP
+definition access policy; server callers remain responsible for their own
+authority boundary.
+
+Workflow ownership is immutable after creation. The database rejects changes
+to `workflow_instances.started_by`, and rejects moving a step or event to a
+different `instance_id`. This keeps owner-derived child authorization stable.
+Treat direct workflow-table writes as unsupported; use `WorkflowService` or the
+authenticated workflow routes.
+
+## Server API
+
+`WorkflowService` provides:
+
+| Method | Behavior |
+| --- | --- |
+| `run()` / `start()` | Validate input, create durable rows, and drive the first frontier. |
+| `get()` / `getInstance()` | Read one instance in trusted server code. |
+| `list()` / `listInstances()` | List instances; HTTP adds owner scoping. |
+| `getSteps()` / `getEvents()` | Read ordered child records. |
+| `sendEvent()` | Persist a durable inbox event and return whether that event was claimed. |
+| `stop()` / `cancel()` | Cancel a nonterminal instance. |
+| `pause()` / `resume()` | Freeze and restore one live instance. |
+| `advance()` | Drive the current legal frontier; concurrent calls coalesce. |
+| `pollRetries()` / `pollTimeouts()` | Scheduler entry points. |
+| `recoverInFlight()` | Initialization-only preflight and recovery of crash-left work. |
+| `dispose()` | Abort, normalize, and drain active work. |
+
+`getWorkflowService()` returns `null` until registration and recovery complete,
+and again after shutdown. App request handlers run after the readiness barrier;
+startup code must not assume the service is published early. The workflow
+plugin owns `recoverInFlight()` and the two polling methods in normal managed
+apps; calling recovery after ordinary service work has begun is rejected.
+
+## HTTP And Browser API
+
+The plugin mounts:
+
+| Method | Path | Result |
+| --- | --- | --- |
+| `GET` | `/workflows` | Owner-scoped list; `status`, `name`, and `limit` filters. |
+| `GET` | `/workflows/definitions` | Access-filtered names and human step labels. |
+| `POST` | `/workflows` | `{ instanceId }`. |
+| `GET` | `/workflows/:id` | One authorized instance. |
+| `GET` | `/workflows/:id/steps` | Ordered steps. |
+| `GET` | `/workflows/:id/events` | Ordered public audit events. |
+| `POST` | `/workflows/:id/events` | `{ ok: true, matched }`. |
+| `POST` | `/workflows/:id/cancel` | `{ ok: true }`. |
+| `POST` | `/workflows/:id/pause` | `{ ok: true }`. |
+| `POST` | `/workflows/:id/resume` | `{ ok: true }`. |
+
+Use the actual Eden surface through `client.api`:
+
+```ts
+import { ApiError, unwrap } from '@zero/framework/react';
+
+const { instanceId } = unwrap(await client.api.workflows.post({
+  name: 'account-onboarding',
+  input: { accountId: 'acct_1' },
+}));
+
+const { matched } = unwrap(
+  await client.api.workflows[instanceId].events.post({
+    eventName: 'approved',
+    payload: { reviewerId: 'user_1' },
+  }),
+);
+```
+
+Workflow browser calls are exposed only through `client.api.workflows`.
+`ApiError` is a public export and preserves `status`, the stable Zero `code`,
+the response `body`, and a safe message when `unwrap()` rejects a call.
 
 ## React Hooks
 
-**Location**: `src/frontend/client/workflow-hooks.ts`
+The hooks are Sync-backed; they do not poll.
 
-### useWorkflow(instanceId)
-Returns the workflow instance, its steps, and computed status. Polls for updates while the workflow is active.
+```tsx
+const workflow = useWorkflow(instanceId);
+const actions = useWorkflowActions();
 
-### useWorkflowList(filter?)
-Returns a list of workflow instances with optional status filtering. Polls for new entries.
+const nextId = await actions.start('account-onboarding', {
+  accountId: 'acct_1',
+});
+const matched = await actions.sendEvent(nextId, 'approved', {
+  reviewerId: 'user_1',
+});
+```
 
-### useWorkflowActions()
-Returns action dispatchers for workflow control:
-- `start(name, input)` — start a new instance
-- `cancel(instanceId)` — cancel a running instance
-- `pause(instanceId)` — pause a running instance
-- `resume(instanceId)` — resume a paused instance
-- `sendEvent(instanceId, eventName, payload)` — send an event to a waiting step
+`useWorkflow(instanceId)` returns the instance, ordered steps, current frontier,
+and these status flags:
 
-## File Map
+- `isRunning`
+- `isComplete`
+- `isFailed`
+- `isPaused`
+- `isCancelled`
+- `isWaiting`
+- `isRetrying`
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `src/workflows/types.ts` | ~120 | Status enums, StepDefinition, WorkflowDefinition, StepContext, StepHandler, persisted record types |
-| `src/workflows/workflow-registry.ts` | ~60 | In-memory handler + definition registry |
-| `src/workflows/workflow-executor.ts` | ~120 | Single step execution with waitFor/condition/retry logic |
-| `src/workflows/workflow-service.ts` | ~300 | Full lifecycle: start, advance, sendEvent, cancel/pause/resume, polling, recovery |
-| `src/workflows/workflow.plugin.ts` | ~200 | Elysia plugin: table definitions, REST routes, getWorkflowService/Registry exports |
-| `src/workflows/index.ts` | ~15 | Barrel exports |
-| `packages/sdk/src/workflow/workflow.ts` | ~100 | SDK Workflow API implementation |
-| `src/frontend/client/workflow-hooks.ts` | ~100 | React hooks for real-time workflow UI |
+These flags are descriptive rather than mutually exclusive: an instance stays
+`running` while its frontier is waiting for an event or a scheduled retry, so
+`isRunning` can be true together with `isWaiting` or `isRetrying`.
 
-## Scheduler Integration
+`useWorkflowList({ status?, name? })` returns the current user's live visible
+instances. `useWorkflowActions()` exposes start/cancel/pause/resume/sendEvent.
+`useWorkflowRun(name, { instanceId? })` composes those actions with one selected
+run, progress, pending/error state, and the same status flags.
 
-Two cron jobs registered in `src/server/app.ts`:
+## Scheduler And Observability
 
-| Job Name | Interval | Action |
-|----------|----------|--------|
-| `workflow-retries` | Every minute | Calls `workflowService.pollRetries()` |
-| `workflow-timeouts` | Every minute | Calls `workflowService.pollTimeouts()` |
+The plugin owns two scheduler jobs and unregisters only the jobs it created:
 
-These run alongside the existing ingestion queue scheduler using `@elysiajs/cron`.
+| Job | Schedule | Action |
+| --- | --- | --- |
+| `workflow-retries` | Every minute | Find due retry frontiers and advance them. |
+| `workflow-timeouts` | Every minute | Transactionally expire current deadlines. |
 
-## Crash Recovery
+Stable lifecycle codes include:
 
-On server restart, `recoverInFlight()` handles two cases:
+- `workflows.initialized`, `workflows.stopped`, `workflows.startup.failed`
+- `workflows.recovered`, `workflows.recovery.failed`
+- `workflows.instance.started`, `.completed`, `.failed`, `.paused`, `.resumed`, `.cancelled`
+- `workflows.step.retry_scheduled`, `.timed_out`
+- `workflows.handler.missing`
+- `workflows.advance.failed`
 
-1. **Steps stuck in `running`** — the process crashed mid-execution. These are reset to `pending` since the handler may not be idempotent and partial results are discarded.
-2. **Workflows still `running`** — re-advanced from their `current_step` index, picking up where they left off.
+Stable workflow-domain HTTP/service codes include:
 
-This is called once during plugin `onStart`, before the server begins accepting requests.
+- `WORKFLOW_NOT_READY`
+- `WORKFLOW_NOT_FOUND`
+- `WORKFLOW_DEFINITION_NOT_FOUND`
+- `WORKFLOW_DEFINITION_INVALID`
+- `WORKFLOW_HANDLER_NOT_REGISTERED`
+- `WORKFLOW_STATE_INVALID`
+- `WORKFLOW_INPUT_INVALID`
+- `WORKFLOW_EVENT_INVALID`
+- `WORKFLOW_REQUEST_INVALID`
+- `WORKFLOW_REQUEST_PARSE_FAILED`
+- `WORKFLOW_STARTUP_FAILED`
+- `WORKFLOW_INTERNAL_ERROR`
 
-## Configuration
+HTTP auth failures retain the auth subsystem's stable codes, such as
+`UNAUTHORIZED`. Eden `unwrap()` preserves the status, stable code, response
+body, and safe message in `ApiError`.
 
-- Requires a ReactiveDB instance (passed via `getDB` getter in the plugin)
-- Tables are created in the plugin's `onStart` hook
-- Degrades gracefully if DB is unavailable (routes return 503)
-- Scheduler jobs are registered in `app.ts` before app assembly
+## Storage Layout
 
-## Extension Points
+Workflow storage tables (only authorized, projected runtime rows enter Sync):
 
-- **New step features**: Add fields to `StepDefinition` and handle them in the executor's execution flow
-- **New lifecycle states**: Extend `WorkflowStatus` / `StepStatus` enums and add transition logic in the service
-- **Custom retry strategies**: Replace the exponential backoff formula in the executor with pluggable retry policies
-- **Event-driven triggers**: Use `workflow_events` table to build event-sourced audit trails or trigger cross-workflow coordination
-- **Alternative storage**: The service accepts a DB getter — swap ReactiveDB for any SQLite-compatible store
+- `workflow_definitions`: persisted server-only definition snapshots; excluded
+  from `WORKFLOW_TABLES`, lazy data queries, and every Sync path.
+- `workflow_instances`: lifecycle, input/output/error, owner, and a server-only
+  immutable step snapshot used for execution/recovery.
+- `workflow_steps`: ordered status, output/error, retry, wait, and deadline data.
+- `workflow_events`: immutable, owner-visible event/audit payload rows.
+
+Internal tables:
+
+- `_workflow_event_delivery`
+- `_workflow_step_attempts`
+- `_workflow_pauses`
+
+The hardened runtime keeps the existing 1.3 public workflow-table shape. No
+app-owned schema migration is required: composition creates the coordination
+tables and installs the added workflow indexes and ownership/parent guards
+idempotently. It does not backfill delivery rows for historical audit events,
+so an upgrade cannot reinterpret old records as newly delivered input.
+
+Public step rows have no `updated_at` column. An instance stores `updated_at`;
+steps use `started_at`, `completed_at`, `retry_at`, and `timeout_at`.
+
+## Source Map
+
+| File | Responsibility |
+| --- | --- |
+| `types.ts` | Definitions, contexts, statuses, records, and client table descriptors. |
+| `workflow-registry.ts` | In-memory handlers and definitions. |
+| `workflow-access.ts` | Definition-policy validation and HTTP role evaluation. |
+| `workflow-public-record.ts` | Shared HTTP/Sync topology redaction. |
+| `workflow-condition.ts` | Trusted condition compilation shared by registration and execution. |
+| `workflow-step-definition.ts` | Immutable definition-snapshot parsing and handler resolution. |
+| `workflow-persisted-state.ts` | Fail-closed validation of durable run rows and topology. |
+| `workflow-runtime-store.ts` | Internal inbox claims, attempt fences, and pause timestamps. |
+| `workflow-repository.ts` | Prepared SQL reads/writes and durable transaction helpers. |
+| `workflow-instance-factory.ts` | Start-time input validation and atomic instance/step persistence. |
+| `workflow-attempt-coordinator.ts` | Transactional prepare/commit, retry/deadline decisions, and attempt fences. |
+| `workflow-transition-controller.ts` | Pause, resume, and cancellation transitions. |
+| `workflow-lifecycle-coordinator.ts` | Recovery, retry/timeout discovery, and shutdown normalization. |
+| `workflow-executor.ts` | One physical handler invocation and cooperative abort/drain behavior. |
+| `workflow-service.ts` | Public service facade and coalesced strict-frontier pump. |
+| `workflow-schema.ts` | ReactiveDB public-table registration, indexes, and ownership/parent guards. |
+| `workflow-sync-policy.ts` | Owner/admin Sync visibility and read-only enforcement. |
+| `workflow-scheduler-owner.ts` | Owned retry/timeout job registration and cleanup. |
+| `workflow-plugin-runtime.ts` | Registration/recovery barrier and safe service publication. |
+| `workflow-http.plugin.ts` | Protected routes, public projections, and stable HTTP errors. |
+| `workflow.plugin.ts` | Thin Elysia composition facade. |
+| `workflow-error.ts` | Stable workflow errors. |
+| `src/frontend/client/workflow-hooks.ts` | Live state and browser actions. |
+| `src/frontend/client/workflow-run-hooks.ts` | Start-and-watch composition and progress. |

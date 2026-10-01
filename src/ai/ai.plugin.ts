@@ -31,7 +31,6 @@ export interface AIPluginConfig {
  */
 export function createAIPlugin(options: AIPluginConfig) {
   const service = options.service ?? new AIService(options.config);
-  activeAIService = service;
 
   const endpoint = options.config.statusEndpoint;
   const readMode = endpoint.read ?? (options.authEnabled ? 'admin' : 'development');
@@ -39,6 +38,7 @@ export function createAIPlugin(options: AIPluginConfig) {
   const app = new Elysia({ name: 'zero-platform-ai' })
     .decorate('ai', service)
     .onStart(() => {
+      activeAIService = service;
       emitPlatformCode(OBS_CODES.AI_CONFIGURED, {
         metadata: {
           providers: service.status().providers.length,
@@ -53,6 +53,9 @@ export function createAIPlugin(options: AIPluginConfig) {
           reason: provider.reason,
         });
       }
+    })
+    .onStop(() => {
+      if (activeAIService === service) activeAIService = null;
     });
 
   if (!endpoint.enabled) return app;

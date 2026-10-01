@@ -1,189 +1,224 @@
 /**
- * workflow-executor.ts
- *
- * Part of: Workflows subsystem (executor)
- *
- * Executes a single workflow step: looks up the handler from the
- * registry, builds the StepContext with chained I/O, handles
- * waitFor/condition logic, and manages success/failure with retries.
- *
- * Dependencies:
- *   - ./types
- *   - ./workflow-registry
- *   - ../sync/reactive-db (ReactiveDB)
+ * Invokes workflow handlers and owns their in-memory cancellation lifecycle.
+ * Durable attempt preparation and commits live in WorkflowAttemptCoordinator.
  */
 
 import type { ReactiveDB } from '../sync/reactive-db';
-import type { StepContext, WorkflowStepRecord } from './types';
+import { OBS_CODES } from '../observability/codes';
+import { emitPlatformCode } from '../observability/sink';
+import type { StepContext } from './types';
+import { WorkflowAttemptCoordinator } from './workflow-attempt-coordinator';
+import { WorkflowExecutionTracker } from './workflow-execution-tracker';
+import { formatWorkflowError, WorkflowError } from './workflow-error';
+import { WorkflowRepository } from './workflow-repository';
 import type { WorkflowRegistry } from './workflow-registry';
+import { WorkflowRuntimeStore } from './workflow-runtime-store';
+import {
+  DEFAULT_WORKFLOW_SHUTDOWN_GRACE_MS,
+  resolveWorkflowShutdownGraceMs,
+} from './workflow-shutdown-policy';
+import { WorkflowWakeCoordinator } from './workflow-wake-coordinator';
 
-const MAX_BACKOFF_MS = 5 * 60 * 1000; // 5 minutes
+export interface WorkflowClock {
+  now(): Date;
+}
+
+const systemClock: WorkflowClock = { now: () => new Date() };
+
+export type WorkflowExecutionResult =
+  | 'completed'
+  | 'skipped'
+  | 'waiting'
+  | 'retry-scheduled'
+  | 'failed'
+  | 'timed-out'
+  | 'stale';
 
 export class WorkflowExecutor {
+  private readonly attempts: WorkflowAttemptCoordinator;
+  private readonly executions: WorkflowExecutionTracker;
+  private disposed = false;
+
   constructor(
-    private db: ReactiveDB,
-    private registry: WorkflowRegistry,
-  ) {}
+    db: ReactiveDB,
+    private readonly registry: WorkflowRegistry,
+    runtime = new WorkflowRuntimeStore(db),
+    clock: WorkflowClock = systemClock,
+    private readonly repository = new WorkflowRepository(db),
+    wakes = new WorkflowWakeCoordinator(clock, false, {
+      retry: () => undefined,
+      timeout: () => undefined,
+    }),
+    shutdownGraceMs = DEFAULT_WORKFLOW_SHUTDOWN_GRACE_MS,
+  ) {
+    this.attempts = new WorkflowAttemptCoordinator(repository, runtime, clock, wakes);
+    this.executions = new WorkflowExecutionTracker(
+      resolveWorkflowShutdownGraceMs(shutdownGraceMs),
+    );
+  }
 
-  /**
-   * Execute a single step. Returns true if the step completed (or was skipped),
-   * false if it entered waiting state or failed.
-   */
-  async executeStep(
-    instanceId: string,
-    stepId: string,
-    eventPayload?: { name: string; payload: unknown },
-  ): Promise<boolean> {
-    const step = this.db.queryOne('workflow_steps', stepId) as WorkflowStepRecord | null;
-    if (!step) throw new Error(`Step ${stepId} not found`);
-
-    const instance = this.db.queryOne('workflow_instances', instanceId);
-    if (!instance) throw new Error(`Instance ${instanceId} not found`);
-
-    // Get handler
-    const handler = this.registry.getHandler(step.step_name);
-    if (!handler) {
-      this.failStep(stepId, `Handler "${step.step_name}" not found in registry`);
-      return false;
+  /** Execute one eligible step and return its durable outcome. */
+  async executeStep(instanceId: string, stepId: string): Promise<WorkflowExecutionResult> {
+    if (this.disposed) {
+      throw new WorkflowError(
+        'Workflow executor is not available',
+        'WORKFLOW_NOT_READY',
+        503,
+      );
     }
-
-    // Check waitFor — if step is waiting and no event provided, stay waiting
-    if (step.wait_event && !eventPayload) {
-      this.db.update('workflow_steps', stepId, { status: 'waiting' });
-      return false;
-    }
-
-    // Check condition
-    if (step.status === 'pending') {
-      const stepDefs = JSON.parse(instance.steps_json as string ?? '[]');
-      const stepDef = stepDefs[step.step_index];
-      if (stepDef?.condition && !this.evaluateCondition(stepDef.condition, instance, step)) {
-        this.db.update('workflow_steps', stepId, {
-          status: 'skipped',
-          completed_at: new Date().toISOString(),
-        });
-        return true;
+    // A pause/cancel aborts the logical attempt immediately, but a handler can
+    // ignore its signal. Never overlap a replacement with that physical call.
+    if (this.executions.isStepActive(stepId)) return 'stale';
+    const preparation = this.attempts.prepare(instanceId, stepId);
+    if (preparation.kind !== 'execute') {
+      if (preparation.kind === 'timed-out') {
+        this.attempts.emitTimeout(instanceId, stepId);
       }
+      if (preparation.kind === 'failed') {
+        emitPlatformCode(OBS_CODES.WORKFLOW_INSTANCE_FAILED, {
+          error: preparation.cause,
+          metadata: { instanceId, stepId, reason: 'preparation' },
+        });
+      }
+      return preparation.kind;
     }
 
-    // Build step context
-    const previousOutput = this.getPreviousStepOutput(instanceId, step.step_index);
-    const ctx: StepContext = {
-      input: previousOutput,
-      workflowInput: instance.input ? JSON.parse(instance.input as string) : null,
-      instanceId,
-      stepIndex: step.step_index,
-      attempt: step.retries,
-      waitEvent: eventPayload,
-    };
+    const prepared = preparation.prepared;
+    const handler = this.registry.getHandler(prepared.handlerName);
+    if (!handler) {
+      this.attempts.release(prepared);
+      emitPlatformCode(OBS_CODES.WORKFLOW_HANDLER_MISSING, {
+        metadata: {
+          instanceId,
+          stepId,
+          stepIndex: prepared.step.step_index,
+          handler: prepared.handlerName,
+        },
+      });
+      throw new WorkflowError(
+        `Workflow handler "${prepared.handlerName}" is not registered`,
+        'WORKFLOW_HANDLER_NOT_REGISTERED',
+        500,
+      );
+    }
+    if (this.disposed) {
+      this.attempts.release(prepared);
+      return 'stale';
+    }
+    // ReactiveDB listeners run synchronously as prepare commits. A listener
+    // can pause/cancel/timeout before this attempt is registered in memory.
+    if (!this.attempts.isCurrent(prepared)) return 'stale';
+    const controller = new AbortController();
 
-    // Mark step as running
-    const now = new Date().toISOString();
-    const timeoutAt = step.timeout_at ?? (
-      (() => {
-        const stepDefs = JSON.parse(instance.steps_json as string ?? '[]');
-        const def = stepDefs[step.step_index];
-        return def?.timeoutMs
-          ? new Date(Date.now() + def.timeoutMs).toISOString()
-          : null;
-      })()
+    const context: StepContext = Object.freeze({
+      input: prepared.input,
+      workflowInput: prepared.workflowInput,
+      instanceId,
+      stepIndex: prepared.step.step_index,
+      attempt: prepared.step.retries,
+      attemptId: prepared.attemptId,
+      idempotencyKey: `workflow:${instanceId}:step:${prepared.step.step_index}`,
+      signal: controller.signal,
+      ...(prepared.waitEvent
+        ? {
+            waitEvent: Object.freeze({
+              id: prepared.waitEvent.eventId,
+              name: prepared.waitEvent.name,
+              payload: prepared.waitEvent.payload,
+            }),
+          }
+        : {}),
+    });
+    // Defer invocation by one microtask so physical tracking is published
+    // before any synchronous handler prefix can reenter workflow controls.
+    const invocation = Promise.resolve().then(() => {
+      if (controller.signal.aborted) throw abortReason(controller.signal);
+      return handler(context);
+    });
+    this.executions.track(
+      instanceId,
+      stepId,
+      prepared.attemptId,
+      controller,
+      invocation,
     );
 
-    this.db.update('workflow_steps', stepId, {
-      status: 'running',
-      started_at: step.started_at ?? now,
-      timeout_at: timeoutAt,
-    });
-
-    // Execute handler
     try {
-      const output = await handler(ctx);
-      this.db.update('workflow_steps', stepId, {
-        status: 'completed',
-        output: output !== undefined ? JSON.stringify(output) : null,
-        completed_at: new Date().toISOString(),
-        error: null,
-      });
-      return true;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return this.handleStepFailure(stepId, step, message);
-    }
-  }
-
-  private handleStepFailure(
-    stepId: string,
-    step: WorkflowStepRecord,
-    error: string,
-  ): boolean {
-    const retries = step.retries + 1;
-
-    if (retries < step.max_retries) {
-      // Schedule retry with exponential backoff (capped at 5min)
-      const stepDefs = this.getStepDefs(step.instance_id);
-      const def = stepDefs[step.step_index];
-      const baseBackoff = def?.backoffMs ?? 1000;
-      const backoffMs = Math.min(baseBackoff * Math.pow(2, retries), MAX_BACKOFF_MS);
-      const retryAt = new Date(Date.now() + backoffMs).toISOString();
-
-      this.db.update('workflow_steps', stepId, {
-        status: 'failed',
+      const output = await raceWithAbort(invocation, controller.signal);
+      if (this.disposed) return 'stale';
+      let serialized: string | null;
+      try {
+        if (output === undefined) {
+          serialized = null;
+        } else {
+          const encoded = JSON.stringify(output);
+          if (encoded === undefined) {
+            throw new TypeError('Workflow handler output is not JSON-serializable');
+          }
+          serialized = encoded;
+        }
+      } catch (error) {
+        return this.attempts.commitFailure(
+          prepared,
+          formatWorkflowError(error),
+          false,
+          error,
+        );
+      }
+      const result = this.attempts.commitSuccess(prepared, serialized);
+      if (result === 'timed-out') this.attempts.emitTimeout(instanceId, stepId);
+      return result;
+    } catch (error) {
+      // Disposal already normalized durable running rows. The physical
+      // invocation remains observed by the tracker, but must never touch the
+      // repository after the teardown boundary begins.
+      if (this.disposed) return 'stale';
+      const result = this.attempts.commitFailure(
+        prepared,
+        formatWorkflowError(error),
+        true,
         error,
-        retries,
-        retry_at: retryAt,
-      });
-      return false;
-    }
-
-    // Max retries exceeded — permanent failure
-    this.failStep(stepId, error);
-    return false;
-  }
-
-  private failStep(stepId: string, error: string): void {
-    this.db.update('workflow_steps', stepId, {
-      status: 'failed',
-      error,
-      completed_at: new Date().toISOString(),
-      retry_at: null,
-    });
-  }
-
-  private getPreviousStepOutput(instanceId: string, currentIndex: number): unknown {
-    if (currentIndex === 0) return null;
-
-    const steps = this.db.query('workflow_steps')
-      .filter(s => s.instance_id === instanceId && s.step_index === currentIndex - 1);
-
-    if (steps.length === 0) return null;
-    const prev = steps[0];
-    return prev.output ? JSON.parse(prev.output as string) : null;
-  }
-
-  private evaluateCondition(
-    condition: string,
-    instance: Record<string, unknown>,
-    _step: WorkflowStepRecord,
-  ): boolean {
-    try {
-      const input = instance.input ? JSON.parse(instance.input as string) : {};
-      // Simple condition evaluation — supports basic property access
-      // e.g., "input.approved === true", "input.amount > 1000"
-      const fn = new Function('input', `return Boolean(${condition})`);
-      return fn(input);
-    } catch {
-      // If condition can't be evaluated, proceed (don't skip)
-      return true;
+      );
+      if (result === 'timed-out') this.attempts.emitTimeout(instanceId, stepId);
+      return result;
     }
   }
 
-  private getStepDefs(instanceId: string): Array<{ backoffMs?: number; timeoutMs?: number }> {
-    const instance = this.db.queryOne('workflow_instances', instanceId);
-    if (!instance) return [];
-    try {
-      return JSON.parse(instance.steps_json as string ?? '[]');
-    } catch {
-      return [];
-    }
+  abortInstance(instanceId: string, reason: string): void {
+    this.executions.abortInstance(instanceId, reason);
   }
+
+  abortStep(stepId: string, reason: string): void {
+    this.executions.abortStep(stepId, reason);
+  }
+
+  isInstanceDraining(instanceId: string): boolean {
+    return this.executions.isInstanceActive(instanceId);
+  }
+
+  dispose(): Promise<void> {
+    this.disposed = true;
+    return this.executions.dispose();
+  }
+}
+
+async function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw abortReason(signal);
+  let removeAbortListener: () => void = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal));
+    signal.addEventListener('abort', onAbort, { once: true });
+    removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+  });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    removeAbortListener();
+  }
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error('Workflow execution aborted');
 }

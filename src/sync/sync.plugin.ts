@@ -38,7 +38,7 @@ import type {
 let _db: ReactiveDB | null = null;
 let _stateManager: StateManager | null = null;
 let _ephemeralManager: EphemeralStateManager | null = null;
-let _unsubChange: (() => void) | null = null;
+const syncRuntimeOwners: ReactiveDB[] = [];
 
 /**
  * Get the ReactiveDB instance. Returns null if the sync plugin hasn't been
@@ -47,6 +47,21 @@ let _unsubChange: (() => void) | null = null;
  */
 export function getSyncDB(): ReactiveDB | null {
   return _db;
+}
+
+/**
+ * Dispose a Sync runtime whose app failed during composition, before listen().
+ *
+ * Identity checking prevents a stale construction failure from tearing down a
+ * newer app's process-local runtime. Started apps remain owned by onStop.
+ */
+export function discardUnstartedSyncRuntime(expectedDB: ReactiveDB): void {
+  if (!syncRuntimeOwners.includes(expectedDB)) return;
+  try {
+    expectedDB.dispose();
+  } finally {
+    restorePreviousSyncRuntime(expectedDB);
+  }
 }
 
 /**
@@ -83,7 +98,10 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     db.defineTable(name, schema);
   }
   const mutationReceipts = new SyncMutationReceiptStore(db);
+  let started = false;
+  let unsubChange: (() => void) | null = null;
 
+  syncRuntimeOwners.push(db);
   _db = db;
   if (sqlite) setPlatformSQLiteService(sqlite);
 
@@ -91,12 +109,13 @@ export function createSyncPlugin(config: SyncPluginConfig) {
 
     // ─── Lifecycle ──────────────────────────────────────
     .onStart(() => {
+      started = true;
       // Register onChange BEFORE any connections arrive.
       // Every write to ReactiveDB publishes to the appropriate topic.
       // This is the single broadcast path — works for WS mutations,
       // HTTP route writes, background jobs, transactions — everything.
       _db = db;
-      _unsubChange = db.onChange((change) => {
+      unsubChange = db.onChange((change) => {
         // Don't publish changes for _ prefix tables (internal)
         if (change.table.startsWith('_')) return;
         deliverSyncChange(
@@ -136,19 +155,23 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     })
 
     .onStop(() => {
-      _unsubChange?.();
-      _unsubChange = null;
-      _stateManager = null;
-      _ephemeralManager?.dispose();
-      _ephemeralManager = null;
+      unsubChange?.();
+      unsubChange = null;
+      if (started) {
+        _stateManager = null;
+        _ephemeralManager?.dispose();
+        _ephemeralManager = null;
+      }
       socketAuth.dispose();
       activeSockets.clear();
       db.dispose();
-      if (_db === db) _db = null;
-      if (sqlite) clearPlatformSQLiteService(sqlite);
-      emitPlatformCode(OBS_CODES.SYNC_STOPPED, {
-        metadata: { db: describeSyncDatabase(config.db, db) },
-      });
+      restorePreviousSyncRuntime(db);
+      if (started) {
+        started = false;
+        emitPlatformCode(OBS_CODES.SYNC_STOPPED, {
+          metadata: { db: describeSyncDatabase(config.db, db) },
+        });
+      }
     })
 
     // ─── Derive: expose syncDB globally ─────────────────
@@ -275,6 +298,18 @@ export function createSyncPlugin(config: SyncPluginConfig) {
         clearSyncBackpressure(ws as unknown as ServerWebSocket<SyncSocketData>);
       },
     });
+}
+
+function restorePreviousSyncRuntime(expectedDB: ReactiveDB): void {
+  const sqlite = expectedDB.getSQLiteService();
+  const ownerIndex = syncRuntimeOwners.lastIndexOf(expectedDB);
+  if (ownerIndex >= 0) syncRuntimeOwners.splice(ownerIndex, 1);
+  if (_db !== expectedDB) return;
+  const previousDB = syncRuntimeOwners.at(-1) ?? null;
+  _db = previousDB;
+  if (sqlite) clearPlatformSQLiteService(sqlite);
+  const previousSQLite = previousDB?.getSQLiteService();
+  if (previousSQLite) setPlatformSQLiteService(previousSQLite);
 }
 
 function describeSyncDatabase(config: SyncPluginConfig['db'], db: ReactiveDB): string {

@@ -41,19 +41,23 @@ export function getScheduler(): SchedulerService | null {
  */
 export function createSchedulerPlugin(config?: SchedulerPluginConfig) {
   const prefix = config?.prefix ?? '/scheduler';
+  let ownedScheduler: SchedulerService | null = null;
 
   return new Elysia({ name: 'scheduler', prefix })
 
     .use(createAuthMiddleware(getTokenService))
 
     .onStart(() => {
-      _scheduler = new SchedulerService();
+      ownedScheduler = new SchedulerService();
+      _scheduler = ownedScheduler;
       emitPlatformCode(OBS_CODES.SCHEDULER_STARTED);
     })
 
     .onStop(() => {
-      _scheduler?.stopAll();
-      _scheduler = null;
+      if (!ownedScheduler) return;
+      ownedScheduler.stopAll();
+      if (_scheduler === ownedScheduler) _scheduler = null;
+      ownedScheduler = null;
       emitPlatformCode(OBS_CODES.SCHEDULER_STOPPED);
     })
 

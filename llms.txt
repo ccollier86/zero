@@ -392,7 +392,7 @@ app.listen(config.port ?? 3000);
 | State sync | Per-user persisted reactive state. |
 | Notifications | Notifications and per-user receipts when auth is enabled. |
 | Rooms/presence | Room membership and presence primitives when auth is enabled. |
-| Workflows | Workflow registry/service when auth is enabled. |
+| Workflows | Durable registry/service when auth is enabled; app registration and crash recovery complete before requests. |
 | Scheduler | Platform jobs. |
 | AI | Server-side AI provider registry/service when enabled. |
 | Vector | zvec-backed vector store when enabled. |
@@ -1041,19 +1041,86 @@ Hooks:
 
 ## Workflows And Scheduler
 
-Zero workflows and scheduler are in-process platform services. Use them for
-app-owned background orchestration, scheduled work, and domain workflows.
+Zero workflows and scheduler are in-process platform services. Workflows are
+enabled by default with auth unless `workflows: false`. Register handlers first
+and definitions second through `AppConfig.workflows.register(registry)`. Zero
+awaits that callback, waits for auth, preflights live handlers, recovers
+in-flight work, and only then publishes the service or accepts requests. The
+registry itself is synchronously available during composition, but managed apps
+must not use that as a post-start registration path.
+
+For 1.3 upgrades, move workflow registration out of `onStart`/post-`listen`
+code and into `workflows.register`. A direct-composition integration may use
+`getWorkflowRegistry()` after `createApp()` returns and before `listen()`;
+post-listen registration is too late for recovery preflight.
+
+Workflow execution is sequential per instance. The first unfinished step is a
+strict frontier; later steps cannot pass a wait, retry, running step, or
+terminal failure. `retries` is the total handler-attempt budget, not retries in
+addition to the first attempt. Step zero receives workflow input in both
+`ctx.input` and `ctx.workflowInput`; later steps receive the previous output in
+`ctx.input`. The runtime always supplies `ctx.signal`, a per-attempt
+`ctx.attemptId`, and a logical-step `ctx.idempotencyKey` stable across retries
+and recovery, although those fields remain optional in the public type for
+compatibility.
+
+New workflow events are stored both as public audit rows and as durable
+internal delivery rows. This buffers events sent before a wait becomes active,
+claims each event once, and preserves the same payload through handler retries
+and crash recovery. Historical audit rows without delivery records are not
+replayed. `sendEvent()` returns `true` only if that newly inserted event was
+claimed before the call returned; a paused or currently nonmatching event is
+buffered and returns `false`.
+
+`timeoutMs` is one total logical-step deadline spanning event wait, handler
+execution, retry backoff, and later attempts. Pause fences the physical
+attempt, freezes retry/deadline time, and resume waits for the old handler to
+settle before re-driving work. Cancellation skips all remaining nonterminal
+steps. Completed, failed, and cancelled instances are immutable.
+
+The timeout boundary is inclusive. Timeout wins when a retry becomes due at
+the exact same instant, and it also wins over a pause requested at an already
+expired deadline.
+
+Crash recovery is at-least-once. Use `ctx.idempotencyKey` to deduplicate email,
+payments, webhooks, storage writes, and other external effects. Do not use
+`attemptId` for that purpose.
 
 Hooks:
 
 - `useWorkflowRun`
 - `useWorkflow`
 - `useWorkflowList`
+- `useWorkflowActions`
+
+Hooks read owner-scoped ReactiveDB Sync and do not poll. They expose running,
+complete, failed, paused, cancelled, waiting, and retrying flags. Normal users
+see only runs they started; the exact stable global `admin` role sees all
+runtime rows. Definition `access.start`/`access.inspect` may allow any
+authenticated user, only the global admin, or named app roles; denied
+definitions look missing over HTTP. Workflow definitions and underscore-prefixed
+coordination tables are excluded from Sync. Browser instances omit `steps_json`
+and browser steps omit `wait_event`, while public workflow tables remain
+read-only through Sync. Ownership and child-to-instance links are immutable.
 
 Server services:
 
 - `zero.workflows`
 - `zero.scheduler`
+
+Browser actions use the generated Eden surface under `client.api.workflows`.
+Use public `unwrap()` and catch public `ApiError` from `@zero/framework/react`
+to retain HTTP status, stable code, safe message, and response body.
+The plugin also owns minute scheduler jobs that discover due retries and
+timeouts; those jobs do not make the React hooks poll. Workflow failures use
+stable `WORKFLOW_*` error codes and `workflows.*` observability codes. See
+`docs/workflows.md` for the complete route, service, hook, storage, and error
+contracts.
+
+`WorkflowService` is a trusted server boundary: it bypasses definition access
+rules and must receive `startedBy` when a normal browser user should own the
+run. Managed apps let the plugin own initialization-only recovery and scheduler
+poll entry points.
 
 Future extension points include workflow-trigger webhooks and AI tools that
 can invoke workflows, but do not invent those unless they exist in the current
@@ -1872,9 +1939,9 @@ reference docs confirm the behavior is implemented.
   warnings, errors, and lifecycle events should flow.
 - [Observability Audit](docs/observability-audit.md): audit of existing logging
   and events, gaps, and improvement notes.
-- [Durable Workflow System](docs/workflows.md): workflow service, workflow
-  registry, scheduled/background work concepts, app-facing usage, and future
-  workflow expansion.
+- [Durable Workflow System](docs/workflows.md): registration and recovery
+  lifecycle, strict-frontier execution, durable events, deadlines, retries,
+  authorization, Sync hooks, HTTP/service APIs, errors, and observability.
 - [Webhooks Plan](docs/webhooks.md): planned inbound/outbound webhook system,
   signatures, workflow/table triggers, webhook delivery, and future API shape.
 

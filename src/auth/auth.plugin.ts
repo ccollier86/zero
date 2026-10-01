@@ -51,10 +51,18 @@ export {
 export function createAuthPlugin(config: AuthPluginConfig) {
   const authConfig = resolveAuthBehaviorConfig(config);
   const nativeRuntime = resolveNativeRuntimeConfig(config, authConfig);
+  let runtimeStarted = false;
 
   return new Elysia({ name: 'auth', prefix: '/auth' })
-    .onStart(() => startAuthRuntime(config, authConfig))
-    .onStop(() => stopAuthRuntime())
+    .onStart(async () => {
+      runtimeStarted = true;
+      await startAuthRuntime(config, authConfig);
+    })
+    .onStop(async () => {
+      if (!runtimeStarted) return;
+      runtimeStarted = false;
+      await stopAuthRuntime();
+    })
     .derive({ as: 'global' }, () => getAuthRuntimeContext())
     .onError(({ code, error, request, set }) => {
       if (error instanceof AuthError) {

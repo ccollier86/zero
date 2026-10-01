@@ -1,433 +1,336 @@
 /**
- * workflow-service.ts
+ * Durable workflow lifecycle orchestration.
  *
- * Part of: Workflows subsystem (service)
- *
- * Orchestrates workflow lifecycle: start, advance, sendEvent, cancel,
- * pause, resume, and polling for retries/timeouts. All writes go through
- * ReactiveDB for automatic WebSocket broadcast to connected clients.
- *
- * Dependencies:
- *   - ./types
- *   - ./workflow-registry
- *   - ./workflow-executor
- *   - ../sync/reactive-db (ReactiveDB)
+ * Each instance has one coalesced frontier pump. Different instances remain
+ * concurrent, while retries, event waits, and later steps cannot pass an
+ * unfinished earlier step.
  */
 
 import type { ReactiveDB } from '../sync/reactive-db';
-import type {
-  StepDefinition,
-  WorkflowDefinition,
-  WorkflowInstanceRecord,
-  WorkflowStepRecord,
-} from './types';
-import { WorkflowExecutor } from './workflow-executor';
+import { OBS_CODES } from '../observability/codes';
+import { emitPlatformCode } from '../observability/sink';
+import type { WorkflowInstanceRecord, WorkflowStepRecord } from './types';
+import {
+  WorkflowExecutor,
+  type WorkflowClock,
+} from './workflow-executor';
+import { WorkflowError, workflowNotFound } from './workflow-error';
+import { WorkflowFrontierPump } from './workflow-frontier-pump';
+import { WorkflowInstanceFactory } from './workflow-instance-factory';
+import {
+  WorkflowLifecycleCoordinator,
+  type WorkflowDispatchPhase,
+} from './workflow-lifecycle-coordinator';
+import {
+  WorkflowRepository,
+  type WorkflowInstanceListFilter,
+} from './workflow-repository';
 import type { WorkflowRegistry } from './workflow-registry';
+import { WorkflowRuntimeStore } from './workflow-runtime-store';
+import { resolveWorkflowShutdownGraceMs } from './workflow-shutdown-policy';
+import { WorkflowTransitionController } from './workflow-transition-controller';
+import {
+  createNativeWorkflowWakeTimer,
+  WorkflowWakeCoordinator,
+  type WorkflowWakeTimer,
+} from './workflow-wake-coordinator';
+
+const systemClock: WorkflowClock = { now: () => new Date() };
+
+export interface WorkflowServiceOptions {
+  clock?: WorkflowClock;
+  runtime?: WorkflowRuntimeStore;
+  /**
+   * Exact in-process retry/deadline timer. Custom clocks disable native timers
+   * unless a deterministic timer is supplied explicitly.
+   */
+  wakeTimer?: WorkflowWakeTimer | false;
+  /** Maximum wall-clock wait for abort-ignoring handlers during shutdown. */
+  shutdownGraceMs?: number;
+}
 
 export class WorkflowService {
-  private executor: WorkflowExecutor;
+  private readonly runtime: WorkflowRuntimeStore;
+  private readonly repository: WorkflowRepository;
+  private readonly executor: WorkflowExecutor;
+  private readonly lifecycle: WorkflowLifecycleCoordinator;
+  private readonly transitions: WorkflowTransitionController;
+  private readonly instanceFactory: WorkflowInstanceFactory;
+  private readonly frontier: WorkflowFrontierPump;
+  private readonly wakes: WorkflowWakeCoordinator;
+  private readonly clock: WorkflowClock;
+  private disposed = false;
+  private disposalPromise: Promise<void> | null = null;
 
   constructor(
-    private db: ReactiveDB,
-    private registry: WorkflowRegistry,
+    db: ReactiveDB,
+    registry: WorkflowRegistry,
+    options: WorkflowServiceOptions = {},
   ) {
-    this.executor = new WorkflowExecutor(db, registry);
-  }
-
-  // ─── Start ──────────────────────────────────────────
-
-  /**
-   * Start a new workflow instance. Creates instance + step rows
-   * in a transaction, then immediately executes the first step.
-   */
-  async start(
-    name: string,
-    input?: unknown,
-    startedBy?: string,
-  ): Promise<string> {
-    const definition = this.registry.getWorkflow(name);
-    if (!definition) {
-      throw new Error(`Workflow "${name}" not registered`);
-    }
-
-    const instanceId = crypto.randomUUID();
-    const now = new Date().toISOString();
-
-    // Persist definition if not already stored
-    this.ensureDefinitionPersisted(definition);
-
-    // Create instance + steps atomically
-    this.db.transaction(() => {
-      this.db.insert('workflow_instances', {
-        instance_id: instanceId,
-        definition_id: this.getDefinitionId(definition.name),
-        name: definition.name,
-        status: 'running',
-        current_step: 0,
-        input: input !== undefined ? JSON.stringify(input) : null,
-        output: null,
-        error: null,
-        started_by: startedBy ?? null,
-        created_at: now,
-        updated_at: now,
-        completed_at: null,
-        steps_json: JSON.stringify(definition.steps),
-      });
-
-      for (let i = 0; i < definition.steps.length; i++) {
-        const step = definition.steps[i];
-        this.db.insert('workflow_steps', {
-          step_id: crypto.randomUUID(),
-          instance_id: instanceId,
-          step_index: i,
-          step_name: step.handler,
-          status: 'pending',
-          input: null,
-          output: null,
-          error: null,
-          retries: 0,
-          max_retries: step.retries ?? 3,
-          retry_at: null,
-          wait_event: step.waitFor ?? null,
-          timeout_at: null,
-          started_at: null,
-          completed_at: null,
-          created_at: now,
-        });
-      }
+    this.clock = options.clock ?? systemClock;
+    const shutdownGraceMs = resolveWorkflowShutdownGraceMs(options.shutdownGraceMs);
+    this.runtime = options.runtime ?? new WorkflowRuntimeStore(db);
+    this.repository = new WorkflowRepository(db);
+    const wakeTimer = options.wakeTimer === undefined
+      ? (options.clock ? false : createNativeWorkflowWakeTimer())
+      : options.wakeTimer;
+    this.wakes = new WorkflowWakeCoordinator(this.clock, wakeTimer, {
+      retry: (wake) => this.dispatchAdvance(wake.instanceId, 'retry'),
+      timeout: (wake) => this.lifecycle.handleTimeoutWake(wake),
     });
-
-    // Execute first step (non-blocking — don't await in transaction)
-    await this.advance(instanceId);
-
-    return instanceId;
+    this.executor = new WorkflowExecutor(
+      db,
+      registry,
+      this.runtime,
+      this.clock,
+      this.repository,
+      this.wakes,
+      shutdownGraceMs,
+    );
+    this.lifecycle = new WorkflowLifecycleCoordinator(
+      this.repository,
+      registry,
+      this.runtime,
+      this.executor,
+      this.clock,
+      this.wakes,
+    );
+    this.transitions = new WorkflowTransitionController(
+      this.repository,
+      this.runtime,
+      this.executor,
+      this.lifecycle,
+      this.clock,
+      this.wakes,
+    );
+    this.instanceFactory = new WorkflowInstanceFactory(
+      registry,
+      this.repository,
+      this.clock,
+    );
+    this.frontier = new WorkflowFrontierPump(
+      this.repository,
+      this.runtime,
+      this.executor,
+      this.clock,
+      this.wakes,
+    );
   }
 
-  /** Canonical run alias for start(). */
-  async run(
-    name: string,
-    input?: unknown,
-    startedBy?: string,
-  ): Promise<string> {
+  /** Create an instance and drive its first legal frontier. */
+  async start(name: string, input?: unknown, startedBy?: string): Promise<string> {
+    this.assertAvailable();
+    this.markOperationStarted();
+    const created = this.instanceFactory.create(name, input, startedBy);
+
+    emitPlatformCode(OBS_CODES.WORKFLOW_INSTANCE_STARTED, {
+      metadata: {
+        instanceId: created.instanceId,
+        name: created.name,
+        startedBy: startedBy ?? null,
+      },
+    });
+    await this.advance(created.instanceId);
+    return created.instanceId;
+  }
+
+  async run(name: string, input?: unknown, startedBy?: string): Promise<string> {
     return this.start(name, input, startedBy);
   }
 
-  // ─── Advance ────────────────────────────────────────
-
-  /**
-   * Advance the workflow to the next pending step. Called after a step
-   * completes or is skipped. Completes the workflow if all steps are done.
-   */
+  /** Coalesce concurrent triggers into one per-instance frontier pump. */
   async advance(instanceId: string): Promise<void> {
-    const instance = this.db.queryOne('workflow_instances', instanceId) as
-      | (Record<string, unknown> & { status: string })
-      | null;
-
-    if (!instance || instance.status !== 'running') return;
-
-    const steps = this.getSteps(instanceId);
-    const failedStep = steps.find(
-      s => s.status === 'failed' && !s.retry_at,
-    );
-    if (failedStep) {
-      this.db.update('workflow_instances', instanceId, {
-        status: 'failed',
-        error: failedStep.error,
-        current_step: failedStep.step_index,
-        updated_at: new Date().toISOString(),
-      });
-      return;
-    }
-
-    const nextStep = steps.find(
-      s => s.status === 'pending' || s.status === 'waiting',
-    );
-
-    if (!nextStep) {
-      // A failed step with a scheduled retry keeps the workflow running.
-      if (steps.some(s => s.status === 'failed' && s.retry_at)) return;
-
-      // All steps completed/skipped — workflow is done
-      const lastCompleted = steps
-        .filter(s => s.status === 'completed')
-        .sort((a, b) => b.step_index - a.step_index)[0];
-
-      this.db.update('workflow_instances', instanceId, {
-        status: 'completed',
-        current_step: steps.length,
-        output: lastCompleted?.output ?? null,
-        completed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-      return;
-    }
-
-    // Execute next pending step
-    if (nextStep.status === 'pending') {
-      this.db.update('workflow_instances', instanceId, {
-        current_step: nextStep.step_index,
-        updated_at: new Date().toISOString(),
-      });
-
-      await this.executor.executeStep(instanceId, nextStep.step_id);
-      // Reconcile success, scheduled retry, or permanent failure atomically
-      // into the owning workflow lifecycle.
-      await this.advance(instanceId);
-    }
-    // If status is 'waiting', do nothing — sendEvent will resume
+    if (this.disposed) return;
+    this.markOperationStarted();
+    return this.frontier.advance(instanceId, () => this.advance(instanceId));
   }
 
-  // ─── Events ─────────────────────────────────────────
-
-  /**
-   * Send an event to a workflow instance. If a step is waiting for
-   * this event, it will be executed with the event payload.
-   */
+  /** Persist an event as an inbox item, then let the legal frontier claim it. */
   async sendEvent(
     instanceId: string,
     eventName: string,
     payload?: unknown,
     sentBy?: string,
   ): Promise<boolean> {
-    // Record the event
-    this.db.insert('workflow_events', {
-      event_id: crypto.randomUUID(),
-      instance_id: instanceId,
-      event_name: eventName,
-      payload: payload !== undefined ? JSON.stringify(payload) : null,
-      sent_by: sentBy ?? null,
-      created_at: new Date().toISOString(),
+    this.assertAvailable();
+    this.markOperationStarted();
+    if (!eventName.trim()) {
+      throw new WorkflowError('Event name is required', 'WORKFLOW_EVENT_INVALID', 422);
+    }
+    if (eventName !== eventName.trim()) {
+      throw new WorkflowError(
+        'Event name must not include surrounding whitespace',
+        'WORKFLOW_EVENT_INVALID',
+        422,
+      );
+    }
+    const serializedPayload = serializeJson(
+      payload,
+      'Workflow event payload is not JSON-serializable',
+      'WORKFLOW_EVENT_INVALID',
+    );
+    const eventId = crypto.randomUUID();
+    const createdAt = this.clock.now().toISOString();
+    let shouldAdvance = false;
+
+    this.repository.transaction(() => {
+      const instance = this.getInstanceRecord(instanceId);
+      if (!instance) throw workflowNotFound();
+      if (instance.status !== 'running' && instance.status !== 'paused') {
+        throw new WorkflowError(
+          `Cannot send an event to a ${instance.status} workflow`,
+          'WORKFLOW_STATE_INVALID',
+          409,
+        );
+      }
+      shouldAdvance = instance.status === 'running';
+      this.repository.insertEvent({
+        event_id: eventId,
+        instance_id: instanceId,
+        event_name: eventName,
+        payload: serializedPayload,
+        sent_by: sentBy ?? null,
+        created_at: createdAt,
+      });
+      this.runtime.recordDeliverableEvent(eventId, instanceId, eventName, createdAt);
     });
 
-    // Find a waiting step that matches
-    const steps = this.getSteps(instanceId);
-    const waitingStep = steps.find(
-      s => s.status === 'waiting' && s.wait_event === eventName,
-    );
-
-    if (!waitingStep) return false;
-
-    await this.executor.executeStep(
-      instanceId,
-      waitingStep.step_id,
-      { name: eventName, payload },
-    );
-
-    await this.advance(instanceId);
-
-    return true;
+    if (shouldAdvance) await this.advance(instanceId);
+    return this.runtime.isEventClaimed(eventId);
   }
-
-  // ─── Lifecycle Control ──────────────────────────────
 
   cancel(instanceId: string): void {
-    const instance = this.db.queryOne('workflow_instances', instanceId);
-    if (!instance) throw new Error(`Instance ${instanceId} not found`);
-
-    this.db.update('workflow_instances', instanceId, {
-      status: 'cancelled',
-      updated_at: new Date().toISOString(),
-      completed_at: new Date().toISOString(),
-    });
+    this.assertAvailable();
+    this.markOperationStarted();
+    this.transitions.cancel(instanceId);
   }
 
-  /** Canonical stop alias for cancel(). */
   stop(instanceId: string): void {
     this.cancel(instanceId);
   }
 
   pause(instanceId: string): void {
-    const instance = this.db.queryOne('workflow_instances', instanceId);
-    if (!instance) throw new Error(`Instance ${instanceId} not found`);
-    if (instance.status !== 'running') {
-      throw new Error(`Cannot pause workflow in status "${instance.status}"`);
-    }
-
-    this.db.update('workflow_instances', instanceId, {
-      status: 'paused',
-      updated_at: new Date().toISOString(),
-    });
+    this.assertAvailable();
+    this.markOperationStarted();
+    this.transitions.pause(instanceId);
   }
 
   async resume(instanceId: string): Promise<void> {
-    const instance = this.db.queryOne('workflow_instances', instanceId);
-    if (!instance) throw new Error(`Instance ${instanceId} not found`);
-    if (instance.status !== 'paused') {
-      throw new Error(`Cannot resume workflow in status "${instance.status}"`);
-    }
-
-    this.db.update('workflow_instances', instanceId, {
-      status: 'running',
-      updated_at: new Date().toISOString(),
-    });
-
-    await this.advance(instanceId);
+    this.assertAvailable();
+    this.markOperationStarted();
+    await this.transitions.resume(
+      instanceId,
+      () => this.assertAvailable(),
+      (id) => this.advance(id),
+    );
   }
 
-  // ─── Polling ────────────────────────────────────────
-
-  /**
-   * Poll for failed steps with retry_at <= now. Re-execute them.
-   * Called by the scheduler on a cron interval.
-   */
+  /** Discover due instances; the normal frontier pump performs every retry. */
   async pollRetries(): Promise<number> {
-    const now = new Date().toISOString();
-    const steps = this.db.query('workflow_steps')
-      .filter(s =>
-        s.status === 'failed' &&
-        s.retry_at !== null &&
-        (s.retry_at as string) <= now,
-      ) as unknown as WorkflowStepRecord[];
-
-    let count = 0;
-    for (const step of steps) {
-      // Check workflow is still running
-      const instance = this.db.queryOne('workflow_instances', step.instance_id);
-      if (!instance || instance.status !== 'running') continue;
-
-      await this.executor.executeStep(step.instance_id, step.step_id);
-      await this.advance(step.instance_id);
-      count++;
-    }
-
-    return count;
+    if (this.disposed) return 0;
+    return this.lifecycle.pollRetries((instanceId, phase) => {
+      this.dispatchAdvance(instanceId, phase);
+    });
   }
 
-  /**
-   * Poll for steps that have exceeded their timeout. Mark them as failed.
-   */
+  /** Expire only a still-current deadline after a transactional reread. */
   pollTimeouts(): number {
-    const now = new Date().toISOString();
-    const steps = this.db.query('workflow_steps')
-      .filter(s =>
-        (s.status === 'running' || s.status === 'waiting') &&
-        s.timeout_at !== null &&
-        (s.timeout_at as string) <= now,
-      ) as unknown as WorkflowStepRecord[];
-
-    for (const step of steps) {
-      this.db.update('workflow_steps', step.step_id, {
-        status: 'failed',
-        error: 'Step timed out',
-        completed_at: now,
-        retry_at: null,
-      });
-
-      // Fail the workflow
-      this.db.update('workflow_instances', step.instance_id, {
-        status: 'failed',
-        error: `Step "${step.step_name}" timed out`,
-        updated_at: now,
-      });
-    }
-
-    return steps.length;
+    if (this.disposed) return 0;
+    return this.lifecycle.pollTimeouts();
   }
 
-  // ─── Crash Recovery ─────────────────────────────────
-
-  /**
-   * On startup, re-execute steps stuck in 'running' status
-   * (indicates a crash during execution).
-   */
-  async recoverInFlight(): Promise<number> {
-    const runningSteps = this.db.query('workflow_steps')
-      .filter(s => s.status === 'running') as unknown as WorkflowStepRecord[];
-
-    for (const step of runningSteps) {
-      // Reset to pending and let advance() pick it up
-      this.db.update('workflow_steps', step.step_id, {
-        status: 'pending',
-        started_at: null,
-      });
-    }
-
-    // Re-advance all running workflows
-    const runningInstances = this.db.query('workflow_instances')
-      .filter(i => i.status === 'running') as unknown as Array<{ instance_id: string }>;
-
-    for (const instance of runningInstances) {
-      await this.advance(instance.instance_id);
-    }
-
-    return runningSteps.length;
+  /** Preflight every live handler, then normalize and re-drive crash-left work. */
+  async recoverInFlight(onReady?: () => void): Promise<number> {
+    return this.lifecycle.recoverInFlight(
+      (instanceId, phase) => this.dispatchAdvance(instanceId, phase),
+      () => this.assertAvailable(),
+      onReady,
+    );
   }
 
-  // ─── Queries ────────────────────────────────────────
+  dispose(): Promise<void> {
+    if (this.disposalPromise) return this.disposalPromise;
+    this.disposed = true;
+    this.frontier.stop();
+    this.disposalPromise = (async () => {
+      let lifecycleError: unknown;
+      try {
+        await this.lifecycle.dispose();
+      } catch (error) {
+        lifecycleError = error;
+      }
+      await this.frontier.drain();
+      if (lifecycleError !== undefined) throw lifecycleError;
+    })();
+    return this.disposalPromise;
+  }
 
   getInstance(instanceId: string): Record<string, unknown> | null {
-    return this.db.queryOne('workflow_instances', instanceId);
+    return this.repository.getInstance(instanceId) as unknown as Record<string, unknown> | null;
   }
 
-  /** Canonical get alias for getInstance(). */
   get(instanceId: string): Record<string, unknown> | null {
     return this.getInstance(instanceId);
   }
 
   getSteps(instanceId: string): WorkflowStepRecord[] {
-    return this.db.query('workflow_steps')
-      .filter(s => s.instance_id === instanceId)
-      .sort((a, b) => (a.step_index as number) - (b.step_index as number)) as unknown as WorkflowStepRecord[];
+    return this.repository.getSteps(instanceId);
   }
 
   getEvents(instanceId: string): Record<string, unknown>[] {
-    return this.db.query('workflow_events')
-      .filter(e => e.instance_id === instanceId);
+    return this.repository.getEvents(instanceId);
   }
 
-  listInstances(filter?: {
-    status?: string;
-    name?: string;
-    limit?: number;
-  }): Record<string, unknown>[] {
-    let results = this.db.query('workflow_instances');
-
-    if (filter?.status) {
-      results = results.filter(i => i.status === filter.status);
-    }
-    if (filter?.name) {
-      results = results.filter(i => i.name === filter.name);
-    }
-
-    // Sort by created_at descending
-    results.sort((a, b) =>
-      (b.created_at as string).localeCompare(a.created_at as string),
-    );
-
-    if (filter?.limit) {
-      results = results.slice(0, filter.limit);
-    }
-
-    return results;
+  listInstances(filter?: WorkflowInstanceListFilter): Record<string, unknown>[] {
+    return this.repository.listInstances(filter);
   }
 
-  /** Canonical list alias for listInstances(). */
   list(filter?: Parameters<WorkflowService['listInstances']>[0]): Record<string, unknown>[] {
     return this.listInstances(filter);
   }
 
-  // ─── Internal ───────────────────────────────────────
+  private getInstanceRecord(instanceId: string): WorkflowInstanceRecord | null {
+    return this.repository.getInstance(instanceId);
+  }
 
-  private ensureDefinitionPersisted(definition: WorkflowDefinition): void {
-    const existing = this.db.query('workflow_definitions')
-      .find(d => d.name === definition.name);
-
-    if (!existing) {
-      this.db.insert('workflow_definitions', {
-        definition_id: crypto.randomUUID(),
-        name: definition.name,
-        version: 1,
-        steps_json: JSON.stringify(definition.steps),
-        input_schema: definition.inputSchema ? JSON.stringify(definition.inputSchema) : null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+  private dispatchAdvance(
+    instanceId: string,
+    phase: WorkflowDispatchPhase,
+  ): void {
+    void this.advance(instanceId).catch((error) => {
+      emitPlatformCode(OBS_CODES.WORKFLOW_ADVANCE_FAILED, {
+        error,
+        metadata: { instanceId, phase },
       });
+    });
+  }
+
+  private assertAvailable(): void {
+    if (this.disposed) {
+      throw new WorkflowError(
+        'Workflow service is not available',
+        'WORKFLOW_NOT_READY',
+        503,
+      );
     }
   }
 
-  private getDefinitionId(name: string): string {
-    const def = this.db.query('workflow_definitions')
-      .find(d => d.name === name);
-    return (def?.definition_id as string) ?? name;
+  private markOperationStarted(): void {
+    this.lifecycle.markOperationStarted();
+  }
+}
+
+function serializeJson(
+  value: unknown,
+  message: string,
+  code: 'WORKFLOW_INPUT_INVALID' | 'WORKFLOW_EVENT_INVALID',
+): string | null {
+  if (value === undefined) return null;
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) throw new TypeError(message);
+    return serialized;
+  } catch {
+    throw new WorkflowError(message, code, 422);
   }
 }

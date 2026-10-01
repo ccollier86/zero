@@ -50,6 +50,33 @@ describe('resolveConfig', () => {
     expect(config.resourceRoutes).toEqual({});
     expect(config.routeAuth).toBe('protected-by-default');
     expect(config.postLoginPath).toBe('/');
+    expect(config.workflows).toEqual({});
+  });
+
+  test('normalizes workflow registration and enforces its auth dependency', () => {
+    const register = () => undefined;
+    const configured = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: true,
+      workflows: { register },
+    });
+    expect(configured.workflows).toEqual({ register });
+
+    const disabled = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: true,
+      workflows: false,
+    });
+    expect(disabled.workflows).toBe(false);
+
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: false,
+      workflows: { register },
+    })).toThrow('workflows require auth: true');
   });
 
   test('supports explicit route auth for public-first apps', () => {

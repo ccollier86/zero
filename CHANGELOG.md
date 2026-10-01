@@ -57,6 +57,22 @@ All notable Zero Platform changes are tracked here.
 
 ### Fixed
 
+- Rebuilt durable workflow execution around a strict sequential frontier and
+  crash-safe attempt fencing. Retries can no longer let later steps overtake
+  an unfinished predecessor; buffered events, claimed payloads, wait and retry
+  deadlines, pause duration, and idempotency identity now survive restart;
+  cancellation, pause, timeout, and late handler completion use first-winner
+  durable transitions. Startup registers application handlers before a
+  whole-set recovery preflight, publishes the ready service before recovered
+  work is dispatched, and fails closed on malformed state or missing live
+  handlers without partially normalizing stored runs. Workflow HTTP and Sync
+  reads are now owner-scoped (with platform-admin access), executable topology
+  remains server-only, definition start/inspect access is declarative, and all
+  Sync writes to framework workflow tables are denied. Added stable workflow
+  error/observability codes, structured client `ApiError` handling, live React
+  run/progress actions, indexed repository queries, immutable ownership/parent
+  guards, deterministic restart/concurrency/lifecycle coverage, and complete
+  registration, recovery, authorization, hooks, and Zero 1.3 upgrade docs.
 - Made KV same-key mutations genuinely atomic within one service instance.
   Compare-and-set, counters, and all limiter shapes now make their decision and
   commit under one per-key boundary, return the result produced by their own

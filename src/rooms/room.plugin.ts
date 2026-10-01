@@ -71,6 +71,7 @@ export interface RoomPluginConfig {
  * Mount AFTER auth plugin.
  */
 export function createRoomPlugin(config: RoomPluginConfig) {
+  let ownedService: RoomService | null = null;
   return new Elysia({ name: 'rooms', prefix: '/rooms' })
 
     .use(createAuthMiddleware(getTokenService))
@@ -78,14 +79,17 @@ export function createRoomPlugin(config: RoomPluginConfig) {
     // ─── Lifecycle ─────────────────────────────────────
     .onStart(() => {
       defineRoomTables(config.db);
-      _roomService = new RoomService(config.db);
+      ownedService = new RoomService(config.db);
+      _roomService = ownedService;
       emitPlatformCode(OBS_CODES.ROOMS_STARTED, {
         metadata: { tablesDefined: true },
       });
     })
 
     .onStop(() => {
-      _roomService = null;
+      if (!ownedService) return;
+      if (_roomService === ownedService) _roomService = null;
+      ownedService = null;
       emitPlatformCode(OBS_CODES.ROOMS_STOPPED);
     })
 

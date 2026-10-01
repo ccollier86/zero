@@ -132,21 +132,37 @@ With `DEEPGRAM_API_KEY` set, the default `speech` alias resolves to
 ## Workflows And Jobs
 
 The AI plugin mounts before the scheduler and workflow plugins, so workflow
-handlers and scheduled jobs can use the same server-side service:
+handlers and scheduled jobs can use the same server-side service. Put workflow
+registration inside `AppConfig.workflows.register`:
 
 ```ts
-import { getAI } from '@zero/framework/server';
+import { defineZeroConfig, getAI } from '@zero/framework/server';
 
-registry.registerHandler('summarizeRecord', async (ctx) => {
-  const ai = getAI();
-  if (!ai) throw new Error('AI is not enabled.');
+export default defineZeroConfig({
+  // db, tables, auth, ai...
+  workflows: {
+    register(registry) {
+      registry.registerHandler('summarizeRecord', async (ctx) => {
+        ctx.signal?.throwIfAborted();
+        const ai = getAI();
+        if (!ai) throw new Error('AI is not enabled.');
 
-  return ai.generateConversation({
-    model: 'smart',
-    messages: [
-      { role: 'user', content: JSON.stringify(ctx.workflowInput) },
-    ],
-  });
+        return ai.generateConversation({
+          model: 'smart',
+          messages: [
+            { role: 'user', content: JSON.stringify(ctx.workflowInput) },
+          ],
+          abortSignal: ctx.signal,
+          metadata: { workflowIdempotencyKey: ctx.idempotencyKey },
+        });
+      });
+
+      registry.create({
+        name: 'summarize-record',
+        steps: [{ name: 'Summarize', handler: 'summarizeRecord' }],
+      });
+    },
+  },
 });
 ```
 
@@ -155,12 +171,21 @@ For common workflow steps, `createAIWorkflowHandler()` wraps that pattern:
 ```ts
 import { createAIWorkflowHandler } from '@zero/framework/server';
 
-registry.registerHandler('summarizeRecord', createAIWorkflowHandler({
-  model: 'smart',
-  system: 'Summarize records for internal review.',
-  prompt: (ctx) => JSON.stringify(ctx.input),
-}));
+registry.registerHandler(
+  'summarizeRecord',
+  createAIWorkflowHandler({
+    model: 'smart',
+    system: 'Summarize records for internal review.',
+    prompt: (ctx) => JSON.stringify(ctx.input),
+  }),
+);
 ```
+
+The helper adds workflow instance/step metadata to the AI request. Workflow
+execution is at-least-once after a crash, so use `ctx.idempotencyKey` for any
+separate nontransactional effect that must not happen twice.
+See [Durable Workflows](./workflows.md) for registration timing, retry budgets,
+deadlines, recovery, and owner-scoped browser state.
 
 For repeated server-side calls that should carry previous user and assistant
 turns, use the transient session helper:

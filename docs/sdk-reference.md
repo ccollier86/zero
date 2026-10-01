@@ -2664,10 +2664,54 @@ use SDK auth headers with an automatic refresh-and-retry on 401.
 
 | Hook | Signature | Description |
 |------|-----------|-------------|
-| `useWorkflow` | `(instanceId) => UseWorkflowResult` | Live workflow instance and steps |
-| `useWorkflowList` | `(filter?) => UseWorkflowListResult` | Live workflow instances by status/name |
-| `useWorkflowActions` | `() => WorkflowActions` | Start/cancel/pause/resume/send-event actions |
-| `useWorkflowRun` | `(name, options?) => UseWorkflowRunResult` | Start one workflow by name and watch live progress |
+| `useWorkflow` | `(instanceId: string \| null) => UseWorkflowResult` | Live authorized instance, ordered steps, frontier, and status flags |
+| `useWorkflowList` | `(filter?: { status?; name? }) => UseWorkflowListResult` | Live authorized instances filtered by status/name |
+| `useWorkflowActions` | `() => WorkflowActions` | Authenticated start/cancel/pause/resume/send-event actions |
+| `useWorkflowRun` | `(name, options?: { instanceId?: string \| null }) => UseWorkflowRunResult` | Start/select one run and compose state, actions, progress, and pending/error state |
+
+`useWorkflow()` and `useWorkflowRun()` expose `isRunning`, `isComplete`,
+`isFailed`, `isPaused`, `isCancelled`, `isWaiting`, and `isRetrying`.
+`isRunning` can be true together with `isWaiting` or `isRetrying`; those flags
+describe the current frontier while the instance remains live.
+`sendEvent()` resolves to the server's `matched` boolean: `true` only when that
+new event was claimed before the call returned. Events accepted while paused
+remain buffered and return `false` until a later resume can claim them.
+
+Workflow hooks read owner-scoped ReactiveDB Sync state and do not poll. A normal
+user sees only runs they started; the exact stable global `admin` role can see
+all runtime rows. Definitions are server-only and excluded from Sync. Browser
+instance rows omit the immutable `steps_json` snapshot, and step rows omit the
+executable `wait_event` routing key; `step_name` is the safe human label.
+Mutating workflow tables directly over Sync is rejected; actions use the
+authenticated HTTP surface.
+
+For direct browser calls, use the generated Eden API on `client.api`:
+
+```ts
+import { ApiError, unwrap } from '@zero/framework/react';
+
+const { instanceId } = unwrap(await client.api.workflows.post({
+  name: 'generate-report',
+  input: { clientId },
+}));
+
+const definitions = unwrap(await client.api.workflows.definitions.get());
+// Access-filtered: Array<{ name: string; steps: Array<{ name: string }> }>
+
+const { matched } = unwrap(
+  await client.api.workflows[instanceId].events.post({
+    eventName: 'approved',
+    payload: { reviewerId },
+  }),
+);
+```
+
+`ApiError` is exported from `@zero/framework/react`. A caught instance exposes
+`status`, the stable Zero `code`, the response `body`, and a safe `message`;
+workflow UI can branch on `error.code` without parsing response text.
+
+See [Durable Workflows](./workflows.md) for registration, strict-frontier
+execution, retries, deadlines, event claims, recovery, and authorization.
 
 ### Router Hooks
 
@@ -2729,7 +2773,7 @@ See [Frontend Hooks](frontend/hooks.md) for usage examples and hook boundary rul
 Everything available from `@zero/framework/react`:
 
 ### Functions & Classes
-`createClient`, `getClient`, `AuthClient`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
+`createClient`, `getClient`, `AuthClient`, `ApiError`, `unwrap`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
 
 ### React Components
 `AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `KanbanBoard`, `KanbanTaskCard`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`

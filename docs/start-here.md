@@ -50,9 +50,10 @@ modal manager together. See [LaunchBoard](./frontend/launchboard.md) before
 building dashboard/work-queue style apps.
 
 Core backend primitives include ReactiveDB, generated resources, WebSocket
-sync, auth, email, storage, workflows, notifications, AI, vector storage,
-[PDF rendering](./pdf.md), and [platform tokens](./tokens.md) for one-time
-actions plus resumable public flows.
+sync, auth, email, storage, [durable workflows](./workflows.md), notifications,
+AI, vector storage, [PDF rendering](./pdf.md), and
+[platform tokens](./tokens.md) for one-time actions plus resumable public
+flows.
 
 Create a new app with:
 
@@ -654,7 +655,7 @@ Zero includes these backend capabilities out of the box:
 | State Sync | Per-user server-persisted reactive key/value state. |
 | Notifications | Server-created notifications and receipt tracking. |
 | Rooms/Presence | Presence and room coordination primitives. |
-| Workflows | Built-in workflow/scheduler infrastructure. |
+| Workflows | [Durable strict-frontier execution](./workflows.md), event waits, retries/deadlines, crash recovery, owner-scoped live state, and authenticated actions. |
 | Migrations | Explicit migration files, ledger, schema history, rollback, backups, doctor, draft plans. |
 | Observability | Structured event codes, default console/memory sink, protected event endpoint, frontend ingest. |
 | AI | Internal server-side AI service with env-detected providers, custom Meta Llama adapter, aliases, conversations, tools, embeddings, images, transcription, speech, and protected status. |

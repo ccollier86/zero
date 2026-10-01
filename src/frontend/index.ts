@@ -49,7 +49,7 @@ export type {
 export type { IdentityKey, IdentityValue } from '../sync/identity';
 
 // ─── Typed API (Eden Treaty) ────────────────────────────────────────────
-export { unwrap } from './client/api';
+export { ApiError, unwrap } from './client/api';
 export type { Api } from './client/api';
 
 // ─── Auth Client (vanilla JS) ────────────────────────────────────────────
@@ -702,6 +702,8 @@ export type {
   WorkflowStatus,
   StepStatus,
   StepDefinition,
+  WorkflowAccessRule,
+  WorkflowDefinitionAccessPolicy,
   WorkflowDefinition,
   StepContext,
   StepHandler,

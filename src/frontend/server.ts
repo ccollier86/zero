@@ -19,6 +19,7 @@ export { defineZeroConfig, resolveConfig } from './server/types';
 export type {
   AppConfig,
   AppDoctorConfig,
+  AppWorkflowsConfig,
   AppTableInput,
   AutoLazyAction,
   ResolvedConfig,
@@ -496,7 +497,12 @@ export { createSchedulerPlugin, getScheduler } from '../scheduler';
 export type { JobDefinition, JobStatus, SchedulerPluginConfig } from '../scheduler';
 
 // ─── Workflows: Server ──────────────────────────────────────────────────
-export { createWorkflowPlugin, getWorkflowService, getWorkflowRegistry } from '../workflows';
+export {
+  createWorkflowPlugin,
+  getWorkflowService,
+  getWorkflowRegistry,
+  stopWorkflowRuntime,
+} from '../workflows';
 export { WORKFLOW_TABLES } from '../workflows';
 export type {
   WorkflowPluginConfig,

@@ -517,8 +517,34 @@ const report = useWorkflowRun('generate-report');
 
 await report.start({ clientId });
 
-return <Progress value={report.progress.percent} />;
+return (
+  <>
+    <Progress value={report.progress.percent} />
+    {report.isWaiting && <span>Waiting for an event</span>}
+    {report.isRetrying && <span>Retry scheduled</span>}
+  </>
+);
 ```
+
+`useWorkflow(instanceId)` returns `instance`, ordered `steps`, the current
+strict-frontier step, and `isRunning`, `isComplete`, `isFailed`, `isPaused`,
+`isCancelled`, `isWaiting`, and `isRetrying`. `useWorkflowList({ status?,
+name? })` returns the current user's visible instances. `isRunning` can be true
+together with `isWaiting` or `isRetrying`, because those frontier states do not
+make the instance terminal.
+
+`useWorkflowActions()` exposes authenticated `start`, `cancel`, `pause`,
+`resume`, and `sendEvent` calls. `sendEvent` resolves to `true` only when the
+newly stored event was claimed before the request returned. An event sent while
+paused is durably buffered but returns `false`; resume may claim it later.
+
+These hooks read ReactiveDB Sync and do not poll. Runtime rows are owner-scoped,
+with the exact stable global `admin` role allowed to see all runs. Definitions
+are excluded from Sync. Instance rows omit the server-only `steps_json`
+snapshot, and step rows omit the executable `wait_event` routing key; render
+the projected human `step_name` instead. Workflow tables are read-only over
+Sync, and lifecycle actions go through `client.api.workflows`. See
+[Durable Workflows](../workflows.md).
 
 ### User Properties
 

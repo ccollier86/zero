@@ -87,6 +87,20 @@ afterEach(() => {
 });
 
 describe('createClient auth configuration', () => {
+  test('registers only public workflow runtime tables in the browser SDK', () => {
+    const client = createClient({
+      url: 'http://localhost:3000',
+      tables,
+      autoConnect: false,
+    });
+
+    expect(() => client.collection('workflow_instances')).not.toThrow();
+    expect(() => client.collection('workflow_steps')).not.toThrow();
+    expect(() => client.collection('workflow_events')).not.toThrow();
+    expect(() => client.collection('workflow_definitions'))
+      .toThrow('Unknown table: workflow_definitions');
+  });
+
   test('defaults auth to disabled and gives clear auth-action errors', async () => {
     const client = createClient({
       url: 'http://localhost:3000',

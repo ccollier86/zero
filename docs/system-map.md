@@ -358,22 +358,57 @@ startup is lazy and process-wide; each render receives an isolated context.
 
 ## System 5: Workflows
 
-**What:** Durable multi-step workflow engine with retry, timeout, branching.
+**What:** Durable, sequential workflow engine with a strict execution frontier,
+validated input, total-attempt retry budgets, event waits, total logical-step
+deadlines, pause/resume, cancellation, and crash recovery.
 
 **Files:**
 | File | Purpose |
 |------|---------|
 | `src/workflows/types.ts` | WorkflowDefinition, StepDefinition, StepContext |
-| `src/workflows/workflow-registry.ts` | Register workflow definitions |
-| `src/workflows/workflow-executor.ts` | Execute steps, handle branching/conditions |
-| `src/workflows/workflow-service.ts` | CRUD, state machine, retry/timeout polling |
-| `src/workflows/workflow.plugin.ts` | Elysia plugin — tables, REST routes |
+| `src/workflows/workflow-access.ts` | Validated declarative start/inspect authority |
+| `src/workflows/workflow-registry.ts` | In-memory handler and definition registry |
+| `src/workflows/workflow-schema.ts` | Public ReactiveDB table registration, indexes, and ownership/parent guards |
+| `src/workflows/workflow-step-definition.ts` | Definition-snapshot parsing and handler resolution |
+| `src/workflows/workflow-persisted-state.ts` | Fail-closed validation of durable run rows/topology |
+| `src/workflows/workflow-runtime-store.ts` | Durable internal event claims, attempt fences, and pause boundaries |
+| `src/workflows/workflow-repository.ts` | Prepared SQL reads/writes and durable transaction helpers |
+| `src/workflows/workflow-instance-factory.ts` | Start-time validation and atomic instance/step persistence |
+| `src/workflows/workflow-attempt-coordinator.ts` | Transactional prepare/commit, retry/deadline decisions, and attempt fences |
+| `src/workflows/workflow-transition-controller.ts` | Pause, resume, and cancellation transitions |
+| `src/workflows/workflow-lifecycle-coordinator.ts` | Recovery, retry/timeout discovery, and shutdown normalization |
+| `src/workflows/workflow-executor.ts` | Physical handler invocation and cooperative abort/drain behavior |
+| `src/workflows/workflow-service.ts` | Public facade and coalesced strict-frontier pump |
+| `src/workflows/workflow-sync-policy.ts` | Owner/admin Sync visibility and read-only workflow tables |
+| `src/workflows/workflow-public-record.ts` | HTTP/Sync executable-topology redaction |
+| `src/workflows/workflow-error.ts` | Stable workflow-domain errors |
+| `src/workflows/workflow-scheduler-owner.ts` | Owned retry/timeout job registration and cleanup |
+| `src/workflows/workflow-plugin-runtime.ts` | Registration/recovery barrier and safe service publication |
+| `src/workflows/workflow-http.plugin.ts` | Protected REST routes and stable HTTP errors |
+| `src/workflows/workflow.plugin.ts` | Thin Elysia composition facade |
 | `src/workflows/index.ts` | Barrel exports |
 
 **Client:**
 | File | Purpose |
 |------|---------|
-| `src/frontend/client/workflow-hooks.ts` | useWorkflow, useWorkflowList, useWorkflowActions |
+| `src/frontend/client/workflow-hooks.ts` | Sync-backed `useWorkflow`, `useWorkflowList`, and HTTP actions |
+| `src/frontend/client/workflow-run-hooks.ts` | Start-and-watch composition, progress, and status flags |
+
+**Key patterns:** `AppConfig.workflows.register` is awaited before whole-set
+persisted-state/handler preflight and crash recovery. The service is published
+only after recovery.
+Each run advances only its first unfinished step. New events receive durable
+`_workflow_event_delivery` rows, so early events are buffered, claimed once,
+and retained across retries; historical audit-only event rows are not replayed.
+HTTP and Sync runtime visibility is owner-only except for the exact stable
+global `admin` role. Definitions and underscore coordination tables never
+enter Sync; executable `steps_json` and `wait_event` topology is also projected
+out of browser rows. Definition start/inspection can be declared for
+authenticated users, the global admin, or app roles. Ownership and child
+instance links are immutable. Browser actions use
+`client.api.workflows`; hooks receive live state through ReactiveDB Sync rather
+than polling. See
+[Durable Workflows](./workflows.md).
 
 ---
 

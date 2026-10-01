@@ -73,7 +73,9 @@ sending the request.
 
 Workflow step handlers and scheduled jobs can use the same server-side AI
 service directly, or use `createAIWorkflowHandler()` for common one-step AI
-handlers.
+handlers. Register the examples below inside
+`AppConfig.workflows.register(registry)` so registration finishes before
+workflow recovery begins.
 
 Direct use:
 
@@ -81,15 +83,19 @@ Direct use:
 import { getAI } from '@zero/framework/server';
 
 registry.registerHandler('summarizeCustomer', async (ctx) => {
+  ctx.signal?.throwIfAborted();
   const ai = getAI();
   if (!ai) throw new Error('AI is not enabled.');
+  const input = ctx.workflowInput as { customerId: string };
 
   return ai.generateConversation({
     model: 'smart',
     messages: [
-      { role: 'user', content: `Summarize ${ctx.workflowInput.customerId}` },
+      { role: 'user', content: `Summarize ${input.customerId}` },
     ],
     tools,
+    abortSignal: ctx.signal,
+    metadata: { workflowIdempotencyKey: ctx.idempotencyKey },
   });
 });
 ```
@@ -99,16 +105,23 @@ Helper use:
 ```ts
 import { createAIWorkflowHandler } from '@zero/framework/server';
 
-registry.registerHandler('summarizeCustomer', createAIWorkflowHandler({
-  model: 'smart',
-  system: 'Summarize customer records for internal staff.',
-  prompt: (ctx) => `Summarize customer ${ctx.input.customerId}`,
-  tools,
-}));
+registry.registerHandler(
+  'summarizeCustomer',
+  createAIWorkflowHandler<{ customerId: string }>({
+    model: 'smart',
+    system: 'Summarize customer records for internal staff.',
+    prompt: (ctx) => `Summarize customer ${ctx.input.customerId}`,
+    tools,
+  }),
+);
 ```
 
 The helper returns generated text by default. Set `output: 'result'` when a
-workflow step needs the full AI SDK result, such as usage metadata.
+workflow step needs the full AI SDK result, such as usage metadata. Workflow
+handlers are recovered with at-least-once semantics; pass
+`ctx.idempotencyKey` to separate external effects that must be deduplicated.
+See [Durable Workflows](./workflows.md) for the complete handler, retry,
+deadline, recovery, and authorization contracts.
 
 ## Tool Failures
 

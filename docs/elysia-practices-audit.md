@@ -109,7 +109,9 @@ Current state:
 2. Auth middleware also returns `requireAuth` and `requireAdmin` from `resolve` because those helpers depend on async token verification for the current request.
 3. Sync plugin uses `derive({ as: 'global' })` for `syncDB`.
 4. Notifications, rooms, and scheduler expose services with `derive({ as: 'global' })`.
-5. Workflows exposes service/registry with `derive({ as: 'scoped' })`.
+5. Workflows keeps registry/service ownership in its explicit plugin runtime;
+   app handlers consume the lazy canonical `zero.workflows` service context,
+   and composition-time integrations may use the module registry getter.
 
 Current verdict: mixed. Auth helpers and `syncDB` reasonably need global reach. Domain service derivation should be reviewed; most business services are better as explicit dependencies or module getters unless every later route needs them.
 

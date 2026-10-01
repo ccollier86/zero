@@ -71,6 +71,7 @@ export function getStorageService(): StorageService | null {
  */
 export function createStoragePlugin(config: StoragePluginConfig) {
   const adapter: StorageAdapter = config.adapter ?? new LocalStorageAdapter(config.localDir);
+  let ownedService: StorageService | null = null;
 
   return new Elysia({ name: 'storage', prefix: '/storage' })
 
@@ -81,17 +82,20 @@ export function createStoragePlugin(config: StoragePluginConfig) {
       defineStorageTables(config.db);
       _signingSecret = config.signingSecret ?? crypto.randomUUID();
       _defaultTTL = config.defaultPresignedTTL ?? 3600;
-      _storageService = new StorageService(config.db, adapter, {
+      ownedService = new StorageService(config.db, adapter, {
         uploadGrantSecret: _signingSecret,
         defaultPresignedTTL: _defaultTTL,
       });
+      _storageService = ownedService;
       emitPlatformCode(OBS_CODES.STORAGE_STARTED, {
         metadata: { tablesDefined: true },
       });
     })
 
     .onStop(() => {
-      _storageService = null;
+      if (!ownedService) return;
+      if (_storageService === ownedService) _storageService = null;
+      ownedService = null;
       emitPlatformCode(OBS_CODES.STORAGE_STOPPED);
     })
 

@@ -29,7 +29,7 @@ export interface UseWorkflowRunResult extends UseWorkflowResult {
   cancel: () => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
-  sendEvent: (eventName: string, payload?: unknown) => Promise<void>;
+  sendEvent: (eventName: string, payload?: unknown) => Promise<boolean>;
   starting: boolean;
   actionPending: boolean;
   actionError: unknown;
@@ -54,7 +54,11 @@ export function useWorkflowRun(
   options: UseWorkflowRunOptions = {},
 ): UseWorkflowRunResult {
   const [localInstanceId, setLocalInstanceId] = useState<string | null>(options.instanceId ?? null);
-  const instanceId = options.instanceId ?? localInstanceId;
+  // `null` is an intentional controlled value (observe no run). Only an
+  // omitted/undefined option falls back to the hook's local selection.
+  const instanceId = options.instanceId !== undefined
+    ? options.instanceId
+    : localInstanceId;
   const workflow = useWorkflow(instanceId);
   const actions = useWorkflowActions();
 
@@ -98,11 +102,18 @@ export function useWorkflowRun(
     };
   }, [workflow.steps]);
 
-  const cancel = useCallback(() => actionMutation.run('cancel'), [actionMutation.run]);
-  const pause = useCallback(() => actionMutation.run('pause'), [actionMutation.run]);
-  const resume = useCallback(() => actionMutation.run('resume'), [actionMutation.run]);
+  const cancel = useCallback(async () => {
+    await actionMutation.run('cancel');
+  }, [actionMutation.run]);
+  const pause = useCallback(async () => {
+    await actionMutation.run('pause');
+  }, [actionMutation.run]);
+  const resume = useCallback(async () => {
+    await actionMutation.run('resume');
+  }, [actionMutation.run]);
   const sendEvent = useCallback(
-    (eventName: string, payload?: unknown) => actionMutation.run('event', eventName, payload),
+    async (eventName: string, payload?: unknown) =>
+      Boolean(await actionMutation.run('event', eventName, payload)),
     [actionMutation.run],
   );
 

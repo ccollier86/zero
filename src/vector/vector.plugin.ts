@@ -37,11 +37,11 @@ export function createVectorPlugin(options: VectorPluginConfig) {
         storeFactory: options.storeFactory,
       });
   const service = options.service ?? new VectorService(registry!);
-  activeVectorService = service;
 
   return new Elysia({ name: 'zero-platform-vector' })
     .decorate('vectors', service)
     .onStart(() => {
+      activeVectorService = service;
       emitVectorConfigured({
         indexes: Object.keys(options.config.indexes).length,
       });

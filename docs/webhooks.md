@@ -6,6 +6,12 @@ Durable outgoing delivery is a larger platform subsystem because it needs
 persistence, retries, replay, signing, admin controls, and workflow/table-event
 integration.
 
+> **Status: proposed design, not current API.** Every code block in this page is
+> non-runnable pseudocode for a future webhook package. Zero does not currently
+> export `verifyWebhook` or provide `zero.webhooks`. Current workflows are
+> registered through `AppConfig.workflows.register`, and current browser calls
+> use `client.api.workflows`; see [Durable Workflows](./workflows.md).
+
 ## Scope
 
 The webhook system has two related but separate jobs:
@@ -122,18 +128,37 @@ different.
 
 ## Workflow Integration
 
-Workflows should be able to send and receive webhook events.
+Workflows should be able to send and receive webhook events. The examples in
+this section describe a future bridge. In particular, the current
+`StepContext` does not contain `zero`; a real implementation must inject or
+close over a supported webhook service without changing the workflow context
+implicitly.
 
 Outbound workflow step:
 
 ```ts
-registry.registerHandler('sendWebhook', async ({ workflowInput, input, zero }) => {
-  return zero.webhooks.send({
+import type { WorkflowRegistry } from '@zero/framework/workflows';
+
+interface AppWebhookSender {
+  send(
+    message: { endpoint: string; event: string; payload: unknown },
+    options: { idempotencyKey?: string; signal?: AbortSignal },
+  ): Promise<unknown>;
+}
+
+function registerWebhookWorkflowHandler(
+  registry: WorkflowRegistry,
+  webhooks: AppWebhookSender,
+): void {
+  registry.registerHandler('sendWebhook', async (ctx) => webhooks.send({
     endpoint: 'partner-intake',
     event: 'intake.submitted',
-    payload: { workflowInput, input },
-  });
-});
+    payload: { workflowInput: ctx.workflowInput, input: ctx.input },
+  }, {
+    idempotencyKey: ctx.idempotencyKey,
+    signal: ctx.signal,
+  }));
+}
 ```
 
 Inbound webhook route to workflow:

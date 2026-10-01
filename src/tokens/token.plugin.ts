@@ -45,21 +45,25 @@ export function configurePlatformTokens(config: PlatformTokenPluginConfig): Plat
   return tokenService;
 }
 
-/** Reset the process-local platform token singleton. */
-export function resetPlatformTokens(): void {
+/** Reset the process-local platform token singleton when ownership matches. */
+export function resetPlatformTokens(expected?: PlatformTokenService): void {
+  if (expected && tokenService !== expected) return;
   tokenStore = null;
   tokenService = null;
 }
 
 /** Create the Elysia plugin that exposes `platformTokens` to route context. */
 export function createPlatformTokenPlugin(config: PlatformTokenPluginConfig) {
+  let ownedService: PlatformTokenService | null = null;
   return new Elysia({ name: 'platform.tokens' })
     .onStart(() => {
-      configurePlatformTokens(config);
+      ownedService = configurePlatformTokens(config);
       emitPlatformCode(OBS_CODES.TOKENS_STARTED);
     })
     .onStop(() => {
-      resetPlatformTokens();
+      if (!ownedService) return;
+      resetPlatformTokens(ownedService);
+      ownedService = null;
       emitPlatformCode(OBS_CODES.TOKENS_STOPPED);
     })
     .derive({ as: 'global' }, () => ({

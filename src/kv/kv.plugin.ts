@@ -38,7 +38,6 @@ export interface KvPluginConfig extends KvServiceConfig {
  */
 export function createKvPlugin(config: KvPluginConfig = {}) {
   const service = config.service ?? new KvService(config);
-  kvService = service;
 
   return new Elysia({ name: 'kv' })
     .onStart(async () => {

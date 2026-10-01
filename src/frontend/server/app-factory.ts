@@ -1,73 +1,37 @@
 import { Elysia } from 'elysia';
 import { createSyncPlugin } from '../../sync/sync.plugin';
 import { combineSyncPolicies, createDefaultSyncPolicy } from '../../sync/sync-policy';
-import { createAuthPlugin, getAuthStore, getTokenService } from '../../auth/auth.plugin';
-import { stopAuthRuntime } from '../../auth/auth-runtime';
-import { createAuthMiddleware } from '../../auth/auth.middleware';
-import {
-  rejectedPageSessionCookieHeader,
-  resolvePageSessionAuth,
-} from '../../auth/page-session';
+import { getAuthStore, getTokenService } from '../../auth/auth.plugin';
 import { getSyncDB } from '../../sync/sync.plugin';
-import { createSchedulerPlugin, getScheduler } from '../../scheduler';
-import { createNotificationPlugin } from '../../notifications/notification.plugin';
-import { NOTIFICATION_TABLES } from '../../notifications/types';
-import { createRoomPlugin } from '../../rooms/room.plugin';
-import { ROOM_TABLES } from '../../rooms/types';
-import { createWorkflowPlugin, getWorkflowService } from '../../workflows';
-import { WORKFLOW_TABLES } from '../../workflows/types';
-import { createStoragePlugin } from '../../storage/storage.plugin';
-import { STORAGE_TABLES } from '../../storage/types';
-import { createDataQueryPlugin } from '../../sync/data-query.plugin';
-import { createRouterPlugin } from './router-plugin';
-import { loadServerRoutePlugins } from './server-route-loader';
+import { WORKFLOW_SERVER_TABLE_NAMES } from '../../workflows/types';
+import { createWorkflowSyncPolicyAdapter } from '../../workflows/workflow-sync-policy';
 import { buildClientBundle } from './client-bundle';
 import { buildPlatformStyles } from './style-bundle';
 import { configureEmail } from '../../email';
-import { createAIPlugin } from '../../ai';
-import { createKvPlugin } from '../../kv';
-import { createPdfPlugin } from '../../pdf';
 import type { AppConfig } from './types';
 import { resolveConfig } from './types';
-import { applyTableSyncResolution, resolveTableSyncModes } from './sync-mode-resolver';
 import { Migrator, migrations } from '../../migrations';
-import { OBS_CODES, configureObservability, createObservabilityPlugin, emitPlatformCode } from '../../observability';
-import { createVectorPlugin } from '../../vector';
-import { createPlatformTokenPlugin } from '../../tokens';
+import { OBS_CODES, configureObservability, emitPlatformCode } from '../../observability';
 import { createPlatformSQLiteService, type PlatformSQLiteService } from '../../persistence';
 import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
 import {
   configureResourceRegistry,
-  createResourceCrudPlugin,
   ResourceSyncPolicyService,
   loadResourceDefinitions,
 } from '../../resources';
-import { installAppStopBarrier } from './app-stop-lifecycle';
+import {
+  getAppStopHooks,
+  installAppStopBarrier,
+  type AppStopHook,
+} from './app-stop-lifecycle';
 import { installAppSignalLifecycle } from './app-signal-lifecycle';
+import { mountPlatformApp } from './app-platform-composition';
+import {
+  addPlatformSnapshotTables,
+  PLATFORM_SYNC_WRITE_PROTECTED_TABLES,
+} from './app-sync-tables';
 
 // ─── App Factory ───────────────────────────────────────────────────────────
-
-const PLATFORM_SYNC_WRITE_PROTECTED_TABLES = new Set([
-  'users',
-  ...Object.keys(NOTIFICATION_TABLES),
-  ...Object.keys(ROOM_TABLES),
-  ...Object.keys(WORKFLOW_TABLES),
-  ...Object.keys(STORAGE_TABLES),
-]);
-
-const PLATFORM_CLIENT_TABLES = {
-  ...NOTIFICATION_TABLES,
-  ...ROOM_TABLES,
-  ...WORKFLOW_TABLES,
-  ...STORAGE_TABLES,
-};
-
-/** Include framework-owned full-sync tables in the websocket snapshot allow-list. */
-function addPlatformSnapshotTables(snapshotTables: Set<string>): void {
-  for (const [table, def] of Object.entries(PLATFORM_CLIENT_TABLES)) {
-    if (def._sync !== 'lazy') snapshotTables.add(table);
-  }
-}
 
 /**
  * Create a full-stack Elysia application.
@@ -103,74 +67,92 @@ export async function createApp(userConfig: AppConfig) {
   configureObservability(config.observability);
   const sqlite = config.db.sqlite ?? createPlatformSQLiteService(config.db);
   const ownsSqlite = !config.db.sqlite;
-  const emailRuntime = configureEmail(config.email, config.app);
-  addPlatformSnapshotTables(config.snapshotTables);
-  const platformSyncPolicy = config.auth !== false
-    ? createDefaultSyncPolicy({
-        writeProtectedTables: PLATFORM_SYNC_WRITE_PROTECTED_TABLES,
-      })
-    : undefined;
-  const syncPolicy = combineSyncPolicies(platformSyncPolicy, config.syncPolicy);
-  const loadedResources = await loadResourceDefinitions({
-    resourcesDir: config.serverResourcesDir,
-  });
-  const resourceAuthConfig = resolveAuthBehaviorConfig(config.auth === false ? {} : config.auth);
-  const resourceRegistry = configureResourceRegistry({
-    resources: [...config.resources, ...loadedResources],
-    tables: config.tables,
-    authConfig: resourceAuthConfig,
-  });
-  const resourceSyncPolicy = new ResourceSyncPolicyService({
-    registry: resourceRegistry,
-    authConfig: resourceAuthConfig,
-    getUserStore: config.auth !== false ? getAuthStore : undefined,
-  });
+  let lifecycleApp: Elysia | null = null;
+  let sqliteClosed = false;
+  let stopOwnedWorkflows: (() => Promise<void>) | null = null;
+  const closeOwnedSQLite = (): void => {
+    if (!ownsSqlite || sqliteClosed) return;
+    sqliteClosed = true;
+    sqlite.close();
+  };
 
-  // ─── Build client bundle ────────────────────────────────
-  let clientEntry: string | undefined;
-  let cssPath: string | undefined;
   try {
-    const bundle = await buildClientBundle(config.outDir, config.appDir, {
-      generatedDir: config.generatedDir,
+    const emailRuntime = configureEmail(config.email, config.app);
+    addPlatformSnapshotTables(config.snapshotTables, config.workflows !== false);
+    const platformSyncPolicy = createDefaultSyncPolicy({
+      // Disabling the runtime must not reopen historical workflow data. When
+      // enabled, definitions remain server-only while runtime rows are narrowed
+      // by the owner-aware resource adapter below.
+      readProtectedTables: config.workflows === false
+        ? WORKFLOW_SERVER_TABLE_NAMES
+        : ['workflow_definitions'],
+      writeProtectedTables: config.auth !== false
+        ? PLATFORM_SYNC_WRITE_PROTECTED_TABLES
+        : WORKFLOW_SERVER_TABLE_NAMES,
     });
-    clientEntry = bundle.publicPath;
-    emitPlatformCode(OBS_CODES.APP_CLIENT_BUNDLE_READY, {
-      metadata: { publicPath: bundle.publicPath },
+    const syncPolicy = combineSyncPolicies(platformSyncPolicy, config.syncPolicy);
+    const loadedResources = await loadResourceDefinitions({
+      resourcesDir: config.serverResourcesDir,
     });
-  } catch (err) {
-    // Client bundle is optional — SSR still works without hydration
-    emitPlatformCode(OBS_CODES.APP_CLIENT_BUNDLE_FAILED, {
-      error: err,
-      metadata: { outDir: config.outDir, appDir: config.appDir },
+    const resourceAuthConfig = resolveAuthBehaviorConfig(
+      config.auth === false ? {} : config.auth,
+    );
+    const resourceRegistry = configureResourceRegistry({
+      resources: [...config.resources, ...loadedResources],
+      tables: config.tables,
+      authConfig: resourceAuthConfig,
     });
-  }
-  try {
-    const styles = await buildPlatformStyles(config.outDir, config.appDir);
-    cssPath = styles.publicPath;
-    emitPlatformCode(OBS_CODES.APP_STYLES_READY, {
-      metadata: { publicPath: styles.publicPath },
+    const resourceSyncPolicy = new ResourceSyncPolicyService({
+      registry: resourceRegistry,
+      authConfig: resourceAuthConfig,
+      getUserStore: config.auth !== false ? getAuthStore : undefined,
     });
-  } catch (err) {
-    emitPlatformCode(OBS_CODES.APP_STYLES_FAILED, {
-      error: err,
-      metadata: { outDir: config.outDir, appDir: config.appDir },
-    });
-  }
+    let workflowSyncDB: ReturnType<typeof getSyncDB> = null;
+    const syncResourcePolicy = config.workflows === false
+      ? resourceSyncPolicy
+      : createWorkflowSyncPolicyAdapter({
+          getDB: () => workflowSyncDB,
+          delegate: resourceSyncPolicy,
+        });
 
-  // ─── Run database migrations ──────────────────────────────
-  // Migrations run BEFORE the server starts against the shared platform SQL
-  // handle. This keeps backend-only SQL, ReactiveDB, and platform services on
-  // the same persistence boundary.
-  try {
+    // ─── Build client bundle ────────────────────────────────
+    let clientEntry: string | undefined;
+    let cssPath: string | undefined;
+    try {
+      const bundle = await buildClientBundle(config.outDir, config.appDir, {
+        generatedDir: config.generatedDir,
+      });
+      clientEntry = bundle.publicPath;
+      emitPlatformCode(OBS_CODES.APP_CLIENT_BUNDLE_READY, {
+        metadata: { publicPath: bundle.publicPath },
+      });
+    } catch (err) {
+      // Client bundle is optional — SSR still works without hydration
+      emitPlatformCode(OBS_CODES.APP_CLIENT_BUNDLE_FAILED, {
+        error: err,
+        metadata: { outDir: config.outDir, appDir: config.appDir },
+      });
+    }
+    try {
+      const styles = await buildPlatformStyles(config.outDir, config.appDir);
+      cssPath = styles.publicPath;
+      emitPlatformCode(OBS_CODES.APP_STYLES_READY, {
+        metadata: { publicPath: styles.publicPath },
+      });
+    } catch (err) {
+      emitPlatformCode(OBS_CODES.APP_STYLES_FAILED, {
+        error: err,
+        metadata: { outDir: config.outDir, appDir: config.appDir },
+      });
+    }
+
+    // Migrations run before listen against the shared platform SQL handle.
     if (shouldRunMigrations(sqlite, config.migrate)) {
       const migrator = new Migrator({
         database: sqlite.raw,
         dbPath: sqlite.snapshotPath ?? sqlite.path ?? ':memory:',
         migrations,
         applyPragmas: false,
-        // Both file and hot modes are durable migration targets. Hot mode is a
-        // live in-memory handle, so Migrator snapshots that handle even before
-        // its configured snapshot file exists.
         createBackups: sqlite.mode !== 'ephemeral',
       });
       try {
@@ -180,42 +162,43 @@ export async function createApp(userConfig: AppConfig) {
       }
       sqlite.snapshot?.snapshotSync();
     }
-  } catch (error) {
-    if (ownsSqlite) sqlite.close();
-    throw error;
-  }
 
-  try {
     // ─── Assemble Elysia app ────────────────────────────────
-    const app = new Elysia({ name: 'platform' });
-
-    app.onStart(() => {
-      sqlite.start();
+    const terminalStopHooks: AppStopHook[] = [];
+    const app = installAppStopBarrier(new Elysia({ name: 'platform' }), {
+      beforeHooks: async () => { await stopOwnedWorkflows?.(); },
+      // Sync releases ReactiveDB before the platform-owned SQL handle closes.
+      lastHooks: terminalStopHooks,
     });
+    lifecycleApp = app;
+
+    app.onStart(() => { sqlite.start(); });
+    let hookCount = getAppStopHooks(app).length;
+    app.onStop(closeOwnedSQLite);
+    terminalStopHooks.push(...getAppStopHooks(app).slice(hookCount));
 
     // 1. Sync engine — always first (provides ReactiveDB over shared SQL)
-    app.use(
-      createSyncPlugin({
-        db: {
-          ...config.db,
-          sqlite,
-        },
-        tables: config.tables,
-        stateSync: config.stateSync,
-        policy: syncPolicy,
-        resourcePolicy: resourceSyncPolicy,
-        snapshotTables: config.snapshotTables,
-        auth: config.auth !== false
-          ? {
-              required: config.syncAuth === 'required',
-              modeDefaulted: config.syncAuthDefaulted,
-              // Auth routes are mounted after sync, so the verifier is resolved lazily
-              // when a WebSocket opens rather than during plugin composition.
-              getTokenVerifier: getTokenService,
-            }
-          : undefined,
-      })
-    );
+    hookCount = getAppStopHooks(app).length;
+    app.use(createSyncPlugin({
+      db: { ...config.db, sqlite },
+      tables: config.tables,
+      stateSync: config.stateSync,
+      policy: syncPolicy,
+      resourcePolicy: syncResourcePolicy,
+      snapshotTables: config.snapshotTables,
+      auth: config.auth !== false
+        ? {
+            required: config.syncAuth === 'required',
+            modeDefaulted: config.syncAuthDefaulted,
+            getTokenVerifier: getTokenService,
+          }
+        : undefined,
+    }));
+    terminalStopHooks.unshift(...getAppStopHooks(app).slice(hookCount));
+    workflowSyncDB = getSyncDB();
+    if (!workflowSyncDB) {
+      throw new Error('[app] Sync plugin did not publish its app-local database.');
+    }
 
     const mounted = await mountPlatformApp({
       app,
@@ -226,272 +209,24 @@ export async function createApp(userConfig: AppConfig) {
       emailRuntime,
       clientEntry,
       cssPath,
+      onWorkflowStopCreated(stop) { stopOwnedWorkflows = stop; },
     });
-    // The platform-owned SQL service is the final lifecycle resource released.
-    // Injected services remain caller-owned.
-    mounted.onStop(() => {
-      if (ownsSqlite) sqlite.close();
-    });
-    const stopped = installAppStopBarrier(mounted, async () => {
-      if (config.auth !== false) await stopAuthRuntime();
-    });
-    return installAppSignalLifecycle(stopped);
+    return installAppSignalLifecycle(mounted);
   } catch (error) {
-    if (ownsSqlite) sqlite.close();
-    throw error;
+    const failures: unknown[] = [error];
+    try {
+      if (lifecycleApp) await lifecycleApp.stop();
+      else closeOwnedSQLite();
+    } catch (cleanupError) {
+      failures.push(cleanupError);
+    }
+    if (failures.length === 1) throw error;
+    throw new AggregateError(failures, 'Application construction and cleanup failed');
   }
-}
-
-interface MountPlatformAppInput {
-  app: Elysia;
-  config: ReturnType<typeof resolveConfig>;
-  syncPolicy: ReturnType<typeof combineSyncPolicies>;
-  resourceRegistry: ReturnType<typeof configureResourceRegistry>;
-  resourceAuthConfig: ReturnType<typeof resolveAuthBehaviorConfig>;
-  emailRuntime: ReturnType<typeof configureEmail>;
-  clientEntry?: string;
-  cssPath?: string;
 }
 
 function shouldRunMigrations(sqlite: PlatformSQLiteService, migrate: boolean): boolean {
   return migrate && sqlite.mode !== 'ephemeral';
-}
-
-async function mountPlatformApp({
-  app,
-  config,
-  syncPolicy,
-  resourceRegistry,
-  resourceAuthConfig,
-  emailRuntime,
-  clientEntry,
-  cssPath,
-}: MountPlatformAppInput) {
-  // 1.5. Platform tokens — generic action/resume token service for auth and app flows
-  app.use(createPlatformTokenPlugin({ db: getSyncDB()! }));
-
-  app.onStart(() => {
-    const db = getSyncDB();
-    if (!db) {
-      throw new Error('[app] Sync plugin must start before sync mode resolution.');
-    }
-
-    const resolution = resolveTableSyncModes(config, db);
-    applyTableSyncResolution(config, resolution);
-    addPlatformSnapshotTables(config.snapshotTables);
-  });
-
-  // 2. Auth — optional, mounted before middleware
-  if (config.auth !== false) {
-    const db = getSyncDB();
-    if (!db) {
-      throw new Error('[app] Sync plugin must start before auth. This should not happen.');
-    }
-
-    app.use(
-      createAuthPlugin({
-        db,
-        accessTokenTTL: config.auth.accessTokenTTL,
-        refreshTokenTTL: config.auth.refreshTokenTTL,
-        registration: config.auth.registration,
-        account: config.auth.account,
-        mfa: config.auth.mfa,
-        accountEmails: config.auth.accountEmails,
-        branding: config.auth.branding,
-        emails: config.auth.emails,
-        userProperties: config.auth.userProperties,
-        strictUserProperties: config.auth.strictUserProperties,
-        nativeApps: config.auth.nativeApps,
-        nativeIssuer: resourceAuthConfig.nativeApps.issuer
-          ?? nativeIssuerFromPublicUrl(config.app.publicUrl),
-        nativeAudience: config.app.publicUrl?.replace(/\/+$/, ''),
-        loginPath: config.loginPath,
-        registrationPath: config.registrationPath,
-      })
-    );
-
-    // Auth middleware — resolves authContext + requireAuth/requireAdmin globally
-    app.use(createAuthMiddleware(getTokenService));
-  }
-
-  // 2.5. Observability — default sink endpoint + global error reporting
-  app.use(createObservabilityPlugin({
-    config: config.observability,
-    authEnabled: config.auth !== false,
-  }));
-
-  // 2.6. AI — optional internal provider service for loaders, jobs, workflows, and plugins
-  if (config.ai !== false) {
-    app.use(createAIPlugin({
-      config: config.ai,
-      authEnabled: config.auth !== false,
-    }));
-  }
-
-  // 2.7. Vector store — optional local zvec service for loaders, jobs, workflows, and plugins
-  if (config.vector !== false) {
-    app.use(createVectorPlugin({
-      config: config.vector,
-    }));
-  }
-
-  // 2.75. PDF — lazy browser-grade renderer for server code and workflows
-  if (config.pdf !== false) {
-    app.use(createPdfPlugin({ config: config.pdf }));
-  }
-
-  // 2.8. KV/cache — memory-first app cache with journal/checkpoint recovery
-  if (config.kv !== false) {
-    app.use(createKvPlugin(config.kv));
-  }
-
-  // 3. Scheduler — provides cron job registration for other plugins
-  app.use(createSchedulerPlugin());
-
-  // 4. Notifications — depends on auth + scheduler
-  if (config.auth !== false) {
-    const db = getSyncDB()!;
-    app.use(createNotificationPlugin({ db }));
-  }
-
-  // 4.5. Rooms — depends on auth
-  if (config.auth !== false) {
-    const db = getSyncDB()!;
-    app.use(createRoomPlugin({ db }));
-  }
-
-  // 5. Workflows — depends on auth + scheduler
-  if (config.auth !== false) {
-    const db = getSyncDB()!;
-    app.use(createWorkflowPlugin({ db }));
-
-    // Register workflow polling jobs after scheduler is available
-    const scheduler = getScheduler();
-    if (scheduler) {
-      scheduler.register({
-        name: 'workflow-retries',
-        pattern: '* * * * *', // every minute
-        run: async () => {
-          const svc = getWorkflowService();
-          if (svc) await svc.pollRetries();
-        },
-      });
-      scheduler.register({
-        name: 'workflow-timeouts',
-        pattern: '* * * * *',
-        run: () => {
-          const svc = getWorkflowService();
-          if (svc) svc.pollTimeouts();
-        },
-      });
-    }
-  }
-
-  // 6. Storage — depends on auth (for permissions)
-  if (config.auth !== false) {
-    const db = getSyncDB()!;
-    app.use(createStoragePlugin({ db, localDir: config.storageDir }));
-  }
-
-  // 6.7. Data query — lazy-table reads plus registered resource read policy
-  app.use(
-    createDataQueryPlugin({
-      queryableTables: config.lazyTables,
-      tableColumns: config.tableColumns,
-      policy: syncPolicy,
-      getTokenService: config.auth !== false ? getTokenService : undefined,
-      getUserStore: config.auth !== false ? getAuthStore : undefined,
-      resourceRegistry,
-      resourceAuthConfig,
-    })
-  );
-
-  // 6.8. Generated resource CRUD — resource policy enforced server-side
-  if (config.resourceRoutes !== false) {
-    app.use(
-      createResourceCrudPlugin({
-        registry: resourceRegistry,
-        tables: config.tables,
-        authConfig: resourceAuthConfig,
-        getTokenService: config.auth !== false ? getTokenService : undefined,
-        getUserStore: config.auth !== false ? getAuthStore : undefined,
-        ...config.resourceRoutes,
-      })
-    );
-  }
-
-  // 6.9. App-owned backend extensions — mounted before health and file-router catch-all
-  const serverRoutePlugins = await loadServerRoutePlugins({
-    extensionDirs: [
-      { kind: 'plugins', dir: config.serverPluginsDir },
-      { kind: 'middleware', dir: config.serverMiddlewareDir },
-      { kind: 'endpoints', dir: config.serverEndpointsDir },
-      { kind: 'routes', dir: config.serverRoutesDir },
-    ],
-  });
-  for (const serverRoutePlugin of serverRoutePlugins) {
-    app.use(serverRoutePlugin as any);
-  }
-
-  // 7. Health check — always available
-  app.get('/api/health', () => ({ status: 'ok', uptime: process.uptime() }));
-
-  // 8. File-based router — LAST (catch-all)
-  // URL is derived from each request in the router plugin (not hardcoded)
-  app.use(
-    createRouterPlugin({
-      appDir: config.appDir,
-      outDir: config.outDir,
-      clientEntry,
-      cssPath,
-      platformConfig: {
-        url: '', // Derived from request.url at runtime
-        auth: config.auth !== false,
-        email: emailRuntime.enabled,
-        stateSync: config.stateSync,
-        tableSyncModes: config.resolvedSyncModes,
-        publicPaths: config.publicPaths,
-        routeAuth: config.routeAuth,
-        loginPath: config.loginPath,
-        postLoginPath: config.postLoginPath,
-      },
-      // When auth is enabled, protect all page routes by default
-      ...(config.auth !== false
-        ? {
-            authGuard: {
-              routeAuth: config.routeAuth,
-              publicPaths: config.publicPaths,
-              loginPath: config.loginPath,
-              postLoginPath: config.postLoginPath,
-              resolvePageAuth: async (request: Request) => {
-                const auth = await resolvePageSessionAuth(
-                  request,
-                  getTokenService()
-                );
-                return auth ? { ...auth } : null;
-              },
-              clearRejectedPageSession: rejectedPageSessionCookieHeader,
-            },
-          }
-        : {}),
-      ...(config.sitemap
-        ? {
-            sitemap: {
-              config: config.sitemap,
-              publicUrl: config.app.publicUrl,
-              routeAuth: config.routeAuth,
-              publicPaths: config.publicPaths,
-            },
-          }
-        : {}),
-    })
-  );
-
-  return app;
-}
-
-function nativeIssuerFromPublicUrl(publicUrl: string | undefined): string | undefined {
-  return publicUrl ? `${publicUrl.replace(/\/+$/, '')}/auth` : undefined;
 }
 
 /** Type helper — export the app type for Eden Treaty typed client. */

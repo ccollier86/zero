@@ -36,29 +36,56 @@ export function createAuthMiddleware(
   return new Elysia({ name: 'auth-middleware' })
     .resolve(
       { as: 'global' },
-      async ({ request }) => {
-        const tokenService = getTokenService();
-        let authContext: AuthContext | null = null;
-
-        if (tokenService) {
-          const token = readAuthBearerToken(request);
-          if (token) authContext = await resolveContext(tokenService, token);
-        }
-
-        return {
-          authContext,
-          requireAuth(): AuthContext {
-            if (!authContext) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
-            return authContext;
-          },
-          requireAdmin(): AuthContext {
-            if (!authContext) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
-            if (authContext.role !== 'admin') throw new AuthError('Forbidden', 'FORBIDDEN', 403);
-            return authContext;
-          },
-        };
-      }
+      createAuthResolver(getTokenService),
     );
+}
+
+/**
+ * Scoped auth context for a nested plugin with its own readiness boundary.
+ *
+ * The distinct plugin name avoids Elysia deduplication against the app-global
+ * auth middleware. `scoped` keeps the boundary on this plugin's descendants
+ * instead of delaying unrelated routes.
+ */
+export function createScopedAuthMiddleware(
+  name: string,
+  getTokenService: () => TokenService | null,
+  beforeResolve: () => void | Promise<void>,
+) {
+  return new Elysia({ name })
+    .resolve(
+      { as: 'scoped' },
+      createAuthResolver(getTokenService, beforeResolve),
+    );
+}
+
+function createAuthResolver(
+  getTokenService: () => TokenService | null,
+  beforeResolve?: () => void | Promise<void>,
+) {
+  return async ({ request }: { request: Request }) => {
+    await beforeResolve?.();
+    const tokenService = getTokenService();
+    let authContext: AuthContext | null = null;
+
+    if (tokenService) {
+      const token = readAuthBearerToken(request);
+      if (token) authContext = await resolveContext(tokenService, token);
+    }
+
+    return {
+      authContext,
+      requireAuth(): AuthContext {
+        if (!authContext) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
+        return authContext;
+      },
+      requireAdmin(): AuthContext {
+        if (!authContext) throw new AuthError('Unauthorized', 'UNAUTHORIZED', 401);
+        if (authContext.role !== 'admin') throw new AuthError('Forbidden', 'FORBIDDEN', 403);
+        return authContext;
+      },
+    };
+  };
 }
 
 async function resolveContext(

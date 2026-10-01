@@ -95,6 +95,7 @@ export interface NotificationPluginConfig {
  * ```
  */
 export function createNotificationPlugin(config: NotificationPluginConfig) {
+  let ownedService: NotificationService | null = null;
   return new Elysia({ name: 'notifications', prefix: '/notifications' })
 
     .use(createAuthMiddleware(getTokenService))
@@ -102,7 +103,8 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
     // ─── Lifecycle ─────────────────────────────────────
     .onStart(() => {
       defineNotificationTables(config.db);
-      _notificationService = new NotificationService(config.db);
+      ownedService = new NotificationService(config.db);
+      _notificationService = ownedService;
 
       // Register cleanup job if scheduler is available
       const scheduler = getScheduler();
@@ -111,7 +113,7 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
           name: 'notification-cleanup',
           pattern: '0 0 * * * *', // every hour
           run: () => {
-            const deleted = _notificationService?.deleteExpired() ?? 0;
+            const deleted = ownedService?.deleteExpired() ?? 0;
             if (deleted > 0) {
               emitPlatformCode(OBS_CODES.NOTIFICATIONS_CLEANUP, {
                 metadata: { deleted },
@@ -127,7 +129,9 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
     })
 
     .onStop(() => {
-      _notificationService = null;
+      if (!ownedService) return;
+      if (_notificationService === ownedService) _notificationService = null;
+      ownedService = null;
       emitPlatformCode(OBS_CODES.NOTIFICATIONS_STOPPED);
     })
 

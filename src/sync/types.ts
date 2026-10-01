@@ -312,9 +312,15 @@ export interface SyncResourceTableAccessContext {
   authContext: SyncAuthContext | null;
 }
 
-/** Synchronous row predicate returned by a resource policy adapter. */
+/** Synchronous row boundary returned by a resource policy adapter. */
 export interface SyncRowFilter {
+  /** Evaluated against the full server row before any projection. */
   matches(row: Row): boolean;
+  /**
+   * Optional wire projection for an already-authorized row. It must be pure,
+   * must preserve the table's primary key, and must not grant row visibility.
+   */
+  project?(row: Row): Row;
 }
 
 /** Connection-time table access resolved from resource policy. */

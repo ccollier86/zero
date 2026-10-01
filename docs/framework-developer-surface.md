@@ -440,7 +440,7 @@ Prefer Zero's canonical service vocabulary in app-owned backend code:
 | `zero.limiter` | `fixedWindow()`, `tokenBucket()`, `slidingWindow()` |
 | `zero.notifications` | `create()`, `get()`, `list()`, `delete()` |
 | `zero.scheduler` | `create()`, `get()`, `list()`, `run()`, `delete()`, `stop()` |
-| `zero.workflows` | `run()`, `get()`, `list()`, `stop()` |
+| `zero.workflows` | `run()`, `get()`, `list()`, `sendEvent()`, `pause()`, `resume()`, `stop()` |
 | `zero.vector` | `list()`, `search()`, `get()`, `status()` |
 | `zero.pdf` | `render()`, `renderToStorage()`, `status()`, `close()` |
 | `zero.storage` | `drives.*`, `objects.*`, `permissions.*`, and `uploads.*` grouped APIs |
@@ -983,32 +983,74 @@ is private by default and normal storage read permissions still apply.
 
 ## Workflows And Scheduler
 
-Workflows mount when auth is enabled. Register workflow definitions and step
-handlers on the server:
+Workflows mount by default when auth is enabled. Register handlers and
+definitions through `AppConfig.workflows.register`; Zero awaits registration
+before handler preflight and crash recovery, and publishes the service only
+after recovery succeeds:
 
 ```ts
-import { getWorkflowRegistry, getWorkflowService } from '@zero/framework/server';
+import { defineZeroConfig } from '@zero/framework/server';
 
-getWorkflowRegistry()?.registerHandler('sendWelcomeEmail', async (ctx) => {
-  // Use email, AI, storage, or app services here.
-  return { ok: true };
-});
+export default defineZeroConfig({
+  // db, tables, auth...
+  workflows: {
+    register(registry) {
+      registry.registerHandler('sendWelcomeEmail', async (ctx) => {
+        await sendWelcomeEmail(ctx.input, {
+          idempotencyKey: ctx.idempotencyKey,
+          signal: ctx.signal,
+        });
+        return { ok: true };
+      });
 
-getWorkflowRegistry()?.create({
-  name: 'customer-onboarding',
-  steps: [
-    { name: 'Send welcome email', handler: 'sendWelcomeEmail' },
-  ],
-});
-
-await getWorkflowService()?.run('customer-onboarding', {
-  customerId: 'cust_1',
+      registry.create({
+        name: 'customer-onboarding',
+        access: {
+          start: ['operator'],
+          inspect: ['operator', 'reviewer'],
+        },
+        steps: [
+          { name: 'Send welcome email', handler: 'sendWelcomeEmail' },
+        ],
+      });
+    },
+  },
 });
 ```
 
-The scheduler is mounted by `createApp()` and platform jobs use it for retries,
-timeouts, and cleanup. A public cron/job registration convention for app code is
-a future package-mode slice.
+For a 1.3 upgrade, move registration out of `onStart` or any code that runs
+after `listen()`. Direct-composition code may use `getWorkflowRegistry()` after
+`createApp()` returns and before `listen()`, but post-listen registration is too
+late for recovery preflight.
+
+The first step receives workflow input through both `ctx.input` and
+`ctx.workflowInput`; later steps receive the previous output through
+`ctx.input`. At runtime every handler also receives a cooperative `signal`, a
+physical `attemptId`, and a stable logical-step `idempotencyKey`. Durable wait
+events are buffered and retained across retries; `sendEvent()` reports whether
+the newly added event was claimed before that call returned. `retries` is a
+total-attempt budget. One `timeoutMs` deadline spans event waiting, handler
+execution, retry backoff, and later attempts, while pause freezes that clock.
+Recovery is at-least-once, so external effects must deduplicate with
+`idempotencyKey`. Workflow HTTP and Sync state is owner-scoped, with the exact
+stable global `admin` role able to inspect all runs. Definitions remain
+server-only. Definition `access.start` and `access.inspect` accept
+`authenticated`, `admin`, or a non-empty array of app roles; denied definitions
+look missing at the HTTP boundary. Executable `steps_json` and `wait_event`
+topology is projected out of browser-visible runtime rows. Workflow hooks
+receive state changes through Sync rather than polling.
+
+The server-side `WorkflowService` is trusted and intentionally bypasses the
+definition access policy. When server code starts a run that a normal browser
+user must observe or control, pass that user's ID as `startedBy`; an unowned run
+is visible only to the global admin. Managed apps should let the workflow plugin
+own startup recovery and retry/timeout discovery.
+
+The scheduler is mounted by `createApp()` and owns minute-level workflow retry
+and timeout discovery. See [Durable Workflows](./workflows.md) for the strict
+frontier, deadline, recovery, authorization, and browser API contracts. A
+public cron/job registration convention for app code is a future package-mode
+slice.
 
 ## Observability And Tracing
 
