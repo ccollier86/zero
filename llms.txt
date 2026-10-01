@@ -128,8 +128,8 @@ publicly supported.
   explicit route admission, session-only management, SDK/hooks/components, and
   one-time-secret lifecycle.
 - `docs/auth/platform-administration.md`: exact protected Administration
-  Organization, application-permission, customer-directory, SDK/hook, and
-  packaged-control contract.
+  Organization, application-permission, customer directory/member control
+  plane, SDK/hook, and packaged-control contract.
 - `docs/tokens.md`: generic action/resume tokens and the exact shared-
   ReactiveDB transaction/post-commit telemetry contract used by auth actions.
 - `docs/auth/app-auth-sdk-guide.md`: selection and onboarding for web,
@@ -1096,12 +1096,12 @@ Auth UI components:
 - `TenantSelectionForm`
 - `TenantCreationForm`
 - `TenantSwitcher`
+- `UserManagement` / `PlatformUserManagement` (the same adaptive control plane)
+- `IdentityUserManagement` (explicit identity-only management)
+- `PlatformWorkspaceManagement`
 - `TenantMemberManagement`
 - `TenantInvitationForm`
 - `TenantOnboardingManagement`
-- `ApplicationAccessManagement`
-- `PlatformAdministrationManagement`
-- `PlatformTenantManagement`
 - `PermissionGate`
 - `TenantGate`
 - `PlatformAdminGate`
@@ -1113,6 +1113,34 @@ Auth UI components:
 
 Use these instead of building custom auth forms unless the app has a strong
 reason.
+
+`UserManagement` reads the live tenancy/authorization profile and active
+scope. It preserves the identity manager in `single/simple`, adds application
+RBAC in `single/advanced`, renders tenant membership in customer scope, and
+provides the Administration Organization People/Workspaces control plane in
+platform scope. `PlatformUserManagement` is an explicit alias. Passing the
+controlled `data` prop intentionally pins the component to identity-only mode;
+use the adaptive component without `data` for configuration-driven behavior.
+
+In the Administration Organization, `PlatformWorkspaceManagement` can manage
+a selected active customer's membership, roles, and ownership when
+`canManageTenantMembers` is true. The exact server boundary requires
+`application.tenants:read`, `application.users:read`, and
+`application.tenant-members:manage`; `customerRoles` supplies the separate
+assignable/grantable customer-role projection. Use
+`client.platformAdmin.addTenantMember()`, `updateTenantMember()`,
+`removeTenantMember()`, and `transferTenantOwnership()`, or the matching
+`usePlatformTenants()` methods.
+Role writes are revision-fenced. This control plane does not switch the actor's
+session or grant customer application-data access, and tenant-only managers
+never receive global password/MFA/account controls.
+
+The adaptive multi-tenant people view supplies a focused Invite/Invitations
+dialog. It issues only policy-allowed email/manual invitations, displays a
+manual token only in the immediate result, lists pending invitations with
+cursor-based Load more, and confirms revocation. For a custom member layout,
+compose `useTenantInvitationAction()` with `TenantMemberManagement` through
+the latter's `secondaryPrimaryAction` prop and render the hook's `dialog` node.
 
 ### Installed app auth
 
@@ -2225,7 +2253,8 @@ reference docs confirm the behavior is implemented.
   packaged control UI without tenant semantics.
 - [Platform Administration Organization](docs/auth/platform-administration.md):
   multi-mode bootstrap administration scope, people/invitations,
-  customer-organization lifecycle, routes, permissions, SDK/hooks, and UI.
+  customer-organization lifecycle/member control plane, routes, permissions,
+  SDK/hooks, and UI.
 - [Tenant Member Administration](docs/auth/tenant-member-administration.md):
   active-tenant member lifecycle, role assignments, ownership transfer,
   grant ceilings, SDK/hooks, and packaged UI.

@@ -39,9 +39,9 @@ describe('packaged tenant administration components', () => {
     const markup = renderToStaticMarkup(createElement(TenantMemberManagement));
 
     expect(markup).toContain('Organization members');
-    expect(markup).toMatch(
-      /<h2[^>]*data-slot="card-title"[^>]*>Organization members<\/h2>/,
-    );
+    expect(markup).toMatch(/<h2[^>]*>Organization members<\/h2>/);
+    expect(markup).toContain('data-slot="list-detail-layout"');
+    expect(markup).toContain('data-slot="record-navigation-bar"');
     expect(markup).toContain(
       'Organization member controls are available after signing in with active organization access.',
     );
@@ -452,7 +452,7 @@ describe('packaged tenant administration components', () => {
     expect(administration).toContain('supports invitations only');
     expect(administration).toContain('join requests');
     expect(administration).toContain('verified-domain onboarding');
-    expect(administration).toContain('PlatformAdministrationManagement');
+    expect(administration).toContain('adaptive UserManagement control plane');
     expect(customer).toBe('');
   });
 

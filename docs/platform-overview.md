@@ -152,7 +152,8 @@ before configuring it.
   administration, invitations/join requests, and request-only verified domains
 - **Platform administration:** protected Administration Organization,
   capability-gated people/invitations, customer-organization directory and
-  lifecycle, plus read-only customer-member drill-in
+  lifecycle, plus cross-workspace member/role/ownership administration that
+  does not grant customer application-data access
 - **Advanced RBAC:** app-declared permissions and static role templates with
   durable application/tenant assignments and packaged administration UI
 - **Control-plane audit:** bounded append-only authorization/security events,
@@ -206,9 +207,10 @@ console.log(client.isAuthenticated); // true
 | `<PermissionGate>` / `<TenantGate>` / `<AdministrationScopeGate>` / `<PlatformAdminGate>` | Browser-safe visibility gates over the live authorization snapshot; server enforcement is still required |
 | `<AuthFlowContinuation>` | Shared account-gate, tenant-selection/creation, invitation, and onboarding continuation |
 | `<TenantSwitcher>` / `<TenantSelectionForm>` / `<TenantCreationForm>` | Refresh-proof-backed tenant scope selection and creation controls |
-| `<TenantMemberManagement>` / `<TenantOnboardingManagement>` | Active-tenant member, role, invitation, and join-request administration |
+| `<UserManagement>` / `<PlatformUserManagement>` | Adaptive people/access control plane: established identity controls in `single/simple`, integrated application RBAC in `single/advanced`, active-organization membership/RBAC in customer scope, and Administration Organization people/workspace controls in platform scope |
+| `<TenantMemberManagement>` / `<TenantOnboardingManagement>` | Focused active-tenant member/role and full onboarding primitives for custom layouts; the adaptive user manager composes the common member/invitation flow |
 | `<TenantDomainManagement>` / `<DomainOnboarding>` | Exact-domain claim administration and request-to-join onboarding |
-| `<ApplicationAccessManagement>` | `single/advanced` application role administration |
+| `<PlatformWorkspaceManagement>` | Administration-scope customer-workspace directory, lifecycle, creation, and capability-shaped member/role/ownership control plane |
 | `<ControlPlaneAuditViewer>` | Authorized bounded tenant/platform control-plane audit view and export |
 
 `SocialLoginGroup` renders caller-provided labels, icons, and click handlers.

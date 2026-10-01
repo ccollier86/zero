@@ -290,10 +290,10 @@ mutation transaction. See
 `usePlatformAdministration(options?)` is the protected Administration
 Organization's headless people/invitation/ownership surface.
 `usePlatformTenants(options?)` is the customer-organization directory,
-lifecycle, creation, and read-only member-detail surface. Both require a live
-active `kind: 'administration'` scope, load only reads allowed by the
-server-projected capabilities, and synchronously mask old data across an
-account or tenant switch.
+lifecycle, creation, member-detail, and cross-workspace member/role/ownership
+surface. Both require a live active `kind: 'administration'` scope, load only
+reads allowed by the server-projected capabilities, and synchronously mask old
+data across an account or tenant switch.
 
 ```tsx
 const administrators = usePlatformAdministration({
@@ -306,6 +306,14 @@ const organizations = usePlatformTenants({
   selectedTenantId,
   memberStatus: 'active',
 });
+
+if (organizations.config?.capabilities.canManageTenantMembers) {
+  await organizations.updateTenantMember(
+    selectedTenantId,
+    selectedMembershipId,
+    { roles: ['manager'] },
+  );
+}
 ```
 
 Platform people, invitation, and configuration requests are independent
@@ -335,8 +343,23 @@ failure.
 The directory exposes `canCreateTenants` separately from
 `canManageTenants`, and `canReadTenantMembers` separately from
 `canReadTenants`; callers must not infer the combined permission requirements.
-Customer-member mutation remains on `useTenantMembers()` after a real session
-switch into that organization. See
+Its failures are split by owning operation: use `directoryError` with
+`reloadDirectory()` for config/workspace reads,
+`selectedTenantMembersError` with `reloadSelectedTenantMembers()` for the
+selected workspace's people list, and `mutationError` for failed writes.
+`clearMutationError()` dismisses a handled write failure without clearing either
+read slice. The legacy `error` field remains an aggregate and `reload()` retries
+both read slices and dismisses the aggregate mutation failure for compatibility;
+focused UI should prefer the narrower
+fields so a member failure cannot replace a loaded workspace directory.
+It also exposes `canManageTenantMembers` and a distinct `customerRoles`
+projection. `addTenantMember()`, `updateTenantMember()`,
+`removeTenantMember()`, and `transferTenantOwnership()` require the selected
+target organization; role updates inject that loaded member's current
+revision, and successful writes refresh the directory/member state. This
+membership control plane does not switch the actor's session or grant access
+to customer application data. `useTenantMembers()` remains the corresponding
+active-organization surface for customer organization managers. See
 [Platform Administration Organization](../auth/platform-administration.md).
 
 ### Control-plane audit

@@ -2352,9 +2352,15 @@ authorization request after account, membership, MFA, and tenant binding have su
 
 ## Administrative surfaces
 
-Do not stretch the current global users page into a combined interface. Zero should ship a
-headless client contract, focused reusable blocks, and opinionated self-wired control-plane
-organisms. Provide three visibly distinct surfaces:
+This section records the original UI proposal. Its recommendation to keep
+global identity, tenant membership, and platform administration in separate
+page-level organisms is **superseded**. The implemented package keeps those
+authority boundaries distinct while presenting them through one adaptive
+`UserManagement` control plane, with focused primitives still available for
+custom layouts.
+
+The three conceptual scopes remain useful security boundaries, not a mandate
+for three disconnected control planes:
 
 - **Platform administration**: global accounts, tenant lifecycle, SSO connection support,
   system health, and audited recovery actions.
@@ -2367,9 +2373,9 @@ All list/search APIs take their tenant boundary from the authorized context, not
 trusted query parameter. Cross-tenant platform views use separate platform-admin endpoints
 and still do not expose tenant application data by default.
 
-### Existing UI seams to retain and correct
+### Historical UI seams and current resolution
 
-The current component system already supplies useful foundations:
+At the time of the audit, the component system supplied these foundations:
 
 - auth forms cover login, registration, password lifecycle, verification, MFA, user
   properties, layout, and visibility gates;
@@ -2380,25 +2386,29 @@ The current component system already supplies useful foundations:
 - `DataTable`, `MasterDetailPage`, modal management, toasts, and the design-token primitives
   are suitable building blocks.
 
-The upgrade must correct rather than amplify current ambiguity:
+The audit recorded the following risks. The current implementation resolves
+them as noted:
 
-- `UserManagement` is global identity/platform administration. It exposes password, email,
-  MFA, global role/status, and deletion actions and therefore cannot become tenant member
-  management;
+- the old `UserManagement` was global identity/platform administration. The
+  replacement is auth-profile adaptive and composes tenant membership without
+  merging authority: global password/email/MFA/account controls are loaded
+  only with explicit application-user capability, while tenant-only managers
+  never call those APIs;
 - `AdminGate`, `adminOnly()`, `requireAdmin()`, and existing `matcher.role` retain their
   legacy global-administrator meaning; they neither consume nor supply advanced
   application-permission authority;
 - `PropertyGate` remains a presentation convenience, not an RBAC primitive;
-- the generic AppShell workspace switcher may display tenants but currently has no atomic
-  authorization switch state and must not choose the first item as authority;
+- the original generic AppShell workspace seam had no atomic authorization
+  switch state. `TenantSwitcher` and `useTenantAppShellWorkspaces()` now share
+  the official scope-replacement coordinator, preserve the server-committed
+  selection, and never treat the first displayed item as authority;
 - route guards need useful loading, selection, denied, revoked, and switching states rather
   than a blank page;
 - `SocialLoginGroup` is caller-wired presentation and must not be relabeled as server-backed
   enterprise SSO;
-- the narrow auth component barrel and broad frontend barrel currently disagree about some
-  MFA exports, while older inventory names such as `AuthGate`/`RoleGate` do not match the
-  real `Gate`/`AdminGate` exports. Normalize this public surface before adding tenancy
-  components.
+- the audit found mismatched narrow/broad exports and obsolete inventory names.
+  Current package-export and distribution tests enforce the normalized public
+  surface, including the adaptive user-management and tenant-switching APIs.
 
 ### Mode-aware default UI
 
@@ -2418,10 +2428,11 @@ normalize to `single/simple` in the client.
 
 Single-tenant advanced authorization and single-tenant enterprise SSO remain valid. The
 application scope is implicit, so these profiles never render a fake tenant chooser.
-For `single/advanced`, Zero packages an `ApplicationAccessManagement` surface that assigns
-application roles/permissions without tenant lifecycle or membership language. It reuses
-the same security patterns as tenant role management while remaining separate from the
-global-account mutation powers in `UserManagement`.
+For `single/advanced`, Zero's adaptive `UserManagement` surface composes
+application roles/permissions into the established selected-account workflow
+without tenant lifecycle or membership language. It reuses the same security
+patterns as tenant role management while keeping the account and application
+authority contracts distinct behind one coherent UI.
 When an SSO connection is application-owned in either single authorization mode, an
 `ApplicationSsoManagement` section uses the same tested, write-only-secret connection
 workflow without presenting tenant membership controls.
@@ -2633,14 +2644,15 @@ global `UserManagement` mutation model.
 
 Keep global control-plane authority visibly separate:
 
-- retain `UserManagement` and add the clearer alias `PlatformUserManagement`;
-- use the implemented `PlatformTenantManagement` for bounded tenant lifecycle,
-  member counts, read-only member drill-in, and control-plane operations
-  without tenant application data;
-- use `PlatformAdministrationManagement` for protected-organization people,
-  invitations, roles, and ownership;
-- add `PlatformIdentityManagement` for global identity lifecycle plus read-only membership
-  summaries;
+- retain the adaptive `UserManagement` and its explicit
+  `PlatformUserManagement` alias as one master/detail control plane;
+- compose `PlatformWorkspaceManagement` for bounded tenant lifecycle, member
+  counts, and capability-shaped member/role/ownership operations without
+  tenant application-data authority;
+- compose protected-organization people, invitations, roles, ownership, and
+  capability-gated global account operations into the People view;
+- retain an all-identities scope for global identity lifecycle and add
+  read-only membership summaries when the platform API projects them;
 - include bootstrap/readiness, cross-tenant control-plane audit, and platform-owned SSO
   support;
 - make recovery and break-glass a dedicated workflow rather than ordinary row actions.

@@ -22,6 +22,12 @@ export interface AuthTenantMutationAuthority {
   readonly applicationScope?: (AuthorizationScopeSnapshot & {
     readonly scopeKind: 'application';
   }) | null;
+  /**
+   * Internal cross-tenant authority projected only by the protected
+   * Administration Organization after application authority is revalidated.
+   * Ordinary tenant request paths never set this flag.
+   */
+  readonly platformAdministration?: true;
 }
 
 /**

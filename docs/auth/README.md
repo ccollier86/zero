@@ -658,7 +658,7 @@ See [Architecture](./architecture.md) for the full component diagram and data fl
 | [Auth Guards And Audit Boundaries](./guards-and-audit.md) | Implemented request-scoped route guards and the explicit boundary between durable control-plane audit and deferred general activity tracking |
 | [Control-Plane Audit](./control-plane-audit.md) | Append-only authorization/security events, atomic mutation wiring, authorized query/export, retention, SDK/hook, and packaged viewer |
 | [Application Access Administration](./application-access-administration.md) | Implemented `single/advanced` assignments, protected owner, SDK/hook, and packaged UI |
-| [Platform Administration Organization](./platform-administration.md) | Multi-mode bootstrap administration scope, application permissions, customer-organization lifecycle, SDK/hooks, and packaged controls |
+| [Platform Administration Organization](./platform-administration.md) | Multi-mode bootstrap administration scope, application permissions, customer-organization lifecycle/member control plane, SDK/hooks, and packaged controls |
 | [Tenant Member Administration](./tenant-member-administration.md) | Active-tenant member, role, status, ownership, SDK/hook, and packaged UI contract |
 | [Tenant Invitations And Join Requests](./tenant-invitations-and-join-requests.md) | Invitation delivery/acceptance and retained join-request review contract |
 | [Verified Company-Domain Onboarding](./verified-domain-onboarding.md) | Exact-domain DNS/mailbox proof, request-to-join, release/quarantine, and packaged controls |
@@ -1077,17 +1077,27 @@ function AdminUsersPanel() {
 }
 ```
 
-`PlatformUserManagement` is the explicit name for the existing global identity
-administrator. `UserManagement` remains an exact compatibility alias. Neither
-component is tenant member administration: both can change global passwords,
-MFA, account status, and platform roles. Use `ApplicationAccessManagement` for
-application roles in `single/advanced`, `TenantMemberManagement` for the active
-organization, and `TenantSwitcher` for refresh-proof-backed switching. Their
-contracts are documented in
+`UserManagement` is now auth-profile adaptive and `PlatformUserManagement` is
+its explicit platform-oriented alias. `single/simple` preserves the established
+global identity manager. `single/advanced` adds application roles and
+permissions to the same selected account. In multi mode it renders the active
+organization's people, membership, and tenant roles; inside the protected
+Administration Organization it adds compact People/Workspaces scope controls,
+administrator membership/invitations, the all-identities directory, and the
+customer-workspace directory. A platform operator with the dedicated
+three-permission customer-member capability can manage the selected
+workspace's membership, roles, and ownership there without acquiring customer
+application-data access. Global password/MFA/account actions remain separately
+application-authorized and never appear for tenant-only organization managers.
+`TenantMemberManagement` and
+`PlatformWorkspaceManagement` remain focused primitives for custom layouts,
+and `TenantSwitcher` performs refresh-proof-backed scope changes. The contracts
+are documented in
 [Application Access Administration](./application-access-administration.md)
 and [Tenant Member Administration](./tenant-member-administration.md).
-`PlatformUserManagement` loads `/auth/admin/config` and
-`/auth/admin/users`. Its
+The identity/account portion loads `/auth/admin/config` and
+`/auth/admin/users` only when live application authority exposes those
+capabilities. Its
 readiness strip appears only for actionable email, verification, or MFA setup
 problems. The selected-user security row likewise stays hidden for normal
 verified/ready/optional states and surfaces only pending verification,

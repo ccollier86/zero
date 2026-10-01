@@ -1,0 +1,55 @@
+import { describe, expect, test } from 'bun:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { KeyRound, Shield, UserRoundX } from 'lucide-react';
+import { RecordNavigationBar } from './record-navigation-bar';
+
+describe('RecordNavigationBar', () => {
+  test('keeps dense action labels visible and provides touch-safe horizontal overflow', () => {
+    const markup = renderToStaticMarkup(
+      <RecordNavigationBar
+        currentIndex={1}
+        totalCount={3}
+        onPrevious={() => {}}
+        onNext={() => {}}
+        actions={[
+          { icon: createElement(KeyRound), label: 'Reset password', onClick() {} },
+          { icon: createElement(Shield), label: 'Revoke sessions', onClick() {} },
+          { icon: createElement(UserRoundX), label: 'Suspend account', onClick() {} },
+        ]}
+        secondaryPrimaryAction={{ label: 'Invite member', onClick() {} }}
+        primaryAction={{ label: 'Add member', onClick() {} }}
+      />,
+    );
+
+    expect(markup).toContain('flex-wrap');
+    expect(markup).toContain('gap-2');
+    expect(markup).toContain('overflow-x-auto');
+    expect(markup).toContain('@sm/wrapper:overflow-visible');
+    expect(markup).toContain('>Reset password</span>');
+    expect(markup).toContain('>Revoke sessions</span>');
+    expect(markup).toContain('>Suspend account</span>');
+    expect(markup).not.toContain('invisible');
+    expect(markup).not.toContain('max-w-10');
+    expect(markup).toContain('aria-label="Reset password"');
+    expect(markup).toContain('aria-label="Revoke sessions"');
+    expect(markup).toContain('aria-label="Suspend account"');
+    expect(markup).not.toContain('sm:flex-nowrap');
+  });
+
+  test('uses non-submitting buttons with visible focus treatment throughout', () => {
+    const markup = renderToStaticMarkup(
+      <RecordNavigationBar
+        currentIndex={0}
+        totalCount={1}
+        onPrevious={() => {}}
+        onNext={() => {}}
+        actions={[{ icon: createElement(KeyRound), label: 'Reset password', onClick() {} }]}
+        primaryAction={{ label: 'Add user', onClick() {} }}
+      />,
+    );
+
+    expect(markup.match(/type="button"/g)).toHaveLength(4);
+    expect(markup).toContain('focus-visible:ring-ring/50');
+  });
+});

@@ -12,6 +12,7 @@ import {
 import { createRequestAuthorizationAccess } from './authorization-access';
 import type { AuthorizationKernel, AuthorizationScopeSnapshot } from './authorization-kernel';
 import type { AuthorizationRoleService } from './authorization-role-service';
+import { isRoleAssignableToTenantKind } from './authorization-registry';
 import { extractAuthContext } from './auth-context';
 import { EMAIL_MAX_LENGTH, EMAIL_PATTERN_SOURCE } from './auth-email-identity';
 import type { AuthPlatformTenantAdministrationService } from './auth-platform-tenant-administration-service';
@@ -20,6 +21,7 @@ import type { AuthTenantAdministrationService } from './auth-tenant-administrati
 import {
   captureAuthTenantMutationAuthority,
   type AssertAuthTenantMutationAuthority,
+  type AuthTenantMutationAuthority,
 } from './auth-tenant-mutation-authority';
 import type { AuthTenantOnboardingService } from './auth-tenant-onboarding-service';
 import type { TokenService } from './token-service';
@@ -98,6 +100,9 @@ export function createAuthPlatformAdministrationPlugin(
       });
       actor.assertApplicationAuthority([]);
       const has = (permission: string) => actor.access.hasPermission(permission);
+      const canManageTenantMembers = has('application.tenant-members:manage')
+        && has('application.tenants:read')
+        && has('application.users:read');
       return Object.freeze({
         authorization: tenantConfig.authorization,
         administration: Object.freeze({
@@ -116,12 +121,27 @@ export function createAuthPlatformAdministrationPlugin(
           canReadTenants: has('application.tenants:read'),
           canReadTenantMembers: has('application.tenants:read')
             && has('application.users:read'),
+          canManageTenantMembers,
           canManageTenants: has('application.tenants:manage'),
           canCreateTenants: has('application.tenants:manage')
             && has('application.users:read'),
           canTransferOwnership: tenantConfig.capabilities.canTransferOwnership,
         }),
         roles: tenantConfig.roles,
+        customerRoles: Object.freeze(tenantConfig.roles.map((role) => Object.freeze({
+          ...role,
+          assignable: !role.system && isRoleAssignableToTenantKind(
+            role.key,
+            'organization',
+            config.getAuthorizationKernel().authorization,
+          ),
+          grantable: canManageTenantMembers && !role.system
+            && isRoleAssignableToTenantKind(
+              role.key,
+              'organization',
+              config.getAuthorizationKernel().authorization,
+            ),
+        }))),
       });
     })
     .get('/members', async ({ request, query, set }) => {
@@ -409,7 +429,126 @@ export function createAuthPlatformAdministrationPlugin(
     }, {
       params: t.Object({ tenantId: idSchema }, { additionalProperties: false }),
       query: memberListSchema(),
+    })
+    .post('/tenants/:tenantId/members', async ({ request, params, body }) => {
+      const actor = await requirePlatformActor(config, request);
+      requirePlatformTenantMemberAccess(actor);
+      return actor.tenantAdministration.addMember({
+        tenantId: params.tenantId,
+        email: body.email,
+        roleKeys: body.roles,
+        assertCurrentAuthority: platformTenantAuthority(actor, params.tenantId),
+        auditRequest: authAuditRequestFromRequest(request),
+      });
+    }, {
+      params: t.Object({ tenantId: idSchema }, { additionalProperties: false }),
+      body: t.Object({
+        email: emailSchema,
+        roles: t.Optional(platformMemberRolesSchema),
+      }, { additionalProperties: false }),
+    })
+    .patch('/tenants/:tenantId/members/:membershipId', async ({ request, params, body }) => {
+      const actor = await requirePlatformActor(config, request);
+      requirePlatformTenantMemberAccess(actor);
+      if (body.status === undefined && body.roles === undefined) {
+        throw new AuthError(
+          'Provide a membership status or role change',
+          'TENANT_MEMBER_UPDATE_EMPTY',
+          422,
+        );
+      }
+      return actor.tenantAdministration.updateMember({
+        tenantId: params.tenantId,
+        membershipId: params.membershipId,
+        status: body.status,
+        roleKeys: body.roles,
+        expectedRoleRevision: body.expectedRoleRevision,
+        assertCurrentAuthority: platformTenantAuthority(actor, params.tenantId),
+        auditRequest: authAuditRequestFromRequest(request),
+      });
+    }, {
+      params: t.Object({
+        tenantId: idSchema,
+        membershipId: idSchema,
+      }, { additionalProperties: false }),
+      body: t.Object({
+        status: t.Optional(t.Union([t.Literal('active'), t.Literal('suspended')])),
+        roles: t.Optional(platformMemberRolesSchema),
+        expectedRoleRevision: t.Optional(t.String({ minLength: 1, maxLength: 512 })),
+      }, { additionalProperties: false }),
+    })
+    .delete('/tenants/:tenantId/members/:membershipId', async ({ request, params }) => {
+      const actor = await requirePlatformActor(config, request);
+      requirePlatformTenantMemberAccess(actor);
+      return actor.tenantAdministration.removeMember({
+        tenantId: params.tenantId,
+        membershipId: params.membershipId,
+        assertCurrentAuthority: platformTenantAuthority(actor, params.tenantId),
+        auditRequest: authAuditRequestFromRequest(request),
+      });
+    }, {
+      params: t.Object({
+        tenantId: idSchema,
+        membershipId: idSchema,
+      }, { additionalProperties: false }),
+    })
+    .post('/tenants/:tenantId/ownership/transfer', async ({ request, params, body }) => {
+      const actor = await requirePlatformActor(config, request);
+      requirePlatformTenantMemberAccess(actor);
+      return actor.tenantAdministration.transferOwnership({
+        tenantId: params.tenantId,
+        targetMembershipId: body.membershipId,
+        assertCurrentAuthority: platformTenantAuthority(actor, params.tenantId),
+        auditRequest: authAuditRequestFromRequest(request),
+      });
+    }, {
+      params: t.Object({ tenantId: idSchema }, { additionalProperties: false }),
+      body: t.Object({ membershipId: idSchema }, { additionalProperties: false }),
     });
+}
+
+/**
+ * Adapt live application authority to the existing tenant mutation engine.
+ * The synthetic target scope never becomes a user session and is accepted
+ * only while `platformAdministration` is present and the actor remains in the
+ * protected Administration Organization.
+ */
+function platformTenantAuthority(
+  actor: PlatformActor,
+  tenantId: string,
+): AssertAuthTenantMutationAuthority {
+  return (_requiredTenantPermissions): AuthTenantMutationAuthority => {
+    const authority = actor.assertApplicationAuthority(PLATFORM_TENANT_MEMBER_PERMISSIONS);
+    return Object.freeze({
+      auth: authority.auth,
+      scope: Object.freeze({
+        tenancy: actor.tenantScope.tenancy,
+        mode: actor.tenantScope.mode,
+        scopeKind: 'tenant' as const,
+        scopeId: tenantId,
+        tenantId,
+        membershipId: `platform:${actor.tenantScope.membershipId}`,
+        roles: Object.freeze([]),
+        permissions: Object.freeze([]),
+        allPermissions: true,
+        revision: authority.scope.revision,
+      }),
+      applicationScope: authority.scope,
+      platformAdministration: true as const,
+    });
+  };
+}
+
+const PLATFORM_TENANT_MEMBER_PERMISSIONS = Object.freeze([
+  'application.tenants:read',
+  'application.users:read',
+  'application.tenant-members:manage',
+] as const);
+
+function requirePlatformTenantMemberAccess(actor: PlatformActor): void {
+  for (const permission of PLATFORM_TENANT_MEMBER_PERMISSIONS) {
+    actor.access.requirePermission(permission);
+  }
 }
 
 function requireAdministrationMemberRoles(

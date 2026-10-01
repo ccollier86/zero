@@ -16,6 +16,7 @@ import {
   getUserManagementEditableFields,
 } from './user-management-schema';
 import { canCreateManagedUser } from './user-management-action-policy';
+import { buildTenantAccountNavigationActions } from './tenant-account-navigation-actions';
 import { UserManagementDetail } from './user-management-detail';
 import type { UserManagementProps } from './user-management-props';
 import { UserManagementToolbar } from './user-management-toolbar';
@@ -24,11 +25,12 @@ import { useUserCreateDialog } from './use-user-create-dialog';
 import { useUserManagementMutations } from './use-user-management-mutations';
 import { useUserManagementNavigationActions } from './use-user-management-navigation-actions';
 import { useUserMfaStatus } from './use-user-mfa-status';
+import { useTenantAccountEditDialog } from './use-tenant-account-edit-dialog';
 
 export type { UserManagementProps } from './user-management-props';
 
 /** Render the self-wired or explicitly controlled admin user-management organism. */
-export function UserManagement({
+export function IdentityUserManagement({
   data,
   config: configProp,
   roleOptions: roleOptionsProp,
@@ -37,8 +39,12 @@ export function UserManagement({
   onUpdate,
   onDeleteProperty,
   onDelete,
+  additionalDetailContent,
+  additionalNavigationActions,
+  onSelectedUserChange,
   className,
-}: UserManagementProps) {
+  accountEditMode = 'inline',
+}: UserManagementProps & { accountEditMode?: 'inline' | 'dialog' }) {
   const controlled = data !== undefined;
   const live = useAdminUsers({
     enabled: !controlled || configProp === undefined,
@@ -112,11 +118,38 @@ export function UserManagement({
     deleteUser: mutations.deleteUser,
     onSecurityChanged: securityChanged,
   });
+  const openAccountEdit = useTenantAccountEditDialog({
+    config,
+    roleOptions,
+    editableFields,
+    updateUser: mutations.updateUser,
+  });
+  const accountNavigationActions = React.useCallback((user: typeof selectedUser) => (
+    accountEditMode === 'dialog'
+      ? buildTenantAccountNavigationActions({
+          user,
+          canEdit: canUpdate && editableFields.length > 0,
+          accountActions: navigationActions(user),
+          onEdit: openAccountEdit,
+        })
+      : navigationActions(user)
+  ), [
+    accountEditMode, canUpdate, editableFields.length, navigationActions,
+    openAccountEdit,
+  ]);
+  const composedNavigationActions = React.useCallback((user: typeof selectedUser) => [
+    ...accountNavigationActions(user),
+    ...(additionalNavigationActions?.(user) ?? []),
+  ], [accountNavigationActions, additionalNavigationActions]);
+  React.useEffect(() => {
+    onSelectedUserChange?.(selectedUser);
+  }, [onSelectedUserChange, selectedUser]);
   const canCreate = controlled ? Boolean(onCreate) : canCreateManagedUser(config);
   const creationDisabled = (!controlled && config === null) || live.isLoading || !canCreate;
   const primaryAction = !canCreate ? undefined : {
     label: config?.registration.mode === 'disabled' ? 'Creation Disabled'
       : live.isLoading ? 'Loading' : 'Add User',
+    ariaHasPopup: 'dialog' as const,
     disabled: creationDisabled,
     onClick: openCreateDialog,
   };
@@ -139,11 +172,13 @@ export function UserManagement({
         controlled={controlled}
         canUpdate={canUpdate}
         canDeleteProperty={!controlled || Boolean(onDeleteProperty)}
+        accountEditMode={accountEditMode}
         mfaStatus={mfa.status}
         mfaLoading={mfa.loading}
         mfaError={mfa.error}
-        navigationActions={navigationActions}
+        navigationActions={composedNavigationActions}
         primaryAction={primaryAction}
+        additionalDetailContent={additionalDetailContent}
         updateUser={mutations.updateUser}
         deleteProperty={mutations.deleteProperty}
         onSelectedIdChange={setSelectedId}

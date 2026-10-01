@@ -64,6 +64,7 @@ describe('protected platform administration', () => {
           canManageRoles: true,
           canReadTenants: true,
           canReadTenantMembers: true,
+          canManageTenantMembers: true,
           canManageTenants: true,
           canCreateTenants: true,
         },
@@ -73,6 +74,17 @@ describe('protected platform administration', () => {
       .toMatchObject({ administrationOnly: false, assignable: false });
     expect(config.body.roles.find((role: any) => role.key === 'administrator'))
       .toMatchObject({ administrationOnly: true, assignable: true });
+    expect(config.body.customerRoles.find((role: any) => role.key === 'member'))
+      .toMatchObject({
+        administrationOnly: false,
+        system: false,
+        assignable: true,
+        grantable: true,
+      });
+    expect(config.body.customerRoles.find((role: any) => role.key === 'administrator'))
+      .toMatchObject({ administrationOnly: true, assignable: false, grantable: false });
+    expect(config.body.customerRoles.find((role: any) => role.key === 'owner'))
+      .toMatchObject({ system: true, assignable: false, grantable: false });
 
     const customerDenied = await request(
       harness,
@@ -126,6 +138,7 @@ describe('protected platform administration', () => {
       owner.accessToken,
     );
     expect(pageOne.body.page).toMatchObject({ count: 1, hasMore: true });
+    expect(pageOne.body.tenants[0].tenantId).toBe(created.body.tenant.tenantId);
     const pageTwo = await request(
       harness,
       'GET',
@@ -220,6 +233,287 @@ describe('protected platform administration', () => {
     }).events).toContainEqual(expect.objectContaining({
       targetId: created.body.tenant.tenantId,
     }));
+  }, 60_000);
+
+  test('manages customer members through live application authority without replacing the actor session', async () => {
+    const harness = await start();
+    const owner = await register(harness, 'platform-customer-member-owner');
+    const customer = await register(harness, 'platform-customer-member-tenant');
+    const candidate = await register(harness, 'platform-customer-member-candidate');
+
+    const added = await request(
+      harness,
+      'POST',
+      `/auth/platform/tenants/${customer.tenant.tenantId}/members`,
+      { email: candidate.user.email, roles: ['manager'] },
+      owner.accessToken,
+    );
+    expect(added).toMatchObject({
+      status: 200,
+      body: {
+        member: {
+          identity: { userId: candidate.user.userId },
+          roles: ['manager'],
+        },
+        actorSessionInvalidated: false,
+      },
+    });
+
+    const updated = await request(
+      harness,
+      'PATCH',
+      `/auth/platform/tenants/${customer.tenant.tenantId}/members/${
+        added.body.member.membershipId
+      }`,
+      {
+        roles: ['member'],
+        expectedRoleRevision: added.body.member.roleRevision,
+      },
+      owner.accessToken,
+    );
+    expect(updated).toMatchObject({
+      status: 200,
+      body: { member: { roles: ['member'] }, actorSessionInvalidated: false },
+    });
+
+    const staleRevision = await request(
+      harness,
+      'PATCH',
+      `/auth/platform/tenants/${customer.tenant.tenantId}/members/${
+        added.body.member.membershipId
+      }`,
+      {
+        roles: ['manager'],
+        expectedRoleRevision: added.body.member.roleRevision,
+      },
+      owner.accessToken,
+    );
+    expect(staleRevision).toMatchObject({
+      status: 409,
+      body: { code: 'TENANT_ROLE_REVISION_CONFLICT' },
+    });
+
+    const crossTenantMembership = await request(
+      harness,
+      'PATCH',
+      `/auth/platform/tenants/${customer.tenant.tenantId}/members/${
+        candidate.tenant.membershipId
+      }`,
+      { status: 'suspended' },
+      owner.accessToken,
+    );
+    expect(crossTenantMembership).toMatchObject({
+      status: 404,
+      body: { code: 'TENANT_MEMBER_NOT_FOUND' },
+    });
+    expect(await request(
+      harness,
+      'POST',
+      `/auth/platform/tenants/${owner.tenant.tenantId}/members`,
+      { email: candidate.user.email, roles: ['member'] },
+      owner.accessToken,
+    )).toMatchObject({ status: 403, body: { code: 'FORBIDDEN' } });
+    expect(await request(
+      harness,
+      'POST',
+      `/auth/platform/tenants/${candidate.tenant.tenantId}/members`,
+      { email: candidate.user.email, roles: ['member'] },
+      customer.accessToken,
+    )).toMatchObject({ status: 403, body: { code: 'FORBIDDEN' } });
+
+    const transferred = await request(
+      harness,
+      'POST',
+      `/auth/platform/tenants/${customer.tenant.tenantId}/ownership/transfer`,
+      { membershipId: added.body.member.membershipId },
+      owner.accessToken,
+    );
+    expect(transferred).toMatchObject({
+      status: 200,
+      body: {
+        owner: { identity: { userId: candidate.user.userId }, roles: ['owner'] },
+        previousOwner: {
+          identity: { userId: customer.user.userId },
+          roles: ['member'],
+        },
+        actorSessionInvalidated: false,
+      },
+    });
+    expect(await request(
+      harness,
+      'GET',
+      '/auth/platform/config',
+      undefined,
+      owner.accessToken,
+    )).toMatchObject({ status: 200 });
+
+    const removed = await request(
+      harness,
+      'DELETE',
+      `/auth/platform/tenants/${customer.tenant.tenantId}/members/${
+        transferred.body.previousOwner.membershipId
+      }`,
+      undefined,
+      owner.accessToken,
+    );
+    expect(removed).toMatchObject({
+      status: 200,
+      body: { member: { status: 'removed' }, actorSessionInvalidated: false },
+    });
+
+    expect(harness.runtime.getAuditService()!.listTenant(
+      customer.tenant.tenantId,
+      { action: 'tenant.member-added' },
+    ).events).toContainEqual(expect.objectContaining({
+      actorUserId: owner.user.userId,
+      targetId: added.body.member.membershipId,
+    }));
+    expect(harness.runtime.getAuditService()!.listTenant(
+      customer.tenant.tenantId,
+      { action: 'tenant.ownership-transferred' },
+    ).events).toContainEqual(expect.objectContaining({
+      actorUserId: owner.user.userId,
+      targetId: added.body.member.membershipId,
+    }));
+
+  }, 60_000);
+
+  test('does not advertise or allow customer-member writes without the full read ceiling', async () => {
+    const harness = await start({
+      mode: 'advanced',
+      roles: {
+        'customer-member-operator': {
+          label: 'Customer member operator',
+          permissions: [
+            'tenant:read',
+            'application.tenants:read',
+            'application.tenant-members:manage',
+          ],
+        },
+      },
+    });
+    const owner = await register(harness, 'platform-customer-ceiling-owner');
+    const delegate = await register(harness, 'platform-customer-ceiling-delegate');
+    const customer = await register(harness, 'platform-customer-ceiling-tenant');
+    const target = await register(harness, 'platform-customer-ceiling-target');
+    const delegated = await request(harness, 'POST', '/auth/platform/members', {
+      email: delegate.user.email,
+      roles: ['customer-member-operator'],
+    }, owner.accessToken);
+    expect(delegated.status).toBe(200);
+    const delegatedSession = await switchTenant(
+      harness,
+      delegate.refreshToken,
+      owner.tenant.tenantId,
+    );
+    const config = await request(
+      harness,
+      'GET',
+      '/auth/platform/config',
+      undefined,
+      delegatedSession.accessToken,
+    );
+    expect(config).toMatchObject({
+      status: 200,
+      body: {
+        capabilities: {
+          canReadTenants: true,
+          canReadTenantMembers: false,
+          canManageTenantMembers: false,
+        },
+      },
+    });
+    expect(config.body.customerRoles.every((role: any) => role.grantable === false))
+      .toBe(true);
+    const deniedMutations = [
+      await request(
+        harness,
+        'POST',
+        `/auth/platform/tenants/${customer.tenant.tenantId}/members`,
+        { email: target.user.email, roles: ['member'] },
+        delegatedSession.accessToken,
+      ),
+      await request(
+        harness,
+        'PATCH',
+        `/auth/platform/tenants/${customer.tenant.tenantId}/members/${
+          customer.tenant.membershipId
+        }`,
+        { status: 'suspended' },
+        delegatedSession.accessToken,
+      ),
+      await request(
+        harness,
+        'DELETE',
+        `/auth/platform/tenants/${customer.tenant.tenantId}/members/${
+          customer.tenant.membershipId
+        }`,
+        undefined,
+        delegatedSession.accessToken,
+      ),
+      await request(
+        harness,
+        'POST',
+        `/auth/platform/tenants/${customer.tenant.tenantId}/ownership/transfer`,
+        { membershipId: customer.tenant.membershipId },
+        delegatedSession.accessToken,
+      ),
+    ];
+    expect(deniedMutations).toEqual(deniedMutations.map(() => expect.objectContaining({
+      status: 403,
+      body: expect.objectContaining({ code: 'FORBIDDEN' }),
+    })));
+  }, 60_000);
+
+  test('revalidates platform member authority inside the target-tenant write transaction', async () => {
+    const harness = await start();
+    const owner = await register(harness, 'platform-member-fence-owner');
+    const customer = await register(harness, 'platform-member-fence-tenant');
+    const target = await register(harness, 'platform-member-fence-target');
+    const added = await request(
+      harness,
+      'POST',
+      `/auth/platform/tenants/${customer.tenant.tenantId}/members`,
+      { email: target.user.email, roles: ['member'] },
+      owner.accessToken,
+    );
+    expect(added.status).toBe(200);
+
+    const auth = await harness.runtime.getTokenService()!.resolveAuthContext(owner.accessToken);
+    if (!auth?.sessionId) throw new Error('Platform owner session was not resolved');
+    const service = harness.runtime.getTenantAdministrationService()!;
+    const updateMember = service.updateMember.bind(service);
+    let intercepted = false;
+    (service as any).updateMember = (input: any) => {
+      intercepted = true;
+      harness.runtime.getAuthSessionService()!.revoke(
+        auth.sessionId!,
+        'platform-member-commit-fence-test',
+      );
+      return updateMember(input);
+    };
+    let response;
+    try {
+      response = await request(
+        harness,
+        'PATCH',
+        `/auth/platform/tenants/${customer.tenant.tenantId}/members/${
+          added.body.member.membershipId
+        }`,
+        { status: 'suspended' },
+        owner.accessToken,
+      );
+    } finally {
+      (service as any).updateMember = updateMember;
+    }
+    expect(intercepted).toBe(true);
+    expect(response!).toMatchObject({
+      status: 409,
+      body: { code: 'AUTHORIZATION_CHANGED' },
+    });
+    expect(harness.runtime.getTenancyService()!.getMembershipById(
+      added.body.member.membershipId,
+    )).toMatchObject({ status: 'active' });
   }, 60_000);
 
   test('uses the combined admin-organization ceiling for delegated role grants', async () => {

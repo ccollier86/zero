@@ -8,7 +8,10 @@ import {
   canCreateManagedUser,
   resolveUserManagementActionPolicy,
 } from './user-management-action-policy';
-import { getUserManagementEditableFields } from './user-management-schema';
+import {
+  createUserManagementSchema,
+  getUserManagementEditableFields,
+} from './user-management-schema';
 import { getAuthReadinessWarnings } from './user-management-readiness';
 import { UserManagementSecurityPanel } from './user-management-security-panel';
 import { UserDetailHeader } from './user-detail-header';
@@ -159,12 +162,14 @@ describe('admin user UI policy', () => {
     expect(policy.deleteUser).toBe(false);
   });
 
-  test('generic fields exclude status and policy-gate MFA', () => {
+  test('generic account editing excludes lifecycle and MFA security commands', () => {
     const unavailable = config({ mfa: false });
     expect(getUserManagementEditableFields(unavailable)).not.toContain('status');
     expect(getUserManagementEditableFields(unavailable)).not.toContain('passwordChangeRequired');
     expect(getUserManagementEditableFields(unavailable)).not.toContain('mfaRequired');
-    expect(getUserManagementEditableFields(config())).toContain('mfaRequired');
+    expect(getUserManagementEditableFields(config())).not.toContain('mfaRequired');
+    expect(createUserManagementSchema([{ value: 'user', label: 'User' }]).fields.has('mfaRequired'))
+      .toBe(false);
   });
 
   test('create form exposes only the deliverable setup-email gate', () => {

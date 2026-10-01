@@ -130,8 +130,8 @@ export class AuthPlatformTenantAdministrationService {
     }
     if (cursor) {
       clauses.push(`(
-        tenant.created_at > ?
-        OR (tenant.created_at = ? AND tenant.tenant_id > ?)
+        tenant.created_at < ?
+        OR (tenant.created_at = ? AND tenant.tenant_id < ?)
       )`);
       args.push(cursor.createdAt, cursor.createdAt, cursor.tenantId);
     }
@@ -147,7 +147,7 @@ export class AuthPlatformTenantAdministrationService {
         ON membership.tenant_id = tenant.tenant_id
       WHERE ${clauses.join(' AND ')}
       GROUP BY tenant.tenant_id
-      ORDER BY tenant.created_at ASC, tenant.tenant_id ASC
+      ORDER BY tenant.created_at DESC, tenant.tenant_id DESC
       LIMIT ?
     `).all(...args, limit + 1) as TenantDirectoryRow[];
     const hasMore = rows.length > limit;

@@ -1147,6 +1147,18 @@ import {
 } from '@zero/framework/components/auth';
 ```
 
+`UserManagement`/`PlatformUserManagement` is the default Guardian control
+plane rather than a global-user-only table. It preserves the familiar
+single/simple account manager, composes application RBAC in single/advanced,
+uses tenant membership/RBAC in customer scope, and adds compact People and
+Workspaces views in the protected Administration Organization. The workspace
+view can administer customer membership, roles, and ownership through its
+dedicated application capability without granting customer application-data
+access; global account-security controls remain independently authorized.
+Focused
+`TenantMemberManagement` and `PlatformWorkspaceManagement` exports remain
+available when an app is intentionally composing a custom control plane.
+
 Narrow imports are also supported:
 
 ```tsx

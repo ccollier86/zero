@@ -6,7 +6,10 @@ import type { Row } from '../../sync/types';
 import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { ResourceFieldAccess } from '../../resources/resource-field-access';
 import type { RowAction } from '../data-table/data-table-row-actions';
-import type { NavigationAction } from '../ui/record-navigation-bar';
+import type {
+  NavigationAction,
+  RecordPrimaryAction,
+} from '../ui/record-navigation-bar';
 import { useCollection, useLazyCollection } from '../../frontend/client/data-hooks';
 import type { LazyCollectionOptions } from '../../frontend/client/data-hooks';
 import { DataTable } from '../data-table';
@@ -118,7 +121,7 @@ export interface CrudPageProps<T extends Row = Row> {
   /** Navigation bar action buttons for the selected record. */
   navigationActions?: (item: T | null) => NavigationAction[];
   /** Primary action button in the navigation bar. */
-  primaryAction?: { label: string; sublabel?: string; shortcut?: string; disabled?: boolean; onClick: () => void };
+  primaryAction?: RecordPrimaryAction;
   /** Detail panel submit label. Default: 'Save Changes'. */
   submitLabel?: string;
   /** Width of the list panel. Default: '3fr'. */
@@ -487,6 +490,7 @@ function MasterDetailLayout<T extends Row = Row>({
   // Build primary action — default to create button if not provided and not hidden
   const resolvedPrimaryAction = primaryAction ?? (!hideCreate ? {
     label: createLabel,
+    ariaHasPopup: 'dialog' as const,
     onClick: openCreateModal,
   } : undefined);
 

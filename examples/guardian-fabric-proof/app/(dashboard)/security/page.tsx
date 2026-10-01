@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  SelfApiKeyManagement,
   TenantGate,
 } from '@zero/framework/components/auth';
 import {
@@ -11,7 +10,7 @@ import {
   CardTitle,
 } from '@zero/framework/components/ui/card';
 
-import { ApiKeyUsageGuide } from '../../components/api-key-usage-guide';
+import { WorkspaceApiKeyControls } from '../../components/workspace-api-key-controls';
 
 export const meta = {
   title: 'Security | Guardian + Fabric Proof',
@@ -23,12 +22,7 @@ export default function SecurityPage() {
   return (
     <TenantGate tenantKind="organization" fallback={<CustomerWorkspaceRequired />}>
       <div className="grid gap-6">
-        <SelfApiKeyManagement
-          title="Workspace automation credentials"
-          description="Issue finite API keys for your current customer workspace. The raw secret is shown once."
-          pageSize={20}
-        />
-        <ApiKeyUsageGuide />
+        <WorkspaceApiKeyControls />
       </div>
     </TenantGate>
   );
@@ -40,8 +34,8 @@ function CustomerWorkspaceRequired() {
       <CardHeader>
         <CardTitle asChild><h2>Switch to a customer workspace</h2></CardTitle>
         <CardDescription>
-          User API keys are bound to customer-workspace memberships. Platform operators manage
-          customer credentials from Platform operations while using the Administration Organization.
+          User API keys are bound to customer-workspace memberships. Platform operators can use
+          the Credentials mode in Platform operations while the Administration Organization is active.
         </CardDescription>
       </CardHeader>
     </Card>

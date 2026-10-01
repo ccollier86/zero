@@ -31,21 +31,29 @@ All notable Zero Platform changes are tracked here.
   retained assignment history, protected ownership transfer, optimistic role
   revisions, live grant-ceiling checks, and inert cleanup of retired role
   definitions. `single/advanced` includes the namespaced `/auth/application`
-  control plane, typed client surface, identity-safe hook, and packaged
-  `ApplicationAccessManagement` UI.
+  control plane, typed client surface, identity-safe hook, and application-role
+  composition in the adaptive `UserManagement` control plane.
 - Added multi-tenant member administration, one-time expiring invitations,
   invitation-bound account creation, retained join requests, typed tenant
-  administration clients/hooks, and packaged member, invitation, onboarding,
-  creation, selection, and switching controls.
+  administration clients/hooks, and packaged member, onboarding, creation,
+  selection, and switching controls. The adaptive member control plane includes
+  a focused invitation dialog with pending-only cursor pagination, explicit
+  revoke confirmation, capability-projected roles, and one-time manual-token
+  handling.
 - Added one protected Administration Organization for each multi-tenant app,
   created atomically at bootstrap and visibly distinguished from customer
   organizations by the required tenant `kind`. The bounded `/auth/platform`
   control plane, `client.platformAdmin`, scope-fenced hooks, and capability-
   driven packaged controls now manage its members, invitations, roles, and
   ownership; browse/create/suspend/reactivate customer organizations; and
-  inspect safe customer-member projections without accepting an administration
-  tenant ID from the browser. Customer membership mutation still requires
-  switching into that customer scope.
+  inspect or administer customer memberships and roles without accepting an
+  administration tenant ID from the browser. Cross-workspace member writes
+  require `application.tenants:read`, `application.users:read`, and the new
+  `application.tenant-members:manage`; reuse tenant role-revision, grant-
+  ceiling, ownership, error, audit, and transaction guarantees; and never
+  grant customer application-data access or global account controls to tenant
+  organization managers. The adaptive Workspaces view composes these actions
+  into its selected workspace/people control plane.
 - Added opt-in verified-company-domain request onboarding with exact DNS and
   current-mailbox proof, non-enumerating discovery, retained fixed-role join
   requests, packaged administration/onboarding controls, and an owner-only

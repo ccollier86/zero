@@ -13,7 +13,8 @@
 > Opt-in verified-company-domain request admission and the bounded append-only
 > authorization/control-plane audit are implemented in this candidate. The
 > protected Administration Organization, its SDK/hooks/UI, and the bounded
-> customer-tenant directory/lifecycle are implemented. Break-glass support,
+> customer-tenant directory/lifecycle/member control plane are implemented.
+> Break-glass support,
 > tenant-custom roles, broader populated-app discovery/migration tooling beyond
 > exact pre-024 administration reconciliation, domain
 > autojoin/aliases/direct transfer, and upstream enterprise SSO remain separate
@@ -25,7 +26,7 @@
 > implementation checklist—not
 > the presence of a config field—defines when each profile is ready to release.
 >
-> Last reviewed: 2026-09-28
+> Last reviewed: 2026-10-01
 
 This document defines the stable principles that new Zero authentication and authorization
 work must preserve. It is intentionally smaller than the
@@ -380,7 +381,9 @@ The current candidate packages global identity management, single/advanced
 application access, active-tenant member/onboarding/domain/audit controls,
 current-user continuation and switching UI, protected Administration
 Organization people/invitations, and a bounded customer-tenant
-directory/lifecycle console. Tenant SSO controls remain future work.
+directory/lifecycle/member console. Cross-workspace membership operations are
+explicit application permissions and do not grant customer application-data
+access. Tenant SSO controls remain future work.
 
 Tenant controls operate on the active server-validated tenant rather than trusting an
 arbitrary tenant ID from the browser. Tenant administrators cannot reset global passwords,

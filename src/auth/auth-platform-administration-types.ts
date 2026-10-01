@@ -24,11 +24,14 @@ export interface AuthPlatformAdministrationConfig {
     canManageInvitations: boolean;
     canReadTenants: boolean;
     canReadTenantMembers: boolean;
+    canManageTenantMembers: boolean;
     canManageTenants: boolean;
     canCreateTenants: boolean;
     canTransferOwnership: boolean;
   };
   roles: readonly AuthTenantRoleDescriptor[];
+  /** Organization-scoped role templates for customer-member administration. */
+  customerRoles: readonly AuthTenantRoleDescriptor[];
 }
 
 export interface AuthPlatformTenant {

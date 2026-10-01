@@ -212,6 +212,7 @@ export function StorageDriveList({ onBrowse, className }: StorageDriveListProps)
         primaryAction={{
           label: loading ? 'Loading' : 'New Drive',
           shortcut: 'Cmd+N',
+          ariaHasPopup: 'dialog',
           disabled: loading || busy,
           onClick: handleCreate,
         }}

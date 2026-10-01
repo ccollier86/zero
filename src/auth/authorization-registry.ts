@@ -107,6 +107,11 @@ export const FRAMEWORK_PLATFORM_ADMINISTRATION_PERMISSIONS = Object.freeze({
     description: 'Administer organization lifecycle across the application.',
     scope: 'application',
   }),
+  'application.tenant-members:manage': Object.freeze({
+    label: 'Manage organization members',
+    description: 'Administer customer-organization membership and role assignments from the protected application control plane.',
+    scope: 'application',
+  }),
 } satisfies Record<string, AuthPermissionConfig>);
 
 export const FRAMEWORK_TENANT_AUTHORIZATION_PERMISSIONS = Object.freeze({
@@ -223,6 +228,7 @@ const APPLICATION_MANAGER_PERMISSIONS = Object.freeze([
   'application.users:manage',
   'application.tenants:read',
   'application.tenants:manage',
+  'application.tenant-members:manage',
 ]);
 
 const ADMINISTRATION_TENANT_ACCESS_MANAGER_PERMISSIONS = Object.freeze([

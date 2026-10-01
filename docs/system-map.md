@@ -234,7 +234,7 @@ control surfaces.
 | `src/auth/auth-audit-service.ts`, `src/auth/auth-audit.plugin.ts` | Bounded append-only authorization/control-plane audit and authorized query/export/retention routes |
 | `src/auth/auth-application-administration.plugin.ts` | Single/advanced application user and role-assignment administration |
 | `src/auth/auth-tenant-administration.plugin.ts` | Active-tenant member, role, status, and ownership administration |
-| `src/auth/auth-platform-administration.plugin.ts` | Active protected Administration Organization people/invitations and capability-gated customer-tenant directory/lifecycle |
+| `src/auth/auth-platform-administration.plugin.ts` | Active protected Administration Organization people/invitations plus capability-gated customer-tenant directory, lifecycle, and cross-workspace member/role administration |
 | `src/auth/auth-tenant-onboarding.plugin.ts` | Hashed invitations and retained join-request issue/accept/review routes |
 | `src/auth/auth-tenant-invitation-service.ts` | Invitation issue, inspection, acceptance, and delivery lifecycle |
 | `src/auth/auth-tenant-join-request-service.ts`, `auth-tenant-join-request-store.ts`, `auth-tenant-join-request-projection.ts` | Join-request orchestration, durable concurrency-fenced rows, and public-safe projections |
@@ -278,12 +278,13 @@ control surfaces.
 | `src/frontend/client/application-administration-hooks.ts` | Single/advanced application-access administration hook |
 | `src/frontend/client/tenant-administration-hooks.ts` | Tenant switch, member, invitation, and join-request administration hooks |
 | `src/frontend/client/platform-administration-hooks.ts` | Protected Administration Organization member/invitation state and mutations |
-| `src/frontend/client/platform-tenant-directory-hooks.ts` | Customer-organization directory/lifecycle and read-only member drill-in |
+| `src/frontend/client/platform-tenant-directory-hooks.ts` | Customer-organization directory/lifecycle plus revision-fenced cross-workspace member/role/ownership administration |
 | `src/components/auth/authorization-gates.tsx` | Presentation-only permission, tenant, and platform-admin gates; server remains authoritative |
-| `src/components/auth/application-access-management.tsx` | Packaged single/advanced application access control |
-| `src/components/auth/tenant-*.tsx` | Packaged tenant selection, switching, creation, member, invitation, and join-request controls |
-| `src/components/auth/platform-administration-management.tsx` | Packaged protected-organization people, role, ownership, and invitation controls |
-| `src/components/auth/platform-tenant-management.tsx` | Packaged customer-organization directory, lifecycle, creation, and read-only member detail |
+| `src/components/admin/users/adaptive-user-management.tsx` | Mode-adaptive account, application-access, tenant-member, and platform-workspace control plane |
+| `src/components/admin/users/single-advanced-user-management.tsx` | Account administration with application RBAC composed into the established user manager |
+| `src/components/auth/tenant-member-management*.tsx` | Compact active-tenant people, membership, role, ownership, and invitation workflows |
+| `src/components/auth/platform-workspace-*.tsx` | Customer-organization directory, lifecycle, creation, and capability-shaped member/role control plane without customer data-plane access |
+| `src/components/auth/tenant-*.tsx` | Tenant selection, switching, creation, invitation acceptance, join-request, and domain-onboarding controls |
 
 **Key auth patterns:**
 

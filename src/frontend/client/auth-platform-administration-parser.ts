@@ -4,6 +4,7 @@ import type {
   AuthPlatformAdministrationConfig,
   AuthPlatformTenant,
   AuthPlatformTenantCreateResult,
+  AuthPlatformTenantOwnershipTransferResult,
   AuthPlatformTenantPage,
   AuthPlatformTenantUpdateResult,
 } from './auth-platform-administration-types';
@@ -31,7 +32,9 @@ const MAX_PAGE = 100;
 export function parsePlatformAdministrationConfig(
   value: unknown,
 ): AuthPlatformAdministrationConfig {
-  const result = exact(value, ['authorization', 'administration', 'capabilities', 'roles']);
+  const result = exact(value, [
+    'authorization', 'administration', 'capabilities', 'roles', 'customerRoles',
+  ]);
   if (result.authorization !== 'simple' && result.authorization !== 'advanced') throw invalid();
   const administration = exact(result.administration, [
     'tenantId', 'kind', 'slug', 'name', 'membershipId',
@@ -40,13 +43,20 @@ export function parsePlatformAdministrationConfig(
   const capabilities = exact(result.capabilities, [
     'canReadMembers', 'canManageMembers', 'canManageRoles', 'canReadInvitations',
     'canManageInvitations', 'canReadTenants', 'canManageTenants',
-    'canReadTenantMembers', 'canCreateTenants', 'canTransferOwnership',
+    'canReadTenantMembers', 'canManageTenantMembers', 'canCreateTenants',
+    'canTransferOwnership',
   ]);
   for (const value of Object.values(capabilities)) {
     if (typeof value !== 'boolean') throw invalid();
   }
   const roles = parseArray(result.roles, 128, parsePlatformRoleDescriptor);
+  const customerRoles = parseArray(
+    result.customerRoles,
+    128,
+    parsePlatformRoleDescriptor,
+  );
   unique(roles.map((role) => role.key));
+  unique(customerRoles.map((role) => role.key));
   return Object.freeze({
     authorization: result.authorization,
     administration: Object.freeze({
@@ -64,11 +74,13 @@ export function parsePlatformAdministrationConfig(
       canManageInvitations: capabilities.canManageInvitations,
       canReadTenants: capabilities.canReadTenants,
       canReadTenantMembers: capabilities.canReadTenantMembers,
+      canManageTenantMembers: capabilities.canManageTenantMembers,
       canManageTenants: capabilities.canManageTenants,
       canCreateTenants: capabilities.canCreateTenants,
       canTransferOwnership: capabilities.canTransferOwnership,
     }) as AuthPlatformAdministrationConfig['capabilities'],
     roles,
+    customerRoles,
   });
 }
 
@@ -89,6 +101,14 @@ export function parsePlatformMemberMutation(
   });
 }
 
+export function parsePlatformTenantMemberMutation(
+  value: unknown,
+): AuthTenantMemberMutationResult & { actorSessionInvalidated: false } {
+  const result = parsePlatformMemberMutation(value);
+  if (result.actorSessionInvalidated !== false) throw invalid();
+  return Object.freeze({ ...result, actorSessionInvalidated: false });
+}
+
 export function parsePlatformOwnershipTransfer(
   value: unknown,
 ): AuthTenantOwnershipTransferResult {
@@ -98,6 +118,18 @@ export function parsePlatformOwnershipTransfer(
     owner: parseMember(result.owner),
     previousOwner: parseMember(result.previousOwner),
     actorSessionInvalidated: true,
+  });
+}
+
+export function parsePlatformTenantOwnershipTransfer(
+  value: unknown,
+): AuthPlatformTenantOwnershipTransferResult {
+  const result = exact(value, ['owner', 'previousOwner', 'actorSessionInvalidated']);
+  if (result.actorSessionInvalidated !== false) throw invalid();
+  return Object.freeze({
+    owner: parseMember(result.owner),
+    previousOwner: parseMember(result.previousOwner),
+    actorSessionInvalidated: false,
   });
 }
 

@@ -32,6 +32,7 @@ import { DataTableColumnHeader } from './data-table-column-header';
 import { DataTableToolbar } from './data-table-toolbar';
 import { DataTableRowActions, type RowAction } from './data-table-row-actions';
 import { DataTablePagination } from './data-table-pagination';
+import { handleDataTableRowKeyDown } from './data-table-row-interaction';
 import { getSchemaPrimaryKey } from './row-identity';
 import {
   Table,
@@ -325,12 +326,17 @@ export function DataTable<T extends Row = Row>({
                     data-slot="table-row"
                     data-state={row.getIsSelected() ? 'selected' : undefined}
                     data-highlighted={highlightedRowId != null && row.id === highlightedRowId ? '' : undefined}
+                    aria-current={highlightedRowId != null && row.id === highlightedRowId ? 'true' : undefined}
+                    tabIndex={onRowClick ? 0 : undefined}
                     className={cn(
                       'border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted data-[highlighted]:bg-accent',
-                      onRowClick && 'cursor-pointer',
+                      onRowClick && 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
                       getRowClassName?.(row.original),
                     )}
                     onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                    onKeyDown={onRowClick
+                      ? (event) => handleDataTableRowKeyDown(event, row.original, onRowClick)
+                      : undefined}
                     onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row.original) : undefined}
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}

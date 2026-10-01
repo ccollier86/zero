@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { motion, type Variants, type Transition } from 'motion/react';
+import { motion } from 'motion/react';
 import { SlidingNumber } from '#zero/components/animate-ui/primitives/texts/sliding-number';
 import { cn } from '#zero/lib/utils';
 
@@ -16,50 +16,28 @@ export interface NavigationAction {
   disabled?: boolean;
 }
 
+export interface RecordPrimaryAction {
+  label: string;
+  sublabel?: string;
+  shortcut?: string;
+  disabled?: boolean;
+  ariaHasPopup?: React.AriaAttributes['aria-haspopup'];
+  onClick: () => void;
+}
+
 export interface RecordNavigationBarProps {
   currentIndex: number;
   totalCount: number;
   onPrevious: () => void;
   onNext: () => void;
   actions?: NavigationAction[];
-  primaryAction?: {
-    label: string;
-    sublabel?: string;
-    shortcut?: string;
-    disabled?: boolean;
-    onClick: () => void;
-  };
+  /** Optional adjacent workflow rendered before the primary action. */
+  secondaryPrimaryAction?: RecordPrimaryAction;
+  primaryAction?: RecordPrimaryAction;
   className?: string;
 }
 
 // ─── Animation Config (ManagementBar DNA) ────────────────────────────────────
-
-const BUTTON_MOTION_CONFIG = {
-  initial: 'rest',
-  whileHover: 'hover',
-  whileTap: 'tap',
-  variants: {
-    rest: { maxWidth: '40px' },
-    hover: {
-      maxWidth: '140px',
-      transition: { type: 'spring', stiffness: 200, damping: 35, delay: 0.15 },
-    },
-    tap: { scale: 0.95 },
-  },
-  transition: { type: 'spring', stiffness: 250, damping: 25 },
-} as const;
-
-const LABEL_VARIANTS: Variants = {
-  rest: { opacity: 0, x: 4 },
-  hover: { opacity: 1, x: 0, visibility: 'visible' },
-  tap: { opacity: 1, x: 0, visibility: 'visible' },
-};
-
-const LABEL_TRANSITION: Transition = {
-  type: 'spring',
-  stiffness: 200,
-  damping: 25,
-};
 
 const VARIANT_COLORS: Record<string, string> = {
   default: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
@@ -76,6 +54,7 @@ function RecordNavigationBar({
   onPrevious,
   onNext,
   actions,
+  secondaryPrimaryAction,
   primaryAction,
   className,
 }: RecordNavigationBarProps) {
@@ -86,15 +65,16 @@ function RecordNavigationBar({
   return (
     <div
       data-slot="record-navigation-bar"
-      className={cn('@container/wrapper w-full flex justify-center', className)}
+      className={cn('@container/wrapper flex w-full justify-center', className)}
     >
-      <div className="flex w-full flex-col @xl/wrapper:flex-row items-center gap-y-2 rounded-2xl border border-border bg-background p-2 shadow-lg">
-        {/* Navigation controls */}
-        <div className="flex shrink-0 items-center">
-          <div className="flex h-10 items-center">
+      <div className="flex w-full min-w-0 flex-col items-stretch gap-2 rounded-2xl border border-border bg-background p-2 shadow-lg @xl/wrapper:flex-row @xl/wrapper:items-center">
+        <div className="flex min-w-0 w-full flex-col items-stretch gap-2 @sm/wrapper:flex-row @sm/wrapper:items-center @xl/wrapper:flex-1">
+          {/* Navigation controls */}
+          <div className="flex h-10 shrink-0 items-center justify-center @sm/wrapper:justify-start">
             <button
+              type="button"
               disabled={isFirst}
-              className="p-1 text-muted-foreground transition-colors hover:text-foreground disabled:text-muted-foreground/30"
+              className="rounded-sm p-1 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:text-muted-foreground/30"
               onClick={onPrevious}
               aria-label="Previous record"
             >
@@ -109,8 +89,9 @@ function RecordNavigationBar({
               <span className="text-muted-foreground">/ {totalCount}</span>
             </div>
             <button
+              type="button"
               disabled={isLast}
-              className="p-1 text-muted-foreground transition-colors hover:text-foreground disabled:text-muted-foreground/30"
+              className="rounded-sm p-1 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:text-muted-foreground/30"
               onClick={onNext}
               aria-label="Next record"
             >
@@ -118,31 +99,32 @@ function RecordNavigationBar({
             </button>
           </div>
 
-          {/* Action buttons */}
+          {/* Record action buttons */}
           {actions && actions.length > 0 && (
             <>
-              <div className="mx-3 h-6 w-px bg-border rounded-full hidden @lg/wrapper:block" />
-              <motion.div layout layoutRoot className="mx-auto flex flex-wrap space-x-2 sm:flex-nowrap">
-                {actions.map((action) => (
+              <div className="hidden h-6 w-px shrink-0 rounded-full bg-border @sm/wrapper:block" />
+              <motion.div
+                layout
+                layoutRoot
+                className="flex min-w-0 flex-1 flex-nowrap items-center justify-start gap-2 overflow-x-auto pb-1 @sm/wrapper:flex-wrap @sm/wrapper:overflow-visible @sm/wrapper:pb-0"
+              >
+                {actions.map((action, index) => (
                   <motion.button
-                    key={action.label}
-                    {...BUTTON_MOTION_CONFIG}
+                    key={`${action.label}:${index}`}
+                    type="button"
+                    whileTap={{ scale: 0.95 }}
                     disabled={action.disabled}
                     className={cn(
-                      'flex h-10 items-center space-x-2 overflow-hidden whitespace-nowrap rounded-lg px-2.5 py-2 disabled:opacity-50',
+                      'flex h-10 max-w-full shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 transition-[background-color,color,box-shadow,opacity] duration-200 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none',
                       VARIANT_COLORS[action.variant ?? 'default'],
                     )}
                     aria-label={action.label}
                     onClick={action.onClick}
                   >
                     <span className="shrink-0">{action.icon}</span>
-                    <motion.span
-                      variants={LABEL_VARIANTS}
-                      transition={LABEL_TRANSITION}
-                      className="invisible text-sm"
-                    >
+                    <span className="text-sm">
                       {action.label}
-                    </motion.span>
+                    </span>
                   </motion.button>
                 ))}
               </motion.div>
@@ -150,29 +132,16 @@ function RecordNavigationBar({
           )}
         </div>
 
-        {/* Primary action */}
-        {primaryAction && (
+        {/* Primary workflows */}
+        {(secondaryPrimaryAction || primaryAction) && (
           <>
-            <div className="mx-3 hidden h-6 w-px bg-border @xl/wrapper:block rounded-full" />
-            <motion.button
-              whileTap={{ scale: 0.975 }}
-              disabled={primaryAction.disabled}
-              className="flex h-10 text-sm cursor-pointer items-center justify-center rounded-lg bg-primary px-3 py-2 text-primary-foreground transition-colors duration-300 hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50 w-full @xl/wrapper:w-auto"
-              onClick={primaryAction.onClick}
-            >
-              {primaryAction.sublabel && (
-                <span className="mr-1 text-primary-foreground/80">{primaryAction.sublabel}</span>
+            <div className="hidden h-6 w-px shrink-0 rounded-full bg-border @xl/wrapper:block" />
+            <div className="flex w-full flex-col gap-2 @xl/wrapper:w-auto @xl/wrapper:shrink-0 @xl/wrapper:flex-row">
+              {secondaryPrimaryAction && (
+                <PrimaryActionButton action={secondaryPrimaryAction} secondary />
               )}
-              <span>{primaryAction.label}</span>
-              {primaryAction.shortcut && (
-                <>
-                  <div className="mx-3 h-5 w-px bg-primary-foreground/40 rounded-full" />
-                  <div className="flex items-center gap-1 rounded-md bg-primary-foreground/20 px-1.5 py-0.5 -mr-1 text-xs">
-                    {primaryAction.shortcut}
-                  </div>
-                </>
-              )}
-            </motion.button>
+              {primaryAction && <PrimaryActionButton action={primaryAction} />}
+            </div>
           </>
         )}
       </div>
@@ -181,3 +150,45 @@ function RecordNavigationBar({
 }
 
 export { RecordNavigationBar };
+
+function PrimaryActionButton({
+  action,
+  secondary = false,
+}: {
+  action: RecordPrimaryAction;
+  secondary?: boolean;
+}) {
+  return (
+    <motion.button
+      type="button"
+      whileTap={{ scale: 0.975 }}
+      disabled={action.disabled}
+      aria-haspopup={action.ariaHasPopup}
+      className={cn(
+        'flex h-10 w-full cursor-pointer items-center justify-center rounded-lg px-3 py-2 text-sm transition-colors duration-300 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 @xl/wrapper:w-auto',
+        secondary
+          ? 'border border-border bg-background text-foreground hover:bg-accent'
+          : 'bg-primary text-primary-foreground hover:bg-primary/90',
+      )}
+      onClick={action.onClick}
+    >
+      {action.sublabel && (
+        <span className={cn('mr-1', secondary ? 'text-muted-foreground' : 'text-primary-foreground/80')}>
+          {action.sublabel}
+        </span>
+      )}
+      <span>{action.label}</span>
+      {action.shortcut && (
+        <>
+          <div className={cn('mx-3 h-5 w-px rounded-full', secondary ? 'bg-border' : 'bg-primary-foreground/40')} />
+          <div className={cn(
+            '-mr-1 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs',
+            secondary ? 'bg-muted' : 'bg-primary-foreground/20',
+          )}>
+            {action.shortcut}
+          </div>
+        </>
+      )}
+    </motion.button>
+  );
+}

@@ -182,6 +182,8 @@ export function ManualInvitationToken({
 export function TenantInvitationList({
   headingId,
   headingRef,
+  title = 'Invitations',
+  emptyMessage = 'No invitations yet.',
   invitations,
   roleLabels,
   canManage,
@@ -193,6 +195,8 @@ export function TenantInvitationList({
 }: {
   headingId: string;
   headingRef: React.Ref<HTMLHeadingElement>;
+  title?: string;
+  emptyMessage?: string;
   invitations: readonly AuthTenantInvitation[];
   roleLabels: ReadonlyMap<string, string>;
   canManage: boolean;
@@ -205,11 +209,11 @@ export function TenantInvitationList({
   return (
     <section aria-labelledby={headingId}>
       <h3 ref={headingRef} id={headingId} tabIndex={-1} className="text-sm font-semibold">
-        Invitations
+        {title}
       </h3>
       <div className="mt-3 divide-y rounded-md border">
         {invitations.length === 0 ? (
-          <p className="p-4 text-sm text-muted-foreground">No invitations yet.</p>
+          <p className="p-4 text-sm text-muted-foreground">{emptyMessage}</p>
         ) : invitations.map((invitation) => (
           <div
             key={invitation.invitationId}

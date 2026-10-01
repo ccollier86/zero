@@ -355,12 +355,16 @@ export class AuthTenantAdministrationMutations {
           assertCurrentAuthority,
           ['tenant.roles:manage'],
         );
-        const actor = this.authority.requireActorMembership(
-          tenantId,
-          authority.scope.membershipId,
-          authority.auth.userId,
-        );
-        if (actor.roleKey !== TENANT_OWNER_ROLE_KEY) {
+        const actor = authority.platformAdministration === true
+          ? this.tenancy.listActiveMembershipsForTenant(tenantId).find(
+              (membership) => membership.roleKey === TENANT_OWNER_ROLE_KEY,
+            ) ?? null
+          : this.authority.requireActorMembership(
+              tenantId,
+              authority.scope.membershipId,
+              authority.auth.userId,
+            );
+        if (!actor || actor.roleKey !== TENANT_OWNER_ROLE_KEY) {
           throw tenantAdministrationForbidden();
         }
         this.authority.requireTenantMembership(tenantId, targetMembershipId);
@@ -397,18 +401,21 @@ export class AuthTenantAdministrationMutations {
             id: result.ownerMembership.membershipId,
           },
         });
-        return result;
+        return {
+          result,
+          actorSessionInvalidated: authority.platformAdministration !== true,
+        };
       });
       return {
         owner: this.readModel.getMember(
           tenantId,
-          transferred.ownerMembership.membershipId,
+          transferred.result.ownerMembership.membershipId,
         ),
         previousOwner: this.readModel.getMember(
           tenantId,
-          transferred.previousOwnerMembership.membershipId,
+          transferred.result.previousOwnerMembership.membershipId,
         ),
-        actorSessionInvalidated: true,
+        actorSessionInvalidated: transferred.actorSessionInvalidated,
       };
     } catch (error) {
       throw mapTenantAdministrationError(error);

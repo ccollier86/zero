@@ -1,6 +1,7 @@
 /** Authenticated browser transport for protected platform administration. */
 
 import type {
+  AuthTenantAddMemberParams,
   AuthTenantInvitation,
   AuthTenantInvitationListParams,
   AuthTenantInvitationPage,
@@ -9,6 +10,7 @@ import type {
   AuthTenantMemberMutationResult,
   AuthTenantMemberPage,
   AuthTenantOwnershipTransferResult,
+  AuthTenantUpdateMemberParams,
 } from './auth-types';
 import type {
   AuthPlatformAddMemberParams,
@@ -18,6 +20,7 @@ import type {
   AuthPlatformTenantCreateParams,
   AuthPlatformTenantCreateResult,
   AuthPlatformTenantListParams,
+  AuthPlatformTenantOwnershipTransferResult,
   AuthPlatformTenantPage,
   AuthPlatformTenantUpdateParams,
   AuthPlatformTenantUpdateResult,
@@ -32,7 +35,9 @@ import {
   parsePlatformMemberPage,
   parsePlatformOwnershipTransfer,
   parsePlatformTenantCreate,
+  parsePlatformTenantMemberMutation,
   parsePlatformTenantPage,
+  parsePlatformTenantOwnershipTransfer,
   parsePlatformTenantUpdate,
 } from './auth-platform-administration-parser';
 
@@ -179,8 +184,69 @@ implements AuthPlatformAdminSdkSurface {
     );
   }
 
+  addTenantMember(
+    tenantId: string,
+    params: AuthTenantAddMemberParams,
+  ): Promise<AuthTenantMemberMutationResult> {
+    return this.memberMutation(
+      this.tenantMembersPath(tenantId),
+      jsonRequest('POST', params),
+      'Failed to add customer organization member',
+      parsePlatformTenantMemberMutation,
+    );
+  }
+
+  updateTenantMember(
+    tenantId: string,
+    membershipId: string,
+    params: AuthTenantUpdateMemberParams,
+  ): Promise<AuthTenantMemberMutationResult> {
+    return this.memberMutation(
+      this.tenantMemberPath(tenantId, membershipId),
+      jsonRequest('PATCH', params),
+      'Failed to update customer organization member',
+      parsePlatformTenantMemberMutation,
+    );
+  }
+
+  removeTenantMember(
+    tenantId: string,
+    membershipId: string,
+  ): Promise<AuthTenantMemberMutationResult> {
+    return this.memberMutation(
+      this.tenantMemberPath(tenantId, membershipId),
+      { method: 'DELETE' },
+      'Failed to remove customer organization member',
+      parsePlatformTenantMemberMutation,
+    );
+  }
+
+  transferTenantOwnership(
+    tenantId: string,
+    membershipId: string,
+  ): Promise<AuthPlatformTenantOwnershipTransferResult> {
+    return this.memberMutation(
+      `${this.tenantPath(tenantId)}/ownership/transfer`,
+      jsonRequest('POST', { membershipId }),
+      'Failed to transfer customer organization ownership',
+      parsePlatformTenantOwnershipTransfer,
+    );
+  }
+
   private memberPath(membershipId: string): string {
     return `/auth/platform/members/${encodeURIComponent(membershipId)}`;
+  }
+
+  private tenantPath(tenantId: string): string {
+    return `/auth/platform/tenants/${encodeURIComponent(tenantId)}`;
+  }
+
+  private tenantMembersPath(tenantId: string): string {
+    return `${this.tenantPath(tenantId)}/members`;
+  }
+
+  private tenantMemberPath(tenantId: string, membershipId: string): string {
+    return `${this.tenantMembersPath(tenantId)}/${encodeURIComponent(membershipId)}`;
   }
 
   private async memberMutation<T extends { actorSessionInvalidated: boolean }>(

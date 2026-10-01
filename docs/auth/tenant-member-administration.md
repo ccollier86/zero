@@ -2,14 +2,30 @@
 
 > Status: implemented in this unreleased candidate
 >
-> Last reviewed: 2026-09-28
+> Last reviewed: 2026-10-01
 
-Zero's tenant control plane is separate from global identity administration.
-`PlatformUserManagement` manages accounts for the whole installation. The
-tenant APIs and `TenantMemberManagement` component manage only the current
-session's organization membership and role assignments; they cannot change a
-password, email, MFA method, global account status, platform role, or delete an
-identity.
+Zero's tenant API contract remains separate from global identity
+administration. The tenant routes and focused `TenantMemberManagement`
+primitive manage only the current session's organization membership and role
+assignments; they cannot change a password, email, MFA method, global account
+status, platform role, or delete an identity.
+
+The default adaptive `UserManagement`/`PlatformUserManagement` UI composes
+that tenant primitive with exact-account detail and the established account
+actions only when the live authorization projection grants
+`application.users:read`/`application.users:manage`. This is UI composition,
+not an authority merge: tenant-only managers never call global account routes,
+and every account or membership mutation still reaches its own server-enforced
+API family.
+
+The protected Administration Organization also has a bounded cross-workspace
+adapter under `/auth/platform/tenants/:tenantId/...`. It reuses this exact
+mutation engine, revision/grant/owner invariants, standard errors, and audit
+events, but admission requires the three explicit application permissions
+documented in
+[Platform Administration Organization](./platform-administration.md). The
+target tenant ID selects only a membership control-plane target; it never
+turns the platform actor into a customer data-plane member.
 
 This surface exists only with `auth.tenancy: 'multi'` and works in both
 authorization modes:
@@ -278,6 +294,46 @@ is selected. Concurrent role conflicts reload current state rather than
 clobbering another manager's change. Suspension, removal, and ownership
 transfer require explicit confirmation. It never renders global password,
 email, MFA, platform-role, or identity-deletion controls.
+
+The adaptive `UserManagement`/`PlatformUserManagement` tenant view composes a
+focused invitation workflow beside Add member. It opens as Invite when the
+actor may issue and as Invitations when issue is unavailable but pending
+history is readable. The dialog uses only policy-enabled email/manual delivery,
+filters role choices through the actor's live grant ceiling, shows a manual
+token only after an explicit manual issue succeeds, and embeds pending
+invitation history. That history is requested with `status: 'pending'`, uses
+cursor-based Load more (10 records by default), and independently exposes a
+confirmed revoke when the actor has invitation-management authority. An
+identity or active-tenant scope change closes the dialog, clears manual-token
+state, and fences stale mutation results.
+
+Focused layouts can attach the same workflow to the member primitive:
+
+```tsx
+import {
+  TenantMemberManagement,
+  useTenantInvitationAction,
+} from '@zero/framework/react';
+
+export function OrganizationMembers() {
+  const invitations = useTenantInvitationAction({ pageSize: 20 });
+
+  return (
+    <>
+      <TenantMemberManagement
+        secondaryPrimaryAction={invitations.secondaryPrimaryAction}
+      />
+      {invitations.dialog}
+    </>
+  );
+}
+```
+
+`pageSize` is normalized to 1–100. The hook also accepts `label` and
+`onInvitationIssued`, and returns `canInvite` plus
+`canViewPendingInvitations`. The full `TenantOnboardingManagement` remains the
+packaged surface when invitation and retained join-request administration
+belong together on one settings page.
 
 The components are dashboard organisms, not routes. The app chooses their
 location and protects the containing page; the server permissions remain the

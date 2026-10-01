@@ -181,8 +181,8 @@ export function TenantOnboardingTenantKindNotice({
     >
       Platform administration supports invitations only. Customer join
       requests and verified-domain onboarding are unavailable in this
-      protected scope. Use PlatformAdministrationManagement for the full
-      administrator membership and ownership controls.
+      protected scope. Use the adaptive UserManagement control plane for
+      administrator membership, account, role, and ownership controls.
     </p>
   );
 }

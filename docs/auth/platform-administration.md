@@ -2,7 +2,7 @@
 
 > Status: implemented in the unreleased multi-tenant auth candidate
 >
-> Last reviewed: 2026-09-29
+> Last reviewed: 2026-10-01
 
 Zero's multi-tenant profiles create one protected **Administration
 Organization** for the people who operate the application. Every later tenant
@@ -11,8 +11,9 @@ role-assignment, ownership, revision, and audit machinery, but they are not
 interchangeable data scopes.
 
 This document is the contract for the administration scope, the customer
-organization directory, their browser SDKs and hooks, and the packaged React
-controls. Read it with [Zero Auth Philosophy](./zero-auth-philosophy.md),
+organization directory and bounded membership control plane, their browser
+SDKs and hooks, and the packaged React controls. Read it with
+[Zero Auth Philosophy](./zero-auth-philosophy.md),
 [Tenant Member Administration](./tenant-member-administration.md), and the
 [Auth and Data-Plane Capability Matrix](./auth-data-plane-capability-matrix.md).
 
@@ -119,6 +120,8 @@ Cross-organization platform work uses explicit application permissions:
 | --- | --- |
 | Browse customer organizations | `application.tenants:read` |
 | Inspect safe customer-member projections | `application.tenants:read` **and** `application.users:read` |
+| Add, suspend/reactivate, remove, or change roles for a customer member | `application.tenants:read`, `application.users:read`, **and** `application.tenant-members:manage` |
+| Transfer customer-organization ownership | `application.tenants:read`, `application.users:read`, **and** `application.tenant-members:manage` |
 | Suspend/reactivate a customer organization | `application.tenants:manage` |
 | Create a customer organization and resolve its owner | `application.tenants:manage` **and** `application.users:read` |
 | Browse global identities | `application.users:read` |
@@ -133,7 +136,11 @@ administration-only. Any configured role that explicitly contains an
 `administrationOnly`, `assignable`, and `grantable` on every role descriptor;
 packaged controls obey those projections instead of reconstructing role policy
 in the browser. Customer-organization controls do not offer administration-only
-roles.
+roles. The built-in `administrator` receives
+`application.tenant-members:manage`; the narrower built-in `access-manager`
+does not. Apps can define another administration-only role with a narrower
+combination, but all three permissions in the table are still required at
+request and commit time.
 
 Every newly added or invited non-owner administration member must receive only
 explicit administration-only roles; these flows never fall back to the customer
@@ -180,12 +187,30 @@ never an input.
 | `POST /auth/platform/tenants` | Create a customer organization and bind its initial owner |
 | `PATCH /auth/platform/tenants/:tenantId` | Suspend/reactivate with expected authorization generation |
 | `GET /auth/platform/tenants/:tenantId/members` | Read a bounded safe customer-member page |
+| `POST /auth/platform/tenants/:tenantId/members` | Add an existing identity to an active customer organization |
+| `PATCH /auth/platform/tenants/:tenantId/members/:membershipId` | Suspend/reactivate membership or replace customer roles with revision fencing |
+| `DELETE /auth/platform/tenants/:tenantId/members/:membershipId` | Remove a retained customer membership subject to owner invariants |
+| `POST /auth/platform/tenants/:tenantId/ownership/transfer` | Transfer customer ownership without switching the platform actor's session |
 
-Customer-member drill-in is intentionally read-only. To manage a customer
-organization's memberships, an authorized person switches into that
-organization and uses the ordinary active-tenant APIs and
-`TenantMemberManagement`. This keeps customer mutations on the same tenant
-authority boundary as the rest of the data plane.
+The four customer-member writes are a narrow platform control-plane adapter
+over the same tenant mutation engine used by `/auth/tenant`. They are admitted
+only from a live Administration Organization session with all three required
+application permissions, and the server rechecks that authority at the commit
+boundary. The target must remain an active `kind: 'organization'` tenant.
+Supplying a customer tenant ID selects only the control-plane target; it never
+changes the actor's session, creates customer data-plane authority, or permits
+application-data reads. Tenant managers continue to use `/auth/tenant` for
+their active organization and never receive cross-organization authority.
+
+Role replacement requires the member's current `expectedRoleRevision` and
+uses the existing grant ceiling, protected-owner lifecycle, retained-role
+cleanup, account viability, and transaction guarantees. Platform ownership
+transfer moves the customer's existing owner. Every cross-workspace member or
+ownership receipt is strictly parsed with `actorSessionInvalidated: false`:
+the actor remains in the protected Administration Organization, so changing a
+customer did not change the actor's own session authority. Active-tenant and
+Administration Organization ownership transfers retain their normal
+actor-session invalidation behavior.
 
 Directory and member reads validate the request shape and then revalidate live
 application authority before customer-tenant discovery or SQL projection. A
@@ -193,7 +218,11 @@ revoked caller therefore receives the same authority failure for existing and
 missing customer IDs, without an unauthorized existence probe.
 
 Tenant directory reads represent `active`, `suspended`, and terminal
-`archived` rows. Lifecycle mutation accepts only `active` or `suspended`.
+`archived` rows and return newest workspaces first with an opaque, stable
+cursor. Lifecycle mutation accepts only `active` or `suspended`. The React
+directory reconciles exact create/lifecycle receipts into the current filtered
+projection until the owning cursor page observes them, so a newly created
+workspace can be selected immediately even when the first page is full.
 Direct/headless tenant and member list calls reject invalid filters with
 `PLATFORM_TENANT_PAGE_INVALID` (`422`) before authority or persistence work.
 On HTTP routes, values rejected by the Elysia query schema (for example an
@@ -236,16 +265,36 @@ await client.platformAdmin.updateTenant(created.tenant.tenantId, {
   expectedAuthorizationGeneration:
     created.tenant.authorizationGeneration,
 });
+
+if (config.capabilities.canManageTenantMembers) {
+  const added = await client.platformAdmin.addTenantMember(
+    created.tenant.tenantId,
+    { email: 'clinician@acme.example', roles: ['member'] },
+  );
+
+  await client.platformAdmin.updateTenantMember(
+    created.tenant.tenantId,
+    added.member.membershipId,
+    {
+      roles: ['manager'],
+      expectedRoleRevision: added.member.roleRevision,
+    },
+  );
+}
 ```
 
 The namespace also provides `listMembers`, `addMember`, `updateMember`,
 `removeMember`, `transferOwnership`, `listInvitations`, `issueInvitation`,
-`revokeInvitation`, and read-only `listTenantMembers`. Exact request and result
-types are exported from `@zero/framework/react`, including
+`revokeInvitation`, `listTenantMembers`, `addTenantMember`,
+`updateTenantMember`, `removeTenantMember`, and `transferTenantOwnership`.
+The customer-member methods take the target `tenantId` explicitly; the
+Administration Organization methods do not. Exact request and result types are
+exported from `@zero/framework/react`, including
 `AuthPlatformAdministrationConfig`, `AuthPlatformRoleSelection`,
 `AuthPlatformAddMemberParams`, `AuthPlatformUpdateMemberParams`,
 `AuthPlatformUpdateMemberInput`, `AuthPlatformIssueInvitationParams`,
-`AuthPlatformTenant`, and `AuthPlatformAdminSdkSurface`. Platform add,
+`AuthPlatformTenant`, `AuthPlatformTenantOwnershipTransferResult`, and
+`AuthPlatformAdminSdkSurface`. Platform add,
 role-replacement, and invitation requests use a non-empty role tuple; direct
 role replacement also requires `expectedRoleRevision`. The administration
 hook accepts `AuthPlatformUpdateMemberInput` and injects that revision from its
@@ -262,7 +311,12 @@ In the customer directory,
 `canManageTenants` controls suspend/reactivate, while `canCreateTenants`
 captures the stronger tenant-manage plus user-read requirement;
 `canReadTenantMembers` captures the combined tenant-read plus user-read
-requirement. Clients must not infer one from another.
+requirement. `canManageTenantMembers` is independently true only when the
+actor also holds `application.tenant-members:manage`. The sibling
+`customerRoles` array contains customer-organization role descriptors with
+server-computed `assignable` and actor-specific `grantable` flags; it is
+separate from `roles`, which describes Administration Organization roles.
+Clients must not infer one capability or role policy from another.
 
 As with every authenticated Zero transport, session restoration completes
 before sending, refresh/retry is centralized, and an authorization-scope fence
@@ -296,9 +350,15 @@ const directory = usePlatformTenants({
 `usePlatformAdministration` owns config, protected-organization members,
 invitations, pagination, mutations, and role-revision conflict recovery.
 `usePlatformTenants` owns the customer directory, customer lifecycle,
-creation, and capability-gated read-only member drill-in. Both hooks clear old
-scope data synchronously, ignore late completions, suppress mutation results
-after a foreign scope transition, and expose pending/error/reload state.
+creation, member drill-in, and capability-gated member/role/ownership
+mutations. It exposes `addTenantMember()`, `updateTenantMember()`,
+`removeTenantMember()`, and `transferTenantOwnership()` alongside the existing
+directory methods. A role update injects the selected member's currently
+loaded `roleRevision`; a missing or stale selection fails closed and a
+revision conflict reloads the directory/member slice. Successful writes
+refresh the directory and selected member list. Both hooks clear old scope
+data synchronously, ignore late completions, suppress mutation results after a
+foreign scope transition, and expose pending/error/reload state.
 
 The administration hook does not collapse unrelated work into one request.
 Its protected config, member directory, public invitation policy, and
@@ -343,42 +403,77 @@ member, invitation-policy, or invitation error, and `reload()` asks all three
 protected slices to reload. Prefer the exact slice fields for new UI so one
 failure cannot replace an unrelated panel with a screen-wide error.
 
-## Packaged React controls
+## Packaged React control plane
 
-Zero exports two ready-to-compose organisms:
+Zero exposes one adaptive people/workspace control plane:
 
 ```tsx
 import {
-  PlatformAdministrationManagement,
-  PlatformTenantManagement,
+  PlatformUserManagement,
 } from '@zero/framework/react';
 
 export function PlatformOperations() {
   return (
-    <main className="grid gap-8">
-      <PlatformAdministrationManagement />
-      <PlatformTenantManagement />
-    </main>
+    <PlatformUserManagement className="h-[calc(100svh-5rem)] min-h-0" />
   );
 }
 ```
 
-`PlatformAdministrationManagement` browses and manages administration members,
-invitations, roles, status, and ownership according to projected capabilities.
-It selects exactly one role in `multi/simple` and supports bounded multiple
-role assignments in `multi/advanced`; both modes require at least one
-administration-only role.
+In the protected Administration Organization, the compact control bar switches
+between **People** and the configured workspace plural. People defaults to the
+current Administration Organization and can switch to **All platform
+identities**. The selected-person detail combines identity, membership, roles,
+effective access, security, and configured properties when the actor has the
+corresponding capabilities. Password, verification, MFA, session, account
+lifecycle, membership lifecycle, and ownership commands remain in the shared
+bottom action bar. Add and invite use focused dialogs rather than separate
+page-sized panels.
 
-`PlatformTenantManagement` browses customer organizations, creates them when
-`canCreateTenants` is true, suspends/reactivates them when
-`canManageTenants` is true, and presents capability-gated read-only customer
-membership detail. Archived organizations remain visible but immutable.
-Customer-facing titles, labels, status/search copy, empty states, and lifecycle
-actions use the resolved `auth.tenancy.terminology` singular/plural values;
-“Platform administration” stays the fixed protected-scope name.
+The focused Invite/Invitations dialog is capability-shaped. A platform
+administrator may issue an invitation only when live policy enables a delivery
+mode, `canManageInvitations` is true, and the actor can grant at least one
+administration-only role. When invitation policy is enabled, an actor with only
+`canReadInvitations` can still open the dialog as a pending-invitation viewer.
+The embedded list requests only `pending` records, follows the server cursor
+through Load more (10 per page by default), and exposes revoke only with
+`canManageInvitations`; revoke always uses a confirmation dialog. Manual
+delivery reveals its one-time token only in the immediate dialog state.
+Closing the dialog or changing authorization scope clears that token and
+fences stale completions.
 
-These controls are not pages. The host application owns routing, layout,
-branding, and navigation. Both controls:
+Role editing selects exactly one role in `multi/simple` and supports bounded
+multiple assignments in `multi/advanced`; both modes require at least one
+administration-only role. Account-level operations are independently gated by
+`application.users:*`; administration membership alone does not expose them.
+
+The Workspaces view uses `PlatformWorkspaceManagement`. It browses customer
+organizations, creates them when `canCreateTenants` is true, and
+suspends/reactivates them when `canManageTenants` is true. A selected workspace
+offers **Manage people** when mutable or **View people** when read-only. That
+opens a focused `<workspace> people` list/detail surface with an explicit
+**Back to workspace directory** action. Member search/status filters stay with
+the list. Identity and membership metadata, assigned roles, effective
+permissions, and the authorized role editor stay in the right pane. Add member
+is a focused primary-action dialog; suspend/reactivate, remove, and confirmed
+ownership transfer remain in the bottom action bar. Successful mutation
+refresh preserves the current workspace/member rows and selection. Those
+controls appear only when `canManageTenantMembers` and the relevant
+`customerRoles` policy permit them. Archived or suspended organizations remain
+inspectable but immutable, and workspace lifecycle commands stay in the
+directory's bottom bar.
+
+Customer membership authority remains distinct from customer data-plane
+authority. These controls can operate membership and role lifecycle without
+switching the platform actor into the customer workspace, but they cannot read
+or mutate the customer's application resources. Account password, email,
+verification, MFA, session, global role, property, and identity-lifecycle
+controls remain separately gated by `application.users:*`; ordinary customer
+organization managers never receive those global account controls from tenant
+membership permissions.
+
+`PlatformWorkspaceManagement` and `TenantMemberManagement` remain exported as
+focused primitives for custom layouts. These controls are not pages; the host
+application owns routing, surrounding layout, branding, and navigation. They:
 
 - render an explicit switch-to-administration message outside that scope;
 - omit unauthorized reads and mutation controls rather than using a rejected
@@ -387,12 +482,21 @@ branding, and navigation. Both controls:
   states, confirmation focus restoration, and responsive-safe layouts; and
 - remain presentation only—the server reauthorizes every operation.
 
-Global account administration remains a separate surface:
-`PlatformUserManagement` browses and, when authorized, manages application
-identities, security state, and properties. It now distinguishes read from
-manage authority and separately gates global-admin targets. Administration
-membership does not authorize password, email, MFA, account suspension, or
-identity deletion by itself.
+The same adaptive component renders active-customer organization membership
+and tenant roles when the session switches into a customer scope. In
+`single/simple` it remains the familiar identity manager; in
+`single/advanced` it adds application RBAC to that existing account workflow.
+
+`UserManagementProps`/`PlatformUserManagementProps` expose
+`defaultManagementView` (`people` or `workspaces`) and `defaultPeopleScope`
+(`administration` or `identities`) for initial platform presentation. Identity
+extensions use `additionalDetailContent`, `additionalNavigationActions`, and
+`onSelectedUserChange`; tenant-member extensions use the corresponding
+`additionalTenantMember*` props and `onSelectedTenantMemberChange`.
+`onActorSessionInvalidated` and `onActorAuthorizationChanged` let the host
+respond to self-authority changes. Supplying controlled `data` deliberately
+selects identity-only management instead of partially controlling this
+adaptive platform surface.
 
 `GET /auth/authorization` keeps the active administration membership in its
 ordinary tenant `scope` and projects its live application permissions in the
@@ -424,9 +528,13 @@ strict preview SDK.
   authority.
 - Do not turn global `users.role`, `allPermissions`, or a customer owner role
   into implicit cross-tenant access.
-- Keep customer membership mutation on the active-customer-tenant routes.
-- Treat actor-session invalidation after self/ownership changes as a required
-  navigation/auth refresh event.
+- Keep active-tenant membership mutation on `/auth/tenant`; expose cross-
+  customer membership mutation only through the three-permission platform
+  adapter, never through a caller-selected tenant scope or data-plane handle.
+- Treat actor-session invalidation after active-scope self/ownership changes as
+  a required navigation/auth refresh event. A platform customer-ownership
+  receipt is deliberately `actorSessionInvalidated: false` because the actor's
+  Administration Organization session did not change.
 - Preserve expected revision/generation fields on role and lifecycle writes.
 - Do not expose the manual one-time invitation token in logs or long-lived UI;
   the packaged invitation control labels its manual-delivery fallback as a
@@ -436,6 +544,13 @@ strict preview SDK.
 - Retain the durable authorization/control-plane audit for bootstrap,
   membership, invitations, ownership, role, identity, and tenant lifecycle
   changes.
+
+The platform customer-member routes reuse Zero's normal `AuthError` envelope,
+tenant mutation error codes, auth action failure reporting, and transactional
+audit path. Successful operations append `tenant.member-added`,
+`tenant.member-updated`, `tenant.member-removed`, or
+`tenant.ownership-transferred` with the real platform actor and target tenant;
+there is no parallel, weaker error or logging contract for this adapter.
 
 ## Deliberately separate work
 

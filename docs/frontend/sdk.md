@@ -435,9 +435,10 @@ continuation; the SDK then proves and rotates the current refresh family.
 `UserPropertiesForm` renders only
 `editableBy: 'user'` property fields exposed by `/auth/config`.
 
-### Admin User Management
+### Adaptive User Management
 
-Use `PlatformUserManagement` for the default global-account admin panel:
+Use `UserManagement` or its explicit `PlatformUserManagement` alias for the
+default people/access control plane:
 
 ```tsx
 import { PlatformUserManagement } from '@zero/framework/react';
@@ -447,13 +448,40 @@ export function UsersSettingsPanel() {
 }
 ```
 
-`UserManagement` remains an exact compatibility alias. This surface administers
-global identities and must not be used as tenant member management.
+The organism resolves the installed auth profile from live configuration and
+scope. `single/simple` keeps the established global account manager;
+`single/advanced` composes application roles and ownership into that same
+selected-account detail; a customer organization uses tenant membership and
+role administration; and the protected Administration Organization adds
+compact People/Workspaces scope controls, invitations, the all-identities
+directory, and customer-workspace lifecycle/detail.
 
-The organism self-wires to the admin auth SDK. It supports backend pagination,
-search, role/status filters, create, update, promote, suspend, activate,
-delete, session revoke, direct reset when enabled, setup email, password reset
-email, and configured user-property editing.
+`UserManagementProps` keeps extension points scoped to the record family they
+augment:
+
+| Prop | Adaptive behavior |
+| --- | --- |
+| `pageSize` | Sets the bounded page size for the active identity, member, or workspace directory. |
+| `defaultManagementView` | Chooses the initial Administration Organization view: `people` or `workspaces`. |
+| `defaultPeopleScope` | Chooses the initial platform People scope: `administration` or `identities`. |
+| `additionalDetailContent`, `additionalNavigationActions`, `onSelectedUserChange` | Extend and observe identity-backed detail only. |
+| `additionalTenantMemberDetailContent`, `additionalTenantMemberNavigationActions`, `onSelectedTenantMemberChange` | Extend and observe tenant-membership detail only. |
+| `onActorSessionInvalidated` | Runs after a self-membership or ownership mutation invalidates the actor session. |
+| `onActorAuthorizationChanged` | Runs after a `single/advanced` mutation changes the actor's own application authority. |
+
+Supplying `data` intentionally selects the established controlled
+identity-manager contract, together with `config`, `roleOptions`, and the
+controlled mutation handlers. It does not partially control the adaptive
+tenant or workspace modes. Use `IdentityUserManagement` when an explicitly
+identity-only self-wired surface is clearer.
+
+Where application-account authority is present, the account layer supports
+backend pagination, search, role/status filters, create, update, promote,
+suspend, activate, delete where safe, session revoke, direct reset when
+enabled, setup/reset email, verification/MFA operations, and configured
+user-property editing. In tenant-member views the exact selected account is
+loaded only after the live authorization projection grants
+`application.users:read`; tenant-only managers never probe that API.
 
 Those controls are actor-capability gated. `application.users:read` may render
 a read-only identity directory; writes require the projected user-management
@@ -516,8 +544,10 @@ if (first && config.capabilities.canManageRoles) {
 }
 ```
 
-Use `useApplicationAccess()` for headless React state or
-`<ApplicationAccessManagement />` for the packaged control panel. The routes
+Use `useApplicationAccess()` for headless React state or mount the adaptive
+`<UserManagement />`/`<PlatformUserManagement />` control plane. In a
+`single/advanced` application it composes application roles and ownership into
+the selected account's existing detail and bottom action bar. The routes
 do not exist outside `single/advanced`; global `users.role = 'admin'` does not
 grant application authority. Role replacement is grant-ceiling constrained,
 requires the latest target `roleRevision` to prevent lost updates, and
@@ -550,11 +580,58 @@ if (config.capabilities.canCreateTenants) {
 
 Use `usePlatformAdministration()` for protected-organization people,
 invitations, roles, and ownership. Use `usePlatformTenants()` for the customer
-directory, lifecycle, creation, and capability-gated read-only member detail.
-`<PlatformAdministrationManagement />` and `<PlatformTenantManagement />`
-provide the packaged controls. Customer member mutation deliberately requires
-switching to that customer scope and using `TenantMemberManagement`; active
-administration scope never implies customer data access. See
+directory, lifecycle, creation, and capability-gated member/role/ownership
+control plane. Customer workspaces are cursor-paged newest first; committed
+create and lifecycle receipts stay reconciled into the active filtered
+projection until their server page observes them.
+`<UserManagement />` (or its explicit `PlatformUserManagement` alias) provides
+the packaged adaptive control plane. Its compact People/Workspaces controls
+compose Administration Organization membership, invitations and roles with the
+customer-workspace directory rather than stacking independent page-sized
+panels. A workspace opens one focused Manage/View people list-detail surface:
+roles/effective permissions remain in the right pane, member/ownership actions
+remain in the bottom bar, and Add member uses a dialog. A Back action returns
+to the workspace directory without losing the selected workspace. Navigation
+scopes follow the live application projection: global identities require
+`application.users:read`, while Workspaces appears for directory readers or
+for the supported create-only combination of `application.tenants:manage`
+plus `application.users:read`.
+`PlatformWorkspaceManagement` and `TenantMemberManagement` remain
+available as focused primitives for custom layouts. A platform actor holding
+`application.tenants:read`, `application.users:read`, and
+`application.tenant-members:manage` can add, update, remove, or transfer a
+selected customer membership without switching sessions:
+
+```ts
+const member = await client.platformAdmin.addTenantMember(customerTenantId, {
+  email: 'manager@example.com',
+  roles: ['manager'],
+});
+
+await client.platformAdmin.updateTenantMember(
+  customerTenantId,
+  member.member.membershipId,
+  {
+    roles: ['member'],
+    expectedRoleRevision: member.member.roleRevision,
+  },
+);
+```
+
+`getConfig()` projects this authority as `canManageTenantMembers` and returns
+customer role policy separately in `customerRoles`. The
+`usePlatformTenants()` hook exposes matching methods, injects the selected
+member's current role revision on role changes, and refreshes the customer
+directory/member view after a successful write. Its read failures remain
+independent: `directoryError` retries through `reloadDirectory()`, while
+`selectedTenantMembersError` retries through
+`reloadSelectedTenantMembers()`. Failed writes use `mutationError` and
+`clearMutationError()`; the aggregate `error` and `reload()` members remain for
+compatibility, with aggregate reload retrying both reads and dismissing the
+handled mutation failure. This is membership control
+only: active administration scope never implies customer application-data
+access, and customer organization managers never gain global password, MFA,
+session, or account-lifecycle controls. See
 [Platform Administration Organization](../auth/platform-administration.md).
 
 For custom administration UI, prefer the hook's independent config, member,
@@ -568,6 +645,49 @@ error, and reload fields remain for compatibility.
 Member and invitation paging are independent as well:
 `memberPage`/`isLoadingMoreMembers`/`loadMoreMembers()` and
 `invitationPage`/`isLoadingMoreInvitations`/`loadMoreInvitations()`.
+
+The adaptive tenant-member views put invitation work in one focused
+Invite/Invitations dialog beside Add member. The dialog projects the live
+delivery policy and grantable roles, displays a manual token only after that
+explicit delivery mode succeeds, and embeds a server-filtered pending list.
+The pending list uses cursor-based Load more, remains available without issue
+controls when the actor has read authority, and exposes revoke independently
+when the actor has invitation-management authority. Revocation always requires
+explicit confirmation. The default pending page size is 10 and custom callers
+may request 1–100 records through `useTenantInvitationAction({ pageSize })`.
+
+For a custom member layout, compose the same workflow without rebuilding its
+authority and scope fencing:
+
+```tsx
+import {
+  TenantMemberManagement,
+  useTenantInvitationAction,
+} from '@zero/framework/react';
+
+export function OrganizationPeople() {
+  const invitations = useTenantInvitationAction({
+    label: 'Invite person',
+    pageSize: 20,
+    onInvitationIssued: (result) => {
+      console.log(result.invitation.invitationId);
+    },
+  });
+
+  return (
+    <>
+      <TenantMemberManagement
+        secondaryPrimaryAction={invitations.secondaryPrimaryAction}
+      />
+      {invitations.dialog}
+    </>
+  );
+}
+```
+
+The hook also returns `canInvite` and `canViewPendingInvitations`. It closes
+the dialog, clears a displayed manual token, and discards stale completions
+when the identity or active tenant authorization boundary changes.
 
 For active-tenant invitation and customer join-request controls,
 `useTenantOnboardingAdministration()` composes three independently fenced

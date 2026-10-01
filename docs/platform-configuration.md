@@ -390,7 +390,7 @@ omitting them still resolves to `single/simple`.
 | --- | --- | --- | --- |
 | `single` | `simple` | Existing global user/admin runtime plus compatibility kernel scope | Supported current runtime |
 | `single` | `advanced` | Validated registry, durable additive application assignments, protected owner, live HTTP/Sync expansion, `/auth/application`, typed SDK/hook, and packaged access UI | Implemented in this unreleased tree; final cross-cutting release verification remains |
-| `multi` | `simple` | Protected Administration Organization bootstrap, tenant/membership persistence, bound browser/native sessions, selection/switching, customer-tenant creation/directory/lifecycle, registered-resource and managed-service isolation, invitations/join requests, opt-in verified-domain requests, durable control-plane audit, and packaged tenant/platform controls | Implemented in this unreleased tree; exact pre-024 administration-tenant reconciliation is available, while final release gates remain |
+| `multi` | `simple` | Protected Administration Organization bootstrap, tenant/membership persistence, bound browser/native sessions, selection/switching, customer-tenant creation/directory/lifecycle/member administration, registered-resource and managed-service isolation, invitations/join requests, opt-in verified-domain requests, durable control-plane audit, and packaged tenant/platform controls | Implemented in this unreleased tree; exact pre-024 administration-tenant reconciliation is available, while final release gates remain |
 | `multi` | `advanced` | Multi/simple foundation plus durable additive membership assignments, administration-only application roles, protected owners, live permission expansion, optimistic role revisions, permission-aware tenant/platform UI, and authorized audit review | Implemented in this unreleased tree; the same remaining multi release gates apply |
 
 Multi-mode selection includes the protected Administration Organization and
@@ -569,7 +569,7 @@ The framework-owned registry is fixed by profile:
 | --- | --- |
 | `single/simple` | None; this is the compatibility profile with the existing global `user`/`admin` role behavior. |
 | `single/advanced` | `application.roles:read`, `application.roles:manage` |
-| `multi/simple` or `multi/advanced` | `tenant:read`, `tenant:manage`, `tenant.members:read`, `tenant.members:manage`, `tenant.roles:read`, `tenant.roles:manage`, `tenant.invitations:read`, `tenant.invitations:manage`, `tenant.domains:read`, `tenant.domains:verify`, `tenant.domains:release`, `tenant.onboarding:manage`, `tenant.join-requests:review`, `tenant.audit:read`, `workflows:manage`, `notifications:manage`, `rooms:manage`, plus administration-scope `application.roles:read/manage`, `application.audit:read/manage`, `application.users:read/manage`, and `application.tenants:read/manage` |
+| `multi/simple` or `multi/advanced` | `tenant:read`, `tenant:manage`, `tenant.members:read`, `tenant.members:manage`, `tenant.roles:read`, `tenant.roles:manage`, `tenant.invitations:read`, `tenant.invitations:manage`, `tenant.domains:read`, `tenant.domains:verify`, `tenant.domains:release`, `tenant.onboarding:manage`, `tenant.join-requests:review`, `tenant.audit:read`, `workflows:manage`, `notifications:manage`, `rooms:manage`, plus administration-scope `application.roles:read/manage`, `application.audit:read/manage`, `application.users:read/manage`, `application.tenants:read/manage`, and `application.tenant-members:manage` |
 
 The framework roles are equally deterministic. `single/advanced` adds
 `access-manager` with both `application.roles:*` permissions and a protected
@@ -581,7 +581,12 @@ members, and role metadata. `manager` adds member administration, invitation
 read/manage, domain read/verify, onboarding management, and join-request
 review. It deliberately does not receive tenant settings management, role
 management, domain release, security-audit read, or the three built-in service
-management permissions. `owner` receives every permission available to its
+management permissions. The administration-only `administrator` includes
+`application.tenant-members:manage`; the narrower administration
+`access-manager` does not receive it by default. Cross-workspace membership
+writes also require the platform read permissions documented in
+[Platform Administration Organization](./auth/platform-administration.md).
+`owner` receives every permission available to its
 live scope: a customer owner remains tenant-only, while the protected
 Administration Organization owner can receive application permissions.
 

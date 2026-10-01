@@ -2,7 +2,7 @@
 
 > Status: implemented in this unreleased candidate
 >
-> Last reviewed: 2026-09-29
+> Last reviewed: 2026-10-01
 
 Zero retains a bounded, append-only trail for security and authorization
 control-plane changes. This is not a general user-activity logger: it does not
@@ -91,6 +91,12 @@ The current trail records these successful local control-plane transitions:
 | Account security | password change/recovery/admin reset and forced-change gates; admin setup/reset delivery prepared/succeeded/failed; email verification; admin account update/status/delete; admin property writes; MFA enrollment, requirement, clear, and reset |
 | Verified domains | claim creation/release, challenge issuance, manual verification finalization, and policy update |
 | Trail access | successful and authenticated denied `audit.exported`; successful operator `audit.retention-pruned` |
+
+Administration Organization cross-workspace member/role/ownership mutations
+reuse the tenant action families above. Their tenant scope identifies the
+customer target while the actor fields identify the real platform operator;
+the adapter does not create a second audit vocabulary or impersonate a
+customer member.
 
 No-op role/status/security requests that successfully pass policy may retain an
 event with `metadata.changed: false`. A failed domain proof is retained as a

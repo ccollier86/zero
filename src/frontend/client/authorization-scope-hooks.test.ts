@@ -287,7 +287,7 @@ const authorizationScopedHookFiles = [
   '../../hooks/use-form.ts',
   '../../components/data-table/data-table-source.ts',
   '../../components/auth/tenant-member-management.tsx',
-  '../../components/auth/platform-tenant-management.tsx',
+  '../../components/auth/platform-workspace-management.tsx',
   '../../components/admin/users/use-admin-user-data.ts',
   '../../components/admin/users/use-admin-user-actions.ts',
 ];

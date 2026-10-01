@@ -79,10 +79,17 @@ for silent behavior.
   templates, simple/advanced expansion through one evaluator, retained
   assignment history, protected ownership, and grant ceilings.
 - [x] Implement `single/advanced` application-role administration with typed
-  transport/client/hook and packaged `ApplicationAccessManagement` UI.
+  transport/client/hook and compose it into the adaptive packaged
+  `UserManagement` UI.
 - [x] Implement active-tenant member list/add/update/remove, role assignment,
   suspension/reactivation, ownership transfer, typed client/hooks, and packaged
   member controls.
+- [x] Implement Administration Organization cross-workspace member/role/
+  ownership administration behind `application.tenants:read`,
+  `application.users:read`, and `application.tenant-members:manage`; reuse the
+  tenant mutation engine, role-revision and grant-ceiling checks, audit/error
+  contracts, scope fencing, and adaptive workspace People UI without granting
+  customer data-plane access or global account controls to tenant managers.
 - [x] Keep tenant/application roles independent from the global platform role
   in persistence, authorization, APIs, and UI terminology.
 - [x] Persist a bounded append-only authorization/control-plane audit with
@@ -235,8 +242,8 @@ for silent behavior.
 - [x] Ship the protected Administration Organization and customer-tenant
   control plane end to end: bounded routes, strict browser parser/SDK, stale
   scope fencing, `usePlatformAdministration`, `usePlatformTenants`,
-  capability-driven people/invitation/lifecycle UI, and read-only customer
-  member drill-in.
+  capability-driven people/invitation/lifecycle UI, and cross-workspace
+  customer member/role/ownership controls that do not grant data-plane access.
 - [x] Hide advanced role controls in simple mode and keep global identity
   management separate from tenant membership controls.
 - [x] Exercise packaged platform controls with automated render/policy checks

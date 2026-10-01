@@ -758,7 +758,6 @@ const clientSmokeSource = `
 import {
   AdministrationScopeGate as AdministrationScopeGateSubpath,
   ApiKeyManagement as ApiKeyManagementSubpath,
-  ApplicationAccessManagement as ApplicationAccessManagementSubpath,
   ApplicationUserApiKeyManagement as ApplicationUserApiKeyManagementSubpath,
   AuthFlowContinuation as AuthFlowContinuationSubpath,
   ControlPlaneAuditViewer as ControlPlaneAuditViewerSubpath,
@@ -769,9 +768,8 @@ import {
   MFAEnrollmentForm,
   PermissionGate as PermissionGateSubpath,
   PlatformAdminGate as PlatformAdminGateSubpath,
-  PlatformAdministrationManagement as PlatformAdministrationManagementSubpath,
   PlatformApiKeyManagement as PlatformApiKeyManagementSubpath,
-  PlatformTenantManagement as PlatformTenantManagementSubpath,
+  PlatformWorkspaceManagement as PlatformWorkspaceManagementSubpath,
   SelfApiKeyManagement as SelfApiKeyManagementSubpath,
   TenantCreationForm as TenantCreationFormSubpath,
   TenantInvitationForm,
@@ -780,6 +778,7 @@ import {
   TenantMemberApiKeyManagement as TenantMemberApiKeyManagementSubpath,
   TenantMemberManagement as TenantMemberManagementSubpath,
   TenantOnboardingManagement,
+  useTenantInvitationAction as useTenantInvitationActionSubpath,
   TenantSelectionForm as TenantSelectionFormSubpath,
   TenantSwitcher as TenantSwitcherSubpath,
   TenantDomainManagement as TenantDomainManagementSubpath,
@@ -792,6 +791,7 @@ import type {
   PlatformApiKeyManagementProps as PlatformApiKeyManagementPropsSubpath,
   SelfApiKeyManagementProps as SelfApiKeyManagementPropsSubpath,
   TenantMemberApiKeyManagementProps as TenantMemberApiKeyManagementPropsSubpath,
+  UseTenantInvitationActionOptions as UseTenantInvitationActionOptionsSubpath,
 } from '@zero/framework/components/auth';
 import { AppShell as AppShellSubpath } from '@zero/framework/components/app-shell';
 import { AnimatedList as AnimatedListSubpath } from '@zero/framework/components/animated-list';
@@ -860,7 +860,6 @@ import type {
 import {
   AdministrationScopeGate,
   ApiKeyManagement,
-  ApplicationAccessManagement,
   ApplicationUserApiKeyManagement,
   AuthFlowContinuation,
   ControlPlaneAuditViewer,
@@ -893,10 +892,10 @@ import {
   groupKanbanItemIds,
   Hero,
   hasAuthorizationPermission,
+  IdentityUserManagement,
   KanbanBoard,
-  PlatformAdministrationManagement,
   PlatformApiKeyManagement,
-  PlatformTenantManagement,
+  PlatformWorkspaceManagement,
   PlatformUserManagement,
   PermissionGate,
   PlatformAdminGate,
@@ -932,6 +931,7 @@ import {
   useTenantDomainAdministration,
   useTenantMembers,
   useTenantOnboardingAdministration,
+  useTenantInvitationAction,
   useTenantAppShellWorkspaces,
   useTenantSwitcher,
   TenantCreationForm,
@@ -956,7 +956,6 @@ import type {
   AdministrationScopeGateProps,
   ApiKeyManagementCommonProps,
   ApiKeyManagementProps,
-  ApplicationAccessManagementProps,
   ApplicationUserApiKeyManagementProps,
   AuthApiKeyApplicationAdminSdkSurface,
   AuthApiKeyCreatedVia,
@@ -1000,9 +999,8 @@ import type {
 	  SyncMutationRejection,
 	  LoginFormProps,
   PlatformUserManagementProps,
-  PlatformAdministrationManagementProps,
   PlatformApiKeyManagementProps,
-  PlatformTenantManagementProps,
+  PlatformWorkspaceManagementProps,
   TenantCreationFormProps,
   TenantMemberApiKeyManagementProps,
   TenantMemberManagementProps,
@@ -1018,6 +1016,8 @@ import type {
   UsePlatformTenantsResult,
   UseTenantOnboardingAdministrationOptions,
   UseTenantOnboardingAdministrationResult,
+  UseTenantInvitationActionOptions,
+  UseTenantInvitationActionResult,
 } from '@zero/framework/react';
 
 	const row: Row = {};
@@ -1025,7 +1025,6 @@ import type {
 	const administrationScopeGateProps = {} as AdministrationScopeGateProps;
 	const authConfigState = {} as AuthConfigState;
 	const authConfigStatus = 'ready' as AuthConfigStatus;
-	const applicationAccessProps: ApplicationAccessManagementProps = {};
 	const dataRealmReadinessSnapshot = {} as DataRealmReadinessSnapshot;
 	const dataRealmReadyGateProps = {} as DataRealmReadyGateProps;
 	const dataRealmReadyGatePropsSubpath = {} as DataRealmReadyGatePropsSubpath;
@@ -1100,8 +1099,7 @@ import type {
 		const switchTenant = {} as Client['switchTenant'];
 		const legacyLoginFormProps: LoginFormProps = { showRememberMe: true };
 	const platformUserManagementProps = {} as PlatformUserManagementProps;
-	const platformAdministrationManagementProps = {} as PlatformAdministrationManagementProps;
-	const platformTenantManagementProps = {} as PlatformTenantManagementProps;
+	const platformWorkspaceManagementProps = {} as PlatformWorkspaceManagementProps;
 	const tenantCreationFormProps = {} as TenantCreationFormProps;
 	const tenantMemberManagementProps = {} as TenantMemberManagementProps;
 	const tenantSelectionFormProps = {} as TenantSelectionFormProps;
@@ -1134,8 +1132,6 @@ export const clientSymbols = {
   ApiKeyManagementSubpath,
   apiKeyPublicTypes,
   apiKeySubpathPublicTypes,
-  ApplicationAccessManagement,
-  ApplicationAccessManagementSubpath,
   ApplicationUserApiKeyManagement,
   ApplicationUserApiKeyManagementSubpath,
   AuthFlowContinuation,
@@ -1200,18 +1196,16 @@ export const clientSymbols = {
   Hero,
   HeroSubpath,
   hasAuthorizationPermission,
+  IdentityUserManagement,
   KanbanBoard,
   KanbanBoardSubpath,
-	  PlatformAdministrationManagement,
-	  PlatformAdministrationManagementSubpath,
 	  PlatformApiKeyManagement,
 	  PlatformApiKeyManagementSubpath,
-	  PlatformTenantManagement,
-	  PlatformTenantManagementSubpath,
+	  PlatformWorkspaceManagement,
+	  PlatformWorkspaceManagementSubpath,
 	  PlatformUserManagement,
 	  legacyLoginFormProps,
-	  platformAdministrationManagementProps,
-	  platformTenantManagementProps,
+	  platformWorkspaceManagementProps,
 	  platformUserManagementProps,
   PermissionGate,
   PermissionGateSubpath,

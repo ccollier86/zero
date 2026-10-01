@@ -38,10 +38,6 @@ export type {
   DataRealmReadyGateProps,
 } from './data-realm-ready-gate';
 export {
-  ApplicationAccessManagement,
-  type ApplicationAccessManagementProps,
-} from './application-access-management';
-export {
   ApiKeyManagement,
   ApplicationUserApiKeyManagement,
   PlatformApiKeyManagement,
@@ -57,17 +53,18 @@ export type {
   TenantMemberApiKeyManagementProps,
 } from './api-key-management-types';
 export {
-  PlatformAdministrationManagement,
-  type PlatformAdministrationManagementProps,
-} from './platform-administration-management';
-export {
-  PlatformTenantManagement,
-  type PlatformTenantManagementProps,
-} from './platform-tenant-management';
+  PlatformWorkspaceManagement,
+  type PlatformWorkspaceManagementProps,
+} from './platform-workspace-management';
 export {
   TenantMemberManagement,
   type TenantMemberManagementProps,
 } from './tenant-member-management';
+export {
+  useTenantInvitationAction,
+  type UseTenantInvitationActionOptions,
+  type UseTenantInvitationActionResult,
+} from './use-tenant-invitation-action';
 export {
   TenantOnboardingManagement,
   type TenantOnboardingManagementProps,

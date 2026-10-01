@@ -1,6 +1,7 @@
 /** Browser-safe contracts for the protected administration organization. */
 
 import type {
+  AuthTenantAddMemberParams,
   AuthTenantInvitation,
   AuthTenantInvitationListParams,
   AuthTenantInvitationPage,
@@ -11,6 +12,7 @@ import type {
   AuthTenantOwnershipTransferResult,
   AuthTenantRoleDescriptor,
   AuthTenantMembershipStatus,
+  AuthTenantUpdateMemberParams,
 } from './auth-types';
 
 /** At least one explicitly selected administration-organization role. */
@@ -85,12 +87,16 @@ export interface AuthPlatformAdministrationConfig {
     canReadTenants: boolean;
     /** Actor may inspect safe customer-member projections. */
     canReadTenantMembers: boolean;
+    /** Actor may mutate customer memberships and assign customer roles. */
+    canManageTenantMembers: boolean;
     canManageTenants: boolean;
     /** Actor may create a tenant and resolve its initial owner account. */
     canCreateTenants: boolean;
     canTransferOwnership: boolean;
   };
   roles: AuthTenantRoleDescriptor[];
+  /** Customer-organization role descriptors projected for cross-tenant management. */
+  customerRoles: AuthTenantRoleDescriptor[];
 }
 
 /** Safe customer-organization projection for the platform tenant directory. */
@@ -145,6 +151,17 @@ export interface AuthPlatformTenantUpdateResult {
   tenant: AuthPlatformTenant;
 }
 
+/**
+ * Receipt for a platform administrator transferring a customer workspace.
+ * The actor remains authenticated because its live session belongs to the
+ * protected administration organization, not to the customer workspace.
+ */
+export interface AuthPlatformTenantOwnershipTransferResult {
+  owner: AuthTenantMemberPage['members'][number];
+  previousOwner: AuthTenantMemberPage['members'][number];
+  actorSessionInvalidated: false;
+}
+
 /** Namespaced SDK surface; every route requires an active administration scope. */
 export interface AuthPlatformAdminSdkSurface {
   getConfig(): Promise<AuthPlatformAdministrationConfig>;
@@ -175,4 +192,21 @@ export interface AuthPlatformAdminSdkSurface {
     tenantId: string,
     params?: AuthTenantMemberListParams,
   ): Promise<AuthTenantMemberPage>;
+  addTenantMember(
+    tenantId: string,
+    params: AuthTenantAddMemberParams,
+  ): Promise<AuthTenantMemberMutationResult>;
+  updateTenantMember(
+    tenantId: string,
+    membershipId: string,
+    params: AuthTenantUpdateMemberParams,
+  ): Promise<AuthTenantMemberMutationResult>;
+  removeTenantMember(
+    tenantId: string,
+    membershipId: string,
+  ): Promise<AuthTenantMemberMutationResult>;
+  transferTenantOwnership(
+    tenantId: string,
+    membershipId: string,
+  ): Promise<AuthPlatformTenantOwnershipTransferResult>;
 }

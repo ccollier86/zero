@@ -32,6 +32,17 @@ export class AuthTenantAdministrationAuthority {
   ): AuthTenantMutationAuthority {
     const authority = this.invoke(assertion, permissions);
     if (authority.scope.tenantId !== tenantId) throw tenantAdministrationForbidden();
+    if (authority.platformAdministration === true) {
+      if (authority.auth.tenantKind !== 'administration'
+        || authority.applicationScope?.scopeKind !== 'application') {
+        throw tenantAdministrationForbidden();
+      }
+      const target = this.tenancy.getTenant(tenantId);
+      if (!target || target.kind !== 'organization' || target.status !== 'active') {
+        throw tenantAdministrationForbidden();
+      }
+      return authority;
+    }
     this.requireActorMembership(
       tenantId,
       authority.scope.membershipId,

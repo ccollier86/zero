@@ -385,18 +385,14 @@ import {
 } from '@zero/framework/sync';
 import { createZeroNativeAuth, type ZeroNativeAuthOptions } from '@zero/framework/native';
 import type {
-  ApplicationAccessManagementProps,
-  PlatformAdministrationManagementProps,
-  PlatformTenantManagementProps,
+  PlatformWorkspaceManagementProps,
   TenantMemberManagementProps,
 } from '@zero/framework/components/auth';
 import config from './zero.config';
 
 type PackagedAuthUiContract =
-  ApplicationAccessManagementProps
-  | LoginFormProps
-  | PlatformAdministrationManagementProps
-  | PlatformTenantManagementProps
+  LoginFormProps
+  | PlatformWorkspaceManagementProps
   | PlatformUserManagementProps
   | TenantMemberManagementProps;
 void (null as PackagedAuthUiContract | null);

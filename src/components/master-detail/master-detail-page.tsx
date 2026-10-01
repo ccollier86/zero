@@ -27,6 +27,7 @@ import { DetailPanel } from '#zero/components/ui/detail-panel';
 import {
   RecordNavigationBar,
   type NavigationAction,
+  type RecordPrimaryAction,
 } from '#zero/components/ui/record-navigation-bar';
 import { Skeleton } from '#zero/components/ui/skeleton';
 import { cn } from '#zero/lib/utils';
@@ -108,13 +109,7 @@ export interface MasterDetailPageProps<T extends Row = Row> {
   /** Factory function returning action buttons for the selected record. */
   navigationActions?: (selectedItem: T | null) => NavigationAction[];
   /** Primary action button config (right side of nav bar). */
-  primaryAction?: {
-    label: string;
-    sublabel?: string;
-    shortcut?: string;
-    disabled?: boolean;
-    onClick: () => void;
-  };
+  primaryAction?: RecordPrimaryAction;
 
   // ── Callbacks ───────────────────────────────────────────────────
   /** Called when a row is clicked / selected. */
@@ -230,6 +225,33 @@ function MasterDetailPage<T extends Row = Row>({
     error,
     refresh,
   } = state;
+  const [mobileDetailOpen, setMobileDetailOpen] = React.useState(selectedItem !== null);
+  const previousSelectedIdRef = React.useRef(selectedId);
+  React.useEffect(() => {
+    const selectionChanged = previousSelectedIdRef.current !== selectedId;
+    previousSelectedIdRef.current = selectedId;
+    if (selectedId === null) {
+      setMobileDetailOpen(false);
+    } else if (selectionChanged) {
+      setMobileDetailOpen(true);
+    }
+  }, [selectedId]);
+  const selectRowAndOpenDetail = useCallback((row: T) => {
+    setMobileDetailOpen(true);
+    selectRow(row);
+  }, [selectRow]);
+  const selectIdAndOpenDetail = useCallback((id: string | null) => {
+    setMobileDetailOpen(id !== null);
+    selectId(id);
+  }, [selectId]);
+  const selectPreviousAndOpenDetail = useCallback(() => {
+    setMobileDetailOpen(true);
+    selectPrevious();
+  }, [selectPrevious]);
+  const selectNextAndOpenDetail = useCallback(() => {
+    setMobileDetailOpen(true);
+    selectNext();
+  }, [selectNext]);
   const editableFieldSet = useMemo(
     () => editableFields ? new Set(editableFields) : null,
     [editableFields],
@@ -261,10 +283,10 @@ function MasterDetailPage<T extends Row = Row>({
       totalCount,
       canSelectPrevious,
       canSelectNext,
-      selectId,
-      selectItem: selectRow,
-      selectPrevious,
-      selectNext,
+      selectId: selectIdAndOpenDetail,
+      selectItem: selectRowAndOpenDetail,
+      selectPrevious: selectPreviousAndOpenDetail,
+      selectNext: selectNextAndOpenDetail,
       update: (changes) => {
         if (!selectedItem) return;
         return submitDetailChanges(selectedItem, changes);
@@ -283,10 +305,10 @@ function MasterDetailPage<T extends Row = Row>({
       liveActions,
       primaryKey,
       refresh,
-      selectId,
-      selectNext,
-      selectPrevious,
-      selectRow,
+      selectIdAndOpenDetail,
+      selectNextAndOpenDetail,
+      selectPreviousAndOpenDetail,
+      selectRowAndOpenDetail,
       selectedId,
       selectedIndex,
       selectedItem,
@@ -330,7 +352,7 @@ function MasterDetailPage<T extends Row = Row>({
         searchable={searchable}
         sortable={sortable}
         paginated={paginated}
-        onRowClick={selectRow}
+        onRowClick={selectRowAndOpenDetail}
         highlightedRowId={selectedId ?? undefined}
         className="h-full"
       />
@@ -347,7 +369,7 @@ function MasterDetailPage<T extends Row = Row>({
     refresh,
     schema,
     searchable,
-    selectRow,
+    selectRowAndOpenDetail,
     selectedId,
     sortable,
   ]);
@@ -358,6 +380,8 @@ function MasterDetailPage<T extends Row = Row>({
     <div className={cn('h-full', className)}>
       <ListDetailLayout
         hasSelection={selectedItem != null}
+        mobileDetailOpen={mobileDetailOpen}
+        onMobileBack={() => setMobileDetailOpen(false)}
         selectedKey={selectedId ?? undefined}
         listWidth={listWidth}
         detailWidth={detailWidth}
@@ -412,8 +436,8 @@ function MasterDetailPage<T extends Row = Row>({
           <RecordNavigationBar
             currentIndex={selectedIndex}
             totalCount={totalCount}
-            onPrevious={selectPrevious}
-            onNext={selectNext}
+            onPrevious={selectPreviousAndOpenDetail}
+            onNext={selectNextAndOpenDetail}
             actions={navActions}
             primaryAction={primaryAction}
           />

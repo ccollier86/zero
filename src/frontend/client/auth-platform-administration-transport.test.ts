@@ -8,6 +8,8 @@ import {
   parsePlatformMemberPage,
   parsePlatformOwnershipTransfer,
   parsePlatformTenantCreate,
+  parsePlatformTenantMemberMutation,
+  parsePlatformTenantOwnershipTransfer,
   parsePlatformTenantPage,
   parsePlatformTenantUpdate,
 } from './auth-platform-administration-parser';
@@ -119,6 +121,47 @@ describe('platform administration transport', () => {
     await transport.removeMember('member-1');
     expect(events).toEqual(['current', 'current', 'expire']);
   });
+
+  test('targets customer membership routes without expiring the platform actor', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    let expirations = 0;
+    const transport = new AuthPlatformAdministrationTransport({
+      baseUrl: 'https://zero.test',
+      authenticatedFetch: async (url, init) => {
+        calls.push({ url, init });
+        return Response.json(url.endsWith('/ownership/transfer')
+          ? customerOwnershipTransfer()
+          : memberMutation());
+      },
+      createResponseError: (_response, _body, fallback) => new Error(fallback),
+      assertResponseCurrent() {},
+      expireSession() { expirations += 1; },
+    });
+
+    await transport.addTenantMember('customer/one', {
+      email: 'ada@example.test', roles: ['member'],
+    });
+    await transport.updateTenantMember('customer/one', 'member/one', {
+      roles: ['manager'], expectedRoleRevision: 'tenant:1',
+    });
+    await transport.removeTenantMember('customer/one', 'member/one');
+    const transferred = await transport.transferTenantOwnership(
+      'customer/one',
+      'member/one',
+    );
+
+    expect(calls.map((call) => [call.init?.method, call.url])).toEqual([
+      ['POST', 'https://zero.test/auth/platform/tenants/customer%2Fone/members'],
+      ['PATCH', 'https://zero.test/auth/platform/tenants/customer%2Fone/members/member%2Fone'],
+      ['DELETE', 'https://zero.test/auth/platform/tenants/customer%2Fone/members/member%2Fone'],
+      ['POST', 'https://zero.test/auth/platform/tenants/customer%2Fone/ownership/transfer'],
+    ]);
+    expect(JSON.parse(String(calls[1]!.init?.body))).toEqual({
+      roles: ['manager'], expectedRoleRevision: 'tenant:1',
+    });
+    expect(transferred.actorSessionInvalidated).toBe(false);
+    expect(expirations).toBe(0);
+  });
 });
 
 describe('platform administration response boundary', () => {
@@ -126,10 +169,16 @@ describe('platform administration response boundary', () => {
     const config = parsePlatformAdministrationConfig(platformConfig());
     expect(config.administration.kind).toBe('administration');
     expect(config.capabilities.canManageRoles).toBe(true);
+    expect(config.capabilities.canManageTenantMembers).toBe(true);
+    expect(config.customerRoles[0]?.key).toBe('member');
     expect(Object.isFrozen(config)).toBe(true);
     expect(parsePlatformMemberPage(memberPage()).members).toHaveLength(1);
     expect(parsePlatformMemberMutation(memberMutation()).member.membershipId).toBe('member-1');
+    expect(parsePlatformTenantMemberMutation(memberMutation()).actorSessionInvalidated)
+      .toBe(false);
     expect(parsePlatformOwnershipTransfer(ownershipTransfer()).actorSessionInvalidated).toBe(true);
+    expect(parsePlatformTenantOwnershipTransfer(customerOwnershipTransfer())
+      .actorSessionInvalidated).toBe(false);
     expect(parsePlatformInvitationPage(invitationPage()).invitations).toHaveLength(1);
     expect(parsePlatformInvitationIssue({
       invitation: invitation(), delivery: { mode: 'manual' }, token: 'one-time-token',
@@ -183,9 +232,13 @@ describe('platform administration response boundary', () => {
     expectInvalid(() => parsePlatformMemberMutation({
       ...memberMutation(), member: { ...member(), roles: ['invalid:role'] },
     }));
+    expectInvalid(() => parsePlatformTenantMemberMutation({
+      ...memberMutation(), actorSessionInvalidated: true,
+    }));
     expectInvalid(() => parsePlatformOwnershipTransfer({
       ...ownershipTransfer(), actorSessionInvalidated: false,
     }));
+    expectInvalid(() => parsePlatformTenantOwnershipTransfer(ownershipTransfer()));
     expectInvalid(() => parsePlatformInvitationPage({
       ...invitationPage(),
       invitations: [{ ...invitation(), email: 'not-an-email' }],
@@ -230,9 +283,11 @@ function platformConfig() {
       canReadMembers: true, canManageMembers: true, canManageRoles: true,
       canReadInvitations: true, canManageInvitations: true,
       canReadTenants: true, canReadTenantMembers: true,
+      canManageTenantMembers: true,
       canManageTenants: true, canCreateTenants: true, canTransferOwnership: true,
     },
     roles: [role()],
+    customerRoles: [customerRole()],
   };
 }
 
@@ -241,6 +296,14 @@ function role() {
     key: 'administrator', label: 'Administrator', description: 'Platform operator',
     administrationOnly: true, permissions: ['application.tenants:manage'],
     allPermissions: false, system: true, assignable: true, grantable: true,
+  };
+}
+
+function customerRole() {
+  return {
+    key: 'member', label: 'Member', description: 'Customer member',
+    administrationOnly: false, permissions: ['tenant:read'],
+    allPermissions: false, system: false, assignable: true, grantable: true,
   };
 }
 
@@ -272,6 +335,13 @@ function ownershipTransfer() {
     owner: { ...member(), membershipId: 'member-2' },
     previousOwner: member(),
     actorSessionInvalidated: true,
+  };
+}
+
+function customerOwnershipTransfer() {
+  return {
+    ...ownershipTransfer(),
+    actorSessionInvalidated: false,
   };
 }
 

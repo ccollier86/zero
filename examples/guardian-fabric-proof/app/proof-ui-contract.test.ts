@@ -94,6 +94,22 @@ describe('Guardian + Fabric proof UI contract', () => {
     expect(CUSTOMER_STEPS.map((step) => step.href)).toContain('/tasks');
   });
 
+  test('keeps every promised Guardian control reachable from a rendered route mode', async () => {
+    const [platform, organization, security] = await Promise.all([
+      Bun.file(new URL('./(dashboard)/platform/page.tsx', import.meta.url)).text(),
+      Bun.file(new URL('./(dashboard)/organization/page.tsx', import.meta.url)).text(),
+      Bun.file(new URL('./(dashboard)/security/page.tsx', import.meta.url)).text(),
+    ]);
+
+    expect(platform).toContain('PlatformUserManagement');
+    expect(platform).toContain('PlatformApiKeyControls');
+    expect(platform).toContain('ControlPlaneAuditViewer');
+    expect(organization).toContain('PlatformUserManagement');
+    expect(organization).toContain('TenantOnboardingManagement');
+    expect(organization).toContain('ControlPlaneAuditViewer');
+    expect(security).toContain('WorkspaceApiKeyControls');
+  });
+
   test('scrubs one-time invitation material and normalizes workspace hints', () => {
     const token = `zinv_${'A'.repeat(43)}`;
     expect(parseInvitationRoute(`?token=%20${token}%20&continuation=next`)).toEqual({

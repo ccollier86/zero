@@ -31,11 +31,6 @@ export function createUserManagementSchema(
       ],
       { label: 'Status', required: true, defaultValue: 'active' },
     ),
-    mfaRequired: field.boolean({
-      label: 'Require MFA',
-      description: 'Requires this user to enroll or pass two-factor authentication before receiving a session.',
-      defaultValue: false,
-    }),
   });
 }
 
@@ -64,6 +59,5 @@ export function getUserManagementEditableFields(
     if (fieldName === 'role') return Boolean(config?.capabilities.promoteAdmins) && !options.isSelf;
     return true;
   });
-  if (config?.capabilities.mfa && !options.isSelf) fields.push('mfaRequired');
   return fields;
 }

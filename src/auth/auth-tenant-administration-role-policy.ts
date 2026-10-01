@@ -88,11 +88,13 @@ export class AuthTenantAdministrationRolePolicy {
     ]);
     if (changedKeys.size === 0) return { roleKeys, changed: false };
 
-    const actor = this.authority.requireActorMembership(
-      input.tenantId,
-      input.authority.scope.membershipId,
-      input.authority.auth.userId,
-    );
+    const actor = input.authority.platformAdministration === true
+      ? null
+      : this.authority.requireActorMembership(
+          input.tenantId,
+          input.authority.scope.membershipId,
+          input.authority.auth.userId,
+        );
     const tenant = this.tenancy.getTenant(input.tenantId);
     if (!tenant) throw tenantMemberNotFound();
     for (const roleKey of changedKeys) {
@@ -100,7 +102,10 @@ export class AuthTenantAdministrationRolePolicy {
       if (!role) {
         // Removed templates are inert. Only the live tenant owner may remove
         // their retained audit assignment; they can never be newly granted.
-        if (actor.roleKey !== TENANT_OWNER_ROLE_KEY) throw roleEscalationForbidden();
+        if (actor?.roleKey !== TENANT_OWNER_ROLE_KEY
+          && input.authority.platformAdministration !== true) {
+          throw roleEscalationForbidden();
+        }
         continue;
       }
       const removingOutOfKindRole = currentSet.has(roleKey)
@@ -114,7 +119,10 @@ export class AuthTenantAdministrationRolePolicy {
         // A configuration transition or historical import can leave a
         // declared role in the wrong tenant kind. It is inert at resolution;
         // only the live owner may remove the retained assignment.
-        if (actor.roleKey !== TENANT_OWNER_ROLE_KEY) throw roleEscalationForbidden();
+        if (actor?.roleKey !== TENANT_OWNER_ROLE_KEY
+          && input.authority.platformAdministration !== true) {
+          throw roleEscalationForbidden();
+        }
         continue;
       }
       if (!this.canGrantRole(input.tenantId, input.authority, roleKey)) {

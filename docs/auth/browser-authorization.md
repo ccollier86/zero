@@ -176,9 +176,12 @@ unknown or misspelled browser key pass.
 Permission helpers evaluate the union of `scope.permissions` and
 `applicationScope.permissions`. This lets administration-scope navigation use
 `application.users:*`, `application.tenants:*`, `application.roles:*`, and
-`application.audit:*` hints without flattening those capabilities into the
-active tenant scope. Tenant identity/role helpers continue to inspect only
-`scope`; an application permission can never satisfy `TenantGate`.
+`application.audit:*` hints, including the bounded
+`application.tenant-members:manage` control-plane capability, without
+flattening those capabilities into the active tenant scope. Tenant
+identity/role helpers continue to inspect only `scope`; an application
+permission can never satisfy `TenantGate` or grant customer application-data
+access.
 
 ### App-owned cache isolation
 

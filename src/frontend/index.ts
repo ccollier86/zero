@@ -240,6 +240,7 @@ export type {
   AuthPlatformTenantCreateParams,
   AuthPlatformTenantCreateResult,
   AuthPlatformTenantListParams,
+  AuthPlatformTenantOwnershipTransferResult,
   AuthPlatformTenantPage,
   AuthPlatformTenantStatus,
   AuthPlatformTenantUpdateParams,
@@ -787,6 +788,7 @@ export { RecordNavigationBar } from '../components/ui/record-navigation-bar';
 export type {
   RecordNavigationBarProps,
   NavigationAction,
+  RecordPrimaryAction,
 } from '../components/ui/record-navigation-bar';
 
 // ─── Auth Blocks ────────────────────────────────────────────────────────
@@ -797,7 +799,7 @@ export {
   DataRealmReadinessNotice, DataRealmReadyGate,
   ApiKeyManagement, SelfApiKeyManagement, ApplicationUserApiKeyManagement,
   TenantMemberApiKeyManagement, PlatformApiKeyManagement,
-  ApplicationAccessManagement, PlatformAdministrationManagement, PlatformTenantManagement,
+  PlatformWorkspaceManagement,
   TenantSwitcher, TenantMemberManagement, TenantOnboardingManagement,
   TenantDomainManagement, DomainOnboarding, ControlPlaneAuditViewer,
   TenantInvitationForm, TenantJoinRequestForm,
@@ -807,7 +809,7 @@ export {
   PermissionGate, PlatformAdminGate,
   PropertyGate, SignedIn, SignedOut, TenantGate,
   useGate, useNativeAuthContinuation, useNativeAuthRoute, useNativeLoginHint,
-  usePropertyGate,
+  usePropertyGate, useTenantInvitationAction,
 } from '../components/auth';
 export type {
   LoginFormProps, RegisterFormProps, ForgotPasswordFormProps,
@@ -818,9 +820,9 @@ export type {
   ApiKeyManagementCommonProps, ApiKeyManagementProps,
   SelfApiKeyManagementProps, ApplicationUserApiKeyManagementProps,
   TenantMemberApiKeyManagementProps, PlatformApiKeyManagementProps,
-  ApplicationAccessManagementProps,
-  PlatformAdministrationManagementProps, PlatformTenantManagementProps,
+  PlatformWorkspaceManagementProps,
   TenantSwitcherProps, TenantMemberManagementProps, TenantOnboardingManagementProps,
+  UseTenantInvitationActionOptions, UseTenantInvitationActionResult,
   TenantDomainManagementProps, DomainOnboardingProps,
   ControlPlaneAuditViewerProps,
   TenantInvitationFormProps, TenantJoinRequestFormProps,
@@ -1019,6 +1021,7 @@ export type {
 
 // ─── Admin Components ───────────────────────────────────────────────────
 export {
+  IdentityUserManagement,
   PlatformUserManagement,
   UserManagement,
   useAdminUsers,

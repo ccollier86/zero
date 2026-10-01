@@ -187,6 +187,7 @@ export type {
   AuthPlatformTenantCreateParams,
   AuthPlatformTenantCreateResult,
   AuthPlatformTenantListParams,
+  AuthPlatformTenantOwnershipTransferResult,
   AuthPlatformMutableTenantStatus,
   AuthPlatformTenantPage,
   AuthPlatformTenantStatus,

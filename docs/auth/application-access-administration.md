@@ -201,14 +201,14 @@ the loaded target revision automatically and keys its cached projection to the
 authenticated user, immediately masking a prior identity's data during an
 account replacement.
 
-For the packaged surface:
+For the packaged surface, use Zero's adaptive user manager:
 
 ```tsx
-import { ApplicationAccessManagement } from '@zero/framework/react';
+import { UserManagement } from '@zero/framework/react';
 
 export function AccessSettings() {
   return (
-    <ApplicationAccessManagement
+    <UserManagement
       onActorAuthorizationChanged={() => {
         // Optional: close an access drawer or navigate after self-authority changes.
       }}
@@ -217,11 +217,14 @@ export function AccessSettings() {
 }
 ```
 
-The component renders only application-role controls. Role choices are driven
-by the server registry and actor-specific grantability, higher roles remain
-visible but locked, retired roles are identified for owner cleanup, suspended
-targets cannot receive new grants, and ownership requires an explicit
-confirmation. UI visibility is convenience only; the
+In `single/advanced`, the component preserves the established account list,
+profile/properties, password, verification, MFA, session, and lifecycle
+controls and adds application roles, effective permissions, and ownership to
+that same selected-person workflow. Role choices are driven by the server
+registry and actor-specific grantability, higher roles remain visible but
+locked, retired roles are identified for owner cleanup, suspended targets
+cannot receive new grants, and ownership requires an explicit confirmation.
+UI visibility is convenience only; the
 Elysia routes and headless domain service repeat every authority check.
 `pageSize` is clamped to the server's 1–100 range, and self-role changes and
 ownership transfer invoke `onActorAuthorizationChanged` only after the server
@@ -232,9 +235,10 @@ that point.
 
 | Need | Surface |
 | --- | --- |
-| Passwords, MFA, suspension, global platform roles | `PlatformUserManagement` |
-| Single/advanced application roles | `ApplicationAccessManagement` |
-| Multi-tenant membership and tenant roles | `TenantMemberManagement` |
+| Single/simple accounts, passwords, MFA, and lifecycle | `UserManagement` |
+| Single/advanced accounts plus application roles | `UserManagement` |
+| Multi-tenant active-organization people and tenant roles | `UserManagement` or focused `TenantMemberManagement` |
+| Administration Organization people and customer workspaces | `PlatformUserManagement` |
 
 Do not use platform-admin status as an application data-plane role, and do not
 mix application access assignment into tenant member APIs.

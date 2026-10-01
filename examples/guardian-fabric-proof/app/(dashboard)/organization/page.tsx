@@ -3,22 +3,16 @@
 import {
   ControlPlaneAuditViewer,
   TenantGate,
-  TenantMemberManagement,
   TenantOnboardingManagement,
 } from '@zero/framework/components/auth';
-import {
-  Card,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@zero/framework/components/ui/card';
+import { PlatformUserManagement } from '@zero/framework/react';
 import { useRouter } from '@zero/framework/react/hooks';
 
-import { WorkspaceMemberApiKeys } from '../../components/workspace-member-api-keys';
+import { ControlPlaneTabs } from '../../components/control-plane-tabs';
 
 export const meta = {
   title: 'Members & access | Guardian + Fabric Proof',
-  description: 'Manage the active customer workspace and review its authorization audit.',
+  description: 'Adaptive people and access controls for the active customer workspace.',
 };
 
 /** Customer-workspace management composed entirely from Guardian controls. */
@@ -26,37 +20,56 @@ export default function OrganizationPage() {
   const router = useRouter();
   return (
     <TenantGate tenantKind="organization" fallback={<CustomerWorkspaceRequired />}>
-      <div className="grid gap-6">
-        <TenantMemberManagement
-          title="Workspace members"
-          description="Manage membership state and assign only roles your current authority may grant."
-          onActorSessionInvalidated={() => router.replace('/login')}
-        />
-        <WorkspaceMemberApiKeys />
-        <TenantOnboardingManagement
-          title="Workspace onboarding"
-          description="Invite exact email addresses with one-time tokens and review retained workspace access requests."
-        />
-        <ControlPlaneAuditViewer
-          scope="tenant"
-          title="Workspace authorization audit"
-          description="Guardian events visible to your current tenant-scoped authority."
-        />
-      </div>
+      <ControlPlaneTabs
+        defaultValue="people"
+        tabs={[
+          {
+            id: 'people',
+            label: 'People',
+            description: 'Manage workspace membership, roles, effective access, and focused invitations.',
+            content: (
+              <PlatformUserManagement
+                className="h-[calc(100svh-13rem)] min-h-[36rem]"
+                onActorSessionInvalidated={() => router.replace('/login')}
+              />
+            ),
+          },
+          {
+            id: 'onboarding',
+            label: 'Onboarding',
+            description: 'Review retained access requests and the complete invitation/domain workflow.',
+            content: (
+              <TenantOnboardingManagement
+                title="Workspace onboarding"
+                description="Review retained workspace access requests and advanced onboarding policy."
+              />
+            ),
+          },
+          {
+            id: 'activity',
+            label: 'Activity',
+            description: 'Inspect the bounded authorization history for this workspace.',
+            content: (
+              <ControlPlaneAuditViewer
+                scope="tenant"
+                title="Workspace authorization audit"
+                description="Guardian events visible to your current tenant-scoped authority."
+              />
+            ),
+          },
+        ]}
+      />
     </TenantGate>
   );
 }
 
 function CustomerWorkspaceRequired() {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle asChild><h2>Switch to a customer workspace</h2></CardTitle>
-        <CardDescription>
-          Customer membership and onboarding controls are separate from the protected Administration Organization.
-          Choose a customer workspace above, or create one from the workspace menu.
-        </CardDescription>
-      </CardHeader>
-    </Card>
+    <div className="rounded-lg border border-dashed bg-background p-6">
+      <h2 className="font-semibold">Switch to a customer workspace</h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Choose a customer workspace to manage its people and access.
+      </p>
+    </div>
   );
 }

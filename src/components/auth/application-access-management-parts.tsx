@@ -4,94 +4,9 @@ import type {
   AuthApplicationRoleDescriptor,
   AuthApplicationUser,
 } from '../../frontend/client/auth-application-administration-types';
-import { Badge } from '#zero/components/ui/badge';
 import { Button } from '#zero/components/ui/button';
 import { Checkbox } from '#zero/components/ui/checkbox';
 import { cn } from '#zero/lib/utils';
-import { authRoleLabel } from './auth-role-presentation';
-
-export function ApplicationUserRow({
-  user,
-  actorUserId,
-  selected,
-  canManageRoles,
-  canTransferOwnership,
-  busy,
-  rolePanelId,
-  roleLabels,
-  onSelect,
-  onTransfer,
-}: {
-  user: AuthApplicationUser;
-  actorUserId?: string;
-  selected: boolean;
-  canManageRoles?: boolean;
-  canTransferOwnership?: boolean;
-  busy: boolean;
-  rolePanelId: string;
-  roleLabels: ReadonlyMap<string, string>;
-  onSelect(): void;
-  onTransfer(trigger: HTMLButtonElement): void;
-}) {
-  const isActor = user.identity.userId === actorUserId;
-  const isOwner = user.roles.includes('owner');
-  const canSelectRoles = canManageRoles === true;
-  return (
-    <div className={cn('p-4', selected && 'bg-accent/35')}>
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <button
-          type="button"
-          className="min-w-0 text-left disabled:cursor-default"
-          onClick={onSelect}
-          aria-expanded={canSelectRoles ? selected : undefined}
-          aria-controls={canSelectRoles ? rolePanelId : undefined}
-          aria-label={canSelectRoles
-            ? `${selected ? 'Hide' : 'Manage'} roles for ${applicationUserName(user)}`
-            : undefined}
-          disabled={!canSelectRoles || busy}
-        >
-          <span className="block truncate text-sm font-semibold">
-            {applicationUserName(user)} {isActor && <span className="font-normal text-muted-foreground">(you)</span>}
-          </span>
-          <span className="block truncate text-xs text-muted-foreground">{user.identity.email}</span>
-        </button>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={user.status === 'active' ? 'secondary' : 'warning'}>
-            {user.status}
-          </Badge>
-          {user.roles.map((role) => (
-            <Badge key={role} variant="outline">{authRoleLabel(role, roleLabels)}</Badge>
-          ))}
-          {canManageRoles && (
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              onClick={onSelect}
-              disabled={busy}
-              aria-expanded={selected}
-              aria-controls={rolePanelId}
-              aria-label={`${selected ? 'Hide' : 'Manage'} roles for ${applicationUserName(user)}`}
-            >
-              Roles
-            </Button>
-          )}
-          {canTransferOwnership && !isActor && !isOwner && user.status === 'active' && (
-            <Button
-              type="button"
-              size="xs"
-              onClick={(event) => onTransfer(event.currentTarget)}
-              disabled={busy}
-              aria-haspopup="dialog"
-            >
-              Transfer ownership
-            </Button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export function ApplicationRoleEditor({
   user,

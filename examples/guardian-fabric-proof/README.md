@@ -163,10 +163,14 @@ replace another profile's cookie or browser session:
    identity before assigning that email as the initial owner of a
    platform-created customer workspace. The UI gate is presentation only;
    every operation is reauthorized on the server.
-3. Create customer workspaces A and B. Enter A, wait for **Fabric data realm —
-   Ready**, open **Realtime tasks**, and add two tasks. Open a second window in
-   the same profile and confirm inserts and drag-to-complete status updates
-   arrive through ReactiveDB Sync.
+3. Create customer workspaces A and B. While Profile A remains in the
+   Administration Organization, select A under **Platform operations →
+   Directory**, add Profile B as a customer member, change its role, and return
+   it to the original role. Confirm the workspace People detail updates without
+   switching Profile A into A and exposes no customer task data. Then enter A,
+   wait for **Fabric data realm — Ready**, open **Realtime tasks**, and add two
+   tasks. Open a second window in the same profile and confirm inserts and
+   drag-to-complete status updates arrive through ReactiveDB Sync.
 4. Switch to B and confirm its board starts empty. Add a different task set,
    switch repeatedly between A and B, and verify no previous-realm rows flash or
    leak. To prove identical primary keys physically coexist, issue one key in
@@ -179,8 +183,8 @@ replace another profile's cookie or browser session:
    material from the URL and keeps a bounded current-tab handoff only when a
    sign-in round trip is required.
 6. In Profile C, open `/request-access`, submit B's exact slug, and observe the
-   deliberately non-enumerating receipt. In Profile A, review and approve or
-   deny the retained request under **Workspace onboarding**. After approval,
+   deliberately non-enumerating receipt. In Profile A, open **Members & access
+   → Onboarding** to review and approve or deny the retained request. After approval,
    switch Profile C into B and wait for its Fabric realm before opening tasks.
 7. Assign Profile B `viewer`; confirm the board is realtime and read-only.
    Promote it to `editor`; confirm it can create and move only tasks stamped to
@@ -193,17 +197,20 @@ replace another profile's cookie or browser session:
 9. In **Security**, issue a self-service key. Run the list and create commands,
    observe the created row arrive in both live task windows, rotate the key and
    prove the old secret fails, then revoke the replacement and prove it fails.
-   Under **Members & access**, issue a member key as the owner and confirm a
-   viewer cannot do so. Back in the Administration Organization, select an
-   active customer and member under **Issue a customer member credential** to
-   exercise platform-authorized issuance and the global key directory.
+   Under **Security → Member credentials**, issue a member key as the owner and
+   confirm a viewer cannot do so. Back in the Administration Organization, open
+   **Platform operations → Credentials**, select an active customer and member,
+   and exercise platform-authorized issuance plus the global key directory.
 10. From **Platform operations**, suspend A. Confirm its browser data access,
     Sync, and existing API key all fail closed. Reactivate A, switch or sign in
     again as required, and confirm the original task data returns unchanged.
-11. Transfer customer ownership or change the current actor's own authority and
-    confirm the packaged control clears the invalidated session and returns
-    directly to sign-in. Review both **Workspace authorization audit** and
-    **Platform authorization audit** for the completed control-plane actions.
+11. Inside a customer scope, transfer the current owner's authority and confirm
+    the packaged control clears that invalidated session and returns directly
+    to sign-in. Separately, transfer a customer's ownership from the
+    Administration Organization and confirm the platform actor stays signed in
+    because its own administration scope did not change. Review **Members &
+    access → Activity** and **Platform operations → Activity** for the completed
+    control-plane actions.
 
 The default configuration uses manual invitation delivery and never requires
 putting the invitation token in a link. The acceptance route also understands a
@@ -290,9 +297,9 @@ enables self-service and administrator management with these bounds:
 - maximum lifetime: 30 days; and
 - at most 5 active keys per user in one workspace scope.
 
-Self-service uses the packaged control on **Security**. Workspace owners can
-also open **Members & access**, choose an active member under **Member automation
-credentials**, and use the targeted tenant-administrator control. Guardian
+Self-service uses **Security → My credentials**. Workspace owners can switch to
+**Security → Member credentials**, choose an active member, and use the targeted
+tenant-administrator control. Guardian
 projects issue, rotate, and revoke capabilities independently for the selected
 member; the picker itself grants no authority.
 
@@ -459,6 +466,6 @@ responsibilities beyond this proof's UI.
 | `app/auth-route-query.ts` | Pure invitation/slug validation, clean-URL projection, and bounded current-tab invitation handoff. |
 | `app/(public)/` | Landing, login, registration, manual invitation acceptance, and retained access-request routes. |
 | `app/(dashboard)/` | Auth-required proof center, tasks, member/security/platform controls, workspace creation, and route-owned shell. |
-| `app/components/` | Scope-aware shell, live proof/status/access panels, API-key guide, invitation-expiry guard, and tenant/platform member key selectors composed around packaged Guardian controls. |
+| `app/components/` | Scope-aware shell, compact control-plane modes, live proof/status/access panels, API-key guide, invitation-expiry guard, and tenant/platform credential selectors composed around packaged Guardian controls. |
 | `app/tasks/` | Realtime collection orchestration, exact access summary, cards, and Resource-backed board actions. |
 | `app/proof-ui-contract.test.ts` | Pure UI/security contract coverage for scopes, journeys, onboarding handoff, role matrix, fields, and Sync states. |

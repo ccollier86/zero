@@ -92,7 +92,12 @@ export interface AuthTenantMemberMutationResult {
 export interface AuthTenantOwnershipTransferResult {
   owner: AuthTenantMember;
   previousOwner: AuthTenantMember;
-  actorSessionInvalidated: true;
+  /**
+   * Active-tenant ownership transfers invalidate the owner actor. A protected
+   * platform administrator transferring a customer tenant does not own that
+   * target session, so the same mutation engine reports false for that path.
+   */
+  actorSessionInvalidated: boolean;
 }
 
 export interface TenantRoleGrantCeiling {

@@ -1175,16 +1175,28 @@ export function UsersSettingsPanel() {
 }
 ```
 
-`PlatformUserManagement` is the explicit global-identity administration name;
-`UserManagement` remains an exact compatibility alias. It does not manage
-tenant membership or tenant roles. The component self-wires to the admin auth
-SDK, loads `/auth/admin/config`, uses backend pagination plus `search`, `role`,
-and `status` filters, adapts
-configured `auth.userProperties` into typed controls, and hides email-only
-actions when the email runtime is not ready. When `strictUserProperties` is
-false, it also lets admins add, edit, and remove unconfigured key/value
-metadata on a user. When strict mode is true, only configured properties are
-editable.
+`UserManagement` is auth-profile adaptive; `PlatformUserManagement` is the
+explicit platform-oriented alias for the same component. In `single/simple`
+it remains the established identity/account manager. In `single/advanced` it
+adds application roles and effective permissions to the selected account. In
+multi mode it manages the active organization's membership and roles; inside
+the protected Administration Organization it adds compact People/Workspaces
+scope controls, invitations, the all-identities directory, and the customer
+workspace directory. The Workspaces view can also manage a selected customer's
+membership, roles, and ownership when the live platform config exposes
+`canManageTenantMembers`; that bounded control-plane authority does not expose
+the customer's application data. Tenant-only managers never receive global
+password, MFA, session, or account-lifecycle controls.
+
+Where application account authority is available, the selected-person detail
+loads the exact `/auth/admin/users/:id` account and composes configured user
+properties, security state, and standard password/verification/MFA/session and
+account-lifecycle actions. Tenant-only managers never probe those global
+endpoints. Backend pagination and search/status/role filters remain owned by
+the applicable account, tenant, or platform hook. When
+`strictUserProperties` is false, authorized account managers can also add,
+edit, and remove unconfigured key/value metadata; strict mode exposes only
+declared properties.
 
 Use `auth.userProperties` for metadata that app code should understand, such
 as department, group, plan, flags, or policy claims. Defaults apply during
