@@ -11,6 +11,7 @@ import { Elysia } from 'elysia';
 import { resolveAuthBehaviorConfig } from '../auth/auth-config';
 import { defineAuthTables } from '../auth/auth-schema';
 import { UserStore } from '../auth/user-store';
+import { installAppStopBarrier } from '../frontend/server/app-stop-lifecycle';
 import type { ReactiveDB } from './reactive-db';
 import { createSyncPlugin } from './sync.plugin';
 import { createDefaultSyncPolicy } from './sync-policy';
@@ -26,8 +27,15 @@ import {
 } from '../resources';
 
 interface TestApp {
-  stop(): void;
-  server: { hostname?: string; port?: number } | null;
+  stop(closeActiveConnections?: boolean): unknown;
+  server: {
+    hostname?: string;
+    port?: number;
+    pendingRequests?: number;
+    pendingWebSockets?: number;
+    stop(closeActiveConnections?: boolean): unknown;
+    unref?(): unknown;
+  } | null;
 }
 
 let app: TestApp | null = null;
@@ -325,8 +333,8 @@ async function connectWS(
   };
 }
 
-afterEach(() => {
-  app?.stop();
+afterEach(async () => {
+  if (app) await installAppStopBarrier(app, async () => {}).stop(true);
   app = null;
 });
 

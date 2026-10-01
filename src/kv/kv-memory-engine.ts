@@ -11,6 +11,7 @@ import { KvError } from './kv-errors';
 import { KvLruIndex } from './kv-lru-index';
 import { estimateKvValueSize } from './kv-size';
 import { KvTtlIndex } from './kv-ttl-index';
+import { snapshotKvValue } from './kv-value';
 import type {
   KvClock,
   KvCompareAndSetResult,
@@ -35,9 +36,12 @@ export class KvMemoryEngine {
   private readonly maxEntries: number | null;
   private readonly maxBytes: number | null;
   private readonly eviction: KvEvictionPolicy;
+  private readRecencyAffectsEviction: boolean;
+  private readPrunesExpired = true;
 
   private nextVersion = 1;
   private approximateBytes = 0;
+  private readonly capacityReservations = new Map<string, number>();
   private expiredEntries = 0;
   private evictedEntries = 0;
 
@@ -48,6 +52,7 @@ export class KvMemoryEngine {
     this.maxEntries = normalizeOptionalLimit(options.maxEntries, 'maxEntries');
     this.maxBytes = normalizeOptionalLimit(options.maxBytes, 'maxBytes');
     this.eviction = options.eviction ?? 'lru';
+    this.readRecencyAffectsEviction = (options.evictionRecency ?? 'access') === 'access';
     this.ttlIndex = new KvTtlIndex(normalizeBucketMs(options.ttlBucketMs));
   }
 
@@ -65,8 +70,32 @@ export class KvMemoryEngine {
 
     const now = this.clock.now();
     entry.lastAccessedAt = now;
-    this.lruIndex.touch(key);
+    if (this.readRecencyAffectsEviction) this.lruIndex.touch(key);
     return cloneEntry(entry) as ZeroKvEntry<T>;
+  }
+
+  /** @internal Select whether synchronous reads alter the eviction order. */
+  setReadRecencyAffectsEviction(enabled: boolean): void {
+    this.readRecencyAffectsEviction = enabled;
+  }
+
+  /** @internal Select whether reads physically remove logically expired entries. */
+  setReadPrunesExpired(enabled: boolean): void {
+    this.readPrunesExpired = enabled;
+  }
+
+  /** @internal Whether global capacity/eviction state requires serialized decisions. */
+  requiresSerializedCapacityMutations(): boolean {
+    return this.maxEntries !== null || this.maxBytes !== null;
+  }
+
+  /** @internal Return state as it existed at a mutation timestamp without changing live state. */
+  getEntryAt<T = unknown>(key: string, timestamp: number): ZeroKvEntry<T> | null {
+    validateKey(key);
+    const entry = this.entriesByKey.get(key) as ZeroKvEntry<T> | undefined;
+    if (!entry) return null;
+    if (entry.expiresAt !== null && entry.expiresAt <= timestamp) return null;
+    return cloneEntry(entry);
   }
 
   /** Return true when the key exists and has not expired. */
@@ -86,7 +115,7 @@ export class KvMemoryEngine {
       kind: options.kind ?? 'value',
       value,
       expiresAt,
-      version: this.nextVersion++,
+      version: this.allocateVersion(),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       lastAccessedAt: now,
@@ -136,6 +165,7 @@ export class KvMemoryEngine {
     this.entriesByKey.clear();
     this.ttlIndex.clear();
     this.lruIndex.clear();
+    this.capacityReservations.clear();
     this.approximateBytes = 0;
   }
 
@@ -149,7 +179,7 @@ export class KvMemoryEngine {
     const now = this.clock.now();
     entry.expiresAt = now + ttl;
     entry.updatedAt = now;
-    entry.version = this.nextVersion++;
+    entry.version = this.allocateVersion();
     this.ttlIndex.schedule(key, entry.expiresAt);
     this.lruIndex.touch(key);
     return true;
@@ -164,7 +194,7 @@ export class KvMemoryEngine {
     const now = this.clock.now();
     entry.expiresAt = null;
     entry.updatedAt = now;
-    entry.version = this.nextVersion++;
+    entry.version = this.allocateVersion();
     this.ttlIndex.cancel(key);
     this.lruIndex.touch(key);
     return true;
@@ -217,6 +247,12 @@ export class KvMemoryEngine {
     }
 
     const nextValue = (current?.value ?? 0) + delta;
+    if (!Number.isFinite(nextValue)) {
+      throw new KvError('KV_VALUE_INVALID', 'Counter result must be a finite number.', {
+        key,
+        delta,
+      });
+    }
     const expiresAt = options.ttlMs === undefined
       ? current?.expiresAt ?? this.resolveWriteExpiry(undefined, null)
       : this.resolveWriteExpiry(options.ttlMs, null);
@@ -225,7 +261,7 @@ export class KvMemoryEngine {
       kind: 'counter',
       value: nextValue,
       expiresAt,
-      version: this.nextVersion++,
+      version: this.allocateVersion(),
       createdAt: current?.createdAt ?? now,
       updatedAt: now,
       lastAccessedAt: now,
@@ -241,20 +277,46 @@ export class KvMemoryEngine {
     return this.increment(key, -delta, options);
   }
 
-  /** Return all live entries as cloned snapshots suitable for checkpointing. */
-  entries(): ZeroKvEntry[] {
-    this.pruneExpired();
-    return [...this.entriesByKey.values()].map((entry) => cloneEntry(entry));
+  /** Return cloned entries suitable for snapshots and diagnostics. */
+  entries(options: { pruneExpired?: boolean } = {}): ZeroKvEntry[] {
+    if (options.pruneExpired !== false) this.pruneExpired();
+    return this.lruIndex.orderedKeys()
+      .map((key) => this.entriesByKey.get(key))
+      .filter((entry): entry is ZeroKvEntry => entry !== undefined)
+      .map((entry) => cloneEntry(entry));
+  }
+
+  /** @internal Return the physical entry count, including retained logical expiry state. */
+  storedEntryCount(): number {
+    return this.entriesByKey.size;
+  }
+
+  /** @internal Count physical entries logically expired at one cleanup boundary. */
+  expiredEntryCountAt(timestamp: number): number {
+    let count = 0;
+    for (const entry of this.entriesByKey.values()) {
+      if (entry.expiresAt !== null && entry.expiresAt <= timestamp) count += 1;
+    }
+    return count;
   }
 
   /** Restore checkpointed entries into the memory engine. */
-  restoreEntries(entries: Iterable<ZeroKvEntry>, options: { clear?: boolean } = {}): void {
+  restoreEntries(
+    entries: Iterable<ZeroKvEntry>,
+    options: { clear?: boolean; retainExpired?: boolean; capacityTime?: number } = {}
+  ): void {
     if (options.clear) this.clear();
-    const now = this.clock.now();
+    const now = options.capacityTime ?? this.clock.now();
 
     for (const input of entries) {
       validateKey(input.key);
-      if (input.expiresAt !== null && input.expiresAt <= now) {
+      if (!Number.isSafeInteger(input.version) || input.version < 0) {
+        throw new KvError('KV_VALUE_INVALID', 'KV entry version must be a non-negative safe integer.', {
+          key: input.key,
+          version: input.version,
+        });
+      }
+      if (!options.retainExpired && input.expiresAt !== null && input.expiresAt <= now) {
         this.expiredEntries += 1;
         continue;
       }
@@ -263,11 +325,68 @@ export class KvMemoryEngine {
         ...input,
         sizeBytes: estimateKvValueSize(input.value),
       };
-      this.writeRestoredEntry(entry);
+      this.writeRestoredEntry(entry, options.capacityTime);
       if (entry.version >= this.nextVersion) this.nextVersion = entry.version + 1;
     }
 
-    this.enforceLimits('');
+    this.enforceLimits('', now);
+  }
+
+  /** Reject a write that cannot fit when automatic eviction is disabled. */
+  assertCanStore(key: string, value: unknown, capacityTime = this.clock.now()): void {
+    validateKey(key);
+    if (this.eviction !== 'none') return;
+    const { entries: projectedEntries, bytes: projectedBytes } = this.projectedCapacity(
+      key,
+      estimateKvValueSize(value),
+      capacityTime
+    );
+    if (
+      (this.maxEntries !== null && projectedEntries > this.maxEntries)
+      || (this.maxBytes !== null && projectedBytes > this.maxBytes)
+    ) {
+      throw new KvError('KV_EVICTION_REQUIRED', 'KV memory engine exceeded configured limits.', {
+        maxEntries: this.maxEntries,
+        maxBytes: this.maxBytes,
+      });
+    }
+  }
+
+  /** Reserve bounded no-eviction capacity across an asynchronous WAL append. */
+  reserveStoreCapacity(
+    key: string,
+    value: unknown,
+    capacityTime = this.clock.now()
+  ): () => void {
+    validateKey(key);
+    if (this.eviction !== 'none') return () => undefined;
+    if (this.capacityReservations.has(key)) {
+      throw new KvError('KV_RECOVERY_FAILED', 'KV key already has an active capacity reservation.', { key });
+    }
+
+    const sizeBytes = estimateKvValueSize(value);
+    const { entries: projectedEntries, bytes: projectedBytes } = this.projectedCapacity(
+      key,
+      sizeBytes,
+      capacityTime
+    );
+    if (
+      (this.maxEntries !== null && projectedEntries > this.maxEntries)
+      || (this.maxBytes !== null && projectedBytes > this.maxBytes)
+    ) {
+      throw new KvError('KV_EVICTION_REQUIRED', 'KV memory engine exceeded configured limits.', {
+        maxEntries: this.maxEntries,
+        maxBytes: this.maxBytes,
+      });
+    }
+
+    this.capacityReservations.set(key, sizeBytes);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.capacityReservations.delete(key);
+    };
   }
 
   /** Remove expired keys and return the number pruned. */
@@ -288,11 +407,14 @@ export class KvMemoryEngine {
   }
 
   /** Return diagnostic counters for the memory engine. */
-  stats(): KvMemoryEngineStats {
-    this.pruneExpired();
+  stats(options: { pruneExpired?: boolean } = {}): KvMemoryEngineStats {
+    if (options.pruneExpired !== false) this.pruneExpired();
+    const capacity = options.pruneExpired === false
+      ? this.liveCapacity()
+      : { entries: this.entriesByKey.size, bytes: this.approximateBytes };
     return {
-      entries: this.entriesByKey.size,
-      approximateBytes: this.approximateBytes,
+      entries: capacity.entries,
+      approximateBytes: capacity.bytes,
       maxEntries: this.maxEntries,
       maxBytes: this.maxBytes,
       expiredEntries: this.expiredEntries,
@@ -306,39 +428,58 @@ export class KvMemoryEngine {
     if (!entry) return null;
 
     const now = this.clock.now();
+    // Reads treat expired entries as absent without physically deleting them.
+    // A durable mutation may already have made a decision at an earlier clock
+    // value while its journal append is still pending; destructive reads would
+    // remove the historical state that mutation and recovery both need.
     if (entry.expiresAt !== null && entry.expiresAt <= now) {
-      this.removeEntry(key);
-      this.expiredEntries += 1;
+      if (this.readPrunesExpired) {
+        this.removeEntry(key);
+        this.expiredEntries += 1;
+      }
       return null;
     }
 
     return entry;
   }
 
-  private writeEntry(entry: ZeroKvEntry): void {
-    const existing = this.entriesByKey.get(entry.key);
-    if (existing) this.approximateBytes -= existing.sizeBytes;
-
-    this.entriesByKey.set(entry.key, entry);
-    this.approximateBytes += entry.sizeBytes;
-    this.lruIndex.touch(entry.key);
-
-    if (entry.expiresAt === null) this.ttlIndex.cancel(entry.key);
-    else this.ttlIndex.schedule(entry.key, entry.expiresAt);
-
-    this.enforceLimits(entry.key);
+  private allocateVersion(): number {
+    if (!Number.isSafeInteger(this.nextVersion) || this.nextVersion <= 0) {
+      throw new KvError('KV_LIMIT_INVALID', 'KV entry version space is exhausted.', {
+        version: this.nextVersion,
+      });
+    }
+    return this.nextVersion++;
   }
 
-  private writeRestoredEntry(entry: ZeroKvEntry): void {
-    const existing = this.entriesByKey.get(entry.key);
+  private writeEntry(entry: ZeroKvEntry): void {
+    const stored = { ...entry, value: snapshotKvValue(entry.value) };
+    this.assertCanStore(stored.key, stored.value);
+    const existing = this.entriesByKey.get(stored.key);
     if (existing) this.approximateBytes -= existing.sizeBytes;
 
-    this.entriesByKey.set(entry.key, entry);
-    this.approximateBytes += entry.sizeBytes;
-    this.lruIndex.touch(entry.key);
+    this.entriesByKey.set(stored.key, stored);
+    this.approximateBytes += stored.sizeBytes;
+    this.lruIndex.touch(stored.key);
 
-    if (entry.expiresAt === null) this.ttlIndex.cancel(entry.key);
-    else this.ttlIndex.schedule(entry.key, entry.expiresAt);
+    if (stored.expiresAt === null) this.ttlIndex.cancel(stored.key);
+    else this.ttlIndex.schedule(stored.key, stored.expiresAt);
+
+    this.enforceLimits(stored.key);
+  }
+
+  private writeRestoredEntry(entry: ZeroKvEntry, capacityTime?: number): void {
+    const stored = { ...entry, value: snapshotKvValue(entry.value) };
+    this.assertCanStore(stored.key, stored.value, capacityTime);
+    const existing = this.entriesByKey.get(stored.key);
+    if (existing) this.approximateBytes -= existing.sizeBytes;
+
+    this.entriesByKey.set(stored.key, stored);
+    this.approximateBytes += stored.sizeBytes;
+    this.lruIndex.touch(stored.key);
+
+    if (stored.expiresAt === null) this.ttlIndex.cancel(stored.key);
+    else this.ttlIndex.schedule(stored.key, stored.expiresAt);
   }
 
   private removeEntry(key: string): boolean {
@@ -353,9 +494,9 @@ export class KvMemoryEngine {
     return true;
   }
 
-  private enforceLimits(protectedKey: string): void {
+  private enforceLimits(protectedKey: string, capacityTime = this.clock.now()): void {
     if (this.eviction === 'none') {
-      if (this.isOverLimit()) {
+      if (this.isOverLimit(capacityTime)) {
         throw new KvError('KV_EVICTION_REQUIRED', 'KV memory engine exceeded configured limits.', {
           maxEntries: this.maxEntries,
           maxBytes: this.maxBytes,
@@ -364,10 +505,10 @@ export class KvMemoryEngine {
       return;
     }
 
-    while (this.isOverLimit()) {
-      const candidate = this.lruIndex.oldest(1)[0];
+    while (this.isOverLimit(capacityTime)) {
+      const candidate = this.oldestLiveKey(capacityTime);
       if (!candidate) break;
-      if (candidate === protectedKey && this.entriesByKey.size === 1) {
+      if (candidate === protectedKey && this.liveCapacity(capacityTime).entries === 1) {
         this.removeEntry(candidate);
         this.evictedEntries += 1;
         break;
@@ -381,11 +522,54 @@ export class KvMemoryEngine {
     }
   }
 
-  private isOverLimit(): boolean {
+  private isOverLimit(capacityTime = this.clock.now()): boolean {
+    const capacity = this.liveCapacity(capacityTime);
     return (
-      (this.maxEntries !== null && this.entriesByKey.size > this.maxEntries) ||
-      (this.maxBytes !== null && this.approximateBytes > this.maxBytes)
+      (this.maxEntries !== null && capacity.entries > this.maxEntries) ||
+      (this.maxBytes !== null && capacity.bytes > this.maxBytes)
     );
+  }
+
+  private oldestLiveKey(now = this.clock.now()): string | undefined {
+    for (const key of this.lruIndex.orderedKeys()) {
+      const entry = this.entriesByKey.get(key);
+      if (!entry) continue;
+      if (entry.expiresAt !== null && entry.expiresAt <= now) continue;
+      return key;
+    }
+    return undefined;
+  }
+
+  private liveCapacity(now = this.clock.now()): { entries: number; bytes: number } {
+    let entries = 0;
+    let bytes = 0;
+    for (const entry of this.entriesByKey.values()) {
+      if (entry.expiresAt !== null && entry.expiresAt <= now) continue;
+      entries += 1;
+      bytes += entry.sizeBytes;
+    }
+    return { entries, bytes };
+  }
+
+  private projectedCapacity(key: string, sizeBytes: number, capacityTime = this.clock.now()): {
+    entries: number;
+    bytes: number;
+  } {
+    let entries = 1;
+    let bytes = sizeBytes;
+
+    for (const entry of this.entriesByKey.values()) {
+      if (entry.key === key || this.capacityReservations.has(entry.key)) continue;
+      if (entry.expiresAt !== null && entry.expiresAt <= capacityTime) continue;
+      entries += 1;
+      bytes += entry.sizeBytes;
+    }
+    for (const [reservedKey, reservedSize] of this.capacityReservations) {
+      if (reservedKey === key) continue;
+      entries += 1;
+      bytes += reservedSize;
+    }
+    return { entries, bytes };
   }
 
   private resolveWriteExpiry(ttlMs: number | null | undefined, fallback: number | null): number | null {
@@ -434,5 +618,5 @@ function normalizeBucketMs(value: number | undefined): number {
 }
 
 function cloneEntry<T>(entry: ZeroKvEntry<T>): ZeroKvEntry<T> {
-  return { ...entry };
+  return { ...entry, value: snapshotKvValue(entry.value) };
 }

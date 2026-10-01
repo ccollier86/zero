@@ -7,7 +7,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import { systemKvClock } from './kv-clock';
@@ -16,6 +16,7 @@ import {
   KV_PERSISTENCE_FORMAT_VERSION,
   parseKvCheckpoint,
   serializeKvCheckpoint,
+  validateKvCheckpointPayload,
   type KvCheckpointPayload,
 } from './kv-serializer';
 import type { KvClock, ZeroKvEntry } from './kv-types';
@@ -32,6 +33,7 @@ export class KvCheckpointStore {
   private readonly baseDir: string;
   private readonly fileName: string;
   private readonly clock: KvClock;
+  private namespaceDurabilityEstablished = false;
 
   /** Create a checkpoint store rooted under a base directory. */
   constructor(config: KvCheckpointConfig = {}) {
@@ -41,38 +43,69 @@ export class KvCheckpointStore {
   }
 
   /** Write live entries and the latest covered journal sequence atomically. */
-  async write(entries: Iterable<ZeroKvEntry>, sequence: number): Promise<KvCheckpointPayload> {
-    const payload: KvCheckpointPayload = {
+  async write(
+    entries: Iterable<ZeroKvEntry>,
+    sequence: number,
+    timestamp = this.clock.now()
+  ): Promise<KvCheckpointPayload> {
+    const candidate: KvCheckpointPayload = {
       version: KV_PERSISTENCE_FORMAT_VERSION,
       sequence,
-      timestamp: this.clock.now(),
+      timestamp,
       entries: [...entries],
     };
-    await mkdir(this.baseDir, { recursive: true });
+    let serialized: string;
+    let payload: KvCheckpointPayload;
+    try {
+      payload = validateKvCheckpointPayload(candidate);
+      serialized = serializeKvCheckpoint(payload);
+      // Validate the exact JSON round-trip before replacing the last known-good
+      // checkpoint. JSON.stringify can silently omit unsupported values or
+      // coerce non-finite numbers, so validating only the source object is not
+      // sufficient.
+      payload = parseKvCheckpoint(serialized);
+      serialized = serializeKvCheckpoint(payload);
+    } catch (error) {
+      throw new KvError('KV_CHECKPOINT_INVALID', 'KV checkpoint could not be serialized.', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     const target = this.path();
     const temp = `${target}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temp, serializeKvCheckpoint(payload));
-    await rename(temp, target).catch(async () => {
-      await rm(target, { force: true });
-      try {
-        await rename(temp, target);
-      } catch (error) {
-        await rm(temp, { force: true });
-        throw error;
+    try {
+      await mkdir(this.baseDir, { recursive: true });
+      await writeAndSyncFile(temp, serialized);
+      // Same-directory rename atomically replaces the prior checkpoint. Never
+      // delete the last known-good target as a fallback when replacement fails.
+      await rename(temp, target);
+      if (this.namespaceDurabilityEstablished) {
+        await fsyncDirectory(this.baseDir);
+      } else {
+        await fsyncDirectoryChain(this.baseDir);
+        this.namespaceDurabilityEstablished = true;
       }
-    });
+    } catch (error) {
+      await rm(temp, { force: true }).catch(() => undefined);
+      throw checkpointPersistenceError('write', target, error);
+    }
     return payload;
   }
 
   /** Read the latest checkpoint, returning null when none exists. */
   async read(): Promise<KvCheckpointPayload | null> {
+    let text: string;
     try {
-      return parseKvCheckpoint(await readFile(this.path(), 'utf8'));
+      text = await readFile(this.path(), 'utf8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw checkpointPersistenceError('read', this.path(), error);
+    }
+    try {
+      return parseKvCheckpoint(text);
+    } catch (error) {
       if (error instanceof KvError) throw error;
-      throw new KvError('KV_CHECKPOINT_INVALID', 'KV checkpoint could not be read.', {
+      throw new KvError('KV_CHECKPOINT_INVALID', 'KV checkpoint contents are invalid.', {
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -82,4 +115,45 @@ export class KvCheckpointStore {
   path(): string {
     return path.join(this.baseDir, this.fileName);
   }
+}
+
+async function fsyncDirectoryChain(directory: string): Promise<void> {
+  let current = path.resolve(directory);
+  while (true) {
+    await fsyncDirectory(current);
+    const parent = path.dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
+}
+
+async function writeAndSyncFile(filePath: string, contents: string): Promise<void> {
+  const handle = await open(filePath, 'wx');
+  try {
+    await handle.writeFile(contents);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function fsyncDirectory(directory: string): Promise<void> {
+  const handle = await open(directory, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+function checkpointPersistenceError(
+  operation: 'read' | 'write',
+  filePath: string,
+  error: unknown
+): KvError {
+  if (error instanceof KvError && error.code === 'KV_PERSISTENCE_FAILED') return error;
+  return new KvError('KV_PERSISTENCE_FAILED', `KV checkpoint ${operation} failed.`, {
+    path: filePath,
+    error: error instanceof Error ? error.message : String(error),
+  });
 }

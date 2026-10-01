@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
+import { installAppStopBarrier } from '../frontend/server/app-stop-lifecycle';
 
 import {
   authenticatedOnly,
@@ -22,14 +23,23 @@ import type {
 } from './types';
 
 interface TestApp {
-  stop(): void;
-  server: { hostname?: string; port?: number } | null;
+  stop(closeActiveConnections?: boolean): unknown;
+  server: {
+    hostname?: string;
+    port?: number;
+    pendingRequests?: number;
+    pendingWebSockets?: number;
+    stop(closeActiveConnections?: boolean): unknown;
+    unref?(): unknown;
+  } | null;
 }
 
 let activeApp: TestApp | null = null;
 
-afterEach(() => {
-  activeApp?.stop();
+afterEach(async () => {
+  if (activeApp) {
+    await installAppStopBarrier(activeApp, async () => {}).stop(true);
+  }
   activeApp = null;
 });
 

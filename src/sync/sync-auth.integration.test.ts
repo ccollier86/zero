@@ -8,6 +8,7 @@
 
 import { describe, test, expect, afterEach } from 'bun:test';
 import { Elysia } from 'elysia';
+import { installAppStopBarrier } from '../frontend/server/app-stop-lifecycle';
 import { createSyncPlugin } from './sync.plugin';
 import type { ServerMessage, SyncTokenVerifier } from './types';
 
@@ -157,8 +158,8 @@ async function connectWS(
   };
 }
 
-afterEach(() => {
-  app?.stop();
+afterEach(async () => {
+  if (app) await installAppStopBarrier(app, async () => {}).stop(true);
   app = null;
 });
 

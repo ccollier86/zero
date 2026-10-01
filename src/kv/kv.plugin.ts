@@ -9,10 +9,14 @@
 import { Elysia } from 'elysia';
 
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
+import { emitPlatformCode, emitPlatformCodeTo } from '../observability/sink';
+import { KvError } from './kv-errors';
 import { KvService, type KvServiceConfig } from './kv-service';
 import { CompatibilityProviderRegistry } from '../runtime/compatibility-provider-registry';
-import { ZERO_KV_SERVICE } from '../runtime/service-keys';
+import {
+  ZERO_KV_SERVICE,
+  ZERO_OBSERVABILITY_RUNTIME,
+} from '../runtime/service-keys';
 import type { ZeroAppRuntime } from '../runtime/zero-app-runtime';
 
 const kvProviders = new CompatibilityProviderRegistry<KvService>('KV service');
@@ -38,6 +42,8 @@ export interface KvPluginConfig extends KvServiceConfig {
   runtime?: ZeroAppRuntime;
   /** Composition callback for app factories and advanced integrations. */
   onServiceCreated?: (service: KvService) => void;
+  /** Cached startup boundary used by managed app factories before publication. */
+  onInitializerCreated?: (initialize: () => Promise<void>) => void;
 }
 
 /**
@@ -47,10 +53,18 @@ export interface KvPluginConfig extends KvServiceConfig {
  * context. It does not register public HTTP routes.
  */
 export function createKvPlugin(config: KvPluginConfig = {}) {
-  const service = config.service ?? new KvService(config);
+  const observability = config.runtime?.require(ZERO_OBSERVABILITY_RUNTIME) ?? null;
+  const emitCode: typeof emitPlatformCode = observability
+    ? (definition, options) => emitPlatformCodeTo(observability, definition, options)
+    : config.emitCode ?? emitPlatformCode;
+  const service = config.service ?? new KvService({ ...config, emitCode });
   const owner = {};
   let registration: ReturnType<typeof kvProviders.register> | null = null;
   let startupPromise: Promise<void> | null = null;
+  let stoppingPromise: Promise<void> | null = null;
+  let disposed = false;
+  let started = false;
+  let stopOutcomeReported = false;
   config.runtime?.set(ZERO_KV_SERVICE, service);
   config.onServiceCreated?.(service);
   const clearRegistration = () => {
@@ -58,18 +72,22 @@ export function createKvPlugin(config: KvPluginConfig = {}) {
     clearKvService(service);
   };
   const ensureStarted = (): Promise<void> => {
+    if (disposed) {
+      return Promise.reject(new KvError(
+        'KV_SERVICE_STOPPING',
+        'KV plugin cannot restart after its owning app begins shutdown.',
+      ));
+    }
     if (startupPromise) return startupPromise;
     startupPromise = (async () => {
       try {
         await service.start();
-        emitPlatformCode(OBS_CODES.KV_STARTED, {
+        started = true;
+        emitCode(OBS_CODES.KV_STARTED, {
           metadata: { ...service.status() },
         });
       } catch (error) {
-        emitPlatformCode(OBS_CODES.KV_START_FAILED, {
-          error,
-          metadata: { error: error instanceof Error ? error.message : String(error) },
-        });
+        emitCode(OBS_CODES.KV_START_FAILED, { error });
         throw error;
       }
     })();
@@ -79,36 +97,49 @@ export function createKvPlugin(config: KvPluginConfig = {}) {
     void startupPromise.catch(() => undefined);
     return startupPromise;
   };
+  const stopService = (reportSuccess: boolean): Promise<void> => {
+    disposed = true;
+    stoppingPromise ??= service.stop();
+    return stoppingPromise.then(
+      () => {
+        if (stopOutcomeReported) return;
+        stopOutcomeReported = true;
+        if (reportSuccess && started) emitCode(OBS_CODES.KV_STOPPED);
+      },
+      (error: unknown) => {
+        if (!stopOutcomeReported) {
+          stopOutcomeReported = true;
+          emitCode(OBS_CODES.KV_STOP_FAILED, { error });
+        }
+        throw error;
+      },
+    ).finally(clearRegistration);
+  };
+  config.onInitializerCreated?.(ensureStarted);
   config.runtime?.addCleanup(async () => {
     // createApp's stop barrier awaits runtime cleanup because Bun/Elysia does
     // not await async onStop hooks. Join the final flush/checkpoint here so an
     // app cannot report itself stopped while KV still owns its files.
-    try {
-      await service.stop();
-    } finally {
-      clearRegistration();
-    }
+    await stopService(true);
   });
 
   return new Elysia({ name: 'kv' })
     .onStart((lifecycle) => {
       void ensureStarted().then(() => {
-        if (!registration) {
+        if (!disposed && !registration) {
           registration = kvProviders.register(owner, () => service);
           kvRegistrations.set(service, registration);
         }
       }).catch(async (startupError) => {
         try {
-          await service.stop();
-        } catch (cleanupError) {
-          emitPlatformCode(OBS_CODES.KV_STOP_FAILED, { error: cleanupError });
-        } finally {
-          clearRegistration();
+          await stopService(false);
+        } catch {
+          // stopService reports the shared cleanup failure exactly once.
         }
         try {
           await lifecycle.server?.stop(true);
         } catch (transportError) {
-          emitPlatformCode(OBS_CODES.APP_LIFECYCLE_FAILED, {
+          emitCode(OBS_CODES.APP_LIFECYCLE_FAILED, {
             error: new AggregateError(
               [startupError, transportError],
               '[kv] Startup failed and the listener could not be stopped.',
@@ -118,19 +149,12 @@ export function createKvPlugin(config: KvPluginConfig = {}) {
         }
       });
     })
-    .onRequest(() => ensureStarted())
-    .onStop(async () => {
-      try {
-        await service.stop();
-        emitPlatformCode(OBS_CODES.KV_STOPPED);
-      } catch (error) {
-        emitPlatformCode(OBS_CODES.KV_STOP_FAILED, {
-          metadata: { error: error instanceof Error ? error.message : String(error) },
-        });
-        throw error;
-      } finally {
-        clearRegistration();
-      }
+    .onBeforeHandle({ as: 'global' }, () => ensureStarted())
+    .onStop(() => {
+      // Bun/Elysia does not await async onStop hooks. Managed apps observe the
+      // same cached result through the runtime cleanup barrier; standalone
+      // failures are already emitted here and must not become unhandled.
+      void stopService(true).catch(() => undefined);
     })
     .derive({ as: 'global' }, () => ({
       kv: service,

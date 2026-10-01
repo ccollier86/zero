@@ -19,6 +19,9 @@ export type ZeroKvKind =
 /** Eviction strategy used when the memory engine exceeds configured bounds. */
 export type KvEvictionPolicy = 'none' | 'lru';
 
+/** Recency signal used by bounded LRU eviction. */
+export type KvEvictionRecency = 'access' | 'mutation';
+
 /** Clock boundary used to keep TTL and recovery tests deterministic. */
 export interface KvClock {
   /** Return the current epoch time in milliseconds. */
@@ -37,6 +40,8 @@ export interface KvMemoryEngineOptions {
   maxBytes?: number;
   /** Eviction policy used when maxEntries or maxBytes is exceeded. Default: lru. */
   eviction?: KvEvictionPolicy;
+  /** Recency signal for LRU eviction. Standalone memory engines default to access. */
+  evictionRecency?: KvEvictionRecency;
   /** Bucket size for TTL scheduling. Default: 250ms. */
   ttlBucketMs?: number;
 }

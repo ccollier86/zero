@@ -203,13 +203,13 @@ describe('KvService', () => {
     try {
       await service.start();
       await waitFor(() => events.query({
-        code: OBS_CODES.KV_BACKGROUND_PERSIST_FAILED.code,
+        code: OBS_CODES.KV_FLUSH_FAILED.code,
       }).events.length > 0);
 
       const [event] = events.query({
-        code: OBS_CODES.KV_BACKGROUND_PERSIST_FAILED.code,
+        code: OBS_CODES.KV_FLUSH_FAILED.code,
       }).events;
-      expect(event?.metadata?.operation).toBe('flush');
+      expect(event?.metadata?.trigger).toBe('interval');
       expect(event?.error).toBe(failure);
     } finally {
       failFlush = false;

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Elysia } from 'elysia';
 
+import { installAppStopBarrier } from '../frontend/server/app-stop-lifecycle';
 import { createSyncPlugin } from './sync.plugin';
 import { SYNC_INGRESS_MAX_PENDING_MESSAGES } from './sync-socket-ingress';
 import type { SyncTokenVerifier } from './types';
@@ -56,8 +57,8 @@ describe('Sync ingress integration', () => {
   });
 });
 
-afterEach(() => {
-  app?.stop();
+afterEach(async () => {
+  if (app) await installAppStopBarrier(app, async () => {}).stop(true);
   app = null;
 });
 

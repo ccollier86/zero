@@ -16,7 +16,7 @@ import {
   type NormalizedAuthBehaviorConfig,
 } from '../../auth/types';
 import type { EmailRuntime } from '../../email';
-import { createKvPlugin, type KvService } from '../../kv';
+import { createKvPlugin } from '../../kv';
 import { createNotificationPlugin } from '../../notifications/notification.plugin';
 import { createObservabilityPlugin } from '../../observability';
 import { createPdfPlugin } from '../../pdf';
@@ -83,7 +83,7 @@ export function mountPlatformServices({
   };
   const managedStartup: {
     auth: AuthRuntime | null;
-    kv: KvService | null;
+    kv: (() => Promise<void>) | null;
     workflows: (() => Promise<void>) | null;
   } = { auth: null, kv: null, workflows: null };
 
@@ -158,8 +158,8 @@ export function mountPlatformServices({
     app.use(createKvPlugin({
       ...config.kv,
       runtime,
-      onServiceCreated(service) {
-        managedStartup.kv = service;
+      onInitializerCreated(initialize) {
+        managedStartup.kv = initialize;
       },
     }));
   }
@@ -213,7 +213,7 @@ export function mountPlatformServices({
   return {
     async start() {
       await managedStartup.auth?.start();
-      await managedStartup.kv?.start();
+      await managedStartup.kv?.();
       await managedStartup.workflows?.();
     },
   };
@@ -228,7 +228,7 @@ interface WorkflowMountInput {
   readonly authorization: AuthMiddlewareAuthorizationOptions;
   readonly managedStartup: {
     auth: AuthRuntime | null;
-    kv: KvService | null;
+    kv: (() => Promise<void>) | null;
     workflows: (() => Promise<void>) | null;
   };
 }

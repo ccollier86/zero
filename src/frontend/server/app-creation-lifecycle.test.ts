@@ -28,10 +28,12 @@ describe.serial('createApp composition lifecycle', () => {
       [appA, appB] = await Promise.all([
         createApp(config(rootA, {
           app: { name: 'Alpha' },
+          kv: { durability: 'memory' },
           observability: { console: false, store: eventsA },
         })),
         createApp(config(rootB, {
           app: { name: 'Beta' },
+          kv: { durability: 'memory' },
           observability: { console: false, store: eventsB },
         })),
       ]);
@@ -40,13 +42,19 @@ describe.serial('createApp composition lifecycle', () => {
       expect(styleOutcomeCount(eventsA)).toBe(1);
       expect(bundleOutcomeCount(eventsB)).toBe(1);
       expect(styleOutcomeCount(eventsB)).toBe(1);
+      expect(eventsA.query({ code: OBS_CODES.KV_STARTED.code }).count).toBe(1);
+      expect(eventsB.query({ code: OBS_CODES.KV_STARTED.code }).count).toBe(1);
 
       appA.listen(0);
       appB.listen(0);
+      expect(eventsA.query({ code: OBS_CODES.KV_STARTED.code }).count).toBe(1);
+      expect(eventsB.query({ code: OBS_CODES.KV_STARTED.code }).count).toBe(1);
       await appB.stop();
       appB = null;
       await appA.stop();
       appA = null;
+      expect(eventsA.query({ code: OBS_CODES.KV_STOPPED.code }).count).toBe(1);
+      expect(eventsB.query({ code: OBS_CODES.KV_STOPPED.code }).count).toBe(1);
     } finally {
       if (appB) await appB.stop();
       if (appA) await appA.stop();
@@ -113,6 +121,9 @@ describe.serial('createApp composition lifecycle', () => {
       }))).rejects.toThrow();
 
       expect(getKvService()).toBeNull();
+      expect(events.query({ code: OBS_CODES.KV_START_FAILED.code }).count).toBe(1);
+      expect(events.query({ code: OBS_CODES.KV_STARTED.code }).count).toBe(0);
+      expect(events.query({ code: OBS_CODES.KV_STOPPED.code }).count).toBe(0);
       expect(events.query({
         code: OBS_CODES.PERSISTENCE_SQL_CLOSED.code,
       }).events).toHaveLength(2);

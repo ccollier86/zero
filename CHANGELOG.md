@@ -292,6 +292,21 @@ All notable Zero Platform changes are tracked here.
 
 ### Fixed
 
+- Made KV same-key mutations genuinely atomic within one service instance.
+  Compare-and-set, counters, and all limiter shapes now make their decision and
+  commit under one per-key boundary, return the result produced by their own
+  mutation, use one recorded timestamp across decision and replay, preserve
+  independent-key concurrency for unbounded stores, and coordinate globally
+  when bounded capacity can evict unrelated keys. Durable journals now use a
+  strict v2 sequence format with compatible v1 migration, exact result capture,
+  crash-durable file/directory sync, torn-tail repair, journaled TTL cleanup,
+  and atomic fsynced checkpoints. Startup gates downstream Elysia routes until
+  recovery completes; managed lifecycle and background-persistence events stay
+  bound to their owning app runtime. Granular flush/checkpoint failure codes
+  are dual-emitted with the deprecated background-persistence umbrella code
+  during a compatibility window. Deterministic concurrency, lifecycle,
+  persistence, checkpoint, upgrade, failure, and restart coverage protects the
+  contract.
 - Made Fabric coordinator existing-only acquisition prove the target file
   exists before reserving or evicting capacity, then recheck after admission to
   close disappearance races. Missing targets no longer evict a healthy idle
