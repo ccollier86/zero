@@ -55,6 +55,11 @@ export const OBS_CODES = {
   KV_STOPPED: code('kv', 'stopped', 'info', 'Platform KV/cache service stopped.'),
   KV_START_FAILED: code('kv', 'start.failed', 'error', 'Platform KV/cache service failed to start.'),
   KV_STOP_FAILED: code('kv', 'stop.failed', 'error', 'Platform KV/cache service failed to stop cleanly.'),
+  KV_FLUSH_FAILED: code('kv', 'flush.failed', 'error', 'Platform KV/cache journal flush failed.'),
+  KV_CHECKPOINT_FAILED: code('kv', 'checkpoint.failed', 'error', 'Platform KV/cache checkpoint failed.'),
+  KV_JOURNAL_TAIL_RECOVERED: code('kv', 'journal.tail_recovered', 'warn', 'Platform KV/cache removed an incomplete final journal record.'),
+  KV_LEGACY_PERSISTENCE_MIGRATED: code('kv', 'persistence.legacy_migrated', 'warn', 'Platform KV/cache migrated legacy persistence records.'),
+  KV_RECOVERY_RECORDS_SKIPPED: code('kv', 'recovery.records_skipped', 'warn', 'Platform KV/cache skipped persistence data under the configured recovery policy.'),
 
   AUTH_STARTED: code('auth', 'started', 'info', 'Auth plugin started.'),
   AUTH_STOPPED: code('auth', 'stopped', 'info', 'Auth plugin stopped.'),

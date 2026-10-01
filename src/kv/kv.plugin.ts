@@ -50,10 +50,16 @@ export function createKvPlugin(config: KvPluginConfig = {}) {
         });
       } catch (error) {
         emitPlatformCode(OBS_CODES.KV_START_FAILED, {
-          metadata: { error: error instanceof Error ? error.message : String(error) },
+          error,
         });
         throw error;
       }
+    })
+    .onBeforeHandle({ as: 'global' }, async function waitForKvReadiness() {
+      // Elysia begins accepting connections before asynchronous onStart hooks
+      // necessarily settle. Gate every downstream route on KV recovery so the
+      // first request cannot observe an empty engine or race a rejected write.
+      await service.start();
     })
     .onStop(async () => {
       try {
@@ -62,7 +68,7 @@ export function createKvPlugin(config: KvPluginConfig = {}) {
         emitPlatformCode(OBS_CODES.KV_STOPPED);
       } catch (error) {
         emitPlatformCode(OBS_CODES.KV_STOP_FAILED, {
-          metadata: { error: error instanceof Error ? error.message : String(error) },
+          error,
         });
         throw error;
       }

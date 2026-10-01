@@ -29,4 +29,36 @@ describe('createKvPlugin', () => {
 
     expect(body).toEqual({ value: 'ok', count: 1 });
   });
+
+  test('waits for KV startup before serving downstream routes', async () => {
+    const service = new KvService({ durability: 'memory' });
+    const originalStart = service.start.bind(service);
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    let routeHandled = false;
+
+    service.start = async () => {
+      await startGate;
+      await originalStart();
+    };
+
+    const app = new Elysia()
+      .use(createKvPlugin({ service }))
+      .get('/ready', () => {
+        routeHandled = true;
+        return service.status().started;
+      });
+
+    const responsePromise = app.handle(new Request('http://localhost/ready'));
+    await Promise.resolve();
+    expect(routeHandled).toBe(false);
+
+    releaseStart();
+    const response = await responsePromise;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toBe(true);
+    expect(routeHandled).toBe(true);
+  });
 });

@@ -37,13 +37,18 @@ export { recoverKvMemoryEngine } from './kv-recovery';
 export type { KvRecoveryConfig, KvRecoveryCorruptRecordPolicy, KvRecoveryResult } from './kv-recovery';
 export { KvNamespace } from './kv-namespace';
 export {
+  KV_LEGACY_PERSISTENCE_FORMAT_VERSION,
   KV_PERSISTENCE_FORMAT_VERSION,
   parseKvCheckpoint,
   parseKvJournalRecord,
   serializeKvCheckpoint,
   serializeKvJournalRecord,
 } from './kv-serializer';
-export type { KvCheckpointPayload, KvJournalRecord } from './kv-serializer';
+export type {
+  KvCheckpointPayload,
+  KvJournalRecord,
+  KvPersistenceFormatVersion,
+} from './kv-serializer';
 export { KvService } from './kv-service';
 export type { KvServiceConfig, KvServiceStatus } from './kv-service';
 export { estimateKvValueSize } from './kv-size';
@@ -53,6 +58,7 @@ export type {
   KvCompareAndSetResult,
   KvCounterOptions,
   KvEvictionPolicy,
+  KvEvictionRecency,
   KvMemoryEngineOptions,
   KvMemoryEngineStats,
   KvSetOptions,

@@ -69,6 +69,37 @@ describe('KvMemoryEngine', () => {
     expect(kv.stats().evictedEntries).toBe(1);
   });
 
+  test('can use deterministic mutation recency and preserves eviction order in snapshots', () => {
+    const kv = new KvMemoryEngine({ maxEntries: 2, evictionRecency: 'mutation' });
+    kv.set('a', 1);
+    kv.set('b', 2);
+    expect(kv.get<number>('a')).toBe(1);
+    kv.set('c', 3);
+
+    expect(kv.get('a')).toBeUndefined();
+    expect(kv.get<number>('b')).toBe(2);
+    expect(kv.get<number>('c')).toBe(3);
+
+    const restored = new KvMemoryEngine({ maxEntries: 2, evictionRecency: 'mutation' });
+    restored.restoreEntries(kv.entries());
+    restored.set('d', 4);
+    expect(restored.get('b')).toBeUndefined();
+    expect(restored.get<number>('c')).toBe(3);
+    expect(restored.get<number>('d')).toBe(4);
+  });
+
+  test('eagerly removes expired standalone entries during reads', () => {
+    const clock = new ManualKvClock(0);
+    const kv = new KvMemoryEngine({ clock, maxEntries: 1 });
+    for (let index = 0; index < 1000; index += 1) {
+      kv.set(`expired:${index}`, index, { ttlMs: 1 });
+      clock.advance(2);
+      expect(kv.get(`expired:${index}`)).toBeUndefined();
+    }
+    expect(kv.stats({ pruneExpired: false }).expiredEntries).toBe(1000);
+    expect(kv.stats({ pruneExpired: false }).entries).toBe(0);
+  });
+
   test('compareAndSet enforces entry versions', () => {
     const kv = new KvMemoryEngine();
     const first = kv.set('feature', 'off');
@@ -121,5 +152,10 @@ describe('KvMemoryEngine', () => {
     const kv = new KvMemoryEngine();
     expect(() => kv.set('', 'bad')).toThrow(KvError);
     expect(() => kv.set('bad-ttl', 'bad', { ttlMs: -1 })).toThrow(KvError);
+
+    const exhausted = new KvMemoryEngine();
+    const seed = kv.set('version-seed', true);
+    exhausted.restoreEntries([{ ...seed, version: Number.MAX_SAFE_INTEGER }]);
+    expect(() => exhausted.set('after-exhaustion', true)).toThrow(KvError);
   });
 });

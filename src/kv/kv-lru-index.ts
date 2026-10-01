@@ -34,4 +34,9 @@ export class KvLruIndex {
     }
     return result;
   }
+
+  /** Return every tracked key from least to most recently used. */
+  orderedKeys(): string[] {
+    return [...this.keys.keys()];
+  }
 }

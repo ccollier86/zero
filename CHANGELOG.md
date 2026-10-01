@@ -57,6 +57,17 @@ All notable Zero Platform changes are tracked here.
 
 ### Fixed
 
+- Made KV same-key mutations genuinely atomic within one service instance.
+  Compare-and-set, counters, and all limiter shapes now make their decision and
+  commit under one per-key boundary, return the result produced by their own
+  mutation, use one recorded timestamp across decision and replay, preserve
+  independent-key concurrency for unbounded stores, and coordinate globally
+  when bounded capacity can evict unrelated keys. Durable journals now use a
+  strict v2 sequence format with compatible v1 migration, exact result capture,
+  crash-durable file/directory sync, torn-tail repair, journaled TTL cleanup,
+  and atomic fsynced checkpoints. Startup gates downstream Elysia routes until
+  recovery completes, and deterministic concurrency, lifecycle, persistence,
+  checkpoint, upgrade, failure, and restart coverage protects the contract.
 - Hardened local auth navigation against external, scheme-relative, malformed,
   duplicate, recursive, backslash/control-character, and canonicalization-unsafe
   redirect targets. Login paths with equivalent trailing slashes are treated as

@@ -6,6 +6,7 @@
  */
 
 import type { KvService } from './kv-service';
+import { KV_ATOMIC_SET } from './kv-atomic-update';
 import { KvError } from './kv-errors';
 import type { KvClock } from './kv-types';
 
@@ -45,17 +46,24 @@ interface TokenBucketState {
   updatedAt: number;
 }
 
+interface FixedWindowState {
+  windowStart: number;
+  current: number;
+  updatedAt: number;
+}
+
 interface SlidingWindowState {
   windowStart: number;
   current: number;
   previous: number;
+  updatedAt?: number;
 }
 
 /** Rate limiter helpers exposed as `zero.limiter` in later runtime wiring. */
 export class KvLimiterService {
   constructor(
     private readonly service: KvService,
-    private readonly clock: KvClock
+    _clock: KvClock
   ) {}
 
   /** Apply a fixed-window rate limit. */
@@ -63,21 +71,36 @@ export class KvLimiterService {
     const limit = normalizePositive(options.limit, 'limit');
     const windowMs = normalizePositive(options.windowMs, 'windowMs');
     const cost = normalizeCost(options.cost);
-    const now = this.clock.now();
-    const windowStart = Math.floor(now / windowMs) * windowMs;
-    const resetAt = windowStart + windowMs;
-    const value = await this.service.increment(`limiter:fixed:${key}:${windowStart}`, cost, {
-      ttlMs: windowMs * 2,
-    });
-    const allowed = value <= limit;
+    const stateKey = `limiter:fixed-state:${key}`;
+    return this.service[KV_ATOMIC_SET]<FixedWindowState, KvLimiterResult>(stateKey, (stored, context) => {
+      const observedNow = context.evaluatedAt;
+      const now = Math.max(observedNow, stored?.updatedAt ?? stored?.windowStart ?? observedNow);
+      const windowStart = Math.floor(now / windowMs) * windowMs;
+      const legacyValue = stored === undefined
+        ? context.get<number>(`limiter:fixed:${key}:${windowStart}`)
+        : undefined;
+      const current = stored?.windowStart === windowStart
+        ? stored.current
+        : typeof legacyValue === 'number' && Number.isFinite(legacyValue)
+          ? legacyValue
+          : 0;
+      const value = current + cost;
+      const allowed = value <= limit;
+      const resetAt = windowStart + windowMs;
 
-    return {
-      allowed,
-      remaining: Math.max(0, limit - value),
-      resetAt,
-      retryAfterMs: allowed ? null : Math.max(0, resetAt - now),
-      value,
-    };
+      return {
+        value: { windowStart, current: value, updatedAt: now },
+        options: { kind: 'rate-limit' },
+        expiresAt: now + windowMs * 2,
+        result: {
+          allowed,
+          remaining: Math.max(0, limit - value),
+          resetAt,
+          retryAfterMs: allowed ? null : Math.max(0, resetAt - now),
+          value,
+        },
+      };
+    });
   }
 
   /** Apply a token-bucket rate limit. */
@@ -85,24 +108,32 @@ export class KvLimiterService {
     const capacity = normalizePositive(options.capacity, 'capacity');
     const refillPerSec = normalizePositive(options.refillPerSec, 'refillPerSec');
     const cost = normalizeCost(options.cost);
-    const now = this.clock.now();
     const stateKey = `limiter:bucket:${key}`;
-    const current = this.service.get<TokenBucketState>(stateKey);
-    const elapsedSec = current ? Math.max(0, (now - current.updatedAt) / 1000) : 0;
-    let tokens = Math.min(capacity, (current?.tokens ?? capacity) + elapsedSec * refillPerSec);
-    const allowed = tokens >= cost;
-    if (allowed) tokens -= cost;
+    const ttlMs = normalizeTtl(
+      options.ttlMs ?? Math.max(1000, Math.ceil((capacity / refillPerSec) * 2000))
+    );
+    return this.service[KV_ATOMIC_SET]<TokenBucketState, KvLimiterResult>(stateKey, (current, context) => {
+      const observedNow = context.evaluatedAt;
+      const now = Math.max(observedNow, current?.updatedAt ?? observedNow);
+      const elapsedSec = current ? Math.max(0, (now - current.updatedAt) / 1000) : 0;
+      let tokens = Math.min(capacity, (current?.tokens ?? capacity) + elapsedSec * refillPerSec);
+      const allowed = tokens >= cost;
+      if (allowed) tokens -= cost;
+      const retryAfterMs = allowed ? null : Math.ceil(((cost - tokens) / refillPerSec) * 1000);
 
-    const ttlMs = options.ttlMs ?? Math.max(1000, Math.ceil((capacity / refillPerSec) * 2000));
-    await this.service.set(stateKey, { tokens, updatedAt: now }, { kind: 'rate-limit', ttlMs });
-
-    return {
-      allowed,
-      remaining: Math.floor(tokens),
-      resetAt: allowed ? null : now + Math.ceil(((cost - tokens) / refillPerSec) * 1000),
-      retryAfterMs: allowed ? null : Math.ceil(((cost - tokens) / refillPerSec) * 1000),
-      value: tokens,
-    };
+      return {
+        value: { tokens, updatedAt: now },
+        options: { kind: 'rate-limit' },
+        expiresAt: now + ttlMs,
+        result: {
+          allowed,
+          remaining: Math.floor(tokens),
+          resetAt: retryAfterMs === null ? null : now + retryAfterMs,
+          retryAfterMs,
+          value: tokens,
+        },
+      };
+    });
   }
 
   /** Apply a weighted sliding-window rate limit. */
@@ -110,25 +141,32 @@ export class KvLimiterService {
     const limit = normalizePositive(options.limit, 'limit');
     const windowMs = normalizePositive(options.windowMs, 'windowMs');
     const cost = normalizeCost(options.cost);
-    const now = this.clock.now();
     const stateKey = `limiter:sliding:${key}`;
-    const windowStart = Math.floor(now / windowMs) * windowMs;
-    const current = normalizeSlidingState(this.service.get<SlidingWindowState>(stateKey), windowStart, windowMs);
-    const elapsed = now - current.windowStart;
-    const weight = Math.max(0, (windowMs - elapsed) / windowMs);
-    const weightedValue = current.current + current.previous * weight;
-    const allowed = weightedValue + cost <= limit;
-    if (allowed) current.current += cost;
-    await this.service.set(stateKey, current, { kind: 'rate-limit', ttlMs: windowMs * 2 });
+    return this.service[KV_ATOMIC_SET]<SlidingWindowState, KvLimiterResult>(stateKey, (stored, context) => {
+      const observedNow = context.evaluatedAt;
+      const now = Math.max(observedNow, stored?.updatedAt ?? stored?.windowStart ?? observedNow);
+      const windowStart = Math.floor(now / windowMs) * windowMs;
+      const current = normalizeSlidingState(stored, windowStart, windowMs);
+      const elapsed = now - current.windowStart;
+      const weight = Math.max(0, (windowMs - elapsed) / windowMs);
+      const weightedValue = current.current + current.previous * weight;
+      const allowed = weightedValue + cost <= limit;
+      if (allowed) current.current += cost;
 
-    const resetAt = current.windowStart + windowMs;
-    return {
-      allowed,
-      remaining: Math.max(0, Math.floor(limit - (allowed ? weightedValue + cost : weightedValue))),
-      resetAt,
-      retryAfterMs: allowed ? null : Math.max(0, resetAt - now),
-      value: allowed ? weightedValue + cost : weightedValue,
-    };
+      const resetAt = current.windowStart + windowMs;
+      return {
+        value: { ...current, updatedAt: now },
+        options: { kind: 'rate-limit' },
+        expiresAt: now + windowMs * 2,
+        result: {
+          allowed,
+          remaining: Math.max(0, Math.floor(limit - (allowed ? weightedValue + cost : weightedValue))),
+          resetAt,
+          retryAfterMs: allowed ? null : Math.max(0, resetAt - now),
+          value: allowed ? weightedValue + cost : weightedValue,
+        },
+      };
+    });
   }
 }
 
@@ -157,4 +195,15 @@ function normalizePositive(value: number, label: string): number {
 
 function normalizeCost(value: number | undefined): number {
   return normalizePositive(value ?? 1, 'cost');
+}
+
+function normalizeTtl(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new KvError(
+      'KV_TTL_INVALID',
+      'KV limiter ttlMs must be a finite positive number or zero.',
+      { value }
+    );
+  }
+  return value;
 }
