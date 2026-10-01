@@ -31,6 +31,8 @@ export interface TenantInvitationFormProps {
   continuation?: string;
   /** Host-owned override; omitted values return from `/login` to this local page. */
   signInHref?: string;
+  /** Prepare a host-owned secret handoff before sign-in; false or a throw cancels navigation. */
+  onBeforeSignIn?: () => boolean | void;
   onSuccess?: (result: AuthTenantInvitationAcceptanceResult) => void;
   className?: string;
 }
@@ -52,6 +54,7 @@ function TenantInvitationFormScope({
   token,
   continuation,
   signInHref,
+  onBeforeSignIn,
   onSuccess,
   className,
 }: TenantInvitationFormProps) {
@@ -277,12 +280,32 @@ function TenantInvitationFormScope({
           {submitting ? 'Joining and preparing…' : `Accept and join ${presentation.actionTerm}`}
         </Button>
       ) : (
-        <Button asChild className="w-full">
-          <a href={resolvedSignInHref}>Sign in as the invited account</a>
+        <Button
+          type="button"
+          className="w-full"
+          onClick={() => {
+            if (runBeforeTenantInvitationSignIn(onBeforeSignIn)) {
+              window.location.assign(resolvedSignInHref);
+            }
+          }}
+        >
+          Sign in as the invited account
         </Button>
       )}
     </div>
   );
+}
+
+/** @internal Synchronous navigation gate for host-owned credential handoffs. */
+export function runBeforeTenantInvitationSignIn(
+  callback: TenantInvitationFormProps['onBeforeSignIn'],
+): boolean {
+  try {
+    return callback?.() !== false;
+  } catch (cause) {
+    reportAuthUiError('prepareTenantInvitationSignIn', cause);
+    return false;
+  }
 }
 
 /** @internal Reset boundary for invitation, proof, and signed-in identity changes. */

@@ -14,6 +14,9 @@ import {
   CardTitle,
 } from '@zero/framework/components/ui/card';
 import { PlatformUserManagement } from '@zero/framework/react';
+import { useRouter } from '@zero/framework/react/hooks';
+
+import { PlatformMemberApiKeys } from '../../components/platform-member-api-keys';
 
 export const meta = {
   title: 'Platform operations | Guardian + Fabric Proof',
@@ -22,10 +25,13 @@ export const meta = {
 
 /** Presentation gate for the protected scope; every component reauthorizes server-side. */
 export default function PlatformPage() {
+  const router = useRouter();
   return (
     <AdministrationScopeGate fallback={<AdministrationScopeRequired />}>
       <div className="grid gap-6">
-        <PlatformAdministrationManagement />
+        <PlatformAdministrationManagement
+          onActorSessionInvalidated={() => router.replace('/login')}
+        />
         <section className="grid gap-3" aria-labelledby="platform-identities-heading">
           <div>
             <h2 id="platform-identities-heading" className="text-lg font-semibold">
@@ -39,6 +45,7 @@ export default function PlatformPage() {
           <PlatformUserManagement className="h-[42rem] min-h-[32rem]" />
         </section>
         <PlatformTenantManagement />
+        <PlatformMemberApiKeys />
         <PlatformApiKeyManagement
           title="Customer API key directory"
           description="Review and revoke customer-workspace credentials within your projected platform capabilities."
@@ -58,7 +65,7 @@ function AdministrationScopeRequired() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Administration Organization required</CardTitle>
+        <CardTitle asChild><h2>Administration Organization required</h2></CardTitle>
         <CardDescription>
           Platform controls are shown only while your live session is bound to the protected Administration Organization.
           The server independently authorizes every list and mutation.

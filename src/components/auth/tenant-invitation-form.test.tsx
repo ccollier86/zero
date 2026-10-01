@@ -2,11 +2,28 @@ import { describe, expect, test } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  runBeforeTenantInvitationSignIn,
   TenantInvitationScopeNotice,
   tenantInvitationPresentation,
 } from './tenant-invitation-form';
 
 describe('TenantInvitationForm tenant-kind presentation', () => {
+  test('lets the host synchronously prepare or cancel sign-in navigation', () => {
+    let calls = 0;
+    expect(runBeforeTenantInvitationSignIn(undefined)).toBe(true);
+    expect(runBeforeTenantInvitationSignIn(() => {
+      calls += 1;
+    })).toBe(true);
+    expect(runBeforeTenantInvitationSignIn(() => {
+      calls += 1;
+      return false;
+    })).toBe(false);
+    expect(runBeforeTenantInvitationSignIn(() => {
+      throw new Error('handoff failed');
+    })).toBe(false);
+    expect(calls).toBe(2);
+  });
+
   test('labels a protected administration invitation and explains its boundary', () => {
     const presentation = tenantInvitationPresentation(
       'administration',

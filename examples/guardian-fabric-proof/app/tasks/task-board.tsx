@@ -18,9 +18,10 @@ import { Check, Plus, Trash, Wifi } from '@zero/framework/icons';
 import { useConfirm } from '@zero/framework/react';
 import {
   useCollection,
+  useAuthorization,
+  useConnectionHealth,
   useHasPermission,
   useResourceActions,
-  useStatus,
 } from '@zero/framework/react/hooks';
 import { toast } from '@zero/framework/react';
 
@@ -30,6 +31,8 @@ import {
   type TaskColumn,
   type TaskRow,
 } from './task-types';
+import { TaskAccessSummary } from './task-access-summary';
+import { TaskCard } from './task-card';
 
 /** Realtime reads plus policy-protected Resource mutations for one tenant realm. */
 export function TaskBoard() {
@@ -40,7 +43,9 @@ export function TaskBoard() {
   const canUpdateOwn = useHasPermission('tasks:update:own');
   const canManage = useHasPermission('tasks:manage');
   const canUpdate = canUpdateOwn || canManage;
-  const { connected } = useStatus();
+  const authorization = useAuthorization();
+  const connection = useConnectionHealth();
+  const currentMembershipId = authorization.authorization?.scope?.membershipId;
   const [title, setTitle] = React.useState('');
   const tasks = React.useMemo(
     () => [...collection.data].sort((left, right) => right.created_at - left.created_at),
@@ -57,7 +62,6 @@ export function TaskBoard() {
         task_id: crypto.randomUUID(),
         title: nextTitle,
         status: 'open',
-        created_at: Date.now(),
       });
       setTitle('');
       toast.success('Task created.');
@@ -95,33 +99,46 @@ export function TaskBoard() {
   }
 
   return (
-    <div className="space-y-5">
+    <div
+      className="space-y-5"
+      aria-busy={actions.loading || connection.pendingMutations > 0}
+      data-testid="realtime-task-board"
+    >
       <Card>
         <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1.5">
-            <CardTitle>Active workspace tasks</CardTitle>
+            <CardTitle asChild><h2>Active workspace tasks</h2></CardTitle>
             <CardDescription>
               Reads stream through tenant Sync. Creates, moves, and deletes use the generated tasks Resource.
             </CardDescription>
           </div>
           <Badge
-            variant={connected ? 'secondary' : 'outline'}
-            className="w-fit gap-1.5"
+            variant={connection.connected ? 'secondary' : 'outline'}
+            className={`w-fit gap-1.5 ${connection.offline ? 'text-destructive' : ''}`}
             role="status"
             aria-live="polite"
           >
             <Wifi className="size-3.5" aria-hidden="true" />
-            {connected ? 'Realtime connected' : 'Connecting'}
+            {connection.offline
+              ? 'Realtime offline'
+              : connection.connected ? 'Realtime connected' : connection.lastSeq > 0 ? 'Reconnecting' : 'Connecting'}
           </Badge>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          <TaskAccessSummary
+            canCreate={canCreate}
+            canUpdateOwn={canUpdateOwn}
+            canManage={canManage}
+            pendingMutations={connection.pendingMutations}
+            resourceActionPending={actions.loading}
+          />
           <PermissionGate
             permission="tasks:create"
             loadingFallback={<p className="text-sm text-muted-foreground">Checking task permissions…</p>}
             fallback={(
               <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
                 Your current role cannot create tasks. A workspace owner can grant the contributor
-                or manager role from Workspace.
+                or manager role from Members &amp; access.
               </div>
             )}
           >
@@ -131,11 +148,12 @@ export function TaskBoard() {
                 onChange={(event) => setTitle(event.target.value)}
                 placeholder="Describe the next task"
                 aria-label="New task title"
+                data-testid="task-title-input"
                 maxLength={200}
                 disabled={actions.loading}
               />
               <Button type="submit" disabled={!canCreate || actions.loading || !title.trim()}>
-                <Plus className="size-4" />
+                <Plus className="size-4" aria-hidden="true" />
                 Add task
               </Button>
             </form>
@@ -175,7 +193,11 @@ export function TaskBoard() {
           </div>
         )}
         renderItem={({ item }) => (
-          <TaskCard task={item} hasActions={canManage} />
+          <TaskCard
+            task={item}
+            hasActions={canManage}
+            currentMembershipId={currentMembershipId}
+          />
         )}
         renderItemActions={({ item }) => canManage ? (
           <Button
@@ -195,40 +217,6 @@ export function TaskBoard() {
       />
     </div>
   );
-}
-
-function TaskCard({
-  task,
-  hasActions,
-}: {
-  task: TaskRow;
-  hasActions: boolean;
-}) {
-  return (
-    <article className={`rounded-lg border border-border bg-card p-3 shadow-xs ${hasActions ? 'pr-10' : ''}`}>
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 space-y-1.5">
-          <h3 className="break-words text-sm font-medium leading-5">{task.title}</h3>
-          <p className="text-xs text-muted-foreground">
-            Created {new Date(task.created_at).toLocaleString()}
-          </p>
-          <div className="flex flex-wrap gap-1.5 text-[0.7rem] text-muted-foreground">
-            <span title={task.created_by_user_id}>
-              User {shortId(task.created_by_user_id)}
-            </span>
-            <span aria-hidden="true">·</span>
-            <span title={task.assigned_membership_id}>
-              Membership {shortId(task.assigned_membership_id)}
-            </span>
-          </div>
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function shortId(value: string): string {
-  return value.length <= 10 ? value : `${value.slice(0, 6)}…${value.slice(-4)}`;
 }
 
 function errorMessage(cause: unknown, fallback: string): string {

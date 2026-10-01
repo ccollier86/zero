@@ -161,6 +161,263 @@ describe('Guardian and Fabric integration', () => {
     expect(await tenantDatabaseFiles(proof.tenantDatabaseRoot)).toEqual([]);
   }, 60_000);
 
+  test('creates an authenticated workspace and approves a join request into its Fabric realm', async () => {
+    const proof = await setupProofApp('guardian-fabric-onboarding-');
+    activeApp = proof.app;
+    activeApp.listen(0);
+    const baseUrl = `http://localhost:${activeApp.server!.port}`;
+
+    await register(
+      baseUrl,
+      'onboarding-platform',
+      'Platform Administration',
+      PROOF_BOOTSTRAP_SECRET,
+    );
+    const creator = await register(
+      baseUrl,
+      'workspace-creator',
+      'Workspace Creator Home',
+    );
+    const applicant = await register(
+      baseUrl,
+      'join-applicant',
+      'Join Applicant Home',
+    );
+    expect(await waitForDataRealmReady(baseUrl, creator.accessToken)).toMatchObject({
+      status: 200,
+      body: { status: 'ready', scope: 'tenant', pendingOperations: 0 },
+    });
+    expect(await waitForDataRealmReady(baseUrl, applicant.accessToken)).toMatchObject({
+      status: 200,
+      body: { status: 'ready', scope: 'tenant', pendingOperations: 0 },
+    });
+
+    const createdWorkspace = await jsonRequest(
+      baseUrl,
+      'POST',
+      '/auth/tenants/create',
+      undefined,
+      {
+        name: 'Created Through Guardian',
+        slug: 'created-through-guardian',
+        refreshToken: creator.refreshToken,
+      },
+    );
+    expect(createdWorkspace).toMatchObject({
+      status: 200,
+      body: {
+        user: { userId: creator.user.userId },
+        activeTenant: {
+          kind: 'organization',
+          name: 'Created Through Guardian',
+          slug: 'created-through-guardian',
+          role: 'owner',
+        },
+      },
+    });
+    expect(createdWorkspace.body.accessToken).toBeString();
+    expect(createdWorkspace.body.refreshToken).toBeString();
+    const workspaceId = createdWorkspace.body.activeTenant.tenantId as string;
+    const workspaceAccessToken = createdWorkspace.body.accessToken as string;
+    expect(workspaceId).toBeString();
+    expect(workspaceId).not.toBe(creator.tenant.tenantId);
+    expect(await waitForDataRealmReady(baseUrl, workspaceAccessToken)).toMatchObject({
+      status: 200,
+      body: { status: 'ready', scope: 'tenant', pendingOperations: 0 },
+    });
+
+    const workspaceConfig = await jsonRequest(
+      baseUrl,
+      'GET',
+      '/auth/tenant/config',
+      workspaceAccessToken,
+    );
+    expect(workspaceConfig).toMatchObject({
+      status: 200,
+      body: {
+        tenant: {
+          tenantId: workspaceId,
+          kind: 'organization',
+          slug: 'created-through-guardian',
+        },
+        actor: { roles: ['owner'] },
+        capabilities: { canReviewJoinRequests: true },
+      },
+    });
+    const ownerMembershipId = workspaceConfig.body.actor.membershipId as string;
+    expect(ownerMembershipId).toBeString();
+
+    const ownerTaskInput = {
+      task_id: 'created-workspace-owner-task',
+      title: 'Owner task in the created workspace',
+      status: 'open',
+    };
+    const ownerTaskRequestStartedAt = Date.now();
+    const createdOwnerTask = await resourceRequest(
+      baseUrl,
+      'POST',
+      '/api/resources/tasks',
+      workspaceAccessToken,
+      ownerTaskInput,
+      { 'Idempotency-Key': 'proof-created-workspace-owner-task' },
+    );
+    const ownerTaskRequestFinishedAt = Date.now();
+    const ownerTask = {
+      ...ownerTaskInput,
+      created_at: expectServerTimestampWithinRequest(
+        createdOwnerTask.body.row?.created_at,
+        ownerTaskRequestStartedAt,
+        ownerTaskRequestFinishedAt,
+      ),
+      created_by_user_id: creator.user.userId,
+      assigned_membership_id: ownerMembershipId,
+    };
+    expect(createdOwnerTask).toEqual({ status: 201, body: { row: ownerTask } });
+
+    expect(await jsonRequest(
+      baseUrl,
+      'POST',
+      '/auth/tenant-join-requests',
+      applicant.accessToken,
+      { tenantSlug: 'created-through-guardian' },
+    )).toEqual({ status: 202, body: { submitted: true } });
+
+    const pendingPage = await jsonRequest(
+      baseUrl,
+      'GET',
+      '/auth/tenant/join-requests?status=pending',
+      workspaceAccessToken,
+    );
+    expect(pendingPage).toMatchObject({
+      status: 200,
+      body: {
+        requests: [{
+          applicant: {
+            userId: applicant.user.userId,
+            email: applicant.user.email,
+          },
+          status: 'pending',
+          membership: null,
+          approvalPolicy: {
+            canApprove: true,
+            roleSelection: {
+              mode: 'selectable',
+              roles: expect.arrayContaining([
+                { key: 'viewer', label: 'Task viewer' },
+                { key: 'editor', label: 'Task contributor' },
+                { key: 'manager', label: 'Task manager' },
+              ]),
+            },
+          },
+        }],
+        page: { count: 1, hasMore: false },
+      },
+    });
+    const pending = pendingPage.body.requests[0];
+    const approved = await jsonRequest(
+      baseUrl,
+      'POST',
+      `/auth/tenant/join-requests/${pending.joinRequestId}/approve`,
+      workspaceAccessToken,
+      {
+        expectedRequestRevision: pending.requestRevision,
+        roles: ['editor'],
+      },
+    );
+    expect(approved).toMatchObject({
+      status: 200,
+      body: {
+        request: {
+          joinRequestId: pending.joinRequestId,
+          status: 'approved',
+          membership: {
+            status: 'active',
+            roles: ['editor'],
+          },
+        },
+      },
+    });
+    const approvedMembershipId = approved.body.request.membership.membershipId as string;
+    expect(approvedMembershipId).toBeString();
+
+    const joinedSession = await switchTenant(
+      baseUrl,
+      applicant.refreshToken,
+      workspaceId,
+    );
+    expect(await waitForDataRealmReady(baseUrl, joinedSession.accessToken)).toMatchObject({
+      status: 200,
+      body: { status: 'ready', scope: 'tenant', pendingOperations: 0 },
+    });
+    expect(await jsonRequest(
+      baseUrl,
+      'GET',
+      '/auth/tenant/config',
+      joinedSession.accessToken,
+    )).toMatchObject({
+      status: 200,
+      body: {
+        tenant: { tenantId: workspaceId },
+        actor: {
+          membershipId: approvedMembershipId,
+          roles: ['editor'],
+        },
+      },
+    });
+    const initialEditorTasks = await resourceRequest(
+      baseUrl,
+      'GET',
+      '/api/resources/tasks',
+      joinedSession.accessToken,
+    );
+    expect(initialEditorTasks.status).toBe(200);
+    expect(initialEditorTasks.body.rows).toEqual([]);
+
+    const editorTaskInput = {
+      task_id: 'approved-editor-task',
+      title: 'Task from the approved editor',
+      status: 'open',
+    };
+    const editorTaskRequestStartedAt = Date.now();
+    const createdEditorTask = await resourceRequest(
+      baseUrl,
+      'POST',
+      '/api/resources/tasks',
+      joinedSession.accessToken,
+      editorTaskInput,
+      { 'Idempotency-Key': 'proof-approved-editor-task' },
+    );
+    const editorTaskRequestFinishedAt = Date.now();
+    const editorTask = {
+      ...editorTaskInput,
+      created_at: expectServerTimestampWithinRequest(
+        createdEditorTask.body.row?.created_at,
+        editorTaskRequestStartedAt,
+        editorTaskRequestFinishedAt,
+      ),
+      created_by_user_id: applicant.user.userId,
+      assigned_membership_id: approvedMembershipId,
+    };
+    expect(createdEditorTask).toEqual({ status: 201, body: { row: editorTask } });
+    const editorTasks = await resourceRequest(
+      baseUrl,
+      'GET',
+      '/api/resources/tasks',
+      joinedSession.accessToken,
+    );
+    expect(editorTasks.status).toBe(200);
+    expect(editorTasks.body.rows).toEqual([editorTask]);
+    expect(await resourceRequest(
+      baseUrl,
+      'GET',
+      '/api/resources/tasks',
+      workspaceAccessToken,
+    )).toMatchObject({
+      status: 200,
+      body: { rows: expect.arrayContaining([ownerTask, editorTask]) },
+    });
+  }, 60_000);
+
   test('projects live Guardian ownership into isolated proof-app task databases', async () => {
     const events = new MemoryEventStore();
     const proof = await setupProofApp('guardian-fabric-owned-tasks-', events);
@@ -193,6 +450,15 @@ describe('Guardian and Fabric integration', () => {
       status: 200,
       body: { status: 'not-required', scope: null },
     });
+    expect(await resourceRequest(
+      baseUrl,
+      'GET',
+      '/api/resources/tasks',
+      platform.accessToken,
+    )).toEqual({
+      status: 403,
+      body: { error: 'Forbidden', code: 'authorization-denied' },
+    });
     const [tenantAReadiness, tenantBReadiness] = await Promise.all([
       waitForDataRealmReady(baseUrl, tenantA.accessToken),
       waitForDataRealmReady(baseUrl, tenantB.accessToken),
@@ -221,6 +487,80 @@ describe('Guardian and Fabric integration', () => {
     expect((await waitForTaskSnapshot(liveClientA)).tables.tasks).toEqual({});
     expect((await waitForTaskSnapshot(liveClientB)).tables.tasks).toEqual({});
 
+    // Client input can neither claim Guardian ownership nor smuggle a logical
+    // tenant selector into the physically tenant-bound task Resource. Each
+    // field is rejected before trusted actor stamping and before any row can
+    // reach the tenant database.
+    for (const [field, value] of [
+      ['created_by_user_id', tenantB.user.userId],
+      ['assigned_membership_id', tenantB.tenant.membershipId],
+      ['tenant_id', tenantB.tenant.tenantId],
+    ] as const) {
+      const taskId = `spoof-${field}`;
+      expect(await resourceRequest(
+        baseUrl,
+        'POST',
+        '/api/resources/tasks',
+        tenantA.accessToken,
+        {
+          task_id: taskId,
+          title: `Must reject ${field}`,
+          status: 'open',
+          [field]: value,
+        },
+        { 'Idempotency-Key': `proof-reject-${field}` },
+      )).toEqual({
+        status: 400,
+        body: {
+          code: 'resource-field-not-writable',
+          error: `Field '${field}' is not client-writable for create on resource table 'tasks'`,
+        },
+      });
+    }
+    expect(await resourceRequest(
+      baseUrl,
+      'POST',
+      '/api/resources/tasks',
+      tenantA.accessToken,
+      {
+        task_id: 'spoof-created-at',
+        title: 'Must reject client creation time',
+        status: 'open',
+        created_at: 1_893_455_000_000,
+      },
+      { 'Idempotency-Key': 'proof-reject-created-at' },
+    )).toEqual({
+      status: 400,
+      body: {
+        code: 'resource-field-not-writable',
+        error: "Field 'created_at' is not client-writable for create on resource table 'tasks'",
+      },
+    });
+    expect(await resourceRequest(
+      baseUrl,
+      'POST',
+      '/api/resources/tasks',
+      tenantA.accessToken,
+      {
+        task_id: 'blank-title-must-not-commit',
+        title: '   ',
+        status: 'open',
+      },
+      { 'Idempotency-Key': 'proof-reject-blank-title' },
+    )).toEqual({
+      status: 400,
+      body: {
+        code: 'task-title-invalid',
+        error: 'Task title must contain 1 to 200 characters after trimming surrounding whitespace',
+      },
+    });
+    expect(await resourceRequest(
+      baseUrl,
+      'GET',
+      '/api/resources/tasks',
+      tenantA.accessToken,
+    )).toMatchObject({ status: 200, body: { rows: [] } });
+
     // Hold one valid system-plane delivery to prove a concurrent request can
     // never race past projection admission and surface a raw FK conflict.
     const projectionOutbox = new IdentityProjectionOutboxStore(
@@ -246,7 +586,6 @@ describe('Guardian and Fabric integration', () => {
         task_id: 'must-wait-for-projection',
         title: 'Must not race projection',
         status: 'open',
-        created_at: 1_893_455_999_999,
       },
       { 'Idempotency-Key': 'proof-pre-ready-must-not-write' },
     )).toEqual({
@@ -267,33 +606,53 @@ describe('Guardian and Fabric integration', () => {
       body: { status: 'ready', scope: 'tenant', pendingOperations: 0 },
     });
 
-    const taskA = {
+    const taskAInput = {
       task_id: 'same-task',
-      title: 'Tenant A owned task',
+      title: '  Tenant A owned task  ',
       status: 'open',
-      created_at: 1_893_456_000_000,
     };
-    const taskB = {
-      ...taskA,
+    const taskBInput = {
+      ...taskAInput,
       title: 'Tenant B owned task',
-      created_at: taskA.created_at + 1,
     };
+    const taskARequestStartedAt = Date.now();
     const createdA = await resourceRequest(
       baseUrl,
       'POST',
       '/api/resources/tasks',
       tenantA.accessToken,
-      taskA,
+      taskAInput,
       { 'Idempotency-Key': 'proof-tenant-a-same-task' },
     );
+    const taskARequestFinishedAt = Date.now();
+    const taskBRequestStartedAt = Date.now();
     const createdB = await resourceRequest(
       baseUrl,
       'POST',
       '/api/resources/tasks',
       tenantB.accessToken,
-      taskB,
+      taskBInput,
       { 'Idempotency-Key': 'proof-tenant-b-same-task' },
     );
+    const taskBRequestFinishedAt = Date.now();
+
+    const taskA = {
+      ...taskAInput,
+      title: taskAInput.title.trim(),
+      created_at: expectServerTimestampWithinRequest(
+        createdA.body.row?.created_at,
+        taskARequestStartedAt,
+        taskARequestFinishedAt,
+      ),
+    };
+    const taskB = {
+      ...taskBInput,
+      created_at: expectServerTimestampWithinRequest(
+        createdB.body.row?.created_at,
+        taskBRequestStartedAt,
+        taskBRequestFinishedAt,
+      ),
+    };
 
     expect(createdA).toEqual({
       status: 201,
@@ -359,20 +718,30 @@ describe('Guardian and Fabric integration', () => {
     expect((await waitForTaskSnapshot(tenantAObserver)).tables.tasks).toEqual({
       [taskA.task_id]: createdA.body.row,
     });
-    const ownerDeleteTarget = {
+    const ownerDeleteTargetInput = {
       task_id: 'owner-delete-target',
       title: 'Owner task for manager deletion',
       status: 'open',
-      created_at: taskA.created_at + 2,
     };
-    expect(await resourceRequest(
+    const ownerDeleteRequestStartedAt = Date.now();
+    const createdOwnerDeleteTarget = await resourceRequest(
       baseUrl,
       'POST',
       '/api/resources/tasks',
       tenantA.accessToken,
-      ownerDeleteTarget,
+      ownerDeleteTargetInput,
       { 'Idempotency-Key': 'proof-owner-delete-target' },
-    )).toMatchObject({
+    );
+    const ownerDeleteRequestFinishedAt = Date.now();
+    const ownerDeleteTarget = {
+      ...ownerDeleteTargetInput,
+      created_at: expectServerTimestampWithinRequest(
+        createdOwnerDeleteTarget.body.row?.created_at,
+        ownerDeleteRequestStartedAt,
+        ownerDeleteRequestFinishedAt,
+      ),
+    };
+    expect(createdOwnerDeleteTarget).toEqual({
       status: 201,
       body: {
         row: {
@@ -438,13 +807,40 @@ describe('Guardian and Fabric integration', () => {
         task_id: 'viewer-must-not-create',
         title: 'Viewer must not create',
         status: 'open',
-        created_at: taskA.created_at + 2,
       },
       { 'Idempotency-Key': 'proof-viewer-create-denied' },
     )).toMatchObject({
       status: 403,
       body: { code: 'authorization-denied' },
     });
+    expect(await resourceRequest(
+      baseUrl,
+      'PATCH',
+      '/api/resources/tasks/same-task',
+      viewerSession.accessToken,
+      { status: 'complete' },
+      { 'Idempotency-Key': 'proof-viewer-update-denied' },
+    )).toMatchObject({
+      status: 403,
+      body: { code: 'authorization-denied' },
+    });
+    expect(await resourceRequest(
+      baseUrl,
+      'DELETE',
+      '/api/resources/tasks/same-task',
+      viewerSession.accessToken,
+      undefined,
+      { 'Idempotency-Key': 'proof-viewer-delete-denied' },
+    )).toMatchObject({
+      status: 403,
+      body: { code: 'authorization-denied' },
+    });
+    expect((await resourceRequest(
+      baseUrl,
+      'GET',
+      '/api/resources/tasks/same-task',
+      viewerSession.accessToken,
+    )).body.row).toEqual(createdA.body.row);
     const roleBoundKey = await issueApiKeyWithToken(
       baseUrl,
       viewerSession.accessToken,
@@ -470,7 +866,6 @@ describe('Guardian and Fabric integration', () => {
         task_id: 'viewer-key-must-not-create',
         title: 'Viewer key must not create',
         status: 'open',
-        created_at: taskA.created_at + 3,
       },
       { 'Idempotency-Key': 'proof-viewer-key-create-denied' },
     )).toMatchObject({
@@ -504,21 +899,30 @@ describe('Guardian and Fabric integration', () => {
       tenantB.user.email,
       tenantA.tenant.tenantId,
     );
-    const editorTask = {
+    const editorTaskInput = {
       task_id: 'editor-owned-task',
       title: 'Editor owned task',
       status: 'open',
-      created_at: taskA.created_at + 4,
     };
+    const editorTaskRequestStartedAt = Date.now();
     const createdByEditorKey = await resourceRequest(
       baseUrl,
       'POST',
       '/api/resources/tasks',
       roleBoundKey.secret,
-      editorTask,
+      editorTaskInput,
       { 'Idempotency-Key': 'proof-editor-key-create' },
     );
-    expect(createdByEditorKey).toMatchObject({
+    const editorTaskRequestFinishedAt = Date.now();
+    const editorTask = {
+      ...editorTaskInput,
+      created_at: expectServerTimestampWithinRequest(
+        createdByEditorKey.body.row?.created_at,
+        editorTaskRequestStartedAt,
+        editorTaskRequestFinishedAt,
+      ),
+    };
+    expect(createdByEditorKey).toEqual({
       status: 201,
       body: {
         row: {
@@ -558,16 +962,34 @@ describe('Guardian and Fabric integration', () => {
       editorSession.accessToken,
     )).status).toBe(403);
 
-    const editorUpdatedTask = {
-      ...editorTask,
-      title: 'Editor updated own task',
-    };
     expect(await resourceRequest(
       baseUrl,
       'PATCH',
       '/api/resources/tasks/editor-owned-task',
       editorSession.accessToken,
-      { title: editorUpdatedTask.title },
+      { title: 'Client title edits must be rejected' },
+      { 'Idempotency-Key': 'proof-editor-title-update-denied' },
+    )).toEqual({
+      status: 400,
+      body: {
+        code: 'resource-field-not-writable',
+        error: "Field 'title' is not client-writable for update on resource table 'tasks'",
+      },
+    });
+    expect((await resourceRequest(
+      baseUrl,
+      'GET',
+      '/api/resources/tasks/editor-owned-task',
+      editorSession.accessToken,
+    )).body.row).toEqual(createdByEditorKey.body.row);
+
+    const editorUpdatedTask = { ...editorTask, status: 'complete' };
+    expect(await resourceRequest(
+      baseUrl,
+      'PATCH',
+      '/api/resources/tasks/editor-owned-task',
+      editorSession.accessToken,
+      { status: editorUpdatedTask.status },
       { 'Idempotency-Key': 'proof-editor-update-own' },
     )).toMatchObject({
       status: 200,
@@ -579,12 +1001,14 @@ describe('Guardian and Fabric integration', () => {
         'UPDATE',
         editorUpdatedTask.task_id,
         editorUpdatedTask.title,
+        editorUpdatedTask.status,
       ),
       waitForTaskMutation(
         tenantAObserver,
         'UPDATE',
         editorUpdatedTask.task_id,
         editorUpdatedTask.title,
+        editorUpdatedTask.status,
       ),
     ]);
     expect((await resourceRequest(
@@ -592,9 +1016,29 @@ describe('Guardian and Fabric integration', () => {
       'PATCH',
       '/api/resources/tasks/same-task',
       editorSession.accessToken,
-      { title: 'Editor must not update another user task' },
+      { status: 'complete' },
       { 'Idempotency-Key': 'proof-editor-update-other-denied' },
     )).status).toBe(403);
+    expect(await resourceRequest(
+      baseUrl,
+      'DELETE',
+      '/api/resources/tasks/editor-owned-task',
+      editorSession.accessToken,
+      undefined,
+      { 'Idempotency-Key': 'proof-editor-delete-own-denied' },
+    )).toMatchObject({
+      status: 403,
+      body: { code: 'authorization-denied' },
+    });
+    expect((await resourceRequest(
+      baseUrl,
+      'GET',
+      '/api/resources/tasks/editor-owned-task',
+      editorSession.accessToken,
+    )).body.row).toEqual({
+      ...createdByEditorKey.body.row,
+      status: editorUpdatedTask.status,
+    });
 
     const rotatedRoleKeyResponse = await jsonRequest(
       baseUrl,
@@ -679,16 +1123,13 @@ describe('Guardian and Fabric integration', () => {
 
     // The same key resolves the member's current role on every request. Once
     // promoted, it can manage rows owned by either Guardian actor.
-    const managerUpdatedTaskA = {
-      ...taskA,
-      title: 'Manager updated another user task',
-    };
+    const managerUpdatedTaskA = { ...taskA, status: 'complete' };
     expect(await resourceRequest(
       baseUrl,
       'PATCH',
       '/api/resources/tasks/same-task',
       rotatedRoleKey.secret,
-      { title: managerUpdatedTaskA.title },
+      { status: managerUpdatedTaskA.status },
       { 'Idempotency-Key': 'proof-manager-key-update-any' },
     )).toMatchObject({
       status: 200,
@@ -706,12 +1147,14 @@ describe('Guardian and Fabric integration', () => {
         'UPDATE',
         managerUpdatedTaskA.task_id,
         managerUpdatedTaskA.title,
+        managerUpdatedTaskA.status,
       ),
       waitForTaskMutation(
         tenantAObserver,
         'UPDATE',
         managerUpdatedTaskA.task_id,
         managerUpdatedTaskA.title,
+        managerUpdatedTaskA.status,
       ),
     ]);
     expect((await resourceRequest(
@@ -1394,6 +1837,21 @@ function hasSqliteTable(sqlite: PlatformSQLiteService, table: string): boolean {
   ).get(table));
 }
 
+function expectServerTimestampWithinRequest(
+  value: unknown,
+  requestStartedAt: number,
+  requestFinishedAt: number,
+): number {
+  const isSafeTimestamp = typeof value === 'number' && Number.isSafeInteger(value);
+  expect(isSafeTimestamp).toBe(true);
+  if (!isSafeTimestamp) {
+    throw new TypeError(`Expected a safe integer server timestamp; received ${String(value)}`);
+  }
+  expect(value).toBeGreaterThanOrEqual(requestStartedAt);
+  expect(value).toBeLessThanOrEqual(requestFinishedAt);
+  return value;
+}
+
 async function setupProofApp(
   prefix: string,
   events?: MemoryEventStore,
@@ -1715,6 +2173,7 @@ async function waitForTaskMutation(
   operation: 'INSERT' | 'UPDATE' | 'DELETE',
   taskId: string,
   title?: string,
+  status?: string,
 ): Promise<void> {
   const change = await connection.waitFor(
     (message) => message.type === 'sync.change'
@@ -1722,7 +2181,8 @@ async function waitForTaskMutation(
       && message.table === 'tasks'
       && message.op === operation
       && message.rowId === taskId
-      && (title === undefined || message.row?.title === title),
+      && (title === undefined || message.row?.title === title)
+      && (status === undefined || message.row?.status === status),
     `realtime task ${operation.toLowerCase()} ${taskId}`,
   );
   expect(change).toMatchObject({
@@ -1730,7 +2190,14 @@ async function waitForTaskMutation(
     plane: 'tenant',
     op: operation,
     rowId: taskId,
-    ...(operation === 'DELETE' ? { row: null } : { row: { title } }),
+    ...(operation === 'DELETE'
+      ? { row: null }
+      : {
+          row: {
+            ...(title === undefined ? {} : { title }),
+            ...(status === undefined ? {} : { status }),
+          },
+        }),
   });
 }
 

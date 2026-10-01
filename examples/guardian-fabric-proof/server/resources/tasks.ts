@@ -4,6 +4,7 @@ import {
   allOf,
   anyOf,
   authorizationPolicy,
+  customPolicy,
   defineResource,
   defineResourceFields,
   tenantKindPolicy,
@@ -24,8 +25,8 @@ const readableTaskFields = [
 
 const taskFields = defineResourceFields({
   read: readableTaskFields,
-  create: ['title', 'status', 'created_at'],
-  update: ['title', 'status'],
+  create: ['title', 'status'],
+  update: ['status'],
   filter: readableTaskFields,
   sort: readableTaskFields,
 });
@@ -35,6 +36,34 @@ const currentGuardianActor = guardianActorPolicy({
   userField: 'created_by_user_id',
   membershipField: 'assigned_membership_id',
 });
+
+const serverCreationTime = customPolicy(({ action }) => action === 'create'
+  ? {
+      allowed: true,
+      stampedInput: { created_at: Date.now() },
+    }
+  : true, { name: 'task-server-creation-time' });
+
+const normalizedTaskTitle = customPolicy(({ action, input }) => {
+  if (action !== 'create' || !Object.hasOwn(input ?? {}, 'title')) {
+    return true;
+  }
+  const title = input?.title;
+  if (typeof title !== 'string') return true;
+  const normalized = title.trim();
+  if (normalized.length === 0 || normalized.length > 200) {
+    return {
+      allowed: false,
+      reason: 'task-title-invalid',
+      status: 400,
+      message: 'Task title must contain 1 to 200 characters after trimming surrounding whitespace',
+    };
+  }
+  return {
+    allowed: true,
+    stampedInput: { title: normalized },
+  };
+}, { name: 'task-title-normalization' });
 
 const readEveryTask = allOf(
   authorizationPolicy({
@@ -65,7 +94,9 @@ const createOwnTask = allOf(
     permission: 'tasks:create',
   }),
   customerWorkspace,
+  normalizedTaskTitle,
   currentGuardianActor,
+  serverCreationTime,
 );
 
 const updateOwnTask = allOf(

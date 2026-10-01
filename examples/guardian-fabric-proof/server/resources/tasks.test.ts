@@ -18,15 +18,20 @@ describe('Guardian + Fabric proof task model', () => {
     ]);
   });
 
-  test('keeps ownership fields readable but never client-writable', () => {
+  test('keeps server-owned chronology and ownership readable but never client-writable', () => {
     expect(tasksResource.fields?.read).toEqual(expect.arrayContaining([
+      'created_at',
       'created_by_user_id',
       'assigned_membership_id',
     ]));
-    expect(tasksResource.fields?.create).not.toContain('created_by_user_id');
-    expect(tasksResource.fields?.create).not.toContain('assigned_membership_id');
-    expect(tasksResource.fields?.update).not.toContain('created_by_user_id');
-    expect(tasksResource.fields?.update).not.toContain('assigned_membership_id');
+    for (const field of [
+      'created_at',
+      'created_by_user_id',
+      'assigned_membership_id',
+    ]) {
+      expect(tasksResource.fields?.create).not.toContain(field);
+      expect(tasksResource.fields?.update).not.toContain(field);
+    }
   });
 
   test('uses trusted actor ownership on constrained read and write paths', () => {

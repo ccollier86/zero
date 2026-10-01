@@ -12,6 +12,10 @@ import {
 
 import { tables } from '../db/schema';
 import { guardianFabricTenantRealm } from '../db/tenant-realm';
+import {
+  TASK_PERMISSION_REGISTRY,
+  TASK_ROLE_REGISTRY,
+} from '../shared/task-access';
 import { tasksResource } from './resources/tasks';
 
 export interface GuardianFabricProofPaths {
@@ -108,62 +112,14 @@ export function createGuardianFabricProofConfig(
               },
             },
           },
-          // This focused proof exposes exact-email invitations end to end. Join
-          // requests need a separate public/domain admission surface, so leaving
-          // them disabled keeps the packaged administration UI honest.
-          joinRequests: { enabled: false },
+          joinRequests: { enabled: true },
         },
       },
       authorization: {
         mode: 'advanced',
         registryVersion: 2,
-        permissions: {
-          'tasks:read': {
-            scope: 'tenant',
-            label: 'Read assigned tasks',
-            description: 'Read tasks attributed to the active workspace membership.',
-          },
-          'tasks:read:any': {
-            scope: 'tenant',
-            label: 'Read every task',
-            description: 'Read every task in the active workspace database.',
-          },
-          'tasks:create': {
-            scope: 'tenant',
-            label: 'Create assigned tasks',
-            description: 'Create tasks stamped to the active Guardian user and membership.',
-          },
-          'tasks:update:own': {
-            scope: 'tenant',
-            label: 'Update assigned tasks',
-            description: 'Update tasks owned by the active Guardian user and membership.',
-          },
-          'tasks:manage': {
-            scope: 'tenant',
-            label: 'Manage every task',
-            description: 'Read, update, and remove every task in the active workspace database.',
-          },
-        },
-        roles: {
-          viewer: {
-            label: 'Task viewer',
-            permissions: ['tasks:read', 'tasks:read:any'],
-          },
-          editor: {
-            label: 'Task contributor',
-            permissions: ['tasks:read', 'tasks:create', 'tasks:update:own'],
-          },
-          manager: {
-            label: 'Task manager',
-            permissions: [
-              'tasks:read',
-              'tasks:read:any',
-              'tasks:create',
-              'tasks:update:own',
-              'tasks:manage',
-            ],
-          },
-        },
+        permissions: TASK_PERMISSION_REGISTRY,
+        roles: TASK_ROLE_REGISTRY,
       },
       apiKeys: {
         enabled: true,
@@ -180,7 +136,7 @@ export function createGuardianFabricProofConfig(
     routeAuth: 'explicit',
     loginPath: '/login',
     postLoginPath: '/app',
-    publicPaths: ['/login', '/register', '/accept-invitation'],
+    publicPaths: ['/login', '/register', '/accept-invitation', '/request-access'],
     databaseTopology: {
       mode: 'multiple',
       rootDirectory: paths.tenantDatabases,

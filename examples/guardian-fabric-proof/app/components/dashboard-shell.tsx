@@ -3,6 +3,10 @@
 import * as React from 'react';
 
 import {
+  getAuthDisplayMessage,
+  reportAuthUiError,
+} from '@zero/framework/components/auth';
+import {
   AppShell,
   type AppShellMenuItem,
   type AppShellNavGroup,
@@ -37,38 +41,10 @@ export function DashboardShell({ children }: DashboardShellProps) {
     activeActions,
   });
 
-  const nav = React.useMemo<AppShellNavGroup[]>(() => {
-    const groups: AppShellNavGroup[] = [
-      {
-        id: 'workspace',
-        label: 'Workspace',
-        items: [
-          { id: 'tasks', label: 'Tasks', href: '/app', icon: 'clipboard' },
-          { id: 'organization', label: 'Workspace', href: '/organization', icon: 'users' },
-          ...(auth.activeTenant?.kind === 'organization'
-            ? [{ id: 'security', label: 'Security', href: '/security', icon: 'key' as const }]
-            : []),
-          {
-            id: 'create-workspace',
-            label: 'Create workspace',
-            href: '/workspaces/new',
-            icon: 'plus',
-            variant: 'action',
-          },
-        ],
-      },
-    ];
-    if (auth.activeTenant?.kind === 'administration') {
-      groups.push({
-        id: 'platform',
-        label: 'Platform',
-        items: [
-          { id: 'platform-operations', label: 'Platform operations', href: '/platform', icon: 'lock' },
-        ],
-      });
-    }
-    return groups;
-  }, [auth.activeTenant?.kind]);
+  const nav = React.useMemo(
+    () => dashboardNavigation(auth.activeTenant?.kind),
+    [auth.activeTenant?.kind],
+  );
 
   const displayName = [auth.user?.firstName, auth.user?.lastName]
     .filter(Boolean)
@@ -87,7 +63,8 @@ export function DashboardShell({ children }: DashboardShellProps) {
     void auth.logout()
       .then(() => router.replace('/login'))
       .catch((cause: unknown) => {
-        toast.error(cause instanceof Error ? cause.message : 'Sign out failed.');
+        reportAuthUiError('logout', cause);
+        toast.error(getAuthDisplayMessage(cause, 'Sign out failed.'));
       });
   }, [auth.logout, router]);
 
@@ -125,6 +102,7 @@ export function DashboardShell({ children }: DashboardShellProps) {
 export function activeTenantActions(
   kind: 'administration' | 'organization' | undefined,
 ): AppShellMenuItem[] {
+  if (kind === undefined) return [];
   return kind === 'administration'
     ? [{
         id: 'platform-operations',
@@ -134,17 +112,62 @@ export function activeTenantActions(
       }]
     : [{
         id: 'workspace-settings',
-        label: 'Workspace settings',
+        label: 'Members & access',
         icon: 'settings',
         href: '/organization',
       }];
 }
 
+/** Keep navigation aligned with routes that can operate in the active scope. */
+export function dashboardNavigation(
+  kind: 'administration' | 'organization' | undefined,
+): AppShellNavGroup[] {
+  const overview: AppShellNavGroup = {
+    id: 'proof',
+    label: 'Proof lab',
+    items: [
+      { id: 'proof-center', label: 'Proof center', href: '/app', icon: 'layers' },
+      ...(kind === 'organization' ? [
+        { id: 'tasks', label: 'Realtime tasks', href: '/tasks', icon: 'clipboard' as const },
+        { id: 'organization', label: 'Members & access', href: '/organization', icon: 'users' as const },
+        { id: 'security', label: 'Security', href: '/security', icon: 'key' as const },
+      ] : []),
+      {
+        id: 'request-access',
+        label: 'Request workspace access',
+        href: '/request-access',
+        icon: 'log-in',
+      },
+      {
+        id: 'create-workspace',
+        label: 'Create workspace',
+        href: '/workspaces/new',
+        icon: 'plus',
+        variant: 'action',
+      },
+    ],
+  };
+  if (kind !== 'administration') return [overview];
+  return [overview, {
+    id: 'platform',
+    label: 'Platform',
+    items: [
+      { id: 'platform-operations', label: 'Platform operations', href: '/platform', icon: 'lock' },
+    ],
+  }];
+}
+
 function pagePresentation(pathname: string): { title: string; subtitle: string } {
   if (pathname === '/organization') {
     return {
-      title: 'Workspace',
+      title: 'Members & access',
       subtitle: 'Membership, onboarding, credentials, and workspace authorization events.',
+    };
+  }
+  if (pathname === '/tasks') {
+    return {
+      title: 'Realtime task board',
+      subtitle: 'Live actor-owned rows from the active physical workspace database.',
     };
   }
   if (pathname === '/security') {
@@ -165,8 +188,14 @@ function pagePresentation(pathname: string): { title: string; subtitle: string }
       subtitle: 'Create and activate another physically isolated customer workspace.',
     };
   }
+  if (pathname === '/request-access') {
+    return {
+      title: 'Request workspace access',
+      subtitle: 'Submit a retained, non-enumerating membership request by workspace slug.',
+    };
+  }
   return {
-    title: 'Realtime task board',
-    subtitle: 'Live rows from the active workspace database.',
+    title: 'Guardian + Fabric proof center',
+    subtitle: 'Live authority, realm readiness, realtime health, and guided acceptance.',
   };
 }

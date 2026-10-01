@@ -12,7 +12,13 @@ import { defineTable, field } from '@zero/framework/schema';
 export const tasks = defineTable(
   'tasks',
   {
-    title: field.text({ label: 'Task', required: true, tableVisible: true }),
+    title: field.text({
+      label: 'Task',
+      required: true,
+      minLength: 1,
+      maxLength: 200,
+      tableVisible: true,
+    }),
     status: field.select(
       [
         { label: 'Open', value: 'open' },
@@ -22,6 +28,7 @@ export const tasks = defineTable(
     ),
     created_at: field.number({
       label: 'Created at',
+      description: 'Server-stamped creation time.',
       integer: true,
       required: true,
       tableVisible: true,

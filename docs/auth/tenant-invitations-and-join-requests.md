@@ -456,7 +456,7 @@ finishes deferred acceptance with the post-MFA onboarding proof.
 
 When an unauthenticated visitor must sign in, both public forms provide a safe
 return path by default. The server render and initial hydration use `/login`;
-after the browser mounts, the href becomes:
+after the browser mounts, the same-tab navigation target becomes:
 
 ```txt
 /login?redirect=<current pathname + search + hash>
@@ -469,10 +469,11 @@ the login URL are retained, and an existing `redirect` parameter is never
 wrapped again. The components do not log either the current URL or an
 invitation token carried by it.
 
-`signInHref` remains the host escape hatch. When supplied, its value is rendered
-byte-for-byte and Zero does not append a return path or otherwise reinterpret
-it. This preserves custom routers, a host-owned continuation, and intentional
-external identity-provider entry points:
+`signInHref` remains the host escape hatch. When supplied, its value is used
+byte-for-byte as the same-tab navigation target and Zero does not append a
+return path or otherwise reinterpret it. This preserves custom routers, a
+host-owned continuation, and intentional external identity-provider entry
+points:
 
 ```tsx
 <TenantInvitationForm
@@ -480,6 +481,26 @@ external identity-provider entry points:
   signInHref="/sign-in?mode=sso&redirect=%2Faccept-invitation"
 />
 ```
+
+If the landing route removes the one-time token from its URL, use
+`onBeforeSignIn` to create the host's bounded handoff at the exact point the
+existing-account flow leaves for sign-in. The callback is synchronous and runs
+only for that sign-in navigation—not for inline invited-account creation or an
+already-authenticated acceptance. Returning `false` or throwing cancels the
+navigation, so a host can fail closed when tab storage is unavailable:
+
+```tsx
+<TenantInvitationForm
+  token={capturedToken}
+  onBeforeSignIn={() => rememberForThisTab(capturedToken)}
+  onSuccess={() => clearRememberedInvitation()}
+/>
+```
+
+Treat a newly supplied invitation as authoritative: clear any older handoff
+before presenting it, and do not restore an older token when an explicit link
+contains malformed invitation material. Bound the handoff lifetime, clear it
+after acceptance or abandonment, and keep it out of persistent storage.
 
 The host login route owns the final redirect after authentication. It must
 accept `redirect` only as a same-origin absolute path beginning with one slash,

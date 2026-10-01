@@ -11,6 +11,7 @@
     "app/**/*.ts",
     "app/**/*.tsx",
     "db/**/*.ts",
+    "shared/**/*.ts",
     "server/**/*.ts",
     "zero.config.ts"
   ]

@@ -3,11 +3,10 @@
 This example is an end-to-end proof that Zero can combine Guardian's live
 multi-tenant authority with ReactiveDB Fabric's actor-backed physical database
 isolation. It includes a public landing page, Guardian registration and login,
-workspace switching, a realtime task board, customer-workspace management,
-self-service and administrator-issued API keys, exact-email invitations, and
-protected platform-administration surfaces. Retained join requests are
-deliberately disabled because this focused proof does not expose a public or
-verified-domain request-admission flow.
+workspace switching, a live proof center, a realtime task board,
+customer-workspace management, self-service and administrator-issued API keys,
+exact-email invitations, retained join requests, and protected
+platform-administration surfaces.
 
 The example exercises the active, unreleased Guardian + Fabric release
 candidate. It is useful for integration review and local acceptance testing;
@@ -30,6 +29,11 @@ matrix, backup/restore, or online placement migration work is release-complete.
   references immutable. Callers never submit trusted ownership fields.
 - Realtime reads use `useCollection('tasks')`; browser writes use the generated
   `tasks` Resource through `useResourceActions('tasks')`.
+- Task titles are trimmed and must contain 1 to 200 characters on every
+  transport. They are immutable after creation in this proof; task updates move
+  only the status. Creation time and both Guardian identity references are server-stamped;
+  browser and API-key clients cannot claim chronology, ownership, membership,
+  or a logical tenant selector.
 - The board does not mount its Sync subscription without live `tasks:read`;
   `DataRealmReadyGate` also keeps the board unmounted until the newly active
   tenant realm has completed idempotent schema/identity projection setup.
@@ -49,7 +53,7 @@ plane, and Fabric tenant application planes physically distinct:
 
 | Plane | Location | Current contents |
 | --- | --- | --- |
-| Privileged Zero system database | `data/system.db` | Guardian identities, password/session state, tenants, memberships, role assignments, API-key digests and lifecycle metadata, control-plane audit events, provisioning state, and other Zero-owned system data. |
+| Privileged Zero system database | `data/system.db` | Guardian identities, password/session state, tenants, memberships, role assignments, invitations, retained join requests, API-key digests and lifecycle metadata, control-plane audit events, provisioning state, and other Zero-owned system data. |
 | Pinned application database | `data/application.db` | The app plane required by Zero's topology. It is intentionally empty/minimal in this proof because every customer `tasks` realm is a tenant file. It never receives Guardian credentials, sessions, RBAC, or other system records. |
 | Fabric tenant databases | `data/tenant-databases/db-*.sqlite` | The `tasks` table, ID-only `users` and `tenant_memberships` anchors required by its foreign keys, ReactiveDB change state, and Fabric mutation receipts for one physically bound tenant scope per database. |
 
@@ -92,6 +96,9 @@ Prerequisites:
 - `openssl` (or another cryptographically secure generator) for the one-time
   bootstrap secret.
 
+`sqlite3` is optional and is needed only for the physical-boundary inspection
+commands later in this guide.
+
 Run from the example directory because its database, generated, build, and
 storage paths are intentionally relative:
 
@@ -117,12 +124,14 @@ build output beneath `.build/`.
 
 On a brand-new system database, choose **Create account**. Guardian's packaged
 registration form detects the unconsumed bootstrap and asks for the operator
-setup secret plus an organization name. That first registration creates the
+setup secret plus an Administration workspace name. That first registration creates the
 protected Administration Organization and its initial owner; the bootstrap
 opportunity is then consumed.
 
 Later public registrations follow the configured public-registration policy.
-Authenticated users may also use **Create workspace** in the shell. Guardian
+The scope-adaptive **Proof center** is the post-login destination for both the
+Administration Organization and customer workspaces. Authenticated users may
+also use **Create workspace** in the shell. Guardian
 creates the customer workspace, owner membership, and replacement
 tenant-bound session as one controlled flow; the browser does not manufacture
 or edit its active tenant locally.
@@ -134,39 +143,73 @@ and every managed tenant file intact.
 
 ## Suggested browser acceptance flow
 
-1. Bootstrap the first operator and confirm the shell initially identifies the
-   protected Administration Organization.
-2. Open **Platform operations**. The page is wrapped in
-   `AdministrationScopeGate` and composes the packaged administrator,
-   global-identity, customer-workspace, API-key directory, and platform-audit
-   controls. Create or activate a global identity before assigning that email
-   as the initial owner of a platform-created customer workspace. The gate only
-   controls presentation; each control relies on server-projected capabilities
-   and server authorization.
-3. Create a customer workspace from the workspace menu, then add two tasks.
-   Open a second browser window in the same workspace and confirm inserts and
-   drag-to-complete updates arrive through realtime Sync.
-4. Create another customer workspace. Its task board starts empty. Add
-   different tasks, switch between the two workspaces, and confirm each board
-   restores only that workspace's rows.
-5. In **Workspace**, use the packaged member and onboarding controls. The
-   default no-email configuration issues manual invitation material. Open
-   `/accept-invitation`, paste the one-time token into its secret input, and
-   complete the public, exact-email acceptance flow. Test both an existing
-   account and the packaged invited-account creation path. This example does
-   not enable join requests. Assign `viewer` for
-   `tasks:read` plus `tasks:read:any`, or `editor` for `tasks:read`,
-   `tasks:create`, and `tasks:update:own`.
-6. Sign in as a viewer. The board remains realtime and read-only across the
-   workspace. Assign the editor role and confirm the member can create, read,
-   and move only tasks stamped to that exact user and membership. Assign the
-   manager role and confirm the member can read, move, and delete every task.
-   Refresh/re-authenticate whenever Guardian requests it after an authority
-   transition.
-7. Select an active member under **Member automation credentials** and confirm
-   the owner can issue, rotate, and revoke that member's finite key while a
-   viewer cannot. Review the workspace audit on **Workspace** and the platform
-   audit while switched back to the Administration Organization.
+Use separate browser profiles for distinct identities so one login does not
+replace another profile's cookie or browser session:
+
+| Actor | Suggested profile | Purpose |
+| --- | --- | --- |
+| Platform operator / customer owner | Profile A | Bootstrap, platform controls, customer ownership, onboarding review, and audits. |
+| Existing invited member | Profile B | Existing-account invitation, viewer/editor/manager transitions, and multi-workspace selection. |
+| New or requesting member | Profile C | Invited-account creation and retained join-request submission. |
+| Realtime observer | A second window in the same profile | Proves two live subscribers without introducing another identity. |
+
+1. In Profile A, bootstrap the first operator. Confirm the **Proof center**
+   identifies the protected Administration Organization, its separate
+   application authority, and the three storage planes. No customer task or
+   security navigation should appear in this scope.
+2. Open **Platform operations**. Invite or assign another platform
+   administrator, change its administration role, and confirm its visible
+   capabilities follow the live projection. Create or activate a global
+   identity before assigning that email as the initial owner of a
+   platform-created customer workspace. The UI gate is presentation only;
+   every operation is reauthorized on the server.
+3. Create customer workspaces A and B. Enter A, wait for **Fabric data realm —
+   Ready**, open **Realtime tasks**, and add two tasks. Open a second window in
+   the same profile and confirm inserts and drag-to-complete status updates
+   arrive through ReactiveDB Sync.
+4. Switch to B and confirm its board starts empty. Add a different task set,
+   switch repeatedly between A and B, and verify no previous-realm rows flash or
+   leak. To prove identical primary keys physically coexist, issue one key in
+   each workspace and run the fixed `api-proof-task` create command shown on
+   **Security** in each scope.
+5. In A, open **Members & access** and issue a manual exact-email invitation.
+   In Profile B, open `/accept-invitation`, paste the once-revealed token, and
+   complete the existing-account path. Repeat in Profile C with an email that
+   has no account to exercise invited-account creation. The route removes token
+   material from the URL and keeps a bounded current-tab handoff only when a
+   sign-in round trip is required.
+6. In Profile C, open `/request-access`, submit B's exact slug, and observe the
+   deliberately non-enumerating receipt. In Profile A, review and approve or
+   deny the retained request under **Workspace onboarding**. After approval,
+   switch Profile C into B and wait for its Fabric realm before opening tasks.
+7. Assign Profile B `viewer`; confirm the board is realtime and read-only.
+   Promote it to `editor`; confirm it can create and move only tasks stamped to
+   that exact user and membership. Promote it to `manager`; confirm it can read,
+   move, and delete every task. Demote it again and verify stale authority does
+   not authorize a later write.
+8. Give Profile B memberships in both A and B, sign out, then sign in again.
+   Complete Guardian's workspace selector and verify the resulting session,
+   proof-center projection, and Fabric realm all match the chosen workspace.
+9. In **Security**, issue a self-service key. Run the list and create commands,
+   observe the created row arrive in both live task windows, rotate the key and
+   prove the old secret fails, then revoke the replacement and prove it fails.
+   Under **Members & access**, issue a member key as the owner and confirm a
+   viewer cannot do so. Back in the Administration Organization, select an
+   active customer and member under **Issue a customer member credential** to
+   exercise platform-authorized issuance and the global key directory.
+10. From **Platform operations**, suspend A. Confirm its browser data access,
+    Sync, and existing API key all fail closed. Reactivate A, switch or sign in
+    again as required, and confirm the original task data returns unchanged.
+11. Transfer customer ownership or change the current actor's own authority and
+    confirm the packaged control clears the invalidated session and returns
+    directly to sign-in. Review both **Workspace authorization audit** and
+    **Platform authorization audit** for the completed control-plane actions.
+
+The default configuration uses manual invitation delivery and never requires
+putting the invitation token in a link. The acceptance route also understands a
+fragment token, which is not sent in the initial HTTP request. Its current-tab
+handoff expires after 30 minutes, is cleared on success or manual reset, and is
+never reused as authorization truth; Guardian consumes the actual token.
 
 ### Inspect the physical boundary
 
@@ -220,6 +263,8 @@ The Resource does not expose either reference in its create/update allowlist.
 `guardianActorPolicy()` stamps them after client-field validation from the
 captured server principal and active tenant membership. It constrains editor
 lists/gets/updates to both IDs and rejects attempts to mutate either reference.
+The update allowlist contains only `status`, keeping the visible drag-to-move
+contract identical for browser, session Resource, and API-key callers.
 Manager access is an explicit RBAC branch, not an ownership bypass hidden in
 the schema. The schema foreign keys and shallow anchors enforce existence and
 retention; they do not grant access.
@@ -231,8 +276,9 @@ export const config: RouteConfig = { auth: 'required' };
 ```
 
 That route policy is server-enforced before rendering and mirrored by the
-browser auth boundary. The public `/`, `/login`, `/register`, and
-`/accept-invitation` routes live in a separate route group.
+browser auth boundary. The public `/`, `/login`, `/register`,
+`/accept-invitation`, and `/request-access` routes live in a separate route
+group.
 
 ## API keys
 
@@ -245,7 +291,7 @@ enables self-service and administrator management with these bounds:
 - at most 5 active keys per user in one workspace scope.
 
 Self-service uses the packaged control on **Security**. Workspace owners can
-also open **Workspace**, choose an active member under **Member automation
+also open **Members & access**, choose an active member under **Member automation
 credentials**, and use the targeted tenant-administrator control. Guardian
 projects issue, rotate, and revoke capabilities independently for the selected
 member; the picker itself grants no authority.
@@ -263,6 +309,7 @@ the key without echo, keeps it out of the exported environment, and gives it to
 curl through standard input rather than a process argument:
 
 ```sh
+(
 restore_tty() { stty echo; }
 trap restore_tty EXIT HUP INT TERM
 printf 'Guardian API key: ' >&2
@@ -273,28 +320,38 @@ printf '\n' >&2
 trap - EXIT HUP INT TERM
 
 printf 'header = "Authorization: Bearer %s"\n' "$guardian_fabric_key" \
-  | curl --config - --fail-with-body \
+  | curl -q --config - --fail-with-body \
       http://localhost:3100/api/resources/tasks
+list_status=$?
 
 printf 'header = "Authorization: Bearer %s"\n' "$guardian_fabric_key" \
-  | curl --config - --fail-with-body \
+  | curl -q --config - --fail-with-body \
       http://localhost:3100/api/resources/tasks \
       -X POST \
       -H 'Content-Type: application/json' \
       -H 'Idempotency-Key: readme-api-task-v1' \
-      --data '{"task_id":"readme-api-task","title":"Created through a tenant-bound key","status":"open","created_at":1893456000000}'
+      --data '{"task_id":"readme-api-task","title":"Created through a tenant-bound key","status":"open"}'
+create_status=$?
 
 unset guardian_fabric_key
 unset -f restore_tty
+test "$list_status" -eq 0 && exit "$create_status"
+exit "$list_status"
+)
 ```
 
 The key stores no permission list. Every request resolves the current user,
 customer membership, role assignments, tenant status, security generation,
 key state, and expiry. A viewer key can list tasks but cannot write; an editor
-key can create and update its own stamped tasks; a manager key can manage every
-task. Revocation, account suspension, workspace or
+key can create tasks and move only its own stamped tasks; a manager key can move
+or delete every task. Revocation, account suspension, workspace or
 membership suspension, removal of eligible live authority, expiry, or a
 security-generation change affects subsequent requests immediately.
+
+`created_at`, `created_by_user_id`, and `assigned_membership_id` are deliberately
+absent from create input. The Resource stamps creation time and the live
+Guardian actor on the server, and rejects attempts to submit any of those
+fields.
 
 Changing `X-Tenant-Id`, `X-Zero-Tenant-Id`, a query `tenantId`, or JSON fields
 does not redirect the key to another database. Its exact customer membership
@@ -315,12 +372,13 @@ bun test \
   --timeout 120000
 ```
 
-The example-local contract tests check the Guardian-reference schema and
-trusted-ownership Resource shape plus the small UI constants that control Sync
-admission, workspace navigation, and semantic status color. The fixture test
-checks the complete Resource policy, runs Doctor against this exact
-configuration, and bundles this exact server entrypoint through Zero's public
-package exports, preventing the shipped example from drifting. The primary
+The example-local contract tests check the Guardian-reference schema,
+server-owned field boundaries, role matrix, guided journeys, scope-aware
+navigation, onboarding input and current-tab handoff, and semantic Sync states.
+The fixture test checks the Resource realm/exposure plus its declared
+credential, permission, and customer-tenant branches, runs Doctor against this
+exact configuration, and bundles this exact server entrypoint through Zero's
+public package exports. The primary
 integration test builds its temporary `createApp()` instance through the same
 side-effect-free configuration factory as `zero.config.ts`, changing only
 disposable paths and matching runtime-owned SQLite handles, the test actor
@@ -330,19 +388,26 @@ drift from the test. Real actor subprocesses and Sync clients verify:
 
 - the privileged system and pinned application handles are distinct, neither
   contains `tasks`, and only the system database contains Guardian authority;
+- a registration rolled back after system writes leaves no customer database
+  file behind;
+- an authenticated user can create a customer workspace, wait for its Fabric
+  realm, submit a retained join request from another identity, approve it as
+  the owner, switch into that workspace, and exercise isolated owned data;
 - a Resource request made while identity projection is actively leased fails
   closed with stable `503 data-realm-not-ready`, never a raw FK conflict;
-- successful task creates are stamped with the live Guardian user and
-  membership IDs, and each physical tenant file matches an exact allowed
-  table-and-column contract with restrictive foreign keys and no Guardian
-  authority or PII columns;
+- successful task creates trim their titles and are stamped with a bounded
+  server creation time plus the live Guardian user and membership IDs. Blank
+  titles, client timestamps, identity/tenant spoof fields, and title updates
+  are rejected without committing a row;
+- each physical tenant file matches an exact allowed table-and-column contract
+  with restrictive foreign keys and no Guardian authority or PII columns;
 - two customer workspaces can store the same task primary key with different
   values in separate physical databases, and tenant B cannot list tenant A's
   row;
 - spoofed tenant headers and query input cannot change API-key routing;
 - two distinct users own rows in one workspace: an editor can list, read, and
-  update only its own row, while a manager can update and delete either user's
-  row; stale sessions fail after both role transitions;
+  move only its own row, while a manager can move and delete either user's row;
+  stale sessions fail after both role transitions;
 - tenant Sync delivers Resource-originated inserts, updates, and deletes to two
   live subscribers without crossing workspace boundaries;
 - the exact task Resource admits a key while its user is a viewer but denies
@@ -381,15 +446,19 @@ responsibilities beyond this proof's UI.
 
 | Path | Responsibility |
 | --- | --- |
+| `.env.example` | Safe local environment template; the real bootstrap secret belongs only in untracked `.env`. |
 | `zero.config.ts` | Small environment adapter for port, public URL, and the secret-gated bootstrap ceremony. |
 | `tsconfig.json` | App-local `@app/*` route alias used by Zero's generated hydration bundle. |
 | `db/schema.ts` | Shared `tasks` contract with declarative Guardian user/membership references and intentionally no `tenant_id`. |
 | `db/tenant-realm.ts` | Side-effect-free schema installed in every physical tenant database. |
+| `shared/task-access.ts` | Isomorphic permission/role registry shared by config, UI explanation, and contract tests. |
 | `server/proof-config.ts` | Pure shared Guardian/RBAC/API-key/Fabric configuration factory with explicit disposable-runtime overrides. |
-| `server/resources/tasks.ts` | Resource field policy, RBAC branches, trusted actor stamping, immutable ownership, HTTP CRUD, and Sync authorization. |
+| `server/resources/tasks.ts` | Resource field policy, title normalization, RBAC branches, trusted chronology/actor stamping, immutable ownership, HTTP CRUD, and Sync authorization. |
 | `app/server.ts` | Same-entry parent startup and Fabric actor bootstrap. |
-| `app/layout.tsx` | One `ThemeProvider`, `AppProvider`, `ConfirmProvider`, and `Toaster`. |
-| `app/(public)/` | Landing, login, registration, and invitation-acceptance routes. |
-| `app/(dashboard)/` | Auth-required pages and route-owned application shell. |
-| `app/components/` | Workspace-aware shell plus the app-owned member selector composed with Guardian's packaged API-key control. |
-| `app/tasks/` | Realtime collection projection and Resource-backed board actions. |
+| `app/layout.tsx` | One `ThemeProvider`, `AppProvider`, invitation-expiry guard, `ConfirmProvider`, and `Toaster`. |
+| `app/auth-route-query.ts` | Pure invitation/slug validation, clean-URL projection, and bounded current-tab invitation handoff. |
+| `app/(public)/` | Landing, login, registration, manual invitation acceptance, and retained access-request routes. |
+| `app/(dashboard)/` | Auth-required proof center, tasks, member/security/platform controls, workspace creation, and route-owned shell. |
+| `app/components/` | Scope-aware shell, live proof/status/access panels, API-key guide, invitation-expiry guard, and tenant/platform member key selectors composed around packaged Guardian controls. |
+| `app/tasks/` | Realtime collection orchestration, exact access summary, cards, and Resource-backed board actions. |
+| `app/proof-ui-contract.test.ts` | Pure UI/security contract coverage for scopes, journeys, onboarding handoff, role matrix, fields, and Sync states. |

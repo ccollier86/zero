@@ -8,6 +8,7 @@ import { ConfirmProvider } from '@zero/framework/react';
 import { AppProvider } from '@zero/framework/react/app-provider';
 
 import { tables } from '../db/schema';
+import { InvitationHandoffExpiry } from './components/invitation-handoff-expiry';
 
 /** Own the single browser runtime shared by every public and protected route. */
 export default function RootLayout({ children }: { children?: ReactNode }) {
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: { children?: ReactNode }) {
         tables={tables}
         auth
       >
+        <InvitationHandoffExpiry />
         <ConfirmProvider>
           <div className="min-h-screen bg-background font-sans text-foreground antialiased">
             {children}

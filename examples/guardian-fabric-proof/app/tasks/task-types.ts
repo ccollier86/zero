@@ -16,8 +16,7 @@ export interface TaskColumn {
   accent: string;
 }
 
-/** Either broad or actor-scoped read authority may mount the task data plane. */
-export const TASK_READ_PERMISSIONS = ['tasks:read:any', 'tasks:read'] as const;
+export { TASK_READ_PERMISSIONS } from '../../shared/task-access';
 
 export const TASK_COLUMNS: TaskColumn[] = [
   { status: 'open', label: 'Open', accent: 'bg-primary' },
