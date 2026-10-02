@@ -428,7 +428,9 @@
     "./styles.css": "./src/frontend/styles/globals.css"
   },
   "scripts": {
-    "test": "bun test --parallel=4",
+    "test": "bun run test:parallel && bun run test:database-actor-entry",
+    "test:parallel": "bun test --parallel=4 --path-ignore-patterns='**/database-actor-entry.test.ts'",
+    "test:database-actor-entry": "bun test src/databases/database-actor-entry.test.ts",
     "dev": "bun --watch src/cli/run.ts",
     "build": "bun build src/frontend/index.ts src/frontend/server.ts src/cli/run.ts src/create-zero/run.ts --target bun --outdir dist",
     "build:binary": "bun build --compile src/cli/run.ts --outfile zero",

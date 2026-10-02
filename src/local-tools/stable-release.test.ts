@@ -1,8 +1,8 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { archivePath, command, publishMain, readStableRelease } from './stable-release';
+import { archivePath, command, publishBranch, publishMain, readStableRelease } from './stable-release';
 import { runStableTool } from './run';
 import { installTools } from './install';
 
@@ -26,6 +26,7 @@ test('saved packages exclude feature/uncommitted files; installed tools and main
     await command(['git', 'add', '.'], repo);
     await command(['git', '-c', 'commit.gpgsign=false', 'commit', '-m', 'baseline'], repo);
     const main = await command(['git', 'rev-parse', 'HEAD'], repo);
+    await command(['git', 'branch', 'release/1.3', main], repo);
     await command(['git', 'checkout', '-b', 'feature/unreleased'], repo);
     await writeFile(join(repo, 'src/marker.ts'), 'export const marker = "feature-commit";\n');
     await command(['git', 'add', 'src/marker.ts'], repo);
@@ -33,13 +34,49 @@ test('saved packages exclude feature/uncommitted files; installed tools and main
     await writeFile(join(repo, 'src/marker.ts'), 'export const marker = "dirty-feature";\n');
     await writeFile(join(repo, 'src/untracked-feature.ts'), 'unreleased\n');
     await writeFile(join(repo, 'src/create-zero/scaffold.ts'), 'throw new Error("LIVE CHECKOUT EXECUTED");\n');
+    const checkoutBefore = await command(['git', 'symbolic-ref', '--short', 'HEAD'], repo);
+    const statusBefore = await command(['git', 'status', '--short'], repo);
     const release = await publishMain(config);
     expect(release.commit).toBe(main);
+    expect(release.branch).toBe('main');
+    expect(release.source).toBe('refs/heads/main');
+    expect(await command(['git', 'symbolic-ref', '--short', 'HEAD'], repo)).toBe(checkoutBefore);
+    expect(await command(['git', 'status', '--short'], repo)).toBe(statusBefore);
     const bytes = await readFile(archivePath(config, release));
     const files = await new Bun.Archive(bytes).files();
     expect(await files.get('package/src/marker.ts')!.text()).toContain('committed-main');
     expect(files.has('package/src/untracked-feature.ts')).toBe(false);
     expect(await publishMain(config)).toEqual(release);
+
+    // An explicitly selected slash branch is resolved only through refs/heads,
+    // packages its committed object without touching the checkout, and records
+    // source identity even when it points at the same commit as main.
+    const compatibility = await publishBranch(config, 'release/1.3');
+    expect(compatibility).toMatchObject({
+      branch: 'release/1.3', source: 'refs/heads/release/1.3', commit: main,
+    });
+    expect(archivePath(config, compatibility)).not.toBe(archivePath(config, release));
+    expect(await command(['git', 'symbolic-ref', '--short', 'HEAD'], repo)).toBe(checkoutBefore);
+    expect(await command(['git', 'status', '--short'], repo)).toBe(statusBefore);
+    expect(await readStableRelease(config)).toEqual(compatibility);
+    expect(await publishMain(config)).toEqual(release);
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      expect(await runStableTool(config, 'release', ['release/1.3'])).toBe(0);
+      expect(await runStableTool(config, 'release', ['--status'])).toBe(0);
+      expect(log.mock.calls.flat().join('\n')).toContain('release/1.3');
+      expect(log.mock.calls.flat().join('\n')).toContain('refs/heads/release/1.3');
+    } finally {
+      log.mockRestore();
+    }
+    expect(await readStableRelease(config)).toEqual(compatibility);
+    expect(await publishMain(config)).toEqual(release);
+
+    await expect(publishBranch(config, '@{-1}')).rejects.toThrow('Invalid local branch');
+    await expect(publishBranch(config, 'main^{commit}')).rejects.toThrow('Invalid local branch');
+    await expect(publishBranch(config, 'does/not/exist')).rejects.toThrow('does not exist');
+    await expect(runStableTool(config, 'release', ['--unknown'])).rejects.toThrow('Usage:');
+    await expect(runStableTool(config, 'release', ['main', 'extra'])).rejects.toThrow('Usage:');
 
     process.env.ZERO_LOCAL_BIN_DIR = join(root, 'bin');
     process.env.ZERO_LOCAL_TOOLS_DIR = join(root, 'tools');
@@ -51,7 +88,9 @@ test('saved packages exclude feature/uncommitted files; installed tools and main
     const appPackage = JSON.parse(await readFile(join(app, 'package.json'), 'utf8'));
     expect(appPackage.dependencies['@zero/framework']).toBe('file:./.zero/framework/zero-framework.tgz');
     expect(await readFile(join(app, '.zero/framework/zero-framework.tgz'))).toEqual(bytes);
-    expect(JSON.parse(await readFile(join(app, 'zero-release.json'), 'utf8')).commit).toBe(main);
+    expect(JSON.parse(await readFile(join(app, 'zero-release.json'), 'utf8'))).toMatchObject({
+      branch: 'main', source: 'refs/heads/main', commit: main,
+    });
     await expect(runStableTool(config, 'new', [join(root, 'override'), '--zero', '*'])).rejects.toThrow('cannot override');
     await expect(runStableTool(config, 'update', [app, '--local', repo])).rejects.toThrow('cannot override');
     // The installed command works even when the source repository is unavailable.

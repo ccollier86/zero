@@ -3,13 +3,14 @@
 import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { archivePath, command, publishMain, readStableRelease, withStablePackage, writeJsonAtomic } from './stable-release';
+import { archivePath, command, publishBranch, publishMain, readStableRelease, withStablePackage, writeJsonAtomic } from './stable-release';
 import type { StableRelease, ToolsConfig } from './stable-release';
 
 const DEPENDENCY = 'file:./.zero/framework/zero-framework.tgz';
 
 function report(config: ToolsConfig, release: StableRelease): void {
-  console.log(`Zero ${release.version} · main ${release.commit.slice(0, 12)}`);
+  console.log(`Zero ${release.version} · ${release.branch} ${release.commit.slice(0, 12)}`);
+  console.log(`Source: ${release.source}`);
   console.log(`Archive: ${archivePath(config, release)}`);
   console.log(`SHA-256: ${release.sha256}`);
 }
@@ -24,12 +25,13 @@ function help(action: string): void {
   const usage: Record<string, string> = {
     new: 'zero-new [target-dir] [--skip-install] [--name <name>] [--force]',
     update: 'zero-update [project-dir] [--dry-run] [--check]',
-    release: 'zero-release [--status]',
+    release: 'zero-release [branch] | zero-release --status',
     doctor: 'zero-doctor [doctor options] (run inside an installed app)',
   };
   console.log(`Usage: ${usage[action] ?? 'zero-release --status'}`);
-  console.log('zero-new and zero-update use the saved committed-main package. No working-tree fallback.');
-  console.log('zero-release packages local main; --status shows the saved version without refreshing it.');
+  console.log('zero-new and zero-update use the saved committed-branch package. No working-tree fallback.');
+  console.log('zero-release defaults to local main; pass release/2.0 or release/1.3 to select an exact local branch.');
+  console.log('--status shows the saved source branch and version without refreshing it.');
 }
 
 export async function runStableTool(config: ToolsConfig, action: string, args: string[]): Promise<number> {
@@ -42,8 +44,12 @@ export async function runStableTool(config: ToolsConfig, action: string, args: s
     return 0;
   }
   if (action === 'release') {
-    if (args.length && (args.length !== 1 || args[0] !== '--status')) throw new Error('Usage: zero-release [--status]');
-    report(config, args[0] === '--status' ? await readStableRelease(config) : await publishMain(config));
+    if (args.length > 1 || (args[0]?.startsWith('-') && args[0] !== '--status')) {
+      throw new Error('Usage: zero-release [branch] | zero-release --status');
+    }
+    report(config, args[0] === '--status'
+      ? await readStableRelease(config)
+      : await publishBranch(config, args[0] ?? 'main'));
     return 0;
   }
   if (action === 'doctor') {
@@ -54,7 +60,7 @@ export async function runStableTool(config: ToolsConfig, action: string, args: s
   }
   if (action !== 'new' && action !== 'update') throw new Error(`Unknown Zero tool: ${action}`);
   return withStablePackage(config, async (directory, release, archive) => {
-    console.log(`Using saved Zero ${release.version} from main ${release.commit.slice(0, 12)}`);
+    console.log(`Using saved Zero ${release.version} from ${release.branch} ${release.commit.slice(0, 12)}`);
     const module = (path: string) => import(pathToFileURL(join(directory, path)).href);
     if (action === 'new') {
       // Keep the strict committed parser; add only the wrapper's default target/install behavior.

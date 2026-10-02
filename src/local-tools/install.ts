@@ -84,9 +84,10 @@ export async function installTools(repo: string): Promise<void> {
     }
   }
   console.log(`Installed stable Zero tools in ${bin}`);
-  console.log(`Active package: ${release.version} / main ${release.commit}`);
+  console.log(`Active package: ${release.version} / ${release.branch} ${release.commit}`);
   console.log(`Previous command files: ${backup}`);
-  console.log('zero-release --status shows the saved archive. Feature checkouts never change it.');
+  console.log('zero-release [branch] selects an exact local branch; --status shows the saved archive.');
+  console.log('Only main refreshes automatically; feature checkouts never change the saved package.');
 }
 
 if (import.meta.main) {
