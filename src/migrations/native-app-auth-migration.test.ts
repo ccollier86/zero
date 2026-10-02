@@ -42,7 +42,7 @@ describe('migration 005 native app auth', () => {
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?"
         ).get(table)).toEqual({ name: table });
       }
-      expect(migrator.run()).toEqual(['006', '007']);
+      expect(migrator.run()).toEqual(['006', '007', '030']);
       expect(db.query('SELECT email FROM users WHERE user_id = ?').get('u_existing')).toEqual({
         email: 'existing@example.com',
       });

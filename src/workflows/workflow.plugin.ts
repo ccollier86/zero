@@ -10,6 +10,7 @@ import { installAppStopBarrier } from '../frontend/server/app-stop-lifecycle';
 import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import { createWorkflowHttpPlugin } from './workflow-http.plugin';
+import { createWorkflowDefinitionAdminHttpPlugin } from './workflow-definition-http.plugin';
 import {
   createWorkflowPluginRuntimeOwner,
   getWorkflowRegistry,
@@ -63,6 +64,12 @@ export function createWorkflowPlugin(
     })
     .onStop(() => runtime.stop())
     .use(createWorkflowHttpPlugin({
+      registry: runtime.registry,
+      getTokenService: runtime.getTokenService,
+      initializeForRequest: runtime.initializeForRequest,
+      requireReadyService: runtime.requireReadyService,
+    }))
+    .use(createWorkflowDefinitionAdminHttpPlugin({
       registry: runtime.registry,
       getTokenService: runtime.getTokenService,
       initializeForRequest: runtime.initializeForRequest,

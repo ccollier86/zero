@@ -509,8 +509,9 @@ the underlying sync connection.
 
 ### Workflow Runs
 
-`useWorkflowRun(name, options?)` starts a workflow and watches its live synced
-instance/step progress:
+`useWorkflowRun(name, { instanceId?, version? })` starts or selects a workflow
+and watches its live synced node/interaction progress. `version` pins new
+starts to one immutable definition version:
 
 ```tsx
 const report = useWorkflowRun('generate-report');
@@ -520,30 +521,49 @@ await report.start({ clientId });
 return (
   <>
     <Progress value={report.progress.percent} />
-    {report.isWaiting && <span>Waiting for an event</span>}
+    {report.isWaitingForInput && <span>Waiting for a response</span>}
     {report.isRetrying && <span>Retry scheduled</span>}
+    {report.isRunningInParallel && <span>Running parallel work</span>}
   </>
 );
 ```
 
-`useWorkflow(instanceId)` returns `instance`, ordered `steps`, the current
-strict-frontier step, and `isRunning`, `isComplete`, `isFailed`, `isPaused`,
-`isCancelled`, `isWaiting`, and `isRetrying`. `useWorkflowList({ status?,
-name? })` returns the current user's visible instances. `isRunning` can be true
-together with `isWaiting` or `isRetrying`, because those frontier states do not
-make the instance terminal.
+`useWorkflow(instanceId)` returns `instance`, ordered `steps`, all
+`activeSteps`, safe durable `interactions`, `currentStep`, and these flags:
+`isRunning`, `isComplete`, `isFailed`, `isPaused`, `isCancelled`, `isWaiting`,
+`isWaitingForInput`, `isRetrying`, and `isRunningInParallel`.
+`useWorkflowList({ status?, name? })` returns the current user's visible
+instances. Flags are descriptive and can overlap: a run remains `running`
+while waiting or retrying, and several nodes can be active in a parallel or
+fan-out region.
 
 `useWorkflowActions()` exposes authenticated `start`, `cancel`, `pause`,
-`resume`, and `sendEvent` calls. `sendEvent` resolves to `true` only when the
-newly stored event was claimed before the request returned. An event sent while
-paused is durably buffered but returns `false`; resume may claim it later.
+`resume`, `sendEvent`, and `submitResponse` calls. `start(name, input?, {
+version? })` can pin an immutable definition version. `submitResponse(instanceId,
+interactionId, payload, { submissionId?, channel? })` answers a
+`requestAndWait`. The hook generates an ID for each call; callers that may
+retry at the application layer should supply one stable submission ID across
+those attempts. It resolves to
+`accepted`, `rejected`, or `superseded`. `sendEvent` resolves to `true` only
+when the newly stored event was claimed before the request returned. An event
+sent while paused is durably buffered but returns `false`; resume may claim it
+later. A direct response is not buffered while paused: it rejects with
+retryable HTTP `409` `WORKFLOW_DRAINING`. Preserve its submission ID and retry
+after resume. Each wait also has a bounded unique-submission/byte budget;
+replaying an existing stable ID remains valid at that cap, while a new ID
+returns non-retryable HTTP `429` `WORKFLOW_INTERACTION_SUBMISSION_LIMIT`.
 
 These hooks read ReactiveDB Sync and do not poll. Runtime rows are owner-scoped,
 with the exact stable global `admin` role allowed to see all runs. Definitions
-are excluded from Sync. Instance rows omit the server-only `steps_json`
-snapshot, and step rows omit the executable `wait_event` routing key; render
-the projected human `step_name` instead. Workflow tables are read-only over
-Sync, and lifecycle actions go through `client.api.workflows`. See
+and canonical graph JSON are excluded from Sync. Instance rows omit private
+graph snapshots and internal version IDs. Every graph instance and step clears
+input, output, and raw error; step rows also omit the executable `wait_event`.
+Safe `node_id`, `node_kind`, `node_path`, `branch_key`, `parent_step_id`,
+`item_key`, and `item_index` remain for a real-time timeline or graph view.
+Graph-event rows expose audit metadata with payloads redacted. Interaction rows
+expose safe status/timestamps and rejection counts, not prompts, policies,
+schemas, or response payloads. Workflow tables are read-only over Sync, and
+actions go through `client.api.workflows`. See
 [Durable Workflows](../workflows.md).
 
 ### User Properties

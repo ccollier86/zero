@@ -7,15 +7,17 @@ import { AuthError } from '../auth/types';
 import { OBS_CODES } from '../observability/codes';
 import { getSafeRequestPath } from '../observability/safe-request-path';
 import { emitPlatformCode } from '../observability/sink';
-import { canAccessWorkflowDefinition } from './workflow-access';
+import { WorkflowDefinitionManager } from './workflow-definition-manager';
 import { WorkflowError, workflowNotFound } from './workflow-error';
 import {
+  toPublicWorkflowEvent,
   toPublicWorkflowInstance,
   toPublicWorkflowStep,
 } from './workflow-public-record';
 import type { WorkflowRegistry } from './workflow-registry';
 import type { WorkflowService } from './workflow-service';
 import type { WorkflowStatus } from './types';
+import { MAX_WORKFLOW_EVENT_NAME_LENGTH } from './workflow-runtime-store';
 
 export interface WorkflowHttpPluginDependencies {
   registry: WorkflowRegistry;
@@ -103,27 +105,37 @@ export function createWorkflowHttpPlugin(
     })
     .get('/definitions', ({ requireAuth }) => {
       const auth = requireAuth();
-      return registry.listWorkflows()
-        .filter((workflow) => canAccessWorkflowDefinition(workflow, 'inspect', auth))
-        .map((workflow) => ({
-          name: workflow.name,
-          steps: workflow.steps.map((step) => ({ name: step.name })),
-        }));
+      const workflowService = requireReadyService();
+      const manager = new WorkflowDefinitionManager(
+        registry,
+        workflowService.getGraphRuntime().versions,
+      );
+      return manager.listVisible(auth).map((summary) => ({
+        name: summary.name,
+        steps: summary.steps,
+      }));
     })
     .post('/', async ({ requireAuth, body }) => {
       const auth = requireAuth();
       const workflowService = requireReadyService();
       const name = body.name.trim();
-      const definition = registry.getWorkflow(name);
-      if (!definition || !canAccessWorkflowDefinition(definition, 'start', auth)) {
-        throw workflowNotFound();
-      }
-      const instanceId = await workflowService.start(name, body.input, auth.userId);
+      const manager = new WorkflowDefinitionManager(
+        registry,
+        workflowService.getGraphRuntime().versions,
+      );
+      manager.assertCanStart(name, body.version, auth);
+      const instanceId = await workflowService.start(
+        name,
+        body.input,
+        auth.userId,
+        { ...(body.version === undefined ? {} : { version: body.version }) },
+      );
       return { instanceId };
     }, {
       body: t.Object({
         name: nonBlankString(),
         input: t.Optional(t.Unknown()),
+        version: t.Optional(t.Integer({ minimum: 1 })),
       }),
     })
     .get('/:id', ({ requireAuth, params }) => {
@@ -139,15 +151,61 @@ export function createWorkflowHttpPlugin(
       const instanceId = params.id.trim();
       const instance = requireWorkflowAccess(workflowService, instanceId, auth);
       return workflowService.getSteps(instanceId)
-        .map((step) => toPublicWorkflowStep(step, instance.steps_json));
+        .map((step) => toPublicWorkflowStep(
+          step,
+          instance.steps_json,
+          instance.graph_json,
+        ));
     }, idParams())
     .get('/:id/events', ({ requireAuth, params }) => {
       const auth = requireAuth();
       const workflowService = requireReadyService();
       const instanceId = params.id.trim();
-      requireWorkflowAccess(workflowService, instanceId, auth);
-      return workflowService.getEvents(instanceId);
+      const instance = requireWorkflowAccess(workflowService, instanceId, auth);
+      return workflowService.getEvents(instanceId)
+        .map((event) => toPublicWorkflowEvent(event, instance.graph_json));
     }, idParams())
+    .get('/:id/interactions', ({ requireAuth, params }) => {
+      const auth = requireAuth();
+      const workflowService = requireReadyService();
+      const instanceId = params.id.trim();
+      requireWorkflowAccess(workflowService, instanceId, auth);
+      return workflowService.getGraphRuntime().interactions.listByInstance(instanceId);
+    }, idParams())
+    .post('/:id/interactions/:interactionId/responses', async ({
+      requireAuth,
+      params,
+      body,
+    }) => {
+      const auth = requireAuth();
+      const workflowService = requireReadyService();
+      const instanceId = params.id.trim();
+      if (!workflowService.getInstance(instanceId)) throw workflowNotFound();
+      const graph = workflowService.getGraphRuntime();
+      const interaction = graph.interactions.get(params.interactionId.trim());
+      if (!interaction || interaction.instanceId !== instanceId) throw workflowNotFound();
+      return graph.submitInteraction({
+        interactionId: interaction.interactionId,
+        submissionId: body.submissionId.trim(),
+        actor: {
+          actorId: auth.userId,
+          roles: [auth.role],
+          claims: { email: auth.email },
+        },
+        payload: body.payload,
+        channel: body.channel?.trim() || 'web',
+      });
+    }, {
+      params: t.Object({
+        id: nonBlankString(),
+        interactionId: nonBlankString(),
+      }),
+      body: t.Object({
+        submissionId: nonBlankString(),
+        payload: t.Unknown(),
+        channel: t.Optional(nonBlankString()),
+      }),
+    })
     .post('/:id/events', async ({ requireAuth, params, body }) => {
       const auth = requireAuth();
       const workflowService = requireReadyService();
@@ -158,12 +216,21 @@ export function createWorkflowHttpPlugin(
         body.eventName.trim(),
         body.payload,
         auth.userId,
+        {
+          actorId: auth.userId,
+          roles: [auth.role],
+          claims: { email: auth.email },
+        },
       );
       return { ok: true, matched };
     }, {
       params: idParams().params,
       body: t.Object({
-        eventName: nonBlankString(),
+        eventName: t.String({
+          minLength: 1,
+          maxLength: MAX_WORKFLOW_EVENT_NAME_LENGTH,
+          pattern: '\\S',
+        }),
         payload: t.Optional(t.Unknown()),
       }),
     })

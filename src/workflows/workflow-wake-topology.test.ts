@@ -355,6 +355,7 @@ function seedExpired(
     completed_at: null,
     created_at: new Date(START - 100).toISOString(),
   });
+  seedResourceAccounting(db, instanceId);
 }
 
 function seedFutureRunning(instanceId: string): void {
@@ -369,6 +370,7 @@ function seedFutureRunning(instanceId: string): void {
     timeout_at: new Date(START + 50).toISOString(),
     started_at: START_ISO,
   });
+  seedResourceAccounting(db, instanceId);
 }
 
 function seedCorruptSuccessor(instanceId: string): void {
@@ -386,6 +388,7 @@ function seedCorruptSuccessor(instanceId: string): void {
     started_at: new Date(START - 100).toISOString(),
     completed_at: new Date(START - 50).toISOString(),
   });
+  seedResourceAccounting(db, instanceId);
 }
 
 function seedCorruptExpiredSuccessor(instanceId: string): void {
@@ -407,6 +410,7 @@ function seedCorruptExpiredSuccessor(instanceId: string): void {
     timeout_at: START_ISO,
     started_at: new Date(START - 100).toISOString(),
   });
+  seedResourceAccounting(db, instanceId);
 }
 
 function insertInstance(instanceId: string, definitions: unknown[]): void {
@@ -425,6 +429,22 @@ function insertInstance(instanceId: string, definitions: unknown[]): void {
     updated_at: new Date(START - 100).toISOString(),
     completed_at: null,
   });
+}
+
+function seedResourceAccounting(database: ReactiveDB, instanceId: string): void {
+  const bytes = Number((database.prepare(`SELECT
+    length(CAST(COALESCE(instance.input, '') AS BLOB))
+      + length(CAST(COALESCE(instance.output, '') AS BLOB))
+      + COALESCE((SELECT SUM(length(CAST(COALESCE(step.input, '') AS BLOB))
+        + length(CAST(COALESCE(step.output, '') AS BLOB)))
+        FROM workflow_steps AS step WHERE step.instance_id = instance.instance_id), 0) AS bytes
+    FROM workflow_instances AS instance WHERE instance.instance_id = ?`)
+    .get(instanceId) as { bytes: number }).bytes);
+  database.prepare(`INSERT OR REPLACE INTO _workflow_runtime_usage
+    (instance_id, runtime_bytes) VALUES (?, ?)`).run(instanceId, bytes);
+  database.prepare(`INSERT OR REPLACE INTO _workflow_event_usage
+    (instance_id, total_count, total_bytes, queued_count, queued_bytes, revision)
+    VALUES (?, 0, 0, 0, 0, 0)`).run(instanceId);
 }
 
 function pristineStep(

@@ -129,6 +129,7 @@ describe('workflow initialization recovery', () => {
       completed_at: null,
       created_at: START_ISO,
     });
+    seedResourceAccounting(db, 'pending-instance');
     const service = track(new WorkflowService(db, registry));
     const original = publicRows();
 
@@ -181,6 +182,7 @@ describe('workflow initialization recovery', () => {
       completed_at: null,
       created_at: START_ISO,
     });
+    seedResourceAccounting(db, 'retired-handler');
     const service = track(new WorkflowService(db, registry));
 
     expect(await service.recoverInFlight()).toBe(1);
@@ -489,6 +491,7 @@ function seedRunning(
     completed_at: null,
     created_at: START_ISO,
   });
+  seedResourceAccounting(db, instanceId);
 }
 
 function seedInstance(
@@ -511,6 +514,23 @@ function seedInstance(
     updated_at: START_ISO,
     completed_at: null,
   });
+  seedResourceAccounting(db, instanceId);
+}
+
+function seedResourceAccounting(database: ReactiveDB, instanceId: string): void {
+  const bytes = Number((database.prepare(`SELECT
+    length(CAST(COALESCE(instance.input, '') AS BLOB))
+      + length(CAST(COALESCE(instance.output, '') AS BLOB))
+      + COALESCE((SELECT SUM(length(CAST(COALESCE(step.input, '') AS BLOB))
+        + length(CAST(COALESCE(step.output, '') AS BLOB)))
+        FROM workflow_steps AS step WHERE step.instance_id = instance.instance_id), 0) AS bytes
+    FROM workflow_instances AS instance WHERE instance.instance_id = ?`)
+    .get(instanceId) as { bytes: number }).bytes);
+  database.prepare(`INSERT OR REPLACE INTO _workflow_runtime_usage
+    (instance_id, runtime_bytes) VALUES (?, ?)`).run(instanceId, bytes);
+  database.prepare(`INSERT OR REPLACE INTO _workflow_event_usage
+    (instance_id, total_count, total_bytes, queued_count, queued_bytes, revision)
+    VALUES (?, 0, 0, 0, 0, 0)`).run(instanceId);
 }
 
 function publicRows(): Record<string, unknown[]> {

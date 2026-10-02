@@ -20,6 +20,8 @@ export interface WorkflowProgress {
 
 export interface UseWorkflowRunOptions {
   instanceId?: string | null;
+  /** Pin new starts to one immutable workflow-definition version. */
+  version?: number;
 }
 
 export interface UseWorkflowRunResult extends UseWorkflowResult {
@@ -30,6 +32,11 @@ export interface UseWorkflowRunResult extends UseWorkflowResult {
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   sendEvent: (eventName: string, payload?: unknown) => Promise<boolean>;
+  submitResponse: (
+    interactionId: string,
+    payload: unknown,
+    options?: { submissionId?: string; channel?: string },
+  ) => Promise<'accepted' | 'rejected' | 'superseded'>;
   starting: boolean;
   actionPending: boolean;
   actionError: unknown;
@@ -64,7 +71,9 @@ export function useWorkflowRun(
 
   const startMutation = useMutation(
     async (input?: unknown) => {
-      const nextInstanceId = await actions.start(name, input);
+      const nextInstanceId = await actions.start(name, input, {
+        ...(options.version === undefined ? {} : { version: options.version }),
+      });
       setLocalInstanceId(nextInstanceId);
       return nextInstanceId;
     },
@@ -72,7 +81,12 @@ export function useWorkflowRun(
   );
 
   const actionMutation = useMutation(
-    async (action: 'cancel' | 'pause' | 'resume' | 'event', eventName?: string, payload?: unknown) => {
+    async (
+      action: 'cancel' | 'pause' | 'resume' | 'event' | 'response',
+      target?: string,
+      payload?: unknown,
+      responseOptions?: { submissionId?: string; channel?: string },
+    ) => {
       const targetInstanceId = requireInstanceId(instanceId);
       switch (action) {
         case 'cancel':
@@ -82,7 +96,14 @@ export function useWorkflowRun(
         case 'resume':
           return actions.resume(targetInstanceId);
         case 'event':
-          return actions.sendEvent(targetInstanceId, eventName ?? '', payload);
+          return actions.sendEvent(targetInstanceId, target ?? '', payload);
+        case 'response':
+          return actions.submitResponse(
+            targetInstanceId,
+            target ?? '',
+            payload,
+            responseOptions,
+          );
       }
     },
     { metadata: { workflow: name } },
@@ -116,6 +137,16 @@ export function useWorkflowRun(
       Boolean(await actionMutation.run('event', eventName, payload)),
     [actionMutation.run],
   );
+  const submitResponse = useCallback(
+    async (
+      interactionId: string,
+      payload: unknown,
+      responseOptions?: { submissionId?: string; channel?: string },
+    ) => actionMutation.run('response', interactionId, payload, responseOptions) as Promise<
+      'accepted' | 'rejected' | 'superseded'
+    >,
+    [actionMutation.run],
+  );
 
   return {
     ...workflow,
@@ -126,6 +157,7 @@ export function useWorkflowRun(
     pause,
     resume,
     sendEvent,
+    submitResponse,
     starting: startMutation.pending,
     actionPending: actionMutation.pending,
     actionError: startMutation.error ?? actionMutation.error,

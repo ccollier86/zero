@@ -12,6 +12,8 @@ import type {
   WorkflowInstanceRecord,
   WorkflowStepRecord,
 } from './types';
+import { WorkflowEventCapacityStore } from './workflow-event-capacity-store';
+import { WorkflowRuntimeValueBudget } from './workflow-runtime-budget';
 
 export interface WorkflowInstanceListFilter {
   status?: string;
@@ -31,6 +33,8 @@ type WorkflowRow = Record<string, unknown>;
 type PreparedStatement = ReturnType<ReactiveDB['prepare']>;
 
 export class WorkflowRepository {
+  private readonly budget: WorkflowRuntimeValueBudget;
+  private readonly eventCapacity: WorkflowEventCapacityStore;
   private readonly instanceById: PreparedStatement;
   private readonly stepById: PreparedStatement;
   private readonly stepsByInstance: PreparedStatement;
@@ -44,6 +48,8 @@ export class WorkflowRepository {
   private readonly listStatements = new Map<number, PreparedStatement>();
 
   constructor(private readonly db: ReactiveDB) {
+    this.budget = new WorkflowRuntimeValueBudget(db);
+    this.eventCapacity = new WorkflowEventCapacityStore(db);
     this.instanceById = db.prepare(`
       SELECT * FROM workflow_instances WHERE instance_id = ?
     `);
@@ -74,6 +80,7 @@ export class WorkflowRepository {
       INNER JOIN workflow_instances AS instance
         ON instance.instance_id = retry.instance_id
       WHERE instance.status = 'running'
+        AND instance.graph_json IS NULL
         AND retry.status = 'failed'
         AND retry.retry_at IS NOT NULL
         AND retry.retry_at <= ?
@@ -93,6 +100,7 @@ export class WorkflowRepository {
       INNER JOIN workflow_instances AS instance
         ON instance.instance_id = timeout.instance_id
       WHERE instance.status = 'running'
+        AND instance.graph_json IS NULL
         AND timeout.timeout_at IS NOT NULL
         AND timeout.timeout_at <= ?
         AND (
@@ -111,7 +119,8 @@ export class WorkflowRepository {
     `);
     this.nonterminalInstances = db.prepare(`
       SELECT * FROM workflow_instances
-      WHERE status NOT IN ('completed', 'failed', 'cancelled')
+      WHERE graph_json IS NULL
+        AND status NOT IN ('completed', 'failed', 'cancelled')
       ORDER BY rowid ASC
     `);
     this.runningStepsForDisposal = db.prepare(`
@@ -119,7 +128,8 @@ export class WorkflowRepository {
       FROM workflow_steps AS step
       INNER JOIN workflow_instances AS instance
         ON instance.instance_id = step.instance_id
-      WHERE instance.status = 'running' AND step.status = 'running'
+      WHERE instance.graph_json IS NULL
+        AND instance.status = 'running' AND step.status = 'running'
       ORDER BY step.rowid ASC
     `);
   }
@@ -255,11 +265,18 @@ export class WorkflowRepository {
   }
 
   insertInstance(row: WorkflowRow): void {
-    this.db.insert('workflow_instances', row);
+    this.db.transaction(() => {
+      this.budget.assertNewInstance(row);
+      this.eventCapacity.initializeInstance(String(row.instance_id ?? ''));
+      this.db.insert('workflow_instances', row);
+    });
   }
 
   insertStep(row: WorkflowRow): void {
-    this.db.insert('workflow_steps', row);
+    this.db.transaction(() => {
+      this.budget.assertNewStep(row);
+      this.db.insert('workflow_steps', row);
+    });
   }
 
   insertEvent(row: WorkflowRow): void {
@@ -271,10 +288,21 @@ export class WorkflowRepository {
   }
 
   updateInstance(instanceId: string, changes: WorkflowRow): void {
-    this.db.update('workflow_instances', instanceId, changes);
+    this.db.transaction(() => {
+      this.budget.assertInstanceChange(instanceId, changes);
+      this.db.update('workflow_instances', instanceId, changes);
+    });
   }
 
   updateStep(stepId: string, changes: WorkflowRow): void {
-    this.db.update('workflow_steps', stepId, changes);
+    this.db.transaction(() => {
+      this.budget.assertStepChange(stepId, changes);
+      this.db.update('workflow_steps', stepId, changes);
+    });
+  }
+
+  /** Recovery-only aggregate byte-accounting integrity check. */
+  validateRuntimeBudget(instanceId: string): void {
+    this.budget.validateInstance(instanceId);
   }
 }

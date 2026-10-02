@@ -7,6 +7,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { defineZeroConfig, resolveConfig } from './types';
+import { WorkflowInteractionAuthority } from '../../workflows/workflow-interaction-authority';
 
 const tables = {
   todos: {
@@ -55,13 +56,14 @@ describe('resolveConfig', () => {
 
   test('normalizes workflow registration and enforces its auth dependency', () => {
     const register = () => undefined;
+    const interactionAuthority = new WorkflowInteractionAuthority(() => true);
     const configured = resolveConfig({
       db: { mode: 'memory' },
       tables,
       auth: true,
-      workflows: { register },
+      workflows: { register, interactionAuthority },
     });
-    expect(configured.workflows).toEqual({ register });
+    expect(configured.workflows).toEqual({ register, interactionAuthority });
 
     const disabled = resolveConfig({
       db: { mode: 'memory' },

@@ -104,6 +104,8 @@ export class WorkflowLifecycleCoordinator {
       for (const instance of nonterminalInstances) {
         const steps = this.repository.getSteps(instance.instance_id);
         try {
+          this.runtime.validateEventUsage(instance.instance_id);
+          this.repository.validateRuntimeBudget(instance.instance_id);
           const validated = validateWorkflowPersistedState(instance, steps);
           const expiredFrontier = instance.status === 'running'
             && validated.frontier?.timeout_at !== null

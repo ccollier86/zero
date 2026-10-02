@@ -655,7 +655,7 @@ Zero includes these backend capabilities out of the box:
 | State Sync | Per-user server-persisted reactive key/value state. |
 | Notifications | Server-created notifications and receipt tracking. |
 | Rooms/Presence | Presence and room coordination primitives. |
-| Workflows | [Durable strict-frontier execution](./workflows.md), event waits, retries/deadlines, crash recovery, owner-scoped live state, and authenticated actions. |
+| Workflows | [Versioned durable graphs](./workflows.md), trusted activities, choices, parallel joins, bounded array fan-out, event and human waits, private scratch memory, crash recovery, and owner-scoped live visualization. |
 | Migrations | Explicit migration files, ledger, schema history, rollback, backups, doctor, draft plans. |
 | Observability | Structured event codes, default console/memory sink, protected event endpoint, frontend ingest. |
 | AI | Internal server-side AI service with env-detected providers, custom Meta Llama adapter, aliases, conversations, tools, embeddings, images, transcription, speech, and protected status. |
@@ -677,7 +677,7 @@ Platform-specific hooks include:
 | Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
 | Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveQuota` |
 | Rooms/presence | `usePresence`, `usePresenceList`, `useTypingIndicator`, `useEphemeral`, `useEphemeralTopic` |
-| Workflows/notifications | `useWorkflowRun`, `useWorkflow`, `useWorkflowList`, `useNotifications`, `useUnreadCount` |
+| Workflows/notifications | `useWorkflowRun`, `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, `useNotifications`, `useUnreadCount` |
 | State and health | `useServerState`, `usePreference`, `useFormDraft`, `useConnectionHealth`, `useMutation` |
 
 Zero also exports a standard React hook set for common UI behavior such as

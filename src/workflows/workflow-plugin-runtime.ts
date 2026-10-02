@@ -11,6 +11,7 @@ import { OBS_CODES } from '../observability/codes';
 import { emitPlatformCode } from '../observability/sink';
 import type { ReactiveDB } from '../sync/reactive-db';
 import { WorkflowError } from './workflow-error';
+import type { WorkflowInteractionAuthority } from './workflow-interaction-authority';
 import { WorkflowRegistry } from './workflow-registry';
 import {
   getCurrentWorkflowRuntimeOwner,
@@ -31,6 +32,8 @@ export interface WorkflowPluginConfig {
   ensureAuthReady?: () => Promise<void>;
   /** Maximum wait for cooperative handler cancellation during shutdown. */
   shutdownGraceMs?: number;
+  /** Guardian/app policy adapter for graph interaction responders. */
+  interactionAuthority?: WorkflowInteractionAuthority;
 }
 
 export type WorkflowPluginLifecycleOptions =
@@ -172,6 +175,7 @@ export function createWorkflowPluginRuntimeOwner(
       startupPhase = 'recovery';
       const recoveringService = new WorkflowService(config.db, registry, {
         shutdownGraceMs: config.shutdownGraceMs,
+        interactionAuthority: config.interactionAuthority,
       });
       created = recoveringService;
       startingService = recoveringService;

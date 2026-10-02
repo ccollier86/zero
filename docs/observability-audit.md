@@ -124,11 +124,14 @@ same core contracts.
 The workflow subsystem no longer logs lifecycle state directly to the console.
 It emits stable platform codes through the observability sink for startup,
 shutdown, recovery, instance lifecycle, retry scheduling, timeouts, and missing
-handlers. Background frontier failures emit `workflows.advance.failed` instead
-of becoming unhandled promise rejections. Request failures also use the shared
+handlers. The graph runtime adds stable definition publish/activate/retire,
+node, choice, parallel/join, fan-out, memory, and interaction lifecycle codes.
+Background frontier failures emit `workflows.advance.failed` instead of
+becoming unhandled promise rejections. Request failures also use the shared
 safe request-failure path, while HTTP responses expose stable `WORKFLOW_*`
-domain codes without leaking internal 5xx details. See
-[Durable Workflows](./workflows.md#scheduler-and-observability).
+domain codes without leaking internal 5xx details or private graph, memory, or
+interaction/event/delivery payloads. See
+[Durable Workflows](./workflows.md#observability-and-errors).
 
 ### Defensive Silent Denials
 

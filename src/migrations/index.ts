@@ -18,6 +18,7 @@ import { migration as m004 } from './definitions/004_auth_email_verification_mfa
 import { migration as m005 } from './definitions/005_native_app_auth';
 import { migration as m006 } from './definitions/006_native_auth_hardening';
 import { migration as m007 } from './definitions/007_auth_email_outbox';
+import { migration as m030 } from './definitions/030_workflow_graph_runtime';
 
 export { Migrator, type MigratorConfig, type MigrationStatus } from './migrator';
 export type {
@@ -55,4 +56,5 @@ export const migrations: Migration[] = [
   m005,
   m006,
   m007,
+  m030,
 ];

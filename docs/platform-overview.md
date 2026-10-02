@@ -411,37 +411,77 @@ is mounted. See [PDF Rendering](./pdf.md).
 
 ---
 
-## Workflows — Durable Multi-Step Processes
+## Workflows — Durable Versioned Graphs
 
-Register handlers and definitions with `AppConfig.workflows.register`. Zero
-awaits registration, preflights live handlers, recovers in-flight work, and
-only then publishes the runtime or accepts workflow requests. Within each run,
-the first unfinished step is a strict frontier: retries, event waits, and
-failures cannot be passed by later steps.
+Register trusted, versioned activities and code definitions with
+`AppConfig.workflows.register`. The small TypeScript DSL covers ordered steps,
+persisted choices, concurrent branches with deterministic joins, bounded
+per-item fan-out, durable event waits, and channel-neutral human/external
+interactions. It compiles into the same canonical JSON graph used by immutable
+database versions, the admin API, agents, and future visual editors. A database
+definition can invoke only activities explicitly registered with
+`databaseCallable: true`; publication also validates schema snapshots and
+rejects output references that are not guaranteed on every path to their
+consumer.
 
 ```tsx
 const {
   instance,
   steps,
-  isWaiting,
-  isRetrying,
-  isCancelled,
+  activeSteps,
+  interactions,
+  isWaitingForInput,
+  isRunningInParallel,
 } = useWorkflow(workflowId);
-const { start, cancel, pause, resume, sendEvent } = useWorkflowActions();
+const { start, submitResponse } = useWorkflowActions();
 
-const instanceId = await start('onboarding', { userId: 'alice' });
-const matched = await sendEvent(instanceId, 'approved', { reviewer: 'sam' });
+await start(
+  'onboarding',
+  { userId: 'alice' },
+  { version: 2 },
+);
+
+const approval = interactions.find((item) => item.status === 'open');
+if (approval) {
+  await submitResponse(
+    approval.instance_id,
+    approval.interaction_id,
+    { approved: true },
+  );
+}
 ```
 
-Runtime state is SQLite-backed and delivered to hooks through owner-scoped
-ReactiveDB Sync; hooks do not poll. Event delivery claims, step-attempt fences,
-deadlines, retry state, and pause boundaries survive restart. The scheduler's
-minute jobs discover due retries and timeouts, while normal execution still
-enforces their exact persisted timestamps. Definition start/inspection access
-can be declared for authenticated users, the global admin, or app roles.
-Definitions remain server-only and are excluded from Sync; executable
-`steps_json` and `wait_event` topology is also removed from browser runtime
-rows. See [Durable Workflows](./workflows.md).
+Workflow definitions and each new run are fingerprinted and pinned to immutable
+history. SQLite/ReactiveDB stores topology decisions, item snapshots, attempt
+fences, deadlines, open interactions, and private `ctx.memory`; recovery
+validates that state before re-driving work. Activity scratch writes commit
+atomically with successful node completion, while external effects use the
+stable `ctx.idempotencyKey` for at-least-once safety.
+
+Durable runtime JSON values are capped at 1 MiB. Persisted run/step/fan-out,
+scratch-memory, interaction-definition, and interaction-response values share
+a 32 MiB per-run budget; each interaction also has bounded unique-submission
+and byte totals. Durable event delivery has separate per-run pending and
+retained count/byte quotas. Pass storage IDs through the graph instead of
+embedding large files or unbounded event streams.
+
+Human/external responses default to the workflow starter. Apps that need
+Guardian organization or role decisions can install one fail-closed
+`workflows.interactionAuthority` adapter for both direct and event-delivered
+responses. A direct response submitted while paused fails with retryable
+`WORKFLOW_DRAINING` and must be retried after resume; named events can remain
+buffered during the pause. Event actor roles/claims are authenticated send-time
+snapshots for restart parity, so policies that require current membership or
+revocation state must reload it inside the authority callback.
+
+Authorized clients receive safe `workflow_instances`, `workflow_steps`,
+`workflow_events`, and `workflow_interactions` changes over ReactiveDB Sync,
+so they can watch nodes, branches, fan-out items, retries, and waits in real
+time without polling. Executable graph JSON, memory, interaction bodies, and
+other coordination state stay server-only; graph event payloads and all graph
+instance/step input, output, and raw error values are redacted from browser
+projections. See
+[Durable Workflows](./workflows.md).
 
 ---
 

@@ -71,9 +71,9 @@ sending the request.
 
 ## Workflows And Jobs
 
-Workflow step handlers and scheduled jobs can use the same server-side AI
-service directly, or use `createAIWorkflowHandler()` for common one-step AI
-handlers. Register the examples below inside
+Workflow activities and scheduled jobs can use the same server-side AI service
+directly, or use `createAIWorkflowHandler()` for common one-activity calls.
+Register the examples below inside
 `AppConfig.workflows.register(registry)` so registration finishes before
 workflow recovery begins.
 
@@ -82,21 +82,25 @@ Direct use:
 ```ts
 import { getAI } from '@zero/framework/server';
 
-registry.registerHandler('summarizeCustomer', async (ctx) => {
-  ctx.signal?.throwIfAborted();
-  const ai = getAI();
-  if (!ai) throw new Error('AI is not enabled.');
-  const input = ctx.workflowInput as { customerId: string };
+registry.registerActivity({
+  name: 'ai.summarize-customer',
+  version: '1',
+  handler: async (ctx) => {
+    ctx.signal?.throwIfAborted();
+    const ai = getAI();
+    if (!ai) throw new Error('AI is not enabled.');
+    const input = ctx.workflowInput as { customerId: string };
 
-  return ai.generateConversation({
-    model: 'smart',
-    messages: [
-      { role: 'user', content: `Summarize ${input.customerId}` },
-    ],
-    tools,
-    abortSignal: ctx.signal,
-    metadata: { workflowIdempotencyKey: ctx.idempotencyKey },
-  });
+    return ai.generateConversation({
+      model: 'smart',
+      messages: [
+        { role: 'user', content: `Summarize ${input.customerId}` },
+      ],
+      tools,
+      abortSignal: ctx.signal,
+      metadata: { workflowIdempotencyKey: ctx.idempotencyKey },
+    });
+  },
 });
 ```
 
@@ -105,23 +109,23 @@ Helper use:
 ```ts
 import { createAIWorkflowHandler } from '@zero/framework/server';
 
-registry.registerHandler(
-  'summarizeCustomer',
-  createAIWorkflowHandler<{ customerId: string }>({
+registry.registerActivity({
+  name: 'ai.summarize-customer',
+  handler: createAIWorkflowHandler<{ customerId: string }>({
     model: 'smart',
     system: 'Summarize customer records for internal staff.',
     prompt: (ctx) => `Summarize customer ${ctx.input.customerId}`,
     tools,
   }),
-);
+});
 ```
 
 The helper returns generated text by default. Set `output: 'result'` when a
 workflow step needs the full AI SDK result, such as usage metadata. Workflow
 handlers are recovered with at-least-once semantics; pass
 `ctx.idempotencyKey` to separate external effects that must be deduplicated.
-See [Durable Workflows](./workflows.md) for the complete handler, retry,
-deadline, recovery, and authorization contracts.
+See [Durable Workflows](./workflows.md) for activity schemas/versioning, graph
+authoring, retry/deadline/recovery, memory, and authorization contracts.
 
 ## Tool Failures
 

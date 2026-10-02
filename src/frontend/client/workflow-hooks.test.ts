@@ -4,6 +4,7 @@ import type { Root } from 'react-dom/client';
 
 import type { Row } from '../../sync/types';
 import type {
+  WorkflowClientInteractionRecord,
   WorkflowClientInstanceRecord,
   WorkflowClientStepRecord,
   WorkflowStatus,
@@ -28,7 +29,11 @@ type EdenResult<T> = EdenSuccess<T> | EdenFailure;
 
 interface WorkflowTransport {
   calls: Array<{ action: string; args: unknown[] }>;
-  start: (name: string, input: unknown) => Promise<EdenResult<{ instanceId: string }>>;
+  start: (
+    name: string,
+    input: unknown,
+    version?: number,
+  ) => Promise<EdenResult<{ instanceId: string }>>;
   cancel: (instanceId: string) => Promise<EdenResult<{ success: boolean }>>;
   pause: (instanceId: string) => Promise<EdenResult<{ success: boolean }>>;
   resume: (instanceId: string) => Promise<EdenResult<{ success: boolean }>>;
@@ -37,6 +42,13 @@ interface WorkflowTransport {
     eventName: string,
     payload: unknown,
   ) => Promise<EdenResult<{ matched: boolean }>>;
+  response: (
+    instanceId: string,
+    interactionId: string,
+    submissionId: string,
+    payload: unknown,
+    channel: string | undefined,
+  ) => Promise<EdenResult<{ outcome: 'accepted' | 'rejected' | 'superseded' }>>;
 }
 
 const activeRoots = new Set<Root>();
@@ -66,6 +78,8 @@ describe('workflow observation hooks', () => {
     expect(rendered.current).toEqual({
       instance: null,
       steps: [],
+      activeSteps: [],
+      interactions: [],
       currentStep: null,
       isRunning: false,
       isComplete: false,
@@ -73,7 +87,9 @@ describe('workflow observation hooks', () => {
       isPaused: false,
       isCancelled: false,
       isWaiting: false,
+      isWaitingForInput: false,
       isRetrying: false,
+      isRunningInParallel: false,
     });
   });
 
@@ -168,6 +184,46 @@ describe('workflow observation hooks', () => {
     expect(rendered.current.currentStep).toBeNull();
   });
 
+  test('projects parallel activity and durable human waits from live Sync rows', async () => {
+    const client = workflowClient({
+      instances: [instance('run_graph', 'running', 0, '2030-01-01T00:00:00.000Z')],
+      steps: [
+        step('branch_b', 'run_graph', 2, 'waiting', {
+          node_id: 'branch-b', started_at: '2030-01-01T00:00:02.000Z',
+        }),
+        step('branch_a', 'run_graph', 1, 'running', {
+          node_id: 'branch-a', started_at: '2030-01-01T00:00:01.000Z',
+        }),
+      ],
+      interactions: [interaction('wait_1', 'run_graph', 'branch_b', 'open')],
+    });
+    const rendered = await renderHook(() => useWorkflow('run_graph'), undefined, client.value);
+
+    expect(rendered.current.activeSteps.map((row) => row.step_id))
+      .toEqual(['branch_a', 'branch_b']);
+    expect(rendered.current.interactions.map((row) => row.interaction_id))
+      .toEqual(['wait_1']);
+    expect(rendered.current).toMatchObject({
+      isRunningInParallel: true,
+      isWaiting: true,
+      isWaitingForInput: true,
+    });
+
+    await act(async () => {
+      client.interactions.replace([
+        interaction('wait_1', 'run_graph', 'branch_b', 'accepted'),
+      ]);
+      client.steps.replace([
+        step('branch_a', 'run_graph', 1, 'completed', { node_id: 'branch-a' }),
+        step('branch_b', 'run_graph', 2, 'running', {
+          node_id: 'branch-b', started_at: '2030-01-01T00:00:02.000Z',
+        }),
+      ]);
+    });
+    expect(rendered.current.isWaitingForInput).toBe(false);
+    expect(rendered.current.isRunningInParallel).toBe(false);
+  });
+
   test('applies both list filters and sorts matching instances newest first', async () => {
     const client = workflowClient({
       instances: [
@@ -247,6 +303,29 @@ describe('workflow action hooks', () => {
       code: 'WORKFLOW_STATE_INVALID',
       message: 'Cannot cancel a completed workflow',
     });
+  });
+
+  test('starts a pinned version and submits an idempotent interaction response', async () => {
+    const client = workflowClient();
+    const rendered = await renderHook(() => useWorkflowActions(), undefined, client.value);
+
+    await expect(rendered.current.start('approval', { requestId: 'r1' }, { version: 7 }))
+      .resolves.toBe('started_1');
+    await expect(rendered.current.submitResponse(
+      'started_1',
+      'wait_1',
+      { approved: true },
+      { submissionId: 'submission_1', channel: 'agent' },
+    )).resolves.toBe('accepted');
+    expect(client.transport.calls).toEqual([
+      { action: 'start', args: ['approval', { requestId: 'r1' }, 7] },
+      {
+        action: 'response',
+        args: [
+          'started_1', 'wait_1', 'submission_1', { approved: true }, 'agent',
+        ],
+      },
+    ]);
   });
 });
 
@@ -524,6 +603,31 @@ function step(
   };
 }
 
+function interaction(
+  interactionId: string,
+  instanceId: string,
+  stepId: string,
+  status: WorkflowClientInteractionRecord['status'],
+): WorkflowClientInteractionRecord & Row {
+  const now = '2030-01-01T00:00:00.000Z';
+  return {
+    interaction_id: interactionId,
+    instance_id: instanceId,
+    node_id: 'approval',
+    step_id: stepId,
+    safe_label: 'Approval required',
+    status,
+    opened_at: now,
+    expires_at: null,
+    accepted_at: status === 'accepted' ? now : null,
+    accepted_by: status === 'accepted' ? 'user_1' : null,
+    rejection_count: 0,
+    max_rejections: 3,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
 class TestCollection<T extends Row> {
   private rows: Record<string, T>;
   private readonly listeners = new Set<() => void>();
@@ -575,14 +679,17 @@ function indexRows<T extends Row>(rows: readonly T[], primaryKey: keyof T): Reco
 function workflowClient(initial: {
   instances?: Array<WorkflowClientInstanceRecord & Row>;
   steps?: Array<WorkflowClientStepRecord & Row>;
+  interactions?: Array<WorkflowClientInteractionRecord & Row>;
 } = {}): {
   value: Client;
   instances: TestCollection<WorkflowClientInstanceRecord & Row>;
   steps: TestCollection<WorkflowClientStepRecord & Row>;
+  interactions: TestCollection<WorkflowClientInteractionRecord & Row>;
   transport: WorkflowTransport;
 } {
   const instances = new TestCollection(initial.instances ?? [], 'instance_id');
   const steps = new TestCollection(initial.steps ?? [], 'step_id');
+  const interactions = new TestCollection(initial.interactions ?? [], 'interaction_id');
   const transport: WorkflowTransport = {
     calls: [],
     async start() { return success({ instanceId: 'started_1' }); },
@@ -590,11 +697,19 @@ function workflowClient(initial: {
     async pause() { return success({ success: true }); },
     async resume() { return success({ success: true }); },
     async event() { return success({ matched: true }); },
+    async response() { return success({ outcome: 'accepted' }); },
   };
   const routes = new Proxy({
-    post: async ({ name, input }: { name: string; input: unknown }) => {
-      transport.calls.push({ action: 'start', args: [name, input] });
-      return transport.start(name, input);
+    post: async ({ name, input, version }: {
+      name: string;
+      input: unknown;
+      version?: number;
+    }) => {
+      transport.calls.push({
+        action: 'start',
+        args: version === undefined ? [name, input] : [name, input, version],
+      });
+      return transport.start(name, input, version);
     },
   } as Record<PropertyKey, unknown>, {
     get(target, property) {
@@ -617,18 +732,43 @@ function workflowClient(initial: {
           transport.calls.push({ action: 'event', args: [instanceId, eventName, payload] });
           return transport.event(instanceId, eventName, payload);
         } },
+        interactions: new Proxy({}, {
+          get(_interactions, interactionProperty) {
+            const interactionId = String(interactionProperty);
+            return {
+              responses: { post: async ({ submissionId, payload, channel }: {
+                submissionId: string;
+                payload: unknown;
+                channel?: string;
+              }) => {
+                transport.calls.push({
+                  action: 'response',
+                  args: [instanceId, interactionId, submissionId, payload, channel],
+                });
+                return transport.response(
+                  instanceId,
+                  interactionId,
+                  submissionId,
+                  payload,
+                  channel,
+                );
+              } },
+            };
+          },
+        }),
       };
     },
   });
   const collections: Record<string, Collection<Row>> = {
     workflow_instances: instances.asCollection('workflow_instances') as Collection<Row>,
     workflow_steps: steps.asCollection('workflow_steps') as Collection<Row>,
+    workflow_interactions: interactions.asCollection('workflow_interactions') as Collection<Row>,
   };
   const value = {
     api: { workflows: routes },
     collection: (name: string) => collections[name],
   } as unknown as Client;
-  return { value, instances, steps, transport };
+  return { value, instances, steps, interactions, transport };
 }
 
 function success<T>(data: T): EdenSuccess<T> {

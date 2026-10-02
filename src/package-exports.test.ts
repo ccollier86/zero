@@ -114,12 +114,30 @@ import {
 import { createSyncPlugin } from '@zero/framework/sync';
 import { PlatformTokenService } from '@zero/framework/tokens';
 import { createVectorPlugin } from '@zero/framework/vector';
-import { WorkflowService } from '@zero/framework/workflows';
+import {
+  WorkflowActivityCatalog,
+  WorkflowService,
+  expr,
+  flow,
+  normalizeWorkflowSchemaSnapshot,
+  step,
+  type WorkflowChooseOptions,
+  type WorkflowClientInteractionRecord,
+  type WorkflowInteractionRecord,
+  type WorkflowMemoryContext,
+} from '@zero/framework/workflows';
 
 const nativeSourceResolver: NativeAuthorizationSourceResolver = () => 'trusted-edge';
 const authNativeSourceResolver: AuthNativeSourceResolver = () => 'trusted-edge';
 const configuredPostLoginPath = (config: AppConfig): string | undefined => config.postLoginPath;
 const resolvedPostLoginPath = (config: ResolvedConfig): string => config.postLoginPath;
+const workflowDefinition = flow(step('start', 'smoke.activity', { input: expr.input() }));
+const workflowChooseOptions: WorkflowChooseOptions = { label: 'Smoke choice' };
+const workflowTypeSurface = null as unknown as {
+  clientInteraction: WorkflowClientInteractionRecord;
+  interaction: WorkflowInteractionRecord;
+  memory: WorkflowMemoryContext;
+};
 
 export const serverSymbols = {
   AIService,
@@ -180,7 +198,12 @@ export const serverSymbols = {
   runUsageAudit,
   verifySubpathUploadGrantToken,
   verifyUploadGrantToken,
+  workflowChooseOptions,
+  workflowDefinition,
+  workflowTypeSurface,
+  WorkflowActivityCatalog,
   WorkflowService,
+  normalizeWorkflowSchemaSnapshot,
 };
 `;
 
@@ -221,7 +244,14 @@ import { useDisclosure } from '@zero/framework/hooks';
 import { Check } from '@zero/framework/icons';
 import { ModalManager } from '@zero/framework/modals';
 import { AppProvider } from '@zero/framework/react/app-provider';
-import { useCollection as useCollectionSubpath, useResourceList as useResourceListSubpath } from '@zero/framework/react/hooks';
+import {
+  useCollection as useCollectionSubpath,
+  useResourceList as useResourceListSubpath,
+  useWorkflow as useWorkflowSubpath,
+  useWorkflowActions as useWorkflowActionsSubpath,
+  useWorkflowList as useWorkflowListSubpath,
+  useWorkflowRun as useWorkflowRunSubpath,
+} from '@zero/framework/react/hooks';
 import {
   ApiError,
   Button,
@@ -258,6 +288,10 @@ import {
   useCollection,
   useNativeAuthContinuation,
   useResourceList,
+  useWorkflow,
+  useWorkflowActions,
+  useWorkflowList,
+  useWorkflowRun,
   unwrap,
   WavyBackground,
 } from '@zero/framework/react';
@@ -355,6 +389,14 @@ import { createIdentityId } from '@zero/framework/sync/identity';
   useNativeAuthContinuation,
   useResourceList,
   useResourceListSubpath,
+  useWorkflow,
+  useWorkflowActions,
+  useWorkflowActionsSubpath,
+  useWorkflowList,
+  useWorkflowListSubpath,
+  useWorkflowRun,
+  useWorkflowRunSubpath,
+  useWorkflowSubpath,
   useDisclosure,
   unwrap,
   FlipWords,

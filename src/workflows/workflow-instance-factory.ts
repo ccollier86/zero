@@ -5,6 +5,7 @@ import type { WorkflowClock } from './workflow-executor';
 import { WorkflowError } from './workflow-error';
 import type { WorkflowRepository } from './workflow-repository';
 import type { WorkflowRegistry } from './workflow-registry';
+import { serializeWorkflowRuntimeJson } from './workflow-runtime-json';
 
 export interface CreatedWorkflowInstance {
   instanceId: string;
@@ -113,16 +114,7 @@ function serializeDefinitionSnapshot(
 }
 
 function serializeInput(value: unknown): string | null {
-  if (value === undefined) return null;
-  try {
-    const serialized = JSON.stringify(value);
-    if (serialized === undefined) throw new TypeError();
-    return serialized;
-  } catch {
-    throw new WorkflowError(
-      'Workflow input is not JSON-serializable',
-      'WORKFLOW_INPUT_INVALID',
-      422,
-    );
-  }
+  return serializeWorkflowRuntimeJson(value, {
+    code: 'WORKFLOW_INPUT_INVALID', label: 'Workflow input',
+  });
 }

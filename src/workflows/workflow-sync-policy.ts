@@ -18,6 +18,7 @@ import type {
 } from '../sync/types';
 import { WORKFLOW_SERVER_TABLE_NAMES } from './types';
 import {
+  toPublicWorkflowEvent,
   toPublicWorkflowInstance,
   toPublicWorkflowStep,
 } from './workflow-public-record';
@@ -26,7 +27,12 @@ const WORKFLOW_RUNTIME_TABLES = new Set([
   'workflow_instances',
   'workflow_steps',
   'workflow_events',
+  'workflow_interactions',
 ]);
+
+const WORKFLOW_PRIVATE_TABLES = new Set(
+  [...WORKFLOW_SERVER_TABLE_NAMES].filter((table) => !WORKFLOW_RUNTIME_TABLES.has(table)),
+);
 
 export interface WorkflowSyncPolicyOptions {
   /** Resolve the current app-local ReactiveDB after Sync composition. */
@@ -54,9 +60,12 @@ export function createWorkflowSyncPolicyAdapter(
       const readableTables = new Set(delegated.readableTables);
       const rowFilters = new Map(delegated.rowFilters);
 
-      // Workflow definitions expose handler names and server-side topology.
-      readableTables.delete('workflow_definitions');
-      rowFilters.delete('workflow_definitions');
+      // Definitions, topology, memory, policies, and response payloads are
+      // execution internals. Only the explicit runtime projection may Sync.
+      for (const table of WORKFLOW_PRIVATE_TABLES) {
+        readableTables.delete(table);
+        rowFilters.delete(table);
+      }
 
       for (const table of WORKFLOW_RUNTIME_TABLES) {
         if (!readableTables.has(table)) continue;
@@ -117,10 +126,31 @@ function createOwnershipFilter(
           const instance = instanceId
             ? getDB()?.queryOne('workflow_instances', instanceId)
             : null;
-          return toPublicWorkflowStep(row, instance?.steps_json);
+          return toPublicWorkflowStep(
+            row,
+            instance?.steps_json,
+            // An orphan child is corrupted state, never evidence that it is a
+            // legacy row whose execution payload may be exposed.
+            instance ? instance.graph_json : '',
+          );
+        }
+      : table === 'workflow_events'
+        ? (row: Row): Row => {
+          const instanceId = workflowInstanceId(row);
+          const instance = instanceId
+            ? getDB()?.queryOne('workflow_instances', instanceId)
+            : null;
+          return toPublicWorkflowEvent(row, instance ? instance.graph_json : '');
         }
     : undefined;
-  if (auth?.role === 'admin') return { matches: () => true, project };
+  if (auth?.role === 'admin') return {
+    matches(row) {
+      if (table === 'workflow_instances') return true;
+      const instanceId = workflowInstanceId(row);
+      return Boolean(instanceId && getDB()?.queryOne('workflow_instances', instanceId));
+    },
+    project,
+  };
   if (!auth) return { matches: () => false, project };
 
   if (table === 'workflow_instances') {
@@ -169,8 +199,8 @@ function workflowFingerprint(
   context: SyncResourceTableAccessContext,
 ): string {
   const auth = context.authContext;
-  if (!auth) return 'topology-v2:anonymous:none';
+  if (!auth) return 'topology-v3:anonymous:none';
   return auth.role === 'admin'
-    ? 'topology-v2:admin:all'
-    : `topology-v2:owner:${auth.userId}`;
+    ? 'topology-v3:admin:all'
+    : `topology-v3:owner:${auth.userId}`;
 }

@@ -12,6 +12,7 @@ import type { KvServiceConfig } from '../../kv';
 import { resolvePdfConfig } from '../../pdf/pdf-config';
 import type { PdfConfig, ResolvedPdfConfig } from '../../pdf/pdf-types';
 import type { WorkflowRegistry } from '../../workflows/workflow-registry';
+import type { WorkflowInteractionAuthority } from '../../workflows/workflow-interaction-authority';
 import {
   resolveRouteAuthMode,
   type RouteAuthMode,
@@ -150,6 +151,8 @@ export interface AppWorkflowsConfig {
   register?: (registry: WorkflowRegistry) => void | Promise<void>;
   /** Maximum shutdown wait for handlers that ignore cancellation. Default: 30s. */
   shutdownGraceMs?: number;
+  /** Guardian/app policy adapter for human or agent interaction responders. */
+  interactionAuthority?: WorkflowInteractionAuthority;
 }
 
 /**

@@ -18,6 +18,7 @@ import {
   resolveWorkflowShutdownGraceMs,
 } from './workflow-shutdown-policy';
 import { WorkflowWakeCoordinator } from './workflow-wake-coordinator';
+import { serializeWorkflowRuntimeJson } from './workflow-runtime-json';
 
 export interface WorkflowClock {
   now(): Date;
@@ -148,15 +149,12 @@ export class WorkflowExecutor {
       if (this.disposed) return 'stale';
       let serialized: string | null;
       try {
-        if (output === undefined) {
-          serialized = null;
-        } else {
-          const encoded = JSON.stringify(output);
-          if (encoded === undefined) {
-            throw new TypeError('Workflow handler output is not JSON-serializable');
-          }
-          serialized = encoded;
-        }
+        serialized = serializeWorkflowRuntimeJson(output, {
+          code: 'WORKFLOW_ACTIVITY_OUTPUT_INVALID',
+          label: 'Workflow handler output',
+          invalidStatus: 500,
+          limitStatus: 500,
+        });
       } catch (error) {
         return this.attempts.commitFailure(
           prepared,

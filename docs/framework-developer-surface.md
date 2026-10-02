@@ -104,7 +104,7 @@ mechanism because those commands replace scaffold targets.
 | `@zero/framework/sync` | ReactiveDB and sync server contracts. |
 | `@zero/framework/sync/client` | Lower-level WebSocket sync client primitives. Prefer `react` hooks in browser UI. |
 | `@zero/framework/vector` | Vector store contracts when importing the vector layer directly. |
-| `@zero/framework/workflows` | Workflow registry/service contracts. React workflow hooks come from `react`. |
+| `@zero/framework/workflows` | Workflow DSL, canonical IR/expressions, activity catalog, graph validation, and durable TypeBox schema-snapshot helpers. React workflow hooks come from `react`. |
 | `@zero/framework/hooks` | Generic React hook library when importing hooks without the full React barrel. |
 | `@zero/framework/modals` | Modal manager primitives when importing without the full React barrel. |
 | `@zero/framework/components/auth` | Auth UI blocks and gates. Also exported from `react`. |
@@ -983,35 +983,61 @@ is private by default and normal storage read permissions still apply.
 
 ## Workflows And Scheduler
 
-Workflows mount by default when auth is enabled. Register handlers and
-definitions through `AppConfig.workflows.register`; Zero awaits registration
-before handler preflight and crash recovery, and publishes the service only
-after recovery succeeds:
+Workflows mount by default when auth is enabled. Register trusted activities
+and definitions through `AppConfig.workflows.register`; Zero awaits
+registration before activity preflight and crash recovery, and publishes the
+service only after recovery succeeds:
 
 ```ts
 import { defineZeroConfig } from '@zero/framework/server';
+import {
+  flow,
+  parallel,
+  requestAndWait,
+  step,
+} from '@zero/framework/workflows';
 
 export default defineZeroConfig({
   // db, tables, auth...
   workflows: {
     register(registry) {
-      registry.registerHandler('sendWelcomeEmail', async (ctx) => {
-        await sendWelcomeEmail(ctx.input, {
-          idempotencyKey: ctx.idempotencyKey,
-          signal: ctx.signal,
-        });
-        return { ok: true };
+      registry.registerActivity({
+        name: 'email.welcome',
+        version: '2',
+        default: true,
+        databaseCallable: true,
+        handler: async (ctx) => {
+          await sendWelcomeEmail(ctx.input, {
+            idempotencyKey: ctx.idempotencyKey,
+            signal: ctx.signal,
+          });
+          return { ok: true };
+        },
+      });
+
+      registry.registerActivity({
+        name: 'account.audit',
+        version: '1',
+        handler: async (ctx) => writeAccountAudit(ctx.input),
       });
 
       registry.create({
         name: 'customer-onboarding',
+        version: 2,
         access: {
           start: ['operator'],
           inspect: ['operator', 'reviewer'],
         },
-        steps: [
-          { name: 'Send welcome email', handler: 'sendWelcomeEmail' },
-        ],
+        flow: flow(
+          parallel('prepare', {
+            email: [step('send-welcome', 'email.welcome')],
+            audit: [step('record-start', 'account.audit')],
+          }),
+          requestAndWait('approval', 'approval.received', {
+            request: { title: 'Approve onboarding' },
+            timeoutMs: 24 * 60 * 60 * 1_000,
+          }),
+        ),
       });
     },
   },
@@ -1023,22 +1049,52 @@ after `listen()`. Direct-composition code may use `getWorkflowRegistry()` after
 `createApp()` returns and before `listen()`, but post-listen registration is too
 late for recovery preflight.
 
-The first step receives workflow input through both `ctx.input` and
-`ctx.workflowInput`; later steps receive the previous output through
-`ctx.input`. At runtime every handler also receives a cooperative `signal`, a
-physical `attemptId`, and a stable logical-step `idempotencyKey`. Durable wait
-events are buffered and retained across retries; `sendEvent()` reports whether
-the newly added event was claimed before that call returned. `retries` is a
-total-attempt budget. One `timeoutMs` deadline spans event waiting, handler
-execution, retry backoff, and later attempts, while pause freezes that clock.
-Recovery is at-least-once, so external effects must deduplicate with
-`idempotencyKey`. Workflow HTTP and Sync state is owner-scoped, with the exact
-stable global `admin` role able to inspect all runs. Definitions remain
-server-only. Definition `access.start` and `access.inspect` accept
-`authenticated`, `admin`, or a non-empty array of app roles; denied definitions
-look missing at the HTTP boundary. Executable `steps_json` and `wait_event`
-topology is projected out of browser-visible runtime rows. Workflow hooks
-receive state changes through Sync rather than polling.
+The code DSL compiles into the canonical JSON-safe graph used by immutable
+database definitions, agents, and visual-editor tooling. Choices are persisted
+once, parallel branches converge at explicit all-branches joins, and `each`
+snapshots its array before running a bounded number of keyed item activities.
+Database/API definitions can reference only activity versions that app code
+marks `databaseCallable: true`. Publication rejects output references that do
+not exist or do not dominate their consumer. Persisted TypeBox schemas retain
+their runtime kind in `x-zero-typebox-kind`, reject executable transforms, and
+share a bounded 2 MiB definition/draft persistence contract.
+
+At runtime each graph activity receives resolved `ctx.input`, original
+`ctx.workflowInput`, a cooperative `signal`, a physical `attemptId`, a stable
+logical-node/item `idempotencyKey`, and a ReactiveDB-backed `ctx.memory`
+scratchpad. Memory writes are attempt-local and commit atomically only with a
+successful node transition. Recovery is at-least-once for external systems, so
+email, payments, webhooks, and storage writes must deduplicate with
+`idempotencyKey`.
+
+`waitFor` uses the durable event inbox. `requestAndWait` persists an interaction
+before optional email/SMS/UI/agent delivery and accepts one authorized,
+schema-validated, idempotent response from any transport. Deadlines cover the
+whole logical node; pause freezes retry, timeout, and open-interaction expiry
+time. The secure default allows only the workflow starter to answer;
+`workflows.interactionAuthority` installs one fail-closed Guardian/app policy
+adapter for both direct and event-delivered responses.
+
+Event-delivered actor roles and claims are authenticated send-time snapshots
+for restart parity, not current revocation state. An authority decision that
+depends on live organization membership, roles, tenant status, or account
+state must reload it inside the callback and honor its `AbortSignal`.
+
+Each durable runtime JSON value is limited to 1 MiB. Run/step/fan-out values,
+scratch memory, interaction policy/schema/request data, and retained
+submission/accepted values share a 32 MiB aggregate budget per run. Each
+interaction also retains at most 1,024 actor-and-payload-bound unique
+submissions or 16 MiB of payload/accepted data. Event names and per-run pending
+and retained delivery count/byte quotas are bounded as well. A direct
+interaction response submitted while paused fails with retryable
+`WORKFLOW_DRAINING` and must be retried after resume; an authenticated named
+event may remain buffered through the pause.
+
+Definitions and runs pin canonical content and exact activity versions.
+Platform admins can manage database drafts, publish immutable versions,
+activate a default, and retire versions through `/workflows/admin/definitions`.
+Definition `access.start` and `access.inspect` accept `authenticated`, `admin`,
+or an app-role array; denied definitions look missing at the HTTP boundary.
 
 The server-side `WorkflowService` is trusted and intentionally bypasses the
 definition access policy. When server code starts a run that a normal browser
@@ -1046,11 +1102,18 @@ user must observe or control, pass that user's ID as `startedBy`; an unowned run
 is visible only to the global admin. Managed apps should let the workflow plugin
 own startup recovery and retry/timeout discovery.
 
-The scheduler is mounted by `createApp()` and owns minute-level workflow retry
-and timeout discovery. See [Durable Workflows](./workflows.md) for the strict
-frontier, deadline, recovery, authorization, and browser API contracts. A
-public cron/job registration convention for app code is a future package-mode
-slice.
+Authorized runtime state is projected through ReactiveDB Sync. Hooks expose
+`activeSteps`, safe `interactions`, parallel/wait/retry flags, and node,
+branch, and fan-out identity for live visualization without polling. Graph
+JSON, memory, interaction request/response bodies, and coordination rows stay
+private. Graph-event payloads and all graph instance/step input, output, and
+raw error values are redacted from HTTP and Sync while safe status, timing, and
+topology labels stay live. The scheduler's minute retry/timeout jobs are a
+persisted-state safety sweep; exact in-process timers handle normal deadlines.
+See
+[Durable Workflows](./workflows.md) for the full DSL, IR, version, lifecycle,
+authorization, HTTP, and React contracts. A public cron/job registration
+convention for app code is a future package-mode slice.
 
 ## Observability And Tracing
 

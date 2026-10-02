@@ -1297,13 +1297,27 @@ by responsibility:
 - `mutation-hooks.ts` and `connection-health-hooks.ts` own mutation lifecycle and sync/auth health state.
 - `presence-list-hooks.ts` and `typing-indicator-hooks.ts` own display-ready room presence and ephemeral typing state.
 - `preference-hooks.ts` owns `usePreference` and `useFormDraft` over server state sync.
-- `workflow-run-hooks.ts` owns the composed `useWorkflowRun` helper.
+- `workflow-hooks.ts` owns Sync-backed live graph nodes/interactions plus
+  versioned start, lifecycle, event, and response actions.
+- `workflow-run-hooks.ts` owns the composed `useWorkflowRun` helper, including
+  version pinning, progress, parallel/wait flags, and selected-run state.
 - `src/storage/upload-queue-hooks.ts`, `src/storage/upload-dropzone-hooks.ts`, `src/storage/storage-file-hooks.ts`, and `src/storage/storage-browser-hooks.ts` own storage queue, dropzone, file, and browser composition.
 - `src/hooks/*` owns generic React primitives such as `useDisclosure`, `useAsyncAction`, `useDebouncedValue`, `useDebouncedCallback`, `useThrottledValue`, `useClickAway`, `useCopyToClipboard`, `useIdle`, `useOs`, `useTextSelection`, `useMediaQuery`, and `useHotkey`.
 - `use-stick-to-bottom` is re-exported directly as `StickToBottom`, `useStickToBottom`, and `useStickToBottomContext` for smooth AI/chat/log panels.
 
 App code should still import from `@zero/framework/react`. Use the lower-level
 files only when working inside the platform source. See [Frontend Hooks](./hooks.md).
+
+Workflow actions use the generated authenticated `client.api.workflows`
+surface, while `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, and
+`useWorkflowRun` compose the safe owner-scoped ReactiveDB projection. That live
+projection includes status, timing, labels, branch, parent, and fan-out
+identity; it redacts graph-event payloads plus every graph instance/step input,
+output, and raw error. Canonical definitions, scratch memory, interaction
+bodies, and coordination state remain server-only. Named events can buffer
+while a run is paused, but a direct interaction response fails with retryable
+HTTP `409` `WORKFLOW_DRAINING`; reuse its stable submission ID after resume. See
+[Durable Workflows](../workflows.md).
 
 ### useUserProperty
 

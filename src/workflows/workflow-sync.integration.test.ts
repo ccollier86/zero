@@ -3,14 +3,17 @@ import { Elysia } from 'elysia';
 import { createSyncPlugin, getSyncDB } from '../sync/sync.plugin';
 import { createDefaultSyncPolicy } from '../sync/sync-policy';
 import type { ServerMessage, SyncTokenVerifier } from '../sync/types';
+import { flow, parallel, requestAndWait, step, waitFor } from './workflow-dsl';
+import { WorkflowRegistry } from './workflow-registry';
 import { defineWorkflowTables } from './workflow-schema';
+import { WorkflowService } from './workflow-service';
 import { createWorkflowSyncPolicyAdapter } from './workflow-sync-policy';
 
 describe('workflow Sync isolation', () => {
   test('filters snapshots and live changes by owner while admins retain runtime visibility', async () => {
     const verifier = createVerifier();
     const snapshotTables = new Set([
-      'workflow_instances', 'workflow_steps', 'workflow_events',
+      'workflow_instances', 'workflow_steps', 'workflow_events', 'workflow_interactions',
     ]);
     const pending = new Elysia().use(createSyncPlugin({
       db: { mode: 'memory', ringBufferDepth: 100 },
@@ -25,7 +28,7 @@ describe('workflow Sync isolation', () => {
         readProtectedTables: ['workflow_definitions'],
         writeProtectedTables: [
           'workflow_definitions', 'workflow_instances',
-          'workflow_steps', 'workflow_events',
+          'workflow_steps', 'workflow_events', 'workflow_interactions',
         ],
       }),
       resourcePolicy: createWorkflowSyncPolicyAdapter({ getDB: getSyncDB }),
@@ -66,6 +69,8 @@ describe('workflow Sync isolation', () => {
       expect(userSnapshot.tables.workflow_steps?.['step-a-seed'])
         .not.toHaveProperty('wait_event');
       expect(Object.keys(userSnapshot.tables.workflow_events ?? {})).toEqual(['event-a-seed']);
+      expect(Object.keys(userSnapshot.tables.workflow_interactions ?? {}))
+        .toEqual(['interaction-a-seed']);
 
       expect(adminSnapshot.tables.workflow_definitions).toBeUndefined();
       expect(Object.keys(adminSnapshot.tables.workflow_instances ?? {}).sort())
@@ -78,11 +83,14 @@ describe('workflow Sync isolation', () => {
         .toBe('Public step');
       expect(Object.keys(adminSnapshot.tables.workflow_events ?? {}).sort())
         .toEqual(['event-a-seed', 'event-b-seed']);
+      expect(Object.keys(adminSnapshot.tables.workflow_interactions ?? {}).sort())
+        .toEqual(['interaction-a-seed', 'interaction-b-seed']);
 
       expect(anonymousSnapshot.tables.workflow_definitions).toBeUndefined();
       expect(anonymousSnapshot.tables.workflow_instances).toEqual({});
       expect(anonymousSnapshot.tables.workflow_steps).toEqual({});
       expect(anonymousSnapshot.tables.workflow_events).toEqual({});
+      expect(anonymousSnapshot.tables.workflow_interactions).toEqual({});
 
       user.ws.send(JSON.stringify({
         type: 'sync.mutate',
@@ -109,21 +117,22 @@ describe('workflow Sync isolation', () => {
       seedDefinition(db, 'never-synced');
       seedWorkflow(db, 'a-live', 'user-a');
       await user.waitForMessage(
-        (message) => message.type === 'sync.change' && message.rowId === 'event-a-live',
+        (message) => message.type === 'sync.change' && message.rowId === 'interaction-a-live',
       );
       await admin.waitForMessage(
-        (message) => message.type === 'sync.change' && message.rowId === 'event-b-live',
+        (message) => message.type === 'sync.change' && message.rowId === 'interaction-b-live',
       );
 
       const userLiveIds = user.messages
         .filter((message) => message.type === 'sync.change')
         .map((message) => message.rowId);
       expect(userLiveIds).toEqual([
-        'a-live', 'step-a-live', 'event-a-live',
+        'a-live', 'step-a-live', 'event-a-live', 'interaction-a-live',
       ]);
       expect(userLiveIds).not.toContain('b-live');
       expect(userLiveIds).not.toContain('step-b-live');
       expect(userLiveIds).not.toContain('event-b-live');
+      expect(userLiveIds).not.toContain('interaction-b-live');
       expect(userLiveIds).not.toContain('definition-never-synced');
       const userLiveInstance = user.messages.find(
         (message) => message.type === 'sync.change' && message.rowId === 'a-live',
@@ -147,6 +156,7 @@ describe('workflow Sync isolation', () => {
       expect(adminLiveIds).toContain('b-live');
       expect(adminLiveIds).toContain('step-b-live');
       expect(adminLiveIds).toContain('event-b-live');
+      expect(adminLiveIds).toContain('interaction-b-live');
       expect(adminLiveIds).not.toContain('definition-never-synced');
       const adminLiveInstance = admin.messages.find(
         (message) => message.type === 'sync.change' && message.rowId === 'b-live',
@@ -172,7 +182,7 @@ describe('workflow Sync isolation', () => {
         type: 'sync.subscribe',
         tables: [
           'workflow_definitions', 'workflow_instances',
-          'workflow_steps', 'workflow_events',
+          'workflow_steps', 'workflow_events', 'workflow_interactions',
         ],
         lastSeq: userSnapshot.seq,
         epoch: userSnapshot.epoch,
@@ -183,7 +193,7 @@ describe('workflow Sync isolation', () => {
       );
       if (catchup.type !== 'sync.catchup') throw new Error('Expected Sync catchup');
       expect(catchup.changes.map((change) => change.rowId)).toEqual([
-        'a-live', 'step-a-live', 'event-a-live',
+        'a-live', 'step-a-live', 'event-a-live', 'interaction-a-live',
       ]);
       expect(catchup.changes.find((change) => change.rowId === 'a-live')?.row)
         .not.toHaveProperty('steps_json');
@@ -202,8 +212,8 @@ describe('workflow Sync isolation', () => {
         throw new Error('Expected admin Sync catchup');
       }
       expect(adminCatchup.changes.map((change) => change.rowId)).toEqual([
-        'b-live', 'step-b-live', 'event-b-live',
-        'a-live', 'step-a-live', 'event-a-live',
+        'b-live', 'step-b-live', 'event-b-live', 'interaction-b-live',
+        'a-live', 'step-a-live', 'event-a-live', 'interaction-a-live',
       ]);
       expect(adminCatchup.changes.find((change) => change.rowId === 'b-live')?.row)
         .not.toHaveProperty('steps_json');
@@ -225,7 +235,8 @@ describe('workflow Sync isolation', () => {
 
       seedWorkflow(db, 'scope-move', 'user-a');
       await user.waitForMessage(
-        (message) => message.type === 'sync.change' && message.rowId === 'event-scope-move',
+        (message) => message.type === 'sync.change'
+          && message.rowId === 'interaction-scope-move',
       );
       expect(() => db.update('workflow_instances', 'scope-move', {
         started_by: 'user-b',
@@ -243,6 +254,140 @@ describe('workflow Sync isolation', () => {
       user.close();
       admin.close();
       anonymous.close();
+      await app.stop(true);
+    }
+  });
+
+  test('streams safe graph, parallel-branch, and interaction progress in real time', async () => {
+    const verifier = createVerifier();
+    const snapshotTables = new Set([
+      'workflow_instances', 'workflow_steps', 'workflow_events', 'workflow_interactions',
+    ]);
+    const pending = new Elysia().use(createSyncPlugin({
+      db: { mode: 'memory', ringBufferDepth: 500 },
+      tables: {},
+      snapshotTables,
+      auth: {
+        required: true,
+        allowLegacyQueryToken: true,
+        getTokenVerifier: () => verifier,
+      },
+      policy: createDefaultSyncPolicy({
+        writeProtectedTables: [...snapshotTables],
+      }),
+      resourcePolicy: createWorkflowSyncPolicyAdapter({ getDB: getSyncDB }),
+    }));
+    const db = getSyncDB()!;
+    defineWorkflowTables(db);
+    const registry = new WorkflowRegistry();
+    registry.registerActivity({
+      name: 'finalize-live-run',
+      version: '1',
+      default: true,
+      handler: async ({ input }) => ({ finalized: true, branches: input }),
+    });
+    registry.registerWorkflow({
+      name: 'live-visual-workflow',
+      flow: flow(
+        parallel('prepare', {
+          records: [waitFor('records-ready', 'records.ready', { label: 'Records ready' })],
+          approval: [requestAndWait('approval', 'approval.responded', {
+            label: 'Approval required',
+          })],
+        }, { label: 'Prepare in parallel' }),
+        step('finalize', 'finalize-live-run', { label: 'Finalize request' }),
+      ),
+    });
+    const service = new WorkflowService(db, registry);
+    const app = pending.listen(0);
+    const owner = await connectWS(appUrl(app, 'user-a-token'));
+
+    try {
+      subscribe(owner.ws);
+      await owner.waitForMessage((message) => message.type === 'sync.snapshot');
+      const instanceId = await service.start(
+        'live-visual-workflow',
+        { privateRequest: 'must-not-sync' },
+        'user-a',
+      );
+
+      const recordsStep = await owner.waitForMessage((message) =>
+        message.type === 'sync.change'
+        && message.table === 'workflow_steps'
+        && message.row?.instance_id === instanceId
+        && message.row?.node_id === 'records-ready'
+        && message.row?.status === 'waiting');
+      const approvalStep = await owner.waitForMessage((message) =>
+        message.type === 'sync.change'
+        && message.table === 'workflow_steps'
+        && message.row?.instance_id === instanceId
+        && message.row?.node_id === 'approval'
+        && message.row?.status === 'waiting');
+      if (recordsStep.type !== 'sync.change' || approvalStep.type !== 'sync.change') {
+        throw new Error('Expected live graph step changes');
+      }
+      expect(recordsStep.row).toMatchObject({
+        branch_key: 'records',
+        step_name: 'Records ready',
+        input: null,
+        output: null,
+        error: null,
+      });
+      expect(approvalStep.row).toMatchObject({
+        branch_key: 'approval',
+        step_name: 'Approval required',
+        input: null,
+        output: null,
+        error: null,
+      });
+
+      const opened = await owner.waitForMessage((message) =>
+        message.type === 'sync.change'
+        && message.table === 'workflow_interactions'
+        && message.row?.instance_id === instanceId
+        && message.row?.status === 'open');
+      if (opened.type !== 'sync.change') throw new Error('Expected live interaction change');
+      expect(opened.row?.safe_label).toBe('Approval required');
+
+      expect(await service.sendEvent(
+        instanceId,
+        'records.ready',
+        { privateRecordId: 'record-1' },
+        'user-a',
+        { actorId: 'user-a', roles: ['user'] },
+      )).toBe(true);
+      const interaction = service.getGraphRuntime().interactions.listByInstance(instanceId)[0]!;
+      await service.getGraphRuntime().submitInteraction({
+        interactionId: interaction.interactionId,
+        submissionId: 'live-approval-1',
+        actor: { actorId: 'user-a', roles: ['user'] },
+        payload: { approved: true },
+        channel: 'test',
+      });
+
+      const completed = await owner.waitForMessage((message) =>
+        message.type === 'sync.change'
+        && message.table === 'workflow_instances'
+        && message.rowId === instanceId
+        && message.row?.status === 'completed');
+      if (completed.type !== 'sync.change') throw new Error('Expected completed live run');
+      expect(completed.row).toMatchObject({ input: null, output: null, error: null });
+      expect(completed.row).not.toHaveProperty('graph_json');
+
+      const eventChange = owner.messages.find((message) =>
+        message.type === 'sync.change'
+        && message.table === 'workflow_events'
+        && message.row?.instance_id === instanceId);
+      if (eventChange?.type !== 'sync.change') throw new Error('Expected live event audit row');
+      expect(eventChange.row?.payload).toBeNull();
+      expect(owner.messages.some((message) =>
+        message.type === 'sync.change'
+        && message.table === 'workflow_interactions'
+        && message.row?.interaction_id === interaction.interactionId
+        && message.row?.status === 'accepted')).toBe(true);
+    } finally {
+      owner.close();
+      await service.dispose();
       await app.stop(true);
     }
   });
@@ -271,6 +416,7 @@ function subscribe(ws: WebSocket): void {
     'workflow_instances',
     'workflow_steps',
     'workflow_events',
+    'workflow_interactions',
   ];
   ws.send(JSON.stringify({
     type: 'sync.subscribe', tables, snapshot: tables, lastSeq: 0,
@@ -285,7 +431,7 @@ function subscribeFrom(
     type: 'sync.subscribe',
     tables: [
       'workflow_definitions', 'workflow_instances',
-      'workflow_steps', 'workflow_events',
+      'workflow_steps', 'workflow_events', 'workflow_interactions',
     ],
     lastSeq: snapshot.seq,
     epoch: snapshot.epoch,
@@ -414,5 +560,21 @@ function seedWorkflow(
     payload: null,
     sent_by: ownerId,
     created_at: now,
+  });
+  db.insert('workflow_interactions', {
+    interaction_id: `interaction-${instanceId}`,
+    instance_id: instanceId,
+    node_id: 'approval',
+    step_id: `step-${instanceId}`,
+    safe_label: 'Approval required',
+    status: 'open',
+    opened_at: now,
+    expires_at: null,
+    accepted_at: null,
+    accepted_by: null,
+    rejection_count: 0,
+    max_rejections: 3,
+    created_at: now,
+    updated_at: now,
   });
 }

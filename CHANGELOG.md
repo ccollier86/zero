@@ -54,6 +54,28 @@ All notable Zero Platform changes are tracked here.
 - Added `zero pdf install` and `zero pdf status`, generated-app convenience
   scripts, Platform Doctor PDF checks, deployment configuration, real Chromium
   integration coverage, and comprehensive PDF documentation.
+- Added the versioned workflow graph engine. The code DSL and canonical
+  JSON-safe IR now support trusted versioned activities, persisted choices,
+  concurrent branches with deterministic joins, bounded keyed array fan-out,
+  channel-neutral human/external interactions, and ReactiveDB-backed private
+  scratch memory. Code and database definitions share append-only versions,
+  canonical fingerprints, mutable revision-fenced drafts, activation and
+  retirement, plus an administrator definition API guarded by the explicit
+  `databaseCallable` activity boundary.
+- Added real-time graph observability through safe owner-scoped
+  `workflow_steps` and `workflow_interactions` projections. React workflow
+  hooks now expose all active nodes, open waits, parallel/input-wait flags,
+  version-pinned starts, and idempotent response submission while definition
+  IR, memory, policies, graph-event payloads, interaction bodies, and graph
+  instance/step inputs, outputs, and raw errors remain server-only. Migration
+  `030` adds graph/version/interaction state and conservatively backfills
+  compatible Zero 1.3 workflow history.
+- Bounded durable workflow execution state with a 1 MiB per-value limit, a
+  transactional 32 MiB per-run execution-value budget, per-interaction
+  submission count/byte limits, and per-run event inbox/retention count and
+  byte quotas. Paused graph runs buffer authenticated named events but reject
+  direct interaction submissions with retryable `WORKFLOW_DRAINING`, preventing
+  authorization or validation work from racing resume.
 
 ### Fixed
 

@@ -160,6 +160,7 @@ export async function mountPlatformApp({
       db: getSyncDB()!,
       register: config.workflows.register,
       shutdownGraceMs: config.workflows.shutdownGraceMs,
+      interactionAuthority: config.workflows.interactionAuthority,
       ensureAuthReady: workflowLifecycle.ensureDependenciesReady,
     }, {
       managedStartup: true,

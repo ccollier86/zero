@@ -58,13 +58,13 @@ export class WorkflowExecutionTracker {
     return false;
   }
 
-  abortInstance(instanceId: string, reason: string): void {
+  abortInstance(instanceId: string, reason: string | Error): void {
     for (const active of this.activeByStep.values()) {
       if (active.instanceId === instanceId) this.abort(active, reason);
     }
   }
 
-  abortStep(stepId: string, reason: string): void {
+  abortStep(stepId: string, reason: string | Error): void {
     const active = this.activeByStep.get(stepId);
     if (active) this.abort(active, reason);
   }
@@ -104,8 +104,10 @@ export class WorkflowExecutionTracker {
     });
   }
 
-  private abort(active: ActiveExecution, reason: string): void {
-    if (!active.controller.signal.aborted) active.controller.abort(new Error(reason));
+  private abort(active: ActiveExecution, reason: string | Error): void {
+    if (!active.controller.signal.aborted) {
+      active.controller.abort(reason instanceof Error ? reason : new Error(reason));
+    }
   }
 }
 

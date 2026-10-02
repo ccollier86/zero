@@ -47,7 +47,7 @@ export function freezeWorkflowAccessPolicy(
  * current HTTP routes call this only after requireAuth().
  */
 export function canAccessWorkflowDefinition(
-  definition: WorkflowDefinition,
+  definition: Pick<WorkflowDefinition, 'access'>,
   capability: WorkflowDefinitionCapability,
   principal: WorkflowAccessPrincipal | null,
 ): boolean {

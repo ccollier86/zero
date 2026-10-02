@@ -392,7 +392,7 @@ app.listen(config.port ?? 3000);
 | State sync | Per-user persisted reactive state. |
 | Notifications | Notifications and per-user receipts when auth is enabled. |
 | Rooms/presence | Room membership and presence primitives when auth is enabled. |
-| Workflows | Durable registry/service when auth is enabled; app registration and crash recovery complete before requests. |
+| Workflows | Versioned durable graph engine with trusted activities, branches/joins, fan-out, memory, interactions, crash recovery, and owner-scoped live state. |
 | Scheduler | Platform jobs. |
 | AI | Server-side AI provider registry/service when enabled. |
 | Vector | zvec-backed vector store when enabled. |
@@ -1042,49 +1042,115 @@ Hooks:
 ## Workflows And Scheduler
 
 Zero workflows and scheduler are in-process platform services. Workflows are
-enabled by default with auth unless `workflows: false`. Register handlers first
-and definitions second through `AppConfig.workflows.register(registry)`. Zero
-awaits that callback, waits for auth, preflights live handlers, recovers
+enabled by default with auth unless `workflows: false`. Register trusted
+activities first and definitions second through
+`AppConfig.workflows.register(registry)`. Zero awaits that callback, waits for
+auth, preflights live activity/version references, validates and recovers
 in-flight work, and only then publishes the service or accepts requests. The
-registry itself is synchronously available during composition, but managed apps
-must not use that as a post-start registration path.
+registry itself is synchronously available during composition, but managed
+apps must not use that as a post-start registration path.
 
 For 1.3 upgrades, move workflow registration out of `onStart`/post-`listen`
 code and into `workflows.register`. A direct-composition integration may use
 `getWorkflowRegistry()` after `createApp()` returns and before `listen()`;
 post-listen registration is too late for recovery preflight.
 
-Workflow execution is sequential per instance. The first unfinished step is a
-strict frontier; later steps cannot pass a wait, retry, running step, or
-terminal failure. `retries` is the total handler-attempt budget, not retries in
-addition to the first attempt. Step zero receives workflow input in both
-`ctx.input` and `ctx.workflowInput`; later steps receive the previous output in
-`ctx.input`. The runtime always supplies `ctx.signal`, a per-attempt
-`ctx.attemptId`, and a logical-step `ctx.idempotencyKey` stable across retries
-and recovery, although those fields remain optional in the public type for
-compatibility.
+Use `registerActivity()` for new work. Activities have immutable string
+versions, optional input/output schemas, descriptive capabilities, and a
+`databaseCallable` flag. Code, database, API, agent, and future visual-editor
+definitions all compile to canonical JSON-safe `WorkflowGraphIR`; persisted
+graphs never contain closures or JavaScript source. Database-authored graphs
+can invoke only activity versions explicitly opted in with
+`databaseCallable: true`.
 
-New workflow events are stored both as public audit rows and as durable
-internal delivery rows. This buffers events sent before a wait becomes active,
-claims each event once, and preserves the same payload through handler retries
-and crash recovery. Historical audit rows without delivery records are not
-replayed. `sendEvent()` returns `true` only if that newly inserted event was
-claimed before the call returned; a paused or currently nonmatching event is
-buffered and returns `false`.
+The code DSL exports `flow`, `step`, `choose`, `when`, `otherwise`, `parallel`,
+`each`, `waitFor`, `requestAndWait`, and the safe serializable `expr` builders.
+Choices select in declaration order and persist exactly one decision. Parallel
+branches execute concurrently and converge at an explicit all-branches join.
+`each` snapshots its input array once, uses stable item keys, enforces bounded
+concurrency, and preserves ordered results with configurable invalid/error
+policies. Legacy sequential `steps` definitions and `registerHandler()` remain
+supported.
 
-`timeoutMs` is one total logical-step deadline spanning event wait, handler
-execution, retry backoff, and later attempts. Pause fences the physical
-attempt, freezes retry/deadline time, and resume waits for the old handler to
-settle before re-driving work. Cancellation skips all remaining nonterminal
-steps. Completed, failed, and cancelled instances are immutable.
+`@zero/framework/workflows` also exports the canonical IR/types and limits,
+activity catalog contracts, graph compiler/validator helpers, and durable
+schema snapshot helpers. Publication checks that named output references exist
+and dominate their consumer. Persisted TypeBox schemas preserve
+`x-zero-typebox-kind`; executable transforms and non-data schema members are
+rejected. Definition and draft persistence is capped at 2 MiB, with invalid or
+oversized content returning `422 WORKFLOW_DEFINITION_GRAPH_INVALID`.
+
+Graph activity `ctx.input` is the resolved predecessor/expression value and
+`ctx.workflowInput` is the original input. The runtime always supplies
+`ctx.signal`, a per-attempt `ctx.attemptId`, a logical-node/item
+`ctx.idempotencyKey` stable across retries/recovery, and a private
+ReactiveDB-backed `ctx.memory`. Memory reads use an attempt snapshot; writes are
+staged and commit atomically only with successful node completion. Failed,
+timed-out, paused, cancelled, or stale attempts discard the overlay. Each
+fan-out item gets an isolated memory namespace.
+
+`waitFor` uses durable audit rows plus a private event inbox. Early events are
+buffered, claimed once, and retained through restart; historical audit-only
+rows are not replayed. `sendEvent()` returns `true` only if that new event was
+claimed before return. A paused or nonmatching event is buffered and returns
+`false`. Graph event payloads are retained server-side for execution but
+redacted from HTTP and Sync projections.
+
+Runtime JSON values are limited to 1 MiB each. Run/step/fan-out values, scratch
+memory, interaction policy/schema/request data, and retained submission/accepted
+values share a 32 MiB aggregate budget per run. One interaction retains at
+most 1,024 actor-and-payload-bound submissions or 16 MiB of submitted plus
+accepted data; an exact existing ID/actor/payload replay remains available at
+the cap. Event names are at most 200 characters; the per-run unconsumed inbox
+is capped at 1,000 events or 16 MiB, and retained deliverable history at 10,000
+events or 64 MiB.
+
+`requestAndWait` persists a channel-neutral interaction before optional
+delivery activities send email, SMS, UI notifications, webhooks, or agent
+tasks. The response can arrive through the authenticated response endpoint or
+the named workflow event. Submission IDs are idempotent, response schemas and
+optional validator activities run server-side, one valid concurrent response
+wins, and normalized accepted output feeds downstream nodes. Private prompts,
+policies, schemas, payloads, and accepted values never enter Sync.
+The default responder is the workflow starter;
+`workflows.interactionAuthority` can install one fail-closed Guardian/app
+decision callback for both direct and event-delivered responses.
+
+Event-delivered roles and claims are authenticated send-time snapshots kept
+for restart parity; they do not prove that revocable membership or account
+state is still current. Policies that need current authority must reload it in
+`interactionAuthority` and honor its `AbortSignal`.
+
+Direct interaction submissions are accepted only while the graph is running.
+While paused they fail before reservation with retryable HTTP `409`
+`WORKFLOW_DRAINING`; keep the submission ID and retry after resume. Named
+authenticated events may remain durably buffered during the pause.
+
+`retries` is a total-attempt budget. `timeoutMs` is one logical-node deadline
+spanning event/interaction wait, activity execution, retry backoff, and later
+attempts. Pause fences the physical attempt and freezes retry, deadline, and
+interaction-expiry time. Resume never overlaps attempts: while abort-ignoring
+physical work is still draining it fails fast with retryable HTTP `409`
+`WORKFLOW_DRAINING`; retry after the old invocation settles. Cancellation
+closes interactions and skips/cancels unfinished nodes/items. Completed,
+failed, and cancelled instances are immutable.
 
 The timeout boundary is inclusive. Timeout wins when a retry becomes due at
 the exact same instant, and it also wins over a pause requested at an already
 expired deadline.
 
-Crash recovery is at-least-once. Use `ctx.idempotencyKey` to deduplicate email,
-payments, webhooks, storage writes, and other external effects. Do not use
-`attemptId` for that purpose.
+Every graph run pins an immutable definition version, canonical graph JSON,
+fingerprint, and exact activity versions. Code definitions publish/deduplicate
+through the same append-only history as database definitions. Platform-admin
+routes under `/workflows/admin/definitions` inspect the activity catalog and
+specific editable content, manage revision-fenced drafts, publish immutable
+versions, activate a default, and retire versions. Active-version changes can
+use compare fences. Retired history remains available to recover already-pinned
+runs.
+
+Crash recovery is at-least-once for external systems. Use
+`ctx.idempotencyKey` to deduplicate email, payments, webhooks, storage writes,
+and other external effects. Do not use `attemptId` for that purpose.
 
 Hooks:
 
@@ -1093,15 +1159,35 @@ Hooks:
 - `useWorkflowList`
 - `useWorkflowActions`
 
-Hooks read owner-scoped ReactiveDB Sync and do not poll. They expose running,
-complete, failed, paused, cancelled, waiting, and retrying flags. Normal users
-see only runs they started; the exact stable global `admin` role sees all
-runtime rows. Definition `access.start`/`access.inspect` may allow any
+Hooks read owner-scoped ReactiveDB Sync and do not poll. `useWorkflow()` returns
+`steps`, all `activeSteps`, safe `interactions`, `currentStep`, lifecycle flags,
+`isWaitingForInput`, `isRetrying`, and `isRunningInParallel`.
+`useWorkflowActions()` includes version-pinned start and idempotent
+`submitResponse` in addition to lifecycle/event actions. Public step fields
+carry node/branch/parent/item identities, so a UI can draw and animate graph,
+parallel, fan-out, retry, and wait progress in real time.
+
+Normal users see only runs they started; the exact stable global `admin` role
+sees all runtime rows. Definition `access.start`/`access.inspect` may allow any
 authenticated user, only the global admin, or named app roles; denied
-definitions look missing over HTTP. Workflow definitions and underscore-prefixed
-coordination tables are excluded from Sync. Browser instances omit `steps_json`
-and browser steps omit `wait_event`, while public workflow tables remain
-read-only through Sync. Ownership and child-to-instance links are immutable.
+definitions look missing over HTTP. Workflow definitions, canonical graph IR,
+scratch memory, interaction payloads, and underscore-prefixed coordination
+tables are excluded from Sync. Browser instances omit private snapshots and
+internal version IDs. All graph instance/step input, output, and raw error
+values are cleared; steps omit executable `wait_event`, and graph-event rows
+clear payloads. Public workflow tables remain read-only through Sync.
+Ownership and child-to-instance links are immutable. Legacy 1.3 runs preserve
+their historical projection for compatibility.
+
+Workflow names, node IDs/labels, event names, branch keys, fan-out item keys,
+and interaction safe labels are browser-visible operational metadata. Keep
+them stable and non-sensitive; use opaque record IDs rather than secrets, PHI,
+credentials, prompt text, or other private values.
+
+Trusted server code can inspect complete execution state through
+`WorkflowService`. When a browser needs a result, expose a narrow app endpoint
+with explicit authorization and a field-level response contract; never add raw
+workflow execution columns back to general Sync.
 
 Server services:
 
@@ -1111,20 +1197,24 @@ Server services:
 Browser actions use the generated Eden surface under `client.api.workflows`.
 Use public `unwrap()` and catch public `ApiError` from `@zero/framework/react`
 to retain HTTP status, stable code, safe message, and response body.
-The plugin also owns minute scheduler jobs that discover due retries and
-timeouts; those jobs do not make the React hooks poll. Workflow failures use
-stable `WORKFLOW_*` error codes and `workflows.*` observability codes. See
-`docs/workflows.md` for the complete route, service, hook, storage, and error
-contracts.
+Graph retries and deadlines use exact in-process timers. The plugin also owns
+minute scheduler jobs as persisted-state safety sweeps and restart fallback;
+those jobs do not make React hooks poll. Workflow failures use stable
+`WORKFLOW_*` error codes and `workflows.*` observability codes covering
+definitions, nodes, branches, fan-out, memory, and interactions. See
+`docs/workflows.md` for the complete DSL, IR, trust, version, route, service,
+hook, privacy, storage, migration, and error contracts.
 
 `WorkflowService` is a trusted server boundary: it bypasses definition access
 rules and must receive `startedBy` when a normal browser user should own the
 run. Managed apps let the plugin own initialization-only recovery and scheduler
 poll entry points.
 
-Future extension points include workflow-trigger webhooks and AI tools that
-can invoke workflows, but do not invent those unless they exist in the current
-framework.
+Do not expose graph JSON, `ctx.memory`, responder policies, or interaction
+payloads through app Sync tables. Build an operator/visual editor by combining
+an authorized server/admin definition surface with the safe live runtime
+projection. Zero provides the projection and React hooks, not a bundled generic
+graph canvas.
 
 ## AI
 
@@ -1939,9 +2029,10 @@ reference docs confirm the behavior is implemented.
   warnings, errors, and lifecycle events should flow.
 - [Observability Audit](docs/observability-audit.md): audit of existing logging
   and events, gaps, and improvement notes.
-- [Durable Workflow System](docs/workflows.md): registration and recovery
-  lifecycle, strict-frontier execution, durable events, deadlines, retries,
-  authorization, Sync hooks, HTTP/service APIs, errors, and observability.
+- [Durable Workflow System](docs/workflows.md): code DSL and canonical IR,
+  trusted versioned activities, immutable code/database definitions and drafts,
+  choices/parallel/fan-out, memory, event and human waits, recovery,
+  authorization/privacy, real-time hooks, APIs, migration, and observability.
 - [Webhooks Plan](docs/webhooks.md): planned inbound/outbound webhook system,
   signatures, workflow/table triggers, webhook delivery, and future API shape.
 

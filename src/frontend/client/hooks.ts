@@ -159,6 +159,16 @@ export type {
   UseTypingIndicatorReturn,
 } from './typing-indicator-hooks';
 
+export {
+  useWorkflow,
+  useWorkflowActions,
+  useWorkflowList,
+} from './workflow-hooks';
+export type {
+  UseWorkflowListResult,
+  UseWorkflowResult,
+  WorkflowActions,
+} from './workflow-hooks';
 export { useWorkflowRun } from './workflow-run-hooks';
 export type {
   UseWorkflowRunOptions,

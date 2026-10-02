@@ -16,7 +16,11 @@ import {
 } from './workflow-executor';
 import { WorkflowError, workflowNotFound } from './workflow-error';
 import { WorkflowFrontierPump } from './workflow-frontier-pump';
+import { WorkflowGraphRuntime } from './workflow-graph-runtime';
 import { WorkflowInstanceFactory } from './workflow-instance-factory';
+import type { WorkflowInteractionAuthority } from './workflow-interaction-authority';
+import type { WorkflowInteractionActor } from './workflow-interaction-authority';
+import { serializeWorkflowEventActor } from './workflow-event-actor';
 import {
   WorkflowLifecycleCoordinator,
   type WorkflowDispatchPhase,
@@ -26,8 +30,17 @@ import {
   type WorkflowInstanceListFilter,
 } from './workflow-repository';
 import type { WorkflowRegistry } from './workflow-registry';
-import { WorkflowRuntimeStore } from './workflow-runtime-store';
+import {
+  MAX_WORKFLOW_EVENT_NAME_LENGTH,
+  WorkflowRuntimeStore,
+} from './workflow-runtime-store';
+import { serializeWorkflowRuntimeJson } from './workflow-runtime-json';
 import { resolveWorkflowShutdownGraceMs } from './workflow-shutdown-policy';
+import {
+  validateWorkflowStartOptions,
+  type WorkflowStartOptions,
+} from './workflow-start-options';
+import { tryStartWorkflowGraph } from './workflow-start-router';
 import { WorkflowTransitionController } from './workflow-transition-controller';
 import {
   createNativeWorkflowWakeTimer,
@@ -47,6 +60,8 @@ export interface WorkflowServiceOptions {
   wakeTimer?: WorkflowWakeTimer | false;
   /** Maximum wall-clock wait for abort-ignoring handlers during shutdown. */
   shutdownGraceMs?: number;
+  /** Optional Guardian/app policy adapter for graph interaction responses. */
+  interactionAuthority?: WorkflowInteractionAuthority;
 }
 
 export class WorkflowService {
@@ -58,22 +73,29 @@ export class WorkflowService {
   private readonly instanceFactory: WorkflowInstanceFactory;
   private readonly frontier: WorkflowFrontierPump;
   private readonly wakes: WorkflowWakeCoordinator;
+  private readonly graph: WorkflowGraphRuntime;
   private readonly clock: WorkflowClock;
   private disposed = false;
   private disposalPromise: Promise<void> | null = null;
 
   constructor(
     db: ReactiveDB,
-    registry: WorkflowRegistry,
+    private readonly registry: WorkflowRegistry,
     options: WorkflowServiceOptions = {},
   ) {
     this.clock = options.clock ?? systemClock;
     const shutdownGraceMs = resolveWorkflowShutdownGraceMs(options.shutdownGraceMs);
-    this.runtime = options.runtime ?? new WorkflowRuntimeStore(db);
-    this.repository = new WorkflowRepository(db);
     const wakeTimer = options.wakeTimer === undefined
       ? (options.clock ? false : createNativeWorkflowWakeTimer())
       : options.wakeTimer;
+    this.runtime = options.runtime ?? new WorkflowRuntimeStore(db);
+    this.graph = new WorkflowGraphRuntime(db, registry, {
+      now: () => this.clock.now(),
+      shutdownGraceMs,
+      interactionAuthority: options.interactionAuthority,
+      wakeTimer,
+    });
+    this.repository = new WorkflowRepository(db);
     this.wakes = new WorkflowWakeCoordinator(this.clock, wakeTimer, {
       retry: (wake) => this.dispatchAdvance(wake.instanceId, 'retry'),
       timeout: (wake) => this.lifecycle.handleTimeoutWake(wake),
@@ -118,9 +140,20 @@ export class WorkflowService {
   }
 
   /** Create an instance and drive its first legal frontier. */
-  async start(name: string, input?: unknown, startedBy?: string): Promise<string> {
+  async start(
+    name: string,
+    input?: unknown,
+    startedBy?: string,
+    options: WorkflowStartOptions = {},
+  ): Promise<string> {
     this.assertAvailable();
     this.markOperationStarted();
+    const startOptions = validateWorkflowStartOptions(options);
+    const graphInstanceId = await tryStartWorkflowGraph({
+      graph: this.graph, registry: this.registry, name, workflowInput: input,
+      startedBy: startedBy ?? null, options: startOptions,
+    });
+    if (graphInstanceId) return graphInstanceId;
     const created = this.instanceFactory.create(name, input, startedBy);
 
     emitPlatformCode(OBS_CODES.WORKFLOW_INSTANCE_STARTED, {
@@ -134,14 +167,20 @@ export class WorkflowService {
     return created.instanceId;
   }
 
-  async run(name: string, input?: unknown, startedBy?: string): Promise<string> {
-    return this.start(name, input, startedBy);
+  async run(
+    name: string,
+    input?: unknown,
+    startedBy?: string,
+    options?: WorkflowStartOptions,
+  ): Promise<string> {
+    return this.start(name, input, startedBy, options);
   }
 
   /** Coalesce concurrent triggers into one per-instance frontier pump. */
   async advance(instanceId: string): Promise<void> {
     if (this.disposed) return;
     this.markOperationStarted();
+    if (this.graph.isGraphInstance(instanceId)) return this.graph.advance(instanceId);
     return this.frontier.advance(instanceId, () => this.advance(instanceId));
   }
 
@@ -151,6 +190,7 @@ export class WorkflowService {
     eventName: string,
     payload?: unknown,
     sentBy?: string,
+    actor?: WorkflowInteractionActor,
   ): Promise<boolean> {
     this.assertAvailable();
     this.markOperationStarted();
@@ -164,13 +204,28 @@ export class WorkflowService {
         422,
       );
     }
-    const serializedPayload = serializeJson(
-      payload,
-      'Workflow event payload is not JSON-serializable',
-      'WORKFLOW_EVENT_INVALID',
-    );
+    if (eventName.length > MAX_WORKFLOW_EVENT_NAME_LENGTH) {
+      throw new WorkflowError(
+        `Event name must be at most ${MAX_WORKFLOW_EVENT_NAME_LENGTH} characters`,
+        'WORKFLOW_EVENT_INVALID',
+        422,
+      );
+    }
+    const serializedPayload = serializeWorkflowRuntimeJson(payload, {
+      code: 'WORKFLOW_EVENT_INVALID', label: 'Workflow event payload',
+    });
     const eventId = crypto.randomUUID();
     const createdAt = this.clock.now().toISOString();
+    if (actor && sentBy && actor.actorId !== sentBy) {
+      throw new WorkflowError(
+        'Workflow event actor does not match its sender',
+        'WORKFLOW_EVENT_INVALID',
+        422,
+      );
+    }
+    const eventActor = actor ?? (sentBy ? { actorId: sentBy } : null);
+    const actorJson = serializeWorkflowEventActor(eventActor);
+    const effectiveSender = sentBy ?? actor?.actorId;
     let shouldAdvance = false;
 
     this.repository.transaction(() => {
@@ -189,10 +244,18 @@ export class WorkflowService {
         instance_id: instanceId,
         event_name: eventName,
         payload: serializedPayload,
-        sent_by: sentBy ?? null,
+        sent_by: effectiveSender ?? null,
         created_at: createdAt,
       });
-      this.runtime.recordDeliverableEvent(eventId, instanceId, eventName, createdAt);
+      this.runtime.recordDeliverableEvent(
+        eventId,
+        instanceId,
+        eventName,
+        createdAt,
+        actorJson,
+        serializedPayload === null ? 0 : Buffer.byteLength(serializedPayload, 'utf8'),
+        actorJson === null ? 0 : Buffer.byteLength(actorJson, 'utf8'),
+      );
     });
 
     if (shouldAdvance) await this.advance(instanceId);
@@ -202,7 +265,8 @@ export class WorkflowService {
   cancel(instanceId: string): void {
     this.assertAvailable();
     this.markOperationStarted();
-    this.transitions.cancel(instanceId);
+    if (this.graph.isGraphInstance(instanceId)) this.graph.cancel(instanceId);
+    else this.transitions.cancel(instanceId);
   }
 
   stop(instanceId: string): void {
@@ -212,12 +276,17 @@ export class WorkflowService {
   pause(instanceId: string): void {
     this.assertAvailable();
     this.markOperationStarted();
-    this.transitions.pause(instanceId);
+    if (this.graph.isGraphInstance(instanceId)) this.graph.pause(instanceId);
+    else this.transitions.pause(instanceId);
   }
 
   async resume(instanceId: string): Promise<void> {
     this.assertAvailable();
     this.markOperationStarted();
+    if (this.graph.isGraphInstance(instanceId)) {
+      await this.graph.resume(instanceId);
+      return;
+    }
     await this.transitions.resume(
       instanceId,
       () => this.assertAvailable(),
@@ -228,24 +297,31 @@ export class WorkflowService {
   /** Discover due instances; the normal frontier pump performs every retry. */
   async pollRetries(): Promise<number> {
     if (this.disposed) return 0;
-    return this.lifecycle.pollRetries((instanceId, phase) => {
+    const legacy = this.lifecycle.pollRetries((instanceId, phase) => {
       this.dispatchAdvance(instanceId, phase);
     });
+    return legacy + this.graph.pollRetries();
   }
 
   /** Expire only a still-current deadline after a transactional reread. */
   pollTimeouts(): number {
     if (this.disposed) return 0;
-    return this.lifecycle.pollTimeouts();
+    return this.lifecycle.pollTimeouts() + this.graph.pollTimeouts();
   }
 
   /** Preflight every live handler, then normalize and re-drive crash-left work. */
   async recoverInFlight(onReady?: () => void): Promise<number> {
-    return this.lifecycle.recoverInFlight(
+    let graph = 0;
+    const legacy = await this.lifecycle.recoverInFlight(
       (instanceId, phase) => this.dispatchAdvance(instanceId, phase),
       () => this.assertAvailable(),
-      onReady,
+      () => {
+        graph = this.graph.prepareRecovery();
+        onReady?.();
+      },
     );
+    this.graph.activateRecovery();
+    return legacy + graph;
   }
 
   dispose(): Promise<void> {
@@ -260,6 +336,15 @@ export class WorkflowService {
         lifecycleError = error;
       }
       await this.frontier.drain();
+      try {
+        await this.graph.dispose();
+      } catch (error) {
+        if (lifecycleError === undefined) lifecycleError = error;
+        else lifecycleError = new AggregateError(
+          [lifecycleError, error],
+          'Workflow runtimes failed to dispose',
+        );
+      }
       if (lifecycleError !== undefined) throw lifecycleError;
     })();
     return this.disposalPromise;
@@ -279,6 +364,10 @@ export class WorkflowService {
 
   getEvents(instanceId: string): Record<string, unknown>[] {
     return this.repository.getEvents(instanceId);
+  }
+
+  getGraphRuntime(): WorkflowGraphRuntime {
+    return this.graph;
   }
 
   listInstances(filter?: WorkflowInstanceListFilter): Record<string, unknown>[] {
@@ -317,20 +406,5 @@ export class WorkflowService {
 
   private markOperationStarted(): void {
     this.lifecycle.markOperationStarted();
-  }
-}
-
-function serializeJson(
-  value: unknown,
-  message: string,
-  code: 'WORKFLOW_INPUT_INVALID' | 'WORKFLOW_EVENT_INVALID',
-): string | null {
-  if (value === undefined) return null;
-  try {
-    const serialized = JSON.stringify(value);
-    if (serialized === undefined) throw new TypeError(message);
-    return serialized;
-  } catch {
-    throw new WorkflowError(message, code, 422);
   }
 }

@@ -206,6 +206,7 @@ The frontend SDK composes these — it doesn't reinvent them:
 | Public sections | [Public Components](./public-components.md) | `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `BentoGridItem`, `AnimatedList`, and `AnimatedListCard` for polished public content sections |
 | Forms | [Form Library](./forms.md) | `useForm`, `AutoForm`, `Wizard`, generated fields, current limits, and the planned intake-grade blueprint/draft/attachment layer |
 | Storage | [Hooks](./hooks.md#storage-workflows) | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `StorageDropzone`, and storage browser helpers |
+| Workflows | [Hooks](./hooks.md#workflow-runs) and [Durable Workflows](../workflows.md) | Live nodes/interactions, versioned starts, response actions, progress, parallel/fan-out/wait visualization |
 | Rooms and ephemeral sync | [Hooks](./hooks.md#presence-and-typing) | `usePresence`, `usePresenceList`, `useTypingIndicator`, `useEphemeral`, and `useEphemeralTopic` |
 | Observability | [docs/observability.md](../observability.md) | Backend/frontend event sink, default inspection endpoint, configurable adapters |
 

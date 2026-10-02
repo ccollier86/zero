@@ -286,34 +286,38 @@ The bridge does not persist chat threads or create a gateway. It only calls
 ## Workflows And Jobs
 
 The vector plugin mounts before scheduler and workflow plugins, so jobs and
-workflow handlers can use it directly. Register this handler inside
+workflow activities can use it directly. Register this activity inside
 `AppConfig.workflows.register(registry)`:
 
 ```ts
 import { getAI, getVectorStore } from '@zero/framework/server';
 
-registry.registerHandler('indexDocument', async (ctx) => {
-  ctx.signal?.throwIfAborted();
-  const ai = getAI();
-  const vectors = getVectorStore();
-  if (!ai || !vectors) throw new Error('AI/vector services are not enabled.');
-  const input = ctx.input as {
-    id: string;
-    text: string;
-    metadata?: Record<string, unknown>;
-  };
+registry.registerActivity({
+  name: 'vector.index-document',
+  version: '1',
+  handler: async (ctx) => {
+    ctx.signal?.throwIfAborted();
+    const ai = getAI();
+    const vectors = getVectorStore();
+    if (!ai || !vectors) throw new Error('AI/vector services are not enabled.');
+    const input = ctx.input as {
+      id: string;
+      text: string;
+      metadata?: Record<string, unknown>;
+    };
 
-  const embedding = await ai.embed({
-    model: 'embedding',
-    value: input.text,
-  });
+    const embedding = await ai.embed({
+      model: 'embedding',
+      value: input.text,
+    });
 
-  return vectors.upsert('knowledge', {
-    id: input.id,
-    vector: embedding.embedding,
-    text: input.text,
-    metadata: input.metadata,
-  });
+    return vectors.upsert('knowledge', {
+      id: input.id,
+      vector: embedding.embedding,
+      text: input.text,
+      metadata: input.metadata,
+    });
+  },
 });
 ```
 

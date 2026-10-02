@@ -2664,34 +2664,48 @@ use SDK auth headers with an automatic refresh-and-retry on 401.
 
 | Hook | Signature | Description |
 |------|-----------|-------------|
-| `useWorkflow` | `(instanceId: string \| null) => UseWorkflowResult` | Live authorized instance, ordered steps, frontier, and status flags |
+| `useWorkflow` | `(instanceId: string \| null) => UseWorkflowResult` | Live instance, ordered/all-active nodes, safe interactions, and graph-aware flags |
 | `useWorkflowList` | `(filter?: { status?; name? }) => UseWorkflowListResult` | Live authorized instances filtered by status/name |
-| `useWorkflowActions` | `() => WorkflowActions` | Authenticated start/cancel/pause/resume/send-event actions |
-| `useWorkflowRun` | `(name, options?: { instanceId?: string \| null }) => UseWorkflowRunResult` | Start/select one run and compose state, actions, progress, and pending/error state |
+| `useWorkflowActions` | `() => WorkflowActions` | Authenticated versioned start, lifecycle, event, and interaction-response actions |
+| `useWorkflowRun` | `(name, options?: { instanceId?: string \| null; version?: number }) => UseWorkflowRunResult` | Start/select one run and compose live state, actions, progress, and pending/error state |
 
-`useWorkflow()` and `useWorkflowRun()` expose `isRunning`, `isComplete`,
-`isFailed`, `isPaused`, `isCancelled`, `isWaiting`, and `isRetrying`.
-`isRunning` can be true together with `isWaiting` or `isRetrying`; those flags
-describe the current frontier while the instance remains live.
+`useWorkflow()` and `useWorkflowRun()` return `steps`, `activeSteps`,
+`interactions`, and `currentStep`, plus `isRunning`, `isComplete`, `isFailed`,
+`isPaused`, `isCancelled`, `isWaiting`, `isWaitingForInput`, `isRetrying`, and
+`isRunningInParallel`. Flags can overlap: a run remains live while waiting or
+retrying, and concurrent graph/fan-out nodes can all be active.
+
+`start(name, input?, { version? })` optionally pins one immutable definition
+version. `submitResponse(instanceId, interactionId, payload, { submissionId?,
+channel? })` sends an idempotent channel-neutral response and resolves to
+`accepted`, `rejected`, or `superseded`.
 `sendEvent()` resolves to the server's `matched` boolean: `true` only when that
 new event was claimed before the call returned. Events accepted while paused
 remain buffered and return `false` until a later resume can claim them.
+Direct interaction responses are not buffered while paused; they reject with
+retryable HTTP `409` `WORKFLOW_DRAINING`, so retain the stable submission ID
+and retry after the run resumes. Existing submission IDs remain idempotently
+replayable at a wait's capacity boundary; a new ID beyond it returns
+non-retryable HTTP `429` `WORKFLOW_INTERACTION_SUBMISSION_LIMIT`.
 
 Workflow hooks read owner-scoped ReactiveDB Sync state and do not poll. A normal
 user sees only runs they started; the exact stable global `admin` role can see
-all runtime rows. Definitions are server-only and excluded from Sync. Browser
-instance rows omit the immutable `steps_json` snapshot, and step rows omit the
-executable `wait_event` routing key; `step_name` is the safe human label.
-Mutating workflow tables directly over Sync is rejected; actions use the
-authenticated HTTP surface.
+all runtime rows. Definitions, graph IR, memory, interaction bodies, and graph
+event payloads are server-only. Browser instances omit private snapshots and
+internal version IDs. Every graph instance and step clears input, output, and
+raw error; steps omit `wait_event`, while safe node/branch/item identity remains
+available. Events and interactions expose safe audit/progress metadata for
+real-time workflow visualization. Mutating workflow tables directly over Sync
+is rejected; actions use the authenticated HTTP surface.
 
 For direct browser calls, use the generated Eden API on `client.api`:
 
 ```ts
-import { ApiError, unwrap } from '@zero/framework/react';
+import { unwrap } from '@zero/framework/react';
 
 const { instanceId } = unwrap(await client.api.workflows.post({
   name: 'generate-report',
+  version: 3,
   input: { clientId },
 }));
 
@@ -2704,14 +2718,30 @@ const { matched } = unwrap(
     payload: { reviewerId },
   }),
 );
+
+const waits = unwrap(
+  await client.api.workflows[instanceId].interactions.get(),
+);
+const wait = waits[0];
+if (!wait) throw new Error('The workflow has no open interaction.');
+const response = unwrap(
+  await client.api.workflows[instanceId]
+    .interactions[wait.interactionId]
+    .responses.post({
+      submissionId: crypto.randomUUID(),
+      payload: { approved: true },
+      channel: 'web',
+    }),
+);
 ```
 
 `ApiError` is exported from `@zero/framework/react`. A caught instance exposes
 `status`, the stable Zero `code`, the response `body`, and a safe `message`;
 workflow UI can branch on `error.code` without parsing response text.
 
-See [Durable Workflows](./workflows.md) for registration, strict-frontier
-execution, retries, deadlines, event claims, recovery, and authorization.
+See [Durable Workflows](./workflows.md) for the code DSL, canonical IR,
+immutable versions and drafts, activity trust boundary, memory, parallel and
+fan-out execution, interactions, recovery, privacy, and authorization.
 
 ### Router Hooks
 

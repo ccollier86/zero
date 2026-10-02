@@ -10,6 +10,8 @@ import {
   getWorkflowService,
   stopWorkflowRuntime,
 } from './workflow.plugin';
+import { flow, requestAndWait } from './workflow-dsl';
+import { WorkflowInteractionAuthority } from './workflow-interaction-authority';
 import type { WorkflowRegistry } from './workflow-registry';
 
 describe('workflow plugin lifecycle and HTTP authority', () => {
@@ -411,19 +413,19 @@ describe('workflow plugin lifecycle and HTTP authority', () => {
         '/workflows/definitions', {}, user.token,
       );
       expect(userDefinitions.data.map(({ name }) => name)).toEqual([
-        'metadata-workflow', 'discoverable-admin',
+        'discoverable-admin', 'metadata-workflow',
       ]);
       const operatorDefinitions = await runtime.request<DefinitionSummary[]>(
         '/workflows/definitions', {}, operator.token,
       );
       expect(operatorDefinitions.data.map(({ name }) => name)).toEqual([
-        'metadata-workflow', 'operator-only', 'discoverable-admin',
+        'discoverable-admin', 'metadata-workflow', 'operator-only',
       ]);
       const adminDefinitions = await runtime.request<DefinitionSummary[]>(
         '/workflows/definitions', {}, admin.token,
       );
       expect(adminDefinitions.data.map(({ name }) => name)).toEqual([
-        'metadata-workflow', 'admin-only', 'operator-only', 'discoverable-admin',
+        'admin-only', 'discoverable-admin', 'metadata-workflow', 'operator-only',
       ]);
       expect(adminDefinitions.data.find(({ name }) => name === 'admin-only')).toEqual({
         name: 'admin-only',
@@ -450,6 +452,419 @@ describe('workflow plugin lifecycle and HTTP authority', () => {
         '/workflows', jsonPost({ name: 'admin-only' }), admin.token,
       );
       expect(adminStart.status).toBe(200);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('administers immutable database definitions without exposing executable graphs', async () => {
+    const runtime = await createHttpRuntime((registry) => {
+      registry.registerActivity({
+        name: 'database-noop',
+        version: '1',
+        databaseCallable: true,
+        default: true,
+        handler: async ({ input }) => ({ input }),
+      });
+    });
+    try {
+      const user = await runtime.createUser('user');
+      const admin = await runtime.createUser('admin');
+      const graph = {
+        schemaVersion: 1,
+        entry: 'complete',
+        nodes: [{
+          id: 'complete',
+          kind: 'activity',
+          label: 'Complete request',
+          activity: { name: 'database-noop', version: '1' },
+        }],
+        edges: [],
+      };
+
+      const forbidden = await runtime.request<Record<string, unknown>>(
+        '/workflows/admin/definitions/publish',
+        jsonPost({ name: 'database-workflow', graph }),
+        user.token,
+      );
+      expect(forbidden).toEqual({
+        status: 403,
+        data: { error: 'Forbidden', code: 'FORBIDDEN' },
+      });
+
+      const untrustedGraph = {
+        ...graph,
+        nodes: [{
+          id: 'complete', kind: 'activity', activity: { name: 'noop', version: '1' },
+        }],
+      };
+      const disallowed = await runtime.request<Record<string, unknown>>(
+        '/workflows/admin/definitions/publish',
+        jsonPost({ name: 'disallowed-workflow', graph: untrustedGraph }),
+        admin.token,
+      );
+      expect(disallowed).toEqual({
+        status: 403,
+        data: {
+          error: 'Workflow activity "noop" version "1" is not allowed in database-authored workflows',
+          code: 'WORKFLOW_ACTIVITY_NOT_ALLOWED',
+        },
+      });
+
+      const first = await runtime.request<Record<string, any>>(
+        '/workflows/admin/definitions/publish',
+        jsonPost({
+          name: 'database-workflow',
+          graph,
+          access: { start: 'authenticated' },
+        }),
+        admin.token,
+      );
+      expect(first.status).toBe(200);
+      expect(first.data).toMatchObject({
+        name: 'database-workflow',
+        created: true,
+        activated: true,
+        version: { version: 1, source: 'database', status: 'published' },
+      });
+      expect(JSON.stringify(first.data)).not.toContain('graph_json');
+      expect(JSON.stringify(first.data)).not.toContain('database-noop');
+
+      const visible = await runtime.request<Array<Record<string, unknown>>>(
+        '/workflows/definitions',
+        {},
+        user.token,
+      );
+      expect(visible.data.find((definition) => definition.name === 'database-workflow'))
+        .toEqual({ name: 'database-workflow', steps: [{ name: 'Complete request' }] });
+
+      const started = await runtime.request<{ instanceId: string }>(
+        '/workflows',
+        jsonPost({ name: 'database-workflow', input: { requestId: 'r1' } }),
+        user.token,
+      );
+      expect(started.status).toBe(200);
+      await waitFor(() => runtime.db.queryOne(
+        'workflow_instances',
+        started.data.instanceId,
+      )?.status === 'completed');
+      expect(runtime.db.queryOne('workflow_instances', started.data.instanceId))
+        .toMatchObject({ definition_version: 1, started_by: user.user.userId });
+      const publicInstance = await runtime.request<Record<string, unknown>>(
+        `/workflows/${started.data.instanceId}`,
+        {},
+        user.token,
+      );
+      expect(publicInstance.data).toMatchObject({
+        input: null,
+        output: null,
+        error: null,
+      });
+      expect(publicInstance.data).not.toHaveProperty('graph_json');
+      const publicSteps = await runtime.request<Array<Record<string, unknown>>>(
+        `/workflows/${started.data.instanceId}/steps`,
+        {},
+        user.token,
+      );
+      expect(publicSteps.data).toHaveLength(1);
+      expect(publicSteps.data[0]).toMatchObject({
+        input: null,
+        output: null,
+        error: null,
+      });
+      expect(runtime.db.queryOne('workflow_instances', started.data.instanceId)?.output)
+        .toContain('requestId');
+      expect(runtime.db.query('workflow_steps').find(
+        (step) => step.instance_id === started.data.instanceId,
+      )?.output).toContain('requestId');
+
+      const second = await runtime.request<Record<string, any>>(
+        '/workflows/admin/definitions/publish',
+        jsonPost({
+          name: 'database-workflow',
+          graph,
+          version: 2,
+          activate: false,
+          expectedActiveVersionId: first.data.activeVersionId,
+        }),
+        admin.token,
+      );
+      expect(second.data).toMatchObject({
+        created: true,
+        activated: false,
+        activeVersionId: first.data.activeVersionId,
+        version: { version: 2 },
+      });
+
+      const versions = await runtime.request<Array<Record<string, unknown>>>(
+        `/workflows/admin/definitions/${first.data.definitionId}/versions`,
+        {},
+        admin.token,
+      );
+      expect(versions.data.map((version) => version.version)).toEqual([2, 1]);
+      expect(JSON.stringify(versions.data)).not.toContain('graph_json');
+
+      const activities = await runtime.request<Array<Record<string, unknown>>>(
+        '/workflows/admin/definitions/activities',
+        {},
+        admin.token,
+      );
+      expect(activities.data).toContainEqual(expect.objectContaining({
+        name: 'database-noop', version: '1', databaseCallable: true,
+      }));
+
+      const draft = await runtime.request<Record<string, any>>(
+        '/workflows/admin/definitions/drafts',
+        jsonPut({
+          definitionId: first.data.definitionId,
+          name: 'database-workflow',
+          graph,
+          baseVersionId: first.data.version.versionId,
+          editorMetadata: { viewport: { x: 10, y: 20 } },
+        }),
+        admin.token,
+      );
+      expect(draft.data).toMatchObject({
+        definitionId: first.data.definitionId,
+        baseVersionId: first.data.version.versionId,
+        revision: 1,
+      });
+      const mismatchedDraft = await runtime.request<Record<string, unknown>>(
+        '/workflows/admin/definitions/drafts',
+        jsonPut({
+          definitionId: first.data.definitionId,
+          name: 'another-workflow',
+          graph,
+        }),
+        admin.token,
+      );
+      expect(mismatchedDraft).toEqual({
+        status: 409,
+        data: {
+          error: 'Workflow draft definition identity does not match its name',
+          code: 'WORKFLOW_DRAFT_CONFLICT',
+        },
+      });
+      const loadedDraft = await runtime.request<Record<string, any>>(
+        `/workflows/admin/definitions/drafts/${draft.data.draftId}`,
+        {},
+        admin.token,
+      );
+      expect(loadedDraft.data).toMatchObject({
+        graph,
+        editorMetadata: { viewport: { x: 10, y: 20 } },
+      });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('exposes privacy-safe live interactions and resumes from an idempotent response', async () => {
+    const runtime = await createHttpRuntime((registry) => {
+      registry.registerWorkflow({
+        name: 'interactive-approval',
+        flow: flow(requestAndWait(
+          'approval',
+          'approval.responded',
+          { label: 'Approval required', request: { prompt: 'Approve this request?' } },
+        )),
+      });
+    });
+    try {
+      const owner = await runtime.createUser('user');
+      const stranger = await runtime.createUser('user');
+      const started = await runtime.request<{ instanceId: string }>(
+        '/workflows',
+        jsonPost({ name: 'interactive-approval', input: { requestId: 'r1' } }),
+        owner.token,
+      );
+      expect(started.status).toBe(200);
+      const instanceId = started.data.instanceId;
+      await waitFor(() => runtime.db.query('workflow_interactions').length === 1);
+
+      const interactions = await runtime.request<Array<Record<string, unknown>>>(
+        `/workflows/${instanceId}/interactions`,
+        {},
+        owner.token,
+      );
+      expect(interactions.status).toBe(200);
+      expect(interactions.data).toHaveLength(1);
+      expect(interactions.data[0]).toMatchObject({
+        instanceId,
+        nodeId: 'approval',
+        safeLabel: 'Approval required',
+        status: 'open',
+      });
+      expect(JSON.stringify(interactions.data)).not.toContain('prompt');
+      const interactionId = String(interactions.data[0].interactionId);
+
+      const hidden = await runtime.request<Record<string, unknown>>(
+        `/workflows/${instanceId}/interactions`,
+        {},
+        stranger.token,
+      );
+      expect(hidden).toEqual({
+        status: 404,
+        data: { error: 'Workflow not found', code: 'WORKFLOW_NOT_FOUND' },
+      });
+
+      const accepted = await runtime.request<Record<string, unknown>>(
+        `/workflows/${instanceId}/interactions/${interactionId}/responses`,
+        jsonPost({
+          submissionId: 'submission-1',
+          payload: { approved: true },
+          channel: 'web',
+        }),
+        owner.token,
+      );
+      expect(accepted.status).toBe(200);
+      expect(accepted.data).toMatchObject({ outcome: 'accepted' });
+      await waitFor(() => runtime.db.queryOne('workflow_instances', instanceId)?.status
+        === 'completed');
+
+      const replay = await runtime.request<Record<string, unknown>>(
+        `/workflows/${instanceId}/interactions/${interactionId}/responses`,
+        jsonPost({
+          submissionId: 'submission-1',
+          payload: { approved: true },
+          channel: 'web',
+        }),
+        owner.token,
+      );
+      expect(replay.data).toMatchObject({ outcome: 'accepted' });
+      expect(runtime.db.prepare(`SELECT COUNT(*) AS count
+        FROM _workflow_interaction_responses`).get()).toEqual({ count: 1 });
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('lets an interaction authority grant a non-owner response without run access', async () => {
+    let responderId = '';
+    const authority = new WorkflowInteractionAuthority(({ actor }) =>
+      actor.actorId === responderId
+    );
+    const runtime = await createHttpRuntime((registry) => {
+      registry.registerWorkflow({
+        name: 'delegated-approval',
+        flow: flow(requestAndWait('approval', 'approval.responded')),
+      });
+    }, { interactionAuthority: authority });
+    try {
+      const owner = await runtime.createUser('user');
+      const responder = await runtime.createUser('user');
+      responderId = responder.user.userId;
+      const started = await runtime.request<{ instanceId: string }>(
+        '/workflows',
+        jsonPost({ name: 'delegated-approval' }),
+        owner.token,
+      );
+      const instanceId = started.data.instanceId;
+      await waitFor(() => runtime.db.query('workflow_interactions').length === 1);
+      const interaction = runtime.db.query('workflow_interactions')[0] as {
+        interaction_id: string;
+      };
+
+      const accepted = await runtime.request<Record<string, unknown>>(
+        `/workflows/${instanceId}/interactions/${interaction.interaction_id}/responses`,
+        jsonPost({ submissionId: 'delegated-response', payload: { approved: true } }),
+        responder.token,
+      );
+      expect(accepted).toMatchObject({ status: 200, data: { outcome: 'accepted' } });
+      await waitFor(() => runtime.db.queryOne('workflow_instances', instanceId)?.status
+        === 'completed');
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('advances a rejected interaction that reaches its rejection limit', async () => {
+    const runtime = await createHttpRuntime((registry) => {
+      registry.registerActivity({
+        name: 'reject-response',
+        handler: async () => ({
+          valid: false,
+          code: 'not_approved',
+          publicMessage: 'Response was not approved.',
+        }),
+      });
+      registry.registerWorkflow({
+        name: 'single-rejection',
+        flow: flow(requestAndWait('approval', 'approval.responded', {
+          validator: 'reject-response',
+          maxRejections: 1,
+        })),
+      });
+    });
+    try {
+      const owner = await runtime.createUser('user');
+      const started = await runtime.request<{ instanceId: string }>(
+        '/workflows',
+        jsonPost({ name: 'single-rejection' }),
+        owner.token,
+      );
+      const instanceId = started.data.instanceId;
+      await waitFor(() => runtime.db.query('workflow_interactions').length === 1);
+      const interaction = runtime.db.query('workflow_interactions')[0] as {
+        interaction_id: string;
+      };
+      const rejected = await runtime.request<Record<string, unknown>>(
+        `/workflows/${instanceId}/interactions/${interaction.interaction_id}/responses`,
+        jsonPost({ submissionId: 'rejected-response', payload: { approved: false } }),
+        owner.token,
+      );
+
+      expect(rejected).toMatchObject({
+        status: 200,
+        data: { outcome: 'rejected', interaction: { status: 'rejection_limit' } },
+      });
+      await waitFor(() => runtime.db.queryOne('workflow_instances', instanceId)?.status
+        === 'failed');
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  test('preserves responder roles across direct and named-event interaction paths', async () => {
+    const authority = new WorkflowInteractionAuthority(({ actor }) =>
+      actor.roles?.includes('admin') === true
+    );
+    const runtime = await createHttpRuntime((registry) => {
+      registry.registerWorkflow({
+        name: 'role-response-parity',
+        flow: flow(requestAndWait('approval', 'approval.responded')),
+      });
+    }, { interactionAuthority: authority });
+    try {
+      const owner = await runtime.createUser('user');
+      const approver = await runtime.createUser('admin');
+      const direct = await runtime.request<{ instanceId: string }>(
+        '/workflows', jsonPost({ name: 'role-response-parity' }), owner.token,
+      );
+      const event = await runtime.request<{ instanceId: string }>(
+        '/workflows', jsonPost({ name: 'role-response-parity' }), owner.token,
+      );
+      await waitFor(() => runtime.db.query('workflow_interactions').length >= 2);
+      const directInteraction = runtime.db.prepare(`SELECT interaction_id
+        FROM workflow_interactions WHERE instance_id = ? LIMIT 1`)
+        .get(direct.data.instanceId) as { interaction_id: string };
+
+      const directResult = await runtime.request<Record<string, unknown>>(
+        `/workflows/${direct.data.instanceId}/interactions/${directInteraction.interaction_id}/responses`,
+        jsonPost({ submissionId: 'role-direct', payload: { approved: true } }),
+        approver.token,
+      );
+      const eventResult = await runtime.request<Record<string, unknown>>(
+        `/workflows/${event.data.instanceId}/events`,
+        jsonPost({ eventName: 'approval.responded', payload: { approved: true } }),
+        approver.token,
+      );
+
+      expect(directResult).toMatchObject({ status: 200, data: { outcome: 'accepted' } });
+      expect(eventResult).toMatchObject({ status: 200, data: { matched: true } });
+      await waitFor(() => [direct.data.instanceId, event.data.instanceId].every((id) =>
+        runtime.db.queryOne('workflow_instances', id)?.status === 'completed'
+      ));
     } finally {
       await runtime.stop();
     }
@@ -505,11 +920,13 @@ describe('workflow plugin lifecycle and HTTP authority', () => {
 
 async function createHttpRuntime(
   register?: (registry: WorkflowRegistry) => void,
+  options: { interactionAuthority?: WorkflowInteractionAuthority } = {},
 ) {
   const db = createReactiveDB({ mode: 'memory' });
   let initialize!: () => Promise<void>;
   const plugin = createWorkflowPlugin({
     db,
+    interactionAuthority: options.interactionAuthority,
     register(registry) {
       registry.registerHandler('noop', async () => null);
       registry.registerWorkflow({
@@ -572,6 +989,10 @@ function jsonPost(body: unknown): RequestInit {
   };
 }
 
+function jsonPut(body: unknown): RequestInit {
+  return { ...jsonPost(body), method: 'PUT' };
+}
+
 interface DefinitionSummary {
   name: string;
   steps: Array<{ name: string }>;
@@ -628,6 +1049,7 @@ function seedWorkflow(db: ReactiveDB, instanceId: string, ownerId: string): void
     sent_by: ownerId,
     created_at: now,
   });
+  seedResourceAccounting(db, instanceId);
 }
 
 function seedRecoverableWorkflow(
@@ -670,4 +1092,21 @@ function seedRecoverableWorkflow(
     completed_at: null,
     created_at: now,
   });
+  seedResourceAccounting(db, instanceId);
+}
+
+function seedResourceAccounting(database: ReactiveDB, instanceId: string): void {
+  const bytes = Number((database.prepare(`SELECT
+    length(CAST(COALESCE(instance.input, '') AS BLOB))
+      + length(CAST(COALESCE(instance.output, '') AS BLOB))
+      + COALESCE((SELECT SUM(length(CAST(COALESCE(step.input, '') AS BLOB))
+        + length(CAST(COALESCE(step.output, '') AS BLOB)))
+        FROM workflow_steps AS step WHERE step.instance_id = instance.instance_id), 0) AS bytes
+    FROM workflow_instances AS instance WHERE instance.instance_id = ?`)
+    .get(instanceId) as { bytes: number }).bytes);
+  database.prepare(`INSERT OR REPLACE INTO _workflow_runtime_usage
+    (instance_id, runtime_bytes) VALUES (?, ?)`).run(instanceId, bytes);
+  database.prepare(`INSERT OR REPLACE INTO _workflow_event_usage
+    (instance_id, total_count, total_bytes, queued_count, queued_bytes, revision)
+    VALUES (?, 0, 0, 0, 0, 0)`).run(instanceId);
 }

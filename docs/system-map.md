@@ -358,56 +358,119 @@ startup is lazy and process-wide; each render receives an isolated context.
 
 ## System 5: Workflows
 
-**What:** Durable, sequential workflow engine with a strict execution frontier,
-validated input, total-attempt retry budgets, event waits, total logical-step
-deadlines, pause/resume, cancellation, and crash recovery.
+**What:** Durable, immutable-versioned workflow graphs with trusted activities,
+safe serializable expressions, persisted choices, concurrent branches and
+joins, bounded array fan-out, event/human waits, transactional private memory,
+exact wakes, pause/resume, cancellation, crash recovery, and live safe state.
 
 **Files:**
 | File | Purpose |
 |------|---------|
-| `src/workflows/types.ts` | WorkflowDefinition, StepDefinition, StepContext |
+| `src/workflows/types.ts` | Shared definition, context, runtime-record, and public Sync contracts |
+| `src/workflows/workflow-dsl.ts` | Code-first `flow`/`step`/`choose`/`parallel`/`each`/wait builders |
+| `src/workflows/workflow-expression.ts` | JSON-safe expression AST, builders, validation, and evaluation |
+| `src/workflows/workflow-ir.ts` | Canonical graph schema shared by code, database, agent, and visual authors |
+| `src/workflows/workflow-compiler.ts` | Legacy/DSL/raw-IR compilation, canonicalization, and fingerprints |
+| `src/workflows/workflow-ir-validator.ts` | Whole-graph topology, limit, join, and activity-shape validation |
+| `src/workflows/workflow-ir-expression-validator.ts` | Context, item-scope, existence, and output-dominance validation |
+| `src/workflows/workflow-schema-snapshot.ts` | JSON-safe TypeBox schema persistence and rehydration without executable transforms |
+| `src/workflows/workflow-activity-catalog.ts` | Trusted versioned activities and `databaseCallable` boundary |
+| `src/workflows/workflow-activity-reference-codec.ts` | Reversible internal encoding for exact activity name/version references |
 | `src/workflows/workflow-access.ts` | Validated declarative start/inspect authority |
-| `src/workflows/workflow-registry.ts` | In-memory handler and definition registry |
+| `src/workflows/workflow-registry.ts` | Activity catalog plus legacy and compiled definition registry |
 | `src/workflows/workflow-schema.ts` | Public ReactiveDB table registration, indexes, and ownership/parent guards |
+| `src/workflows/workflow-graph-schema.ts` | Version, graph, fan-out, memory, and interaction DDL/integrity guards |
+| `src/workflows/workflow-definition-canonical.ts` | Bounded canonical JSON envelopes and immutable SHA-256 fingerprints |
+| `src/workflows/workflow-definition-version-store.ts` | Append-only definition publication, activation, retirement, and integrity validation |
+| `src/workflows/workflow-definition-version-validation.ts` | Stable validation/error boundary for persisted version and draft content |
+| `src/workflows/workflow-definition-draft-store.ts` | Mutable revision-fenced editor/agent drafts |
+| `src/workflows/workflow-definition-manager.ts` | Trusted database-definition validation and policy boundary |
+| `src/workflows/workflow-definition-version-observability.ts` | Safe definition publication/activation/retirement events |
+| `src/workflows/workflow-definition-http.plugin.ts` | Platform-admin draft/version API |
+| `src/workflows/workflow-graph-store.ts` | Graph runtime persistence and transactions |
+| `src/workflows/workflow-graph-node-metadata.ts` | Stable public-safe branch ancestry for live graph rows |
+| `src/workflows/workflow-graph-planner.ts` | Ready/unreachable node planning from durable edges and decisions |
+| `src/workflows/workflow-graph-state-reader.ts` | Coherent persisted graph snapshot reads and validation boundary |
+| `src/workflows/workflow-graph-runtime.ts` | Version resolution and graph runtime composition |
+| `src/workflows/workflow-graph-recovery.ts` | Fail-closed graph preflight and crash-left state recovery |
+| `src/workflows/workflow-graph-pump.ts` | Coalesced per-instance graph advancement |
+| `src/workflows/workflow-graph-activity-executor.ts` | Activity validation, attempts, memory commit, retries, and deadlines |
+| `src/workflows/workflow-structural-node-controller.ts` | Choice, parallel, and join decisions |
+| `src/workflows/workflow-each-controller.ts` | Snapshotted keyed fan-out and ordered result aggregation |
+| `src/workflows/workflow-each-item-coordinator.ts` | Durable item/child-step reconciliation and claim transitions |
+| `src/workflows/workflow-wait-controller.ts` | Durable event and interaction waits plus delivery activities |
+| `src/workflows/workflow-interaction-authority.ts` | Fail-closed app/Guardian responder-authorization callback boundary |
+| `src/workflows/workflow-interaction-store.ts` | Atomic private interaction, idempotent submission, and response-capacity persistence |
+| `src/workflows/workflow-memory-store.ts` | Private scoped optimistic ReactiveDB scratch memory |
+| `src/workflows/workflow-interaction-service.ts` | Channel-neutral interaction lifecycle and tracked authorization/validation work |
+| `src/workflows/workflow-interaction-submission-processor.ts` | Authorization, schema/activity validation, and first-valid-wins response pipeline |
+| `src/workflows/workflow-interaction-persisted-state.ts` | Recovery validation for public/private interaction envelopes |
+| `src/workflows/workflow-interaction-response-integrity.ts` | Recovery validation and outcome derivation for private submissions |
+| `src/workflows/workflow-interaction-event-bridge.ts` | Authenticated durable-event response adapter |
+| `src/workflows/workflow-event-actor.ts` | Bounded private actor snapshots for event-delivered responses |
+| `src/workflows/workflow-event-capacity-store.ts` | O(1), transactional pending/retained event count and byte accounting |
+| `src/workflows/workflow-event-persisted-state.ts` | Fail-closed recovery validation for public/private event identity and counters |
+| `src/workflows/workflow-graph-interaction-validator.ts` | Trusted activity validation context for interaction responses |
+| `src/workflows/workflow-graph-wake-scheduler.ts` | Exact in-process graph retry/deadline timers |
 | `src/workflows/workflow-step-definition.ts` | Definition-snapshot parsing and handler resolution |
 | `src/workflows/workflow-persisted-state.ts` | Fail-closed validation of durable run rows/topology |
 | `src/workflows/workflow-runtime-store.ts` | Durable internal event claims, attempt fences, and pause boundaries |
+| `src/workflows/workflow-runtime-schema.ts` | Internal coordination DDL shared by runtime and migration 030 |
+| `src/workflows/workflow-runtime-json.ts` | JSON serialization and per-value durable runtime byte boundary |
+| `src/workflows/workflow-runtime-budget.ts` | O(1), transactional per-instance aggregate runtime-value accounting |
+| `src/workflows/workflow-persisted-state-values.ts` | Strict bounded JSON/scalar/timestamp recovery primitives |
 | `src/workflows/workflow-repository.ts` | Prepared SQL reads/writes and durable transaction helpers |
 | `src/workflows/workflow-instance-factory.ts` | Start-time validation and atomic instance/step persistence |
 | `src/workflows/workflow-attempt-coordinator.ts` | Transactional prepare/commit, retry/deadline decisions, and attempt fences |
 | `src/workflows/workflow-transition-controller.ts` | Pause, resume, and cancellation transitions |
 | `src/workflows/workflow-lifecycle-coordinator.ts` | Recovery, retry/timeout discovery, and shutdown normalization |
 | `src/workflows/workflow-executor.ts` | Physical handler invocation and cooperative abort/drain behavior |
-| `src/workflows/workflow-service.ts` | Public facade and coalesced strict-frontier pump |
+| `src/workflows/workflow-service.ts` | Public facade routing graph and legacy-compatible runs |
+| `src/workflows/workflow-start-router.ts` | Fail-closed graph/database/legacy start selection |
 | `src/workflows/workflow-sync-policy.ts` | Owner/admin Sync visibility and read-only workflow tables |
 | `src/workflows/workflow-public-record.ts` | HTTP/Sync executable-topology redaction |
 | `src/workflows/workflow-error.ts` | Stable workflow-domain errors |
 | `src/workflows/workflow-scheduler-owner.ts` | Owned retry/timeout job registration and cleanup |
 | `src/workflows/workflow-plugin-runtime.ts` | Registration/recovery barrier and safe service publication |
-| `src/workflows/workflow-http.plugin.ts` | Protected REST routes and stable HTTP errors |
+| `src/workflows/workflow-runtime-owner-store.ts` | Process-local ownership unit for composed registry/service/shutdown state |
+| `src/workflows/workflow-http.plugin.ts` | Protected runtime/interaction routes and stable HTTP errors |
 | `src/workflows/workflow.plugin.ts` | Thin Elysia composition facade |
 | `src/workflows/index.ts` | Barrel exports |
 
 **Client:**
 | File | Purpose |
 |------|---------|
-| `src/frontend/client/workflow-hooks.ts` | Sync-backed `useWorkflow`, `useWorkflowList`, and HTTP actions |
-| `src/frontend/client/workflow-run-hooks.ts` | Start-and-watch composition, progress, and status flags |
+| `src/frontend/client/workflow-hooks.ts` | Sync-backed nodes/interactions, parallel/wait flags, and HTTP actions |
+| `src/frontend/client/workflow-run-hooks.ts` | Version-pinned start-and-watch composition, progress, and response actions |
 
-**Key patterns:** `AppConfig.workflows.register` is awaited before whole-set
-persisted-state/handler preflight and crash recovery. The service is published
-only after recovery.
-Each run advances only its first unfinished step. New events receive durable
-`_workflow_event_delivery` rows, so early events are buffered, claimed once,
-and retained across retries; historical audit-only event rows are not replayed.
-HTTP and Sync runtime visibility is owner-only except for the exact stable
-global `admin` role. Definitions and underscore coordination tables never
-enter Sync; executable `steps_json` and `wait_event` topology is also projected
-out of browser rows. Definition start/inspection can be declared for
-authenticated users, the global admin, or app roles. Ownership and child
-instance links are immutable. Browser actions use
-`client.api.workflows`; hooks receive live state through ReactiveDB Sync rather
-than polling. See
+**Key patterns:** `AppConfig.workflows.register` is awaited before definition,
+activity, and persisted-state preflight. Every graph run pins canonical graph
+content, definition version, fingerprint, and activity versions. Database/API
+graphs can reference only explicitly `databaseCallable` activities.
+Publication checks schema snapshots and output dominance, and immutable
+content/draft envelopes are bounded before storage.
+
+Durable run values have both a 1 MiB per-value boundary and a transactional
+32 MiB per-instance aggregate budget across instance, step, fan-out, memory,
+interaction definition, and interaction response state. Each interaction has
+additional submission count/byte accounting. The private event inbox separately
+enforces bounded event names plus pending and retained count/byte quotas per
+instance.
+
+Readiness comes from durable dependencies. Choice selections, parallel joins,
+fan-out snapshots/items, event claims, physical-attempt fences, and human
+interactions survive restart. `ctx.memory` writes are staged per attempt and
+commit with successful node completion; external effects remain at-least-once
+and use `ctx.idempotencyKey`. `requestAndWait` persists its response endpoint
+before transport-specific delivery.
+
+HTTP and Sync visibility is owner-scoped except for the global `admin` role.
+Definitions, graph topology, scratch memory, interaction bodies, and graph
+event payloads remain private. All graph instance/step input, output, and raw
+error values are redacted; safe node/branch/item identity, event audit
+metadata, and interaction progress let React hooks and a future graph UI
+animate runs in real time without polling. Browser actions use
+`client.api.workflows`. See
 [Durable Workflows](./workflows.md).
 
 ---
@@ -423,7 +486,10 @@ than polling. See
 | `src/scheduler/scheduler.plugin.ts` | Elysia plugin — @elysiajs/cron integration |
 | `src/scheduler/index.ts` | Barrel exports |
 
-**Pre-registered jobs:** workflow-retries (every minute), workflow-timeouts (every minute), notification-cleanup (every hour).
+**Pre-registered jobs:** workflow-retries (every minute), workflow-timeouts
+(every minute), notification-cleanup (every hour). Graph workflows also arm
+exact in-process retry/deadline timers; minute jobs are the persisted-state
+safety sweep and restart fallback.
 
 ---
 

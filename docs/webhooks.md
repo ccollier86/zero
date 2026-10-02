@@ -134,7 +134,7 @@ this section describe a future bridge. In particular, the current
 close over a supported webhook service without changing the workflow context
 implicitly.
 
-Outbound workflow step:
+Outbound workflow activity:
 
 ```ts
 import type { WorkflowRegistry } from '@zero/framework/workflows';
@@ -146,18 +146,22 @@ interface AppWebhookSender {
   ): Promise<unknown>;
 }
 
-function registerWebhookWorkflowHandler(
+function registerWebhookWorkflowActivity(
   registry: WorkflowRegistry,
   webhooks: AppWebhookSender,
 ): void {
-  registry.registerHandler('sendWebhook', async (ctx) => webhooks.send({
-    endpoint: 'partner-intake',
-    event: 'intake.submitted',
-    payload: { workflowInput: ctx.workflowInput, input: ctx.input },
-  }, {
-    idempotencyKey: ctx.idempotencyKey,
-    signal: ctx.signal,
-  }));
+  registry.registerActivity({
+    name: 'webhook.send',
+    version: '1',
+    handler: async (ctx) => webhooks.send({
+      endpoint: 'partner-intake',
+      event: 'intake.submitted',
+      payload: { workflowInput: ctx.workflowInput, input: ctx.input },
+    }, {
+      idempotencyKey: ctx.idempotencyKey,
+      signal: ctx.signal,
+    }),
+  });
 }
 ```
 

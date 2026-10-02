@@ -7,9 +7,16 @@
  */
 
 import type { ReactiveDB } from '../sync/reactive-db';
+import { ensureWorkflowGraphSchema } from './workflow-graph-schema';
+import { ensureWorkflowRuntimeSchema } from './workflow-runtime-schema';
 
 /** Register workflow tables and their lookup indexes with ReactiveDB. */
 export function defineWorkflowTables(db: ReactiveDB): void {
+  // Raw additive DDL must run first: defineTable prepares statements for every
+  // declared column and legacy databases may not have graph columns yet.
+  ensureWorkflowGraphSchema(db);
+  ensureWorkflowRuntimeSchema(db);
+
   db.defineTable('workflow_definitions', {
     definition_id: 'text primary key',
     name: 'text unique not null',
@@ -18,6 +25,14 @@ export function defineWorkflowTables(db: ReactiveDB): void {
     input_schema: 'text',
     created_at: 'text not null',
     updated_at: 'text not null',
+    active_version_id: 'text',
+    source: "text not null default 'code'",
+    scope_type: "text not null default 'application'",
+    scope_id: "text not null default ''",
+    status: "text not null default 'active'",
+    access_policy_json: 'text',
+    created_by: 'text',
+    updated_by: 'text',
   });
 
   db.defineTable('workflow_instances', {
@@ -34,6 +49,10 @@ export function defineWorkflowTables(db: ReactiveDB): void {
     created_at: 'text not null',
     updated_at: 'text not null',
     completed_at: 'text',
+    definition_version_id: 'text',
+    definition_version: 'integer',
+    graph_json: 'text',
+    graph_fingerprint: 'text',
   });
 
   db.defineTable('workflow_steps', {
@@ -53,6 +72,15 @@ export function defineWorkflowTables(db: ReactiveDB): void {
     started_at: 'text',
     completed_at: 'text',
     created_at: 'text not null',
+    node_id: 'text',
+    node_kind: 'text',
+    node_path: 'text',
+    parent_step_id: 'text',
+    branch_key: 'text',
+    item_key: 'text',
+    item_index: 'integer',
+    activation_key: 'text',
+    updated_at: 'text',
   });
 
   db.defineTable('workflow_events', {
@@ -62,6 +90,42 @@ export function defineWorkflowTables(db: ReactiveDB): void {
     payload: 'text',
     sent_by: 'text',
     created_at: 'text not null',
+  });
+
+  // This is the safe, owner-scoped projection used by ReactiveDB clients.
+  // Response payloads and validation policy remain in underscore tables.
+  db.defineTable('workflow_interactions', {
+    interaction_id: 'text primary key',
+    instance_id: 'text not null',
+    node_id: 'text not null',
+    step_id: 'text',
+    safe_label: 'text not null',
+    status: "text not null default 'open'",
+    opened_at: 'text not null',
+    expires_at: 'text',
+    accepted_at: 'text',
+    accepted_by: 'text',
+    rejection_count: 'integer not null default 0',
+    max_rejections: 'integer not null default 3',
+    created_at: 'text not null',
+    updated_at: 'text not null',
+    _identity: ['instance_id', 'step_id'],
+  });
+
+  // Scratch memory participates in the same ReactiveDB transaction as public
+  // step completion, while the underscore prefix keeps values off Sync.
+  db.defineTable('_workflow_memory', {
+    memory_id: 'text primary key',
+    instance_id: 'text not null',
+    scope_kind: 'text not null',
+    scope_id: "text not null default ''",
+    key: 'text not null',
+    value_json: 'text not null',
+    version: 'integer not null',
+    updated_by_step_id: 'text',
+    updated_by_attempt_id: 'text',
+    created_at: 'text not null',
+    updated_at: 'text not null',
   });
 
   db.exec(

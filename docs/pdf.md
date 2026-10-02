@@ -236,29 +236,33 @@ with `PDF_STORAGE_UNAVAILABLE` when storage is not mounted. A custom
 
 ## Workflows And Jobs
 
-PDF uses the same process-wide service in workflow handlers and scheduled jobs.
-Register this handler inside `AppConfig.workflows.register(registry)`:
+PDF uses the same process-wide service in workflow activities and scheduled
+jobs. Register this activity inside `AppConfig.workflows.register(registry)`:
 
 ```ts
 import { requirePdfService } from '@zero/framework/pdf';
 
-registry.registerHandler('generate-consent-pdf', async (ctx) => {
-  ctx.signal?.throwIfAborted();
-  const input = ctx.input as { intakeId: string; driveId: string; html: string };
-  const result = await requirePdfService().renderToStorage(
-    { html: input.html, css: '@page { size: Letter; margin: 0.5in; }' },
-    {
-      driveId: input.driveId,
-      path: `/intakes/${input.intakeId}/consent.pdf`,
-      metadata: { intakeId: input.intakeId },
-    }
-  );
+registry.registerActivity({
+  name: 'pdf.generate-consent',
+  version: '1',
+  handler: async (ctx) => {
+    ctx.signal?.throwIfAborted();
+    const input = ctx.input as { intakeId: string; driveId: string; html: string };
+    const result = await requirePdfService().renderToStorage(
+      { html: input.html, css: '@page { size: Letter; margin: 0.5in; }' },
+      {
+        driveId: input.driveId,
+        path: `/intakes/${input.intakeId}/consent.pdf`,
+        metadata: { intakeId: input.intakeId },
+      }
+    );
 
-  return {
-    objectId: result.file.id,
-    path: result.file.path,
-    size: result.size,
-  };
+    return {
+      objectId: result.file.id,
+      path: result.file.path,
+      size: result.size,
+    };
+  },
 });
 ```
 
