@@ -250,6 +250,7 @@ UI:
 import { AppShell } from '@zero/framework/components/app-shell';
 import { Button } from '@zero/framework/components/ui/button';
 import { DataTableView } from '@zero/framework/components/data-table';
+import { Popover, PopoverContent, PopoverTrigger } from '@zero/framework/components/popover';
 import { MasterDetailView } from '@zero/framework/components/master-detail';
 import { KanbanBoard } from '@zero/framework/components/kanban';
 ```
@@ -1478,6 +1479,9 @@ Use these before adding new generic hooks.
 - Use `Hero` for public opening sections.
 - Use `TextGenerateEffect`, `TypewriterEffect`, and `FlipWords` for public
   text motion.
+- Use `StreamingText` for AI responses, agent output, async string streams, and
+  caller-owned progressive text. Do not slow a real stream with a decorative
+  typewriter effect.
 - Use `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`,
   `ExpandableCards`, `BentoGrid`, and `AnimatedList` for common public
   sections.
@@ -1559,6 +1563,7 @@ Data organisms:
 
 - `DataTable`
 - `DataTableView`
+- `DataTableSearch`
 - `DataTableToolbar`
 - `DataTablePagination`
 - `DataTableRowActions`
@@ -1590,6 +1595,27 @@ Admin/domain organisms:
 - storage subcomponents listed above
 - notification center components
 
+Agent/streaming output:
+
+- `StreamingText`
+
+Use the narrow import for AI answers and live string output:
+
+```tsx
+import { StreamingText } from '@zero/framework/components/streaming-text';
+
+<StreamingText source={decodedStringStream} onError={reportError} />
+```
+
+`source` accepts `AsyncIterable<string>` or `ReadableStream<string>`; decode a
+byte-oriented `Response.body` through `TextDecoderStream` first. When an SDK
+already accumulates the response, pass `text={message.text}` and
+`streaming={message.status === 'streaming'}`. The component supplies the
+semantic-token cursor, reduced-motion behavior, and sentence-level polite live
+announcements. Use `announce="off"` only when another surface already announces
+the same content. Use `speed` only for known-text demos, never to delay an
+actual provider stream.
+
 ## AppShell Guidance
 
 Use `AppShell` for dashboards:
@@ -1617,6 +1643,37 @@ Both should be able to consume app data from:
 
 Use lazy data for large tables. Use filters/sorting/pagination contracts
 instead of custom ad hoc fetch code.
+
+DataTable's `searchable` prop accepts `true` or
+`DataTableSearchOptions { placeholder, ariaLabel, collapsedWidth,
+expandedWidth, disabled }`. This compact, Gooey-inspired animated search is
+table-only: it expands on focus or while populated, clears then collapses with
+Escape, suppresses ancestor-form submission on Enter, and respects reduced motion.
+Name the toolbar group with `toolbarLabel` when `Table controls` is not
+specific enough.
+
+Use `toolbarSlots { controls, actions, supplemental }` for custom table
+controls and bulk actions. A slot may be a node or a render function receiving
+`table`, `query`, `setQuery`, `columnFilters`, `activeFilterCount`,
+`hasActiveFilters`, `hasActiveSearch`, `clearAll`, `selectedRowIds`,
+`selectedRows`, and `selectedRowCount`. `toolbarActions` remains a legacy
+right-side outlet; prefer `toolbarSlots.actions`. CrudPage and MasterDetail
+wrappers expose the same contract as `tableToolbarSlots`; use
+`tableToolbarLabel` to customize their forwarded accessible group name.
+
+This is an additive API. Do not rewrite existing table pages merely to adopt
+it: `DataTable` remains supported, boolean `searchable` is unchanged, every
+slot is optional, and `toolbarActions` remains compatible as a node or render
+function. No database migration is required. Package updates do not overwrite
+components previously copied into an app with `zero add`; review local changes
+before opting into a fresh copy with `zero add components/data-table --force`.
+
+Do not confuse client toolbar filtering with source filtering. Search,
+generated filters, and TanStack column controls filter resolved rows only;
+`clearAll` clears only that client state. Lazy `filters` and `source.filters`
+are server-side `/api/data` query inputs. Generated discrete, numeric, and date
+controls match exact values; text controls use contains matching; multi-value
+fields match an included value.
 
 ## Kanban
 
@@ -1657,6 +1714,7 @@ zero add components/kanban
 zero add components/navbar
 zero add components/hero
 zero add components/text-effects
+zero add components/streaming-text
 zero add hooks modals --dry-run
 ```
 
@@ -1909,8 +1967,9 @@ reference docs confirm the behavior is implemented.
   compose workspace switchers, nested menus, groups, actions, footer menus, and
   collapsed/icon mode.
 - [DataTableView](docs/frontend/data-table.md): schema-aware table organism,
-  columns, lazy source contracts, filters, pagination, sorting, row actions,
-  toolbar, and integration with `/api/data`.
+  columns, lazy source contracts, client-versus-server filters, compact search,
+  selection-aware toolbar slots, pagination, sorting, row actions, and
+  integration with `/api/data`.
 - [MasterDetailView](docs/frontend/master-detail.md): master/detail organism,
   list/table/detail composition, selection state, lazy DataTable-compatible
   sources, loading/error state, and row actions.
@@ -1929,6 +1988,9 @@ reference docs confirm the behavior is implemented.
   scroll, magnetic hover, mobile menu, brand/actions, and package import.
 - [Text Effects](docs/frontend/text-effects.md): `TextGenerateEffect`,
   `TypewriterEffect`, `FlipWords`, timing guidance, and public text motion.
+- [Streaming Text](docs/frontend/streaming-text.md): `StreamingText`, live
+  string sources, caller-owned progressive output, cursor styling,
+  sentence-level announcements, callbacks, and source-copy guidance.
 - [LaunchBoard Reference App](docs/frontend/launchboard.md): reference app
   showing root `zero.config.ts`, thin `app/server.ts`, AppShell, ReactiveDB,
   registered owner resources, row-filtered sync, KanbanBoard, auth bootstrap

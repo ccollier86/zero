@@ -469,6 +469,13 @@ Zero components before copying external snippets:
 `CodeBlock`, or custom React visual slot. Their usage contract is documented in
 [Public Components](./frontend/public-components.md).
 
+For AI answers, agent output, and text that actually arrives in chunks, use
+`StreamingText` from `@zero/framework/components/streaming-text`. It accepts an
+`AsyncIterable<string>`, a `ReadableStream<string>`, or caller-owned progressive
+text, and provides a tokenized cursor plus sentence-level screen-reader
+announcements. Do not use a decorative typewriter effect to delay a real
+provider stream. See [Streaming Text](./frontend/streaming-text.md).
+
 Run the platform doctor against an exported config module:
 
 ```txt
@@ -522,6 +529,7 @@ generated apps should prefer narrow imports. Direct subsystem imports such as
 `@zero/framework/components/navbar`, and
 `@zero/framework/components/hero`, and
 `@zero/framework/components/text-effects`,
+`@zero/framework/components/streaming-text`,
 `@zero/framework/components/faq`,
 `@zero/framework/components/features`,
 `@zero/framework/components/code-block`,
@@ -550,6 +558,7 @@ zero add components/hero
 zero add components/kanban
 zero add components/navbar
 zero add components/text-effects
+zero add components/streaming-text
 zero add hooks modals --dry-run
 ```
 

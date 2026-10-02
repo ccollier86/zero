@@ -112,7 +112,8 @@ mechanism because those commands replace scaffold targets.
 | `@zero/framework/components/bento-grid` | Public bento grid layout and cards. Also exported from `react`. |
 | `@zero/framework/components/code-block` | Public Shiki code block with tabs, line numbers, and copy action. Also exported from `react`. |
 | `@zero/framework/components/cta` | Public call-to-action section with Hero-compatible actions. Also exported from `react`. |
-| `@zero/framework/components/data-table` | Data table primitives. Also exported from `react`. |
+| `@zero/framework/components/data-table` | Data table organism, compact table-only search, composable toolbar, pagination, and row actions. Also exported from `react`. |
+| `@zero/framework/components/popover` | Public token-aware Popover composition used by table controls and app UI. Also exported from `react`. |
 | `@zero/framework/components/expandable-card` | Public shared-layout expandable cards. Also exported from `react`. |
 | `@zero/framework/components/faq` | Public FAQ accordion with generated answer support. Also exported from `react`. |
 | `@zero/framework/components/features` | Public feature section with icon bullets and flexible image/code/custom visual slot. Also exported from `react`. |
@@ -124,6 +125,7 @@ mechanism because those commands replace scaffold targets.
 | `@zero/framework/components/navbar` | Public-page resizable navbar. Also exported from `react`. |
 | `@zero/framework/components/storage` | Storage management/dropzone UI. Also exported from `react`. |
 | `@zero/framework/components/text-effects` | Public text effects for Hero titles and landing copy. Also exported from `react`. |
+| `@zero/framework/components/streaming-text` | Accessible live/replayed text for AI, agents, and async string output. Also exported from `react`. |
 | `@zero/framework/components/ui/<name>` | Direct UI primitive imports such as `button`, `input`, or `table`. |
 
 Rule of thumb:
@@ -1168,6 +1170,7 @@ import {
   MFAManagementPanel,
   QRCode,
   ResizableNavbar,
+  StreamingText,
   TextGenerateEffect,
   UserManagement,
   useAuth,
@@ -1194,6 +1197,7 @@ import { KanbanBoard } from '@zero/framework/components/kanban';
 import { RadialMenu } from '@zero/framework/components/radial-menu';
 import { ResizableNavbar } from '@zero/framework/components/navbar';
 import { TextGenerateEffect } from '@zero/framework/components/text-effects';
+import { StreamingText } from '@zero/framework/components/streaming-text';
 import { LoginForm, MFAEnrollmentForm } from '@zero/framework/components/auth';
 import { QRCode } from '@zero/framework/components/qr-code';
 import { useDisclosure } from '@zero/framework/hooks';
@@ -1225,6 +1229,7 @@ zero add components/hero
 zero add components/kanban
 zero add components/navbar
 zero add components/text-effects
+zero add components/streaming-text
 zero add hooks modals --dry-run
 zero add components/storage --target ./my-app
 ```
@@ -1250,6 +1255,7 @@ Supported source-copy targets:
 | `components/navbar` | Resizable public-page navbar and its animated icon/button dependencies. |
 | `components/storage` | Storage management, file browser, drive list, dropzone, and dependencies. |
 | `components/text-effects` | Public text effects for Hero titles, landing copy, and docs/content headings. |
+| `components/streaming-text` | Accessible live, caller-owned, and replayed text plus the shared class-name helper. |
 | `hooks` | Generic React hook library. |
 | `modals` | Modal manager primitives. |
 

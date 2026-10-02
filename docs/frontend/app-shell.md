@@ -255,8 +255,11 @@ while styling it as a create button instead of another navigation target:
 
 Use `header.themeToggle` to render Zero's packaged Animate UI
 `ThemeTogglerButton` in the integrated header row. The shell default is a
-two-state light/dark control with the View Transition swipe effect when the
-browser supports it.
+two-state light/dark control. In supporting browsers, the next theme expands
+in a circular View Transition from the button that was clicked while one SVG
+rotates and reshapes between its sun and moon states. Keyboard activation uses
+the button center, unsupported browsers change theme without the page reveal,
+and reduced-motion preferences skip the decorative animation.
 
 ```tsx
 <AppShell
@@ -271,8 +274,9 @@ browser supports it.
 </AppShell>
 ```
 
-Pass a config object when the app needs a different direction or wants to
-include `system` in the cycle:
+Pass a config object when the app wants to include `system` in the cycle or set
+the fallback reveal origin used by custom/primitive callers that do not provide
+an activation point:
 
 ```tsx
 <AppShell

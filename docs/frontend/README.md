@@ -179,10 +179,11 @@ Auth, sync, and router all share one ReactiveDB. The router renders pages with R
 | [Resizable Navbar](./navbar.md) | Public-page navbar that detaches/shrinks on scroll, uses magnetic desktop hover, and renders a mobile menu from the same data |
 | [Hero](./hero.md) | Public-page hero section with public token lane styling, background presets/custom background slots, actions, and rich title support |
 | [Text Effects](./text-effects.md) | Public text effects for Hero titles, landing-page copy, docs headers, and content pages |
+| [Streaming Text](./streaming-text.md) | Accessible live text for AI responses, async string streams, caller-owned progressive output, and demos |
 | [Public Components](./public-components.md) | Feature sections, code blocks, FAQ, expandable cards, bento grids, and animated lists for public landing/content sections |
 | [Component Inventory](./component-inventory.md) | Layered map of base primitives, composed controls, organisms, domain UI, Animate UI source groups, and cleanup targets |
 | [Form Library](./forms.md) | Current form stack, CRUD boundaries, intake-grade roadmap, draft adapters, public resume flows, attachments, consents, and PDF/workflow composition |
-| [DataTableView](./data-table.md) | Schema-aware table organism, full-sync/lazy/data sources, inline editing, toolbar, column overrides |
+| [DataTableView](./data-table.md) | Schema-aware table organism with full-sync/lazy/data sources, inline editing, compact table-only search, composable selection-aware toolbar slots, and column overrides |
 | [KanbanBoard](./kanban.md) | Tokenized drag-and-drop board organism for ordered records grouped by caller-owned columns |
 | [LaunchBoard](./launchboard.md) | Reference app showing AppShell + ReactiveDB + KanbanBoard + platform modals in one package-mode example |
 | [MasterDetailView](./master-detail.md) | List/detail organism, generated detail forms, custom detail rendering, navigation, low-level detail primitives |
@@ -203,6 +204,7 @@ The frontend SDK composes these — it doesn't reinvent them:
 | Public navigation | [Resizable Navbar](./navbar.md) | `ResizableNavbar` for docs, marketing, landing, and other public route trees |
 | Public heroes | [Hero](./hero.md) | `Hero`, `HeroBackground`, and `HeroImageBackground` for public route opening sections |
 | Public text effects | [Text Effects](./text-effects.md) | `TextGenerateEffect`, `TypewriterEffect`, and `FlipWords` for landing copy and rich Hero titles |
+| Streaming and agent output | [Streaming Text](./streaming-text.md) | `StreamingText` for actual async string chunks, caller-owned progressive text, accessible sentence announcements, and replayed demos |
 | Public sections | [Public Components](./public-components.md) | `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `BentoGridItem`, `AnimatedList`, and `AnimatedListCard` for polished public content sections |
 | Forms | [Form Library](./forms.md) | `useForm`, `AutoForm`, `Wizard`, generated fields, current limits, and the planned intake-grade blueprint/draft/attachment layer |
 | Storage | [Hooks](./hooks.md#storage-workflows) | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `StorageDropzone`, and storage browser helpers |

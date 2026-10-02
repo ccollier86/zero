@@ -215,8 +215,30 @@ import { BentoGrid as BentoGridSubpath } from '@zero/framework/components/bento-
 import { CodeBlock as CodeBlockSubpath } from '@zero/framework/components/code-block';
 import { CtaSection as CtaSectionSubpath } from '@zero/framework/components/cta';
 import { Collapsible as CollapsibleSubpath } from '@zero/framework/components/collapsible';
-import { DataTableView } from '@zero/framework/components/data-table';
+import {
+  DataTableSearch as DataTableSearchSubpath,
+  DataTableToolbar as DataTableToolbarSubpath,
+  DataTableView,
+} from '@zero/framework/components/data-table';
+import type {
+  DataTableSearchOptions as DataTableSearchOptionsSubpath,
+  DataTableSearchProps as DataTableSearchPropsSubpath,
+  DataTableToolbarContext as DataTableToolbarContextSubpath,
+  DataTableToolbarProps as DataTableToolbarPropsSubpath,
+  DataTableToolbarSlot as DataTableToolbarSlotSubpath,
+  DataTableToolbarSlots as DataTableToolbarSlotsSubpath,
+} from '@zero/framework/components/data-table';
 import { DropdownMenu as DropdownMenuSubpath } from '@zero/framework/components/dropdown-menu';
+import {
+  Popover as PopoverSubpath,
+  PopoverContent as PopoverContentSubpath,
+  PopoverTrigger as PopoverTriggerSubpath,
+} from '@zero/framework/components/popover';
+import type {
+  PopoverContentProps as PopoverContentPropsSubpath,
+  PopoverProps as PopoverPropsSubpath,
+  PopoverTriggerProps as PopoverTriggerPropsSubpath,
+} from '@zero/framework/components/popover';
 import { ExpandableCards as ExpandableCardsSubpath } from '@zero/framework/components/expandable-card';
 import { Faq as FaqSubpath } from '@zero/framework/components/faq';
 import { FeaturesSection as FeaturesSectionSubpath } from '@zero/framework/components/features';
@@ -229,6 +251,7 @@ import { QRCode as QRCodeSubpath } from '@zero/framework/components/qr-code';
 import { RadialMenu as RadialMenuSubpath } from '@zero/framework/components/radial-menu';
 import { Sidebar as SidebarSubpath } from '@zero/framework/components/sidebar';
 import { StorageManagement } from '@zero/framework/components/storage';
+import { StreamingText as StreamingTextSubpath } from '@zero/framework/components/streaming-text';
 import { TextGenerateEffect as TextGenerateEffectSubpath } from '@zero/framework/components/text-effects';
 import { Tooltip as TooltipSubpath } from '@zero/framework/components/tooltip';
 import { Button as UiButton } from '@zero/framework/components/ui/button';
@@ -264,6 +287,8 @@ import {
   CtaSection,
   Collapsible,
   DataTable,
+  DataTableSearch,
+  DataTableToolbar,
   DropdownMenu,
   ExpandableCards,
   Faq,
@@ -279,7 +304,11 @@ import {
   RadialMenu,
   ResizableNavbar,
   projectKanbanMove,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   StickToBottom,
+  StreamingText,
   TextGenerateEffect,
   ThemeTogglerButton,
   ThemeProvider,
@@ -302,6 +331,15 @@ import { createIdentityId } from '@zero/framework/sync/identity';
 	import type {
 	  AppProviderProps,
 	  AuthState,
+	  DataTableSearchOptions,
+	  DataTableSearchProps,
+	  DataTableToolbarContext,
+	  DataTableToolbarProps,
+	  DataTableToolbarSlot,
+	  DataTableToolbarSlots,
+	  PopoverContentProps,
+	  PopoverProps,
+	  PopoverTriggerProps,
 	  ToasterProps,
 	} from '@zero/framework/react';
 
@@ -309,6 +347,30 @@ import { createIdentityId } from '@zero/framework/sync/identity';
 	const toasterProps: ToasterProps = {};
 	const appProviderPostLoginPath = (props: AppProviderProps): string | undefined => props.postLoginPath;
 	const authRestorationState = (state: AuthState): boolean => state.isRestoring;
+	type DataTablePublicTypes = readonly [
+	  DataTableSearchOptions,
+	  DataTableSearchProps,
+	  DataTableToolbarContext<Row>,
+	  DataTableToolbarProps<Row>,
+	  DataTableToolbarSlot<Row>,
+	  DataTableToolbarSlots<Row>,
+	  DataTableSearchOptionsSubpath,
+	  DataTableSearchPropsSubpath,
+	  DataTableToolbarContextSubpath<Row>,
+	  DataTableToolbarPropsSubpath<Row>,
+	  DataTableToolbarSlotSubpath<Row>,
+	  DataTableToolbarSlotsSubpath<Row>,
+	];
+	const dataTablePublicTypes = null as unknown as DataTablePublicTypes;
+	type PopoverPublicTypes = readonly [
+	  PopoverProps,
+	  PopoverTriggerProps,
+	  PopoverContentProps,
+	  PopoverPropsSubpath,
+	  PopoverTriggerPropsSubpath,
+	  PopoverContentPropsSubpath,
+	];
+	const popoverPublicTypes = null as unknown as PopoverPublicTypes;
 	type MasterDetailProps = ComponentProps<typeof MasterDetailView>;
 	const masterDetailLazySource: MasterDetailProps['source'] = {
 	  type: 'lazy',
@@ -337,9 +399,14 @@ import { createIdentityId } from '@zero/framework/sync/identity';
   Collapsible,
   CollapsibleSubpath,
   createIdentityId,
-  createSyncClient,
-  DataTable,
-  DataTableView,
+	  createSyncClient,
+	  dataTablePublicTypes,
+	  DataTable,
+	  DataTableSearch,
+	  DataTableSearchSubpath,
+	  DataTableToolbar,
+	  DataTableToolbarSubpath,
+	  DataTableView,
   DropdownMenu,
   DropdownMenuSubpath,
   ExpandableCards,
@@ -362,7 +429,14 @@ import { createIdentityId } from '@zero/framework/sync/identity';
 	  MFAEnrollmentForm,
   ModalManager,
   normalizeAbsoluteLocalPath,
-  normalizeConfiguredLocalPath,
+	  normalizeConfiguredLocalPath,
+	  Popover,
+	  PopoverContent,
+	  PopoverContentSubpath,
+	  popoverPublicTypes,
+	  PopoverSubpath,
+	  PopoverTrigger,
+	  PopoverTriggerSubpath,
   QRCode,
   QRCodeSubpath,
   RadialMenu,
@@ -372,6 +446,8 @@ import { createIdentityId } from '@zero/framework/sync/identity';
   SidebarSubpath,
   StickToBottom,
   StorageManagement,
+  StreamingText,
+  StreamingTextSubpath,
   TextGenerateEffect,
   TextGenerateEffectSubpath,
   ThemeProvider,

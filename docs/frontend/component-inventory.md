@@ -45,6 +45,7 @@ classes through the component tree.
 | Public navigation | Public-page navigation for marketing/docs/content routes. | `@zero/framework/components/navbar` or `@zero/framework/react` | `ResizableNavbar` |
 | Public heroes | Public-page opening sections with background slots and actions. | `@zero/framework/components/hero` or `@zero/framework/react` | `Hero`, `HeroBackground`, `HeroImageBackground` |
 | Public text effects | Public landing/docs/content text motion. | `@zero/framework/components/text-effects` or `@zero/framework/react` | `TextGenerateEffect`, `TypewriterEffect`, `FlipWords` |
+| Streaming and agent output | Accessible text that follows a real string stream or caller-owned progressive value. | `@zero/framework/components/streaming-text` or `@zero/framework/react` | `StreamingText` |
 | Public content sections | Landing/docs/content sections using the public token lane. | `@zero/framework/components/*` or `@zero/framework/react` | `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList` |
 | App shell | Default app chrome for dashboards, admin tools, and data apps. | `@zero/framework/components/app-shell` | `AppShell`, `AppShellSidebar` |
 | Data organisms | Feature-complete screens or major widgets wired for schemas/live data. | `@zero/framework/react` | `DataTableView`, `KanbanBoard`, `MasterDetailView`, `CrudPage` |
@@ -58,16 +59,18 @@ classes through the component tree.
 3. Start with `Hero` for public route opening sections.
 4. Use `TextGenerateEffect`, `TypewriterEffect`, and `FlipWords` for public
    text motion instead of custom one-off heading animations.
-5. Use `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`,
+5. Use `StreamingText` for AI/agent output and other real string streams. Use
+   `TypewriterEffect` only for deliberate presentation, not to delay live data.
+6. Use `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`,
    and `AnimatedList` for common public content sections before copying
    external snippets.
-6. Use base `ui/` primitives instead of raw HTML controls.
-7. Use generated/data organisms when a schema or collection exists.
-8. Use Animate UI Radix wrappers for overlays and menus instead of duplicating
+7. Use base `ui/` primitives instead of raw HTML controls.
+8. Use generated/data organisms when a schema or collection exists.
+9. Use Animate UI Radix wrappers for overlays and menus instead of duplicating
    Radix setup.
-9. Use Zero animated icons by default. Use `lucide-react` directly only when an
+10. Use Zero animated icons by default. Use `lucide-react` directly only when an
    icon is not in Zero's animated set.
-10. Keep app-specific source outside `src/components`; promote only reusable
+11. Keep app-specific source outside `src/components`; promote only reusable
    components with docs and export decisions.
 
 ## Base Primitives
@@ -101,11 +104,13 @@ These are the lowest-level app-facing controls in `src/components/ui`.
 | `Breadcrumb`, `BreadcrumbList`, `BreadcrumbItem`, `BreadcrumbLink`, `BreadcrumbPage`, `BreadcrumbSeparator`, `BreadcrumbEllipsis` | `ui/breadcrumb.tsx` | Low-level breadcrumb primitives. |
 | `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis` | `ui/pagination.tsx` | Page navigation primitives. |
 | `DropdownMenu` and subparts | `components/dropdown-menu` | Public animated dropdown menu wrapper. Prefer this over raw Radix menu. |
+| `Popover`, `PopoverTrigger`, `PopoverContent`, `PopoverClose` | `components/popover` | Public token-aware popover wrapper, including the narrow `@zero/framework/components/popover` import used by table controls. |
 | `Collapsible`, `CollapsibleTrigger`, `CollapsibleContent` | `components/collapsible` | Public animated collapsible wrapper. |
 | `Tooltip`, `TooltipTrigger`, `TooltipContent` | `components/tooltip` | Public Zero/Radix tooltip for accessible control descriptions, including icon-only actions. |
 | `ResizableNavbar` | `components/navbar` | Public-page navbar that detaches/shrinks on scroll and uses magnetic hover highlighting between links. |
 | `Hero`, `HeroBackground`, `HeroImageBackground`, `WavyBackground` | `components/hero` | Public-page hero section with tokenized background presets, custom background slot, actions, wavy canvas background, and rich title support. |
 | `TextGenerateEffect`, `TypewriterEffect`, `FlipWords` | `components/text-effects` | Public text effects for Hero titles, landing copy, docs headers, and content pages. |
+| `StreamingText` | `components/streaming-text` | Accessible static, replayed, caller-owned, or async streamed text for AI and agent output. The default cursor uses the semantic `foreground` token. |
 | `CodeBlock` | `components/code-block` | Tokenized Shiki code block with tabs, line numbers, copy action, and observability-backed fallback. |
 | `CtaSection` | `components/cta` | Public call-to-action section with title, supporting copy, and Hero-compatible actions. |
 | `FooterSection` | `components/footer` | Full-width public footer band with brand, labeled nav links, Hero-compatible actions, supporting action copy, copyright, and animated icon links. |
@@ -171,7 +176,8 @@ intake behavior through the planned blueprint/draft/attachment layer.
 | `Toaster` | `ui/sonner.tsx` | Zero-themed Sonner host. Mount once under `ThemeProvider`. |
 | `toast` | `sonner` via `@zero/framework/react` | Imperative toast API. |
 | `ThemeProvider` | `ui/theme-provider.tsx` | Theme persistence and class management. |
-| `ThemeTogglerButton` | `animate-ui/components/buttons/theme-toggler.tsx` | Animated light/dark/system toggle. Integrated into `AppShell` via `header.themeToggle`. |
+| `ThemeTogglerButton` | `animate-ui/components/buttons/theme-toggler.tsx` | Accessible light/dark/system toggle with a single morphing sun/moon SVG, click-origin circular page reveal, reduced-motion fallback, and `AppShell` integration through `header.themeToggle`. |
+| `StreamingText` | `streaming-text/streaming-text.tsx` | Streaming status, tokenized cursor, and sentence-level polite announcements for live text. |
 | `NotificationBadge` | `ui/notification-badge.tsx` | Badge/dot counter overlay. |
 | `NotificationItem` | `ui/notification-item.tsx` | Single notification row. |
 | `NotificationList` | `ui/notification-list.tsx` | Grouped notification list. |
@@ -192,15 +198,16 @@ intake behavior through the planned blueprint/draft/attachment layer.
 
 | Component | File | Role |
 | --- | --- | --- |
-| `DataTableView`, `DataTable` | `data-table/data-table.tsx` | Schema-aware table organism; `DataTableView` is preferred. |
-| `DataTableToolbar` | `data-table/data-table-toolbar.tsx` | Search, filters, column visibility, export actions. |
+| `DataTableView`, `DataTable` | `data-table/data-table.tsx` | Schema-aware table organism with full-sync/lazy/custom sources and a responsive, composable toolbar; `DataTableView` is preferred. |
+| `DataTableSearch` | `data-table/data-table-search.tsx` | Compact expanding searchbox used only by table toolbars, with Escape/Enter and reduced-motion behavior. |
+| `DataTableToolbar` | `data-table/data-table-toolbar.tsx` | Search, generated filters, active-filter feedback, selection-aware `controls`/`actions`/`supplemental` slots, column visibility, and export actions. |
 | `DataTablePagination` | `data-table/data-table-pagination.tsx` | Table pagination controls. |
 | `DataTableRowActions` | `data-table/data-table-row-actions.tsx` | Row action dropdown. |
 | `DataTableColumnHeader` | `data-table/data-table-column-header.tsx` | Sortable/filterable header. |
 | `EditableCell`, `AnimatedCell` | `data-table/*cell.tsx` | Inline editing and value transition cells. |
 | `KanbanBoard`, `KanbanTaskCard` | `kanban/kanban-board.tsx` | Drag-and-drop board organism for status/work queues. |
-| `MasterDetailView`, `MasterDetailPage` | `master-detail/master-detail-page.tsx` | List/table + detail organism with DataTable-compatible `source` support. |
-| `CrudPage` | `crud-page/crud-page.tsx` | Schema CRUD page/organism using DataTable and generated forms. |
+| `MasterDetailView`, `MasterDetailPage` | `master-detail/master-detail-page.tsx` | List/table + detail organism with DataTable-compatible `source`, search options, and `tableToolbarSlots` support. |
+| `CrudPage` | `crud-page/crud-page.tsx` | Schema CRUD page/organism using DataTable, generated forms, and forwarded `tableToolbarSlots`. |
 
 ## Platform Domain Organisms
 

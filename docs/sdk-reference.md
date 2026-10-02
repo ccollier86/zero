@@ -1200,14 +1200,18 @@ toolbar, editing, and override guide.
     { label: 'Delete', icon: Trash2, onClick: (row) => remove(row.todo_id), variant: 'destructive' },
     { label: 'Edit', icon: Pencil, onClick: (row) => push(`/todos/${row.todo_id}`) },
   ]}
-  searchable            // Global search bar
+  searchable={{         // Compact, table-only global search
+    placeholder: 'Find todos…',
+    ariaLabel: 'Search todos',
+  }}
   sortable              // Column header sorting
   filterable            // Per-column filters
   paginated={{ pageSize: 20 }}
   selectable            // Checkbox column
   onSelectionChange={(ids) => console.log('Selected:', ids)}
   onCellEdit={(rowId, col, val) => console.log('Edited:', rowId, col, val)}
-  showToolbar            // Force toolbar rendering for actions/export/columns only
+  toolbarLabel="Todo table controls"
+  showToolbar            // Force toolbar rendering for export/columns only
   exportFilename="todos.csv"
 />
 ```
@@ -1268,10 +1272,49 @@ Custom data source with mutation actions:
 
 Toolbar behavior:
 
-- `searchable` or `filterable` renders the toolbar automatically.
-- `toolbarActions` also renders the toolbar so custom controls are not hidden.
-- Set `showToolbar` when an app only wants built-in export or column visibility controls.
+- `searchable` accepts `boolean | DataTableSearchOptions`. The options are
+  `placeholder`, `ariaLabel`, `collapsedWidth`, `expandedWidth`, and
+  `disabled`.
+- Compact search expands on focus or while populated. `Escape` clears a query
+  before blurring/collapsing an empty search, `Enter` does not submit an
+  ancestor form, and reduced-motion preferences disable the spring transition.
+- `toolbarSlots={{ controls, actions, supplemental }}` accepts nodes or
+  functions of the table-aware render context. The context contains `table`,
+  `query`, `setQuery`, `columnFilters`, `activeFilterCount`,
+  `hasActiveFilters`, `hasActiveSearch`, `clearAll`, `selectedRowIds`,
+  `selectedRows`, and `selectedRowCount`.
+- `toolbarLabel` names the toolbar control group for assistive technology. Its
+  default is `Table controls`.
+- Search, generated filters, `toolbarActions`, or any toolbar slot renders the
+  toolbar automatically. Set `showToolbar` when an app only wants built-in
+  export or column visibility controls.
+- `toolbarActions` is the backwards-compatible right-side outlet. Prefer
+  `toolbarSlots.actions` for new code.
 - Set `showExport={false}` or `showColumnVisibility={false}` to hide those default controls.
+
+The toolbar API is additive. Existing `DataTable`/`DataTableView` calls,
+boolean `searchable`, and the `toolbarActions` node or render-function outlet
+do not require a rewrite; all three `toolbarSlots` entries are optional. No
+database/schema migration or backend change is required. Package-mode apps get
+the upgrade with their normal framework update. An app that used
+`zero add components/data-table` owns a local source copy and must opt into the
+new implementation manually or with `zero add components/data-table --force`
+after reviewing its local customizations. See
+[the complete upgrade notes](./frontend/data-table.md#upgrading-existing-tables).
+
+Toolbar search, generated schema filters, and TanStack controls supplied by a
+slot operate on rows already loaded into the table. They do not update lazy
+`filters` or `source.filters`, which are server query inputs sent to
+`/api/data`. `clearAll` clears client search and column filters only.
+
+Generated discrete (`boolean`, `select`, and `enum`), number, date, and
+datetime filters match exact values. Text filters use contains matching.
+Multi-value combobox, multi-select, and tags fields match an included value.
+
+`CrudPage`, `MasterDetailView`, and `MasterDetailPage` forward the same slot
+contract through `tableToolbarSlots`; their `searchable` props also accept
+`DataTableSearchOptions`, and `tableToolbarLabel` customizes the forwarded
+toolbar's accessible name.
 
 #### Column overrides
 
@@ -1320,7 +1363,8 @@ Available for composing custom table layouts:
 | Component | Description |
 |-----------|-------------|
 | `DataTableColumnHeader` | Sortable column header with sort indicator |
-| `DataTableToolbar` | Search, filter badges, column visibility, CSV export |
+| `DataTableSearch` | Compact, animated, accessible search control scoped to table toolbars |
+| `DataTableToolbar` | Responsive search/filter control plane with composable slots, selection context, column visibility, and CSV export |
 | `DataTablePagination` | Page controls, rows-per-page selector |
 | `DataTableRowActions` | Per-row action dropdown menu |
 | `AnimatedCell` | Cell wrapper that flashes on value change |
@@ -1461,11 +1505,21 @@ verify both light and dark mode with a screenshot pass.
 
 ### `<ThemeTogglerButton>`
 
-Animated button that cycles through light → dark → system.
+Animated button that cycles through light → dark → system. One masked SVG
+morphs continuously between the resolved sun and moon states, while supported
+browsers reveal the new page theme in a circle from the clicked control.
+Keyboard activation uses the control center as the reveal origin. The button
+falls back to an immediate switch when View Transitions are unavailable and
+disables both animations when the user prefers reduced motion.
 
 ```tsx
 <ThemeTogglerButton variant="ghost" size="default" modes={['light', 'dark']} />
 ```
+
+Multiple toggles may be mounted on the same page; each activation uses its own
+position and each SVG mask has a hydration-safe unique identifier. The existing
+`direction` option remains the fallback reveal origin for primitive callers
+that do not supply a pointer or control position.
 
 ### `<Toaster>`
 
@@ -2121,6 +2175,7 @@ Animated wrappers around Radix UI primitives. All include enter/exit transitions
 ```tsx
 import { Sidebar, SidebarProvider } from '@zero/framework/components/sidebar';
 import { DropdownMenu, DropdownMenuTrigger } from '@zero/framework/components/dropdown-menu';
+import { Popover, PopoverTrigger, PopoverContent } from '@zero/framework/components/popover';
 ```
 
 | Component | Sub-exports |
@@ -2806,7 +2861,7 @@ Everything available from `@zero/framework/react`:
 `createClient`, `getClient`, `AuthClient`, `ApiError`, `unwrap`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
 
 ### React Components
-`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `KanbanBoard`, `KanbanTaskCard`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
+`AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableSearch`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `KanbanBoard`, `KanbanTaskCard`, `UserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Popover`, `PopoverTrigger`, `PopoverContent`, `PopoverClose`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
 
 ### React Hooks
 `useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
@@ -2815,7 +2870,7 @@ Everything available from `@zero/framework/react`:
 `STORAGE_TABLES`, `zeroAnimatedIconNames`, `zeroAnimatedIcons`
 
 ### Types
-`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `RegisterParams`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `StorageUploadGrantResource`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
+`Client`, `Collection`, `ClientConfig`, `SyncClient`, `AuthUser`, `RegisterParams`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `StorageUploadGrantResource`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSearchOptions`, `DataTableSearchProps`, `DataTableToolbarContext`, `DataTableToolbarProps`, `DataTableToolbarSlot`, `DataTableToolbarSlots`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `PopoverProps`, `PopoverTriggerProps`, `PopoverContentProps`, `PopoverCloseProps`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
 
 Native-only (from `@zero/framework/native`): `createZeroNativeAuth`,
 `createZeroNativeAuthBroker`, `createNativeAuthClient`,

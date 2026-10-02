@@ -4,6 +4,39 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+## 1.3.3 - 2026-10-02
+
+### Added
+
+- Added a public token-aware Popover subpath for composing table filter menus
+  and other app controls without importing internal Animate UI files.
+- Added the MIT-licensed Mischief UI `StreamingText` component as a first-class
+  Zero export for AI, agent, and live text output. It supports async string
+  sources, caller-owned progressive text, known-text replay, semantic-token
+  cursor styling, reduced motion, and sentence-level screen-reader
+  announcements. The package, source-copy registry, docs, tests, and required
+  Tinkerers Labs notice are included together.
+
+### Improved
+
+- Upgraded DataTable's toolbar into a responsive control plane with a compact,
+  table-only animated search, schema-aware exact/contains/array filters,
+  selection-aware `controls`/`actions`/`supplemental` slots, accessible
+  pagination, wrapper forwarding, and packed-package coverage. The existing
+  `toolbarActions` outlet remains backwards compatible.
+- Reworked the theme control around one masked sun/moon SVG and a native View
+  Transition that reveals the new theme in a circle from the activated toggle.
+  Keyboard users receive a control-centered reveal, reduced-motion preferences
+  switch immediately, unsupported browsers retain a safe fallback, and
+  multiple toggles use independent hydration-safe SVG masks.
+
+### Fixed
+
+- Updated the coordinated AI SDK 6 provider family within its existing major
+  versions so fresh 1.3 installs no longer resolve the vulnerable
+  `@ai-sdk/provider-utils` range reported by GHSA-866g-f22w-33x8. The 1.3 line
+  now commits its Bun lockfile so release verification is reproducible.
+
 ## 1.3.2 - 2026-10-02
 
 ### Fixed

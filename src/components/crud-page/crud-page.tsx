@@ -9,6 +9,10 @@ import type { NavigationAction } from '../ui/record-navigation-bar';
 import { useCollection, useLazyCollection } from '../../frontend/client/data-hooks';
 import type { LazyCollectionOptions } from '../../frontend/client/data-hooks';
 import { DataTable } from '../data-table';
+import type {
+  DataTableSearchOptions,
+  DataTableToolbarSlots,
+} from '../data-table';
 import {
   ensureRowPrimaryKey,
   getSchemaPrimaryKey,
@@ -77,7 +81,11 @@ export interface CrudPageProps<T extends Row = Row> {
   emptyState?: ReactNode;
 
   // ── Table features ────────────────────────────────────────
-  searchable?: boolean;
+  searchable?: boolean | DataTableSearchOptions;
+  /** Controls and actions inserted into the generated table toolbar. */
+  tableToolbarSlots?: DataTableToolbarSlots<T>;
+  /** Accessible name for the generated table toolbar control group. */
+  tableToolbarLabel?: string;
   sortable?: boolean;
   paginated?: boolean | { pageSize?: number };
 
@@ -236,6 +244,8 @@ function TableLayout<T extends Row = Row>({
   editFields,
   formColumns = 2,
   searchable,
+  tableToolbarSlots,
+  tableToolbarLabel,
   sortable,
   paginated,
   onRowClick,
@@ -363,6 +373,8 @@ function TableLayout<T extends Row = Row>({
           primaryKey={primaryKey}
           actions={allActions}
           searchable={searchable}
+          toolbarSlots={tableToolbarSlots}
+          toolbarLabel={tableToolbarLabel}
           sortable={sortable}
           paginated={paginated}
           onRowClick={onRowClick}
@@ -392,6 +404,8 @@ function MasterDetailLayout<T extends Row = Row>({
   editableFields,
   formColumns = 2,
   searchable = true,
+  tableToolbarSlots,
+  tableToolbarLabel,
   sortable = true,
   paginated,
   onRowClick,
@@ -519,6 +533,8 @@ function MasterDetailLayout<T extends Row = Row>({
         onSelect={onRowClick}
         onUpdate={handleUpdate}
         searchable={searchable}
+        tableToolbarSlots={tableToolbarSlots}
+        tableToolbarLabel={tableToolbarLabel}
         sortable={sortable}
         paginated={paginated}
         formColumns={formColumns}

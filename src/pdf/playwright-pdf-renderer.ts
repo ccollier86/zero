@@ -100,7 +100,22 @@ export class PlaywrightPdfRenderer implements PdfRenderer {
       input.resources,
       this.config.javaScriptEnabled
     );
-    await page.setContent(html, { waitUntil: 'load', timeout: input.timeoutMs });
+    const contentLoad = page.setContent(html, {
+      waitUntil: 'load',
+      timeout: input.timeoutMs,
+    });
+    if (input.resources.deniedBehavior === 'error') {
+      await Promise.race([contentLoad, denied.firstDenied]);
+      if (denied.count > 0) {
+        // Closing the context in `render()` will cancel any load that Chromium
+        // kept pending for the rejected resource. Observe that cancellation so
+        // it cannot become an unhandled rejection after this prompt failure.
+        void contentLoad.catch(() => undefined);
+        throw deniedResourceError(denied);
+      }
+    } else {
+      await contentLoad;
+    }
 
     if (input.waitForFonts) {
       await page.evaluate(async () => {
@@ -108,11 +123,7 @@ export class PlaywrightPdfRenderer implements PdfRenderer {
       });
     }
     if (denied.count > 0 && input.resources.deniedBehavior === 'error') {
-      throw new PdfError(
-        'PDF rendering blocked one or more document resources.',
-        'PDF_RESOURCE_DENIED',
-        { resources: denied.resources, deniedCount: denied.count }
-      );
+      throw deniedResourceError(denied);
     }
 
     const bytes = await page.pdf({
@@ -200,10 +211,16 @@ export class PlaywrightPdfRenderer implements PdfRenderer {
 interface DeniedResourceCollector {
   count: number;
   resources: Array<{ url: string; reason: string }>;
+  firstDenied: Promise<void>;
+  notifyDenied: () => void;
 }
 
 function createDeniedResourceCollector(): DeniedResourceCollector {
-  return { count: 0, resources: [] };
+  let notifyDenied = () => {};
+  const firstDenied = new Promise<void>((resolve) => {
+    notifyDenied = resolve;
+  });
+  return { count: 0, resources: [], firstDenied, notifyDenied };
 }
 
 function recordDeniedResource(
@@ -213,6 +230,15 @@ function recordDeniedResource(
 ): void {
   collector.count += 1;
   if (collector.resources.length < 10) collector.resources.push({ url, reason });
+  collector.notifyDenied();
+}
+
+function deniedResourceError(collector: DeniedResourceCollector): PdfError {
+  return new PdfError(
+    'PDF rendering blocked one or more document resources.',
+    'PDF_RESOURCE_DENIED',
+    { resources: collector.resources, deniedCount: collector.count }
+  );
 }
 
 async function loadPlaywright(): Promise<typeof import('playwright')> {

@@ -29,7 +29,12 @@ import {
 import { AnimatedCell } from './animated-cell';
 import { EditableCell } from './editable-cell';
 import { DataTableColumnHeader } from './data-table-column-header';
-import { DataTableToolbar } from './data-table-toolbar';
+import {
+  DataTableToolbar,
+  type DataTableToolbarSlot,
+  type DataTableToolbarSlots,
+} from './data-table-toolbar';
+import type { DataTableSearchOptions } from './data-table-search';
 import { DataTableRowActions, type RowAction } from './data-table-row-actions';
 import { DataTablePagination } from './data-table-pagination';
 import { getSchemaPrimaryKey } from './row-identity';
@@ -70,7 +75,7 @@ export interface DataTableProps<T extends Row = Row> {
   editable?: string[];
   columnOverrides?: DataTableColumnOverrides<T>;
   actions?: RowAction<T>[];
-  searchable?: boolean;
+  searchable?: boolean | DataTableSearchOptions;
   sortable?: boolean;
   filterable?: boolean;
   filterColumns?: string[];
@@ -87,7 +92,11 @@ export interface DataTableProps<T extends Row = Row> {
   /** Initial TanStack table state. */
   initialState?: DataTableInitialState;
   /** Extra toolbar controls rendered before built-in buttons. */
-  toolbarActions?: React.ReactNode;
+  toolbarActions?: DataTableToolbarSlot<T>;
+  /** Composable left, right, and full-width toolbar insertion points. */
+  toolbarSlots?: DataTableToolbarSlots<T>;
+  /** Accessible name for this table's toolbar control group. */
+  toolbarLabel?: string;
   toolbarClassName?: string;
   /** Force toolbar rendering when only export, column, or custom actions are needed. */
   showToolbar?: boolean;
@@ -130,6 +139,8 @@ export function DataTable<T extends Row = Row>({
   highlightedRowId,
   initialState,
   toolbarActions,
+  toolbarSlots,
+  toolbarLabel,
   toolbarClassName,
   showToolbar,
   exportFilename = 'export.csv',
@@ -226,7 +237,13 @@ export function DataTable<T extends Row = Row>({
   // ─── Render ───────────────────────────────────────────────────────
 
   const pageRows = table.getRowModel().rows;
-  const shouldShowToolbar = showToolbar ?? (searchable || filterable || !!toolbarActions);
+  const hasToolbarSlots = !!(
+    toolbarSlots?.controls
+    || toolbarSlots?.actions
+    || toolbarSlots?.supplemental
+  );
+  const shouldShowToolbar = showToolbar
+    ?? (!!searchable || filterable || toolbarActions != null || hasToolbarSlots);
   const colSpan =
     (visibleColumns?.length ?? schema.fieldNames.length) +
     (selectable ? 1 : 0) +
@@ -256,7 +273,7 @@ export function DataTable<T extends Row = Row>({
   }
 
   return (
-    <div className={cn('space-y-3', className)}>
+    <div className={cn('min-w-0 space-y-3', className)}>
       {/* Toolbar */}
       {shouldShowToolbar && (
         <DataTableToolbar
@@ -270,12 +287,14 @@ export function DataTable<T extends Row = Row>({
           showExport={showExport}
           exportFilename={exportFilename}
           actions={toolbarActions}
+          slots={toolbarSlots}
+          ariaLabel={toolbarLabel}
           className={toolbarClassName}
         />
       )}
 
       {/* Table */}
-      <ScrollArea className="rounded-md border">
+      <ScrollArea className="w-full min-w-0 max-w-full rounded-md border">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (

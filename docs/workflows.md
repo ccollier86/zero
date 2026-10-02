@@ -181,6 +181,160 @@ recovery. Direct plugin composition can use `getWorkflowRegistry()` after
 composition and before `listen()`. Do not register definitions or activities
 from request handlers or after the server starts.
 
+## Upgrading Existing Torrent Applications
+
+Existing sequential workflow definitions do **not** need to be rewritten for
+Zero 1.3.3. The `steps` shape and `registerHandler()` remain supported, and an
+application can convert one definition at a time to `flow` later. An upgrade
+does, however, have two separate operator actions:
+
+1. update the `@zero/framework` package; and
+2. apply the pending framework migrations to the database that owns Torrent.
+
+`zero update` performs only the first action. It does not run migration
+commands, rewrite application source, or move database rows. Managed
+`createApp()` runs pending framework migrations for a non-ephemeral database
+when `migrate` is left at its default `true`, but a production upgrade should
+still be planned, backed up, and applied while traffic is stopped. An app with
+`migrate: false` must run the migration command explicitly before startup.
+
+### Compatibility at a glance
+
+| Upgrade | Workflow-definition rewrite | Database action | Application action |
+| --- | --- | --- | --- |
+| Earlier Zero 1.3 to 1.3.3 | No; existing sequential and graph definitions remain valid | Apply any missing `030`, `032`, and `033` to the existing combined application database | Register handlers and activities before recovery; keep one Torrent owner for the database |
+| Zero 1.3.x to 2.0 | No all-at-once rewrite; `steps` remains supported | Perform the app-specific offline system/application split, then apply the 2.0 framework registry to `systemDb` | Adopt Guardian/Fabric configuration, update managed raw start call sites to actor/system authority, and retain every implementation required by a recoverable run |
+| One definition from `steps` to `flow` | Optional, definition by definition | No special migration beyond the installed Torrent schema | Publish a new immutable version; do not rewrite a version used by an existing run |
+
+### Upgrade to Zero 1.3.3
+
+Use this path to keep the combined database and avoid importing Guardian
+multi-tenancy, Fabric, or the 2.0 database split:
+
+1. Stop every process that can use the database. Do not introduce the runtime
+   ownership generation while an older Torrent runtime can still write.
+2. Capture a restorable SQLite backup, including committed WAL content, and
+   preserve the current package, lockfile, configuration, and environment.
+3. Check out the exact `v1.3.3` source (or the maintained `release/1.3`
+   branch), then preview and install it through the explicit local path. Do not
+   use a wrapper tied to Zero 2.0/main for an app that is staying on 1.3.
+4. Against the exact configured combined database, inspect status, apply the
+   pending registry, and inspect status again. Use the app's existing scripts;
+   pass `--db` when they do not already pin the path.
+5. Start one runtime, let registration and recovery finish, and verify
+   nonterminal runs before admitting traffic.
+
+```bash
+# Run from the Zero 1.3.3 checkout.
+bun run zero update --project /path/to/app --local /path/to/zero-1.3 --dry-run
+bun run zero update --project /path/to/app --local /path/to/zero-1.3 --check
+
+# Run from the application. Keep this path equal to AppConfig.db.
+bun run migrate:status -- --db /absolute/path/to/app.db
+bun run migrate -- --db /absolute/path/to/app.db
+bun run migrate:status -- --db /absolute/path/to/app.db
+```
+
+The first maintained Torrent upgrade appends migrations `030`, `032`, and
+`033`. An app already on 1.3.1 or 1.3.2 may therefore have no pending Torrent
+migration: 1.3.2's interaction-event recovery fix and 1.3.3's reusable
+frontend additions do not add another numbered migration. Trust the status
+command and ledger, not an assumed starting version. Never edit or
+re-checksum an applied migration.
+
+### Later move from 1.3 to 2.0
+
+This is a breaking topology adoption, not the next step of the 1.3 patch
+procedure. Zero 2.0 stores all Guardian and Torrent state in `systemDb`; `db`
+contains application-owned data. It detects a legacy combined layout and
+fails closed rather than splitting the database automatically.
+
+Before that cutover:
+
+1. Prefer first reaching 1.3.3 and proving its migrations and recovery. This
+   is a staging recommendation, not permission to skip the 2.0 split.
+2. Drain, complete, or deliberately cancel every nonterminal 1.3 workflow.
+   A 1.3 run has no 2.0 Guardian execution-authority seal. The 2.0 authority
+   migration creates storage but does not invent authority for an existing
+   run; managed recovery fails missing or invalid authority rather than
+   dispatching work under guessed privilege.
+3. Stop every old runtime and take one consistent backup of the combined
+   database and related storage.
+4. Use the target release's `docs/framework/system-database.md` existing-app
+   procedure to design an app-specific offline split. Preserve the migration
+   ledger and complete Zero/Guardian/Torrent state in the new system plane,
+   retain business tables in the application plane, and seed the documented
+   ID-only identity anchors needed by application foreign keys. Do not point
+   `db` and `systemDb` at the same file.
+5. Run the 2.0 framework migration status and migration commands against the
+   system database only. Run application-schema Doctor/plan separately against
+   the application database, then complete the target release's Guardian
+   profile and Administration Organization adoption procedure.
+6. Register all handlers, activity versions, and code definitions before
+   recovery. Start one Torrent owner and verify status, definition versions,
+   completed history, and new actor/system starts before admitting traffic.
+
+The 2.0 registry applies the missing migrations `008` through `029` and
+guarded migration `031`. When the extracted ledger already records `030`,
+`032`, and `033`, those versions are not rerun. Migration `031` rebuilds the
+affected workflow relations for tenant integrity and reinstalls the final
+`033` constraints. Migration `031` is guarded and requires the normal
+file-backed backup. Do not delete ledger rows to force a migration to run
+again.
+
+Managed request code in 2.0 should start work through the scope-closed
+`zero.workflows` facade. A plugin or trusted job holding the raw managed
+service must replace raw `start()`/`run()` with `runAsActor()` or explicitly
+privileged `runAsSystem()`. That is a caller-authority change, not a rewrite of
+the workflow definition.
+
+### Definitions, versions, and recovery
+
+- Keep every `registerHandler()` key needed by a nonterminal sequential run.
+  Keep every exact registered activity version referenced by a nonterminal
+  graph or database definition. Recovery validates the complete set before it
+  publishes the service.
+- Move registration into `workflows.register` if it currently happens in an
+  `onStart` hook, request handler, or after `listen()`. Managed Zero awaits the
+  callback before recovery. Direct plugin composition must finish registration
+  after composition and before `listen()`.
+- Migration `030` backfills an immutable version only when the legacy snapshot
+  can be canonicalized and matched. Ambiguous history remains on the proven
+  sequential path; the migrator does not guess.
+- Published code and database versions are append-only. Existing runs remain
+  pinned. Publish and activate a new version for changed behavior instead of
+  editing graph JSON, fingerprints, or active-version rows directly.
+- Database-defined versions and drafts remain durable database state; no JSON
+  re-entry is required for a 1.3 patch. A 2.0 split must transfer them with the
+  rest of Torrent's system state. Migration `031` preserves and validates the
+  stored scope tuple rather than guessing a new tenant assignment.
+- Database-authored definitions remain data, not executable source. Every
+  referenced implementation must still be registered in application code with
+  `databaseCallable: true`, including interaction delivery, validation, and
+  `each` activities.
+- Exactly one live `WorkflowService` generation may own a physical workflow
+  database. A second owner receives retryable `WORKFLOW_RUNTIME_OWNED`; it must
+  not be treated as a cue to bypass or delete the lease.
+
+### Backup and rollback
+
+Treat package code, configuration, the migration ledger, and database files as
+one release unit. A package downgrade does not undo schema changes.
+
+- For a failed 1.3 patch upgrade, stop all writers and restore both the old
+  package/lockfile and the pre-migration combined-database backup. Older
+  migrators can refuse a database whose ledger contains unknown newer
+  versions.
+- For a failed 2.0 adoption, restore the complete pre-cutover asset set, or the
+  complete verified post-split system/application set. Do not try to recombine
+  planes or restore only one file while writes continue.
+- `--down-to` is not a substitute for a data backup. A `down()` migration can
+  restore only what it explicitly implements; it cannot recreate lost rows,
+  execution authority, or an earlier database topology.
+
+See [Migrations](./migrations.md) for ledger, status, backup, checksum, and
+rollback contracts.
+
 ## Activities And The Trust Boundary
 
 `registry.registerActivity()` registers one immutable application-code
@@ -1142,13 +1296,14 @@ system/application database split. Existing 1.3 applications keep their
 single-database auth and data topology; running the normal migrations adds only
 Torrent's graph/runtime tables, ownership lease, and integrity triggers.
 
-Zero 1.3.2 preserves that exact compatibility boundary and hardens the
-interaction-event recovery race. It adds no Guardian, Fabric, tenant-column,
-or database-topology migration.
+Zero 1.3.3 preserves that exact compatibility boundary, includes the 1.3.2
+interaction-event recovery hardening, and adds only reusable frontend surfaces.
+It adds no Guardian, Fabric, tenant-column, or database-topology migration.
 
-An eventual upgrade from 1.3.1 or 1.3.2 to the combined 2.0 platform is
-supported. The 2.0 migrator applies the missing Guardian/Fabric migrations and
-tenant-integrity migration `031`; the already-recorded `032` and `033`
+An eventual upgrade from any maintained 1.3 release through 1.3.3 to the
+combined 2.0 platform is supported. The 2.0 migrator applies the missing
+Guardian/Fabric migrations and tenant-integrity migration `031`; the
+already-recorded `032` and `033`
 migrations are not rerun. Migration `031` reconstructs the multi-tenant
 workflow relations while reinstalling the same final `033` definition, draft,
 version, terminal-event, and authority guarantees.

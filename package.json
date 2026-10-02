@@ -1,6 +1,6 @@
 {
   "name": "@zero/framework",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Bun/Elysia full-stack app framework with integrated backend services, reactive data, and reusable React UI.",
   "type": "module",
   "keywords": [
@@ -31,6 +31,7 @@
     "llm.txt",
     "llms.txt",
     "CHANGELOG.md",
+    "THIRD_PARTY_NOTICES.md",
     "tsconfig.json"
   ],
   "bin": {
@@ -207,6 +208,10 @@
       "types": "./src/components/dropdown-menu/index.ts",
       "import": "./src/components/dropdown-menu/index.ts"
     },
+    "./components/popover": {
+      "types": "./src/components/popover/index.ts",
+      "import": "./src/components/popover/index.ts"
+    },
     "./components/expandable-card": {
       "types": "./src/components/expandable-card/index.ts",
       "import": "./src/components/expandable-card/index.ts"
@@ -255,6 +260,10 @@
       "types": "./src/components/text-effects/index.ts",
       "import": "./src/components/text-effects/index.ts"
     },
+    "./components/streaming-text": {
+      "types": "./src/components/streaming-text/index.ts",
+      "import": "./src/components/streaming-text/index.ts"
+    },
     "./components/tooltip": {
       "types": "./src/components/tooltip/index.ts",
       "import": "./src/components/tooltip/index.ts"
@@ -301,16 +310,16 @@
     "react-dom": ">=19.2.0 <20"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "3.0.2",
-    "@ai-sdk/cohere": "3.0.2",
-    "@ai-sdk/deepgram": "2.0.2",
-    "@ai-sdk/google": "3.0.2",
-    "@ai-sdk/groq": "3.0.2",
-    "@ai-sdk/openai": "3.0.2",
-    "@ai-sdk/openai-compatible": "2.0.2",
-    "@ai-sdk/provider": "3.0.1",
-    "@ai-sdk/provider-utils": "4.0.2",
-    "@ai-sdk/xai": "3.0.3",
+    "@ai-sdk/anthropic": "3.0.123",
+    "@ai-sdk/cohere": "3.0.65",
+    "@ai-sdk/deepgram": "2.0.61",
+    "@ai-sdk/google": "3.0.128",
+    "@ai-sdk/groq": "3.0.70",
+    "@ai-sdk/openai": "3.0.119",
+    "@ai-sdk/openai-compatible": "2.0.79",
+    "@ai-sdk/provider": "3.0.18",
+    "@ai-sdk/provider-utils": "4.0.55",
+    "@ai-sdk/xai": "3.0.137",
     "@base-ui-components/react": "^1.0.0-rc.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
@@ -352,7 +361,7 @@
     "@types/qrcode": "^1.5.6",
     "@xstate/store": "^3.16.0",
     "@zvec/zvec": "0.5.0",
-    "ai": "6.0.5",
+    "ai": "6.0.293",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

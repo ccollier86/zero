@@ -13,6 +13,10 @@ import { useMemo, useCallback } from 'react';
 import type { SchemaDescriptor } from '../../schema/define-schema';
 import type { Row } from '../../sync/types';
 import { DataTable } from '@/components/data-table';
+import type {
+  DataTableSearchOptions,
+  DataTableToolbarSlots,
+} from '@/components/data-table';
 import type { LazyCollectionOptions } from '../../frontend/client/data-hooks';
 import type {
   DataTableFilters,
@@ -126,7 +130,11 @@ export interface MasterDetailPageProps<T extends Row = Row> {
 
   // ── Table features ──────────────────────────────────────────────
   /** Enable search bar in the table toolbar. Default: true. */
-  searchable?: boolean;
+  searchable?: boolean | DataTableSearchOptions;
+  /** Controls and actions inserted into the list table's toolbar. */
+  tableToolbarSlots?: DataTableToolbarSlots<T>;
+  /** Accessible name for the list table's toolbar control group. */
+  tableToolbarLabel?: string;
   /** Enable column sorting. Default: true. */
   sortable?: boolean;
   /** Enable pagination. Default: false. */
@@ -184,6 +192,8 @@ function MasterDetailPage<T extends Row = Row>({
   onUpdate,
   onUpdateError,
   searchable = true,
+  tableToolbarSlots,
+  tableToolbarLabel,
   sortable = true,
   paginated = false,
   formColumns = 2,
@@ -328,6 +338,8 @@ function MasterDetailPage<T extends Row = Row>({
         columns={listColumns}
         primaryKey={primaryKey}
         searchable={searchable}
+        toolbarSlots={tableToolbarSlots}
+        toolbarLabel={tableToolbarLabel}
         sortable={sortable}
         paginated={paginated}
         onRowClick={selectRow}
@@ -347,6 +359,8 @@ function MasterDetailPage<T extends Row = Row>({
     refresh,
     schema,
     searchable,
+    tableToolbarSlots,
+    tableToolbarLabel,
     selectRow,
     selectedId,
     sortable,

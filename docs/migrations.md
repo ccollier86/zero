@@ -64,8 +64,12 @@ behavior with a new migration rather than editing an applied file.
 A later upgrade to Zero 2.0 applies the missing `008`–`029` migrations and
 tenant-integrity migration `031`. Applied `032`/`033` ledger entries remain in
 place and are not rerun; `031` preserves/reinstalls their final constraints for
-the tenant-aware workflow topology. See [Torrent Durable Workflows](./workflows.md#zero-131-compatibility-boundary)
-for the application compatibility boundary.
+the tenant-aware workflow topology. See the
+[Torrent upgrade guide](./workflows.md#upgrading-existing-torrent-applications)
+for the exact 1.3.3 operator path, handler/recovery requirements, later 2.0
+split boundary, and rollback rules. The
+[1.3 compatibility boundary](./workflows.md#zero-131-compatibility-boundary)
+summarizes the resulting topology.
 
 ## Safety Classes
 

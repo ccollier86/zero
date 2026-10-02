@@ -57,9 +57,13 @@ describe('addZeroSource', () => {
       });
 
       expect(result.filesWritten).toContain('components/data-table/data-table.tsx');
+      expect(result.filesWritten).toContain('components/data-table/data-table-search.tsx');
+      expect(result.filesWritten).toContain('components/data-table/data-table-column-filter.tsx');
+      expect(result.filesWritten).toContain('components/data-table/data-table-export.ts');
       expect(result.filesWritten).toContain('components/data-table/row-identity.ts');
       expect(result.filesWritten).toContain('components/ui/table.tsx');
       expect(result.filesWritten).toContain('components/animate-ui/components/radix/checkbox.tsx');
+      expect(result.filesWritten).toContain('components/animate-ui/icons/search.tsx');
       expect(result.rewrites.length).toBeGreaterThan(0);
 
       const rowIdentity = await readFile(join(targetDir, 'components/data-table/row-identity.ts'), 'utf8');
@@ -69,7 +73,16 @@ describe('addZeroSource', () => {
 
       await writeFile(
         join(targetDir, 'entry.tsx'),
-        "import { DataTable } from './components/data-table';\nexport { DataTable };\n"
+        [
+          "import { DataTable, DataTableSearch, DataTableToolbar } from './components/data-table';",
+          "import type { DataTableSearchOptions, DataTableToolbarSlots } from './components/data-table';",
+          "const search: DataTableSearchOptions = { placeholder: 'Find records…' };",
+          'const slots: DataTableToolbarSlots<Record<string, unknown>> = {',
+          "  controls: ({ activeFilterCount }) => <span>{activeFilterCount}</span>,",
+          '};',
+          'export { DataTable, DataTableSearch, DataTableToolbar, search, slots };',
+          '',
+        ].join('\n'),
       );
 
       const build = await Bun.build({
@@ -164,6 +177,36 @@ describe('addZeroSource', () => {
       expect(result.filesWritten).toContain('components/text-effects/flip-words.tsx');
       expect(result.filesWritten).toContain('components/text-effects/index.ts');
       expect(result.filesWritten).toContain('lib/utils.ts');
+    } finally {
+      await rm(targetDir, { recursive: true, force: true });
+    }
+  });
+
+  test('copies accessible streaming text with its class-name helper', async () => {
+    const targetDir = await createTempApp();
+
+    try {
+      const result = await addZeroSource({
+        targetDir,
+        items: ['components/streaming-text'],
+      });
+
+      expect(result.filesWritten).toContain('components/streaming-text/streaming-text.tsx');
+      expect(result.filesWritten).toContain('components/streaming-text/index.ts');
+      expect(result.filesWritten).toContain('lib/utils.ts');
+      expect(result.filesPlanned).not.toContain('components/streaming-text/streaming-text.test.tsx');
+
+      await writeFile(
+        join(targetDir, 'entry.tsx'),
+        "import { StreamingText } from './components/streaming-text';\nexport { StreamingText };\n"
+      );
+
+      const build = await Bun.build({
+        entrypoints: [join(targetDir, 'entry.tsx')],
+        outdir: join(targetDir, 'dist-streaming-text'),
+        target: 'browser',
+      });
+      expect(build.success).toBe(true);
     } finally {
       await rm(targetDir, { recursive: true, force: true });
     }

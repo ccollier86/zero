@@ -10,7 +10,6 @@
 
 import * as React from 'react';
 import { useTheme } from 'next-themes';
-import { Monitor, Moon, Sun } from 'lucide-react';
 import { VariantProps } from 'class-variance-authority';
 
 import {
@@ -20,22 +19,13 @@ import {
   type Resolved,
 } from '@/components/animate-ui/primitives/effects/theme-toggler';
 import { buttonVariants } from '@/components/animate-ui/components/buttons/icon';
+import {
+  ThemeMorphIcon,
+  ThemeMorphIconStyles,
+} from '@/components/animate-ui/components/buttons/theme-morph-icon';
 import { cn } from '@/lib/utils';
 
-const getIcon = (
-  effective: ThemeSelection,
-  resolved: Resolved,
-  modes: ThemeSelection[],
-) => {
-  const theme = modes.includes('system') ? effective : resolved;
-  return theme === 'system' ? (
-    <Monitor />
-  ) : theme === 'dark' ? (
-    <Moon />
-  ) : (
-    <Sun />
-  );
-};
+const DEFAULT_MODES: ThemeSelection[] = ['light', 'dark', 'system'];
 
 const getNextTheme = (
   effective: ThemeSelection,
@@ -45,6 +35,22 @@ const getNextTheme = (
   if (i === -1) return modes[0];
   return modes[(i + 1) % modes.length];
 };
+
+function getTransitionOrigin(
+  event: React.MouseEvent<HTMLButtonElement>,
+): { x: number; y: number; source: HTMLButtonElement } {
+  const source = event.currentTarget;
+  if (event.detail !== 0) {
+    return { x: event.clientX, y: event.clientY, source };
+  }
+
+  const bounds = source.getBoundingClientRect();
+  return {
+    x: bounds.left + bounds.width / 2,
+    y: bounds.top + bounds.height / 2,
+    source,
+  };
+}
 
 type ThemeTogglerButtonProps = React.ComponentProps<'button'> &
   VariantProps<typeof buttonVariants> & {
@@ -62,37 +68,66 @@ function ThemeTogglerButton({
   onClick,
   className,
   type = 'button',
+  disabled,
   title,
   'aria-label': ariaLabel,
+  'aria-busy': ariaBusy,
   ...props
 }: ThemeTogglerButtonProps) {
   const { theme, resolvedTheme, setTheme } = useTheme();
-  const currentTheme = resolveCurrentTheme(theme, resolvedTheme, modes);
+  const availableModes = modes.length > 0 ? modes : DEFAULT_MODES;
+  const currentTheme = resolveCurrentTheme(
+    theme,
+    resolvedTheme,
+    availableModes,
+  );
+  const currentResolved: Resolved =
+    resolvedTheme === 'dark' ? 'dark' : 'light';
+  const previousResolved = React.useRef(currentResolved);
+  const [animateIcon, setAnimateIcon] = React.useState(false);
+
+  React.useEffect(() => {
+    if (previousResolved.current !== currentResolved) setAnimateIcon(true);
+    previousResolved.current = currentResolved;
+  }, [currentResolved]);
 
   return (
     <ThemeTogglerPrimitive
       theme={currentTheme}
-      resolvedTheme={resolvedTheme as Resolved}
+      resolvedTheme={currentResolved}
       setTheme={setTheme}
       direction={direction}
       onImmediateChange={onImmediateChange}
     >
-      {({ effective, resolved, toggleTheme }) => (
-        <button
-          data-slot="theme-toggler-button"
-          className={cn(buttonVariants({ variant, size, className }))}
-          type={type}
-          title={title ?? 'Switch theme'}
-          aria-label={ariaLabel ?? `Switch theme from ${effective}`}
-          onClick={(e) => {
-            onClick?.(e);
-            toggleTheme(getNextTheme(effective, modes));
-          }}
-          {...props}
-        >
-          {getIcon(effective, resolved, modes)}
-        </button>
-      )}
+      {({ effective, resolved, transitioning, toggleTheme }) => {
+        const nextTheme = getNextTheme(effective, availableModes);
+        const actionLabel = `Switch to ${nextTheme} theme`;
+
+        return (
+          <>
+            <button
+              data-slot="theme-toggler-button"
+              data-theme={resolved}
+              data-state={transitioning ? 'transitioning' : 'idle'}
+              className={cn(buttonVariants({ variant, size, className }))}
+              type={type}
+              disabled={disabled || transitioning}
+              title={title ?? actionLabel}
+              aria-label={ariaLabel ?? actionLabel}
+              aria-busy={ariaBusy ?? (transitioning || undefined)}
+              onClick={(event) => {
+                onClick?.(event);
+                if (event.defaultPrevented) return;
+                void toggleTheme(nextTheme, getTransitionOrigin(event));
+              }}
+              {...props}
+            >
+              <ThemeMorphIcon resolved={resolved} animate={animateIcon} />
+            </button>
+            <ThemeMorphIconStyles />
+          </>
+        );
+      }}
     </ThemeTogglerPrimitive>
   );
 }

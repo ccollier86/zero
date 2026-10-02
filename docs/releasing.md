@@ -22,6 +22,7 @@ Before publishing to npm, verify the package `files` allowlist includes:
 - `llm.txt`
 - `llms.txt`
 - `CHANGELOG.md`
+- `THIRD_PARTY_NOTICES.md`
 - `tsconfig.json`
 
 A later publish-hardening pass can move exports/bins to `dist`, but that should
@@ -75,6 +76,11 @@ rollback. Zero itself must not directly invoke migration tooling. Run
 `bun run migrate:plan` separately and intentionally against the correct test
 database or a safe copy; migration planning may open or create configured
 database or ledger files.
+
+Existing workflow applications should follow the
+[Torrent upgrade guide](./workflows.md#upgrading-existing-torrent-applications)
+for the 1.3.3 package/migration sequence, registration and recovery checks,
+the later 2.0 database-split boundary, and rollback requirements.
 
 Never use `create-zero --force` or `zero-new --force` for this smoke test. Those
 commands regenerate scaffold targets and are not updaters.

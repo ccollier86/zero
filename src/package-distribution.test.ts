@@ -72,6 +72,12 @@ describe('package distribution', () => {
       expect(packagedFiles).toContain('package/.env.example');
       expect(contents).toContain('package/README.md');
       expect(contents).toContain('package/llms.txt');
+      expect(contents).toContain('package/THIRD_PARTY_NOTICES.md');
+      expect(contents).toContain('package/src/components/streaming-text/streaming-text.tsx');
+      expect(contents).toContain('package/src/components/data-table/data-table-search.tsx');
+      expect(contents).toContain('package/src/components/data-table/data-table-column-filter.tsx');
+      expect(contents).toContain('package/src/components/data-table/data-table-export.ts');
+      expect(contents).toContain('package/src/components/popover/index.ts');
       expect(contents).toContain('package/docs/start-here.md');
       expect(contents).toContain('package/docs/auth/native-app-auth.md');
       expect(contents).toContain('package/tsconfig.json');
@@ -131,6 +137,10 @@ describe('package distribution', () => {
         stat(join(appDir, 'node_modules/@zero/framework/llms.txt')).then((value) => value.isFile())
       ).resolves.toBe(true);
       await expect(
+        stat(join(appDir, 'node_modules/@zero/framework/THIRD_PARTY_NOTICES.md'))
+          .then((value) => value.isFile())
+      ).resolves.toBe(true);
+      await expect(
         stat(join(appDir, 'node_modules/@zero/framework/examples/native-auth/desktop.ts'))
           .then((value) => value.isFile())
       ).resolves.toBe(true);
@@ -139,6 +149,7 @@ describe('package distribution', () => {
           .then((value) => value.isFile())
       ).resolves.toBe(true);
       await buildInstalledNativeRecipes(appDir);
+      await buildInstalledFrontendComponents(appDir);
       await writePackageRuntimeSmoke(appDir);
       await spawnChecked(['bun', 'run', 'typecheck'], appDir);
       await spawnChecked(['bun', 'package-runtime-smoke.ts'], appDir);
@@ -192,6 +203,36 @@ async function buildInstalledNativeRecipes(appDir: string): Promise<void> {
   await spawnChecked([
     'bun', 'build', join(recipes, 'broker.ts'), '--target=browser',
     `--outdir=${join(appDir, '.native-broker-smoke')}`,
+  ], appDir);
+}
+
+/** Bundle the installed table control plane from a consumer app boundary. */
+async function buildInstalledFrontendComponents(appDir: string): Promise<void> {
+  const entrypoint = join(appDir, '.zero-package-ui-smoke.tsx');
+  await writeFile(entrypoint, `
+import {
+  DataTable,
+  DataTableSearch,
+  DataTableToolbar,
+} from '@zero/framework/components/data-table';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@zero/framework/components/popover';
+
+export {
+  DataTable,
+  DataTableSearch,
+  DataTableToolbar,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+};
+`);
+  await spawnChecked([
+    'bun', 'build', entrypoint, '--target=browser',
+    `--outdir=${join(appDir, '.zero-package-ui-smoke')}`,
   ], appDir);
 }
 

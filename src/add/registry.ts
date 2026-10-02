@@ -44,7 +44,7 @@ const STATIC_TARGETS: AddableTarget[] = [
   {
     id: 'components/data-table',
     sourceRel: 'components/data-table',
-    description: 'DataTable, DataTableView, toolbar, pagination, and row actions.',
+    description: 'DataTable, compact search, composable toolbar, pagination, and row actions.',
   },
   {
     id: 'components/expandable-card',
@@ -95,6 +95,11 @@ const STATIC_TARGETS: AddableTarget[] = [
     id: 'components/text-effects',
     sourceRel: 'components/text-effects',
     description: 'Public text effects for Hero titles and landing-page copy.',
+  },
+  {
+    id: 'components/streaming-text',
+    sourceRel: 'components/streaming-text',
+    description: 'Accessible streamed text for AI responses and live output.',
   },
   {
     id: 'hooks',

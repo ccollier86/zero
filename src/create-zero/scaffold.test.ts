@@ -15,6 +15,14 @@ import { LOCAL_FRAMEWORK_DEPENDENCY } from './local-framework-package';
 import { runCreateZeroCli } from './run';
 import { scaffoldZeroApp } from './scaffold';
 
+// Archive creation traverses the publish surface and can contend with the
+// package-distribution suite when the full test run is parallelized.
+const LOCAL_ARCHIVE_SCAFFOLD_TIMEOUT_MS = 300_000;
+
+// The outside-tree smoke test performs a cold server import/build in a child
+// process, which is sensitive to CPU and filesystem contention in parallel CI.
+const OUTSIDE_TREE_STARTUP_TIMEOUT_MS = 120_000;
+
 async function createTempRoot(): Promise<string> {
   const baseDir = join(process.cwd(), '.zero');
   await mkdir(baseDir, { recursive: true });
@@ -41,7 +49,7 @@ describe('scaffoldZeroApp', () => {
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, LOCAL_ARCHIVE_SCAFFOLD_TIMEOUT_MS);
 
   test('creates a package-mode app that builds through public imports', async () => {
     const rootDir = await createTempRoot();
@@ -166,7 +174,7 @@ describe('scaffoldZeroApp', () => {
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
-  });
+  }, OUTSIDE_TREE_STARTUP_TIMEOUT_MS);
 
   test('rejects non-empty target directories unless force is enabled', async () => {
     const rootDir = await createTempRoot();

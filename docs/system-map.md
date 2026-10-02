@@ -541,7 +541,10 @@ safety sweep and restart fallback.
 | `src/components/data-table/use-data-table.ts` | `useDataTable()` — TanStack Table wrapper |
 | `src/components/data-table/data-table-source.ts` | `useDataTableSource()` — static/full-sync/lazy data-source resolver |
 | `src/components/data-table/data-table-column-header.tsx` | Sortable/filterable column headers |
-| `src/components/data-table/data-table-toolbar.tsx` | Search, generated filters, column visibility, and export toolbar |
+| `src/components/data-table/data-table-search.tsx` | Compact, table-only animated search with accessible keyboard and reduced-motion behavior |
+| `src/components/data-table/data-table-column-filter.tsx` | Schema-aware client-side column-filter controls |
+| `src/components/data-table/data-table-toolbar.tsx` | Responsive search/filter control plane with selection-aware `controls`, `actions`, and `supplemental` slots, column visibility, and export |
+| `src/components/data-table/data-table-export.ts` | CSV export projection and download helper |
 | `src/components/data-table/data-table-pagination.tsx` | Pagination controls |
 | `src/components/data-table/data-table-row-actions.tsx` | Row action dropdown |
 | `src/components/data-table/editable-cell.tsx` | Inline cell editing |
@@ -560,6 +563,7 @@ safety sweep and restart fallback.
 | `src/components/text-effects/text-generate-effect.tsx` | Public word-by-word text reveal component |
 | `src/components/text-effects/typewriter-effect.tsx` | Public segmented typewriter text effect |
 | `src/components/text-effects/flip-words.tsx` | Public rotating inline word effect |
+| `src/components/streaming-text/streaming-text.tsx` | Accessible static, replayed, and live string-stream renderer for AI/agent output |
 | `src/components/faq/faq.tsx` | Public FAQ accordion with optional generated answer text |
 | `src/components/expandable-card/expandable-card.tsx` | Public shared-layout expandable card gallery |
 | `src/components/bento-grid/bento-grid.tsx` | Public bento grid layout, item, and skeleton components |
@@ -567,6 +571,15 @@ safety sweep and restart fallback.
 | `src/components/master-detail/master-detail-page.tsx` | `<MasterDetailView>` / `<MasterDetailPage>` — list + detail organism |
 | `src/components/master-detail/use-master-detail-state.ts` | Live data and selected-row state for master-detail views |
 | `src/components/master-detail/master-detail-selection.ts` | Pure primary-key-aware selection resolution |
+
+`DataTableView` exposes the toolbar through `searchable`, `toolbarLabel`, and
+`toolbarSlots`; CrudPage and MasterDetail wrappers forward slots as
+`tableToolbarSlots` and the accessible label as `tableToolbarLabel`. Toolbar
+filters are TanStack/client filters over resolved rows. Discrete, numeric, and
+date controls match exactly, text controls use contains matching, and
+multi-value controls match an included value. Lazy `filters`/`source.filters`
+remain `/api/data` inputs and are owned by the source layer rather than the
+toolbar.
 
 ---
 

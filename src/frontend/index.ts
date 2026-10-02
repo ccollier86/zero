@@ -285,6 +285,7 @@ export { DataTable, DataTableView } from '../components/data-table';
 export { useDataTable, useDataTableSource, buildDataTableLazyQuery } from '../components/data-table';
 export { DataTableColumnHeader } from '../components/data-table';
 export { DataTableToolbar } from '../components/data-table';
+export { DataTableSearch } from '../components/data-table';
 export { DataTablePagination } from '../components/data-table';
 export { DataTableRowActions } from '../components/data-table';
 export type {
@@ -295,9 +296,15 @@ export type {
   DataTableFilterValue,
   DataTableInitialState,
   DataTableProps,
+  DataTableSearchOptions,
+  DataTableSearchProps,
   DataTableSource,
   DataTableSourceActions,
   DataTableSourceState,
+  DataTableToolbarContext,
+  DataTableToolbarProps,
+  DataTableToolbarSlot,
+  DataTableToolbarSlots,
   RowAction,
   UseDataTableOptions,
   UseDataTableReturn,
@@ -377,6 +384,12 @@ export type {
   TypewriterEffectProps,
   TypewriterWord,
 } from '../components/text-effects';
+export { StreamingText } from '../components/streaming-text';
+export type {
+  StreamSource,
+  StreamingTextProps,
+  StreamingTextStatus,
+} from '../components/streaming-text';
 export { Faq } from '../components/faq';
 export type { FaqItem, FaqProps } from '../components/faq';
 export { ExpandableCards } from '../components/expandable-card';
@@ -465,6 +478,18 @@ export {
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
 } from '../components/dropdown-menu';
+export {
+  Popover,
+  PopoverClose,
+  PopoverContent,
+  PopoverTrigger,
+} from '../components/popover';
+export type {
+  PopoverCloseProps,
+  PopoverContentProps,
+  PopoverProps,
+  PopoverTriggerProps,
+} from '../components/popover';
 export {
   Collapsible,
   CollapsibleTrigger,
