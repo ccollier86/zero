@@ -236,33 +236,42 @@ with `PDF_STORAGE_UNAVAILABLE` when storage is not mounted. A custom
 
 ## Workflows And Jobs
 
-PDF uses the same process-wide service in workflow handlers and scheduled jobs:
+PDF uses the same process-wide service in workflow activities and scheduled
+jobs. Register this activity inside `AppConfig.workflows.register(registry)`:
 
 ```ts
 import { requirePdfService } from '@zero/framework/pdf';
-import { getWorkflowRegistry } from '@zero/framework/workflows';
 
-getWorkflowRegistry()?.registerHandler('generate-consent-pdf', async (ctx) => {
-  const input = ctx.input as { intakeId: string; driveId: string; html: string };
-  const result = await requirePdfService().renderToStorage(
-    { html: input.html, css: '@page { size: Letter; margin: 0.5in; }' },
-    {
-      driveId: input.driveId,
-      path: `/intakes/${input.intakeId}/consent.pdf`,
-      metadata: { intakeId: input.intakeId },
-    }
-  );
+registry.registerActivity({
+  name: 'pdf.generate-consent',
+  version: '1',
+  handler: async (ctx) => {
+    ctx.signal?.throwIfAborted();
+    const input = ctx.input as { intakeId: string; driveId: string; html: string };
+    const result = await requirePdfService().renderToStorage(
+      { html: input.html, css: '@page { size: Letter; margin: 0.5in; }' },
+      {
+        driveId: input.driveId,
+        path: `/intakes/${input.intakeId}/consent.pdf`,
+        metadata: { intakeId: input.intakeId },
+      }
+    );
 
-  return {
-    objectId: result.file.id,
-    path: result.file.path,
-    size: result.size,
-  };
+    return {
+      objectId: result.file.id,
+      path: result.file.path,
+      size: result.size,
+    };
+  },
 });
 ```
 
 Return storage metadata from durable workflow steps, not raw `Uint8Array`
-bytes. This keeps workflow state small and JSON-safe.
+bytes. This keeps workflow state small and JSON-safe. A workflow may be
+re-driven after a crash, so use a deterministic object path and an explicit
+overwrite/deduplication policy when duplicate rendering would be unsafe.
+See [Durable Workflows](./workflows.md) for registration timing, cancellation,
+deadlines, retries, and recovery semantics.
 
 ## Resource Security
 

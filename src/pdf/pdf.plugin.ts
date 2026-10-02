@@ -35,22 +35,26 @@ export interface PdfPluginConfig extends PdfServiceOptions {
 export function createPdfPlugin(options: PdfPluginConfig) {
   const service = options.service ?? new PdfService(options.config, options);
   const owner = {};
-  const registration = pdfProviders.register(owner, () => service);
+  let started = false;
+  const registration = pdfProviders.register(owner, () => started ? service : null);
   options.runtime?.set(ZERO_PDF_SERVICE, service);
   options.onServiceCreated?.(service);
-  const cleanup = async () => {
+  let cleanupPromise: Promise<void> | null = null;
+  const cleanup = (): Promise<void> => cleanupPromise ??= (async () => {
     try {
       await service.close();
     } finally {
+      started = false;
       options.runtime?.clear(ZERO_PDF_SERVICE, service);
       registration.unregister();
     }
-  };
+  })();
   options.runtime?.addCleanup(cleanup);
 
   return new Elysia({ name: 'zero-platform-pdf' })
     .decorate('pdf', service)
     .onStart(() => {
+      started = true;
       emitPlatformCode(OBS_CODES.PDF_CONFIGURED, {
         metadata: {
           renderer: service.status().renderer,

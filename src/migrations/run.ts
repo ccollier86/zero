@@ -1,150 +1,270 @@
 #!/usr/bin/env bun
 /**
- * migrations/run.ts — Standalone CLI migration runner.
+ * Standalone migration CLI.
  *
- * Usage:
- *   bun run src/migrations/run.ts                    # apply all pending
- *   bun run src/migrations/run.ts --status           # show migration status
- *   bun run src/migrations/run.ts --to 003           # apply up to version 003
- *   bun run src/migrations/run.ts --down-to 002      # roll back to version 002
- *   bun run src/migrations/run.ts --doctor --schema ./app/lib/schemas.ts
- *   bun run src/migrations/run.ts --plan --schema ./app/lib/schemas.ts
- *   bun run src/migrations/run.ts --checkpoint       # just WAL checkpoint, no migrations
- *   bun run src/migrations/run.ts --db ./data/app.db # custom db path
- *
- * Exit codes:
- *   0 — success (or nothing to do)
- *   1 — migration failed
+ * Managed migrations target Zero's separated system database. Application
+ * schema doctor/plan commands are explicit inspection operations and never
+ * create platform migration state in app or Fabric databases.
  */
 
+import { Database } from 'bun:sqlite';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { inspectDatabaseSchema } from './schema-inspector';
+import {
+  resolveMigrationCliTarget,
+  type MigrationCliTarget,
+} from './migration-cli-target';
 import { createMigrationPlan, renderMigrationPlan } from './migration-planner';
-import { loadDeclaredTables } from './schema-loader';
-import { runMigrationDoctor } from './migration-doctor';
+import {
+  runMigrationDoctor,
+  runSchemaDoctor,
+  type DoctorReport,
+} from './migration-doctor';
 import { Migrator } from './migrator';
+import { inspectDatabaseSchema } from './schema-inspector';
+import { loadDeclaredTables } from './schema-loader';
 import { migrations } from './index';
 
-// ─── Parse CLI args ──────────────────────────────────────────────────────
-
-const args = process.argv.slice(2);
-
-function getArg(flag: string): string | null {
-  const idx = args.indexOf(flag);
-  if (idx === -1) return null;
-  return args[idx + 1] ?? null;
+interface CliOptions {
+  showStatus: boolean;
+  checkpointOnly: boolean;
+  doctor: boolean;
+  plan: boolean;
+  strict: boolean;
+  allowDestructive: boolean;
+  allowDestructiveDown: boolean;
+  createBackups: boolean;
+  writePlan: boolean;
+  help: boolean;
+  toVersion?: string;
+  downToVersion?: string;
+  explicitDbPath?: string;
+  schemaPath?: string;
+  backupDir: string;
+  planVersion: string;
+  planDescription: string;
+  planOutDir: string;
 }
 
-const showStatus = args.includes('--status');
-const checkpointOnly = args.includes('--checkpoint');
-const doctor = args.includes('--doctor');
-const plan = args.includes('--plan');
-const strict = args.includes('--strict');
-const allowDestructive = args.includes('--allow-destructive');
-const allowDestructiveDown = args.includes('--allow-destructive-down');
-const createBackups = !args.includes('--no-backup');
-const writePlan = args.includes('--write');
-const toVersion = getArg('--to');
-const downToVersion = getArg('--down-to');
-const dbPath = getArg('--db') ?? process.env.DATABASE_PATH ?? './data/platform.db';
-const schemaPath = getArg('--schema');
-const backupDir = getArg('--backup-dir') ?? './data/backups';
-const planVersion = getArg('--version') ?? nextDraftVersion();
-const planDescription = getArg('--name') ?? 'schema drift plan';
-const planOutDir = getArg('--out') ?? './src/migrations/definitions';
-
-// ─── Run ─────────────────────────────────────────────────────────────────
-
-console.log(`[migrator] Database: ${dbPath}`);
-console.log(`[migrator] ${migrations.length} migration(s) registered`);
-
-const migrator = new Migrator({
-  dbPath,
-  migrations,
-  allowDestructive,
-  allowDestructiveDown,
-  createBackups,
-  backupDir,
-  log: console.log,
-});
-
 try {
-  if (checkpointOnly) {
-    console.log('[migrator] Running WAL checkpoint only...');
-    migrator.checkpoint();
-    console.log('[migrator] Done.');
-  } else if (showStatus) {
-    const statuses = migrator.status();
-    console.log('');
-    console.log('  Version  │ Status          │ Safety       │ Down │ Checksum │ Description');
-    console.log('  ─────────┼─────────────────┼──────────────┼──────┼──────────┼──────────────────────────────────');
-    for (const s of statuses) {
-      const status = s.lastStatus === 'failed'
-        ? `${s.applied ? 'applied' : 'pending'}+failed`
-        : s.applied
-          ? `applied${s.durationMs != null ? ` ${s.durationMs}ms` : ''}`
-          : (s.lastStatus ?? 'pending');
-      const checksum = s.checksumMatches === null ? '-' : s.checksumMatches ? 'ok' : 'changed';
-      console.log(
-        `  ${s.version.padEnd(8)} │ ${status.padEnd(15)} │ ${s.safety.padEnd(12)} │ ${s.hasDown ? 'yes ' : 'no  '} │ ${checksum.padEnd(8)} │ ${s.description}`
-      );
-    }
-    console.log('');
-  } else if (doctor) {
-    const declaredTables = schemaPath ? await loadDeclaredTables(schemaPath) : undefined;
-    const report = runMigrationDoctor({
-      db: migrator.database,
-      migrations,
-      declaredTables,
-      strict,
-    });
+  await run(process.argv.slice(2));
+} catch (error) {
+  console.error('[migrator] Fatal error:', error);
+  process.exitCode = 1;
+}
 
-    printDoctorReport(report);
-    if (!report.ok) process.exitCode = 1;
-  } else if (plan) {
-    if (!schemaPath) {
-      throw new Error('[migrator] --plan requires --schema <module>');
+async function run(args: readonly string[]): Promise<void> {
+  const options = parseOptions(args);
+  if (options.help) {
+    printUsage();
+    return;
+  }
+  validateOptions(options);
+
+  const schemaInspection = options.plan || (options.doctor && options.schemaPath !== undefined);
+  const target = resolveMigrationCliTarget({
+    explicitDbPath: options.explicitDbPath,
+    systemDbPath: process.env.SYSTEM_DB_PATH,
+    schemaInspection,
+  });
+  printTarget(target);
+
+  if (schemaInspection) {
+    await runSchemaInspection(options, target.path);
+    return;
+  }
+
+  runSystemMigrationCommand(options, target.path);
+}
+
+function runSystemMigrationCommand(options: CliOptions, dbPath: string): void {
+  console.log(`[migrator] ${migrations.length} system migration(s) registered`);
+  const migrator = new Migrator({
+    dbPath,
+    migrations,
+    allowDestructive: options.allowDestructive,
+    allowDestructiveDown: options.allowDestructiveDown,
+    createBackups: options.createBackups,
+    backupDir: options.backupDir,
+    log: console.log,
+  });
+
+  try {
+    if (options.checkpointOnly) {
+      console.log('[migrator] Running system database WAL checkpoint only...');
+      migrator.checkpoint();
+      console.log('[migrator] Done.');
+      return;
+    }
+    if (options.showStatus) {
+      printStatus(migrator.status());
+      return;
+    }
+    if (options.doctor) {
+      const report = runMigrationDoctor({
+        db: migrator.database,
+        migrations,
+        strict: options.strict,
+      });
+      printDoctorReport(report, 'System Migration Doctor');
+      if (!report.ok) process.exitCode = 1;
+      return;
+    }
+    if (options.downToVersion !== undefined) {
+      migrator.rollback(options.downToVersion);
+      return;
     }
 
-    const declaredTables = await loadDeclaredTables(schemaPath);
-    const actual = inspectDatabaseSchema(migrator.database, { includeInternal: false });
+    const applied = migrator.run(options.toVersion);
+    if (applied.length === 0) console.log('[migrator] System database is up to date.');
+  } finally {
+    migrator.dispose();
+  }
+}
+
+async function runSchemaInspection(options: CliOptions, dbPath: string): Promise<void> {
+  const schemaPath = options.schemaPath!;
+  const declaredTables = await loadDeclaredTables(schemaPath);
+  // Schema inspection is a read-only boundary. Opening readonly also makes a
+  // mistyped/nonexistent app path fail instead of silently creating a new DB.
+  const database = new Database(dbPath, { readonly: true, strict: true });
+
+  try {
+    if (options.doctor) {
+      const report = runSchemaDoctor({
+        db: database,
+        declaredTables,
+        strict: options.strict,
+      });
+      printDoctorReport(report, 'Application Schema Doctor');
+      if (!report.ok) process.exitCode = 1;
+      return;
+    }
+
+    const actual = inspectDatabaseSchema(database, { includeInternal: false });
     const migrationPlan = createMigrationPlan(declaredTables, actual);
     printPlan(migrationPlan);
 
-    if (writePlan) {
-      mkdirSync(planOutDir, { recursive: true });
-      const outPath = join(planOutDir, `${planVersion}_${slugify(planDescription)}.ts`);
+    if (options.writePlan) {
+      mkdirSync(options.planOutDir, { recursive: true });
+      const outPath = join(
+        options.planOutDir,
+        `${options.planVersion}_${slugify(options.planDescription)}.ts`,
+      );
       writeFileSync(outPath, renderMigrationPlan({
-        version: planVersion,
-        description: planDescription,
+        version: options.planVersion,
+        description: options.planDescription,
         plan: migrationPlan,
       }));
       console.log(`[migrator] Draft migration written: ${outPath}`);
-      console.log('[migrator] Review it, then add it to src/migrations/index.ts.');
+      console.log('[migrator] Review it and route it through the app/Fabric provisioning path.');
     }
-  } else if (downToVersion !== null) {
-    migrator.rollback(downToVersion);
-  } else {
-    const applied = migrator.run(toVersion ?? undefined);
-    if (applied.length === 0) {
-      console.log('[migrator] Database is up to date.');
-    }
+  } finally {
+    database.close();
   }
-} catch (err) {
-  console.error('[migrator] Fatal error:', err);
-  process.exit(1);
-} finally {
-  migrator.dispose();
 }
 
-function printDoctorReport(report: ReturnType<typeof runMigrationDoctor>): void {
+function parseOptions(args: readonly string[]): CliOptions {
+  return {
+    showStatus: args.includes('--status'),
+    checkpointOnly: args.includes('--checkpoint'),
+    doctor: args.includes('--doctor'),
+    plan: args.includes('--plan'),
+    strict: args.includes('--strict'),
+    allowDestructive: args.includes('--allow-destructive'),
+    allowDestructiveDown: args.includes('--allow-destructive-down'),
+    createBackups: !args.includes('--no-backup'),
+    writePlan: args.includes('--write'),
+    help: args.includes('--help') || args.includes('-h'),
+    toVersion: getArg(args, '--to'),
+    downToVersion: getArg(args, '--down-to'),
+    explicitDbPath: getArg(args, '--db'),
+    schemaPath: getArg(args, '--schema'),
+    backupDir: getArg(args, '--backup-dir') ?? './data/backups',
+    planVersion: getArg(args, '--version') ?? nextDraftVersion(),
+    planDescription: getArg(args, '--name') ?? 'schema drift plan',
+    planOutDir: getArg(args, '--out') ?? './src/migrations/definitions',
+  };
+}
+
+function validateOptions(options: CliOptions): void {
+  const modes = [
+    options.showStatus,
+    options.checkpointOnly,
+    options.doctor,
+    options.plan,
+    options.downToVersion !== undefined,
+  ].filter(Boolean).length;
+  if (modes > 1) {
+    throw new Error(
+      '[migrator] Choose one of --status, --checkpoint, --doctor, --plan, or --down-to.',
+    );
+  }
+  if (options.toVersion !== undefined && options.downToVersion !== undefined) {
+    throw new Error('[migrator] --to and --down-to cannot be combined.');
+  }
+  if (options.toVersion !== undefined && modes > 0) {
+    throw new Error('[migrator] --to is supported only by the default system migration command.');
+  }
+  if (options.plan && !options.schemaPath) {
+    throw new Error('[migrator] --plan requires --schema <module>.');
+  }
+  if (options.schemaPath && !options.plan && !options.doctor) {
+    throw new Error('[migrator] --schema is supported only with --plan or --doctor.');
+  }
+  if (options.writePlan && !options.plan) {
+    throw new Error('[migrator] --write is supported only with --plan.');
+  }
+}
+
+function getArg(args: readonly string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  if (index === -1) return undefined;
+  const value = args[index + 1];
+  if (!value || value.startsWith('--')) {
+    throw new Error(`[migrator] ${flag} requires a value.`);
+  }
+  return value;
+}
+
+function printTarget(target: MigrationCliTarget): void {
+  const label = target.plane === 'system'
+    ? 'System database'
+    : 'Application schema database';
+  console.log(`[migrator] ${label}: ${target.path} (${target.source})`);
+}
+
+function printStatus(statuses: ReturnType<Migrator['status']>): void {
   console.log('');
-  console.log('Migration Doctor');
-  console.log('────────────────');
+  console.log('  Version  │ Status          │ Safety       │ Down │ Checksum │ Description');
+  console.log('  ─────────┼─────────────────┼──────────────┼──────┼──────────┼──────────────────────────────────');
+  for (const statusRow of statuses) {
+    const status = statusRow.lastStatus === 'failed'
+      ? `${statusRow.applied ? 'applied' : 'pending'}+failed`
+      : statusRow.applied
+        ? `applied${statusRow.durationMs != null ? ` ${statusRow.durationMs}ms` : ''}`
+        : (statusRow.lastStatus ?? 'pending');
+    const checksum = statusRow.checksumMatches === null
+      ? '-'
+      : statusRow.checksumMatches
+        ? 'ok'
+        : 'changed';
+    console.log(
+      `  ${statusRow.version.padEnd(8)} │ ${status.padEnd(15)} │ ` +
+      `${statusRow.safety.padEnd(12)} │ ${statusRow.hasDown ? 'yes ' : 'no  '} │ ` +
+      `${checksum.padEnd(8)} │ ${statusRow.description}`,
+    );
+  }
+  console.log('');
+}
+
+function printDoctorReport(report: DoctorReport, title: string): void {
+  console.log('');
+  console.log(title);
+  console.log('─'.repeat(title.length));
 
   if (report.findings.length === 0 && report.schemaIssues.length === 0) {
-    console.log('✓ No migration issues found.');
+    console.log('✓ No issues found.');
     return;
   }
 
@@ -160,8 +280,11 @@ function printDoctorReport(report: ReturnType<typeof runMigrationDoctor>): void 
 
 function printPlan(migrationPlan: ReturnType<typeof createMigrationPlan>): void {
   console.log('');
-  console.log(`Migration Plan (${migrationPlan.safety}${migrationPlan.needsManualReview ? ', review required' : ''})`);
-  console.log('────────────────');
+  console.log(
+    `Application Schema Plan (${migrationPlan.safety}` +
+    `${migrationPlan.needsManualReview ? ', review required' : ''})`,
+  );
+  console.log('───────────────────────');
 
   for (const issue of migrationPlan.issues) {
     console.log(`${mark(issue.severity)} ${issue.kind}: ${issue.message}`);
@@ -177,6 +300,17 @@ function printPlan(migrationPlan: ReturnType<typeof createMigrationPlan>): void 
     console.log(`-- ${statement.safety}: ${statement.reason}`);
     console.log(`${statement.sql};`);
   }
+}
+
+function printUsage(): void {
+  console.log('Usage:');
+  console.log('  zero migrate [--status|--checkpoint|--doctor] [--db <system-db>]');
+  console.log('  zero migrate --plan --schema <module> --db <application-db>');
+  console.log('  zero migrate --doctor --schema <module> --db <application-db>');
+  console.log('');
+  console.log('Managed migrations default to SYSTEM_DB_PATH, then ./data/zero.system.db.');
+  console.log('--db is an intentional exact target override.');
+  console.log('Schema doctor/plan are app-database inspections and never install system migrations.');
 }
 
 function mark(severity: 'info' | 'warning' | 'error'): string {

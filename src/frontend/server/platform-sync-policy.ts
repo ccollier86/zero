@@ -38,11 +38,25 @@ import {
   notificationAudienceRoles,
 } from '../../notifications/notification-access';
 import { canManageWorkflowScope } from '../../workflows/workflow-access';
+import {
+  toPublicWorkflowEvent,
+  toPublicWorkflowInstance,
+  toPublicWorkflowInteraction,
+  toPublicWorkflowStep,
+} from '../../workflows/workflow-public-record';
+import {
+  WORKFLOW_SERVER_TABLE_NAMES,
+  WORKFLOW_TABLES,
+} from '../../workflows/types';
+
+const WORKFLOW_PRIVATE_TABLES = [...WORKFLOW_SERVER_TABLE_NAMES].filter(
+  (table) => !Object.hasOwn(WORKFLOW_TABLES, table),
+);
 
 /** Framework tables that must never be exposed through generic Sync reads. */
 export const PLATFORM_SYNC_PRIVATE_TABLES = new Set([
   ...IDENTITY_PROJECTION_TARGET_TABLES,
-  'workflow_definitions',
+  ...WORKFLOW_PRIVATE_TABLES,
   'storage_drives',
   'storage_objects',
 ]);
@@ -55,6 +69,7 @@ const PLATFORM_SYNC_SCOPED_TABLES = new Set([
   'workflow_instances',
   'workflow_steps',
   'workflow_events',
+  'workflow_interactions',
 ]);
 
 export interface PlatformSyncPolicyOptions {
@@ -215,7 +230,17 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
         continue;
       }
 
-      if (!auth || !access || !db) {
+      // A delegated app policy may retain a historical framework table name
+      // after that framework service is disabled. Reserved platform tables
+      // are readable only when the active system data plane actually owns the
+      // table; otherwise projector construction and child-row lookups would
+      // run against an unrelated or nonexistent app table.
+      if (!db?.hasTable(table)) {
+        platformFingerprint.push([table, 'unavailable']);
+        continue;
+      }
+
+      if (!auth || !access) {
         platformFingerprint.push([table, 'unauthenticated']);
         continue;
       }
@@ -264,7 +289,18 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
         table,
         delegateFilter ? andFilters(delegateFilter, platform.filter) : platform.filter,
       );
-      if (delegateProjector) rowProjectors.set(table, delegateProjector);
+      const platformProjector = workflowProjector(table, db);
+      const delegateFilterProjector = delegateFilter?.project
+        ? { project: (row: Row) => delegateFilter.project!(row) }
+        : undefined;
+      const projector = composeProjectors(
+        table,
+        db,
+        platformProjector,
+        delegateFilterProjector,
+        delegateProjector,
+      );
+      if (projector) rowProjectors.set(table, projector);
       platformFingerprint.push([table, platform.fingerprint]);
       if (table === 'rooms' || table === 'room_members') {
         tracksRoomMembershipAuthority = true;
@@ -442,7 +478,8 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
       }
 
       case 'workflow_steps':
-      case 'workflow_events': {
+      case 'workflow_events':
+      case 'workflow_interactions': {
         // WorkflowService assigns started_by at creation and exposes no
         // ownership-transfer operation; direct Sync writes to every workflow
         // table are platform-protected. That invariant keeps the comparable
@@ -451,13 +488,13 @@ export class PlatformSyncPolicyService implements SyncResourcePolicyAdapter {
         return {
           filter: rowFilter((row) =>
             serviceDataScopeMatchesTenant(dataScope, row.tenant_id)
-            && (manageAll
-              || workflowBelongsToUser(
-                db,
-                row.instance_id,
-                auth.userId,
-                dataScope,
-              ))),
+            && workflowParentVisible(
+              db,
+              row.instance_id,
+              auth.userId,
+              dataScope,
+              manageAll,
+            )),
           fingerprint: manageAll
             ? `workflow-child:${serviceDataScopeKey(dataScope)}:scope-manager:${access.authorization?.revision ?? 'legacy'}`
             : `workflow-child:${serviceDataScopeKey(dataScope)}:owner:${auth.userId}`,
@@ -580,16 +617,90 @@ function createRoomMembershipCache(
   return cache;
 }
 
-function workflowBelongsToUser(
+function workflowParentVisible(
   db: ReactiveDB,
   instanceId: unknown,
   userId: string,
   scope: ServiceDataScope,
+  manageAll: boolean,
 ): boolean {
   if (typeof instanceId !== 'string' || !db.hasTable('workflow_instances')) return false;
   const instance = db.get('workflow_instances', instanceId);
-  return instance?.started_by === userId
-    && serviceDataScopeMatchesTenant(scope, instance.tenant_id);
+  if (!instance || !serviceDataScopeMatchesTenant(scope, instance.tenant_id)) return false;
+  return manageAll || instance.started_by === userId;
+}
+
+function workflowProjector(
+  table: string,
+  db: ReactiveDB,
+): SyncRowProjector | undefined {
+  if (table === 'workflow_instances') {
+    return { project: (row) => toPublicWorkflowInstance(row) };
+  }
+  if (table === 'workflow_steps') {
+    return {
+      project(row) {
+        const instance = workflowInstance(db, row.instance_id);
+        return toPublicWorkflowStep(
+          row,
+          instance?.steps_json,
+          instance,
+        );
+      },
+    };
+  }
+  if (table === 'workflow_events') {
+    return {
+      project(row) {
+        const instance = workflowInstance(db, row.instance_id);
+        return toPublicWorkflowEvent(row, instance);
+      },
+    };
+  }
+  if (table === 'workflow_interactions') {
+    return { project: (row) => toPublicWorkflowInteraction(row) };
+  }
+  return undefined;
+}
+
+function workflowInstance(
+  db: ReactiveDB,
+  instanceId: unknown,
+): Row | null {
+  return typeof instanceId === 'string' && db.hasTable('workflow_instances')
+    ? db.get('workflow_instances', instanceId)
+    : null;
+}
+
+function composeProjectors(
+  table: string,
+  db: ReactiveDB,
+  ...projectors: Array<SyncRowProjector | undefined>
+): SyncRowProjector | undefined {
+  const active = projectors.filter(
+    (projector): projector is SyncRowProjector => projector !== undefined,
+  );
+  if (active.length === 0) return undefined;
+  const primaryKey = db.getPrimaryKey(table);
+  return {
+    project(row) {
+      const identity = row[primaryKey];
+      const projected = active.reduce(
+        (current, projector) => projector.project(current),
+        row,
+      );
+      if (!projected
+        || typeof projected !== 'object'
+        || Array.isArray(projected)
+        || !Object.hasOwn(projected, primaryKey)
+        || !Object.is(projected[primaryKey], identity)) {
+        throw new Error(
+          `ZERO_SYNC_ROW_PROJECTION_IDENTITY: projector changed or removed '${table}.${primaryKey}'`,
+        );
+      }
+      return projected;
+    },
+  };
 }
 
 function compareText(left: string, right: string): number {

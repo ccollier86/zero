@@ -268,6 +268,21 @@ describe('createClient auth configuration', () => {
     );
   });
 
+  test('registers only public workflow runtime tables in the browser SDK', () => {
+    const client = createClient({
+      url: 'http://localhost:3000',
+      tables,
+      auth: true,
+      autoConnect: false,
+    });
+
+    expect(() => client.collection('workflow_instances')).not.toThrow();
+    expect(() => client.collection('workflow_steps')).not.toThrow();
+    expect(() => client.collection('workflow_events')).not.toThrow();
+    expect(() => client.collection('workflow_definitions'))
+      .toThrow('Unknown table: workflow_definitions');
+  });
+
   test('defaults auth to disabled and gives clear auth-action errors', async () => {
     const client = createClient({
       url: 'http://localhost:3000',
@@ -335,6 +350,36 @@ describe('createClient auth configuration', () => {
     await client.logout();
 
     expect(client.isAuthenticated).toBe(false);
+    expect(todos.getAll()).toEqual({});
+  });
+
+  test('fences all authorization data before a read-authority refresh reconnects', async () => {
+    mockAuthFetch();
+    const client = createClient({
+      url: 'http://localhost:3000',
+      tables,
+      auth: true,
+    });
+    const internal = client as InternalClient;
+    await flushMicrotasks();
+    await client.login('alice', 'password');
+    await flushMicrotasks();
+
+    const todos = client.collection('todos');
+    todos.load([{ id: 'manager-row', title: 'Visible only to a manager' }]);
+    const before = internal._authorizationDataBoundary.revision;
+    const managerSocket = MockWebSocket.latest();
+
+    managerSocket.close(4001, 'Sync read authority changed');
+
+    expect(internal._authorizationDataBoundary.revision).toBe(before + 1);
+    expect(todos.getAll()).toEqual({});
+
+    for (let index = 0; index < 8; index += 1) await flushMicrotasks();
+    expect(JSON.parse(MockWebSocket.latest().sent[0]!)).toEqual({
+      type: 'sync.auth',
+      token: 'access-2',
+    });
     expect(todos.getAll()).toEqual({});
   });
 
@@ -450,6 +495,12 @@ function mockAuthFetch(requests?: string[]): void {
     }
     if (url.endsWith('/auth/logout')) {
       return Promise.resolve(Response.json({ ok: true }));
+    }
+    if (url.endsWith('/auth/refresh')) {
+      return Promise.resolve(Response.json({
+        accessToken: 'access-2',
+        refreshToken: 'refresh-2',
+      }));
     }
     if (url.endsWith('/auth/application/config')) {
       return Promise.resolve(Response.json({

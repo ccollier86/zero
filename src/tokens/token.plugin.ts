@@ -33,6 +33,7 @@ const tokenStoreProviders = new CompatibilityProviderRegistry<PlatformTokenStore
 const manualOwner = {};
 let manualServiceRegistration: ReturnType<typeof tokenServiceProviders.register> | null = null;
 let manualStoreRegistration: ReturnType<typeof tokenStoreProviders.register> | null = null;
+let manualService: PlatformTokenService | null = null;
 
 /** Platform token plugin options. */
 export interface PlatformTokenPluginConfig extends PlatformTokenServiceConfig {
@@ -63,17 +64,20 @@ export function configurePlatformTokens(config: PlatformTokenPluginConfig): Plat
   definePlatformTokenTables(config.db);
   const store = new PlatformTokenStore(config.db);
   const service = new PlatformTokenService(store, config, emitCode);
+  manualService = service;
   manualStoreRegistration = tokenStoreProviders.register(manualOwner, () => store);
   manualServiceRegistration = tokenServiceProviders.register(manualOwner, () => service);
   return service;
 }
 
-/** Reset the process-local platform token singleton. */
-export function resetPlatformTokens(): void {
+/** Reset the manually configured compatibility provider when ownership matches. */
+export function resetPlatformTokens(expected?: PlatformTokenService): void {
+  if (expected && manualService !== expected) return;
   manualServiceRegistration?.unregister();
   manualStoreRegistration?.unregister();
   manualServiceRegistration = null;
   manualStoreRegistration = null;
+  manualService = null;
 }
 
 /** Create the Elysia plugin that exposes `platformTokens` to route context. */

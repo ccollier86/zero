@@ -297,9 +297,90 @@ All notable Zero Platform changes are tracked here.
 - Added `zero pdf install` and `zero pdf status`, generated-app convenience
   scripts, Platform Doctor PDF checks, deployment configuration, real Chromium
   integration coverage, and comprehensive PDF documentation.
+- Added the versioned workflow graph engine. The code DSL and canonical
+  JSON-safe IR now support trusted versioned activities, persisted choices,
+  concurrent branches with deterministic joins, bounded keyed array fan-out,
+  channel-neutral human/external interactions, and ReactiveDB-backed private
+  scratch memory. Code and database definitions share append-only versions,
+  canonical fingerprints, mutable revision-fenced drafts, activation and
+  retirement, plus an administrator definition API guarded by the explicit
+  `databaseCallable` activity boundary.
+- Added real-time graph observability through safe owner/scope-manager-filtered
+  `workflow_steps`, `workflow_events`, and `workflow_interactions` projections.
+  React workflow hooks now expose all active nodes, ordered redacted events,
+  open waits, accurate parallel/input-wait flags, stable root-node progress,
+  separate fan-out/delivery progress, version-pinned starts, and idempotent
+  response submission whose privacy-safe result retains public validator
+  rejection codes/messages without returning response values. The scope-fenced
+  `useWorkflowTopology` hook loads a
+  run's immutable sanitized presentation topology once and reports current
+  transport failures through a stable frontend observability code. Definition
+  IR, memory, policies, every event payload, interaction bodies, and all
+  workflow instance/step inputs, outputs, and raw errors remain server-only.
+  The frozen
+  migration `030` adds graph/version/interaction state and conservatively
+  backfills compatible Zero 1.3 workflow history. Appended migration `031`
+  preserves that history while adding tenant-scoped interactions, per-scope
+  definition names, immutable parent scope, and non-cascading observable
+  workflow relations.
+- Hardened workflow Sync composition with a composite owner/manager plus
+  delegate read-authority fence. Delegate denials, predicates, projectors, and
+  validators remain authoritative; advanced-RBAC management resolution must
+  be synchronous, and stale or non-comparable filtered sockets fail closed
+  before final row delivery.
+- Bounded durable workflow execution state with a 1 MiB per-value limit, a
+  transactional 32 MiB per-run execution-value budget, per-interaction
+  submission count/byte limits, and per-run event inbox/retention count and
+  byte quotas. Paused graph runs buffer authenticated named events but reject
+  direct interaction submissions with retryable `WORKFLOW_DRAINING`, preventing
+  authorization or validation work from racing resume.
+- Bound delayed authenticated event responses to a private MAC-sealed Guardian
+  authority and exact actor snapshot, with live actor revalidation before
+  policy and commit. Added an explicit scope-checked system-event entry point;
+  legacy/unsealed events can no longer answer interactions.
+- Fenced custom interaction authority through the final response transaction.
+  Synchronous policies are reevaluated at commit, while asynchronous allows
+  must return a revision-aware lease with a synchronous commit assertion;
+  unfenced async allows fail closed as invalid configuration.
+- Sealed the complete durable event command/private envelope and made it
+  immutable. Event-delivered interaction responses now carry a trusted origin
+  and exact event foreign key; the public `event` channel/submission namespace
+  is reserved, released rows upgrade as untrusted external submissions, and
+  terminal/restart cleanup no longer infers runtime authority from public
+  strings.
+- Added migration `032` and a private durable workflow runtime generation
+  lease. One live service owns recovery and execution for each physical
+  workflow database; heartbeat expiry permits takeover, while exact-generation
+  commit fences reject late legacy, graph, fan-out, interaction, authority,
+  event/pause, and definition/draft writes from a former owner.
 
 ### Fixed
 
+- Rebuilt durable workflow execution around a strict sequential frontier and
+  crash-safe attempt fencing. Retries can no longer let later steps overtake
+  an unfinished predecessor; buffered events, claimed payloads, wait and retry
+  deadlines, pause duration, and idempotency identity now survive restart;
+  cancellation, pause, timeout, and late handler completion use first-winner
+  durable transitions. Startup registers application handlers before a
+  whole-set recovery preflight, publishes the ready service before recovered
+  work is dispatched, and fails closed on malformed state or missing live
+  handlers without partially normalizing stored runs. Workflow HTTP and Sync
+  reads are now owner-scoped, with manager access limited to the active
+  application/tenant service-data scope; executable topology
+  remains server-only, definition start/inspect access is declarative, and all
+  Sync writes to framework workflow tables are denied. Added stable workflow
+  error/observability codes, structured client `ApiError` handling, live React
+  run/progress actions, indexed repository queries, immutable ownership/parent
+  guards, deterministic restart/concurrency/lifecycle coverage, and complete
+  registration, recovery, authorization, hooks, and Zero 1.3 upgrade docs.
+- Hardened workflow composition boundaries: app Sync filter projections are
+  composed with Zero redaction across snapshot, catch-up, and live delivery and
+  fail closed if they change row identity; managed workflow observability
+  emitters reassert live authority immediately before sink writes.
+- Added a shared browser authorization-data revision for live same-scope policy
+  changes. Sync purges now cancel scoped HTTP work, clear cached authorization
+  and workflow topology, reject late responses, and mask official hooks until
+  replacement authority validates even when account and tenant IDs are stable.
 - Made KV same-key mutations genuinely atomic within one service instance.
   Compare-and-set, counters, and all limiter shapes now make their decision and
   commit under one per-key boundary, return the result produced by their own

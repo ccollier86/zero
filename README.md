@@ -234,6 +234,9 @@ apps. Start with the
   capabilities.
 - [PDF Rendering](./docs/pdf.md): secure Chromium HTML/CSS rendering, storage
   composition, runtime setup, limits, and adapter contracts.
+- [Durable Workflows](./docs/workflows.md): code DSL, canonical graph IR,
+  immutable code/database versions, trusted activities, memory, interactions,
+  recovery, and safe real-time React visualization data.
 - [Component Inventory](./docs/frontend/component-inventory.md): reusable UI,
   app shells, data organisms, frontend sections, and use-first rules.
 - [Frontend Router](./docs/frontend/router.md): layouts, route groups, auth

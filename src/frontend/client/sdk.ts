@@ -14,6 +14,10 @@ import { EphemeralClient } from '../../sync/client/ephemeral-client';
 import { createEphemeralStore, routeEphemeralMessage } from '../../sync/client/ephemeral-store';
 import type { EphemeralErrorMessage } from '../../sync/ephemeral-policy';
 import { AuthClient, createAuthDisabledError } from './auth-client';
+import {
+  AuthorizationDataBoundaryController,
+  type AuthorizationDataBoundarySource,
+} from './authorization-data-boundary';
 import type { AuthApiKeySdkSurface } from './auth-api-key-types';
 import type {
   AuthDomainOnboardingAdmissionResult,
@@ -728,6 +732,8 @@ export interface InternalClient extends Client {
   readonly ephemeral: EphemeralClient;
   /** @internal */
   readonly _syncClient: SyncClient;
+  /** @internal Shared same-scope authorization cache invalidation boundary. */
+  readonly _authorizationDataBoundary: AuthorizationDataBoundarySource;
 }
 
 // ─── Singleton Guard ───────────────────────────────────────────────────────
@@ -860,6 +866,7 @@ export function createClient(config: ClientConfig): Client {
   let stateClient: StateClient | null = null;
   let ephemeralClient!: EphemeralClient;
   let syncStarted = autoConnect;
+  const authorizationDataBoundary = new AuthorizationDataBoundaryController();
 
   function cancelAuthorizationScopeRequests(): void {
     const cancellations = [...authorizationScopeRequestCancellations.values()]
@@ -871,6 +878,18 @@ export function createClient(config: ClientConfig): Client {
       } catch {
         // Scope invalidation must continue even if one transport cleanup fails.
       }
+    }
+  }
+
+  function invalidateAuthorizationData(): void {
+    authorizationScopeEpoch += 1;
+    cancelAuthorizationScopeRequests();
+    try {
+      authClient?.invalidateAuthorization();
+    } finally {
+      // The transport-level cache fence must advance even if an optional UI
+      // authorization revalidation fails to start synchronously.
+      authorizationDataBoundary.invalidate();
     }
   }
 
@@ -1030,6 +1049,7 @@ export function createClient(config: ClientConfig): Client {
     onError,
     onAuthFailure: handleSyncAuthFailure,
     onReconnect,
+    onAuthorizationDataInvalidated: invalidateAuthorizationData,
     onMutationRejected,
     maxReconnectAttempts,
   });
@@ -1210,6 +1230,8 @@ export function createClient(config: ClientConfig): Client {
 
     /** The underlying SyncClient — exposed for SyncProvider wiring. */
     get _syncClient() { return syncClient; },
+    /** Shared cache revision for live same-scope authorization changes. */
+    get _authorizationDataBoundary() { return authorizationDataBoundary; },
 
     // ─── Typed API ─────────────────────────────────────────────────
     get api() { return api; },

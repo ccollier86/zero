@@ -67,6 +67,7 @@ import {
 const compatibilityRuntimes = new CompatibilityProviderRegistry<SyncPluginRuntimeState>(
   'Sync runtime',
 );
+const unstartedSyncRuntimes = new WeakMap<ReactiveDB, () => void>();
 
 /**
  * Get the ReactiveDB instance. Returns null if the sync plugin hasn't been
@@ -75,6 +76,16 @@ const compatibilityRuntimes = new CompatibilityProviderRegistry<SyncPluginRuntim
  */
 export function getSyncDB(): ReactiveDB | null {
   return compatibilityRuntimes.get()?.db ?? null;
+}
+
+/**
+ * Dispose a Sync runtime whose app failed during composition, before listen().
+ *
+ * Identity checking prevents a stale construction failure from tearing down a
+ * newer app's process-local runtime. Started apps remain owned by onStop.
+ */
+export function discardUnstartedSyncRuntime(expectedDB: ReactiveDB): void {
+  unstartedSyncRuntimes.get(expectedDB)?.();
 }
 
 /**
@@ -264,6 +275,17 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     unregisterCompatibilityRuntime: () => compatibilityRegistration.unregister(),
     reportSyncCode,
   });
+  const teardownLifecycle = (): readonly unknown[] => {
+    unstartedSyncRuntimes.delete(db);
+    return lifecycle.teardown();
+  };
+  unstartedSyncRuntimes.set(db, () => {
+    raiseSyncLifecycleCleanupFailures(
+      teardownLifecycle(),
+      '[sync] Unstarted runtime cleanup failed.',
+    );
+  });
+  cleanupOnCompositionFailure.push(() => unstartedSyncRuntimes.delete(db));
 
   if (config.runtime) {
     config.runtime.set(ZERO_SYNC_DB, db);
@@ -276,7 +298,7 @@ export function createSyncPlugin(config: SyncPluginConfig) {
     }
     const removeRuntimeCleanup = config.runtime.addCleanup(() => {
       raiseSyncLifecycleCleanupFailures(
-        lifecycle.teardown(),
+        teardownLifecycle(),
         '[sync] Runtime cleanup failed.',
       );
     });
@@ -291,9 +313,15 @@ export function createSyncPlugin(config: SyncPluginConfig) {
   const plugin = new Elysia({ name: 'sync' })
 
     // ─── Lifecycle ──────────────────────────────────────
-    .onStart((context) => lifecycle.start(context))
+    .onStart((context) => {
+      unstartedSyncRuntimes.delete(db);
+      lifecycle.start(context);
+    })
 
-    .onStop(() => lifecycle.stop())
+    .onStop(() => {
+      unstartedSyncRuntimes.delete(db);
+      lifecycle.stop();
+    })
 
     // ─── Derive: expose syncDB globally ─────────────────
     .derive({ as: 'global' }, () => ({

@@ -24,16 +24,15 @@ export interface ProjectedSyncChange {
   ts: number;
 }
 
-/** Return only rows visible through an optional row filter. */
+/** Return only visible rows, applying wire projections after authorization. */
 export function filterSyncRows(
   rows: readonly Row[],
   filter?: SyncRowFilter,
   projector?: SyncRowProjector,
 ): Row[] {
   const filtered = filter ? rows.filter((row) => filter.matches(row)) : rows;
-  return projector
-    ? filtered.map((row) => projector.project(row))
-    : [...filtered];
+  if (!filter?.project && !projector) return [...filtered];
+  return filtered.map((row) => projectRow(row, filter, projector));
 }
 
 /**
@@ -54,7 +53,7 @@ export function projectSyncChange(
       table: change.table,
       op: change.op,
       rowId: change.rowId,
-      row: change.row && projector ? projector.project(change.row) : change.row,
+      row: change.row ? projectRow(change.row, undefined, projector) : change.row,
       ts: change.ts,
     };
   }
@@ -67,7 +66,7 @@ export function projectSyncChange(
     return toProjectedChange(
       change,
       'INSERT',
-      change.row && projector ? projector.project(change.row) : change.row,
+      projectNullableRow(change.row, filter, projector),
     );
   }
 
@@ -76,7 +75,7 @@ export function projectSyncChange(
       return toProjectedChange(
         change,
         'UPDATE',
-        change.row && projector ? projector.project(change.row) : change.row,
+        projectNullableRow(change.row, filter, projector),
       );
     }
     if (previousMatches) return toProjectedChange(change, 'DELETE', null);
@@ -85,6 +84,23 @@ export function projectSyncChange(
 
   if (!previousMatches) return null;
   return toProjectedChange(change, 'DELETE', null);
+}
+
+function projectNullableRow(
+  row: Row | null,
+  filter?: SyncRowFilter,
+  projector?: SyncRowProjector,
+): Row | null {
+  return row ? projectRow(row, filter, projector) : null;
+}
+
+function projectRow(
+  row: Row,
+  filter?: SyncRowFilter,
+  projector?: SyncRowProjector,
+): Row {
+  const filteredProjection = filter?.project?.(row) ?? row;
+  return projector?.project(filteredProjection) ?? filteredProjection;
 }
 
 function toProjectedChange(

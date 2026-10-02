@@ -130,6 +130,15 @@ the roadmap. For this unreleased candidate:
   and retained-assignment role reactivation fail closed. Registry
   initialization/updates are system-audited and stale runtimes reject the new
   authority revision until restarted. The platform lifecycle UI is implemented;
+  Migration `028` records idempotent administration user provisioning,
+  migration `029` adds Guardian's hash-only API-key authority, migration `030`
+  remains the frozen historical workflow graph release, and migration `031`
+  upgrades that graph storage to tenant-safe interactions, per-scope definition
+  names, immutable parent scope, and non-cascading observable relations.
+  Migration `032` adds the private durable workflow-runtime owner generation
+  used to exclude overlapping recovery and fence expired owners. The
+  managed registry belongs only to `systemDb`; application and Fabric tenant
+  schemas use their own explicit provisioning path.
   break-glass, tenant-custom roles, broader populated-app discovery/migration
   tooling beyond exact pre-024 administration reconciliation,
   verified-domain autojoin/aliases/direct

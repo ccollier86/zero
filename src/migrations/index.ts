@@ -40,6 +40,9 @@ import { migration as m026 } from './definitions/026_tenant_invitation_grant_sna
 import { migration as m027 } from './definitions/027_authorization_registry_manifest';
 import { migration as m028 } from './definitions/028_admin_user_provisioning_receipts';
 import { migration as m029 } from './definitions/029_guardian_api_keys';
+import { migration as m030 } from './definitions/030_workflow_graph_runtime';
+import { migration as m031 } from './definitions/031_workflow_graph_tenant_integrity';
+import { migration as m032 } from './definitions/032_workflow_runtime_ownership';
 
 export {
   createMigrationRegistry,
@@ -105,4 +108,7 @@ export const migrations: Migration[] = [
   m027,
   m028,
   m029,
+  m030,
+  m031,
+  m032,
 ];

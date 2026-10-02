@@ -127,6 +127,41 @@ export function createAuthMiddleware(
     });
 }
 
+/**
+ * Scoped auth context for a nested plugin with its own readiness boundary.
+ *
+ * The distinct plugin name avoids Elysia deduplication against the app-global
+ * auth middleware. `scoped` keeps the boundary on this plugin's descendants
+ * instead of delaying unrelated routes. The resolver uses the same Guardian
+ * credential dispatcher and authorization facade as the global middleware.
+ */
+export function createScopedAuthMiddleware(
+  name: string,
+  getTokenService: () => TokenService | null,
+  beforeResolve: () => void | Promise<void>,
+  authorization: AuthMiddlewareAuthorizationOptions = {},
+) {
+  const dependencies = resolveAuthorizationDependencies(authorization);
+  return new Elysia({ name })
+    .resolve(
+      { as: 'scoped' },
+      async ({ request }) => {
+        await beforeResolve();
+        const access = await resolveRequestAuthorizationAccess(
+          request,
+          getTokenService,
+          dependencies,
+        );
+        return {
+          authContext: access.context,
+          access,
+          requireAuth: () => access.requireUser(),
+          requireAdmin: () => access.requirePlatformAdmin(),
+        };
+      },
+    );
+}
+
 export type ProtectedMultipartPathMatcher =
   | string
   | RegExp

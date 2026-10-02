@@ -24,7 +24,7 @@ export function createRequestPdfService(
   storage: StorageService | null,
   actorUserId: string | null,
   assertCurrentAuthority: () => Promise<void>,
-): PdfService {
+): RequestPdfMethods {
   const writer = storage ? new ZeroPdfStorageWriter(() => storage) : null;
   const methods: RequestPdfMethods = {
     render: (input) => service.render(input),

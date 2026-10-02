@@ -41,6 +41,9 @@ const FROZEN_MIGRATION_DEFINITIONS: Readonly<Record<string, string>> = {
   '027_authorization_registry_manifest.ts': '8ce4499f60da14211dc114a597f81fa75afa20760e8eca6b6f2a40514074bfb7',
   '028_admin_user_provisioning_receipts.ts': '15e32cf527d0006e504c97dd5bfbfa466e3782a445d693ac4f8c92d2a033a20b',
   '029_guardian_api_keys.ts': '10b7e65d959db692a2e43b91aac5d496f5596fcf3aae2caef5825aec51957bc4',
+  '030_workflow_graph_runtime.ts': '970cad86968c11246c9c9f46f9a0532c3c6e426e02dd4e0b88c976d6dc17b36b',
+  '031_workflow_graph_tenant_integrity.ts': '881e85ac0abe870c357f8cee4994765e56fb14f9a8f523eb2ef1a1fe6ae63a51',
+  '032_workflow_runtime_ownership.ts': 'dba700eb05587afab3ebfce6ba9119e7af764e3f079edecbfd23e6607ba1cf94',
 };
 
 /**
@@ -61,6 +64,11 @@ const FROZEN_LOCAL_DEPENDENCIES: Readonly<Record<string, string>> = {
   '018_auth_control_plane_audit_schema.ts': '60aba0ba5352bd40df3e230aeb31fe4535731821b95453e655d159e24cc2332e',
   '020_auth_authority_revision_schema.ts': '2e2365d74430bfcb0ff57c5a052d8878248ebae6c2d2a216567495cdc74602fd',
   '024_authority_revision_refresh.ts': 'c63849138f7df82db27e9d62915a13c55c6717de6544ffc39e1d6405d64a541f',
+  '030_workflow_definition_canonical.ts': '142d5e5532efbb7bafccce4038dc83acb28db461d007b3062a806db0fd60ad13',
+  '030_workflow_graph_schema.ts': '99b52744060398a5152e402a505980a95ab869a9fc18bbff0521bd83c30d388c',
+  '030_workflow_runtime_schema.ts': '7d5fcea4007cdd8f4a20295ecec5c06a81ad408c2bcd49ba17b6a0709d558219',
+  '031_workflow_graph_integrity_schema.ts': '4fb85fbd287328bf981a94c9ac624bd11b5e3c69321d9b5e92b6bbd0fc011713',
+  '031_workflow_graph_table_rebuilds.ts': 'b15402d664b8ed69caa4d86c1072c6ed8d0ae8e822ac3eff54e73688797f9b84',
 };
 
 test('numbered migrations do not import mutable runtime values', async () => {

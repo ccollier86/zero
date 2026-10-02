@@ -292,7 +292,12 @@ The first implementation routes these platform paths through the sink:
 
 - app factory client bundle/startup/shutdown messages
 - example app listen message
-- auth, sync, storage, notifications, rooms, scheduler, and workflow lifecycle
+- auth, sync, storage, notifications, rooms, scheduler, and workflow lifecycle;
+  workflow coverage includes immutable-version publication, graph nodes,
+  branch/join/fan-out progress, retries/timeouts, memory conflicts/limits,
+  interaction open/accept/reject/expire/delivery plus authority-evaluation
+  failures, durable owner acquire/conflict/heartbeat/loss/release, recovery,
+  and bounded shutdown
 - scheduler job failures
 - ReactiveDB change-listener failures
 - sync-mode startup warnings
@@ -309,6 +314,13 @@ The first implementation routes these platform paths through the sink:
   unresolved aliases, status access denials, and tool execution failures
 - vector runtime configuration, index initialization, operation completion,
   and operation/index failures
+
+Workflow event metadata contains bounded identifiers and lifecycle fields, not
+graph definitions, scratch-memory values, event payloads, interaction bodies,
+or delivery content. A failed activity's thrown value is still the event's raw
+`error`; configured sinks own external serialization/redaction, so application
+errors must not embed secrets or sensitive records in messages, stacks, or
+custom fields.
 
 CLI presentation in `src/migrations/run.ts` intentionally remains direct
 console output because it is command UI.

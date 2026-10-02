@@ -29,6 +29,25 @@ export interface DoctorReport {
   ok: boolean;
 }
 
+/** Inspect application schema drift without creating platform migration state. */
+export function runSchemaDoctor(params: {
+  db: Database;
+  declaredTables: DeclaredTables;
+  strict?: boolean;
+}): DoctorReport {
+  const declared = snapshotDeclaredTables(params.declaredTables);
+  const actual = inspectDatabaseSchema(params.db, { includeInternal: false });
+  const schemaIssues = diffSchemaSnapshots(declared, actual);
+  const hasError = schemaIssues.some((issue) => issue.severity === 'error');
+  const hasWarning = schemaIssues.some((issue) => issue.severity === 'warning');
+
+  return {
+    findings: [],
+    schemaIssues,
+    ok: params.strict ? !hasError && !hasWarning : !hasError,
+  };
+}
+
 /** Run migration and optional schema drift checks. */
 export function runMigrationDoctor(params: {
   db: Database;
@@ -89,7 +108,7 @@ export function runMigrationDoctor(params: {
     findings.push({
       severity: 'info',
       code: 'schema.not_loaded',
-      message: 'No --schema module was provided, so schema drift checks were skipped.',
+      message: 'App schema drift is checked separately with --doctor --schema <module> --db <application-db>.',
     });
   }
 

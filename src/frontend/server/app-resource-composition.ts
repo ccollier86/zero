@@ -61,7 +61,7 @@ export async function composeAppResources({
   observability,
   getSystemDB,
 }: ComposeAppResourcesInput): Promise<AppResourceComposition> {
-  addPlatformSnapshotTables(config.snapshotTables);
+  addPlatformSnapshotTables(config.snapshotTables, config.workflows !== false);
   const platformSyncPolicy = config.auth !== false
     ? createDefaultSyncPolicy({
         readProtectedTables: PLATFORM_SYNC_PRIVATE_TABLES,

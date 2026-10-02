@@ -58,10 +58,12 @@ export async function mountPlatformApp({
       observability: runtime.get(ZERO_OBSERVABILITY_RUNTIME),
     });
     applyTableSyncResolution(config, resolution);
-    if (config.auth !== false) addPlatformSnapshotTables(config.snapshotTables);
+    if (config.auth !== false) {
+      addPlatformSnapshotTables(config.snapshotTables, config.workflows !== false);
+    }
   });
 
-  const services = mountPlatformServices({
+  await mountPlatformServices({
     app,
     runtime,
     systemDB,
@@ -85,8 +87,5 @@ export async function mountPlatformApp({
     identityProjectionRuntime,
   });
 
-  // Elysia's Bun adapter does not await async onStart hooks. Managed apps
-  // finish every fallible owner before createApp publishes a listenable app.
-  await services.start();
   return app;
 }

@@ -27,6 +27,7 @@ export type {
   AppConfig,
   AppDoctorConfig,
   AppStorageConfig,
+  AppWorkflowsConfig,
   AppTableInput,
   AppTenantDataIsolation,
   AutoLazyAction,
@@ -173,6 +174,10 @@ export type {
   ServerRequestServices,
   ServerRouteOptions,
 } from './server/server-route';
+export type {
+  ScopedWorkflowInstanceListFilter,
+  ScopedWorkflowService,
+} from './server/server-request-services';
 export {
   createLazyServerRouteServices,
   getServerRouteServices,
@@ -764,7 +769,12 @@ export { createSchedulerPlugin, getScheduler } from '../scheduler';
 export type { JobDefinition, JobStatus, SchedulerPluginConfig } from '../scheduler';
 
 // ─── Workflows: Server ──────────────────────────────────────────────────
-export { createWorkflowPlugin, getWorkflowService, getWorkflowRegistry } from '../workflows';
+export {
+  createWorkflowPlugin,
+  getWorkflowService,
+  getWorkflowRegistry,
+  stopWorkflowRuntime,
+} from '../workflows';
 export { WORKFLOW_TABLES } from '../workflows';
 export type {
   WorkflowPluginConfig,

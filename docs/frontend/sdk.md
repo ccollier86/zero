@@ -2213,13 +2213,52 @@ by responsibility:
   membership-authorized room presence and typing state; `ephemeral-hooks.ts`
   owns generic topic access and stable error observation.
 - `preference-hooks.ts` owns `usePreference` and `useFormDraft` over server state sync.
-- `workflow-run-hooks.ts` owns the composed `useWorkflowRun` helper.
+- `workflow-hooks.ts` owns Sync-backed live graph nodes/events/interactions plus
+  versioned start, lifecycle, event, and response actions.
+- `workflow-run-hooks.ts` owns the composed `useWorkflowRun` helper, including
+  version pinning, stable root progress, separate fan-out/delivery progress,
+  parallel/wait flags, and selected-run state.
+- `workflow-topology-hooks.ts` owns the authenticated, authorization-fenced
+  load of one run's immutable presentation topology.
 - `src/storage/upload-queue-hooks.ts`, `src/storage/upload-dropzone-hooks.ts`, `src/storage/storage-file-hooks.ts`, and `src/storage/storage-browser-hooks.ts` own storage queue, dropzone, file, and browser composition.
 - `src/hooks/*` owns generic React primitives such as `useDisclosure`, `useAsyncAction`, `useDebouncedValue`, `useDebouncedCallback`, `useThrottledValue`, `useClickAway`, `useCopyToClipboard`, `useIdle`, `useOs`, `useTextSelection`, `useMediaQuery`, and `useHotkey`.
 - `use-stick-to-bottom` is re-exported directly as `StickToBottom`, `useStickToBottom`, and `useStickToBottomContext` for smooth AI/chat/log panels.
 
 App code should still import from `@zero/framework/react`. Use the lower-level
 files only when working inside the platform source. See [Frontend Hooks](./hooks.md).
+
+Workflow actions use the generated authenticated `client.api.workflows`
+surface, while `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, and
+`useWorkflowRun` compose the safe owner-scoped ReactiveDB projection;
+`useWorkflowTopology` adds the sanitized pinned topology over authenticated
+HTTP. That live
+projection includes status, timing, labels, branch, parent, and fan-out
+identity plus ordered event audit rows; it redacts event payloads plus every
+workflow instance/step input, output, and raw error. Canonical definitions, scratch memory, interaction
+bodies, and coordination state remain server-only. `submitResponse` resolves
+to a privacy-safe `WorkflowInteractionSubmissionResult` with the decision
+`outcome`, current interaction projection, and optional validator-authored
+`rejectionCode`/`publicMessage`; it never exposes the submitted or normalized
+response value. Named events can buffer
+while a run is paused, but a direct interaction response fails with retryable
+HTTP `409` `WORKFLOW_DRAINING`; reuse its stable submission ID after resume. See
+[Durable Workflows](../workflows.md).
+
+For a visual monitor, join topology `nodes[].path` to live `steps[].node_path`.
+Legacy rows normalize that path to `step_id`; fan-out rows share their
+definition path and remain distinct by `step_id`/`item_index`; delivery rows
+attach through `parent_step_id`. `isWaiting` covers a waiting parallel lane
+even when another lane is actively running.
+
+The server-side workflow Sync adapter composes this owner/active-scope-manager
+projection with the app's existing resource policy using deny-wins semantics.
+It preserves delegate filters, projectors, and delivery-time validators and
+binds both authorities into one read fingerprint. Advanced-RBAC
+`resolveManagementAccess` must be synchronous: Sync's last check occurs at the
+synchronous row-delivery edge, so an async management result makes the
+filtered connection non-comparable and admission fails closed. This is a
+server integration rule; React hooks require no extra configuration in a
+managed `createApp()`.
 
 ### useUserProperty
 
@@ -2242,9 +2281,13 @@ hook for UI preferences and visibility convenience, not backend authorization.
 App-owned React Query, SWR, custom-store, and other cached state should key or
 purge on `useAuthorizationScopeBoundary().key`, discard callbacks captured
 under an older key, and hide/freeze scope-sensitive UI while `ready` is false.
-The returned `scopeKey`, `stable`, and `phase` are opaque transition metadata;
-the hook contains no credential and is not proof of authority. Zero-owned
-hooks apply the same boundary internally. See
+The returned `scopeKey`, `dataRevision`, `stable`, and `phase` are opaque local
+boundary metadata; the hook contains no credential and is not proof of
+authority. `dataRevision` advances for server-detected same-scope auth-context,
+table-access, or read-authority changes. Zero purges local rows and grants,
+cancels in-flight scoped requests, and keeps the boundary unreadable until a
+replacement authorization projection validates. Zero-owned hooks apply the
+same boundary internally. See
 [Browser Authorization Snapshot and Gates](../auth/browser-authorization.md).
 
 Source-installed components and app-owned async adapters can use the exported

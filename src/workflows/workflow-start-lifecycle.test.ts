@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  ZERO_OBSERVABILITY_RUNTIME,
   ZERO_WORKFLOW_REGISTRY,
   ZERO_WORKFLOW_SERVICE,
 } from '../runtime/service-keys';
@@ -12,6 +13,11 @@ describe('workflow startup lifecycle', () => {
   test('does not publish a service when managed startup fails', async () => {
     const db = createReactiveDB({ mode: 'memory' });
     const runtime = new ZeroAppRuntime('workflow-start-failure');
+    runtime.set(ZERO_OBSERVABILITY_RUNTIME, {
+      sink: { emit() {} },
+      store: null,
+      config: { console: false },
+    });
     let initialize!: () => Promise<void>;
     createWorkflowPlugin({
       db,

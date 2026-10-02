@@ -31,6 +31,7 @@ describe('managed workflow execution services', () => {
       '      let dbBlocked = false;',
       '      try { void services.unsafe; } catch { unsafeBlocked = true; }',
       '      try { void services.db; } catch { dbBlocked = true; }',
+      "      if (!unsafeBlocked || !dbBlocked) throw new Error('unsafe workflow service escape');",
       '      const drive = services.storage.createDrive(context.execution.userId, {',
       "        name: 'Workflow drive',",
       '      });',
@@ -112,14 +113,31 @@ describe('managed workflow execution services', () => {
         accessToken,
       );
       expect(instance.status).toBe(200);
-      expect(JSON.parse(String(instance.body.output))).toEqual({
-        tenantId,
-        executionTenantId: tenantId,
-        driveTenantId: tenantId,
-        notificationTenantId: tenantId,
-        unsafeBlocked: true,
-        dbBlocked: true,
-      });
+      expect(instance.body).toMatchObject({ status: 'completed', output: null });
+
+      const drives = await jsonRequest<Array<Record<string, unknown>>>(
+        baseUrl,
+        'GET',
+        '/storage/drives',
+        undefined,
+        accessToken,
+      );
+      expect(drives.status).toBe(200);
+      expect(drives.body).toEqual([
+        expect.objectContaining({ name: 'Workflow drive', tenant_id: tenantId }),
+      ]);
+
+      const notifications = await jsonRequest(
+        baseUrl,
+        'GET',
+        '/notifications',
+        undefined,
+        accessToken,
+      );
+      expect(notifications.status).toBe(200);
+      expect((notifications.body.notifications as Array<Record<string, unknown>>)).toEqual([
+        expect.objectContaining({ title: 'Workflow notice', tenant_id: tenantId }),
+      ]);
     } finally {
       await app?.stop();
       await rm(root, { recursive: true, force: true });
@@ -127,7 +145,7 @@ describe('managed workflow execution services', () => {
   }, 60_000);
 });
 
-async function jsonRequest(
+async function jsonRequest<TBody = Record<string, unknown>>(
   baseUrl: string,
   method: string,
   path: string,
@@ -144,6 +162,6 @@ async function jsonRequest(
   });
   return {
     status: response.status,
-    body: await response.json().catch(() => ({})) as Record<string, unknown>,
+    body: await response.json().catch(() => ({})) as TBody,
   };
 }

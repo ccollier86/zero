@@ -597,16 +597,54 @@ is mounted. See [PDF Rendering](./pdf.md).
 
 ---
 
-## Workflows — Durable Multi-Step Processes
+## Workflows — Durable Versioned Graphs
 
-Define workflows as step graphs with conditions, branching, retry with exponential backoff, event-based waiting, and crash recovery.
+Register trusted, versioned activities and code definitions with
+`AppConfig.workflows.register`. The small TypeScript DSL covers ordered steps,
+persisted choices, concurrent branches with deterministic joins, bounded
+per-item fan-out, durable event waits, and channel-neutral human/external
+interactions. It compiles into the same canonical JSON graph used by immutable
+database versions, the admin API, agents, and future visual editors. A database
+definition can invoke only activities explicitly registered with
+`databaseCallable: true`; publication also validates schema snapshots and
+rejects output references that are not guaranteed on every path to their
+consumer.
 
 ```tsx
-const { workflow, steps } = useWorkflow(workflowId);
-const { start, cancel, pause, resume, sendEvent } = useWorkflowActions();
+const {
+  instance,
+  steps,
+  activeSteps,
+  events,
+  interactions,
+  isWaitingForInput,
+  isRunningInParallel,
+} = useWorkflow(workflowId);
+const topology = useWorkflowTopology(workflowId);
+const { start, submitResponse } = useWorkflowActions();
 
-await start('onboarding', { userId: 'alice' });
+await start(
+  'onboarding',
+  { userId: 'alice' },
+  { version: 2 },
+);
+
+const approval = interactions.find((item) => item.status === 'open');
+if (approval) {
+  const decision = await submitResponse(
+    approval.instance_id,
+    approval.interaction_id,
+    { approved: true },
+  );
+  if (decision.outcome === 'rejected') {
+    console.info(decision.rejectionCode, decision.publicMessage);
+  }
+}
 ```
+
+The interaction decision contains only the current safe interaction projection
+and validator-authored public rejection detail; submitted and normalized
+response values remain server-only.
 
 SQLite-backed — state survives server restart. Each instance retains a private,
 MAC-protected actor or explicit system-authority seal. Zero revalidates the
@@ -614,6 +652,65 @@ session/account/tenant/membership/role revision before dispatch and again before
 accepting async output, so stale work cannot commit after authorization changes.
 Scheduler polls for retries and timeouts every minute; those global scans do not
 bypass the per-instance authority gate.
+
+Workflow definitions and each new run are fingerprinted and pinned to immutable
+history. SQLite/ReactiveDB stores topology decisions, item snapshots, attempt
+fences, deadlines, open interactions, and private `ctx.memory`; recovery
+validates that state before re-driving work. Activity scratch writes commit
+atomically with successful node completion, while external effects use the
+stable `ctx.idempotencyKey` for at-least-once safety.
+
+Durable runtime JSON values are capped at 1 MiB. Persisted run/step/fan-out,
+scratch-memory, interaction-definition, and interaction-response values share
+a 32 MiB per-run budget; each interaction also has bounded unique-submission
+and byte totals. Durable event delivery has separate per-run pending and
+retained count/byte quotas. Pass storage IDs through the graph instead of
+embedding large files or unbounded event streams.
+
+Human/external responses default to the workflow starter. Apps that need
+Guardian organization or role decisions can install one fail-closed
+`workflows.interactionAuthority` adapter for both direct and event-delivered
+responses. A direct response submitted while paused fails with retryable
+`WORKFLOW_DRAINING` and must be retried after resume; named events can remain
+buffered during the pause. Authenticated HTTP events carry a secret-free,
+event-and-actor-bound Guardian seal; consumption revalidates current
+credential/account/scope/membership/RBAC authority and repeats the fence at
+accepted-response commit. Custom claims are still send-time app metadata, so
+reload mutable app-specific values inside the authority callback. Explicit
+system events use `sendEventAsSystem()`; legacy/unsealed events cannot answer
+an interaction.
+
+Mutable custom responder policy is also fenced at that commit edge. Synchronous
+policies are reevaluated inside the final response transaction. An asynchronous
+allow must return a `WorkflowInteractionAuthorityLease` with a synchronous
+`assertCurrent(expectedRevision, context)` check for its captured revision; an
+async bare allow or promise-returning commit assertion is invalid configuration
+and cannot commit.
+
+Authorized clients receive safe `workflow_instances`, `workflow_steps`,
+`workflow_events`, and `workflow_interactions` changes over ReactiveDB Sync,
+so they can watch nodes, branches, fan-out items, retries, and waits in real
+time without polling. Executable graph JSON, memory, interaction bodies, and
+other coordination state stay server-only; event payloads and all workflow
+instance/step input, output, and raw error values are redacted from browser
+projections. See
+[Durable Workflows](./workflows.md).
+
+`useWorkflow()` orders those payload-redacted event audit rows and reports
+parallel execution only for concurrent root nodes or concurrent children of
+one `each` node. `useWorkflowRun().progress` keeps stable root-node counters
+separate from dynamic fan-out-item and interaction-delivery counters.
+`useWorkflowTopology()` loads the authorized run's immutable payload-free
+presentation topology once; join its node `path` values to live step
+`node_path` values for a visual monitor.
+
+The workflow Sync policy is composed deny-wins with app resource policy. Its
+single comparable read authority covers both delegate policy and the live
+owner/active-scope-manager decision, and both validators run again at the
+final delivery edge. Advanced-RBAC manager resolution must be synchronous;
+an async result cannot protect that edge and causes the filtered socket to
+fail admission closed. Revoking either management or delegate authority closes
+and purges the stale scope before another workflow row is sent.
 
 ---
 

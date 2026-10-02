@@ -1,3 +1,10 @@
+/**
+ * Scope-safe NotificationService projection for requests and workflow steps.
+ *
+ * This module owns actor/manager filtering and per-operation authority fences;
+ * notification persistence and transport remain in NotificationService.
+ */
+
 import type { RequestAuthorizationAccess } from '../../../auth/authorization-access';
 import type { ServiceDataScope } from '../../../auth/service-data-scope';
 import {
@@ -54,7 +61,7 @@ export function createScopedNotificationService(
   access: RequestAuthorizationAccess,
   assertCurrentAuthoritySync: () => void,
   privilegedSystem: boolean,
-): NotificationService {
+): ScopedNotificationMethods {
   const auth = access.context;
   const roles = notificationAudienceRoles(access, scope);
   const canManage = canManageNotificationScope(access, scope, privilegedSystem);
@@ -63,10 +70,12 @@ export function createScopedNotificationService(
     if (!auth || userId !== auth.userId) throw forbidden('Notification user mismatch');
   };
   const actorNotification = (id: string) => {
+    assertCurrentAuthoritySync();
     if (!auth) return service.getById(id, scope);
     return service.getByIdForUser(id, auth.userId, roles, scope);
   };
   const listForActor = () => {
+    assertCurrentAuthoritySync();
     if (!auth) return [];
     return service.getForUser(auth.userId, roles, scope);
   };
@@ -76,6 +85,7 @@ export function createScopedNotificationService(
     return notification;
   };
   const requireManager = (id: string) => {
+    assertCurrentAuthoritySync();
     if (!canManage) throw forbidden('Notification management is not permitted');
     const notification = service.getById(id, scope);
     if (!notification) throw notFound('Notification not found');

@@ -15,34 +15,68 @@ import { useAuthorizationScopeBoundary } from './authorization-scope-hooks';
 import { useQuery, useRow } from './data-hooks';
 import { unwrap } from './api';
 import type {
+  WorkflowClientInteractionRecord,
   WorkflowStatus,
-  WorkflowInstanceRecord,
-  WorkflowStepRecord,
+  WorkflowClientInstanceRecord,
+  WorkflowClientStepRecord,
+  WorkflowEventRecord,
 } from '../../workflows/types';
+import type { WorkflowInteractionRecord } from '../../workflows/workflow-interaction-records';
 
 // ─── Types ───────────────────────────────────────────
 
 export interface UseWorkflowResult {
-  instance: WorkflowInstanceRecord | null;
-  steps: WorkflowStepRecord[];
-  currentStep: WorkflowStepRecord | null;
+  instance: WorkflowClientInstanceRecord | null;
+  steps: WorkflowClientStepRecord[];
+  /** Nodes currently executing, awaiting input, or waiting to retry. */
+  activeSteps: WorkflowClientStepRecord[];
+  /** Privacy-safe durable interaction progress for this run. */
+  interactions: WorkflowClientInteractionRecord[];
+  /** Ordered event audit rows. Graph-event payloads are always redacted. */
+  events: WorkflowEventRecord[];
+  currentStep: WorkflowClientStepRecord | null;
   isRunning: boolean;
   isComplete: boolean;
   isFailed: boolean;
   isPaused: boolean;
+  isCancelled: boolean;
+  isWaiting: boolean;
+  isWaitingForInput: boolean;
+  isRetrying: boolean;
+  isRunningInParallel: boolean;
 }
 
 export interface UseWorkflowListResult {
-  instances: WorkflowInstanceRecord[];
+  instances: WorkflowClientInstanceRecord[];
   count: number;
 }
 
+/** Privacy-safe result returned after an interaction response is decided. */
+export interface WorkflowInteractionSubmissionResult {
+  outcome: 'accepted' | 'rejected' | 'superseded';
+  interaction: WorkflowInteractionRecord;
+  /** Stable public validator code when the response was rejected. */
+  rejectionCode?: string;
+  /** Validator-authored message safe to present to the responder. */
+  publicMessage?: string;
+}
+
 export interface WorkflowActions {
-  start: (name: string, input?: unknown) => Promise<string>;
+  start: (
+    name: string,
+    input?: unknown,
+    options?: { version?: number },
+  ) => Promise<string>;
   cancel: (instanceId: string) => Promise<void>;
   pause: (instanceId: string) => Promise<void>;
   resume: (instanceId: string) => Promise<void>;
-  sendEvent: (instanceId: string, eventName: string, payload?: unknown) => Promise<void>;
+  sendEvent: (instanceId: string, eventName: string, payload?: unknown) => Promise<boolean>;
+  submitResponse: (
+    instanceId: string,
+    interactionId: string,
+    payload: unknown,
+    options?: { submissionId?: string; channel?: string },
+  ) => Promise<WorkflowInteractionSubmissionResult>;
 }
 
 // ─── Hooks ───────────────────────────────────────────
@@ -52,35 +86,116 @@ export interface WorkflowActions {
  * when the sync engine broadcasts changes.
  */
 export function useWorkflow(instanceId: string | null): UseWorkflowResult {
-  const instance = useRow<WorkflowInstanceRecord & Row>(
+  const instance = useRow<WorkflowClientInstanceRecord & Row>(
     'workflow_instances',
     instanceId ?? '',
   );
+  const visibleInstance = instanceId ? instance : null;
 
   const stepFilter = useCallback(
-    (s: WorkflowStepRecord & Row) => s.instance_id === instanceId,
+    (s: WorkflowClientStepRecord & Row) => s.instance_id === instanceId,
     [instanceId],
   );
-  const steps = useQuery<WorkflowStepRecord & Row>('workflow_steps', stepFilter);
+  const steps = useQuery<WorkflowClientStepRecord & Row>('workflow_steps', stepFilter);
+  const interactionFilter = useCallback(
+    (interaction: WorkflowClientInteractionRecord & Row) =>
+      interaction.instance_id === instanceId,
+    [instanceId],
+  );
+  const interactions = useQuery<WorkflowClientInteractionRecord & Row>(
+    'workflow_interactions',
+    interactionFilter,
+  );
+  const eventFilter = useCallback(
+    (event: WorkflowEventRecord & Row) => event.instance_id === instanceId,
+    [instanceId],
+  );
+  const events = useQuery<WorkflowEventRecord & Row>('workflow_events', eventFilter);
 
   const sorted = useMemo(
-    () => [...steps].sort((a, b) => a.step_index - b.step_index),
+    () => [...steps].sort(compareWorkflowSteps),
     [steps],
   );
 
-  const currentStep = useMemo(
-    () => sorted.find(s => s.status === 'running' || s.status === 'waiting') ?? null,
-    [sorted],
+  // Child rows are meaningful only while their authorized parent projection
+  // is present. This also fails closed during snapshot replacement or if a
+  // malformed/orphaned child somehow reaches the local store.
+  const visibleSteps = useMemo(
+    () => visibleInstance
+      ? sorted.filter((step) => step.tenant_id === visibleInstance.tenant_id)
+      : [],
+    [sorted, visibleInstance],
   );
 
+  const activeSteps = useMemo(
+    () => visibleInstance && !isTerminalWorkflowStatus(visibleInstance.status)
+      ? visibleSteps.filter(isActiveWorkflowStep)
+      : [],
+    [visibleInstance, visibleSteps],
+  );
+  const sortedInteractions = useMemo(
+    () => visibleInstance
+      ? [...interactions].sort((a, b) =>
+          a.opened_at.localeCompare(b.opened_at)
+          || a.interaction_id.localeCompare(b.interaction_id))
+          .filter((interaction) => interaction.tenant_id === visibleInstance.tenant_id)
+      : [],
+    [interactions, visibleInstance],
+  );
+  const sortedEvents = useMemo(
+    () => visibleInstance
+      ? [...events].sort((a, b) =>
+          a.created_at.localeCompare(b.created_at)
+          || a.event_id.localeCompare(b.event_id))
+          .filter((event) => event.tenant_id === visibleInstance.tenant_id)
+      : [],
+    [events, visibleInstance],
+  );
+
+  const currentStep = useMemo(
+    () => {
+      if (!visibleInstance || isTerminalWorkflowStatus(visibleInstance.status)) return null;
+      const active = activeSteps[0];
+      if (active) return active;
+      const indexed = visibleSteps.find(
+        (step) => step.step_index === visibleInstance.current_step,
+      );
+      if (indexed && indexed.status !== 'completed' && indexed.status !== 'skipped') {
+        return indexed;
+      }
+      return visibleSteps.find((step) =>
+        step.status === 'pending'
+        || step.status === 'running'
+        || step.status === 'waiting'
+        || step.status === 'failed'
+      ) ?? null;
+    },
+    [activeSteps, visibleInstance, visibleSteps],
+  );
+
+  const isWaitingForInput = visibleInstance !== null
+    && !isTerminalWorkflowStatus(visibleInstance.status)
+    && sortedInteractions.some((interaction) => interaction.status === 'open');
+
   return {
-    instance: instanceId ? instance : null,
-    steps: sorted,
+    instance: visibleInstance,
+    steps: visibleSteps,
+    activeSteps,
+    interactions: sortedInteractions,
+    events: sortedEvents,
     currentStep,
-    isRunning: instance?.status === 'running',
-    isComplete: instance?.status === 'completed',
-    isFailed: instance?.status === 'failed',
-    isPaused: instance?.status === 'paused',
+    isRunning: visibleInstance?.status === 'running',
+    isComplete: visibleInstance?.status === 'completed',
+    isFailed: visibleInstance?.status === 'failed',
+    isPaused: visibleInstance?.status === 'paused',
+    isCancelled: visibleInstance?.status === 'cancelled',
+    isWaiting: activeSteps.some((step) => step.status === 'waiting')
+      || isWaitingForInput,
+    isWaitingForInput,
+    isRetrying: activeSteps.some(
+      (step) => step.status === 'failed' && step.retry_at !== null,
+    ),
+    isRunningInParallel: hasParallelWork(activeSteps),
   };
 }
 
@@ -94,14 +209,17 @@ export function useWorkflowList(filter?: {
   const filterStatus = filter?.status;
   const filterName = filter?.name;
   const instanceFilter = useCallback(
-    (i: WorkflowInstanceRecord & Row) => {
+    (i: WorkflowClientInstanceRecord & Row) => {
       if (filterStatus && i.status !== filterStatus) return false;
       if (filterName && i.name !== filterName) return false;
       return true;
     },
     [filterStatus, filterName],
   );
-  const instances = useQuery<WorkflowInstanceRecord & Row>('workflow_instances', instanceFilter);
+  const instances = useQuery<WorkflowClientInstanceRecord & Row>(
+    'workflow_instances',
+    instanceFilter,
+  );
 
   const sorted = useMemo(
     () => [...instances].sort((a, b) =>
@@ -138,8 +256,16 @@ export function useWorkflowActions(): WorkflowActions {
     return result;
   }, [callbackBoundaryKey]);
 
-  const start = useCallback((name: string, input?: unknown): Promise<string> => runAction(async () => {
-    const res = unwrap(await client.api.workflows.post({ name, input }));
+  const start = useCallback((
+    name: string,
+    input?: unknown,
+    options?: { version?: number },
+  ): Promise<string> => runAction(async () => {
+    const res = unwrap(await client.api.workflows.post({
+      name,
+      input,
+      ...(options?.version === undefined ? {} : { version: options.version }),
+    }));
     return (res as { instanceId: string }).instanceId;
   }), [client, runAction]);
 
@@ -156,11 +282,63 @@ export function useWorkflowActions(): WorkflowActions {
   }), [client, runAction]);
 
   const sendEvent = useCallback(
-    (instanceId: string, eventName: string, payload?: unknown): Promise<void> => runAction(async () => {
-      unwrap(await client.api.workflows[instanceId].events.post({ eventName, payload }));
+    (instanceId: string, eventName: string, payload?: unknown): Promise<boolean> => runAction(async () => {
+      const result = unwrap(await client.api.workflows[instanceId].events.post({ eventName, payload }));
+      return Boolean((result as { matched?: boolean }).matched);
     }),
     [client, runAction],
   );
 
-  return { start, cancel, pause, resume, sendEvent };
+  const submitResponse = useCallback((
+    instanceId: string,
+    interactionId: string,
+    payload: unknown,
+    options?: { submissionId?: string; channel?: string },
+  ): Promise<WorkflowInteractionSubmissionResult> => runAction(async () => {
+    const result = unwrap(await client.api.workflows[instanceId]
+      .interactions[interactionId].responses.post({
+        payload,
+        submissionId: options?.submissionId ?? crypto.randomUUID(),
+        ...(options?.channel === undefined ? {} : { channel: options.channel }),
+      }));
+    return result as WorkflowInteractionSubmissionResult;
+  }), [client, runAction]);
+
+  return { start, cancel, pause, resume, sendEvent, submitResponse };
+}
+
+function isActiveWorkflowStep(step: WorkflowClientStepRecord): boolean {
+  if (step.status === 'running' || step.status === 'waiting') return true;
+  if (step.status === 'failed' && step.retry_at !== null) return true;
+  return step.status === 'pending' && step.started_at !== null;
+}
+
+function isTerminalWorkflowStatus(status: WorkflowStatus): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+function hasParallelWork(steps: readonly WorkflowClientStepRecord[]): boolean {
+  const physicallyActive = steps.filter((step) =>
+    step.status === 'running' || step.status === 'waiting');
+  const activeRoots = physicallyActive.filter((step) => step.parent_step_id == null);
+  if (activeRoots.length > 1) return true;
+
+  const activeFanoutByParent = new Map<string, number>();
+  for (const step of physicallyActive) {
+    if (step.parent_step_id == null || step.item_index == null) continue;
+    const count = (activeFanoutByParent.get(step.parent_step_id) ?? 0) + 1;
+    if (count > 1) return true;
+    activeFanoutByParent.set(step.parent_step_id, count);
+  }
+  return false;
+}
+
+function compareWorkflowSteps(
+  left: WorkflowClientStepRecord,
+  right: WorkflowClientStepRecord,
+): number {
+  return left.step_index - right.step_index
+    || (left.item_index ?? -1) - (right.item_index ?? -1)
+    || (left.node_path ?? '').localeCompare(right.node_path ?? '')
+    || left.step_id.localeCompare(right.step_id);
 }

@@ -95,6 +95,25 @@ export class AuthAuthorizationController {
     return this.startRequest(true);
   }
 
+  /**
+   * Drop a same-session authorization hint after another live transport proves
+   * that its policy snapshot is stale. Pending results are fenced before the
+   * empty state is published; observed consumers then reload current grants.
+   */
+  invalidate(): void {
+    if (this.disposed) return;
+    const view = this.options.readSession();
+    const current = readSessionIdentity(view);
+    this.requestRevision += 1;
+    this.abortController?.abort();
+    this.abortController = null;
+    this.request = null;
+    this.clearTimer();
+    this.publish(initialState(view, current));
+    if (current && isRequestableTransition(view.transition)
+      && this.listeners.size > 0) void this.startRequest(false);
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;

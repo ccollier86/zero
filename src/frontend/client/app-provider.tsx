@@ -332,7 +332,9 @@ function AuthorizationScopeGuard({
   children?: ReactNode;
 }) {
   const boundary = useAuthorizationScopeBoundary(client);
-  const auth = (client as InternalClient).auth;
+  const internal = client as InternalClient;
+  const auth = internal.auth;
+  const authorizationDataBoundary = internal._authorizationDataBoundary;
   const authorizationState = useAuthorization();
   const [scopeRecoveryRequired, setScopeRecoveryRequired] = useState(false);
   const displayedScopeRef = useRef<string | null>(null);
@@ -371,17 +373,31 @@ function AuthorizationScopeGuard({
   ]);
   useEffect(() => {
     if (!auth) return;
-    let observedBoundaryKey = readAuthorizationScopeBoundaryKey(auth);
-    return auth.subscribe(() => {
-      const nextBoundaryKey = readAuthorizationScopeBoundaryKey(auth);
+    let observedBoundaryKey = readAuthorizationScopeBoundaryKey(
+      auth,
+      authorizationDataBoundary.revision,
+    );
+    const discardScopedOverlays = () => {
+      const nextBoundaryKey = readAuthorizationScopeBoundaryKey(
+        auth,
+        authorizationDataBoundary.revision,
+      );
       if (nextBoundaryKey === observedBoundaryKey) return;
       observedBoundaryKey = nextBoundaryKey;
       // Scope teardown is synchronous and deliberately does not invoke modal
       // close callbacks that may still capture previous-tenant actions.
       modals.discardAll();
       toast.dismiss();
-    });
-  }, [auth]);
+    };
+    const unsubscribeAuth = auth.subscribe(discardScopedOverlays);
+    const unsubscribeAuthorizationData = authorizationDataBoundary.subscribe(
+      discardScopedOverlays,
+    );
+    return () => {
+      unsubscribeAuth();
+      unsubscribeAuthorizationData();
+    };
+  }, [auth, authorizationDataBoundary]);
 
   useEffect(() => {
     const marker = '__zeroAuthorizationBoundaryReload';

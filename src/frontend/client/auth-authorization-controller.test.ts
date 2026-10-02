@@ -117,6 +117,43 @@ describe('AuthAuthorizationController', () => {
     harness.controller.dispose();
   });
 
+  test('drops same-session grants synchronously and fences an in-flight stale result', async () => {
+    const harness = createHarness(session('user-a', 'token-a'));
+    const unsubscribe = harness.controller.subscribe(() => {});
+    harness.loads[0]!.resolve(snapshot('user-a', null, ['records:write'], 'manager-1'));
+    await harness.loads[0]!.promise;
+    expect(hasAuthorizationPermission(
+      harness.controller.getSnapshot().snapshot,
+      'records:write',
+    )).toBe(true);
+
+    const staleRefresh = harness.controller.refresh();
+    expect(harness.controller.getSnapshot().snapshot?.revision).toBe('manager-1');
+    harness.controller.invalidate();
+    expect(harness.controller.getSnapshot()).toMatchObject({
+      status: 'loading',
+      snapshot: null,
+    });
+    expect(harness.loads).toHaveLength(3);
+
+    harness.loads[2]!.resolve(snapshot('user-a', null, [], 'owner-only-2'));
+    await harness.loads[2]!.promise;
+    harness.loads[1]!.resolve(snapshot('user-a', null, ['records:write'], 'stale-manager-2'));
+    await staleRefresh;
+    await flush();
+
+    expect(harness.controller.getSnapshot()).toMatchObject({
+      status: 'ready',
+      snapshot: { revision: 'owner-only-2', scope: { permissions: [] } },
+    });
+    expect(hasAuthorizationPermission(
+      harness.controller.getSnapshot().snapshot,
+      'records:write',
+    )).toBe(false);
+    unsubscribe();
+    harness.controller.dispose();
+  });
+
   test('fails closed and expires local auth after the live endpoint rejects authority', async () => {
     const harness = createHarness(session('user-a', 'token-a'));
     const unsubscribe = harness.controller.subscribe(() => {

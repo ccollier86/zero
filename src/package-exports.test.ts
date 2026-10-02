@@ -316,8 +316,11 @@ import type {
   RunDatabaseActorIfRequestedOptions,
   AuthRequestCredentialResolver as ServerAuthRequestCredentialResolver,
   ResolvedConfig,
+  ScopedWorkflowInstanceListFilter,
+  ScopedWorkflowService,
   ServerSystemDatabaseServices,
   SystemDatabaseConfig,
+  WorkflowExecutionServerServices,
   ZeroPolicyUserPropertyRegistry,
 } from '@zero/framework/server';
 import {
@@ -339,7 +342,42 @@ import {
 } from '@zero/framework/sync';
 import { PlatformTokenService } from '@zero/framework/tokens';
 import { createVectorPlugin } from '@zero/framework/vector';
-import { WorkflowService } from '@zero/framework/workflows';
+import {
+  WorkflowActivityCatalog,
+  WorkflowExecutor,
+  WorkflowRegistry,
+  WorkflowService,
+  createWorkflowObservability,
+  expr,
+  flow,
+  normalizeWorkflowSchemaSnapshot,
+  step,
+  type ClaimedWorkflowEvent,
+  type PublishWorkflowDefinitionVersionResult,
+  type RegisteredWorkflowActivity,
+  type ResolvedWorkflowDefinitionDraft,
+  type ResolvedWorkflowDefinitionVersion,
+  type WorkflowActivityDefinition,
+  type WorkflowActorAuthorityFence,
+  type WorkflowChooseOptions,
+  type WorkflowClientInteractionRecord,
+  type WorkflowClock,
+  type WorkflowCodeEmitter,
+  type WorkflowDefinitionCatalogRecord,
+  type WorkflowDefinitionDraftRecord,
+  type WorkflowDefinitionScope,
+  type WorkflowDefinitionSummary,
+  type WorkflowDefinitionVersionRecord,
+  type WorkflowDefinitionVersionStatus,
+  type WorkflowExecutionResult,
+  type WorkflowInstanceListFilter,
+  type WorkflowInteractionRecord,
+  type WorkflowMemoryContext,
+  type WorkflowMutationOptions,
+  type WorkflowObservability,
+  type WorkflowPublicTopology,
+  type WorkflowStartOptions,
+} from '@zero/framework/workflows';
 
 const nativeSourceResolver: NativeAuthorizationSourceResolver = () => 'trusted-edge';
 const resourceReceiptLimits = [
@@ -544,6 +582,52 @@ const tenantDocumentSubpathResource = defineSubpathResource({
 });
 const configuredPostLoginPath = (config: AppConfig): string | undefined => config.postLoginPath;
 const resolvedPostLoginPath = (config: ResolvedConfig): string => config.postLoginPath;
+const workflowDefinition = flow(step('start', 'smoke.activity', { input: expr.input() }));
+const workflowChooseOptions: WorkflowChooseOptions = { label: 'Smoke choice' };
+type WorkflowActivityInput = { instanceId: string };
+type WorkflowPublicTypes = readonly [
+  ClaimedWorkflowEvent,
+  PublishWorkflowDefinitionVersionResult,
+  ResolvedWorkflowDefinitionDraft,
+  ResolvedWorkflowDefinitionVersion,
+  WorkflowActorAuthorityFence,
+  WorkflowClock,
+  WorkflowCodeEmitter,
+  WorkflowDefinitionCatalogRecord,
+  WorkflowDefinitionDraftRecord,
+  WorkflowDefinitionScope,
+  WorkflowDefinitionSummary,
+  WorkflowDefinitionVersionRecord,
+  WorkflowDefinitionVersionStatus,
+  WorkflowExecutionResult,
+  WorkflowInstanceListFilter,
+  WorkflowMutationOptions,
+  WorkflowObservability,
+  WorkflowPublicTopology,
+  WorkflowStartOptions,
+];
+const typedWorkflowRegistry = new WorkflowRegistry();
+const typedWorkflowActivity = typedWorkflowRegistry.registerActivity<
+  WorkflowActivityInput,
+  WorkflowExecutionServerServices
+>({
+  name: 'smoke.activity',
+  handler: async ({ input, zero }) => zero?.workflows?.get(input.instanceId) ?? null,
+});
+const workflowTypeSurface = null as unknown as {
+  activity: WorkflowActivityDefinition<WorkflowActivityInput, WorkflowExecutionServerServices>;
+  clientInteraction: WorkflowClientInteractionRecord;
+  executionServices: WorkflowExecutionServerServices;
+  interaction: WorkflowInteractionRecord;
+  memory: WorkflowMemoryContext;
+  publicTypes: WorkflowPublicTypes;
+  registeredActivity: RegisteredWorkflowActivity<
+    WorkflowActivityInput,
+    WorkflowExecutionServerServices
+  >;
+  scopedListFilter: ScopedWorkflowInstanceListFilter;
+  scoped: ScopedWorkflowService;
+};
 
 export const serverSymbols = {
   AIService,
@@ -750,7 +834,16 @@ export const serverSymbols = {
   systemDatabaseServices,
   verifySubpathUploadGrantToken,
   verifyUploadGrantToken,
+  workflowChooseOptions,
+  workflowDefinition,
+  workflowTypeSurface,
+  typedWorkflowActivity,
+  WorkflowActivityCatalog,
+  WorkflowExecutor,
+  WorkflowRegistry,
   WorkflowService,
+  createWorkflowObservability,
+  normalizeWorkflowSchemaSnapshot,
 };
 `;
 
@@ -847,6 +940,11 @@ import {
   useTenantOnboardingAdministration as useTenantOnboardingAdministrationSubpath,
   useTenantAppShellWorkspaces as useTenantAppShellWorkspacesSubpath,
   useTenantSwitcher as useTenantSwitcherSubpath,
+  useWorkflow as useWorkflowSubpath,
+  useWorkflowActions as useWorkflowActionsSubpath,
+  useWorkflowList as useWorkflowListSubpath,
+  useWorkflowRun as useWorkflowRunSubpath,
+  useWorkflowTopology as useWorkflowTopologySubpath,
 } from '@zero/framework/react/hooks';
 import type {
   UseAuthApiKeysOptions as UseAuthApiKeysOptionsSubpath,
@@ -856,6 +954,8 @@ import type {
   UsePlatformAdministrationResult as UsePlatformAdministrationResultSubpath,
   UseTenantOnboardingAdministrationOptions as UseTenantOnboardingAdministrationOptionsSubpath,
   UseTenantOnboardingAdministrationResult as UseTenantOnboardingAdministrationResultSubpath,
+  WorkflowInteractionSubmissionResult as WorkflowInteractionSubmissionResultSubpath,
+  UseWorkflowTopologyResult as UseWorkflowTopologyResultSubpath,
 } from '@zero/framework/react/hooks';
 import {
   AdministrationScopeGate,
@@ -872,6 +972,7 @@ import {
   DataRealmReadinessNotice,
   DataRealmReadyGate,
   DomainOnboarding,
+  ApiError,
   Button,
   AppShell,
   AnimatedList,
@@ -941,6 +1042,12 @@ import {
   TenantMemberApiKeyManagement,
   TenantSelectionForm,
   TenantSwitcher,
+  useWorkflow,
+  useWorkflowActions,
+  useWorkflowList,
+  useWorkflowRun,
+  useWorkflowTopology,
+  unwrap,
   WavyBackground,
 } from '@zero/framework/react';
 import {
@@ -1018,6 +1125,8 @@ import type {
   UseTenantOnboardingAdministrationResult,
   UseTenantInvitationActionOptions,
   UseTenantInvitationActionResult,
+  WorkflowInteractionSubmissionResult,
+  UseWorkflowTopologyResult,
 } from '@zero/framework/react';
 
 	const row: Row = {};
@@ -1115,6 +1224,10 @@ import type {
 	const platformAdministrationResultSubpath = {} as UsePlatformAdministrationResultSubpath;
 	const tenantOnboardingAdministrationOptionsSubpath = {} as UseTenantOnboardingAdministrationOptionsSubpath;
 	const tenantOnboardingAdministrationResultSubpath = {} as UseTenantOnboardingAdministrationResultSubpath;
+		const workflowTopologyResult = {} as UseWorkflowTopologyResult;
+		const workflowTopologyResultSubpath = {} as UseWorkflowTopologyResultSubpath;
+		const workflowInteractionSubmissionResult = {} as WorkflowInteractionSubmissionResult;
+		const workflowInteractionSubmissionResultSubpath = {} as WorkflowInteractionSubmissionResultSubpath;
 	const clientPlatformAdmin = {} as Client['platformAdmin'];
 	const appProviderPostLoginPath = (props: AppProviderProps): string | undefined => props.postLoginPath;
 	const authRestorationState = (state: AuthState): boolean => state.isRestoring;
@@ -1155,6 +1268,7 @@ export const clientSymbols = {
   dataRealmReadyGatePropsSubpath,
   DomainOnboarding,
   DomainOnboardingSubpath,
+  ApiError,
   Button,
   AnimatedList,
   AnimatedListCard,
@@ -1304,7 +1418,22 @@ export const clientSymbols = {
   useTenantAppShellWorkspacesSubpath,
   useTenantSwitcher,
   useTenantSwitcherSubpath,
+  useWorkflow,
+  useWorkflowActions,
+  useWorkflowActionsSubpath,
+  useWorkflowList,
+  useWorkflowListSubpath,
+  useWorkflowRun,
+  useWorkflowRunSubpath,
+  useWorkflowSubpath,
+  useWorkflowTopology,
+  useWorkflowTopologySubpath,
+  workflowTopologyResult,
+  workflowTopologyResultSubpath,
+  workflowInteractionSubmissionResult,
+  workflowInteractionSubmissionResultSubpath,
   useDisclosure,
+  unwrap,
   FlipWords,
   WavyBackground,
   projectKanbanMove,

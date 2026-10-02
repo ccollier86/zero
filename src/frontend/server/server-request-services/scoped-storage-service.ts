@@ -1,3 +1,10 @@
+/**
+ * Scope-safe StorageService projection for requests and workflow steps.
+ *
+ * This module owns drive/object ACL projection and authority fencing. Storage
+ * persistence, adapters, and byte transport remain in StorageService.
+ */
+
 import type { RequestAuthorizationAccess } from '../../../auth/authorization-access';
 import { effectiveServiceDataRoles } from '../../../auth/service-data-authority';
 import {
@@ -79,6 +86,7 @@ export function createScopedStorageService(
     level: PermissionLevel,
     path: string | null = null,
   ): boolean => {
+    assertCurrentAuthoritySync();
     if (privilegedSystem) return true;
     if (!auth) return scope.scopeKind === 'application';
     const properties = getProperties();
@@ -98,6 +106,7 @@ export function createScopedStorageService(
     level: PermissionLevel,
     path: string | null = null,
   ): DriveRecord => {
+    assertCurrentAuthoritySync();
     const drive = service.getDriveForScope(driveId, scope);
     if (!drive) throw new StorageError(404, 'Drive not found');
     if (!canAccess(driveId, level, path)) throw new StorageError(403, 'Forbidden');
@@ -110,9 +119,12 @@ export function createScopedStorageService(
     }
   };
 
-  const listVisibleDrives = (): DriveRecord[] => service.listDrives()
-    .filter((drive) => serviceDataScopeMatchesTenant(scope, drive.tenant_id))
-    .filter((drive) => canAccess(drive.drive_id, 'read'));
+  const listVisibleDrives = (): DriveRecord[] => {
+    assertCurrentAuthoritySync();
+    return service.listDrives()
+      .filter((drive) => serviceDataScopeMatchesTenant(scope, drive.tenant_id))
+      .filter((drive) => canAccess(drive.drive_id, 'read'));
+  };
 
   const methods: ScopedStorageMethods = {
     createDrive(ownerId, params) {
@@ -121,10 +133,12 @@ export function createScopedStorageService(
       return service.createDrive(ownerId, params, scope);
     },
     getDrive(driveId) {
+      assertCurrentAuthoritySync();
       const drive = service.getDriveForScope(driveId, scope);
       return drive && canAccess(driveId, 'read') ? drive : null;
     },
     getDriveForScope(driveId) {
+      assertCurrentAuthoritySync();
       const drive = service.getDriveForScope(driveId, scope);
       return drive && canAccess(driveId, 'read') ? drive : null;
     },
@@ -244,6 +258,7 @@ export function createScopedStorageService(
       return service.listPermissions(driveId, options);
     },
     getPermission(permissionId) {
+      assertCurrentAuthoritySync();
       const permission = service.getPermission(permissionId);
       if (!permission || !serviceDataScopeMatchesTenant(scope, permission.tenant_id)) return null;
       requireDrive(permission.drive_id, 'admin');

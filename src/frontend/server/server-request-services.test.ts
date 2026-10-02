@@ -23,14 +23,31 @@ import { WorkflowRegistry } from '../../workflows/workflow-registry';
 import { AuthWorkflowExecutionAuthorityProvider } from '../../workflows/auth-workflow-execution-authority';
 import { WorkflowExecutionAuthorityStore } from '../../workflows/workflow-execution-authority';
 import { defineWorkflowTables } from '../../workflows/workflow.plugin';
+import { OBS_CODES } from '../../observability/codes';
 import {
   createServerRequestServices,
 } from './server-request-services';
-import { createWorkflowExecutionServiceProvider } from './workflow-execution-services';
+import {
+  createWorkflowExecutionServiceProvider,
+  type WorkflowExecutionServerServices,
+} from './workflow-execution-services';
 import type { ServerRouteServices } from './server-services';
 import type { DatabaseManager } from '../../databases/database-manager';
 
 describe('request-bound server services', () => {
+  test('types graph activity input and managed services without privileged workflows', () => {
+    const registry = new WorkflowRegistry();
+    const activity = registry.registerActivity<
+      { instanceId: string },
+      WorkflowExecutionServerServices
+    >({
+      name: 'typed-managed-activity',
+      handler: async ({ input, zero }) => zero?.workflows?.get(input.instanceId) ?? null,
+    });
+
+    expect(activity.name).toBe('typed-managed-activity');
+  });
+
   test('scopes storage to the live tenant and keeps raw access explicit', () => {
     const fixture = createFixture();
     try {
@@ -133,6 +150,7 @@ describe('request-bound server services', () => {
         platformRole: 'admin',
         tenantRole: 'member',
       });
+      fixture.contexts.set('roleless', context);
       const advancedKernel = createAuthorizationKernel(resolveAuthBehaviorConfig({
         tenancy: 'multi',
         authorization: { mode: 'advanced' },
@@ -283,9 +301,57 @@ describe('request-bound server services', () => {
       expect(beta.rooms!.getRoom(roomA.room_id)).toBeNull();
       expect(alpha.workflows!.get(workflowB)).toBeNull();
       expect(beta.workflows!.get(workflowA)).toBeNull();
+      // Deliberately bypass the compile-time facade to verify its runtime traps.
+      const rawSignatureWorkflow = alpha.workflows as unknown as WorkflowService;
+      await expect(rawSignatureWorkflow.run(
+        'proof',
+        {},
+        USER_ID,
+        trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: TENANT_B }),
+      )).rejects.toMatchObject({ code: 'WORKFLOW_REQUEST_INVALID' });
       expect(() => alpha.notifications!.deleteExpired()).toThrow('not available');
-      expect(() => alpha.workflows!.pollTimeouts()).toThrow('not available');
+      const deniedWorkflow = alpha.workflows as unknown as {
+        getGraphRuntime(): unknown;
+        dispose(): Promise<void>;
+        pollTimeouts(): number;
+      };
+      expect(() => deniedWorkflow.getGraphRuntime()).toThrow('not available');
+      expect(() => deniedWorkflow.dispose()).toThrow('not available');
+      expect(() => deniedWorkflow.pollTimeouts()).toThrow('not available');
     } finally {
+      fixture.db.dispose();
+    }
+  });
+
+  test('seals scoped workflow events with the exact request actor authority', async () => {
+    const fixture = createFixture();
+    try {
+      const alpha = fixture.forToken('alpha');
+      const instanceId = await alpha.workflows!.run('waiting-proof', {}, USER_ID);
+      await expect(alpha.workflows!.sendEvent(
+        instanceId,
+        'proof.ready',
+        { accepted: true },
+        USER_ID,
+      )).resolves.toBe(true);
+
+      expect(fixture.workflows.getInstance(instanceId, alpha.scope!)).toMatchObject({
+        status: 'completed',
+      });
+      const sealed = fixture.db.prepare(`SELECT authority.authority_json, delivery.actor_json
+        FROM _workflow_event_authorities AS authority
+        INNER JOIN _workflow_event_delivery AS delivery
+          ON delivery.event_id = authority.event_id
+        WHERE delivery.instance_id = ? LIMIT 1`).get(instanceId) as {
+          authority_json: string;
+          actor_json: string;
+        };
+      expect(sealed.authority_json).toContain(`"userId":"${USER_ID}"`);
+      expect(sealed.actor_json).toContain(`"actorId":"${USER_ID}"`);
+      expect(JSON.parse(sealed.authority_json)).not.toHaveProperty('accessToken');
+      expect(JSON.parse(sealed.authority_json)).not.toHaveProperty('refreshToken');
+    } finally {
+      await fixture.workflows.dispose();
       fixture.db.dispose();
     }
   });
@@ -306,6 +372,25 @@ describe('request-bound server services', () => {
       });
       expect(workflowManager.workflows!.list().map((row) => row.instance_id))
         .toContain(instanceId);
+    } finally {
+      fixture.db.dispose();
+    }
+  });
+
+  test('does not hide workflow storage failures as missing instances', async () => {
+    const fixture = createFixture();
+    try {
+      const alpha = fixture.forToken('alpha');
+      const storageFailure = new Error('workflow storage unavailable');
+      const getInstance = fixture.workflows.getInstance;
+      fixture.workflows.getInstance = () => {
+        throw storageFailure;
+      };
+
+      expect(() => alpha.workflows!.getInstance('wf_failure')).toThrow(storageFailure);
+      expect(() => alpha.workflows!.get('wf_failure')).toThrow(storageFailure);
+
+      fixture.workflows.getInstance = getInstance;
     } finally {
       fixture.db.dispose();
     }
@@ -456,6 +541,13 @@ describe('request-bound server services', () => {
         authority: fixture.resolveWorkflowAuthority(authority),
         assertCurrentAuthority: () => fixture.assertWorkflowAuthority(authority),
       });
+      const resolved = fixture.resolveWorkflowAuthority(authority);
+      expect(() => provider.createServices({
+        authority: { ...resolved, authContext: null },
+        assertCurrentAuthority: () => fixture.assertWorkflowAuthority(authority),
+      })).toThrow(expect.objectContaining({
+        code: 'WORKFLOW_AUTHORITY_REQUIRED', status: 500,
+      }));
 
       expect(zero.scope).toEqual(trustedSystemServiceDataScope({
         scopeKind: 'tenant',
@@ -522,6 +614,86 @@ describe('request-bound server services', () => {
         ['owner'],
         trustedSystemServiceDataScope({ scopeKind: 'tenant', tenantId: TENANT_A }),
       )).toHaveLength(notificationCount);
+    } finally {
+      fixture.db.dispose();
+    }
+  });
+
+  test('fences every workflow observability emitter after authority is revoked', async () => {
+    const fixture = createFixture();
+    try {
+      const authority = fixture.captureWorkflowAuthority('alpha');
+      const zero = createWorkflowExecutionServiceProvider({
+        services: fixture.services,
+      }).createServices({
+        authority: fixture.resolveWorkflowAuthority(authority),
+        assertCurrentAuthority: () => fixture.assertWorkflowAuthority(authority),
+      });
+      const initialEventCount = fixture.observabilityEvents.length;
+      const definition = OBS_CODES.WORKFLOW_NODE_COMPLETED;
+      const emitters = [
+        () => zero.observability.emitCode(definition),
+        () => zero.observability.emitEvent({
+          level: 'info',
+          category: 'workflows',
+          code: 'workflows.test',
+          message: 'must not be emitted after revocation',
+        }),
+        () => zero.observability.error(definition),
+        () => zero.observability.info(definition),
+        () => zero.observability.warn(definition),
+      ];
+
+      // A handler may retain the facade across arbitrary awaits. Every sink
+      // entry point must revalidate at the call rather than only at dispatch.
+      await Promise.resolve();
+      fixture.contexts.set('alpha', tenantContext(TENANT_A, 'mem_a', 1));
+
+      for (const emit of emitters) {
+        expect(emit).toThrow('Workflow execution authority is no longer valid');
+      }
+      expect(fixture.observabilityEvents).toHaveLength(initialEventCount);
+    } finally {
+      fixture.db.dispose();
+    }
+  });
+
+  test('fences synchronous workflow service reads after authority is revoked', async () => {
+    const fixture = createFixture();
+    try {
+      const authority = fixture.captureWorkflowAuthority('alpha');
+      const zero = createWorkflowExecutionServiceProvider({
+        services: fixture.services,
+      }).createServices({
+        authority: fixture.resolveWorkflowAuthority(authority),
+        assertCurrentAuthority: () => fixture.assertWorkflowAuthority(authority),
+      });
+      const drive = zero.storage!.createDrive(USER_ID, { name: 'Private drive' });
+      const notification = zero.notifications!.create({ title: 'Private notice' }, USER_ID);
+      const room = zero.rooms!.create(USER_ID, { name: 'Private room' });
+      const workflow = await zero.workflows!.run('proof', {}, USER_ID);
+
+      // Simulate an arbitrary await followed by session/membership revocation.
+      await Promise.resolve();
+      fixture.contexts.set('alpha', tenantContext(TENANT_A, 'mem_a', 1));
+
+      const revoked = 'Workflow execution authority is no longer valid';
+      expect(() => zero.storage!.getDrive(drive.drive_id)).toThrow(revoked);
+      expect(() => zero.storage!.listDrives()).toThrow(revoked);
+      expect(() => zero.storage!.getDriveUsage(drive.drive_id)).toThrow(revoked);
+      expect(() => zero.notifications!.getById(notification.notification_id)).toThrow(revoked);
+      expect(() => zero.notifications!.list(USER_ID, [])).toThrow(revoked);
+      expect(() => zero.notifications!.getReceipts(notification.notification_id)).toThrow(revoked);
+      expect(() => zero.rooms!.getRoom(room.room_id)).toThrow(revoked);
+      expect(() => zero.rooms!.getMembers(room.room_id)).toThrow(revoked);
+      expect(() => zero.rooms!.getRoomsForUser(USER_ID)).toThrow(revoked);
+      expect(() => zero.workflows!.getInstance(workflow)).toThrow(revoked);
+      expect(() => zero.workflows!.get(workflow)).toThrow(revoked);
+      expect(() => zero.workflows!.getSteps(workflow)).toThrow(revoked);
+      expect(() => zero.workflows!.getEvents(workflow)).toThrow(revoked);
+      expect(() => zero.workflows!.getPublicTopology(workflow)).toThrow(revoked);
+      expect(() => zero.workflows!.listInstances()).toThrow(revoked);
+      expect(() => zero.workflows!.list()).toThrow(revoked);
     } finally {
       fixture.db.dispose();
     }
@@ -619,9 +791,14 @@ function createFixture(
   } as unknown as UserStore;
   const workflowRegistry = new WorkflowRegistry();
   workflowRegistry.registerHandler('proof', async () => ({ ok: true }));
+  workflowRegistry.registerHandler('waiting-proof', async ({ waitEvent }) => waitEvent?.payload);
   workflowRegistry.registerWorkflow({
     name: 'proof',
     steps: [{ name: 'Proof', handler: 'proof' }],
+  });
+  workflowRegistry.registerWorkflow({
+    name: 'waiting-proof',
+    steps: [{ name: 'Wait for proof', handler: 'waiting-proof', waitFor: 'proof.ready' }],
   });
   const workflowAuthorityStore = new WorkflowExecutionAuthorityStore(db);
   const workflowAuthorityProvider = new AuthWorkflowExecutionAuthorityProvider({
@@ -687,6 +864,7 @@ function createFixture(
     observabilityEvents,
     storage,
     store,
+    workflows,
     services,
     captureWorkflowAuthority(token: string) {
       const context = contexts.get(token);

@@ -4,17 +4,25 @@
  * Part of: Workflows subsystem (types)
  *
  * Core types for the durable workflow engine. Workflows are multi-step
- * processes with durable state in SQLite. Steps execute sequentially
- * with I/O chaining, retries with exponential backoff, optional wait-for
- * events, and condition-based branching.
+ * processes with durable state in SQLite. Legacy sequential definitions and
+ * versioned graph definitions share lifecycle, retry, interaction, fan-out,
+ * scratch-memory, and live-projection contracts.
  *
- * Tables use NO `_` prefix so changes broadcast via the sync engine
- * for real-time workflow observability on the client.
+ * Public runtime tables use no `_` prefix for authorized real-time Sync.
+ * Definitions and underscore-prefixed coordination tables remain server-only.
  */
 
 import type { TSchema } from 'elysia';
 import type { ClientTableDef } from '../schema/define-schema';
 import type { WorkflowExecutionIdentity } from './workflow-execution-authority';
+import type {
+  WorkflowInteractionRecord,
+  WorkflowInteractionStatus,
+} from './workflow-interaction-records';
+import type { WorkflowMemoryContext } from './workflow-memory-context';
+
+/** Registration-time ceiling for one step's total handler attempt budget. */
+export const MAX_WORKFLOW_ATTEMPTS = 1_000;
 
 // ─── Status Enums ────────────────────────────────────
 
@@ -41,7 +49,7 @@ export interface StepDefinition {
   name: string;
   /** Key in the handler registry */
   handler: string;
-  /** Max retry attempts (default 3) */
+  /** Total attempt budget, including the first attempt (default 3) */
   retries?: number;
   /** Base backoff in ms (default 1000), exponential with 5min cap */
   backoffMs?: number;
@@ -53,10 +61,36 @@ export interface StepDefinition {
   condition?: string;
 }
 
+/**
+ * Declarative role requirement for one workflow-definition capability.
+ *
+ * `authenticated` preserves the historical behavior. `admin` limits the
+ * capability to an administrator of the workflow's current application or
+ * tenant scope. An array names accepted live roles in that same scope.
+ * A global users.role value never grants tenant authority by itself.
+ */
+export type WorkflowAccessRule = 'authenticated' | 'admin' | readonly string[];
+
+export interface WorkflowDefinitionAccessPolicy {
+  /** Who may start a new instance (default `authenticated`). */
+  start?: WorkflowAccessRule;
+  /** Who may discover definition metadata (defaults to the `start` rule). */
+  inspect?: WorkflowAccessRule;
+}
+
 export interface WorkflowDefinition {
   name: string;
   steps: StepDefinition[];
+  /** Mutually exclusive graph authoring formats are accepted by WorkflowRegistry. */
+  flow?: never;
+  graph?: never;
+  /** Immutable publication belongs to flow/graph definitions. */
+  version?: never;
+  /** Immutable publication belongs to flow/graph definitions. */
+  activate?: never;
   inputSchema?: TSchema;
+  /** Optional HTTP authority policy. Trusted WorkflowService calls bypass it. */
+  access?: WorkflowDefinitionAccessPolicy;
 }
 
 // ─── Runtime Context ─────────────────────────────────
@@ -72,14 +106,26 @@ export interface StepContext<TInput = unknown, TServices = unknown> {
   stepIndex: number;
   /** Current retry attempt (0-based) */
   attempt: number;
+  /** Unique token for this physical handler invocation (always set by Zero). */
+  attemptId?: string;
+  /** Stable key for idempotent external effects by this logical step (always set by Zero). */
+  idempotencyKey?: string;
+  /** Cooperative cancellation signal (always set by Zero at runtime). */
+  signal?: AbortSignal;
   /** Event data if step was waiting for an event */
-  waitEvent?: { name: string; payload: unknown };
+  waitEvent?: { id: string; name: string; payload: unknown };
   /** Immutable actor/system provenance and tenant-safe authorization scope. */
   execution: WorkflowExecutionIdentity;
   /** Request-equivalent, scope-closed services when the app installed a provider. */
   zero: TServices | null;
   /** Revalidate immediately before an app-owned external/security-sensitive effect. */
   assertCurrentAuthority(): void;
+  /** Attempt-local durable scratchpad; staged writes commit only with success. */
+  memory?: WorkflowMemoryContext;
+  /** Current fan-out item for an each activity. */
+  item?: { value: unknown; index: number; key: string };
+  /** Public interaction metadata for delivery or validation activities. */
+  interaction?: WorkflowInteractionRecord;
 }
 
 export type StepHandler<TInput = unknown, TServices = unknown> = (
@@ -110,10 +156,21 @@ export interface WorkflowInstanceRecord {
   output: string | null;
   error: string | null;
   started_by: string | null;
+  steps_json: string | null;
+  definition_version_id?: string | null;
+  definition_version?: number | null;
+  graph_json?: string | null;
+  graph_fingerprint?: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
 }
+
+/** Runtime instance shape exposed through HTTP and Sync. */
+export type WorkflowClientInstanceRecord = Omit<
+  WorkflowInstanceRecord,
+  'steps_json' | 'graph_json' | 'definition_version_id'
+>;
 
 export interface WorkflowStepRecord {
   step_id: string;
@@ -121,6 +178,7 @@ export interface WorkflowStepRecord {
   tenant_id: string | null;
   instance_id: string;
   step_index: number;
+  /** Human-readable step label for new rows; 1.3 rows may contain the handler key. */
   step_name: string;
   status: StepStatus;
   input: string | null;
@@ -134,6 +192,38 @@ export interface WorkflowStepRecord {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  node_id?: string | null;
+  node_kind?: string | null;
+  node_path?: string | null;
+  parent_step_id?: string | null;
+  branch_key?: string | null;
+  item_key?: string | null;
+  item_index?: number | null;
+  activation_key?: string | null;
+  updated_at?: string | null;
+}
+
+/** Runtime step shape exposed through HTTP and Sync. */
+export type WorkflowClientStepRecord = Omit<WorkflowStepRecord, 'wait_event'>;
+
+/** Privacy-safe interaction progress exposed over HTTP and ReactiveDB Sync. */
+export interface WorkflowClientInteractionRecord {
+  interaction_id: string;
+  /** Duplicated from the parent instance for direct Sync filtering. */
+  tenant_id: string | null;
+  instance_id: string;
+  node_id: string;
+  step_id: string;
+  safe_label: string;
+  status: WorkflowInteractionStatus;
+  opened_at: string;
+  expires_at: string | null;
+  accepted_at: string | null;
+  accepted_by: string | null;
+  rejection_count: number;
+  max_rejections: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface WorkflowEventRecord {
@@ -154,16 +244,6 @@ export interface WorkflowEventRecord {
  * Auto-registered by the platform — apps don't need to import this manually.
  */
 export const WORKFLOW_TABLES: Record<string, ClientTableDef> = {
-  workflow_definitions: {
-    _pk: 'definition_id',
-    definition_id: 'text',
-    name: 'text',
-    version: 'integer',
-    steps_json: 'text',
-    input_schema: 'text',
-    created_at: 'text',
-    updated_at: 'text',
-  },
   workflow_instances: {
     _pk: 'instance_id',
     instance_id: 'text',
@@ -176,7 +256,8 @@ export const WORKFLOW_TABLES: Record<string, ClientTableDef> = {
     output: 'text',
     error: 'text',
     started_by: 'text',
-    steps_json: 'text',
+    definition_version: 'integer',
+    graph_fingerprint: 'text',
     created_at: 'text',
     updated_at: 'text',
     completed_at: 'text',
@@ -195,11 +276,19 @@ export const WORKFLOW_TABLES: Record<string, ClientTableDef> = {
     retries: 'integer',
     max_retries: 'integer',
     retry_at: 'text',
-    wait_event: 'text',
     timeout_at: 'text',
     started_at: 'text',
     completed_at: 'text',
     created_at: 'text',
+    node_id: 'text',
+    node_kind: 'text',
+    node_path: 'text',
+    parent_step_id: 'text',
+    branch_key: 'text',
+    item_key: 'text',
+    item_index: 'integer',
+    activation_key: 'text',
+    updated_at: 'text',
   },
   workflow_events: {
     _pk: 'event_id',
@@ -211,4 +300,48 @@ export const WORKFLOW_TABLES: Record<string, ClientTableDef> = {
     sent_by: 'text',
     created_at: 'text',
   },
+  workflow_interactions: {
+    _pk: 'interaction_id',
+    interaction_id: 'text',
+    tenant_id: 'text',
+    instance_id: 'text',
+    node_id: 'text',
+    step_id: 'text',
+    safe_label: 'text',
+    status: 'text',
+    opened_at: 'text',
+    expires_at: 'text',
+    accepted_at: 'text',
+    accepted_by: 'text',
+    rejection_count: 'integer',
+    max_rejections: 'integer',
+    created_at: 'text',
+    updated_at: 'text',
+  },
 };
+
+/**
+ * Every workflow table protected by the server boundary, including tables
+ * deliberately absent from the browser client descriptor.
+ */
+export const WORKFLOW_SERVER_TABLE_NAMES: ReadonlySet<string> = new Set([
+  'workflow_definitions',
+  'workflow_definition_versions',
+  '_workflow_definition_drafts',
+  '_workflow_graph_edges',
+  '_workflow_decisions',
+  '_workflow_each_items',
+  '_workflow_memory',
+  '_workflow_interaction_details',
+  '_workflow_interaction_responses',
+  '_workflow_event_delivery',
+  '_workflow_event_authorities',
+  '_workflow_event_usage',
+  '_workflow_step_attempts',
+  '_workflow_pauses',
+  '_workflow_runtime_usage',
+  '_workflow_runtime_owner_lease',
+  '_workflow_execution_authorities',
+  '_workflow_step_executions',
+  ...Object.keys(WORKFLOW_TABLES),
+]);

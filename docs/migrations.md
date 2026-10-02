@@ -1,17 +1,21 @@
 # Migrations
 
-Zero treats migrations as first-class production infrastructure. The app schema
-in code remains the source of truth, migration files remain explicit reviewable
-changes, and the database keeps an audit trail of what actually happened.
+Zero treats migrations as first-class production infrastructure. The managed
+framework registry owns Zero's separated system database. Application schemas
+remain app-owned, while Fabric realm definitions carry the ordered migrations
+used to provision and upgrade each physical application or tenant database.
 
 ## Core Model
 
 The migration system has four separate pieces:
 
-1. **Migration files**: explicit `up()` / optional `down()` code.
-2. **Migration ledger**: append-only `_zero_migrations` events.
-3. **Schema history**: `_zero_schema_history` snapshots after successful runs.
-4. **Doctor and plan tooling**: compare declared schemas with the live DB.
+1. **System migration files**: explicit framework `up()` / optional `down()` code.
+2. **System migration ledger**: append-only `_zero_migrations` events in `systemDb`.
+3. **Schema history**: `_zero_schema_history` snapshots after successful system runs.
+4. **App schema tooling**: non-mutating doctor/plan comparison against an explicitly
+   selected application database.
+5. **Fabric realm migrations**: app-owned ordered migrations run independently
+   by each database actor while provisioning or upgrading its realm.
 
 This is a hybrid model: code-first enough to detect drift and draft SQL, but
 explicit enough that destructive changes still require human review.
@@ -97,21 +101,31 @@ bun run migrate -- --down-to 20260628110000 --allow-destructive-down
 # Run doctor without schema drift checks
 bun run migrate:doctor
 
-# Run doctor with app schema drift checks
-bun run migrate:doctor -- --schema ./app/lib/schemas.ts
+# Inspect app schema drift against an explicit application database
+bun run migrate:doctor -- --schema ./app/lib/schemas.ts --db ./data/app.db
 
 # Fail on warnings too, for CI
-bun run migrate:doctor -- --schema ./app/lib/schemas.ts --strict
+bun run migrate:doctor -- --schema ./app/lib/schemas.ts --db ./data/app.db --strict
 
 # Print a draft plan from declared schema vs live DB
-bun run migrate:plan -- --schema ./app/lib/schemas.ts
+bun run migrate:plan -- --schema ./app/lib/schemas.ts --db ./data/app.db
 
 # Write a draft migration file for review
-bun run migrate:plan -- --schema ./app/lib/schemas.ts --write --name "add memberships"
+bun run migrate:plan -- --schema ./app/lib/schemas.ts --db ./data/app.db \
+  --write --name "add memberships"
 ```
 
-`--db ./path/app.db` overrides the database path. If omitted, the runner uses
-`DATABASE_PATH` and then `./data/platform.db`.
+Managed migration, status, checkpoint, rollback, and migration-doctor commands
+target `SYSTEM_DB_PATH`, then `./data/zero.system.db`. `DATABASE_PATH` is not a
+migration target. `--db` remains an intentional exact override for operators
+working on a specific system database.
+
+`--plan --schema` and `--doctor --schema` are application-schema inspection
+commands. They require `--db <application-db>`, do not create Zero migration
+ledger/history/artifact tables, and never install framework migrations in that
+file. They also do not provision Fabric databases. Fabric initializes and
+migrates each admitted database from its declared realm version, tables, and
+ordered realm migrations inside the owning database actor.
 
 Programmatic migration runners can call `migrator.run()`,
 `migrator.rollback()`, and `migrator.list()`. The older `migrator.status()`
@@ -123,7 +137,7 @@ connection-local wait without changing the migration contract:
 
 ```ts
 const migrator = new Migrator({
-  dbPath: './data/platform.db',
+  dbPath: './data/zero.system.db',
   migrations,
   busyTimeoutMs: 45_000,
 });
@@ -179,6 +193,33 @@ security boundaries rather than application schema conveniences: follow the
 and [authorization registry deployment contract](./platform-configuration.md#authorization-registry-and-static-roles)
 instead of editing their private rows directly.
 
+Migration `030` is the immutable historical release that introduced versioned
+workflow graphs, scratch memory, interactions, and runtime coordination.
+Migration `031` is the appended upgrade: it scopes workflow interactions to
+their owning tenant, gives definitions a per-scope name namespace, installs
+parent/tenant immutability checks, and transactionally rebuilds the affected
+workflow relations without `ON DELETE CASCADE`. It also adds the private,
+event-bound authority seals and explicit actor/system/legacy-untrusted event
+classification used by delayed interaction responses, plus immutable response
+`origin`/`event_id` fields that distinguish the private event bridge from
+external callers. Existing response rows become `external` without trusting
+legacy channel or submission strings; an already-upgraded repair rerun
+preserves trusted origins. This preserves
+ReactiveDB's observable mutation path instead of allowing SQLite to delete
+related rows outside it. Existing `030` databases and fresh installs converge
+on that graph schema through `031`; `030` itself is never rewritten.
+File-backed `031` upgrades require the normal migration backup before the
+transactional rebuild begins.
+
+Migration `032` appends the private `_workflow_runtime_owner_lease` singleton
+used to elect one live workflow runtime generation per physical database. The
+migration is additive and does not claim ownership. Runtime startup performs
+the first atomic acquire; heartbeat renewal, graceful exact-generation release,
+and expired-generation takeover happen through the workflow service. The table
+is internal coordination state and remains outside app schemas and Sync. Fresh
+installs and upgrades now converge on the current workflow schema through
+`032`.
+
 ## Schema Module Shape
 
 Doctor and plan need a module that exports declared tables. These shapes are
@@ -205,13 +246,16 @@ export default schema({
 
 ## Doctor
 
-Doctor checks:
+System migration doctor checks:
 
 - Pending migrations.
 - Failed migration events.
 - Applied migration checksum changes.
 - Missing `down()` on destructive migrations.
-- Declared tables missing from the DB.
+
+Application schema doctor (`--doctor --schema ... --db ...`) checks:
+
+- Declared tables missing from the selected app DB.
 - Missing or changed columns.
 - Primary key drift.
 - Composite primary keys in sync-managed tables.
@@ -223,8 +267,9 @@ the recommended CI mode.
 
 ## Migrate Plan
 
-`migrate:plan` compares declared schema with the live SQLite schema and emits
-reviewable SQL.
+`migrate:plan` compares declared app schema with the explicitly selected live
+SQLite application database and emits reviewable SQL. It does not apply the
+draft or mutate the framework migration ledger.
 
 It can draft:
 
@@ -254,13 +299,15 @@ It will not auto-write destructive operations. Drops, renames, type changes,
 primary key changes, table rebuilds, and unknown transformations are reported as
 manual review items.
 
-When `--write` is provided, the draft migration is saved under
-`src/migrations/definitions`. Review it, fill in `down()`, then append it to
-`src/migrations/index.ts`.
+When `--write` is provided, the draft migration is saved under the selected
+output directory. Review it, fill in `down()`, and register it with the app's
+database realm. Framework contributors append system migrations to
+`src/migrations/index.ts`; app and Fabric schema changes do not belong there.
 
 ## Ledger And History Tables
 
-Zero creates these internal tables:
+The managed system migration runner creates these internal tables in its exact
+system-database target:
 
 | Table | Purpose |
 |-------|---------|

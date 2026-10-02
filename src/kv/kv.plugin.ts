@@ -152,9 +152,12 @@ export function createKvPlugin(config: KvPluginConfig = {}) {
     .onBeforeHandle({ as: 'global' }, () => ensureStarted())
     .onStop(() => {
       // Bun/Elysia does not await async onStop hooks. Managed apps observe the
-      // same cached result through the runtime cleanup barrier; standalone
-      // failures are already emitted here and must not become unhandled.
-      void stopService(true).catch(() => undefined);
+      // same cached result through the runtime cleanup barrier. Returning the
+      // promise also lets Zero's stop barrier await standalone composition;
+      // the attached observer prevents an unhandled rejection in raw Elysia.
+      const stopping = stopService(true);
+      void stopping.catch(() => undefined);
+      return stopping;
     })
     .derive({ as: 'global' }, () => ({
       kv: service,

@@ -1,3 +1,10 @@
+/**
+ * Scope-safe RoomService projection for requests and workflow steps.
+ *
+ * This module owns membership visibility and per-operation authority fences;
+ * room persistence remains in RoomService.
+ */
+
 import type { RequestAuthorizationAccess } from '../../../auth/authorization-access';
 import type { ServiceDataScope } from '../../../auth/service-data-scope';
 import { canManageRoomScope } from '../../../rooms/room-access';
@@ -35,7 +42,7 @@ export function createScopedRoomService(
   access: RequestAuthorizationAccess,
   assertCurrentAuthoritySync: () => void,
   privilegedSystem: boolean,
-): RoomService {
+): ScopedRoomMethods {
   const auth = access.context;
   const canManage = canManageRoomScope(access, scope, privilegedSystem);
   const requireActor = (userId: string): void => {
@@ -62,6 +69,7 @@ export function createScopedRoomService(
         assertCurrentAuthoritySync();
         return service.join(roomId, userId, role, scope);
       }
+      assertCurrentAuthoritySync();
       requireReadable(roomId);
       return service.getMember(roomId, userId, scope)!;
     },
@@ -71,6 +79,9 @@ export function createScopedRoomService(
       return service.leave(roomId, userId, scope);
     },
     getRoom(roomId) {
+      // Keep the authority fence outside the not-found normalization below;
+      // stale execution authority must never be converted into a null result.
+      assertCurrentAuthoritySync();
       try {
         return requireReadable(roomId);
       } catch {
@@ -78,22 +89,27 @@ export function createScopedRoomService(
       }
     },
     getMembers(roomId) {
+      assertCurrentAuthoritySync();
       requireReadable(roomId);
       return service.getMembers(roomId, scope);
     },
     getMember(roomId, userId) {
+      assertCurrentAuthoritySync();
       requireReadable(roomId);
       return service.getMember(roomId, userId, scope);
     },
     getRoomsForUser(userId) {
       requireActor(userId);
+      assertCurrentAuthoritySync();
       return service.getRoomsForUser(userId, scope);
     },
     isMember(roomId, userId) {
+      assertCurrentAuthoritySync();
       requireReadable(roomId);
       return service.isMember(roomId, userId, scope);
     },
     delete(roomId) {
+      assertCurrentAuthoritySync();
       const room = service.getRoom(roomId, scope);
       if (!room
         || (!canManage && (!auth || room.created_by !== auth.userId))) {

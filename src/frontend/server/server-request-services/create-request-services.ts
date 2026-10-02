@@ -90,7 +90,7 @@ export function createDeferredServerRequestServices(
 /**
  * Build one scope-closed service facade from already validated authority.
  * Callers own authority capture/revalidation; this function owns capability
- * projection and mutation fencing.
+ * projection and authority fencing at each scoped operation.
  */
 export function createAuthorityScopedServerServices(
   options: CreateAuthorityScopedServerServicesOptions,
@@ -166,6 +166,7 @@ export function createAuthorityScopedServerServices(
         scope,
         access,
         request ?? null,
+        assertCurrentAuthoritySync,
       )
     : services.observability;
   // Tenant-file operations require an explicit durable synchronous fence.
@@ -220,7 +221,7 @@ export function createAuthorityScopedServerServices(
 }
 
 export function isServerRequestServices(
-  services: ServerRouteServices,
+  services: object,
 ): services is ServerRequestServices {
   return Reflect.get(services, REQUEST_SERVICES) === true;
 }
@@ -243,6 +244,7 @@ function createUncommittedRequestServices(
       null,
       access,
       request,
+      authority.synchronous,
     ),
     storage: null,
     notifications: null,

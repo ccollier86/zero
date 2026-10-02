@@ -18,6 +18,7 @@ import {
 } from '../../resources';
 import type { ServerMessage, SyncSnapshotMessage } from '../../sync/types';
 import { createApp } from './app-factory';
+import type { WorkflowExecutionServerServices } from './workflow-execution-services';
 
 const DATABASE_ACTOR_ENTRYPOINT = fileURLToPath(new URL(
   '../../databases/test-fixtures/database-actor-same-entry.ts',
@@ -29,6 +30,11 @@ type ManagedApp = Awaited<ReturnType<typeof createApp>>;
 interface RegisteredTenant {
   readonly accessToken: string;
   readonly tenant: { readonly tenantId: string };
+}
+
+interface FabricWorkflowInput {
+  readonly id: string;
+  readonly title: string;
 }
 
 interface SyncConnection {
@@ -95,6 +101,36 @@ describe('createApp actor-backed multi-database Sync', () => {
         bootstrap: 'public',
         registration: { mode: 'public' },
       },
+      workflows: {
+        register(registry) {
+          registry.registerHandler<FabricWorkflowInput, WorkflowExecutionServerServices>(
+            'fabric-tenant-write',
+            async (context) => {
+              const data = context.zero?.data;
+              if (!data) throw new Error('Tenant workflow database is unavailable');
+              if (!context.idempotencyKey) {
+                throw new Error('Workflow idempotency key is unavailable');
+              }
+              await data.mutate({
+                type: 'create',
+                table: 'todos',
+                row: {
+                  id: context.input.id,
+                  title: context.input.title,
+                },
+              }, { idempotencyKey: context.idempotencyKey });
+              return { createdId: context.input.id };
+            },
+          );
+          registry.create({
+            name: 'fabric-tenant-write',
+            steps: [{
+              name: 'Write tenant data',
+              handler: 'fabric-tenant-write',
+            }],
+          });
+        },
+      },
       databaseTopology: {
         mode: 'multiple',
         rootDirectory: join(activeRoot, 'tenant-databases'),
@@ -146,6 +182,8 @@ describe('createApp actor-backed multi-database Sync', () => {
     // materialized as shadows in the application database.
     expect(hasSQLiteTable(sqlite, 'todos')).toBe(false);
     expect(hasSQLiteTable(sqlite, 'notifications')).toBe(false);
+    expect(hasSQLiteTable(sqlite, 'workflow_instances')).toBe(false);
+    expect(hasSQLiteTable(sqlite, '_workflow_memory')).toBe(false);
 
     const connectionA = await connectSync(syncUrl, tenantA.accessToken);
     const connectionB = await connectSync(syncUrl, tenantB.accessToken);
@@ -172,6 +210,10 @@ describe('createApp actor-backed multi-database Sync', () => {
     ]);
     expect(systemA.tables.todos).toBeUndefined();
     expect(systemB.tables.todos).toBeUndefined();
+    expect(systemA.tables.workflow_instances).toEqual({});
+    expect(systemA.tables.workflow_steps).toEqual({});
+    expect(systemB.tables.workflow_instances).toEqual({});
+    expect(systemB.tables.workflow_steps).toEqual({});
     expect(tenantSnapshotA.tables).toEqual({ todos: {} });
     expect(tenantSnapshotB.tables).toEqual({ todos: {} });
 
@@ -180,13 +222,86 @@ describe('createApp actor-backed multi-database Sync', () => {
       notificationA.notification_id,
     );
 
+    // A tenant-owned workflow keeps its durable coordination in the system
+    // database while its scope-closed ctx.zero.data capability writes only the
+    // actor-backed tenant file. The two changes arrive over their respective
+    // multiplexed planes, with workflow payloads redacted at the Sync boundary.
+    const workflowTodo = {
+      id: 'workflow-live',
+      title: 'Workflow tenant value',
+    };
+    const workflowInstanceId = await startTenantWorkflow(
+      baseUrl,
+      tenantA.accessToken,
+      workflowTodo,
+    );
+    const [workflowTodoChange, workflowInstanceChange, workflowStepChange]
+      = await Promise.all([
+        waitForTodoChange(connectionA, workflowTodo),
+        waitForWorkflowChange(
+          connectionA,
+          'workflow_instances',
+          workflowInstanceId,
+        ),
+        waitForWorkflowChange(
+          connectionA,
+          'workflow_steps',
+          workflowInstanceId,
+        ),
+      ]);
+    expect(workflowTodoChange.plane).toBe('tenant');
+    expect(workflowInstanceChange.row).toMatchObject({
+      instance_id: workflowInstanceId,
+      tenant_id: tenantA.tenant.tenantId,
+      status: 'completed',
+      input: null,
+      output: null,
+      error: null,
+    });
+    expect(workflowInstanceChange.row).not.toHaveProperty('steps_json');
+    expect(workflowInstanceChange.row).not.toHaveProperty('graph_json');
+    expect(workflowInstanceChange.row).not.toHaveProperty('definition_version_id');
+    expect(workflowStepChange.row).toMatchObject({
+      instance_id: workflowInstanceId,
+      tenant_id: tenantA.tenant.tenantId,
+      step_name: 'Write tenant data',
+      status: 'completed',
+      input: null,
+      output: null,
+      error: null,
+      item_key: null,
+      activation_key: null,
+    });
+    expect(workflowStepChange.row).not.toHaveProperty('wait_event');
+
+    // Advance tenant B's system stream past the workflow commits before
+    // asserting absence, so this is an ordering proof rather than a race with
+    // websocket delivery.
+    const afterWorkflowNotificationB = await createTenantNotification(
+      baseUrl,
+      tenantB.accessToken,
+      'Tenant B post-workflow barrier',
+    );
+    await waitForSystemChange(
+      connectionB,
+      'notifications',
+      afterWorkflowNotificationB.notification_id,
+    );
+    expect(connectionB.messages.some(
+      (message) => message.type === 'sync.change'
+        && message.plane === 'system'
+        && (message.table === 'workflow_instances'
+          || message.table === 'workflow_steps')
+        && message.row?.instance_id === workflowInstanceId,
+    )).toBe(false);
+
     // Resource writes and Sync mutations share the actor writer lane. Keep a
     // second live socket on the same physical tenant database to prove an HTTP
     // commit wakes every persistent binding without crossing tenant scope.
     const secondConnectionA = await connectSync(syncUrl, tenantA.accessToken);
     subscribeMixed(secondConnectionA);
     expect((await waitForSnapshot(secondConnectionA, 'tenant')).tables)
-      .toEqual({ todos: {} });
+      .toEqual({ todos: { [workflowTodo.id]: workflowTodo } });
     const resourceTodo = {
       id: 'resource-live',
       title: 'Resource fanout value',
@@ -245,6 +360,7 @@ describe('createApp actor-backed multi-database Sync', () => {
       waitForSnapshot(reconnectB, 'tenant'),
     ]);
     expect(reloadedA.tables.todos).toEqual({
+      [workflowTodo.id]: workflowTodo,
       [resourceTodo.id]: resourceTodo,
       'same-id': { id: 'same-id', title: 'Tenant A value' },
     });
@@ -307,10 +423,39 @@ async function registerTenant(
 function subscribeMixed(connection: SyncConnection): void {
   connection.ws.send(JSON.stringify({
     type: 'sync.subscribe',
-    tables: ['notifications', 'todos'],
-    snapshot: ['notifications', 'todos'],
+    tables: [
+      'notifications',
+      'todos',
+      'workflow_instances',
+      'workflow_steps',
+    ],
+    snapshot: [
+      'notifications',
+      'todos',
+      'workflow_instances',
+      'workflow_steps',
+    ],
     lastSeq: 0,
   }));
+}
+
+async function startTenantWorkflow(
+  baseUrl: string,
+  token: string,
+  input: FabricWorkflowInput,
+): Promise<string> {
+  const response = await fetch(`${baseUrl}/workflows`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ name: 'fabric-tenant-write', input }),
+  });
+  const body = await response.json() as { instanceId?: unknown };
+  expect(response.status).toBe(200);
+  expect(body.instanceId).toBeString();
+  return body.instanceId as string;
 }
 
 async function waitForSnapshot(
@@ -448,7 +593,7 @@ async function insertTodo(
 async function waitForTodoChange(
   connection: SyncConnection,
   todo: Readonly<{ id: string; title: string }>,
-): Promise<void> {
+): Promise<Extract<ServerMessage, { type: 'sync.change' }>> {
   const change = await connection.waitFor(
     (message) => message.type === 'sync.change'
       && message.plane === 'tenant'
@@ -463,6 +608,44 @@ async function waitForTodoChange(
     op: 'INSERT',
     row: todo,
   });
+  return change as Extract<ServerMessage, { type: 'sync.change' }>;
+}
+
+async function waitForWorkflowChange(
+  connection: SyncConnection,
+  table: 'workflow_instances' | 'workflow_steps',
+  instanceId: string,
+): Promise<Extract<ServerMessage, { type: 'sync.change' }>> {
+  const change = await connection.waitFor(
+    (message) => message.type === 'sync.change'
+      && message.plane === 'system'
+      && message.table === table
+      && message.row?.instance_id === instanceId
+      && message.row?.status === 'completed',
+    `${table} completed workflow change`,
+  );
+  if (change.type !== 'sync.change') {
+    throw new Error(`Expected ${table} workflow change`);
+  }
+  return change;
+}
+
+async function waitForSystemChange(
+  connection: SyncConnection,
+  table: string,
+  rowId: string,
+): Promise<Extract<ServerMessage, { type: 'sync.change' }>> {
+  const change = await connection.waitFor(
+    (message) => message.type === 'sync.change'
+      && message.plane === 'system'
+      && message.table === table
+      && message.rowId === rowId,
+    `${table} system change`,
+  );
+  if (change.type !== 'sync.change') {
+    throw new Error(`Expected ${table} system change`);
+  }
+  return change;
 }
 
 async function connectSync(url: string, token: string): Promise<SyncConnection> {

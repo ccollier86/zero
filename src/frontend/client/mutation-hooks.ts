@@ -56,9 +56,12 @@ export function useMutation<Args extends unknown[], Result>(
   const actionRef = useStableCallback(action);
   const onSuccess = useStableCallback((value: Result) => options.onSuccess?.(value));
   const onError = useStableCallback((err: unknown) => options.onError?.(err));
-  const resetOnRun = options.resetOnRun ?? true;
-  const emitErrors = options.emitErrors ?? true;
-  const metadata = options.metadata;
+  const resetOnRunRef = useRef(options.resetOnRun ?? true);
+  const emitErrorsRef = useRef(options.emitErrors ?? true);
+  const metadataRef = useRef(options.metadata);
+  resetOnRunRef.current = options.resetOnRun ?? true;
+  emitErrorsRef.current = options.emitErrors ?? true;
+  metadataRef.current = options.metadata;
 
   useEffect(() => {
     lifecycleRevisionRef.current += 1;
@@ -90,7 +93,7 @@ export function useMutation<Args extends unknown[], Result>(
     }
 
     const operationBoundaryKey = callbackBoundaryKey;
-    if (resetOnRun) {
+    if (resetOnRunRef.current) {
       lifecycleRevisionRef.current += 1;
       activeOperationsRef.current.clear();
       setError(null);
@@ -125,10 +128,10 @@ export function useMutation<Args extends unknown[], Result>(
       if (stateIsCurrent()) {
         setError(err);
         onError(err);
-        if (emitErrors) {
+        if (emitErrorsRef.current) {
           emitFrontendCode(OBS_CODES.FRONTEND_MUTATION_FAILED, {
             error: err,
-            metadata,
+            metadata: metadataRef.current,
           });
         }
       }
@@ -142,11 +145,8 @@ export function useMutation<Args extends unknown[], Result>(
   }, [
     actionRef,
     callbackBoundaryKey,
-    emitErrors,
-    metadata,
     onError,
     onSuccess,
-    resetOnRun,
   ]);
 
   const visible = authorizationBoundary.ready

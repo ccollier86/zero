@@ -58,26 +58,68 @@ export function createAIWorkflowHandler<TInput = unknown>(
     const messages = await resolveWorkflowMessages(options, ctx);
     const system = await resolveMaybe(options.system, ctx);
     const tools = await resolveMaybe(options.tools, ctx);
-    const result = await service.generateConversation({
-      model: options.model,
-      system,
-      messages,
-      tools,
-      toolChoice: options.toolChoice,
-      temperature: options.temperature,
-      topP: options.topP,
-      maxOutputTokens: options.maxOutputTokens,
-      stopSequences: options.stopSequences,
-      abortSignal: options.abortSignal,
-      providerOptions: options.providerOptions,
-      metadata: {
-        workflowInstanceId: ctx.instanceId,
-        workflowStepIndex: ctx.stepIndex,
-        ...(options.metadata ?? {}),
-      },
-    });
+    const abort = combineWorkflowAbortSignals(ctx.signal, options.abortSignal);
 
-    return options.output === 'result' ? result : result.text;
+    try {
+      // Prompt/tool derivation may yield. Revalidate at the external-effect
+      // boundary so a revoked, cancelled, or stale attempt cannot start an AI
+      // request with authority it no longer owns.
+      abort.signal?.throwIfAborted();
+      ctx.assertCurrentAuthority();
+      const result = await service.generateConversation({
+        model: options.model,
+        system,
+        messages,
+        tools,
+        toolChoice: options.toolChoice,
+        temperature: options.temperature,
+        topP: options.topP,
+        maxOutputTokens: options.maxOutputTokens,
+        stopSequences: options.stopSequences,
+        abortSignal: abort.signal,
+        providerOptions: options.providerOptions,
+        metadata: {
+          workflowInstanceId: ctx.instanceId,
+          workflowStepIndex: ctx.stepIndex,
+          ...(options.metadata ?? {}),
+        },
+      });
+
+      return options.output === 'result' ? result : result.text;
+    } finally {
+      abort.dispose();
+    }
+  };
+}
+
+function combineWorkflowAbortSignals(
+  workflow: AbortSignal | undefined,
+  configured: AbortSignal | undefined,
+): { signal: AbortSignal | undefined; dispose: () => void } {
+  if (!workflow || workflow === configured) {
+    return { signal: configured ?? workflow, dispose: () => undefined };
+  }
+  if (!configured) {
+    return { signal: workflow, dispose: () => undefined };
+  }
+
+  const controller = new AbortController();
+  const abortFromWorkflow = () => controller.abort(workflow.reason);
+  const abortFromConfigured = () => controller.abort(configured.reason);
+
+  if (workflow.aborted) abortFromWorkflow();
+  else if (configured.aborted) abortFromConfigured();
+  else {
+    workflow.addEventListener('abort', abortFromWorkflow, { once: true });
+    configured.addEventListener('abort', abortFromConfigured, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      workflow.removeEventListener('abort', abortFromWorkflow);
+      configured.removeEventListener('abort', abortFromConfigured);
+    },
   };
 }
 

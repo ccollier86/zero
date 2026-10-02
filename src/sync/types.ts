@@ -612,9 +612,15 @@ export interface SyncResourceTableAccessContext {
   authContext: SyncAuthContext | null;
 }
 
-/** Synchronous row predicate returned by a resource policy adapter. */
+/** Synchronous row boundary returned by a resource policy adapter. */
 export interface SyncRowFilter {
+  /** Evaluated against the full server row before any projection. */
   matches(row: Row): boolean;
+  /**
+   * Optional wire projection for an already-authorized row. It must be pure,
+   * must preserve the table's primary key, and must not grant row visibility.
+   */
+  project?(row: Row): Row;
 }
 
 /** Synchronous client-row projection returned by a resource policy adapter. */
@@ -1039,6 +1045,12 @@ export interface SyncClientConfig {
   onAuthFailure?: (error: string) => void;
   /** Callback after successful reconnect */
   onReconnect?: () => void;
+  /**
+   * Called synchronously whenever Sync purges authorization-scoped local data.
+   * SDK integrations use this to invalidate one-shot HTTP and UI caches that
+   * share the same server authorization boundary.
+   */
+  onAuthorizationDataInvalidated?: () => void;
   /** Called after a rejected optimistic mutation has been rolled back. */
   onMutationRejected?: (rejection: SyncMutationRejection) => void;
   /** Mutation ack timeout in ms. Default: 10000 */

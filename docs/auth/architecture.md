@@ -138,24 +138,28 @@ Authenticated HTTP plugins derive a branded `ServiceDataScope` from the live req
 application scope, while `multi` requires a complete, live tenant membership and fails
 closed for application/selection sessions.
 
-Notifications and receipts, rooms and members, workflow instances/steps/events, and
-Storage drives/objects/permissions persist the nullable discriminator added by migration
-`008`. Child rows copy the parent's discriminator directly. Default framework Sync row
-filters compare that column with the server-validated socket scope for snapshots, catch-up,
-and live delivery. Durable state and ephemeral topics use the same scope in internal
-principal/namespace keys so the same user may safely use the same logical key or topic in
-two tenants.
+Notifications and receipts, rooms and members, workflow
+instances/steps/events/interactions, and Storage drives/objects/permissions
+persist the nullable discriminator added by migration `008`. Child rows copy
+the parent's discriminator directly. Default framework Sync row filters
+compare that column with the server-validated socket scope for snapshots,
+catch-up, and live delivery. Durable state and ephemeral topics use the same
+scope in internal principal/namespace keys so the same user may safely use the
+same logical key or topic in two tenants.
 
-Workflow definitions and handlers are application-global configuration. Notification
-expiry cleanup, workflow polling/recovery, and the Storage content-addressed blob pool are
-system-global scans; they do not create workflow authority. Migration `014` keeps each
-workflow's original actor/session/scope generations (or an explicit audited system
-principal) in a private MAC-protected seal. Dispatch, retry/recovery, and async output
-commit revalidate that seal under SQLite write serialization, so revoked sessions,
-suspended tenants/memberships, assignment changes, and stale handler attempts fail closed.
-No bearer or refresh credential is persisted in workflow state. Signed
-Storage URLs and upload grants are explicit bearer capabilities bound to one drive/path,
-not ambient tenant membership.
+Trusted workflow activities and code-authored definitions are application
+configuration. Database-authored definitions belong to an exact application
+or tenant namespace; a tenant definition can shadow a same-name code definition
+only in that tenant. Notification expiry cleanup, workflow polling/recovery,
+and the Storage content-addressed blob pool are system-global scans; they do not
+create workflow authority. Migration `014` keeps each workflow's original
+actor/session/scope generations (or an explicit audited system principal) in a
+private MAC-protected seal. Dispatch, retry/recovery, and async output commit
+revalidate that seal under SQLite write serialization, so revoked sessions,
+suspended tenants/memberships, assignment changes, and stale handler attempts
+fail closed. No bearer or refresh credential is persisted in workflow state.
+Signed Storage URLs and upload grants are explicit bearer capabilities bound
+to one drive/path, not ambient tenant membership.
 
 The immutable multi-tenant permission registry includes `workflows:manage`,
 `notifications:manage`, and `rooms:manage`. Tenant `owner`, any live tenant

@@ -117,6 +117,7 @@ export function createRequestObservabilityServices(
   scope: ServiceDataScope | null,
   access: RequestAuthorizationAccess,
   request: Request | null,
+  assertCurrentAuthority: () => void = () => {},
 ): ServerObservabilityServices {
   const authorityMetadata = Object.freeze({
     zeroScopeKind: scope?.scopeKind ?? 'identity',
@@ -138,23 +139,26 @@ export function createRequestObservabilityServices(
     ...(userId ? { userId } : {}),
   });
   const emitters: Partial<ServerObservabilityServices> = {
-    emitCode: (definition, options = {}) => services.emitCode(
-      definition,
-      bindOptions(options),
-    ),
-    emitEvent: (input) => services.emitEvent(bindOptions(input)),
-    error: (definition, options = {}) => services.error(
-      definition,
-      bindOptions(options),
-    ),
-    info: (definition, options = {}) => services.info(
-      definition,
-      bindOptions(options),
-    ),
-    warn: (definition, options = {}) => services.warn(
-      definition,
-      bindOptions(options),
-    ),
+    emitCode: (definition, options = {}) => {
+      assertCurrentAuthority();
+      return services.emitCode(definition, bindOptions(options));
+    },
+    emitEvent: (input) => {
+      assertCurrentAuthority();
+      return services.emitEvent(bindOptions(input));
+    },
+    error: (definition, options = {}) => {
+      assertCurrentAuthority();
+      return services.error(definition, bindOptions(options));
+    },
+    info: (definition, options = {}) => {
+      assertCurrentAuthority();
+      return services.info(definition, bindOptions(options));
+    },
+    warn: (definition, options = {}) => {
+      assertCurrentAuthority();
+      return services.warn(definition, bindOptions(options));
+    },
   };
 
   return new Proxy(services, {

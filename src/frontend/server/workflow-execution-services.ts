@@ -25,7 +25,7 @@ import type { ServerObservabilityServices } from './server-services';
 import type { PdfService } from '../../pdf/pdf-service';
 import type { RoomService } from '../../rooms/room-service';
 import type { StorageService } from '../../storage/storage-service';
-import type { WorkflowService } from '../../workflows/workflow-service';
+import { WorkflowError } from '../../workflows/workflow-error';
 import type {
   WorkflowExecutionServiceProvider,
   WorkflowResolvedExecutionAuthority,
@@ -33,6 +33,7 @@ import type {
 import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import {
   createAuthorityScopedServerServices,
+  type ScopedWorkflowService,
 } from './server-request-services';
 import {
   createLazyServerRouteServices,
@@ -64,7 +65,7 @@ export interface WorkflowExecutionServerServices {
   readonly storage: StorageService | null;
   readonly notifications: NotificationService | null;
   readonly rooms: RoomService | null;
-  readonly workflows: WorkflowService | null;
+  readonly workflows: ScopedWorkflowService | null;
   readonly pdf: PdfService | null;
   readonly observability: WorkflowExecutionObservabilityServices;
 }
@@ -111,7 +112,7 @@ function createActorExecutionAccess(
   kernel: AuthorizationKernel,
 ): RequestAuthorizationAccess {
   if (authority.identity.kind !== 'actor' || !authority.authContext) {
-    throw new Error('[workflows] Actor execution is missing its live auth context.');
+    throw workflowAuthorityRequired('Actor execution is missing its live auth context');
   }
   const context = authority.authContext;
   const scope = actorScope(authority, kernel);
@@ -186,7 +187,7 @@ function actorScope(
   kernel: AuthorizationKernel,
 ): AuthorizationScopeSnapshot {
   if (authority.identity.kind !== 'actor') {
-    throw new Error('[workflows] Actor scope requested for system execution.');
+    throw workflowAuthorityRequired('Actor scope was requested for a system execution');
   }
   const identity = authority.identity;
   const scope: AuthorizationScopeSnapshot = Object.freeze({
@@ -207,7 +208,7 @@ function actorScope(
     || scope.scopeKind !== authority.scope.scopeKind
     || scope.scopeId !== authority.scope.scopeId
     || (scope.tenantId ?? null) !== authority.scope.tenantId) {
-    throw new Error('[workflows] Sealed actor scope is incompatible with the app runtime.');
+    throw workflowAuthorityRequired('Sealed actor scope is incompatible with the app runtime');
   }
   return scope;
 }
@@ -242,9 +243,17 @@ function createSystemExecutionAccess(
 function requireKernel(services: ServerRouteServices): AuthorizationKernel {
   const kernel = services.auth.authorizationKernel;
   if (!kernel) {
-    throw new Error('[workflows] Authorization services are unavailable.');
+    throw new WorkflowError(
+      'Workflow authorization services are unavailable',
+      'WORKFLOW_CONFIG_INVALID',
+      500,
+    );
   }
   return kernel;
+}
+
+function workflowAuthorityRequired(message: string): WorkflowError {
+  return new WorkflowError(message, 'WORKFLOW_AUTHORITY_REQUIRED', 500);
 }
 
 function forbidden(): AuthError {

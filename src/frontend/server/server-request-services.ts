@@ -12,6 +12,10 @@ export type {
   CreateServerRequestServicesOptions,
   ServerRequestServices,
 } from './server-request-services/contracts';
+export type {
+  ScopedWorkflowInstanceListFilter,
+  ScopedWorkflowService,
+} from './server-request-services/scoped-workflow-service';
 
 export {
   createAuthorityScopedServerServices,

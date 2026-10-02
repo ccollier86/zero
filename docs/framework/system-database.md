@@ -86,6 +86,26 @@ contexts do not receive the unsafe escape hatch. Application code should use
 `zero.auth` and the other service APIs: direct system-table writes can bypass
 Guardian audit, generation, outbox, and invariant handling.
 
+### Migration routing
+
+`zero migrate` and its status, checkpoint, rollback, and system-doctor modes
+target `SYSTEM_DB_PATH`, then `./data/zero.system.db`. An explicit `--db` is an
+exact operator override. The managed framework registry is never inferred from
+`DB_PATH` or `DATABASE_PATH` and is never installed into `db` or a Fabric tenant
+file.
+
+Application schema inspection is deliberately separate:
+
+```sh
+zero migrate --plan --schema ./db/schema.ts --db ./data/app.db
+zero migrate --doctor --schema ./db/schema.ts --db ./data/app.db --strict
+```
+
+Those commands inspect the selected app database without creating the system
+migration ledger. Fabric databases are provisioned and upgraded by their
+declared realm tables, version, and ordered realm migrations inside the owning
+actor, so independent tenant files never share a migration transaction.
+
 ### Later universal API exploration
 
 This split does not add a broad system-data API. A later, separately reviewed
@@ -521,7 +541,7 @@ Doctor currently checks:
 - system projection schema plus aggregate ready/provisioning/quarantined target
   and pending-delivery state, including physical tenant targets.
 
-Doctor never creates, migrates, or repairs a database while inspecting it.
+Platform Doctor never creates, migrates, or repairs a database while inspecting it.
 Run it with a project root so durable SQLite files and filesystem aliases can
 be inspected read-only.
 

@@ -1,0 +1,450 @@
+/**
+ * workflow-interaction-service.ts
+ *
+ * Coordinates durable human/agent waits without coupling them to HTTP, email,
+ * text, or UI delivery. It owns authorization, validation, idempotency, and
+ * privacy-safe results; the store owns atomic persistence.
+ */
+
+import { createHash } from 'node:crypto';
+import { OBS_CODES } from '../observability/codes';
+import { WorkflowError } from './workflow-error';
+import { WorkflowExecutionTracker } from './workflow-execution-tracker';
+import {
+  WorkflowInteractionAuthority,
+  type WorkflowInteractionActor,
+} from './workflow-interaction-authority';
+import {
+  type OpenWorkflowInteractionInput,
+  type WorkflowInteractionRecord,
+  type WorkflowInteractionStore,
+} from './workflow-interaction-store';
+import {
+  replayInteractionResult,
+} from './workflow-interaction-results';
+import {
+  serializeWorkflowJson,
+  type WorkflowJsonValue,
+} from './workflow-json-value';
+import { WorkflowInteractionSubmissionProcessor } from './workflow-interaction-submission-processor';
+import { resolveWorkflowShutdownGraceMs } from './workflow-shutdown-policy';
+import {
+  createWorkflowObservability,
+  type WorkflowObservability,
+} from './workflow-observability';
+
+export interface WorkflowInteractionValidationResult {
+  valid: boolean;
+  code?: string;
+  publicMessage?: string;
+  /** Optional normalized value passed to downstream nodes when accepted. */
+  value?: unknown;
+}
+export interface WorkflowInteractionValidationContext {
+  interaction: WorkflowInteractionRecord;
+  submissionId: string;
+  actor: WorkflowInteractionActor;
+  channel: string | null;
+  payload: WorkflowJsonValue;
+  signal: AbortSignal;
+}
+export type WorkflowInteractionSchemaValidator = (
+  schema: WorkflowJsonValue,
+  context: WorkflowInteractionValidationContext,
+) => WorkflowInteractionValidationResult | boolean
+  | Promise<WorkflowInteractionValidationResult | boolean>;
+export type WorkflowInteractionActivityValidator = (
+  activityId: string,
+  context: WorkflowInteractionValidationContext,
+) => WorkflowInteractionValidationResult | boolean
+  | Promise<WorkflowInteractionValidationResult | boolean>;
+export interface WorkflowInteractionServiceOptions {
+  authority?: WorkflowInteractionAuthority;
+  validateSchema?: WorkflowInteractionSchemaValidator;
+  validateActivity?: WorkflowInteractionActivityValidator;
+  clock?: () => Date;
+  shutdownGraceMs?: number;
+  /** Require graph instances to remain running at every persistence fence. */
+  requireRunningInstance?: boolean;
+  /** Revalidate sealed run authority inside the final decision transaction. */
+  beforeDecision?: (interaction: WorkflowInteractionRecord) => boolean;
+  /** Shared app-local, transaction-aware workflow event boundary. */
+  observability?: WorkflowObservability;
+}
+
+export interface SubmitWorkflowInteractionInput {
+  interactionId: string;
+  submissionId: string;
+  actor: WorkflowInteractionActor;
+  payload: unknown;
+  /** Audit-only transport name such as `web`, `email`, `sms`, or `agent`. */
+  channel?: string;
+  /** Trusted request boundary revalidation executed inside the final writer transaction. */
+  assertCurrentResponder?: () => void;
+  /** Trusted event bridge callback committed atomically with the response. */
+  onDecisionCommit?: (result: WorkflowInteractionSubmissionResult) => void;
+  /** Trusted event bridge cleanup committed when a final authority fence rejects. */
+  onDecisionAbort?: () => void;
+}
+
+/** Server-internal persisted origin; never accepted from an external adapter. */
+export interface InternalSubmitWorkflowInteractionInput
+  extends SubmitWorkflowInteractionInput {
+  origin: 'external' | 'event';
+  eventId?: string;
+}
+
+/** Privacy-safe response returned to transport adapters. */
+export interface WorkflowInteractionSubmissionResult {
+  outcome: 'accepted' | 'rejected' | 'superseded';
+  interaction: WorkflowInteractionRecord;
+  rejectionCode?: string;
+  publicMessage?: string;
+}
+
+export interface WorkflowInteractionDeliveryResult {
+  interaction: WorkflowInteractionRecord;
+  delivered: boolean;
+}
+
+export type WorkflowInteractionDeliver = (
+  interaction: WorkflowInteractionRecord,
+) => void | Promise<void>;
+
+interface InflightSubmission {
+  payloadHash: string;
+  actorId: string;
+  origin: 'external' | 'event';
+  eventId: string | null;
+  promise: Promise<WorkflowInteractionSubmissionResult>;
+}
+
+/** Channel-neutral service for opening, answering, and expiring workflow waits. */
+export class WorkflowInteractionService {
+  private readonly authority: WorkflowInteractionAuthority;
+  private readonly clock: () => Date;
+  private readonly inflight = new Map<string, InflightSubmission>();
+  private readonly tracker: WorkflowExecutionTracker;
+  private readonly processor: WorkflowInteractionSubmissionProcessor;
+  private readonly observability: WorkflowObservability;
+  private disposed = false;
+
+  constructor(
+    private readonly store: WorkflowInteractionStore,
+    private readonly options: WorkflowInteractionServiceOptions = {},
+  ) {
+    this.observability = options.observability ?? createWorkflowObservability();
+    this.authority = options.authority
+      ?? new WorkflowInteractionAuthority(undefined, this.observability);
+    this.clock = options.clock ?? (() => new Date());
+    this.tracker = new WorkflowExecutionTracker(
+      resolveWorkflowShutdownGraceMs(options.shutdownGraceMs),
+      this.observability,
+    );
+    this.processor = new WorkflowInteractionSubmissionProcessor(
+      store,
+      this.authority,
+      options,
+      () => this.now(),
+      (signal) => this.assertActive(signal),
+      this.observability,
+    );
+  }
+
+  /** Persist a wait before any channel-specific activity is allowed to deliver it. */
+  open(input: Omit<OpenWorkflowInteractionInput, 'openedAt'> & { openedAt?: string }): WorkflowInteractionRecord {
+    const interaction = this.store.open({
+      ...input,
+      openedAt: input.openedAt ?? this.now(),
+    });
+    this.observability.emitAfterCommit(OBS_CODES.WORKFLOW_INTERACTION_OPENED, {
+      metadata: {
+        interactionId: interaction.interactionId,
+        instanceId: interaction.instanceId,
+        nodeId: interaction.nodeId,
+      },
+    });
+    return interaction;
+  }
+
+  /** Persist first, then invoke any caller-provided delivery function. */
+  async openAndDeliver(
+    input: Omit<OpenWorkflowInteractionInput, 'openedAt'> & { openedAt?: string },
+    deliver: WorkflowInteractionDeliver,
+  ): Promise<WorkflowInteractionDeliveryResult> {
+    const interaction = this.open(input);
+    try {
+      await deliver(interaction);
+      return { interaction, delivered: true };
+    } catch (error) {
+      // The durable wait intentionally remains open so another activity or an
+      // operator retry can deliver it without losing the response endpoint.
+      this.observability.emitNow(OBS_CODES.WORKFLOW_INTERACTION_DELIVERY_FAILED, {
+        error,
+        metadata: {
+          interactionId: interaction.interactionId,
+          instanceId: interaction.instanceId,
+          nodeId: interaction.nodeId,
+        },
+      });
+      return { interaction, delivered: false };
+    }
+  }
+
+  /** Authorize and validate an idempotent response; exactly one valid response wins. */
+  async submit(input: SubmitWorkflowInteractionInput): Promise<WorkflowInteractionSubmissionResult> {
+    if (input.channel?.toLowerCase() === 'event' || /^event:/iu.test(input.submissionId)) {
+      throw new WorkflowError(
+        'The event interaction namespace is reserved for the workflow runtime',
+        'WORKFLOW_INTERACTION_INVALID',
+        400,
+      );
+    }
+    return this.submitInternal({ ...input, origin: 'external' });
+  }
+
+  /** Runtime-only event bridge entrypoint with a durable, non-spoofable origin. */
+  async submitEvent(input: Omit<SubmitWorkflowInteractionInput,
+    'submissionId' | 'channel'> & { eventId: string }): Promise<WorkflowInteractionSubmissionResult> {
+    return this.submitInternal({
+      ...input,
+      submissionId: `event:${input.eventId}`,
+      channel: 'event',
+      origin: 'event',
+      eventId: input.eventId,
+    });
+  }
+
+  private async submitInternal(
+    input: InternalSubmitWorkflowInteractionInput,
+  ): Promise<WorkflowInteractionSubmissionResult> {
+    this.assertAvailable();
+    const interaction = this.requireInteraction(input.interactionId);
+    const definition = this.store.getPrivateDefinition(input.interactionId);
+    const payloadJson = serializeWorkflowJson(
+      input.payload,
+      'WORKFLOW_INTERACTION_INVALID',
+    );
+    const payloadHash = createHash('sha256').update(payloadJson).digest('hex');
+    const inflightKey = `${input.interactionId}\0${input.submissionId}`;
+    const durable = this.store.findResponse(input.interactionId, input.submissionId);
+    if (durable) {
+      if (durable.payloadHash !== payloadHash || durable.actorId !== input.actor.actorId) {
+        throw new WorkflowError(
+          'Submission ID was already used with different input or identity',
+          'WORKFLOW_INTERACTION_SUBMISSION_CONFLICT',
+          409,
+        );
+      }
+      if (durable.origin !== input.origin
+        || durable.eventId !== (input.eventId ?? null)) {
+        throw new WorkflowError(
+          'Submission ID was already used by a different submission origin',
+          'WORKFLOW_INTERACTION_SUBMISSION_CONFLICT',
+          409,
+        );
+      }
+      const replay = replayInteractionResult(durable, interaction);
+      if (replay) {
+        input.onDecisionCommit?.(replay);
+        return replay;
+      }
+    }
+    const existing = this.inflight.get(inflightKey);
+    if (existing) {
+      if (existing.payloadHash !== payloadHash || existing.actorId !== input.actor.actorId) {
+        throw new WorkflowError(
+          'Submission ID was already used with different input or identity',
+          'WORKFLOW_INTERACTION_SUBMISSION_CONFLICT',
+          409,
+        );
+      }
+      if (existing.origin !== input.origin
+        || existing.eventId !== (input.eventId ?? null)) {
+        throw new WorkflowError(
+          'Submission ID was already used by a different submission origin',
+          'WORKFLOW_INTERACTION_SUBMISSION_CONFLICT',
+          409,
+        );
+      }
+      return existing.promise;
+    }
+
+    const controller = new AbortController();
+    const promise = this.processor.process({
+      submission: input,
+      interaction,
+      responderPolicy: definition.responderPolicy,
+      responseSchema: definition.responseSchema,
+      validatorActivityId: definition.validatorActivityId,
+      payloadJson,
+      payloadHash,
+      signal: controller.signal,
+    });
+    this.tracker.track(
+      interaction.instanceId,
+      inflightKey,
+      `wsubmit_${crypto.randomUUID()}`,
+      controller,
+      promise,
+    );
+    this.inflight.set(inflightKey, {
+      payloadHash,
+      actorId: input.actor.actorId,
+      origin: input.origin,
+      eventId: input.eventId ?? null,
+      promise,
+    });
+    try {
+      return await promise;
+    } finally {
+      if (this.inflight.get(inflightKey)?.promise === promise) this.inflight.delete(inflightKey);
+    }
+  }
+
+  /** Atomically release a forbidden event reservation and consume its claim. */
+  releaseEventSubmission(
+    interactionId: string,
+    eventId: string,
+    consume: () => void,
+  ): boolean {
+    return this.store.releaseProcessingSubmission(
+      interactionId,
+      `event:${eventId}`,
+      this.now(),
+      consume,
+      eventId,
+    );
+  }
+
+  /** Private recovery lookup for pre-atomic event decisions. */
+  getSubmission(interactionId: string, submissionId: string) {
+    return this.store.findResponse(interactionId, submissionId);
+  }
+
+  /** Read safe progress for a delivery or UI adapter. */
+  get(interactionId: string): WorkflowInteractionRecord | null {
+    return this.store.get(interactionId);
+  }
+
+  /** Recover the durable wait for a graph step without opening a duplicate. */
+  getByStep(instanceId: string, stepId: string): WorkflowInteractionRecord | null {
+    return this.store.getByStep(instanceId, stepId);
+  }
+
+  /** List safe interaction progress for one workflow instance. */
+  list(instanceId: string): WorkflowInteractionRecord[] {
+    return this.store.listByInstance(instanceId);
+  }
+
+  /** Preserve remaining interaction time across a workflow pause. */
+  shiftOpenExpiries(instanceId: string, milliseconds: number): void {
+    this.store.shiftOpenExpiries(instanceId, milliseconds, this.now());
+  }
+
+  /** Read every privacy-safe wait projection for one workflow run. */
+  listByInstance(instanceId: string): WorkflowInteractionRecord[] {
+    return this.store.listByInstance(instanceId);
+  }
+
+  /** Server-only downstream access to the accepted, normalized response value. */
+  getAcceptedValue(interactionId: string): WorkflowJsonValue | null {
+    return this.store.getAcceptedValue(interactionId);
+  }
+
+  /** Server-only request passed to configured delivery activities. */
+  getRequestValue(interactionId: string): WorkflowJsonValue {
+    return this.store.getPrivateDefinition(interactionId).request;
+  }
+
+  /** Expire one due wait using the service clock. */
+  expire(interactionId: string): WorkflowInteractionRecord {
+    const before = this.store.get(interactionId);
+    const interaction = this.store.expire(interactionId, this.now());
+    if (before?.status === 'open' && interaction.status === 'expired') {
+      emitInteractionExpired(this.observability, interaction);
+    }
+    return interaction;
+  }
+
+  /** Expire every due wait, typically from the workflow wake coordinator. */
+  expireDue(): WorkflowInteractionRecord[] {
+    const expired = this.store.expireDue(this.now());
+    for (const interaction of expired) emitInteractionExpired(this.observability, interaction);
+    return expired;
+  }
+
+  /** Close all open waits when their workflow is cancelled or otherwise terminal. */
+  cancelForInstance(instanceId: string): WorkflowInteractionRecord[] {
+    return this.store.cancelForInstance(instanceId, this.now());
+  }
+
+  /** Abort authorization/validation work without pretending physical work has stopped. */
+  abortInstance(instanceId: string, reason: string | Error): void {
+    this.tracker.abortInstance(instanceId, reason);
+  }
+
+  isInstanceDraining(instanceId: string): boolean {
+    return this.tracker.isInstanceActive(instanceId);
+  }
+
+  dispose(): Promise<void> {
+    this.disposed = true;
+    return this.tracker.dispose();
+  }
+
+  private requireInteraction(interactionId: string): WorkflowInteractionRecord {
+    const interaction = this.store.get(interactionId);
+    if (!interaction) {
+      throw new WorkflowError(
+        'Workflow interaction not found',
+        'WORKFLOW_INTERACTION_NOT_FOUND',
+        404,
+      );
+    }
+    return interaction;
+  }
+
+  private now(): string {
+    const date = this.clock();
+    if (!(date instanceof Date) || !Number.isFinite(date.getTime())) {
+      throw new WorkflowError('Workflow interaction clock returned an invalid date', 'WORKFLOW_CONFIG_INVALID', 500);
+    }
+    return date.toISOString();
+  }
+
+  private assertAvailable(): void {
+    if (this.disposed) {
+      throw new WorkflowError(
+        'Workflow interaction service is not available',
+        'WORKFLOW_NOT_READY',
+        503,
+      );
+    }
+  }
+
+  private assertActive(signal: AbortSignal): void {
+    this.assertAvailable();
+    if (!signal.aborted) return;
+    if (signal.reason instanceof WorkflowError) throw signal.reason;
+    throw new WorkflowError(
+      'Workflow interaction processing was interrupted',
+      'WORKFLOW_DRAINING',
+      409,
+      true,
+    );
+  }
+}
+
+function emitInteractionExpired(
+  observability: WorkflowObservability,
+  interaction: WorkflowInteractionRecord,
+): void {
+  observability.emitAfterCommit(OBS_CODES.WORKFLOW_INTERACTION_EXPIRED, {
+    metadata: {
+      interactionId: interaction.interactionId,
+      instanceId: interaction.instanceId,
+      nodeId: interaction.nodeId,
+    },
+  });
+}

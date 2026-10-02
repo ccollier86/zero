@@ -68,9 +68,11 @@ modal manager together. See [LaunchBoard](./frontend/launchboard.md) before
 building dashboard/work-queue style apps.
 
 Core backend primitives include ReactiveDB, generated resources, WebSocket
-sync, Guardian auth/authorization, email, storage, workflows, notifications, AI, vector storage,
-[PDF rendering](./pdf.md), and [platform tokens](./tokens.md) for one-time
-actions plus resumable public flows.
+sync, Guardian auth/authorization, email, storage,
+[durable workflows](./workflows.md), notifications,
+AI, vector storage, [PDF rendering](./pdf.md), and
+[platform tokens](./tokens.md) for one-time actions plus resumable public
+flows.
 
 ReactiveDB Fabric—Zero's multi-database routing, isolation, actor, and
 lifecycle layer—is an active unreleased candidate rather than a
@@ -689,9 +691,14 @@ Generated apps can run `bun run doctor`. Local checkout users can run
 Use `migrate:doctor` and `migrate:plan` for database drift:
 
 ```txt
-bun run migrate:plan -- --schema ./db/schema.ts --write
-zero migrate --doctor --schema ./db/schema.ts --strict
+bun run migrate:plan -- --schema ./db/schema.ts --db ./data/app.db --write
+zero migrate --doctor --schema ./db/schema.ts --db ./data/app.db --strict
 ```
+
+Plain `zero migrate`, status, checkpoint, rollback, and system migration Doctor
+target `SYSTEM_DB_PATH`, then `./data/zero.system.db`. App-schema Doctor and plan
+require the explicit application `--db`; they do not install Zero internals or
+provision Fabric tenant files.
 
 Use `@zero/framework/server` for app startup, backend routes, and server
 service getters. Use `@zero/framework/react/app-provider`,
@@ -862,7 +869,7 @@ Zero includes these backend capabilities out of the box:
 | State Sync | Server-persisted reactive key/value state isolated per authorized-scope user. |
 | Notifications | Server-created notifications and receipt tracking. |
 | Rooms/Presence | Presence and room coordination primitives. |
-| Workflows | Built-in workflow/scheduler infrastructure. |
+| Workflows | [Versioned durable graphs](./workflows.md), trusted activities, choices, parallel joins, bounded array fan-out, event and human waits, private scratch memory, crash recovery, and owner-scoped live visualization. |
 | Migrations | Explicit migration files, ledger, schema history, rollback, backups, doctor, draft plans. |
 | Observability | Structured event codes, default console/memory sink, protected event endpoint, frontend ingest. |
 | AI | Internal server-side AI service with env-detected providers, custom Meta Llama adapter, aliases, conversations, tools, embeddings, images, transcription, speech, and protected status. |
@@ -913,7 +920,7 @@ Platform-specific hooks include:
 | Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
 | Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveQuota` |
 | Rooms/presence | `usePresence`, `usePresenceList`, `useTypingIndicator`, `useEphemeral`, `useEphemeralTopic` |
-| Workflows/notifications | `useWorkflowRun`, `useWorkflow`, `useWorkflowList`, `useNotifications`, `useUnreadCount` |
+| Workflows/notifications | `useWorkflowRun`, `useWorkflow`, `useWorkflowTopology`, `useWorkflowList`, `useWorkflowActions`, `useNotifications`, `useUnreadCount` |
 | State and health | `useServerState`, `usePreference`, `useFormDraft`, `useConnectionHealth`, `useMutation` |
 
 Zero also exports a standard React hook set for common UI behavior such as
@@ -1314,6 +1321,6 @@ and the separately labeled future discovery proposal.
 2. Add natural identity for relationship tables.
 3. Add migrations for schema/index changes.
 4. Run `bun run doctor -- --config ./zero.config.ts` for app config.
-5. Run `bun run migrate:doctor -- --schema ./app/lib/schemas.ts`.
+5. Run `bun run migrate:doctor -- --schema ./app/lib/schemas.ts --db ./data/app.db`.
 6. Use `--strict` in CI.
 7. Run `bun run typecheck` and `bun run test` before shipping platform changes.

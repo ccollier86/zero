@@ -37,10 +37,16 @@ export interface AIPluginConfig {
 export function createAIPlugin(options: AIPluginConfig) {
   const service = options.service ?? new AIService(options.config);
   const owner = {};
-  const registration = aiProviders.register(owner, () => service);
+  let started = false;
+  const registration = aiProviders.register(owner, () => started ? service : null);
   options.runtime?.set(ZERO_AI_SERVICE, service);
   options.onServiceCreated?.(service);
-  options.runtime?.addCleanup(() => registration.unregister());
+  const cleanup = () => {
+    started = false;
+    options.runtime?.clear(ZERO_AI_SERVICE, service);
+    registration.unregister();
+  };
+  options.runtime?.addCleanup(cleanup);
 
   const endpoint = options.config.statusEndpoint;
   const readMode = endpoint.read ?? (options.authEnabled ? 'admin' : 'development');
@@ -48,6 +54,7 @@ export function createAIPlugin(options: AIPluginConfig) {
   const app = new Elysia({ name: 'zero-platform-ai' })
     .decorate('ai', service)
     .onStart(() => {
+      started = true;
       emitPlatformCode(OBS_CODES.AI_CONFIGURED, {
         metadata: {
           providers: service.status().providers.length,
@@ -64,8 +71,7 @@ export function createAIPlugin(options: AIPluginConfig) {
       }
     })
     .onStop(() => {
-      options.runtime?.clear(ZERO_AI_SERVICE, service);
-      registration.unregister();
+      cleanup();
     });
 
   if (!endpoint.enabled) return app;

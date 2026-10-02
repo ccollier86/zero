@@ -43,22 +43,26 @@ export function createVectorPlugin(options: VectorPluginConfig) {
       });
   const service = options.service ?? new VectorService(registry!);
   const owner = {};
-  const registration = vectorProviders.register(owner, () => service);
+  let started = false;
+  const registration = vectorProviders.register(owner, () => started ? service : null);
   options.runtime?.set(ZERO_VECTOR_SERVICE, service);
   options.onServiceCreated?.(service);
-  const cleanup = async () => {
+  let cleanupPromise: Promise<void> | null = null;
+  const cleanup = (): Promise<void> => cleanupPromise ??= (async () => {
     try {
       await service.dispose();
     } finally {
+      started = false;
       options.runtime?.clear(ZERO_VECTOR_SERVICE, service);
       registration.unregister();
     }
-  };
+  })();
   options.runtime?.addCleanup(cleanup);
 
   return new Elysia({ name: 'zero-platform-vector' })
     .decorate('vectors', service)
     .onStart(() => {
+      started = true;
       emitVectorConfigured({
         indexes: Object.keys(options.config.indexes).length,
       });

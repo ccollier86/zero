@@ -10,6 +10,7 @@ import { resolveAuthBehaviorConfig } from '../../auth/auth-config';
 import { defineTable, field, schema } from '../../schema';
 import { SYNC_TABLE_MUTATION_VALIDATOR } from '../../sync/types';
 import { defineZeroConfig, resolveConfig } from './types';
+import { WorkflowInteractionAuthority } from '../../workflows/workflow-interaction-authority';
 
 const tables = {
   todos: {
@@ -309,6 +310,34 @@ describe('resolveConfig', () => {
     expect(config.resourceRoutes).toEqual({});
     expect(config.routeAuth).toBe('protected-by-default');
     expect(config.postLoginPath).toBe('/');
+    expect(config.workflows).toEqual({});
+  });
+
+  test('normalizes workflow registration and enforces its auth dependency', () => {
+    const register = () => undefined;
+    const interactionAuthority = new WorkflowInteractionAuthority(() => true);
+    const configured = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: true,
+      workflows: { register, interactionAuthority },
+    });
+    expect(configured.workflows).toEqual({ register, interactionAuthority });
+
+    const disabled = resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: true,
+      workflows: false,
+    });
+    expect(disabled.workflows).toBe(false);
+
+    expect(() => resolveConfig({
+      db: { mode: 'memory' },
+      tables,
+      auth: false,
+      workflows: { register },
+    })).toThrow('workflows require auth: true');
   });
 
   test('normalizes auth: true to the backward-compatible capability profile', () => {

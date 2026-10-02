@@ -238,12 +238,26 @@ export type {
   UseTypingIndicatorReturn,
 } from './typing-indicator-hooks';
 
+export {
+  useWorkflow,
+  useWorkflowActions,
+  useWorkflowList,
+} from './workflow-hooks';
+export type {
+  UseWorkflowListResult,
+  UseWorkflowResult,
+  WorkflowActions,
+  WorkflowInteractionSubmissionResult,
+} from './workflow-hooks';
 export { useWorkflowRun } from './workflow-run-hooks';
 export type {
   UseWorkflowRunOptions,
   UseWorkflowRunResult,
   WorkflowProgress,
+  WorkflowProgressCounts,
 } from './workflow-run-hooks';
+export { useWorkflowTopology } from './workflow-topology-hooks';
+export type { UseWorkflowTopologyResult } from './workflow-topology-hooks';
 
 export {
   useEphemeral,

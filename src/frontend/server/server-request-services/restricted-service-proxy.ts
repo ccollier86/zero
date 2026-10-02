@@ -26,7 +26,7 @@ export function restrictedServiceProxy<
   methods: TMethods,
   denied: ReadonlySet<string>,
   label: string,
-): TService {
+): TMethods {
   return new Proxy(service, {
     get(target, property) {
       if (typeof property === 'string' && Object.hasOwn(methods, property)) {
@@ -51,7 +51,7 @@ export function restrictedServiceProxy<
         ? { configurable: true, enumerable: true }
         : undefined;
     },
-  });
+  }) as TService & TMethods;
 }
 
 export function forbidden(message: string): AuthError {

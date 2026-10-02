@@ -607,6 +607,11 @@ export class AuthClient {
     return this.authorizationController.subscribe(callback);
   }
 
+  /** @internal Purge a stale same-session authorization hint immediately. */
+  invalidateAuthorization(): void {
+    this.authorizationController.invalidate();
+  }
+
   login(username: string, password: string): Promise<AuthCompletionResult> {
     return this.account.login(username, password);
   }

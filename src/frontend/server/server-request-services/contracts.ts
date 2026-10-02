@@ -2,15 +2,18 @@ import type { RequestAuthorizationAccess } from '../../../auth/authorization-acc
 import type { ServiceDataScope } from '../../../auth/service-data-scope';
 import type { AsyncDatabaseClient } from '../../../databases/database-operations';
 import type { ServerRouteServices } from '../server-services';
+import type { ScopedWorkflowService } from './scoped-workflow-service';
 
 /** App services projected into one request's immutable authorization scope. */
-export interface ServerRequestServices extends ServerRouteServices {
+export interface ServerRequestServices extends Omit<ServerRouteServices, 'workflows'> {
   /** The same live authorization facade exposed on the Elysia request. */
   readonly access: RequestAuthorizationAccess;
   /** Validated data boundary, or null for a multi-tenant selection/anonymous session. */
   readonly scope: ServiceDataScope | null;
   /** Tenant-file data client, or null outside tenant-database isolation. */
   readonly data: AsyncDatabaseClient | null;
+  /** Scope-closed workflow facade; privileged lifecycle APIs remain under unsafe. */
+  readonly workflows: ScopedWorkflowService | null;
   /**
    * Explicit raw/setup surface. Calls through this object bypass request data
    * scoping and are trusted application code.
@@ -21,7 +24,7 @@ export interface ServerRequestServices extends ServerRouteServices {
 export interface CreateServerRequestServicesOptions {
   request: Request;
   access: RequestAuthorizationAccess;
-  services: ServerRouteServices;
+  services: ServerRouteServices | ServerRequestServices;
 }
 
 /** Internal transport-neutral projection used by authenticated background work. */
@@ -31,7 +34,7 @@ export interface CreateAuthorityScopedServerServicesOptions {
   scope: ServiceDataScope;
   /** Async fence used around operations which can yield. */
   assertCurrentAuthority: () => Promise<void>;
-  /** Synchronous fence run immediately before every synchronous mutation. */
+  /** Synchronous fence run before every scoped synchronous read or mutation. */
   assertCurrentAuthoritySync?: () => void;
   /** Optional request metadata; background execution deliberately omits it. */
   request?: Request;
@@ -46,9 +49,12 @@ export interface CreateAuthorityScopedServerServicesOptions {
 }
 
 /** Scope-closed service projection shared by HTTP and durable background work. */
-export interface AuthorityScopedServerServices extends ServerRouteServices {
+export interface AuthorityScopedServerServices
+  extends Omit<ServerRouteServices, 'workflows'> {
   readonly access: RequestAuthorizationAccess;
   readonly scope: ServiceDataScope;
   /** Tenant-file data client, or null outside tenant-database isolation. */
   readonly data: AsyncDatabaseClient | null;
+  /** Scope-closed workflow facade shared with managed workflow activities. */
+  readonly workflows: ScopedWorkflowService | null;
 }

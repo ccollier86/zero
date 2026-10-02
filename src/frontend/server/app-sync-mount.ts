@@ -20,7 +20,7 @@ import type { SyncTenantDataPlane } from '../../sync/sync-tenant-data-plane';
 import type { SyncResourcePolicyAdapter } from '../../sync/types';
 import type { AppIdentityProjectionRuntime } from './identity-projection-runtime';
 import { assertApplicationGuardianReferenceStorage } from './identity-projection-runtime';
-import { PLATFORM_CLIENT_TABLES } from './app-platform-tables';
+import { resolvePlatformClientTables } from './app-platform-tables';
 import type { ResolvedConfig } from './types';
 
 interface MountAppSyncEngineInput {
@@ -72,7 +72,7 @@ export function mountAppSyncEngine({
       ? {
           systemDataPlane: {
             db: systemDB,
-            tables: PLATFORM_CLIENT_TABLES,
+            tables: resolvePlatformClientTables(config.workflows !== false),
           },
         }
       : {}),

@@ -4,10 +4,13 @@ import { Elysia, type AnyElysia } from 'elysia';
 import type { AuthRuntime } from '../auth/auth-runtime';
 import { createAuthPlugin } from '../auth/auth.plugin';
 import { trustedSystemServiceDataScope } from '../auth/service-data-scope';
+import { createSchedulerPlugin } from '../scheduler';
 import { createReactiveDB, type ReactiveDB } from '../sync/reactive-db';
 import type { WorkflowRegistry } from './workflow-registry';
-import type { WorkflowService } from './workflow-service';
+import { getWorkflowGraphRuntime, type WorkflowService } from './workflow-service';
 import { createWorkflowPlugin } from './workflow.plugin';
+import { flow, requestAndWait } from './workflow-dsl';
+import { WorkflowInteractionAuthority } from './workflow-interaction-authority';
 
 interface Harness {
   app: AnyElysia;
@@ -180,6 +183,8 @@ describe('durable workflow execution authority', () => {
         retry_at: new Date(0).toISOString(),
       });
     expect(await second.workflows.pollRetries()).toBe(1);
+    await waitFor(() => second.workflows
+      .getInstance(instanceId, tenantScope(actor))?.status === 'completed');
     const completed = second.workflows.getInstance(instanceId, tenantScope(actor));
     expect(completed).toMatchObject({ status: 'completed' });
     expect(JSON.parse(String(completed!.output))).toEqual({
@@ -273,11 +278,287 @@ describe('durable workflow execution authority', () => {
       FROM _workflow_execution_authorities WHERE instance_id = ?`)
       .get(instanceId)).toEqual({ invalidation_reason: 'authority-seal-invalid' });
   });
+
+  test('revalidates a direct responder credential inside the final interaction commit', async () => {
+    const validatorEntered = deferred<void>();
+    const releaseValidator = deferred<void>();
+    const harness = await startHarness({
+      interactionAuthority: new WorkflowInteractionAuthority(() => true),
+      register(registry) {
+        registry.registerActivity({
+          name: 'deferred-response-validator',
+          handler: async () => {
+            validatorEntered.resolve();
+            await releaseValidator.promise;
+            return true;
+          },
+        });
+        registry.create({
+          name: 'responder-revocation',
+          flow: flow(requestAndWait('approval', 'approval.response', {
+            validator: { name: 'deferred-response-validator' },
+          })),
+        });
+      },
+    });
+    const responder = await register(harness, 'response-owner', 'Response Org');
+    const instanceId = await harness.workflows.runAsSystem(
+      'responder-revocation',
+      {},
+      {
+        principal: 'workflow-authority-test',
+        reason: 'Verify direct responder revocation fence',
+        scope: tenantScope(responder),
+      },
+    );
+    const interaction = getWorkflowGraphRuntime(harness.workflows).listInteractions(instanceId)[0]!;
+    const context = await harness.runtime.getTokenService()!
+      .resolveAuthContext(responder.accessToken);
+    expect(context?.sessionId).toBeString();
+
+    expect(await post(
+      harness,
+      `/workflows/${instanceId}/interactions/${interaction.interactionId}/responses`,
+      responder.accessToken,
+      { submissionId: 'forged-channel', channel: 'event', payload: { approved: true } },
+    )).toMatchObject({
+      status: 400,
+      body: { code: 'WORKFLOW_INTERACTION_INVALID' },
+    });
+    expect(await post(
+      harness,
+      `/workflows/${instanceId}/interactions/${interaction.interactionId}/responses`,
+      responder.accessToken,
+      { submissionId: 'event:forged', channel: 'web', payload: { approved: true } },
+    )).toMatchObject({
+      status: 400,
+      body: { code: 'WORKFLOW_INTERACTION_INVALID' },
+    });
+
+    const response = post(
+      harness,
+      `/workflows/${instanceId}/interactions/${interaction.interactionId}/responses`,
+      responder.accessToken,
+      { submissionId: 'revoked-responder', payload: { approved: true } },
+    );
+    await validatorEntered.promise;
+    harness.runtime.getAuthSessionService()!.revoke(
+      context!.sessionId!,
+      'workflow-responder-revocation-test',
+    );
+    releaseValidator.resolve();
+
+    expect(await response).toMatchObject({
+      status: 409,
+      body: { code: 'AUTH_STATE_CHANGED' },
+    });
+    expect(getWorkflowGraphRuntime(harness.workflows).listInteractions(instanceId)[0])
+      .toMatchObject({ status: 'open', acceptedBy: null });
+    expect(harness.db.prepare(`SELECT COUNT(*) AS count
+      FROM _workflow_interaction_responses WHERE interaction_id = ?`)
+      .get(interaction.interactionId)).toEqual({ count: 0 });
+    expect(harness.workflows.getInstance(instanceId, tenantScope(responder))?.status)
+      .toBe('running');
+  });
+
+  test('revalidates a queued event responder when a paused interaction resumes', async () => {
+    const harness = await startHarness({
+      interactionAuthority: new WorkflowInteractionAuthority(() => true),
+      register(registry) {
+        registry.create({
+          name: 'queued-responder-revocation',
+          flow: flow(requestAndWait('approval', 'approval.response')),
+        });
+      },
+    });
+    const responder = await register(harness, 'queued-responder', 'Queued Response Org');
+    const scope = tenantScope(responder);
+    const instanceId = await harness.workflows.runAsSystem(
+      'queued-responder-revocation',
+      {},
+      {
+        principal: 'workflow-authority-test',
+        reason: 'Verify delayed event responder revocation fence',
+        scope,
+      },
+    );
+    harness.workflows.pause(instanceId, scope);
+    expect(await post(
+      harness,
+      `/workflows/${instanceId}/events`,
+      responder.accessToken,
+      { eventName: 'approval.response', payload: { approved: true } },
+    )).toMatchObject({ status: 200, body: { matched: false } });
+    const interaction = getWorkflowGraphRuntime(harness.workflows).listInteractions(instanceId)[0]!;
+    const context = await harness.runtime.getTokenService()!
+      .resolveAuthContext(responder.accessToken);
+    harness.runtime.getAuthSessionService()!.revoke(
+      context!.sessionId!,
+      'workflow-queued-responder-revocation-test',
+    );
+
+    await harness.workflows.resume(instanceId, scope);
+    expect(getWorkflowGraphRuntime(harness.workflows).listInteractions(instanceId)[0])
+      .toMatchObject({ status: 'open', acceptedBy: null, rejectionCount: 0 });
+    expect(harness.workflows.getInstance(instanceId, scope)?.status).toBe('running');
+    expect(harness.db.prepare(`SELECT claimed_by_step_id FROM _workflow_event_delivery
+      WHERE instance_id = ? LIMIT 1`).get(instanceId)).toMatchObject({
+        claimed_by_step_id: expect.stringContaining('consumed:'),
+      });
+    expect(harness.db.prepare(`SELECT COUNT(*) AS count
+      FROM _workflow_interaction_responses WHERE interaction_id = ?`)
+      .get(interaction.interactionId)).toEqual({ count: 0 });
+  });
+
+  test('preserves sealed event responder authority across restart and rejects snapshot tampering', async () => {
+    const raw = new Database(':memory:');
+    const registerWait = (registry: WorkflowRegistry) => {
+      registry.create({
+        name: 'durable-event-responder',
+        flow: flow(requestAndWait('approval', 'approval.response')),
+      });
+    };
+    const authority = new WorkflowInteractionAuthority(() => true);
+    const first = await startHarness({
+      database: raw,
+      interactionAuthority: authority,
+      register: registerWait,
+    });
+    const responder = await register(first, 'durable-responder', 'Durable Response Org');
+    const scope = tenantScope(responder);
+    const firstId = await first.workflows.runAsSystem('durable-event-responder', {}, {
+      principal: 'workflow-authority-test',
+      reason: 'Verify durable event responder seal',
+      scope,
+    });
+    first.workflows.pause(firstId, scope);
+    const responderContext = await first.runtime.getTokenService()!
+      .resolveAuthContext(responder.accessToken);
+    const responderFence = first.workflows.captureActorAuthorityFence(responderContext!);
+    await first.workflows.sendEvent(
+      firstId,
+      'approval.response',
+      { approved: true },
+      responder.user.userId,
+      scope,
+      // Tenant identity is intentionally omitted. The service must persist
+      // the canonical tenant from the sealed authority, not this snapshot.
+      { actorId: responder.user.userId },
+      {
+        actorAuthority: responderFence.authority,
+        assertCurrentAuthority: responderFence.assertCurrentAuthority,
+      },
+    );
+    const persistedActor = first.db.prepare(`SELECT actor_json
+      FROM _workflow_event_delivery WHERE instance_id = ? LIMIT 1`)
+      .get(firstId) as { actor_json: string };
+    expect(JSON.parse(persistedActor.actor_json)).toMatchObject({
+      actorId: responder.user.userId,
+      tenantId: responder.tenant.tenantId,
+    });
+    await stopHarness(first);
+
+    const second = await startHarness({
+      database: raw,
+      interactionAuthority: authority,
+      register: registerWait,
+    });
+    await second.workflows.resume(firstId, scope);
+    expect(second.workflows.getInstance(firstId, scope)?.status).toBe('completed');
+
+    const tamperedId = await second.workflows.runAsSystem('durable-event-responder', {}, {
+      principal: 'workflow-authority-test',
+      reason: 'Verify event snapshot tamper rejection',
+      scope,
+    });
+    second.workflows.pause(tamperedId, scope);
+    await post(second, `/workflows/${tamperedId}/events`, responder.accessToken, {
+      eventName: 'approval.response', payload: { approved: true },
+    });
+    const envelope = second.db.prepare(`SELECT event_id, actor_json
+      FROM _workflow_event_delivery WHERE instance_id = ? LIMIT 1`)
+      .get(tamperedId) as { event_id: string; actor_json: string };
+    const actor = JSON.parse(envelope.actor_json) as Record<string, unknown>;
+    second.db.exec('DROP TRIGGER trg_workflow_event_delivery_envelope_immutable');
+    second.db.prepare(`UPDATE _workflow_event_delivery SET actor_json = ? WHERE event_id = ?`)
+      .run(JSON.stringify({ ...actor, roles: ['administrator'] }), envelope.event_id);
+
+    await second.workflows.resume(tamperedId, scope);
+    expect(second.workflows.getInstance(tamperedId, scope)?.status).toBe('running');
+    expect(getWorkflowGraphRuntime(second.workflows).listInteractions(tamperedId)[0])
+      .toMatchObject({ status: 'open', acceptedBy: null });
+    await stopHarness(second);
+    raw.close();
+  });
+
+  test('fails revoked running and paused runs before restart publication or dispatch', async () => {
+    const raw = new Database(':memory:');
+    let handlerCalls = 0;
+    const registerWait = (registry: WorkflowRegistry) => {
+      registry.registerHandler('recovery-authority-wait', async () => {
+        handlerCalls += 1;
+        return { leaked: true };
+      });
+      registry.create({
+        name: 'recovery-authority-preflight',
+        steps: [{
+          name: 'Wait',
+          handler: 'recovery-authority-wait',
+          waitFor: 'continue',
+        }],
+      });
+    };
+    const first = await startHarness({ database: raw, register: registerWait });
+    const actor = await register(first, 'recovery-owner', 'Recovery Authority Org');
+    const scope = tenantScope(actor);
+    const running = await post(first, '/workflows', actor.accessToken, {
+      name: 'recovery-authority-preflight', input: {},
+    });
+    const paused = await post(first, '/workflows', actor.accessToken, {
+      name: 'recovery-authority-preflight', input: {},
+    });
+    const runningId = String(running.body.instanceId);
+    const pausedId = String(paused.body.instanceId);
+    first.workflows.pause(pausedId, scope);
+    for (const instanceId of [runningId, pausedId]) {
+      await post(first, `/workflows/${instanceId}/events`, actor.accessToken, {
+        eventName: 'unmatched', payload: { queued: true },
+      });
+    }
+    const context = await first.runtime.getTokenService()!
+      .resolveAuthContext(actor.accessToken);
+    first.runtime.getAuthSessionService()!.revoke(
+      context!.sessionId!,
+      'workflow-recovery-preflight-test',
+    );
+    await stopHarness(first);
+
+    const second = await startHarness({ database: raw, register: registerWait });
+    for (const instanceId of [runningId, pausedId]) {
+      expect(second.workflows.getInstance(instanceId, scope)).toMatchObject({
+        status: 'failed',
+        error: 'Workflow execution authority is no longer valid',
+      });
+      expect(second.db.prepare(`SELECT queued_count, queued_bytes
+        FROM _workflow_event_usage WHERE instance_id = ?`).get(instanceId)).toEqual({
+        queued_count: 0,
+        queued_bytes: 0,
+      });
+      expect(second.db.prepare(`SELECT claimed_by_step_id
+        FROM _workflow_event_delivery WHERE instance_id = ?`).get(instanceId)).toMatchObject({
+        claimed_by_step_id: expect.stringMatching(/^discarded:/),
+      });
+    }
+    expect(handlerCalls).toBe(0);
+    await stopHarness(second);
+    raw.close();
+  });
 });
 
 async function startHarness(options: {
   database?: Database;
   register: (registry: WorkflowRegistry) => void;
+  interactionAuthority?: WorkflowInteractionAuthority;
 }): Promise<Harness> {
   const db = options.database
     ? createReactiveDB({ database: options.database })
@@ -292,6 +573,7 @@ async function startHarness(options: {
       registration: { mode: 'public' },
       onRuntimeCreated(created) { runtime = created; },
     }))
+    .use(createSchedulerPlugin())
     .use(createWorkflowPlugin({
       db,
       ensureAuthReady: async () => { await runtime!.start(); },
@@ -309,6 +591,7 @@ async function startHarness(options: {
           });
         },
       },
+      interactionAuthority: options.interactionAuthority,
       onRegistryCreated: options.register,
       onServiceCreated(service) { workflows = service; },
     }));
@@ -329,6 +612,14 @@ async function startHarness(options: {
   };
   active.push(harness);
   return harness;
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error('Workflow authority condition did not settle');
 }
 
 async function register(

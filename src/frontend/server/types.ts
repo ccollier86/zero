@@ -28,6 +28,8 @@ import type {
 import type { KvServiceConfig } from '../../kv';
 import { resolvePdfConfig } from '../../pdf/pdf-config';
 import type { PdfConfig, ResolvedPdfConfig } from '../../pdf/pdf-types';
+import type { WorkflowRegistry } from '../../workflows/workflow-registry';
+import type { WorkflowInteractionAuthority } from '../../workflows/workflow-interaction-authority';
 import {
   assertDatabaseDirectoryIsolation,
   resolveControlDatabasePaths,
@@ -213,6 +215,19 @@ export interface ResolvedSyncDefaults {
 /** WebSocket sync authentication policy for full-stack platform apps. */
 export type SyncAuthMode = 'required' | 'public';
 
+/** Managed durable-workflow registration for a full-stack app. */
+export interface AppWorkflowsConfig {
+  /**
+   * Register handlers and definitions during app composition. Async setup is
+   * awaited before crash recovery and service publication.
+   */
+  register?: (registry: WorkflowRegistry) => void | Promise<void>;
+  /** Maximum shutdown wait for handlers that ignore cancellation. Default: 30s. */
+  shutdownGraceMs?: number;
+  /** Guardian/app policy adapter for human or agent interaction responders. */
+  interactionAuthority?: WorkflowInteractionAuthority;
+}
+
 /**
  * Configuration for createApp() — the single entry point for
  * building a full-stack app with the platform.
@@ -263,6 +278,12 @@ export interface AppConfig {
     accessTokenTTL?: string;
     refreshTokenTTL?: string;
   });
+
+  /**
+   * Durable workflows. Enabled with auth by default. Pass a registration
+   * callback for app handlers/definitions, or false to omit the subsystem.
+   */
+  workflows?: false | AppWorkflowsConfig;
 
   /**
    * Platform email configuration.
@@ -503,6 +524,7 @@ export interface ResolvedConfig {
   /** Server-only logical validators used by websocket mutation handling. */
   mutationValidators: Record<string, SyncTableMutationValidator>;
   auth: false | (AuthBehaviorConfig & { accessTokenTTL?: string; refreshTokenTTL?: string });
+  workflows: false | AppWorkflowsConfig;
   email: false | EmailConfig;
   ai: false | ResolvedAIConfig;
   vector: false | ResolvedVectorConfig;
@@ -560,6 +582,9 @@ export function resolveConfig(
       ? false
       : config.auth;
   const authBehavior = auth === false ? null : validateAppAuthConfig(auth);
+  const workflows = config.workflows === false || auth === false
+    ? false
+    : config.workflows ?? {};
   const email = config.email === true
     ? {}
     : config.email === false || config.email === undefined
@@ -606,6 +631,9 @@ export function resolveConfig(
   }
   if (auth === false && syncAuth === 'required') {
     throw new Error('[app] syncAuth: \'required\' requires auth: true.');
+  }
+  if (auth === false && config.workflows !== undefined && config.workflows !== false) {
+    throw new Error('[app] workflows require auth: true.');
   }
 
   const syncDefaults = normalizeSyncDefaults(config.syncDefaults);
@@ -682,6 +710,7 @@ export function resolveConfig(
     tables: normalized,
     mutationValidators,
     auth,
+    workflows,
     email,
     ai,
     vector,

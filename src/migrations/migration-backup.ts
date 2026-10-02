@@ -34,7 +34,7 @@ export function createMigrationBackup(
   // This snapshots the connected database, including committed WAL pages and
   // hot-mode in-memory state whose configured snapshot file may not exist yet.
   database.run('VACUUM INTO ?', [path]);
-  // Backups contain the full durable platform database. Do not let a permissive
+  // Backups contain the full durable migration target. Do not let a permissive
   // process umask make a newly created snapshot readable by other local users.
   chmodSync(path, 0o600);
   return {

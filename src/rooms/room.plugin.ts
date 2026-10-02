@@ -132,7 +132,6 @@ export function createRoomPlugin(config: RoomPluginConfig) {
   };
   const requestScope = (access: Parameters<typeof requireRequestServiceDataScope>[0]) =>
     requireRequestServiceDataScope(access, getAuthorizationKernel);
-
   return new Elysia({ name: 'rooms', prefix: '/rooms' })
 
     .use(createAuthMiddleware(getRoomTokenService, authorization))

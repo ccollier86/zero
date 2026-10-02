@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { AuthClient } from './auth-client';
+import type { AuthAuthorizationStatus } from './auth-authorization-types';
+import { AuthorizationDataBoundaryController } from './authorization-data-boundary';
 import {
   AuthorizationScopeBoundaryFence,
+  isAuthorizationDataReady,
   isAuthorizationScopeCallbackCurrent,
   isAuthorizationScopeReady,
   isAuthorizationScopeStable,
@@ -16,6 +19,7 @@ function authState(overrides: Partial<{
   isLoading: boolean;
   phase: 'idle' | 'preparing' | 'committed' | 'reconciling' | 'recovery-required';
   revision: number;
+  authorizationStatus: AuthAuthorizationStatus;
 }> = {}): AuthClient {
   const userId = overrides.userId === undefined ? 'user-1' : overrides.userId;
   const tenantId = overrides.tenantId === undefined ? 'tenant-1' : overrides.tenantId;
@@ -24,6 +28,11 @@ function authState(overrides: Partial<{
     user: userId ? { userId } : null,
     activeTenant: tenantId ? { tenantId } : null,
     isLoading: overrides.isLoading ?? false,
+    authorizationState: {
+      status: overrides.authorizationStatus ?? 'ready',
+      snapshot: null,
+      error: null,
+    },
     sessionTransition: {
       phase: overrides.phase ?? 'idle',
       operation: null,
@@ -56,6 +65,40 @@ describe('authorization scope hook boundary', () => {
     expect(readAuthorizationScopeBoundaryKey(authState({ revision: 1 }))).not.toBe(baseline);
   });
 
+  test('separates same-scope authorization data revisions without changing identity', () => {
+    const auth = authState();
+    const boundary = new AuthorizationDataBoundaryController();
+    const identity = readAuthorizationScopeIdentityKey(auth);
+    const managerKey = readAuthorizationScopeBoundaryKey(auth, boundary.revision);
+    let notifications = 0;
+    const unsubscribe = boundary.subscribe(() => { notifications += 1; });
+
+    boundary.invalidate();
+
+    expect(notifications).toBe(1);
+    expect(readAuthorizationScopeBoundaryKey(auth, boundary.revision)).not.toBe(managerKey);
+    expect(readAuthorizationScopeIdentityKey(auth)).toBe(identity);
+    unsubscribe();
+  });
+
+  test('advances the boundary again when replacement authorization becomes readable', () => {
+    const unvalidated = readAuthorizationScopeBoundaryKey(
+      authState({ authorizationStatus: 'loading' }),
+      1,
+    );
+    const ready = readAuthorizationScopeBoundaryKey(
+      authState({ authorizationStatus: 'ready' }),
+      1,
+    );
+    const refreshing = readAuthorizationScopeBoundaryKey(
+      authState({ authorizationStatus: 'refreshing' }),
+      1,
+    );
+
+    expect(ready).not.toBe(unvalidated);
+    expect(refreshing).toBe(ready);
+  });
+
   test('treats only committed and recoverable scopes as readable', () => {
     expect(isAuthorizationScopeStable(authState({ phase: 'idle' }).sessionTransition)).toBe(true);
     expect(isAuthorizationScopeStable(
@@ -79,6 +122,15 @@ describe('authorization scope hook boundary', () => {
     expect(isAuthorizationScopeReady(idle, false)).toBe(true);
     expect(isAuthorizationScopeReady(idle, true)).toBe(false);
     expect(isAuthorizationScopeReady(preparing, false)).toBe(false);
+  });
+
+  test('masks a same-scope authorization purge until replacement grants are validated', () => {
+    expect(isAuthorizationDataReady(0, 'loading')).toBe(true);
+    expect(isAuthorizationDataReady(1, 'loading')).toBe(false);
+    expect(isAuthorizationDataReady(1, 'error')).toBe(false);
+    expect(isAuthorizationDataReady(1, 'revoked')).toBe(false);
+    expect(isAuthorizationDataReady(1, 'ready')).toBe(true);
+    expect(isAuthorizationDataReady(1, 'refreshing')).toBe(true);
   });
 
   test('invalidates async work at every boundary change', () => {
@@ -266,13 +318,16 @@ const authorizationScopedHookFiles = [
   'mutation-hooks.ts',
   'workflow-run-hooks.ts',
   'workflow-hooks.ts',
+  'workflow-topology-hooks.ts',
   'notification-hooks.ts',
   'room-hooks.ts',
   'typing-indicator-hooks.ts',
   'data-selection-hooks.ts',
   'preference-hooks.ts',
   'auth-hooks.ts',
+  'auth-api-key-hooks.ts',
   'authorization-hooks.ts',
+  'data-realm-readiness-hooks.ts',
   'application-administration-hooks.ts',
   'tenant-member-hooks.ts',
   'tenant-onboarding-hooks.ts',

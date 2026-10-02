@@ -2,8 +2,10 @@
 
 import { useCallback, useSyncExternalStore } from 'react';
 import type { AuthClient } from './auth-client';
+import type { AuthAuthorizationStatus } from './auth-authorization-types';
 import type { AuthSessionTransitionState } from './auth-types';
 import type { Client, InternalClient } from './sdk';
+import type { AuthorizationDataBoundarySource } from './authorization-data-boundary';
 import { useClientMaybe } from './client-context';
 
 const NOOP_UNSUBSCRIBE = () => {};
@@ -14,6 +16,8 @@ export interface AuthorizationScopeBoundary {
   readonly key: string;
   /** Stable identity of the committed browser authorization family and scope. */
   readonly scopeKey: string;
+  /** Monotonic local cache fence for same-scope server authority changes. */
+  readonly dataRevision: number;
   /** False while old data must be masked and new requests must remain frozen. */
   readonly stable: boolean;
   /** False during initial stored-session restoration as well as transitions. */
@@ -40,17 +44,38 @@ export function isAuthorizationScopeReady(
 }
 
 /**
+ * A server-declared read-authority purge is unreadable until a replacement
+ * authorization projection has been validated for the same browser session.
+ * Revision zero preserves initial hydration while that optional UI hint loads.
+ */
+export function isAuthorizationDataReady(
+  revision: number,
+  status: AuthAuthorizationStatus | null,
+): boolean {
+  return revision === 0 || status === 'ready' || status === 'refreshing';
+}
+
+/**
  * Shared browser cache boundary for every Zero-owned hook.
  *
  * The opaque scope key changes on ordinary login, logout, tenant replacement,
- * and cross-tab session replacement while remaining stable across refresh-token
- * rotation inside the same authorization family. Transition phase/revision are
- * included so subscribers synchronously hide old data at `preparing`, before
- * the replacement credential is committed.
+ * cross-tab session replacement, and a server-declared same-scope read-authority
+ * change while remaining stable across an ordinary refresh-token rotation.
+ * Transition phase/revision are included so subscribers synchronously hide old
+ * data at `preparing`, before the replacement credential is committed.
  */
-export function readAuthorizationScopeBoundaryKey(auth: AuthClient | null): string {
-  if (!auth) return JSON.stringify(['auth-disabled']);
+export function readAuthorizationScopeBoundaryKey(
+  auth: AuthClient | null,
+  dataRevision = 0,
+): string {
+  if (!auth) return JSON.stringify(['auth-disabled', dataRevision]);
   const transition = auth.sessionTransition;
+  const authorizationStatus = auth.authorizationState?.status ?? null;
+  const dataValidation = dataRevision === 0
+    ? 'initial'
+    : isAuthorizationDataReady(dataRevision, authorizationStatus)
+      ? 'validated'
+      : 'unvalidated';
   return JSON.stringify([
     auth.authorizationScopeKey,
     auth.user?.userId ?? null,
@@ -58,6 +83,8 @@ export function readAuthorizationScopeBoundaryKey(auth: AuthClient | null): stri
     auth.isLoading,
     transition.phase,
     transition.revision,
+    dataRevision,
+    dataValidation,
   ]);
 }
 
@@ -97,28 +124,53 @@ export function useAuthorizationScopeBoundary(
     );
   }
   const client = clientOverride === undefined ? contextClient : clientOverride;
-  const auth = (client as InternalClient | null)?.auth ?? null;
+  const internal = client as InternalClient | null;
+  const auth = internal?.auth ?? null;
+  const dataBoundary = internal?._authorizationDataBoundary ?? null;
   const subscribe = useCallback(
-    (callback: () => void) => auth ? auth.subscribe(callback) : NOOP_UNSUBSCRIBE,
-    [auth],
+    (callback: () => void) => subscribeToAuthorizationBoundary(
+      auth,
+      dataBoundary,
+      callback,
+    ),
+    [auth, dataBoundary],
   );
   const getSnapshot = useCallback(
-    () => readAuthorizationScopeBoundaryKey(auth),
-    [auth],
+    () => readAuthorizationScopeBoundaryKey(auth, dataBoundary?.revision ?? 0),
+    [auth, dataBoundary],
   );
   const key = useSyncExternalStore(subscribe, getSnapshot, () => SSR_BOUNDARY_KEY);
   const phase = auth?.sessionTransition.phase ?? 'idle';
   const stable = auth ? isAuthorizationScopeStable(auth.sessionTransition) : true;
+  const dataRevision = dataBoundary?.revision ?? 0;
   const ready = auth
     ? isAuthorizationScopeReady(auth.sessionTransition, auth.isRestoring)
+      && isAuthorizationDataReady(dataRevision, auth.authorizationState.status)
     : true;
 
   return {
     key,
     scopeKey: readAuthorizationScopeIdentityKey(auth),
+    dataRevision,
     stable,
     ready,
     phase,
+  };
+}
+
+function subscribeToAuthorizationBoundary(
+  auth: AuthClient | null,
+  dataBoundary: AuthorizationDataBoundarySource | null,
+  callback: () => void,
+): () => void {
+  const unsubscribeAuth = auth?.subscribe(callback) ?? NOOP_UNSUBSCRIBE;
+  const unsubscribeAuthorization = auth?.subscribeAuthorization(callback)
+    ?? NOOP_UNSUBSCRIBE;
+  const unsubscribeData = dataBoundary?.subscribe(callback) ?? NOOP_UNSUBSCRIBE;
+  return () => {
+    unsubscribeAuth();
+    unsubscribeAuthorization();
+    unsubscribeData();
   };
 }
 

@@ -403,6 +403,41 @@ describe('createSyncClient', () => {
     });
   }
 
+  test('invalidates authorization data before refreshing and reconnecting a revoked manager', async () => {
+    let token = 'manager-token';
+    const order: string[] = [];
+    const client = makeClient({
+      getToken: async () => token,
+      refreshAuth: async () => {
+        order.push('refresh');
+        token = 'owner-only-token';
+        return token;
+      },
+      onAuthorizationDataInvalidated: () => order.push('invalidate'),
+    });
+    await flushMicrotasks();
+    await flushMicrotasks();
+    const managerSocket = MockWebSocket.latest();
+    managerSocket.simulateMessage(JSON.stringify({
+      type: 'sync.snapshot', seq: 4,
+      tables: { todos: { peer: {
+        id: 'peer', title: 'Manager-visible peer row', done: 0,
+      } } },
+    }));
+
+    managerSocket.simulateClose(4001, 'Sync read authority changed');
+
+    expect(order[0]).toBe('invalidate');
+    expect(getCtx(client).todos).toEqual({});
+    expect(getCtx(client)._sync.lastSeq).toBe(0);
+    await waitForSocketCount(2);
+    await flushMicrotasks();
+    expect(order).toEqual(['invalidate', 'refresh']);
+    expect(JSON.parse(MockWebSocket.latest().sent[0]!).token).toBe('owner-only-token');
+    expect(getCtx(client).todos).toEqual({});
+    client.disconnect();
+  });
+
   test('retains cache across an ordinary expired-token refresh', async () => {
     let token = 'expiring-token';
     const client = makeClient({

@@ -1,409 +1,428 @@
 /**
- * Executes workflow steps behind durable, revalidated authority gates.
+ * Invokes legacy workflow handlers and owns their cancellation lifecycle.
  *
- * A step receives a unique execution lease. Handler output is accepted only
- * when the same lease is still current and the original actor authority still
- * resolves inside the SQLite write transaction which commits that output.
+ * Durable attempt preparation/commits live in WorkflowAttemptCoordinator;
+ * Guardian authority resolution and app-service projection live in the shared
+ * execution-authority gate.
  */
 
 import type { ReactiveDB } from '../sync/reactive-db';
 import { OBS_CODES } from '../observability/codes';
-import { emitPlatformCode } from '../observability/sink';
-import type { StepContext, WorkflowStepRecord } from './types';
+import type { StepContext } from './types';
 import {
-  scopeFromIdentity,
+  WorkflowAttemptCoordinator,
+  type PreparedWorkflowExecution,
+} from './workflow-attempt-coordinator';
+import {
   WorkflowExecutionAuthorityStore,
-  type WorkflowAuthorityFailureReason,
-  type WorkflowExecutionAuthorityProvider,
-  type WorkflowExecutionServiceProvider,
-  type WorkflowResolvedExecutionAuthority,
 } from './workflow-execution-authority';
+import {
+  WorkflowExecutionAuthorityGate,
+  WorkflowAuthorityChangedError,
+  workflowExecutionAuthorityGateUsesDatabase,
+  type WorkflowAuthorityLease,
+} from './workflow-execution-authority-gate';
+import { WorkflowExecutionTracker } from './workflow-execution-tracker';
+import { formatWorkflowError, WorkflowError } from './workflow-error';
+import {
+  WorkflowRepository,
+  workflowRepositoryUsesDatabase,
+} from './workflow-repository';
 import type { WorkflowRegistry } from './workflow-registry';
+import {
+  WorkflowRuntimeStore,
+  workflowRuntimeStoreUsesDatabase,
+} from './workflow-runtime-store';
+import {
+  DEFAULT_WORKFLOW_SHUTDOWN_GRACE_MS,
+  resolveWorkflowShutdownGraceMs,
+} from './workflow-shutdown-policy';
+import { WorkflowWakeCoordinator } from './workflow-wake-coordinator';
+import { serializeWorkflowRuntimeJson } from './workflow-runtime-json';
+import {
+  createUnmanagedWorkflowRuntimeFence,
+  workflowRuntimeTransaction,
+  type WorkflowRuntimeFence,
+} from './workflow-runtime-fence';
+import {
+  createWorkflowObservability,
+  type WorkflowObservability,
+} from './workflow-observability';
 
-const MAX_BACKOFF_MS = 5 * 60 * 1000;
-const AUTHORITY_ERROR = 'Workflow execution authority is no longer valid';
+export { WorkflowAuthorityChangedError } from './workflow-execution-authority-gate';
 
-interface PreparedExecution {
-  executionId: string;
-  step: WorkflowStepRecord;
-  context: StepContext;
+export interface WorkflowClock {
+  now(): Date;
 }
 
-type PreparationResult =
-  | { kind: 'execute'; prepared: PreparedExecution }
-  | { kind: 'waiting' | 'skipped' | 'failed' | 'stale' };
+const systemClock: WorkflowClock = { now: () => new Date() };
+const OWNER_FENCED_EXECUTOR_CONSTRUCTION = Symbol('owner-fenced-workflow-executor');
 
-export class WorkflowAuthorityChangedError extends Error {
-  readonly code = 'WORKFLOW_AUTHORITY_CHANGED';
-
-  constructor() {
-    super(AUTHORITY_ERROR);
-    this.name = 'WorkflowAuthorityChangedError';
-  }
+interface OwnerFencedExecutorConstruction {
+  readonly capability: typeof OWNER_FENCED_EXECUTOR_CONSTRUCTION;
+  readonly runtimeFence: WorkflowRuntimeFence;
 }
 
+export type WorkflowExecutionResult =
+  | 'completed'
+  | 'skipped'
+  | 'waiting'
+  | 'retry-scheduled'
+  | 'failed'
+  | 'timed-out'
+  | 'stale';
+
+/**
+ * Low-level standalone compatibility executor.
+ *
+ * @deprecated Managed applications should use WorkflowService. Direct
+ * executors are fenced out while a managed workflow runtime owns the database.
+ */
 export class WorkflowExecutor {
+  private readonly attempts: WorkflowAttemptCoordinator;
+  private readonly executions: WorkflowExecutionTracker;
+  private readonly repository: WorkflowRepository;
+  private readonly authority: WorkflowExecutionAuthorityGate;
+  private readonly runtimeFence: WorkflowRuntimeFence;
+  private disposed = false;
+
+  constructor(
+    db: ReactiveDB,
+    registry: WorkflowRegistry,
+    runtime?: WorkflowRuntimeStore,
+    clock?: WorkflowClock,
+    repository?: WorkflowRepository,
+    wakes?: WorkflowWakeCoordinator,
+    shutdownGraceMs?: number,
+    authority?: WorkflowExecutionAuthorityGate,
+    observability?: WorkflowObservability,
+  );
   constructor(
     private readonly db: ReactiveDB,
     private readonly registry: WorkflowRegistry,
-    private readonly authorityStore: WorkflowExecutionAuthorityStore =
-      new WorkflowExecutionAuthorityStore(db),
-    private readonly authorityProvider: WorkflowExecutionAuthorityProvider | null = null,
-    private readonly serviceProvider: WorkflowExecutionServiceProvider | null = null,
-  ) {}
+    runtime: WorkflowRuntimeStore | undefined = undefined,
+    clock: WorkflowClock = systemClock,
+    repository: WorkflowRepository | undefined = undefined,
+    wakes: WorkflowWakeCoordinator | undefined = undefined,
+    shutdownGraceMs = DEFAULT_WORKFLOW_SHUTDOWN_GRACE_MS,
+    authority: WorkflowExecutionAuthorityGate | undefined = undefined,
+    private readonly observability: WorkflowObservability = createWorkflowObservability(db),
+    internal?: OwnerFencedExecutorConstruction,
+  ) {
+    assertExecutorCollaboratorDatabases(db, runtime, repository, authority);
+    // Public construction is always unmanaged. Only the module-private
+    // capability used by WorkflowService can install an exact owner fence;
+    // passing an arbitrary tenth argument cannot disable ownership checks.
+    this.runtimeFence = internal?.capability === OWNER_FENCED_EXECUTOR_CONSTRUCTION
+      ? internal.runtimeFence
+      : createUnmanagedWorkflowRuntimeFence(db);
+    this.repository = repository ?? new WorkflowRepository(db, this.runtimeFence);
+    const authorityStore = new WorkflowExecutionAuthorityStore(
+      db,
+      () => clock.now().getTime(),
+    );
+    this.authority = authority ?? new WorkflowExecutionAuthorityGate(
+      db,
+      authorityStore,
+      null,
+      null,
+      () => clock.now(),
+      this.observability,
+      this.runtimeFence,
+    );
+    const ownedRuntime = runtime ?? new WorkflowRuntimeStore(
+      db,
+      this.authority.store,
+      () => clock.now(),
+      this.runtimeFence,
+    );
+    const wakeCoordinator = wakes ?? new WorkflowWakeCoordinator(clock, false, {
+      retry: () => undefined,
+      timeout: () => undefined,
+    }, this.observability);
+    this.attempts = new WorkflowAttemptCoordinator(
+      this.repository,
+      ownedRuntime,
+      clock,
+      wakeCoordinator,
+      this.observability,
+    );
+    this.executions = new WorkflowExecutionTracker(
+      resolveWorkflowShutdownGraceMs(shutdownGraceMs),
+      this.observability,
+    );
+  }
 
-  /** Execute one eligible step; stale/concurrent attempts are ignored. */
-  async executeStep(
-    instanceId: string,
-    stepId: string,
-    eventPayload?: { name: string; payload: unknown },
-  ): Promise<boolean> {
-    const preparation = this.prepare(instanceId, stepId, eventPayload);
-    if (preparation.kind !== 'execute') return preparation.kind === 'skipped';
-    const { executionId, step, context } = preparation.prepared;
-    const handler = this.registry.getHandler(step.step_name);
-    if (!handler) {
-      return this.commitHandlerFailure(
-        instanceId,
-        step,
-        executionId,
-        `Handler "${step.step_name}" not found in registry`,
+  /** Execute one eligible step and return its durable outcome. */
+  async executeStep(instanceId: string, stepId: string): Promise<WorkflowExecutionResult> {
+    if (this.disposed) {
+      throw new WorkflowError(
+        'Workflow executor is not available',
+        'WORKFLOW_NOT_READY',
+        503,
       );
     }
-
-    try {
-      const output = await handler(context);
-      return this.commitHandlerSuccess(instanceId, step, executionId, output);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return this.commitHandlerFailure(instanceId, step, executionId, message);
-    }
-  }
-
-  /** Revalidate an in-flight lease for request-equivalent scoped services. */
-  assertCurrentAuthority(
-    instanceId: string,
-    stepId: string,
-    executionId: string,
-  ): void {
-    const valid = this.db.transaction(() => {
-      const step = this.db.queryOne('workflow_steps', stepId);
-      const instance = this.db.queryOne('workflow_instances', instanceId);
-      if (!step
-        || !instance
-        || step.instance_id !== instanceId
-        || step.status !== 'running'
-        || instance.status !== 'running'
-        || !this.authorityStore.hasLease(stepId, executionId)) return false;
-      return this.resolveAuthority(instanceId) !== null;
-    });
-    if (!valid) throw new WorkflowAuthorityChangedError();
-  }
-
-  /** Gate lifecycle transitions which do not dispatch a handler. */
-  withCurrentInstanceAuthority<T>(
-    instanceId: string,
-    operation: () => T,
-  ): { committed: true; value: T } | { committed: false } {
-    return this.db.transaction(() => {
-      const instance = this.db.queryOne('workflow_instances', instanceId);
-      if (!instance || instance.status !== 'running') return { committed: false };
-      if (!this.resolveAuthority(instanceId)) return { committed: false };
-      return { committed: true, value: operation() };
-    });
-  }
-
-  private prepare(
-    instanceId: string,
-    stepId: string,
-    eventPayload?: { name: string; payload: unknown },
-  ): PreparationResult {
-    return this.db.transaction(() => {
-      const step = this.db.queryOne('workflow_steps', stepId) as WorkflowStepRecord | null;
-      const instance = this.db.queryOne('workflow_instances', instanceId);
-      if (!step || !instance || step.instance_id !== instanceId) return { kind: 'stale' };
-      if (instance.status !== 'running') return { kind: 'stale' };
-
-      const eligible = step.status === 'pending'
-        || (step.status === 'waiting' && Boolean(eventPayload))
-        || (step.status === 'failed' && step.retry_at !== null);
-      if (!eligible) return { kind: 'stale' };
-
-      const resolved = this.resolveAuthority(instanceId);
-      if (!resolved) return { kind: 'failed' };
-      const stepDefs = parseStepDefs(instance.steps_json);
-      const definition = stepDefs[step.step_index];
-
-      // A wait event cannot be supplied to a different wait name, and callers
-      // cannot bypass a wait by racing an ordinary advance.
-      if (step.wait_event) {
-        if (!eventPayload) {
-          this.db.update('workflow_steps', stepId, {
-            status: 'waiting',
-            timeout_at: step.timeout_at ?? (definition?.timeoutMs
-              ? new Date(Date.now() + definition.timeoutMs).toISOString()
-              : null),
-          });
-          return { kind: 'waiting' };
-        }
-        if (eventPayload.name !== step.wait_event) return { kind: 'waiting' };
-      } else if (eventPayload) {
-        return { kind: 'stale' };
+    // A pause/cancel aborts the logical attempt immediately, but a handler can
+    // ignore its signal. Never overlap a replacement with that physical call.
+    if (this.executions.isStepActive(stepId)) return 'stale';
+    const preparation = this.transaction(() => this.attempts.prepare(instanceId, stepId));
+    if (preparation.kind !== 'execute') {
+      if (preparation.kind === 'timed-out') {
+        this.attempts.emitTimeout(instanceId, stepId);
       }
-
-      if (step.status === 'pending') {
-        const stepDef = stepDefs[step.step_index];
-        if (stepDef?.condition
-          && !this.evaluateCondition(stepDef.condition, instance)) {
-          this.db.update('workflow_steps', stepId, {
-            status: 'skipped',
-            completed_at: new Date().toISOString(),
-          });
-          return { kind: 'skipped' };
-        }
-      }
-
-      const executionId = `wexec_${crypto.randomUUID()}`;
-      const now = new Date().toISOString();
-      const timeoutAt = step.timeout_at ?? (definition?.timeoutMs
-        ? new Date(Date.now() + definition.timeoutMs).toISOString()
-        : null);
-
-      this.authorityStore.putLease(stepId, instanceId, executionId);
-      this.db.update('workflow_steps', stepId, {
-        status: 'running',
-        started_at: now,
-        timeout_at: timeoutAt,
-        retry_at: null,
-      });
-
-      const previousOutput = this.getPreviousStepOutput(instanceId, step.step_index);
-      const assertCurrentAuthority = () => this.assertCurrentAuthority(
-        instanceId,
-        stepId,
-        executionId,
-      );
-      const zero = this.serviceProvider?.createServices({
-        authority: resolved,
-        assertCurrentAuthority,
-      }) ?? null;
-      const context: StepContext = Object.freeze({
-        input: step.step_index === 0
-          ? parseJson(instance.input)
-          : previousOutput,
-        workflowInput: parseJson(instance.input),
-        instanceId,
-        stepIndex: step.step_index,
-        attempt: step.retries,
-        ...(eventPayload ? { waitEvent: Object.freeze({ ...eventPayload }) } : {}),
-        execution: resolved.identity,
-        zero,
-        assertCurrentAuthority,
-      });
-      return {
-        kind: 'execute',
-        prepared: { executionId, step, context },
-      };
-    });
-  }
-
-  private commitHandlerSuccess(
-    instanceId: string,
-    step: WorkflowStepRecord,
-    executionId: string,
-    output: unknown,
-  ): boolean {
-    return this.db.transaction(() => {
-      if (!this.isCurrentExecution(instanceId, step.step_id, executionId)) return false;
-      if (!this.resolveAuthority(instanceId)) return false;
-      this.db.update('workflow_steps', step.step_id, {
-        status: 'completed',
-        output: output !== undefined ? JSON.stringify(output) : null,
-        completed_at: new Date().toISOString(),
-        timeout_at: null,
-        retry_at: null,
-        error: null,
-      });
-      this.authorityStore.releaseLease(step.step_id, executionId);
-      return true;
-    });
-  }
-
-  private commitHandlerFailure(
-    instanceId: string,
-    step: WorkflowStepRecord,
-    executionId: string,
-    error: string,
-  ): boolean {
-    return this.db.transaction(() => {
-      if (!this.isCurrentExecution(instanceId, step.step_id, executionId)) return false;
-      if (!this.resolveAuthority(instanceId)) return false;
-      this.authorityStore.releaseLease(step.step_id, executionId);
-      this.handleStepFailure(step.step_id, step, boundedError(error));
-      return false;
-    });
-  }
-
-  private resolveAuthority(
-    instanceId: string,
-  ): WorkflowResolvedExecutionAuthority | null {
-    const read = this.authorityStore.lockAndRead(instanceId);
-    if (!read.ok) {
-      this.failAuthority(instanceId, read.reason);
-      return null;
-    }
-    const { authority } = read;
-    if (authority.kind === 'system') {
-      const instance = this.db.queryOne('workflow_instances', instanceId);
-      const scope = scopeFromIdentity(authority.identity);
-      if (!instance || (instance.tenant_id ?? null) !== scope.tenantId) {
-        this.failAuthority(instanceId, 'authority-scope-mismatch');
-        return null;
-      }
-      return Object.freeze({
-        persisted: authority,
-        identity: authority.identity,
-        scope,
-        authContext: null,
-        userProperties: Object.freeze({}),
-      });
-    }
-    const resolved = this.authorityProvider?.revalidateActor(authority) ?? null;
-    if (!resolved) {
-      this.failAuthority(instanceId, 'authority-revoked');
-      return null;
-    }
-    const instance = this.db.queryOne('workflow_instances', instanceId);
-    if (!instance || (instance.tenant_id ?? null) !== resolved.scope.tenantId) {
-      this.failAuthority(instanceId, 'authority-scope-mismatch');
-      return null;
-    }
-    return resolved;
-  }
-
-  private failAuthority(
-    instanceId: string,
-    reason: WorkflowAuthorityFailureReason,
-  ): void {
-    this.authorityStore.invalidate(instanceId, reason);
-    emitPlatformCode(OBS_CODES.WORKFLOWS_AUTHORITY_INVALIDATED, {
-      metadata: { instanceId, reason },
-    });
-    const now = new Date().toISOString();
-    const steps = this.db.query('workflow_steps')
-      .filter((candidate) => candidate.instance_id === instanceId);
-    for (const step of steps) {
-      if (step.status === 'pending'
-        || step.status === 'waiting'
-        || step.status === 'running'
-        || (step.status === 'failed' && step.retry_at !== null)) {
-        this.db.update('workflow_steps', String(step.step_id), {
-          status: 'failed',
-          error: AUTHORITY_ERROR,
-          retry_at: null,
-          timeout_at: null,
-          completed_at: now,
+      if (preparation.kind === 'failed') {
+        this.observability.emitAfterCommit(OBS_CODES.WORKFLOW_INSTANCE_FAILED, {
+          error: preparation.cause,
+          metadata: { instanceId, stepId, reason: 'preparation' },
         });
       }
+      return preparation.kind;
     }
-    if (this.db.queryOne('workflow_instances', instanceId)) {
-      this.db.update('workflow_instances', instanceId, {
-        status: 'failed',
-        error: AUTHORITY_ERROR,
-        updated_at: now,
-        completed_at: now,
-      });
+
+    const prepared = preparation.prepared;
+    const authorityLease = this.transaction(() => this.authority.begin({
+      instanceId,
+      leaseId: stepId,
+      executionId: prepared.attemptId,
+      isCurrent: () => this.attempts.isCurrent(prepared),
+    }));
+    if (!authorityLease) {
+      this.transaction(() => this.attempts.release(prepared));
+      return this.authorityOutcome(instanceId);
     }
-  }
 
-  private isCurrentExecution(
-    instanceId: string,
-    stepId: string,
-    executionId: string,
-  ): boolean {
-    const instance = this.db.queryOne('workflow_instances', instanceId);
-    const step = this.db.queryOne('workflow_steps', stepId);
-    return Boolean(instance
-      && step
-      && step.instance_id === instanceId
-      && instance.status === 'running'
-      && step.status === 'running'
-      && this.authorityStore.hasLease(stepId, executionId));
-  }
-
-  private handleStepFailure(
-    stepId: string,
-    step: WorkflowStepRecord,
-    error: string,
-  ): void {
-    const retries = step.retries + 1;
-    if (retries < step.max_retries) {
-      const definition = parseStepDefs(
-        this.db.queryOne('workflow_instances', step.instance_id)?.steps_json,
-      )[step.step_index];
-      const baseBackoff = definition?.backoffMs ?? 1000;
-      const backoffMs = Math.min(baseBackoff * Math.pow(2, retries), MAX_BACKOFF_MS);
-      this.db.update('workflow_steps', stepId, {
-        status: 'failed',
-        error,
-        retries,
-        retry_at: new Date(Date.now() + backoffMs).toISOString(),
-        timeout_at: null,
-      });
-      return;
-    }
-    this.db.update('workflow_steps', stepId, {
-      status: 'failed',
-      error,
-      retries,
-      completed_at: new Date().toISOString(),
-      retry_at: null,
-      timeout_at: null,
-    });
-  }
-
-  private getPreviousStepOutput(instanceId: string, currentIndex: number): unknown {
-    if (currentIndex === 0) return null;
-    const previous = this.db.query('workflow_steps').find((candidate) =>
-      candidate.instance_id === instanceId
-        && candidate.step_index === currentIndex - 1);
-    return parseJson(previous?.output);
-  }
-
-  private evaluateCondition(
-    condition: string,
-    instance: Record<string, unknown>,
-  ): boolean {
     try {
-      const input = parseJson(instance.input) ?? {};
-      // Definitions are trusted server code; request input is passed only as
-      // data to the compatibility expression evaluator.
-      const evaluate = new Function('input', `return Boolean(${condition})`);
-      return Boolean(evaluate(input));
-    } catch {
-      return true;
+      return await this.executePrepared(prepared, authorityLease);
+    } finally {
+      this.transaction(() => this.authority.release(authorityLease));
     }
   }
-}
 
-function parseStepDefs(value: unknown): Array<{
-  condition?: string;
-  backoffMs?: number;
-  timeoutMs?: number;
-}> {
-  try {
-    return typeof value === 'string' ? JSON.parse(value) : [];
-  } catch {
-    return [];
+  abortInstance(instanceId: string, reason: string): void {
+    try {
+      this.transaction(() => this.authority.releaseInstance(instanceId));
+    } finally {
+      // Even a stale unmanaged executor must stop its own physical work when
+      // the durable release is rejected by a successor's ownership fence.
+      this.executions.abortInstance(instanceId, reason);
+    }
+  }
+
+  abortStep(stepId: string, reason: string): void {
+    this.executions.abortStep(stepId, reason);
+  }
+
+  isInstanceDraining(instanceId: string): boolean {
+    return this.executions.isInstanceActive(instanceId);
+  }
+
+  dispose(): Promise<void> {
+    this.disposed = true;
+    return this.executions.dispose();
+  }
+
+  private async executePrepared(
+    prepared: PreparedWorkflowExecution,
+    authorityLease: WorkflowAuthorityLease,
+  ): Promise<WorkflowExecutionResult> {
+    const { instanceId, step } = prepared;
+    const handler = this.registry.getHandler(prepared.handlerName);
+    if (!handler) {
+      this.transaction(() => this.attempts.release(prepared));
+      this.observability.emitNow(OBS_CODES.WORKFLOW_HANDLER_MISSING, {
+        metadata: {
+          instanceId,
+          stepId: step.step_id,
+          stepIndex: step.step_index,
+          handler: prepared.handlerName,
+        },
+      });
+      throw new WorkflowError(
+        `Workflow handler "${prepared.handlerName}" is not registered`,
+        'WORKFLOW_HANDLER_NOT_REGISTERED',
+        500,
+      );
+    }
+    if (this.disposed) {
+      this.transaction(() => this.attempts.release(prepared));
+      return 'stale';
+    }
+    // ReactiveDB listeners run synchronously as prepare commits. A listener
+    // can pause/cancel/timeout before this attempt is registered in memory.
+    if (!this.transaction(() => this.attempts.isCurrent(prepared))) return 'stale';
+    const controller = new AbortController();
+
+    const context: StepContext = Object.freeze({
+      input: prepared.input,
+      workflowInput: prepared.workflowInput,
+      instanceId,
+      stepIndex: step.step_index,
+      attempt: step.retries,
+      attemptId: prepared.attemptId,
+      idempotencyKey: `workflow:${instanceId}:step:${step.step_index}`,
+      signal: controller.signal,
+      execution: authorityLease.context.execution,
+      zero: authorityLease.context.zero,
+      assertCurrentAuthority: authorityLease.context.assertCurrentAuthority,
+      ...(prepared.waitEvent
+        ? {
+            waitEvent: Object.freeze({
+              id: prepared.waitEvent.eventId,
+              name: prepared.waitEvent.name,
+              payload: prepared.waitEvent.payload,
+            }),
+          }
+        : {}),
+    });
+    // Defer invocation by one microtask so physical tracking is published
+    // before any synchronous handler prefix can reenter workflow controls.
+    const invocation = Promise.resolve().then(() => {
+      if (controller.signal.aborted) throw abortReason(controller.signal);
+      return handler(context);
+    });
+    this.executions.track(
+      instanceId,
+      step.step_id,
+      prepared.attemptId,
+      controller,
+      invocation,
+    );
+
+    try {
+      const output = await raceWithAbort(invocation, controller.signal);
+      if (this.disposed) return 'stale';
+      let serialized: string | null;
+      try {
+        serialized = serializeWorkflowRuntimeJson(output, {
+          code: 'WORKFLOW_ACTIVITY_OUTPUT_INVALID',
+          label: 'Workflow handler output',
+          invalidStatus: 500,
+          limitStatus: 500,
+        });
+      } catch (error) {
+        return this.commitFailure(prepared, authorityLease, error, false);
+      }
+      const result = this.transaction(() => this.attempts.commitSuccess(
+        prepared,
+        serialized,
+        () => this.authority.validate(authorityLease),
+      ));
+      if (result === 'stale') return this.authorityOutcome(instanceId);
+      if (result === 'timed-out') this.attempts.emitTimeout(instanceId, step.step_id);
+      return result;
+    } catch (error) {
+      // Disposal already normalized durable running rows. The physical
+      // invocation remains observed by the tracker, but must never touch the
+      // repository after the teardown boundary begins.
+      if (this.disposed) return 'stale';
+      return this.commitFailure(
+        prepared,
+        authorityLease,
+        error,
+        !(error instanceof WorkflowAuthorityChangedError),
+      );
+    }
+  }
+
+  private commitFailure(
+    prepared: PreparedWorkflowExecution,
+    authorityLease: WorkflowAuthorityLease,
+    error: unknown,
+    retryable: boolean,
+  ): WorkflowExecutionResult {
+    const result = this.transaction(() => this.attempts.commitFailure(
+      prepared,
+      formatWorkflowError(error),
+      retryable,
+      error,
+      () => this.authority.validate(authorityLease),
+    ));
+    if (result === 'stale') return this.authorityOutcome(prepared.instanceId);
+    if (result === 'timed-out') {
+      this.attempts.emitTimeout(prepared.instanceId, prepared.step.step_id);
+    }
+    return result;
+  }
+
+  private authorityOutcome(instanceId: string): WorkflowExecutionResult {
+    return this.transaction(() => this.repository.getInstance(instanceId))?.status === 'failed'
+      ? 'failed'
+      : 'stale';
+  }
+
+  private transaction<T>(operation: () => T): T {
+    return workflowRuntimeTransaction(this.db, this.runtimeFence, operation);
   }
 }
 
-function parseJson(value: unknown): unknown {
-  if (typeof value !== 'string' || !value) return null;
-  try { return JSON.parse(value); } catch { return null; }
+function assertExecutorCollaboratorDatabases(
+  db: ReactiveDB,
+  runtime: WorkflowRuntimeStore | undefined,
+  repository: WorkflowRepository | undefined,
+  authority: WorkflowExecutionAuthorityGate | undefined,
+): void {
+  const mismatch = runtime && !workflowRuntimeStoreUsesDatabase(runtime, db)
+    ? 'runtime store'
+    : repository && !workflowRepositoryUsesDatabase(repository, db)
+      ? 'repository'
+      : authority && !workflowExecutionAuthorityGateUsesDatabase(authority, db)
+        ? 'authority gate'
+        : null;
+  if (!mismatch) return;
+  throw new WorkflowError(
+    `Injected workflow ${mismatch} must use the executor database`,
+    'WORKFLOW_CONFIG_INVALID',
+    500,
+  );
 }
 
-function boundedError(value: string): string {
-  const normalized = value.trim();
-  return (normalized || 'Workflow step failed').slice(0, 2_000);
+/** @internal Construct the executor sharing one WorkflowService generation. */
+export function createOwnerFencedWorkflowExecutor(
+  db: ReactiveDB,
+  registry: WorkflowRegistry,
+  runtime: WorkflowRuntimeStore,
+  clock: WorkflowClock,
+  repository: WorkflowRepository,
+  wakes: WorkflowWakeCoordinator,
+  shutdownGraceMs: number,
+  authority: WorkflowExecutionAuthorityGate,
+  observability: WorkflowObservability,
+  runtimeFence: WorkflowRuntimeFence,
+): WorkflowExecutor {
+  return Reflect.construct(WorkflowExecutor, [
+    db,
+    registry,
+    runtime,
+    clock,
+    repository,
+    wakes,
+    shutdownGraceMs,
+    authority,
+    observability,
+    {
+      capability: OWNER_FENCED_EXECUTOR_CONSTRUCTION,
+      runtimeFence,
+    } satisfies OwnerFencedExecutorConstruction,
+  ]) as WorkflowExecutor;
+}
+
+async function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw abortReason(signal);
+  let removeAbortListener: () => void = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal));
+    signal.addEventListener('abort', onAbort, { once: true });
+    removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+  });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    removeAbortListener();
+  }
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new Error('Workflow execution aborted');
 }

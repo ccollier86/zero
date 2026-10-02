@@ -48,6 +48,7 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
     onError,
     onAuthFailure,
     onReconnect,
+    onAuthorizationDataInvalidated,
     onMutationRejected,
     ackTimeout = DEFAULT_ACK_TIMEOUT,
     maxReconnectAttempts = DEFAULT_MAX_RECONNECT_ATTEMPTS,
@@ -311,6 +312,11 @@ export function createSyncClient(config: SyncClientConfig): SyncClient {
   }
 
   function purgeLocalState(): void {
+    try {
+      onAuthorizationDataInvalidated?.();
+    } catch {
+      // Cache observers cannot prevent the mandatory Sync data purge.
+    }
     sendBuffer.length = 0;
     mutations.clear();
     synchronizedPlanes.clear();

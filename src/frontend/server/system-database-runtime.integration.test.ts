@@ -9,7 +9,9 @@ import { pathToFileURL } from 'node:url';
 import { createPlatformSQLiteService } from '../../persistence';
 import type { PlatformSQLiteService } from '../../persistence';
 import { databaseAuthorityCommitFencePath } from '../../databases';
+import { migrations } from '../../migrations';
 import { createApp } from './app-factory';
+import { WORKFLOW_SERVER_TABLE_NAMES } from '../../workflows/types';
 
 describe('createApp system database runtime', () => {
   const roots: string[] = [];
@@ -71,6 +73,56 @@ describe('createApp system database runtime', () => {
       expect(hasTable(systemSqlite, 'users')).toBe(true);
       expect(hasTable(systemSqlite, '_zero_migrations')).toBe(true);
       expect(hasTable(systemSqlite, '_zero_sync_table_modes')).toBe(true);
+    } finally {
+      await app.stop(true);
+      appSqlite.close();
+      systemSqlite.close();
+    }
+  }, 20_000);
+
+  test('fails closed on released workflow migration 030 when startup migration is disabled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'zero-system-workflow-030-'));
+    roots.push(root);
+    const appDir = join(root, 'app');
+    const systemPath = join(root, 'system.db');
+    await mkdir(appDir, { recursive: true });
+    applySystemMigrationsThrough(systemPath, '030');
+    const appSqlite = createPlatformSQLiteService({ mode: 'ephemeral' });
+    const systemSqlite = createPlatformSQLiteService({ mode: 'file', path: systemPath });
+
+    try {
+      await expect(createApp(workflowCompatibilityConfig({
+        root,
+        appDir,
+        appSqlite,
+        systemSqlite,
+      }))).rejects.toThrow('apply migration 031 before startup');
+    } finally {
+      appSqlite.close();
+      systemSqlite.close();
+    }
+  }, 20_000);
+
+  test('accepts current workflow migration 032 when startup migration is disabled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'zero-system-workflow-032-'));
+    roots.push(root);
+    const appDir = join(root, 'app');
+    const systemPath = join(root, 'system.db');
+    await mkdir(appDir, { recursive: true });
+    applySystemMigrationsThrough(systemPath, '032');
+    const appSqlite = createPlatformSQLiteService({ mode: 'ephemeral' });
+    const systemSqlite = createPlatformSQLiteService({ mode: 'file', path: systemPath });
+
+    const app = await createApp(workflowCompatibilityConfig({
+      root,
+      appDir,
+      appSqlite,
+      systemSqlite,
+    }));
+    try {
+      expect(hasTable(systemSqlite, 'workflow_interactions')).toBe(true);
+      expect(hasTable(systemSqlite, '_workflow_runtime_owner_lease')).toBe(true);
+      expect(hasTable(appSqlite, 'workflow_interactions')).toBe(false);
     } finally {
       await app.stop(true);
       appSqlite.close();
@@ -348,13 +400,53 @@ function systemServiceTables(): readonly string[] {
     'storage_objects',
     '_storage_blobs',
     '_storage_permissions',
-    'workflow_definitions',
-    'workflow_instances',
-    'workflow_steps',
-    'workflow_events',
-    '_workflow_execution_authorities',
-    '_workflow_step_executions',
+    ...[...WORKFLOW_SERVER_TABLE_NAMES].sort(),
   ];
+}
+
+function applySystemMigrationsThrough(path: string, version: string): void {
+  const database = new Database(path, { strict: true });
+  try {
+    database.exec('PRAGMA foreign_keys = ON');
+    for (const migration of migrations) {
+      migration.up(database);
+      if (migration.version === version) return;
+    }
+    throw new Error(`Unknown system migration ${version}`);
+  } finally {
+    database.close();
+  }
+}
+
+function workflowCompatibilityConfig(input: {
+  root: string;
+  appDir: string;
+  appSqlite: PlatformSQLiteService;
+  systemSqlite: PlatformSQLiteService;
+}) {
+  return {
+    db: { sqlite: input.appSqlite },
+    systemDb: { sqlite: input.systemSqlite },
+    tables: {},
+    auth: true,
+    workflows: {},
+    migrate: false,
+    stateSync: false,
+    serverResourcesDir: false,
+    serverPluginsDir: false,
+    serverMiddlewareDir: false,
+    serverEndpointsDir: false,
+    serverRoutesDir: false,
+    appDir: input.appDir,
+    outDir: join(input.root, 'out'),
+    generatedDir: join(input.root, '.zero', 'generated'),
+    observability: false,
+    email: false,
+    ai: false,
+    vector: false,
+    pdf: false,
+    kv: false,
+  } as const;
 }
 
 async function connectSyncSocket(url: string) {

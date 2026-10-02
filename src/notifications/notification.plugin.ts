@@ -168,7 +168,6 @@ export function createNotificationPlugin(config: NotificationPluginConfig) {
   };
   const requestScope = (access: Parameters<typeof requireRequestServiceDataScope>[0]) =>
     requireRequestServiceDataScope(access, getAuthorizationKernel);
-
   return new Elysia({ name: 'notifications', prefix: '/notifications' })
 
     .use(createAuthMiddleware(getNotificationTokenService, authorization))

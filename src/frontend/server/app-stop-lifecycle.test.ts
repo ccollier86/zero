@@ -42,19 +42,23 @@ describe('installAppStopBarrier', () => {
     await expect(app.stop()).rejects.toBe(nativeFailure);
     expect(await app.stop()).toBe(app);
     expect(nativeStops).toBe(2);
-    expect(cleanups).toBe(2);
+    expect(cleanups).toBe(1);
   });
 
-  test('aggregates runtime and native failures without losing either cause', async () => {
+  test('does not tear down the runtime when listener closure fails', async () => {
     const cleanupFailure = new Error('runtime cleanup failed');
     const nativeFailure = new Error('native stop failed');
+    let cleanupCalls = 0;
     const app = {
       async stop() {
         throw nativeFailure;
       },
     };
 
-    installAppStopBarrier(app, async () => { throw cleanupFailure; });
+    installAppStopBarrier(app, async () => {
+      cleanupCalls += 1;
+      throw cleanupFailure;
+    });
 
     let received: unknown;
     try {
@@ -62,11 +66,8 @@ describe('installAppStopBarrier', () => {
     } catch (error) {
       received = error;
     }
-    expect(received).toBeInstanceOf(AggregateError);
-    expect((received as AggregateError).errors).toEqual([
-      cleanupFailure,
-      nativeFailure,
-    ]);
+    expect(received).toBe(nativeFailure);
+    expect(cleanupCalls).toBe(0);
   });
 
   test('force-stops the native transport before cleanup even when the caller requests graceful stop', async () => {
@@ -115,20 +116,24 @@ describe('installAppStopBarrier', () => {
     await expect(app.stop()).rejects.toBe(transportFailure);
     await expect(app.stop()).resolves.toBe(app);
     await expect(app.stop()).resolves.toBe(app);
-    expect(transportStops).toBe(2);
-    expect(nativeStops).toBe(2);
-    expect(cleanups).toBe(2);
+    expect(transportStops).toBe(1);
+    expect(nativeStops).toBe(1);
+    expect(cleanups).toBe(1);
   });
 
   test('aggregates transport, runtime, and native-hook failures', async () => {
     const transportFailure = new Error('transport stop failed');
     const cleanupFailure = new Error('runtime cleanup failed');
     const nativeFailure = new Error('native hook failed');
+    let cleanupCalls = 0;
     const app = {
       server: { async stop(_force?: boolean) { throw transportFailure; } },
       async stop(_force?: boolean) { throw nativeFailure; },
     };
-    installAppStopBarrier(app, async () => { throw cleanupFailure; });
+    installAppStopBarrier(app, async () => {
+      cleanupCalls += 1;
+      throw cleanupFailure;
+    });
 
     let received: unknown;
     try {
@@ -140,9 +145,9 @@ describe('installAppStopBarrier', () => {
     expect(received).toBeInstanceOf(AggregateError);
     expect((received as AggregateError).errors).toEqual([
       transportFailure,
-      cleanupFailure,
       nativeFailure,
     ]);
+    expect(cleanupCalls).toBe(0);
   });
 
   test('recovers only stale WebSocket accounting while preserving native stop hooks', async () => {

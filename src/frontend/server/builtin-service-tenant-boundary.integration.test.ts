@@ -8,6 +8,7 @@ import type { TokenService } from '../../auth/token-service';
 import type { AuthContext, AuthContextAuthorityReference } from '../../auth/types';
 import { createNotificationPlugin } from '../../notifications/notification.plugin';
 import { createRoomPlugin } from '../../rooms/room.plugin';
+import { SchedulerService } from '../../scheduler';
 import type { StorageAdapter } from '../../storage/types';
 import { createStoragePlugin } from '../../storage/storage.plugin';
 import { createReactiveDB, type ReactiveDB } from '../../sync/reactive-db';
@@ -212,11 +213,13 @@ async function startHarness(): Promise<Harness> {
   };
   const workflowRegistryRef: { current: WorkflowRegistry | null } = { current: null };
   let workflowReady = false;
+  const scheduler = new SchedulerService();
 
   const app = createHarnessApp(
     db,
     tokenService,
     authorization,
+    scheduler,
     (registry) => { workflowRegistryRef.current = registry; },
     () => { workflowReady = true; },
   );
@@ -248,6 +251,7 @@ function createHarnessApp(
     getAuthorizationKernel: () => ReturnType<typeof createAuthorizationKernel>;
     getPropertyStore: () => AuthorizationPropertyStore;
   },
+  scheduler: SchedulerService,
   onWorkflowRegistry: (registry: WorkflowRegistry) => void,
   onWorkflowService: () => void,
 ) {
@@ -262,6 +266,7 @@ function createHarnessApp(
     .use(createRoomPlugin({ db, getTokenService: () => tokenService, authorization }))
     .use(createWorkflowPlugin({
       db,
+      scheduler,
       getTokenService: () => tokenService,
       authorization,
       onRegistryCreated: onWorkflowRegistry,

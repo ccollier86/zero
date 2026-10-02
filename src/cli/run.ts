@@ -70,7 +70,7 @@ function printUsage(): void {
   console.log('  add      Copy selected components/hooks into an app');
   console.log('  create   Create a new Zero app');
   console.log('  doctor   Run platform doctor');
-  console.log('  migrate  Run migrations');
+  console.log('  migrate  Migrate the Zero system database or inspect an app schema');
   console.log('  pdf      Install or inspect the PDF Chromium runtime');
   console.log('  update   Safely update Zero in an existing app');
 }

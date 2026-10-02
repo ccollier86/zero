@@ -196,13 +196,14 @@ Platform hooks require `AppProvider` or `ClientProvider` in the browser. They ar
 | Rooms/presence | `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator` |
 | Ephemeral KV | `useEphemeral`, `useEphemeralTopic` |
 | Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions` |
-| Workflows | `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun` |
+| Workflows | `useWorkflow`, `useWorkflowTopology`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun` |
 | Components | `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers` |
 
 Zero keeps existing platform hooks as canonical instead of adding duplicate
 aliases. Use `useDataPage` for paged `/api/data` screens, `useRecord` /
 `useRecordByIdentity` for detail records, `useWorkflowRun` for start-and-watch
-workflow UI, `useResourceList` for generated resource CRUD screens, and
+workflow UI, `useWorkflowTopology` for a pinned run map, `useResourceList` for
+generated resource CRUD screens, and
 `useNotifications` for notification lists and counts.
 
 The new Auth control-plane hooks share one caught-failure reporter. Current
@@ -251,10 +252,15 @@ for status semantics, vanilla APIs, packaged gates, and security boundaries.
 App-owned caches should subscribe to `useAuthorizationScopeBoundary()`. Key or
 purge their entries with its opaque `key`, reject late callbacks captured under
 an older key, and hide/freeze scope-sensitive UI while `ready` is false.
-`scopeKey`, `stable`, and `phase` describe the committed scope and transition;
-they contain no token and provide no server authority. Zero-owned hooks already
-use this boundary internally. See the linked browser-authorization guide for a
-complete example. The public
+`scopeKey`, `dataRevision`, `stable`, and `phase` describe the committed scope,
+same-scope local data generation, and credential transition; they contain no
+token and provide no server authority. `dataRevision` advances when Sync proves
+that the current auth context, table access, or read authority is stale even if
+the account and tenant IDs are unchanged. Zero cancels scoped HTTP work, clears
+the cached authorization hint, purges Sync rows, and masks official hooks until
+replacement authority validates. Zero-owned hooks already use this boundary
+internally. See the linked browser-authorization guide for a complete example.
+The public
 `isAuthorizationScopeCallbackCurrent(currentKey, ready, capturedKey)` predicate
 provides the same pure late-callback check for app-owned async adapters.
 
@@ -786,16 +792,95 @@ the underlying sync connection.
 
 ### Workflow Runs
 
-`useWorkflowRun(name, options?)` starts a workflow and watches its live synced
-instance/step progress:
+`useWorkflowRun(name, { instanceId?, version? })` starts or selects a workflow
+and watches its live synced node/interaction progress. `version` pins new
+starts to one immutable definition version:
 
 ```tsx
 const report = useWorkflowRun('generate-report');
 
 await report.start({ clientId });
 
-return <Progress value={report.progress.percent} />;
+return (
+  <>
+    <Progress value={report.progress.percent} />
+    {report.isWaitingForInput && <span>Waiting for a response</span>}
+    {report.isRetrying && <span>Retry scheduled</span>}
+    {report.isRunningInParallel && <span>Running parallel work</span>}
+  </>
+);
 ```
+
+`useWorkflow(instanceId)` returns `instance`, ordered `steps`, ordered
+payload-redacted `events`, all `activeSteps`, safe durable `interactions`,
+`currentStep`, and these flags:
+`isRunning`, `isComplete`, `isFailed`, `isPaused`, `isCancelled`, `isWaiting`,
+`isWaitingForInput`, `isRetrying`, and `isRunningInParallel`.
+`useWorkflowList({ status?, name? })` returns the current user's visible
+instances. Flags are descriptive and can overlap: a run remains `running`
+while waiting or retrying. `isWaiting` covers every active lane, not only the
+row selected as `currentStep`. `isRunningInParallel` means either multiple root
+nodes are physically active or multiple items under one `each` parent are
+active; a wait node and its delivery child do not count as parallel work.
+
+The existing top-level `report.progress` counters now describe stable root
+definition nodes and are mirrored at `report.progress.rootNodes`. Dynamic
+`each` work is reported in `report.progress.fanoutItems`; interaction delivery
+work is reported in `report.progress.deliverySteps`. Fan-out expansion cannot
+change the root-node denominator or move the primary progress bar backward.
+
+`useWorkflowTopology(instanceId)` performs one authenticated, scope-fenced load
+of the immutable payload-free topology pinned to that run. It returns
+`{ topology, isLoading, error, reload }`; combine `topology.nodes[].path` with
+live `steps[].node_path` to render a graph. Legacy public rows normalize that
+path to `step_id`, so the join is format-independent. Repeated fan-out rows use
+`step_id` plus `item_index`; delivery rows attach through `parent_step_id`
+instead of pretending to be definition nodes. The sanitized response contains
+safe labels/paths/branch and edge layout metadata, not executable activities,
+expressions, schemas, event routing names, interaction bodies, retry policy, or
+payload-derived fan-out keys. Current-request failures emit
+`frontend.workflow.topology_failed`; stale responses and errors are discarded.
+
+`useWorkflowActions()` exposes authenticated `start`, `cancel`, `pause`,
+`resume`, `sendEvent`, and `submitResponse` calls. `start(name, input?, {
+version? })` can pin an immutable definition version. `submitResponse(instanceId,
+interactionId, payload, { submissionId?, channel? })` answers a
+`requestAndWait`. The hook generates an ID for each call; callers that may
+retry at the application layer should supply one stable submission ID across
+those attempts. It resolves to a privacy-safe
+`WorkflowInteractionSubmissionResult` containing `outcome`, the current safe
+`interaction` projection, and optional validator-authored `rejectionCode` and
+`publicMessage`. `outcome` is `accepted`, `rejected`, or `superseded`; use the
+optional public fields to explain a rejected response without exposing its
+private submitted or normalized value. `sendEvent` resolves to `true` only
+when the newly stored event was claimed before the request returned. An event
+sent while paused is durably buffered but returns `false`; resume may claim it
+later. A direct response is not buffered while paused: it rejects with
+retryable HTTP `409` `WORKFLOW_DRAINING`. Preserve its submission ID and retry
+after resume. Each wait also has a bounded unique-submission/byte budget;
+replaying an existing stable ID remains valid at that cap, while a new ID
+returns non-retryable HTTP `429` `WORKFLOW_INTERACTION_SUBMISSION_LIMIT`.
+
+These hooks read ReactiveDB Sync and do not poll. Runtime rows are owner-scoped.
+A live manager can see all runs only inside the active application/tenant
+service-data scope; a global role does not imply cross-tenant visibility.
+Definition `access.inspect` controls definition discovery, while a starter can
+still use these safe hooks for their own pinned run. Child step/event/interaction
+rows are shown only while their authorized parent instance is also visible.
+Definitions and canonical graph JSON are excluded from Sync. Instance rows omit private
+graph snapshots and `definition_version_id`, while their public `definition_id`,
+numeric `definition_version`, and `graph_fingerprint` identify the immutable
+topology safely. Every workflow instance and step clears
+input, output, and raw error; step rows also omit the executable `wait_event`.
+Safe `node_id`, `node_kind`, `node_path`, `branch_key`, `parent_step_id`,
+and `item_index` remain for a real-time timeline or graph view. Use `step_id`
+as the unique row key; payload-derived `item_key` and `activation_key` are
+omitted.
+Event rows expose audit metadata with payloads redacted. Interaction rows
+expose safe status/timestamps and rejection counts, not prompts, policies,
+schemas, or response payloads. Workflow tables are read-only over Sync, and
+actions go through `client.api.workflows`. See
+[Durable Workflows](../workflows.md).
 
 ### User Properties
 

@@ -4,6 +4,7 @@ import {
   AppSignalDispatcher,
   type AppSignalHost,
 } from './app-signal-dispatcher';
+import { hasCompletedNativeAppStop } from './app-stop-lifecycle';
 
 const APP_SIGNAL_LIFECYCLE = Symbol.for('zero.app.signal-lifecycle');
 const PROCESS_DISPATCHER = Symbol.for('zero.app.signal-dispatcher');
@@ -33,10 +34,21 @@ export function installAppSignalLifecycle<T extends SignalStoppableApp>(
     if (stopped) return app;
     if (stopping) return stopping;
     const run = (async () => {
-      await nativeStop(closeActiveConnections);
-      stopped = true;
-      unregister();
-      return app;
+      try {
+        await nativeStop(closeActiveConnections);
+        stopped = true;
+        unregister();
+        return app;
+      } catch (error) {
+        // The inner lifecycle barrier can report cleanup failure after native
+        // Elysia teardown succeeded. Retire this signal registration without
+        // hiding that failure or requiring a second stop call.
+        if (hasCompletedNativeAppStop(app)) {
+          stopped = true;
+          unregister();
+        }
+        throw error;
+      }
     })();
     stopping = run;
     try { return await run; }

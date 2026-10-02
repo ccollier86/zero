@@ -984,7 +984,7 @@ function LoginPage() {
 | `useHasPermission(permission)` | `boolean` | Checks one permission across the active tenant and additive application scopes |
 | `useHasAllPermissions(permissions)` | `boolean` | Checks every permission across the active tenant and additive application scopes |
 | `useHasAnyPermission(permissions)` | `boolean` | Checks for any permission across the active tenant and additive application scopes |
-| `useAuthorizationScopeBoundary()` | `AuthorizationScopeBoundary` | Stable boundary key for discarding work from a previous identity or tenant scope |
+| `useAuthorizationScopeBoundary()` | `AuthorizationScopeBoundary` | Opaque key/readiness fence for identity, tenant, and live same-scope authorization-data changes |
 | `useDataRealmReadiness(options?)` | `UseDataRealmReadinessResult` | Scope-fenced application/Fabric realm readiness, automatic pending reconciliation, safe retry, and polling |
 | `useAuthApiKeys(options)` | `UseAuthApiKeysResult` | Scope-fenced user API-key listing, pagination, issue/rotate/revoke, and exact server-projected mutation capability state |
 | `useApplicationAccess(options?)` | `UseApplicationAccessResult` | Single/advanced application-role assignments and ownership actions |
@@ -4600,10 +4600,143 @@ refresh/retry, and authorization-scope cancellation.
 
 | Hook | Signature | Description |
 |------|-----------|-------------|
-| `useWorkflow` | `(instanceId) => UseWorkflowResult` | Live workflow instance and steps |
-| `useWorkflowList` | `(filter?) => UseWorkflowListResult` | Live workflow instances by status/name |
-| `useWorkflowActions` | `() => WorkflowActions` | Start/cancel/pause/resume/send-event actions |
-| `useWorkflowRun` | `(name, options?) => UseWorkflowRunResult` | Start one workflow by name and watch live progress |
+| `useWorkflow` | `(instanceId: string \| null) => UseWorkflowResult` | Live instance, ordered/all-active nodes, ordered redacted events, safe interactions, and graph-aware flags |
+| `useWorkflowList` | `(filter?: { status?; name? }) => UseWorkflowListResult` | Live authorized instances filtered by status/name |
+| `useWorkflowActions` | `() => WorkflowActions` | Authenticated versioned start, lifecycle, event, and interaction-response actions |
+| `useWorkflowRun` | `(name, options?: { instanceId?: string \| null; version?: number }) => UseWorkflowRunResult` | Start/select one run and compose live state, actions, progress, and pending/error state |
+| `useWorkflowTopology` | `(instanceId: string \| null) => UseWorkflowTopologyResult` | Load the authorized run's immutable payload-free presentation topology with loading/error/reload state |
+
+`useWorkflow()` and `useWorkflowRun()` return `steps`, `activeSteps`, ordered
+`events`, safe `interactions`, and `currentStep`, plus `isRunning`, `isComplete`, `isFailed`,
+`isPaused`, `isCancelled`, `isWaiting`, `isWaitingForInput`, `isRetrying`, and
+`isRunningInParallel`. Flags can overlap: a run remains live while waiting or
+retrying. `isWaiting` covers any active waiting lane, not only `currentStep`.
+Parallel means multiple active root nodes or multiple active items under one
+fan-out parent; a wait parent plus delivery child is not parallel.
+`useWorkflowRun().progress` keeps its top-level compatibility counters aligned
+to stable root definition nodes (also `rootNodes`) and reports dynamic
+`fanoutItems` and `deliverySteps` separately.
+
+`useWorkflowTopology()` returns `{ topology, isLoading, error, reload }`. Its
+scope-fenced authenticated request returns safe node paths/labels/branch
+metadata and presentation edges from the run's pinned graph; it excludes
+activities, expressions, schemas, routing names, retry/timeout configuration,
+fan-out source/key selectors, and all payloads. Join `nodes[].path` to live
+`steps[].node_path` for a visual monitor. Legacy rows normalize that path to
+`step_id`; use `step_id`/`item_index` to distinguish repeated fan-out rows and
+`parent_step_id` to attach delivery work.
+
+`start(name, input?, { version? })` optionally pins one immutable definition
+version. `submitResponse(instanceId, interactionId, payload, { submissionId?,
+channel? })` sends an idempotent channel-neutral response and resolves to a
+privacy-safe `WorkflowInteractionSubmissionResult`. The result contains
+`outcome` (`accepted`, `rejected`, or `superseded`), the current safe
+interaction projection, and optional validator-authored `rejectionCode` and
+`publicMessage`; it never includes the submitted or normalized response value.
+`sendEvent()` resolves to the server's `matched` boolean: `true` only when that
+new event was claimed before the call returned. Events accepted while paused
+remain buffered and return `false` until a later resume can claim them.
+Direct interaction responses are not buffered while paused; they reject with
+retryable HTTP `409` `WORKFLOW_DRAINING`, so retain the stable submission ID
+and retry after the run resumes. Existing submission IDs remain idempotently
+replayable at a wait's capacity boundary; a new ID beyond it returns
+non-retryable HTTP `429` `WORKFLOW_INTERACTION_SUBMISSION_LIMIT`.
+
+Authenticated HTTP events that answer an interaction carry a secret-free
+Guardian authority MAC-sealed to their event ID and private actor snapshot.
+The bridge revalidates the exact actor before policy evaluation and accepted
+response commit. `WorkflowService.sendEventAsSystem()` is the explicit
+scope-checked system-principal alternative. Unsealed legacy/generic trusted
+events may still feed ordinary `waitFor` nodes, but cannot answer
+`requestAndWait` interactions.
+
+Private delivery state classifies every event as `actor`, `system`, or
+`legacy-untrusted`; sealed authority bytes count toward the same event quotas
+as actor metadata. A response decision consumes its claimed event in the same
+ReactiveDB transaction, and recovery reconciles finalized event submissions
+with any crash-left claim before advancing the queue.
+
+The server-side `WorkflowInteractionAuthority` policy is also fenced through
+that final transaction. Synchronous allow callbacks are reevaluated at commit.
+An asynchronous allow must return a `WorkflowInteractionAuthorityLease` with a
+synchronous `assertCurrent(expectedRevision, context)` callback; a bare async
+allow or promise-returning assertion fails closed with
+`WORKFLOW_CONFIG_INVALID`. The package exports the lease, decision, authorize,
+context, actor, and commit-assertion types from `@zero/framework/workflows`.
+
+Workflow hooks read owner-scoped ReactiveDB Sync state and do not poll. A normal
+user sees only runs they started. A live manager sees every run only within the
+active application/tenant service-data scope; global identity role alone does
+not imply peer-tenant visibility. Definition `access.inspect` controls catalog
+discovery, not safe monitoring of the starter's own pinned run. Definitions,
+graph IR, memory, interaction bodies, and event payloads are server-only.
+Browser instances omit private snapshots and
+`definition_version_id`; public `definition_id`, numeric `definition_version`,
+and `graph_fingerprint` identify the pinned immutable topology. Every workflow
+instance and step clears input, output, and raw error; steps omit `wait_event`,
+payload-derived `item_key`, and `activation_key`, while safe
+node/branch/parent/item-index identity remains available. Use `step_id` as the
+unique row key. Events and interactions expose safe audit/progress metadata for
+real-time workflow visualization. Mutating workflow tables directly over Sync
+is rejected; actions use the authenticated HTTP surface.
+
+`createWorkflowSyncPolicyAdapter({ getDB, delegate?,
+resolveManagementAccess? })` is the standalone composition boundary behind
+that projection. It ANDs owner/active-scope-manager access with delegated row
+filters, composes projectors, retains delegated mutation decisions, and wraps
+the delegate's read-authority fingerprint/validator in a composite workflow
+authority. `resolveManagementAccess` must return synchronously for Sync use.
+If it returns a promise, or a filtered delegate cannot provide a comparable
+fingerprint plus synchronous delivery validator, socket admission fails
+closed. At every final delivery fence, a changed manager-assignment or
+delegate revision invalidates the stale socket before data leaves the server.
+`manageAll` never escapes the active application/tenant service-data scope;
+without it the exact starter remains the only visible owner.
+
+For direct browser calls, use the generated Eden API on `client.api`:
+
+```ts
+import { unwrap } from '@zero/framework/react';
+
+const { instanceId } = unwrap(await client.api.workflows.post({
+  name: 'generate-report',
+  version: 3,
+  input: { clientId },
+}));
+
+const definitions = unwrap(await client.api.workflows.definitions.get());
+// Access-filtered: Array<{ name: string; steps: Array<{ name: string }> }>
+
+const { matched } = unwrap(
+  await client.api.workflows[instanceId].events.post({
+    eventName: 'approved',
+    payload: { reviewerId },
+  }),
+);
+
+const waits = unwrap(
+  await client.api.workflows[instanceId].interactions.get(),
+);
+const wait = waits[0];
+if (!wait) throw new Error('The workflow has no open interaction.');
+const response = unwrap(
+  await client.api.workflows[instanceId]
+    .interactions[wait.interactionId]
+    .responses.post({
+      submissionId: crypto.randomUUID(),
+      payload: { approved: true },
+      channel: 'web',
+    }),
+);
+```
+
+`ApiError` is exported from `@zero/framework/react`. A caught instance exposes
+`status`, the stable Zero `code`, the response `body`, and a safe `message`;
+workflow UI can branch on `error.code` without parsing response text.
+
+See [Durable Workflows](./workflows.md) for the code DSL, canonical IR,
+immutable versions and drafts, activity trust boundary, memory, parallel and
+fan-out execution, interactions, recovery, privacy, and authorization.
 
 ### Router Hooks
 
@@ -4667,7 +4800,7 @@ generated or exhaustive inventory; use TypeScript autocomplete and the package
 barrel for the exact installed-version surface.
 
 ### Functions & Classes
-`createClient`, `getClient`, `AuthClient`, `ResourceMutationError`, `isAuthEmailVerificationRequiredResult`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
+`createClient`, `getClient`, `AuthClient`, `ApiError`, `unwrap`, `ResourceMutationError`, `isAuthEmailVerificationRequiredResult`, `registerRoute`, `matchClientRoute`, `navigateTo`, `prefetchRoute`, `defineSchema`, `defineTable`, `field`, `toast`, `formatRelativeTime`, `buildDataTableLazyQuery`, `buildDataPageQuery`, `groupKanbanItemIds`, `projectKanbanMove`, `getOS`, `getZeroAnimatedIcon`, `hasZeroAnimatedIcon`, `resolveZeroAnimatedIcon`
 
 ### React Components
 `AppProvider`, `ClientProvider`, `RouterProvider`, `NotificationProvider`, `ConfirmProvider`, `Link`, `LoginForm`, `RegisterForm`, `ForgotPasswordForm`, `PasswordActionForm`, `ChangePasswordForm`, `EmailVerificationForm`, `UserPropertiesForm`, `AuthFlowContinuation`, `TenantSelectionForm`, `TenantCreationForm`, `TenantSwitcher`, `ApiKeyManagement`, `SelfApiKeyManagement`, `ApplicationUserApiKeyManagement`, `TenantMemberApiKeyManagement`, `PlatformApiKeyManagement`, `PlatformWorkspaceManagement`, `TenantMemberManagement`, `TenantOnboardingManagement`, `TenantDomainManagement`, `DomainOnboarding`, `TenantInvitationForm`, `TenantJoinRequestForm`, `ControlPlaneAuditViewer`, `PermissionGate`, `TenantGate`, `AdministrationScopeGate`, `PlatformAdminGate`, `AnimateIcon`, `ZeroIcon`, `StickToBottom`, `Toaster`, `ThemeProvider`, `ThemeTogglerButton`, `ResizableNavbar`, `Hero`, `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList`, `AutoForm`, `FieldRenderer`, `CrudPage`, `MasterDetailView`, `MasterDetailPage`, `DataTableView`, `DataTable`, `DataTableColumnHeader`, `DataTableToolbar`, `DataTablePagination`, `DataTableRowActions`, `KanbanBoard`, `KanbanTaskCard`, `PlatformUserManagement`, `UserManagement`, `IdentityUserManagement`, `StorageManagement`, `StorageDriveList`, `StorageDriveDetail`, `StorageDriveSettingsPanel`, `StorageDrivePermissionsPanel`, `StorageDropzone`, `StorageFileBrowser`, `StorageDriveDetailHeader`, `StorageFileDetailPanel`, `Button`, `Input`, `Label`, `Textarea`, `Badge`, `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter`, `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`, `SelectGroup`, `SelectLabel`, `SelectSeparator`, `Table`, `TableHeader`, `TableBody`, `TableFooter`, `TableRow`, `TableHead`, `TableCell`, `TableCaption`, `ScrollArea`, `ScrollBar`, `Separator`, `Skeleton`, `Avatar`, `AvatarImage`, `AvatarFallback`, `FormField`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`, `Calendar`, `DatePicker`, `DateRangePicker`, `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut`, `Combobox`, `TagInput`, `NotificationBadge`, `NotificationItem`, `NotificationList`, `NotificationDropdown`, `NotificationCenter`, `ValidationRules`, `ValidationMeter`
@@ -4675,7 +4808,7 @@ barrel for the exact installed-version surface.
 Realm-readiness additions: `DataRealmReadyGate`, `DataRealmReadinessNotice`.
 
 ### React Hooks
-`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useAuthApiKeys`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `isAuthorizationScopeCallbackCurrent`, `useAuthorizationScopeBoundary`, `useAuthorization`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `usePlatformAdministration`, `usePlatformTenants`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantInvitationAction`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher`, `useTenantAppShellWorkspaces`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useWorkflow`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
+`useClient`, `useClientMaybe`, `useIsServer`, `useCollection`, `useLazyCollection`, `useDataPage`, `useDataSelection`, `useRow`, `useRecord`, `useRecordByIdentity`, `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions`, `useQuery`, `useStatus`, `useConnectionHealth`, `useMutation`, `useAuth`, `useAuthConfig`, `useAuthApiKeys`, `useCurrentUser`, `useRequireAuth`, `useUserProperty`, `isAuthorizationScopeCallbackCurrent`, `useAuthorizationScopeBoundary`, `useAuthorization`, `useHasPermission`, `useHasAllPermissions`, `useHasAnyPermission`, `useApplicationAccess`, `usePlatformAdministration`, `usePlatformTenants`, `useAuthAudit`, `useTenantMembers`, `useTenantOnboardingAdministration`, `useTenantInvitationAction`, `useTenantDomainAdministration`, `useDomainOnboarding`, `useTenantSwitcher`, `useTenantAppShellWorkspaces`, `useServerState`, `useServerStateReady`, `usePreference`, `useFormDraft`, `useNotifications`, `useUnreadCount`, `useOnNewNotification`, `useNotificationContext`, `useRoom`, `useRoomMembers`, `useRooms`, `useRoomActions`, `useRoomData`, `usePresence`, `usePresenceList`, `useTypingIndicator`, `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageFolder`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveUsage`, `useDriveQuota`, `usePresignedUrl`, `useStorageActions`, `useWorkflow`, `useWorkflowTopology`, `useWorkflowList`, `useWorkflowActions`, `useWorkflowRun`, `useParams`, `usePathname`, `useRouter`, `useForm`, `useDataTable`, `useDataTableSource`, `useAdminUsers`, `useAsyncAction`, `useAutoHeight`, `useClickAway`, `useConfirm`, `useControlledState`, `useCopyToClipboard`, `useDataState`, `useDebouncedCallback`, `useDebouncedValue`, `useDisclosure`, `useHotkey`, `useIdle`, `useInterval`, `useIsInView`, `useIsMobile`, `useMediaQuery`, `useMounted`, `useMotionValueState`, `useOs`, `usePrevious`, `useStableCallback`, `useStickToBottom`, `useStickToBottomContext`, `useTextSelection`, `useThrottledCallback`, `useThrottledValue`, `useTimeout`
 
 Realm-readiness hook: `useDataRealmReadiness`.
 
@@ -4683,7 +4816,7 @@ Realm-readiness hook: `useDataRealmReadiness`.
 `STORAGE_TABLES`, `zeroAnimatedIconNames`, `zeroAnimatedIcons`
 
 ### Types
-`Client`, `Collection`, `ClientConfig`, `SyncClient`, `SyncMutationRejection`, `ResourceClient`, `ResourceClientOptions`, `ResourceListResult`, `ResourceMutationOptions`, `ResourceRowResult`, `ResourceDeleteResult`, `AuthUser`, `AuthCompletionResult`, `AuthRegistrationResult`, `AuthRegistrationTenant`, `AuthPlatformAdministrationConfig`, `AuthPlatformAdminSdkSurface`, `AuthPlatformTenant`, `AuthPlatformTenantPage`, `AuthPlatformTenantOwnershipTransferResult`, `AuthEmailVerificationRequiredResult`, `RegisterParams`, `LoginFormProps`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `PlatformUserManagementProps`, `PlatformWorkspaceManagementProps`, `UserManagementProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `AuthConfigStatus`, `AuthorizationScopeBoundary`, `UseAuthorizationResult`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `UseApplicationAccessOptions`, `UseApplicationAccessResult`, `UsePlatformAdministrationOptions`, `UsePlatformAdministrationResult`, `UsePlatformTenantsOptions`, `UsePlatformTenantsResult`, `UseAuthAuditOptions`, `UseAuthAuditResult`, `UseTenantMembersOptions`, `UseTenantMembersResult`, `UseTenantOnboardingAdministrationOptions`, `UseTenantOnboardingAdministrationResult`, `UseTenantInvitationActionOptions`, `UseTenantInvitationActionResult`, `UseTenantDomainAdministrationOptions`, `UseTenantDomainAdministrationResult`, `UseDomainOnboardingOptions`, `UseDomainOnboardingResult`, `UseTenantSwitcherResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `InferInsert`, `InsertInput`, `PrimaryKeyOf`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
+`Client`, `Collection`, `ClientConfig`, `SyncClient`, `SyncMutationRejection`, `ResourceClient`, `ResourceClientOptions`, `ResourceListResult`, `ResourceMutationOptions`, `ResourceRowResult`, `ResourceDeleteResult`, `AuthUser`, `AuthCompletionResult`, `AuthRegistrationResult`, `AuthRegistrationTenant`, `AuthPlatformAdministrationConfig`, `AuthPlatformAdminSdkSurface`, `AuthPlatformTenant`, `AuthPlatformTenantPage`, `AuthPlatformTenantOwnershipTransferResult`, `AuthEmailVerificationRequiredResult`, `RegisterParams`, `LoginFormProps`, `AppProviderProps`, `ClientProviderProps`, `NotificationProviderProps`, `LinkProps`, `AnimateIconContextValue`, `AnimateIconProps`, `IconProps`, `IconWrapperProps`, `ZeroAnimatedIconComponent`, `ZeroAnimatedIconName`, `ZeroIconProps`, `ThemeProviderProps`, `ThemeTogglerButtonProps`, `PlatformUserManagementProps`, `PlatformWorkspaceManagementProps`, `UserManagementProps`, `AuthState`, `AuthActions`, `AuthConfigState`, `AuthConfigStatus`, `AuthorizationScopeBoundary`, `UseAuthorizationResult`, `UseUserPropertyOptions`, `UseUserPropertyResult`, `UseApplicationAccessOptions`, `UseApplicationAccessResult`, `UsePlatformAdministrationOptions`, `UsePlatformAdministrationResult`, `UsePlatformTenantsOptions`, `UsePlatformTenantsResult`, `UseAuthAuditOptions`, `UseAuthAuditResult`, `UseTenantMembersOptions`, `UseTenantMembersResult`, `UseTenantOnboardingAdministrationOptions`, `UseTenantOnboardingAdministrationResult`, `UseTenantInvitationActionOptions`, `UseTenantInvitationActionResult`, `UseTenantDomainAdministrationOptions`, `UseTenantDomainAdministrationResult`, `UseDomainOnboardingOptions`, `UseDomainOnboardingResult`, `UseTenantSwitcherResult`, `CollectionResult`, `LazyCollectionResult`, `LazyCollectionOptions`, `ConnectionHealth`, `DataFilterExpression`, `DataFilterOperator`, `DataFilterPrimitive`, `DataFilterValue`, `DataPageFilters`, `DataPageInfo`, `DataPageOptions`, `DataPageResult`, `DataPageSort`, `DataSelectionMode`, `UseDataSelectionOptions`, `UseDataSelectionReturn`, `IdentityRecordResult`, `RecordResult`, `UseFormDraftOptions`, `UseFormDraftResult`, `UseMutationOptions`, `UseMutationReturn`, `UsePreferenceResult`, `WorkflowActions`, `WorkflowInteractionSubmissionResult`, `UseWorkflowResult`, `UseWorkflowListResult`, `UseWorkflowRunOptions`, `UseWorkflowRunResult`, `WorkflowProgress`, `InferRow`, `InferInsert`, `InsertInput`, `PrimaryKeyOf`, `Register`, `TableNames`, `RegisteredTableRow`, `Notification`, `NotificationReceipt`, `NotificationWithStatus`, `UseNotificationsResult`, `NotificationType`, `NotificationPriority`, `NotificationTarget`, `PresenceMember`, `PresenceListMember`, `TypingIndicatorMember`, `UsePresenceResult`, `UsePresenceListOptions`, `UsePresenceListReturn`, `UseTypingIndicatorOptions`, `UseTypingIndicatorReturn`, `Animation`, `GetTargetScrollTop`, `ScrollElements`, `ScrollToBottom`, `ScrollToBottomOptions`, `SpringAnimation`, `StickToBottomContext`, `StickToBottomInstance`, `StickToBottomOptions`, `StickToBottomProps`, `StickToBottomState`, `StopScroll`, `UploadState`, `UseUploadReturn`, `UploadFileOptions`, `UseUploadQueueReturn`, `UploadQueueFilesOptions`, `UploadQueueItem`, `UploadQueueItemStatus`, `UseUploadDropzoneOptions`, `UseUploadDropzoneReturn`, `UseStorageFileReturn`, `UseStorageFolderReturn`, `UseStorageBrowserReturn`, `StorageBrowserActions`, `UseStorageDrivesReturn`, `UseDriveCapabilitiesReturn`, `UseStoragePermissionsReturn`, `UseDriveUsageReturn`, `UseDriveQuotaReturn`, `UsePresignedUrlReturn`, `StorageActions`, `CreateUploadGrantParams`, `GrantPermissionParams`, `ListPermissionsOptions`, `StorageAccessCapabilities`, `StorageUploadGrant`, `DriveRecord`, `DriveRecordWithAccess`, `PermissionRecord`, `FileInfo`, `DriveUsage`, `StorageManagementProps`, `StorageManagementView`, `StorageDriveRow`, `StorageDriveListProps`, `StorageDriveDetailProps`, `StorageDriveSettingsPanelProps`, `StorageDrivePermissionsPanelProps`, `StorageDropzoneProps`, `StorageFileBrowserProps`, `StorageDriveDetailHeaderProps`, `StorageFileDetailPanelProps`, `RouteModule`, `RouteNode`, `MatchResult`, `LoaderContext`, `ApiHandler`, `PageMeta`, `RouterConfig`, `SchemaDescriptor`, `TableDefinition`, `FieldType`, `FieldMeta`, `FieldDef`, `UseFormOptions`, `UseFormReturn`, `MasterDetailPageProps`, `MasterDetailRenderContext`, `DataTableCellContext`, `DataTableColumnOverride`, `DataTableColumnOverrides`, `DataTableFilters`, `DataTableFilterValue`, `DataTableInitialState`, `DataTableProps`, `DataTableSource`, `DataTableSourceActions`, `DataTableSourceState`, `UseDataTableOptions`, `UseDataTableReturn`, `UseDataTableSourceOptions`, `RowAction`, `KanbanBoardProps`, `KanbanItemMove`, `KanbanTaskCardProps`, `KanbanTarget`, `ProjectKanbanMoveInput`, `ProjectKanbanMoveResult`, `CrudPageProps`, `CalendarProps`, `DatePickerProps`, `DateRangePickerProps`, `ComboboxProps`, `ComboboxOption`, `TagInputProps`, `NotificationBadgeProps`, `NotificationItemProps`, `NotificationItemType`, `NotificationListProps`, `NotificationListItem`, `NotificationDropdownProps`, `NotificationCenterProps`, `ValidationRule`, `ValidationRulesProps`, `ValidationMeterProps`, `AutoHeightOptions`, `ClickAwayEvent`, `CommonControlledStateProps`, `ConfirmOptions`, `DataStateValue`, `HotkeyHandler`, `HotkeyOptions`, `OperatingSystem`, `OSDetectionInput`, `UseAsyncActionOptions`, `UseAsyncActionReturn`, `UseClickAwayOptions`, `UseCopyToClipboardOptions`, `UseCopyToClipboardReturn`, `UseDebouncedCallbackOptions`, `UseDebouncedCallbackReturn`, `UseDisclosureOptions`, `UseDisclosureReturn`, `UseIdleOptions`, `UseIntervalOptions`, `UseIsInViewOptions`, `UseMediaQueryOptions`, `UseOsOptions`, `UseOsReturnValue`, `UseThrottledCallbackOptions`, `UseThrottledCallbackReturn`, `UseThrottledValueOptions`
 
 Guardian user API-key types in the browser-safe barrel:
 `AuthApiKeyApplicationAdminSdkSurface`, `AuthApiKeyCreatedVia`,

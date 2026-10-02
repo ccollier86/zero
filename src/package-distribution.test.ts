@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
 const EXPECTED_MIGRATION_VERSIONS = Array.from(
-  { length: 29 },
+  { length: 32 },
   (_, index) => String(index + 1).padStart(3, '0'),
 );
 
@@ -205,7 +205,11 @@ describe('package distribution', () => {
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
-  }, 240_000);
+  // This gate packs, installs, and typechecks the framework plus the complete
+  // Guardian/Fabric proof app. Busy CI builders can spend several minutes in
+  // TypeScript without being stalled, so keep the timeout above the combined
+  // subprocess budget rather than terminating a healthy compiler.
+  }, 600_000);
 });
 
 async function findPackedTarball(packDir: string): Promise<string> {

@@ -37,7 +37,6 @@ import type { ReactiveDB } from '../../sync/reactive-db';
 import { createPlatformTokenPlugin } from '../../tokens';
 import { createVectorPlugin } from '../../vector';
 import { createWorkflowPlugin } from '../../workflows';
-import type { WorkflowService } from '../../workflows/workflow-service';
 import {
   NOT_REQUIRED_DATA_REALM_READINESS,
   type AppIdentityProjectionRuntime,
@@ -55,13 +54,8 @@ interface MountPlatformServicesInput {
   readonly identityProjectionRuntime: AppIdentityProjectionRuntime | null;
 }
 
-export interface MountedPlatformServices {
-  /** Finish fallible async owners before createApp publishes a listenable app. */
-  start(): Promise<void>;
-}
-
 /** Mount tokens, auth, and the platform's optional runtime services in order. */
-export function mountPlatformServices({
+export async function mountPlatformServices({
   app,
   runtime,
   systemDB,
@@ -69,7 +63,7 @@ export function mountPlatformServices({
   resourceAuthConfig,
   emailRuntime,
   identityProjectionRuntime,
-}: MountPlatformServicesInput): MountedPlatformServices {
+}: MountPlatformServicesInput): Promise<void> {
   const getAuthStore = () => runtime.get(ZERO_AUTH_STORE);
   const getTokenService = () => runtime.get(ZERO_AUTH_TOKEN_SERVICE);
   const getRequestCredentialResolver = () => (
@@ -81,11 +75,8 @@ export function mountPlatformServices({
     getPropertyStore: getAuthStore,
     getRoleAssignments: () => runtime.get(ZERO_AUTHORIZATION_ROLE_SERVICE),
   };
-  const managedStartup: {
-    auth: AuthRuntime | null;
-    kv: (() => Promise<void>) | null;
-    workflows: (() => Promise<void>) | null;
-  } = { auth: null, kv: null, workflows: null };
+  const managedStartup: { auth: AuthRuntime | null } = { auth: null };
+  const managedInitializers: Array<() => Promise<void>> = [];
 
   app.use(createPlatformTokenPlugin({ db: systemDB, runtime }));
 
@@ -159,7 +150,7 @@ export function mountPlatformServices({
       ...config.kv,
       runtime,
       onInitializerCreated(initialize) {
-        managedStartup.kv = initialize;
+        managedInitializers.push(initialize);
       },
     }));
   }
@@ -199,24 +190,24 @@ export function mountPlatformServices({
         return field ? isPolicyTrustedUserProperty(field) : false;
       },
     }));
-    mountWorkflowService({
-      app,
-      runtime,
-      systemDB,
-      scheduler,
-      getTokenService,
-      authorization,
-      managedStartup,
-    });
+    if (config.workflows !== false) {
+      mountWorkflowService({
+        app,
+        runtime,
+        systemDB,
+        scheduler,
+        getTokenService,
+        authorization,
+        managedStartup,
+        workflowConfig: config.workflows,
+      });
+    }
   }
 
-  return {
-    async start() {
-      await managedStartup.auth?.start();
-      await managedStartup.kv?.();
-      await managedStartup.workflows?.();
-    },
-  };
+  // Managed createApp() composition must settle async service recovery before
+  // the app is published. Elysia's Bun adapter does not await onStart promises;
+  // the plugin reuses this same single-flight initializer when listen() runs.
+  await Promise.all(managedInitializers.map((initialize) => initialize()));
 }
 
 interface WorkflowMountInput {
@@ -226,10 +217,9 @@ interface WorkflowMountInput {
   readonly scheduler: SchedulerService;
   readonly getTokenService: () => TokenService | null;
   readonly authorization: AuthMiddlewareAuthorizationOptions;
+  readonly workflowConfig: Exclude<ResolvedConfig['workflows'], false>;
   readonly managedStartup: {
     auth: AuthRuntime | null;
-    kv: (() => Promise<void>) | null;
-    workflows: (() => Promise<void>) | null;
   };
 }
 
@@ -241,11 +231,15 @@ function mountWorkflowService({
   getTokenService,
   authorization,
   managedStartup,
+  workflowConfig,
 }: WorkflowMountInput): void {
-  let workflowService: WorkflowService | null = null;
   app.use(createWorkflowPlugin({
     db: systemDB,
     runtime,
+    scheduler,
+    register: workflowConfig.register,
+    shutdownGraceMs: workflowConfig.shutdownGraceMs,
+    interactionAuthority: workflowConfig.interactionAuthority,
     executionServices: createWorkflowExecutionServiceProvider({ runtime }),
     ensureAuthReady: async () => {
       if (!managedStartup.auth) {
@@ -255,28 +249,7 @@ function mountWorkflowService({
     },
     getTokenService,
     authorization,
-    onServiceCreated(service) {
-      workflowService = service;
-    },
-    onInitializerCreated(initialize) {
-      managedStartup.workflows = initialize;
-    },
   }));
-
-  scheduler.register({
-    name: 'workflow-retries',
-    pattern: '* * * * *',
-    run: async () => {
-      if (workflowService) await workflowService.pollRetries();
-    },
-  });
-  scheduler.register({
-    name: 'workflow-timeouts',
-    pattern: '* * * * *',
-    run: () => {
-      if (workflowService) workflowService.pollTimeouts();
-    },
-  });
 }
 
 function nativeIssuerFromPublicUrl(publicUrl: string | undefined): string | undefined {

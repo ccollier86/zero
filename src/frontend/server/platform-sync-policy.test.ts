@@ -5,6 +5,7 @@ import { deliverSyncChange } from '../../sync/sync-change-delivery';
 import { handleSyncSubscribe } from '../../sync/sync-subscribe-handler';
 import { clearSyncBackpressure } from '../../sync/sync-wire-send';
 import type {
+  Row,
   ServerMessage,
   SyncHistoryGap,
   SyncResourcePolicyAdapter,
@@ -37,6 +38,163 @@ afterEach(() => {
 });
 
 describe('PlatformSyncPolicyService history-gap reset', () => {
+  test('fails closed when a delegated reserved table is absent from the system data plane', async () => {
+    db = createReactiveDB({ mode: 'memory' });
+    const policy = new PlatformSyncPolicyService({
+      delegate: allowAllPolicy(),
+      getDB: () => db,
+      tenancyMode: 'single',
+    });
+
+    const access = await policy.resolveTableAccess({
+      tableNames: [
+        'workflow_instances',
+        'notifications',
+        'rooms',
+        'app_documents',
+      ],
+      authContext: CONTEXT.authContext,
+    });
+
+    expect([...access.readableTables]).toEqual(['app_documents']);
+    expect(access.rowFilters.size).toBe(0);
+    expect(access.rowProjectors?.size ?? 0).toBe(0);
+  });
+
+  test('composes platform and delegated projections for snapshot, catch-up, and live rows', async () => {
+    db = createReactiveDB({ mode: 'memory' });
+    defineWorkflowInstanceProjectionTable(db);
+    db.insert('workflow_instances', workflowProjectionRow('private-before'));
+
+    let fullRowMatches = 0;
+    const delegate = allowAllPolicy();
+    delegate.resolveTableAccess = async ({ tableNames }) => ({
+      readableTables: new Set(tableNames),
+      rowFilters: new Map([[
+        'workflow_instances',
+        {
+          matches(row) {
+            if (row.private_secret === 'private-before'
+              || row.private_secret === 'private-after') fullRowMatches += 1;
+            return row.private_secret === 'private-before'
+              || row.private_secret === 'private-after';
+          },
+          project(row) {
+            expect(row).not.toHaveProperty('private_secret');
+            expect(row).not.toHaveProperty('graph_json');
+            return { ...row, delegated_filter_projection: true };
+          },
+        },
+      ]]),
+      rowProjectors: new Map([[
+        'workflow_instances',
+        {
+          project(row) {
+            expect(row.delegated_filter_projection).toBe(true);
+            return { ...row, delegated_row_projection: true };
+          },
+        },
+      ]]),
+      policyFingerprint: 'delegated-projection-policy',
+    });
+    const policy = new PlatformSyncPolicyService({
+      delegate,
+      getDB: () => db,
+      tenancyMode: 'single',
+    });
+    const access = await policy.resolveTableAccess({
+      tableNames: ['workflow_instances'],
+      authContext: CONTEXT.authContext,
+    });
+    const row = db.get('workflow_instances', 'workflow-projection-1');
+    if (!row) throw new Error('Expected workflow projection fixture');
+    expect(access.rowFilters.get('workflow_instances')?.matches(row)).toBe(true);
+    expect(fullRowMatches).toBeGreaterThan(0);
+
+    const target = platformSocket();
+    installAccess(target.data, access);
+    await handleSyncSubscribe(target.value, {
+      type: 'sync.subscribe',
+      tables: ['workflow_instances'],
+      snapshot: ['workflow_instances'],
+      lastSeq: 0,
+      epoch: 'force-snapshot',
+      scope: 'scope-a',
+    }, db);
+    const snapshot = target.messages.find((message) => message.type === 'sync.snapshot');
+    if (snapshot?.type !== 'sync.snapshot') throw new Error('Expected Sync snapshot');
+    expectPublicDelegatedProjection(
+      snapshot.tables.workflow_instances?.['workflow-projection-1'],
+    );
+
+    const baselineSequence = snapshot.seq;
+    const updated = db.update('workflow_instances', 'workflow-projection-1', {
+      private_secret: 'private-after',
+      status: 'waiting',
+    });
+    if (!updated) throw new Error('Expected workflow update');
+    deliverSyncChange(
+      [target.value],
+      updated,
+      db.syncEpoch,
+      'other-connection',
+    );
+    const live = target.messages.find(
+      (message) => message.type === 'sync.change' && message.seq === updated.seq,
+    );
+    if (live?.type !== 'sync.change') throw new Error('Expected live Sync change');
+    expectPublicDelegatedProjection(live.row);
+
+    const resumed = platformSocket();
+    installAccess(resumed.data, access);
+    await handleSyncSubscribe(resumed.value, {
+      type: 'sync.subscribe',
+      tables: ['workflow_instances'],
+      lastSeq: baselineSequence,
+      epoch: db.syncEpoch,
+      scope: 'scope-a',
+    }, db);
+    const catchup = resumed.messages.find((message) => message.type === 'sync.catchup');
+    if (catchup?.type !== 'sync.catchup') throw new Error('Expected Sync catch-up');
+    expect(catchup.changes).toHaveLength(1);
+    expectPublicDelegatedProjection(catchup.changes[0]?.row);
+  });
+
+  test('fails closed when a delegated projector removes the row identity', async () => {
+    db = createReactiveDB({ mode: 'memory' });
+    defineWorkflowInstanceProjectionTable(db);
+    db.insert('workflow_instances', workflowProjectionRow('private-before'));
+    const delegate = allowAllPolicy();
+    delegate.resolveTableAccess = async ({ tableNames }) => ({
+      readableTables: new Set(tableNames),
+      rowFilters: new Map(),
+      rowProjectors: new Map([[
+        'workflow_instances',
+        {
+          project(row) {
+            const { instance_id: _identity, ...withoutIdentity } = row;
+            return withoutIdentity;
+          },
+        },
+      ]]),
+      policyFingerprint: 'invalid-projection-policy',
+    });
+    const policy = new PlatformSyncPolicyService({
+      delegate,
+      getDB: () => db,
+      tenancyMode: 'single',
+    });
+    const access = await policy.resolveTableAccess({
+      tableNames: ['workflow_instances'],
+      authContext: CONTEXT.authContext,
+    });
+    const row = db.get('workflow_instances', 'workflow-projection-1');
+    if (!row) throw new Error('Expected workflow projection fixture');
+
+    expect(() => access.rowProjectors?.get('workflow_instances')?.project(row))
+      .toThrow("ZERO_SYNC_ROW_PROJECTION_IDENTITY: projector changed or removed 'workflow_instances.instance_id'");
+  });
+
   test('preserves delegated realm, exposure, and physical data-plane proofs', () => {
     const delegate = allowAllPolicy();
     delegate.classifyManagedTableRealm = (table) => table === 'documents'
@@ -373,6 +531,69 @@ function createPolicyDatabase(): ReactiveDB {
     tenant_id: 'text',
   });
   return reactive;
+}
+
+function defineWorkflowInstanceProjectionTable(reactive: ReactiveDB): void {
+  reactive.defineTable('workflow_instances', {
+    instance_id: 'text primary key',
+    tenant_id: 'text',
+    definition_id: 'text not null',
+    name: 'text not null',
+    status: 'text not null',
+    input: 'text',
+    output: 'text',
+    error: 'text',
+    current_step: 'integer not null',
+    started_by: 'text not null',
+    steps_json: 'text not null',
+    graph_json: 'text',
+    definition_version_id: 'text',
+    definition_version: 'integer',
+    graph_fingerprint: 'text',
+    private_secret: 'text not null',
+    created_at: 'text not null',
+    updated_at: 'text not null',
+    completed_at: 'text',
+  });
+}
+
+function workflowProjectionRow(privateSecret: string): Row {
+  const now = new Date().toISOString();
+  return {
+    instance_id: 'workflow-projection-1',
+    tenant_id: null,
+    definition_id: 'projection-definition',
+    name: 'projection-test',
+    status: 'running',
+    input: JSON.stringify({ secret: 'input' }),
+    output: JSON.stringify({ secret: 'output' }),
+    error: 'private error',
+    current_step: 0,
+    started_by: CONTEXT.authContext!.userId,
+    steps_json: '[]',
+    graph_json: JSON.stringify({ nodes: [] }),
+    definition_version_id: 'definition-version-1',
+    definition_version: 1,
+    graph_fingerprint: 'graph-fingerprint-1',
+    private_secret: privateSecret,
+    created_at: now,
+    updated_at: now,
+    completed_at: null,
+  };
+}
+
+function expectPublicDelegatedProjection(row: Row | null | undefined): void {
+  expect(row).toMatchObject({
+    instance_id: 'workflow-projection-1',
+    input: null,
+    output: null,
+    error: null,
+    delegated_filter_projection: true,
+    delegated_row_projection: true,
+  });
+  expect(row).not.toHaveProperty('private_secret');
+  expect(row).not.toHaveProperty('graph_json');
+  expect(row).not.toHaveProperty('definition_version_id');
 }
 
 function allowAllPolicy(): SyncResourcePolicyAdapter {

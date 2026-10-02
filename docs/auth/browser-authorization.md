@@ -163,7 +163,8 @@ Available hooks:
 - `useHasAllPermissions(keys)` requires every non-empty key.
 - `useHasAnyPermission(keys)` requires at least one non-empty key.
 - `useAuthorizationScopeBoundary()` returns a credential-free boundary for
-  partitioning app-owned browser caches across account and tenant changes.
+  partitioning app-owned browser caches across account, tenant, and live
+  same-scope authorization changes.
 - `isAuthorizationScopeCallbackCurrent(currentKey, ready, capturedKey)` is the
   same pure late-callback fence used by Zero-owned hooks and source-installed
   components.
@@ -208,10 +209,20 @@ function CurrentScopeResults() {
 
 `key` changes synchronously when old results must stop rendering, including
 initial session restoration, logout, account replacement, tenant switching,
-and transition phases. Use it as the app-cache partition and late-callback
-fence. Hide or freeze scope-sensitive UI while `ready` is false. `scopeKey` is
-the opaque identity of the committed authorization family and scope;
-`stable`/`phase` describe transition state for diagnostics or richer UX.
+transition phases, and a live Sync close that reports `Auth context changed`,
+`Sync access changed`, or `Sync read authority changed`. Those Sync cases may
+keep the same account and tenant identity, so Zero increments the separate
+monotonic `dataRevision`, cancels in-flight scoped HTTP work, drops the current
+authorization hint, and purges local Sync rows before reconnecting. The key
+changes again when replacement authorization becomes readable; late results
+captured under either older key remain rejected.
+
+Use `key` as the app-cache partition and late-callback fence. Hide or freeze
+scope-sensitive UI while `ready` is false. `scopeKey` is the opaque identity of
+the committed authorization family and scope; it deliberately remains stable
+for a same-scope policy change. `dataRevision` identifies the browser-local
+data invalidation generation. `stable`/`phase` describe credential transition
+state for diagnostics or richer UX.
 
 When an app-owned async operation captures a boundary key, compare it with the
 latest key before publishing the result. The exported

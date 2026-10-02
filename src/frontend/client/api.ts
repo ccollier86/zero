@@ -35,6 +35,19 @@ import type { AuthClient } from './auth-client';
 // biome-ignore lint/suspicious/noExplicitAny: Eden Treaty requires generic any for dynamic plugin route access
 export type Api = ReturnType<typeof treaty<App>> & Record<string, any>;
 
+/** Structured error preserved from a Zero HTTP response. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number | null,
+    readonly code: string | null,
+    readonly body: unknown,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 // ─── Factory ────────────────────────────────────────────────────────────────
 
 /**
@@ -76,9 +89,20 @@ export function unwrap<T>(
   if (result.error !== null && result.error !== undefined) {
     const err = result.error;
     if (typeof err === 'object' && err !== null && 'value' in err) {
-      throw new Error(String((err as Record<string, unknown>).value));
+      const record = err as Record<string, unknown>;
+      const body = record.value;
+      const status = typeof record.status === 'number' ? record.status : null;
+      if (body && typeof body === 'object') {
+        const response = body as Record<string, unknown>;
+        const message = typeof response.error === 'string'
+          ? response.error
+          : 'API request failed';
+        const code = typeof response.code === 'string' ? response.code : null;
+        throw new ApiError(message, status, code, body);
+      }
+      throw new ApiError(String(body), status, null, body);
     }
-    throw new Error(String(err));
+    throw new ApiError(String(err), null, null, err);
   }
   return result.data as T;
 }

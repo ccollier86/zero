@@ -1,621 +1,622 @@
 /**
  * workflow-service.ts
  *
- * Part of: Workflows subsystem (service)
- *
- * Orchestrates workflow lifecycle: start, advance, sendEvent, cancel,
- * pause, resume, and polling for retries/timeouts. All writes go through
- * ReactiveDB for automatic WebSocket broadcast to connected clients.
- *
- * Dependencies:
- *   - ./types
- *   - ./workflow-registry
- *   - ./workflow-executor
- *   - ../sync/reactive-db (ReactiveDB)
+ * Stable public facade, composition root, and lifecycle owner for legacy and
+ * graph workflows. Focused collaborators own scope checks, reads, starts, and
+ * event commands; this facade preserves their shared runtime, authority,
+ * transaction, observability, recovery, and disposal boundaries.
  */
 
 import type { ReactiveDB } from '../sync/reactive-db';
-import { AuthError, type AuthContext } from '../auth/types';
+import type { AuthContext } from '../auth/types';
+import type { ServiceDataScope } from '../auth/service-data-scope';
+import { OBS_CODES } from '../observability/codes';
 import type {
-  WorkflowDefinition,
+  WorkflowEventRecord,
+  WorkflowInstanceRecord,
   WorkflowStepRecord,
 } from './types';
-import { WorkflowExecutor } from './workflow-executor';
-import type { WorkflowRegistry } from './workflow-registry';
 import {
-  applicationServiceDataScope,
-  serviceDataScopeMatchesTenant,
-  serviceDataTenantId,
-  type ServiceDataScope,
-} from '../auth/service-data-scope';
+  createOwnerFencedWorkflowExecutor,
+  type WorkflowExecutor,
+  type WorkflowClock,
+} from './workflow-executor';
 import {
-  createSystemAuthority,
-  scopeFromIdentity,
   WorkflowExecutionAuthorityStore,
   type WorkflowExecutionAuthorityProvider,
   type WorkflowExecutionServiceProvider,
-  type WorkflowPersistedExecutionAuthority,
   type WorkflowSystemExecutionOptions,
 } from './workflow-execution-authority';
+import { WorkflowExecutionAuthorityGate } from './workflow-execution-authority-gate';
+import { WorkflowError } from './workflow-error';
+import {
+  WorkflowEventCoordinator,
+  type WorkflowEventMutationOptions,
+} from './workflow-event-coordinator';
+import { WorkflowFrontierPump } from './workflow-frontier-pump';
+import { WorkflowGraphRuntime } from './workflow-graph-runtime';
+import { WorkflowInstanceFactory } from './workflow-instance-factory';
+import type { WorkflowInteractionAuthority } from './workflow-interaction-authority';
+import type { WorkflowInteractionActor } from './workflow-interaction-authority';
+import {
+  WorkflowLifecycleCoordinator,
+  type WorkflowDispatchPhase,
+} from './workflow-lifecycle-coordinator';
+import {
+  createWorkflowObservability,
+  type WorkflowObservability,
+} from './workflow-observability';
+import {
+  WorkflowRepository,
+  type WorkflowInstanceListFilter,
+} from './workflow-repository';
+import type { WorkflowRegistry } from './workflow-registry';
+import type { WorkflowPublicTopology } from './workflow-public-topology';
+import { WorkflowRunQueryService } from './workflow-run-query-service';
+import { WorkflowRuntimeStore } from './workflow-runtime-store';
+import { WorkflowScopeBoundary } from './workflow-scope-boundary';
+import { resolveWorkflowShutdownGraceMs } from './workflow-shutdown-policy';
+import {
+  type WorkflowStartOptions,
+} from './workflow-start-options';
+import {
+  WorkflowStartCoordinator,
+  type WorkflowCapturedActorAuthorityFence,
+} from './workflow-start-coordinator';
+import { WorkflowTransitionController } from './workflow-transition-controller';
+import {
+  createNativeWorkflowWakeTimer,
+  WorkflowWakeCoordinator,
+  type WorkflowWakeTimer,
+} from './workflow-wake-coordinator';
+import {
+  WorkflowRuntimeOwnerLease,
+  type WorkflowRuntimeOwnershipOptions,
+} from './workflow-runtime-owner-lease';
+
+const systemClock: WorkflowClock = { now: () => new Date() };
+const graphRuntimes = new WeakMap<WorkflowService, WorkflowGraphRuntime>();
+
+/** Framework-internal graph coordinator access; intentionally absent from the package barrel. */
+export function getWorkflowGraphRuntime(service: WorkflowService): WorkflowGraphRuntime {
+  const graph = graphRuntimes.get(service);
+  if (!graph) {
+    throw new WorkflowError(
+      'Workflow graph runtime is not available',
+      'WORKFLOW_NOT_READY',
+      503,
+    );
+  }
+  return graph;
+}
 
 export interface WorkflowServiceOptions {
+  clock?: WorkflowClock;
+  /**
+   * @deprecated Retained as a same-database compatibility template. Each
+   * service now constructs an owner-fenced runtime for its lease generation.
+   */
+  runtime?: WorkflowRuntimeStore;
+  /** Exact in-process retry/deadline timer; false enables poll-only operation. */
+  wakeTimer?: WorkflowWakeTimer | false;
+  shutdownGraceMs?: number;
+  interactionAuthority?: WorkflowInteractionAuthority;
+  tenancyMode?: 'single' | 'multi';
   authorityStore?: WorkflowExecutionAuthorityStore;
   authorityProvider?: WorkflowExecutionAuthorityProvider | null;
   serviceProvider?: WorkflowExecutionServiceProvider | null;
+  /** App-local, transaction-aware workflow event boundary. */
+  observability?: WorkflowObservability;
+  /** Durable single-owner lease configuration; defaults are production-safe. */
+  runtimeOwnership?: WorkflowRuntimeOwnershipOptions;
+  /** @internal Plugin-owner callback for retiring stale publication and jobs. */
+  onRuntimeOwnershipLost?: (error: WorkflowError) => void | Promise<void>;
 }
 
+/** Public mutation authority contract retained for WorkflowService callers. */
+export interface WorkflowMutationOptions extends WorkflowEventMutationOptions {}
+
+/** Public captured-actor fence retained for WorkflowService callers. */
+export interface WorkflowActorAuthorityFence extends WorkflowCapturedActorAuthorityFence {}
+
+/** Public workflow API and owner of one composed legacy/graph runtime. */
 export class WorkflowService {
-  private executor: WorkflowExecutor;
-  private readonly authorityStore: WorkflowExecutionAuthorityStore;
-  private readonly authorityProvider: WorkflowExecutionAuthorityProvider | null;
+  private readonly runtime: WorkflowRuntimeStore;
+  private readonly repository: WorkflowRepository;
+  private readonly executor: WorkflowExecutor;
+  private readonly lifecycle: WorkflowLifecycleCoordinator;
+  private readonly transitions: WorkflowTransitionController;
+  private readonly frontier: WorkflowFrontierPump;
+  private readonly graph: WorkflowGraphRuntime;
+  private readonly authority: WorkflowExecutionAuthorityGate;
+  private readonly observability: WorkflowObservability;
+  private readonly scopes: WorkflowScopeBoundary;
+  private readonly queries: WorkflowRunQueryService;
+  private readonly starts: WorkflowStartCoordinator;
+  private readonly events: WorkflowEventCoordinator;
+  private readonly ownerLease: WorkflowRuntimeOwnerLease;
+  private readonly onRuntimeOwnershipLost:
+    ((error: WorkflowError) => void | Promise<void>) | null;
+  private disposed = false;
+  private disposalPromise: Promise<void> | null = null;
 
   constructor(
-    private db: ReactiveDB,
-    private registry: WorkflowRegistry,
-    private readonly tenancyMode: 'single' | 'multi' = 'single',
-    options: WorkflowServiceOptions = {},
+    db: ReactiveDB,
+    registry: WorkflowRegistry,
+    modeOrOptions: 'single' | 'multi' | WorkflowServiceOptions = {},
+    legacyOptions: WorkflowServiceOptions = {},
   ) {
-    this.authorityStore = options.authorityStore
-      ?? new WorkflowExecutionAuthorityStore(db);
-    this.authorityProvider = options.authorityProvider ?? null;
-    this.executor = new WorkflowExecutor(
+    const options = typeof modeOrOptions === 'string' ? legacyOptions : modeOrOptions;
+    const tenancyMode = typeof modeOrOptions === 'string'
+      ? modeOrOptions
+      : options.tenancyMode ?? 'single';
+    const clock = options.clock ?? systemClock;
+    this.onRuntimeOwnershipLost = options.onRuntimeOwnershipLost ?? null;
+    this.observability = options.observability ?? createWorkflowObservability(db);
+    this.ownerLease = new WorkflowRuntimeOwnerLease(
       db,
-      registry,
-      this.authorityStore,
-      this.authorityProvider,
-      options.serviceProvider ?? null,
+      options.runtimeOwnership,
+      this.observability,
     );
+    try {
+      const authorityProvider = options.authorityProvider ?? null;
+      const authorityStore = options.authorityStore
+        ?? new WorkflowExecutionAuthorityStore(db, () => clock.now().getTime());
+      this.authority = new WorkflowExecutionAuthorityGate(
+        db,
+        authorityStore,
+        authorityProvider,
+        options.serviceProvider ?? null,
+        () => clock.now(),
+        this.observability,
+        this.ownerLease,
+      );
+      const shutdownGraceMs = resolveWorkflowShutdownGraceMs(options.shutdownGraceMs);
+      const wakeTimer = options.wakeTimer === undefined
+        ? (options.clock ? false : createNativeWorkflowWakeTimer())
+        : options.wakeTimer;
+      this.runtime = WorkflowRuntimeStore.createOwnerFenced(
+        db,
+        authorityStore,
+        () => clock.now(),
+        this.ownerLease,
+        options.runtime,
+      );
+      this.graph = new WorkflowGraphRuntime(db, registry, {
+        authority: this.authority,
+        runtime: this.runtime,
+        now: () => clock.now(),
+        shutdownGraceMs,
+        interactionAuthority: options.interactionAuthority,
+        wakeTimer,
+        observability: this.observability,
+        runtimeFence: this.ownerLease,
+      });
+      graphRuntimes.set(this, this.graph);
+      this.repository = new WorkflowRepository(db, this.ownerLease);
+      this.scopes = new WorkflowScopeBoundary(tenancyMode, this.repository);
+      const wakes = new WorkflowWakeCoordinator(clock, wakeTimer, {
+        retry: (wake) => this.dispatchAdvance(wake.instanceId, 'retry'),
+        timeout: (wake) => this.lifecycle.handleTimeoutWake(wake),
+      }, this.observability);
+      this.executor = createOwnerFencedWorkflowExecutor(
+        db,
+        registry,
+        this.runtime,
+        clock,
+        this.repository,
+        wakes,
+        shutdownGraceMs,
+        this.authority,
+        this.observability,
+        this.ownerLease,
+      );
+      this.lifecycle = new WorkflowLifecycleCoordinator(
+        this.repository,
+        registry,
+        this.runtime,
+        this.executor,
+        clock,
+        wakes,
+        this.observability,
+      );
+      this.transitions = new WorkflowTransitionController(
+        this.repository,
+        this.runtime,
+        this.executor,
+        this.lifecycle,
+        clock,
+        wakes,
+        this.observability,
+      );
+      const instanceFactory = new WorkflowInstanceFactory(
+        registry,
+        this.repository,
+        clock,
+      );
+      this.frontier = new WorkflowFrontierPump(
+        this.repository,
+        this.runtime,
+        this.executor,
+        clock,
+        wakes,
+        this.observability,
+      );
+      const hooks = {
+        beginOperation: () => {
+          this.assertAvailable();
+          this.markOperationStarted();
+        },
+        advance: (instanceId: string) => this.advanceTrusted(instanceId),
+      };
+      this.queries = new WorkflowRunQueryService(
+        this.repository,
+        this.graph,
+        this.scopes,
+      );
+      this.starts = new WorkflowStartCoordinator(
+        registry,
+        this.graph,
+        instanceFactory,
+        this.authority,
+        authorityProvider,
+        this.scopes,
+        this.observability,
+        hooks,
+      );
+      this.events = new WorkflowEventCoordinator(
+        this.repository,
+        this.runtime,
+        clock,
+        this.scopes,
+        hooks,
+      );
+      this.ownerLease.onLost((error) => this.quiesceAfterOwnershipLoss(error));
+    } catch (error) {
+      this.ownerLease.release();
+      throw error;
+    }
   }
 
-  // ─── Start ──────────────────────────────────────────
-
-  /**
-   * Start a new workflow instance. Creates instance + step rows
-   * in a transaction, then immediately executes the first step.
-   */
+  /** Compatibility start for standalone/trusted services without an auth provider. */
   async start(
     name: string,
     input?: unknown,
     startedBy?: string,
-    scope?: ServiceDataScope,
+    scopeOrOptions: ServiceDataScope | WorkflowStartOptions = {},
+    options: WorkflowStartOptions = {},
   ): Promise<string> {
-    const boundary = this.requireScope(scope);
-    if (this.authorityProvider) {
-      throw new Error(
-        '[workflows] Managed workflow execution requires runAsActor() or runAsSystem().',
-      );
-    }
-    const authority = createSystemAuthority({
-      principal: 'legacy:workflow-service',
-      reason: 'Compatibility start() call on a trusted standalone workflow service',
-      scope: boundary,
-      legacyCompatibility: true,
-    });
-    return this.startWithAuthority(name, input, startedBy, authority);
+    return this.starts.startCompatibility(
+      name,
+      input,
+      startedBy ?? null,
+      scopeOrOptions,
+      options,
+    );
   }
 
-  /** Start under the exact live authority of an authenticated request. */
+  /** Start under the exact live Guardian authority of an authenticated request. */
   async startAsActor(
     name: string,
     input: unknown,
     context: AuthContext,
+    options: WorkflowStartOptions = {},
+    assertCurrentAuthority?: () => void,
   ): Promise<string> {
-    const authority = this.authorityProvider?.captureActor(context) ?? null;
-    if (!authority) {
-      throw new AuthError(
-        'Authorization changed before the workflow could start',
-        'AUTH_STATE_CHANGED',
-        409,
-      );
-    }
-    return this.startWithAuthority(name, input, authority.identity.userId, authority);
+    return this.starts.startAsActor(
+      name,
+      input,
+      context,
+      options,
+      assertCurrentAuthority,
+    );
   }
 
-  /** Canonical actor alias matching run(). */
   async runAsActor(
     name: string,
     input: unknown,
     context: AuthContext,
+    options: WorkflowStartOptions = {},
+    assertCurrentAuthority?: () => void,
   ): Promise<string> {
-    return this.startAsActor(name, input, context);
+    return this.startAsActor(name, input, context, options, assertCurrentAuthority);
   }
 
-  /** Explicit, auditable privileged entry point for schedulers/plugins. */
+  /**
+   * Capture a secret-free Guardian authority and return its final-commit fence.
+   * Callers must invoke the returned assertion inside their writer transaction.
+   */
+  captureActorAuthorityFence(context: AuthContext): WorkflowActorAuthorityFence {
+    return this.starts.captureActorAuthorityFence(context);
+  }
+
+  captureActorAuthorityAssertion(context: AuthContext): () => void {
+    return this.starts.captureActorAuthorityAssertion(context);
+  }
+
+  /** Explicit, auditable privileged entry point for schedulers and plugins. */
   async startAsSystem(
     name: string,
     input: unknown,
-    options: WorkflowSystemExecutionOptions,
+    system: WorkflowSystemExecutionOptions,
+    options: WorkflowStartOptions = {},
   ): Promise<string> {
-    const boundary = this.requireScope(options.scope);
-    const authority = createSystemAuthority({ ...options, scope: boundary });
-    return this.startWithAuthority(name, input, null, authority);
+    return this.starts.startAsSystem(name, input, system, options);
   }
 
-  /** Canonical system alias matching run(). */
   async runAsSystem(
     name: string,
     input: unknown,
-    options: WorkflowSystemExecutionOptions,
+    system: WorkflowSystemExecutionOptions,
+    options: WorkflowStartOptions = {},
   ): Promise<string> {
-    return this.startAsSystem(name, input, options);
+    return this.startAsSystem(name, input, system, options);
   }
 
-  private async startWithAuthority(
-    name: string,
-    input: unknown,
-    startedBy: string | null | undefined,
-    authority: WorkflowPersistedExecutionAuthority,
-  ): Promise<string> {
-    const boundary = scopeFromIdentity(authority.identity);
-    const tenantId = serviceDataTenantId(boundary);
-    const definition = this.registry.getWorkflow(name);
-    if (!definition) {
-      throw new Error(`Workflow "${name}" not registered`);
-    }
-
-    const instanceId = crypto.randomUUID();
-    const now = new Date().toISOString();
-
-    // Persist definition if not already stored
-    this.ensureDefinitionPersisted(definition);
-
-    // Create instance + steps atomically
-    this.db.transaction(() => {
-      this.db.insert('workflow_instances', {
-        instance_id: instanceId,
-        tenant_id: tenantId,
-        definition_id: this.getDefinitionId(definition.name),
-        name: definition.name,
-        status: 'running',
-        current_step: 0,
-        input: input !== undefined ? JSON.stringify(input) : null,
-        output: null,
-        error: null,
-        started_by: startedBy ?? null,
-        created_at: now,
-        updated_at: now,
-        completed_at: null,
-        steps_json: JSON.stringify(definition.steps),
-      });
-
-      this.authorityStore.insert(instanceId, authority);
-
-      for (let i = 0; i < definition.steps.length; i++) {
-        const step = definition.steps[i];
-        this.db.insert('workflow_steps', {
-          step_id: crypto.randomUUID(),
-          tenant_id: tenantId,
-          instance_id: instanceId,
-          step_index: i,
-          step_name: step.handler,
-          status: 'pending',
-          input: null,
-          output: null,
-          error: null,
-          retries: 0,
-          max_retries: step.retries ?? 3,
-          retry_at: null,
-          wait_event: step.waitFor ?? null,
-          timeout_at: null,
-          started_at: null,
-          completed_at: null,
-          created_at: now,
-        });
-      }
-    });
-
-    // Execute first step (non-blocking — don't await in transaction)
-    await this.advanceInternal(instanceId);
-
-    return instanceId;
-  }
-
-  /** Canonical run alias for start(). */
   async run(
     name: string,
     input?: unknown,
     startedBy?: string,
-    scope?: ServiceDataScope,
+    scopeOrOptions: ServiceDataScope | WorkflowStartOptions = {},
+    options: WorkflowStartOptions = {},
   ): Promise<string> {
-    return this.start(name, input, startedBy, scope);
+    return this.start(name, input, startedBy, scopeOrOptions, options);
   }
 
-  // ─── Advance ────────────────────────────────────────
-
-  /**
-   * Advance the workflow to the next pending step. Called after a step
-   * completes or is skipped. Completes the workflow if all steps are done.
-   */
+  /** Scope-check an external advance; internal pumps use the trusted path. */
   async advance(instanceId: string, scope?: ServiceDataScope): Promise<void> {
-    if (this.tenancyMode === 'multi') {
-      this.requireInstanceInScope(instanceId, this.requireScope(scope));
+    if (scope || this.scopes.requiresExplicitScope()) {
+      this.scopes.requireInstance(instanceId, this.scopes.requireScope(scope));
     }
-    await this.advanceInternal(instanceId);
+    return this.advanceTrusted(instanceId);
   }
 
-  private async advanceInternal(instanceId: string): Promise<void> {
-    const instance = this.db.queryOne('workflow_instances', instanceId) as
-      | (Record<string, unknown> & { status: string })
-      | null;
-
-    if (!instance || instance.status !== 'running') return;
-
-    const steps = this.getStepsUnscoped(instanceId);
-    const failedStep = steps.find(
-      s => s.status === 'failed' && !s.retry_at,
-    );
-    if (failedStep) {
-      this.db.update('workflow_instances', instanceId, {
-        status: 'failed',
-        error: failedStep.error,
-        current_step: failedStep.step_index,
-        updated_at: new Date().toISOString(),
-      });
-      return;
-    }
-
-    const nextStep = steps.find(
-      s => s.status === 'pending' || s.status === 'waiting',
-    );
-
-    if (!nextStep) {
-      // A failed step with a scheduled retry keeps the workflow running.
-      if (steps.some(s => s.status === 'failed' && s.retry_at)) return;
-
-      // Empty workflows and the final lifecycle transition are still
-      // authority-bearing commits, even though no handler is dispatched.
-      this.executor.withCurrentInstanceAuthority(instanceId, () => {
-        // All steps completed/skipped — workflow is done
-        const lastCompleted = steps
-          .filter(s => s.status === 'completed')
-          .sort((a, b) => b.step_index - a.step_index)[0];
-
-        this.db.update('workflow_instances', instanceId, {
-          status: 'completed',
-          current_step: steps.length,
-          output: lastCompleted?.output ?? null,
-          completed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
-      });
-      return;
-    }
-
-    // Execute next pending step
-    if (nextStep.status === 'pending') {
-      this.db.update('workflow_instances', instanceId, {
-        current_step: nextStep.step_index,
-        updated_at: new Date().toISOString(),
-      });
-
-      await this.executor.executeStep(instanceId, nextStep.step_id);
-      // Reconcile success, scheduled retry, or permanent failure atomically
-      // into the owning workflow lifecycle.
-      await this.advanceInternal(instanceId);
-    }
-    // If status is 'waiting', do nothing — sendEvent will resume
-  }
-
-  // ─── Events ─────────────────────────────────────────
-
-  /**
-   * Send an event to a workflow instance. If a step is waiting for
-   * this event, it will be executed with the event payload.
-   */
+  /** Persist an event as an inbox item, then let the legal frontier claim it. */
   async sendEvent(
     instanceId: string,
     eventName: string,
     payload?: unknown,
     sentBy?: string,
-    scope?: ServiceDataScope,
+    scopeOrActor?: ServiceDataScope | WorkflowInteractionActor,
+    explicitActor?: WorkflowInteractionActor,
+    mutation: WorkflowMutationOptions = {},
   ): Promise<boolean> {
-    const boundary = this.requireScope(scope);
-    const instance = this.requireInstanceInScope(instanceId, boundary);
-    // Record the event
-    this.db.insert('workflow_events', {
-      event_id: crypto.randomUUID(),
-      tenant_id: instance.tenant_id ?? null,
-      instance_id: instanceId,
-      event_name: eventName,
-      payload: payload !== undefined ? JSON.stringify(payload) : null,
-      sent_by: sentBy ?? null,
-      created_at: new Date().toISOString(),
-    });
-
-    // Find a waiting step that matches
-    const steps = this.getStepsUnscoped(instanceId);
-    const waitingStep = steps.find(
-      s => s.status === 'waiting' && s.wait_event === eventName,
-    );
-
-    if (!waitingStep) return false;
-
-    await this.executor.executeStep(
+    return this.events.sendEvent(
       instanceId,
-      waitingStep.step_id,
-      { name: eventName, payload },
+      eventName,
+      payload,
+      sentBy,
+      scopeOrActor,
+      explicitActor,
+      mutation,
     );
-
-    await this.advanceInternal(instanceId);
-
-    return true;
   }
 
-  // ─── Lifecycle Control ──────────────────────────────
-
-  cancel(instanceId: string, scope?: ServiceDataScope): void {
-    this.requireInstanceInScope(instanceId, this.requireScope(scope));
-    this.db.transaction(() => {
-      this.authorityStore.releaseInstanceLeases(instanceId);
-      this.db.update('workflow_instances', instanceId, {
-        status: 'cancelled',
-        updated_at: new Date().toISOString(),
-        completed_at: new Date().toISOString(),
-      });
-    });
+  /** Explicit privileged event responder with a MAC-sealed system identity. */
+  async sendEventAsSystem(
+    instanceId: string,
+    eventName: string,
+    payload: unknown,
+    system: WorkflowSystemExecutionOptions,
+  ): Promise<boolean> {
+    return this.events.sendEventAsSystem(instanceId, eventName, payload, system);
   }
 
-  /** Canonical stop alias for cancel(). */
-  stop(instanceId: string, scope?: ServiceDataScope): void {
-    this.cancel(instanceId, scope);
-  }
-
-  pause(instanceId: string, scope?: ServiceDataScope): void {
-    const instance = this.requireInstanceInScope(instanceId, this.requireScope(scope));
-    if (instance.status !== 'running') {
-      throw new Error(`Cannot pause workflow in status "${instance.status}"`);
-    }
-
-    this.db.transaction(() => {
-      this.authorityStore.releaseInstanceLeases(instanceId);
-      for (const step of this.getStepsUnscoped(instanceId)) {
-        if (step.status === 'running') {
-          this.db.update('workflow_steps', step.step_id, {
-            status: 'pending',
-            started_at: null,
-            timeout_at: null,
-          });
-        }
-      }
-      this.db.update('workflow_instances', instanceId, {
-        status: 'paused',
-        updated_at: new Date().toISOString(),
-      });
-    });
-  }
-
-  async resume(instanceId: string, scope?: ServiceDataScope): Promise<void> {
-    const instance = this.requireInstanceInScope(instanceId, this.requireScope(scope));
-    if (instance.status !== 'paused') {
-      throw new Error(`Cannot resume workflow in status "${instance.status}"`);
-    }
-
-    this.db.update('workflow_instances', instanceId, {
-      status: 'running',
-      updated_at: new Date().toISOString(),
-    });
-
-    await this.advanceInternal(instanceId);
-  }
-
-  // ─── Polling ────────────────────────────────────────
-
-  /**
-   * Poll for failed steps with retry_at <= now. Re-execute them.
-   * Called by the scheduler on a cron interval.
-   */
-  async pollRetries(): Promise<number> {
-    const now = new Date().toISOString();
-    const steps = this.db.query('workflow_steps')
-      .filter(s =>
-        s.status === 'failed' &&
-        s.retry_at !== null &&
-        (s.retry_at as string) <= now,
-      ) as unknown as WorkflowStepRecord[];
-
-    let count = 0;
-    for (const step of steps) {
-      // Check workflow is still running
-      const instance = this.db.queryOne('workflow_instances', step.instance_id);
-      if (!instance || instance.status !== 'running') continue;
-
-      await this.executor.executeStep(step.instance_id, step.step_id);
-      await this.advanceInternal(step.instance_id);
-      count++;
-    }
-
-    return count;
-  }
-
-  /**
-   * Poll for steps that have exceeded their timeout. Mark them as failed.
-   */
-  pollTimeouts(): number {
-    const now = new Date().toISOString();
-    const steps = this.db.query('workflow_steps')
-      .filter(s =>
-        (s.status === 'running' || s.status === 'waiting') &&
-        s.timeout_at !== null &&
-        (s.timeout_at as string) <= now,
-      ) as unknown as WorkflowStepRecord[];
-
-    for (const step of steps) {
-      this.db.transaction(() => {
-        this.authorityStore.releaseInstanceLeases(step.instance_id);
-        this.db.update('workflow_steps', step.step_id, {
-          status: 'failed',
-          error: 'Step timed out',
-          completed_at: now,
-          retry_at: null,
-          timeout_at: null,
-        });
-
-        // Fail the workflow and fence any late handler completion.
-        this.db.update('workflow_instances', step.instance_id, {
-          status: 'failed',
-          error: `Step "${step.step_name}" timed out`,
-          updated_at: now,
-          completed_at: now,
-        });
-      });
-    }
-
-    return steps.length;
-  }
-
-  // ─── Crash Recovery ─────────────────────────────────
-
-  /**
-   * On startup, re-execute steps stuck in 'running' status
-   * (indicates a crash during execution).
-   */
-  async recoverInFlight(): Promise<number> {
-    const runningSteps = this.db.query('workflow_steps')
-      .filter(s => s.status === 'running') as unknown as WorkflowStepRecord[];
-
-    for (const step of runningSteps) {
-      // Reset to pending and let advance() pick it up
-      this.authorityStore.releaseInstanceLeases(step.instance_id);
-      this.db.update('workflow_steps', step.step_id, {
-        status: 'pending',
-        started_at: null,
-        timeout_at: null,
-      });
-    }
-
-    // Re-advance all running workflows
-    const runningInstances = this.db.query('workflow_instances')
-      .filter(i => i.status === 'running') as unknown as Array<{ instance_id: string }>;
-
-    for (const instance of runningInstances) {
-      await this.advanceInternal(instance.instance_id);
-    }
-
-    return runningSteps.length;
-  }
-
-  // ─── Queries ────────────────────────────────────────
-
-  getInstance(
+  cancel(
     instanceId: string,
     scope?: ServiceDataScope,
-  ): Record<string, unknown> | null {
-    const boundary = this.requireScope(scope);
-    const instance = this.db.queryOne('workflow_instances', instanceId);
-    return instance && serviceDataScopeMatchesTenant(boundary, instance.tenant_id)
-      ? instance
-      : null;
+    mutation: WorkflowMutationOptions = {},
+  ): void {
+    this.assertAvailable();
+    this.markOperationStarted();
+    this.scopes.requireInstance(instanceId, this.scopes.requireScope(scope));
+    if (this.graph.isGraphInstance(instanceId)) {
+      this.graph.cancel(instanceId, mutation.assertCurrentAuthority);
+    } else this.transitions.cancel(instanceId, mutation.assertCurrentAuthority);
   }
 
-  /** Canonical get alias for getInstance(). */
-  get(instanceId: string, scope?: ServiceDataScope): Record<string, unknown> | null {
+  stop(
+    instanceId: string,
+    scope?: ServiceDataScope,
+    mutation: WorkflowMutationOptions = {},
+  ): void {
+    this.cancel(instanceId, scope, mutation);
+  }
+
+  pause(
+    instanceId: string,
+    scope?: ServiceDataScope,
+    mutation: WorkflowMutationOptions = {},
+  ): void {
+    this.assertAvailable();
+    this.markOperationStarted();
+    this.scopes.requireInstance(instanceId, this.scopes.requireScope(scope));
+    if (this.graph.isGraphInstance(instanceId)) {
+      this.graph.pause(instanceId, mutation.assertCurrentAuthority);
+    } else this.transitions.pause(instanceId, mutation.assertCurrentAuthority);
+  }
+
+  async resume(
+    instanceId: string,
+    scope?: ServiceDataScope,
+    mutation: WorkflowMutationOptions = {},
+  ): Promise<void> {
+    this.assertAvailable();
+    this.markOperationStarted();
+    this.scopes.requireInstance(instanceId, this.scopes.requireScope(scope));
+    if (this.graph.isGraphInstance(instanceId)) {
+      await this.graph.resume(instanceId, mutation.assertCurrentAuthority);
+      return;
+    }
+    await this.transitions.resume(
+      instanceId,
+      () => this.assertAvailable(),
+      (id) => this.advanceTrusted(id),
+      mutation.assertCurrentAuthority,
+    );
+  }
+
+  async pollRetries(): Promise<number> {
+    if (this.disposed) return 0;
+    this.assertAvailable();
+    const legacy = this.lifecycle.pollRetries((instanceId, phase) => {
+      this.dispatchAdvance(instanceId, phase);
+    });
+    return legacy + this.graph.pollRetries();
+  }
+
+  pollTimeouts(): number {
+    if (this.disposed) return 0;
+    this.assertAvailable();
+    return this.lifecycle.pollTimeouts() + this.graph.pollTimeouts();
+  }
+
+  /** Preflight every live handler, normalize crash-left work, then publish. */
+  async recoverInFlight(onReady?: () => void): Promise<number> {
+    // Recovery is initialization-only, so it must not mark an ordinary
+    // operation started; it must still reject disposed or stale ownership
+    // before reading or validating any durable run.
+    this.assertAvailable();
+    for (const instance of this.repository.listNonterminalInstances()) {
+      this.authority.validateRecoveryInstance(instance.instance_id);
+    }
+    let graph = 0;
+    const legacy = await this.lifecycle.recoverInFlight(
+      (instanceId, phase) => this.dispatchAdvance(instanceId, phase),
+      () => this.assertAvailable(),
+      () => {
+        graph = this.graph.prepareRecovery();
+        onReady?.();
+      },
+    );
+    this.graph.activateRecovery();
+    return legacy + graph;
+  }
+
+  dispose(): Promise<void> {
+    if (this.disposalPromise) return this.disposalPromise;
+    this.disposed = true;
+    this.frontier.stop();
+    this.disposalPromise = (async () => {
+      const failures: unknown[] = [];
+      try {
+        if (this.ownerLease.isCurrent()) await this.lifecycle.dispose();
+        else await this.lifecycle.disposeWithoutPersistence();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        await this.frontier.drain();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        await this.graph.dispose();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        this.ownerLease.release();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) {
+        throw new AggregateError(failures, 'Workflow runtimes failed to dispose');
+      }
+    })();
+    return this.disposalPromise;
+  }
+
+  getInstance(instanceId: string, scope?: ServiceDataScope): WorkflowInstanceRecord | null {
+    return this.queries.getInstance(instanceId, scope);
+  }
+
+  get(instanceId: string, scope?: ServiceDataScope): WorkflowInstanceRecord | null {
     return this.getInstance(instanceId, scope);
   }
 
   getSteps(instanceId: string, scope?: ServiceDataScope): WorkflowStepRecord[] {
-    const boundary = this.requireScope(scope);
-    if (!this.getInstance(instanceId, boundary)) return [];
-    return this.getStepsUnscoped(instanceId)
-      .filter((step) => serviceDataScopeMatchesTenant(boundary, step.tenant_id));
+    return this.queries.getSteps(instanceId, scope);
   }
 
-  getEvents(instanceId: string, scope?: ServiceDataScope): Record<string, unknown>[] {
-    const boundary = this.requireScope(scope);
-    if (!this.getInstance(instanceId, boundary)) return [];
-    return this.db.query('workflow_events')
-      .filter(e => e.instance_id === instanceId
-        && serviceDataScopeMatchesTenant(boundary, e.tenant_id));
+  getEvents(instanceId: string, scope?: ServiceDataScope): WorkflowEventRecord[] {
+    return this.queries.getEvents(instanceId, scope);
   }
 
-  listInstances(filter?: {
-    status?: string;
-    name?: string;
-    /** Server-owned HTTP ownership filter; never populated from query input. */
-    startedBy?: string;
-    /** Server-owned tenant/application boundary; never populated from query input. */
-    scope?: ServiceDataScope;
-    limit?: number;
-  }): Record<string, unknown>[] {
-    const boundary = this.requireScope(filter?.scope);
-    let results = this.db.query('workflow_instances');
-
-    results = results.filter((instance) =>
-      serviceDataScopeMatchesTenant(boundary, instance.tenant_id));
-
-    if (filter?.status) {
-      results = results.filter(i => i.status === filter.status);
-    }
-    if (filter?.name) {
-      results = results.filter(i => i.name === filter.name);
-    }
-    if (filter?.startedBy !== undefined) {
-      results = results.filter(i => i.started_by === filter.startedBy);
-    }
-
-    // Sort by created_at descending
-    results.sort((a, b) =>
-      (b.created_at as string).localeCompare(a.created_at as string),
-    );
-
-    if (filter?.limit) {
-      results = results.slice(0, filter.limit);
-    }
-
-    return results;
+  /** Payload-free, scope-checked topology for a run visualization. */
+  getPublicTopology(
+    instanceId: string,
+    scope?: ServiceDataScope,
+  ): WorkflowPublicTopology | null {
+    return this.queries.getPublicTopology(instanceId, scope);
   }
 
-  /** Canonical list alias for listInstances(). */
-  list(filter?: Parameters<WorkflowService['listInstances']>[0]): Record<string, unknown>[] {
+  listInstances(filter: WorkflowInstanceListFilter = {}): WorkflowInstanceRecord[] {
+    return this.queries.listInstances(filter);
+  }
+
+  list(filter?: WorkflowInstanceListFilter): WorkflowInstanceRecord[] {
     return this.listInstances(filter);
   }
 
-  // ─── Internal ───────────────────────────────────────
+  private async advanceTrusted(instanceId: string): Promise<void> {
+    if (this.disposed) return;
+    this.ownerLease.assertCurrent();
+    this.markOperationStarted();
+    if (this.graph.isGraphInstance(instanceId)) return this.graph.advance(instanceId);
+    return this.frontier.advance(instanceId, () => this.advanceTrusted(instanceId));
+  }
 
-  private ensureDefinitionPersisted(definition: WorkflowDefinition): void {
-    const existing = this.db.query('workflow_definitions')
-      .find(d => d.name === definition.name);
-
-    if (!existing) {
-      this.db.insert('workflow_definitions', {
-        definition_id: crypto.randomUUID(),
-        name: definition.name,
-        version: 1,
-        steps_json: JSON.stringify(definition.steps),
-        input_schema: definition.inputSchema ? JSON.stringify(definition.inputSchema) : null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+  private dispatchAdvance(instanceId: string, phase: WorkflowDispatchPhase): void {
+    void this.advanceTrusted(instanceId).catch((error) => {
+      this.observability.emitNow(OBS_CODES.WORKFLOW_ADVANCE_FAILED, {
+        error,
+        metadata: { instanceId, phase },
       });
+    });
+  }
+
+  private assertAvailable(): void {
+    if (this.disposed) {
+      throw new WorkflowError(
+        'Workflow service is not available',
+        'WORKFLOW_NOT_READY',
+        503,
+      );
     }
+    this.ownerLease.assertCurrent();
   }
 
-  private getDefinitionId(name: string): string {
-    const def = this.db.query('workflow_definitions')
-      .find(d => d.name === name);
-    return (def?.definition_id as string) ?? name;
+  private markOperationStarted(): void {
+    this.lifecycle.markOperationStarted();
   }
 
-  private getStepsUnscoped(instanceId: string): WorkflowStepRecord[] {
-    return this.db.query('workflow_steps')
-      .filter(s => s.instance_id === instanceId)
-      .sort((a, b) => (a.step_index as number) - (b.step_index as number)) as unknown as WorkflowStepRecord[];
-  }
-
-  private requireInstanceInScope(
-    instanceId: string,
-    scope: ServiceDataScope,
-  ): Record<string, unknown> {
-    const instance = this.db.queryOne('workflow_instances', instanceId);
-    if (!instance || !serviceDataScopeMatchesTenant(scope, instance.tenant_id)) {
-      throw new Error(`Instance ${instanceId} not found`);
+  private quiesceAfterOwnershipLoss(error: WorkflowError): void {
+    if (this.disposed) return;
+    this.frontier.stop();
+    let ownerQuiescence: Promise<unknown>;
+    try {
+      // Run the callback prefix synchronously so stale publication and
+      // scheduler jobs disappear before the losing operation returns.
+      ownerQuiescence = Promise.resolve(this.onRuntimeOwnershipLost?.(error));
+    } catch (callbackError) {
+      ownerQuiescence = Promise.reject(callbackError);
     }
-    return instance;
-  }
-
-  private requireScope(scope: ServiceDataScope | undefined): ServiceDataScope {
-    if (scope) return scope;
-    if (this.tenancyMode === 'multi') {
-      throw new Error('A validated tenant data scope is required in multi-tenant mode');
-    }
-    return applicationServiceDataScope();
+    void Promise.allSettled([
+      this.lifecycle.disposeWithoutPersistence(),
+      this.frontier.drain(),
+      this.graph.dispose(),
+      ownerQuiescence,
+    ]).then((settlements) => {
+      for (const settlement of settlements) {
+        if (settlement.status === 'rejected') {
+          this.observability.emitNow(OBS_CODES.WORKFLOW_ADVANCE_FAILED, {
+            error: settlement.reason,
+            metadata: { phase: 'ownership-loss-quiescence', cause: error.code },
+          });
+        }
+      }
+    });
   }
 }

@@ -27,6 +27,7 @@ import type { ZeroAppRuntime } from '../../runtime/zero-app-runtime';
 import { createDataQueryPlugin } from '../../sync/data-query.plugin';
 import type { ReactiveDB } from '../../sync/reactive-db';
 import type { SyncPolicy } from '../../sync/sync-policy';
+import { resolveGenericDataQueryableTables } from './app-platform-tables';
 import type { AppIdentityProjectionRuntime } from './identity-projection-runtime';
 import { createResourceTenantDatabaseAccess } from './request-database-client';
 import { createRouterPlugin } from './router-plugin';
@@ -72,7 +73,7 @@ export async function mountPlatformRoutes({
   const observabilityRuntime = runtime.require(ZERO_OBSERVABILITY_RUNTIME);
 
   app.use(createDataQueryPlugin({
-    queryableTables: config.lazyTables,
+    queryableTables: resolveGenericDataQueryableTables(config.lazyTables),
     tableColumns: config.tableColumns,
     policy: syncPolicy,
     getTokenService: config.auth !== false ? getTokenService : undefined,

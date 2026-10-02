@@ -125,6 +125,20 @@ The CLI in `src/migrations/run.ts` should keep console output because it is a
 human-facing command-line tool, but it can later format events emitted by the
 same core contracts.
 
+### Workflow Events
+
+The workflow subsystem no longer logs lifecycle state directly to the console.
+It emits stable platform codes through the observability sink for startup,
+shutdown, recovery, instance lifecycle, retry scheduling, timeouts, and missing
+handlers. The graph runtime adds stable definition publish/activate/retire,
+node, choice, parallel/join, fan-out, memory, and interaction lifecycle codes.
+Background frontier failures emit `workflows.advance.failed` instead of
+becoming unhandled promise rejections. Request failures also use the shared
+safe request-failure path, while HTTP responses expose stable `WORKFLOW_*`
+domain codes without leaking internal 5xx details or private graph, memory, or
+interaction/event/delivery payloads. See
+[Durable Workflows](./workflows.md#observability-and-errors).
+
 ### Defensive Silent Denials
 
 `src/sync/sync-policy.ts` catches policy callback exceptions and normalizes
@@ -156,7 +170,6 @@ Current non-test direct console usage appears in:
 - `src/storage/storage.plugin.ts`
 - `src/sync/reactive-db.ts`
 - `src/sync/sync.plugin.ts`
-- `src/workflows/workflow.plugin.ts`
 
 There are also direct console calls inside bundled UI/demo-style components
 under `src/components/animate-ui`. Those are lower priority than platform core.
@@ -164,7 +177,7 @@ under `src/components/animate-ui`. Those are lower priority than platform core.
 The most important backend console paths to route first are:
 
 1. Plugin lifecycle logs: auth, sync, storage, rooms, notifications, scheduler,
-   workflows, app factory shutdown.
+   app factory shutdown.
 2. Runtime error catches: ReactiveDB listener errors, scheduler job errors,
    SSR render errors, hydrate errors.
 3. Startup warnings: client bundle fallback, router layout config import

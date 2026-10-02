@@ -535,7 +535,7 @@ app.listen(config.port ?? 3000);
 | State sync | Persisted reactive state isolated per authorized-scope user. |
 | Notifications | Notifications and per-user receipts when auth is enabled. |
 | Rooms/presence | Room membership and presence primitives when auth is enabled. |
-| Workflows | Workflow registry/service when auth is enabled. |
+| Workflows | Versioned durable graph engine with trusted activities, branches/joins, fan-out, memory, interactions, crash recovery, and owner-scoped live state. |
 | Scheduler | Platform jobs. |
 | AI | Server-side AI provider registry/service when enabled. |
 | Vector | zvec-backed vector store when enabled. |
@@ -723,8 +723,8 @@ Sync mode controls loading, not authorization. For auth-enabled `createApp()`:
 - notifications and receipts are target/owner scoped;
 - rooms and room members require actual membership, including for a global
   administrator;
-- workflow execution rows are starter-scoped, with the documented legacy
-  global-administrator workflow override;
+- workflow execution rows are starter-scoped, with a live manager override
+  limited to the active application/tenant service-data scope;
 - framework-owned tables reject direct Sync mutation; use their supported HTTP
   or service APIs; and
 - app-owned tables still need an explicit resource/Sync policy appropriate to
@@ -735,6 +735,15 @@ hook filter such as `useQuery()` or `useRoomData()` is only presentation logic;
 it cannot replace server read-row and mutation policy. Lower-level standalone
 `createSyncPlugin()` intentionally retains public/allow-all compatibility, so
 private deployments must configure both WebSocket auth and read/write policy.
+
+`createWorkflowSyncPolicyAdapter()` preserves its delegate's denials, row
+filters, projectors, mutation authority, and synchronous delivery validator.
+It emits one comparable read-authority fingerprint covering both the delegate
+and workflow owner/active-scope-manager decision. Advanced-RBAC
+`resolveManagementAccess` must return synchronously for browser Sync; an async
+result cannot be rechecked at the synchronous final-delivery fence and the
+filtered/projected socket fails admission closed. Manager or delegate
+revocation invalidates the composite authority before another row is sent.
 
 ## Frontend Root Provider
 
@@ -1437,29 +1446,320 @@ Hooks:
 
 ## Workflows And Scheduler
 
-Zero workflows and scheduler are in-process platform services. Use them for
-app-owned background orchestration, scheduled work, and domain workflows.
+Zero workflows and scheduler are in-process platform services. Workflows are
+enabled by default with auth unless `workflows: false`. Register trusted
+activities first and definitions second through
+`AppConfig.workflows.register(registry)`. Zero awaits that callback, waits for
+auth, preflights live activity/version references, validates and recovers
+in-flight work, and only then publishes the service or accepts requests. The
+registry itself is synchronously available during composition, but managed
+apps must not use that as a post-start registration path.
+
+One live workflow runtime owns each physical workflow database through a
+private durable heartbeat/generation lease. Overlapping startup fails
+retryably with `WORKFLOW_RUNTIME_OWNED`; clean shutdown releases the exact
+generation, abrupt takeover waits for expiry, and stale generations fail
+commits with `WORKFLOW_RUNTIME_LEASE_LOST`. The private lease row is never an
+app or Sync table. External activity side effects remain at-least-once and must
+deduplicate `ctx.idempotencyKey`.
+
+Authenticated starts preserve the exact live Guardian credential: either a
+session or an explicitly admitted user API key. In app-owned request and
+managed activity code, the scope-closed `zero.workflows.start()`/`.run()` facade
+adapts to `runAsActor()`, derives scope server-side, and enforces definition
+start access. Raw managed callers use
+`runAsActor(name, input, authContext, { version? })` or
+`runAsSystem(name, input, { principal, reason, scope }, { version? })`; raw
+compatibility `start()`/`run()` is standalone-only and fails closed in a
+managed app.
+
+Low-level framework adapters may supply the optional fifth
+`runAsActor(..., assertCurrentAuthority)` argument or use the raw captured-actor
+and mutation fence contracts to close the admission-to-writer-commit race.
+Ordinary app code should use scoped `zero.workflows` or the four-argument actor
+form; see `docs/workflows.md` for the adapter contract.
+
+For 1.3 upgrades, move workflow registration out of `onStart`/post-`listen`
+code and into `workflows.register`. A direct-composition integration may use
+`getWorkflowRegistry()` after `createApp()` returns and before `listen()`;
+post-listen registration is too late for recovery preflight.
+
+Use `registerActivity()` for new work. Activities have immutable string
+versions, optional input/output schemas, descriptive capabilities, and a
+`databaseCallable` flag. Code, database, API, agent, and future visual-editor
+definitions all compile to canonical JSON-safe `WorkflowGraphIR`; persisted
+graphs never contain closures or JavaScript source. Database-authored graphs
+can invoke only activity versions explicitly opted in with
+`databaseCallable: true`.
+
+The code DSL exports `flow`, `step`, `choose`, `when`, `otherwise`, `parallel`,
+`each`, `waitFor`, `requestAndWait`, and the safe serializable `expr` builders.
+Choices select in declaration order and persist exactly one decision. Parallel
+branches execute concurrently and converge at an explicit all-branches join.
+`each` snapshots its input array once, uses server-private stable item keys, enforces bounded
+concurrency, and preserves ordered results with configurable invalid/error
+policies. Legacy sequential `steps` definitions and `registerHandler()` remain
+supported.
+
+`@zero/framework/workflows` also exports the canonical IR/types and limits,
+activity catalog contracts, graph compiler/validator helpers, and durable
+schema snapshot helpers. Publication checks that named output references exist
+and dominate their consumer. Persisted TypeBox schemas preserve
+`x-zero-typebox-kind`; executable transforms and non-data schema members are
+rejected. Definition and draft persistence is capped at 2 MiB, with invalid or
+oversized content returning `422 WORKFLOW_DEFINITION_GRAPH_INVALID`.
+
+Graph activity `ctx.input` is the resolved predecessor/expression value and
+`ctx.workflowInput` is the original input. The runtime always supplies
+`ctx.signal`, a per-attempt `ctx.attemptId`, a logical-node/item
+`ctx.idempotencyKey` stable across retries/recovery, and a private
+ReactiveDB-backed `ctx.memory`. Memory reads use an attempt snapshot; writes are
+staged and commit atomically only with successful node completion. Failed,
+timed-out, paused, cancelled, or stale attempts discard the overlay. Each
+fan-out item gets an isolated memory namespace.
+
+Managed activity contexts also expose a scope-closed `ctx.zero` facade. Its
+mutable services reassert live run/attempt authority at their commit edge. All
+observability writer methods assert immediately before sink emission, so stale
+captured facades cannot publish revoked user/tenant-attributed telemetry.
+
+`waitFor` uses durable audit rows plus a private event inbox. Early events are
+buffered, claimed once, and retained through restart; historical audit-only
+rows are not replayed. `sendEvent()` returns `true` only if that new event was
+claimed before return. A paused or nonmatching event is buffered and returns
+`false`. Event payloads are retained server-side for execution but
+redacted from HTTP and Sync projections.
+
+Runtime JSON values are limited to 1 MiB each. Run/step/fan-out values, scratch
+memory, interaction policy/schema/request data, and retained submission/accepted
+values share a 32 MiB aggregate budget per run. One interaction retains at
+most 1,024 actor-and-payload-bound submissions or 16 MiB of submitted plus
+accepted data; an exact existing ID/actor/payload replay remains available at
+the cap. Event names are at most 200 characters; the per-run unconsumed inbox
+is capped at 1,000 events or 16 MiB, and retained deliverable history at 10,000
+events or 64 MiB.
+
+Runtime JSON is strict data, not lossy `JSON.stringify`: reject non-finite
+numbers, nested `undefined`, sparse arrays, cycles, accessors, class instances,
+and other values that would be coerced or dropped. Error boundaries are
+deliberate: authored graph syntax is `422 WORKFLOW_GRAPH_INVALID`; an immutable
+stored graph that fails semantic validation is
+`500 WORKFLOW_DEFINITION_GRAPH_INVALID`; corrupt durable runtime state is
+`500 WORKFLOW_STATE_INVALID`; transition/runtime-value exhaustion is
+`500 WORKFLOW_RUNTIME_LIMIT_EXCEEDED`; and invalid dynamic `each` inputs/keys
+are `422 WORKFLOW_ACTIVITY_INPUT_INVALID`. Authority/scope failures use
+`WORKFLOW_AUTHORITY_REQUIRED`, `WORKFLOW_AUTHORITY_CHANGED`,
+`WORKFLOW_SCOPE_REQUIRED`, and `WORKFLOW_SCOPE_INVALID`; changed authority is a
+non-retryable 409 commit fence. Keep safe 4xx messages. For recognized 5xx
+`WorkflowError`s, preserve the stable code and applicable `retryable: true`
+marker but return only a generic safe message; unexpected 5xx failures use
+`WORKFLOW_INTERNAL_ERROR`. Send the original cause to the app-local
+request-failure observability sink.
+
+`requestAndWait` persists a channel-neutral interaction before optional
+delivery activities send email, SMS, UI notifications, webhooks, or agent
+tasks. The response can arrive through the authenticated response endpoint or
+the named workflow event. Submission IDs are idempotent, response schemas and
+optional validator activities run server-side, one valid concurrent response
+wins, and normalized accepted output feeds downstream nodes. Private prompts,
+policies, schemas, payloads, and accepted values never enter Sync.
+The default responder is the workflow starter;
+`workflows.interactionAuthority` can install one fail-closed Guardian/app
+decision callback for both direct and event-delivered responses.
+
+The policy is fenced through the accepted-response commit. Zero reevaluates a
+synchronous policy inside the final ReactiveDB writer transaction. An
+asynchronous allow must return a `WorkflowInteractionAuthorityLease` with a
+synchronous `assertCurrent(expectedRevision, context)` callback; a bare async
+allow or asynchronous commit assertion fails closed with
+`WORKFLOW_CONFIG_INVALID`. Use a local monotonic policy revision or another
+synchronous current-state check in that assertion, never network I/O.
+
+Authenticated HTTP event responses carry a secret-free authority reference
+MAC-sealed to the complete canonical command/private envelope: event, tenant,
+instance, name, exact payload JSON, sender, timestamp, actor snapshot, and
+authority. Those fields and the seal are immutable. Consumption revalidates the
+exact Guardian credential/account/scope/membership/RBAC identity and repeats
+the fence before accepted-response commit. Callback roles come from that live-
+validated authority; custom claims remain send-time app metadata, so reload
+mutable app-specific state in `interactionAuthority` and honor its
+`AbortSignal`. `sendEventAsSystem()` is the explicit scope-checked trusted
+system path; legacy/unsealed events cannot answer an interaction.
+
+Private events persist `authority_kind` as actor, system, or legacy-untrusted.
+Actor JSON plus authority JSON/MAC bytes participate in event capacity.
+Interaction decision and claimed-event consumption are one ReactiveDB commit;
+recovery reconciles a finalized event response with a crash-left claim.
+Ordinary `waitFor` may consume legacy-untrusted rows for compatibility, but
+that never grants interaction-responder identity.
+An actor/system event with an invalid seal is never downgraded to that
+compatibility path: ordinary graph and legacy waits fail terminally before
+handler execution, while interaction responses consume it as a safe
+rejection.
+
+Event responses persist a trusted private `origin = 'event'` and exact event
+ID. Cleanup never infers that origin from public strings. External response
+calls cannot use `channel: 'event'` or a submission ID beginning with `event:`;
+both are reserved for the private bridge. Released response rows upgrade as
+external without guessing from their legacy channel/ID.
+
+Direct interaction submissions are accepted only while the graph is running.
+While paused they fail before reservation with retryable HTTP `409`
+`WORKFLOW_DRAINING`; keep the submission ID and retry after resume. Named
+authenticated events may remain durably buffered during the pause.
+
+`retries` is a total-attempt budget. `timeoutMs` is one logical-node deadline
+spanning event/interaction wait, activity execution, retry backoff, and later
+attempts. Pause fences the physical attempt and freezes retry, deadline, and
+interaction-expiry time. Resume never overlaps attempts: while abort-ignoring
+physical work is still draining it fails fast with retryable HTTP `409`
+`WORKFLOW_DRAINING`; retry after the old invocation settles. Cancellation
+closes interactions and skips/cancels unfinished nodes/items. Completed,
+failed, and cancelled instances are immutable.
+
+The timeout boundary is inclusive. Timeout wins when a retry becomes due at
+the exact same instant, and it also wins over a pause requested at an already
+expired deadline.
+
+Every graph run pins an immutable definition version, canonical graph JSON,
+fingerprint, and exact activity versions. Code definitions publish/deduplicate
+through the same append-only history as database definitions. Active-scope
+manager routes under `/workflows/admin/definitions` inspect the activity catalog
+and specific editable content, manage revision-fenced drafts, publish immutable
+versions, activate a default, and retire versions. In single/application scope
+the manager includes the established platform administrator. In multi-tenant
+scope it is the active tenant owner, `allPermissions`, or `workflows:manage`;
+the `/admin/` prefix grants no cross-tenant authority. Definition identity is
+`(scope_type, scope_id, name)`: code definitions are application-scoped, and a
+tenant database definition shadows a same-name code definition only inside that
+tenant. Application database definitions remain outside tenant management.
+Active-version changes can use compare fences. Retired history remains
+available to recover already-pinned runs. Publishing a database-authored draft
+requires its current positive `expectedRevision`; Zero recompiles it and
+rechecks that exact revision plus canonical fingerprint in the same writer
+transaction that appends the immutable version. A concurrent editor save fails
+publication with HTTP `409` `WORKFLOW_DRAFT_CONFLICT` rather than publishing
+stale content. Draft ids are server-owned. Updating an existing draft requires
+both its returned `draftId` and current positive `expectedRevision`; deletion
+requires that revision in the query. A missing fence is HTTP `422`
+`WORKFLOW_REQUEST_INVALID`, while a stale fence is HTTP `409`
+`WORKFLOW_DRAFT_CONFLICT`.
+
+Crash recovery is at-least-once for external systems. Use
+`ctx.idempotencyKey` to deduplicate email, payments, webhooks, storage writes,
+and other external effects. Do not use `attemptId` for that purpose.
+Before service publication or recovered dispatch, recovery preflights sealed
+authority for the complete running/paused set. Invalid runs fail and drain their
+event inbox atomically. Every terminal path marks claimed events
+`consumed:<eventId>`, unclaimed events `discarded:<eventId>`, zeros queued
+usage, supersedes crash-left external processing submissions, and reconciles
+trusted event submissions by their persisted event ID while retaining public
+event audit rows.
 
 Workflow definitions are authenticated shared metadata over the purpose-built
 HTTP API, not generic Sync rows. Normal instance lists and instance/step/event
 reads are starter-scoped; send/cancel/pause/resume use the same owner check,
-with the documented legacy global-administrator workflow authority. Missing and
-inaccessible instance IDs both return 404.
+with a live manager override limited to the active application/tenant
+service-data scope. Missing and inaccessible instance IDs both return 404.
 
 Hooks:
 
 - `useWorkflowRun`
 - `useWorkflow`
+- `useWorkflowTopology`
 - `useWorkflowList`
+- `useWorkflowActions`
+
+Hooks read owner-scoped ReactiveDB Sync and do not poll. `useWorkflow()` returns
+`steps`, all `activeSteps`, ordered payload-redacted `events`, safe
+`interactions`, `currentStep`, lifecycle flags,
+`isWaitingForInput`, `isRetrying`, and `isRunningInParallel`.
+`useWorkflowActions()` includes version-pinned start and idempotent
+`submitResponse` in addition to lifecycle/event actions. `submitResponse`
+returns safe outcome/interaction metadata plus optional public rejection code
+and message, never the submitted or normalized response value. Public step fields
+carry node/branch/parent/item-index identities, so a UI can draw and animate
+graph,
+parallel, fan-out, retry, and wait progress in real time. Parallel means
+multiple active root nodes or multiple active items under one `each` parent,
+not a wait parent plus its delivery child. `useWorkflowRun().progress` keeps
+stable root-node counters and reports fan-out and delivery counters separately.
+`useWorkflowTopology(instanceId)` performs one authenticated, authorization-
+fenced load of the immutable payload-free presentation topology pinned to the
+run. Join its node paths to live `step.node_path` values. The response excludes
+activities, expressions, schemas, event routing, interaction requests,
+retry/timeout configuration, fan-out source/key selectors, and payloads.
+The shared authorization-data revision also invalidates cached and in-flight
+topology when live Sync reports an auth-context, table-access, or read-authority
+change inside the same account/tenant scope. Official hooks stay masked until
+replacement authorization validates; app caches must key on
+`useAuthorizationScopeBoundary().key` for the same guarantee.
+
+Normal users see only runs they started; a live manager sees all runs only
+inside the active application/tenant service-data scope. A global identity role
+alone does not grant peer-tenant visibility. Definition
+`access.start`/`access.inspect` may allow any authenticated user, a manager of
+that active scope, or named app roles; denied definitions look missing over
+HTTP. `access.inspect` gates catalog/discovery rather than owned-run monitoring: a
+starter still receives sanitized steps, events, interactions, and presentation
+topology for their own pinned run. Workflow definitions, canonical graph IR,
+scratch memory, interaction payloads, and underscore-prefixed coordination
+tables are excluded from Sync. Browser instances omit private snapshots and
+the storage-row key `definition_version_id`; public `definition_id`, numeric
+`definition_version`, and `graph_fingerprint` identify the pinned immutable
+topology. All workflow instance/step input, output, and raw error values are
+cleared; steps omit executable `wait_event` and payload-derived fan-out keys,
+and event rows clear payloads. Public workflow tables remain read-only through
+Sync. Ownership and child-to-instance links are immutable. Legacy 1.3 runs
+retain their execution semantics but use the same metadata-only browser
+projection.
+
+Workflow names, node IDs/paths/labels, event names, branch keys, fan-out
+indexes, and interaction safe labels are browser-visible operational metadata.
+Keep them stable and non-sensitive; use opaque record IDs rather than secrets, PHI,
+credentials, prompt text, or other private values.
+
+Trusted server code can inspect complete execution state through
+`WorkflowService`. When a browser needs a result, expose a narrow app endpoint
+with explicit authorization and a field-level response contract; never add raw
+workflow execution columns back to general Sync.
 
 Server services:
 
 - `zero.workflows`
 - `zero.scheduler`
 
-Future extension points include workflow-trigger webhooks and AI tools that
-can invoke workflows, but do not invent those unless they exist in the current
-framework.
+Browser actions use the generated Eden surface under `client.api.workflows`.
+Use public `unwrap()` and catch public `ApiError` from `@zero/framework/react`
+to retain HTTP status, stable code, safe message, and response body.
+Graph retries and deadlines use exact in-process timers. The plugin also owns
+minute scheduler jobs as persisted-state safety sweeps and restart fallback;
+those jobs do not make React hooks poll. Workflow failures use stable
+`WORKFLOW_*` error codes and `workflows.*` observability codes covering
+definitions, nodes, branches, fan-out, memory, and interactions. See
+`docs/workflows.md` for the complete DSL, IR, trust, version, route, service,
+hook, privacy, storage, migration, and error contracts.
+
+Managed workflow observability belongs to the app-local runtime. State-derived
+lifecycle events use the owning ReactiveDB's `afterCommit` boundary: they remain
+invisible before commit, rollback emits nothing, and the winning commit emits
+once. Operational failures which do not describe committed state emit
+immediately. Only standalone composition without an app runtime uses the
+process-global compatibility sink.
+
+Do not conflate raw `WorkflowService` with the request-scoped
+`zero.workflows` facade. The scoped facade binds actor/scope and enforces
+definition access. Raw `runAsActor()` also enforces definition access; explicit
+system and standalone compatibility starts bypass it. A raw managed service
+rejects compatibility `start()`/`run()` with `WORKFLOW_AUTHORITY_REQUIRED`.
+Managed apps let the plugin own initialization-only recovery and scheduler poll
+entry points.
+
+Do not expose graph JSON, `ctx.memory`, responder policies, or interaction
+payloads through app Sync tables. Build an operator/visual editor by combining
+an authorized server/admin definition surface with the safe live runtime
+projection. Zero provides the projection and React hooks, not a bundled generic
+graph canvas.
 
 ## AI
 
@@ -1686,7 +1986,7 @@ Platform hooks:
 | Resources | `useResourceClient`, `useResourceList`, `useResourceRecord`, `useResourceActions` |
 | Storage | `useUpload`, `useUploadQueue`, `useUploadDropzone`, `useStorageFile`, `useStorageBrowser`, `useStorageDrives`, `useDriveCapabilities`, `useStoragePermissions`, `useDriveQuota` |
 | Rooms/presence | `usePresence`, `usePresenceList`, `useTypingIndicator`, `useEphemeral`, `useEphemeralTopic` |
-| Workflows/notifications | `useWorkflowRun`, `useWorkflow`, `useWorkflowList`, `useNotifications`, `useUnreadCount` |
+| Workflows/notifications | `useWorkflowRun`, `useWorkflow`, `useWorkflowTopology`, `useWorkflowList`, `useNotifications`, `useUnreadCount` |
 | State and health | `useServerState`, `usePreference`, `useFormDraft`, `useConnectionHealth`, `useMutation` |
 
 Zero-owned browser hooks fence cached work at the current account/tenant
@@ -2364,8 +2664,10 @@ reference docs confirm the behavior is implemented.
   pre-observability baseline; use the current Observability guide for runtime
   behavior.
 - [Durable Workflow System](docs/workflows.md): workflow service, workflow
-  registry, scheduled/background work concepts, app-facing usage, and future
-  workflow expansion.
+  registry, code DSL and canonical IR,
+  trusted versioned activities, immutable code/database definitions and drafts,
+  choices/parallel/fan-out, memory, event and human waits, recovery,
+  authorization/privacy, real-time hooks, APIs, migration, and observability.
 - [Webhooks Plan](docs/webhooks.md): planned inbound/outbound webhook system,
   signatures, workflow/table triggers, webhook delivery, and future API shape.
 
