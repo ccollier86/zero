@@ -2,11 +2,21 @@
 
 import { useCallback, useSyncExternalStore } from 'react';
 import type { AuthClient } from './auth-client';
-import type { AuthAuthorizationStatus } from './auth-authorization-types';
 import type { AuthSessionTransitionState } from './auth-types';
 import type { Client, InternalClient } from './sdk';
 import type { AuthorizationDataBoundarySource } from './authorization-data-boundary';
 import { useClientMaybe } from './client-context';
+import {
+  isAuthorizationDataReady,
+  isAuthorizationScopeReady,
+  isAuthorizationScopeStable,
+} from './authorization-scope-readiness';
+
+export {
+  isAuthorizationDataReady,
+  isAuthorizationScopeReady,
+  isAuthorizationScopeStable,
+} from './authorization-scope-readiness';
 
 const NOOP_UNSUBSCRIBE = () => {};
 const SSR_BOUNDARY_KEY = JSON.stringify(['ssr']);
@@ -25,36 +35,6 @@ export interface AuthorizationScopeBoundary {
   readonly phase: AuthSessionTransitionState['phase'];
 }
 
-/** A committed or recoverable scope may safely back UI reads. */
-export function isAuthorizationScopeStable(
-  transition: AuthSessionTransitionState,
-): boolean {
-  return transition.phase === 'idle' || transition.phase === 'recovery-required';
-}
-
-/** True when cached application state may be rendered for the current scope. */
-export function isAuthorizationScopeReady(
-  transition: AuthSessionTransitionState,
-  isRestoring: boolean,
-): boolean {
-  // Ordinary login/MFA form submission uses isLoading but does not make the
-  // current scope unsafe. Initial credential restoration and explicit scope
-  // transitions do, and remain masked by this boundary.
-  return isAuthorizationScopeStable(transition) && !isRestoring;
-}
-
-/**
- * A server-declared read-authority purge is unreadable until a replacement
- * authorization projection has been validated for the same browser session.
- * Revision zero preserves initial hydration while that optional UI hint loads.
- */
-export function isAuthorizationDataReady(
-  revision: number,
-  status: AuthAuthorizationStatus | null,
-): boolean {
-  return revision === 0 || status === 'ready' || status === 'refreshing';
-}
-
 /**
  * Shared browser cache boundary for every Zero-owned hook.
  *
@@ -71,9 +51,14 @@ export function readAuthorizationScopeBoundaryKey(
   if (!auth) return JSON.stringify(['auth-disabled', dataRevision]);
   const transition = auth.sessionTransition;
   const authorizationStatus = auth.authorizationState?.status ?? null;
-  const dataValidation = dataRevision === 0
+  const dataReady = isAuthorizationDataReady(
+    dataRevision,
+    authorizationStatus,
+    auth.isAuthenticated,
+  );
+  const dataValidation = dataRevision === 0 && dataReady
     ? 'initial'
-    : isAuthorizationDataReady(dataRevision, authorizationStatus)
+    : dataReady
       ? 'validated'
       : 'unvalidated';
   return JSON.stringify([
@@ -145,7 +130,11 @@ export function useAuthorizationScopeBoundary(
   const dataRevision = dataBoundary?.revision ?? 0;
   const ready = auth
     ? isAuthorizationScopeReady(auth.sessionTransition, auth.isRestoring)
-      && isAuthorizationDataReady(dataRevision, auth.authorizationState.status)
+      && isAuthorizationDataReady(
+        dataRevision,
+        auth.authorizationState.status,
+        auth.isAuthenticated,
+      )
     : true;
 
   return {

@@ -260,6 +260,11 @@ the account and tenant IDs are unchanged. Zero cancels scoped HTTP work, clears
 the cached authorization hint, purges Sync rows, and masks official hooks until
 replacement authority validates. Zero-owned hooks already use this boundary
 internally. See the linked browser-authorization guide for a complete example.
+Anonymous cache resets can also advance `dataRevision`. After stored-session
+restoration and explicit transitions settle, `ready` remains true for the
+signed-out login/registration/bootstrap scope because no authenticated
+authorization projection is pending. Authenticated scopes still become
+unreadable after a purge until replacement authorization validates.
 The public
 `isAuthorizationScopeCallbackCurrent(currentKey, ready, capturedKey)` predicate
 provides the same pure late-callback check for app-owned async adapters.

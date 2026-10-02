@@ -1590,7 +1590,11 @@ The SDK keeps the user logged in across normal access-token expiry:
 
 When auth is enabled, `AppProvider` watches auth state on the client. During
 persisted-session restoration it withholds the login subtree, preventing a
-login-form flash. If the user becomes unauthenticated on a protected route, it
+login-form flash. After restoration settles, a fully signed-out scope keeps
+public login and first-administrator bootstrap UI mounted even if an anonymous
+Sync reset has advanced the local authorization-data revision. Authenticated
+replacement data remains masked until its live authorization projection is
+validated. If the user becomes unauthenticated on a protected route, Zero
 removes the protected subtree and redirects to `loginPath` with exactly one
 validated, URL-encoded `redirect` return path. The client can retain pathname,
 query, and fragment. A direct server response retains pathname and query only,

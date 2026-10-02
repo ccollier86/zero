@@ -4,6 +4,15 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+### Fixed
+
+- Fixed a Guardian browser deadlock where an anonymous Sync reset advanced the
+  authorization data revision and permanently hid public login or first-admin
+  bootstrap UI behind “Restoring your secure session…”. A settled signed-out
+  scope now remains readable after its cache is purged, while authenticated
+  replacement data, stored-session restoration, logout, revocation, and scope
+  transitions retain their fail-closed boundary.
+
 ### Added
 
 - Added the tokenized, display-only `SecretField` component for masked API

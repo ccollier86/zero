@@ -17,6 +17,7 @@ function authState(overrides: Partial<{
   userId: string | null;
   tenantId: string | null;
   isLoading: boolean;
+  isAuthenticated: boolean;
   phase: 'idle' | 'preparing' | 'committed' | 'reconciling' | 'recovery-required';
   revision: number;
   authorizationStatus: AuthAuthorizationStatus;
@@ -28,6 +29,7 @@ function authState(overrides: Partial<{
     user: userId ? { userId } : null,
     activeTenant: tenantId ? { tenantId } : null,
     isLoading: overrides.isLoading ?? false,
+    isAuthenticated: overrides.isAuthenticated ?? Boolean(userId),
     authorizationState: {
       status: overrides.authorizationStatus ?? 'ready',
       snapshot: null,
@@ -124,13 +126,105 @@ describe('authorization scope hook boundary', () => {
     expect(isAuthorizationScopeReady(preparing, false)).toBe(false);
   });
 
-  test('masks a same-scope authorization purge until replacement grants are validated', () => {
-    expect(isAuthorizationDataReady(0, 'loading')).toBe(true);
-    expect(isAuthorizationDataReady(1, 'loading')).toBe(false);
-    expect(isAuthorizationDataReady(1, 'error')).toBe(false);
-    expect(isAuthorizationDataReady(1, 'revoked')).toBe(false);
-    expect(isAuthorizationDataReady(1, 'ready')).toBe(true);
-    expect(isAuthorizationDataReady(1, 'refreshing')).toBe(true);
+  test('masks an authenticated authorization purge until replacement grants are validated', () => {
+    expect(isAuthorizationDataReady(0, 'loading', true)).toBe(true);
+    expect(isAuthorizationDataReady(0, 'error', true)).toBe(true);
+    expect(isAuthorizationDataReady(0, 'revoked', true)).toBe(false);
+    expect(isAuthorizationDataReady(1, 'disabled', true)).toBe(false);
+    expect(isAuthorizationDataReady(1, 'unauthenticated', true)).toBe(false);
+    expect(isAuthorizationDataReady(1, 'loading', true)).toBe(false);
+    expect(isAuthorizationDataReady(1, 'error', true)).toBe(false);
+    expect(isAuthorizationDataReady(1, 'revoked', true)).toBe(false);
+    expect(isAuthorizationDataReady(1, 'ready', true)).toBe(true);
+    expect(isAuthorizationDataReady(1, 'refreshing', true)).toBe(true);
+  });
+
+  test('keeps settled signed-out auth surfaces readable after an anonymous cache purge', () => {
+    expect(isAuthorizationDataReady(0, 'unauthenticated', false)).toBe(true);
+    expect(isAuthorizationDataReady(0, 'loading', false)).toBe(true);
+    expect(isAuthorizationDataReady(0, 'revoked', false)).toBe(true);
+    expect(isAuthorizationDataReady(0, 'ready', false)).toBe(false);
+    expect(isAuthorizationDataReady(1, 'unauthenticated', false)).toBe(true);
+    expect(isAuthorizationDataReady(1, 'loading', false)).toBe(true);
+    expect(isAuthorizationDataReady(1, 'revoked', false)).toBe(true);
+    expect(isAuthorizationDataReady(1, 'disabled', false)).toBe(false);
+    expect(isAuthorizationDataReady(1, 'error', false)).toBe(false);
+    expect(isAuthorizationDataReady(1, 'ready', false)).toBe(false);
+    expect(isAuthorizationDataReady(1, 'refreshing', false)).toBe(false);
+    expect(isAuthorizationDataReady(17, 'unauthenticated', false)).toBe(true);
+    expect(isAuthorizationDataReady(17, 'loading', true)).toBe(false);
+
+    const anonymous = authState({
+      authorizationScopeKey: null,
+      userId: null,
+      tenantId: null,
+      isAuthenticated: false,
+      authorizationStatus: 'unauthenticated',
+    });
+    const key = readAuthorizationScopeBoundaryKey(anonymous, 1);
+    expect(JSON.parse(key).at(-1)).toBe('validated');
+  });
+
+  test('validates every auth and authorization-status combination at every revision class', () => {
+    const statuses = [
+      null,
+      'disabled',
+      'unauthenticated',
+      'loading',
+      'refreshing',
+      'ready',
+      'error',
+      'revoked',
+    ] as const;
+    const readable = (
+      revision: number,
+      authenticated: boolean,
+    ) => statuses.filter((status) => (
+      isAuthorizationDataReady(revision, status, authenticated)
+    ));
+
+    expect(readable(0, false)).toEqual(['unauthenticated', 'loading', 'revoked']);
+    expect(readable(1, false)).toEqual(['unauthenticated', 'loading', 'revoked']);
+    expect(readable(17, false)).toEqual(['unauthenticated', 'loading', 'revoked']);
+    expect(readable(0, true)).toEqual(['loading', 'refreshing', 'ready', 'error']);
+    expect(readable(1, true)).toEqual(['refreshing', 'ready']);
+    expect(readable(17, true)).toEqual(['refreshing', 'ready']);
+  });
+
+  test('changes the revision-zero boundary key when status compatibility changes', () => {
+    const authenticatedReady = readAuthorizationScopeBoundaryKey(
+      authState({ authorizationStatus: 'ready', isAuthenticated: true }),
+      0,
+    );
+    const authenticatedRevoked = readAuthorizationScopeBoundaryKey(
+      authState({ authorizationStatus: 'revoked', isAuthenticated: true }),
+      0,
+    );
+    const signedOutReady = readAuthorizationScopeBoundaryKey(
+      authState({
+        authorizationStatus: 'ready',
+        isAuthenticated: false,
+        userId: null,
+        tenantId: null,
+      }),
+      0,
+    );
+    const signedOut = readAuthorizationScopeBoundaryKey(
+      authState({
+        authorizationStatus: 'unauthenticated',
+        isAuthenticated: false,
+        userId: null,
+        tenantId: null,
+      }),
+      0,
+    );
+
+    expect(JSON.parse(authenticatedReady).at(-1)).toBe('initial');
+    expect(JSON.parse(authenticatedRevoked).at(-1)).toBe('unvalidated');
+    expect(authenticatedRevoked).not.toBe(authenticatedReady);
+    expect(JSON.parse(signedOutReady).at(-1)).toBe('unvalidated');
+    expect(JSON.parse(signedOut).at(-1)).toBe('initial');
+    expect(signedOut).not.toBe(signedOutReady);
   });
 
   test('invalidates async work at every boundary change', () => {

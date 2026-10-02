@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { AUTH_DISABLED_MESSAGE } from './auth-client';
 import { createClient, getClient, type InternalClient } from './sdk';
 import { SYNC_ACK_ERROR_CODES } from '../../sync/types';
+import { isAuthorizationDataReady } from './authorization-scope-readiness';
 
 const tables = {
   todos: { _pk: 'id', id: 'text', title: 'text' },
@@ -121,6 +122,31 @@ afterEach(() => {
 });
 
 describe('createClient auth configuration', () => {
+  test('keeps a fresh anonymous bootstrap surface readable after Sync resets its cache', async () => {
+    const client = createClient({
+      url: 'http://localhost:3000',
+      tables,
+      auth: true,
+      autoConnect: false,
+    }) as InternalClient;
+    await flushMicrotasks();
+
+    expect(client.isAuthenticated).toBe(false);
+    expect(client.auth?.isRestoring).toBe(false);
+    expect(client.authorizationState.status).toBe('unauthenticated');
+    expect(client._authorizationDataBoundary.revision).toBe(0);
+
+    client._syncClient.reset();
+
+    expect(client._authorizationDataBoundary.revision).toBe(1);
+    expect(client.authorizationState.status).toBe('unauthenticated');
+    expect(isAuthorizationDataReady(
+      client._authorizationDataBoundary.revision,
+      client.authorizationState.status,
+      client.isAuthenticated,
+    )).toBe(true);
+  });
+
   test('expands the app table plane catalog with SDK-owned system tables', async () => {
     const client = createClient({
       url: 'http://localhost:3000',

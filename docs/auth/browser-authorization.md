@@ -217,6 +217,21 @@ authorization hint, and purges local Sync rows before reconnecting. The key
 changes again when replacement authorization becomes readable; late results
 captured under either older key remain rejected.
 
+An anonymous Sync reset can advance `dataRevision` too. Once stored-session
+restoration and any explicit scope transition have settled, a signed-out scope
+keeps public login, registration, recovery, and first-administrator bootstrap
+UI readable because it has no authenticated authorization projection to
+replace. Ordinary login or registration submission also keeps that anonymous
+surface mounted while it reports `loading`. This exception never exposes a
+stale authenticated scope: authenticated data remains masked after a purge
+until its replacement authorization is `ready` or safely `refreshing`, and
+logout/revocation remains masked until the authenticated session is cleared.
+Before the first purge, an authenticated `loading` or transient `error` state
+does not globally mask the app: the authorization snapshot is only a UI hint,
+while server loaders and Sync remain server-authorized and browser permission
+gates fail closed. An authenticated `revoked` state is never readable,
+including at the initial revision.
+
 Use `key` as the app-cache partition and late-callback fence. Hide or freeze
 scope-sensitive UI while `ready` is false. `scopeKey` is the opaque identity of
 the committed authorization family and scope; it deliberately remains stable
