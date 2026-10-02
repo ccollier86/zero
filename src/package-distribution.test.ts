@@ -115,6 +115,7 @@ describe('package distribution', () => {
       expect(contents).toContain('package/README.md');
       expect(contents).toContain('package/llms.txt');
       expect(contents).toContain('package/THIRD_PARTY_NOTICES.md');
+      expect(contents).toContain('package/src/components/secret-field/secret-field.tsx');
       expect(contents).toContain('package/src/components/streaming-text/streaming-text.tsx');
       expect(contents).toContain('package/docs/start-here.md');
       expect(contents).toContain('package/docs/auth/native-app-auth.md');

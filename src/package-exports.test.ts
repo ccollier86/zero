@@ -848,8 +848,12 @@ export const serverSymbols = {
 `;
 
 const clientSmokeSource = `
-import { StreamingText as StreamingTextRoot } from '@zero/framework';
+import {
+  SecretField as SecretFieldRoot,
+  StreamingText as StreamingTextRoot,
+} from '@zero/framework';
 import type {
+  SecretFieldProps as SecretFieldPropsRoot,
   StreamSource as StreamSourceRoot,
   StreamingTextProps as StreamingTextPropsRoot,
   StreamingTextStatus as StreamingTextStatusRoot,
@@ -933,6 +937,10 @@ import { ResizableNavbar as ResizableNavbarSubpath } from '@zero/framework/compo
 import { QRCode as QRCodeSubpath } from '@zero/framework/components/qr-code';
 import { RadialMenu as RadialMenuSubpath } from '@zero/framework/components/radial-menu';
 import { Sidebar as SidebarSubpath } from '@zero/framework/components/sidebar';
+import { SecretField as SecretFieldSubpath } from '@zero/framework/components/secret-field';
+import type {
+  SecretFieldProps as SecretFieldPropsSubpath,
+} from '@zero/framework/components/secret-field';
 import { StorageManagement } from '@zero/framework/components/storage';
 import { TextGenerateEffect as TextGenerateEffectSubpath } from '@zero/framework/components/text-effects';
 import { Tooltip as TooltipSubpath } from '@zero/framework/components/tooltip';
@@ -1048,6 +1056,7 @@ import {
   projectKanbanMove,
   StickToBottom,
   SelfApiKeyManagement,
+  SecretField,
   StreamingText,
   TextGenerateEffect,
   ThemeTogglerButton,
@@ -1151,6 +1160,7 @@ import type {
   IssuedAuthApiKey,
 	  SyncMutationRejection,
   LoginFormProps,
+  SecretFieldProps,
   StreamSource,
   StreamingTextProps,
   StreamingTextStatus,
@@ -1183,6 +1193,12 @@ import type {
 
 	const row: Row = {};
 	const toasterProps: ToasterProps = {};
+	type SecretFieldPublicTypes = readonly [
+	  SecretFieldPropsRoot,
+	  SecretFieldProps,
+	  SecretFieldPropsSubpath,
+	];
+	const secretFieldPublicTypes = null as unknown as SecretFieldPublicTypes;
 	type StreamingTextPublicTypes = readonly [
 	  StreamSourceRoot,
 	  StreamingTextPropsRoot,
@@ -1466,6 +1482,10 @@ export const clientSymbols = {
   SidebarSubpath,
   SelfApiKeyManagement,
   SelfApiKeyManagementSubpath,
+  SecretFieldRoot,
+  SecretField,
+  SecretFieldSubpath,
+  secretFieldPublicTypes,
   StickToBottom,
   StorageManagement,
   StreamingTextRoot,

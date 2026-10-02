@@ -53,6 +53,7 @@ src/
     ui/                    <- Core UI primitives (35 components)
     forms/                 <- AutoForm, FieldRenderer, Wizard
     data-table/            <- DataTable + related components
+    secret-field/          <- Display-only masked/revealable secret and clipboard boundary
     auth/                  <- Auth UI blocks (LoginForm, reset/setup forms, gates, etc.)
     master-detail/         <- MasterDetailView / MasterDetailPage
     animate-ui/            <- 174 animated components (Motion + radix)
@@ -287,6 +288,7 @@ control surfaces.
 | `src/frontend/client/platform-administration-hooks.ts` | Protected Administration Organization member/invitation state and mutations |
 | `src/frontend/client/platform-tenant-directory-hooks.ts` | Customer-organization directory/lifecycle plus revision-fenced cross-workspace member/role/ownership administration |
 | `src/components/auth/authorization-gates.tsx` | Presentation-only permission, tenant, and platform-admin gates; server remains authoritative |
+| `src/components/auth/api-key-secret-reveal.tsx` | Guardian one-time issue/rotation warning using a masked `SecretField` and explicit in-memory dismissal |
 | `src/components/admin/users/adaptive-user-management.tsx` | Mode-adaptive account, application-access, tenant-member, and platform-workspace control plane |
 | `src/components/admin/users/single-advanced-user-management.tsx` | Account administration with application RBAC composed into the established user manager |
 | `src/components/auth/tenant-member-management*.tsx` | Compact active-tenant people, membership, role, ownership, and invitation workflows |
@@ -830,6 +832,8 @@ safety sweep and restart fallback.
 | `src/components/text-effects/typewriter-effect.tsx` | Public segmented typewriter text effect |
 | `src/components/text-effects/flip-words.tsx` | Public rotating inline word effect |
 | `src/components/streaming-text/streaming-text.tsx` | Accessible static, replayed, and live string-stream renderer for AI/agent output |
+| `src/components/secret-field/secret-field.tsx` | Tokenized display-only secret with bounded masking, reveal policy, full-value copy, and accessible status |
+| `src/components/secret-field/clipboard.ts` | Narrow browser Clipboard API boundary that never returns or reports the copied value |
 | `src/components/faq/faq.tsx` | Public FAQ accordion with optional generated answer text |
 | `src/components/expandable-card/expandable-card.tsx` | Public shared-layout expandable card gallery |
 | `src/components/bento-grid/bento-grid.tsx` | Public bento grid layout, item, and skeleton components |
@@ -903,7 +907,7 @@ QRCode for token-aware authenticator setup and app-owned QR flows.
 | `src/frontend/router/matcher.ts` | URL pattern matching |
 | `src/frontend/router/renderer.ts` | React SSR renderer |
 
-**Main barrel export:** `src/frontend/index.ts` (`@zero/framework/react`) -- exports everything apps need: `defineTable`, `field`, `defineSchema`, `schema`, `InferRow`, `useCollection`, `useLazyCollection`, `CrudPage`, `AppProvider`, hooks, components. `@zero/framework/server` is only for `app/server.ts`.
+**Main barrel export:** `src/frontend/index.ts` (`@zero/framework/react`) -- exports everything apps need: `defineTable`, `field`, `defineSchema`, `schema`, `InferRow`, `useCollection`, `useLazyCollection`, `CrudPage`, `SecretField`, `AppProvider`, hooks, components. `@zero/framework/server` is only for `app/server.ts`.
 
 ---
 

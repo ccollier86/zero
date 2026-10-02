@@ -126,6 +126,7 @@ commands replace scaffold targets.
 | `@zero/framework/components/radial-menu` | Radial context menu organism. Also exported from `react`. |
 | `@zero/framework/components/master-detail` | Master-detail primitives. Also exported from `react`. |
 | `@zero/framework/components/navbar` | Public-page resizable navbar. Also exported from `react`. |
+| `@zero/framework/components/secret-field` | Display-only masked/revealable secret with full-value copy. Also exported from `react`. |
 | `@zero/framework/components/storage` | Storage management/dropzone UI. Also exported from `react`. |
 | `@zero/framework/components/text-effects` | Public text effects for Hero titles and landing copy. Also exported from `react`. |
 | `@zero/framework/components/streaming-text` | Accessible live/replayed text for AI, agents, and async string output. Also exported from `react`. |
@@ -1410,6 +1411,7 @@ import { RadialMenu } from '@zero/framework/components/radial-menu';
 import { ResizableNavbar } from '@zero/framework/components/navbar';
 import { TextGenerateEffect } from '@zero/framework/components/text-effects';
 import { StreamingText } from '@zero/framework/components/streaming-text';
+import { SecretField } from '@zero/framework/components/secret-field';
 import {
   LoginForm,
   MFAEnrollmentForm,
@@ -1446,6 +1448,7 @@ zero add components/kanban
 zero add components/navbar
 zero add components/text-effects
 zero add components/streaming-text
+zero add components/secret-field
 zero add hooks modals --dry-run
 zero add components/storage --target ./my-app
 ```
@@ -1469,6 +1472,7 @@ Supported source-copy targets:
 | `components/kanban` | Kanban board, task card, movement helpers, and dependencies. |
 | `components/master-detail` | Master-detail primitives and dependencies. |
 | `components/navbar` | Resizable public-page navbar and its animated icon/button dependencies. |
+| `components/secret-field` | Tokenized display-only secret field, clipboard boundary, and icon/button dependencies. |
 | `components/storage` | Storage management, file browser, drive list, dropzone, and dependencies. |
 | `components/text-effects` | Public text effects for Hero titles, landing copy, and docs/content headings. |
 | `components/streaming-text` | Accessible live, caller-owned, and replayed text plus the shared class-name helper. |

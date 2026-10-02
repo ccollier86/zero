@@ -92,6 +92,11 @@ const STATIC_TARGETS: AddableTarget[] = [
     description: 'Storage management, file browser, drive list, and dropzone UI.',
   },
   {
+    id: 'components/secret-field',
+    sourceRel: 'components/secret-field',
+    description: 'Accessible masked secret display with reveal and copy controls.',
+  },
+  {
     id: 'components/text-effects',
     sourceRel: 'components/text-effects',
     description: 'Public text effects for Hero titles and landing-page copy.',

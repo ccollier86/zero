@@ -667,6 +667,13 @@ text, and provides a tokenized cursor plus sentence-level screen-reader
 announcements. Do not use a decorative typewriter effect to delay a real
 provider stream. See [Streaming Text](./frontend/streaming-text.md).
 
+For API keys, tokens, signing secrets, and other values already authorized into
+browser memory, use `SecretField` from
+`@zero/framework/components/secret-field`. It is a display-only masked/reveal
+control whose copy action writes the complete value; masking reduces accidental
+exposure but does not replace server authorization. See
+[Secret Field](./frontend/secret-field.md).
+
 Run the platform doctor against an exported config module:
 
 ```txt
@@ -735,6 +742,7 @@ generated apps should prefer narrow imports. Direct subsystem imports such as
 `@zero/framework/components/hero`, and
 `@zero/framework/components/text-effects`,
 `@zero/framework/components/streaming-text`,
+`@zero/framework/components/secret-field`,
 `@zero/framework/components/faq`,
 `@zero/framework/components/features`,
 `@zero/framework/components/code-block`,
@@ -764,6 +772,7 @@ zero add components/kanban
 zero add components/navbar
 zero add components/text-effects
 zero add components/streaming-text
+zero add components/secret-field
 zero add hooks modals --dry-run
 ```
 

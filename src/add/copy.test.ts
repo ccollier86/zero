@@ -220,6 +220,52 @@ describe('addZeroSource', () => {
     }
   });
 
+  test('copies the accessible secret field with its local clipboard boundary', async () => {
+    const targetDir = await createTempApp();
+
+    try {
+      const result = await addZeroSource({
+        targetDir,
+        items: ['components/secret-field'],
+      });
+
+      expect(result.filesWritten).toContain('components/secret-field/secret-field.tsx');
+      expect(result.filesWritten).toContain('components/secret-field/clipboard.ts');
+      expect(result.filesWritten).toContain('components/secret-field/index.ts');
+      expect(result.filesWritten).toContain('components/ui/button.tsx');
+      expect(result.filesWritten).toContain('lib/utils.ts');
+      expect(result.filesPlanned).not.toContain('components/secret-field/secret-field.test.tsx');
+      expect(result.filesPlanned).not.toContain('components/secret-field/secret-field.browser.test.ts');
+
+      const copiedSource = await readFile(
+        join(targetDir, 'components/secret-field/secret-field.tsx'),
+        'utf8',
+      );
+      expect(copiedSource).toContain("from '@/lib/utils'");
+      expect(copiedSource).not.toContain('#zero/');
+
+      await writeFile(
+        join(targetDir, 'entry.tsx'),
+        [
+          "import { SecretField } from './components/secret-field';",
+          "import type { SecretFieldProps } from './components/secret-field';",
+          "const props: SecretFieldProps = { value: 'zero_ak_v1.example' };",
+          'export { SecretField, props };',
+          '',
+        ].join('\n'),
+      );
+
+      const build = await Bun.build({
+        entrypoints: [join(targetDir, 'entry.tsx')],
+        outdir: join(targetDir, 'dist-secret-field'),
+        target: 'browser',
+      });
+      expect(build.success).toBe(true);
+    } finally {
+      await rm(targetDir, { recursive: true, force: true });
+    }
+  });
+
   test('copies public landing components with shared dependencies', async () => {
     const targetDir = await createTempApp();
 

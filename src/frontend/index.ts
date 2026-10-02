@@ -600,6 +600,8 @@ export type {
   StreamingTextProps,
   StreamingTextStatus,
 } from '../components/streaming-text';
+export { SecretField } from '../components/secret-field';
+export type { SecretFieldProps } from '../components/secret-field';
 export { Faq } from '../components/faq';
 export type { FaqItem, FaqProps } from '../components/faq';
 export { ExpandableCards } from '../components/expandable-card';

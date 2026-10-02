@@ -376,6 +376,7 @@ import { DataTableView } from '@zero/framework/components/data-table';
 import { Popover, PopoverContent, PopoverTrigger } from '@zero/framework/components/popover';
 import { MasterDetailView } from '@zero/framework/components/master-detail';
 import { KanbanBoard } from '@zero/framework/components/kanban';
+import { SecretField } from '@zero/framework/components/secret-field';
 ```
 
 Icons:
@@ -2170,6 +2171,33 @@ announcements. Use `announce="off"` only when another surface already announces
 the same content. Use `speed` only for known-text demos, never to delay an
 actual provider stream.
 
+Sensitive-value display:
+
+- `SecretField`
+
+Use `SecretField` for an API key, token, signing secret, or similar value that
+the server has already authorized into browser memory:
+
+```tsx
+import { SecretField } from '@zero/framework/components/secret-field';
+
+<SecretField
+  label="Signing secret"
+  value={secret}
+  visiblePrefix={8}
+  visibleSuffix={4}
+/>
+```
+
+It is display-only, masked by default, and copies the complete value. Prefix
+defaults to zero and suffix to four; the mask is bounded and visible segments
+never overlap. Use `masked`/`onMaskedChange` for controlled state or
+`defaultMasked` for uncontrolled state. `revealable={false}` forces permanent
+masking even if a controlled caller requests otherwise. `onCopied` receives no
+secret, and `onCopyError` receives a stable, secret-free clipboard `Error`.
+Masking helps with shoulder surfing; it is not authorization, and the raw value
+remains in browser memory. See `docs/frontend/secret-field.md`.
+
 Data organisms:
 
 - `DataTable`
@@ -2304,6 +2332,7 @@ zero add components/navbar
 zero add components/hero
 zero add components/text-effects
 zero add components/streaming-text
+zero add components/secret-field
 zero add hooks modals --dry-run
 ```
 
@@ -2597,6 +2626,9 @@ reference docs confirm the behavior is implemented.
 - [Streaming Text](docs/frontend/streaming-text.md): `StreamingText`, live
   string sources, caller-owned progressive output, replay mode, cursor styling,
   callbacks, and sentence-level accessibility behavior.
+- [Secret Field](docs/frontend/secret-field.md): display-only secret masking,
+  controlled/uncontrolled reveal state, full-value copy, callback boundaries,
+  Guardian one-time use, and source-copy support.
 - [LaunchBoard Reference App](docs/frontend/launchboard.md): reference app
   showing root `zero.config.ts`, thin `app/server.ts`, AppShell, ReactiveDB,
   registered owner resources, row-filtered sync, KanbanBoard, auth bootstrap

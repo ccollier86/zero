@@ -116,6 +116,7 @@
     "#zero/components/dropdown-menu": "./src/components/dropdown-menu/index.ts",
     "#zero/components/hero": "./src/components/hero/index.ts",
     "#zero/components/qr-code": "./src/components/qr-code/index.ts",
+    "#zero/components/secret-field": "./src/components/secret-field/index.ts",
     "#zero/components/sidebar": "./src/components/sidebar/index.ts",
     "#zero/components/text-effects": "./src/components/text-effects/index.ts",
     "#zero/components/ui/avatar": "./src/components/ui/avatar.tsx",
@@ -392,6 +393,10 @@
     "./components/radial-menu": {
       "types": "./src/components/radial-menu/index.ts",
       "import": "./src/components/radial-menu/index.ts"
+    },
+    "./components/secret-field": {
+      "types": "./src/components/secret-field/index.ts",
+      "import": "./src/components/secret-field/index.ts"
     },
     "./components/sidebar": {
       "types": "./src/components/sidebar/index.ts",

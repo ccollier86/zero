@@ -195,17 +195,26 @@ describe('ApiKeyManagement one-time secret lifecycle', () => {
     expect(JSON.stringify(dismissed)).not.toContain(SECRET);
   });
 
-  test('makes copy-now and never-shown-again handling explicit', () => {
+  test('masks the one-time value while keeping reveal, copy, and dismissal explicit', () => {
     const markup = renderToStaticMarkup(createElement(ApiKeySecretReveal, {
       issued: issued(),
       onDismiss() {},
     }));
-    expect(markup).toContain(SECRET);
+    const boundedMask = `${'•'.repeat(24)}aaaa`;
+
+    expect(markup).not.toContain(SECRET);
     expect(markup).toContain('Copy this API key now');
     expect(markup).toContain('shown once and cannot be recovered');
-    expect(markup).toContain('Copy now');
+    expect(markup).toContain(`zero_ak_v1.${boundedMask}`);
+    expect(markup.match(/•/g)).toHaveLength(24);
+    expect(markup).toContain('data-slot="secret-field"');
+    expect(markup).toContain('data-masked="true"');
+    expect(markup).toContain('data-slot="secret-field-reveal"');
+    expect(markup).toContain('aria-label="Show One-time API key secret"');
+    expect(markup).toContain('data-slot="secret-field-copy"');
+    expect(markup).toContain('aria-label="Copy One-time API key secret"');
     expect(markup).toContain('Dismiss and clear from page');
-    expect(markup).toContain('aria-label="One-time API key secret"');
+    expect(markup).not.toContain('<input');
     expect(markup).not.toContain('secretHash');
   });
 });

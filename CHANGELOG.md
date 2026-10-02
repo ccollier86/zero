@@ -4,6 +4,16 @@ All notable Zero Platform changes are tracked here.
 
 ## Unreleased
 
+### Added
+
+- Added the tokenized, display-only `SecretField` component for masked API
+  keys, tokens, and signing secrets. It supports bounded prefix/suffix masking,
+  controlled or uncontrolled reveal state, permanently masked and non-copyable
+  policies, full-value clipboard copy with accessible status, narrow and React
+  barrel exports, `zero add components/secret-field`, keyboard-safe manual
+  selection, and Guardian's masked one-time issue/rotation reveal. The adapted
+  MIT-licensed Mischief UI source is pinned in `THIRD_PARTY_NOTICES.md`.
+
 ## 2.0.0 - 2026-10-02
 
 Major platform release unifying Zero's three named foundations: **Guardian**

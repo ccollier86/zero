@@ -381,6 +381,37 @@ cannot erase a value the operator has already placed on the system clipboard.
 Changing identity, tenant scope, live authorization revision, or target
 remounts the control and clears the previous authority's secret and list state.
 
+The one-time panel uses the public
+[`SecretField`](../frontend/secret-field.md) component. It starts masked, exposes
+the non-sensitive `zero_ak_v1.` prefix and final four characters, and copies
+the complete key through its built-in action. Reveal state resets for every new
+issue or rotation. The raw value still exists in authorized browser memory
+until dismissal, so masking is protection against accidental viewing—not an
+authorization or persistence boundary.
+
+If an explicit copy attempt fails because the browser clipboard is unavailable
+or denied, the panel reveals, focuses, and selects the complete key for manual
+copying. This fallback occurs only after the operator requests a copy.
+
+Apps building a custom key screen can use the same display primitive without
+reimplementing secret presentation:
+
+```tsx
+import { SecretField } from '@zero/framework/components/secret-field';
+
+<SecretField
+  label="One-time API key secret"
+  value={issued.secret}
+  visiblePrefix={11}
+  visibleSuffix={4}
+/>
+```
+
+`onCopied` receives no raw key. `onCopyError` receives a stable, secret-free
+clipboard `Error`, and the component's built-in observability does not attach
+the value. The application remains responsible for clearing its own `issued`
+state after the operator finishes.
+
 ## Secret And Lifecycle Contract
 
 The raw `zero_ak_v1...` value is generated from cryptographically random

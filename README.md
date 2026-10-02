@@ -254,6 +254,9 @@ apps. Start with the
   app shells, data organisms, frontend sections, and use-first rules.
 - [Streaming Text](./docs/frontend/streaming-text.md): accessible AI/agent text
   from live string streams, caller-owned progressive output, or demos.
+- [Secret Field](./docs/frontend/secret-field.md): tokenized display-only
+  masking, reveal policy, and full-value copy for authorized browser-held
+  secrets and Guardian's one-time API-key reveal.
 - [Frontend Router](./docs/frontend/router.md): layouts, route groups, auth
   boundaries, sitemap, and file-router behavior.
 - [Zero Product Roadmap](./docs/platform-roadmap.md): living, unordered product

@@ -2,9 +2,8 @@
 
 import * as React from 'react';
 import type { IssuedAuthApiKey } from '../../frontend/client/auth-api-key-types';
+import { SecretField } from '#zero/components/secret-field';
 import { Button } from '#zero/components/ui/button';
-import { Input } from '#zero/components/ui/input';
-import { writeAuthClipboardText } from './auth-clipboard';
 
 export type ApiKeySecretAction =
   | { type: 'show'; issued: IssuedAuthApiKey }
@@ -25,35 +24,70 @@ export function ApiKeySecretReveal({
   issued: IssuedAuthApiKey;
   onDismiss(): void;
 }) {
-  const [copyState, setCopyState] = React.useState<'idle' | 'copied'>('idle');
   const [copyError, setCopyError] = React.useState<string | null>(null);
+  const [masked, setMasked] = React.useState(true);
+  const [manualCopyRequest, requestManualCopy] = React.useReducer(
+    (request: number) => request + 1,
+    0,
+  );
   const headingId = React.useId();
   const descriptionId = React.useId();
-  const secretInputRef = React.useRef<HTMLInputElement | null>(null);
-  const copyButtonRef = React.useRef<HTMLButtonElement | null>(null);
+  const secretFieldRef = React.useRef<HTMLDivElement | null>(null);
+  const manualCopySecretRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
-    setCopyState('idle');
+    manualCopySecretRef.current = null;
     setCopyError(null);
-    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
-      copyButtonRef.current?.focus();
+    setMasked(true);
+    const focusCopyButton = () => {
+      secretFieldRef.current
+        ?.querySelector<HTMLButtonElement>('[data-slot="secret-field-copy"]')
+        ?.focus();
+    };
+    if (
+      typeof window === 'undefined' ||
+      typeof window.requestAnimationFrame !== 'function'
+    ) {
+      focusCopyButton();
       return;
     }
-    const frame = window.requestAnimationFrame(() => copyButtonRef.current?.focus());
+    const frame = window.requestAnimationFrame(focusCopyButton);
     return () => window.cancelAnimationFrame(frame);
   }, [issued.secret]);
 
-  async function copySecret() {
-    setCopyError(null);
-    try {
-      await writeAuthClipboardText(issued.secret);
-      setCopyState('copied');
-    } catch (cause) {
-      setCopyState('idle');
-      setCopyError(cause instanceof Error ? cause.message : 'Failed to copy API key');
-      secretInputRef.current?.focus();
-      secretInputRef.current?.select();
+  React.useEffect(() => {
+    if (
+      manualCopyRequest === 0 ||
+      manualCopySecretRef.current !== issued.secret
+    ) {
+      return;
     }
+
+    const focusValue = () => {
+      secretFieldRef.current
+        ?.querySelector<HTMLElement>('[data-slot="secret-field-value"]')
+        ?.focus();
+    };
+    if (
+      typeof window === 'undefined' ||
+      typeof window.requestAnimationFrame !== 'function'
+    ) {
+      focusValue();
+      return;
+    }
+    const frame = window.requestAnimationFrame(focusValue);
+    return () => window.cancelAnimationFrame(frame);
+  }, [issued.secret, manualCopyRequest]);
+
+  function handleCopied() {
+    setCopyError(null);
+  }
+
+  function handleCopyError() {
+    manualCopySecretRef.current = issued.secret;
+    setCopyError('The API key could not be copied automatically.');
+    setMasked(false);
+    requestManualCopy();
   }
 
   return (
@@ -69,44 +103,32 @@ export function ApiKeySecretReveal({
         This secret is shown once and cannot be recovered. Store it securely before
         dismissing this notice.
       </p>
-      <Input
-        ref={secretInputRef}
-        className="mt-3 font-mono text-xs"
-        aria-label="One-time API key secret"
-        autoCapitalize="none"
-        autoComplete="off"
-        autoCorrect="off"
-        readOnly
-        spellCheck={false}
+      <SecretField
+        ref={secretFieldRef}
+        className="mt-3"
+        label="One-time API key secret"
         value={issued.secret}
-        onFocus={(event) => event.currentTarget.select()}
+        visiblePrefix={11}
+        visibleSuffix={4}
+        masked={masked}
+        onMaskedChange={setMasked}
+        onCopied={handleCopied}
+        onCopyError={handleCopyError}
       />
       <p className="mt-2 text-xs">
         Key: {issued.apiKey.label} · ending in {issued.apiKey.hint}
       </p>
       {copyError && (
         <p role="alert" className="mt-2 text-sm text-destructive">
-          {copyError} Use the one-time secret field above to copy it manually.
+          {copyError} Its full value is revealed, focused, and selected for
+          manual copying.
         </p>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
-        <Button
-          ref={copyButtonRef}
-          type="button"
-          size="sm"
-          onClick={() => void copySecret()}
-        >
-          {copyState === 'copied' ? 'Copied' : 'Copy now'}
-        </Button>
         <Button type="button" size="sm" variant="outline" onClick={onDismiss}>
           Dismiss and clear from page
         </Button>
       </div>
-      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {copyState === 'copied'
-          ? 'API key copied to the clipboard.'
-          : 'A new one-time API key secret is ready to copy.'}
-      </p>
     </section>
   );
 }

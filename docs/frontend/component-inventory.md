@@ -46,6 +46,7 @@ classes through the component tree.
 | Public heroes | Public-page opening sections with background slots and actions. | `@zero/framework/components/hero` or `@zero/framework/react` | `Hero`, `HeroBackground`, `HeroImageBackground` |
 | Public text effects | Public landing/docs/content text motion. | `@zero/framework/components/text-effects` or `@zero/framework/react` | `TextGenerateEffect`, `TypewriterEffect`, `FlipWords` |
 | Streaming and agent output | Accessible text that follows a real string stream or caller-owned progressive value. | `@zero/framework/components/streaming-text` or `@zero/framework/react` | `StreamingText` |
+| Sensitive-value display | Display-only masking, reveal policy, and full-value copy for a secret already authorized into browser memory. | `@zero/framework/components/secret-field` or `@zero/framework/react` | `SecretField` |
 | Public content sections | Landing/docs/content sections using the public token lane. | `@zero/framework/components/*` or `@zero/framework/react` | `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`, `AnimatedList` |
 | App shell | Default app chrome for dashboards, admin tools, and data apps. | `@zero/framework/components/app-shell` | `AppShell`, `AppShellSidebar` |
 | Data organisms | Feature-complete screens or major widgets wired for schemas/live data. | `@zero/framework/react` | `DataTableView`, `KanbanBoard`, `MasterDetailView`, `CrudPage` |
@@ -61,16 +62,18 @@ classes through the component tree.
    text motion instead of custom one-off heading animations.
 5. Use `StreamingText` for AI/agent output and other real string streams. Use
    `TypewriterEffect` only for deliberate presentation, not to delay live data.
-6. Use `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`,
+6. Use `SecretField` to display an authorized API key, token, or signing secret;
+   masking is not a substitute for server authorization or safe delivery.
+7. Use `FeaturesSection`, `CodeBlock`, `CtaSection`, `FooterSection`, `Faq`, `ExpandableCards`, `BentoGrid`,
    and `AnimatedList` for common public content sections before copying
    external snippets.
-7. Use base `ui/` primitives instead of raw HTML controls.
-8. Use generated/data organisms when a schema or collection exists.
-9. Use Animate UI Radix wrappers for overlays and menus instead of duplicating
+8. Use base `ui/` primitives instead of raw HTML controls.
+9. Use generated/data organisms when a schema or collection exists.
+10. Use Animate UI Radix wrappers for overlays and menus instead of duplicating
    Radix setup.
-10. Use Zero animated icons by default. Use `lucide-react` directly only when an
+11. Use Zero animated icons by default. Use `lucide-react` directly only when an
    icon is not in Zero's animated set.
-11. Keep app-specific source outside `src/components`; promote only reusable
+12. Keep app-specific source outside `src/components`; promote only reusable
    components with docs and export decisions.
 
 ## Base Primitives
@@ -168,6 +171,7 @@ intake behavior through the planned blueprint/draft/attachment layer.
 | `Command`, `CommandDialog`, `CommandInput`, `CommandList`, `CommandEmpty`, `CommandGroup`, `CommandItem`, `CommandSeparator`, `CommandShortcut` | `ui/command.tsx` | cmdk command palette primitives. |
 | `Combobox` | `ui/combobox.tsx` | Searchable select, including grouped/multi options. |
 | `TagInput` | `ui/tag-input.tsx` | Chip-based tag entry. |
+| `SecretField` | `secret-field/secret-field.tsx` | Display-only secret with bounded prefix/suffix masking, controlled or uncontrolled reveal state, and full-value copy. The raw value remains in authorized browser memory; see [Secret Field](./secret-field.md). |
 
 ## Feedback And Status
 
@@ -178,6 +182,7 @@ intake behavior through the planned blueprint/draft/attachment layer.
 | `ThemeProvider` | `ui/theme-provider.tsx` | Theme persistence and class management. |
 | `ThemeTogglerButton` | `animate-ui/components/buttons/theme-toggler.tsx` | Accessible light/dark/system toggle with a single morphing sun/moon SVG, click-origin circular View Transition, reduced-motion handling, and an immediate fallback. Integrated into `AppShell` via `header.themeToggle`. |
 | `StreamingText` | `streaming-text/streaming-text.tsx` | Streaming status, tokenized cursor, and sentence-level polite announcements for live text. |
+| `SecretField` | `secret-field/secret-field.tsx` | Accessible reveal and clipboard status for an already-authorized secret; callbacks never receive the copied value. |
 | `NotificationBadge` | `ui/notification-badge.tsx` | Badge/dot counter overlay. |
 | `NotificationItem` | `ui/notification-item.tsx` | Single notification row. |
 | `NotificationList` | `ui/notification-list.tsx` | Grouped notification list. |
